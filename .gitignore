@@ -1,0 +1,67 @@
+# Node
+node_modules/
+.pnpm-store/
+dist/
+build/
+.vite/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# TypeScript build outputs (composite project mode emits tsc artifacts next to source)
+*.tsbuildinfo
+apps/*/vite.config.d.ts
+apps/*/vite.config.js
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local data & secrets
+.qingagent/
+.env
+.env.local
+.env*.bak*
+
+# SQLite databases (runtime data)
+*.db
+*.db-shm
+*.db-wal
+*.db.bak-pre-v*
+
+# Mastra skills (installed per-machine)
+.agents/
+skills-lock.json
+
+# Electron build output
+release/
+
+# CI artifacts
+coverage/
+junit.xml
+uploads/
+
+# Runtime observability artifacts (DuckDB)
+*.duckdb
+*.duckdb.wal
+packages/server/*.duckdb
+packages/server/*.duckdb.wal
+
+# Durable crash logs (.logs/server-<date>.log)
+.logs/
+
+# agent-browser login state (sensitive) & profile
+.qingagent-browser-state.json
+**/.qingagent-browser-state.json
+.qingagent-browser-profile/
+**/.qingagent-browser-profile/
+
+# agent-browser / node runtime cache
+.tmp/
+.playwright-cli/
+
+# Local scorer / pm-gate output
+output/

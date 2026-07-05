@@ -1,0 +1,54 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it } from "vitest";
+import type { ToolCallSpec } from "@qingagent/contract-ts";
+import { UnifiedToolCall } from "./chatUnified";
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+const genericTool = (name: string): ToolCallSpec => ({
+  id: `tool-${name}`,
+  name,
+  render: { kind: "chatInline" },
+  status: { kind: "running", data: { progressPct: null, etaSec: null } },
+  body: { kind: "generic", data: { argsJson: "" } },
+  result: null,
+});
+
+async function render(specs: ToolCallSpec[]) {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root?.render(<>{specs.map((spec) => <UnifiedToolCall key={spec.id} spec={spec} />)}</>);
+  });
+}
+
+describe("UnifiedToolCall generic placeholder labels", () => {
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  it("生成期占位 generic body 使用真实工具中文名,不显示裸工具调用", async () => {
+    await render([
+      genericTool("writeDraft"),
+      genericTool("generateSvg"),
+      genericTool("show_qr"),
+      genericTool("askUser"),
+    ]);
+
+    const text = host?.textContent ?? "";
+    expect(text).toContain("生成草稿");
+    expect(text).toContain("生成配图");
+    expect(text).toContain("生成二维码");
+    expect(text).toContain("确认方向");
+    expect(text).not.toContain("工具调用");
+  });
+});

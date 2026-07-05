@@ -1,0 +1,485 @@
+@font-face {
+  font-family: "QingYanShiSubset";
+  src: url("./assets/yanshi-colophon-subset.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 外壳锁死一屏高度(替代被删除的 <Laptop> 外壳:固定高度 + overflow:hidden）。
+   原先三层用 min-height:100vh 只设下限不设上限,长文档会把整条链一路撑到 body,
+   产生浏览器原生滚动条。改为固定 height:100vh,让溢出在内部页面(workspace 文档区 /
+   home 的 .home-left-scroll)各自的 overflow 容器里滚动,页面本身永远只占一屏。 */
+#root {
+  height: 100vh;
+}
+
+/* 全局细滚动条:Electron(尤其 Windows)默认用系统粗滚动条,与 Chrome 下观感不一致。
+   统一成与各滚动容器一致的细样式(8px、半透明拇指、透明轨道)。具体容器若另有更细规则
+   (如 workspace 的 6px),选择器更具体仍会覆盖此默认。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.web-app-shell {
+  --web-page-max-width: 1440px;
+  height: 100vh;
+  background: var(--bg-window);
+}
+
+/* 未配置 key 的发送按钮引导气泡(新建页 / 编辑页共用) */
+.nokey-gate {
+  position: relative;
+  display: inline-flex;
+  /* 接管被包裹发送按钮原有的 margin-left:auto(新建页 .ccx-send 靠它右对齐),
+     避免包一层后按钮从右下角左移;编辑页发送在独立容器内,此 auto 无副作用。 */
+  margin-left: auto;
+}
+.nokey-gate .nokey-tip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  z-index: 90;
+  width: max-content;
+  max-width: 248px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 0;
+  /* 暖白纸实底,跟左侧技能面板(.qa-skill-menu)同一套配色 */
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transform: translateY(5px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+/* 透明「桥」:填补气泡与按钮之间的间隙,让鼠标从按钮移到气泡时 hover 不断、能选中里面的按钮。 */
+.nokey-gate .nokey-tip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -14px;
+  height: 16px;
+}
+/* 朝下的小尖角,把气泡锚到发送按钮上,更像「从按钮长出来的提示」 */
+.nokey-gate .nokey-tip::before {
+  content: "";
+  position: absolute;
+  right: 16px;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  background: var(--bg-canvas);
+  border-right: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+  transform: rotate(45deg);
+}
+.nokey-gate:hover .nokey-tip,
+.nokey-gate.is-forced .nokey-tip {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+/* 按发送快捷键却被门禁拦下时:气泡强弹 + 发送区轻微抖动提示 */
+.nokey-gate.is-forced {
+  animation: nokey-shake 0.42s ease;
+}
+@keyframes nokey-shake {
+  0%, 100% { transform: translateX(0); }
+  18% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  62% { transform: translateX(-3px); }
+  82% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nokey-gate.is-forced { animation: none; }
+}
+.nokey-tip-text {
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+  color: var(--ink-1);
+}
+.nokey-tip-btn {
+  /* 右对齐:气泡锚在发送按钮上方,按钮贴右最贴近光标来向,移过去最快 */
+  align-self: flex-end;
+  height: 27px;
+  padding: 0 13px;
+  border-radius: 0;
+  cursor: pointer;
+  border: 1px solid var(--line-2);
+  background: var(--mark-soft);
+  color: var(--mark);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-zh-serif);
+}
+.nokey-tip-btn:hover {
+  background: var(--bg-hover);
+}
+
+.web-page-frame {
+  position: relative;
+  width: min(100%, var(--web-page-max-width));
+  height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 启动/路由切换时露这层 = --app-boot-bg(首页暖纸稳态色 #ece4d3(--bg-window),见 index.html),
+     消除懒加载大 chunk 下载期的"中间黑块"闪;workspace 自己设 --bg-canvas 亮底(见 workspace.css)。 */
+  background: var(--app-boot-bg, var(--bg-canvas));
+}
+
+.web-page-frame > [data-view] {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+}
+
+/* 编辑页是亮色文档:显式给编辑页铺 --bg-canvas 亮底。
+   放 app.css 而非 workspace.css —— 避开后者的 css 字节合约。 */
+#view-workspace {
+  background: var(--bg-canvas);
+}
+
+.mobile-desktop-notice {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 24px;
+  background: var(--bg-canvas);
+  color: var(--ink-1);
+}
+
+.mobile-desktop-notice__content {
+  width: min(100%, 320px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.mobile-desktop-notice__title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.5;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.mobile-desktop-notice__url {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  user-select: all;
+}
+
+.mobile-desktop-notice__button {
+  appearance: none;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  padding: 10px 18px;
+  background: var(--bg-canvas);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.mobile-desktop-notice__button:active {
+  transform: translateY(1px);
+}
+
+.ws-folder-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(8, 10, 12, 0.55);
+  backdrop-filter: none;
+  animation: ws-folder-modal-overlay-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.ws-folder-modal-overlay.is-exiting {
+  pointer-events: none;
+  animation: ws-folder-modal-overlay-out 220ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+.ws-folder-modal-overlay > .ws-folder-intro-modal,
+.ws-folder-modal-overlay > .ws-folder-confirm-modal {
+  width: min(460px, 92vw);
+  color: var(--ink-1);
+  background: var(--bg-paper-deep);
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+  transform-origin: 50% 56%;
+  will-change: opacity, transform;
+  animation: ws-folder-modal-panel-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ws-folder-modal-overlay > .ws-folder-intro-modal {
+  padding: 26px 26px 20px;
+}
+
+.ws-folder-modal-overlay > .ws-folder-confirm-modal {
+  max-width: 330px;
+  padding: 22px 24px 18px;
+}
+
+.ws-folder-confirm-modal h3 {
+  margin: 0 0 10px;
+  color: var(--ink-1);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.ws-folder-confirm-modal p {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.85;
+}
+
+.ws-folder-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.ws-folder-modal-primary,
+.ws-folder-modal-secondary,
+.ws-folder-modal-danger {
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ws-folder-modal-primary {
+  padding: 9px 18px;
+  color: var(--bg-paper-deep);
+  font-weight: 600;
+  background: var(--ink-1);
+  border: 0;
+}
+
+.ws-folder-modal-secondary {
+  padding: 8px 16px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+}
+
+.ws-folder-modal-danger {
+  padding: 8px 16px;
+  color: #fff;
+  font-weight: 600;
+  background: #c0392b;
+  border: 0;
+}
+
+.ws-folder-modal-primary:disabled,
+.ws-folder-modal-secondary:disabled,
+.ws-folder-modal-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ws-folder-modal-overlay.is-exiting > .ws-folder-intro-modal,
+.ws-folder-modal-overlay.is-exiting > .ws-folder-confirm-modal {
+  animation: ws-folder-modal-panel-out 220ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+@keyframes ws-folder-modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ws-folder-modal-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ws-folder-modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ws-folder-modal-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+}
+
+@keyframes ws-folder-modal-panel-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ws-folder-modal-panel-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-folder-modal-overlay > .ws-folder-intro-modal,
+  .ws-folder-modal-overlay > .ws-folder-confirm-modal {
+    animation-name: ws-folder-modal-panel-fade-in;
+    transform: none;
+  }
+
+  .ws-folder-modal-overlay.is-exiting > .ws-folder-intro-modal,
+  .ws-folder-modal-overlay.is-exiting > .ws-folder-confirm-modal {
+    animation-name: ws-folder-modal-panel-fade-out;
+    transform: none;
+  }
+}
+
+/* 全局操作提示 toast:qa-toast 是唯一现役通道。 */
+.qa-toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 112px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.qa-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  box-sizing: border-box;
+  max-width: min(80vw, 440px);
+  padding: 9px 16px;
+  background: rgba(22, 17, 12, 0.94);
+  border: 1px solid rgba(184, 169, 140, 0.32);
+  border-left: 2px solid #b59a63;
+  border-radius: 0;
+  color: var(--ink-on-dark);
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  animation: qa-toast-in 160ms ease;
+}
+.qa-toast.success {
+  border-left-color: #6fae6a;
+}
+.qa-toast.warn {
+  border-left-color: #d2622b;
+}
+.qa-toast.error {
+  border-left-color: #d8382b;
+}
+.qa-toast .qa-toast-msg {
+  flex: 1;
+  min-width: 0;
+}
+.qa-toast .qa-toast-act {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border: 1px solid rgba(184, 169, 140, 0.4);
+  border-radius: 0;
+  background: transparent;
+  color: #e6c98a;
+  font-family: var(--font-zh-serif);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.qa-toast .qa-toast-act:hover {
+  background: rgba(184, 169, 140, 0.12);
+  border-color: rgba(184, 169, 140, 0.6);
+}
+.qa-toast .qa-toast-x {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: rgba(236, 227, 208, 0.5);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.qa-toast .qa-toast-x:hover {
+  color: var(--ink-on-dark);
+}
+
+@keyframes qa-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

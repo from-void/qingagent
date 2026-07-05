@@ -1,0 +1,257 @@
+import { z } from "zod";
+import type { Command } from "../Command";
+import type { LegacySection } from "../LegacySection";
+import type { PmDoc } from "../PmDoc";
+import type { SessionMode } from "../SessionMode";
+import type { StartSession } from "../StartSession";
+import type { SendMessage } from "../SendMessage";
+import type { CancelStream } from "../CancelStream";
+import type { AcceptPatch } from "../AcceptPatch";
+import type { RejectPatch } from "../RejectPatch";
+import type { CommitPatches } from "../CommitPatches";
+import type { SubmitReviewOutcome } from "../SubmitReviewOutcome";
+import type { ResumeAskUser } from "../ResumeAskUser";
+import type { AskUserAnswer } from "../AskUserAnswer";
+import type { CancelAskUser } from "../CancelAskUser";
+import type { UpdateDoc } from "../UpdateDoc";
+import type { UpdateMaterialSummary } from "../UpdateMaterialSummary";
+import type { RemoveMaterial } from "../RemoveMaterial";
+import type { ReparseMaterial } from "../ReparseMaterial";
+import type { AttachFolder, DetachFolder } from "../FolderSource";
+import {
+  boundedNonEmptyString,
+  chatChipSchema,
+  resourceRefSchema,
+  skillRefSchema,
+  uploadIdSchema,
+} from "./common";
+import type { Equal, Expect } from "./typeAssert";
+
+// 与旧手写校验对齐的长度上限(stream.ts MAX_FOLDER_COMMAND_*_LENGTH)。
+const MAX_ID_LENGTH = 256;
+const MAX_NAME_LENGTH = 256;
+const MAX_HANDLE_LENGTH = 1024;
+
+/**
+ * updateDoc 的 doc / legacySections 为**运行期直通**(z.unknown()),类型层声明为
+ * PmDoc / LegacySection[]。这是设计决策 1 的刻意取舍:contract-ts 不引入对 pm-schema
+ * 的生产依赖(避免 contract-ts → pm-schema 依赖环),PM 文档的深层结构校验仍由 server 侧
+ * 现有 `safeParsePmDoc` / `validateLegacySections` 承担(与旧行为逐字一致)。
+ * 因此这里用受控 cast 把"运行期 unknown、类型层精确"两者兜住,既不拉依赖、又保住
+ * `commandSchema satisfies z.ZodType<Command>` 与等价断言。
+ */
+const pmDocPassthroughSchema = z.unknown() as unknown as z.ZodType<PmDoc>;
+const legacySectionsPassthroughSchema = z.unknown() as unknown as z.ZodType<Array<LegacySection>>;
+
+// ---- 各 command 载荷 schema(逐一锚定到手写契约类型)----
+
+const sessionModeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("existing"),
+    data: z.object({ id: boundedNonEmptyString(MAX_ID_LENGTH) }),
+  }),
+  z.object({
+    kind: z.literal("new"),
+    data: z.object({
+      template: z.string().nullable(),
+      sessionId: boundedNonEmptyString(MAX_ID_LENGTH).optional(),
+    }),
+  }),
+]) satisfies z.ZodType<SessionMode>;
+type _SessionModeExact = Expect<Equal<z.infer<typeof sessionModeSchema>, SessionMode>>;
+
+const startSessionDataSchema = z.object({
+  mode: sessionModeSchema,
+}) satisfies z.ZodType<StartSession>;
+type _StartSessionExact = Expect<Equal<z.infer<typeof startSessionDataSchema>, StartSession>>;
+
+const sendMessageDataSchema = z.object({
+  sessionId: z.string().min(1),
+  text: z.string(),
+  mentions: z.array(resourceRefSchema),
+  skills: z.array(skillRefSchema),
+  chips: z.array(chatChipSchema),
+  // fileIds 缺省即 []:契约类型要求 fileIds 存在,但旧手写校验容忍其缺省(视作无文件)。
+  // .default([]) 让"输入可省=与旧行为等价、输出恒为 string[]=与契约类型精确等价"两者兼得;
+  // 下游 bridgeHandler 亦以 `fileIds ?? []` 消费,[] 与 undefined 行为一致。
+  fileIds: z.array(uploadIdSchema).default([]),
+  clientMessageId: z.string().optional(),
+  richText: z.string().optional(),
+}) satisfies z.ZodType<SendMessage>;
+type _SendMessageExact = Expect<Equal<z.infer<typeof sendMessageDataSchema>, SendMessage>>;
+
+const cancelStreamDataSchema = z.object({
+  streamId: z.string().min(1),
+}) satisfies z.ZodType<CancelStream>;
+type _CancelStreamExact = Expect<Equal<z.infer<typeof cancelStreamDataSchema>, CancelStream>>;
+
+// acceptPatch / rejectPatch:id 或 reviewBatchId 至少一个非空(跨字段约束)。
+const patchRefRefine = (data: { id?: string; reviewBatchId?: string }): boolean =>
+  (typeof data.id === "string" && data.id.length > 0) ||
+  (typeof data.reviewBatchId === "string" && data.reviewBatchId.length > 0);
+
+const acceptPatchDataSchema = z
+  .object({ id: z.string().optional(), reviewBatchId: z.string().optional() })
+  .refine(patchRefRefine, "must include id or reviewBatchId") satisfies z.ZodType<AcceptPatch>;
+type _AcceptPatchExact = Expect<Equal<z.infer<typeof acceptPatchDataSchema>, AcceptPatch>>;
+
+const rejectPatchDataSchema = z
+  .object({ id: z.string().optional(), reviewBatchId: z.string().optional() })
+  .refine(patchRefRefine, "must include id or reviewBatchId") satisfies z.ZodType<RejectPatch>;
+type _RejectPatchExact = Expect<Equal<z.infer<typeof rejectPatchDataSchema>, RejectPatch>>;
+
+const commitPatchesDataSchema = z
+  .object({
+    ids: z.array(z.string().min(1)),
+    reviewBatchIds: z.array(z.string().min(1)).optional(),
+  })
+  .refine(
+    (data) => data.ids.length > 0 || (data.reviewBatchIds?.length ?? 0) > 0,
+    "must include ids or reviewBatchIds",
+  ) satisfies z.ZodType<CommitPatches>;
+type _CommitPatchesExact = Expect<Equal<z.infer<typeof commitPatchesDataSchema>, CommitPatches>>;
+
+const reviewOutcomeHunkSchema = z.object({
+  verdict: z.enum(["accepted", "rejected"]),
+  blockSummary: z.string(),
+  beforeText: z.string(),
+  afterText: z.string(),
+});
+
+const submitReviewOutcomeDataSchema = z.object({
+  sessionId: z.string().min(1),
+  outcome: z.object({
+    acceptedCount: z.number().int().nonnegative(),
+    rejectedCount: z.number().int().nonnegative(),
+    hunks: z.array(reviewOutcomeHunkSchema),
+  }),
+}) satisfies z.ZodType<SubmitReviewOutcome>;
+type _SubmitReviewOutcomeExact = Expect<
+  Equal<z.infer<typeof submitReviewOutcomeDataSchema>, SubmitReviewOutcome>
+>;
+
+const askUserAnswerSchema = z.object({
+  chosen: z.array(z.string()),
+  freeText: z.string().nullable(),
+  numericValue: z.number().nullable().optional(),
+}) satisfies z.ZodType<AskUserAnswer>;
+type _AskUserAnswerExact = Expect<Equal<z.infer<typeof askUserAnswerSchema>, AskUserAnswer>>;
+
+const resumeAskUserDataSchema = z.object({
+  sessionId: z.string().min(1),
+  // 值用 .optional():契约 answers 是 partial record(`{[key in string]?: AskUserAnswer}`),
+  // z.record 值加 optional 才与之精确等价;旧校验本就不校验答案值形状,这里更贴近旧行为。
+  answers: z
+    .record(z.string(), askUserAnswerSchema.optional())
+    .refine((answers) => Object.keys(answers).length > 0, "must contain at least one entry"),
+}) satisfies z.ZodType<ResumeAskUser>;
+type _ResumeAskUserExact = Expect<Equal<z.infer<typeof resumeAskUserDataSchema>, ResumeAskUser>>;
+
+const cancelAskUserDataSchema = z.object({
+  sessionId: z.string().min(1),
+  toolCallId: z.string().min(1),
+}) satisfies z.ZodType<CancelAskUser>;
+type _CancelAskUserExact = Expect<Equal<z.infer<typeof cancelAskUserDataSchema>, CancelAskUser>>;
+
+const updateDocDataSchema = z.object({
+  sessionId: z.string().min(1),
+  expectedDocumentSnapshot: z.number().int(),
+  legacySections: legacySectionsPassthroughSchema.optional(),
+  doc: pmDocPassthroughSchema.optional(),
+  clientMutationId: z.string().min(1),
+}) satisfies z.ZodType<UpdateDoc>;
+type _UpdateDocExact = Expect<Equal<z.infer<typeof updateDocDataSchema>, UpdateDoc>>;
+
+const updateMaterialSummaryDataSchema = z.object({
+  sessionId: z.string().min(1),
+  materialId: z.string().min(1),
+  summary: z.string(),
+}) satisfies z.ZodType<UpdateMaterialSummary>;
+type _UpdateMaterialSummaryExact = Expect<
+  Equal<z.infer<typeof updateMaterialSummaryDataSchema>, UpdateMaterialSummary>
+>;
+
+const removeMaterialDataSchema = z.object({
+  sessionId: z.string().min(1),
+  materialId: z.string().min(1),
+}) satisfies z.ZodType<RemoveMaterial>;
+type _RemoveMaterialExact = Expect<Equal<z.infer<typeof removeMaterialDataSchema>, RemoveMaterial>>;
+
+const reparseMaterialDataSchema = z.object({
+  sessionId: z.string().min(1),
+  fileId: z.string().min(1),
+}) satisfies z.ZodType<ReparseMaterial>;
+type _ReparseMaterialExact = Expect<Equal<z.infer<typeof reparseMaterialDataSchema>, ReparseMaterial>>;
+
+const attachFolderDataSchema = z.object({
+  sessionId: boundedNonEmptyString(MAX_ID_LENGTH),
+  source: z.discriminatedUnion("provider", [
+    z.object({
+      provider: z.literal("desktop-local"),
+      selectionToken: boundedNonEmptyString(MAX_ID_LENGTH),
+    }),
+    z.object({
+      provider: z.literal("browser-fs-access"),
+      clientSourceId: boundedNonEmptyString(MAX_ID_LENGTH),
+      name: boundedNonEmptyString(MAX_NAME_LENGTH),
+      browserHandleKey: boundedNonEmptyString(MAX_HANDLE_LENGTH),
+    }),
+  ]),
+}) satisfies z.ZodType<AttachFolder>;
+type _AttachFolderExact = Expect<Equal<z.infer<typeof attachFolderDataSchema>, AttachFolder>>;
+
+const detachFolderDataSchema = z.object({
+  sessionId: boundedNonEmptyString(MAX_ID_LENGTH),
+  folderId: boundedNonEmptyString(MAX_ID_LENGTH),
+}) satisfies z.ZodType<DetachFolder>;
+type _DetachFolderExact = Expect<Equal<z.infer<typeof detachFolderDataSchema>, DetachFolder>>;
+
+// ---- 顶层 Command 联合 ----
+
+/**
+ * 全部合法 command kind。顺序/内容与 `Command.ts` 的 tagged union 一一对应,
+ * 用编译期断言强制不漂移。server 侧判"未知 kind"复用它。
+ */
+export const COMMAND_KINDS = [
+  "startSession",
+  "sendMessage",
+  "cancelStream",
+  "acceptPatch",
+  "rejectPatch",
+  "commitPatches",
+  "submitReviewOutcome",
+  "resumeAskUser",
+  "cancelAskUser",
+  "updateDoc",
+  "updateMaterialSummary",
+  "removeMaterial",
+  "reparseMaterial",
+  "attachFolder",
+  "detachFolder",
+] as const;
+type _CommandKindsExact = Expect<Equal<(typeof COMMAND_KINDS)[number], Command["kind"]>>;
+
+export const COMMAND_KIND_SET: ReadonlySet<string> = new Set(COMMAND_KINDS);
+
+/**
+ * 入站命令联合。`z.discriminatedUnion("kind", …)`:未知 kind → discriminator 错(→ 400);
+ * 默认 strip 未知字段(handler 用 parse 输出即天然消毒,消解 __proto__ 一类脏键)。
+ */
+export const commandSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("startSession"), data: startSessionDataSchema }),
+  z.object({ kind: z.literal("sendMessage"), data: sendMessageDataSchema }),
+  z.object({ kind: z.literal("cancelStream"), data: cancelStreamDataSchema }),
+  z.object({ kind: z.literal("acceptPatch"), data: acceptPatchDataSchema }),
+  z.object({ kind: z.literal("rejectPatch"), data: rejectPatchDataSchema }),
+  z.object({ kind: z.literal("commitPatches"), data: commitPatchesDataSchema }),
+  z.object({ kind: z.literal("submitReviewOutcome"), data: submitReviewOutcomeDataSchema }),
+  z.object({ kind: z.literal("resumeAskUser"), data: resumeAskUserDataSchema }),
+  z.object({ kind: z.literal("cancelAskUser"), data: cancelAskUserDataSchema }),
+  z.object({ kind: z.literal("updateDoc"), data: updateDocDataSchema }),
+  z.object({ kind: z.literal("updateMaterialSummary"), data: updateMaterialSummaryDataSchema }),
+  z.object({ kind: z.literal("removeMaterial"), data: removeMaterialDataSchema }),
+  z.object({ kind: z.literal("reparseMaterial"), data: reparseMaterialDataSchema }),
+  z.object({ kind: z.literal("attachFolder"), data: attachFolderDataSchema }),
+  z.object({ kind: z.literal("detachFolder"), data: detachFolderDataSchema }),
+]) satisfies z.ZodType<Command>;
+type _CommandExact = Expect<Equal<z.infer<typeof commandSchema>, Command>>;

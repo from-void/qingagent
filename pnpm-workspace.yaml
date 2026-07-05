@@ -1,0 +1,14 @@
+# 显式枚举而非通配:VPS 部署用不带 --delete 的 rsync 同步源码,
+# git 里删除的包会在 VPS 留下幽灵目录;通配会把幽灵 package.json
+# 扫进 workspace,与 lockfile 不符导致 frozen install 失败。
+# 新增包时在此登记。
+packages:
+  - "apps/web"
+  - "apps/desktop"
+  - "packages/chinese-masonry"
+  - "packages/contract-ts"
+  - "packages/core"
+  - "packages/diagram-engine"
+  - "packages/pm-schema"
+  - "packages/server"
+  - "packages/ui-kit"

@@ -1,0 +1,3000 @@
+{
+  "generatedAt": "2026-07-05T08:58:37.799Z",
+  "forward": {
+    "total": 460,
+    "attributed": 268,
+    "exempt": 192,
+    "missing": 0,
+    "rows": [
+      {
+        "cls": "a",
+        "family": "a",
+        "status": "attributed"
+      },
+      {
+        "cls": "active",
+        "family": "active",
+        "status": "attributed"
+      },
+      {
+        "cls": "agent",
+        "family": "agent",
+        "status": "attributed"
+      },
+      {
+        "cls": "ai-cursor",
+        "family": "ai",
+        "status": "exempt",
+        "reason": "编辑器 AI 光标 / 协作光标层,运行时装饰,当前无多人协作场景"
+      },
+      {
+        "cls": "arrowclosed",
+        "family": "arrowclosed",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "au-slider",
+        "family": "au",
+        "status": "attributed"
+      },
+      {
+        "cls": "au-slider-input",
+        "family": "au",
+        "status": "attributed"
+      },
+      {
+        "cls": "au-slider-scale",
+        "family": "au",
+        "status": "attributed"
+      },
+      {
+        "cls": "au-slider-value",
+        "family": "au",
+        "status": "attributed"
+      },
+      {
+        "cls": "bigplan-panel",
+        "family": "bigplan",
+        "status": "attributed"
+      },
+      {
+        "cls": "body",
+        "family": "body",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-acts",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-body",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-head",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-opt",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-opt-desc",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-opt-label",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-opts",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-other",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q-enter",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q-head",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q-kind",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q-num",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-q-title",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "bp-ta",
+        "family": "bp",
+        "status": "attributed"
+      },
+      {
+        "cls": "br",
+        "family": "br",
+        "status": "attributed"
+      },
+      {
+        "cls": "c-ico",
+        "family": "c",
+        "status": "attributed"
+      },
+      {
+        "cls": "c-label",
+        "family": "c",
+        "status": "attributed"
+      },
+      {
+        "cls": "c-skill-ico",
+        "family": "c",
+        "status": "attributed"
+      },
+      {
+        "cls": "c-skill-label",
+        "family": "c",
+        "status": "attributed"
+      },
+      {
+        "cls": "c-x",
+        "family": "c",
+        "status": "attributed"
+      },
+      {
+        "cls": "card",
+        "family": "card",
+        "status": "attributed"
+      },
+      {
+        "cls": "ccx-adopt",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-back",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-bd",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-cn",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-composer",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-desc",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-dust",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-folder-btn",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-folder-wrap",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-fr",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-h1",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-hanzi",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-hanzi-canvas",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-hanzi-canvas--base",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-hanzi-canvas--pulse",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-ico",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-idx",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-ink",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-kicker",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-lede",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-left",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-meta",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-morph",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-morph-corner",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-morph-frame",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-morph-noise",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-newpage",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-page",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-reveal",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-right",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-send",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-space",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-sub",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-swap",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-tcard",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-ticon",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-tname",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-toast",
+        "family": "ccx",
+        "status": "attributed"
+      },
+      {
+        "cls": "ccx-tool",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-toolbar",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-top",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "ccx-tx",
+        "family": "ccx",
+        "status": "exempt",
+        "reason": "整页场景类·新建页(青简门板/汉字水墨),整页构图非控件;技能chip/输入原子已在第一层覆盖"
+      },
+      {
+        "cls": "chat-chip",
+        "family": "chat",
+        "status": "attributed"
+      },
+      {
+        "cls": "chat-edit",
+        "family": "chat",
+        "status": "attributed"
+      },
+      {
+        "cls": "chat-loading-dots",
+        "family": "chat",
+        "status": "attributed"
+      },
+      {
+        "cls": "cm-card",
+        "family": "cm",
+        "status": "attributed"
+      },
+      {
+        "cls": "connectableend",
+        "family": "connectableend",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "connectablestart",
+        "family": "connectablestart",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "disabled",
+        "family": "disabled",
+        "status": "attributed"
+      },
+      {
+        "cls": "doc-empty",
+        "family": "doc",
+        "status": "exempt",
+        "reason": "文档区空态/工具栏骨架,归属文档页(doc-toolbar 已在17节选中工具条活渲染)"
+      },
+      {
+        "cls": "doc-toolbar",
+        "family": "doc",
+        "status": "attributed"
+      },
+      {
+        "cls": "doc-ver-toast",
+        "family": "doc",
+        "status": "attributed"
+      },
+      {
+        "cls": "dots",
+        "family": "dots",
+        "status": "attributed"
+      },
+      {
+        "cls": "draggable",
+        "family": "draggable",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-ai",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-ai-ico",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-btn",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-caret",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-code-icon",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-divider",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-dropdown",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-group",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-hi-bar",
+        "family": "dt",
+        "status": "exempt",
+        "reason": "文档顶栏(doc-topbar)内部件,归属工作区文档区页面构图"
+      },
+      {
+        "cls": "dt-hi-lbl",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-lbl",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "dt-svg",
+        "family": "dt",
+        "status": "attributed"
+      },
+      {
+        "cls": "em",
+        "family": "em",
+        "status": "attributed"
+      },
+      {
+        "cls": "font-mono",
+        "family": "font",
+        "status": "attributed"
+      },
+      {
+        "cls": "ghost",
+        "family": "ghost",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-canvas",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-canvas--preview",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-export",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle--b",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle--l",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle--r",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle--t",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle-slot",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle-slot--b",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle-slot--l",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle-slot--r",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-handle-slot--t",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node--rect",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-hover-ring",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-label",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-selection-ring",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-shape-fill",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-shape-svg",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-node-shell",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "graph-diagram-viewbar",
+        "family": "graph-diagram",
+        "status": "attributed"
+      },
+      {
+        "cls": "has-desc",
+        "family": "has",
+        "status": "attributed"
+      },
+      {
+        "cls": "hc-arrow",
+        "family": "hc",
+        "status": "exempt",
+        "reason": "协作光标(hover cursor)装饰,当前无多人协作,归属未来场景"
+      },
+      {
+        "cls": "hc-cursor",
+        "family": "hc",
+        "status": "exempt",
+        "reason": "协作光标(hover cursor)装饰,当前无多人协作,归属未来场景"
+      },
+      {
+        "cls": "hc-name",
+        "family": "hc",
+        "status": "exempt",
+        "reason": "协作光标(hover cursor)装饰,当前无多人协作,归属未来场景"
+      },
+      {
+        "cls": "head",
+        "family": "head",
+        "status": "attributed"
+      },
+      {
+        "cls": "home-qingjian",
+        "family": "home",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "human-cursor-layer",
+        "family": "human",
+        "status": "exempt",
+        "reason": "编辑器 AI 光标 / 协作光标层,运行时装饰,当前无多人协作场景"
+      },
+      {
+        "cls": "inactive",
+        "family": "inactive",
+        "status": "exempt",
+        "reason": "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉"
+      },
+      {
+        "cls": "ink-bubble",
+        "family": "ink-bubble",
+        "status": "attributed"
+      },
+      {
+        "cls": "ink-bubble--animate",
+        "family": "ink-bubble",
+        "status": "attributed"
+      },
+      {
+        "cls": "ink-bubble__canvas",
+        "family": "ink-bubble",
+        "status": "attributed"
+      },
+      {
+        "cls": "ink-bubble__content",
+        "family": "ink-bubble",
+        "status": "attributed"
+      },
+      {
+        "cls": "ink-bubble__content--visible",
+        "family": "ink-bubble",
+        "status": "attributed"
+      },
+      {
+        "cls": "insert",
+        "family": "insert",
+        "status": "exempt",
+        "reason": "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉"
+      },
+      {
+        "cls": "is-active",
+        "family": "is",
+        "status": "attributed"
+      },
+      {
+        "cls": "is-agent-active",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-dark",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-disabled",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-empty",
+        "family": "is",
+        "status": "attributed"
+      },
+      {
+        "cls": "is-morph-hidden",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-morph-out",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-np",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-on",
+        "family": "is",
+        "status": "attributed"
+      },
+      {
+        "cls": "is-open",
+        "family": "is",
+        "status": "attributed"
+      },
+      {
+        "cls": "is-placeholder",
+        "family": "is",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "is-visible",
+        "family": "is",
+        "status": "attributed"
+      },
+      {
+        "cls": "light",
+        "family": "light",
+        "status": "exempt",
+        "reason": "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉"
+      },
+      {
+        "cls": "md-account",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-active",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-block",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-block-head",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-block-sub",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-block-title",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-card",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-card-title",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-col",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-date-filter",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-detail-card",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-detail-filters",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-dot",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-dot--ok",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-empty",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-foot-note",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-keyline",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-keyops",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-keysrc",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-keysrc-detail",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-metric",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-metric-label",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-metric-sub",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-metric-value",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-metrics",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-mini-btn",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-recheck",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-row",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-status-row",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-status-text",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-trend",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-trend-axis",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-trend-bar",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-trend-bar--empty",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-trend-col",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-usage",
+        "family": "md",
+        "status": "exempt",
+        "reason": "整页场景类·模型用量仪表盘(设置内页),数据面板非通用控件"
+      },
+      {
+        "cls": "md-value-accent",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-view-btn",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-views",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "md-views--right",
+        "family": "md",
+        "status": "attributed"
+      },
+      {
+        "cls": "native-char-enter",
+        "family": "native",
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+      },
+      {
+        "cls": "native-presentation-active",
+        "family": "native",
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+      },
+      {
+        "cls": "native-presentation-cursor",
+        "family": "native",
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+      },
+      {
+        "cls": "native-presentation-shell",
+        "family": "native",
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+      },
+      {
+        "cls": "native-presentation-vignette",
+        "family": "native",
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+      },
+      {
+        "cls": "no-ink",
+        "family": "no",
+        "status": "exempt",
+        "reason": "纯状态修饰类(is-*/active),依附具体控件由模板拼接,无独立视觉"
+      },
+      {
+        "cls": "node-diagram",
+        "family": "node",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "nodrag",
+        "family": "nodrag",
+        "status": "attributed"
+      },
+      {
+        "cls": "nopan",
+        "family": "nopan",
+        "status": "attributed"
+      },
+      {
+        "cls": "on",
+        "family": "on",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-hover-popup",
+        "family": "patch-hover",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-nav",
+        "family": "patch-nav",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-actions",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-btn",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-ctx",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-del-seg",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-info",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-k",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-num",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-orig",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "patch-popup-row",
+        "family": "patch-popup",
+        "status": "attributed"
+      },
+      {
+        "cls": "pn-commit",
+        "family": "pn",
+        "status": "attributed"
+      },
+      {
+        "cls": "pn-dot",
+        "family": "pn",
+        "status": "attributed"
+      },
+      {
+        "cls": "pn-ghost",
+        "family": "pn",
+        "status": "attributed"
+      },
+      {
+        "cls": "pn-label",
+        "family": "pn",
+        "status": "attributed"
+      },
+      {
+        "cls": "primary",
+        "family": "primary",
+        "status": "attributed"
+      },
+      {
+        "cls": "qa-skill-desc",
+        "family": "qa",
+        "status": "attributed"
+      },
+      {
+        "cls": "qa-skill-ico",
+        "family": "qa",
+        "status": "attributed"
+      },
+      {
+        "cls": "qa-skill-menu",
+        "family": "qa",
+        "status": "attributed"
+      },
+      {
+        "cls": "qa-skill-name",
+        "family": "qa",
+        "status": "attributed"
+      },
+      {
+        "cls": "qa-skill-row",
+        "family": "qa",
+        "status": "attributed"
+      },
+      {
+        "cls": "qing-center",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-ch",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-col",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-empty",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-stage",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-tag",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qing-tag-inner",
+        "family": "qing",
+        "status": "exempt",
+        "reason": "首页/空态青简装饰构图,非通用控件"
+      },
+      {
+        "cls": "qj-active",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-bird-wing",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-bird-wing-l",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-bird-wing-r",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-birds-flock",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-br",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-card-slot",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-colophon",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-dock",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-bar",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-hotspot",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-dock-prog",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-search-btn",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-search-count",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-search-input",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dock-search-wrap",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dp-cursor",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dp-fill",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dp-scale",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-dp-track",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-fired",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-seal",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-sealimg",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-side",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-title",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-title-char",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-verse",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-fp-verse-in",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-frontispiece",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-head",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-in",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-ink",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-ink-bloom",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-ink-growDown",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-ink-growUp",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-inner",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-left",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-m-fall",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-moment-art",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-nc-corner",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-nc-frame",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-nc-shade",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-nc-tex",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-nc-title",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-new-card",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-new-fab",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-on",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-open",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-plant-body",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-plant-body-bottom",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-plant-body-top",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-plant-flip",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-right",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-roller",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-root",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-scroll",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-settings-btn",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-settings-wrap",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-backdrop",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-body",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-close",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-content",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-ink-stage",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-nav",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-panel",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-tab",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-tabs",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sheet-title",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-show",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-silk",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-silkcore",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage-moment",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage-moment-birds",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage-moment-edge-bottom",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage-moment-edge-top",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-stage-moment-plant",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-sway",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-tail",
+        "family": "qj",
+        "status": "exempt",
+        "reason": "整页场景类·首页青简卷轴构图(非可复用控件);其可复用件[qj-sheet设置面板/季节植物]已在第三层活渲染"
+      },
+      {
+        "cls": "qj-tl",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qj-topctrl",
+        "family": "qj",
+        "status": "attributed"
+      },
+      {
+        "cls": "qt-author",
+        "family": "qt",
+        "status": "exempt",
+        "reason": "首页题字/引文装饰(quote title),装饰非控件"
+      },
+      {
+        "cls": "qt-title",
+        "family": "qt",
+        "status": "exempt",
+        "reason": "首页题字/引文装饰(quote title),装饰非控件"
+      },
+      {
+        "cls": "react-renderer",
+        "family": "react",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "right",
+        "family": "right",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-group",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-group-title",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-item",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-kbd",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-keys",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-label",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-list",
+        "family": "sc",
+        "status": "attributed"
+      },
+      {
+        "cls": "sc-source",
+        "family": "sc",
+        "status": "exempt",
+        "reason": "快捷键面板(shortcuts)整块,归属设置页"
+      },
+      {
+        "cls": "seal-img",
+        "family": "seal",
+        "status": "exempt",
+        "reason": "首页印章图 / 转场特效层(sfx),整页视觉装饰非控件"
+      },
+      {
+        "cls": "settings-model",
+        "family": "settings",
+        "status": "attributed"
+      },
+      {
+        "cls": "settings-shortcuts",
+        "family": "settings",
+        "status": "attributed"
+      },
+      {
+        "cls": "settings-skills",
+        "family": "settings",
+        "status": "attributed"
+      },
+      {
+        "cls": "sfx-blur",
+        "family": "sfx",
+        "status": "exempt",
+        "reason": "首页印章图 / 转场特效层(sfx),整页视觉装饰非控件"
+      },
+      {
+        "cls": "sfx-seg",
+        "family": "sfx",
+        "status": "exempt",
+        "reason": "首页印章图 / 转场特效层(sfx),整页视觉装饰非控件"
+      },
+      {
+        "cls": "show-sb",
+        "family": "show",
+        "status": "exempt",
+        "reason": "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉"
+      },
+      {
+        "cls": "sk-card",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card--search",
+        "family": "sk",
+        "status": "exempt",
+        "reason": "整页场景类·新建页技能卡网格(skill card grid),归属新建页构图"
+      },
+      {
+        "cls": "sk-card--span",
+        "family": "sk",
+        "status": "exempt",
+        "reason": "整页场景类·新建页技能卡网格(skill card grid),归属新建页构图"
+      },
+      {
+        "cls": "sk-card-arrow",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-desc",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-foot",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-head",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-icon",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-tag",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-card-title",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-grid",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-on",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-search-toggle",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-toggle",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sk-toggle-dot",
+        "family": "sk",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-active",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-back",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-btn",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-config",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-configured",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-faq-q",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-field",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-field-input",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-field-label",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-guide",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-keyhint",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-keyinput",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-keyrow",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-model-prefix",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-note",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-official",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-secret",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-secret-toggle",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-secret-wrap",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-setup",
+        "family": "sm",
+        "status": "exempt",
+        "reason": "整页场景类·设置-模型/密钥配置页,表单排布归属其页面"
+      },
+      {
+        "cls": "sm-setup-tab",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "sm-setup-tabs",
+        "family": "sm",
+        "status": "attributed"
+      },
+      {
+        "cls": "small",
+        "family": "small",
+        "status": "attributed"
+      },
+      {
+        "cls": "source",
+        "family": "source",
+        "status": "attributed"
+      },
+      {
+        "cls": "src-chip",
+        "family": "src",
+        "status": "exempt",
+        "reason": "来源内联标签(citation 外壳已在19节活渲染)/ 新建页可编辑体 / 全局 tooltip 运行时浮层"
+      },
+      {
+        "cls": "starter-edit",
+        "family": "starter",
+        "status": "exempt",
+        "reason": "来源内联标签(citation 外壳已在19节活渲染)/ 新建页可编辑体 / 全局 tooltip 运行时浮层"
+      },
+      {
+        "cls": "sub",
+        "family": "sub",
+        "status": "attributed"
+      },
+      {
+        "cls": "target",
+        "family": "target",
+        "status": "attributed"
+      },
+      {
+        "cls": "tiptap",
+        "family": "tiptap",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      },
+      {
+        "cls": "tl",
+        "family": "tl",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "tool",
+        "family": "tool",
+        "status": "attributed"
+      },
+      {
+        "cls": "top",
+        "family": "top",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-bar",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-card-chev",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-ico",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-lbl",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-meta",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-procdiv",
+        "family": "u",
+        "status": "exempt",
+        "reason": "对话统一组件内部件(.u-*),已随 UToolBar/UResearch 等真组件在第二层活渲染其外壳"
+      },
+      {
+        "cls": "u-procdiv-lbl",
+        "family": "u",
+        "status": "exempt",
+        "reason": "对话统一组件内部件(.u-*),已随 UToolBar/UResearch 等真组件在第二层活渲染其外壳"
+      },
+      {
+        "cls": "u-procdiv-line",
+        "family": "u",
+        "status": "exempt",
+        "reason": "对话统一组件内部件(.u-*),已随 UToolBar/UResearch 等真组件在第二层活渲染其外壳"
+      },
+      {
+        "cls": "u-scope",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "u-seg",
+        "family": "u",
+        "status": "exempt",
+        "reason": "对话统一组件内部件(.u-*),已随 UToolBar/UResearch 等真组件在第二层活渲染其外壳"
+      },
+      {
+        "cls": "u-spacer",
+        "family": "u",
+        "status": "attributed"
+      },
+      {
+        "cls": "user",
+        "family": "user",
+        "status": "attributed"
+      },
+      {
+        "cls": "web-app-shell",
+        "family": "web",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "web-page-frame",
+        "family": "web",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "web-page-frame--qingjian-home",
+        "family": "web",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "web-page-frame--workspace",
+        "family": "web",
+        "status": "exempt",
+        "reason": "页面外壳/布局工具类(app-shell/page-frame/结构容器),无独立控件视觉;字体族 font-mono/排版已在 Token 层演示"
+      },
+      {
+        "cls": "wf-blockmark",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-btn",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-doc",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-input",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-modal",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-msg",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-patch-ins",
+        "family": "wf-patch",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-patch-ins-wrap",
+        "family": "wf-patch",
+        "status": "attributed"
+      },
+      {
+        "cls": "wf-toast",
+        "family": "wf",
+        "status": "attributed"
+      },
+      {
+        "cls": "workspace-tooltip",
+        "family": "workspace",
+        "status": "exempt",
+        "reason": "来源内联标签(citation 外壳已在19节活渲染)/ 新建页可编辑体 / 全局 tooltip 运行时浮层"
+      },
+      {
+        "cls": "ws-back-home",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "工作区整页骨架/文档顶栏(左右分栏/纸面/返回),归属工作区页面构图"
+      },
+      {
+        "cls": "ws-body",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "工作区整页骨架/文档顶栏(左右分栏/纸面/返回),归属工作区页面构图"
+      },
+      {
+        "cls": "ws-chat",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-colophon",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-colophon-count",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-colophon-countcol",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-colophon-date",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-colophon-glyph",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-colophon-seal",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "文档落款印章区(colophon),文档尾部装饰归属文档页"
+      },
+      {
+        "cls": "ws-doc-btn",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-doc-topbar",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-draft-body",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-body-inner",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-brewing",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-card",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-count",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-foot",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-head",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-status",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-tag",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-target",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-draft-title",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "右栏草稿卡骨架(draft card),整块归属工作区右栏文档态"
+      },
+      {
+        "cls": "ws-edit-lock",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "编辑锁提示(审核态锁),运行时态归属工作区"
+      },
+      {
+        "cls": "ws-edit-lock-hint",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "编辑锁提示(审核态锁),运行时态归属工作区"
+      },
+      {
+        "cls": "ws-edit-lock-hint-dot",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "编辑锁提示(审核态锁),运行时态归属工作区"
+      },
+      {
+        "cls": "ws-export-anchor",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-export-item",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-export-item--platform",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-export-menu",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-export-sep",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-float-bar",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-float-bar-dot",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-float-bar-label",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-float-bar-spacer",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-btn",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-check",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-intro-modal",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-intro-point",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-modal-foot",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-modal-icon",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-modal-overlay",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-modal-primary",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-modal-secondary",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-folder-wrap",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-input-morph",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-input-tools",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-input-wrap",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-left",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-paper-surface",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "工作区整页骨架/文档顶栏(左右分栏/纸面/返回),归属工作区页面构图"
+      },
+      {
+        "cls": "ws-pill",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "ws-right",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "工作区整页骨架/文档顶栏(左右分栏/纸面/返回),归属工作区页面构图"
+      },
+      {
+        "cls": "ws-think-head",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "思考流跑马灯(thinking marquee),流式态归属对话区运行时,已由 UTurnFold/thinking 覆盖语义"
+      },
+      {
+        "cls": "ws-think-label",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "思考流跑马灯(thinking marquee),流式态归属对话区运行时,已由 UTurnFold/thinking 覆盖语义"
+      },
+      {
+        "cls": "ws-think-marquee",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "思考流跑马灯(thinking marquee),流式态归属对话区运行时,已由 UTurnFold/thinking 覆盖语义"
+      },
+      {
+        "cls": "ws-think-text",
+        "family": "ws",
+        "status": "exempt",
+        "reason": "思考流跑马灯(thinking marquee),流式态归属对话区运行时,已由 UTurnFold/thinking 覆盖语义"
+      },
+      {
+        "cls": "ws-tool-ico",
+        "family": "ws",
+        "status": "attributed"
+      },
+      {
+        "cls": "xyflow__viewport",
+        "family": "xyflow__viewport",
+        "status": "exempt",
+        "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
+      }
+    ]
+  },
+  "reverse": {
+    "scannedTokens": 480,
+    "categories": {
+      "census": 183,
+      "scaffold": 93,
+      "pageCss": 33,
+      "dig": 43,
+      "conditionalLive": 101,
+      "dormant": 0,
+      "editorPm": 16,
+      "modifier": 11,
+      "violation": 0
+    },
+    "conditionalLive": [
+      {
+        "cls": "wf-chip",
+        "evidence": "AskUserOverlay.tsx:361 · ChatMessageList.tsx:999(census 42 态未采到该出现点)"
+      },
+      {
+        "cls": "wf-region",
+        "evidence": "WorkspacePage.tsx:4963 PatchUnresolvableBanner · 4988 PatchUnrenderableHint(审核态可达);历史横幅变体 4779 已停摆(hash-only 无入口)"
+      },
+      {
+        "cls": "wf-sel",
+        "evidence": "DocumentSnapshotView.tsx:3736/5090(选区态 span)"
+      },
+      {
+        "cls": "wf-patch-del-marker",
+        "evidence": "DocumentSnapshotView.tsx:3923"
+      },
+      {
+        "cls": "patch-del-cursor",
+        "evidence": "DocumentSnapshotView.tsx:3936"
+      },
+      {
+        "cls": "wf-floaty",
+        "evidence": "FolderSourceControl.tsx:424(ws-folder-popover 外壳;A2-2 待随文件入口融合退役)"
+      },
+      {
+        "cls": "ws-folder-popover",
+        "evidence": "FolderSourceControl.tsx:424"
+      },
+      {
+        "cls": "ws-folder-popover-head",
+        "evidence": "FolderSourceControl.tsx:425"
+      },
+      {
+        "cls": "ws-folder-popover-icon",
+        "evidence": "FolderSourceControl.tsx:426"
+      },
+      {
+        "cls": "ws-folder-popover-name",
+        "evidence": "FolderSourceControl.tsx:427"
+      },
+      {
+        "cls": "ws-folder-popover-path",
+        "evidence": "FolderSourceControl.tsx:429"
+      },
+      {
+        "cls": "ws-folder-popover-meta",
+        "evidence": "FolderSourceControl.tsx:430"
+      },
+      {
+        "cls": "ws-folder-popover-divider",
+        "evidence": "FolderSourceControl.tsx:437"
+      },
+      {
+        "cls": "ws-folder-popover-disconnect",
+        "evidence": "FolderSourceControl.tsx:440"
+      },
+      {
+        "cls": "ws-folder-popover-hint",
+        "evidence": "FolderSourceControl.tsx:450"
+      },
+      {
+        "cls": "ws-folder-popover-arrow",
+        "evidence": "FolderSourceControl.tsx:452"
+      },
+      {
+        "cls": "ws-folder-dot",
+        "evidence": "FolderSourceControl.tsx:421"
+      },
+      {
+        "cls": "graph-diagram-node--circle",
+        "evidence": "GraphDiagramView.tsx:317(`graph-diagram-node--${shape}`)"
+      },
+      {
+        "cls": "graph-diagram-node--diamond",
+        "evidence": "GraphDiagramView.tsx:317"
+      },
+      {
+        "cls": "graph-diagram-node--hexagon",
+        "evidence": "GraphDiagramView.tsx:317"
+      },
+      {
+        "cls": "graph-diagram-node--parallelogram",
+        "evidence": "GraphDiagramView.tsx:317"
+      },
+      {
+        "cls": "graph-diagram-node--doublecircle",
+        "evidence": "GraphDiagramView.tsx:317"
+      },
+      {
+        "cls": "chat-chip-longtext",
+        "evidence": "system/longText.tsx:40"
+      },
+      {
+        "cls": "settings-search",
+        "evidence": "SearchPanel.tsx:212"
+      },
+      {
+        "cls": "ss-card",
+        "evidence": "SearchPanel.tsx:216 · settings.css:444(搜索配置卡,census 42 态未采到)"
+      },
+      {
+        "cls": "ss-badge",
+        "evidence": "SearchPanel.tsx:220 · settings.css:459(配置状态徽标,census 42 态未采到)"
+      },
+      {
+        "cls": "sm-other",
+        "evidence": "ModelSettingsPanel.tsx:533"
+      },
+      {
+        "cls": "sm-field-input--invalid",
+        "evidence": "ModelSettingsPanel.tsx:551 · VisionPanel.tsx:225"
+      },
+      {
+        "cls": "sm-field-err",
+        "evidence": "ModelSettingsPanel.tsx:441/559 · VisionPanel.tsx:233"
+      },
+      {
+        "cls": "md-dot--bad",
+        "evidence": "ModelSettingsPanel.tsx:452 · modelDashboard.css:89"
+      },
+      {
+        "cls": "md-dot--warn",
+        "evidence": "ModelSettingsPanel.tsx:760 · modelDashboard.css:93"
+      },
+      {
+        "cls": "md-metrics--3",
+        "evidence": "ModelSettingsPanel.tsx:707 · modelDashboard.css:151"
+      },
+      {
+        "cls": "sk-off",
+        "evidence": "SkillsPanel.tsx:360 · settings.css:241"
+      },
+      {
+        "cls": "sk-subhead",
+        "evidence": "SkillsPanel.tsx:253 · settings.css:274"
+      },
+      {
+        "cls": "sk-back",
+        "evidence": "SkillsPanel.tsx:254 · settings.css:275"
+      },
+      {
+        "cls": "sk-back-arrow",
+        "evidence": "SkillsPanel.tsx:255 · settings.css:277"
+      },
+      {
+        "cls": "sk-subtitle",
+        "evidence": "SkillsPanel.tsx:260 · settings.css:278"
+      },
+      {
+        "cls": "qj-dock-preview",
+        "evidence": "QingjianScroll.tsx:2491 · qingjian.css:1836"
+      },
+      {
+        "cls": "qj-dock-preview-card",
+        "evidence": "QingjianScroll.tsx:2495 · qingjian.css:1854"
+      },
+      {
+        "cls": "qj-dock-preview-title",
+        "evidence": "QingjianScroll.tsx:2496 · qingjian.css:1868"
+      },
+      {
+        "cls": "qj-dock-preview-body",
+        "evidence": "QingjianScroll.tsx:2497 · qingjian.css:1879"
+      },
+      {
+        "cls": "qj-dock-preview-meta",
+        "evidence": "QingjianScroll.tsx:2499 · qingjian.css:1891"
+      },
+      {
+        "cls": "home-card-menu",
+        "evidence": "HomePage.tsx:308(右键文章卡)"
+      },
+      {
+        "cls": "home-card-menu-item",
+        "evidence": "HomePage.tsx:315/324"
+      },
+      {
+        "cls": "home-delete-confirm-actions",
+        "evidence": "HomePage.tsx:362"
+      },
+      {
+        "cls": "home-fetch-error",
+        "evidence": "HomePage.tsx:289(列表拉取失败)"
+      },
+      {
+        "cls": "ws-folder-modal-danger",
+        "evidence": "HomePage.tsx:364(删除确认危险按钮)"
+      },
+      {
+        "cls": "dt-menu",
+        "evidence": "DocToolbar.tsx:1228/1239 · workspace.css:1290(下拉菜单容器,census 未展开采到)"
+      },
+      {
+        "cls": "dt-mi",
+        "evidence": "DocToolbar.tsx:1245/1263"
+      },
+      {
+        "cls": "dt-mi-k",
+        "evidence": "DocToolbar.tsx:1274"
+      },
+      {
+        "cls": "dt-block-ai",
+        "evidence": "DocToolbar.tsx:907(选中原子块紧凑 AI 条)"
+      },
+      {
+        "cls": "block-handle-wrap",
+        "evidence": "DocumentSnapshotView.tsx:2368 · workspace.css:1404"
+      },
+      {
+        "cls": "block-handle-btn",
+        "evidence": "DocumentSnapshotView.tsx:2388 · workspace.css:1414"
+      },
+      {
+        "cls": "bh-chip-inner",
+        "evidence": "DocumentSnapshotView.tsx:2427"
+      },
+      {
+        "cls": "bh-type",
+        "evidence": "DocumentSnapshotView.tsx:2428"
+      },
+      {
+        "cls": "bh-grip",
+        "evidence": "DocumentSnapshotView.tsx:2431"
+      },
+      {
+        "cls": "fold-toggle",
+        "evidence": "DocumentSnapshotView.tsx:2445"
+      },
+      {
+        "cls": "fold-caret",
+        "evidence": "DocumentSnapshotView.tsx:2456"
+      },
+      {
+        "cls": "block-handle-menu",
+        "evidence": "DocumentSnapshotView.tsx:2457 · workspace.css:1470"
+      },
+      {
+        "cls": "bh-section-label",
+        "evidence": "DocumentSnapshotView.tsx:2459"
+      },
+      {
+        "cls": "bh-grid",
+        "evidence": "DocumentSnapshotView.tsx:2460"
+      },
+      {
+        "cls": "bh-grid-btn",
+        "evidence": "DocumentSnapshotView.tsx:2461"
+      },
+      {
+        "cls": "bh-divider",
+        "evidence": "DocumentSnapshotView.tsx:2471"
+      },
+      {
+        "cls": "block-handle-item",
+        "evidence": "DocumentSnapshotView.tsx:2480 · workspace.css:1519"
+      },
+      {
+        "cls": "bh-icon",
+        "evidence": "DocumentSnapshotView.tsx:2481"
+      },
+      {
+        "cls": "bh-submenu",
+        "evidence": "DocumentSnapshotView.tsx:2476"
+      },
+      {
+        "cls": "bh-submenu-trigger",
+        "evidence": "DocumentSnapshotView.tsx:2480"
+      },
+      {
+        "cls": "bh-caret",
+        "evidence": "DocumentSnapshotView.tsx:2483"
+      },
+      {
+        "cls": "bh-submenu-panel",
+        "evidence": "DocumentSnapshotView.tsx:2485"
+      },
+      {
+        "cls": "bh-inline-insert",
+        "evidence": "DocumentSnapshotView.tsx:2516(空块插入菜单)"
+      },
+      {
+        "cls": "link-hover-card",
+        "evidence": "DocumentSnapshotView.tsx:2753 · workspace.css:1999"
+      },
+      {
+        "cls": "lhc-view",
+        "evidence": "DocumentSnapshotView.tsx:2785"
+      },
+      {
+        "cls": "lhc-edit",
+        "evidence": "DocumentSnapshotView.tsx:2764"
+      },
+      {
+        "cls": "lhc-url",
+        "evidence": "DocumentSnapshotView.tsx:2786"
+      },
+      {
+        "cls": "lhc-sep",
+        "evidence": "DocumentSnapshotView.tsx:2789"
+      },
+      {
+        "cls": "lhc-btn",
+        "evidence": "DocumentSnapshotView.tsx:2780/2792"
+      },
+      {
+        "cls": "lhc-input",
+        "evidence": "DocumentSnapshotView.tsx:2766"
+      },
+      {
+        "cls": "math-edit-popover",
+        "evidence": "MathEditPopover.tsx:78 · workspace.css:1969"
+      },
+      {
+        "cls": "math-edit-preview",
+        "evidence": "MathEditPopover.tsx:94"
+      },
+      {
+        "cls": "math-edit-actions",
+        "evidence": "MathEditPopover.tsx:100"
+      },
+      {
+        "cls": "tbl-col-hdr",
+        "evidence": "DocumentSnapshotView.tsx:3020 · workspace.css:2029"
+      },
+      {
+        "cls": "tbl-row-hdr",
+        "evidence": "DocumentSnapshotView.tsx:3028"
+      },
+      {
+        "cls": "tbl-dot",
+        "evidence": "DocumentSnapshotView.tsx:3035/3044 · workspace.css:2048"
+      },
+      {
+        "cls": "tbl-dot-col",
+        "evidence": "DocumentSnapshotView.tsx:3035"
+      },
+      {
+        "cls": "tbl-dot-row",
+        "evidence": "DocumentSnapshotView.tsx:3044"
+      },
+      {
+        "cls": "tbl-dot-mark",
+        "evidence": "DocumentSnapshotView.tsx:3038/3047"
+      },
+      {
+        "cls": "tbl-sel-toolbar",
+        "evidence": "DocumentSnapshotView.tsx:3068 · workspace.css:2083"
+      },
+      {
+        "cls": "tbl-color-group",
+        "evidence": "DocumentSnapshotView.tsx:3074"
+      },
+      {
+        "cls": "dt-text-bar",
+        "evidence": "DocumentSnapshotView.tsx:3078 · workspace.css:1366"
+      },
+      {
+        "cls": "dt-cell-fill-icon",
+        "evidence": "DocumentSnapshotView.tsx:3097 · workspace.css:1370"
+      },
+      {
+        "cls": "graph-diagram-context",
+        "evidence": "GraphDiagramView.tsx:1717 · graphDiagram.css:508"
+      },
+      {
+        "cls": "graph-diagram-toolbar",
+        "evidence": "GraphDiagramView.tsx:1717 · graphDiagram.css:549"
+      },
+      {
+        "cls": "graph-diagram-context--node",
+        "evidence": "GraphDiagramView.tsx:1717"
+      },
+      {
+        "cls": "graph-diagram-context--edge",
+        "evidence": "GraphDiagramView.tsx:1839"
+      },
+      {
+        "cls": "graph-diagram-context--below",
+        "evidence": "graphDiagram.css:526"
+      },
+      {
+        "cls": "graph-diagram-toolbar__row",
+        "evidence": "GraphDiagramView.tsx:1735"
+      },
+      {
+        "cls": "graph-diagram-toolbar__button",
+        "evidence": "GraphDiagramView.tsx:1989 · graphDiagram.css:549"
+      },
+      {
+        "cls": "graph-diagram-toolbar__value",
+        "evidence": "GraphDiagramView.tsx:1998"
+      },
+      {
+        "cls": "graph-diagram-toolbar__caret",
+        "evidence": "GraphDiagramView.tsx:1999"
+      },
+      {
+        "cls": "graph-diagram-context__hint",
+        "evidence": "GraphDiagramView.tsx:1728 · graphDiagram.css:530"
+      },
+      {
+        "cls": "graph-diagram-popover",
+        "evidence": "GraphDiagramView.tsx:1752 · graphDiagram.css:594"
+      },
+      {
+        "cls": "graph-diagram-popover--menu",
+        "evidence": "GraphDiagramView.tsx:1826"
+      },
+      {
+        "cls": "graph-diagram-shape-grid",
+        "evidence": "GraphDiagramView.tsx:1753"
+      },
+      {
+        "cls": "graph-diagram-shape-btn",
+        "evidence": "GraphDiagramView.tsx:1757"
+      },
+      {
+        "cls": "graph-diagram-menu-item",
+        "evidence": "GraphDiagramView.tsx:2144"
+      },
+      {
+        "cls": "graph-diagram-icon",
+        "evidence": "GraphDiagramView.tsx:2044"
+      },
+      {
+        "cls": "nokey-gate",
+        "evidence": "modelKeyGate.tsx:71 · app.css:47"
+      },
+      {
+        "cls": "nokey-tip",
+        "evidence": "modelKeyGate.tsx:73 · app.css:54"
+      },
+      {
+        "cls": "nokey-tip-text",
+        "evidence": "modelKeyGate.tsx:74 · app.css:117"
+      },
+      {
+        "cls": "nokey-tip-btn",
+        "evidence": "modelKeyGate.tsx:75 · app.css:124"
+      }
+    ],
+    "dormant": [],
+    "specForward": [
+      {
+        "cls": "qa-toast",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "qa-toast-msg",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "qa-toast-act",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "qa-toast-x",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "success",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "warn",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "error",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "sticky",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      },
+      {
+        "cls": "info",
+        "reason": "统一 qa-toast 现役生产家族,ToastProvider 单一通道"
+      }
+    ],
+    "violations": [],
+    "dormantViolations": []
+  }
+}

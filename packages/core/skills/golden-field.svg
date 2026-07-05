@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" width="800" height="450">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A90D9"/>
+      <stop offset="100%" stop-color="#87CEEB"/>
+    </linearGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8B830"/>
+      <stop offset="100%" stop-color="#D4A030"/>
+    </linearGradient>
+  </defs>
+  <!-- 天空 -->
+  <rect x="0" y="0" width="800" height="300" fill="url(#sky)"/>
+  <!-- 太阳 -->
+  <circle cx="650" cy="80" r="40" fill="#FFF4C0" opacity="0.9"/>
+  <circle cx="650" cy="80" r="30" fill="#FFE066"/>
+  <!-- 云朵 -->
+  <g fill="white" opacity="0.8">
+    <ellipse cx="200" cy="80" rx="60" ry="25"/>
+    <ellipse cx="250" cy="70" rx="45" ry="20"/>
+    <ellipse cx="160" cy="75" rx="35" ry="18"/>
+    <ellipse cx="550" cy="120" rx="50" ry="20"/>
+    <ellipse cx="590" cy="110" rx="40" ry="18"/>
+  </g>
+  <!-- 远山 -->
+  <path d="M0 280 Q100 200 200 260 Q280 230 350 250 Q420 220 500 240 Q580 210 650 250 Q720 230 800 260 L800 300 L0 300Z" fill="#7BA88E" opacity="0.5"/>
+  <!-- 麦田 -->
+  <rect x="0" y="280" width="800" height="170" fill="url(#field)"/>
+  <!-- 麦浪线条 -->
+  <g stroke="#C49020" stroke-width="1.5" fill="none" opacity="0.6">
+    <path d="M0 310 Q50 295 100 310 Q150 325 200 310 Q250 295 300 310 Q350 325 400 310 Q450 295 500 310 Q550 325 600 310 Q650 295 700 310 Q750 325 800 310"/>
+    <path d="M0 340 Q50 325 100 340 Q150 355 200 340 Q250 325 300 340 Q350 355 400 340 Q450 325 500 340 Q550 355 600 340 Q650 325 700 340 Q750 355 800 340"/>
+    <path d="M0 370 Q50 355 100 370 Q150 385 200 370 Q250 355 300 370 Q350 385 400 370 Q450 355 500 370 Q550 385 600 370 Q650 355 700 370 Q750 385 800 370"/>
+    <path d="M0 400 Q50 385 100 400 Q150 415 200 400 Q250 385 300 400 Q350 415 400 400 Q450 385 500 400 Q550 415 600 400 Q650 385 700 400 Q750 415 800 400"/>
+  </g>
+  <!-- 麦穗点缀 -->
+  <g stroke="#B8860B" stroke-width="1.2" fill="none" opacity="0.5">
+    <line x1="80" y1="310" x2="80" y2="280"/>
+    <line x1="180" y1="310" x2="180" y2="278"/>
+    <line x1="280" y1="310" x2="280" y2="282"/>
+    <line x1="380" y1="320" x2="380" y2="290"/>
+    <line x1="480" y1="310" x2="480" y2="280"/>
+    <line x1="580" y1="315" x2="580" y2="285"/>
+    <line x1="680" y1="310" x2="680" y2="278"/>
+    <line x1="750" y1="315" x2="750" y2="285"/>
+  </g>
+  <!-- 几只飞鸟 -->
+  <g stroke="#555" stroke-width="1.5" fill="none" opacity="0.5">
+    <path d="M300 150 Q305 143 310 150 Q315 143 320 150"/>
+    <path d="M330 135 Q335 128 340 135 Q345 128 350 135"/>
+    <path d="M280 160 Q285 153 290 160 Q295 153 300 160"/>
+  </g>
+</svg>

@@ -1,0 +1,1 @@
+{"version":3,"file":"capacity.d.ts","sourceRoot":"","sources":["../../src/templates/capacity.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,kBAAkB,EAAE,oBAAoB,EAAE,gBAAgB,EAAE,WAAW,EAAE,MAAM,SAAS,CAAC;AAOvG,wBAAgB,qBAAqB,CAAC,OAAO,EAAE,WAAW,GAAG,gBAAgB,CA8B5E;AAED,wBAAgB,6BAA6B,CAAC,QAAQ,EAAE,kBAAkB,GAAG,oBAAoB,CAYhG;AAED,wBAAgB,wBAAwB,CAAC,QAAQ,EAAE,kBAAkB,GAAG,kBAAkB,CAUzF"}

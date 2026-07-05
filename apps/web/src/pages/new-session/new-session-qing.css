@@ -1,0 +1,933 @@
+/* ============================================================
+   新建页「研墨开卷」版面 + 跨路由过渡(移植自 cc-b demo)。
+   玄青夜空空间 / 墨尘 / 墨水 reveal canvas / 共享元素 morph 飞卡 /
+   左输入 + 右 card-swap。全部 position:fixed 覆盖整屏,
+脱离 1440 画框。
+   命名前缀 ccx- 避免与首页 / 既有 new-session 样式冲突。
+   ============================================================ */
+
+:root {
+  --ccx-serif: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --ccx-sans: "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+  --ccx-d-bg0: #11151a;
+  --ccx-d-bg1: #1a232a;
+  --ccx-d-bg2: #0a0d10;
+  --ccx-d-ink: #ece3d0;
+  --ccx-d-ink-soft: #b9ad94;
+  --ccx-d-gray: #8ea0a0;
+  --ccx-cinnabar: #d8382b; /* 大红/朱(原 #cf5a4f 偏粉,调亮调正) */
+  --ccx-cinnabar-lite: #ee6a59;
+  --ccx-em-red: #b23a2e; /* 标题「成章」专用:压暗的深朱(原 #ec2d1c 太艳) */
+  --ccx-gold: #c8a96a; /* demo 金色 */
+  --ccx-gold-line: rgba(200, 169, 106, 0.42); /* 金色描边 */
+  --ccx-line: rgba(196, 214, 208, 0.16);
+  --ccx-placeholder: #7e93a0;
+}
+/* 整个新建页根:透明容器,
+真正的视觉都在下面的 fixed 层 */
+.ccx-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* —— 玄青夜空背景 —— */
+.ccx-space {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.11), transparent 50%),
+    radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.1), transparent 55%),
+    radial-gradient(150% 130% at 50% 42%, var(--ccx-d-bg1) 0%, var(--ccx-d-bg0) 46%, var(--ccx-d-bg2) 100%);
+  transition: opacity 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ccx-space::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background:
+    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 10px),
+    repeating-linear-gradient(94deg, rgba(160, 200, 200, 0.05) 0 1px, transparent 1px 14px);
+  -webkit-mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
+  mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
+}
+.ccx-page.is-dark .ccx-space {
+  opacity: 1;
+}
+/* 墨水 reveal 接管期间:玄青夜空瞬时就位(无慢渐显),
+在不透明墨层底下无缝交接 */
+.ccx-page.is-ink-wipe .ccx-space {
+  transition: none;
+}
+/* 墨尘粒子 canvas */
+.ccx-dust {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease 0.15s;
+}
+.ccx-page.is-dark .ccx-dust {
+  opacity: 1;
+}
+/* 墨水渗墨 reveal canvas(z45,
+在玄青夜空之上、morph(z60)与新页内容(z50)之下) */
+.ccx-ink {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 45;
+  pointer-events: none;
+  opacity: 0;
+}
+.ccx-ink.active {
+  opacity: 1;
+}
+/* —— 共享元素:morph 飞卡(从首页新建卡 rect 飞到右侧顶层模板) —— */
+.ccx-morph {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  will-change: transform;
+  transform-origin: top left;
+  overflow: hidden;
+  border-radius: 0;
+  opacity: 0;
+  background: #efe9dd;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+}
+.ccx-morph-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.9;
+}
+.ccx-morph-frame {
+  position: absolute;
+  inset: 14px;
+  pointer-events: none;
+  border: 1px solid rgba(90, 70, 40, 0.5);
+  outline: 1px solid rgba(90, 70, 40, 0.3);
+  outline-offset: 4px;
+}
+.ccx-morph-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 1.6px solid rgba(158, 43, 37, 0.62);
+}
+.ccx-morph-corner.tl {
+  left: 26px;
+  top: 26px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.ccx-morph-corner.br {
+  right: 26px;
+  bottom: 26px;
+  border-left: 0;
+  border-top: 0;
+}
+/* —— 新建页内容:左文案+输入 / 右 card-swap —— */
+.ccx-newpage {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  place-content: center;
+  padding: 0 clamp(24px, 4vw, 56px);
+  gap: clamp(40px, 5vw, 76px);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+}
+.ccx-page.is-np .ccx-newpage {
+  pointer-events: auto;
+}
+.ccx-left {
+  width: 440px;
+  max-width: 440px;
+  /* 定高相对定位:标题/副标在上方常驻不动,输入框绝对底锚、只向上长 */
+  position: relative;
+  height: 372px; /* 收短,使输入框更贴近上方文案 */
+}
+.ccx-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  filter: blur(2px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 0.7s ease;
+}
+.ccx-reveal.on {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+.ccx-page.is-returning .ccx-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  filter: blur(2px);
+  transition:
+    opacity 0.5s ease,
+    transform 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.5s ease;
+}
+.ccx-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.26em;
+  color: var(--ccx-gold); /* demo 金色 */
+  margin-bottom: 18px;
+}
+.ccx-kicker .seal {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 1.4px solid var(--ccx-cinnabar);
+  color: var(--ccx-cinnabar-lite);
+  font-family: var(--ccx-serif);
+  font-size: 14px;
+  writing-mode: vertical-rl;
+  border-radius: 3px;
+  background: rgba(207, 90, 79, 0.06);
+}
+/* 空生妙有印章(透明红原图,
+小如文案) */
+.ccx-kicker .seal-img {
+  width: 21px;
+  height: 21px;
+  object-fit: contain;
+  opacity: 0.95;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+.ccx-h1 {
+  font-family: var(--ccx-serif);
+  font-size: clamp(30px, 4vw, 46px);
+  font-weight: 700;
+  line-height: 1.18;
+  color: var(--ccx-d-ink);
+  letter-spacing: 0.04em;
+  margin: 0 0 14px;
+}
+.ccx-h1 .em {
+  color: var(--ccx-em-red);
+}
+.ccx-lede {
+  font-family: var(--ccx-serif);
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--ccx-d-ink-soft);
+  max-width: 420px;
+  margin-bottom: 26px;
+  max-height: 120px;
+  overflow: hidden;
+  transition:
+    opacity 0.3s ease,
+    max-height 0.35s ease,
+    margin-bottom 0.35s ease;
+}
+/* 输入内容变多时:副标题让位(收起),
+输入框得以向上铺展;大标题保持不动 */
+.ccx-left.is-dense .ccx-lede {
+  opacity: 0;
+  max-height: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+.ccx-left.is-dense .ccx-composer .starter-edit {
+  max-height: 232px;
+}
+.ccx-lede .dot {
+  color: var(--ccx-cinnabar);
+}
+/* 输入框外壳(较窄,
+定宽) */
+.ccx-composer {
+  /* 对齐编辑页输入框(.wf-input):同一份毛玻璃底 + 暖灰描边 + 直角,不再金边/圆角。 */
+  background: rgba(8, 11, 15, 0.72);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  border-radius: 0;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  /* 绝对底锚:底固定,内容多了只向上长(标题不动) */
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+/* 输入区:约 3 行起,
+最多约 5 行后内滚;宽度恒定 */
+.ccx-composer .starter-edit {
+  min-height: 78px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 16px 16px 6px;
+  font-family: var(--ccx-serif);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ccx-d-ink);
+  outline: none;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+.ccx-composer .starter-edit:empty::before {
+  content: attr(data-placeholder);
+  /* 占位符字色对齐编辑页(.chat-edit.is-empty::before):暖米色半透,不再用冷蓝灰。 */
+  color: rgba(236, 227, 208, 0.4);
+}
+/* 模板回填:整体由左向右带渐变边显形(非逐字蹦) */
+.ccx-composer .starter-edit.ccx-wipe {
+  -webkit-mask-image: linear-gradient(90deg, #000 62%, transparent);
+  mask-image: linear-gradient(90deg, #000 62%, transparent);
+  -webkit-mask-size: 240% 100%;
+  mask-size: 240% 100%;
+  animation: ccx-text-wipe 0.42s ease forwards;
+}
+@keyframes ccx-text-wipe {
+  from {
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+    opacity: 0.5;
+  }
+  to {
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+    opacity: 1;
+  }
+}
+/* 模板回填:输入框外壳金边一闪 */
+.ccx-composer.ccx-filled {
+  animation: ccx-composer-flash 0.75s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes ccx-composer-flash {
+  0% {
+    box-shadow:
+      0 18px 50px rgba(0, 0, 0, 0.5),
+      0 0 0 0 rgba(200, 169, 106, 0);
+  }
+  28% {
+    box-shadow:
+      0 18px 50px rgba(0, 0, 0, 0.5),
+      0 0 0 2px rgba(200, 169, 106, 0.55),
+      0 0 24px rgba(200, 169, 106, 0.32);
+  }
+  100% {
+    box-shadow:
+      0 18px 50px rgba(0, 0, 0, 0.5),
+      0 0 0 0 rgba(200, 169, 106, 0);
+  }
+}
+/* 玄青空间内的 chip 配色 */
+.ccx-composer .src-chip {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--ccx-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 2px 8px;
+  margin: 0 4px 4px 0;
+  border-radius: 2px;
+  background: rgba(207, 90, 79, 0.16);
+  border: 1px solid rgba(207, 90, 79, 0.42);
+  color: var(--ccx-cinnabar-lite);
+  user-select: none;
+}
+.ccx-page .ccx-composer .src-chip[data-type="skill"] {
+  background: rgba(225, 202, 143, 0.12);
+  border-color: rgba(225, 202, 143, 0.3);
+  color: #ead5a4;
+  border-radius: 4px;
+}
+.ccx-page .ccx-composer .src-chip[data-type="skill"] .c-skill-ico {
+  background: rgba(225, 202, 143, 0.52);
+  border-color: rgba(225, 202, 143, 0.52);
+}
+.ccx-page .ccx-composer .src-chip[data-type="skill"] .c-skill-label {
+  color: #ead5a4;
+}
+.ccx-composer .src-chip .c-br {
+  color: var(--ccx-cinnabar-lite);
+  opacity: 0.7;
+}
+.ccx-composer .src-chip .c-x {
+  margin-left: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 12px;
+}
+.ccx-composer .src-chip .c-x:hover {
+  opacity: 1;
+}
+/* 工具栏 */
+.ccx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-top: 0; /* 去掉技能/文件上方的横线 */
+  position: relative;
+}
+.ccx-tool {
+  position: relative;
+}
+.ccx-tool > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  /* 字色对齐编辑页工具按钮(.ws-pill):暖米色,不再用冷灰 --ccx-d-gray。 */
+  color: rgba(236, 227, 208, 0.62);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: var(--ccx-serif);
+  transition: 0.15s;
+}
+.ccx-tool > button:hover {
+  color: #f3ecdb;
+  border-color: rgba(184, 169, 140, 0.34);
+  background: rgba(184, 169, 140, 0.08);
+}
+.ccx-ico {
+  display: inline-block;
+  vertical-align: -2px;
+  flex: 0 0 auto;
+}
+.ccx-send {
+  margin-left: auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 2px;
+  border: 1px solid var(--ccx-cinnabar);
+  background: rgba(216, 56, 43, 0.16);
+  color: var(--ccx-cinnabar-lite);
+  font-size: 17px;
+  line-height: 1; /* 箭头垂直居中 */
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.15s;
+}
+.ccx-send .a,
+.ccx-send {
+  font-family: var(--ccx-sans); /* 用 sans 让 → 字形居中更稳 */
+}
+.ccx-send:hover {
+  /* 对齐编辑页发送键 hover:半透明加深而非实底,文字浅化(颜色/样式统一,形状各保留)。 */
+  background: rgba(216, 56, 43, 0.28);
+  color: #fdf3ea;
+}
+.ccx-send.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ccx-send.disabled:hover {
+  background: rgba(207, 90, 79, 0.16);
+  color: var(--ccx-cinnabar-lite);
+}
+/* —— 右侧 card-swap 叠卡 —— */
+.ccx-right {
+  position: relative;
+  justify-self: center;
+  width: 330px;
+  height: 430px;
+  perspective: 1200px;
+  perspective-origin: 58% 50%;
+}
+.ccx-swap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 300px;
+  height: 380px;
+  transform-style: preserve-3d;
+}
+.ccx-tcard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 300px;
+  height: 380px;
+  transform-origin: center center;
+  cursor: pointer;
+  will-change: transform;
+  background: #efe9dd;
+  border-radius: 0;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  transition:
+    transform 0.8s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s ease,
+    filter 0.35s ease;
+}
+.ccx-tx {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.9;
+  pointer-events: none;
+}
+/* 转场:飞行卡(参与翻转的真实顶卡)其文字/边框/纹理快速淡出 → 只留干净纸面 */
+.ccx-tcard.content-out > * {
+  opacity: 0 !important;
+  transition: opacity 0.15s ease;
+}
+/* 翻转期间,
+其余叠卡淡出(只留飞行卡) */
+.ccx-swap.is-flying .ccx-tcard:not(.flying) {
+  opacity: 0 !important;
+  transition: opacity 0.3s ease;
+}
+.ccx-fr {
+  position: absolute;
+  inset: 14px;
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid rgba(90, 70, 40, 0.5);
+  outline: 1px solid rgba(90, 70, 40, 0.3);
+  outline-offset: 4px;
+}
+.ccx-cn {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  z-index: 3;
+  border: 1.6px solid rgba(158, 43, 37, 0.6);
+}
+.ccx-cn.tl {
+  left: 24px;
+  top: 24px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.ccx-cn.br {
+  right: 24px;
+  bottom: 24px;
+  border-left: 0;
+  border-top: 0;
+}
+/* 说明排在卡片自身内容里(无渐变条):左列 索引+椭圆图标 / 下方 副标+说明+采用;右侧竖排名 */
+.ccx-bd {
+  position: relative;
+  z-index: 4;
+  height: 100%;
+  width: 58%;
+  padding: 34px 26px 30px 38px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+.ccx-top {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ccx-idx {
+  font-family: var(--ccx-serif);
+  font-size: 15px;
+  color: #9e2b25;
+  letter-spacing: 0.24em;
+}
+.ccx-ticon {
+  width: 56px;
+  height: 44px;
+  border: 1.5px solid rgba(122, 106, 72, 0.5);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #7a6a48;
+}
+.ccx-ticon svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+}
+.ccx-meta {
+  margin-top: auto;
+}
+.ccx-sub {
+  display: inline-block;
+  font-family: var(--ccx-serif);
+  font-size: 13.5px;
+  letter-spacing: 0.2em;
+  color: #9e2b25;
+  font-weight: 600;
+  padding-bottom: 7px;
+  position: relative;
+}
+.ccx-sub::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 22px;
+  height: 1.5px;
+  background: rgba(158, 43, 37, 0.55);
+  transition: width 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.ccx-desc {
+  font-family: var(--ccx-serif);
+  font-size: 12px;
+  line-height: 1.75;
+  color: #5d4c33;
+  margin-top: 8px;
+}
+.ccx-adopt {
+  margin-top: 13px;
+  font-family: var(--ccx-sans);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: #fdf3ea;
+  background: linear-gradient(150deg, #b23a2e, #8f2a21);
+  border: 0;
+  padding: 6px 18px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s cubic-bezier(0.2, 0.7, 0.3, 1),
+    filter 0.2s;
+}
+.ccx-adopt:hover {
+  filter: brightness(1.08);
+}
+.ccx-adopt:active {
+  transform: translateY(1px);
+}
+.ccx-tcard.top .ccx-adopt {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.ccx-tname {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  white-space: nowrap;
+  font-family: var(--ccx-serif);
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  color: #2a2620;
+  position: absolute;
+  top: 50%;
+  right: 26px;
+  transform: translateY(-50%);
+  z-index: 4;
+  transition: color 0.3s ease;
+}
+.ccx-tcard.top:hover {
+  filter: brightness(1.035);
+  box-shadow: 0 34px 74px rgba(0, 0, 0, 0.6);
+}
+.ccx-tcard.top:hover .ccx-sub::after {
+  width: 48px;
+}
+.ccx-tcard.top:hover .ccx-adopt {
+  opacity: 1;
+  transform: none;
+}
+.ccx-tcard.top:hover .ccx-tname {
+  color: #9e2b25;
+}
+/* —— 返回按钮(新建页可见) —— */
+.ccx-back {
+  position: fixed;
+  top: 18px;
+  /* 与编辑页返回钮(.ws-back-home,left:22px)对齐 */
+  left: 22px;
+  z-index: 72;
+  /* 只剩箭头:紧凑方钮 */
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 16px;
+  /* 金色调,与编辑页返回钮一致(象牙字 + 金边),不再用红 */
+  color: rgba(236, 227, 208, 0.64);
+  background: rgba(18, 24, 31, 0.42);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: var(--ccx-sans);
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: 0.5s ease;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+}
+.ccx-page.is-np .ccx-back {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.ccx-back:hover {
+  color: #b8a98c;
+  border-color: rgba(184, 169, 140, 0.42);
+}
+/* 箭头跟随金色,
+不再红色 */
+.ccx-back .a {
+  color: inherit;
+}
+/* —— 回填 / 提示 toast —— */
+.ccx-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 75;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--ccx-d-ink);
+  background: rgba(20, 28, 34, 0.92);
+  border: 1px solid var(--ccx-cinnabar);
+  border-radius: 2px;
+  padding: 9px 18px;
+  opacity: 0;
+  pointer-events: none;
+  font-family: var(--ccx-sans);
+  transition: 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.ccx-toast.on {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* —— 无墨水时(WebGL 不可用)兜底:新建页直接渐显 —— */
+.ccx-page.no-ink .ccx-newpage {
+  transition: opacity 0.6s ease;
+}
+@media (prefers-reduced-motion: reduce) {.ccx-reveal,
+.ccx-tcard {
+    transition: none !important;
+  }
+
+}
+/* ============================================================
+   汉字矩阵背景层(HanziMatrix,
+移植自 uiverse 字符矩阵)
+   z40:与夜空同层、渲染序在后 → 夜空之上、墨尘(z41)之下。
+   进场淡入由组件自挂 is-on 驱动(不随 is-ink-wipe 瞬时就位:首页最后
+   一帧没有矩阵,
+瞬时出现会跳);离场跟随 is-returning / is-leaving 淡出。
+   中央椭圆蒙版:--hz-mask-core = 中心区不透明度(1 = 无蒙版)。
+   ============================================================ */
+.ccx-hanzi {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.2s ease 0.25s;
+  overflow: hidden;
+}
+/* 字符场:透明蒙版、基础字、点亮脉冲和逐字吸入均由 canvas 内部按旧 DOM 网格复刻 */
+.ccx-hanzi-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  font-size: var(--hz-font-size);
+  font-family: var(--ccx-serif);
+  user-select: none;
+  -webkit-mask: radial-gradient(
+    var(--hz-mask-w, 62%) var(--hz-mask-h, 54%) at 50% 47%,
+    rgba(0, 0, 0, var(--hz-mask-core, 1)) 26%,
+    #000 82%
+  );
+  mask: radial-gradient(
+    var(--hz-mask-w, 62%) var(--hz-mask-h, 54%) at 50% 47%,
+    rgba(0, 0, 0, var(--hz-mask-core, 1)) 26%,
+    #000 82%
+  );
+}
+.ccx-hanzi-canvas--pulse {
+  z-index: 2;
+}
+.ccx-page.is-dark .ccx-hanzi.is-on {
+  opacity: 1;
+}
+/* 返回首页:跟随额外元素一起在切路由前淡干净(goBack 460ms 窗口内) */
+.ccx-page.is-returning .ccx-hanzi,
+.ccx-page.is-returning .ccx-hanzi.is-on {
+  opacity: 0;
+  transition: opacity 0.38s ease;
+}
+/* 提交去工作区:汉字不再即时整层淡出(改为逐字「吸入聚拢」到顶卡,
+见 .fly)。
+   收尾时(吸入大半后)才把剩余汉字层缓慢隐去。 */
+.ccx-page.is-hz-gone .ccx-hanzi,
+.ccx-page.is-hz-gone .ccx-hanzi.is-on {
+  opacity: 0.001;
+  transition: opacity 0.5s ease;
+}
+/* 逐字吸入已迁入 HanziMatrix canvas:沿用旧 .fly 的落点、延迟、缩放、旋转和缓动参数。 */
+/* 提交去工作区:左侧文案/输入/返回钮/右侧 label 随翻卡一起淡出(顶卡翻成文档,
+其余元素退场) */
+.ccx-page.is-leaving .ccx-reveal,
+.ccx-page.is-leaving .ccx-reveal.on,
+.ccx-page.is-leaving .ccx-back {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 0.4s ease,
+    transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+/* 随机点亮:canvas 调度器仍按旧节奏补足 hiRatio,
+以下 keyframes 作为视觉契约保留。 */
+
+@keyframes ccx-hanzi-pulse {
+  0%,
+  100% {
+    color: var(--hz-base-color);
+    text-shadow: 0 0 5px var(--hz-base-glow);
+  }
+  30% {
+    color: var(--hz-hi-1);
+    text-shadow: 0 0 10px var(--hz-hi-1), 0 0 15px var(--hz-hi-1);
+  }
+  50% {
+    color: var(--hz-hi-2);
+    text-shadow: 0 0 10px var(--hz-hi-2), 0 0 15px var(--hz-hi-2);
+  }
+  70% {
+    color: var(--hz-hi-peak);
+    text-shadow: 0 0 10px var(--hz-hi-peak), 0 0 15px var(--hz-hi-peak), 0 0 20px var(--hz-hi-peak);
+  }
+}
+@media (prefers-reduced-motion: reduce) {.ccx-hanzi-canvas {
+    animation: none !important;
+  }
+
+}
+/* —— 右下角调参面板(Ctrl+Shift+H 唤起,
+默认隐藏) —— */
+.ccx-hzpanel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  width: 248px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(10, 13, 16, 0.86);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ccx-line);
+  color: var(--ccx-d-ink);
+  font-family: var(--ccx-sans);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ccx-hzpanel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+.ccx-hzpanel-reset {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--ccx-line);
+  background: transparent;
+  color: var(--ccx-d-ink-soft);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ccx-hzpanel-reset:hover {
+  color: var(--ccx-d-ink);
+  border-color: var(--ccx-cinnabar);
+}
+.ccx-hzpanel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.ccx-hzpanel-toggle input {
+  accent-color: var(--ccx-cinnabar);
+}
+.ccx-hzpanel-group {
+  margin-top: 8px;
+}
+.ccx-hzpanel-label {
+  color: var(--ccx-d-gray);
+  margin-bottom: 4px;
+}
+.ccx-hzpanel-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.ccx-hzpanel-preset {
+  padding: 5px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--ccx-line);
+  background: transparent;
+  color: var(--ccx-d-ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ccx-hzpanel-preset.is-active {
+  border-color: var(--ccx-cinnabar);
+  color: var(--ccx-d-ink);
+  background: rgba(207, 90, 79, 0.16);
+}
+.ccx-hzpanel-field {
+  display: block;
+  margin-top: 8px;
+}
+.ccx-hzpanel-field-head {
+  display: flex;
+  justify-content: space-between;
+}
+.ccx-hzpanel-field-head strong {
+  color: var(--ccx-d-ink-soft);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ccx-hzpanel-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--ccx-cinnabar);
+}
+.ccx-hzpanel-select {
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--ccx-line);
+  color: var(--ccx-d-ink);
+  font-family: inherit;
+  font-size: 12px;
+}
+

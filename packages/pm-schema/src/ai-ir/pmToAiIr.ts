@@ -1,0 +1,220 @@
+import { pmToPlainText } from "../pmToPlainText";
+import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmParagraphNode, PmHeadingNode, PmTableCellNode, PmListItemNode, PmTaskItemNode } from "../types";
+import type { AiBlock, AiDocument, AiListItem, AiRun, AiRunMark, AiTaskListItem } from "./aiIrSchema";
+
+export function pmToAiIr(doc: PmDoc): AiDocument {
+  return {
+    blocks: doc.content.map(blockToAi),
+  };
+}
+
+export function blockToAi(node: PmBlockNode): AiBlock {
+  switch (node.type) {
+    case "paragraph":
+      return withAlign({ type: "paragraph", runs: inlineToRuns(node.content ?? []) }, node);
+    case "heading": {
+      // 保留标题的 anchor 字段(渲染成 HTML id 供目录链接跳转)
+      const headingAnchor = node.attrs.anchor ?? undefined;
+      return withAlign(
+        headingAnchor != null
+          ? { type: "heading", level: node.attrs.level, anchor: headingAnchor, runs: inlineToRuns(node.content ?? []) }
+          : { type: "heading", level: node.attrs.level, runs: inlineToRuns(node.content ?? []) },
+        node,
+      );
+    }
+    case "blockquote":
+      return { type: "blockquote", runs: blocksToRuns(node.content) };
+    case "codeBlock":
+      // language 缺省统一为 "plaintext",与 aiIrToPm 的缺省对称(language:null 往返会漂移成 "plaintext")。
+      return { type: "codeBlock", language: node.attrs.language ?? "plaintext", text: inlineToRuns(node.content ?? []).map((run) => run.text).join("") };
+    case "bulletList":
+      return { type: "bulletList", items: node.content.map(listItemToAi) };
+    case "orderedList": {
+      const listStyle = node.attrs.listStyle ?? "decimal";
+      const block = { type: "orderedList" as const, items: node.content.map(listItemToAi) };
+      return listStyle === "decimal" ? block : { ...block, listStyle };
+    }
+    case "horizontalRule":
+      return { type: "horizontalRule" };
+    case "image":
+      return {
+        type: "image",
+        src: node.attrs.src,
+        alt: node.attrs.alt ?? null,
+        caption: node.attrs.caption ?? null,
+        width: node.attrs.width ?? null,
+        height: node.attrs.height ?? null,
+        align: node.attrs.align ?? "center",
+      };
+    case "diagram":
+      return { type: "diagram", lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg ?? null };
+    case "fileAttachment":
+      return { type: "fileAttachment", fileId: node.attrs.fileId, filename: node.attrs.filename, mimeType: node.attrs.mimeType, size: node.attrs.size };
+    case "penNote":
+      return { type: "penNote", runs: inlineToRuns(node.content ?? []) };
+    case "taskList":
+      return {
+        type: "taskList",
+        items: node.content.map(taskItemToAi),
+      };
+    case "callout":
+      return {
+        type: "callout",
+        emoji: node.attrs.emoji ?? null,
+        tone: node.attrs.tone ?? null,
+        runs: blocksToRuns(node.content),
+      };
+    case "columnList":
+      return {
+        type: "columnList",
+        columns: node.content.map((column) => ({
+          widthRatio: column.attrs.widthRatio ?? null,
+          blocks: column.content.map(blockToAi),
+        })),
+      };
+    case "blockMath":
+      return { type: "blockMath", latex: node.attrs.latex };
+    case "table":
+      return {
+        type: "table",
+        rows: node.content.map((row) => ({
+          cells: row.content.map(cellToAi),
+        })),
+      };
+  }
+}
+
+function listItemToAi(item: PmListItemNode): AiListItem {
+  const [first, ...rest] = item.content;
+  if (first && isInlineOnlyBlock(first)) {
+    const runs = inlineToRuns(first.content ?? []);
+    const children = rest.map(blockToAi);
+    return children.length > 0 ? { runs, children } : { runs };
+  }
+  const children = item.content.map(blockToAi);
+  return children.length > 0 ? { runs: [], children } : { runs: [] };
+}
+
+function taskItemToAi(item: PmTaskItemNode): AiTaskListItem {
+  const checked = item.attrs.checked === true;
+  const [first, ...rest] = item.content;
+  if (first?.type === "paragraph") {
+    const runs = inlineToRuns(first.content ?? []);
+    const children = rest.map(blockToAi);
+    return children.length > 0 ? { checked, runs, children } : { checked, runs };
+  }
+  const children = item.content.map(blockToAi);
+  return children.length > 0 ? { checked, runs: [], children } : { checked, runs: [] };
+}
+
+function isInlineOnlyBlock(block: PmBlockNode): block is PmParagraphNode | PmHeadingNode | Extract<PmBlockNode, { type: "penNote" }> {
+  return block.type === "paragraph" || block.type === "heading" || block.type === "penNote";
+}
+
+function withAlign<T extends Extract<AiBlock, { type: "paragraph" | "heading" }>>(
+  block: T,
+  node: PmParagraphNode | PmHeadingNode,
+): T {
+  if (!node.attrs.textAlign) return block;
+  return { ...block, textAlign: node.attrs.textAlign };
+}
+
+function cellToAi(cell: PmTableCellNode) {
+  const bg = cell.attrs?.backgroundColor;
+  return {
+    runs: blocksToRuns(cell.content),
+    ...(cell.type === "tableHeader" ? { header: true } : {}),
+    ...(bg ? { backgroundColor: bg } : {}),
+  };
+}
+
+// 抽取一组块(blockquote/listItem/单元格的 content)的行内 runs,保留 marks。
+// 单段(最常见)即等价 inlineToRuns,与 aiIrToPm 反向构造对齐;多块之间插入换行 run 保留断行
+// (AI-IR 的 blockquote/list item 是扁平 runs,多块结构会塌缩,但 marks 不丢——见设计 §5)。
+function blocksToRuns(blocks: readonly PmBlockNode[]): AiRun[] {
+  const runs: AiRun[] = [];
+  blocks.forEach((block, index) => {
+    if (index > 0) runs.push({ text: "\n" });
+    if (block.type === "paragraph" || block.type === "heading" || block.type === "penNote") {
+      runs.push(...inlineToRuns(block.content ?? []));
+    } else {
+      const text = pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: [block] });
+      // 空块不产出空 run(空 run 会被 runsToInline 跳过→两轮 AI-IR 不一致);
+      // 平文本里的 \n 同样按 hardBreak 语义拆分,保持与 inlineToRuns/runsToInline
+      // 对称(fuzz seed 0x513789ba:单元格内 callout 的拍平文本携带 \n)。
+      text.split("\n").forEach((segment, segIndex) => {
+        if (segIndex > 0) runs.push({ text: "\n" });
+        if (segment.length > 0) runs.push({ text: segment });
+      });
+    }
+  });
+  return mergeAdjacentRuns(runs);
+}
+
+/** AI-IR 规范形:相邻且 marks 相同的文本 run 合并(对称于 runsToInline 的合并),
+ *  否则「两个相邻裸 text 节点」与「一个合并节点」两种等价 PM 形态产出不同 AI-IR,
+ *  块 hash 往返漂移(fuzz seed 0x513789ba 第四层)。math run 永不合并:
+ *  两个相邻公式合并会把两条 latex 拼成一条。 */
+function mergeAdjacentRuns(runs: AiRun[]): AiRun[] {
+  const out: AiRun[] = [];
+  const isMath = (run: AiRun) => run.marks?.some((mark) => mark.type === "math") === true;
+  for (const run of runs) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      !isMath(prev) &&
+      !isMath(run) &&
+      JSON.stringify(prev.marks ?? []) === JSON.stringify(run.marks ?? [])
+    ) {
+      out[out.length - 1] = prev.marks ? { text: prev.text + run.text, marks: prev.marks } : { text: prev.text + run.text };
+      continue;
+    }
+    out.push(run);
+  }
+  return out;
+}
+
+function inlineToRuns(content: readonly PmInlineNode[]): AiRun[] {
+  const runs: AiRun[] = [];
+  for (const node of content) {
+    if (node.type === "hardBreak") {
+      runs.push({ text: "\n" });
+      continue;
+    }
+    // 行内公式整体作为一个 run:text 即 LaTeX 源码,挂 math mark。
+    if (node.type === "inlineMath") {
+      runs.push({ text: node.attrs.latex, marks: [{ type: "math" }] });
+      continue;
+    }
+    // 无 marks 时省略键:`marks: undefined` 会进入 getDeterministicId 的稳定串,
+    // 造成往返后 ai-block-* id 漂移(p-loop R1 发现的字节级往返不稳定)。
+    const marks = node.marks?.map(markToAi);
+    // 文本内字面 \n 按 hardBreak 语义拆分,与 runsToInline 的逆向拆分对称:
+    // 否则「text 含 \n」与「text+hardBreak+text」两种等价形态产出不同 AI-IR,
+    // 往返一轮后块 hash 漂移(fuzz seed 0x513789ba 第二层;\n 可经 updateDoc 注入)。
+    const segments = node.text.split("\n");
+    segments.forEach((segment, index) => {
+      if (index > 0) runs.push({ text: "\n" });
+      if (segment.length === 0) return;
+      runs.push(marks && marks.length > 0 ? { text: segment, marks } : { text: segment });
+    });
+  }
+  return mergeAdjacentRuns(runs);
+}
+
+function markToAi(mark: PmMark): AiRunMark {
+  switch (mark.type) {
+    case "bold":
+    case "italic":
+    case "underline":
+    case "strike":
+    case "code":
+      return { type: mark.type };
+    case "link":
+      return { type: "link", href: mark.attrs.href };
+    case "textColor":
+      return { type: "textColor", color: mark.attrs.color };
+    case "highlight":
+      return { type: "highlight", color: mark.attrs.color };
+  }
+}

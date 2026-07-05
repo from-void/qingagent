@@ -1,0 +1,17 @@
+{
+  "name": "@qingagent/diagram-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5",
+    "vitest": "2.1.9"
+  },
+  "license": "MIT"
+}

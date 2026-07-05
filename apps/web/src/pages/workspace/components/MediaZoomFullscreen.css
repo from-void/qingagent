@@ -1,0 +1,112 @@
+.media-zoom-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  background: rgba(20, 18, 16, 0.76);
+  backdrop-filter: blur(2px);
+}
+
+.media-zoom-toolbar {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.media-zoom-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius:0;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.media-zoom-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.media-zoom-btn--text {
+  min-width: 48px;
+  font-size: 13px;
+}
+
+.media-zoom-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.media-zoom-viewport:active {
+  cursor: grabbing;
+}
+
+.media-zoom-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  width: min(90vw, 1100px);
+  max-width: 96vw;
+  max-height: 92vh;
+  padding: 24px;
+  border-radius:0;
+  /* 全屏预览所见即所得:用文档纸米黄 #efe7d6 作底,等于图嵌进正文后的真实观感 */
+  background: var(--bg-paper-deep);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  cursor: default;
+  /* 不在这里常驻 will-change:transform —— 那会把内容常驻合成层、把矢量 SVG 栅格化,
+   * 默认(scale=1)全屏看图表就发糊(用户反馈"全屏甘特图还是有点模糊")。
+   * 改为仅在拖拽平移时由组件内联挂 will-change,静止/缩放后保持矢量清晰。 */
+}
+
+.media-zoom-content svg {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.media-zoom-content img {
+  display: block;
+  max-width: min(96vw, 1200px);
+  max-height: 88vh;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border-radius:0;
+}
+
+.media-zoom-content--image {
+  width: auto;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* SVG 配图全屏:SVG 的 <img> 只有 viewBox 没固有宽高,width:auto 会塌成 0(全屏空白)——
+   这里给【显式宽】+ 文档纸米黄底(所见即所得,等于嵌进正文的观感)。 */
+.media-zoom-content--svg {
+  width: min(90vw, 1000px);
+  padding: 24px;
+  background: var(--bg-paper-deep);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+}
+.media-zoom-content--svg img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 86vh;
+  margin: 0;
+  border-radius: 0;
+}

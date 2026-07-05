@@ -1,0 +1,592 @@
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
+import path from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { config as loadEnvFile } from "dotenv";
+import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const userDataDir = app.getPath("userData");
+const desktopLogDir = path.join(userDataDir, "logs");
+try {
+  mkdirSync(desktopLogDir, { recursive: true });
+} catch {
+  // 日志目录创建失败不阻塞开窗，后续日志落盘会静默降级。
+}
+const consoleFileTransport = createRollingConsoleTransport(desktopLogDir, {
+  maxDays: 7,
+  maxBytes: 20 * 1024 * 1024,
+});
+
+// 日志写失败绝不能崩主进程(必须最早执行,早于任何会 console.log 的代码):
+// 打包后的 GUI 客户端没有有效的 stdout/stderr(无控制台 / 启动管道可能断开),内置 Hono
+// server 的 per-request 日志中间件 console.log 写入会抛 EPIPE: broken pipe,冒泡成主进程
+// uncaughtException → 弹"A JavaScript error occurred in the main process"致命框、整个 app 崩。
+// ① 给 stdout/stderr 挂 error 兜底(吞异步 EPIPE);② try/catch 包住 console 各方法(吞同步 EPIPE)。
+// 只吞"写日志"这类 IO 写错误,不影响业务异常的正常抛出/上报。
+const swallowStreamWriteError = (): void => {};
+process.stdout.on("error", swallowStreamWriteError);
+process.stderr.on("error", swallowStreamWriteError);
+for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+  const original = console[method].bind(console) as (...args: unknown[]) => void;
+  console[method] = (...args: unknown[]): void => {
+    consoleFileTransport.write(method, args);
+    try {
+      original(...args);
+    } catch {
+      // stdout/stderr 写失败(EPIPE 等)直接吞掉,绝不让"写日志"崩主进程。
+    }
+  };
+}
+
+// 仅在「从 WSL/UNC 网络路径运行」或「Linux」时禁用硬件加速,走软件渲染(SwiftShader)。
+// 这些环境下 electron 的 GPU 子进程会启动失败(error_code=18)→ 反复崩溃 → FATAL
+// "GPU process isn't usable" → 整个 app 闪退。本地 Windows 盘运行(正常使用)保留硬件加速、全速体验。
+// __dirname 从 \\wsl.localhost\... / \\wsl$\... 这类 UNC 路径运行时以 `\\` 开头。
+// 必须在 app ready 之前调用。
+const runningFromUncPath = __dirname.startsWith("\\\\");
+if (process.platform === "linux" || runningFromUncPath) {
+  app.disableHardwareAcceleration();
+}
+
+// 用户级配置:从 userData/.env 读密钥等(如 DEEPSEEK_API_KEY)。这样打包后的客户端
+// 无需重新构建即可配置(把 .env 放进 %APPDATA%/<app>/ 即可)。必须在 import server 之前
+// 加载——@qingagent/core 在模块求值期就读这些环境变量。
+loadEnvFile({ path: path.join(userDataDir, ".env") });
+process.env.QINGAGENT_LOG_DIR = desktopLogDir;
+
+// Set DATABASE_URL before importing server so that @qingagent/core's LibSQL
+// storage resolves to the user's app data directory instead of cwd.
+// 必须用 pathToFileURL 生成合法 file URL:Windows 路径含盘符+反斜杠
+// (C:\Users\...),`file:${dbPath}` 会得到非法 URL 让 libsql 连库即崩(启动闪退);
+// pathToFileURL 在 Windows 输出 file:///C:/... 、在 *nix 输出 file:///... ,两端皆可用。
+if (!process.env.DATABASE_URL) {
+  const dbPath = path.join(userDataDir, "qingagent.db");
+  process.env.DATABASE_URL = pathToFileURL(dbPath).href;
+}
+
+// 沙箱凭据密钥(.cred-key)与会话工作目录的根:落在 userData,避免打包后写到
+// 安装目录/cwd(Windows 下常不可写,会导致凭据/沙箱创建失败)。
+// TODO(P2 feishu-byo-app):决定桌面端 lark-cli 配置目录策略。当前沙箱透传宿主 HOME,
+// lark-cli 会写用户真实 ~/.lark-cli;单机交付前需决定保持真实 HOME,还是隔离到 userData 下。
+if (!process.env.QINGAGENT_DATA_DIR) {
+  process.env.QINGAGENT_DATA_DIR = path.join(userDataDir, "data");
+}
+
+// 上传/生成图片(SVG 配图、导出栅格化等)落盘根:打包后 cwd(安装目录)常不可写,
+// 必须落 userData。server 写、core 读都解析这个变量(uploadsBaseDir / UPLOAD_DIR)。
+// 必须在 import server/core 之前设置——相关模块在求值期 const 取这个目录。
+if (!process.env.QINGAGENT_UPLOADS_DIR) {
+  process.env.QINGAGENT_UPLOADS_DIR = path.join(userDataDir, "uploads");
+}
+
+process.env.QINGAGENT_RUNTIME = "desktop";
+process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
+
+// 浏览器类能力(网页抓取 scrapeWithBrowser / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
+// 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装
+// Edge,多数开箱即用,且是真 Chrome 内核,newContext/newPage 全正常(Electron 自带 Chromium 的
+// CDP 不支持这两个,不能那样复用)。无系统浏览器时这些能力优雅降级——PDF 导出由 printToPDF
+// 独立可用、不受影响。getBrowser() 末尾仍恒附默认 Chromium 兜底(随包则用,没有就报错降级)。
+if (!process.env.QINGAGENT_BROWSER_CHANNELS) {
+  process.env.QINGAGENT_BROWSER_CHANNELS = "msedge,chrome";
+}
+
+// 桌面客户端跑在用户自己机器上,默认走系统直连,不套宿主环境的代理 env。背景:用户机器常带有
+// 失效/翻墙代理 env(HTTPS_PROXY 等),被 Playwright(pool.ts proxyFromEnv)与 agent-browser(继承
+// process.env)一并喂给 Chromium → ERR_PROXY_CONNECTION_FAILED,qq.com 等正常网页都打不开。
+// 清掉后 Chromium 回退用 Windows 系统代理设置(即正常浏览行为),既"不限制网络"又能命中系统代理。
+// 确实需要走代理的环境设 QINGAGENT_DESKTOP_KEEP_PROXY=1 保留。NO_PROXY 保留无害。
+if (process.env.QINGAGENT_DESKTOP_KEEP_PROXY !== "1") {
+  for (const k of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+  ]) {
+    delete process.env[k];
+  }
+}
+
+// 客户端「上来纯空」:彻底不认 env/db 默认 key,只认用户在 app 设置里自带的 key
+// (visitor key,存本地 localStorage、随请求 header 透传)。这里删掉从 userData/.env
+// 读进来的 DEEPSEEK_API_KEY,使服务端任何兜底读取都拿不到默认 key,强制用户配置自己的 key;
+// db 全局 key 客户端从不写入、天然为空。必须在 import server/core 之前执行。
+delete process.env.DEEPSEEK_API_KEY;
+
+// —— undici@8 / Electron-Node-20 兼容垫片(必须在引入 server/core 之前执行) ——
+// Electron 33 内置 Node 20.18,其 node:worker_threads 没有 markAsUncloneable
+// (该 API 是 Node 22 才加、未回移到 20)。undici@8.4.1 的 webidl/index.js 里
+// `const { markAsUncloneable } = require('node:worker_threads')` 后直接
+// `webidl.util.markAsUncloneable = markAsUncloneable`,无兜底 → 首次 new Headers()/
+// CacheStorage 就抛 "markAsUncloneable is not a function" 启动崩溃。
+// 这里给 worker_threads 的 module.exports 补一个 no-op(它只是 structuredClone 的
+// 不可克隆标记,对我们的用法无副作用),让随后 require 它的 undici 取到合法函数。
+{
+  const wt = createRequire(import.meta.url)("node:worker_threads") as {
+    markAsUncloneable?: (value: unknown) => void;
+  };
+  if (typeof wt.markAsUncloneable !== "function") {
+    wt.markAsUncloneable = () => {};
+  }
+}
+
+if (app.isPackaged && !process.env.QINGAGENT_SKILLS_DIR) {
+  process.env.QINGAGENT_SKILLS_DIR = path.join(process.resourcesPath, "skills");
+}
+
+if (app.isPackaged && !process.env.QINGAGENT_USER_SKILLS_DIR) {
+  process.env.QINGAGENT_USER_SKILLS_DIR = path.join(userDataDir, "skills");
+}
+
+if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
+  process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS = [
+    path.dirname(process.execPath),
+    process.resourcesPath,
+  ].join(path.delimiter);
+}
+
+if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
+  console.warn("[sandbox] QINGAGENT_SANDBOX_NODE_RUNTIME=system, using host node for diagnostics only");
+} else {
+  const { ensureNodeRuntimeShim, isElectronRuntime, ensureLarkCliShim } = await import("@qingagent/core");
+  const nodeShimPath = ensureNodeRuntimeShim({ execPath: process.execPath, electron: isElectronRuntime() });
+
+  // 飞书 lark-cli:随包带到 Resources/lark-cli(build.mjs 暂存,electron-builder extraResources),
+  // 首启往沙箱 PATH 写 `lark-cli` shim——经 node shim(Electron-as-Node)跑其 run.js。HOME/配置走
+  // 宿主真实 HOME(沙箱透传),写真实 ~/.lark-cli 与用户已有飞书登录共用。瘦包(无随包 run.js)则跳过。
+  if (app.isPackaged) {
+    const larkRunJs = path.join(
+      process.resourcesPath,
+      "lark-cli",
+      "node_modules",
+      "@larksuite",
+      "cli",
+      "scripts",
+      "run.js",
+    );
+    if (existsSync(larkRunJs)) {
+      try {
+        ensureLarkCliShim({ runJsPath: larkRunJs, nodePath: nodeShimPath });
+      } catch (err) {
+        console.warn("[lark-cli] shim 写入失败,飞书命令可能不可用:", err);
+      }
+    }
+  }
+}
+
+// 桌面端是单用户本地环境,技能插拔(安装/删除)等同装自己的本地软件,默认放开。
+if (!process.env.QINGAGENT_ALLOW_SKILL_MUTATION) {
+  process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
+}
+
+// 桌面端是单用户本地环境,agent 执行命令 = 用户自己在本机跑,凭据注入 = 用本机自己的登录态。
+// 安全默认翻转后(决策 4.5),这两项默认关闭;桌面显式补回以维持现状能力。必须在 import server/core 之前设。
+if (!process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS) {
+  process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS = "1";
+}
+if (!process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS) {
+  process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+}
+
+// Python 能力(run_python):默认随包 Pyodide(build.mjs 默认 ON),运行时默认启用。
+// 实际是否注入仍由 pyodideRunner 的资源探测把关——瘦包(无随包资源)即便启用也不会误注入,
+// 只记一条 warn。打包态资源从 process.resourcesPath/pyodide 自动解析,无需额外配路径。
+if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
+  process.env.QINGAGENT_PYODIDE_ENABLED = "1";
+}
+
+// Dynamic import after env is configured — server (and transitively
+// @qingagent/core) reads DATABASE_URL at module-evaluation time.
+const { installDesktopObservability } = await import("./diagnostics/observability.js");
+installDesktopObservability(desktopLogDir);
+const { startServer } = await import("./server.js");
+const { telemetry } = await import("./telemetry/index.js");
+const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
+
+// PDF 导出复用 Electron 自带 Chromium(printToPDF):打包后没有随包 Playwright Chromium,
+// 默认路径会硬失败到 500。注册自定义渲染器后,htmlToPdf 优先走 Electron,零增量体积。
+{
+  const core = await import("@qingagent/core");
+  const { renderPdfViaElectron } = await import("./pdfRenderer.js");
+  core.setHtmlToPdfRenderer(renderPdfViaElectron);
+
+  // agent 浏览器(browser_*)桌面启用:探测到系统已装浏览器(Edge/Chrome)就默认开,并把
+  // 可执行路径透传给 @mastra/agent-browser 的 executablePath。没有系统浏览器则不开(避免注入了
+  // 又起不来)。用户已设环境变量则尊重不覆盖。pool.ts 的抓取/渲染走 channel(上面已设),此处补
+  // browser_* 的 executablePath 通道。
+  const sysBrowser = core.systemBrowserExecutablePath();
+  if (sysBrowser && !process.env.QINGAGENT_BROWSER_EXECUTABLE_PATH) {
+    process.env.QINGAGENT_BROWSER_EXECUTABLE_PATH = sysBrowser;
+  }
+  if (sysBrowser && !process.env.QINGAGENT_AGENT_BROWSER) {
+    process.env.QINGAGENT_AGENT_BROWSER = "1";
+  }
+}
+
+let mainWindow: BrowserWindow | null = null;
+let appOpenedCaptured = false;
+const appStartedAt = Date.now();
+let embeddedServerPort: number | null = null;
+
+function captureAppOpenedOnce() {
+  if (appOpenedCaptured) return;
+  appOpenedCaptured = true;
+  telemetry.captureAppOpened();
+}
+
+function installTelemetryProcessErrorHandlers() {
+  const existingUncaughtExceptionListeners = process.listenerCount("uncaughtException");
+  const existingUnhandledRejectionListeners = process.listenerCount("unhandledRejection");
+
+  process.prependListener("uncaughtException", (err, origin) => {
+    telemetry.captureError(err, {
+      errorKind: "uncaughtException",
+      errorOrigin: origin,
+    });
+
+    // 接管 uncaughtException 会抑制 Node 默认的堆栈打印,这里补回再退出,绝不静默吞崩溃。
+    if (existingUncaughtExceptionListeners === 0) {
+      console.error("[telemetry] uncaughtException:", err);
+      void telemetry.shutdown(1000).finally(() => process.exit(1));
+    }
+  });
+
+  process.prependListener("unhandledRejection", (reason) => {
+    telemetry.captureError(reason, {
+      errorKind: "unhandledRejection",
+    });
+
+    // 没有既有 handler 时,保持 Node 默认崩溃方向,并补回堆栈打印。
+    if (existingUnhandledRejectionListeners === 0) {
+      console.error("[telemetry] unhandledRejection:", reason);
+      void telemetry.shutdown(1000).finally(() => process.exit(1));
+    }
+  });
+}
+
+ipcMain.handle("qingagent:select-folder-source", async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const result = owner
+    ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] })
+    : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const selectedPath = result.filePaths[0]!;
+  const {
+    assertDirectory,
+    countFolderFiles,
+    registerDesktopFolderSelection,
+  } = await import("@qingagent/server/desktopFolderSelection");
+  const rootPath = await assertDirectory(selectedPath);
+  const count = await countFolderFiles(rootPath);
+  const selection = registerDesktopFolderSelection({
+    webContentsId: event.sender.id,
+    rootPath,
+    name: path.basename(rootPath),
+    pathLabel: rootPath,
+    fileCount: count.fileCount,
+    fileCountCapped: count.fileCountCapped,
+  });
+  return {
+    selectionToken: selection.selectionToken,
+    name: selection.name,
+    pathLabel: selection.pathLabel,
+    fileCount: selection.fileCount,
+    fileCountCapped: selection.fileCountCapped,
+  };
+});
+
+// 客户端凭证/模型配置持久化:落 userData/client-config.json,与端口/origin 解耦。
+// 背景:桌面打包版内置服务随机端口 → 窗口 origin 每次变 → localStorage 按 origin 隔离
+// → 之前 visitor key 等存 localStorage 的配置「每次启动/换版都像丢」。改存 userData 后稳定。
+// 渲染层经 clientPersist.ts 读写:get 走同步 IPC(preload 启动期注入快照),set 走异步 invoke。
+function clientConfigPath(): string {
+  return path.join(app.getPath("userData"), "client-config.json");
+}
+function readClientConfig(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(clientConfigPath(), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {}; // 文件不存在/损坏都当空,绝不让读配置阻断启动。
+  }
+}
+function writeClientConfig(cfg: Record<string, string>): void {
+  // 临时文件 + rename 原子落盘,避免读到截断的半成品 JSON。
+  const file = clientConfigPath();
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  renameSync(tmp, file);
+}
+// 同步取整份配置(preload sendSync 调用),供渲染层启动期拿到初值快照。
+ipcMain.on("qingagent:client-config-get", (event) => {
+  event.returnValue = readClientConfig();
+});
+// 合并写入(value=null/空 表示删除该项);返回是否落盘成功。
+ipcMain.handle(
+  "qingagent:client-config-set",
+  (_event, patch: Record<string, string | null> | undefined) => {
+    if (!patch || typeof patch !== "object") return false;
+    try {
+      const cfg = readClientConfig();
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === undefined || v === "") delete cfg[k];
+        else if (typeof v === "string") cfg[k] = v;
+      }
+      writeClientConfig(cfg);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+);
+
+ipcMain.handle("qingagent:export-diagnostics", async (event, opts: unknown) => {
+  if (!embeddedServerPort) throw new Error("embedded server is not ready");
+  const privacyLevel = readPrivacyLevel(opts);
+  const report = readReport(opts);
+  const sessionIds = readSessionIds(opts);
+  const origin = `http://127.0.0.1:${embeddedServerPort}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Origin: origin,
+  };
+  if (process.env.QINGAGENT_AUTH_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.QINGAGENT_AUTH_TOKEN}`;
+  }
+  const res = await fetch(`${origin}/api/v1/diagnostics/export`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ privacyLevel, report, sessionIds }),
+  });
+  if (!res.ok) {
+    throw new Error(`diagnostics export failed: HTTP ${res.status}`);
+  }
+
+  const filename = filenameFromContentDisposition(res.headers.get("content-disposition")) ??
+    `qingagent-diag-v1-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.zip`;
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const save = owner
+    ? await dialog.showSaveDialog(owner, {
+      defaultPath: filename,
+      filters: [{ name: "诊断包", extensions: ["zip"] }],
+    })
+    : await dialog.showSaveDialog({
+      defaultPath: filename,
+      filters: [{ name: "诊断包", extensions: ["zip"] }],
+    });
+  if (save.canceled || !save.filePath) return { saved: false };
+
+  writeFileSync(save.filePath, Buffer.from(await res.arrayBuffer()));
+  return { saved: true, path: save.filePath };
+});
+
+function readPrivacyLevel(opts: unknown): "L1" | "L2" {
+  if (opts && typeof opts === "object" && (opts as { privacyLevel?: unknown }).privacyLevel === "L2") {
+    return "L2";
+  }
+  return "L1";
+}
+
+function readSessionIds(opts: unknown): string[] | undefined {
+  if (!opts || typeof opts !== "object") return undefined;
+  const raw = (opts as { sessionIds?: unknown }).sessionIds;
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return ids.length > 0 ? ids : undefined;
+}
+
+function readReport(opts: unknown): string {
+  const value = opts && typeof opts === "object" ? (opts as { report?: unknown }).report : undefined;
+  return typeof value === "string" ? value : "";
+}
+
+function filenameFromContentDisposition(value: string | null): string | null {
+  if (!value) return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(value)?.[1];
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8);
+    } catch {
+      return utf8;
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(value)?.[1] ?? /filename=([^;]+)/i.exec(value)?.[1];
+  return plain ? plain.trim() : null;
+}
+
+// 首启示例内容(分叉骨架):桌面端「一辈子只 seed 一次」。
+// once 门 = userData 下的版本化标记文件;seed 写入本身在 @qingagent/core 里(进程内、幂等)。
+// 失败只记日志、绝不阻塞开窗。版本号便于将来需要换一套示例时另起 v2。
+async function maybeSeedInitialContent() {
+  const flagFile = path.join(app.getPath("userData"), ".qingagent-seeded-v1");
+  if (existsSync(flagFile)) return;
+  try {
+    const { seedInitialContent } = await import("@qingagent/core");
+    await seedInitialContent();
+    writeFileSync(flagFile, new Date().toISOString());
+  } catch (err) {
+    // 落标记失败 / seed 失败都不影响主流程,下次启动会再试一次。
+    console.warn("[seed] initial content seeding skipped:", err);
+  }
+}
+
+async function createWindow() {
+  captureAppOpenedOnce();
+
+  const { port } = await startServer();
+  embeddedServerPort = port;
+  await maybeSeedInitialContent();
+
+  // 顶部菜单栏(File / Edit / View / Window / Help)对终端用户无意义,整窗去掉。
+  Menu.setApplicationMenu(null);
+
+  // 窗口尺寸按主显示器工作区动态算:高度取工作区 ~92%(在最小的 MacBook,
+  // 工作区约 1280×740,高度≈680,接近填满但不顶满);宽度取上限 1480 与屏宽 90%
+  // 的较小值,再居中。避免写死像素在小屏上过小、在大屏上过大。
+  const { width: waW, height: waH } = screen.getPrimaryDisplay().workAreaSize;
+  const winWidth = Math.min(1480, Math.round(waW * 0.9));
+  const winHeight = Math.round(waH * 0.92);
+
+  mainWindow = new BrowserWindow({
+    width: winWidth,
+    height: winHeight,
+    minWidth: 960,
+    minHeight: 600,
+    center: true,
+    title: "青简",
+    autoHideMenuBar: true,
+    // 启动直出:先隐藏窗口、深色底兜白屏,首帧就绪后再 show(见下 ready-to-show)。
+    backgroundColor: "#1a1a1a",
+    show: false,
+    webPreferences: {
+      // preload 以 CommonJS .cjs 产出(见 build.mjs);ESM 的 .js preload 在 Electron 里
+      // 加载不了,会导致 window.electron 缺失、文件夹连接退化成浏览器 FS 路径。
+      preload: path.join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // 窗口失焦时保持完整帧率,动效不被降到 1fps(注意键名是 backgroundThrottling)。
+      backgroundThrottling: false,
+    },
+  });
+
+  attachRendererTelemetry(mainWindow, telemetry.getRendererBootstrap());
+
+  // 启动直出:首帧就绪即显示;幂等 revealWindow + 5s 兜底(并清掉 timer),避免
+  // did-finish-load 那种会被 reload/导航多次触发、把已最小化窗口又弹出来的问题。
+  let revealed = false;
+  let revealFallback: ReturnType<typeof setTimeout> | null = null;
+  const revealWindow = () => {
+    if (revealed || !mainWindow) return;
+    revealed = true;
+    if (revealFallback) {
+      clearTimeout(revealFallback);
+      revealFallback = null;
+    }
+    mainWindow.show();
+  };
+  mainWindow.once("ready-to-show", revealWindow);
+  revealFallback = setTimeout(revealWindow, 5000);
+
+  // 外部链接走系统默认浏览器,不在 app 内弹小窗 / 不把主窗口导航走。
+  // ① target=_blank / window.open():拦下新窗,http(s)/mailto 交给系统浏览器,其余一律 deny。
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+  // ② 整页导航:SPA 内部跳转走 history API 不触发本事件;凡是要跳到「与当前页不同源」的
+  //    http(s) 外链(如 <a href> 直接点开网址),拦下用系统浏览器打开,避免主窗口被带走。
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    try {
+      const target = new URL(url);
+      const current = new URL(mainWindow?.webContents.getURL() ?? "");
+      const isWeb = target.protocol === "http:" || target.protocol === "https:";
+      if (isWeb && target.origin !== current.origin) {
+        event.preventDefault();
+        void shell.openExternal(url);
+      }
+    } catch {
+      // URL 解析失败忽略,交回默认处理。
+    }
+  });
+
+  const isDev = !app.isPackaged;
+  if (isDev) {
+    // In dev mode, load from the Vite dev server.
+    // The web app's vite config proxies /api to the Hono server.
+    // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
+    const devUrl = process.env.QINGAGENT_DESKTOP_DEV_URL ?? "http://localhost:6173";
+    mainWindow.loadURL(devUrl);
+    mainWindow.webContents.openDevTools();
+  } else {
+    // In production, the Hono server serves both API and static files.
+    mainWindow.loadURL(`http://localhost:${port}`);
+  }
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+// macOS GPU/渲染实验性开关:**默认关**,仅 QINGAGENT_MAC_GPU_TWEAKS=1 时启用。
+// 审查结论:这组 flags 收益未经 Mac 实测证明,且有副作用(SkiaGraphite 在 Apple 多已默认开、
+// PlatformVk 在当前 Chrome 版本未必是稳定 feature),故不默认上线、用 env 包住供实测;
+// 确认有收益再固化。appendSwitch 必须在 app ready 之前调用。
+if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1") {
+  app.commandLine.appendSwitch("enable-features", "PlatformVk,SkiaGraphite");
+}
+
+app.whenReady().then(async () => {
+  if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
+    const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");
+    const result = await runSandboxRuntimeProbe();
+    app.exit(result.ok ? 0 : 1);
+    return;
+  }
+  await telemetry.init();
+  // 仅在埋点启用时才接管进程错误事件:禁用(无 key,默认态)时不改变 Node/Electron 的崩溃行为。
+  if (telemetry.enabled) installTelemetryProcessErrorHandlers();
+  await createWindow();
+});
+
+let quitFlushStarted = false;
+let quitResumed = false;
+
+app.on("before-quit", (event) => {
+  if (!telemetry.enabled || quitResumed) return;
+  if (quitFlushStarted) {
+    event.preventDefault();
+    return;
+  }
+
+  quitFlushStarted = true;
+  event.preventDefault();
+  telemetry.captureAppClosed(Date.now() - appStartedAt);
+  void telemetry.shutdown(2000).finally(() => {
+    quitResumed = true;
+    app.quit();
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
+});

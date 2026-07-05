@@ -1,0 +1,326 @@
+/* 图表块(diagram / mermaid)样式 */
+.pm-diagram {
+  margin: 14px 0;
+  border-radius:0;
+}
+/* 整块对齐:仅当图表宽度小于栏宽(用户拖窄/设了 width)时可见效果;满栏宽时三种一致。
+   把 .pm-diagram-view 在块内左/中/右摆放(margin auto)。 */
+.pm-diagram[data-align="left"] .pm-diagram-view {
+  margin-right: auto;
+  margin-left: 0;
+}
+.pm-diagram[data-align="center"] .pm-diagram-view {
+  margin-left: auto;
+  margin-right: auto;
+}
+.pm-diagram[data-align="right"] .pm-diagram-view {
+  margin-left: auto;
+  margin-right: 0;
+}
+/* 选中描边落在内画布上(而非整块):宽度被拖窄后描边仍贴合实际尺寸,不会留全栏宽的空框。
+   颜色统一成图表框的棕色(rgb(176,138,62)),与画布边框/圆点句柄一致,不再用朱红。 */
+.pm-diagram.is-selected .pm-diagram-view {
+  outline: 2px solid rgba(176, 138, 62, 0.95);
+  outline-offset: 0;
+}
+.pm-diagram-view {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 内部画布铺满,不留内边框/留白(用户反馈"边框没必要")。 */
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius:0;
+  /* 内容由内层容器(.graph-diagram-canvas / .pm-diagram-svg)各自 overflow:hidden 裁剪;
+     这里放开溢出,好让右下角圆点句柄能"骑"在边框线上(用户要求落在边框上)而不被裁掉。 */
+  overflow: visible;
+  box-sizing: border-box;
+  /* 默认尺寸:占满栏宽 + 一个合理高度;内层画布 height:100% 跟随,拖高时不再被卡住留空带。
+     内联 style(用户拖拽落进 attrs 的 width/height)会覆盖这两条默认值。 */
+  width: 100%;
+  max-width: 100%;
+  height: min(56vh, 520px);
+  min-height: 160px;
+}
+/* 圆点拖拽句柄:替代原生 resize:vertical 的双斜线("两个拖拽点"),骑在图表块右下角边框线上,
+   同时调宽+高;悬停/选中图表块时显现。圆心对齐边框角(right/bottom 各 -8px,圆点 16px → 居中压线),
+   用户要求"落在边框上"。颜色统一成图表框棕色 rgb(176,138,62),不再朱红。 */
+.pm-diagram-resize-handle {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgb(176, 138, 62);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(47, 42, 34, 0.28);
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  z-index: 3;
+  touch-action: none;
+}
+.pm-diagram:hover .pm-diagram-resize-handle,
+.pm-diagram.is-selected .pm-diagram-resize-handle,
+.pm-diagram-view:focus-within .pm-diagram-resize-handle {
+  opacity: 0.9;
+}
+.pm-diagram-resize-handle:hover {
+  opacity: 1;
+}
+.pm-diagram-svg {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  overflow: hidden; /* 放大平移时裁掉溢出,不撑破图表块 */
+}
+/* 就地缩放/平移的变换层(双指 pinch / ctrl+滚轮 驱动,见 MermaidPreview.tsx) */
+.pm-diagram-svg-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* will-change 不在此常驻:常驻会把 SVG 栅格化致文字发糊。仅缩放态由内联 style 临时加(见 MermaidPreview)。 */
+}
+/* 在容器内"等比铺满且绝不溢出/变形":svg 自带 viewBox + preserveAspectRatio(默认 meet),
+   给 100%×100% 盒子即按比例缩放居中适配——拖宽拖高都不会把饼图/时序图撑变形或溢出边框
+   (此前 width:100%+height:auto+max-height:100% 会在限高时强行压宽 → 椭圆/溢出,用户反馈"饼图变形")。 */
+.pm-diagram-svg svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  display: block;
+}
+/* 嵌在编辑器图表块里的只读 SVG 外壳:填满外层 .pm-diagram-view(而非自带 56vh 默认高),
+   否则外层放开 overflow 后内层按自身高把图顶出边框(用户反馈饼图溢出)。独立快照场景(无外层
+   .pm-diagram-view)不匹配此规则,仍用默认高。 */
+.pm-diagram-view .pm-diagram-view--readonly {
+  height: 100%;
+  min-height: 0;
+}
+/* SVG 图表全屏查看(MediaZoomFullscreen 内):定宽承载,svg 等比铺满。 */
+.pm-diagram-zoom-svg {
+  width: min(90vw, 1100px);
+  max-width: 96vw;
+}
+.pm-diagram-zoom-svg svg {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+.pm-diagram-empty {
+  color: var(--ink-3, #999);
+  font-size: 13px;
+  padding: 20px;
+}
+.pm-diagram-error {
+  color: var(--danger, #b42318);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: var(--font-mono);
+  /* 出错时也不许撑变形:限高可滚、限宽。 */
+  max-width: 100%;
+  max-height: 220px;
+  overflow: auto;
+}
+/* 统一工具栏按钮样式(图表 react-flow 路径 / SVG 路径共用,观感与图片块工具栏一致)。 */
+.pm-diagram-tool {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius:0;
+  background: transparent;
+  color: var(--ink-2, #4a4034);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm-diagram-tool:hover {
+  background: var(--bg-hover);
+}
+.pm-diagram-tool.is-active {
+  border-color: rgba(168, 130, 63, 0.38);
+  background: var(--mark-soft);
+  color: var(--mark, #8f6d30);
+}
+.pm-diagram-tool--wide {
+  min-width: 58px;
+  gap: 2px;
+}
+.pm-diagram-tool-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: rgba(55, 45, 32, 0.14);
+}
+/* SVG 图表(时序图/饼图/柱状图等)右上角工具栏容器:与图表路径的 react-flow Panel 视觉统一。 */
+.pm-diagram-svg-viewbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(55, 45, 32, 0.12);
+  border-radius:0;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 22px rgba(55, 45, 32, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.pm-diagram:hover .pm-diagram-svg-viewbar,
+.pm-diagram.is-selected .pm-diagram-svg-viewbar,
+.pm-diagram-view:hover .pm-diagram-svg-viewbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 文字编辑按钮(可视化编辑 / 编辑 Mermaid)移到左下角(用户反馈:右上角让位给统一工具栏)。 */
+.pm-diagram-view-actions {
+  position: absolute;
+  z-index: 12;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.pm-diagram-view:hover .pm-diagram-view-actions,
+.pm-diagram-view:focus-within .pm-diagram-view-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.pm-diagram-view-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(47, 42, 34, 0.18);
+  border-radius:0;
+  background: rgba(47, 79, 111, 0.96);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(47, 42, 34, 0.08);
+}
+.pm-diagram-view-btn:hover {
+  background: #243e58;
+}
+.pm-diagram-view-btn--ghost {
+  background: rgba(255, 250, 240, 0.94);
+  color: var(--ink-1);
+}
+.pm-diagram-view-btn--ghost:hover {
+  border-color: rgba(53, 97, 157, 0.45);
+  background: #fffaf0;
+  color: #1d4f91;
+}
+/* 全屏覆盖层(legacy,已不再由图表使用) */
+.pm-diagram-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(20, 18, 16, 0.72);
+  backdrop-filter: blur(2px);
+  cursor: zoom-out;
+}
+.pm-diagram-fullscreen-body {
+  /* 定宽:svg 用 width:100% 才有参照(此前 width:auto 无参照 → svg 塌成 0 宽 → 全屏一片空白) */
+  width: min(90vw, 1100px);
+  max-width: 96vw;
+  max-height: 92vh;
+  overflow: auto;
+  background: #fff;
+  border-radius:0;
+  padding: 24px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  cursor: default;
+}
+.pm-diagram-fullscreen-body svg {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 84vh;
+  display: block;
+}
+.pm-diagram-fullscreen-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius:0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+.pm-diagram-edit {
+  border: 1px solid var(--qj-cinnabar, #9e2b25);
+  border-radius:0;
+  overflow: hidden;
+}
+.pm-diagram-preview {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.015);
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+  min-height: 60px;
+}
+.pm-diagram-source {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-1, #222);
+  background: #fbfbfa;
+}
+.pm-diagram-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f5f4f2;
+}
+.pm-diagram-btn {
+  padding: 4px 14px;
+  font-size: 12px;
+  border-radius:0;
+  border: 1px solid var(--qj-cinnabar, #9e2b25);
+  background: var(--qj-cinnabar, #9e2b25);
+  color: #fff;
+  cursor: pointer;
+}
+.pm-diagram-btn--ghost {
+  background: transparent;
+  color: var(--ink-2, #444);
+  border-color: rgba(0, 0, 0, 0.15);
+}

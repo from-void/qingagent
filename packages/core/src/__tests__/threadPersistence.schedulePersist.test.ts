@@ -1,0 +1,278 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatMessage, FolderSourceRecord } from "@qingagent/contract-ts";
+import {
+  prepareTempDocumentsDb,
+  type TempDocumentsDb,
+} from "../db/__tests__/dbTestUtils.js";
+
+const { logger, memory } = vi.hoisted(() => {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const memory = {
+    updateThread: vi.fn(),
+    saveThread: vi.fn(),
+  };
+  return { logger, memory };
+});
+
+vi.mock("../mastra.js", () => ({
+  mastra: {
+    getLogger: () => logger,
+    getMemory: () => memory,
+  },
+  getObservability: () => null,
+}));
+
+vi.mock("../bridge/agentSpans.js", () => ({
+  sessionIdToTraceId: (sessionId: string) => `trace-${sessionId}`,
+}));
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function readDraftMessage(id: string): ChatMessage {
+  return {
+    id: `msg-${id}`,
+    role: { kind: "agent" },
+    ts: "2026-01-01T00:00:00.000Z",
+    chips: null,
+    parts: [
+      {
+        kind: "toolCall",
+        data: {
+          id,
+          name: "readDraft",
+          render: { kind: "chatInline" },
+          status: { kind: "done" },
+          body: { kind: "generic", data: { argsJson: "{}" } },
+          result: { kind: "genericText", data: "draft" },
+        },
+      },
+    ],
+  };
+}
+
+function folderSource(sessionId: string): FolderSourceRecord {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    id: "fld_schedule",
+    sessionId,
+    provider: "desktop-local",
+    name: "Schedule Docs",
+    pathLabel: "Schedule Docs",
+    mountName: "source_schedule",
+    mountPath: "/sources/source_schedule",
+    readOnly: true,
+    fileCount: 1,
+    fileCountCapped: false,
+    status: "connected",
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+    desktopRootPath: "/tmp/qingagent-schedule-docs",
+  };
+}
+
+describe("schedulePersist dirty-loop", () => {
+  let tempDb: TempDocumentsDb;
+
+  beforeEach(async () => {
+    // 影子双写已恒开:用临时 libsql 库做真隔离,双写落在临时库而不是工作目录的 qingagent.db。
+    tempDb = prepareTempDocumentsDb("qingagent-schedule-persist-");
+    vi.clearAllMocks();
+    memory.updateThread.mockReset();
+    memory.saveThread.mockReset();
+    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    __resetSessionPersistenceForTest();
+  });
+
+  afterEach(async () => {
+    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    __resetSessionPersistenceForTest();
+    tempDb.cleanup();
+  });
+
+  it("慢写期间再次 mutate 会补写 trailing-edge 快照且合并 N 次 schedule", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const {
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../bridge/threadPersistence.js");
+    const firstWrite = deferred();
+    const writes: Array<Record<string, unknown>> = [];
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+        if (writes.length === 1) await firstWrite.promise;
+      },
+    );
+
+    const state = createSession("schedule-slow-write");
+    state.docVersion = 1;
+    schedulePersist(state, "first");
+
+    await vi.waitFor(() => expect(memory.updateThread).toHaveBeenCalledTimes(1));
+    state.docVersion = 2;
+    state.chatHistory.push(readDraftMessage("read-1"));
+    for (let i = 0; i < 5; i += 1) {
+      schedulePersist(state, `second-${i}`);
+    }
+
+    firstWrite.resolve();
+    await drainSessionPersistence();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(2);
+    expect(writes[0]?.docVersion).toBe(1);
+    expect(writes[1]?.docVersion).toBe(2);
+    const persistedHistory = writes[1]?.chatHistory as ChatMessage[] | undefined;
+    expect(
+      persistedHistory?.some((message) =>
+        message.parts.some((part) => part.kind === "toolCall" && part.data.name === "readDraft"),
+      ),
+    ).toBe(true);
+  });
+
+  it("loop 收尾微任务里追加的 mutation 不会被 finally 清理窗口吞掉", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../bridge/threadPersistence.js");
+    const firstWrite = deferred();
+    const writes: Array<Record<string, unknown>> = [];
+    let queuedTailMutation = false;
+    let state: ReturnType<typeof createSession>;
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+        if (writes.length === 1) {
+          await firstWrite.promise;
+          queueMicrotask(() => {
+            state.docVersion = 9;
+            queuedTailMutation = true;
+            schedulePersist(state, "tail-microtask");
+          });
+        }
+      },
+    );
+
+    state = createSession("schedule-finally-window");
+    state.docVersion = 1;
+    schedulePersist(state, "first");
+
+    await vi.waitFor(() => expect(memory.updateThread).toHaveBeenCalledTimes(1));
+    firstWrite.resolve();
+    await drainSessionPersistence();
+
+    expect(queuedTailMutation).toBe(true);
+    expect(memory.updateThread).toHaveBeenCalledTimes(2);
+    expect(writes[1]?.docVersion).toBe(9);
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 0,
+      loopCount: 0,
+    });
+  });
+
+  it("初始 thread 创建完成前不执行 updateThread，完成后写入包含 folderSources 的最新快照", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const {
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../bridge/threadPersistence.js");
+    const initialCreate = deferred();
+    const writes: Array<Record<string, unknown>> = [];
+    memory.updateThread.mockImplementation(
+      async ({ metadata }: { metadata: Record<string, unknown> }) => {
+        writes.push(metadata);
+      },
+    );
+
+    const state = createSession("schedule-await-initial-create");
+    state.threadCreatePromise = initialCreate.promise;
+    const source = folderSource(state.sessionId);
+    state.folderSources.set(source.id, source);
+    const persistPromise = schedulePersist(state, "command:attachFolder");
+
+    await Promise.resolve();
+    expect(memory.updateThread).not.toHaveBeenCalled();
+
+    initialCreate.resolve();
+    await persistPromise;
+    await drainSessionPersistence();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect((writes[0]?.folderSources as FolderSourceRecord[] | undefined)?.[0]?.id).toBe(source.id);
+  });
+
+  it("updateThread 遇到 thread-not-found 时用当前 metadata saveThread 兜底", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const { schedulePersist } = await import("../bridge/threadPersistence.js");
+    const state = createSession("schedule-thread-not-found-fallback");
+    const source = folderSource(state.sessionId);
+    state.folderSources.set(source.id, source);
+    memory.updateThread.mockRejectedValue(new Error("Thread not found"));
+    memory.saveThread.mockResolvedValue(undefined);
+
+    await expect(schedulePersist(state, "command:attachFolder")).resolves.toBeUndefined();
+
+    expect(memory.saveThread).toHaveBeenCalledTimes(1);
+    const saved = memory.saveThread.mock.calls[0]?.[0]?.thread as
+      | { id: string; metadata: Record<string, unknown> }
+      | undefined;
+    expect(saved?.id).toBe(state.sessionId);
+    expect((saved?.metadata.folderSources as FolderSourceRecord[] | undefined)?.[0]?.id).toBe(source.id);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Primary metadata update missed thread; falling back to saveThread",
+      expect.objectContaining({
+        sessionId: state.sessionId,
+        reason: "command:attachFolder",
+      }),
+    );
+  });
+
+  it("非 busy 主写失败不重试，schedulePersist 保持 resolve 并记录 reason", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      schedulePersist,
+    } = await import("../bridge/threadPersistence.js");
+    memory.updateThread.mockRejectedValue(new Error("primary write syntax error"));
+
+    const state = createSession("schedule-nonbusy-primary-fail");
+    await expect(schedulePersist(state, "tool_call_suspended")).resolves.toBeUndefined();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to persist session metadata",
+      expect.objectContaining({
+        sessionId: state.sessionId,
+        reason: "tool_call_suspended",
+        error: "primary write syntax error",
+      }),
+    );
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 0,
+      loopCount: 0,
+    });
+  });
+});

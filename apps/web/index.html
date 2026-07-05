@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>青简</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- 启动底色:首页已固定浅色(cc6bf1f),React 挂载前(首帧)即把整页底色铺成浅色纸底,
+         消除懒加载大 chunk(HomePage/WorkspacePage)下载期 Suspense 兜底露深底的"中间黑块"闪
+         (本地 chunk 秒下看不出、VPS 慢网络尤其明显);路由切换的 Suspense 兜底也复用 --app-boot-bg。
+         注:旧版深色首页时这里按主题铺深底(#0e1114/#2a2620),首页固定浅色后那套已不适用。 -->
+    <style>
+      html, body { margin: 0; }
+      html { background: var(--app-boot-bg, #ece4d3); }
+    </style>
+    <script>
+      (function () {
+        try {
+          // 首页固定浅色,落地/懒加载兜底统一铺首页暖纸底(= body 稳态色 --bg-window #ece4d3;
+          // 主题暖化后旧冷灰 #e9eae6 与两侧暖底不匹配,首帧会闪"暖两侧+冷中心",故同步为暖值)。
+          var bg = "#ece4d3";
+          document.documentElement.style.setProperty("--app-boot-bg", bg);
+          document.documentElement.style.background = bg;
+        } catch (e) {
+          /* 异常时走 CSS 兜底 #ece4d3 */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

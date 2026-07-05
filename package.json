@@ -1,0 +1,40 @@
+{
+  "name": "qingagent",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @qingagent/web dev",
+    "dev:server": "pnpm --filter @qingagent/server dev",
+    "dev:desktop": "pnpm --filter @qingagent/desktop dev",
+    "build:desktop": "pnpm --filter @qingagent/desktop build",
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "scorers": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-scorers.mts",
+    "scorers:live": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-live-scorers.mts",
+    "pm:schema:check": "pnpm --filter @qingagent/pm-schema test -- schemaSync",
+    "pm:roundtrip": "pnpm --filter @qingagent/pm-schema test -- pmMarkdownRoundTrip aiIrRoundTrip && pnpm --filter @qingagent/web test:dom -- pmRoundTrip",
+    "pm:migrate:check": "pnpm --filter @qingagent/pm-schema test -- legacyMigration",
+    "pm:impact:check": "node scripts/pm-impact-check.mjs",
+    "pm:legacy-ban": "node scripts/pm-legacy-ban.mjs",
+    "pm:image:check": "node scripts/pm-image-check.mjs",
+    "pm:history:check": "node scripts/pm-history-check.mjs",
+    "pm:commit:check": "pnpm --filter @qingagent/core test -- commitDocumentOp",
+    "pm:css:check": "node scripts/pm-css-check.mjs",
+    "lint:skills": "node scripts/check-skill-scripts.mjs",
+    "export:matrix": "pnpm --filter @qingagent/core test -- export-format-matrix"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/node": "20.16.5"
+    }
+  },
+  "license": "MIT"
+}

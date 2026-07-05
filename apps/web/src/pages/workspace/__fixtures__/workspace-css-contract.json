@@ -1,0 +1,26 @@
+{
+  "file": "apps/web/src/pages/workspace/workspace.css",
+  "sha256": "03ee4c4b5b3a1af1780ede0625a024289e791d0686400485dbed7154c74c39ec",
+  "lineCount": 2847,
+  "selectors": [
+    ".wf-doc",
+    ".dt-btn",
+    ".dt-menu",
+    ".block-handle-btn",
+    ".block-handle-btn.is-chip",
+    ".fold-toggle",
+    ".is-folded-hidden",
+    ".block-fold-persist",
+    ".block-handle-menu",
+    ".tbl-sel-toolbar",
+    ".tbl-cell-sel",
+    ".wf-patch-ins-wrap",
+    ".wf-blockmark",
+    ".patch-del-cursor",
+    ".wf-patch-del-marker",
+    ".patch-hover-popup",
+    ".code-block-node",
+    ".math-edit-popover",
+    ".link-hover-card"
+  ]
+}

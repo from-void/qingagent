@@ -1,0 +1,49 @@
+/* ════════════════════════════════════════════════════════════════════════
+   画廊 demo 专属样式(gallery-only)。
+   共享的 token(.u-scope)与核心组件 class(.u-bar / .u-card / .u-list / .u-spin /
+   .u-dot / .u-thumb / .u-detail / .u-foot 等)统一由生产
+   apps/web/src/pages/workspace/components/chatUnified.css 提供——本文件只放
+   生产对话流没有、仅画廊/规格页用到的 class,避免两份定义漂移("改了这个漏那个")。
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* 来源/链接卡 */
+.u-scope .u-source {
+  display: flex; gap: 10px; align-items: center; width: 100%; box-sizing: border-box;
+  padding: var(--u-pad-y) var(--u-pad-x); border: var(--u-border); border-radius: var(--u-radius);
+  background: var(--u-bg); margin: 6px 0; text-decoration: none; cursor: pointer;
+}
+.u-scope .u-source-thumb { flex: none; width: 54px; height: 36px; object-fit: cover; border: var(--u-border); }
+.u-scope .u-source-main { flex: 1 1 auto; min-width: 0; }
+.u-scope .u-source-tag { display: inline-block; font-size: 10px; color: var(--u-ink-faint); border: var(--u-border); padding: 0 4px; margin-right: 6px; }
+.u-scope .u-source-title { color: var(--u-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-scope .u-source-host { color: var(--u-ink-faint); font-size: 11px; }
+
+/* 引用 chip */
+.u-scope .u-cite {
+  display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono);
+  font-size: 11px; color: var(--u-ink-soft); border: var(--u-border); padding: 1px 6px; margin: 2px 0;
+}
+
+/* —— 改造对话流:用户气泡(直角统一) —— */
+.u-scope .u-userwrap { display: flex; justify-content: flex-end; margin: 10px 0; }
+.u-scope .u-user {
+  max-width: 86%;
+  padding: 8px 12px;
+  background: var(--u-bg-head);
+  border: var(--u-border);
+  border-radius: var(--u-radius);
+  color: var(--ink-1);
+  font-size: var(--u-fs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.u-scope .u-userchip {
+  display: inline-block; margin-left: 6px; padding: 0 6px;
+  border: var(--u-border); font-size: 11px; color: var(--u-ink-soft); vertical-align: baseline;
+}
+
+/* OldPart:折叠内嵌 ChatMessageList 包装层,让老组件内联融入改造流 */
+.u-scope .u-flat,
+.u-scope .u-flat > .ws-chat,
+.u-scope .u-flat > .ws-chat > .wf-msg.agent { display: contents; }
+.u-scope .u-flat > .ws-chat { padding: 0 !important; }

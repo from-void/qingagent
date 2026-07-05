@@ -1,0 +1,486 @@
+import { useEffect } from "react";
+import type * as React from "react";
+import type { Editor } from "@tiptap/react";
+import type { PmDoc } from "@qingagent/pm-schema";
+import { BigPlanPanel, isBigPlanQuestionnaireReady } from "./BigPlanPanel";
+import { DocInit } from "./DocInit";
+import { DocumentSnapshotView } from "./DocumentSnapshotView";
+import type { DocumentSnapshotViewHandle, PatchMeta } from "./DocumentSnapshotView";
+import { PatchNav } from "./PatchNav";
+import { QingLoading } from "./QingLoading";
+import { StarterPanel } from "./StarterPanel";
+import type { StarterBlankTarget } from "./StarterPanel";
+import { WholeDocReviewNav } from "./WholeDocReviewNav";
+import { clientPerformanceNow } from "../data/sessionFrameGuards";
+import { logClientEvent } from "../data/clientLog";
+import type { DocDimensions } from "../data/docDimensions";
+import type { NativePresentationRun } from "../data/nativeDiffAnimation";
+import type { AskUserAnswers, StreamError, ToolCallSpec, ViewDocumentSnapshot } from "../data/protocol";
+import type { ServerStream } from "../data/serverStream";
+import type { StarterTemplate } from "../data/starterTemplates";
+import { canEditDocument, generationDraftHasContent, selectRenderDoc } from "../data/workspacePageView";
+
+function extractAskUser(tc: ToolCallSpec) {
+  return tc.body.kind === "askUser" ? tc.body.data : null;
+}
+
+interface RightPaneProps {
+  dimensions: DocDimensions;
+  /** 左侧 agent 是否在推理/生成（streamActive || agentBusy || 乐观发送中）——驱动空文档占位的静止/推理态。 */
+  agentReasoning: boolean;
+  /** 空引导态点击模板「填充」:把骨架写入空文档(并触发会话/文档惰性创建) */
+  onFillTemplate: (template: StarterTemplate) => void;
+  /** 空引导态点击标题/正文:创建最小空文档并把光标定位到目标块。 */
+  onCreateBlank: (target: StarterBlankTarget) => void;
+  doc: ViewDocumentSnapshot | null;
+  streamError: StreamError | null;
+  generationDraftDoc: ViewDocumentSnapshot | null;
+  viewingSnapshotDoc: ViewDocumentSnapshot | null;
+  /** 已折叠 patch 标记的文档(单一真相源派生),review/正常渲染直接用,RightPane 不再自算 overlay。 */
+  docWithPatches: ViewDocumentSnapshot | null;
+  /** 大改(≥70%)走整篇新旧版审,而非内联逐处。 */
+  wholeDocReview: boolean;
+  wholeDocVersion: "new" | "old";
+  /** 候选编辑后的干净新文档(整篇审「新版」直接渲染它)。 */
+  editedNewDoc: ViewDocumentSnapshot | null;
+  onWholeDocVersionChange: (v: "new" | "old") => void;
+  patchesAccepted: Set<string>;
+  patchesRejected: Set<string>;
+  reviewedCount: number;
+  remainingCount: number;
+  activePatchIndex: number;
+  visiblePatchCount: number;
+  unrenderablePatchCount: number;
+  effectiveReview: boolean;
+  reviewMaterializing: boolean;
+  showForceUnlock: boolean;
+  fullpageAsk: ToolCallSpec | null;
+  submittingAskUserId?: string | null;
+  viewingVersion: number | null;
+  docViewRef: React.RefObject<DocumentSnapshotViewHandle>;
+  patchMeta: Map<string, PatchMeta>;
+  activePatchId: string | null;
+  revealedPatchIds: ReadonlySet<string> | null;
+  revealCursors: ReadonlyMap<string, number>;
+  typedByPatch: ReadonlyMap<string, number> | null;
+  patchRevealing: boolean;
+  sessionId: string | null;
+  stream: ServerStream | null;
+  presentationRun: NativePresentationRun | null;
+  presentationReducedMotion: boolean;
+  onToast: (msg: string) => void;
+  onSubmitPlan: (toolCallId: string, answers: AskUserAnswers) => void;
+  onJumpPrev: () => void;
+  onJumpNext: () => void;
+  canActOnCurrent: boolean;
+  currentVerdict?: "accepted" | "rejected" | null;
+  onAcceptCurrent: () => void;
+  onRejectCurrent: () => void;
+  onRejectAll: () => void;
+  onAcceptAll?: () => void;
+  onCommit: () => void;
+  onPatchVerdict: (patchId: string, verdict: "accepted" | "rejected") => void;
+  onCancelAskUser: (toolCall: ToolCallSpec) => void;
+  onCloseViewingVersion: () => void;
+  onEditorReady: (editor: Editor | null) => void;
+  onEditorChange: (doc: PmDoc) => void;
+  onPresentationFinish: () => void;
+  onPresentationCancel: () => void;
+}
+
+function RightPaneBranchLog({
+  branch,
+  sessionId,
+  docVersion,
+  runId,
+}: {
+  branch: string;
+  sessionId: string | null;
+  docVersion?: number | null;
+  runId?: number | null;
+}) {
+  useEffect(() => {
+    logClientEvent("presentationRun.rightPane_branch", {
+      sessionId: sessionId ?? undefined,
+      meta: {
+        branch,
+        performanceNow: clientPerformanceNow(),
+        docVersion: docVersion ?? null,
+        runId: runId ?? null,
+      },
+    });
+  }, [branch, docVersion, runId, sessionId]);
+  return null;
+}
+
+export function RightPane({
+  dimensions,
+  agentReasoning,
+  onFillTemplate,
+  onCreateBlank,
+  doc,
+  streamError,
+  generationDraftDoc,
+  viewingSnapshotDoc,
+  docWithPatches,
+  wholeDocReview,
+  wholeDocVersion,
+  editedNewDoc,
+  onWholeDocVersionChange,
+  patchesAccepted,
+  patchesRejected,
+  reviewedCount,
+  remainingCount,
+  activePatchIndex,
+  visiblePatchCount,
+  unrenderablePatchCount,
+  effectiveReview,
+  reviewMaterializing,
+  showForceUnlock,
+  fullpageAsk,
+  submittingAskUserId,
+  viewingVersion,
+  docViewRef,
+  patchMeta,
+  activePatchId,
+  revealedPatchIds,
+  revealCursors,
+  typedByPatch,
+  patchRevealing,
+  sessionId,
+  stream,
+  presentationRun,
+  presentationReducedMotion,
+  onToast,
+  onSubmitPlan,
+  onJumpPrev,
+  onJumpNext,
+  canActOnCurrent,
+  currentVerdict,
+  onAcceptCurrent,
+  onRejectCurrent,
+  onRejectAll,
+  onAcceptAll,
+  onCommit,
+  onPatchVerdict,
+  onCancelAskUser,
+  onCloseViewingVersion,
+  onEditorReady,
+  onEditorChange,
+  onPresentationFinish,
+  onPresentationCancel,
+}: RightPaneProps) {
+  if (streamError?.kind === "failed" && !doc && !generationDraftDoc) {
+    return (
+      <DocInit
+        mode="error"
+        title="恢复失败"
+        subtitle="请点击上方重试"
+      />
+    );
+  }
+  // 中途反问(inline askUser)时,agent 已 suspend、不在产文:此刻 generationDraft 多半是
+  // generation_started 刚建出的【空草稿】(sections 为空),不能拿它当"可渲染文档",否则右侧
+  // 会渲染成空白(用户感知为"文档消失")。空草稿一律不算 renderable;askUser 浮层下优先用
+  // 已落库的 canonical doc(渲染选择见 selectRenderDoc)。
+  const hasRenderableDoc =
+    !!doc || generationDraftHasContent(generationDraftDoc) || !!viewingSnapshotDoc;
+  if (dimensions.content.kind === "empty" && !fullpageAsk && !hasRenderableDoc) {
+    // 左侧 AI 在跑 → 青字 loading;overlay 挂起(如 inline askUser,挂起期 agentBusy=false)→ 同样不给
+    // 可交互引导态:此时服务端 editorState=locked,点填充/正文只会被拒(review #1 状态分叉),回青字静候。
+    if (agentReasoning || dimensions.overlay !== null) {
+      return <QingLoading reasoning={agentReasoning} />;
+    }
+    return <StarterPanel onFill={onFillTemplate} onCreateBlank={onCreateBlank} />;
+  }
+  if (dimensions.overlay === "askUser" && fullpageAsk) {
+    const askSpec = extractAskUser(fullpageAsk)!;
+    const isQuestionnaireStreaming =
+      fullpageAsk.status.kind === "running" && !isBigPlanQuestionnaireReady(askSpec);
+    return (
+      <BigPlanPanel
+        spec={askSpec}
+        isStreaming={isQuestionnaireStreaming}
+        isSubmitting={submittingAskUserId === fullpageAsk.id}
+        onSubmit={(_askUserId, answers) => onSubmitPlan(fullpageAsk.id, answers)}
+        onAbort={() => onCancelAskUser(fullpageAsk)}
+        sessionId={sessionId}
+        stream={stream}
+        onToast={onToast}
+      />
+    );
+  }
+  const viewingHistory = viewingVersion !== null;
+  const historyBanner = viewingHistory ? (
+    <div className="wf-region" data-wf="HistoryViewingBanner" style={{ marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <span className="font-mono">正在查看历史版本 #{viewingVersion}</span>
+      <button type="button" className="wf-btn small ghost" onClick={onCloseViewingVersion}>
+        返回当前版本
+      </button>
+    </div>
+  ) : null;
+  if (reviewMaterializing && !viewingHistory) {
+    return (
+      <DocInit
+        mode="drafting"
+        title="正在整理审阅视图…"
+        subtitle="审阅中 · 请稍候"
+      />
+    );
+  }
+  const showLock = dimensions.overlay === "imageProgress" && !viewingHistory;
+  const reviewMode = dimensions.content.kind === "pendingReview";
+  if (dimensions.agentBusy && !showLock && !viewingHistory && !reviewMode) {
+    const busyDoc = generationDraftDoc ?? doc;
+    if (!busyDoc) return <QingLoading reasoning />;
+    const runMatchesBusyDoc = presentationRun?.docVersion === busyDoc.version;
+    if (runMatchesBusyDoc) {
+      return (
+        <>
+          <RightPaneBranchLog
+            branch="busy-presentation"
+            sessionId={sessionId}
+            docVersion={busyDoc.version}
+            runId={presentationRun.id}
+          />
+          <DocumentSnapshotView
+            ref={docViewRef}
+            doc={busyDoc}
+            docId={sessionId}
+            editable={true}
+            interactiveEditable={false}
+            showPatches={false}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            patchMeta={patchMeta}
+            activePatchId={activePatchId}
+            onEditorReady={onEditorReady}
+            onEditorChange={onEditorChange}
+            onToast={onToast}
+            presentationRun={presentationRun}
+            presentationReducedMotion={presentationReducedMotion}
+            onPresentationFinish={onPresentationFinish}
+            onPresentationCancel={onPresentationCancel}
+          />
+        </>
+      );
+    }
+    return (
+      <>
+        <RightPaneBranchLog
+          branch="busy-readonly"
+          sessionId={sessionId}
+          docVersion={busyDoc.version}
+          runId={presentationRun?.id ?? null}
+        />
+        <DocumentSnapshotView
+          ref={docViewRef}
+          doc={busyDoc}
+          docId={sessionId}
+          editable={true}
+          interactiveEditable={false}
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          patchMeta={patchMeta}
+          activePatchId={activePatchId}
+        />
+      </>
+    );
+  }
+  if (viewingHistory && !viewingSnapshotDoc) {
+    return (
+      <>
+        {historyBanner}
+        <DocInit
+          mode="drafting"
+          title="正在加载历史版本…"
+          subtitle="历史版本 · 请稍候"
+        />
+      </>
+    );
+  }
+  if (!viewingHistory && !doc && !generationDraftDoc)
+    return <QingLoading reasoning={agentReasoning} />;
+
+  const showPatches = !viewingHistory && effectiveReview;
+  const showUnrenderableHint =
+    !viewingHistory &&
+    !patchRevealing &&
+    unrenderablePatchCount > 0 &&
+    dimensions.content.kind === "pendingReview";
+
+  // 已折叠 patch 标记的文档由单一真相源(WorkspacePage derivePatchPresentation)派生并下传;
+  // RightPane 不再自算 overlay,确保计数 / 序号 / 正文标记同源一致。
+  // askUser 浮层(中途反问)期间 agent 已挂起,generationDraft 即便存在也只是空/半成品占位,
+  // 不能盖掉已落库的 doc。渲染选择收敛进 selectRenderDoc(同一不变量,带单测锁)。
+  const renderDoc = selectRenderDoc({
+    viewingHistory,
+    viewingSnapshotDoc,
+    doc,
+    generationDraftDoc,
+    docWithPatches,
+    showPatches,
+    overlay: dimensions.overlay,
+  });
+  if (!renderDoc) return <DocInit />;
+  const baseEditable = canEditDocument(dimensions, viewingVersion) && !generationDraftDoc;
+  const presentationMatchesRenderDoc = presentationRun?.docVersion === renderDoc.version;
+  // inline askUser(中途反问)期间 overlay 锁住 → baseEditable=false → 原本会落到静态 .wf-doc 渲染,
+  // 而 editing 态下静态文档分支会被隐藏(display:none)→ 右侧整片黑("文档消失")。
+  // 修法:askUser 浮层期文档仍挂 TipTap(走和正常 editing 一致、确定可见的渲染路径),
+  // 但 interactiveEditable 保持 false(只读,不可编辑)。
+  const mountEditableSurface =
+    baseEditable || presentationMatchesRenderDoc || dimensions.overlay === "askUser";
+  const interactiveEditable = baseEditable && !presentationRun;
+
+  // 大改(≥70%):整篇新旧版审 —— 右侧直接展示选中版本的完整文档(干净,无内联红绿),
+  // 底部条换成 [新版‖旧版] 互斥选择器 + [应用新版][退回旧版]。切换带动效、新旧各记滚动位置。
+  if (wholeDocReview && !viewingHistory) {
+    const shownDoc =
+      wholeDocVersion === "old" ? (doc ?? renderDoc) : (editedNewDoc ?? renderDoc);
+    const wholeDocReviewScopeKey = [
+      sessionId ?? "",
+      shownDoc.version,
+      remainingCount,
+      visiblePatchCount,
+    ].join(":");
+    return (
+      <>
+        <WholeDocReviewNav
+          reviewScopeKey={wholeDocReviewScopeKey}
+          version={wholeDocVersion}
+          onVersionChange={onWholeDocVersionChange}
+          onApply={onAcceptAll ?? onCommit}
+          onRevert={onRejectAll}
+          onToast={onToast}
+        />
+        <div className="wdr-swap" key={wholeDocVersion}>
+          <DocumentSnapshotView
+            ref={docViewRef}
+            doc={shownDoc}
+            docId={sessionId}
+            editable={false}
+            showPatches={false}
+            acceptedPatches={new Set<string>()}
+            rejectedPatches={new Set<string>()}
+            patchMeta={patchMeta}
+            activePatchId={null}
+          />
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <RightPaneBranchLog
+        branch={presentationRun?.docVersion === renderDoc.version ? "main-presentation" : "main-document"}
+        sessionId={sessionId}
+        docVersion={renderDoc.version}
+        runId={presentationRun?.id ?? null}
+      />
+      {historyBanner}
+      {/* 审批条:揭示动画一开始(patchRevealing)就出条并同体平移进来(不再等揭示跑完),
+          这样"光标刚开始在正文打字"时条就立刻转移过去。 */}
+      {showPatches && (
+        <PatchNav
+          remainingCount={remainingCount}
+          totalCount={visiblePatchCount}
+          activePatchIndex={activePatchIndex}
+          canActOnCurrent={canActOnCurrent}
+          currentVerdict={currentVerdict}
+          onJumpPrev={onJumpPrev}
+          onJumpNext={onJumpNext}
+          onAcceptCurrent={onAcceptCurrent}
+          onRejectCurrent={onRejectCurrent}
+          onRejectAll={onRejectAll}
+          onCommit={onCommit}
+        />
+      )}
+      {!showPatches && showForceUnlock && !patchRevealing && (
+        <div
+          className="wf-region"
+          data-wf="PatchUnresolvableBanner"
+          style={{
+            marginBottom: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <span className="font-mono">
+            本轮 {unrenderablePatchCount} 处块级或无法定位的改动暂不可视，请提交或放弃本轮修改。
+          </span>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button type="button" className="wf-btn small" onClick={onAcceptAll}>
+              提交本轮修改
+            </button>
+            <button type="button" className="wf-btn small ghost" onClick={onRejectAll}>
+              放弃本轮修改
+            </button>
+          </div>
+        </div>
+      )}
+      {showPatches && showUnrenderableHint && (
+        <div
+          className="wf-region"
+          data-wf="PatchUnrenderableHint"
+          style={{ marginBottom: 10, color: "var(--ink-3)", fontSize: 12.5 }}
+        >
+          另有 {unrenderablePatchCount} 处改动无法在正文定位，未计入上方审批。
+        </div>
+      )}
+      <DocumentSnapshotView
+        ref={docViewRef}
+        doc={renderDoc}
+        docId={sessionId}
+        editable={mountEditableSurface}
+        interactiveEditable={interactiveEditable}
+        showPatches={showPatches}
+        acceptedPatches={patchesAccepted}
+        rejectedPatches={patchesRejected}
+        revealedPatchIds={revealedPatchIds}
+        revealCursors={revealCursors}
+        typedByPatch={typedByPatch}
+        onPatchVerdict={onPatchVerdict}
+        patchMeta={patchMeta}
+        activePatchId={activePatchId}
+        onEditorReady={onEditorReady}
+        onEditorChange={onEditorChange}
+        onToast={onToast}
+        presentationRun={presentationRun}
+        presentationReducedMotion={presentationReducedMotion}
+        onPresentationFinish={onPresentationFinish}
+        onPresentationCancel={onPresentationCancel}
+      />
+      {/* 右下角字数浮标去掉,改成文末落款区块(DocColophon,在 DocumentSnapshotView 内渲染) */}
+    </>
+  );
+}
+
+// —— doc-topbar 图标(无文字,描线水墨风) ——
+function HistoryIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 4v4h4" />
+      <path d="M12 8v4l3 2" />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M8 7l4-4 4 4" />
+      <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+    </svg>
+  );
+}
+
+export { extractAskUser, HistoryIcon, ExportIcon };

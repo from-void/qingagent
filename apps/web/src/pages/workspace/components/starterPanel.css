@@ -1,0 +1,220 @@
+/* 空文档「引导态」:与文档纸同一张奶白纸(#efe7d6),颜色复用工作区暖 token(--ink-* / --line-* / --mark)。
+   布局对齐文档纸:max-width 800、内边距 52px 64px;模板区 margin-top:auto 沉底;卡片 A4 比例横排等分铺满。 */
+#view-workspace .starter-empty {
+  position: absolute;
+  inset: 0;
+  top: 52px;
+  z-index: 3;
+  background: var(--bg-paper-deep);
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+#view-workspace .starter-doc {
+  width: 100%;
+  max-width: 800px;
+  padding: 52px 64px 34px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+}
+#view-workspace .starter-hit {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  margin: 8px 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: text;
+}
+#view-workspace .starter-h1 {
+  display: block;
+  font-size: 14.5px;
+  line-height: 1.85;
+  font-weight: 400;
+  color: var(--ink-4);
+  letter-spacing: 0;
+}
+/* hover 卡片时的骨架预览:预览元素直接挂 .wf-doc 类 + 编辑器同构 DOM,字号/行距/间距/勾选框/表格
+   全部由编辑器现成样式接管(和填充后的真实文档逐像素一致)。这里只管容器裁剪、半透明与禁交互。 */
+#view-workspace .starter-preview {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0.5;
+  pointer-events: none;
+}
+/* 中和 .wf-doc 自带的纸面 chrome(ink-skin 用 !important 钉了奶白底/阴影/52·64 内边距/min-height):
+   预览已在 starter-doc 的同一张纸里,只要排版不要再套一层纸,否则出现"纸中纸"浅色块与双重留白 */
+#view-workspace .starter-preview.wf-doc {
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  margin: 0;
+  border-radius: 0;
+}
+/* 预览首块顶部不额外留白(编辑器里首块贴纸面顶部内边距,预览同理) */
+#view-workspace .starter-preview > :first-child {
+  margin-top: 0;
+}
+#view-workspace .starter-tplzone {
+  margin-top: auto;
+}
+#view-workspace .starter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+#view-workspace .starter-tabs {
+  display: flex;
+  gap: 2px;
+}
+#view-workspace .starter-tab {
+  font-size: 13px;
+  color: var(--ink-3);
+  padding: 5px 13px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  border-bottom: 2px solid transparent;
+}
+#view-workspace .starter-tab.on {
+  color: var(--ink-1);
+  font-weight: 600;
+  border-bottom-color: var(--mark);
+}
+#view-workspace .starter-sel {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+#view-workspace .starter-sel select {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  border: 1px solid var(--line-2);
+  border-radius:0;
+  padding: 6px 26px 6px 12px;
+  background: var(--bg-subtle);
+  cursor: pointer;
+}
+#view-workspace .starter-sel-caret {
+  position: absolute;
+  right: 10px;
+  color: var(--ink-3);
+  font-size: 10px;
+  pointer-events: none;
+}
+#view-workspace .starter-cards {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  /* 新6:切换 tab/行业时卡片淡入上移(key 变化触发重播) */
+  animation: starter-cards-in 0.28s ease;
+}
+@keyframes starter-cards-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+#view-workspace .starter-card {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 184px;
+  aspect-ratio: 210 / 297;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line-2);
+  border-radius:0;
+  position: relative;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  cursor: pointer;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: inherit;
+  overflow: hidden;
+  transition: border-color 0.15s, background 0.15s;
+}
+#view-workspace .starter-card:hover {
+  border-color: var(--mark);
+  background: var(--bg-hover);
+}
+#view-workspace .starter-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+  line-height: 1.4;
+  padding-right: 24px; /* 给右上角收藏星留位,避免长标题末字与星重叠 */
+}
+#view-workspace .starter-desc {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.55;
+  margin-top: 8px;
+}
+#view-workspace .starter-star {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  border: 1px solid var(--line-2);
+  z-index: 2;
+  /* 新5:默认隐藏,hover 卡片时才浮现;已收藏(filled)同样只在 hover 出 */
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+#view-workspace .starter-card:hover .starter-star {
+  opacity: 1;
+}
+#view-workspace .starter-star:hover {
+  background: var(--mark-soft, #ecdfc2);
+  border-color: var(--mark);
+}
+#view-workspace .starter-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent, var(--mark));
+  color: var(--ink-on-dark, #f3ece0);
+  font-size: 11px;
+  text-align: center;
+  padding: 15px 0 7px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+#view-workspace .starter-card:hover .starter-fill {
+  opacity: 1;
+}
+#view-workspace .starter-empty-fav {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.7;
+  padding: 6px 0;
+}

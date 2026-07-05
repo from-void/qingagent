@@ -1,0 +1,26 @@
+/* Global resets + body baseline + small font-family utility class,
+ * extracted from qingagent-wireframe-demo/index.html. Kept separate from
+ * tokens.css so the design-token sheet stays :root-only. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-window);
+  color: var(--ink-1);
+}
+
+body {
+  font-family: var(--font-zh-serif);
+  font-size: 13.5px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}

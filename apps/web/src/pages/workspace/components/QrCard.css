@@ -1,0 +1,183 @@
+/* 对话流内置二维码卡(统一抽象组件)。
+   配色/圆角/字体全部复用全局 token,与命令卡、草稿卡同一视觉语言。 */
+
+.qr-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px 14px;
+  margin: 8px 0;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--line-1);
+  border-radius:0;        /* 铁律二:默认直角 */
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
+}
+
+.qr-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
+/* 码区:相对定位,过期遮罩/刷新按钮绝对覆盖其上 */
+.qr-card__frame {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-1);
+  border-radius:0;
+  /* 二维码区保留白底:深墨皮肤下也必须浅底,否则扫码识别率骤降 */
+  background: #fff;
+  overflow: hidden;
+}
+
+.qr-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+
+.qr-card__placeholder {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* 过期态:把码打码——灰度 + 模糊 + 压暗,视觉上"作废" */
+.qr-card__frame.is-expired .qr-card__img {
+  filter: grayscale(1) blur(4px) brightness(0.92);
+  opacity: 0.5;
+}
+
+/* 刷新按钮:平时藏起,过期且悬停时浮现(键盘聚焦也浮现,保可达性)。 */
+.qr-card__refresh {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-zh-serif);
+  font-size: 12.5px;
+  font-weight: 600;
+  /* 遮罩盖在永远白底的二维码上,必须用固定深色蒙层 + 白字(不能用随主题翻浅的 --ink-* */
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.qr-card__frame.is-expired:hover .qr-card__refresh,
+.qr-card__refresh:focus-visible {
+  opacity: 1;
+}
+
+.qr-card__refresh:focus-visible {
+  outline: 2px solid var(--mark);
+  outline-offset: -2px;
+}
+
+.qr-card__refresh:disabled {
+  cursor: default;
+}
+
+.qr-card__refresh-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.qr-card__usercode {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.qr-card__usercode b {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  color: var(--ink-1);
+}
+
+.qr-card__expiry {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.qr-card__expiry.is-expired {
+  color: var(--mark);
+}
+
+.qr-card__confirm {
+  margin-top: 2px;
+  padding: 7px 18px;
+  border: none;
+  border-radius:0;
+  /* 主按钮:赭金底 + 深字(原来用 --ink-1 底在深皮下会变浅底浅字看不清) */
+  background: var(--mark);
+  color: var(--ink-surface);
+  font-family: var(--font-zh-serif);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  animation: qr-card__confirm-in 0.2s ease;
+}
+
+.qr-card__confirm:hover {
+  background: #c9ad75;
+}
+
+.qr-card__confirm:disabled {
+  cursor: default;
+  background: var(--ink-3);
+  color: var(--ink-on-dark);
+}
+
+@keyframes qr-card__confirm-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.qr-card__note {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 240px;
+}
+
+.qr-card__note-line {
+  margin: 2px 0;
+}
+
+.qr-card__note a {
+  color: var(--mark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.qr-card__note a:hover {
+  color: var(--ink-1);
+}
+
+.qr-card__note strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}

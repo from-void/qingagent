@@ -1,0 +1,206 @@
+/* 对话工具元素 · 统一组件框架样式。一套 token + .u-* 组件。
+   token 依赖 .ws-left 提供的 ink 色阶;.u-scope 挂在 .ws-chat 上(生产)。 */
+.u-scope {
+  --u-radius: 0px;
+  --u-border-c: var(--line-1);
+  --u-border: 1px solid var(--u-border-c);
+  --u-bg: rgba(255, 255, 255, 0.03);
+  --u-bg-soft: rgba(255, 255, 255, 0.015);
+  /* 卡头**透明**:卡容器已提供单层 0.03 底色。半透明白(0.03)会叠加——若卡头再涂一层 0.03,
+     卡头区就是 0.03 叠 0.03 ≈ 0.059,比单层的工具条更亮(用户实测"卡比条亮")。卡头透明 →
+     整张卡只有容器这一层 0.03,与工具条像素级一致。 */
+  --u-bg-head: transparent;
+  --u-pad-x: 12px;
+  /* 工具条是辅助信息:字号比正文小一号、上下内边距收一点,整体更轻(用户实测原来偏大) */
+  --u-pad-y: 6px;
+  --u-gap: 8px;
+  --u-mar: 4px;
+  --u-fs: 12px;
+  --u-fs-meta: 11px;
+  --u-lbl-weight: 600;
+  --u-ico: 14px;
+  --u-ink: var(--ink-2);
+  --u-ink-soft: var(--ink-3);
+  --u-ink-faint: var(--ink-4);
+}
+
+/* —— 工具条(一行) —— */
+.u-scope .u-bar {
+  display: flex; align-items: center; gap: var(--u-gap); width: 100%; box-sizing: border-box;
+  padding: var(--u-pad-y) var(--u-pad-x); border: var(--u-border); border-radius: var(--u-radius);
+  background: var(--u-bg); font-size: var(--u-fs); color: var(--u-ink-soft); margin: var(--u-mar) 0;
+}
+.u-scope .u-ico { flex: none; width: var(--u-ico); height: var(--u-ico); display: inline-flex; align-items: center; justify-content: center; color: var(--u-ink-soft); }
+.u-scope .u-ico.is-error { color: var(--danger, #b42318); }
+.u-scope .u-ico svg { width: 100%; height: 100%; }
+.u-scope .u-lbl { flex: none; font-weight: var(--u-lbl-weight); color: var(--u-ink); }
+/* 参数段可压缩省略(0702):flex:none 会让长参数把右侧状态字顶出容器裁掉;
+   与卡头 .u-card-sub 同一套收缩姿势——能缩、超长省略号,右侧 .u-meta(flex:none)永不被挤。 */
+.u-scope .u-seg { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--u-ink-soft); white-space: nowrap; }
+.u-scope .u-seg::before { content: "·"; color: var(--u-ink-faint); margin-right: 6px; }
+.u-scope .u-spacer { flex: 1 1 auto; min-width: 8px; }
+.u-scope .u-meta { flex: none; color: var(--u-ink-soft); font-size: var(--u-fs-meta); }
+.u-scope .u-meta.is-error { color: var(--danger, #b42318); }
+
+/* —— 占位/进行中:三点 loading + 「正在准备 <工具名>」流光扫光,无边框(对齐"思考中") —— */
+.u-scope .u-prep {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; margin: var(--u-mar) 0; font-size: var(--u-fs);
+}
+.u-scope .u-prep .chat-loading-dots { flex: 0 0 auto; }
+.u-scope .u-prep-text {
+  letter-spacing: 0.04em;
+  background: linear-gradient(
+    100deg,
+    rgba(236, 227, 208, 0.42) 0%,
+    rgba(236, 227, 208, 0.42) 38%,
+    rgba(255, 247, 230, 0.95) 50%,
+    rgba(236, 227, 208, 0.42) 62%,
+    rgba(236, 227, 208, 0.42) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ws-think-shine 1.9s linear infinite; /* 复用思考中的流光关键帧 */
+}
+.u-scope .u-prep-text b { font-weight: 700; }
+@media (prefers-reduced-motion: reduce) {
+  .u-scope .u-prep-text {
+    animation: none;
+    -webkit-text-fill-color: rgba(236, 227, 208, 0.6);
+    color: rgba(236, 227, 208, 0.6);
+  }
+}
+
+/* —— 卡 —— */
+/* 卡整体底色 = 工具条底色:展开态的 body 区不再比工具条/卡头浅,所有卡与条同色统一。 */
+.u-scope .u-card { width: 100%; box-sizing: border-box; border: var(--u-border); border-radius: var(--u-radius); background: var(--u-bg); margin: var(--u-mar) 0; overflow: hidden; }
+.u-scope .u-card-hd {
+  display: flex; align-items: center; gap: var(--u-gap); width: 100%; box-sizing: border-box;
+  padding: var(--u-pad-y) var(--u-pad-x); background: var(--u-bg-head); border: none;
+  /* font-family / line-height 都显式继承:<button> 默认会把这两个重置(字体→Arial、行高→normal),
+     导致卡头比一行工具条矮 3px、字体不一致。继承回来 → 卡折叠态与工具条同高同字。 */
+  font-size: var(--u-fs); font-family: inherit; line-height: inherit; text-align: left; color: var(--u-ink-soft);
+}
+.u-scope button.u-card-hd { cursor: pointer; }
+.u-scope button.u-card-hd:hover { background: var(--u-bg); }
+.u-scope .u-card-ico { flex: none; width: var(--u-ico); height: var(--u-ico); display: inline-flex; align-items: center; justify-content: center; color: var(--u-ink-soft); }
+.u-scope .u-card-ico svg { width: 100%; height: 100%; }
+.u-scope .u-card-title { flex: none; font-weight: var(--u-lbl-weight); color: var(--u-ink); }
+.u-scope .u-card-sub { flex: 1 1 auto; min-width: 0; color: var(--u-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-scope .u-card-sub::before { content: "·"; color: var(--u-ink-faint); margin-right: 6px; }
+/* 状态 + 箭头永远右对齐 */
+.u-scope .u-card-meta { flex: none; margin-left: auto; color: var(--u-ink-soft); font-size: var(--u-fs-meta); display: inline-flex; align-items: center; gap: 6px; }
+.u-scope .u-card-chev { flex: none; display: inline-flex; color: var(--u-ink-faint); transition: transform 0.15s; }
+.u-scope .u-card-chev.is-open { transform: rotate(180deg); }
+/* 展开后 body 比卡头略深(用户:下边颜色比上面深一点),拉开层次 */
+.u-scope .u-card-bd { padding: var(--u-pad-y) var(--u-pad-x); border-top: var(--u-border); background: rgba(0, 0, 0, 0.16); color: var(--u-ink-soft); font-size: var(--u-fs); line-height: 1.6; }
+
+/* 卡内列表(检索抓取行) */
+.u-scope .u-list { display: flex; flex-direction: column; }
+.u-scope .u-list-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: var(--u-border); }
+.u-scope .u-list-row:first-child { border-top: none; }
+.u-scope .u-list-ico { flex: none; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--u-ink-faint); }
+.u-scope .u-list-main { flex: 1 1 auto; min-width: 0; }
+.u-scope .u-list-title { color: var(--u-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 链接是 <a>(行内元素),必须置为块级 + max-width:100% 才能让 overflow/text-overflow 生效,
+   否则长 URL(如百科 percent-encoded 链接)不截断、向右捅破卡片。 */
+.u-scope .u-list-url { display: block; max-width: 100%; color: var(--u-ink-faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 右列状态标签:固定宽度不换行、右对齐(「2,005 字」「经浏览器」「抓取中」等)。 */
+.u-scope .u-list-tag { flex: none; color: var(--u-ink-soft); font-size: 11px; white-space: nowrap; text-align: right; }
+/* pending 待抓取:灰色虚线点(不转,区别于 fetching 转圈) */
+.u-scope .u-list-wait { width: 8px; height: 8px; border-radius: 50%; border: 1px dashed var(--u-ink-faint); display: inline-block; }
+
+/* loading:转圈 / 点点 / 黄点 */
+.u-scope .u-spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--u-ink-faint); border-top-color: transparent; display: inline-block; animation: u-spin 0.7s linear infinite; }
+@keyframes u-spin { to { transform: rotate(360deg); } }
+.u-scope .u-dots { display: inline-flex; gap: 2px; align-items: center; }
+.u-scope .u-dots span { width: 3px; height: 3px; border-radius: 50%; background: var(--u-ink-faint); animation: u-blink 1.2s infinite; }
+.u-scope .u-dots span:nth-child(2) { animation-delay: 0.2s; }
+.u-scope .u-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes u-blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+.u-scope .u-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--mark); display: inline-block; box-shadow: 0 0 0 0 rgba(181, 154, 99, 0.5); animation: u-dotpulse 1.6s infinite; }
+@keyframes u-dotpulse { 0% { box-shadow: 0 0 0 0 rgba(181, 154, 99, 0.5); } 70% { box-shadow: 0 0 0 5px rgba(181, 154, 99, 0); } 100% { box-shadow: 0 0 0 0 rgba(181, 154, 99, 0); } }
+
+/* 缩略图 + 图片呼吸灯(右上角) */
+.u-scope .u-thumb { position: relative; margin-top: 8px; border: var(--u-border); background: var(--u-bg-soft); display: block; }
+.u-scope .u-thumb-btn { padding: 0; cursor: pointer; width: 100%; }
+.u-scope .u-thumb img, .u-scope .u-thumb svg, .u-scope .u-thumb-svg svg { display: block; width: 100%; height: auto; }
+.u-scope .u-thumb-svg { display: block; }
+.u-scope .u-thumb-empty { padding: 24px; text-align: center; color: var(--u-ink-faint); font-size: 12px; }
+.u-scope .u-thumb-pulse { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--mark); box-shadow: 0 0 0 0 rgba(181, 154, 99, 0.6); animation: u-dotpulse 1.6s infinite; }
+
+.u-scope .u-foot { margin-top: 6px; color: var(--u-ink-soft); font-size: var(--u-fs-meta); }
+
+/* 产出物展示规范:圆角矩形容器(区别于过程条/卡的直角)。后置到最终回复之后展示。 */
+.u-scope .u-artifact { margin: 10px 0; border-radius:0; overflow: hidden; }
+
+/* 图片产出汇总条:已生成 N 张图片 + 文字高的圆角缩略图(点开放大) */
+.u-scope .u-imgsum {
+  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+  padding: var(--u-pad-y) var(--u-pad-x); border: var(--u-border); border-radius:0;
+  background: var(--u-bg); font-size: var(--u-fs); color: var(--u-ink-soft); margin: 10px 0;
+}
+.u-scope .u-imgsum-lbl { flex: none; font-weight: var(--u-lbl-weight); color: var(--u-ink); }
+.u-scope .u-imgsum-thumbs { display: inline-flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+.u-scope .u-imgsum-thumb {
+  flex: none; width: 1.5em; height: 1.5em; padding: 0; border: var(--u-border); border-radius:0;
+  overflow: hidden; cursor: pointer; background: rgba(0, 0, 0, 0.22); line-height: 0;
+}
+.u-scope .u-imgsum-thumb:hover { border-color: var(--mark); }
+.u-scope .u-imgsum-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* 轮级过程折叠:横线 + 「过程 · N 步」+ 箭头,与下方最终回复做区隔;展开后内容直接内联(不缩进) */
+.u-scope .u-procdiv {
+  display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box;
+  background: none; border: none; cursor: pointer; padding: 4px 0; margin: 8px 0 4px;
+  color: var(--u-ink-soft); font-family: inherit; font-size: 12px;
+}
+.u-scope .u-procdiv-line { flex: 1 1 auto; height: 1px; background: var(--u-border-c); }
+.u-scope .u-procdiv-lbl { flex: none; color: var(--u-ink-soft); font-weight: var(--u-lbl-weight); }
+.u-scope .u-procdiv:hover .u-procdiv-lbl { color: var(--u-ink); }
+.u-scope .u-detail { margin: 0; padding: 6px 12px; font-size: 11px; font-family: var(--font-mono); color: var(--u-ink-soft); background: var(--u-bg-soft); border: var(--u-border); border-top: none; white-space: pre-wrap; word-break: break-all; }
+
+/* 命令卡 body:代码块 + 输出块,各自限高,溢出滚动 */
+.u-scope .u-card-bd--cmd { display: flex; flex-direction: column; gap: 6px; }
+.u-scope .u-scrollbox { position: relative; --u-sb-edge: rgba(0, 0, 0, 0.55); }
+.u-scope .u-scrollbox--output { --u-sb-edge: rgba(0, 0, 0, 0.3); }
+.u-scope .u-scrollbox-pre {
+  margin: 0; box-sizing: border-box;
+  max-height: calc(var(--u-sb-lines, 4) * 1.5em + 12px);
+  overflow: auto;
+  scrollbar-gutter: stable;       /* 出现滚动条不挤压内容宽度:滚动条另占固定槽位 */
+  overscroll-behavior: contain;   /* 滚到边不把滚动事件冒泡给外层聊天容器 */
+  padding: 6px 10px;
+  font-size: 11px; font-family: var(--font-mono); line-height: 1.5;
+  color: var(--u-ink-soft);
+  border: var(--u-border);
+  white-space: pre-wrap; word-break: break-all;
+}
+/* 执行(命令/代码)= 深色终端;输出 = 较浅结果面板 + 赭色左条,一眼区分 */
+.u-scope .u-scrollbox--code .u-scrollbox-pre { background: rgba(0, 0, 0, 0.28); }
+.u-scope .u-scrollbox--output .u-scrollbox-pre { background: rgba(255, 255, 255, 0.05); border-left: 2px solid var(--mark); }
+/* 滚动阴影:只在该侧还有内容时出现(到顶无上影、到底无下影) */
+.u-scope .u-scrollbox.has-top::before,
+.u-scope .u-scrollbox.has-bottom::after {
+  content: ""; position: absolute; left: 1px; right: 1px; height: 16px; pointer-events: none;
+}
+.u-scope .u-scrollbox.has-top::before { top: 1px; background: linear-gradient(to top, transparent, var(--u-sb-edge)); }
+.u-scope .u-scrollbox.has-bottom::after { bottom: 1px; background: linear-gradient(to bottom, transparent, var(--u-sb-edge)); }
+/* 细滚动条,贴合暗色主题 */
+.u-scope .u-scrollbox-pre::-webkit-scrollbar { width: 8px; height: 8px; }
+.u-scope .u-scrollbox-pre::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); }
+.u-scope .u-scrollbox-pre::-webkit-scrollbar-track { background: transparent; }
+
+/* 低性能 / 减动效:关掉统一组件的 loading/呼吸动画(对齐生产 perf 守卫) */
+:root[data-perf="low"] .u-scope .u-spin,
+:root[data-perf="low"] .u-scope .u-dots span,
+:root[data-perf="low"] .u-scope .u-dot,
+:root[data-perf="low"] .u-scope .u-thumb-pulse { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .u-scope .u-spin, .u-scope .u-dots span, .u-scope .u-dot, .u-scope .u-thumb-pulse { animation: none; }
+  .u-scope .u-card-chev { transition: none; }
+}

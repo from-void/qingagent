@@ -1,0 +1,65 @@
+/* ============ InkBubble — ink brush-stroke chat bubble ============ */
+
+.ink-bubble {
+  position: relative;
+  overflow: visible;
+  margin-bottom: 12px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* Canvas extends beyond content via negative inset, no layout impact needed
+   since the canvas is absolutely positioned with pointer-events:none */
+
+.ink-bubble__canvas {
+  position: absolute;
+  inset: -12px -18px;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* Prevent empty canvas container from collapsing to a visible line */
+.ink-bubble__canvas:empty {
+  display: none;
+}
+
+.ink-bubble__canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Content sits above the canvas */
+.ink-bubble__content {
+  position: relative;
+  z-index: 1;
+  padding: 6px 25px;
+}
+
+/* Text reveal: starts hidden, revealed via class after ink settles */
+.ink-bubble--animate .ink-bubble__content {
+  opacity: 0;
+}
+
+.ink-bubble__content--visible {
+  animation: ink-text-reveal 0.3s ease-out forwards;
+}
+
+@keyframes ink-text-reveal {
+  from {
+    opacity: 0;
+    mask-image: linear-gradient(to right, black 0%, transparent 20%);
+    -webkit-mask-image: linear-gradient(to right, black 0%, transparent 20%);
+  }
+  to {
+    opacity: 1;
+    mask-image: linear-gradient(to right, black 100%, black 100%);
+    -webkit-mask-image: linear-gradient(to right, black 100%, black 100%);
+  }
+}
+
+/* Non-animated bubbles show content immediately */
+.ink-bubble:not(.ink-bubble--animate) .ink-bubble__content {
+  opacity: 1;
+}

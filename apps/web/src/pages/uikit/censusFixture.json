@@ -1,0 +1,4431 @@
+{
+  "generatedFrom": "ui-census/census.json",
+  "generatedAt": "2026-07-04T07:58:44.890Z",
+  "summary": {
+    "runtimeStates": 42,
+    "runtimeAppClasses": 460,
+    "runtimeThirdPartyClasses": 40,
+    "live_reachable": 400,
+    "liveButStaticNotReachable": 24,
+    "undefinedInCss": 36,
+    "deadCandidates": 191,
+    "devOnly_notSeen": 120,
+    "suspectedUnderSampled": 618
+  },
+  "classes": {
+    "web-app-shell": {
+      "family": "web",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(236, 228, 211)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "web-page-frame": {
+      "family": "web",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "web-page-frame--qingjian-home": {
+      "family": "web",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "home-qingjian": {
+      "family": "home",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Source Han Serif SC\", \"Songti SC\", SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(28, 25, 21)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qj-root": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-topctrl": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-settings-wrap": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-settings-btn": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(58, 50, 38)",
+      "backgroundColor": "rgba(247, 240, 224, 0.82)",
+      "borderColor": "rgb(158, 43, 37)"
+    },
+    "qj-scroll": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-inner": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-roller": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-head": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-silk": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-left": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-frontispiece": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-fp-title": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(35, 32, 27)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(35, 32, 27)"
+    },
+    "qj-fp-title-char": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(35, 32, 27)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(35, 32, 27)"
+    },
+    "qj-fp-side": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(74, 70, 62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(74, 70, 62)"
+    },
+    "qj-fp-verse": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(74, 70, 62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(74, 70, 62)"
+    },
+    "qj-fp-verse-in": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(74, 70, 62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(74, 70, 62)"
+    },
+    "qj-fp-sealimg": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-right": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-silkcore": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-stage": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 40, 0.3)"
+    },
+    "qj-stage-moment": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-stage-moment-plant": {
+      "family": "qj",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-stage-moment-edge-bottom": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-fired": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-moment-art": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-plant-flip": {
+      "family": "qj",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-plant-body": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-plant-body-bottom": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-ink": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-ink-growUp": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-ink-bloom": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-m-fall": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-stage-moment-birds": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-stage-moment-edge-top": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-birds-flock": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-bird-wing": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-bird-wing-l": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-bird-wing-r": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-plant-body-top": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-ink-growDown": {
+      "family": "qj",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-card-slot": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-in": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-sway": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "cm-card": {
+      "family": "cm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgb(239, 233, 221)",
+      "borderColor": "rgba(0, 0, 0, 0.05)"
+    },
+    "qj-new-card": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgb(239, 233, 221)",
+      "borderColor": "rgba(0, 0, 0, 0.05)"
+    },
+    "qj-nc-tex": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-nc-shade": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(60, 45, 25, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-nc-frame": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(90, 70, 40, 0.5)"
+    },
+    "qj-nc-corner": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(158, 43, 37, 0.62)"
+    },
+    "qj-tl": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(158, 43, 37, 0.62)"
+    },
+    "qj-br": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-nc-title": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(58, 50, 38, 0.5)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(58, 50, 38, 0.5)"
+    },
+    "qj-colophon": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-fp-seal": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(191, 44, 32)",
+      "backgroundColor": "rgba(191, 44, 32, 0.024)",
+      "borderColor": "color(srgb 0.721255 0.167843 0.123608)"
+    },
+    "qj-tail": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dock-hotspot": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dock": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-show": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dock-bar": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "11px 11px 11px 11px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(247, 240, 224, 0.82)",
+      "borderColor": "rgba(120, 90, 40, 0.28)"
+    },
+    "qj-dock-prog": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dp-track": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(120, 90, 40, 0.28)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dp-fill": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dp-cursor": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dp-scale": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(60, 50, 35, 0.85)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(60, 50, 35, 0.85)"
+    },
+    "qj-dock-search-btn": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(58, 50, 38)",
+      "backgroundColor": "rgba(158, 43, 37, 0.14)",
+      "borderColor": "rgb(158, 43, 37)"
+    },
+    "qj-on": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(58, 50, 38)",
+      "backgroundColor": "rgba(158, 43, 37, 0.14)",
+      "borderColor": "rgb(158, 43, 37)"
+    },
+    "qj-dock-search-wrap": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-open": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-dock-search-input": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(58, 50, 38)",
+      "backgroundColor": "rgba(127, 127, 127, 0.08)",
+      "borderColor": "rgba(120, 90, 40, 0.28)"
+    },
+    "qj-dock-search-count": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 108, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 108, 70)"
+    },
+    "qj-new-fab": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(58, 50, 38)",
+      "backgroundColor": "rgba(247, 240, 224, 0.82)",
+      "borderColor": "rgba(120, 90, 40, 0.28)"
+    },
+    "ccx-space": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "ccx-dust": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "ccx-ink": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "ccx-morph": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgb(239, 233, 221)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "ccx-morph-noise": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "ccx-morph-frame": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(90, 70, 40, 0.5)"
+    },
+    "ccx-morph-corner": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(158, 43, 37, 0.62)"
+    },
+    "tl": {
+      "family": "tl",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(158, 43, 37, 0.62)"
+    },
+    "br": {
+      "family": "br",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "wf-modal": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "card": {
+      "family": "card",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "14px 14px 14px 14px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(250, 246, 236)",
+      "borderColor": "rgb(212, 200, 170)"
+    },
+    "head": {
+      "family": "head",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Source Han Serif SC\", \"Songti SC\", STSong, SimSun, 宋体, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(242, 236, 221)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "body": {
+      "family": "body",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qj-sheet-backdrop": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 26, 24)",
+      "backgroundColor": "rgba(20, 16, 10, 0.42)",
+      "borderColor": "rgb(26, 26, 24)"
+    },
+    "qj-sheet": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-ink-stage": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-content": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-nav": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-title": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-tabs": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-tab": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "qj-active": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "qj-sheet-close": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(236, 227, 208, 0.05)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "qj-sheet-body": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "qj-sheet-panel": {
+      "family": "qj",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "settings-model": {
+      "family": "settings",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-setup": {
+      "family": "sm",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-guide": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-back": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sm-config": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-faq-q": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-setup-tabs": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-setup-tab": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(0, 0, 0)",
+      "backgroundColor": "rgba(200, 169, 106, 0.16)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sm-active": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(0, 0, 0)",
+      "backgroundColor": "rgba(200, 169, 106, 0.16)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sm-official": {
+      "family": "sm",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-keyrow": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-secret-wrap": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-keyinput": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(3, 6, 8, 0.46)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-secret": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(3, 6, 8, 0.46)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-secret-toggle": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "sm-btn": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(236, 227, 208, 0.043)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-model-prefix": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-field": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-field-label": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "sm-field-input": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(3, 6, 8, 0.46)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sm-keyhint": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "settings-shortcuts": {
+      "family": "settings",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sc-group": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sc-group-title": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "sc-list": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sc-item": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sc-label": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "sc-keys": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sc-kbd": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "5px 5px 5px 5px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(127, 127, 127, 0.08)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sc-source": {
+      "family": "sc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "sm-configured": {
+      "family": "sm",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-card": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-account": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-status-row": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-dot": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgb(95, 206, 147)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-dot--ok": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgb(95, 206, 147)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-status-text": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "md-recheck": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(236, 227, 208, 0.06)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-metrics": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-metric": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(236, 227, 208, 0.04)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-metric-label": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-metric-value": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "md-value-accent": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "font-mono": {
+      "family": "font",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "md-metric-sub": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-keyline": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-keysrc": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "md-keysrc-detail": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "md-keyops": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-mini-btn": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(236, 227, 208, 0.06)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-usage": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-card-title": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-row": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-block": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-col": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-block-head": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-block-title": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-block-sub": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-empty": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-trend": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-trend-col": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-trend-bar": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "3px 3px 1px 1px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(236, 227, 208, 0.1)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-trend-bar--empty": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "3px 3px 1px 1px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(236, 227, 208, 0.1)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-trend-axis": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-detail-card": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "md-detail-filters": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-date-filter": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "md-views": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-views--right": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "md-view-btn": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(26, 20, 11)",
+      "backgroundColor": "rgb(200, 169, 106)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "md-active": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(26, 20, 11)",
+      "backgroundColor": "rgb(200, 169, 106)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "md-foot-note": {
+      "family": "md",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "settings-skills": {
+      "family": "settings",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sm-note": {
+      "family": "sm",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(232, 218, 188, 0.72)"
+    },
+    "sk-grid": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sk-card": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sk-card--span": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sk-card--search": {
+      "family": "sk",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(8, 11, 14, 0.42)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "sk-card-head": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sk-card-icon": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sk-card-title": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sk-card-desc": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(238, 227, 203)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(238, 227, 203)"
+    },
+    "sk-card-foot": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sk-search-toggle": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(200, 169, 106, 0.16)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sk-card-arrow": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sk-toggle": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(200, 169, 106, 0.16)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sk-on": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgba(200, 169, 106, 0.16)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "sk-toggle-dot": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(243, 234, 216)",
+      "backgroundColor": "rgb(95, 206, 147)",
+      "borderColor": "rgb(243, 234, 216)"
+    },
+    "sk-card-tag": {
+      "family": "sk",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgba(232, 218, 188, 0.72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.18)"
+    },
+    "active": {
+      "family": "active",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-page": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "no-ink": {
+      "family": "no",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-dark": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-np": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-hanzi": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-on": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-hanzi-canvas": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-hanzi-canvas--base": {
+      "family": "ccx",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-hanzi-canvas--pulse": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-back": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.64)",
+      "backgroundColor": "rgba(18, 24, 31, 0.42)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "a": {
+      "family": "a",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.64)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.64)"
+    },
+    "ccx-newpage": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-left": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-kicker": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "ccx-reveal": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "on": {
+      "family": "on",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "seal-img": {
+      "family": "seal",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "ccx-h1": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "em": {
+      "family": "em",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(178, 58, 46)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(178, 58, 46)"
+    },
+    "ccx-lede": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(185, 173, 148)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(185, 173, 148)"
+    },
+    "ccx-composer": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(8, 11, 15, 0.72)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "starter-edit": {
+      "family": "starter",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "src-chip": {
+      "family": "src",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(234, 213, 164)",
+      "backgroundColor": "rgba(225, 202, 143, 0.12)",
+      "borderColor": "rgba(225, 202, 143, 0.3)"
+    },
+    "c-skill-ico": {
+      "family": "c",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(234, 213, 164)",
+      "backgroundColor": "rgba(225, 202, 143, 0.52)",
+      "borderColor": "rgba(225, 202, 143, 0.52)"
+    },
+    "c-skill-label": {
+      "family": "c",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(234, 213, 164)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(234, 213, 164)"
+    },
+    "c-x": {
+      "family": "c",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(234, 213, 164)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(234, 213, 164)"
+    },
+    "ccx-toolbar": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-tool": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-ico": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.62)"
+    },
+    "ccx-folder-wrap": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-folder-btn": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "ws-tool-ico": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.62)"
+    },
+    "ccx-send": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgb(238, 106, 89)",
+      "backgroundColor": "rgba(216, 56, 43, 0.16)",
+      "borderColor": "rgb(216, 56, 43)"
+    },
+    "ccx-right": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-swap": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-tcard": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 233, 221)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-tx": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-fr": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(90, 70, 40, 0.5)"
+    },
+    "ccx-cn": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(158, 43, 37, 0.6)"
+    },
+    "ccx-bd": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-top": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-idx": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(158, 43, 37)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(158, 43, 37)"
+    },
+    "ccx-ticon": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(122, 106, 72)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(122, 106, 72, 0.5)"
+    },
+    "ccx-meta": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-sub": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(158, 43, 37)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(158, 43, 37)"
+    },
+    "ccx-desc": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(93, 76, 51)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(93, 76, 51)"
+    },
+    "ccx-adopt": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(253, 243, 234)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(253, 243, 234)"
+    },
+    "ccx-tname": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(42, 38, 32)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(42, 38, 32)"
+    },
+    "top": {
+      "family": "top",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 233, 221)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ccx-toast": {
+      "family": "ccx",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(20, 28, 34, 0.92)",
+      "borderColor": "rgb(216, 56, 43)"
+    },
+    "ws-folder-modal-overlay": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(8, 10, 12, 0.55)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-folder-intro-modal": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "ws-folder-modal-icon": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(156, 133, 82)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "ws-folder-intro-point": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-folder-modal-foot": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "ws-folder-check": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(107, 95, 80)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(107, 95, 80)"
+    },
+    "ws-folder-modal-primary": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "3px 3px 3px 3px",
+      "color": "rgb(239, 231, 214)",
+      "backgroundColor": "rgb(47, 42, 34)",
+      "borderColor": "rgb(239, 231, 214)"
+    },
+    "ws-folder-modal-secondary": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "3px 3px 3px 3px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "disabled": {
+      "family": "disabled",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", \"PingFang SC\", system-ui, sans-serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgb(238, 106, 89)",
+      "backgroundColor": "rgba(216, 56, 43, 0.16)",
+      "borderColor": "rgb(216, 56, 43)"
+    },
+    "qa-skill-menu": {
+      "family": "qa",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(250, 246, 236)",
+      "borderColor": "rgba(120, 90, 50, 0.22)"
+    },
+    "qa-skill-row": {
+      "family": "qa",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "5px 5px 5px 5px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(120, 90, 50, 0.1)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-active": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "5px 5px 5px 5px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(120, 90, 50, 0.1)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qa-skill-ico": {
+      "family": "qa",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(168, 130, 63)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(168, 130, 63)"
+    },
+    "qa-skill-name": {
+      "family": "qa",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qa-skill-desc": {
+      "family": "qa",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 127, 110)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 127, 110)"
+    },
+    "web-page-frame--workspace": {
+      "family": "web",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-back-home": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.64)",
+      "backgroundColor": "rgba(18, 24, 31, 0.42)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "ws-doc-topbar": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-export-anchor": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-doc-btn": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.7)",
+      "backgroundColor": "rgba(18, 24, 31, 0.42)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "is-disabled": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.7)",
+      "backgroundColor": "rgba(18, 24, 31, 0.42)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "ws-body": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-left": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-chat": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "u-scope": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ink-bubble": {
+      "family": "ink-bubble",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "14px 14px 4px 14px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "ink-bubble--animate": {
+      "family": "ink-bubble",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "14px 14px 4px 14px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "wf-msg": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "14px 14px 4px 14px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "user": {
+      "family": "user",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "14px 14px 4px 14px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "ink-bubble__canvas": {
+      "family": "ink-bubble",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "ink-bubble__content": {
+      "family": "ink-bubble",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "ink-bubble__content--visible": {
+      "family": "ink-bubble",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "agent": {
+      "family": "agent",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "u-procdiv": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-procdiv-line": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(184, 169, 140, 0.16)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-procdiv-lbl": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-card-chev": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.3)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.3)"
+    },
+    "is-open": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.3)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.3)"
+    },
+    "ws-draft-card": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(59, 51, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgba(120, 90, 50, 0.22)"
+    },
+    "ws-draft-head": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(59, 51, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(59, 51, 34)"
+    },
+    "ws-draft-tag": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(178, 58, 46)",
+      "backgroundColor": "rgba(216, 56, 43, 0.1)",
+      "borderColor": "rgba(216, 56, 43, 0.32)"
+    },
+    "ws-draft-title": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(44, 36, 25)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(44, 36, 25)"
+    },
+    "ws-draft-body": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(59, 51, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(59, 51, 34)"
+    },
+    "ws-draft-body-inner": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(93, 76, 51)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(93, 76, 51)"
+    },
+    "ws-draft-foot": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 115, 80)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 115, 80)"
+    },
+    "ws-draft-count": {
+      "family": "ws",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 115, 80)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 115, 80)"
+    },
+    "ws-draft-status": {
+      "family": "ws",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(26, 127, 55)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(26, 127, 55)"
+    },
+    "tool": {
+      "family": "tool",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "999px 999px 999px 999px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(255, 255, 255, 0.04)",
+      "borderColor": "rgba(184, 169, 140, 0.16)"
+    },
+    "u-bar": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(255, 255, 255, 0.03)",
+      "borderColor": "rgba(184, 169, 140, 0.16)"
+    },
+    "u-ico": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-lbl": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.64)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.64)"
+    },
+    "u-seg": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-spacer": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "u-meta": {
+      "family": "u",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "ws-input-wrap": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-input-morph": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-morph-out": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-morph-hidden": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "wf-input": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(8, 11, 15, 0.72)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "chat-edit": {
+      "family": "chat",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "is-empty": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "ws-input-tools": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "wf-btn": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "small": {
+      "family": "small",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "ghost": {
+      "family": "ghost",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "ws-pill": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "ws-folder-wrap": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-folder-btn": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgba(236, 227, 208, 0.62)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "primary": {
+      "family": "primary",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgb(238, 106, 89)",
+      "backgroundColor": "rgba(216, 56, 43, 0.16)",
+      "borderColor": "rgb(216, 56, 43)"
+    },
+    "ws-right": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-nav": {
+      "family": "patch-nav",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(8, 11, 15, 0.72)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "pn-dot": {
+      "family": "pn",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(181, 154, 99)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "pn-label": {
+      "family": "pn",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "pn-ghost": {
+      "family": "pn",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(205, 191, 159)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(184, 169, 140, 0.28)"
+    },
+    "pn-commit": {
+      "family": "pn",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(26, 20, 16)",
+      "backgroundColor": "rgb(181, 154, 99)",
+      "borderColor": "rgb(181, 154, 99)"
+    },
+    "ws-paper-surface": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "wf-doc": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "wf-blockmark": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "insert": {
+      "family": "insert",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-canvas": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(251, 247, 238)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-canvas--preview": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(251, 247, 238)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "light": {
+      "family": "light",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "draggable": {
+      "family": "draggable",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "xyflow__viewport": {
+      "family": "xyflow__viewport",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "arrowclosed": {
+      "family": "arrowclosed",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "nopan": {
+      "family": "nopan",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "inactive": {
+      "family": "inactive",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-shell": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node--rect": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-shape-svg": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-shape-fill": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-selection-ring": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-hover-ring": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-node-label": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-handle-slot": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-handle-slot--t": {
+      "family": "graph-diagram",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "nodrag": {
+      "family": "nodrag",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "graph-diagram-handle": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "graph-diagram-handle--t": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "target": {
+      "family": "target",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "connectableend": {
+      "family": "connectableend",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "source": {
+      "family": "source",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "connectablestart": {
+      "family": "connectablestart",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "graph-diagram-handle-slot--r": {
+      "family": "graph-diagram",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-handle--r": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "graph-diagram-handle-slot--b": {
+      "family": "graph-diagram",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-handle--b": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "graph-diagram-handle-slot--l": {
+      "family": "graph-diagram",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-handle--l": {
+      "family": "graph-diagram",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "100% 100% 100% 100%",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(53, 97, 157)",
+      "borderColor": "rgb(255, 250, 240)"
+    },
+    "dots": {
+      "family": "dots",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "graph-diagram-viewbar": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(255, 255, 255, 0.92)",
+      "borderColor": "rgba(55, 45, 32, 0.12)"
+    },
+    "right": {
+      "family": "right",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(255, 255, 255, 0.92)",
+      "borderColor": "rgba(55, 45, 32, 0.12)"
+    },
+    "graph-diagram-export": {
+      "family": "graph-diagram",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-hover-popup": {
+      "family": "patch-hover",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(255, 253, 248)",
+      "borderColor": "rgba(120, 90, 50, 0.16)"
+    },
+    "patch-popup-num": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(179, 167, 145)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(179, 167, 145)"
+    },
+    "patch-popup-info": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 127, 110)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 127, 110)"
+    },
+    "patch-popup-actions": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-popup-btn": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "Arial",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgba(120, 90, 50, 0.28)"
+    },
+    "ws-colophon": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "is-placeholder": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-colophon-date": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(44, 36, 25)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(44, 36, 25)"
+    },
+    "ws-colophon-glyph": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(44, 36, 25)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(44, 36, 25)"
+    },
+    "ws-colophon-countcol": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-colophon-count": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(44, 36, 25)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(44, 36, 25)"
+    },
+    "ws-colophon-seal": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "QingYanShiSubset, \"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-edit-lock": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-edit-lock-hint": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "999px 999px 999px 999px",
+      "color": "rgb(243, 234, 214)",
+      "backgroundColor": "rgba(38, 32, 22, 0.9)",
+      "borderColor": "rgb(243, 234, 214)"
+    },
+    "ws-edit-lock-hint-dot": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(243, 234, 214)",
+      "backgroundColor": "rgb(216, 184, 106)",
+      "borderColor": "rgb(243, 234, 214)"
+    },
+    "native-presentation-shell": {
+      "family": "native",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "tiptap": {
+      "family": "tiptap",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "react-renderer": {
+      "family": "react",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "node-diagram": {
+      "family": "node",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "doc-toolbar": {
+      "family": "doc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(47, 42, 34)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "dt-group": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "dt-dropdown": {
+      "family": "dt",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "dt-btn": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 236, 224)"
+    },
+    "dt-lbl": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 236, 224)"
+    },
+    "dt-caret": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(255, 255, 255, 0.6)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(255, 255, 255, 0.6)"
+    },
+    "dt-divider": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(255, 255, 255, 0.22)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "dt-svg": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 236, 224)"
+    },
+    "dt-code-icon": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "5px 5px 5px 5px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgba(255, 255, 255, 0.08)",
+      "borderColor": "rgba(255, 255, 255, 0.28)"
+    },
+    "dt-hi-lbl": {
+      "family": "dt",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(243, 236, 224)"
+    },
+    "dt-hi-bar": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "1px 1px 1px 1px",
+      "color": "rgb(243, 236, 224)",
+      "backgroundColor": "rgb(255, 243, 163)",
+      "borderColor": "rgb(243, 236, 224)"
+    },
+    "dt-ai": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "4px 4px 4px 4px",
+      "color": "rgb(255, 255, 255)",
+      "backgroundColor": "rgb(168, 130, 63)",
+      "borderColor": "rgb(255, 255, 255)"
+    },
+    "dt-ai-ico": {
+      "family": "dt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(255, 255, 255)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(255, 255, 255)"
+    },
+    "bigplan-panel": {
+      "family": "bigplan",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-head": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "sub": {
+      "family": "sub",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(156, 133, 82)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(156, 133, 82)"
+    },
+    "bp-body": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-q": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-q-enter": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-q-head": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-q-num": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(243, 236, 219)",
+      "backgroundColor": "rgb(156, 133, 82)",
+      "borderColor": "rgb(243, 236, 219)"
+    },
+    "bp-q-title": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-q-kind": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "2px 2px 2px 2px",
+      "color": "rgb(138, 127, 110)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "bp-opts": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "bp-opt": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.14)"
+    },
+    "has-desc": {
+      "family": "has",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.14)"
+    },
+    "bp-opt-label": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(92, 83, 70)"
+    },
+    "bp-opt-desc": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 127, 110)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 127, 110)"
+    },
+    "bp-other": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(92, 83, 70)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.14)"
+    },
+    "au-slider": {
+      "family": "au",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "au-slider-input": {
+      "family": "au",
+      "staticVerdict": "reachable",
+      "fontFamily": "Arial",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(157, 150, 142)",
+      "backgroundColor": "rgb(255, 255, 255)",
+      "borderColor": "rgb(157, 150, 142)"
+    },
+    "au-slider-value": {
+      "family": "au",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0.03)",
+      "borderColor": "rgba(120, 90, 50, 0.26)"
+    },
+    "au-slider-scale": {
+      "family": "au",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(179, 167, 145)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(179, 167, 145)"
+    },
+    "bp-ta": {
+      "family": "bp",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(120, 90, 50, 0.14)"
+    },
+    "bp-acts": {
+      "family": "bp",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(16, 21, 26, 0.56)",
+      "borderColor": "rgba(184, 169, 140, 0.34)"
+    },
+    "ws-float-bar": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(16, 21, 26, 0.56)",
+      "borderColor": "rgba(184, 169, 140, 0.34)"
+    },
+    "ws-float-bar-label": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "ws-float-bar-dot": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "50% 50% 50% 50%",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgb(181, 154, 99)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "ws-float-bar-spacer": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "doc-ver-toast": {
+      "family": "doc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "8px 8px 8px 8px",
+      "color": "rgb(255, 255, 255)",
+      "backgroundColor": "rgb(59, 107, 58)",
+      "borderColor": "rgb(255, 255, 255)"
+    },
+    "show-sb": {
+      "family": "show",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-think-marquee": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "ws-think-head": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "chat-loading-dots": {
+      "family": "chat",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "ws-think-label": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(0, 0, 0, 0)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(0, 0, 0, 0)"
+    },
+    "is-agent-active": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(8, 11, 15, 0.72)",
+      "borderColor": "rgba(184, 169, 140, 0.46)"
+    },
+    "ws-think-text": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgba(236, 227, 208, 0.44)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.44)"
+    },
+    "ws-export-menu": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(16, 21, 26, 0.62)",
+      "borderColor": "rgba(200, 169, 106, 0.34)"
+    },
+    "ws-export-item": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgba(236, 227, 208, 0.84)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgba(236, 227, 208, 0.84)"
+    },
+    "ws-export-sep": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ws-export-item--platform": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "7px 7px 7px 7px",
+      "color": "rgb(200, 169, 106)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(200, 169, 106)"
+    },
+    "workspace-tooltip": {
+      "family": "workspace",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgba(246, 239, 221, 0.92)",
+      "backgroundColor": "rgba(31, 27, 21, 0.9)",
+      "borderColor": "rgba(184, 169, 140, 0.26)"
+    },
+    "is-visible": {
+      "family": "is",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgba(246, 239, 221, 0.92)",
+      "backgroundColor": "rgba(31, 27, 21, 0.9)",
+      "borderColor": "rgba(184, 169, 140, 0.26)"
+    },
+    "wf-toast": {
+      "family": "wf",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Sans SC\", Inter, -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", \"Segoe UI\", system-ui, sans-serif",
+      "borderRadius": "10px 10px 10px 10px",
+      "color": "rgb(255, 255, 255)",
+      "backgroundColor": "rgba(28, 28, 30, 0.92)",
+      "borderColor": "rgb(255, 255, 255)"
+    },
+    "chat-chip": {
+      "family": "chat",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(184, 169, 140, 0.15)",
+      "borderColor": "rgba(184, 169, 140, 0.34)"
+    },
+    "c-ico": {
+      "family": "c",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(143, 176, 196)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(143, 176, 196)"
+    },
+    "c-label": {
+      "family": "c",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 228, 212)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 228, 212)"
+    },
+    "wf-patch-ins-wrap": {
+      "family": "wf-patch",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "3px 3px 3px 3px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "color(srgb 0.658824 0.509804 0.247059 / 0.14)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "wf-patch-ins": {
+      "family": "wf-patch",
+      "staticVerdict": "dev-only",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-popup-row": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-popup-k": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(179, 167, 145)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(179, 167, 145)"
+    },
+    "patch-popup-orig": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "patch-popup-del-seg": {
+      "family": "patch-popup",
+      "staticVerdict": "test-only",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(168, 65, 58)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(168, 65, 58)"
+    },
+    "patch-popup-ctx": {
+      "family": "patch-popup",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(179, 167, 145)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(179, 167, 145)"
+    },
+    "doc-empty": {
+      "family": "doc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qing-empty": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgb(239, 231, 214)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qing-col": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qing-stage": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "qing-ch": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(154, 144, 129)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(154, 144, 129)"
+    },
+    "qing-center": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(168, 130, 63)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(168, 130, 63)"
+    },
+    "qing-tag": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(107, 98, 86)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(107, 98, 86)"
+    },
+    "qing-tag-inner": {
+      "family": "qing",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(107, 98, 86)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(107, 98, 86)"
+    },
+    "qt-title": {
+      "family": "qt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(107, 98, 86)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(107, 98, 86)"
+    },
+    "qt-author": {
+      "family": "qt",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Songti SC\", STSong, SimSun, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(107, 98, 86)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(107, 98, 86)"
+    },
+    "sfx-seg": {
+      "family": "sfx",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "sfx-blur": {
+      "family": "sfx",
+      "staticVerdict": "dead",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(236, 227, 208)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(236, 227, 208)"
+    },
+    "ws-draft-brewing": {
+      "family": "ws",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 115, 80)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 115, 80)"
+    },
+    "ws-draft-target": {
+      "family": "ws",
+      "staticVerdict": "UNDEFINED-in-css",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(138, 115, 80)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(138, 115, 80)"
+    },
+    "native-presentation-active": {
+      "family": "native",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "native-presentation-vignette": {
+      "family": "native",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "native-char-enter": {
+      "family": "native",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "ai-cursor": {
+      "family": "ai",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "native-presentation-cursor": {
+      "family": "native",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "human-cursor-layer": {
+      "family": "human",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "hc-cursor": {
+      "family": "hc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "hc-arrow": {
+      "family": "hc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "0px 0px 0px 0px",
+      "color": "rgb(47, 42, 34)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "borderColor": "rgb(47, 42, 34)"
+    },
+    "hc-name": {
+      "family": "hc",
+      "staticVerdict": "reachable",
+      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
+      "borderRadius": "6px 6px 6px 6px",
+      "color": "rgb(255, 255, 255)",
+      "backgroundColor": "rgb(181, 138, 62)",
+      "borderColor": "rgb(255, 255, 255)"
+    }
+  },
+  "deadCandidatesByFamily": {
+    "ws": [
+      "ws-cred-actions",
+      "ws-cred-badge",
+      "ws-cred-field",
+      "ws-cred-head",
+      "ws-cred-help",
+      "ws-cred-input",
+      "ws-cred-intro",
+      "ws-cred-label",
+      "ws-cred-modal",
+      "ws-cred-modal-head",
+      "ws-cred-overlay",
+      "ws-cred-platform",
+      "ws-cred-saved",
+      "ws-cred-title"
+    ],
+    "gx": [
+      "gx-col-src",
+      "gx-detail-toggle",
+      "gx-flat",
+      "gx-itool",
+      "gx-itool-detail",
+      "gx-itool-ico",
+      "gx-itool-lbl",
+      "gx-itool-muted",
+      "gx-itool-out",
+      "gx-itool-row",
+      "gx-itool-seg",
+      "gx-itool-spacer",
+      "gx-itool-toggle",
+      "gx-revamp"
+    ],
+    "graph-diagram": [
+      "graph-diagram-context--above",
+      "graph-diagram-context--below",
+      "graph-diagram-handle-add--b",
+      "graph-diagram-handle-add--l",
+      "graph-diagram-handle-add--r",
+      "graph-diagram-handle-add--t",
+      "graph-diagram-node--circle",
+      "graph-diagram-node--diamond",
+      "graph-diagram-node--doublecircle",
+      "graph-diagram-node--hexagon",
+      "graph-diagram-node--parallelogram"
+    ],
+    "md": [
+      "md-dot--idle"
+    ],
+    "patch-popup": [
+      "patch-popup-arrow",
+      "patch-popup-bullet",
+      "patch-popup-change-label",
+      "patch-popup-change-list",
+      "patch-popup-deleted",
+      "patch-popup-mark-op",
+      "patch-popup-new-text",
+      "patch-popup-old-text",
+      "patch-popup-preview"
+    ],
+    "face": [
+      "face-back",
+      "face-bottom",
+      "face-front",
+      "face-left",
+      "face-right",
+      "face-top"
+    ],
+    "wf": [
+      "wf-blockmark-del",
+      "wf-blockmark-del-line",
+      "wf-row-diff-list",
+      "wf-table-diff",
+      "wf-task-cb-change"
+    ],
+    "ProseMirror": [
+      "ProseMirror-dropcursor",
+      "ProseMirror-gapcursor",
+      "ProseMirror-selectednode"
+    ],
+    "is": [
+      "is-new",
+      "is-old"
+    ],
+    "patch": [
+      "patch-del-cursor"
+    ],
+    "pm": [
+      "pm-column-drop-target--left",
+      "pm-column-drop-target--right",
+      "pm-math-error"
+    ],
+    "pm-diagram": [
+      "pm-diagram-fullscreen",
+      "pm-diagram-fullscreen-body",
+      "pm-diagram-fullscreen-close"
+    ],
+    "rs": [
+      "rs-ico",
+      "rs-lbl",
+      "rs-st"
+    ],
+    "u": [
+      "u-scrollbox--code",
+      "u-scrollbox--output"
+    ],
+    "wf-patch": [
+      "wf-patch-del-marker",
+      "wf-patch-ins-head"
+    ],
+    "hc": [
+      "hc-edge-bottom",
+      "hc-edge-top"
+    ],
+    "svg": [
+      "svg-ico",
+      "svg-lbl"
+    ],
+    "connectingfrom": [
+      "connectingfrom"
+    ],
+    "connectingto": [
+      "connectingto"
+    ],
+    "cube": [
+      "cube-face"
+    ],
+    "react-flow": [
+      "react-flow__selection"
+    ],
+    "selectedCell": [
+      "selectedCell"
+    ],
+    "tbl": [
+      "tbl-cell-sel"
+    ],
+    "tiptap": [
+      "tiptap-mathematics-render--editable"
+    ]
+  },
+  "devOnlyByFamily": {
+    "gx": [
+      "gx-3col",
+      "gx-clearbtn",
+      "gx-col-copy",
+      "gx-col-no",
+      "gx-col-note",
+      "gx-col-render",
+      "gx-col-state",
+      "gx-col-stream",
+      "gx-col-table",
+      "gx-copy",
+      "gx-copy-empty",
+      "gx-copybar",
+      "gx-copybtn",
+      "gx-custom-note",
+      "gx-dead-note",
+      "gx-diagram-sample",
+      "gx-group-meta",
+      "gx-group-row",
+      "gx-legend",
+      "gx-ministate",
+      "gx-note",
+      "gx-notecell",
+      "gx-qtag",
+      "gx-quick",
+      "gx-render",
+      "gx-revamp-col",
+      "gx-sample",
+      "gx-savehint",
+      "gx-scope",
+      "gx-settled",
+      "gx-src",
+      "gx-srcline",
+      "gx-state-kind",
+      "gx-state-name",
+      "gx-stream-head",
+      "gx-stream-head--revamp",
+      "gx-stream-sub",
+      "gx-sub",
+      "gx-table",
+      "gx-title",
+      "gx-view"
+    ],
+    "uk": [
+      "uk-body",
+      "uk-cap",
+      "uk-cell",
+      "uk-col",
+      "uk-dark",
+      "uk-diagram-sample",
+      "uk-en",
+      "uk-font-line",
+      "uk-group",
+      "uk-idx",
+      "uk-meta",
+      "uk-nav",
+      "uk-portal",
+      "uk-root",
+      "uk-row",
+      "uk-section",
+      "uk-spec-tiles",
+      "uk-stage",
+      "uk-sub",
+      "uk-swatch",
+      "uk-swatches",
+      "uk-tile",
+      "uk-top"
+    ],
+    "dbg": [
+      "dbg-back",
+      "dbg-btn",
+      "dbg-desc",
+      "dbg-error",
+      "dbg-head",
+      "dbg-item",
+      "dbg-list",
+      "dbg-meta",
+      "dbg-name",
+      "dbg-raw",
+      "dbg-row",
+      "dbg-section",
+      "dbg-title",
+      "dbg-truncated"
+    ],
+    "sp": [
+      "sp-h1",
+      "sp-h2",
+      "sp-head",
+      "sp-hint",
+      "sp-row",
+      "sp-rowbody",
+      "sp-rowlbl",
+      "sp-scope",
+      "sp-section",
+      "sp-sub",
+      "sp-turn",
+      "sp-view",
+      "sp-wrap"
+    ],
+    "u": [
+      "u-cite",
+      "u-detail",
+      "u-flat",
+      "u-source",
+      "u-source-host",
+      "u-source-main",
+      "u-source-tag",
+      "u-source-thumb",
+      "u-source-title",
+      "u-user",
+      "u-userchip",
+      "u-userwrap"
+    ],
+    "wf": [
+      "wf-sel"
+    ],
+    "svg": [
+      "svg-card",
+      "svg-error"
+    ],
+    "debug": [
+      "debug-page"
+    ],
+    "lbl": [
+      "lbl"
+    ],
+    "rs": [
+      "rs-card"
+    ],
+    "val": [
+      "val"
+    ]
+  }
+}

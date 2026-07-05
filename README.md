@@ -1,0 +1,182 @@
+# 青简 qingagent
+
+> 本地优先的 AI 中文写作工作台:对话式起稿、逐条审改、宋体暖纸的排版审美,文档始终在你自己手里。
+
+【徽章位:MIT License · CI · Latest Release】
+
+【主截图:工作台全景——左侧对话流式生成,右侧文档同步成稿】
+
+qingagent is a local-first AI writing workbench for Chinese long-form content: chat-driven drafting, reviewable AI edits with per-change accept/reject, and high-fidelity export. Self-host it with a single DeepSeek API key, or grab the desktop app.
+
+## 为什么是青简
+
+**文档是一等公民,不是聊天记录的副产品。** AI 起的稿落进真正的富文本编辑器;此后每一次 AI 修改都以候选 diff 呈现,你逐条采纳或拒绝,版本可回滚。不满意的改动永远进不了正文。
+
+**为中文写作而生的排版。** 宋体、暖纸、直角的界面语言,写作过程即所见即所得;导出 PDF/Word 保持同一套观感,写完即交付。
+
+**本地优先,自带钥匙。** 文档与会话存在本机数据库;一把 DeepSeek API Key 即可自托管,不经过任何中间服务器;源码构建零遥测。
+
+## 功能亮点
+
+- **对话驱动写稿**:开场问卷收敛需求 → 初稿多路并发择优 → 流式成稿
+- **审核制改稿**:AI 修改先出 diff 候选,采纳才落盘,支持局部采纳
+- **富内容**:多级列表、表格、Mermaid 图表、AI 生成配图(SVG)
+- **素材区**:本地文件解析(PDF/Word/图片)、网络搜索与网页抓取入稿
+- **技能系统**:飞书文档/多维表格等集成,输入框 chip 一点即用
+- **观察记忆**:长会话跨几十轮不忘早期细节(可选开启)
+- **高保真导出**:PDF(Chromium 渲染)/ Word / Markdown / HTML
+- **双形态**:桌面客户端(Windows/macOS)与自托管 Web
+
+【截图位 ×3:审核 diff 采纳 · 素材区解析 · 导出效果对比】
+
+## 快速开始(自托管 Web)
+
+前置:Node >= 22、pnpm 9、一把 [DeepSeek API Key](https://platform.deepseek.com)。
+
+```bash
+# One-time
+corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+git clone https://github.com/from-void/qingagent.git
+cd qingagent
+pnpm install
+
+cp packages/server/.env.example packages/server/.env
+# 编辑 packages/server/.env,填入:DEEPSEEK_API_KEY=sk-...
+
+pnpm dev:server   # 后端 http://127.0.0.1:8080
+pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
+```
+
+打开 `http://localhost:5173`,新建会话即可开写。
+
+桌面端:到 Releases 下载安装包(macOS 为免签名 zip,首次打开按系统提示放行;Docker 部署规划中)。
+
+## 配置参考
+
+单机自用零配置即可跑;下表按需取用,安全相关变量见下方《安全声明(Security)》。
+
+**基础**
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | 必填 | DeepSeek API 密钥(也可在应用设置里按访客填) |
+| `PORT` | `8080` | 后端端口 |
+| `QINGAGENT_DEEPSEEK_BASE_URL` | 官方端点 | 自定义模型网关 |
+| `QINGAGENT_MODEL_FLASH` / `QINGAGENT_MODEL_PRO` | deepseek 系 | 快/强两档模型 id |
+| `QINGAGENT_MODEL_PROTOCOL` | `openai` | 模型协议(`openai`/`anthropic`) |
+
+**功能开关**
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `QINGAGENT_AGENT_BROWSER` | 关 | Agent 浏览器抓取;需 `npx playwright install chromium`(缺失时优雅降级) |
+| `QINGAGENT_OM_SIDECAR` | 关 | 观察记忆(长会话) |
+| `QINGAGENT_OM_COMPRESS` | 关 | 超长上下文压缩投影(阈值 `QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS`,默认 160k) |
+| `QINGAGENT_TOOL_SEARCH` | 关 | 低频工具按需检索(省上下文,略增延迟) |
+| `QINGAGENT_PYODIDE_ENABLED` | 开 | Python 沙箱(数据处理技能用) |
+| `QINGAGENT_PROCESSOR_PROMPT_INJECTION` / `_MODERATION` / `_PII` | 关 | LLM 输入护栏三件套 |
+
+**运维进阶**
+
+| 变量 | 作用 |
+|---|---|
+| `QINGAGENT_BROWSER_*` | CDP_URL / HEADFUL / ALLOW_DOMAINS / STORAGE_STATE / PROFILE_DIR(`agentBrowser.ts`) |
+| `QINGAGENT_PREFIX_CACHE_GUARD` | 前缀缓存守卫 off/warn/strict(默认 warn,CI strict) |
+| `QINGAGENT_AGENT_MAX_STEPS` / `QINGAGENT_AGENT_IDLE_TIMEOUT_MS` | agent 单轮步数上限 / 空闲超时 |
+| `QINGAGENT_USER_VERSION_WINDOW_MS` | 用户编辑版本折叠窗口(默认 60000,0 关闭) |
+| `QINGAGENT_SKILLS_DIR` / `QINGAGENT_USER_SKILLS_DIR` / `QINGAGENT_LOG_DIR` | 路径覆盖 |
+
+## 架构一览
+
+```
+apps/web        Vite + React SPA(:5173,/api 代理到后端)
+packages/server Hono HTTP 服务(:8080,libsql 持久化 + DuckDB 观测)
+packages/core   Mastra agent 大脑:工具/技能/浏览器/导出/记忆
+apps/desktop    Electron 壳(内嵌 server,数据落 userData)
+packages/contract-ts 手写前后端契约类型
+```
+
+一句话数据流:用户消息 → Hono SSE → Mastra agent(DeepSeek)→ AI-IR 草稿工具(askUser 问卷 → writeDraft / editDraft)→ 候选-diff(用户确认 → 乐观并发落版本)→ TipTap/ProseMirror 富文本渲染。生成由服务端自驱动,断连不停。
+
+## 安全声明(Security)
+
+qingagent 是单用户自托管产品,不提供多租户或多用户隔离。信任模型很直接:能访问后端 API 的人,就等同于拥有你的全部文档数据,并能消耗你配置的模型 key 用量。
+
+默认安全边界是本机回环:后端默认只监听 `127.0.0.1`,只允许本机访问;桌面端开箱即是这个形态。要让外部设备或公网访问,必须由部署者显式改配置并承担对应加固责任。
+
+不要把端口直接暴露到公网且不设置 `QINGAGENT_AUTH_TOKEN`。这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额;如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,还会扩大到在你的机器上执行命令的风险。不要这样做。
+
+推荐的公网形态是:nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。生成 token 示例:
+
+```bash
+openssl rand -hex 32
+```
+
+服务端环境变量示例:
+
+```bash
+QINGAGENT_HOST=127.0.0.1
+QINGAGENT_AUTH_TOKEN=<openssl rand -hex 32 的输出>
+QINGAGENT_TRUSTED_ORIGINS=https://你的域名
+QINGAGENT_PUBLIC_DEPLOYMENT=1
+```
+
+最小 nginx server 块示例(反代到本机 `127.0.0.1:8080`,透传 Host/Origin,SSE 关闭缓冲):
+
+```nginx
+server {
+    listen 80;
+    server_name 你的域名;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name 你的域名;
+
+    ssl_certificate /etc/letsencrypt/live/你的域名/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/你的域名/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+配置速查:
+
+| 变量 | 默认值 | 作用 |
+|---|---|---|
+| `QINGAGENT_AUTH_TOKEN` | 未设置 | 可选 API token。未设置时本机零配置直通;公网部署必须设置强随机值。 |
+| `QINGAGENT_TRUSTED_ORIGINS` | 空;内置 localhost/127.0.0.1/::1 | 额外可信 Origin,多个值用逗号分隔。公网反代建议设为 `https://你的域名`。 |
+| `QINGAGENT_HOST` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
+| `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |
+| `QINGAGENT_ENABLE_DEBUG` | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
+| `DATABASE_URL` | `file:./qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
+| `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启等同扩大 RCE 面。 |
+| `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启会把凭据注入执行环境,等同扩大 RCE 面。 |
+| `QINGAGENT_ALLOW_SKILL_MUTATION` | 关闭 | 高危能力,仅显式 `=1` 开启。允许安装/删除技能,公网开启等同扩大 RCE 面。 |
+
+数据与备份:默认服务端数据库是 `DATABASE_URL` 指向的 libsql 文件,未设置时为 `file:./qingagent.db`;桌面端数据库位于 Electron `userData` 目录下的 `qingagent.db`。备份时复制该数据库文件;如果同目录存在 `qingagent.db-wal` / `qingagent.db-shm`,也一并复制或先停服务再备份。沙箱凭据存放在同库的 `sandbox_credentials` 表中,值加密落库;备份数据库即同时备份这些凭据密文。
+
+漏洞报告渠道见 [SECURITY.md](SECURITY.md)。请不要在公开 issue 中披露未修复漏洞。
+
+## 隐私与遥测
+
+- 源码构建 / 本地构建:**零遥测**,源码内不含任何上报端点。
+- 官方桌面发布包:匿名使用统计(启动/功能点击/脱敏报错,自托管 Umami),**不采集文档正文、聊天输入、附件内容或 API Key**;设置 `QINGAGENT_TELEMETRY_DISABLED=1` 一键关闭。
+- 细则与全部事件字段见 [PRIVACY.md](./PRIVACY.md)。
+
+## 贡献 / 安全 / 许可证
+
+- 参与开发:[CONTRIBUTING.md](./CONTRIBUTING.md) · 行为准则:[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- 安全漏洞:请发 security@qingagent.com,勿开公开 issue,详见 [SECURITY.md](./SECURITY.md)
+- 许可证:[MIT](./LICENSE);捆绑第三方组件声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)

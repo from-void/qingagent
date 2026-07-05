@@ -1,0 +1,37 @@
+/* 最终设计 demo 页(#/spec)布局。配色 token 复用 .ws-left ink 皮肤;
+   组件样式来自 revampUi.css(.u-*)。此处只管页面骨架。 */
+.sp-view { height: 100vh; overflow-y: auto; }
+
+#view-workspace .ws-left.sp-scope {
+  flex: 1 1 auto !important;
+  max-width: none !important;
+  width: auto !important;
+  display: block !important;
+  overflow: visible !important;
+  height: auto;
+}
+
+.sp-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 40px 20px 140px;
+  font-family: var(--font-zh-serif);
+}
+
+.sp-head { margin-bottom: 30px; }
+.sp-h1 { font-size: 22px; font-weight: 700; color: var(--ink-1); margin: 0 0 6px; letter-spacing: 0.02em; }
+.sp-sub { font-size: 13px; color: var(--ink-3); line-height: 1.7; margin: 0; }
+
+.sp-section { margin: 0 0 38px; }
+.sp-h2 {
+  font-size: 15px; font-weight: 600; color: var(--ink-1);
+  margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line-1);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.sp-hint { font-size: 11.5px; font-weight: 400; color: var(--ink-3); line-height: 1.5; }
+
+.sp-row { margin: 0 0 18px; }
+.sp-rowlbl { font-size: 11px; color: var(--ink-4); font-family: var(--font-mono); margin: 0 0 6px; letter-spacing: 0.02em; }
+.sp-rowbody { /* 统一组件在此渲染,宽度即对话容器宽 */ }
+
+.sp-turn { border: 1px dashed rgba(184, 169, 140, 0.18); padding: 12px 14px; background: rgba(8, 11, 15, 0.3); }

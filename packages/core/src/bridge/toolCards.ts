@@ -1,0 +1,467 @@
+import type {
+  AskUserQuestionKind,
+  AskUserSliderSpec,
+  CommandCardBody,
+  DiffHunk,
+  DocSuggestion,
+  ResearchCardBody,
+  ToolCallSpec,
+  ToolCallStatus,
+  WriteDraftCardBody,
+} from "@qingagent/contract-ts";
+import { Buffer } from "node:buffer";
+import { assessCommand } from "../workspace/commandRisk.js";
+import { createSuggestionFromDiffHunk } from "./draftReviewSuggestions.js";
+import {
+  redactSensitiveText,
+  redactedJsonText,
+  redactedSerializedText,
+} from "./redaction.js";
+import type { SessionState } from "./sessionState.js";
+
+function commandPolicyBlockFromOutput(output: string): { title: string; icon: string; reason: string } | null {
+  const trimmed = output.trimStart();
+  if (trimmed.startsWith("命令已被拒绝:")) {
+    return { title: "命令被拦截", icon: "🚫", reason: trimmed };
+  }
+  if (trimmed.startsWith("命令需要审批:")) {
+    return { title: "命令需要审批", icon: "⚠️", reason: trimmed };
+  }
+  return null;
+}
+
+export function commandCardStatusFromCard(card: CommandCardBody): ToolCallStatus {
+  if (card.phase === "done") return { kind: "done" };
+  return {
+    kind: "failed",
+    data: {
+      retriable: false,
+      reason: card.outputTail || "命令未执行",
+    },
+  };
+}
+
+/** 执行命令工具结束时定格成友好终端卡。命令原文与输出脱敏后藏详情,标题用人话。 */
+export function commandCardFromResult(
+  args: Record<string, unknown>,
+  toolResult: unknown,
+  ok: boolean,
+): CommandCardBody {
+  const rawCommand = typeof args.command === "string" ? args.command : "";
+  const command = redactSensitiveText(rawCommand);
+  // 结果可能是字符串(stdout)或 {output}/对象;取文本并脱敏
+  const outRaw = redactedJsonText(toolResult ?? "");
+  // 退出码:原版失败时结果含 "Exit code: N"
+  const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
+  // 工具 catch 路径返回 "Error: <msg>"(无 Exit code 行),不能因为没退出码就当成功
+  // (R10 codex-3:Error 前缀无 Exit code 被误渲完成态)。
+  const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
+  const exitCode = exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1;
+  const policyBlock = commandPolicyBlockFromOutput(outRaw);
+  if (policyBlock) {
+    return {
+      title: policyBlock.title,
+      icon: policyBlock.icon,
+      command,
+      exitCode: 1,
+      outputTail: policyBlock.reason.slice(-600),
+      phase: "failed",
+    };
+  }
+  const verdict = assessCommand(rawCommand);
+  // 本卡是 tool-result 的定格,标题描述实际结果;安全态占位标题归一成"运行命令"。
+  const cardTitle =
+    verdict.risk === "deny" || (verdict.risk === "safe" && verdict.title === "执行操作")
+      ? "运行命令"
+      : verdict.title.replace(/^AI 想/, "");
+  return {
+    title: cardTitle,
+    icon: verdict.icon,
+    command,
+    exitCode,
+    outputTail: outRaw.slice(-600),
+    // "完成"的定义 = 命令真的跑起来并有产出,而非退出码为 0(用户口径)。退出码非零但有输出
+    // (如校验类命令)仍算已完成,退出码进详情区显示;只有 catch 路径(Error 前缀、根本没跑起来)
+    // 才算未完成。policy 拦截已在上面提前 return failed。
+    phase: looksLikeError ? "failed" : "done",
+  };
+}
+
+/** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,
+ *  复用 CommandCard 的可展开样式,让用户能看到并展开运行的脚本与输出(与沙箱命令卡样式统一)。 */
+export function scriptCardFromResult(
+  toolName: string,
+  args: Record<string, unknown>,
+  toolResult: unknown,
+  ok: boolean,
+): CommandCardBody {
+  const code = typeof args.code === "string" ? args.code : "";
+  const r = (toolResult ?? {}) as Record<string, unknown>;
+  const stdout = typeof r.stdout === "string" ? r.stdout : "";
+  const error = typeof r.error === "string" ? r.error : "";
+  const resultText =
+    r.result !== undefined && r.result !== null
+      ? typeof r.result === "string"
+        ? r.result
+        : JSON.stringify(r.result)
+      : "";
+  const output = redactedJsonText(
+    [stdout, resultText ? `=> ${resultText}` : "", error ? `Error: ${error}` : ""]
+      .filter(Boolean)
+      .join("\n"),
+  );
+  const failed = !ok || Boolean(error);
+  const isPython = toolName === "run_python";
+  return {
+    // 统一显示名:运行时 bar 与完成时 card 都叫「运行代码」,不暴露 JS/Python 实现细节。
+    title: "运行代码",
+    icon: isPython ? "PY" : "JS",
+    command: redactSensitiveText(code),
+    exitCode: failed ? 1 : 0,
+    outputTail: output.slice(-600),
+    phase: failed ? "failed" : "done",
+  };
+}
+
+/** 工具结束时把 writeDraft 出参定格成迷你草稿卡数据(done/failed)。 */
+export function writeDraftCardFromResult(
+  args: Record<string, unknown>,
+  toolResult: Record<string, unknown>,
+  ok: boolean,
+): WriteDraftCardBody {
+  const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+  return {
+    title: typeof args.title === "string" ? args.title : "",
+    phase: ok ? "done" : "failed",
+    charCount: num(toolResult.visibleCharCount) ?? num(toolResult.wordCount) ?? 0,
+    // 完成卡保留开头预览(直播/历史重开都有内容);拿不到则 null。
+    excerpt: typeof toolResult.previewExcerpt === "string" ? toolResult.previewExcerpt : null,
+    targetLength: num(toolResult.targetLength),
+    minLength: num(toolResult.minLength),
+    maxLength: num(toolResult.maxLength),
+    revisionCount: num(toolResult.revisionCount) ?? 0,
+    lengthStatus: typeof toolResult.lengthStatus === "string" ? toolResult.lengthStatus : null,
+  };
+}
+
+type GenerateSvgCardBody = Extract<ToolCallSpec["body"], { kind: "generateSvg" }>["data"];
+type GenerateSvgCardProgress = GenerateSvgCardBody["progress"];
+type GenerateSvgProgressData = NonNullable<GenerateSvgCardProgress>;
+
+export function generateSvgToolCallSpec(
+  toolCallId: string,
+  args: Record<string, unknown>,
+  status: ToolCallStatus,
+  result: ToolCallSpec["result"] = null,
+  progress: GenerateSvgCardProgress = null,
+): ToolCallSpec {
+  const description =
+    typeof args.description === "string"
+      ? args.description
+      : typeof args.prompt === "string"
+        ? args.prompt
+        : "";
+  return {
+    id: toolCallId,
+    name: "generateSvg",
+    render: { kind: "chatInline" },
+    status,
+    body: {
+      kind: "generateSvg",
+      data: {
+        prompt: description,
+        style: typeof args.style === "string" ? args.style : null,
+        aspect: typeof args.aspect === "string" ? args.aspect : null,
+        progress,
+      },
+    },
+    result,
+  };
+}
+
+export function normalizeGenerateSvgProgress(value: unknown): GenerateSvgProgressData | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const stage = record.stage;
+  if (
+    stage !== "starting" &&
+    stage !== "streaming" &&
+    stage !== "sanitizing" &&
+    stage !== "done" &&
+    stage !== "failed"
+  ) {
+    return null;
+  }
+  const elapsedMs = typeof record.elapsedMs === "number" && Number.isFinite(record.elapsedMs)
+    ? Math.max(0, Math.round(record.elapsedMs))
+    : 0;
+  const rawKb = typeof record.rawKb === "number" && Number.isFinite(record.rawKb)
+    ? Math.max(0, Math.round(record.rawKb * 10) / 10)
+    : 0;
+  return {
+    stage,
+    elapsedMs,
+    rawKb,
+    message: typeof record.message === "string" ? record.message : "",
+    error: typeof record.error === "string" && record.error ? record.error : null,
+    src: typeof record.src === "string" && record.src ? record.src : null,
+    width: typeof record.width === "number" && Number.isFinite(record.width) ? record.width : null,
+    height: typeof record.height === "number" && Number.isFinite(record.height) ? record.height : null,
+    partialSvg: typeof record.partialSvg === "string" && record.partialSvg ? record.partialSvg : null,
+  };
+}
+
+export function generateSvgProgressFromResult(result: Record<string, unknown>): GenerateSvgProgressData | null {
+  if (typeof result.src !== "string" || !result.src) return null;
+  return {
+    stage: "done",
+    elapsedMs: 0,
+    rawKb: typeof result.svg === "string" ? Math.round((Buffer.byteLength(result.svg, "utf8") / 1024) * 10) / 10 : 0,
+    message: "SVG 已生成",
+    error: null,
+    src: result.src,
+    width: typeof result.width === "number" && Number.isFinite(result.width) ? result.width : null,
+    height: typeof result.height === "number" && Number.isFinite(result.height) ? result.height : null,
+    partialSvg: null,
+  };
+}
+
+export function latestGenerateSvgProgress(
+  state: SessionState,
+  toolCallId: string,
+): GenerateSvgProgressData | null {
+  for (const message of state.chatHistory) {
+    const part = message.parts.find((p) => p.kind === "toolCall" && p.data.id === toolCallId);
+    if (part?.kind === "toolCall" && part.data.body.kind === "generateSvg") {
+      return part.data.body.data.progress;
+    }
+  }
+  return null;
+}
+
+export function readImageToolCallSpec(
+  toolCallId: string,
+  args: Record<string, unknown>,
+  status: ToolCallStatus,
+  result: ToolCallSpec["result"] = null,
+  thumbnailSrc: string | null = null,
+  excerpt: string | null = null,
+): ToolCallSpec {
+  return {
+    id: toolCallId,
+    name: "readImage",
+    render: { kind: "chatInline" },
+    status,
+    body: {
+      kind: "readImageCard",
+      data: {
+        prompt: typeof args.prompt === "string" ? args.prompt : "",
+        thumbnailSrc,
+        excerpt,
+      },
+    },
+    result,
+  };
+}
+
+export function researchCardToolCallSpec(
+  toolCallId: string,
+  data: ResearchCardBody,
+  status: ToolCallStatus,
+  result: ToolCallSpec["result"] = null,
+): ToolCallSpec {
+  return {
+    id: toolCallId,
+    name: "webSearch",
+    render: { kind: "chatInline" },
+    status,
+    body: {
+      kind: "researchCard",
+      data,
+    },
+    result,
+  };
+}
+
+export function qrCardToolCallSpec(
+  toolCallId: string,
+  args: Record<string, unknown>,
+  status: ToolCallStatus,
+): ToolCallSpec {
+  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const content = str(args.content);
+  if (!content) {
+    return {
+      id: toolCallId,
+      name: "show_qr",
+      render: { kind: "chatInline" },
+      status,
+      body: {
+        kind: "generic",
+        data: { argsJson: redactedSerializedText(args) },
+      },
+      result: status.kind === "done"
+        ? { kind: "genericText", data: "show_qr 缺少 content,无法渲染二维码" }
+        : null,
+    };
+  }
+  const expiresInSec =
+    typeof args.expiresInSec === "number" && Number.isFinite(args.expiresInSec) && args.expiresInSec > 0
+      ? args.expiresInSec
+      : 300;
+  // 用「收到工具调用的此刻」换算成绝对过期时间戳,前端据此倒计时——不受 agent 思考/网络/渲染延迟影响。
+  const expiresAt = Date.now() + expiresInSec * 1000;
+  return {
+    id: toolCallId,
+    name: "show_qr",
+    render: { kind: "chatInline" },
+    status,
+    body: {
+      kind: "qrCard",
+      data: {
+        content,
+        title: str(args.title),
+        code: str(args.code),
+        note: str(args.note),
+        expiresAt,
+        refreshQuery: str(args.refreshQuery) ?? "二维码过期了,请帮我重新生成",
+        confirmQuery: str(args.confirmQuery),
+        confirmLabel: str(args.confirmLabel),
+      },
+    },
+    result: null,
+  };
+}
+
+export const PURE_UI_TOOL_NAMES = new Set(["show_qr"]);
+
+/** 模型提问的语义意图（camelCase，与契约 AskUserPurpose / 工具 enum 一致）。 */
+export type AskUserPurposeKind = "initialBrief" | "quickClarification" | "directionChange";
+
+/**
+ * 由代码决定 askUser 的渲染形态——模型不再选择展示方式，只给出 purpose。
+ * 形态只由"阶段 + 语义"决定，与问题数量/类型无关：
+ * - 已问过一轮 → 浮层，避免重复占用右侧文档区
+ * - quickClarification → 浮层，局部澄清不切大表单
+ * - 首个 initialBrief / directionChange → 大表单（开写前方向建模 / 推翻重设）
+ * - 首轮空态兜底 → 大表单
+ * 注意：调用点必须在 state._askUserCompleted 被置真之前取 askedBefore，否则"首轮"判断失效。
+ */
+export function decideAskUserRenderMode(
+  purpose: AskUserPurposeKind | null | undefined,
+  docStateKind: string,
+  askedBefore: boolean,
+): "fullpage" | "overlay" {
+  if (askedBefore) return "overlay";
+  if (purpose === "quickClarification") return "overlay";
+  if (purpose === "initialBrief" || purpose === "directionChange") return "fullpage";
+  if (docStateKind === "empty") return "fullpage";
+  return "overlay";
+}
+
+export function askUserRenderModeFromSpec(
+  spec: ToolCallSpec | null | undefined,
+): "fullpage" | "overlay" | null {
+  if (spec?.body.kind !== "askUser") return null;
+  const mode = spec.body.data.mode.kind;
+  return mode === "fullpage" || mode === "overlay" ? mode : null;
+}
+
+export function askUserPurposeFromSpec(
+  spec: ToolCallSpec | null | undefined,
+): AskUserPurposeKind | null {
+  if (spec?.body.kind !== "askUser") return null;
+  const purpose = spec.body.data.purpose?.kind;
+  return purpose === "initialBrief" || purpose === "quickClarification" || purpose === "directionChange"
+    ? purpose
+    : null;
+}
+
+export function buildAskUserToolCallSpec(
+  toolCallId: string,
+  args: {
+    id: string;
+    renderMode: "fullpage" | "overlay";
+    purpose: AskUserPurposeKind | null;
+    source: string | null;
+    rationale: string | null;
+    questions: Array<{
+      id: string;
+      label: string;
+      kind: "single" | "multi" | "text" | "slider" | { kind: string };
+      options: Array<{
+        value: string;
+        label: string;
+        description: string | null;
+        preview: string | null;
+      }>;
+      placeholder: string | null;
+      /** F4 滑块配置(kind=slider 时存在),投影必须透传,否则前端 validator 拒收。 */
+      slider?: AskUserSliderSpec | null;
+    }>;
+  },
+  status: ToolCallStatus = { kind: "pending" },
+): ToolCallSpec {
+  return {
+    id: toolCallId,
+    name: "askUser",
+    render: { kind: "rightForm" },
+    status,
+    body: {
+      kind: "askUser",
+      data: {
+        id: args.id,
+        mode: { kind: args.renderMode },
+        purpose: args.purpose ? { kind: args.purpose } : null,
+        source: args.source === "null" ? null : (args.source ?? null),
+        rationale: args.rationale === "null" ? null : (args.rationale ?? null),
+        questions: args.questions.map((q) => ({
+          id: q.id,
+          label: q.label,
+          kind: (typeof q.kind === "object" ? q.kind : { kind: q.kind }) as AskUserQuestionKind,
+          options: q.options,
+          placeholder: q.placeholder,
+          // F4:slider 配置透传(无则缺省,旧问卷兼容)
+          ...(q.slider ? { slider: q.slider } : {}),
+        })),
+      },
+    },
+    result: null,
+  };
+}
+
+// ⚠️【勿删·铁律】docSuggestion 帧是右侧补丁审阅的数据骨架,不是死代码。
+// 这个 spec 经 toolCallUpdated 发到前端 → workspaceState 存 draft.toolCalls →
+// protocol.applyPatchOverlaysWithReport 构建绿色 diff/接受拒绝/patchSummary。
+// 删掉它的 emit(settleDraftCandidate/updatePatchVerdict/commitPatches/markSuggestionConflicts
+// 里的 yield toolCallUpdated(...docSuggestion...))会让整个右侧审阅失效——曾误删已回退。
+export function buildSuggestionToolCallSpec(
+  suggestion: DocSuggestion,
+  status: ToolCallStatus = { kind: "reviewing" },
+): ToolCallSpec {
+  return {
+    id: suggestion.id,
+    name: "docSuggestion",
+    render: { kind: "docInlinePatch" },
+    status,
+    body: {
+      kind: "docSuggestion",
+      data: {
+        kind: "suggestion",
+        data: suggestion,
+      },
+    },
+    result: suggestion.conflict
+      ? { kind: "genericText", data: suggestion.conflict.message }
+      : null,
+  };
+}
+
+export function suggestionFromDiffHunk(input: {
+  hunk: DiffHunk;
+  docId: string;
+  baseVersion: number;
+  baseSchemaVersion: number;
+}): DocSuggestion {
+  return createSuggestionFromDiffHunk(input);
+}

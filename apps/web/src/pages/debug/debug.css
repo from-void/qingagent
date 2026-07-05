@@ -1,0 +1,28 @@
+/* F7 debug 页:沿用全局 ink/line tokens,debug 取向从简。 */
+.debug-page{max-width:880px;margin:0 auto;padding:28px 24px 60px;color:var(--ink-1)}
+.debug-page .dbg-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.debug-page .dbg-back{
+  border:1px solid var(--line-2);background:transparent;border-radius:0;
+  padding:4px 10px;font-size:12.5px;color:var(--ink-2);cursor:pointer;
+}
+.debug-page .dbg-title{margin:0;font-size:17px;font-weight:600}
+.debug-page .dbg-section{margin:22px 0 8px;font-size:13px;font-weight:600;color:var(--ink-2)}
+.debug-page .dbg-list{list-style:none;margin:0;padding:0}
+.debug-page .dbg-item{padding:8px 2px;border-bottom:1px solid var(--line-1, rgba(0,0,0,.06))}
+.debug-page .dbg-row{display:flex;align-items:center;gap:10px}
+.debug-page .dbg-name{font-size:13px;font-weight:600}
+.debug-page .dbg-meta{font-size:11px;color:var(--ink-4);flex:1 1 auto}
+.debug-page .dbg-btn{
+  border:1px solid var(--line-2);background:transparent;border-radius:0;
+  padding:2px 10px;font-size:11.5px;color:var(--ink-2);cursor:pointer;flex-shrink:0;
+}
+.debug-page .dbg-btn:hover{border-color:var(--ink-3)}
+.debug-page .dbg-desc{margin:4px 0 0;font-size:12px;line-height:1.6;color:var(--ink-3)}
+.debug-page .dbg-truncated{margin:6px 0 0;font-size:11px;color:#8a5a00}
+.debug-page .dbg-raw{
+  margin:8px 0 2px;padding:10px 12px;border-radius:0;
+  background:var(--bg-2, rgba(0,0,0,.04));border:1px solid var(--line-1, rgba(0,0,0,.06));
+  font-size:11px;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;
+  max-height:420px;overflow-y:auto;
+}
+.debug-page .dbg-error{color:#b4231f;font-size:12.5px}

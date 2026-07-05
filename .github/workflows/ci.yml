@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm typecheck
+        run: pnpm -r typecheck
+
+      - name: pnpm build
+        run: pnpm -r --if-present build
+
+      # PDF 导出已改为 headless Chromium 渲染 HTML(packages/core toHtml + htmlToPdf)。
+      # 需要:① 中文字体(导出排版用 Noto Sans/Serif CJK,family 名为 "Noto Sans CJK SC"/"Noto Serif CJK SC");
+      #       ② Playwright 的 Chromium 二进制 + 系统依赖。没装 Chromium 时 PDF 烟测会自动 skip
+      #       (browserTestGate.ts 探测),装上即真正跑、覆盖真实 PDF 字节。
+      - name: install Noto CJK font (PDF export render)
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - name: install Playwright Chromium (PDF export render)
+        run: pnpm --filter @qingagent/core exec playwright install --with-deps chromium
+
+      - name: pnpm test
+        run: pnpm -r --if-present test
+
+      - name: deterministic scorers
+        run: pnpm scorers

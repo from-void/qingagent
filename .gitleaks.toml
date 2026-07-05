@@ -1,0 +1,41 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "feishu-base-resource-token"
+description = "Feishu/Lark Base resource token or URL"
+regex = '''(?i)(?:https://my[.]feishu[.]cn/base/|base_token\s*[:=]\s*["'`]?)([A-Za-z0-9]{18,})'''
+secretGroup = 1
+keywords = ["feishu.cn/base", "base_token"]
+
+[[rules]]
+id = "deepseek-api-key"
+description = "DeepSeek-style API key"
+regex = '''(?i)(?:DEEPSEEK_API_KEY\s*=\s*)?\b(sk-[A-Za-z0-9_-]{20,})'''
+secretGroup = 1
+keywords = ["DEEPSEEK_API_KEY", "sk-"]
+
+[[allowlists]]
+description = "Generated/dependency artifacts not part of source release"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)apps/(web|desktop)/dist/''',
+  '''(^|/)apps/desktop/(build|release)/''',
+  '''(^|/)packages/server/(qingagent\.db|observability\.duckdb).*''',
+  '''(^|/)uploads/'''
+]
+
+[[allowlists]]
+description = "Intentional fake secrets in redaction/security tests"
+condition = "AND"
+paths = [
+  '''(^|.*/)apps/desktop/redact\.test\.mjs$''',
+  '''(^|.*/)apps/web/src/.*/__tests__/''',
+  '''(^|.*/)packages/(core|server)/src/__tests__/''',
+  '''(^|.*/)e2e-sandbox/'''
+]
+regexes = [
+  '''(?i)(ABC[0-9A-Z]{6,}|tvly-secret|ds-secret|command[Ss]ecret|token-secret|ghp_headersecret)''',
+  '''(?i)sk-(deepseek-secret|testkey|proj_|proj-envSecret|js-direct|py-direct|header-secret|json-secret|live-|abcdefghijklmnopqrstuvwxyz)''',
+  '''(?i)(ya29\.A0ARrdaM|DIRECT_API_KEY_R15|CMD_BEARER_SECRET_R15|PROBE_SENTINEL|BoundarySecret|NullByteSecret|serializedHasMask|passwordField|eyJhbGciOiJIUzI1NiJ9)'''
+]

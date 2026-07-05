@@ -1,0 +1,90 @@
+import type { Editor } from "@tiptap/react";
+import { uploadAssetFile, uploadedAssetUrl, type UploadedAsset } from "./uploadAsset";
+
+type AssetEditor = Pick<Editor, "chain" | "state" | "view">;
+
+export const UPLOAD_PLACEHOLDER_IMAGE_SRC = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" rx="24" fill="#f3efe7"/><path d="M252 186h136M320 118v136" stroke="#b8aa92" stroke-width="18" stroke-linecap="round"/></svg>',
+)}`;
+
+export async function insertImageAsset(editor: AssetEditor, file: File): Promise<string> {
+  const blockId = createUploadImageBlockId();
+  const inserted = editor.chain().focus().insertContent({
+    type: "image",
+    attrs: {
+      blockId,
+      src: UPLOAD_PLACEHOLDER_IMAGE_SRC,
+      alt: file.name,
+      uploading: true,
+      progress: null,
+      error: false,
+    },
+  }).run();
+  if (!inserted) throw new Error("Insert image placeholder failed");
+
+  const uploaded = await uploadAssetFile(file, {
+    onProgress: (progress) => {
+      updateImageAttrsByBlockId(editor, blockId, {
+        uploading: true,
+        progress,
+        error: false,
+      });
+    },
+  }).catch((error) => {
+    updateImageAttrsByBlockId(editor, blockId, {
+      uploading: false,
+      progress: null,
+      error: true,
+    });
+    throw error;
+  });
+  const src = uploadedAssetUrl(uploaded);
+  updateImageAttrsByBlockId(editor, blockId, {
+    src,
+    alt: file.name,
+    uploading: false,
+    progress: 100,
+    error: false,
+  });
+  return src;
+}
+
+export async function insertFileAsset(editor: AssetEditor, file: File): Promise<UploadedAsset> {
+  const uploaded = await uploadAssetFile(file);
+  editor.chain().focus().insertContent({
+    type: "fileAttachment",
+    attrs: {
+      fileId: uploaded.fileId,
+      filename: uploaded.filename,
+      mimeType: uploaded.mimeType,
+      size: uploaded.size,
+    },
+  }).run();
+  return uploaded;
+}
+
+function createUploadImageBlockId(): string {
+  const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `upload-image-${random}`;
+}
+
+function updateImageAttrsByBlockId(
+  editor: AssetEditor,
+  blockId: string,
+  attrs: Record<string, unknown>,
+): boolean {
+  let found = false;
+  const tr = editor.state.tr;
+  editor.state.doc.descendants((node, pos) => {
+    if (found) return false;
+    if (node.type.name !== "image" || node.attrs.blockId !== blockId) return true;
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...attrs });
+    found = true;
+    return false;
+  });
+  if (!found || !tr.docChanged) return false;
+  editor.view.dispatch(tr);
+  return true;
+}

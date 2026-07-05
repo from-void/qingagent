@@ -1,0 +1,619 @@
+import { describe, expect, it } from "vitest";
+import {
+  aiRunMarkToPmMark,
+  compileAiDocumentToPm,
+  getStablePmJson,
+  materializeDraftBlockIds,
+  pmToLegacySections,
+  type PmBlockNode,
+  type PmDoc,
+} from "@qingagent/pm-schema";
+import {
+  clearDraftMutationScratch,
+  createSession,
+  createSessionScopedTools,
+} from "../bridge/index.js";
+import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { qingagentAgent } from "../agents/qingagent.js";
+import { parseAiDocumentOrBlockFromText } from "../tools/generateDoc.js";
+
+const ctx = {} as any;
+
+function aiParagraph(text: string) {
+  return { type: "paragraph", runs: [{ text }] };
+}
+
+function compileDoc(blocks: unknown[]): PmDoc {
+  const result = compileAiDocumentToPm({ blocks });
+  if (!result.ok || !result.doc) throw new Error("fixture compile failed");
+  return result.doc;
+}
+
+function paragraph(blockId: string, text: string): PmBlockNode {
+  return {
+    type: "paragraph",
+    attrs: { blockId },
+    content: text ? [{ type: "text", text }] : [],
+  };
+}
+
+function bulletList(blockId: string, items: Array<{ blockId: string; paragraphId: string; text: string }>): PmBlockNode {
+  return {
+    type: "bulletList",
+    attrs: { blockId },
+    content: items.map((item) => ({
+      type: "listItem",
+      attrs: { blockId: item.blockId },
+      content: [paragraph(item.paragraphId, item.text)],
+    })),
+  } as unknown as PmBlockNode;
+}
+
+function codeBlock(blockId: string, text: string, language = "ts"): PmBlockNode {
+  return {
+    type: "codeBlock",
+    attrs: { blockId, language },
+    content: text ? [{ type: "text", text }] : [],
+  };
+}
+
+function doc(content: PmBlockNode[]): PmDoc {
+  return { type: "doc", attrs: { schemaVersion: 1 }, content };
+}
+
+function bindDoc(state: ReturnType<typeof createSession>, value: PmDoc): void {
+  state.doc = value;
+  state.legacySections = pmToLegacySections(value) as any;
+  state.docVersion = 1;
+}
+
+function inlineText(block: PmBlockNode): string {
+  if (!("content" in block) || !Array.isArray(block.content)) return "";
+  return block.content.map((node: any) => node.type === "hardBreak" ? "\n" : node.text).join("");
+}
+
+describe("parseAiDocumentOrBlockFromText", () => {
+  it("解析单块、数组和 envelope", () => {
+    expect(parseAiDocumentOrBlockFromText(aiParagraph("单块")).blocks).toEqual([aiParagraph("单块")]);
+    expect(parseAiDocumentOrBlockFromText([aiParagraph("数组")]).blocks).toEqual([aiParagraph("数组")]);
+    expect(parseAiDocumentOrBlockFromText({ title: "t", blocks: [aiParagraph("包裹")] })).toEqual({
+      title: "t",
+      blocks: [aiParagraph("包裹")],
+    });
+  });
+
+  it("复用 extractJson 处理 fence、前导话、收尾散文和正文括号", () => {
+    const block = { type: "paragraph", runs: [{ text: "他说 \"春天] } 仍在\"" }] };
+    const raw = `这是改好的:\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\`\n已替换该段。`;
+
+    const parsed = parseAiDocumentOrBlockFromText(raw);
+
+    expect(parsed.blocks).toEqual([block]);
+    const compiled = compileAiDocumentToPm(parsed);
+    expect(compiled.ok).toBe(true);
+  });
+
+  it("缺闭合符可修复；未闭字符串截断和 askUser 误触不会假成功", () => {
+    expect(parseAiDocumentOrBlockFromText('{"type":"paragraph","runs":[{"text":"半截"}]').blocks).toEqual([
+      aiParagraph("半截"),
+    ]);
+    expect(() => parseAiDocumentOrBlockFromText('{"type":"paragraph","runs":[{"text":"半')).toThrow();
+    expect(() => parseAiDocumentOrBlockFromText('{"askUser":{"question":"要不要继续?"}}')).toThrow();
+  });
+});
+
+describe("AI-IR draft tools", () => {
+  it("agent 只暴露常驻基础工具,草稿工具由 sessionScoped toolset 注入", async () => {
+    const tools = await qingagentAgent.listTools();
+    expect(Object.keys(tools).sort()).toEqual([
+      "askUser",
+      "fetchArticle",
+      "parseFile",
+      "storeMaterial",
+    ]);
+  });
+
+  it("editDraft 工具描述继续要求 children 递归,不回退到扁平 depth 中间格式", () => {
+    const state = createSession("s-edit-description");
+    const { editDraft } = createSessionScopedTools(state);
+    const description = (editDraft as { description?: string }).description ?? "";
+
+    expect(description).toContain("children 递归");
+    expect(description).toContain("深层 AI-IR JSON");
+    expect(description).toContain("insertTableRow");
+    expect(description).toContain("rowIndex/columnIndex 一律是当前表的 0-based 索引");
+    expect(description).toContain("同一次 editDraft 调用内多个表格 op 按声明顺序依次应用");
+    expect(description).toContain("新增列在表头行对应的新 cell 自动带 header:true");
+    expect(description).toContain("在表头行前插入数据行");
+    expect(description).not.toContain("items+depth");
+    expect(description).not.toContain("必须用扁平");
+  });
+
+  it("readDraft 默认只返回 aiIr,range/outline/query 使用顶层 ref", async () => {
+    const state = createSession("s-read");
+    bindDoc(state, doc([
+      { type: "heading", attrs: { blockId: "block-h", level: 2 }, content: [{ type: "text", text: "标题" }] },
+      paragraph("block-a", "春水初生"),
+      paragraph("block-b", "春林初盛"),
+    ]));
+    const { readDraftAiIr } = createSessionScopedTools(state);
+
+    const full = await readDraftAiIr.execute!({ mode: "full" }, ctx) as any;
+    expect(full.ok).toBe(true);
+    expect(full.blocks[0].ref).toBe("block-h");
+    expect(full.blocks[0].aiIr).toMatchObject({ type: "heading", level: 2 });
+    expect(full.blocks[0].text).toBeUndefined();
+
+    const range = await readDraftAiIr.execute!({ mode: "range", from: "block-a", to: "block-b", includeText: true }, ctx) as any;
+    expect(range.blocks.map((b: any) => b.ref)).toEqual(["block-a", "block-b"]);
+
+    const outline = await readDraftAiIr.execute!({ mode: "outline" }, ctx) as any;
+    expect(outline.blocks).toMatchObject([{ ref: "block-h", sectionFrom: "block-h", sectionTo: "block-b" }]);
+
+    const query = await readDraftAiIr.execute!({ query: "春林" }, ctx) as any;
+    expect(query.blocks.map((b: any) => b.ref)).toEqual(["block-b"]);
+    expect(query.blocks[0].text).toBe("春林初盛");
+  });
+
+  it("readDraft range 支持 listItem ref 读取该行文本,full 仍只返回顶层块", async () => {
+    const state = createSession("s-read-list-item");
+    bindDoc(state, doc([
+      bulletList("list-1", [
+        { blockId: "item-1", paragraphId: "item-1-p", text: "第一行" },
+        { blockId: "item-2", paragraphId: "item-2-p", text: "第二行" },
+      ]),
+      paragraph("block-after", "列表后段落"),
+    ]));
+    const { readDraftAiIr } = createSessionScopedTools(state);
+
+    const full = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
+    expect(full.blocks.map((b: any) => b.ref)).toEqual(["list-1", "block-after"]);
+
+    const item = await readDraftAiIr.execute!({
+      mode: "range",
+      from: "item-2",
+      to: "item-2",
+      includeText: true,
+    }, ctx) as any;
+
+    expect(item.ok).toBe(true);
+    expect(item.blocks).toHaveLength(1);
+    expect(item.blocks[0]).toMatchObject({
+      ref: "item-2",
+      type: "listItem",
+      text: "第二行",
+      editability: { replaceBlockAllowed: false },
+    });
+    expect(item.blocks[0].aiIr).toBeUndefined();
+  });
+
+  it("editDraft 混合事务先块后文本,成功后直接写候选", async () => {
+    const state = createSession("s-edit");
+    bindDoc(state, doc([paragraph("block-a", "旧文本"), paragraph("block-b", "保留")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "replaceBlock", ref: "block-a", block: aiParagraph("新文本") },
+        { action: "replaceText", find: "新文本", replace: "最终文本" },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(state.docDraftCandidateDoc?.content[0]?.attrs.blockId).toBe("block-a");
+    expect(inlineText(state.docDraftCandidateDoc!.content[0]!)).toBe("最终文本");
+    expect(inlineText(state.doc!.content[0]!)).toBe("旧文本");
+  });
+
+  it("editDraft replaceBlock 接受 readDraft 返回壳并只取 aiIr 子对象", async () => {
+    const state = createSession("s-edit-envelope-replace");
+    bindDoc(state, doc([paragraph("block-a", "旧文本")]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+    const draft = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
+    const envelope = {
+      ...draft.blocks[0],
+      aiIr: aiParagraph("壳内新文本"),
+      children: [{ ignored: true }],
+    };
+
+    const result = await editDraft.execute!({
+      ops: [{ action: "replaceBlock", ref: "block-a", block: envelope }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(inlineText(state.docDraftCandidateDoc!.content[0]!)).toBe("壳内新文本");
+    expect(state.docDraftCandidateDoc!.content[0]!.attrs.blockId).toBe("block-a");
+  });
+
+  it("editDraft replaceBlock 保留 codeBlock.text,不把代码正文当 readDraft 外壳剥掉", async () => {
+    const state = createSession("s-edit-codeblock-text");
+    bindDoc(state, doc([codeBlock("block-code", "const oldValue = 1;")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "block-code",
+        block: {
+          ref: "readonly-ref",
+          type: "codeBlock",
+          language: "ts",
+          text: "const nextValue = 2;",
+          editability: { replaceBlockAllowed: true, lossyReasons: [] },
+        },
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(true);
+    expect(result.hunkCount).toBeGreaterThan(0);
+    expect(state.docDraftCandidateDoc!.content[0]).toMatchObject({
+      type: "codeBlock",
+      attrs: expect.objectContaining({ blockId: "block-code", language: "ts" }),
+      content: [{ type: "text", text: "const nextValue = 2;" }],
+    });
+  });
+
+  it("editDraft insertBlock 逐个解包多元素 readDraft 壳,裸块保持原样", async () => {
+    const state = createSession("s-edit-envelope-insert");
+    bindDoc(state, doc([paragraph("block-a", "基准")]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+    const draft = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
+    const outlineEnvelope = {
+      ...draft.blocks[0],
+      aiIr: aiParagraph("第一段"),
+      sectionFrom: "block-a",
+      sectionTo: "block-a",
+    };
+    const textEnvelope = {
+      ref: "readonly-ref",
+      type: "paragraph",
+      aiIr: aiParagraph("第二段"),
+      text: "模型顶层补的只读文本",
+      editability: { replaceBlockAllowed: true, lossyReasons: [] },
+    };
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "insertBlock",
+        position: "after",
+        ref: "block-a",
+        blocks: [
+          outlineEnvelope,
+          textEnvelope,
+          aiParagraph("裸块"),
+        ],
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(state.docDraftCandidateDoc!.content.map(inlineText)).toEqual([
+      "基准",
+      "第一段",
+      "第二段",
+      "裸块",
+    ]);
+  });
+
+  it("editDraft 坏壳仍给块级错误,insertBlock.blocks 非数组也不崩", async () => {
+    const state = createSession("s-edit-envelope-bad");
+    bindDoc(state, doc([paragraph("block-a", "基准")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const badShell = await editDraft.execute!({
+      ops: [{
+        action: "insertBlock",
+        position: "after",
+        ref: "block-a",
+        blocks: [{ ref: "r", type: "paragraph", text: "缺 runs", editability: {} }],
+      }],
+    }, ctx) as any;
+    expect(badShell.ok).toBe(false);
+    expect(badShell.failedOpIndex).toBe(0);
+    expect(badShell.error).toContain("block 0");
+
+    // createTool 会先按 z.array 拦截；这里钉住“不会落到 flatMap TypeError / 不污染草稿”的脏输入行为。
+    const nonArray = await editDraft.execute!({
+      ops: [{
+        action: "insertBlock",
+        position: "after",
+        ref: "block-a",
+        blocks: { type: "paragraph", runs: [{ text: "不是数组" }] },
+      }],
+    } as any, ctx) as any;
+    expect(nonArray?.ok).not.toBe(true);
+    expect(state.docDraftCandidateDoc?.content.map(inlineText)).toEqual(["基准"]);
+  });
+
+  it("editDraft 任一文本 op 失败则整组回滚", async () => {
+    const state = createSession("s-rollback");
+    bindDoc(state, doc([paragraph("block-a", "旧文本")]));
+    const { editDraft } = createSessionScopedTools(state);
+    const before = getStablePmJson(state.doc!);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "replaceBlock", ref: "block-a", block: aiParagraph("新文本") },
+        { action: "replaceText", find: "不存在", replace: "不会写入" },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(false);
+    expect(result.failedOpIndex).toBe(1);
+    expect(state.docDraftCandidateDoc ? getStablePmJson(state.docDraftCandidateDoc) : before).toBe(before);
+  });
+
+  it("editDraft 服务端 fail-closed 拒绝仍有损的 replaceBlock,但 deleteBlock 放行", async () => {
+    const state = createSession("s-lossy");
+    const multiParagraphCallout: PmBlockNode = {
+      type: "callout",
+      attrs: { blockId: "block-callout", emoji: "⚠️", tone: "warning" },
+      content: [
+        paragraph("block-callout-p1", "第一段") as Extract<PmBlockNode, { type: "paragraph" }>,
+        paragraph("block-callout-p2", "第二段") as Extract<PmBlockNode, { type: "paragraph" }>,
+      ],
+    };
+    bindDoc(state, doc([multiParagraphCallout]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const rejected = await editDraft.execute!({
+      ops: [{ action: "replaceBlock", ref: "block-callout", block: aiParagraph("普通段") }],
+    }, ctx) as any;
+    expect(rejected.ok).toBe(false);
+    expect(rejected.error).toContain("replaceBlock 拒绝有损块");
+
+    const deleted = await editDraft.execute!({
+      ops: [{ action: "deleteBlock", ref: "block-callout" }],
+    }, ctx) as any;
+    expect(deleted.ok).toBe(true);
+    expect(state.docDraftCandidateDoc?.content).toHaveLength(0);
+  });
+
+  it("editDraft ok:true 但实际 0 diff 时返回 changed:false/hunkCount:0", async () => {
+    const state = createSession("s-noop-edit");
+    bindDoc(state, doc([paragraph("block-a", "原文")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{ action: "replaceText", find: "原文", replace: "原文" }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(result.changed).toBe(false);
+    expect(result.hunkCount).toBe(0);
+    expect(state.docDraftCandidateDoc ? getStablePmJson(state.docDraftCandidateDoc) : getStablePmJson(state.doc!))
+      .toBe(getStablePmJson(state.doc!));
+  });
+
+  it("editDraft 连续插入相同空段得到不同 ref", async () => {
+    const state = createSession("s-insert");
+    bindDoc(state, doc([paragraph("block-a", "基准")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "insertBlock", position: "after", ref: "block-a", blocks: [aiParagraph("")] },
+        { action: "insertBlock", position: "after", ref: "block-a", blocks: [aiParagraph("")] },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const refs = state.docDraftCandidateDoc!.content.map((block) => block.attrs.blockId);
+    expect(new Set(refs).size).toBe(refs.length);
+    expect(refs.some((ref) => ref.startsWith("ai-block-"))).toBe(false);
+  });
+
+  it("editDraft insertBlock 相邻重复被整条跳过时返回模型可见 warning", async () => {
+    const state = createSession("s-insert-duplicate-warning");
+    bindDoc(state, doc([
+      { type: "heading", attrs: { blockId: "block-top", level: 1 }, content: [{ type: "text", text: "章" }] },
+      { type: "heading", attrs: { blockId: "block-sub", level: 2 }, content: [{ type: "text", text: "小标题" }] },
+      paragraph("block-tail", "正文"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        {
+          action: "insertBlock",
+          position: "after",
+          ref: "block-top",
+          blocks: [
+            aiParagraph("不应留下的残块"),
+            { type: "heading", level: 2, runs: [{ text: "小标题" }] },
+          ],
+        },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(result.applied).toEqual([]);
+    expect(result.changed).toBe(false);
+    expect(result.skippedDuplicateInserts).toBe(1);
+    expect(result.warning).toBe("1 处插入与相邻内容重复被跳过;若确需重复内容,请用 replaceBlock 或换插入位置");
+    expect(state.docDraftCandidateDoc?.content.map(inlineText)).toEqual(["章", "小标题", "正文"]);
+  });
+
+  it("editDraft 行级 replaceListItem 保留 item ref,并继续产出父 list replace hunk", async () => {
+    const state = createSession("s-edit-list-item-structure");
+    const base = doc([
+      bulletList("list-a", [
+        { blockId: "item-a", paragraphId: "item-a-p", text: "第一行" },
+        { blockId: "item-b", paragraphId: "item-b-p", text: "第二行" },
+      ]),
+      paragraph("block-tail", "尾段"),
+    ]);
+    bindDoc(state, base);
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceListItem",
+        ref: "item-b",
+        item: {
+          runs: [{ text: "第二行已改" }],
+          children: [{
+            type: "bulletList",
+            items: [{ runs: [{ text: "新增子项" }] }],
+          }],
+        },
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    const list = state.docDraftCandidateDoc!.content[0]!;
+    expect(list.type).toBe("bulletList");
+    if (list.type !== "bulletList") return;
+    expect(list.content[1]!.attrs.blockId).toBe("item-b");
+    expect(inlineText(list.content[1]!.content[0] as PmBlockNode)).toBe("第二行已改");
+    expect(list.content[1]!.content[1]).toMatchObject({ type: "bulletList" });
+
+    const hunks = buildDraftDiff(base, state.docDraftCandidateDoc!);
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({
+      op: "replace",
+      blockPath: [0],
+      anchor: { blockId: "list-a" },
+      beforeBlock: { type: "bulletList" },
+      afterBlock: { type: "bulletList" },
+    });
+  });
+
+  it("editDraft 行级 op 对过期 ref fail-closed,不 fallback 到整 list 误改", async () => {
+    const state = createSession("s-edit-list-item-stale-ref");
+    bindDoc(state, doc([
+      bulletList("list-a", [
+        { blockId: "item-a", paragraphId: "item-a-p", text: "第一行" },
+      ]),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+    const before = getStablePmJson(state.doc!);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceListItem",
+        ref: "missing-item",
+        item: { runs: [{ text: "不应写入" }] },
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(false);
+    expect(result.failedOpIndex).toBe(0);
+    expect(result.error).toContain("列表行 missing-item 不存在");
+    expect(state.docDraftCandidateDoc ? getStablePmJson(state.docDraftCandidateDoc) : before).toBe(before);
+  });
+
+  it("editDraft 表格增量 op 进入 readDiff,且既有单元格字节级不变", async () => {
+    const state = createSession("s-edit-table-incremental");
+    const base = materializeDraftBlockIds(compileDoc([{
+      type: "table",
+      rows: [
+        {
+          cells: [
+            { runs: [{ text: "列A，表头。" }], header: true },
+            { runs: [{ text: "列B\"引用\"", marks: [{ type: "link", href: "https://example.com" }] }], header: true },
+          ],
+        },
+        {
+          cells: [
+            { runs: [{ text: "a1，全角。" }] },
+            { runs: [{ text: "b1，保持。" }] },
+          ],
+        },
+      ],
+    }]));
+    const tableRef = base.content[0]!.attrs.blockId;
+    const beforeTable = base.content[0] as Extract<PmBlockNode, { type: "table" }>;
+    const beforeCells = beforeTable.content.map((row) => row.content.map(getStablePmJson));
+    bindDoc(state, base);
+    const { editDraft, readDiff } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "insertTableColumn",
+        ref: tableRef,
+        at: "end",
+        cells: [{ runs: [{ text: "列C，新增。" }] }, { runs: [{ text: "c1，新增。" }] }],
+      }],
+    }, ctx) as any;
+
+    expect(result).toMatchObject({ ok: true });
+    expect(result.changed).toBe(true);
+    expect(result.hunkCount).toBe(1);
+    expect(result.applied).toEqual([tableRef]);
+    const table = state.docDraftCandidateDoc!.content[0] as Extract<PmBlockNode, { type: "table" }>;
+    expect(table.content[0]!.content[2]!.type).toBe("tableHeader");
+    expect(getStablePmJson(table.content[0]!.content[0])).toBe(beforeCells[0]![0]);
+    expect(getStablePmJson(table.content[0]!.content[1])).toBe(beforeCells[0]![1]);
+    expect(getStablePmJson(table.content[1]!.content[0])).toBe(beforeCells[1]![0]);
+    expect(getStablePmJson(table.content[1]!.content[1])).toBe(beforeCells[1]![1]);
+
+    const diff = await readDiff.execute!({}, ctx) as any;
+    expect(diff.ok).toBe(true);
+    expect(diff.changes).toHaveLength(1);
+    expect(diff.changes[0]).toMatchObject({ kind: "replace", ref: tableRef });
+    expect(diff.stats.blocksChanged).toBe(1);
+  });
+
+  it("readDiff 把纯 mark 编辑归并为 markChange 且跨多次 edit 累计", async () => {
+    const state = createSession("s-diff");
+    bindDoc(state, doc([paragraph("block-a", "山水"), paragraph("block-b", "春风")]));
+    const { editDraft, readDiff } = createSessionScopedTools(state);
+
+    await editDraft.execute!({
+      ops: [{ action: "markText", find: "山水", mark: { type: "bold" }, op: "add" }],
+    }, ctx);
+    await editDraft.execute!({
+      ops: [{ action: "replaceText", find: "春风", replace: "秋月" }],
+    }, ctx);
+    const diff = await readDiff.execute!({}, ctx) as any;
+
+    expect(diff.ok).toBe(true);
+    expect(diff.changes.map((c: any) => c.kind)).toContain("markChange");
+    expect(diff.stats.marksChanged).toBeGreaterThan(0);
+    expect(diff.stats.blocksChanged).toBeGreaterThan(0);
+    expect(diff.stats.totalWords).toBeGreaterThanOrEqual(4);
+  });
+
+  it("clearDraftMutationScratch 只清 scratch,保留 pending base/candidate 供下一轮读取", async () => {
+    const state = createSession("s-cross");
+    bindDoc(state, doc([paragraph("block-a", "原文")]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+
+    await editDraft.execute!({
+      ops: [{ action: "replaceText", find: "原文", replace: "候选文" }],
+    }, ctx);
+    state.patchValidationResults.set("tc", { ok: true, applied: true });
+    clearDraftMutationScratch(state);
+    const nextRead = await readDraftAiIr.execute!({ includeText: true }, ctx) as any;
+
+    expect(state.patchValidationResults.size).toBe(0);
+    expect(state.docDraftBaseDoc).not.toBeNull();
+    expect(state.docDraftCandidateDoc).not.toBeNull();
+    expect(nextRead.blocks[0].text).toBe("候选文");
+  });
+
+  it("markText 继承 S1 mark 边界: remove 只去指定 mark,保留 link", async () => {
+    const bold = aiRunMarkToPmMark({ type: "bold" });
+    const link = { type: "link" as const, attrs: { href: "#a" } };
+    const state = createSession("s-mark-boundary");
+    bindDoc(state, doc([{
+      type: "paragraph",
+      attrs: { blockId: "block-a" },
+      content: [{ type: "text", text: "青山", marks: [bold, link] }],
+    }]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{ action: "markText", find: "山", mark: { type: "bold" }, op: "remove" }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(state.docDraftCandidateDoc?.content[0]).toMatchObject({
+      content: [
+        { text: "青", marks: [bold, link] },
+        { text: "山", marks: [link] },
+      ],
+    });
+  });
+});

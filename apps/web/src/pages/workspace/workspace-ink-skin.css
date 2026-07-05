@@ -1,0 +1,2827 @@
+/* ============================================================
+   工作区「水墨皮肤」· P1 地基(换皮保功能)
+   把现有浅色工作区重皮成 demo(edit-transition.html)那套观感:
+   - 整屏玄青桌面(承接新建页同款夜空)
+   - 左侧对话区:透明浮于桌面,浅色字(在 .ws-left 作用域内翻转 ink 令牌)
+   - 右侧正文:奶白文档纸(深字不变,落在玄青桌面上)
+   - 顶栏 / 返回钮 / 输入框:玄青雾化
+   仅覆盖视觉,DOM 结构与功能保持不变。本文件在 workspace.css 之后引入,
+   靠 #view-workspace 作用域 + 必要 !important 压过原浅色规则,便于整体迭代/回退。
+   ============================================================ */
+
+/* 工作区满铺:外层页框去掉 1440 居中 + 浅色底,玄青桌面无限伸展到整屏(消除左右白边) */
+.web-page-frame--workspace {
+  width: 100% !important;
+  max-width: none !important;
+  background: transparent !important;
+}
+
+/* —— 玄青桌面(与新建页 .ccx-space 同色系) —— */
+#view-workspace {
+  background:
+    radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.1), transparent 50%),
+    radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.09), transparent 55%),
+    radial-gradient(150% 130% at 50% 42%, #1a232a 0%, #11151a 46%, #0a0d10 100%);
+  /* 字体统一 Noto Serif SC(只改 family,字号沿用现有);大红同新建页 */
+  --font-sans: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --font-display: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --font-zh-serif: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --ws-red: #d8382b;
+  --ws-red-lite: #ee6a59;
+  --fx-workspace-glass-bg: rgba(16, 21, 26, 0.56);
+  --fx-workspace-input-glass-bg: rgba(8, 11, 15, 0.72);
+  --fx-workspace-backdrop-filter: blur(18px) saturate(1.3);
+  --fx-workspace-glass-shadow: 0 16px 46px rgba(0, 0, 0, 0.5);
+  --fx-workspace-dot-glow: 0 0 8px rgba(184, 169, 140, 0.5);
+  --fx-input-agent-opacity: 1;
+  --fx-input-agent-glow-rest:
+    0 0 0 1px rgba(184, 169, 140, 0.32),
+    0 0 16px 2px rgba(184, 169, 140, 0.22);
+  --fx-input-agent-glow-peak:
+    0 0 0 1px rgba(184, 169, 140, 0.4),
+    0 0 20px 3px rgba(184, 169, 140, 0.24);
+  --fx-input-agent-glow-static:
+    0 0 0 1px rgba(184, 169, 140, 0.34),
+    0 0 14px 2px rgba(184, 169, 140, 0.22);
+  --ws-float-bar-height: 52px;
+  --ws-float-bar-bottom: 26px;
+  --ws-float-bar-safe-gap: 96px;
+  --ws-bigplan-bottom-safe-area: calc(
+    var(--ws-float-bar-height) + var(--ws-float-bar-bottom) + var(--ws-float-bar-safe-gap)
+  );
+  font-family: var(--font-zh-serif);
+}
+:root[data-perf="low"] #view-workspace {
+  --fx-workspace-glass-bg: rgba(16, 21, 26, 0.78);
+  --fx-workspace-input-glass-bg: rgba(8, 11, 15, 0.84);
+  --fx-workspace-backdrop-filter: blur(8px);
+  --fx-workspace-glass-shadow: none;
+  --fx-workspace-dot-glow: none;
+  --fx-input-agent-opacity: 0.92;
+  --fx-input-agent-glow-rest: none;
+  --fx-input-agent-glow-peak: none;
+  --fx-input-agent-glow-static: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace {
+    --fx-workspace-glass-bg: rgba(16, 21, 26, 0.78);
+    --fx-workspace-input-glass-bg: rgba(8, 11, 15, 0.84);
+    --fx-workspace-backdrop-filter: blur(8px);
+    --fx-workspace-glass-shadow: none;
+    --fx-workspace-dot-glow: none;
+    --fx-input-agent-opacity: 0.92;
+    --fx-input-agent-glow-rest: none;
+    --fx-input-agent-glow-peak: none;
+    --fx-input-agent-glow-static: none;
+  }
+}
+
+/* ============================================================
+   结构推翻:去掉横贯顶部标题栏,改 demo 的「居中左右组」布局
+   ——左对话区 / 固定间距 / 右奶白文档纸,整组在玄青桌面上水平居中。
+   返回钮变左上角浮动箭头。
+   ============================================================ */
+
+/* 左上角浮动返回箭头(demo .back-home) */
+#view-workspace .ws-back-home {
+  position: fixed;
+  left: 22px;
+  top: 18px;
+  z-index: 22;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  line-height: 1;
+  color: rgba(236, 227, 208, 0.64);
+  background: rgba(18, 24, 31, 0.42);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+#view-workspace .ws-back-home:hover {
+  color: #b8a98c;
+  border-color: rgba(184, 169, 140, 0.42);
+}
+
+/* 主体:居中的左右组(无顶栏,占满全高) */
+#view-workspace .ws-body {
+  /* 左右栏定宽不再被压缩:窗口放不下整组时,整体横向滚动而不是把两栏挤窄。
+     safe center:放得下时居中,放不下时回退到 start(靠左)以保证能滚到左侧、不被裁掉。 */
+  justify-content: safe center !important;
+  align-items: stretch !important;
+  gap: 48px !important;
+  padding: 0 40px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+/* 左对话区:定宽 400(不再随 vw 收窄),放不下走 .ws-body 的横向滚动 */
+#view-workspace .ws-left {
+  --ws-chat-scrollbar-outset: 14px;
+  flex: 0 0 400px !important;
+  max-width: 400px !important;
+}
+/* 右文档列:定宽 800(纸宽,不再随窗口收窄)。几何与 computeWorkspaceDocRect 严格对齐
+   (该函数已同步改成 chatW=400/docW=800 + max(0,...) 的 safe-center 居中),使新建页翻转落点
+   = 编辑页这张纸的真实 rect;窗口放不下时两者都回退靠左、由 .ws-body 横向滚动承接。 */
+#view-workspace .ws-right {
+  --ws-paper-min-height: calc(100vh - 52px);
+  flex: 0 0 800px !important;
+  width: auto !important;
+  max-width: 800px !important;
+  padding: 52px 0 0 !important;
+  overflow-y: auto;
+}
+
+#view-workspace .ws-left,
+#view-workspace .ws-back-home,
+#view-workspace .ws-doc-topbar,
+#view-workspace .ws-input-wrap,
+#view-workspace .wf-doc > *,
+#view-workspace .doc-toolbar {
+  transition:
+    opacity 0.44s ease,
+    transform 0.52s cubic-bezier(0.19, 0.85, 0.23, 1),
+    filter 0.44s ease;
+}
+
+#view-workspace.ws-arriving .ws-left,
+#view-workspace.ws-returning .ws-left,
+#view-workspace.ws-arriving .ws-input-wrap,
+#view-workspace.ws-returning .ws-input-wrap {
+  opacity: 0;
+  transform: translateY(18px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+#view-workspace.ws-arriving .ws-back-home,
+#view-workspace.ws-returning .ws-back-home,
+#view-workspace.ws-arriving .ws-doc-topbar,
+#view-workspace.ws-returning .ws-doc-topbar {
+  opacity: 0;
+  transform: translateY(-10px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+#view-workspace.ws-arriving .wf-doc > *,
+#view-workspace.ws-returning .wf-doc > *,
+#view-workspace.ws-arriving .doc-toolbar,
+#view-workspace.ws-returning .doc-toolbar {
+  opacity: 0;
+  transform: translateY(12px);
+  filter: blur(1.5px);
+  pointer-events: none;
+}
+
+#view-workspace.ws-arrive-revealing .wf-doc > * {
+  transition-delay: 80ms;
+}
+
+#view-workspace.ws-arrive-revealing .ws-left,
+#view-workspace.ws-arrive-revealing .ws-input-wrap {
+  transition-delay: 140ms;
+}
+
+/* 顶栏 + 左对话区:作用域内把 ink/line/底 令牌翻成浅色系,让原规则自动适配深底 */
+#view-workspace .ws-back-home,
+#view-workspace .ws-left {
+  --ink-1: var(--ink-on-dark);
+  --ink-2: rgba(236, 227, 208, 0.64);
+  --ink-3: rgba(236, 227, 208, 0.44);
+  --ink-4: rgba(236, 227, 208, 0.3);
+  --ink-cool: rgba(236, 227, 208, 0.46);
+  --line-1: rgba(184, 169, 140, 0.16);
+  --line-2: rgba(184, 169, 140, 0.28);
+  --line-3: rgba(184, 169, 140, 0.42);
+  --bg-canvas: transparent;
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-panel: rgba(20, 26, 33, 0.6);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --mark: #b59a63;
+}
+
+/* —— 左对话区:无包裹,直接浮在桌面上 —— */
+#view-workspace .ws-left {
+  background: transparent !important;
+  border-right: 0 !important;
+  overflow: visible !important;
+}
+#view-workspace .ws-chat {
+  box-sizing: border-box;
+  width: calc(100% + var(--ws-chat-scrollbar-outset));
+  margin-right: calc(var(--ws-chat-scrollbar-outset) * -1);
+  padding-right: calc(18px + var(--ws-chat-scrollbar-outset)) !important;
+}
+/* 模型回复(agent)正文浅色;用户行下面单独做泼墨气泡(P1 后段) */
+#view-workspace .ws-left .wf-msg.agent {
+  color: var(--ink-1);
+}
+#view-workspace .ws-left .chat-heading {
+  color: #f0e9da;
+}
+#view-workspace .ws-left .wf-msg.agent strong {
+  color: #f0e9da;
+}
+/* 用户气泡(临时:深底描金,待 P1 后段换 WebGL 泼墨) */
+#view-workspace .ws-left .wf-msg.user {
+  color: #ece4d4;
+}
+
+/* —— 滚动条:细、雅、默认隐藏(滚动时才显并淡出)、从顶部带下方开始(不顶右上角) ——
+   对话区(.ws-chat)与正文区(.ws-right)统一。show-sb 由 JS 在滚动时挂上、停滚后摘。 */
+#view-workspace .ws-chat::-webkit-scrollbar,
+#view-workspace .ws-right::-webkit-scrollbar {
+  width: 4px;
+}
+/* 去掉滚动条上下两个箭头按钮 */
+#view-workspace .ws-chat::-webkit-scrollbar-button,
+#view-workspace .ws-right::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+#view-workspace .ws-chat::-webkit-scrollbar-track,
+#view-workspace .ws-right::-webkit-scrollbar-track {
+  background: transparent;
+  margin-top: 56px; /* 从顶部带(52)下方起,不顶到右上角 */
+  margin-bottom: 14px;
+}
+#view-workspace .ws-chat::-webkit-scrollbar-thumb,
+#view-workspace .ws-right::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius:0;
+  /* 4px 轨道配 1px 透明描边 → thumb 可见约 2px,更细;border 太粗会把细轨道吃没 */
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.45s ease;
+}
+#view-workspace .ws-chat.show-sb::-webkit-scrollbar-thumb,
+#view-workspace .ws-right.show-sb::-webkit-scrollbar-thumb {
+  background-color: rgba(184, 169, 140, 0.4);
+}
+#view-workspace .ws-chat::-webkit-scrollbar-thumb:hover,
+#view-workspace .ws-right::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(184, 169, 140, 0.62);
+}
+#view-workspace .ws-chat,
+#view-workspace .ws-right {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+#view-workspace .ws-chat.show-sb,
+#view-workspace .ws-right.show-sb {
+  scrollbar-color: rgba(184, 169, 140, 0.4) transparent;
+}
+
+/* ============================================================
+   顶层浮动操作条 .ws-float-bar(问卷确认 / 审批共用观感,样式参考 PatchNav/clip-221224):
+   position:fixed 浮在最高层、定在右侧文档列底部居中;弹性浮现(像左侧输入框「变形飞来」)。
+   只重构条的布局/样式,按钮逻辑不变。
+   ============================================================ */
+#view-workspace .ws-float-bar {
+  position: fixed !important;
+  z-index: 41;
+  /* 宽度 = 正文内容宽(纸宽 - 2×64 内边距),与文章正文左右对齐;clamp 兜底窄视口 */
+  left: max(12px, calc(var(--doc-left, 0px) + 64px));
+  right: max(12px, calc(100vw - var(--doc-right, 100%) + 64px));
+  bottom: var(--ws-float-bar-bottom);
+  margin: 0;
+  max-width: none;
+  height: var(--ws-float-bar-height); /* 与审批条统一固定高(也消除 auto 高导致的二次形变) */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px 0 16px;
+  /* 毛玻璃:更透的暗底 + 强模糊,透出后面被模糊的内容 */
+  background: var(--fx-workspace-glass-bg);
+  border: 1px solid rgba(184, 169, 140, 0.34);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  box-shadow: var(--fx-workspace-glass-shadow);
+  pointer-events: none;
+  /* 入场由 WorkspacePage 的 FLIP(从输入框位置滑来)接管,这里不做 entrance 动画;
+     box 本身全程可见,只让内容(按钮等)在滑到位后延迟浮现 —— 见 .ws-float-bar > * */
+}
+/* 条内容:形变期间隐藏(opacity 0,both 从首帧就藏=不闪),盒子形变到位(--morph-dur 后)再淡入。
+   --morph-dur 由 JS 按当前形变时长写入,保证「稳定之后再淡入新元素」。 */
+#view-workspace .ws-float-bar > *,
+#view-workspace .patch-nav > *,
+#view-workspace .askuser-overlay > * {
+  animation: ws-bar-content-in 0.3s ease var(--morph-dur, 0.5s) both;
+}
+@keyframes ws-bar-content-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* 返回:先把条内容淡出(稳定后)再开始形变回输入框 */
+#view-workspace .ws-float-bar[data-content-out] > *,
+#view-workspace .patch-nav[data-content-out] > *,
+#view-workspace .askuser-overlay[data-content-out] > * {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+#view-workspace .ws-float-bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-on-dark);
+}
+#view-workspace .ws-float-bar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b59a63;
+  box-shadow: var(--fx-workspace-dot-glow);
+}
+#view-workspace .ws-float-bar-spacer {
+  flex: 1 1 auto;
+}
+/* 条内按钮:确认方向=金实心(对应「提交↵」高亮),问我更多/放弃=描金 ghost */
+#view-workspace .ws-float-bar .wf-btn {
+  height: auto;
+  padding: 6px 15px;
+  font-size: 12.5px;
+  border-radius: 0;
+  pointer-events: auto;
+}
+#view-workspace .ws-float-bar .wf-btn.primary {
+  background: #b59a63;
+  border: 1px solid #b59a63;
+  color: var(--ink-surface);
+  font-weight: 600;
+}
+#view-workspace .ws-float-bar .wf-btn.primary:hover:not(:disabled) {
+  background: #c7af78;
+}
+#view-workspace .ws-float-bar .wf-btn.ghost {
+  background: transparent;
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  color: #cdbf9f;
+}
+#view-workspace .ws-float-bar .wf-btn.ghost:hover:not(:disabled) {
+  color: #f3ecdb;
+  border-color: rgba(184, 169, 140, 0.42);
+  background: rgba(184, 169, 140, 0.12);
+}
+/* 禁用态:明确「不可点」——去掉金色实心观感,改灰底faint字 + not-allowed 光标(配合条左侧动态提示文案) */
+#view-workspace .ws-float-bar .wf-btn:disabled,
+#view-workspace .ws-float-bar .wf-btn.primary:disabled {
+  background: rgba(255, 255, 255, 0.035) !important;
+  border-color: rgba(184, 169, 140, 0.16) !important;
+  color: rgba(236, 227, 208, 0.34) !important;
+  cursor: not-allowed !important;
+  opacity: 1 !important;
+}
+/* 幽灵空框:返回动画用,长得就是条的盒子(暗底描金毛玻璃),无内容,纯几何滑回输入框 */
+#view-workspace .ws-morph-ghost {
+  z-index: 41;
+  box-sizing: border-box;
+  background: var(--fx-workspace-glass-bg);
+  border: 1px solid rgba(184, 169, 140, 0.34);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  box-shadow: var(--fx-workspace-glass-shadow);
+  pointer-events: none;
+}
+/* 悬浮条脱离文档流后,给问卷滚动区留足底部安全区,避免最后一题停在浮条下方。 */
+#view-workspace .bigplan-panel .bp-body {
+  scroll-padding-bottom: var(--ws-bigplan-bottom-safe-area);
+}
+
+/* ============================================================
+   问卷重设计:做成「和正文一张纸」——奶白纸底、与正文同宽同 padding(内容宽 672)、
+   衬线排版、大幅去线框。金色点缀。
+   ============================================================ */
+#view-workspace .bigplan-panel {
+  /* 同正文纸:奶白底 + 投影 + 800 定宽居中(内容宽 = 800 - 2×64 = 672,= 正文/条宽) */
+  background: var(--bg-paper-deep) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  width: 100% !important;
+  max-width: 800px !important;
+  box-sizing: border-box !important;
+  margin: 0 auto;
+  font-family: var(--font-zh-serif);
+  overflow: hidden !important;
+  /* 纸上金色点缀 + 暖墨 token(继承全局纸色,仅覆盖点缀金)。 */
+  --mark: #9c8552;
+  --line-1: rgba(120, 90, 50, 0.14);
+  --line-2: rgba(120, 90, 50, 0.26);
+}
+#view-workspace .bigplan-panel .bp-head {
+  padding: 46px 64px 4px !important; /* 下间距收小,标题别离第一题太远 */
+  border-bottom: 0 !important;
+}
+#view-workspace .bigplan-panel .bp-head h2 {
+  font-family: var(--font-zh-serif) !important;
+  font-size: 27px !important;
+  font-weight: 600 !important;
+  color: var(--ink-1) !important;
+  letter-spacing: 0.01em;
+}
+#view-workspace .bigplan-panel .bp-head .sub {
+  font-size: 13px !important;
+  color: #9c8552 !important; /* 金色一点 */
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+}
+#view-workspace .bigplan-panel .bp-body {
+  padding: 2px 64px var(--ws-bigplan-bottom-safe-area) !important; /* 收小与标题的间距 */
+  gap: 0 !important;
+  overflow-y: auto !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  scroll-padding-bottom: var(--ws-bigplan-bottom-safe-area);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 90, 50, 0.32) transparent;
+}
+/* 问卷正文滚动条:细 + 无箭头(同其它滚动区) */
+#view-workspace .bigplan-panel .bp-body::-webkit-scrollbar {
+  width: 6px;
+}
+#view-workspace .bigplan-panel .bp-body::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+#view-workspace .bigplan-panel .bp-body::-webkit-scrollbar-thumb {
+  background: rgba(120, 90, 50, 0.3);
+  border-radius:0;
+}
+#view-workspace .bigplan-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* 题:去描边卡片、去题间分隔线,纯留白分隔;字号放大、行距舒展(像正文) */
+#view-workspace .bigplan-panel .bp-q {
+  border: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 16px 0 18px !important;
+}
+/* 题头:序号圆圈 + 标题(标题内含「类型小标签」跟在文字后) */
+#view-workspace .bigplan-panel .bp-q-head {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 13px !important;
+  margin-bottom: 16px !important;
+}
+/* 序号:金色实心小圆圈,数字居中,排在问题前面 */
+#view-workspace .bigplan-panel .bp-q-num {
+  flex-shrink: 0 !important;
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: 50% !important;
+  border: 0 !important;
+  background: var(--mark) !important;
+  color: #f3ecdb !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-family: var(--font-zh-serif) !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  margin-top: 3px;
+}
+#view-workspace .bigplan-panel .bp-q-title {
+  flex: 1 1 auto !important;
+  font-family: var(--font-zh-serif) !important;
+  font-size: 16.5px !important;
+  font-weight: 600 !important;
+  color: var(--ink-1) !important;
+  line-height: 1.65 !important;
+}
+/* 类型标签:小标签,跟在题目文字后面(行内、与文字一起排版) */
+/* 类型标签:空心描边小标签(没那么重要),跟在题目文字后面行内排版 */
+#view-workspace .bigplan-panel .bp-q-kind {
+  display: inline-block !important;
+  margin-left: 8px !important;
+  padding: 1px 7px !important;
+  font-family: var(--font-zh-serif) !important;
+  font-size: 10.5px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.04em !important;
+  color: var(--ink-3) !important;
+  background: transparent !important;
+  border: 1px solid var(--line-2) !important;
+  border-radius:0 !important;
+  vertical-align: 2px;
+}
+/* 选项:直角 + 衬线字,淡边 → 选中金色填充(不再圆角/深底白字) */
+#view-workspace .bigplan-panel .bp-opt {
+  border-radius: 0 !important;
+  border-color: var(--line-1) !important;
+  background: transparent !important;
+  font-family: var(--font-zh-serif) !important;
+  scroll-margin-bottom: var(--ws-bigplan-bottom-safe-area);
+}
+#view-workspace .bigplan-panel .bp-q,
+#view-workspace .bigplan-panel .bp-ta,
+#view-workspace .bigplan-panel .bp-other {
+  scroll-margin-bottom: var(--ws-bigplan-bottom-safe-area);
+}
+#view-workspace .bigplan-panel .bp-opt:hover {
+  border-color: var(--mark) !important;
+  background: var(--mark-soft) !important;
+  color: var(--ink-1) !important;
+}
+#view-workspace .bigplan-panel .bp-opt.on {
+  background: var(--mark-soft) !important;
+  border-color: var(--mark) !important;
+  color: var(--ink-1) !important;
+}
+#view-workspace .bigplan-panel .bp-opt.on .bp-opt-desc {
+  color: var(--ink-2) !important;
+}
+/* 文本输入:去重边、淡底,聚焦金边 */
+#view-workspace .bigplan-panel .bp-ta,
+#view-workspace .bigplan-panel .bp-other {
+  border-color: var(--line-1) !important;
+  background: transparent !important;
+}
+#view-workspace .bigplan-panel .bp-ta:focus,
+#view-workspace .bigplan-panel .bp-other:focus {
+  border-color: var(--mark) !important;
+}
+
+/* —— 审批条 PatchNav:复用顶层浮动观感(暗底描金、底部居中、弹性浮现) —— */
+#view-workspace .patch-nav {
+  position: fixed !important;
+  z-index: 41;
+  /* 与问卷条完全一致:宽=正文内容宽、固定高 52、毛玻璃 */
+  left: max(12px, calc(var(--doc-left, 0px) + 64px));
+  right: max(12px, calc(100vw - var(--doc-right, 100%) + 64px));
+  top: auto !important;
+  bottom: var(--ws-float-bar-bottom);
+  margin: 0;
+  max-width: none;
+  width: auto;
+  height: var(--ws-float-bar-height);
+  box-sizing: border-box;
+  padding: 0 14px 0 16px;
+  /* 审核条改用纸张色(不要黑底):暖奶白半透明 + 毛玻璃,与正文纸面同语言 */
+  background: rgba(250, 246, 236, 0.92) !important;
+  border: 1px solid rgba(120, 90, 50, 0.22) !important;
+  border-radius: 0 !important;
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  box-shadow: 0 16px 46px rgba(60, 45, 25, 0.18);
+  color: var(--ink-1) !important;
+  /* 入场同样由 FLIP 从输入框位置滑来接管(内容浮现见上方 .patch-nav > *) */
+  animation: none !important;
+}
+#view-workspace .patch-nav .pn-label {
+  color: var(--ink-1) !important;
+}
+#view-workspace .patch-nav .pn-label b {
+  color: #9a6a1a !important;
+}
+#view-workspace .patch-nav .pn-dot {
+  background: #b59a63 !important;
+  box-shadow: 0 0 8px rgba(168, 130, 63, 0.4) !important;
+}
+#view-workspace .patch-nav .pn-jump,
+#view-workspace .patch-nav .pn-ghost {
+  color: var(--ink-2) !important;
+  border-color: rgba(120, 90, 50, 0.24) !important;
+}
+#view-workspace .patch-nav .pn-jump:hover,
+#view-workspace .patch-nav .pn-ghost:hover {
+  color: var(--ink-1) !important;
+  border-color: rgba(120, 90, 50, 0.4) !important;
+  background: var(--bg-hover) !important;
+}
+/* 提交钮:金色实心(对应 clip-221224 的「提交↵」高亮) */
+#view-workspace .patch-nav .pn-commit {
+  background: #b59a63 !important;
+  border-color: #b59a63 !important;
+  color: var(--ink-surface) !important;
+  font-weight: 600 !important;
+}
+#view-workspace .patch-nav .pn-commit:hover {
+  background: #c7af78 !important;
+}
+/* 整篇审:新旧版互斥选择器(暗条上,浅色 + 古铜金 thumb,与提交钮同语义) */
+#view-workspace .patch-nav .wdr-toggle {
+  background: rgba(120, 90, 50, 0.12) !important;
+  border-color: rgba(120, 90, 50, 0.22) !important;
+}
+#view-workspace .patch-nav .wdr-opt {
+  color: var(--ink-2) !important;
+}
+#view-workspace .patch-nav .wdr-opt.is-on {
+  color: var(--ink-surface) !important;
+}
+#view-workspace .patch-nav .wdr-thumb {
+  background: #b59a63 !important;
+}
+/* 整篇审条统一用产品衬线字体(与正文/品牌一致),比默认无衬线更稳重 */
+#view-workspace .patch-nav.wdr-nav,
+#view-workspace .patch-nav.wdr-nav .pn-label,
+#view-workspace .patch-nav.wdr-nav .pn-commit,
+#view-workspace .patch-nav.wdr-nav .pn-ghost,
+#view-workspace .patch-nav.wdr-nav .wdr-opt {
+  font-family: var(--font-zh-serif);
+  letter-spacing: 0.02em;
+}
+/* 条挪到底部后,「撤销全部」确认框要改成向上弹(原 top:calc(100%+6px) 会掉出屏幕)。
+   配色也要适配深墨皮肤:原继承浅色(白底+红钮)在深底上突兀,改深底毛玻璃 + 金钮深字。 */
+#view-workspace .patch-nav .pn-confirm {
+  top: auto;
+  bottom: calc(100% + 8px);
+  right: 0;
+  background: #fffdf8 !important;
+  border-color: rgba(120, 90, 50, 0.22) !important;
+  color: var(--ink-1) !important;
+  box-shadow: 0 16px 46px rgba(60, 45, 25, 0.2) !important;
+}
+#view-workspace .patch-nav .pn-confirm > span {
+  color: var(--ink-2) !important;
+}
+/* 「确认撤销全部」:去掉刺眼红,改金色实心深字(与提交同金调,统一视觉) */
+#view-workspace .patch-nav .pn-confirm button:first-of-type {
+  background: #c8a96a !important;
+  color: var(--ink-surface) !important;
+  border-color: #c8a96a !important;
+}
+/* 「取消」:描金幽灵钮 */
+#view-workspace .patch-nav .pn-confirm button:last-of-type {
+  background: transparent !important;
+  color: #cdbf9f !important;
+  border-color: rgba(200, 169, 106, 0.28) !important;
+}
+/* 审批态:审批条 fixed 脱流后给右栏留底部安全区,避免文档尾/改动/hover 弹层被浮条遮住,
+   并让 scrollIntoView(block:center) 到末尾时有补偿空间 */
+body[data-content="pendingReview"] #view-workspace .ws-right {
+  padding-bottom: 0 !important;
+  scroll-padding-bottom: 104px;
+}
+body[data-content="pendingReview"] #view-workspace .wf-doc {
+  padding-bottom: 156px !important;
+}
+
+/* —— 输入区:玄青雾化框 —— */
+/* 左列:对话区满列高滚动,输入框悬浮在内容之上,内容从其下方滚过(被输入框毛玻璃模糊) */
+#view-workspace .ws-left {
+  position: relative;
+}
+#view-workspace .ws-chat {
+  /* 满高滚动 + 底部留白(下半区):留白 = 悬浮输入框实际高度(JS 测量写入 --ws-input-h)+ 余量,
+     保证任何状态(禁用态/多行)最后的消息都能完整滚到输入框上方、不被挡。 */
+  padding-bottom: calc(var(--ws-input-h, 120px) + 28px) !important;
+}
+#view-workspace .ws-input-wrap {
+  position: absolute !important;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  /* 输入框比对话内容左右各探出一点(内容 padding 18 → 输入区 9),形成「包裹」对话内容的感觉 */
+  padding-left: 9px !important;
+  padding-right: 9px !important;
+  background: transparent !important;
+  border-top: 0 !important;
+}
+/* 输入框 ⇄ 右侧操作条「同体平移」:
+   - 平移本身由 WorkspacePage 的 FLIP(给本元素打 inline transform)驱动,这里只给基础过渡兜底;
+   - .is-morph-out(禁用态/问卷生成中,条还没出):框身保持可见(不再飞走),只把工具排淡掉收一下,
+     呼应「先把文件/技能/发送停掉」;
+   - .is-morph-hidden(右侧条已在场):瞬时隐藏,被滑过来的条无缝接管 —— 输入框不是消失,是「变成了那个条」。 */
+#view-workspace .ws-input-morph {
+  transform-origin: center center;
+  /* 外壳显隐瞬时(不淡),避免返回时「框先没了再淡回来」;只让框内元素淡入淡出。 */
+  will-change: transform;
+}
+/* 工具排:禁用态下淡出收起(box 不动) */
+#view-workspace .ws-input-morph .ws-input-tools {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+#view-workspace .ws-input-morph.is-morph-out .ws-input-tools {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+#view-workspace .ws-input-morph.is-morph-out {
+  pointer-events: none;
+}
+/* 进场第一段:先把输入框「框内元素」(输入区 + 工具)淡出,只剩金边空框,
+   稳定后再交给条去几何形变。返回到位后摘掉本类 → 框内元素淡入。 */
+#view-workspace .ws-input-morph.is-content-out .wf-input > * {
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+#view-workspace .ws-input-morph .wf-input > * {
+  transition: opacity 0.18s ease;
+}
+/* 条在场:瞬时隐藏(此刻框内已淡空,只是把空框也撤掉),交接给形变来的条 */
+#view-workspace .ws-input-morph.is-morph-hidden {
+  opacity: 0 !important;
+  pointer-events: none;
+  transition: none !important;
+}
+/* 无障碍:用户偏好减少动效时,关掉滑行/淡入,直接显隐(FLIP 的 JS 侧也会自检 reduce 跳过) */
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .ws-float-bar > *,
+  #view-workspace .patch-nav > *,
+  #view-workspace .askuser-overlay > * {
+    animation: none !important;
+  }
+  #view-workspace .ws-input-morph,
+  #view-workspace .ws-input-morph .ws-input-tools,
+  #view-workspace .ws-taskpill-host,
+  #view-workspace .ws-taskpill,
+  #view-workspace .ws-taskpill-flyout,
+  #view-workspace .ws-taskpill-ring-value,
+  #view-workspace .ws-scrollbtn {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+  /* 进行中圆点闪烁降级为静态金点(不呼吸)。 */
+  #view-workspace .ws-taskpill-item.is-in_progress .ws-taskpill-status {
+    animation: none !important;
+    opacity: 1 !important;
+    box-shadow: none !important;
+  }
+}
+#view-workspace .wf-input {
+  /* 毛玻璃:压暗(更黑 + 更不透),内容从下方滚过时被模糊 */
+  background: var(--fx-workspace-input-glass-bg) !important;
+  border: 1px solid rgba(184, 169, 140, 0.28) !important;
+  border-radius: 0;
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+}
+#view-workspace .wf-input .chat-edit {
+  color: #ece4d4 !important;
+}
+#view-workspace .wf-input .chat-edit.is-empty::before {
+  color: rgba(236, 227, 208, 0.4) !important;
+}
+#view-workspace .ws-taskpill-host {
+  position: absolute;
+  /* 与输入框左缘平齐(wrap 有 9px 内边距,输入框从 9px 起);离输入框间距收到 2px */
+  left: 9px;
+  top: -32px;
+  /* 不设 z-index:与后续 DOM 的 .ws-input-morph(技能/文件面板所在)同为 auto,
+     面板按 DOM 顺序天然盖在 pill 之上(用户要求面板层级更高)。 */
+  font-family: var(--font-zh-serif);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+/* pill→flyout 之间 12px 空隙的悬停桥:只在已展开时存在——否则这块看不见的
+   大热区会让 pill 外围的 hover 也误触发展开(用户走查)。展开只由 pill 本体触发。 */
+#view-workspace .ws-taskpill-host.is-open::before {
+  content: "";
+  position: absolute;
+  left: -24px;
+  bottom: 100%;
+  width: 300px;
+  height: 18px;
+}
+#view-workspace .ws-taskpill-host.is-dismissing {
+  opacity: 0;
+  transform: translateY(3px);
+  pointer-events: none;
+}
+#view-workspace .ws-taskpill,
+#view-workspace .ws-scrollbtn {
+  background: var(--fx-workspace-input-glass-bg);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  color: var(--ink-1);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--ink-1) 10%, transparent);
+}
+#view-workspace .ws-taskpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  font: inherit;
+  cursor: default;
+  user-select: none;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+#view-workspace .ws-taskpill:hover,
+#view-workspace .ws-taskpill-host.is-open .ws-taskpill,
+#view-workspace .ws-scrollbtn:hover {
+  border-color: color-mix(in srgb, var(--mark) 52%, transparent);
+  background: color-mix(in srgb, var(--fx-workspace-input-glass-bg) 86%, var(--mark));
+}
+#view-workspace .ws-taskpill-count {
+  font-family: var(--font-zh-serif);
+  /* 与 14px 圆环协调:原 16px 偏大(用户走查),收到 13px。 */
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--ink-1);
+  letter-spacing: 0;
+}
+#view-workspace .ws-taskpill-ring {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+#view-workspace .ws-taskpill-ring-base,
+#view-workspace .ws-taskpill-ring-value {
+  fill: none;
+  stroke-width: 2.15;
+}
+#view-workspace .ws-taskpill-ring-base {
+  stroke: var(--ink-3);
+}
+#view-workspace .ws-taskpill-ring-value {
+  stroke: var(--mark);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dasharray 0.18s ease;
+}
+/* 明细浮层:对齐现役玻璃浮层家族(导出菜单 .ws-export-menu)——圆角 10px + 描金细边 +
+   毛玻璃底 + 深投影,不再是无圆角的「生硬深色矩形块」。锚点三角见 ::after。 */
+#view-workspace .ws-taskpill-flyout {
+  position: absolute;
+  left: -30px;
+  bottom: calc(100% + 12px);
+  width: min(300px, calc(100vw - 32px));
+  padding: 6px;
+  border-radius:0;
+  background: var(--fx-workspace-input-glass-bg);
+  border: 1px solid rgba(200, 169, 106, 0.34);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  color: var(--ink-2);
+  box-shadow: var(--fx-workspace-glass-shadow);
+  opacity: 0;
+  transform: translateY(5px);
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+#view-workspace .ws-taskpill-flyout::after {
+  content: "";
+  position: absolute;
+  left: 42px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  /* 三角走过三版(半透明→加毛玻璃→裁半):半透明必与卡片叠色或透出卡片底边线。
+     终版:实色底(≈玻璃卡在 ink 暗底上的实际渲染色),完整方块的上半直接盖掉
+     卡片穿过三角的那段描边——无线、无叠色。ink 皮肤专用文件,写死近似色可控。 */
+  background: #0b0e13;
+  border-right: 1px solid rgba(200, 169, 106, 0.34);
+  border-bottom: 1px solid rgba(200, 169, 106, 0.34);
+  transform: rotate(45deg);
+}
+/* 只认 JS 的 is-open(由 pill 本体 mouseenter 触发);去掉 host:hover 触发,
+   否则 host 范围(含桥)hover 也会拉开浮层。 */
+#view-workspace .ws-taskpill-host.is-open .ws-taskpill-flyout {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+#view-workspace .ws-taskpill-list {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  /* 行距收紧(用户走查:任务之间间距太大) */
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+#view-workspace .ws-taskpill-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 25px;
+  /* 左内边距 26→32:圆点(left:10 宽13)与文字拉开呼吸间距(用户走查:贴太近) */
+  padding: 3px 10px 3px 32px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+#view-workspace .ws-taskpill-status {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border: 1.4px solid var(--ink-3);
+  border-radius: 50%;
+  color: var(--ink-3);
+  transform: translateY(-50%);
+}
+#view-workspace .ws-taskpill-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 完成项:实心对勾 + 文字轻微压灰(不加删除线,对齐 Codex 进度卡风格)。 */
+#view-workspace .ws-taskpill-item.is-completed {
+  color: var(--ink-3);
+}
+#view-workspace .ws-taskpill-item.is-completed .ws-taskpill-status {
+  border-color: var(--mark);
+  background: var(--mark);
+  color: #fff;
+}
+/* 进行中:不再用金底/左金边条,改为状态圆点金色呼吸闪烁(黄灯在闪=在干活),文字保持正常色。 */
+#view-workspace .ws-taskpill-item.is-in_progress .ws-taskpill-status {
+  border-color: var(--mark);
+  background: var(--mark);
+  color: transparent;
+  animation: ws-taskpill-pulse 1.4s ease-in-out infinite;
+}
+/* pending:空圈常规态。 */
+#view-workspace .ws-taskpill-item.is-pending .ws-taskpill-status {
+  background: transparent;
+}
+@keyframes ws-taskpill-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--mark) 42%, transparent);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--mark) 20%, transparent);
+  }
+}
+#view-workspace .ws-scrollbtn {
+  position: absolute;
+  /* 与输入框右缘平齐(对称 taskpill-host 的 left:9px);不设 z-index 让面板盖住它;间距收到 2px */
+  right: 9px;
+  top: -36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+#view-workspace .ws-scrollbtn:hover {
+  transform: translateY(1px);
+}
+/* 工具栏对齐新建页:去掉上方那条虚线 */
+#view-workspace .ws-input-tools {
+  border-top: 0 !important;
+  margin-top: 4px !important;
+  padding-top: 2px !important;
+}
+/* 文件/技能按钮对齐新建页 .ccx-tool>button:透明无边、直角、hover 才出描边(不再是药丸) */
+#view-workspace .ws-input-tools .ws-pill {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius:0 !important;
+  color: rgba(236, 227, 208, 0.62) !important;
+  /* 技能/文件/文件夹/发送 四个按钮字号统一 12.5px(工具键从 13 收小、发送从 11 调大),内距 6/10、gap6。 */
+  font-size: 12.5px !important;
+  padding: 6px 10px !important;
+  gap: 6px !important;
+}
+#view-workspace .ws-input-tools .ws-pill:hover {
+  color: #f3ecdb !important;
+  border-color: rgba(184, 169, 140, 0.34) !important;
+  background: rgba(184, 169, 140, 0.08) !important;
+}
+/* 文件按钮:素材区展开时锁定高亮(琥珀,常驻),表示当前展开;再点收起即去掉 */
+#view-workspace .ws-input-tools .ws-pill.is-active {
+  color: #f6efdf !important;
+  border-color: rgba(184, 169, 140, 0.5) !important;
+  background: rgba(184, 169, 140, 0.18) !important;
+}
+/* 发送按钮:套新建页 .ccx-send 同款(带边框的大红半透,圆角 2) */
+#view-workspace .ws-input-tools .wf-btn.primary {
+  border-radius:0 !important;
+  border: 1px solid var(--ws-red) !important;
+  background: rgba(216, 56, 43, 0.16) !important;
+  color: var(--ws-red-lite) !important;
+  /* 发送键字号与技能/文件/文件夹一致(12.5px,比原 wf-btn.small 的 11 略大)。 */
+  font-size: 12.5px !important;
+  padding: 6px 12px !important;
+}
+#view-workspace .ws-input-tools .wf-btn.primary:hover:not(:disabled) {
+  background: rgba(216, 56, 43, 0.28) !important;
+  color: #fdf3ea !important;
+}
+#view-workspace .ws-input-tools .wf-btn.primary:disabled {
+  opacity: 0.45;
+}
+
+/* askUser 中途反问:内联替代输入框,与输入框同款通体玻璃 */
+#view-workspace .askuser-overlay {
+  border: 1px solid rgba(184, 169, 140, 0.28) !important;
+  border-radius: 0 !important;
+  --au-body-scroll-bg: rgba(17, 20, 19, 0.92);
+  --au-scroll-shadow: rgba(0, 0, 0, 0.34);
+  background: var(--fx-workspace-input-glass-bg) !important;
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.3);
+}
+/* 审批操作条(patch-nav / 整篇审 wdr-nav)统一成深色风格,和问卷条(askuser-overlay)一致。
+   它挂在右侧文档区(.ws-right),原本走 base 浅色令牌(--bg-subtle 暖白 / --line-2 浅描边),
+   且 .ws-right 没有覆盖 --mark → 整条上的 var(--mark) 会落到 ui-kit base 的暗红 #b15059
+   (= 原「提交」按钮变红的根因)。这里把整组语义令牌按问卷条暗皮重定:
+   - 暗玻璃底 + 赭金 --mark(与 askuser-overlay 同一套 #b59a63 / line / ink 色阶)
+   - 提交 = 实心赭金主按钮(深字),放弃全部 / 上一处下一处 = 暗底描边次按钮
+   - 整篇审 wdr-nav 共用同壳,thumb/active 文字也跟着走暗皮。 */
+#view-workspace .patch-nav {
+  --mark: #b59a63;
+  --ink-1: #ece3d0;
+  --ink-2: rgba(236, 227, 208, 0.64);
+  --ink-3: rgba(236, 227, 208, 0.44);
+  --ink-4: rgba(236, 227, 208, 0.3);
+  --line-1: rgba(184, 169, 140, 0.16);
+  --line-2: rgba(184, 169, 140, 0.28);
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --ink-on-dark: var(--ink-surface);
+  background: var(--fx-workspace-input-glass-bg) !important;
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  border-color: rgba(184, 169, 140, 0.28) !important;
+}
+/* dot / 计数高亮:base 用硬编码暖橙 #e8913a,在暗玻璃上偏跳;统一成赭金,与问卷条 au-dot 一致 */
+#view-workspace .patch-nav .pn-dot {
+  background: var(--mark) !important;
+  box-shadow: 0 0 0 3px rgba(181, 154, 99, 0.18) !important;
+}
+#view-workspace .patch-nav .pn-label {
+  color: var(--ink-1) !important;
+}
+#view-workspace .patch-nav .pn-label b {
+  color: var(--mark) !important;
+}
+/* 次按钮:上一处/下一处 + 放弃全部 —— 与 askuser-overlay .wf-btn.ghost 一个调性(暗底描边浅字) */
+#view-workspace .patch-nav .pn-jump,
+#view-workspace .patch-nav .pn-ghost {
+  background: transparent !important;
+  border: 1px solid rgba(184, 169, 140, 0.28) !important;
+  color: #cdbf9f !important;
+}
+#view-workspace .patch-nav .pn-jump:hover:not(:disabled),
+#view-workspace .patch-nav .pn-ghost:hover {
+  border-color: rgba(184, 169, 140, 0.42) !important;
+  background: rgba(184, 169, 140, 0.12) !important;
+  color: #f3ecdb !important;
+}
+/* 主按钮:提交 / 应用新版 —— 实心赭金 + 深字,醒目且与暗条同色系(修掉变红) */
+#view-workspace .patch-nav .pn-commit {
+  background: var(--mark) !important;
+  border-color: var(--mark) !important;
+  color: var(--ink-on-dark) !important;
+}
+#view-workspace .patch-nav .pn-commit:hover:not(:disabled) {
+  background: #c9ad75 !important;
+  border-color: #c9ad75 !important;
+}
+#view-workspace .patch-nav .pn-commit:disabled,
+#view-workspace .patch-nav .pn-jump:disabled,
+#view-workspace .patch-nav .pn-ghost:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+}
+/* 放弃全部确认气泡:base 走浅色 --bg-canvas,这里翻成暗玻璃面板 */
+#view-workspace .patch-nav .pn-confirm,
+#view-workspace .pn-confirm {
+  background: var(--fx-workspace-input-glass-bg) !important;
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  border-color: rgba(184, 169, 140, 0.28) !important;
+  color: rgba(236, 227, 208, 0.64) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4) !important;
+}
+#view-workspace .pn-confirm button {
+  background: transparent !important;
+  border: 1px solid rgba(184, 169, 140, 0.28) !important;
+  color: #cdbf9f !important;
+}
+#view-workspace .pn-confirm button:first-of-type {
+  background: #b59a63 !important;
+  border-color: #b59a63 !important;
+  color: var(--ink-surface) !important;
+}
+/* 整篇审切换器(新版‖旧版):thumb 用 --ink-1(暗皮翻成浅奶白),active 文字用深字 */
+#view-workspace .patch-nav .wdr-toggle {
+  border-color: rgba(184, 169, 140, 0.28) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+#view-workspace .patch-nav .wdr-opt {
+  color: rgba(236, 227, 208, 0.44) !important;
+}
+#view-workspace .patch-nav .wdr-opt.is-on {
+  color: var(--ink-surface) !important;
+}
+#view-workspace .patch-nav .wdr-thumb {
+  background: var(--ink-on-dark) !important;
+}
+
+#view-workspace .askuser-overlay .au-head {
+  padding: 12px 15px 6px;
+  border-bottom: 0 !important;
+}
+#view-workspace .askuser-overlay .au-title {
+  gap: 9px;
+  color: var(--ink-1);
+}
+#view-workspace .askuser-overlay .au-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--mark);
+  box-shadow: 0 0 0 3px rgba(181, 154, 99, 0.18);
+}
+#view-workspace .askuser-overlay .au-body {
+  padding: 6px 15px 4px;
+  gap: 18px;
+  max-height: 430px;
+  background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+/* 暗皮滚动内阴影:玄青磨砂面板底色已近黑(rgba(8,11,15,.72)),
+   .34 的黑渐变叠上去几乎看不见。改用更深(峰值 .6)+ 更高(30px)的多段渐变,
+   才能在暗磨砂上读出"下面还有内容"的模糊内阴影。*/
+#view-workspace .askuser-overlay .au-edge {
+  height: 30px;
+}
+#view-workspace .askuser-overlay .au-edge-top {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.6),
+    rgba(0, 0, 0, 0.3) 48%,
+    transparent
+  );
+}
+#view-workspace .askuser-overlay .au-edge-bottom {
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.6),
+    rgba(0, 0, 0, 0.3) 48%,
+    transparent
+  );
+}
+#view-workspace .askuser-overlay .au-body:hover,
+#view-workspace .askuser-overlay .au-body:focus-within {
+  scrollbar-color: rgba(184, 169, 140, 0.32) transparent;
+}
+#view-workspace .askuser-overlay .au-body::-webkit-scrollbar {
+  width: 6px;
+}
+#view-workspace .askuser-overlay .au-body::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius:0;
+  transition: background-color 0.18s ease;
+}
+#view-workspace .askuser-overlay .au-body:hover::-webkit-scrollbar-thumb,
+#view-workspace .askuser-overlay .au-body:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgba(184, 169, 140, 0.3);
+}
+#view-workspace .askuser-overlay .au-body::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(184, 169, 140, 0.5);
+}
+#view-workspace .askuser-overlay .au-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+#view-workspace .askuser-overlay .au-rationale {
+  color: var(--ink-3);
+}
+#view-workspace .askuser-overlay .au-q {
+  color: var(--ink-1);
+}
+#view-workspace .askuser-overlay .au-q-num {
+  color: var(--ink-4);
+}
+#view-workspace .askuser-overlay .au-q .hint {
+  color: var(--ink-4);
+}
+#view-workspace .askuser-overlay .au-opts .wf-chip {
+  border-radius: 0;
+  border: 1px solid var(--line-1);
+  background: transparent;
+  color: var(--ink-2);
+}
+#view-workspace .askuser-overlay .au-opts .wf-chip:hover {
+  border-color: var(--mark);
+  background: rgba(181, 154, 99, 0.12);
+  color: var(--ink-1);
+}
+#view-workspace .askuser-overlay .au-opts .wf-chip input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+}
+#view-workspace .askuser-overlay .au-opts .wf-chip:has(input:checked) {
+  background: rgba(181, 154, 99, 0.18);
+  border-color: var(--mark);
+  color: var(--ink-1);
+  font-weight: 600;
+}
+#view-workspace .askuser-overlay .au-opts .wf-chip:has(input:checked)::before {
+  content: "\2713";
+  margin-right: 5px;
+  color: var(--mark);
+  font-size: 10px;
+}
+#view-workspace .askuser-overlay .au-text,
+#view-workspace .askuser-overlay .au-other {
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-1);
+}
+#view-workspace .askuser-overlay .au-text:focus,
+#view-workspace .askuser-overlay .au-other:focus {
+  border-color: var(--mark);
+}
+#view-workspace .askuser-overlay .au-text::placeholder,
+#view-workspace .askuser-overlay .au-other::placeholder {
+  color: var(--ink-4);
+}
+#view-workspace .askuser-overlay .au-slider-input {
+  accent-color: var(--mark);
+  min-width: 0;
+  width: 100%;
+}
+#view-workspace .askuser-overlay .au-slider-value {
+  border-color: var(--line-2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-1);
+  max-width: 100%;
+  white-space: nowrap;
+}
+#view-workspace .askuser-overlay .au-slider-scale {
+  color: var(--ink-4);
+}
+#view-workspace .askuser-overlay .au-foot {
+  padding: 10px 15px 13px;
+  border-top: 0 !important;
+  background: transparent !important;
+}
+#view-workspace .askuser-overlay .wf-btn {
+  padding: 6px 15px;
+  border-radius: 0 !important;
+  font-size: 12px;
+}
+#view-workspace .askuser-overlay .wf-btn.primary {
+  border: 1px solid var(--ws-red) !important;
+  background: rgba(216, 56, 43, 0.16) !important;
+  color: var(--ws-red-lite) !important;
+  font-weight: 600;
+}
+#view-workspace .askuser-overlay .wf-btn.primary:hover:not(:disabled) {
+  background: rgba(216, 56, 43, 0.28) !important;
+  color: #fdf3ea !important;
+}
+#view-workspace .askuser-overlay .wf-btn.ghost {
+  border: 1px solid rgba(184, 169, 140, 0.28) !important;
+  background: transparent !important;
+  color: #cdbf9f !important;
+}
+#view-workspace .askuser-overlay .wf-btn.ghost:hover:not(:disabled) {
+  border-color: rgba(184, 169, 140, 0.42) !important;
+  background: rgba(184, 169, 140, 0.12) !important;
+  color: #f3ecdb !important;
+}
+#view-workspace .askuser-overlay .wf-btn:disabled,
+#view-workspace .askuser-overlay .wf-btn.primary:disabled {
+  border-color: rgba(184, 169, 140, 0.16) !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: rgba(236, 227, 208, 0.34) !important;
+  cursor: not-allowed !important;
+  opacity: 1 !important;
+}
+
+/* 素材抽屉条 / pill:玄青化 */
+#view-workspace .ws-pill {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(184, 169, 140, 0.28) !important;
+}
+
+#view-workspace .ws-folder-wrap {
+  position: relative;
+  display: inline-flex;
+}
+#view-workspace .ws-input-tools .ws-folder-btn {
+  gap: 6px;
+}
+#view-workspace .ws-input-tools .ws-folder-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+#view-workspace .ws-input-tools .ws-folder-btn.is-active {
+  color: #f6efdf !important;
+  border-color: rgba(184, 169, 140, 0.5) !important;
+  background: rgba(184, 169, 140, 0.18) !important;
+}
+#view-workspace .ws-folder-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: -1px;
+  border-radius: 50%;
+  background: #6fae6a;
+  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.22);
+}
+#view-workspace .ws-folder-popover {
+  position: absolute;
+  left: 0;
+  bottom: 34px;
+  z-index: 8;
+  width: 230px;
+  min-width: 230px;
+  max-height: none;
+  padding: 11px 13px;
+  overflow: visible;
+  /* 与新建页/技能菜单统一成暖白纸面(去掉原深色 !important,交给共享 folder-control.css 统一治理)。 */
+  color: var(--ink-1);
+  background: var(--bg-canvas);
+  border: 1px solid rgba(120, 90, 50, 0.22);
+  border-radius:0;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+#view-workspace .ws-folder-wrap:hover .ws-folder-popover,
+#view-workspace .ws-folder-wrap:focus-within .ws-folder-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+#view-workspace .ws-folder-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+#view-workspace .ws-folder-popover-icon {
+  flex: 0 0 auto;
+  color: #b59a63;
+}
+#view-workspace .ws-folder-popover-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #f3ecdb;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#view-workspace .ws-folder-popover-path {
+  margin: 6px 0 2px;
+  overflow: hidden;
+  color: rgba(236, 227, 208, 0.55);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#view-workspace .ws-folder-popover-meta {
+  color: rgba(236, 227, 208, 0.62);
+  font-size: 11.5px;
+}
+#view-workspace .ws-folder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding: 3px 9px;
+  color: #86c980;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(111, 174, 106, 0.12);
+  border: 1px solid rgba(111, 174, 106, 0.34);
+  border-radius:0;
+}
+#view-workspace .ws-folder-badge span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6fae6a;
+  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.2);
+}
+#view-workspace .ws-folder-badge.is-warn {
+  color: #d9ad58;
+  background: rgba(217, 173, 88, 0.13);
+  border-color: rgba(217, 173, 88, 0.34);
+}
+#view-workspace .ws-folder-badge.is-warn span {
+  background: #d9ad58;
+  box-shadow: 0 0 0 3px rgba(217, 173, 88, 0.18);
+}
+#view-workspace .ws-folder-badge.is-error {
+  color: #e48a7d;
+  background: rgba(192, 57, 43, 0.14);
+  border-color: rgba(192, 57, 43, 0.34);
+}
+#view-workspace .ws-folder-badge.is-error span {
+  background: #d85f52;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.18);
+}
+#view-workspace .ws-folder-badge.is-muted {
+  color: rgba(236, 227, 208, 0.62);
+  background: rgba(236, 227, 208, 0.08);
+  border-color: rgba(236, 227, 208, 0.18);
+}
+#view-workspace .ws-folder-badge.is-muted span {
+  background: rgba(236, 227, 208, 0.48);
+  box-shadow: 0 0 0 3px rgba(236, 227, 208, 0.12);
+}
+#view-workspace .ws-folder-popover-error {
+  margin-top: 7px;
+  color: #e48a7d;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+#view-workspace .ws-folder-popover-hint {
+  margin-top: 10px;
+  padding-top: 8px;
+  color: #b59a63;
+  font-size: 11px;
+  border-top: 1px solid rgba(184, 169, 140, 0.18);
+}
+#view-workspace .ws-folder-popover-arrow {
+  position: absolute;
+  left: 24px;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  background: #1f262d;
+  border-right: 1px solid rgba(184, 169, 140, 0.34);
+  border-bottom: 1px solid rgba(184, 169, 140, 0.34);
+  transform: rotate(45deg);
+}
+#view-workspace .ws-folder-tooltip {
+  position: absolute;
+  left: 0;
+  bottom: 34px;
+  z-index: 8;
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 9px;
+  color: rgba(236, 227, 208, 0.76);
+  font-size: 11.5px;
+  line-height: 1.5;
+  background: #1f262d;
+  border: 1px solid rgba(184, 169, 140, 0.24);
+  border-radius:0;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+#view-workspace .ws-folder-wrap:hover .ws-folder-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+#view-workspace .ws-folder-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(8, 10, 12, 0.55);
+}
+#view-workspace .ws-folder-intro-modal,
+#view-workspace .ws-folder-confirm-modal {
+  width: min(460px, 92vw);
+  color: var(--ink-1);
+  background: var(--bg-paper-deep);
+  border: 1px solid rgba(120, 90, 50, 0.26);
+  border-radius:0;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+}
+#view-workspace .ws-folder-intro-modal {
+  padding: 26px 26px 20px;
+}
+#view-workspace .ws-folder-confirm-modal {
+  max-width: 330px;
+  padding: 22px 24px 18px;
+}
+#view-workspace .ws-folder-modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
+  color: #9c8552;
+  border: 1px solid rgba(120, 90, 50, 0.26);
+  border-radius:0;
+}
+#view-workspace .ws-folder-intro-modal h3,
+#view-workspace .ws-folder-confirm-modal h3 {
+  margin: 0 0 12px;
+  color: var(--ink-1);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+#view-workspace .ws-folder-confirm-modal h3 {
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+#view-workspace .ws-folder-intro-modal p,
+#view-workspace .ws-folder-confirm-modal p {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.85;
+}
+#view-workspace .ws-folder-intro-point {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+#view-workspace .ws-folder-intro-point > span {
+  flex: 0 0 auto;
+  color: #9c8552;
+  font-weight: 700;
+  line-height: 1.7;
+}
+#view-workspace .ws-folder-intro-point p {
+  margin: 0;
+  line-height: 1.7;
+}
+#view-workspace .ws-folder-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(120, 90, 50, 0.26);
+}
+#view-workspace .ws-folder-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#view-workspace .ws-folder-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--ink-1);
+}
+#view-workspace .ws-folder-modal-primary,
+#view-workspace .ws-folder-modal-secondary,
+#view-workspace .ws-folder-modal-danger {
+  border-radius:0;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#view-workspace .ws-folder-modal-primary {
+  padding: 9px 18px;
+  color: var(--bg-paper-deep);
+  font-weight: 600;
+  background: var(--ink-1);
+  border: 0;
+}
+#view-workspace .ws-folder-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+}
+#view-workspace .ws-folder-modal-secondary {
+  padding: 8px 16px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid rgba(120, 90, 50, 0.26);
+}
+#view-workspace .ws-folder-modal-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+#view-workspace .ws-folder-modal-danger {
+  padding: 8px 16px;
+  color: #fff;
+  font-weight: 600;
+  background: #c0392b;
+  border: 0;
+}
+#view-workspace .ws-folder-modal-danger:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+@media (max-width: 560px) {
+  #view-workspace .ws-folder-modal-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  #view-workspace .ws-folder-modal-primary {
+    width: 100%;
+  }
+}
+
+/* —— 右侧:玄青桌面留白,正文为奶白文档纸 —— */
+#view-workspace .ws-right {
+  /* 透明露出深墨:纸张上方 padding 形成顶部留白间隔(顶部空间感);
+     底部靠 .wf-doc min-height:100% 铺满到底,不再留黑空隙 */
+  background: transparent !important;
+}
+#view-workspace .wf-doc {
+  /* !important:覆盖 editing/pendingReview 等态把纸改成 transparent 的规则,任何态都保持奶白 */
+  background: var(--bg-paper-deep) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  padding: 52px 64px !important;
+  border-radius: 0;
+  /* 纸宽 = 右列可用内容宽(上限 800)。竖向滚动条出现时(占 ~8px),纸自动收 8px 刚好填满,
+     不再比容器宽 → 消除底部横向滚动条(不是隐藏,是让内容刚好放下)。 */
+  width: 100% !important;
+  max-width: 800px !important;
+  box-sizing: border-box !important;
+  /* 铺满滚动容器内容区:短文档也撑到底、底部不露深墨黑;长文档随内容向下延伸。
+     顶部留白由 ws-right 的 padding-top 提供(深墨间隔),底部由 padding-bottom:0 贴到底 */
+  min-height: var(--ws-paper-min-height);
+  margin: 0;
+}
+#view-workspace .ws-paper-surface {
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  min-height: var(--ws-paper-min-height);
+}
+#view-workspace .ws-paper-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+}
+#view-workspace .native-presentation-shell {
+  min-height: var(--ws-paper-min-height);
+}
+#view-workspace .native-presentation-shell .wf-doc.ProseMirror {
+  min-height: var(--ws-paper-min-height);
+}
+#view-workspace .doc-toolbar {
+  background: var(--ink-1) !important;
+  border-color: var(--ink-1) !important;
+}
+#view-workspace .doc-toolbar::after {
+  background: var(--ink-1) !important;
+  border-right-color: var(--ink-1) !important;
+  border-bottom-color: var(--ink-1) !important;
+}
+/* 下方弹出时 caret 朝上,暖墨皮肤下同样染成深墨色(用 top/left 边) */
+#view-workspace .doc-toolbar.is-below::after {
+  border-left-color: var(--ink-1) !important;
+  border-top-color: var(--ink-1) !important;
+}
+#view-workspace .doc-toolbar .dt-menu {
+  background: var(--ink-1) !important;
+  border-color: #3a3328 !important;
+}
+/* 代码块语言菜单通过 portal 挂到 body,不在 #view-workspace 作用域内。
+   这里单独抬高层级并锁住滚动,避免下半选项被正文层吃掉或 wheel 穿透。 */
+.code-block-language-menu {
+  z-index: 100120;
+  pointer-events: auto;
+  max-height: min(52vh, 280px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 块手柄菜单(转换为 / 插入)暖化:它是 fixed/absolute 浮层,在 .wf-doc 暖作用域外,
+   基础 --bg-canvas 现已暖化为 #faf6ec(tokens.css)。这里给整套暖 token + 暖白底(比纸面略亮、
+   靠阴影分离),让面板/分组标题/列表项/图标/网格/hover 全部跟随暖墨纸面,不再白。 */
+#view-workspace .block-handle-menu {
+  background: var(--bg-canvas) !important;
+  border-color: rgba(120, 90, 50, 0.22) !important;
+  --line-1: rgba(120, 90, 50, 0.14);
+  --line-2: rgba(120, 90, 50, 0.24);
+}
+/* 空/生成中态也是同一张奶白纸 —— 翻转落地即有纸接住,内容随后 settle 进来(接缝不断)。
+   原 .doc-empty 是 absolute inset:0(填满右列、top:0);改为 top:40 起,与纸落点 rect 对齐。 */
+#view-workspace .doc-empty {
+  top: 52px !important;
+  background: var(--bg-paper-deep) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+}
+#view-workspace .doc-empty-title {
+  color: #2c2419;
+}
+#view-workspace .doc-empty-sub {
+  color: #8a7350;
+}
+/* 文档纸:无边框(纯净奶白纸面) */
+#view-workspace .wf-doc {
+  position: relative;
+}
+/* 文档纸内的语义令牌翻成「暖纸」系:ui-kit base token 是冷绿灰底 + 暗红 mark(#b15059),
+   表格/行内代码/链接/callout/公式默认走它,在奶白纸上格格不入。这里在纸作用域内统一暖化——
+   凡用 var(--mark / --line-* / --bg-subtle / --ink-*) 的元素自动跟随变暖。 */
+#view-workspace .wf-doc,
+/* 文件预览面板(AssetPreview)同样套暖色 token,否则文字/标签会落到基础冷色(slate-blue)→ 白底青蓝字、与主题不搭。 */
+#view-workspace .fd-right-preview {
+  --bg-canvas: var(--bg-paper-deep);
+}
+
+/* —— 文档纸顶部带:右上角图标按钮(历史 / 导出),贴在纸的右上角那行空间里 ——
+   位置用 WorkspacePage 写的 --doc-left/--doc-right 变量(= 纸的真实左右边),随窗口缩放跟着纸走。 */
+#view-workspace .ws-doc-topbar {
+  position: fixed;
+  top: 12px;
+  z-index: 21;
+  /* 右锚到纸的右边再往里收一点(更靠左、离视口边更远),并钳进视口(窄屏不溢出) */
+  right: max(28px, calc(100vw - var(--doc-right, 100%) + 22px));
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+#view-workspace .ws-doc-btn {
+  pointer-events: auto;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  color: rgba(236, 227, 208, 0.7);
+  background: rgba(18, 24, 31, 0.42);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+#view-workspace .ws-doc-btn:hover {
+  color: #b8a98c;
+  border-color: rgba(184, 169, 140, 0.42);
+}
+/* 正文上滚后:图标压在奶白纸上 → 切成深墨描金底,在纸上清晰可见 */
+#view-workspace.ws-doc-scrolled .ws-doc-btn {
+  color: #6b5836;
+  background: rgba(239, 231, 214, 0.82);
+  border-color: rgba(120, 90, 50, 0.32);
+}
+#view-workspace.ws-doc-scrolled .ws-doc-btn:hover {
+  color: #9e2b25;
+  border-color: rgba(120, 90, 50, 0.55);
+}
+/* 导出按钮禁用态(空文档 / 问卷·审批进行中):置灰不可点,但仍可 hover 出 title 提示原因 */
+#view-workspace .ws-doc-btn.is-disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+#view-workspace .ws-doc-btn.is-disabled:hover {
+  color: rgba(236, 227, 208, 0.7);
+  border-color: rgba(200, 169, 106, 0.28);
+}
+#view-workspace.ws-doc-scrolled .ws-doc-btn.is-disabled:hover {
+  color: #6b5836;
+  border-color: rgba(120, 90, 50, 0.32);
+}
+
+/* 导出二级菜单:贴导出按钮右下方。与工作区水墨皮一致 —— 通透深墨 + 描金边 + 深影,
+   表面处方对齐 .ws-morph-ghost;宋体落字;入场轻弹;正文上滚后随顶栏按钮翻成奶白纸面。 */
+#view-workspace .ws-export-anchor {
+  position: relative;
+  pointer-events: auto;
+  display: inline-flex;
+}
+#view-workspace .ws-export-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  min-width: 156px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius:0;
+  border: 1px solid rgba(200, 169, 106, 0.34);
+  background: rgba(16, 21, 26, 0.62);
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  transform-origin: top right;
+  animation: ws-export-pop 0.18s cubic-bezier(0.34, 1.28, 0.5, 1) both;
+}
+@keyframes ws-export-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+#view-workspace .ws-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-radius:0;
+  background: transparent;
+  color: rgba(236, 227, 208, 0.84);
+  font-size: 13px;
+  font-family: var(--font-zh-serif);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    color 0.14s;
+}
+#view-workspace .ws-export-item:hover:not(:disabled) {
+  background: rgba(200, 169, 106, 0.1);
+  color: #ecdcb4;
+}
+#view-workspace .ws-export-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#view-workspace .ws-export-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(236, 227, 208, 0.22);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ws-export-spin 0.85s linear infinite;
+}
+@keyframes ws-export-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 平台项(走技能·发 query):朱砂点,和确定性导出区分 */
+#view-workspace .ws-export-item--platform {
+  color: #c8a96a;
+}
+#view-workspace .ws-export-item--platform:hover:not(:disabled) {
+  background: rgba(200, 169, 106, 0.14);
+  color: #dcc086;
+}
+#view-workspace .ws-export-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(200, 169, 106, 0.28),
+    transparent
+  );
+}
+/* 正文上滚后:顶栏按钮已翻奶白纸面,菜单同步翻成宣纸描墨,避免悬在奶白纸上发暗突兀 */
+#view-workspace.ws-doc-scrolled .ws-export-menu {
+  border-color: rgba(120, 90, 50, 0.3);
+  background: rgba(243, 236, 221, 0.94);
+  box-shadow: 0 16px 40px rgba(60, 44, 22, 0.22);
+}
+#view-workspace.ws-doc-scrolled .ws-export-item {
+  color: #5b4a2e;
+}
+#view-workspace.ws-doc-scrolled .ws-export-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: #3f3320;
+}
+#view-workspace.ws-doc-scrolled .ws-export-item--platform {
+  color: #9e2b25;
+}
+#view-workspace.ws-doc-scrolled .ws-export-item--platform:hover:not(:disabled) {
+  background: rgba(158, 43, 37, 0.1);
+  color: #7d211c;
+}
+#view-workspace.ws-doc-scrolled .ws-export-sep {
+  background: linear-gradient(90deg, transparent, rgba(120, 90, 50, 0.3), transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .ws-export-menu {
+    animation: none;
+  }
+}
+
+/* —— 左对话区:顶上也留一行空白(与右侧纸顶 52 带对称) —— */
+#view-workspace .ws-chat {
+  padding-top: 52px !important;
+}
+
+/* —— 写草稿:迷你 A4 米黄卡(顶「草稿」标签+标题,中正文,右下角目标自述/完成字数,字号偏小) —— */
+#view-workspace .ws-draft-card {
+  width: 158px;
+  aspect-ratio: 210 / 297; /* A4 竖向 */
+  margin: 8px 0;
+  padding: 11px 11px 9px;
+  background: var(--bg-paper-deep); /* 米黄,同右侧文档纸 */
+  border: 1px solid rgba(120, 90, 50, 0.22);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42);
+  display: flex;
+  flex-direction: column;
+  color: #3b3322;
+  font-size: 9px; /* 迷你 */
+  line-height: 1.55;
+  overflow: hidden;
+}
+#view-workspace .ws-draft-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(120, 90, 50, 0.14);
+}
+#view-workspace .ws-draft-tag {
+  flex: 0 0 auto;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  line-height: 1.3;
+  padding: 1px 5px;
+  color: #b23a2e;
+  background: rgba(216, 56, 43, 0.1);
+  border: 1px solid rgba(216, 56, 43, 0.32);
+}
+#view-workspace .ws-draft-title {
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #2c2419;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#view-workspace .ws-draft-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto; /* 用户可手动滚动;停在底部时 JS 自动跟随到底 */
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 90, 50, 0.32) transparent;
+}
+#view-workspace .ws-draft-body::-webkit-scrollbar {
+  width: 5px;
+}
+#view-workspace .ws-draft-body::-webkit-scrollbar-thumb {
+  background: rgba(120, 90, 50, 0.32);
+  border-radius:0;
+}
+#view-workspace .ws-draft-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* 卡片已出现、工具仍在请求、还没内容 → 「酝酿中」loading */
+#view-workspace .ws-draft-brewing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8a7350;
+  font-size: 9px;
+  padding-top: 2px;
+}
+#view-workspace .ws-draft-brewing .chat-loading-dots span {
+  background: #8a7350;
+}
+#view-workspace .ws-draft-body-inner {
+  color: #5d4c33;
+  font-size: 9px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+#view-workspace .ws-draft-caret {
+  color: #9e2b25;
+}
+#view-workspace .ws-draft-foot {
+  flex: 0 0 auto;
+  margin-top: 7px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 8.5px;
+  color: #8a7350;
+}
+#view-workspace .ws-draft-fail {
+  color: #b42318;
+}
+
+/* —— 聊天行内代码:玄青暗底描金,不再白块 —— */
+#view-workspace .ws-left .chat-inline-code {
+  background: rgba(184, 169, 140, 0.12);
+  color: #cbbd9d;
+  border: 1px solid rgba(184, 169, 140, 0.22);
+  padding: 0 5px;
+  border-radius:0;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  word-break: break-word;
+}
+
+/* —— 问卷提交摘要卡:直角 + 金色头部(icon+「已提交问卷」)—— */
+#view-workspace .askuser-card {
+  border-radius: 0 !important;
+}
+#view-workspace .askuser-card-header {
+  color: #b8a98c !important;
+}
+#view-workspace .askuser-card-check {
+  color: #b8a98c !important;
+  display: inline-flex;
+  align-items: center;
+}
+/* —— bigplan 选项勾选标记:✓ 字符换成金色描线 SVG —— */
+#view-workspace .bigplan-panel .bp-opt.on::before,
+#view-workspace .bigplan-panel .bp-opt.on.has-desc::after {
+  content: "" !important;
+  width: 11px;
+  height: 11px;
+  background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23b59a63'%20stroke-width='2.4'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.5%2012.8l4.6%204.7L19.5%206.6'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+}
+
+/* —— 链接:行内金链 + 整行链接卡(demo .img-card 观感) —— */
+#view-workspace .chat-link {
+  color: #b8a98c;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(184, 169, 140, 0.32);
+}
+#view-workspace .chat-link:hover {
+  border-bottom-color: rgba(184, 169, 140, 0.55);
+}
+#view-workspace .ws-link-arrow {
+  color: var(--ink-4);
+  font-size: 0.92em;
+}
+/* 链接卡 = demo 观感:玄青透底 + 细金边 + 直角;带图/不带图统一结构与字号,前缀「链接」标签 */
+#view-workspace .ws-link-card {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin: 9px 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(184, 169, 140, 0.34);
+  border-radius: 0; /* 直角(同 demo) */
+  background: rgba(20, 28, 34, 0.34);
+  text-decoration: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+#view-workspace .ws-link-card:hover {
+  border-color: rgba(184, 169, 140, 0.48);
+  background: rgba(20, 28, 34, 0.5);
+}
+#view-workspace .ws-link-card-img {
+  width: 100%;
+  display: block;
+  border-bottom: 1px solid rgba(184, 169, 140, 0.2);
+}
+#view-workspace .ws-link-card-meta {
+  padding: 11px 15px;
+}
+/* 「链接」标签:内联在标题开头,跟标题混排(标题换行时第二行流到最左、在标签下方) */
+#view-workspace .ws-link-tag {
+  display: inline-block;
+  margin-right: 7px;
+  vertical-align: 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  line-height: 1.4;
+  padding: 1px 6px;
+  color: #b8a98c;
+  background: rgba(184, 169, 140, 0.12);
+  border: 1px solid rgba(184, 169, 140, 0.3);
+  white-space: nowrap;
+}
+#view-workspace .ws-link-card-title {
+  min-width: 0;
+  color: var(--ink-on-dark);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+#view-workspace .ws-link-card-host {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  margin-top: 4px;
+}
+
+/* —— 思考流指示条(两行,无边框) ——
+   第一行:三点 + 「思考中」(流光扫光);第二行:滚动文案(有内容才出,两行截断)。 */
+#view-workspace .ws-think-marquee {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.6;
+}
+#view-workspace .ws-think-marquee .ws-think-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#view-workspace .ws-think-marquee .chat-loading-dots {
+  flex: 0 0 auto;
+}
+/* 「思考中」三字:从左到右流光扫光 */
+#view-workspace .ws-think-marquee .ws-think-label {
+  background: linear-gradient(
+    100deg,
+    rgba(236, 227, 208, 0.42) 0%,
+    rgba(236, 227, 208, 0.42) 38%,
+    rgba(255, 247, 230, 0.95) 50%,
+    rgba(236, 227, 208, 0.42) 62%,
+    rgba(236, 227, 208, 0.42) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ws-think-shine 1.9s linear infinite;
+  letter-spacing: 0.04em;
+}
+@keyframes ws-think-shine {
+  to {
+    background-position: -120% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .ws-think-marquee .ws-think-label {
+    animation: none;
+    -webkit-text-fill-color: rgba(236, 227, 208, 0.6);
+    color: rgba(236, 227, 208, 0.6);
+  }
+}
+/* 第二行文案:另起一行,对齐到「思考中」起点(让过三点),两行截断 */
+#view-workspace .ws-think-marquee .ws-think-text {
+  padding-left: 26px;
+  color: var(--ink-3);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* —— 霓虹光统一收敛 —— */
+/* ① 正文区生成态的彩虹 Apple-Intelligence 辉光去掉(顶上纸卡不要霓虹) */
+body[data-tool="imageProgress"] #view-workspace .ws-right,
+body[data-tool="agentBusy"] #view-workspace .ws-right,
+body[data-patch-revealing="1"] #view-workspace .ws-right {
+  animation: none !important;
+  box-shadow: none !important;
+}
+/* ② 输入框发光换成单色金(同新建页),不再蓝紫多色 */
+#view-workspace .wf-input.is-agent-active {
+  border-color: rgba(184, 169, 140, 0.46) !important;
+  opacity: var(--fx-input-agent-opacity);
+  animation: ws-input-gold-glow 2.4s ease-in-out infinite !important;
+}
+@keyframes ws-input-gold-glow {
+  0%,
+  100% {
+    box-shadow: var(--fx-input-agent-glow-rest);
+  }
+  50% {
+    box-shadow: var(--fx-input-agent-glow-peak);
+  }
+}
+:root[data-perf="low"] #view-workspace .wf-input.is-agent-active {
+  animation: none !important;
+  box-shadow: var(--fx-input-agent-glow-static) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .wf-input.is-agent-active {
+    animation: none !important;
+    box-shadow: var(--fx-input-agent-glow-static) !important;
+  }
+}
+
+:root[data-perf="low"] #view-workspace .ws-back-home {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .ws-back-home {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* —— 临时调试:输入框→操作条 形变调参面板(Ctrl+Shift+H) —— */
+#view-workspace .morph-debug-panel {
+  position: fixed;
+  top: 64px;
+  left: 24px;
+  z-index: 200;
+  width: 244px;
+  padding: 12px 14px 14px;
+  background: rgba(16, 21, 26, 0.94);
+  border: 1px solid rgba(184, 169, 140, 0.34);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.55);
+  color: var(--ink-on-dark);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+#view-workspace .morph-debug-panel .mdp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: #f0e9da;
+}
+#view-workspace .morph-debug-panel .mdp-x {
+  background: none;
+  border: 0;
+  color: #cdbf9f;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+#view-workspace .morph-debug-panel .mdp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+#view-workspace .morph-debug-panel .mdp-k {
+  width: 28px;
+  color: #cdbf9f;
+}
+#view-workspace .morph-debug-panel .mdp-row input[type="range"] {
+  flex: 1;
+  accent-color: #b59a63;
+}
+#view-workspace .morph-debug-panel .mdp-v {
+  width: 52px;
+  text-align: right;
+  color: #f0e9da;
+}
+#view-workspace .morph-debug-panel .mdp-easings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+#view-workspace .morph-debug-panel .mdp-easings button {
+  padding: 4px 9px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  color: #cdbf9f;
+  cursor: pointer;
+}
+#view-workspace .morph-debug-panel .mdp-easings button.is-on {
+  background: #b59a63;
+  border-color: #b59a63;
+  color: var(--ink-surface);
+  font-weight: 600;
+}
+#view-workspace .morph-debug-panel .mdp-current {
+  font-size: 10px;
+  color: rgba(236, 227, 208, 0.5);
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+#view-workspace .morph-debug-panel .mdp-group-label {
+  font-size: 10px;
+  color: rgba(236, 227, 208, 0.5);
+  margin-bottom: 6px;
+}
+#view-workspace .morph-debug-panel .mdp-kinds {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+#view-workspace .morph-debug-panel .mdp-kinds button {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  background: transparent;
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  color: #cdbf9f;
+  cursor: pointer;
+}
+#view-workspace .morph-debug-panel .mdp-kinds button.is-on {
+  background: rgba(184, 169, 140, 0.16);
+  border-color: rgba(184, 169, 140, 0.5);
+  color: #f3ecdb;
+}
+#view-workspace .morph-debug-panel .mdp-actions {
+  display: flex;
+  gap: 8px;
+}
+#view-workspace .morph-debug-panel .mdp-actions button {
+  flex: 1;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #b59a63;
+}
+#view-workspace .morph-debug-panel .mdp-enter {
+  background: #b59a63;
+  color: var(--ink-surface);
+}
+#view-workspace .morph-debug-panel .mdp-enter:hover {
+  background: #c7af78;
+}
+#view-workspace .morph-debug-panel .mdp-return {
+  background: transparent;
+  color: #cdbf9f;
+}
+#view-workspace .morph-debug-panel .mdp-return:hover:not(:disabled) {
+  background: rgba(184, 169, 140, 0.12);
+  color: #f3ecdb;
+}
+#view-workspace .morph-debug-panel .mdp-return:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* 上下文 token 提示浮层(Ctrl+Shift+H 时出现在左下角,不占界面) */
+#view-workspace .ctx-debug-float {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 200;
+}
+
+#view-workspace .workspace-tooltip {
+  position: fixed;
+  z-index: 100200;
+  box-sizing: border-box;
+  max-width: min(280px, calc(100vw - 28px));
+  padding: 7px 10px 8px;
+  border: 1px solid rgba(184, 169, 140, 0.26);
+  border-radius:0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0)),
+    rgba(31, 27, 21, 0.9);
+  color: rgba(246, 239, 221, 0.92);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-family: var(--font-zh-serif);
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(0, 4px, 0) scale(0.98);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+#view-workspace .workspace-tooltip.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+/* 箭头改 clip-path 纯三角:气泡(rgba .9)与箭头(rgba .9)都半透明,旧的"旋转 45° 方块一半压
+   进气泡"会让叠加区出现加深的菱形(用户反馈)。纯三角顶边正好贴气泡边缘、零面积重叠,根除该问题。 */
+#view-workspace .workspace-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--workspace-tooltip-arrow-left, 16px);
+  width: 12px;
+  height: 6px;
+  background: rgba(31, 27, 21, 0.9);
+  transform: translateX(-50%);
+}
+#view-workspace .workspace-tooltip[data-placement="top"]::after {
+  top: 100%;
+  clip-path: polygon(50% 100%, 0 0, 100% 0); /* 气泡在上,箭头朝下 */
+}
+#view-workspace .workspace-tooltip[data-placement="bottom"]::after {
+  bottom: 100%;
+  clip-path: polygon(50% 0, 0 100%, 100% 100%); /* 气泡在下,箭头朝上 */
+}
+
+/* ============================================================================
+   审阅态「上一处/下一处」当前激活处的强调(问题A)
+   workspace.css 里 .wf-patch-ins-wrap.active 只是把绿底从 .25→.4 加深一点点,
+   多处绿之间根本分不清"当前激活的是哪一处"。这里在纸作用域(--mark = 赭金)
+   给当前激活的那段绿:① 赭金描边环 + 柔和外发光(明显但不刺眼,与暗皮 + 赭金色系协调)
+   ② 激活瞬间一次短促脉冲(activePatchId 变 → .active 在新 wrap 上重新挂载 → 动画重跑一次)。
+   非激活的其余绿处不受影响(只有 .active 命中)。inline 包裹用 box-decoration-break
+   让换行也连续描边。 */
+#view-workspace .wf-patch-ins-wrap.active {
+  position: relative;
+  border-radius:0;
+  outline: 1.5px solid color-mix(in srgb, var(--mark) 78%, transparent);
+  outline-offset: 1px;
+  background-color: color-mix(in srgb, var(--mark) 14%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--mark) 16%, transparent),
+    0 0 14px 2px color-mix(in srgb, var(--mark) 28%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: ws-active-patch-pulse 760ms cubic-bezier(0.16, 1, 0.3, 1);
+  scroll-margin: 30vh 0;
+}
+/* 激活的那段绿底加深一档,和环呼应(覆盖 workspace.css 的 .25→.4) */
+#view-workspace .wf-patch-ins-wrap.active .wf-patch-ins {
+  background: linear-gradient(
+    to bottom,
+    transparent 50%,
+    color-mix(in srgb, var(--mark) 30%, rgba(74, 180, 100, 0.5)) 50%
+  );
+}
+@keyframes ws-active-patch-pulse {
+  0% {
+    outline-color: color-mix(in srgb, var(--mark) 96%, transparent);
+    box-shadow:
+      0 0 0 5px color-mix(in srgb, var(--mark) 34%, transparent),
+      0 0 22px 5px color-mix(in srgb, var(--mark) 46%, transparent);
+  }
+  60% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--mark) 16%, transparent),
+      0 0 14px 2px color-mix(in srgb, var(--mark) 28%, transparent);
+  }
+  100% {
+    outline-color: color-mix(in srgb, var(--mark) 78%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .wf-patch-ins-wrap.active {
+    animation: none;
+  }
+}
+
+/* —— 文末落款:正文末尾续奶白纸,竖排两列「作于{干支年月初几} | 成文{中文数字}字+印章」——
+   position + z-index:1 盖住正文纸(.wf-doc)向下投的那道阴影,消除接缝丑阴影,正文+落款连成一张纸。 */
+#view-workspace .ws-colophon {
+  --ws-colophon-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 800px;
+  margin: 0;
+  box-sizing: border-box;
+  padding: 48px 64px 90px;
+  background: var(--bg-paper-deep);
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: flex-start;
+  /* 两列间距收小(左列「作于…」随之右移、更靠右列),字号 +2(18→20)。 */
+  gap: 5px;
+  /* 文末落款用书法艺术字型(子集 yanshi-colophon-subset 本就为落款字造),回落宋体 */
+  font-family: "QingYanShiSubset", var(--font-zh-serif);
+  font-size: 20px;
+  user-select: none;
+}
+/* 两列竖排:右列「成文X字」、左列「作于干支年月初几」——同字号同字色(用户要求一致)。 */
+#view-workspace .ws-colophon-count,
+#view-workspace .ws-colophon-date {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: "QingYanShiSubset", var(--font-zh-serif);
+  font-size: 1em;
+  font-weight: 400;
+  color: #2c2419;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0;
+  transform: translate3d(0, 10px, 0);
+  animation: wsColophonTextIn 520ms var(--ws-colophon-ease) forwards;
+  will-change: transform, opacity;
+}
+#view-workspace .ws-colophon-glyph {
+  display: grid;
+  place-items: center;
+  width: 1.18em;
+  height: 1.28em;
+  line-height: 1;
+  text-align: center;
+  transform: translateX(var(--ws-colophon-glyph-x, 0));
+}
+#view-workspace .ws-colophon-count {
+  animation-delay: 40ms;
+}
+#view-workspace .ws-colophon-date {
+  animation-delay: 120ms;
+}
+/* 右列:字数(竖排)+ 印章接其下面;列宽≈一列竖排字宽。 */
+#view-workspace .ws-colophon-countcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: 1.6em;
+}
+#view-workspace .ws-colophon-seal {
+  width: 1.18em;
+  height: auto;
+  object-fit: contain;
+  opacity: 0;
+  flex-shrink: 0;
+  transform-origin: 50% 42%;
+  filter: blur(2px);
+  animation: wsColophonSealStamp 720ms var(--ws-colophon-ease) 420ms both;
+  will-change: transform, opacity, filter;
+}
+@keyframes wsColophonTextIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes wsColophonSealStamp {
+  0% {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translate3d(0, -42px, 0) scale(1.58) rotate(-6deg);
+  }
+  48% {
+    opacity: 0.88;
+    filter: blur(0.8px);
+    transform: translate3d(0, -8px, 0) scale(1.22) rotate(-2deg);
+  }
+  68% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 1px, 0) scale(0.92) rotate(1.5deg);
+  }
+  84% {
+    opacity: 0.96;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1.03) rotate(-0.6deg);
+  }
+  100% {
+    opacity: 0.95;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .ws-colophon-count,
+  #view-workspace .ws-colophon-date,
+  #view-workspace .ws-colophon-seal {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: none;
+    will-change: auto;
+  }
+  #view-workspace .ws-colophon-seal {
+    opacity: 0.95;
+  }
+}
+
+/* 落款占位态(问题B):审阅/编辑过渡态的静态路径渲染 .ws-colophon.is-placeholder ——
+   奶白纸 + 完整 padding 照常占位、把那块约一屏的空间提前留好;但署名文字 / 印章
+   不显现(opacity:0、不跑入场动画),保留布局高度。提交结清 → 翻回可编辑路径,
+   那条渲染非占位真落款,文字 + 印章按既有 wsColophonTextIn / wsColophonSealStamp
+   入场动画"淡入显现"。于是空间一直在、只是内容显隐 → 消除提交后凭空蹦一块的跳动。 */
+#view-workspace .ws-colophon.is-placeholder .ws-colophon-count,
+#view-workspace .ws-colophon.is-placeholder .ws-colophon-date,
+#view-workspace .ws-colophon.is-placeholder .ws-colophon-seal {
+  opacity: 0;
+  animation: none;
+  transform: none;
+  filter: none;
+  will-change: auto;
+}
+
+/* ============================================================================
+   落款层级根因修复:.wf-doc.ProseMirror 在 workspace.css 里被
+   `.native-presentation-shell .wf-doc.ProseMirror{position:relative;z-index:1}`
+   无条件赋了 z-index:1(本意是放映态让纸盖在 vignette 之上)。z-index:1 让纸
+   形成层叠上下文,把纸内的高亮/callout 调色浮层(.pm-callout-theme-pop /
+   .pm-callout-emoji-pop,z-index:20)整体困死在纸的上下文里;而文末落款
+   .ws-colophon 是纸的兄弟、同样 z-index:1,DOM 在后 → 落款整体盖在纸(连同纸内
+   浮层)之上,浮层只要向下溢出到落款带就被切断。
+   非放映态根本没有 vignette,这个 z-index:1 纯属多余的"陷阱"。这里仅在
+   非 active(无 vignette)时把纸的 z-index 还原为 auto:纸不再成层叠上下文,
+   浮层 z-index:20 直接压过落款 z-index:1;落款(定位+z-index:1)依旧盖住纸向下
+   投的阴影接缝(实测接缝仍被遮、浮层不再被切)。放映态(.native-presentation-active)
+   维持原 z-index:1,vignette 叠放不受影响。 */
+#view-workspace
+  .native-presentation-shell:not(.native-presentation-active)
+  .wf-doc.ProseMirror {
+  z-index: auto;
+}
+
+/* ============================================================================
+   生成/编辑期间的文档区编辑锁(问题1)
+   信号:复用现有 body[data-tool="agentBusy"|"imageProgress"] 与
+         body[data-patch-revealing="1"](青简正在改文档时由 WorkspacePage 落到 body)。
+   能滚不能点:遮罩层 .ws-edit-lock 自身 pointer-events:none,滚轮/触控板事件穿透
+   给 .ws-right 滚动容器(故"能滚");屏蔽点击/编辑则交给"忙时给 .wf-doc 加
+   pointer-events:none"——纸面所有点击/调色浮层/块手柄全部不可点(故"不能点"),
+   而滚动作用在 .ws-right 上、不受子级 pointer-events 影响。 */
+/* 遮罩/提示锚:作为 .ws-right 的最后一个流内子级,position:sticky + bottom 让其钉在
+   滚动视口底部(不随内容滚走)。height:0 不占布局;子级提示用 sticky 容器的 bottom 锚。 */
+#view-workspace .ws-edit-lock {
+  position: sticky;
+  bottom: 28px;
+  z-index: 40;
+  height: 0;
+  pointer-events: none; /* 关键:遮罩不吃事件,滚轮穿透到 .ws-right */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: -28px; /* 抵消自身 sticky 偏移导致的额外底部空隙 */
+}
+body[data-tool="agentBusy"] #view-workspace .ws-edit-lock,
+body[data-tool="imageProgress"] #view-workspace .ws-edit-lock,
+body[data-patch-revealing="1"] #view-workspace .ws-edit-lock {
+  opacity: 1;
+}
+/* 忙时屏蔽纸面所有点击/编辑(浮层、块手柄、调色钮),但 .ws-right 滚动不受影响 */
+body[data-tool="agentBusy"] #view-workspace .ws-right .wf-doc,
+body[data-tool="imageProgress"] #view-workspace .ws-right .wf-doc,
+body[data-patch-revealing="1"] #view-workspace .ws-right .wf-doc {
+  pointer-events: none;
+}
+
+/* hover 提示:不 hover 不显示;贴底固定(由父级 .ws-edit-lock 的 sticky 钉在视口底),
+   不随内容滚动跑。提示自身只管样式与显隐过渡。 */
+#view-workspace .ws-edit-lock-hint {
+  pointer-events: none;
+  width: fit-content;
+  max-width: 80%;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: rgba(38, 32, 22, 0.9);
+  color: #f3ead6;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow:
+    0 10px 30px rgba(20, 14, 6, 0.4),
+    inset 0 0 0 1px rgba(200, 175, 130, 0.22);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease;
+}
+/* 仅在文档区(.ws-right) hover 且处于忙态时浮现提示 */
+body[data-tool="agentBusy"] #view-workspace .ws-right:hover .ws-edit-lock-hint,
+body[data-tool="imageProgress"]
+  #view-workspace
+  .ws-right:hover
+  .ws-edit-lock-hint,
+body[data-patch-revealing="1"]
+  #view-workspace
+  .ws-right:hover
+  .ws-edit-lock-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+#view-workspace .ws-edit-lock-hint-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d8b86a;
+  box-shadow: 0 0 0 0 rgba(216, 184, 106, 0.6);
+  animation: ws-edit-lock-dot 1.6s ease-in-out infinite;
+}
+@keyframes ws-edit-lock-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(216, 184, 106, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 6px rgba(216, 184, 106, 0);
+  }
+}
+
+/* 纸面内发光呼吸:表示"正在编辑中"。inner glow 打在正文纸 + 落款的共同
+   .ws-paper-surface 上,形成连续表面;不再分别打到 .wf-doc/.ws-colophon,
+   避免两块相邻边 inset 叠出亮线。低端/reduced-motion 守卫见下方。 */
+#view-workspace .ws-right .wf-doc {
+  position: relative;
+}
+body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
+body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
+body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after {
+  opacity: 1;
+  animation: ws-paper-breathe 3.6s ease-in-out infinite;
+}
+/* 内发光呼吸:更明显 + 在风格内缓慢"流转"色相(金→琥珀→青→赭→金),
+   类 Apple Intelligence 的活感,但只取与玄青/赭金相搭的低饱和色,色差不跳。 */
+@keyframes ws-paper-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 30px 80px rgba(0, 0, 0, 0.5),
+      inset 0 0 42px 6px rgba(181, 154, 99, 0.32),
+      inset 0 0 100px 20px rgba(181, 154, 99, 0.16);
+  }
+  28% {
+    box-shadow:
+      0 30px 80px rgba(0, 0, 0, 0.5),
+      inset 0 0 54px 11px rgba(203, 170, 108, 0.44),
+      inset 0 0 118px 26px rgba(203, 170, 108, 0.2);
+  }
+  55% {
+    box-shadow:
+      0 30px 80px rgba(0, 0, 0, 0.5),
+      inset 0 0 54px 11px rgba(120, 156, 142, 0.4),
+      inset 0 0 118px 26px rgba(120, 156, 142, 0.18);
+  }
+  80% {
+    box-shadow:
+      0 30px 80px rgba(0, 0, 0, 0.5),
+      inset 0 0 48px 9px rgba(178, 128, 104, 0.4),
+      inset 0 0 110px 22px rgba(178, 128, 104, 0.17);
+  }
+}
+
+/* 低端 / 减少动态:关掉呼吸与提示点动画,保留遮罩"能滚不能点"的纯功能态 */
+:root[data-perf="low"] body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
+:root[data-perf="low"] body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
+:root[data-perf="low"] body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
+:root[data-perf="low"] #view-workspace .ws-edit-lock-hint-dot {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
+  body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
+  body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
+  #view-workspace .ws-edit-lock-hint-dot {
+    animation: none;
+  }
+  #view-workspace .ws-edit-lock-hint {
+    transition: opacity 0.22s ease;
+    transform: none;
+  }
+}

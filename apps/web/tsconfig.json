@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "useDefineForClassFields": true,
+    "noEmit": true
+  },
+  "include": ["src", "tests", "playwright.config.ts"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

@@ -1,0 +1,3 @@
+# 本包是预构建 vendor 副本：dist 为成品，需纳入版本控制，
+# 故在此覆盖根级 .gitignore 的 `dist/` 规则。
+!dist/

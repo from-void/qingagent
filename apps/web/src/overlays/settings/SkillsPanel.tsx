@@ -1,0 +1,560 @@
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import { useSkills, type SkillDetailInfo, type SkillInfo } from "./useSkills";
+import { SearchPanel } from "./SearchPanel";
+import { VisionPanel } from "./VisionPanel";
+import { useClientCapabilities, useConfirm } from "../../system";
+import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
+import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
+
+ensureSettingsDialogA11y();
+
+interface CtxMenu {
+  name: string;
+  builtin: boolean;
+  title: string;
+  x: number;
+  y: number;
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  webSearch: "联网搜索",
+  fetchArticle: "网页抓取",
+  scrapeWithBrowser: "浏览器渲染",
+  "browser_*": "浏览器操作",
+  generateSvg: "生成配图",
+  readImage: "图像识别",
+  run_js: "精确计算",
+  parseFile: "文件解析",
+  readDocument: "读取资料",
+  searchDocuments: "检索资料",
+  readMaterial: "读取素材",
+  summarizeMaterial: "总结素材",
+  "lark-cli": "飞书操作",
+};
+
+function SkIcon({ icon }: { icon: string }) {
+  const iconKey = normalizeSkillIconKey(icon);
+  return (
+    <svg
+      className="sk-card-icon"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {SKILL_CARD_ICON_PATHS[iconKey]}
+    </svg>
+  );
+}
+
+function toolLabel(tool: string): string {
+  return TOOL_LABELS[tool] ?? tool;
+}
+
+function sourceLabel(source: SkillInfo["source"]): string {
+  return source === "builtin" ? "内置" : "已安装";
+}
+
+function configTitle(config: string): string {
+  if (config === "search-provider") return "配置 · 搜索引擎与 key";
+  if (config === "vision-provider") return "配置 · 图像识别模型";
+  return "配置";
+}
+
+function renderConfig(config: string | undefined): ReactNode {
+  if (config === "search-provider") return <SearchPanel />;
+  if (config === "vision-provider") return <VisionPanel />;
+  return null;
+}
+
+export function SkillsPanel() {
+  const confirm = useConfirm();
+  const {
+    skills,
+    loading,
+    error,
+    setSkillEnabled,
+    deleteSkill,
+    installSkillMd,
+    installZip,
+    getSkillDetail,
+  } = useSkills();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<CtxMenu | null>(null);
+  const mountedRef = useRef(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const capabilities = useClientCapabilities();
+  const canMutate = capabilities?.skills?.mutationEnabled === true;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedName) {
+      setDetail(null);
+      setDetailError(null);
+      setDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    void getSkillDetail(selectedName)
+      .then((data) => {
+        if (!cancelled && mountedRef.current) setDetail(data);
+      })
+      .catch((e) => {
+        if (!cancelled && mountedRef.current) {
+          setDetail(null);
+          setDetailError(e instanceof Error ? e.message : "技能详情加载失败");
+        }
+      })
+      .finally(() => {
+        if (!cancelled && mountedRef.current) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedName, getSkillDetail]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+
+  const toggle = async (name: string, enabled: boolean) => {
+    setBusy(name);
+    setMessage(null);
+    try {
+      await setSkillEnabled(name, enabled);
+      if (detail?.name === name && mountedRef.current) {
+        setDetail({ ...detail, enabled });
+      }
+    } catch (e) {
+      if (mountedRef.current) setMessage(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      if (mountedRef.current) setBusy(null);
+    }
+  };
+
+  const doDelete = async (name: string, title: string) => {
+    setBusy(name);
+    setMessage(null);
+    try {
+      await deleteSkill(name);
+      if (mountedRef.current) {
+        setSelectedName(null);
+        setMessage(`已删除 ${title}`);
+      }
+    } catch (e) {
+      if (mountedRef.current) setMessage(e instanceof Error ? e.message : "删除失败");
+    } finally {
+      if (mountedRef.current) setBusy(null);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    const lower = file.name.toLowerCase();
+    setBusy("__import__");
+    setMessage(null);
+    try {
+      if (lower.endsWith(".zip")) {
+        await installZip(file);
+      } else if (lower.endsWith(".md")) {
+        await installSkillMd(await file.text());
+      } else {
+        throw new Error("仅支持 .zip 技能包或 .md 文件");
+      }
+      if (mountedRef.current) setMessage("技能已导入");
+    } catch (e) {
+      if (mountedRef.current) setMessage(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      if (mountedRef.current) setBusy(null);
+    }
+  };
+
+  const onFilePicked = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) void handleImportFile(file);
+  };
+
+  const confirmDelete = async (name: string, title: string, builtin: boolean) => {
+    if (builtin) {
+      setMessage(`「${title}」是内置技能,不可删除`);
+      return;
+    }
+    const proceed = await confirm({
+      title: `删除已安装技能「${title}」？`,
+      message: "会移除本地安装内容，此操作不可恢复。",
+      confirmLabel: "删除技能",
+    });
+    if (!proceed) return;
+    void doDelete(name, title);
+  };
+
+  const handleMenuDelete = async () => {
+    const m = menu;
+    setMenu(null);
+    if (!m) return;
+    await confirmDelete(m.name, m.title, m.builtin);
+  };
+
+  const openMenu = (e: MouseEvent, s: SkillInfo) => {
+    e.preventDefault();
+    if (!canMutate) return;
+    e.stopPropagation();
+    setMenu({ name: s.name, builtin: s.source === "builtin", title: s.label, x: e.clientX, y: e.clientY });
+  };
+
+  const openDetailByKey = (e: KeyboardEvent<HTMLDivElement>, name: string) => {
+    if (e.currentTarget !== e.target) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    setSelectedName(name);
+  };
+
+  const selectedFromList = selectedName ? skills.find((skill) => skill.name === selectedName) ?? null : null;
+  const selectedSkill = detail ?? selectedFromList;
+
+  if (selectedName) {
+    return (
+      <div className="settings-skills" data-wf="SkillsPanel">
+        <div className="sk-subhead">
+          <button type="button" className="sk-back" onClick={() => setSelectedName(null)}>
+            <span className="sk-back-arrow" aria-hidden="true">
+              ‹
+            </span>
+            返回技能
+          </button>
+          <span className="sk-subtitle">技能详情</span>
+        </div>
+
+        {selectedSkill ? (
+          <SkillDetail
+            skill={selectedSkill}
+            body={detail?.body ?? ""}
+            bodyLoading={detailLoading}
+            bodyError={detailError}
+            busy={busy === selectedSkill.name}
+            canMutate={canMutate}
+            onToggle={(enabled) => void toggle(selectedSkill.name, enabled)}
+            onDelete={() => void confirmDelete(selectedSkill.name, selectedSkill.label, selectedSkill.source === "builtin")}
+          />
+        ) : detailLoading ? (
+          <p className="sm-empty">加载中…</p>
+        ) : (
+          <p className="sm-message">{detailError ?? "技能不存在"}</p>
+        )}
+        {message && <p className="sm-message">{message}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="settings-skills" data-wf="SkillsPanel">
+      <p className="sm-note" style={{ marginTop: 0 }}>
+        停用后模型不再使用该技能；点击卡片查看详情。
+        {canMutate ? "可导入 .zip 技能包或 .md 文件。" : "技能的导入与删除仅在桌面客户端开放。"}
+      </p>
+
+      {loading && skills.length === 0 && <p className="sm-empty">加载中…</p>}
+      {error && <p className="sm-message">{error}</p>}
+
+      {canMutate && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip,.md"
+          style={{ display: "none" }}
+          data-wf="SkillImportInput"
+          onChange={onFilePicked}
+        />
+      )}
+
+      <div className="sk-grid">
+        {skills.map((s) => (
+          <div
+            key={s.name}
+            className={`sk-card${s.enabled ? "" : " sk-off"}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => setSelectedName(s.name)}
+            onKeyDown={(e) => openDetailByKey(e, s.name)}
+            onContextMenu={(e) => openMenu(e, s)}
+          >
+            <div className="sk-card-head">
+              <SkIcon icon={s.icon} />
+              <span className="sk-card-title">{s.label}</span>
+              <button
+                type="button"
+                className={`sk-toggle${s.enabled ? " sk-on" : ""}`}
+                disabled={busy === s.name}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void toggle(s.name, !s.enabled);
+                }}
+                aria-pressed={s.enabled}
+                title={s.enabled ? "已启用,点击停用" : "已停用,点击启用"}
+              >
+                <span className="sk-toggle-dot" aria-hidden="true" />
+                {s.enabled ? "已启用" : "已停用"}
+              </button>
+            </div>
+            <p className="sk-card-summary">{s.summary}</p>
+          </div>
+        ))}
+
+        {canMutate && (
+          <button
+            type="button"
+            className="sk-card sk-card--import"
+            data-wf="SkillImportCard"
+            disabled={busy === "__import__"}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <div className="sk-card-head">
+              <svg
+                className="sk-card-icon"
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M10 3v9m0 0 3.2-3.2M10 12 6.8 8.8" />
+                <path d="M3.6 13.4v1.6c0 .8.6 1.4 1.4 1.4h10c.8 0 1.4-.6 1.4-1.4v-1.6" />
+              </svg>
+              <span className="sk-card-title">{busy === "__import__" ? "导入中…" : "导入技能"}</span>
+            </div>
+            <p className="sk-card-desc">
+              从本地选择 .zip 技能包或单个 .md 文件；声明 user-invocable 的技能导入即出现在输入框菜单。
+            </p>
+          </button>
+        )}
+      </div>
+
+      {menu &&
+        createPortal(
+          <div className="sk-ctxmenu" style={{ left: menu.x, top: menu.y }} role="menu">
+            <button
+              type="button"
+              className="sk-ctxmenu-item sk-ctxmenu-del"
+              role="menuitem"
+              onClick={() => void handleMenuDelete()}
+            >
+              删除技能
+            </button>
+          </div>,
+          document.body,
+        )}
+
+      {!loading && !error && skills.length === 0 && <p className="sm-empty">暂无技能</p>}
+      {message && <p className="sm-message">{message}</p>}
+    </div>
+  );
+}
+
+function SkillDetail({
+  skill,
+  body,
+  bodyLoading,
+  bodyError,
+  busy,
+  canMutate,
+  onToggle,
+  onDelete,
+}: {
+  skill: SkillInfo;
+  body: string;
+  bodyLoading: boolean;
+  bodyError: string | null;
+  busy: boolean;
+  canMutate: boolean;
+  onToggle: (enabled: boolean) => void;
+  onDelete: () => void;
+}) {
+  const configNode = renderConfig(skill.config);
+  const isBuiltin = skill.source === "builtin";
+  const deleteDisabled = isBuiltin || !canMutate || busy;
+  const deleteHint = isBuiltin
+    ? "内置技能不可删除,仅可停用。"
+    : canMutate
+      ? "已安装技能可删除。"
+      : "删除仅在桌面客户端开放。";
+
+  return (
+    <>
+      <div className="sk-detail-hero">
+        <SkIcon icon={skill.icon} />
+        <span className="sk-detail-name">{skill.label}</span>
+        <button
+          type="button"
+          className={`sk-toggle${skill.enabled ? " sk-on" : ""}`}
+          disabled={busy}
+          onClick={() => onToggle(!skill.enabled)}
+          aria-pressed={skill.enabled}
+        >
+          <span className="sk-toggle-dot" aria-hidden="true" />
+          {skill.enabled ? "已启用" : "已停用"}
+        </button>
+      </div>
+
+      <p className="sk-detail-meta">
+        <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
+        &nbsp;&nbsp;
+        <span className="k">引出工具</span>：
+        {skill.tools.length > 0 ? skill.tools.map(toolLabel).join("、") : "无"}
+      </p>
+
+      {configNode && (
+        <>
+          <div className="sk-detail-sec-title">{configTitle(skill.config ?? "")}</div>
+          {configNode}
+        </>
+      )}
+
+      <div className="sk-detail-sec-title">技能正文(SKILL.md · 只读)</div>
+      <div className="sk-md-body" data-wf="SkillDetailBody">
+        {bodyLoading && !body ? <p>加载中…</p> : null}
+        {bodyError ? <p>{bodyError}</p> : null}
+        {!bodyLoading && !bodyError ? renderSkillMarkdown(body) : null}
+      </div>
+
+      <div className="sk-detail-foot">
+        <span className="hint">{deleteHint}</span>
+        <button
+          type="button"
+          className="sk-btn-danger"
+          disabled={deleteDisabled}
+          onClick={onDelete}
+        >
+          删除技能
+        </button>
+      </div>
+    </>
+  );
+}
+
+function renderSkillMarkdown(markdown: string): ReactNode {
+  const nodes: ReactNode[] = [];
+  const lines = markdown.split(/\r?\n/);
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] | null = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const text = paragraph.join(" ").trim();
+    if (text) nodes.push(<p key={`p-${nodes.length}`}>{renderInlineMarkdown(text)}</p>);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list.length === 0) return;
+    nodes.push(
+      <ul key={`ul-${nodes.length}`}>
+        {list.map((item, index) => (
+          <li key={index}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </ul>,
+    );
+    list = [];
+  };
+  const flushCode = () => {
+    if (!code) return;
+    nodes.push(
+      <pre key={`pre-${nodes.length}`}>
+        <code>{code.join("\n")}</code>
+      </pre>,
+    );
+    code = null;
+  };
+
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      if (code) {
+        flushCode();
+      } else {
+        flushParagraph();
+        flushList();
+        code = [];
+      }
+      continue;
+    }
+    if (code) {
+      code.push(line);
+      continue;
+    }
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const heading = trimmed.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      nodes.push(<h4 key={`h-${nodes.length}`}>{renderInlineMarkdown(heading[1]!)}</h4>);
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      list.push(bullet[1]!);
+      continue;
+    }
+    flushList();
+    paragraph.push(trimmed);
+  }
+  flushParagraph();
+  flushList();
+  flushCode();
+  return nodes.length > 0 ? nodes : <p>暂无正文</p>;
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  return text.split(/(`[^`]+`)/g).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    return <span key={index}>{part}</span>;
+  });
+}

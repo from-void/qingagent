@@ -1,0 +1,338 @@
+/* ============ NEW-SESSION VIEW · scoped styles ============
+   旧 starter 版面样式已随玄青版面清理,本文件仅保留仍在使用的
+   starter-edit / src-chip 输入区与 ccx-page 文件夹入口样式。 */
+/* Editable starter input · supports text + file chip mixing */
+#view-new .starter-edit {
+  flex: 1; min-height: 72px; outline: none;
+  font-family: var(--font-sans); font-size: 15px;
+  line-height: 1.7; color: var(--ink-1);
+  padding: 2px 2px;
+}
+#view-new .starter-edit:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-4); white-space: pre-wrap; pointer-events: none;
+}
+#view-new .src-chip {
+  display: inline-flex; align-items: baseline;
+  font-family: var(--font-mono); font-size: 13px;
+  background: var(--bg-subtle); border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 1px 7px; margin: 0 2px;
+  color: var(--ink-1); line-height: 1.5; user-select: none;
+  cursor: default;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+#view-new .src-chip:hover { border-color: var(--ink-1); background: var(--bg-hover); }
+#view-new .src-chip[data-type="skill"] {
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  background: rgba(225, 202, 143, 0.12);
+  border-color: rgba(225, 202, 143, 0.28);
+  border-radius: 4px;
+  padding: 2px 7px 2px 6px;
+  color: #ead5a4;
+}
+#view-new .src-chip[data-type="skill"] .c-skill-ico {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(225, 202, 143, 0.5);
+  border: 1px solid rgba(225, 202, 143, 0.5);
+  flex: 0 0 auto;
+}
+#view-new .src-chip[data-type="skill"] .c-skill-label {
+  color: #ead5a4;
+  line-height: 1.35;
+}
+#view-new .src-chip .c-br { color: var(--ink-3); }
+#view-new .src-chip .c-x {
+  margin-left: 4px; color: var(--ink-3); font-size: 11px;
+  cursor: pointer; padding: 0 3px; border-radius: 2px;
+}
+#view-new .src-chip .c-x:hover { color: var(--mark); background: var(--mark-soft); }
+/* 新建页文件夹入口：复用工作区 DOM 类名，样式限定在 ccx-page 内。 */
+.ccx-page .ccx-folder-wrap {
+  position: relative;
+}
+.ccx-page .ccx-tool > button.ccx-folder-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+.ccx-page .ccx-tool > button.ccx-folder-btn.is-active {
+  color: #f6efdf;
+  border-color: rgba(184, 169, 140, 0.5);
+  background: rgba(184, 169, 140, 0.16);
+}
+.ccx-page .ws-folder-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #6fae6a;
+  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.22);
+}
+.ccx-page .ws-folder-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 80;
+  width: 230px;
+  min-width: 230px;
+  padding: 11px 13px;
+  overflow: visible;
+  color: #ece3d0;
+  background: #1f262d;
+  border: 1px solid rgba(184, 169, 140, 0.34);
+  border-radius: 6px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.ccx-page .ccx-folder-wrap:hover .ws-folder-popover,
+.ccx-page .ccx-folder-wrap:focus-within .ws-folder-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.ccx-page .ws-folder-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ccx-page .ws-folder-popover-icon {
+  flex: 0 0 auto;
+  color: #b59a63;
+}
+.ccx-page .ws-folder-popover-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #f3ecdb;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ccx-page .ws-folder-popover-path {
+  margin: 6px 0 2px;
+  overflow: hidden;
+  color: rgba(236, 227, 208, 0.55);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ccx-page .ws-folder-popover-meta {
+  color: rgba(236, 227, 208, 0.62);
+  font-size: 11.5px;
+}
+.ccx-page .ws-folder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  padding: 5px 11px;
+  color: #86c980;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(111, 174, 106, 0.12);
+  border: 1px solid rgba(111, 174, 106, 0.34);
+  border-radius: 4px;
+}
+.ccx-page .ws-folder-badge span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6fae6a;
+  box-shadow: 0 0 0 3px rgba(111, 174, 106, 0.2);
+}
+.ccx-page .ws-folder-popover-error {
+  margin-top: 7px;
+  color: #e48a7d;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ccx-page .ws-folder-popover-hint {
+  margin-top: 10px;
+  padding-top: 8px;
+  color: #b59a63;
+  font-size: 11px;
+  border-top: 1px solid rgba(184, 169, 140, 0.18);
+}
+.ccx-page .ws-folder-popover-arrow {
+  position: absolute;
+  left: 24px;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  background: #1f262d;
+  border-right: 1px solid rgba(184, 169, 140, 0.34);
+  border-bottom: 1px solid rgba(184, 169, 140, 0.34);
+  transform: rotate(45deg);
+}
+.ccx-page .ws-folder-tooltip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 80;
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 9px;
+  color: rgba(236, 227, 208, 0.76);
+  font-family: var(--ccx-serif);
+  font-size: 11.5px;
+  line-height: 1.5;
+  background: #1f262d;
+  border: 1px solid rgba(184, 169, 140, 0.24);
+  border-radius: 4px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.ccx-page .ccx-folder-wrap:hover .ws-folder-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+.ccx-page .ws-folder-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(8, 10, 12, 0.55);
+}
+.ccx-page .ws-folder-intro-modal,
+.ccx-page .ws-folder-confirm-modal {
+  width: min(460px, 92vw);
+  color: #2f2a22;
+  background: #efe7d6;
+  border: 1px solid rgba(120, 90, 50, 0.26);
+  border-radius: 4px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+}
+.ccx-page .ws-folder-intro-modal {
+  padding: 26px 26px 20px;
+}
+.ccx-page .ws-folder-confirm-modal {
+  max-width: 330px;
+  padding: 22px 24px 18px;
+}
+.ccx-page .ws-folder-modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
+  color: #9c8552;
+  border: 1px solid rgba(120, 90, 50, 0.26);
+  border-radius: 4px;
+}
+.ccx-page .ws-folder-intro-modal h3,
+.ccx-page .ws-folder-confirm-modal h3 {
+  margin: 0 0 12px;
+  color: #2f2a22;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.ccx-page .ws-folder-intro-modal p,
+.ccx-page .ws-folder-confirm-modal p {
+  margin: 0 0 10px;
+  color: #5c5346;
+  font-size: 13px;
+  line-height: 1.85;
+}
+.ccx-page .ws-folder-intro-point {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.ccx-page .ws-folder-intro-point > span {
+  flex: 0 0 auto;
+  color: #9c8552;
+  font-weight: 700;
+  line-height: 1.7;
+}
+.ccx-page .ws-folder-intro-point p {
+  margin: 0;
+  line-height: 1.7;
+}
+.ccx-page .ws-folder-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(120, 90, 50, 0.26);
+}
+.ccx-page .ws-folder-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6b5f50;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ccx-page .ws-folder-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2f2a22;
+}
+.ccx-page .ws-folder-modal-primary,
+.ccx-page .ws-folder-modal-secondary,
+.ccx-page .ws-folder-modal-danger {
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ccx-page .ws-folder-modal-primary {
+  padding: 9px 18px;
+  color: #efe7d6;
+  font-weight: 600;
+  background: #2f2a22;
+  border: 0;
+}
+.ccx-page .ws-folder-modal-secondary {
+  padding: 8px 16px;
+  color: #5c5346;
+  background: transparent;
+  border: 1px solid rgba(120, 90, 50, 0.26);
+}
+.ccx-page .ws-folder-modal-danger {
+  padding: 8px 16px;
+  color: #fff;
+  font-weight: 600;
+  background: #c0392b;
+  border: 0;
+}
+@keyframes new-session-type-in {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes new-session-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* 死件已清除(0704 style-cleanup):新建页旧快捷项列表全库零 TSX 渲染。 */

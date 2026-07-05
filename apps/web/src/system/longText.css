@@ -1,0 +1,175 @@
+/* 长文本"小条" chip + hover 预览卡片 + 全屏浮层。
+   小条样式同时作用于编辑页(#view-workspace)与新建页(#view-new),
+   用 .chat-chip.chat-chip-longtext 提高特异性盖过 #view-workspace .chat-chip 基样式。
+   全屏浮层 portal 到 body,用无作用域类名。 */
+
+#view-workspace .chat-chip.chat-chip-longtext,
+#view-new .chat-chip.chat-chip-longtext {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  vertical-align: baseline;
+  flex-direction: row;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-on-dark);
+  background: var(--mark-soft);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+#view-workspace .chat-chip.chat-chip-longtext:hover,
+#view-new .chat-chip.chat-chip-longtext:hover {
+  border-color: var(--mark);
+  background: var(--bg-hover);
+}
+#view-workspace .chat-chip.chat-chip-longtext .c-ico,
+#view-new .chat-chip.chat-chip-longtext .c-ico {
+  flex: 0 0 auto;
+  color: var(--mark);
+  line-height: 1;
+}
+#view-workspace .chat-chip.chat-chip-longtext .c-label,
+#view-new .chat-chip.chat-chip-longtext .c-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+#view-workspace .chat-chip.chat-chip-longtext .c-tag,
+#view-new .chat-chip.chat-chip-longtext .c-tag {
+  font-size: 10.5px;
+  color: var(--ink-on-dark);
+  background: var(--mark-soft);
+  border-radius: var(--r-pill);
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+#view-workspace .chat-chip.chat-chip-longtext .c-x,
+#view-new .chat-chip.chat-chip-longtext .c-x {
+  margin-left: 1px;
+  color: var(--ink-on-dark);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 0;
+  flex: 0 0 auto;
+}
+#view-workspace .chat-chip.chat-chip-longtext .c-x:hover,
+#view-new .chat-chip.chat-chip-longtext .c-x:hover {
+  color: #e89a92;
+  background: rgba(176, 74, 52, 0.22);
+}
+
+/* hover 预览卡片:浮在小条上方,pointer-events:none 让点击穿透到小条本体打开全屏。 */
+#view-workspace .chat-chip.chat-chip-longtext .lt-pop,
+#view-new .chat-chip.chat-chip-longtext .lt-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+  max-width: 80vw;
+  padding: 10px 12px;
+  border-radius: 0;
+  background: var(--ink-surface-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
+  white-space: normal;
+  cursor: default;
+}
+#view-workspace .chat-chip.chat-chip-longtext:hover .lt-pop,
+#view-new .chat-chip.chat-chip-longtext:hover .lt-pop {
+  display: flex;
+}
+#view-workspace .chat-chip.chat-chip-longtext .lt-pop-text,
+#view-new .chat-chip.chat-chip-longtext .lt-pop-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-on-dark);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: hidden;
+}
+#view-workspace .chat-chip.chat-chip-longtext .lt-pop-hint,
+#view-new .chat-chip.chat-chip-longtext .lt-pop-hint {
+  font-size: 10.5px;
+  color: var(--mark);
+  align-self: flex-end;
+}
+
+/* 全屏查看浮层(portal 到 body) */
+.lt-full {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6vh 5vw;
+  background: rgba(18, 16, 13, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.lt-full-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100%);
+  max-height: 88vh;
+  border-radius: 0;
+  background: var(--ink-surface-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-family: var(--font-zh-serif);
+}
+.lt-full-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-1);
+}
+.lt-full-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-on-dark);
+}
+.lt-full-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 0;
+  background: var(--mark-soft);
+  color: var(--ink-on-dark);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lt-full-close:hover {
+  background: rgba(176, 74, 52, 0.24);
+  color: #e89a92;
+}
+.lt-full-body {
+  padding: 18px 22px;
+  overflow: auto;
+  font-size: 14.5px;
+  line-height: 1.85;
+  color: var(--ink-on-dark);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}

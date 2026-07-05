@@ -1,0 +1,234 @@
+import { createTool } from "@mastra/core/tools";
+import type { RequestContext } from "@mastra/core/request-context";
+import { streamText, type CoreMessage } from "ai";
+import { z } from "zod";
+import { getVisionModel } from "../llm/modelConfig.js";
+import { ImageInputError, resolveImageInput } from "./imageInput.js";
+
+export const READ_IMAGE_TIMEOUT_MS = 60_000;
+export const READ_IMAGE_MAX_OUTPUT_BYTES = 64 * 1024;
+export const READ_IMAGE_MAX_OUTPUT_TOKENS = 4096;
+const CONVERSATION_MAX_MESSAGES = 8;
+const CONVERSATION_MAX_BYTES = 16 * 1024;
+const encoder = new TextEncoder();
+
+function utf8ByteLength(value: string): number {
+  return encoder.encode(value).byteLength;
+}
+
+function textContentFromMessage(message: CoreMessage): string | null {
+  const role = message.role;
+  if (role !== "system" && role !== "user" && role !== "assistant") return null;
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return null;
+  const parts: string[] = [];
+  for (const part of message.content) {
+    if (!part || typeof part !== "object" || part.type !== "text" || typeof part.text !== "string") {
+      return null;
+    }
+    parts.push(part.text);
+  }
+  return parts.join("\n");
+}
+
+function recentTextConversation(requestContext?: RequestContext): string {
+  const raw = requestContext?.get("messages");
+  if (!Array.isArray(raw)) return "";
+  const selected: string[] = [];
+  let bytes = 0;
+  for (const message of raw.slice().reverse()) {
+    const text = textContentFromMessage(message as CoreMessage)?.trim();
+    if (!text) continue;
+    const role = (message as CoreMessage).role;
+    const line = `${role}: ${text}`;
+    const nextBytes = utf8ByteLength(line) + 1;
+    if (bytes + nextBytes > CONVERSATION_MAX_BYTES) break;
+    selected.unshift(line);
+    bytes += nextBytes;
+    if (selected.length >= CONVERSATION_MAX_MESSAGES) break;
+  }
+  return selected.join("\n");
+}
+
+/** 素材区图片(场景5):若 image 命中会话素材库的某个 materialId,改用该素材的原始上传文件
+ *  (Material.fileId → /uploads/<fileId>)。非素材则原样返回交给 resolveImageInput。 */
+function resolveMaterialRef(requestContext: RequestContext | undefined, image: string): string {
+  const materials = requestContext?.get("materials") as
+    | { get?: (id: string) => { fileId?: string | null; mimeType?: string; filename?: string } | undefined }
+    | undefined;
+  const mat = materials && typeof materials.get === "function" ? materials.get(image) : undefined;
+  if (!mat || typeof mat !== "object") return image;
+  if (mat.mimeType && !mat.mimeType.startsWith("image/")) {
+    throw new Error(`素材「${mat.filename ?? image}」不是图片文件,识图只能识别图片。`);
+  }
+  if (!mat.fileId) {
+    throw new Error(`素材「${mat.filename ?? image}」没有可识别的原始图片文件(可能是抓取类纯文本素材)`);
+  }
+  return mat.fileId;
+}
+
+function errorMessageFromUnknown(error: unknown): string {
+  if (error instanceof ImageInputError) {
+    switch (error.kind) {
+      case "invalid_url":
+        return `图片地址无效:${error.message}`;
+      case "invalid_path":
+        return `图片路径不安全:${error.message}`;
+      case "not_found":
+        return `图片不存在:${error.message}`;
+      case "too_large":
+        return `图片过大:${error.message}`;
+      case "unsupported_media":
+        return `图片格式不支持:${error.message}`;
+      case "ssrf_blocked":
+        return `图片地址被安全策略拦截:${error.message}`;
+      case "timeout":
+        return `读取图片超时:${error.message}`;
+      case "network":
+        return `读取图片失败:${error.message}`;
+    }
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return `图像识别超时(${READ_IMAGE_TIMEOUT_MS}ms)`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+export const readImageTool = createTool({
+  id: "readImage",
+  description:
+    "当用户上传图片、给出图片链接,或要求识别/描述/提取图片内容时调用。输入单张图片地址" +
+    "(/api/v1/files/<id>/<name>、http(s) 链接或 fileId)和本次识别指令,返回可供继续写作的文字结果。" +
+    "不要用于生成图片;若未配置图像识别副基模,工具会返回明确的设置指引。",
+  inputSchema: z.object({
+    image: z
+      .string()
+      .describe(
+        "图片来源,支持:① http(s) 图片链接;② /api/v1/files/<id>/<name> 或裸 fileId(刚上传的文件);" +
+          "③ 正文图片块的 src(可为 /api/v1/files、http(s) 或 data:image/...;base64,...);④ 素材区的 materialId(图片素材)。",
+      ),
+    prompt: z.string().describe("本次识别任务指令"),
+    includeConversation: z.boolean().nullable().optional().describe("是否让副基模看最近聊天记录,默认 false"),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    text: z.string(),
+    error: z.string().nullable(),
+  }),
+  execute: async (input, context) => {
+    const requestContext = context?.requestContext as RequestContext | undefined;
+    try {
+      const model = await getVisionModel(requestContext);
+      if (!model) {
+        return {
+          ok: false,
+          text: "",
+          error: "还未配置图像识别模型,请在 设置 → 技能 → 图像识别 里填写模型 API Key。",
+        };
+      }
+
+      const prompt = input.prompt.trim() || "请识别并描述这张图片的主要内容。";
+      // 先把素材区 materialId 折算成原始上传文件,再统一交给安全 resolver。
+      const imageRef = resolveMaterialRef(requestContext, input.image.trim());
+      const image = await resolveImageInput(imageRef);
+      const conversation = input.includeConversation ? recentTextConversation(requestContext) : "";
+      const textPart = conversation
+        ? `最近纯文本对话(仅供理解本次识图任务):\n${conversation}\n\n本次识别指令:\n${prompt}`
+        : prompt;
+
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), READ_IMAGE_TIMEOUT_MS);
+      // 工具流式进度:副基模(GLM-4.6V 等推理模型 + 免费档限流)识图常耗数十秒,期间若主流
+      // 无 chunk 会触发 agent 空闲看门狗(默认 45s)abort 整轮,且 UI 看着卡住像没响应。
+      // 把副基模流式吐出的文字(推理或正文,谁先来展示谁)经 context.writer 推成 tool-output
+      // (readimage-progress),桥层据此刷新识别卡的文案区(前端用思考中同款滚动展示),
+      // 同时每个 chunk 重置看门狗保活。对齐 writeDraft/askUser 既有 writer 进度范式。
+      const writer = (
+        context as { writer?: { write: (chunk: Record<string, unknown>) => Promise<unknown> | unknown } } | undefined
+      )?.writer;
+      const DISPLAY_CAP = 800;
+      let display = ""; // 卡片展示用:累积的流式文本(供前端滚动截取)
+      let lastEmitAt = 0;
+      const emitProgress = (force = false) => {
+        if (!writer) return;
+        const now = Date.now();
+        if (!force && now - lastEmitAt < 300) return; // 节流,避免刷帧过密
+        lastEmitAt = now;
+        try {
+          void writer.write({ type: "readimage-progress", progress: { excerpt: display.slice(-DISPLAY_CAP) } });
+        } catch {
+          // 进度仅装饰 + 保活,失败静默,绝不影响识图主链
+        }
+      };
+      // 兜底保活:reasoning 阶段部分 provider 不吐任何 part(纯静默),定时器维持看门狗 + 刷新展示。
+      const heartbeat = writer ? setInterval(() => emitProgress(true), 8_000) : null;
+      let text = "";
+      let bytes = 0;
+      let finishReason: string | undefined;
+      try {
+        const result = streamText({
+          model,
+          maxTokens: READ_IMAGE_MAX_OUTPUT_TOKENS,
+          maxRetries: 0,
+          toolChoice: "none",
+          abortSignal: abortController.signal,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: textPart },
+                { type: "image", image: image.buffer, mimeType: image.mimeType },
+              ],
+            },
+          ],
+        });
+        // 用 fullStream 而非 textStream:上游 API 报错(限流 1305 / 鉴权 / 配额)时
+        // textStream 会静默结束、不抛,导致把错误当成"空文本的成功"返回。fullStream
+        // 能拿到 error part 并显式抛出。text-delta 收最终答案;reasoning-delta(若 provider
+        // 吐)仅进展示缓冲,不计入最终 text。
+        for await (const part of result.fullStream) {
+          if (part.type === "error") {
+            throw part.error instanceof Error ? part.error : new Error(String(part.error));
+          }
+          if (part.type === "finish") {
+            finishReason = part.finishReason;
+          }
+          // 推理增量:部分多模态推理模型会以 reasoning part 吐思考(展示用,不进答案)
+          if (part.type === "reasoning") {
+            const rd = (part as { textDelta?: string }).textDelta ?? "";
+            if (rd) {
+              display += rd;
+              emitProgress();
+            }
+          }
+          if (part.type === "text-delta") {
+            bytes += utf8ByteLength(part.textDelta);
+            if (bytes > READ_IMAGE_MAX_OUTPUT_BYTES) {
+              abortController.abort();
+              throw new Error(`图像识别输出超过 ${READ_IMAGE_MAX_OUTPUT_BYTES} 字节上限`);
+            }
+            text += part.textDelta;
+            display += part.textDelta;
+            emitProgress();
+          }
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        if (heartbeat) clearInterval(heartbeat);
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed) {
+        // 不把"无文本"当成功:可能限流、思考超额(finishReason=length)或模型不支持图像。
+        return {
+          ok: false,
+          text: "",
+          error: "图像识别没有返回结果,请检查模型配置或稍后重试。",
+        };
+      }
+      return { ok: true, text: trimmed, error: null };
+    } catch (error) {
+      return { ok: false, text: "", error: errorMessageFromUnknown(error) };
+    }
+  },
+});

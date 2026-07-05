@@ -1,0 +1,155 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Buffer } from "node:buffer";
+
+// 回归:readImage 早期用 result.textStream 迭代,上游 API 报错(限流 1305 / 鉴权)时
+// textStream 静默结束、不抛 → 把错误当成"空文本的成功"返回 ok:true。改用 fullStream
+// 显式处理 error part,并对空文本兜底 ok:false。本测试锁死这三条行为。
+
+const streamTextMock = vi.hoisted(() => vi.fn());
+const getVisionModelMock = vi.hoisted(() => vi.fn());
+const resolveImageInputMock = vi.hoisted(() => vi.fn());
+
+vi.mock("ai", () => ({ streamText: streamTextMock }));
+vi.mock("../llm/modelConfig.js", () => ({ getVisionModel: getVisionModelMock }));
+// 注意:mock 路径必须是 readImage.ts 实际 import 的模块(src/tools/imageInput.js),
+// 即从本测试文件(src/__tests__/)算的 ../tools/imageInput.js,不能写成 ./imageInput.js。
+vi.mock("../tools/imageInput.js", async (importActual) => {
+  const actual = await importActual<typeof import("../tools/imageInput.js")>();
+  return { ...actual, resolveImageInput: resolveImageInputMock };
+});
+
+const { readImageTool } = await import("../tools/readImage.js");
+
+type Part =
+  | { type: "text-delta"; textDelta: string }
+  | { type: "finish"; finishReason: string }
+  | { type: "error"; error: unknown };
+
+function fullStream(parts: Part[]): AsyncIterable<Part> {
+  return (async function* () {
+    for (const p of parts) yield p;
+  })();
+}
+
+interface ReadImageResult {
+  ok: boolean;
+  text: string;
+  error: string | null;
+}
+
+async function run(image = "00000000-0000-4000-8000-000000000abc", context: unknown = {}): Promise<ReadImageResult> {
+  return (await readImageTool.execute!(
+    { image, prompt: "描述图片", includeConversation: false },
+    context as never,
+  )) as ReadImageResult;
+}
+
+/** 构造带素材库的 requestContext(materials 是 Map,见 runAgentTurn RequestContext)。 */
+function contextWithMaterials(map: Map<string, unknown>): unknown {
+  return { requestContext: { get: (k: string) => (k === "materials" ? map : undefined) } };
+}
+
+describe("readImage stream error handling", () => {
+  beforeEach(() => {
+    streamTextMock.mockReset();
+    getVisionModelMock.mockReset();
+    resolveImageInputMock.mockReset();
+    getVisionModelMock.mockResolvedValue({});
+    resolveImageInputMock.mockResolvedValue({ buffer: Buffer.from([0x89, 0x50]), mimeType: "image/png" });
+  });
+
+  it("有文本时返回 ok:true 与识别结果", async () => {
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([
+        { type: "text-delta", textDelta: "这是一张" },
+        { type: "text-delta", textDelta: "测试图片。" },
+        { type: "finish", finishReason: "stop" },
+      ]),
+    });
+    const r = await run();
+    expect(r).toEqual({ ok: true, text: "这是一张测试图片。", error: null });
+  });
+
+  it("上游 error part(限流)不再被吞成成功,返回 ok:false 且带原因", async () => {
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([
+        { type: "error", error: new Error("该模型当前访问量过大，请您稍后再试") },
+      ]),
+    });
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe("");
+    expect(r.error).toContain("访问量过大");
+  });
+
+  it("只有 finish、无 text-delta(空输出)返回 ok:false 并给用户提示", async () => {
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([{ type: "finish", finishReason: "length" }]),
+    });
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe("");
+    expect(r.error).toContain("没有返回结果");
+  });
+
+  it("素材区图片(materialId)→ 折算成该素材的 fileId 再解析", async () => {
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([
+        { type: "text-delta", textDelta: "素材里的图" },
+        { type: "finish", finishReason: "stop" },
+      ]),
+    });
+    const materials = new Map<string, unknown>([
+      ["mat-1", { id: "mat-1", filename: "photo.png", mimeType: "image/png", fileId: "11111111-1111-4111-8111-111111111111" }],
+    ]);
+    const r = await run("mat-1", contextWithMaterials(materials));
+    expect(r.ok).toBe(true);
+    // resolveImageInput 应收到素材的 fileId,而不是 materialId
+    expect(resolveImageInputMock).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("非图片素材(如 PDF)→ ok:false 且不去解析", async () => {
+    const materials = new Map<string, unknown>([
+      ["mat-pdf", { id: "mat-pdf", filename: "report.pdf", mimeType: "application/pdf", fileId: "x" }],
+    ]);
+    const r = await run("mat-pdf", contextWithMaterials(materials));
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("不是图片");
+    expect(resolveImageInputMock).not.toHaveBeenCalled();
+  });
+
+  it("流式 text-delta 经 writer 推 readimage-progress 进度(带 excerpt)", async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const writer = { write: (c: Record<string, unknown>) => void writes.push(c) };
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([
+        { type: "text-delta", textDelta: "这是" },
+        { type: "text-delta", textDelta: "一幅古建筑图。" },
+        { type: "finish", finishReason: "stop" },
+      ]),
+    });
+    const r = (await readImageTool.execute!(
+      { image: "00000000-0000-4000-8000-000000000abc", prompt: "描述", includeConversation: false },
+      { writer } as never,
+    )) as ReadImageResult;
+    expect(r.ok).toBe(true);
+    const progress = writes.filter((w) => w.type === "readimage-progress");
+    expect(progress.length).toBeGreaterThan(0);
+    expect(
+      progress.some((p) => {
+        const ex = (p.progress as { excerpt?: unknown } | undefined)?.excerpt;
+        return typeof ex === "string" && ex.includes("这是");
+      }),
+    ).toBe(true);
+  });
+
+  it("素材无原始文件(fileId 为空)→ ok:false", async () => {
+    const materials = new Map<string, unknown>([
+      ["mat-scrape", { id: "mat-scrape", filename: "网页", mimeType: "image/png", fileId: null }],
+    ]);
+    const r = await run("mat-scrape", contextWithMaterials(materials));
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("没有可识别的原始图片");
+    expect(resolveImageInputMock).not.toHaveBeenCalled();
+  });
+});

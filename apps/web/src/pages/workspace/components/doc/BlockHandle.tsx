@@ -1,0 +1,998 @@
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Editor } from "@tiptap/react";
+import { pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
+import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
+import { findDraggableListItem, LIST_ITEM_DND_MIME, resolveListItemByBlockId, type DraggableListItem } from "../ListItemDnD";
+import { getBlockCollapseInfo, qingagentCollapseKey, toggleBlockCollapse } from "../BlockCollapse";
+import { insertFileAsset, insertImageAsset } from "../../data/insertUploadedAsset";
+import { pickFile } from "./pickFile";
+import {
+  createBlockDragPayload,
+  createDefaultColumnListNode,
+  createDefaultTableNode,
+  insertStructureNodeAfterBlock,
+} from "./structureNodes";
+import { writeBlockClipboardPayload } from "./blockClipboard";
+import { BlockHandleIcon } from "./BlockHandleIcons";
+import {
+  computeBlockMenuPlacement,
+  computeCollapsedCarets,
+  firstLineCenterOffset,
+  glyphForBlock,
+  glyphForListItem,
+  HandleTypeIcon,
+  listItemHandleGeometry,
+  refreshHandleGeometryFromDom,
+  type CollapsedCaret,
+  type HandleState,
+} from "./blockHandleGeometry";
+
+export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (message: string) => void }) {
+  const [handle, setHandle] = useState<HandleState | null>(null);
+  const [collapsedCarets, setCollapsedCarets] = useState<CollapsedCaret[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuFlipUp, setMenuFlipUp] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [submenuPlacement, setSubmenuPlacement] = useState<Record<string, { side: "left" | "right"; top: number }>>({});
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draggingRef = useRef(false);
+  const lastMouseRef = useRef<MouseEvent | null>(null);
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  }, []);
+
+  const resetMenuPlacement = useCallback(() => {
+    setMenuPos(null);
+    setMenuFlipUp(false);
+    setSubmenuPlacement({});
+  }, []);
+
+  const refreshFloatingHandle = useCallback(
+    (h: HandleState): HandleState | null => refreshHandleGeometryFromDom(h, editor.view.dom as HTMLElement),
+    [editor],
+  );
+
+  const applyBlockMenuPlacement = useCallback((h: HandleState, menuEl?: HTMLElement | null): boolean => {
+    const placement = computeBlockMenuPlacement(h, menuEl);
+    if (!placement) return false;
+    setMenuPos({ top: placement.top, left: placement.left });
+    setMenuFlipUp(placement.flipUp);
+    setSubmenuPlacement({});
+    return true;
+  }, []);
+
+  const openBlockMenu = useCallback(
+    (h: HandleState) => {
+      if (h.kind !== "block" || !editor.isEditable) return;
+      const next = refreshFloatingHandle(h);
+      if (!next || next.kind !== "block") {
+        setHandle(next);
+        setMenuOpen(false);
+        resetMenuPlacement();
+        return;
+      }
+      if (!applyBlockMenuPlacement(next, menuRef.current)) {
+        setHandle(next);
+        setMenuOpen(false);
+        resetMenuPlacement();
+        return;
+      }
+      setHandle(next);
+      setMenuOpen(true);
+    },
+    [applyBlockMenuPlacement, editor, refreshFloatingHandle, resetMenuPlacement],
+  );
+
+  useEffect(() => {
+    return () => clearHideTimer();
+  }, [clearHideTimer]);
+
+  // 折叠态常驻三角(gutter 悬浮层):随文档内容/折叠态/滚动重算位置。rAF 节流。
+  useEffect(() => {
+    let raf = 0;
+    const recompute = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setCollapsedCarets(computeCollapsedCarets(editor));
+      });
+    };
+    // 折叠/展开走的是纯装饰事务(docChanged=false),tiptap 不发 update/selectionUpdate,
+    // 只发 transaction。若只听 update,折叠后常驻三角不重算、要滚动才出现(回归
+    // fold-collapse-triangle-disappears)。额外监听 transaction,按 collapse meta 过滤后重算。
+    const onTransaction = ({ transaction }: { transaction: { getMeta: (k: typeof qingagentCollapseKey) => unknown } }) => {
+      if (transaction.getMeta(qingagentCollapseKey) !== undefined) recompute();
+    };
+    recompute();
+    editor.on("update", recompute);
+    editor.on("selectionUpdate", recompute);
+    editor.on("transaction", onTransaction);
+    window.addEventListener("scroll", recompute, true);
+    window.addEventListener("resize", recompute);
+    return () => {
+      editor.off("update", recompute);
+      editor.off("selectionUpdate", recompute);
+      editor.off("transaction", onTransaction);
+      window.removeEventListener("scroll", recompute, true);
+      window.removeEventListener("resize", recompute);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    const dom = editor.view.dom;
+
+    const handleFromBlock = (block: MovableBlock, insertPos: number): HandleState | null => {
+      if (!editor.isEditable) return null;
+      // 列表(有序/无序/待办)不出整块级拖拽手柄——列表只做行级(listItem)拖拽,
+      // 整列表块手柄会和行手柄语义打架且不是用户要的交互。列表项仍通过 li 命中走行手柄。
+      if (block.node.type.name === "bulletList" || block.node.type.name === "orderedList" || block.node.type.name === "taskList") {
+        return null;
+      }
+      try {
+        const blockDom = editor.view.nodeDOM(block.pos);
+        if (!(blockDom instanceof HTMLElement)) return null;
+        const rect = blockDom.getBoundingClientRect();
+        const isEmpty =
+          blockDom.textContent?.trim() === "" ||
+          (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR");
+        return {
+          kind: "block",
+          top: rect.top + firstLineCenterOffset(blockDom),
+          left: rect.left,
+          blockPos: block.pos,
+          insertPos,
+          isEmpty,
+          // "+" 仅给"空行且无格式"(空段落);空标题/空引用等已有格式的块显示其类型图标(可拖拽 chip)
+          glyph: isEmpty && block.node.type.name === "paragraph" ? "+" : glyphForBlock(block.node),
+          blockEl: blockDom,
+          blockId: typeof block.node.attrs.blockId === "string" ? block.node.attrs.blockId : null,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const handleFromListItem = (item: DraggableListItem, insertPos: number): HandleState | null => {
+      if (!editor.isEditable) return null;
+      try {
+        const itemDom = editor.view.nodeDOM(item.itemPos);
+        if (!(itemDom instanceof HTMLElement)) return null;
+        const geometry = listItemHandleGeometry(itemDom, item.itemType);
+        return {
+          kind: "listItem",
+          top: geometry.top,
+          left: geometry.left,
+          blockPos: item.itemPos,
+          insertPos,
+          isEmpty: false,
+          glyph: glyphForListItem(item),
+          blockEl: itemDom,
+          blockId: item.blockId,
+          itemType: item.itemType,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    const eventTargetElement = (target: EventTarget | null): Element | null => {
+      if (target instanceof Element) return target;
+      if (target instanceof Node && target.parentElement) return target.parentElement;
+      return null;
+    };
+
+    const resolveHandleFromSelection = (): HandleState | null => {
+      if (!editor.isEditable) return null;
+      const { $from } = editor.state.selection;
+      const block = findDraggableBlock($from);
+      return block ? handleFromBlock(block, editor.state.selection.from) : null;
+    };
+
+    const resolveHandleFromPoint = (e: MouseEvent): HandleState | null => {
+      const targetLi = eventTargetElement(e.target)?.closest("li[data-block-id]");
+      if (targetLi && editor.view.dom.contains(targetLi)) {
+        const blockId = targetLi.getAttribute("data-block-id");
+        const hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
+        const byPos = hit ? findDraggableListItem(editor.state.doc.resolve(hit.pos)) : null;
+        const item = byPos ?? (blockId ? resolveListItemByBlockId(editor.state, blockId) : null);
+        if (item) {
+          const resolved = handleFromListItem(item, hit?.pos ?? item.itemPos + 1);
+          if (resolved) return resolved;
+        }
+      }
+
+      // 鼠标在列表行左侧 marker 带 / gutter(不在 li 文字区,closest 命中不到 li、posAtCoords 落到
+      // ul padding)时,按"垂直所在行"找到列表项,保持行手柄不消失——否则往左移一点点想去点手柄,
+      // 手柄就没了、永远抓不住。取垂直命中 clientY、且 x 不在行右侧之外、x 在行左 gutter 容差内的
+      // 最深(面积最小)列表项。
+      {
+        const HANDLE_GUTTER_PX = 48;
+        let liFallback: HandleState | null = null;
+        let liFallbackArea = Number.POSITIVE_INFINITY;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name !== "listItem" && node.type.name !== "taskItem") return true;
+          const liDom = editor.view.nodeDOM(pos);
+          if (!(liDom instanceof HTMLElement)) return true;
+          const rect = liDom.getBoundingClientRect();
+          if (e.clientY < rect.top || e.clientY > rect.bottom) return true;
+          if (e.clientX > rect.right || e.clientX < rect.left - HANDLE_GUTTER_PX) return true;
+          const item = findDraggableListItem(editor.state.doc.resolve(Math.min(pos + 1, editor.state.doc.content.size)));
+          const resolved = item ? handleFromListItem(item, pos + 1) : null;
+          const area = Math.max(1, rect.width * rect.height);
+          if (resolved && area < liFallbackArea) {
+            liFallback = resolved;
+            liFallbackArea = area;
+          }
+          return true;
+        });
+        if (liFallback) return liFallback;
+      }
+
+      const hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
+      if (hit) {
+        const block = findDraggableBlock(editor.state.doc.resolve(hit.pos));
+        const resolved = block ? handleFromBlock(block, hit.pos) : null;
+        if (resolved) return resolved;
+      }
+
+      let fallback: HandleState | null = null;
+      let fallbackArea = Number.POSITIVE_INFINITY;
+      editor.state.doc.descendants((node, pos, parent) => {
+        if (!parent || !node.isBlock) return true;
+        if (parent.type.name !== "doc" && parent.type.name !== "column") return true;
+        const blockDom = editor.view.nodeDOM(pos);
+        if (!(blockDom instanceof HTMLElement)) return true;
+        const rect = blockDom.getBoundingClientRect();
+        if (e.clientY < rect.top || e.clientY > rect.bottom) return true;
+        if (parent.type.name === "column" && (e.clientX < rect.left || e.clientX > rect.right)) return true;
+        // 非叶子块从内部位置(pos+1)解析;叶子块(diagram 等)pos+1 落到块后无法命中,
+        // 退回用块边界 pos(findDraggableBlock 会经 nodeAfter 命中叶子块)。
+        const block =
+          findDraggableBlock(editor.state.doc.resolve(Math.min(pos + 1, editor.state.doc.content.size))) ??
+          findDraggableBlock(editor.state.doc.resolve(pos));
+        const resolved = block ? handleFromBlock(block, pos + 1) : null;
+        const area = Math.max(1, rect.width * rect.height);
+        if (resolved && area < fallbackArea) {
+          fallback = resolved;
+          fallbackArea = area;
+        }
+        return true;
+      });
+      return fallback;
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (menuOpen || draggingRef.current) return;
+      if (!editor.isEditable) return; // 只读视图不显示手柄
+      lastMouseRef.current = e;
+      clearHideTimer();
+      setHandle(resolveHandleFromPoint(e));
+    };
+
+    // 折叠/展开是纯装饰事务(无 mousemove),尤其点常驻三角展开后鼠标静止,接管的 hover 折叠
+    // 箭头依赖 handle 却收不到 move 事件→箭头不出现、需移动鼠标才回来(回归用户反馈)。
+    // 折叠态变化后按"上次鼠标位置"重算 handle,让 fold 箭头立即接管。
+    const onLeave = (e: MouseEvent) => {
+      if (menuOpen || draggingRef.current) return;
+      if (wrapRef.current?.contains(e.relatedTarget as Node)) return;
+      hideTimer.current = setTimeout(() => setHandle(null), 250);
+    };
+
+    // 滚动/缩放/transaction 时手柄和菜单实时跟随其所属块。菜单用 viewport fixed 坐标,
+    // 因此必须重读 block rect;锚点失效时直接关闭菜单。rAF 节流。
+    let rafId = 0;
+    const syncFloatingAnchor = () => {
+      setHandle((h) => {
+        if (!h) {
+          if (menuOpen) {
+            setMenuOpen(false);
+            resetMenuPlacement();
+          }
+          return h;
+        }
+        const next = refreshHandleGeometryFromDom(h, dom);
+        if (!next) {
+          if (menuOpen) {
+            setMenuOpen(false);
+            resetMenuPlacement();
+          }
+          return null;
+        }
+        if (menuOpen) {
+          if (next.kind !== "block" || !applyBlockMenuPlacement(next, menuRef.current)) {
+            setMenuOpen(false);
+            resetMenuPlacement();
+          }
+        }
+        return next;
+      });
+    };
+    const scheduleFloatingSync = () => {
+      if (draggingRef.current || rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        syncFloatingAnchor();
+      });
+    };
+
+    const onTransaction = ({ transaction }: { transaction: { getMeta: (k: typeof qingagentCollapseKey) => unknown } }) => {
+      const collapseChanged = transaction.getMeta(qingagentCollapseKey) !== undefined;
+      if (menuOpen) {
+        scheduleFloatingSync();
+        return;
+      }
+      if (!collapseChanged || draggingRef.current || !editor.isEditable) return;
+      const last = lastMouseRef.current;
+      if (!last) return;
+      requestAnimationFrame(() => {
+        if (editor.isDestroyed) return;
+        clearHideTimer();
+        setHandle(resolveHandleFromPoint(last));
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const wantsMenu = (e.altKey && e.key === "Enter") || ((e.metaKey || e.ctrlKey) && e.key === "/");
+      if (!wantsMenu) return;
+      const next = resolveHandleFromSelection();
+      if (!next) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearHideTimer();
+      openBlockMenu(next);
+    };
+
+    dom.addEventListener("mousemove", onMove);
+    dom.addEventListener("mouseleave", onLeave);
+    dom.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", scheduleFloatingSync, true); // capture:捕获嵌套滚动容器的滚动
+    window.addEventListener("resize", scheduleFloatingSync);
+    editor.on("transaction", onTransaction);
+    return () => {
+      dom.removeEventListener("mousemove", onMove);
+      dom.removeEventListener("mouseleave", onLeave);
+      dom.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", scheduleFloatingSync, true);
+      window.removeEventListener("resize", scheduleFloatingSync);
+      editor.off("transaction", onTransaction);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [editor, menuOpen, clearHideTimer, applyBlockMenuPlacement, openBlockMenu, resetMenuPlacement]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const insideHandle = wrapRef.current?.contains(target) ?? false;
+      const insideMenu = menuRef.current?.contains(target) ?? false;
+      if (!insideHandle && !insideMenu) {
+        setMenuOpen(false);
+        setHandle(null);
+        resetMenuPlacement();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setMenuOpen(false);
+        resetMenuPlacement();
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen, resetMenuPlacement]);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuFlipUp(false);
+      setMenuPos(null);
+      setSubmenuPlacement({});
+      return;
+    }
+    const menu = menuRef.current;
+    if (!handle || handle.kind !== "block" || !menu) return;
+    if (!applyBlockMenuPlacement(handle, menu)) {
+      setMenuOpen(false);
+      resetMenuPlacement();
+      return;
+    }
+    requestAnimationFrame(() => {
+      menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    });
+  }, [menuOpen, handle, applyBlockMenuPlacement, resetMenuPlacement]);
+
+  const placeSubmenu = useCallback((key: string, wrapper: HTMLDivElement) => {
+    const panel = wrapper.querySelector<HTMLElement>(".bh-submenu-panel");
+    if (!panel) return;
+    const rect = wrapper.getBoundingClientRect();
+    const panelWidth = panel.offsetWidth || 164;
+    const panelHeight = panel.offsetHeight || panel.scrollHeight || 34;
+    const margin = 8;
+    const side = rect.right + 4 + panelWidth <= window.innerWidth - margin ? "right" : "left";
+    const preferredTop = rect.top - 6;
+    const maxTop = Math.max(margin, window.innerHeight - Math.min(panelHeight, window.innerHeight - margin * 2) - margin);
+    const clampedTop = Math.min(Math.max(preferredTop, margin), maxTop);
+    setSubmenuPlacement((current) => ({ ...current, [key]: { side, top: Math.round(clampedTop - rect.top) } }));
+  }, []);
+
+  // 把光标放到"该插入新块的位置":空块原地;非空块在其下方插一个空段落并进入。
+  const seedInsertChain = useCallback(
+    (h: HandleState) => {
+      if (!editor.isEditable) return null;
+      const chain = editor.chain().focus();
+      if (h.isEmpty) return chain.setTextSelection(h.insertPos);
+      const node = editor.state.doc.nodeAt(h.blockPos);
+      const after = h.blockPos + (node?.nodeSize ?? 0);
+      return chain.insertContentAt(after, { type: "paragraph" }).setTextSelection(after + 1);
+    },
+    [editor],
+  );
+
+  const runHandleCommand = useCallback(
+    (ok: boolean, label: string) => {
+      if (!ok) onToast?.(`无法执行：${label}`);
+      return ok;
+    },
+    [onToast],
+  );
+
+  const insertStructureBlockAfter = useCallback(
+    (h: HandleState, node: Record<string, unknown>, label: string) => {
+      const current = editor.state.doc.nodeAt(h.blockPos);
+      if (!current) return runHandleCommand(false, label);
+      return runHandleCommand(
+        insertStructureNodeAfterBlock(editor, h.blockPos, node),
+        label,
+      );
+    },
+    [editor, runHandleCommand],
+  );
+
+  const insertBlock = useCallback(
+    (type: string, opts?: number) => {
+      if (!handle || handle.kind !== "block") return;
+      if (!editor.isEditable) return;
+      setMenuOpen(false);
+      const h = handle;
+      setHandle(null);
+
+      switch (type) {
+        case "blockMath":
+          insertStructureBlockAfter(h, { type: "blockMath", attrs: { latex: "E = mc^2" } }, "公式块");
+          return;
+        case "diagram":
+          insertStructureBlockAfter(
+            h,
+            {
+              type: "diagram",
+              attrs: { lang: "mermaid", source: "flowchart TD\n  A[开始] --> B[结束]", svg: null },
+            },
+            "插入图表",
+          );
+          return;
+        case "horizontalRule":
+          insertStructureBlockAfter(h, { type: "horizontalRule" }, "插入分隔线");
+          return;
+        case "table":
+          insertStructureBlockAfter(h, createDefaultTableNode(), "插入表格");
+          return;
+        case "columnList":
+          insertStructureBlockAfter(h, createDefaultColumnListNode(), "插入分栏");
+          return;
+      }
+
+      const chain = seedInsertChain(h);
+      if (!chain) return;
+      switch (type) {
+        case "heading":
+          runHandleCommand(chain.setHeading({ level: (opts ?? 1) as 1 | 2 | 3 | 4 | 5 | 6 }).run(), "标题");
+          break;
+        case "bulletList":
+          runHandleCommand(chain.toggleBulletList().run(), "无序列表");
+          break;
+        case "orderedList":
+          runHandleCommand(chain.toggleOrderedList().run(), "有序列表");
+          break;
+        case "codeBlock":
+          runHandleCommand(chain.setCodeBlock().run(), "代码块");
+          break;
+        case "inlineMath":
+          runHandleCommand(chain.insertInlineMath({ latex: "x^2" }).run(), "行内公式");
+          break;
+        case "blockquote":
+          runHandleCommand(chain.toggleBlockquote().run(), "引用");
+          break;
+      }
+    },
+    [editor, handle, insertStructureBlockAfter, runHandleCommand, seedInsertChain],
+  );
+
+  // 转换当前块的格式(turn-into,对齐飞书:点徽标把 H1 换成正文/其他)。原地转换,不新建块。
+  const convertBlock = useCallback(
+    (type: string, opts?: number) => {
+      if (!handle || handle.kind !== "block") return;
+      if (!editor.isEditable) return;
+      setMenuOpen(false);
+      const h = handle;
+      setHandle(null);
+      const chain = editor.chain().focus().setTextSelection(h.insertPos);
+      switch (type) {
+        case "paragraph":
+          runHandleCommand(chain.setParagraph().run(), "正文");
+          break;
+        case "heading":
+          runHandleCommand(chain.setHeading({ level: (opts ?? 1) as 1 | 2 | 3 | 4 | 5 | 6 }).run(), "标题");
+          break;
+        case "bulletList":
+          runHandleCommand(chain.toggleBulletList().run(), "无序列表");
+          break;
+        case "orderedList":
+          runHandleCommand(chain.toggleOrderedList().run(), "有序列表");
+          break;
+        case "blockquote":
+          runHandleCommand(chain.toggleBlockquote().run(), "引用");
+          break;
+        case "codeBlock":
+          runHandleCommand(chain.setCodeBlock().run(), "代码块");
+          break;
+        case "taskList":
+          runHandleCommand(chain.toggleTaskList().run(), "待办清单");
+          break;
+        case "callout":
+          if (editor.isActive("callout")) runHandleCommand(chain.lift("callout").run(), "高亮块");
+          else runHandleCommand(chain.wrapIn("callout").run(), "高亮块");
+          break;
+      }
+    },
+    [editor, handle, runHandleCommand],
+  );
+
+  const doInsertImage = useCallback(() => {
+    if (handle?.kind !== "block") return;
+    if (!editor.isEditable) return;
+    setMenuOpen(false);
+    const h = handle;
+    setHandle(null);
+    if (h) seedInsertChain(h)?.run();
+    void pickFile("image/*").then(async (file) => {
+      if (!file) return;
+      if (!editor.isEditable) return;
+      try {
+        await insertImageAsset(editor, file);
+      } catch (error) {
+        console.error("[workspace] image upload failed", error);
+        onToast?.("图片上传失败，请重试");
+      }
+    });
+  }, [editor, onToast, handle, seedInsertChain]);
+
+  const doInsertFile = useCallback(() => {
+    if (handle?.kind !== "block") return;
+    if (!editor.isEditable) return;
+    setMenuOpen(false);
+    const h = handle;
+    setHandle(null);
+    if (h) seedInsertChain(h)?.run();
+    void pickFile("*/*").then(async (file) => {
+      if (!file) return;
+      if (!editor.isEditable) return;
+      try {
+        await insertFileAsset(editor, file);
+      } catch (error) {
+        console.error("[workspace] file upload failed", error);
+        onToast?.("文件上传失败，请重试");
+      }
+    });
+  }, [editor, onToast, handle, seedInsertChain]);
+
+  const handleAlign = useCallback(
+    (align: "left" | "center" | "right") => {
+      if (!handle) return;
+      if (!editor.isEditable) return;
+      const h = handle;
+      setMenuOpen(false);
+      setHandle(null);
+      editor.chain().focus().setTextSelection(h.insertPos).setTextAlign(align).run();
+    },
+    [editor, handle],
+  );
+
+  const deleteCurrentBlock = useCallback(() => {
+    if (!handle) return;
+    if (!editor.isEditable) return;
+    const h = handle;
+    const node = editor.state.doc.nodeAt(h.blockPos);
+    if (!node) return;
+    setMenuOpen(false);
+    setHandle(null);
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: h.blockPos, to: h.blockPos + node.nodeSize })
+      .run();
+  }, [editor, handle]);
+
+  const writeBlockToClipboard = useCallback(
+    async (isCut: boolean) => {
+      if (!handle) return;
+      if (isCut && !editor.isEditable) return;
+      const h = handle;
+      const node = editor.state.doc.nodeAt(h.blockPos);
+      if (!node) return;
+      const pmDoc = { type: "doc", content: [node.toJSON()] } as PmDoc;
+      const html = pmToClipboardHtml(pmDoc);
+      const plain = pmToPlainText(pmDoc);
+      if (!html && !plain) return;
+
+      try {
+        await writeBlockClipboardPayload(html, plain);
+        if (isCut) {
+          editor
+            .chain()
+            .focus()
+            .deleteRange({ from: h.blockPos, to: h.blockPos + node.nodeSize })
+            .run();
+        }
+        onToast?.(isCut ? "已剪切" : "已复制");
+      } catch (error) {
+        console.warn("[workspace] block clipboard failed", error);
+        onToast?.(isCut ? "剪切失败，请重试" : "复制失败，请重试");
+      } finally {
+        setMenuOpen(false);
+        setHandle(null);
+      }
+    },
+    [editor, handle, onToast],
+  );
+
+  // 拖拽排序:ProseMirror 原生 NodeSelection + view.dragging(move),drop 由 PM 处理、
+  // dropcursor 出落点线。手柄是覆盖层元素,选区/插入位置都来自 hover 时存下的 handle,不依赖实时选区。
+  const onDragStart = useCallback(
+    (e: React.DragEvent) => {
+      if (!handle || !editor.isEditable) {
+        e.preventDefault();
+        return;
+      }
+      const { view } = editor;
+      try {
+        const payload = createBlockDragPayload(view, handle.blockPos);
+        view.dispatch(view.state.tr.setSelection(payload.selection));
+        (view as unknown as { dragging: typeof payload.dragging }).dragging = payload.dragging;
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "");
+        if (handle.kind === "listItem") {
+          e.dataTransfer.setData(
+            LIST_ITEM_DND_MIME,
+            JSON.stringify({ blockId: handle.blockId, pos: handle.blockPos }),
+          );
+        }
+        e.dataTransfer.setDragImage(handle.blockEl, 12, 12);
+      } catch {
+        e.preventDefault();
+        return;
+      }
+      draggingRef.current = true;
+      setMenuOpen(false);
+    },
+    [editor, handle],
+  );
+
+  const onDragEnd = useCallback(() => {
+    draggingRef.current = false;
+    setHandle(null);
+  }, []);
+
+  const foldInfo = handle ? getBlockCollapseInfo(editor.state, handle.blockPos) : null;
+  const onFoldToggle = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!editor.isEditable) return;
+      if (!foldInfo?.canToggle) return;
+      toggleBlockCollapse(editor, foldInfo.blockId);
+      setMenuOpen(false);
+      setHandle((current) => (current ? { ...current } : current));
+    },
+    [editor, foldInfo?.blockId, foldInfo?.canToggle],
+  );
+  // 注:不再 early-return,因为折叠常驻三角(collapsedCarets)即使无 hover handle 也要渲染。
+  // menuStyle/子菜单定位(dev 的块菜单)不访问 handle,可无条件计算;菜单 JSX 由 {handle && ...} 守卫。
+  const menuStyle =
+    menuPos === null
+      ? undefined
+      : ({ top: menuPos.top, left: menuPos.left } as React.CSSProperties);
+  const alignPlacement = submenuPlacement.align;
+  const alignSubmenuStyle = alignPlacement
+    ? ({ "--bh-submenu-top": `${alignPlacement.top}px` } as React.CSSProperties)
+    : undefined;
+  const insertPlacement = submenuPlacement.insert;
+  const insertSubmenuStyle = insertPlacement
+    ? ({ "--bh-submenu-top": `${insertPlacement.top}px` } as React.CSSProperties)
+    : undefined;
+
+  return (
+    <>
+      {/* 折叠态常驻三角:gutter 悬浮层(不进入内容),折叠态三角始终由它负责(hover 也不切换,避免跳动);
+          hover 时只在它左边追加拖拽 chip(chip 折叠态左移让位)。 */}
+      {collapsedCarets.map((c) => (
+          <button
+            key={c.blockId}
+            type="button"
+            className="block-fold-persist"
+            aria-label="展开折叠内容"
+            title="展开"
+            style={{ position: "fixed", top: c.top, left: c.left, zIndex: 9 }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!editor.isEditable) return;
+              toggleBlockCollapse(editor, c.blockId);
+            }}
+          >
+            <svg className="block-fold-persist__icon" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true" focusable="false">
+              <path d="M2.4 1.6L6.4 4.5L2.4 7.4Z" fill="currentColor" />
+            </svg>
+          </button>
+        ))}
+      {handle && (
+        <>
+    <div
+      ref={wrapRef}
+      className="block-handle-wrap"
+      style={{
+        position: "fixed",
+        top: handle.top,
+        // 折叠态:常驻三角占住锚点槽位,拖拽 chip 左移让位,二者不重叠
+        left: foldInfo?.collapsed ? handle.left - 18 : handle.left,
+        zIndex: 100050,
+      }}
+      onMouseEnter={clearHideTimer}
+      onMouseLeave={(e) => {
+        if (menuOpen || draggingRef.current) return;
+        const relatedTarget = e.relatedTarget;
+        if (!(relatedTarget instanceof Node) || !editor.view.dom.contains(relatedTarget)) {
+          hideTimer.current = setTimeout(() => setHandle(null), 200);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={`block-handle-btn${handle.glyph === "+" ? " is-plus" : " is-chip"}`}
+        aria-label={handle.kind === "listItem" ? "拖拽列表行" : "块操作菜单(转换格式 / 插入)"}
+        aria-haspopup={handle.kind === "block" ? "menu" : undefined}
+        aria-expanded={handle.kind === "block" ? menuOpen : undefined}
+        title={handle.kind === "listItem" ? "拖拽排序" : "点击转换格式 · 拖拽排序"}
+        draggable={editor.isEditable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={() => {
+          if (!editor.isEditable) return;
+          if (handle.kind !== "block") return;
+          if (menuOpen) {
+            setMenuOpen(false);
+            resetMenuPlacement();
+            return;
+          }
+          openBlockMenu(handle);
+        }}
+        onKeyDown={(e) => {
+          if (!editor.isEditable) return;
+          if (handle.kind !== "block") return;
+          if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+          e.preventDefault();
+          if (!menuOpen) {
+            openBlockMenu(handle);
+            return;
+          }
+          menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+        }}
+      >
+        {handle.glyph === "+" ? (
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+            <path d="M6.5 1.8v9.4M1.8 6.5h9.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <span className="bh-chip-inner">
+            <span className="bh-type">
+              <HandleTypeIcon glyph={handle.glyph} />
+            </span>
+            <svg className="bh-grip" width="7" height="13" viewBox="0 0 7 13" aria-hidden="true" focusable="false">
+              <circle cx="1.6" cy="2.5" r="1.05" fill="currentColor" />
+              <circle cx="5.4" cy="2.5" r="1.05" fill="currentColor" />
+              <circle cx="1.6" cy="6.5" r="1.05" fill="currentColor" />
+              <circle cx="5.4" cy="6.5" r="1.05" fill="currentColor" />
+              <circle cx="1.6" cy="10.5" r="1.05" fill="currentColor" />
+              <circle cx="5.4" cy="10.5" r="1.05" fill="currentColor" />
+            </svg>
+          </span>
+        )}
+      </button>
+      {foldInfo?.canToggle && !foldInfo.collapsed && (
+        <button
+          type="button"
+          className={`fold-toggle${foldInfo.collapsed ? " is-collapsed" : ""}`}
+          aria-label={foldInfo.collapsed ? "展开折叠内容" : "折叠下级内容"}
+          aria-pressed={foldInfo.collapsed}
+          title={foldInfo.collapsed ? "展开" : "折叠"}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={onFoldToggle}
+        >
+          <svg className="fold-caret" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true" focusable="false">
+            <path d="M2.4 1.6L6.4 4.5L2.4 7.4Z" fill="currentColor" />
+          </svg>
+        </button>
+      )}
+    </div>
+      {menuOpen && handle.kind === "block" && (
+        <div ref={menuRef} className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`} role="menu" style={menuStyle}>
+          <div className="bh-section-label">转换为</div>
+          <div className="bh-grid">
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="一级标题" title="一级标题" onClick={() => convertBlock("heading", 1)}><BlockHandleIcon name="heading1" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="二级标题" title="二级标题" onClick={() => convertBlock("heading", 2)}><BlockHandleIcon name="heading2" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="三级标题" title="三级标题" onClick={() => convertBlock("heading", 3)}><BlockHandleIcon name="heading3" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="无序列表" title="无序列表" onClick={() => convertBlock("bulletList")}><BlockHandleIcon name="bulletList" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="有序列表" title="有序列表" onClick={() => convertBlock("orderedList")}><BlockHandleIcon name="orderedList" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="引用" title="引用" onClick={() => convertBlock("blockquote")}><BlockHandleIcon name="quote" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="代码块" title="代码块" onClick={() => convertBlock("codeBlock")}><BlockHandleIcon name="code" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="待办清单" title="待办清单" onClick={() => convertBlock("taskList")}><BlockHandleIcon name="task" /></button>
+            <button type="button" role="menuitem" className="bh-grid-btn" aria-label="高亮块" title="高亮块" onClick={() => convertBlock("callout")}><BlockHandleIcon name="callout" /></button>
+          </div>
+          <div className="bh-divider" />
+          {!handle.isEmpty ? (
+            <>
+              <div
+                className={`bh-submenu${alignPlacement?.side === "left" ? " is-left" : ""}`}
+                onMouseEnter={(e) => placeSubmenu("align", e.currentTarget)}
+                onFocus={(e) => placeSubmenu("align", e.currentTarget)}
+              >
+                <button type="button" role="menuitem" className="block-handle-item bh-submenu-trigger" aria-haspopup="menu" onClick={(e) => e.preventDefault()}>
+                  <span className="bh-icon"><BlockHandleIcon name="align" /></span>
+                  对齐
+                  <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
+                </button>
+                <div className="bh-submenu-panel" role="menu" style={alignSubmenuStyle}>
+                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("left")}>
+                    <span className="bh-icon"><BlockHandleIcon name="alignLeft" /></span>
+                    左对齐
+                  </button>
+                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("center")}>
+                    <span className="bh-icon"><BlockHandleIcon name="alignCenter" /></span>
+                    居中
+                  </button>
+                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("right")}>
+                    <span className="bh-icon"><BlockHandleIcon name="alignRight" /></span>
+                    右对齐
+                  </button>
+                </div>
+              </div>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(false)}>
+                <span className="bh-icon"><BlockHandleIcon name="copy" /></span>
+                复制
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(true)}>
+                <span className="bh-icon"><BlockHandleIcon name="cut" /></span>
+                剪切
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item is-danger" onClick={deleteCurrentBlock}>
+                <span className="bh-icon"><BlockHandleIcon name="delete" /></span>
+                删除
+              </button>
+              <div className="bh-divider" />
+            </>
+          ) : null}
+          {handle.isEmpty ? (
+            <div className="bh-inline-insert">
+              <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
+                <span className="bh-icon"><BlockHandleIcon name="image" /></span>
+                插入图片
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertFile}>
+                <span className="bh-icon"><BlockHandleIcon name="file" /></span>
+                插入文件
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("inlineMath")}>
+                <span className="bh-icon"><BlockHandleIcon name="inlineMath" /></span>
+                行内公式
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("blockMath")}>
+                <span className="bh-icon"><BlockHandleIcon name="blockMath" /></span>
+                公式块
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
+                <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
+                插入图表
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
+                <span className="bh-icon"><BlockHandleIcon name="table" /></span>
+                插入表格
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
+                <span className="bh-icon"><BlockHandleIcon name="columns" /></span>
+                插入分栏
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("codeBlock")}>
+                <span className="bh-icon"><BlockHandleIcon name="code" /></span>
+                代码块
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("horizontalRule")}>
+                <span className="bh-icon"><BlockHandleIcon name="divider" /></span>
+                插入分隔线
+              </button>
+            </div>
+          ) : (
+            <div
+              className={`bh-submenu${insertPlacement?.side === "left" ? " is-left" : ""}`}
+              onMouseEnter={(e) => placeSubmenu("insert", e.currentTarget)}
+              onFocus={(e) => placeSubmenu("insert", e.currentTarget)}
+            >
+              <button type="button" role="menuitem" className="block-handle-item bh-submenu-trigger" aria-haspopup="menu" onClick={(e) => e.preventDefault()}>
+                <span className="bh-icon"><BlockHandleIcon name="insert" /></span>
+                插入
+                <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
+              </button>
+              <div className="bh-submenu-panel" role="menu" style={insertSubmenuStyle}>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
+                  <span className="bh-icon"><BlockHandleIcon name="image" /></span>
+                  插入图片
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertFile}>
+                  <span className="bh-icon"><BlockHandleIcon name="file" /></span>
+                  插入文件
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("inlineMath")}>
+                  <span className="bh-icon"><BlockHandleIcon name="inlineMath" /></span>
+                  行内公式
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("blockMath")}>
+                  <span className="bh-icon"><BlockHandleIcon name="blockMath" /></span>
+                  公式块
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
+                  <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
+                  插入图表
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
+                  <span className="bh-icon"><BlockHandleIcon name="table" /></span>
+                  插入表格
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
+                  <span className="bh-icon"><BlockHandleIcon name="columns" /></span>
+                  插入分栏
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("codeBlock")}>
+                  <span className="bh-icon"><BlockHandleIcon name="code" /></span>
+                  代码块
+                </button>
+                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("horizontalRule")}>
+                  <span className="bh-icon"><BlockHandleIcon name="divider" /></span>
+                  插入分隔线
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+        </>
+      )}
+    </>
+  );
+}

@@ -1,0 +1,275 @@
+/* UI Kit 活页 · 未收录挖掘区 CSS 快照(命名空间隔离在 .dig-scope 下)。
+ *
+ * 这里的生产同名类只用于「待用户拍板」陈列:疑似死件建议删、库存变体建议删/迁库文档、
+ * dev-only 资产建议留或迁 ops。勿把 .dig-scope 当现役 Kit 皮肤引用。
+ */
+
+.dig-scope {
+  --dig-red: #a3352b;
+  --dig-red-soft: rgba(163, 53, 43, 0.1);
+  --dig-yellow: #8a6818;
+  --dig-yellow-soft: rgba(168, 130, 63, 0.14);
+  --dig-paper: #fffaf0;
+  --dig-line: rgba(120, 90, 50, 0.28);
+  --dig-ink: #2f2a22;
+  color: var(--dig-ink);
+}
+
+.dig-scope .dig-ribbon {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border: 1px dashed var(--dig-red);
+  border-left: 5px solid var(--dig-red);
+  background:
+    linear-gradient(90deg, rgba(163, 53, 43, 0.13), rgba(168, 130, 63, 0.12)),
+    repeating-linear-gradient(-45deg, transparent, transparent 10px, rgba(163, 53, 43, 0.04) 10px, rgba(163, 53, 43, 0.04) 20px);
+  color: var(--dig-red);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+}
+
+.dig-scope .dig-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.dig-scope .dig-stat {
+  border: 1px dashed var(--dig-line);
+  background: rgba(255, 250, 240, 0.72);
+  padding: 9px 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dig-scope .dig-stat b {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  color: var(--dig-yellow);
+}
+
+.dig-scope .dig-stat span {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.dig-scope .dig-stat--red b {
+  color: var(--dig-red);
+}
+
+.dig-scope .dig-shot {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px dashed var(--dig-line);
+  background: rgba(255, 250, 240, 0.58);
+  padding: 12px;
+  overflow: auto;
+}
+
+.dig-scope .dig-shot button {
+  font: inherit;
+}
+
+.dig-scope .dig-tombstone {
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px dashed var(--dig-red);
+  background: var(--dig-red-soft);
+  color: var(--dig-red);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+/* —— dev-only 资产族卡片 + 三个独立小样 —— */
+.dig-scope .dig-dev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.dig-scope .dig-dev-card {
+  border: 1px dashed var(--dig-line);
+  background: rgba(255, 250, 240, 0.58);
+  padding: 9px 10px;
+  min-height: 72px;
+}
+
+.dig-scope .dig-dev-card b {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dig-yellow);
+  line-height: 1.4;
+}
+
+.dig-scope .dig-dev-card span,
+.dig-scope .dig-dev-card em {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.45;
+  font-style: normal;
+}
+
+.dig-scope .gx-scope,
+.dig-scope .debug-page,
+.dig-scope .presentation-tuning-panel {
+  width: 100%;
+  max-width: 560px;
+  border: 1px dashed var(--dig-line);
+  background: rgba(255, 250, 240, 0.66);
+  padding: 12px;
+}
+
+.dig-scope .gx-view,
+.dig-scope .gx-table,
+.dig-scope .dbg-list,
+.dig-scope .ptp-body {
+  display: grid;
+  gap: 8px;
+}
+
+.dig-scope .gx-title,
+.dig-scope .dbg-title,
+.dig-scope .ptp-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.dig-scope .gx-note,
+.dig-scope .dbg-meta,
+.dig-scope .ptp-field-head {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.dig-scope .gx-stream-head,
+.dig-scope .gx-group-row,
+.dig-scope .dbg-head,
+.dig-scope .dbg-item,
+.dig-scope .ptp-header,
+.dig-scope .ptp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dig-scope .gx-stream-head {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  border-bottom: 1px solid var(--dig-line);
+  padding-bottom: 5px;
+}
+
+.dig-scope .gx-col-no,
+.dig-scope .gx-col-state,
+.dig-scope .gx-col-render {
+  min-width: 50px;
+}
+
+.dig-scope .gx-ministate {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #3f6b3f;
+}
+
+.dig-scope .gx-render,
+.dig-scope .dbg-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.dig-scope .gx-copybtn,
+.dig-scope .dbg-back,
+.dig-scope .dbg-btn,
+.dig-scope .ptp-collapse,
+.dig-scope .ptp-reset,
+.dig-scope .ptp-replay {
+  border: 1px solid var(--line-2);
+  background: var(--bg-canvas);
+  color: var(--ink-2);
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.dig-scope .dbg-raw {
+  margin: 0;
+  padding: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line-1);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: auto;
+}
+
+.dig-scope .ptp-field {
+  display: grid;
+  gap: 4px;
+}
+
+/* —— 现役未收录清单:族级披露,不活渲染 506 —— */
+.dig-scope .dig-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--dig-line);
+}
+
+.dig-scope .dig-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.dig-scope .dig-table th,
+.dig-scope .dig-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--dig-line);
+  vertical-align: top;
+  text-align: left;
+}
+
+.dig-scope .dig-table th {
+  position: sticky;
+  top: 0;
+  background: #f6eddb;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  z-index: 1;
+}
+
+.dig-scope .dig-table td:first-child,
+.dig-scope .dig-table td:nth-child(3) {
+  font-family: var(--font-mono);
+}
+
+.dig-scope .dig-noise {
+  display: grid;
+  gap: 8px;
+  border: 1px dashed var(--dig-yellow);
+  background: var(--dig-yellow-soft);
+  padding: 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.dig-scope .dig-noise code {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--dig-red);
+}

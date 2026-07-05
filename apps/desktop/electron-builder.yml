@@ -1,0 +1,42 @@
+appId: com.qingagent.desktop
+productName: 青简
+directories:
+  buildResources: resources
+  output: release
+asar: false
+files:
+  - dist/**/*
+  - package.json
+  - "!src"
+  # 排除独立 agent-browser CLI 的平台二进制(产品运行时不用它;它的 .exe 会触发
+  # electron-builder 在 Linux 上用 wine 签名 → 无 wine 即失败)。浏览器自动化走 playwright。
+  - "!**/node_modules/agent-browser/**"
+  - "!**/*.map"
+extraResources:
+  - from: ../web/dist
+    to: web
+  - from: ../../packages/core/skills
+    to: skills
+  # Pyodide 运行时:由 build.mjs 按 QINGAGENT_BUNDLE_PYODIDE 暂存到 build/pyodide。
+  # flag 关时只含占位文件(安装包体积不变);flag 开时含 ~12MB wasm/stdlib。
+  - from: build/pyodide
+    to: pyodide
+  # 飞书 lark-cli:由 build.mjs 按 QINGAGENT_BUNDLE_LARK_CLI 暂存到 build/lark-cli。
+  # flag 关时只含占位文件;flag 开时含 @larksuite/cli + 依赖(~26MB)。
+  # 运行时 ensureLarkCliShim 据 Resources/lark-cli/node_modules/@larksuite/cli/scripts/run.js 写 PATH shim。
+  - from: build/lark-cli
+    to: lark-cli
+mac:
+  target:
+    - dmg
+    - zip
+win:
+  # Linux 无 wine:关闭对 exe 的 rcedit/签名(图标/版本元数据),避免 wine 依赖。
+  signAndEditExecutable: false
+  target:
+    - nsis
+    - zip
+linux:
+  target:
+    - AppImage
+    - deb

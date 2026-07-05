@@ -1,0 +1,245 @@
+/* UI Kit 活页 · 第三层「死件档案」CSS 快照(命名空间隔离在 .cd-scope 下)。
+ *
+ * 背景:这些簇正被清洗专项(wt/style-cleanup)从产品源码里删除。为了让本活页
+ * 在产品 CSS 删除后仍能「存档展示」它们长什么样,这里把其规则的**快照**拷进本页
+ * 自有 CSS,并全部收进 `.cd-scope`(cleaned-archive scope)命名空间——与产品类同名
+ * 但只在 .cd-scope 内生效,不与产品全局样式耦合。产品删掉原规则后,本页不破。
+ *
+ * ⚠️ 这里的类名与产品同名纯为「存档还原观感」,不代表现役;勿把 .cd-scope 当现役皮肤引用。
+ */
+
+.cd-scope {
+  --cd-ink: #2f2a22;
+  --cd-paper: #faf6ec;
+  --cd-line: rgba(120, 90, 50, 0.28);
+  color: var(--cd-ink);
+}
+
+/* 档案区隔离框线:界面上明确标注「清洗档案·非 Kit 内容」,与规范正文视觉切割 */
+.uk-archive {
+  border: 2px dashed #a3352b;
+  padding: 0 16px 16px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(216, 56, 43, 0.03),
+    rgba(216, 56, 43, 0.03) 12px,
+    transparent 12px,
+    transparent 24px
+  );
+}
+.uk-archive-ribbon {
+  margin: 0 -16px 4px;
+  padding: 6px 16px;
+  background: rgba(216, 56, 43, 0.09);
+  border-bottom: 1px dashed #a3352b;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: #a3352b;
+}
+
+/* ——(死件)接入凭据弹层 ws-cred-*:曾是"填第三方平台密钥"的模态,已被单机 BYO / 设置面板取代 —— */
+.cd-scope .ws-cred-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cd-scope .ws-cred-modal {
+  width: 380px;
+  max-width: 90%;
+  background: var(--cd-paper);
+  border: 1px solid var(--cd-line);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  padding: 20px 22px;
+}
+.cd-scope .ws-cred-modal-head,
+.cd-scope .ws-cred-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.cd-scope .ws-cred-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cd-ink);
+}
+.cd-scope .ws-cred-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid var(--cd-line);
+  border-radius: 999px;
+  color: #a8823f;
+}
+.cd-scope .ws-cred-platform {
+  font-size: 12px;
+  color: #8a7f6e;
+  margin-bottom: 10px;
+}
+.cd-scope .ws-cred-intro {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #5c5346;
+  margin-bottom: 14px;
+}
+.cd-scope .ws-cred-field {
+  margin-bottom: 12px;
+}
+.cd-scope .ws-cred-label {
+  display: block;
+  font-size: 12px;
+  color: #5c5346;
+  margin-bottom: 5px;
+}
+.cd-scope .ws-cred-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--cd-line);
+  background: #fff;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.cd-scope .ws-cred-help {
+  font-size: 11px;
+  color: #8a7f6e;
+  margin-top: 5px;
+}
+.cd-scope .ws-cred-saved {
+  font-size: 11px;
+  color: #3f6b3f;
+}
+.cd-scope .ws-cred-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ——(死件)3D 立方体 cube-face / face-*:旧空态里的旋转立方装饰,早已弃用 —— */
+.cd-scope .cube-scene {
+  width: 120px;
+  height: 120px;
+  perspective: 600px;
+  margin: 12px auto;
+}
+.cd-scope .cube-3d {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transform: rotateX(-24deg) rotateY(32deg);
+}
+.cd-scope .cube-face {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border: 1px solid #a8823f;
+  background: rgba(168, 130, 63, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #a8823f;
+}
+/* ——(死件·已删 fd4814c4)右侧抽屉 wf-drawer / 遮罩 wf-overlay-bg:
+ *   曾是 ui-kit 库存抽屉,正式链路零使用;组件 Drawer.tsx/OverlayBg.tsx 已连根删除 —— */
+.cd-scope .wf-overlay-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+.cd-scope .wf-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  background: var(--cd-paper);
+  border-left: 1px solid var(--cd-line);
+  box-shadow: -14px 0 36px rgba(0, 0, 0, 0.2);
+  border-radius: 14px 0 0 14px; /* 存档还原:旧件圆角本就违铁律二 */
+  display: flex;
+  flex-direction: column;
+}
+.cd-scope .wf-drawer .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--cd-line);
+  font-weight: 600;
+}
+.cd-scope .wf-drawer .title {
+  font-weight: 600;
+}
+.cd-scope .wf-drawer .body {
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #5c5346;
+}
+
+.cd-scope .face-front { transform: translateZ(60px); }
+.cd-scope .face-back { transform: rotateY(180deg) translateZ(60px); }
+.cd-scope .face-right { transform: rotateY(90deg) translateZ(60px); }
+.cd-scope .face-left { transform: rotateY(-90deg) translateZ(60px); }
+.cd-scope .face-top { transform: rotateX(90deg) translateZ(60px); }
+.cd-scope .face-bottom { transform: rotateX(-90deg) translateZ(60px); }
+
+/* —— 第三层脚手架小件 —— */
+.uk-l3-note {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  margin-top: 6px;
+}
+.uk-migrate {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.uk-migrate-card {
+  border: 1px dashed var(--line-2);
+  padding: 8px 10px;
+  background: var(--bg-canvas);
+}
+.uk-migrate-card b {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mark);
+}
+.uk-migrate-card span {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+/* —— 图表节点形状条(第三层·现役条件变体):把 census 里 hover/选中才出现的节点形状
+ *    与拖拽把手,用真实类名平铺陈列(强制可见)。—— */
+.uk-node-shapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  align-items: flex-end;
+}
+.uk-node-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.uk-node-box {
+  position: relative;
+  width: 96px;
+  height: 64px;
+}

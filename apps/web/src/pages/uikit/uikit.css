@@ -1,0 +1,1105 @@
+/* UI Kit 规范页(#/uikit)脚手架样式 —— 仅管展厅布局(uk-*),
+ * 控件本身一律用真实全站类(wf-* / pm-* / ws-* …),不在此重写控件样式。 */
+
+.uk-root {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  /* 铁律一「全宋」:规范页自身就是范例——页面正文用宋体系,mono 只给标注。 */
+  font-family: var(--font-zh-serif);
+  font-size: 13.5px;
+
+  /* 当前「暖纸·金」主题 token —— 取自生产 workspace-ink-skin.css 的暖化覆盖。
+   * 基础 ui-kit tokens.css 是旧的冷绿灰 + 暗红 mark(#b15059),全站早已暖化,
+   * 这里在本规范作用域内复刻当下真实皮肤:奶白纸 + 暖棕墨 + 金铜强调。 */
+  --bg-canvas: #faf6ec; /* 奶白纸(主纸面) */
+  --bg-paper-deep: #efe7d6; /* 略深纸 */
+  --bg-window: #e7ddc9; /* 暖底(页面背) */
+  --bg-subtle: rgba(120, 90, 50, 0.07);
+  --bg-panel: rgba(120, 90, 50, 0.05);
+  --bg-hover: rgba(120, 90, 50, 0.1);
+  --line-1: rgba(120, 90, 50, 0.16);
+  --line-2: rgba(120, 90, 50, 0.28);
+  --line-3: rgba(120, 90, 50, 0.42);
+  --line-ink: #2f2a22;
+  --ink-1: #2f2a22; /* 暖深棕墨(正文/标题) */
+  --ink-2: #5c5346;
+  --ink-3: #8a7f6e;
+  --ink-4: #b3a791;
+  --ink-cool: #8a7f6e;
+  --ink-on-dark: #ece3d0; /* 深墨面上的浅奶字 */
+  --mark: #a8823f; /* 金铜强调 */
+  --mark-soft: rgba(168, 130, 63, 0.14);
+  --sel-bg: #f1e4a8;
+  --ink-surface: #1a1410; /* 暗墨 chrome(对话区那种深色面) */
+
+  background: var(--bg-window);
+  color: var(--ink-1);
+}
+
+/* 顶部标题条 */
+.uk-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--ink-surface);
+  color: var(--ink-on-dark);
+  padding: 16px 28px;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  box-shadow: var(--shadow-2);
+}
+.uk-top h1 {
+  font-family: var(--font-zh-serif);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+.uk-top .uk-sub {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-4);
+}
+.uk-top .uk-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.uk-body {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 28px 120px;
+}
+
+/* 章节 */
+.uk-section {
+  margin: 0 0 40px;
+  scroll-margin-top: 72px;
+}
+.uk-section > h2 {
+  font-family: var(--font-zh-serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin: 0 0 4px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--line-ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.uk-section > h2 .uk-idx {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mark);
+  font-weight: 700;
+}
+.uk-section > h2 .uk-en {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-left: auto;
+}
+
+/* 子组 */
+.uk-group {
+  margin: 18px 0 0;
+}
+.uk-group > h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 0 0 10px;
+  letter-spacing: 0.02em;
+}
+.uk-group > h3 code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line-1);
+  border-radius: 0; /* 铁律二:直角 */
+  padding: 0 5px;
+  margin-left: 6px;
+  font-weight: 500;
+}
+
+/* 样本陈列台:白纸底 + 细边,控件落在上面 */
+.uk-stage {
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-1);
+  border-radius: 0; /* 铁律二:直角 */
+  padding: 18px 20px;
+  box-shadow: var(--shadow-1);
+}
+/* 暗墨 chrome 舞台(对话区那种深色面):在其上重置 token 为暗主题暖金,
+ * 用于演示控件落在深色面时的样子(送出按钮、对话气泡 chrome 等)。 */
+.uk-stage.uk-dark {
+  background: var(--ink-surface);
+  border-color: #3a3328;
+  --bg-canvas: #221c15;
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --line-1: rgba(184, 169, 140, 0.16);
+  --line-2: rgba(184, 169, 140, 0.28);
+  --line-3: rgba(184, 169, 140, 0.42);
+  --ink-1: #ece3d0;
+  --ink-2: rgba(236, 227, 208, 0.66);
+  --ink-3: rgba(236, 227, 208, 0.46);
+  --ink-4: rgba(236, 227, 208, 0.32);
+  --ink-on-dark: #1a1410;
+  --mark: #b59a63;
+  color: var(--ink-1);
+}
+
+/* —— 域一 · 首页:生产控件依赖整页 qj/home 作用域,在 #/uikit 中只钉展台边界。 —— */
+#uikit-root .qj-root.uk-home-stage {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 360px;
+  min-height: 360px;
+  overflow: hidden;
+  background: #f5efdf;
+  border: 1px solid rgba(120, 90, 50, 0.18);
+  box-shadow: inset 0 0 52px rgba(120, 90, 40, 0.1);
+}
+#uikit-root .qj-root.uk-home-stage::before {
+  opacity: 0.26;
+}
+#uikit-root .uk-home-stage .qj-topctrl {
+  top: 14px;
+  right: 14px;
+}
+#uikit-root .uk-home-stage .qj-card-slot.uk-home-new-slot {
+  left: 48px;
+  top: 58px;
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+#uikit-root .uk-home-stage .qj-card-slot.uk-home-new-slot::after {
+  opacity: 0.32;
+  transform: scale(1);
+}
+#uikit-root .uk-home-stage .qj-card-slot.uk-home-new-slot .qj-sway {
+  width: 152px;
+  height: 216px;
+}
+#uikit-root .uk-home-stage .qj-card-slot.uk-home-new-slot .qj-new-card {
+  width: 152px;
+  height: 216px;
+}
+#uikit-root .uk-home-stage .qj-new-fab {
+  left: 20px;
+  bottom: 20px;
+}
+#uikit-root .uk-home-stage .qj-dock {
+  right: 20px;
+  bottom: 20px;
+}
+#uikit-root .uk-home-stage .qj-dock-prog {
+  width: min(34vw, 260px);
+}
+#uikit-root .uk-home-stage .qj-dock-preview {
+  bottom: calc(100% + 12px);
+}
+
+#uikit-root .qj-sheet.uk-sheet-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 18px;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  padding: 16px;
+  overflow: hidden;
+  border-radius: 0;
+  background: #14100b;
+  box-shadow: inset 0 0 0 1px rgba(236, 227, 208, 0.08), 0 18px 46px rgba(8, 6, 4, 0.34);
+}
+#uikit-root .qj-sheet.uk-sheet-stage .qj-sheet-close {
+  top: 14px;
+  right: 14px;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .uk-sheet-nav-demo {
+  min-height: 198px;
+  padding-right: 16px;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .uk-sheet-body-demo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-height: 0;
+  overflow: visible;
+  padding: 0 32px 0 0;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .uk-sheet-demo-block {
+  min-width: 0;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .settings-model {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(260px, 1.08fr) minmax(230px, 0.92fr);
+  gap: 12px;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .settings-model .md-metrics {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .settings-model .settings-search {
+  grid-column: 1 / -1;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .settings-skills,
+#uikit-root .qj-sheet.uk-sheet-stage .settings-shortcuts {
+  grid-column: 1 / -1;
+}
+#uikit-root .qj-sheet.uk-sheet-stage .settings-search .ss-ok {
+  color: #5fce93;
+  background: rgba(95, 206, 147, 0.12);
+  border-color: rgba(95, 206, 147, 0.4);
+}
+#uikit-root .qj-sheet.uk-sheet-stage .sk-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+#uikit-root #view-home.uk-home-menu-stage {
+  position: relative;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  background: transparent;
+  font-family: var(--home-songti);
+}
+#uikit-root #view-home.uk-home-menu-stage::before,
+#uikit-root #view-home.uk-home-menu-stage::after {
+  content: none;
+}
+#uikit-root #view-home.uk-home-menu-stage .uk-stage {
+  position: relative;
+  z-index: 2;
+}
+#uikit-root #view-home.uk-home-menu-stage .home-card-menu,
+#uikit-root #view-home.uk-home-menu-stage .home-fetch-error {
+  position: static;
+  transform: none;
+  width: fit-content;
+}
+#uikit-root #view-home.uk-home-menu-stage .home-fetch-error {
+  max-width: 100%;
+}
+#uikit-root #view-home.uk-home-menu-stage .uk-home-confirm-card {
+  width: min(420px, 100%);
+  padding: 18px;
+  color: var(--ink-1);
+  background: var(--bg-paper-deep);
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  box-shadow: 0 16px 38px rgba(31, 42, 49, 0.14);
+}
+#uikit-root #view-home.uk-home-menu-stage .ws-folder-check {
+  margin-bottom: 14px;
+}
+
+.uk-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.uk-row + .uk-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line-1);
+}
+.uk-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* 单个样本 + 其标注 */
+.uk-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.uk-cap {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+}
+
+/* 一个需要相对定位舞台的浮层样本(modal/drawer/floaty) */
+.uk-portal {
+  position: relative;
+  height: 260px;
+  background: repeating-linear-gradient(
+      45deg,
+      var(--bg-subtle),
+      var(--bg-subtle) 10px,
+      var(--bg-canvas) 10px,
+      var(--bg-canvas) 20px
+    );
+  border: 1px solid var(--line-1);
+  border-radius: 0; /* 铁律二:直角 */
+  overflow: hidden;
+}
+
+/* 生产浮层在 #/uikit 小舞台内静态展开:只约束展厅几何,控件视觉仍吃生产 CSS。 */
+#view-workspace.uk-export-demo {
+  background: #10161b;
+  border-color: rgba(184, 169, 140, 0.18);
+}
+#view-workspace.uk-export-demo .uk-export-paper {
+  position: absolute;
+  inset: 40px 190px 0 44px;
+  padding: 42px 54px;
+  color: #5c5346;
+  background: #efe7d6;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.48);
+  font-size: 14px;
+  line-height: 1.9;
+}
+#view-workspace.uk-export-demo .uk-export-paper p {
+  margin: 0 0 10px;
+  white-space: nowrap;
+}
+#view-workspace.uk-export-demo .ws-doc-topbar {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+}
+#view-workspace.uk-export-demo .ws-export-menu {
+  transform: none;
+  animation: none;
+}
+#view-workspace.uk-folder-demo {
+  background: #111820;
+  border-color: rgba(184, 169, 140, 0.18);
+}
+#view-workspace.uk-folder-demo .ws-folder-modal-overlay {
+  position: absolute;
+}
+#view-workspace.uk-folder-demo .uk-folder-tools {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: auto;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  justify-content: flex-start;
+}
+#view-workspace.uk-folder-demo .uk-folder-tools--connected {
+  top: 200px;
+  left: 24px;
+}
+#view-workspace.uk-force-popover .ws-folder-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+#view-workspace.uk-export-sep-scope {
+  width: 160px;
+  padding: 6px 0;
+  background: rgba(16, 21, 26, 0.62);
+  border: 1px solid rgba(200, 169, 106, 0.24);
+}
+#view-workspace.uk-linkedfiles-demo {
+  max-width: 780px;
+  background: #10161b;
+  border: 1px solid rgba(184, 169, 140, 0.18);
+  padding: 12px;
+}
+#view-workspace.uk-linkedfiles-demo .ws-left.uk-sp-scope {
+  position: relative;
+  min-height: 0;
+}
+#view-workspace.uk-linkedfiles-demo .uk-linkedfiles-input-wrap {
+  position: relative !important;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  padding: 0 !important;
+}
+#view-workspace.uk-linkedfiles-demo .uk-linkedfiles-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 14px;
+  align-items: start;
+}
+#view-workspace.uk-linkedfiles-demo .uk-linkedfiles-sample {
+  min-width: 0;
+}
+#view-workspace.uk-linkedfiles-demo .uk-linkedfiles-sample > .uk-cap {
+  display: block;
+  margin-bottom: 6px;
+}
+@media (max-width: 760px) {
+  #view-workspace.uk-linkedfiles-demo .uk-linkedfiles-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- R3 编辑器域 / 输入区 舞台 ---- */
+/* 生产浮动 chrome 多为 fixed portal;小舞台内 override 为静态陈列,只约束几何,控件视觉仍吃生产 CSS。 */
+
+/* 选中 / 块工具条:doc-toolbar 深墨浮条 */
+#view-workspace.uk-doctoolbar-demo {
+  background: #e7ddc9;
+  border-color: var(--line-2);
+  display: flex;
+  align-items: flex-start;
+  padding: 20px;
+}
+#view-workspace.uk-doctoolbar-demo .doc-toolbar {
+  position: static !important;
+  opacity: 1 !important;
+  transform: none !important;
+  pointer-events: auto !important;
+}
+
+/* 块手柄与菜单 */
+#view-workspace.uk-blockhandle-demo {
+  background: #faf6ec;
+  border-color: var(--line-2);
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+  padding: 20px;
+}
+#view-workspace.uk-blockhandle-demo .block-handle-wrap {
+  position: static !important;
+}
+#view-workspace.uk-blockhandle-demo .block-handle-menu {
+  position: static !important;
+  animation: none;
+  margin: 0;
+}
+
+/* 行内浮层:链接卡 / 公式编辑 */
+#view-workspace.uk-inlinepop-demo {
+  background: #e7ddc9;
+  border-color: var(--line-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 22px;
+}
+#view-workspace.uk-inlinepop-demo .link-hover-card,
+#view-workspace.uk-inlinepop-demo .math-edit-popover {
+  position: static !important;
+}
+
+/* 表格编辑件:头 / 圆点 / 选区工具条 */
+#view-workspace.uk-tbl-demo {
+  background: #faf6ec;
+  border-color: var(--line-2);
+  padding: 26px 22px 22px;
+}
+#view-workspace.uk-tbl-demo .uk-tbl-grid {
+  position: relative;
+  width: fit-content;
+  margin: 20px 0 0 46px;
+}
+#view-workspace.uk-tbl-demo .uk-tbl-grid table {
+  border-collapse: collapse;
+}
+#view-workspace.uk-tbl-demo .uk-tbl-grid td {
+  border: 1px solid var(--line-2);
+  width: 82px;
+  height: 30px;
+}
+#view-workspace.uk-tbl-demo .tbl-col-hdr,
+#view-workspace.uk-tbl-demo .tbl-row-hdr {
+  position: absolute;
+}
+#view-workspace.uk-tbl-demo .tbl-dot {
+  position: absolute;
+  transform: none;
+  background: rgba(168, 130, 63, 0.85);
+  width: 18px;
+  height: 18px;
+}
+#view-workspace.uk-tbl-demo .tbl-dot::before {
+  display: none;
+}
+#view-workspace.uk-tbl-demo .tbl-dot .tbl-dot-mark {
+  display: block;
+}
+#view-workspace.uk-tbl-demo .tbl-sel-toolbar {
+  position: static !important;
+  opacity: 1 !important;
+  transform: none !important;
+  pointer-events: auto !important;
+  margin-top: 24px;
+}
+
+/* 图片块 chrome(pm-image-* 为全局类,舞台内强制显出 hover chrome) */
+.uk-image-demo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  padding: 24px;
+  background: #faf6ec;
+  border: 1px solid var(--line-2);
+}
+.uk-image-frame {
+  position: relative;
+  width: 224px;
+}
+.uk-image-frame .uk-image-ph {
+  display: block;
+  width: 100%;
+  height: 132px;
+  border-radius: 0;
+  background: linear-gradient(135deg, #cdbf9e, #9c8d68);
+}
+.uk-image-demo .pm-image-toolbar,
+.uk-image-demo .pm-image-resize-handle,
+.uk-image-demo .pm-image-upload-overlay {
+  opacity: 1;
+}
+
+/* 图表块编辑件:左下入口 + 图编辑器上下文条 */
+.uk-diagramedit-demo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 30px;
+}
+.uk-diagramedit-demo .graph-diagram-context {
+  position: static !important;
+  transform: none !important;
+}
+.uk-diagramedit-demo .pm-diagram-view-actions {
+  position: static !important;
+  opacity: 1 !important;
+  transform: none !important;
+  display: inline-flex;
+}
+
+/* 发送 / 停止 / 未配置 key 门禁(深墨输入区,顶部留白给气泡上弹) */
+#view-workspace.uk-send-demo {
+  background: #10161b;
+  border: 1px solid rgba(184, 169, 140, 0.18);
+  padding: 66px 24px 24px;
+}
+#view-workspace.uk-send-demo .ws-input-tools {
+  position: static;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: flex-start;
+}
+
+/* ---- token 色板 ---- */
+.uk-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.uk-swatch {
+  border: 1px solid var(--line-1);
+  border-radius: 0; /* 铁律二:直角 */
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+.uk-swatch .uk-chip {
+  height: 56px;
+}
+.uk-swatch .uk-meta {
+  padding: 7px 9px;
+  border-top: 1px solid var(--line-1);
+}
+.uk-swatch .uk-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-1);
+  display: block;
+}
+.uk-swatch .uk-val {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ---- 圆角 / 阴影 演示块 ---- */
+.uk-spec-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.uk-tile {
+  width: 96px;
+  height: 64px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* 字体演示 */
+.uk-font-line {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line-1);
+}
+.uk-font-line .uk-lbl {
+  width: 130px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+}
+.uk-font-line .uk-demo {
+  font-size: 18px;
+  color: var(--ink-1);
+}
+
+/* 锚点导航:按「总则/Token/基础原子/场景域」分组,组名在左、胶囊在右 */
+.uk-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0 0 28px;
+}
+.uk-nav-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.uk-nav-glbl {
+  flex-shrink: 0;
+  width: 108px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--mark);
+}
+.uk-nav a {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  text-decoration: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  padding: 3px 11px;
+  background: var(--bg-canvas);
+  transition: background 0.15s, color 0.15s;
+}
+.uk-nav a:hover {
+  background: var(--ink-1);
+  color: var(--ink-on-dark);
+  border-color: var(--ink-1);
+}
+
+/* —— #/uikit 内嵌暗墨展示脚手架:收编自 #/spec 的 sp-* 页面骨架,
+ *    改为 uk-sp-* 后由本页自给,不再跨依赖 gallery/specDemo.css。 —— */
+.uk-sp-view {
+  height: 100vh;
+  overflow-y: auto;
+}
+#view-workspace .ws-left.uk-sp-scope {
+  flex: 1 1 auto !important;
+  max-width: none !important;
+  width: auto !important;
+  display: block !important;
+  overflow: visible !important;
+  height: auto;
+}
+.uk-sp-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 40px 20px 140px;
+  font-family: var(--font-zh-serif);
+}
+.uk-sp-section {
+  margin: 0 0 38px;
+}
+.uk-sp-h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-1);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.uk-sp-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.uk-sp-row {
+  margin: 0 0 18px;
+}
+.uk-sp-rowlbl {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  margin: 0 0 6px;
+  letter-spacing: 0.02em;
+}
+.uk-sp-rowbody {
+  width: 100%;
+}
+.uk-sp-turn {
+  border: 1px dashed rgba(184, 169, 140, 0.18);
+  padding: 12px 14px;
+  background: rgba(8, 11, 15, 0.3);
+}
+
+/* —— kit 内嵌生产 ChatMessageList(Live)只为展示单条 part:
+ *    去掉工作区滚动容器的 flex 撑高 / 滚动 / 内边距,让 pill 贴合行高。
+ *    沿用 revampUi/gallery 的 `.u-flat > .ws-chat { padding:0 !important }` 姿势。 —— */
+#view-workspace .uk-sp-rowbody > .ws-chat {
+  flex: none !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  margin-right: 0 !important;
+  overflow: visible !important;
+  padding: 0 !important;
+}
+
+/* —— 图表块(可视化)展台:React Flow 画布需要显式高度,镜像 gallery 的 gx-diagram-sample
+ *    (不 overflow:hidden,宽度取 364 与 gallery 一致,避免 fitView 在异形容器里失准)。 —— */
+.uk-diagram-sample {
+  width: 364px;
+  max-width: 100%;
+}
+.uk-diagram-sample .graph-diagram { min-height: 220px; }
+.uk-diagram-sample .graph-diagram-canvas { height: 240px; min-height: 220px; }
+
+/* —— 暗墨作用域内的裸文字修正:.u-agent 等无 color 规则的裸文本靠继承,
+ *    在本页浅色根下会继承暗字落在暗底上(08/19 节)。把作用域基色钉成 ink-skin 浅奶。 —— */
+.uk-root #view-workspace .ws-left.uk-sp-scope {
+  color: var(--ink-1); /* 在 ws-left 作用域内解析为 #ece3d0 */
+}
+/* .uk-sp-wrap 基座来自 #/spec,本页内固定回宋体系 */
+.uk-root .uk-sp-wrap {
+  font-family: var(--font-zh-serif);
+}
+
+/* ---- 00 铁律卡 ---- */
+.uk-lead {
+  display: block;
+  margin: 6px 0 12px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--ink-2);
+  letter-spacing: 0;
+  max-width: 74em;
+}
+.uk-rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.uk-rule {
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-2);
+  border-top: 2px solid var(--line-ink);
+  padding: 14px 16px 12px;
+}
+.uk-rule h4 {
+  margin: 0 0 8px;
+  font-family: var(--font-zh-serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.uk-rule p {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+.uk-rule code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-subtle);
+  padding: 0 4px;
+}
+.uk-do,
+.uk-dont {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 3px 8px;
+}
+.uk-rule .uk-do,
+.uk-rule .uk-dont {
+  margin: 0 0 4px;
+}
+.uk-do {
+  color: #3f6b3f;
+  background: rgba(111, 174, 106, 0.12);
+}
+.uk-dont {
+  color: #a3352b;
+  background: rgba(216, 56, 43, 0.08);
+}
+
+/* ---- 收敛映射 / 决策规则表 ---- */
+.uk-map {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  width: 100%;
+  max-width: 680px;
+  background: var(--bg-canvas);
+}
+.uk-map th,
+.uk-map td {
+  border: 1px solid var(--line-1);
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.uk-map th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.uk-map td:first-child {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+
+/* ---- 直角决策 tile 变体 ---- */
+.uk-tile--allow {
+  width: auto;
+  min-width: 150px;
+  height: 64px;
+  padding: 0 14px;
+  text-align: center;
+  border-color: var(--line-3);
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.uk-tile--dep {
+  border-style: dashed;
+  color: var(--ink-4);
+  text-decoration: line-through;
+}
+
+/* ---- E 全局反馈 · 统一 Toast 家族(现役生产样式) ----
+ * 造型:直角 + 宋体 + 暖墨玻璃底(和对话区暗面同族的暖黑,非冷黑)+ 左 2px 语义色条。
+ * 行为:瞬时 2.4s 自动退场(hover 暂停);.sticky 常驻,必带 ×,至多一个动作入口;
+ *      位置底部居中、输入区上方、向上堆叠,同屏至多 3 条(新顶旧)。 */
+.qa-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 9px 16px;
+  box-sizing: border-box;
+  max-width: 440px;
+  background: rgba(22, 17, 12, 0.94);
+  border: 1px solid rgba(184, 169, 140, 0.32);
+  border-left: 2px solid #b59a63; /* 语义色条:默认=金(告知) */
+  border-radius: 0; /* 铁律二:直角 */
+  color: #ece3d0;
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1.6;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+.qa-toast.success { border-left-color: #6fae6a; }
+.qa-toast.warn { border-left-color: #d2622b; }
+.qa-toast.error { border-left-color: #d8382b; }
+.qa-toast .qa-toast-msg {
+  flex: 1;
+  min-width: 0;
+}
+.qa-toast .qa-toast-act {
+  flex: 0 0 auto;
+  font-family: var(--font-zh-serif);
+  font-size: 12px;
+  padding: 3px 12px;
+  border: 1px solid rgba(184, 169, 140, 0.4);
+  border-radius: 0;
+  background: transparent;
+  color: #e6c98a;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.qa-toast .qa-toast-act:hover {
+  background: rgba(184, 169, 140, 0.12);
+  border-color: rgba(184, 169, 140, 0.6);
+}
+.qa-toast .qa-toast-x {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: rgba(236, 227, 208, 0.5);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.qa-toast .qa-toast-x:hover { color: #ece3d0; }
+
+/* ---- 浮动操作条在规范页里「落位」:生产 .ws-float-bar / .patch-nav 是 position:fixed
+ *      并靠 WorkspacePage 的 FLIP 驱动内容浮现(否则内容 opacity:0)。规范页没有那套驱动,
+ *      故在 .uk-root 作用域内把它们钉回 static、内容强制可见,让它们乖乖坐在各自 demo 行里。 ---- */
+.uk-root #view-workspace .ws-float-bar,
+.uk-root #view-workspace .patch-nav {
+  position: static !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 40px;
+  pointer-events: auto !important;
+  z-index: auto !important;
+}
+.uk-root #view-workspace .ws-float-bar > *,
+.uk-root #view-workspace .patch-nav > * {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+/* ---- 20 按钮全矩阵 ---- */
+.uk-btn-matrix {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.uk-btn-matrix th,
+.uk-btn-matrix td {
+  padding: 8px 12px;
+  text-align: center;
+  border: 1px solid var(--line-1);
+}
+.uk-btn-matrix thead th {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.uk-btn-matrix-lbl {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+/* ---- 31 覆盖率校验 ---- */
+.uk-cov-tiles {
+  display: flex;
+  gap: 14px;
+  margin: 4px 0 14px;
+}
+.uk-cov-tile {
+  border: 1px solid var(--line-2);
+  border-top: 2px solid var(--line-ink);
+  padding: 10px 18px;
+  background: var(--bg-canvas);
+  min-width: 120px;
+}
+.uk-cov-tile b {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  color: var(--ink-1);
+  line-height: 1.1;
+}
+.uk-cov-tile span {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.uk-cov-tile.uk-cov-ok {
+  border-top-color: #3f6b3f;
+}
+.uk-cov-tile.uk-cov-ok b {
+  color: #3f6b3f;
+}
+.uk-cov-tile.uk-cov-miss {
+  border-top-color: #a3352b;
+}
+.uk-cov-tile.uk-cov-miss b {
+  color: #a3352b;
+}
+.uk-cov-table-wrap {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid var(--line-1);
+  background: var(--bg-canvas);
+}
+.uk-cov-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11.5px;
+}
+.uk-cov-table th,
+.uk-cov-table td {
+  border-bottom: 1px solid var(--line-1);
+  padding: 4px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.uk-cov-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-paper-deep);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  z-index: 1;
+}
+.uk-cov-table td:first-child,
+.uk-cov-table td:nth-child(2),
+.uk-cov-table td:nth-child(3) {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.uk-cov-attributed td:nth-child(3) { color: #3f6b3f; }
+.uk-cov-exempt td:nth-child(3) { color: var(--mark); }
+.uk-cov-missing td { background: rgba(216, 56, 43, 0.1); }
+.uk-cov-missing td:nth-child(3) { color: #a3352b; font-weight: 700; }
+.uk-cov-table td:last-child {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: normal;
+}

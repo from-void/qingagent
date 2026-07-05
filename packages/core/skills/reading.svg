@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 400" width="500" height="400">
+  <!-- 背景 -->
+  <rect width="500" height="400" fill="#f5f0eb" rx="8"/>
+  
+  <!-- 椅子 - 坐垫 -->
+  <rect x="150" y="240" width="200" height="40" rx="8" fill="#8B7355" stroke="#6B5B3E" stroke-width="2"/>
+  <!-- 椅子 - 靠背 -->
+  <rect x="310" y="120" width="35" height="165" rx="8" fill="#8B7355" stroke="#6B5B3E" stroke-width="2"/>
+  <!-- 椅子 - 前腿 -->
+  <rect x="155" y="275" width="10" height="60" rx="3" fill="#6B5B3E"/>
+  <rect x="335" y="275" width="10" height="60" rx="3" fill="#6B5B3E"/>
+  
+  <!-- 身体 - 躯干 -->
+  <ellipse cx="260" cy="210" rx="40" ry="50" fill="#4A90D9" stroke="#3A70B0" stroke-width="2"/>
+  
+  <!-- 头 -->
+  <circle cx="260" cy="140" r="32" fill="#F5D6B8" stroke="#D4A88C" stroke-width="2"/>
+  
+  <!-- 头发 -->
+  <path d="M 232 128 Q 260 100 288 128" fill="#3A3A3A" stroke="none"/>
+  <path d="M 230 128 Q 230 108 245 105" fill="#3A3A3A" stroke="none"/>
+  <path d="M 290 128 Q 290 108 275 105" fill="#3A3A3A" stroke="none"/>
+  
+  <!-- 眼睛 - 低头看书 -->
+  <ellipse cx="250" cy="142" rx="3" ry="2" fill="#3A3A3A"/>
+  <ellipse cx="270" cy="142" rx="3" ry="2" fill="#3A3A3A"/>
+  
+  <!-- 微笑 -->
+  <path d="M 252 152 Q 260 158 268 152" fill="none" stroke="#D4A88C" stroke-width="1.5" stroke-linecap="round"/>
+  
+  <!-- 手臂 - 左臂（扶书） -->
+  <path d="M 235 200 Q 200 220 200 248" fill="none" stroke="#4A90D9" stroke-width="10" stroke-linecap="round"/>
+  <!-- 手臂 - 右臂（翻书侧） -->
+  <path d="M 285 200 Q 310 215 305 240" fill="none" stroke="#4A90D9" stroke-width="10" stroke-linecap="round"/>
+  
+  <!-- 手 -->
+  <circle cx="200" cy="250" r="6" fill="#F5D6B8"/>
+  <circle cx="305" cy="242" r="6" fill="#F5D6B8"/>
+  
+  <!-- 书 - 打开的书 -->
+  <path d="M 195 248 L 195 290 Q 215 295 230 288 L 230 248 Z" fill="#E8DCC8" stroke="#B8A88C" stroke-width="1.5"/>
+  <path d="M 230 248 L 230 288 Q 250 295 270 288 L 270 248 Z" fill="#F0E8D8" stroke="#B8A88C" stroke-width="1.5"/>
+  <path d="M 270 248 L 270 288 Q 290 295 305 290 L 305 248 Z" fill="#E8DCC8" stroke="#B8A88C" stroke-width="1.5"/>
+  
+  <!-- 书脊线 -->
+  <line x1="230" y1="248" x2="230" y2="288" stroke="#B8A88C" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="270" y1="248" x2="270" y2="288" stroke="#B8A88C" stroke-width="1" stroke-dasharray="2,2"/>
+  
+  <!-- 书上的文字线条 -->
+  <line x1="200" y1="256" x2="225" y2="256" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="200" y1="262" x2="222" y2="262" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="200" y1="268" x2="225" y2="268" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="235" y1="256" x2="265" y2="256" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="235" y1="262" x2="262" y2="262" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="235" y1="268" x2="265" y2="268" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="275" y1="256" x2="300" y2="256" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="275" y1="262" x2="297" y2="262" stroke="#B8A88C" stroke-width="1"/>
+  <line x1="275" y1="268" x2="300" y2="268" stroke="#B8A88C" stroke-width="1"/>
+  
+  <!-- 腿 -->
+  <path d="M 240 250 Q 235 280 230 330" fill="none" stroke="#4A4A6A" stroke-width="12" stroke-linecap="round"/>
+  <path d="M 270 250 Q 275 280 280 330" fill="none" stroke="#4A4A6A" stroke-width="12" stroke-linecap="round"/>
+  
+  <!-- 脚 -->
+  <ellipse cx="225" cy="335" rx="12" ry="5" fill="#4A4A6A"/>
+  <ellipse cx="285" cy="335" rx="12" ry="5" fill="#4A4A6A"/>
+  
+  <!-- 落地灯 -->
+  <rect x="50" y="160" width="6" height="180" rx="3" fill="#A0A0A0"/>
+  <!-- 灯座 -->
+  <ellipse cx="53" cy="340" rx="20" ry="6" fill="#808080"/>
+  <!-- 灯罩 -->
+  <path d="M 25 160 L 53 120 L 81 160 Z" fill="#F0D080" stroke="#D0B060" stroke-width="1.5"/>
+  <!-- 光 -->
+  <path d="M 35 160 L 53 200 L 71 160" fill="#FFF8E0" opacity="0.4"/>
+  
+  <!-- 小茶几 -->
+  <rect x="370" y="280" width="80" height="8" rx="4" fill="#8B7355"/>
+  <rect x="375" y="285" width="6" height="55" rx="2" fill="#6B5B3E"/>
+  <rect x="440" y="285" width="6" height="55" rx="2" fill="#6B5B3E"/>
+  
+  <!-- 杯子 -->
+  <rect x="395" y="258" width="22" height="22" rx="4" fill="#C0C0C0" stroke="#A0A0A0" stroke-width="1.5"/>
+  <path d="M 417 263 Q 425 265 417 273" fill="none" stroke="#A0A0A0" stroke-width="1.5"/>
+  <!-- 热气 -->
+  <path d="M 403 255 Q 400 248 406 242" fill="none" stroke="#C0C0C0" stroke-width="1" opacity="0.6"/>
+  <path d="M 410 255 Q 407 246 413 240" fill="none" stroke="#C0C0C0" stroke-width="1" opacity="0.6"/>
+</svg>

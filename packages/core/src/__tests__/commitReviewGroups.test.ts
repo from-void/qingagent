@@ -1,0 +1,626 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
+import {
+  legacySectionsToPm,
+  pmToLegacySections,
+  type PmBlockNode,
+  type PmDoc,
+  type PmInlineNode,
+} from "@qingagent/pm-schema";
+import {
+  commitReviewGroups,
+  createSession,
+  deriveContentState,
+  expandReviewIds,
+  updatePatchVerdict,
+  type SessionState,
+} from "../bridge/index.js";
+import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { documentRepo } from "../db/documentRepo.js";
+import {
+  documentInput,
+  prepareTempDocumentsDb,
+  type TempDocumentsDb,
+} from "../db/__tests__/dbTestUtils.js";
+import { mastra } from "../mastra.js";
+
+let tempDb: TempDocumentsDb;
+
+function text(value: string): PmInlineNode {
+  return { type: "text", text: value };
+}
+
+function paragraph(blockId: string, value: string): PmBlockNode {
+  return {
+    type: "paragraph",
+    attrs: { blockId },
+    content: [text(value)],
+  };
+}
+
+function doc(content: PmBlockNode[]): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content,
+  };
+}
+
+function docText(pmDoc: PmDoc | undefined): string {
+  return (pmDoc?.content ?? [])
+    .map((block) =>
+      "content" in block
+        ? (block.content ?? []).map((node) => (node.type === "text" ? node.text : "\n")).join("")
+        : "",
+    )
+    .join("\n");
+}
+
+async function collectFrames(gen: AsyncIterable<BridgeFrame>): Promise<BridgeFrame[]> {
+  const frames: BridgeFrame[] = [];
+  for await (const frame of gen) frames.push(frame);
+  return frames;
+}
+
+function collectSyncFrames(gen: Generator<BridgeFrame>): BridgeFrame[] {
+  const frames: BridgeFrame[] = [];
+  for (const frame of gen) frames.push(frame);
+  return frames;
+}
+
+function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion {
+  const pmFrom = hunk.anchor.pmFrom ?? 0;
+  const pmTo = hunk.anchor.pmTo ?? pmFrom;
+  const quote = hunk.beforeText || hunk.afterText || hunk.summary || hunk.hunkId;
+  return {
+    id: hunk.hunkId,
+    reviewBatchId: hunk.reviewBatchId,
+    groupMode: hunk.groupMode,
+    docId: state.docId,
+    baseVersion: state.docVersion,
+    baseSchemaVersion: state.doc?.attrs.schemaVersion ?? 1,
+    status: "reviewing",
+    anchor: {
+      blockId: hunk.anchor.blockId ?? hunk.hunkId,
+      pmFrom,
+      pmTo,
+      quote,
+      textHash: `hash-${hunk.hunkId}`,
+    },
+    patch: {
+      kind: "prosemirror_steps",
+      steps: [{ stepType: "replace", from: pmFrom, to: pmTo }],
+    },
+    preview: {
+      deleteText: hunk.beforeText ?? "",
+      insertText: hunk.afterText ?? "",
+    },
+    diffHunk: hunk,
+    summary: hunk.summary,
+  };
+}
+
+function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk[] {
+  state.doc = base;
+  state.legacySections = pmToLegacySections(base) as never;
+  state.docVersion = 1;
+  state.docState = { kind: "pendingReview" };
+  state.suggestionBaseDoc = base;
+  state.suggestionBaseVersion = state.docVersion;
+
+  const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
+  for (const hunk of hunks) {
+    const suggestion = suggestionFromHunk(state, hunk);
+    state.suggestions.set(suggestion.id, {
+      messageId: "msg-review",
+      toolCallId: suggestion.id,
+      before: hunk.beforeText ?? "",
+      after: hunk.afterText ?? "",
+      blockIndex: hunk.blockPath[0] ?? 0,
+      suggestion,
+      diffHunk: hunk,
+    });
+  }
+  return hunks;
+}
+
+function seedHunksState(state: SessionState, base: PmDoc, hunks: readonly DiffHunk[]): void {
+  state.doc = base;
+  state.legacySections = pmToLegacySections(base) as never;
+  state.docVersion = 1;
+  state.docState = { kind: "pendingReview" };
+  state.suggestionBaseDoc = base;
+  state.suggestionBaseVersion = state.docVersion;
+  state.docDraftBaseDoc = base;
+  state.docDraftBaseVersion = state.docVersion;
+  state.docDraftBaseSections = state.legacySections;
+  state.docDraftCandidateDoc = base;
+  state.docDraftCandidateSections = state.legacySections;
+
+  for (const hunk of hunks) {
+    const suggestion = suggestionFromHunk(state, hunk);
+    state.suggestions.set(suggestion.id, {
+      messageId: "msg-review",
+      toolCallId: suggestion.id,
+      before: hunk.beforeText ?? "",
+      after: hunk.afterText ?? "",
+      blockIndex: hunk.blockPath[0] ?? 0,
+      suggestion,
+      diffHunk: hunk,
+    });
+  }
+}
+
+function inlineReplaceHunk(input: {
+  id: string;
+  blockId: string;
+  from: number;
+  to: number;
+  before: string;
+  after: string;
+}): DiffHunk {
+  return {
+    hunkId: input.id,
+    reviewBatchId: input.id,
+    groupMode: "independent",
+    op: "replace",
+    blockPath: [0],
+    anchor: {
+      blockId: input.blockId,
+      quoteBefore: input.before,
+      quoteAfter: input.after,
+      pmFrom: 1 + input.from,
+      pmTo: 1 + input.to,
+      anchorKind: "range",
+    },
+    before: input.before ? [text(input.before)] as never : [],
+    after: input.after ? [text(input.after)] as never : [],
+    beforeText: input.before,
+    afterText: input.after,
+    summary: "替换文本",
+  };
+}
+
+async function seedDocumentRow(state: SessionState): Promise<void> {
+  await documentRepo.save(
+    documentInput(state.docId, {
+      threadId: state.threadId ?? state.sessionId,
+      resourceId: state.resourceId,
+      docVersion: state.docVersion,
+      legacySections: state.legacySections,
+      pmDoc: state.doc ?? legacySectionsToPm(state.legacySections as never),
+    }),
+  );
+}
+
+beforeEach(() => {
+  tempDb = prepareTempDocumentsDb("qingagent-commit-groups-");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  tempDb.cleanup();
+});
+
+describe("commitReviewGroups", () => {
+  it("acceptPatch 对已解决 reviewBatchId 做成功 no-op 并记录 warn", () => {
+    const state = createSession("noop-verdict");
+    const base = doc([paragraph("block-a", "正文")]);
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+    state.docState = { kind: "pendingReview" };
+    const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
+
+    const frames = collectSyncFrames(updatePatchVerdict(
+      state,
+      undefined,
+      "accepted",
+      "resolved-batch",
+    ));
+
+    expect(frames).toEqual([
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped unknown or resolved review target",
+      expect.objectContaining({
+        sessionId: "noop-verdict",
+        command: "accept",
+        reviewBatchId: "resolved-batch",
+        stateSuggestionRecordCount: 0,
+        skipped: "patchVerdictTarget",
+        remainingValidIdCount: 0,
+      }),
+    );
+  });
+
+  it("commitReviewGroups 对已解决 reviewBatchId 做成功 no-op、返回解锁帧并记录 warn", async () => {
+    const state = createSession("noop-commit");
+    const base = doc([paragraph("block-a", "正文")]);
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+    state.docState = { kind: "pendingReview" };
+    const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: ["resolved-accept"],
+      rejectReviewBatchIds: ["resolved-reject"],
+      keepPendingReviewBatchIds: ["resolved-keep"],
+    }));
+
+    expect(frames).toEqual([
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped unknown or resolved review target",
+      expect.objectContaining({
+        sessionId: "noop-commit",
+        command: "commit",
+        reviewBatchId: "resolved-accept",
+        stateSuggestionRecordCount: 0,
+        skipped: "acceptReviewBatchId",
+        remainingValidIdCount: 0,
+      }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped unknown or resolved review target",
+      expect.objectContaining({
+        sessionId: "noop-commit",
+        command: "commit",
+        reviewBatchId: "resolved-reject",
+        stateSuggestionRecordCount: 0,
+        skipped: "rejectReviewBatchId",
+        remainingValidIdCount: 0,
+      }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped unknown or resolved review target",
+      expect.objectContaining({
+        sessionId: "noop-commit",
+        command: "commit",
+        reviewBatchId: "resolved-keep",
+        stateSuggestionRecordCount: 0,
+        skipped: "keepPendingReviewBatchId",
+        remainingValidIdCount: 0,
+      }),
+    );
+  });
+
+  it("单 patch id 不再按 groupMode 扩展为整组", () => {
+    const state = createSession("per-hunk-expand");
+    const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
+    const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
+    const hunks = seedDiffState(state, base, draft);
+
+    const expanded = expandReviewIds(state, [hunks[0]!.hunkId]);
+
+    expect(expanded).toEqual([hunks[0]!.hunkId]);
+  });
+
+  it("显式 reviewBatchId 仍兼容选择同 batch 旧记录", () => {
+    const state = createSession("legacy-batch-expand");
+    const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
+    const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
+    const hunks = seedDiffState(state, base, draft);
+    for (const hunk of hunks) {
+      const record = state.suggestions.get(hunk.hunkId);
+      if (!record) throw new Error("fixture missing record");
+      record.suggestion = {
+        ...record.suggestion,
+        reviewBatchId: "legacy-batch",
+        groupMode: "atomic",
+        diffHunk: record.suggestion.diffHunk
+          ? { ...record.suggestion.diffHunk, reviewBatchId: "legacy-batch", groupMode: "atomic" }
+          : undefined,
+      };
+      record.diffHunk = record.diffHunk
+        ? { ...record.diffHunk, reviewBatchId: "legacy-batch", groupMode: "atomic" }
+        : undefined;
+    }
+
+    const expanded = expandReviewIds(state, [], ["legacy-batch"]);
+
+    expect(expanded.sort()).toEqual(hunks.map((hunk) => hunk.hunkId).sort());
+  });
+
+  it("acceptPatch 传入单 id 只同步当前 hunk verdict", () => {
+    const state = createSession("per-hunk-verdict");
+    const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
+    const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
+    const hunks = seedDiffState(state, base, draft);
+
+    const frames = collectSyncFrames(updatePatchVerdict(state, hunks[0]!.hunkId, "accepted"));
+
+    expect(frames).toHaveLength(1);
+    expect(frames.every((frame) => frame.kind === "toolCallUpdated")).toBe(true);
+    expect(
+      frames.every((frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.spec.name === "docSuggestion" &&
+        frame.data.spec.status.kind === "accepted",
+      ),
+    ).toBe(true);
+    expect(state.patchVerdicts.get(hunks[0]!.hunkId)).toBe("accepted");
+    expect(state.patchVerdicts.has(hunks[1]!.hunkId)).toBe(false);
+    expect(state.suggestions.get(hunks[0]!.hunkId)?.suggestion.status).toBe("accepted");
+    expect(state.suggestions.get(hunks[1]!.hunkId)?.suggestion.status).toBe("reviewing");
+  });
+
+  it("BLOCKED_ON_S5: 部分提交只写入显式接受组,未决组保留在内存态", async () => {
+    const state = createSession("partial-memory");
+    const base = doc([
+      paragraph("block-a", "A 旧"),
+      paragraph("block-b", "B 旧"),
+      paragraph("block-c", "C 旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "A 新"),
+      paragraph("block-b", "B 新"),
+      paragraph("block-c", "C 新"),
+    ]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+
+    const [hunkA, hunkB, hunkC] = hunks;
+    if (!hunkA || !hunkB || !hunkC) throw new Error("fixture missing hunks");
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunkA.reviewBatchId],
+      keepPendingReviewBatchIds: [hunkB.reviewBatchId, hunkC.reviewBatchId],
+    }));
+
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady");
+    expect(docText(diffFrame.data.editedDoc)).toBe("A 新\nB 新\nC 新");
+    expect(diffFrame.data.editedDoc).toEqual(state.docDraftCandidateDoc);
+    expect(docText(state.doc)).toBe("A 新\nB 旧\nC 旧");
+    expect(state.suggestions.has(hunkA.hunkId)).toBe(false);
+    expect(state.suggestions.has(hunkB.hunkId)).toBe(true);
+    expect(state.suggestions.has(hunkC.hunkId)).toBe(true);
+    expect(state.patchVerdicts.has(hunkB.hunkId)).toBe(false);
+    expect(state.patchVerdicts.has(hunkC.hunkId)).toBe(false);
+  });
+
+  it("同一段内 3 处文字改动:只采纳第 2 处后其余 2 处仍待审且候选位置正确", async () => {
+    const state = createSession("same-paragraph-accept-middle");
+    const base = doc([paragraph("block-a", "一猫，二狗，三鸟。")]);
+    const draft = doc([paragraph("block-a", "一虎，二狼，三鹰。")]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+
+    expect(hunks.map((hunk) => [hunk.beforeText, hunk.afterText])).toEqual([
+      ["猫", "虎"],
+      ["狗", "狼"],
+      ["鸟", "鹰"],
+    ]);
+    const middle = hunks[1]!;
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [middle.reviewBatchId],
+      keepPendingReviewBatchIds: [hunks[0]!.reviewBatchId, hunks[2]!.reviewBatchId],
+    }));
+
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady");
+    expect(docText(state.doc)).toBe("一猫，二狼，三鸟。");
+    expect(docText(diffFrame.data.editedDoc)).toBe("一虎，二狼，三鹰。");
+    expect([...state.suggestions.values()].map((record) => record.diffHunk?.beforeText)).toEqual([
+      "猫",
+      "鸟",
+    ]);
+    expect([...state.suggestions.values()].map((record) => record.diffHunk?.groupMode)).toEqual([
+      "independent",
+      "independent",
+    ]);
+  });
+
+  it("相邻/重叠 hunk 混合操作:采纳一处、拒绝一处、保留一处", async () => {
+    const state = createSession("overlap-mixed-review");
+    const base = doc([paragraph("block-a", "ABCDEFGH")]);
+    const accept = inlineReplaceHunk({
+      id: "h-accept",
+      blockId: "block-a",
+      from: 1,
+      to: 3,
+      before: "BC",
+      after: "XY",
+    });
+    const reject = inlineReplaceHunk({
+      id: "h-reject",
+      blockId: "block-a",
+      from: 2,
+      to: 4,
+      before: "CD",
+      after: "ZW",
+    });
+    const keep = inlineReplaceHunk({
+      id: "h-keep",
+      blockId: "block-a",
+      from: 5,
+      to: 7,
+      before: "FG",
+      after: "UV",
+    });
+    seedHunksState(state, base, [accept, reject, keep]);
+    await seedDocumentRow(state);
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [accept.reviewBatchId],
+      rejectReviewBatchIds: [reject.reviewBatchId],
+      keepPendingReviewBatchIds: [keep.reviewBatchId],
+    }));
+
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady");
+    expect(docText(state.doc)).toBe("AXYDEFGH");
+    expect(docText(diffFrame.data.editedDoc)).toBe("AXYDEUVH");
+    expect([...state.suggestions.values()].map((record) => record.diffHunk?.beforeText)).toEqual(["FG"]);
+    expect(state.patchVerdicts.size).toBe(0);
+  });
+
+  it("结构性整块替换仍作为单 hunk 提交", async () => {
+    const state = createSession("block-replace-single-hunk");
+    const base = doc([{
+      type: "callout",
+      attrs: { blockId: "callout-a", emoji: "!", tone: "warning" },
+      content: [paragraph("callout-a-p", "旧提示") as Extract<PmBlockNode, { type: "paragraph" }>],
+    } as PmBlockNode]);
+    const draft = doc([{
+      type: "callout",
+      attrs: { blockId: "callout-a", emoji: "!", tone: "info" },
+      content: [paragraph("callout-a-p", "新提示") as Extract<PmBlockNode, { type: "paragraph" }>],
+    } as PmBlockNode]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]!.groupMode).toBe("independent");
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunks[0]!.reviewBatchId],
+    }));
+
+    expect(state.doc).toEqual(draft);
+    expect(state.suggestions.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
+  });
+
+  it("只拒绝部分 review group 后重发 docDiffReady 带 rebase 后 editedDoc", async () => {
+    const state = createSession("partial-reject-edited-doc");
+    const base = doc([
+      paragraph("block-a", "A 旧"),
+      paragraph("block-b", "B 旧"),
+      paragraph("block-c", "C 旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "A 新"),
+      paragraph("block-b", "B 新"),
+      paragraph("block-c", "C 新"),
+    ]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+
+    const [hunkA, hunkB, hunkC] = hunks;
+    if (!hunkA || !hunkB || !hunkC) throw new Error("fixture missing hunks");
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: [hunkA.reviewBatchId],
+      keepPendingReviewBatchIds: [hunkB.reviewBatchId, hunkC.reviewBatchId],
+    }));
+
+    const diffFrame = frames.find((frame) => frame.kind === "docDiffReady");
+    expect(diffFrame?.kind).toBe("docDiffReady");
+    if (diffFrame?.kind !== "docDiffReady") throw new Error("missing docDiffReady");
+    expect(docText(diffFrame.data.editedDoc)).toBe("A 旧\nB 新\nC 新");
+    expect(diffFrame.data.editedDoc).toEqual(state.docDraftCandidateDoc);
+    expect(docText(state.doc)).toBe("A 旧\nB 旧\nC 旧");
+  });
+
+  it("先接受一处再撤销全部时会把已接受 batch 也拒绝并回到旧文档", async () => {
+    const state = createSession("accept-then-reject-all");
+    const base = doc([
+      paragraph("block-a", "A 旧"),
+      paragraph("block-b", "B 旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "A 新"),
+      paragraph("block-b", "B 新"),
+    ]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const [hunkA, hunkB] = hunks;
+    if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
+
+    collectSyncFrames(updatePatchVerdict(state, hunkA.hunkId, "accepted"));
+    expect(state.patchVerdicts.get(hunkA.hunkId)).toBe("accepted");
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [],
+      rejectReviewBatchIds: hunks.map((hunk) => hunk.reviewBatchId),
+    }));
+
+    expect(docText(state.doc)).toBe("A 旧\nB 旧");
+    expect(state.suggestions.size).toBe(0);
+    expect(state.patchVerdicts.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
+    const terminalStatuses = frames
+      .filter((frame) => frame.kind === "toolCallUpdated")
+      .map((frame) => frame.kind === "toolCallUpdated" ? frame.data.spec.status.kind : "");
+    expect(terminalStatuses).toContain("rejected");
+    expect(terminalStatuses).not.toContain("committed");
+  });
+
+  it("S5: 同会话连续提交时 remaining hunks 按 blockId rebase,不误写位移后的插入块", async () => {
+    const state = createSession("partial-continuous-rebase");
+    const base = doc([
+      paragraph("block-a", "A"),
+      paragraph("block-b", "B 旧"),
+      paragraph("block-c", "C 旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "A"),
+      paragraph("block-x", "X 插入"),
+      paragraph("block-b", "B 新"),
+      paragraph("block-c", "C 新"),
+    ]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const insertHunk = hunks.find((hunk) => hunk.op === "insert");
+    const blockBHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-b");
+    const blockCHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-c");
+    if (!insertHunk || !blockBHunk || !blockCHunk) throw new Error("fixture missing hunks");
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [insertHunk.reviewBatchId],
+      keepPendingReviewBatchIds: [blockBHunk.reviewBatchId, blockCHunk.reviewBatchId],
+    }));
+
+    expect(docText(state.doc)).toBe("A\nX 插入\nB 旧\nC 旧");
+    const rebasedBHunk = [...state.suggestions.values()]
+      .map((record) => record.diffHunk)
+      .find((hunk) => hunk?.anchor.blockId === "block-b");
+    expect(rebasedBHunk?.blockPath).toEqual([2]);
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [rebasedBHunk!.reviewBatchId],
+      keepPendingReviewBatchIds: [
+        [...state.suggestions.values()]
+          .map((record) => record.diffHunk)
+          .find((hunk) => hunk?.anchor.blockId === "block-c")!.reviewBatchId,
+      ],
+    }));
+
+    expect(docText(state.doc)).toBe("A\nX 插入\nB 新\nC 旧");
+    expect([...state.suggestions.values()].map((record) => record.diffHunk?.anchor.blockId)).toEqual(["block-c"]);
+  });
+
+  it("A2: 接受一个多块 delete review group 会删除该 hunk 覆盖的全部连续块", async () => {
+    const state = createSession("multi-delete-group");
+    const base = doc([
+      paragraph("block-a", "A"),
+      paragraph("block-b", "B"),
+      paragraph("block-c", "C"),
+    ]);
+    const draft = doc([paragraph("block-a", "A")]);
+    const hunks = seedDiffState(state, base, draft);
+    await seedDocumentRow(state);
+    const deleteHunk = hunks.find((hunk) => hunk.op === "delete");
+    if (!deleteHunk) throw new Error("fixture missing delete hunk");
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [deleteHunk.reviewBatchId],
+    }));
+
+    expect(docText(state.doc)).toBe("A");
+    expect(state.suggestions.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
+  });
+});

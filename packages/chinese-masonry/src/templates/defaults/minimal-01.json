@@ -1,0 +1,64 @@
+{
+  "id": "minimal-01",
+  "name": "极简留白",
+  "version": 1,
+  "width": 290,
+  "height": 280,
+  "backgroundColor": "#faf6f0",
+  "borderRadius": "6px",
+  "elements": [
+    {
+      "id": "line-left",
+      "type": "line",
+      "x": 28,
+      "y": 220,
+      "length": 58,
+      "direction": "horizontal",
+      "thickness": 3,
+      "color": "rgba(160, 48, 32, 0.55)",
+      "zIndex": 3
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "role": "title",
+      "x": 28,
+      "y": 32,
+      "width": 234,
+      "height": 36,
+      "fontSize": 20,
+      "color": "#2c1810",
+      "direction": "horizontal",
+      "fontWeight": "bold",
+      "letterSpacing": 1,
+      "lineHeight": 1.4,
+      "maxLines": 2,
+      "textAlign": "left"
+    },
+    {
+      "id": "desc",
+      "type": "text",
+      "role": "description",
+      "x": 28,
+      "y": 82,
+      "width": 234,
+      "height": 126,
+      "fontSize": 14,
+      "color": "#7a6b5d",
+      "direction": "horizontal",
+      "fontWeight": "normal",
+      "letterSpacing": 0,
+      "lineHeight": 1.9,
+      "maxLines": 5,
+      "textAlign": "left"
+    }
+  ],
+  "meta": {
+    "category": "极简",
+    "tags": ["留白", "现代", "文字"],
+    "requiresImage": false,
+    "preferVerticalText": false,
+    "maxTitleLength": 10,
+    "weight": 8
+  }
+}

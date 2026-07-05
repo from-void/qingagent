@@ -1,0 +1,1016 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { Buffer } from "node:buffer";
+import * as cheerio from "cheerio";
+import iconv from "iconv-lite";
+
+export interface ExtractedArticleContent {
+  title: string;
+  body: string;
+  images: Array<{ src: string; alt: string | null }>;
+  screenshot: Buffer | null;
+  ogImageUrl: string | null;
+}
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// 移动端 UA:不少站(百度百科/什么值得买等)对 PC 抓取做安全验证/WAF,却对移动端直接吐 SSR 全文。
+const MOBILE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+  "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
+// 站点适配器:对已知"PC 反爬、移动端可抓"的站,改写到移动子域 + 移动 UA + 追加站点正文选择器。
+// 原则(用户):被搜索引擎收录=必可抓,403/空壳是姿势不对。每个适配器都有真机验证来源(codex 攻坚)。
+interface SiteAdapter {
+  test: (host: string) => boolean;
+  rewriteUrl?: (u: URL) => URL;
+  headers?: Record<string, string>;
+  extraSelectors?: string[];
+  // 该站正文只在"移动端上下文"渲染(桌面渲染只出壳)——浏览器降级时用移动 emulation。
+  mobileBrowser?: boolean;
+}
+const SITE_ADAPTERS: SiteAdapter[] = [
+  {
+    // 百度百科:PC 触发"百度安全验证"(403),移动端 wapbaike 同路径直出 SSR 正文。
+    test: (h) => /(^|\.)baike\.baidu\.com$/.test(h),
+    rewriteUrl: (u) => {
+      const n = new URL(u.toString());
+      n.hostname = "wapbaike.baidu.com";
+      return n;
+    },
+    headers: { "User-Agent": MOBILE_UA, Referer: "https://www.baidu.com/" },
+    extraSelectors: [".BK-main-content", ".summary-content", ".lemma-title"],
+  },
+  {
+    // 敦煌石窟:www HTTPS 入口连接重置、证书链不完整(证书 CN *.dha.ac.cn),改 http 静态抓;正文 .v_news_content(已覆盖)。
+    test: (h) => /(^|\.)dunhuangcaves\.org$/.test(h),
+    rewriteUrl: (u) => {
+      const n = new URL(u.toString());
+      n.protocol = "http:";
+      return n;
+    },
+  },
+  {
+    // 太平洋电脑网:正文 JS 渲染,且只在移动端上下文出正文(桌面浏览器渲染只得壳)。
+    test: (h) => /(^|\.)pconline\.com\.cn$/.test(h),
+    mobileBrowser: true,
+    extraSelectors: [".content", ".articleCon", ".art-content", ".cont"],
+  },
+  {
+    // 医脉通:news-cdn 子域有防盗链(403 denied by Referer ACL),改抓 canonical news 子域 + 带来源 Referer。
+    test: (h) => /(^|\.)medlive\.cn$/.test(h),
+    rewriteUrl: (u) => {
+      const n = new URL(u.toString());
+      n.hostname = n.hostname.replace(/^news-cdn\./, "news.");
+      return n;
+    },
+    headers: { Referer: "https://news.medlive.cn/" },
+    extraSelectors: [".article_cont"],
+  },
+  {
+    // 什么值得买:PC 命中 WAF 探针页,移动端 post.m 直出 SSR 正文。
+    test: (h) => /(^|\.)smzdm\.com$/.test(h),
+    rewriteUrl: (u) => {
+      const n = new URL(u.toString());
+      if (n.hostname === "post.smzdm.com") n.hostname = "post.m.smzdm.com";
+      else if (/^(www\.)?smzdm\.com$/.test(n.hostname)) n.hostname = "m.smzdm.com";
+      return n;
+    },
+    headers: { "User-Agent": MOBILE_UA },
+    extraSelectors: [".detail-article", "article.J_article"],
+  },
+];
+export function resolveSiteAdapter(u: URL): SiteAdapter | null {
+  return SITE_ADAPTERS.find((a) => a.test(u.hostname)) ?? null;
+}
+
+// PDF 上限:超大 PDF 解析慢,避免拖死整条抓取(论文类一般几 MB)。
+const MAX_PDF_BYTES = 30 * 1024 * 1024;
+
+/** 从 PDF 字节提取纯文本(复用 pdf-parse,与 parseFile 工具同款)。 */
+async function extractPdfText(
+  buffer: Buffer,
+): Promise<{ text: string; pages: number; title: string | null }> {
+  const { PDFParse } = await import("pdf-parse");
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const textResult = await parser.getText();
+    let title: string | null = null;
+    try {
+      const info = await parser.getInfo();
+      title = info.info?.Title ?? null;
+    } catch {
+      /* info 取不到不影响正文 */
+    }
+    return { text: textResult.text ?? "", pages: textResult.total ?? 0, title };
+  } finally {
+    await parser.destroy();
+  }
+}
+
+// 非 HTML 二进制/下载型链接的错误前缀:调用方(fetchArticle)据此判定"浏览器降级也无意义",
+// 不再升级浏览器(下载型链浏览器只会触发下载,救不回正文)。
+export const UNSUPPORTED_CONTENT_ERROR_PREFIX = "[unsupported-content]";
+
+/**
+ * 该响应是否"非 HTML 内容、不该按网页正文解析"(PDF/下载附件/图片/压缩包等)。
+ * 把二进制喂给 cheerio.load 会爆栈(线上 .pdf 下载链 Maximum call stack);浏览器降级也只触发下载。
+ * Content-Type 缺失时按宽松放行(部分服务端不带);text/* 与 html/xml 视为可解析。
+ */
+export function isUnsupportedForHtmlExtraction(
+  contentType: string | null | undefined,
+  contentDisposition?: string | null,
+): boolean {
+  const ct = (contentType ?? "").toLowerCase();
+  const isHtmlish = ct === "" || ct.startsWith("text/") || ct.includes("html") || ct.includes("xml");
+  const isAttachment = /attachment/i.test(contentDisposition ?? "");
+  return !isHtmlish || isAttachment;
+}
+
+const PRIVATE_HOSTS = new Set(["localhost", "0.0.0.0", "::1"]);
+const MAX_REDIRECTS = 5;
+const MIN_EXTRACTED_TEXT_LENGTH = 40;
+const MAX_FETCH_ATTEMPTS = 3;
+const MAX_TIMEOUT_FETCH_ATTEMPTS = 2;
+// 单次静态抓取超时 6s(原 12s 太长):慢/挂的站快速失败,交给浏览器降级或直接放弃。
+const FETCH_TIMEOUT_MS = 6_000;
+const FETCH_RETRY_BASE_DELAY_MS = 400;
+// 静态抓取总预算硬上限 9s(用户要求外部抓取≤15s,静态留 ~9s、浏览器降级再 ~13s 内,绝不死等)。
+const FETCH_TOTAL_TIMEOUT_MS = 9_000;
+
+interface FetchRetryState {
+  timeoutErrors: number;
+}
+
+function isPrivateIPv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number(part));
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    return false;
+  }
+  const [a, b] = parts as [number, number, number, number];
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 169 && b === 254) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function extractIPv4MappedIPv6(address: string): string | null {
+  const normalized = address.toLowerCase();
+  const mappedPrefixes = ["::ffff:", "0:0:0:0:0:ffff:"];
+  const prefix = mappedPrefixes.find((candidate) => normalized.startsWith(candidate));
+  if (!prefix) return null;
+
+  const suffix = normalized.slice(prefix.length);
+  if (isIP(suffix) === 4) return suffix;
+
+  const hextets = suffix.split(":");
+  if (hextets.length !== 2) return null;
+
+  const high = Number.parseInt(hextets[0]!, 16);
+  const low = Number.parseInt(hextets[1]!, 16);
+  if (
+    !Number.isInteger(high) ||
+    !Number.isInteger(low) ||
+    high < 0 ||
+    high > 0xffff ||
+    low < 0 ||
+    low > 0xffff
+  ) {
+    return null;
+  }
+
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+}
+
+function isPrivateIPv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  const mappedIPv4 = extractIPv4MappedIPv6(normalized);
+  return (
+    (mappedIPv4 !== null && isPrivateIPv4(mappedIPv4)) ||
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:")
+  );
+}
+
+function assertAllowedAddress(address: string, source: string): void {
+  const kind = isIP(address);
+  if (kind === 4 && isPrivateIPv4(address)) {
+    throw new Error(`Blocked private IPv4 address for ${source}: ${address}`);
+  }
+  if (kind === 6 && isPrivateIPv6(address)) {
+    throw new Error(`Blocked private IPv6 address for ${source}: ${address}`);
+  }
+}
+
+function parseFetchUrl(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid URL: ${rawUrl}`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
+  }
+
+  return parsed;
+}
+
+export async function validateFetchUrl(rawUrl: string): Promise<URL> {
+  const parsed = parseFetchUrl(rawUrl);
+  const hostname = parsed.hostname.toLowerCase();
+  const addressHostname =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  if (PRIVATE_HOSTS.has(hostname) || PRIVATE_HOSTS.has(addressHostname)) {
+    throw new Error(`Blocked private hostname: ${hostname}`);
+  }
+
+  const ipKind = isIP(addressHostname);
+  if (ipKind) {
+    assertAllowedAddress(addressHostname, hostname);
+    return parsed;
+  }
+
+  const records = await lookup(hostname, { all: true, verbatim: true });
+  if (records.length === 0) {
+    throw new Error(`Could not resolve hostname: ${hostname}`);
+  }
+  for (const record of records) {
+    assertAllowedAddress(record.address, hostname);
+  }
+
+  return parsed;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fetchTimeoutError(): DOMException {
+  return new DOMException(
+    `Static article fetch timed out after ${FETCH_TOTAL_TIMEOUT_MS}ms`,
+    "TimeoutError",
+  );
+}
+
+function remainingFetchBudget(deadlineMs: number): number {
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+async function sleepWithinFetchBudget(ms: number, deadlineMs: number): Promise<void> {
+  const remainingMs = remainingFetchBudget(deadlineMs);
+  if (remainingMs <= 0) {
+    throw fetchTimeoutError();
+  }
+  await sleep(Math.min(ms, remainingMs));
+}
+
+function isFetchTimeoutError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+
+  if (error instanceof Error) {
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+
+  return false;
+}
+
+function isRetryableFetchError(error: unknown): boolean {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    isFetchTimeoutError(error) ||
+    error instanceof TypeError ||
+    ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "UND_ERR_SOCKET"].includes(code) ||
+    /fetch failed|network|timeout|timed out|socket hang up|connection reset|econnreset|etimedout/i.test(
+      message,
+    )
+  );
+}
+
+async function fetchWithRetry(
+  url: URL,
+  deadlineMs: number,
+  retryState: FetchRetryState,
+  headersOverride?: Record<string, string>,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const remainingMs = remainingFetchBudget(deadlineMs);
+      if (remainingMs <= 0) {
+        throw fetchTimeoutError();
+      }
+      const response = await fetch(url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingMs)),
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          ...headersOverride,
+        },
+      });
+
+      if (response.status >= 500 && attempt < MAX_FETCH_ATTEMPTS) {
+        await response.body?.cancel().catch(() => undefined);
+        await sleepWithinFetchBudget(FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), deadlineMs);
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+      const timeoutError = isFetchTimeoutError(error);
+      if (timeoutError) {
+        retryState.timeoutErrors += 1;
+      }
+      if (
+        !isRetryableFetchError(error) ||
+        attempt >= MAX_FETCH_ATTEMPTS ||
+        (timeoutError && retryState.timeoutErrors >= MAX_TIMEOUT_FETCH_ATTEMPTS)
+      ) {
+        throw error;
+      }
+      await sleepWithinFetchBudget(FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), deadlineMs);
+    }
+  }
+
+  throw lastError;
+}
+
+async function fetchWithSsrfGuard(
+  url: URL,
+  headersOverride?: Record<string, string>,
+): Promise<{ url: URL; response: Response }> {
+  let currentUrl = url;
+  const deadlineMs = Date.now() + FETCH_TOTAL_TIMEOUT_MS;
+  const retryState: FetchRetryState = { timeoutErrors: 0 };
+  // 跨跳维持 cookie:不少站(医脉通 CAS 网关、各类 WAF/防盗链)首跳 Set-Cookie、次跳要带 Cookie 才放行,
+  // 手动重定向默认会丢 cookie → 二跳 403/连接重置。在重定向链里累积 name=value 回传。
+  const cookieJar = new Map<string, string>();
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    currentUrl = await validateFetchUrl(currentUrl.toString());
+    const cookieHeader = Array.from(cookieJar.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
+    const response = await fetchWithRetry(currentUrl, deadlineMs, retryState, {
+      ...headersOverride,
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    });
+
+    const setCookies =
+      (response.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+    for (const sc of setCookies) {
+      const pair = sc.split(";", 1)[0]?.trim();
+      const eq = pair?.indexOf("=") ?? -1;
+      if (pair && eq > 0) cookieJar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(`Redirect response missing Location header for ${currentUrl.toString()}`);
+      }
+      await response.body?.cancel().catch(() => undefined);
+      currentUrl = new URL(location, currentUrl);
+      continue;
+    }
+
+    return { url: currentUrl, response };
+  }
+
+  throw new Error(`Too many redirects fetching ${url.toString()}`);
+}
+
+function charsetFromContentType(contentType: string | null): string | null {
+  const match = contentType?.match(/charset\s*=\s*"?([^";\s]+)/i);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function charsetFromHtml(buffer: Buffer): string | null {
+  const head = buffer.subarray(0, Math.min(buffer.length, 4096)).toString("latin1");
+  const charsetMatch = head.match(/<meta[^>]+charset=["']?\s*([^"'\s/>]+)/i);
+  if (charsetMatch?.[1]) return charsetMatch[1].toLowerCase();
+
+  const httpEquivMatch = head.match(
+    /<meta[^>]+http-equiv=["']?content-type["']?[^>]+content=["'][^"']*charset=([^"'\s;]+)/i,
+  );
+  return httpEquivMatch?.[1]?.toLowerCase() ?? null;
+}
+
+function normalizeCharset(charset: string | null): string {
+  const normalized = charset?.trim().toLowerCase();
+  if (!normalized || normalized === "utf8") return "utf-8";
+  if (normalized === "gb2312" || normalized === "gbk" || normalized === "gb18030") {
+    return "gb18030";
+  }
+  return normalized;
+}
+
+export function decodeHtml(buffer: Buffer, contentType: string | null): string {
+  const charset = normalizeCharset(charsetFromContentType(contentType) ?? charsetFromHtml(buffer));
+  if (!iconv.encodingExists(charset)) {
+    return iconv.decode(buffer, "utf-8");
+  }
+  return iconv.decode(buffer, charset);
+}
+
+export function cleanText(text: string): string {
+  return text
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function metaContent($: cheerio.CheerioAPI, selector: string): string | null {
+  const value = $(selector).first().attr("content")?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function resolveUrl(value: string | undefined, baseUrl: URL): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+// cheerio .text() 直接拼接所有文本节点,块级元素之间零分隔——抓出来的正文段落
+// 全部糊成一坨(素材预览里表现为"没有排版堆在一起")。克隆后 br→换行、
+// 块级元素尾部补换行再取文本,保住段落结构;cleanText 会把 3+ 连续换行收敛成空行。
+const BLOCK_LEVEL_SELECTOR =
+  "p,div,li,h1,h2,h3,h4,h5,h6,tr,blockquote,pre,section,article,figcaption,dt,dd";
+
+// 可靠噪声:任何情况下都删(脚本/样式/导航/页脚/表单控件/广告/分享/登录等)。
+// 注意 <form> 不在此列:大量 ASP.NET WebForms / VSB CMS(.gov.cn/.edu.cn 常见)把整列正文
+// 裹在服务端 <form> 里,删 form 会把正文连根删掉、只剩导航壳——只删表单"控件",保留 form 内正文。
+const HARD_BOILERPLATE_SELECTOR = [
+  "script",
+  "style",
+  "noscript",
+  "nav",
+  "header",
+  "footer",
+  "input",
+  "select",
+  "textarea",
+  "button",
+  "iframe",
+  "[role=navigation]",
+  "[role=banner]",
+  ".nav",
+  ".navbar",
+  ".menu",
+  ".sidebar",
+  ".side-bar",
+  ".header",
+  ".footer",
+  ".foot",
+  ".top-bar",
+  ".breadcrumb",
+  ".comment",
+  ".comments",
+  ".ad",
+  ".ads",
+  ".advertisement",
+  ".share",
+  ".social",
+  ".subscribe",
+  ".login",
+  ".copyright",
+  ".tags",
+  ".tag-list",
+].join(",");
+
+// 高风险"区块"选择器:可能本身就是正文容器、或裹着正文。class 是精确 token 匹配——
+// class="article hot" 会被 .hot 命中;也有站点把整列正文放在 <aside> / [role=complementary] 里。
+// 这些只在"自身与后代都不含任何正文容器"时才删,否则会把正文连根删掉(与 <form> 同类 footgun)。
+const SOFT_BOILERPLATE_SELECTORS = [
+  "aside",
+  "[role=complementary]",
+  ".related",
+  ".recommend",
+  ".recommendation",
+  ".hot",
+  ".rank",
+];
+
+/**
+ * 剥离样板噪声但护住正文:硬噪声直接删;高风险区块只在"不裹正文容器"时才删。
+ * 防 aside/.hot/.related 这类选择器把"恰好挂了该 class 的正文 wrapper"或"以 aside 作正文列"
+ * 的真正文连根删掉(线上多类 .edu.cn/资讯站结构)。静态(cheerio)与浏览器(DOM)两路同构。
+ */
+function stripBoilerplate($: cheerio.CheerioAPI): void {
+  $(HARD_BOILERPLATE_SELECTOR).remove();
+  const contentSelector = BODY_SELECTOR_GROUPS.join(",");
+  for (const sel of SOFT_BOILERPLATE_SELECTORS) {
+    $(sel).each((_, element) => {
+      const $el = $(element);
+      if ($el.is(contentSelector) || $el.find(contentSelector).length > 0) return; // 裹着正文 → 保留
+      $el.remove();
+    });
+  }
+}
+
+const BODY_SELECTOR_GROUPS = [
+  "#js_content",
+  ".rich_media_content",
+  ".note-content",
+  "#detail-desc",
+  ".origin_content", // 富途牛牛 futunn
+  ".article_cont", // 医脉通 medlive
+  ".RichText", // 知乎专栏
+  "#news_content", // 电子报(epaper.xkb 等)
+  "article",
+  "main",
+  "[role=main]",
+  ".content",
+  ".post-body",
+  ".article-content",
+  ".article",
+  ".post-content",
+  ".entry-content",
+  ".main-content",
+  ".cont-main",
+  "[itemprop=articleBody]",
+  ".lemma-summary",
+  ".para",
+  ".show_text",
+  ".text",
+  ".detail",
+  ".article-detail",
+  ".content-article",
+  ".TRS_Editor",
+  ".TRS_PreAppend",
+  // VSB(维斯比)CMS:大量 .edu.cn / .gov.cn 站点用它,正文恒在 #vsb_content / .v_news_content,
+  // 不加这两个选择器会落到 body 抓成导航壳(线上 library.xhcom.edu.cn 真实漏网样本)。
+  "#vsb_content",
+  ".v_news_content",
+  ".article_text",
+  ".article-text",
+  ".article-body",
+  ".article-main",
+  "#article_content",
+  "#articleContent",
+  "#zoom",
+  ".zoom",
+];
+
+const LEADING_NAV_MARKERS = [
+  "Home",
+  "首页",
+  "首頁",
+  "全部导航",
+  "全部導航",
+  "网页",
+  "新聞",
+  "新闻",
+  "频道",
+  "頻道",
+  "导航",
+  "導航",
+  "登录",
+  "登入",
+  "注册",
+  "ENGLISH",
+  "產業新聞",
+  "主题快搜",
+  "主題快搜",
+  "新闻总览",
+  "新聞總覽",
+];
+
+const CONTROL_LINE_MARKERS = [
+  "登录",
+  "注册",
+  "登入",
+  "注销",
+  "退出",
+  "首页",
+  "搜索",
+  "菜单",
+  "导航",
+  "当前位置",
+  "您好",
+  "欢迎来到",
+  "资源分类",
+  "分类",
+  "点赞",
+  "评论",
+  "收藏",
+  "分享",
+  "关注",
+  "下载App",
+  "打开App",
+  "App下载",
+  "扫一扫",
+  "返回",
+  "上一页",
+  "下一页",
+  "更多",
+  "设置",
+  "充值",
+  "收藏夹",
+  "个人中心",
+  "无障碍阅读",
+  "原版阅读",
+  "下载图书",
+  "生成引文",
+  "中文摘要",
+];
+
+const TRAILING_CONTROL_LINE_MARKERS = [
+  ...CONTROL_LINE_MARKERS,
+  "热门文章",
+  "相关推荐",
+  "相关文章",
+  "推荐阅读",
+  "阅读排行",
+  "版权",
+  "版权所有",
+  "备案",
+  "ICP备案",
+  "ICP",
+  "客户端",
+  "App",
+  "点击展开",
+  "举报",
+  "纠错",
+  "相关阅读",
+  "数据加载中",
+  "查看全部评论",
+  "本内容来自",
+  "观点和立场",
+  "阅读体验更佳",
+  "相关图书",
+  "引文",
+  "复制",
+  "×",
+];
+
+export function textWithBlockBreaks(
+  $: cheerio.CheerioAPI,
+  element: Parameters<cheerio.CheerioAPI>[0],
+): string {
+  const $clone = $(element).clone();
+  $clone.find("br").replaceWith("\n");
+  $clone.find(BLOCK_LEVEL_SELECTOR).each((_, node) => {
+    $(node).append("\n");
+  });
+  return $clone.text();
+}
+
+function isLikelyLeadingNavLine(line: string): boolean {
+  const normalized = line.trim();
+  if (!normalized || normalized.length > 280) return false;
+
+  const markerHits = LEADING_NAV_MARKERS.filter((marker) => normalized.includes(marker)).length;
+  const separatorCount = normalized.match(/[|｜>/]/g)?.length ?? 0;
+  const shortTokenCount = normalized
+    .split(/[\s|｜>/]+/)
+    .map((token) => token.replace(/[^\w\u4e00-\u9fff]/g, ""))
+    .filter((token) => token.length > 0 && token.length <= 6).length;
+
+  return markerHits >= 2 && (separatorCount >= 2 || shortTokenCount >= 6);
+}
+
+function trimLeadingNavigationLines(text: string): string {
+  const lines = text.split("\n");
+  let start = 0;
+  while (start < lines.length - 1 && start < 8 && isLikelyLeadingNavLine(lines[start] ?? "")) {
+    start += 1;
+  }
+  return start > 0 ? lines.slice(start).join("\n").trim() : text;
+}
+
+function compactLine(line: string): string {
+  return line.replace(/\s+/g, "");
+}
+
+function visibleLength(line: string): number {
+  return Array.from(compactLine(line)).length;
+}
+
+function hasSentencePunctuation(line: string): boolean {
+  return /[。！？!?；;]/.test(line);
+}
+
+function markerStats(line: string, markers: string[]): { hits: number; coverage: number } {
+  const compact = compactLine(line);
+  let hitLength = 0;
+  let hits = 0;
+
+  for (const marker of markers) {
+    if (compact.includes(marker)) {
+      hits += 1;
+      hitLength += Array.from(marker).length;
+    }
+  }
+
+  return {
+    hits,
+    coverage: compact.length > 0 ? hitLength / Array.from(compact).length : 0,
+  };
+}
+
+function isLikelyControlLine(line: string, markers: string[], trailing: boolean): boolean {
+  const normalized = line.trim();
+  if (!normalized) return true;
+  if (
+    trailing &&
+    /^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/.test(normalized)
+  ) {
+    return true;
+  }
+
+  const length = visibleLength(normalized);
+  if (length === 0 || length > (trailing ? 32 : 40)) return false;
+
+  const { hits, coverage } = markerStats(normalized, markers);
+  if (hits === 0) return false;
+
+  const separatorCount = normalized.match(/[|｜>/／/·•,，、]/g)?.length ?? 0;
+  const manyShortControls = hits >= 2 && (coverage >= 0.28 || separatorCount >= 1);
+  const singleShortControl = length <= 18 && coverage >= 0.45 && !hasSentencePunctuation(normalized);
+  const shortTrailingCommentPrompt = trailing && length <= 12 && normalized.includes("评论");
+
+  return manyShortControls || singleShortControl || shortTrailingCommentPrompt;
+}
+
+function isBodyLikeLine(line: string): boolean {
+  return visibleLength(line) >= 28 && hasSentencePunctuation(line);
+}
+
+function isLikelyLeadingIndexLine(line: string): boolean {
+  const normalized = line.trim();
+  if (!normalized) return true;
+  const length = visibleLength(normalized);
+  return length <= 120 && !hasSentencePunctuation(normalized);
+}
+
+function trimInlineLeadingControlPrefix(line: string): string {
+  const segments = line.split(/\s*\/\s*/);
+  if (segments.length <= 1) return line;
+
+  const firstBodySegment = segments.findIndex((segment) => isBodyLikeLine(segment));
+  if (firstBodySegment <= 0) return line;
+
+  return segments.slice(firstBodySegment).join(" / ").trim();
+}
+
+function isProtectedRemovedLine(line: string): boolean {
+  return visibleLength(line) >= 30 && hasSentencePunctuation(line);
+}
+
+function shouldKeepTrimmedText(original: string, trimmed: string, removedLines: string[]): boolean {
+  const originalLength = compactLine(original).length;
+  const trimmedLength = compactLine(trimmed).length;
+  if (originalLength > 0 && trimmedLength < originalLength * 0.3) return false;
+  return !removedLines.some(isProtectedRemovedLine);
+}
+
+export function trimArticleBoilerplateLines(text: string): string {
+  const original = cleanText(text);
+  if (!original) return original;
+
+  const lines = original.split("\n");
+  let start = 0;
+  const removed: string[] = [];
+  let controlPrefixStarted = false;
+
+  while (
+    start < lines.length - 1 &&
+    start < 360 &&
+    (isLikelyControlLine(lines[start] ?? "", CONTROL_LINE_MARKERS, false) ||
+      (controlPrefixStarted &&
+        isLikelyLeadingIndexLine(lines[start] ?? "") &&
+        !isBodyLikeLine(lines[start] ?? "")))
+  ) {
+    if (isLikelyControlLine(lines[start] ?? "", CONTROL_LINE_MARKERS, false)) {
+      controlPrefixStarted = true;
+    }
+    removed.push(lines[start] ?? "");
+    start += 1;
+  }
+
+  let end = lines.length;
+  while (
+    end > start + 1 &&
+    lines.length - end < 24 &&
+    isLikelyControlLine(lines[end - 1] ?? "", TRAILING_CONTROL_LINE_MARKERS, true)
+  ) {
+    removed.push(lines[end - 1] ?? "");
+    end -= 1;
+  }
+
+  const outputLines = lines.slice(start, end);
+  if (controlPrefixStarted && outputLines[0]) {
+    outputLines[0] = trimInlineLeadingControlPrefix(outputLines[0]);
+  }
+
+  if (start === 0 && end === lines.length && outputLines[0] === lines[0]) return original;
+
+  const trimmed = cleanText(outputLines.join("\n"));
+  return shouldKeepTrimmedText(original, trimmed, removed) ? trimmed : original;
+}
+
+function trimBodyFallbackPrefix($: cheerio.CheerioAPI, bodyText: string): string {
+  const headings = $("h1")
+    .toArray()
+    .map((element) => cleanText(textWithBlockBreaks($, element)))
+    .filter((text) => text.replace(/\s+/g, "").length >= 8)
+    .sort((a, b) => b.length - a.length);
+
+  for (const heading of headings) {
+    const start = bodyText.indexOf(heading);
+    if (start > 0 && start < 6000) {
+      const trimmedFromHeading = bodyText.slice(start).trim();
+      if (compactLine(trimmedFromHeading).length >= compactLine(bodyText).length * 0.3) {
+        return trimArticleBoilerplateLines(trimmedFromHeading);
+      }
+    }
+  }
+
+  return trimArticleBoilerplateLines(trimLeadingNavigationLines(bodyText));
+}
+
+export function selectBodyText(
+  $: cheerio.CheerioAPI,
+  waitForSelector?: string,
+  extraSelectors?: string[],
+): string {
+  const $extract = cheerio.load($.root().html() ?? "");
+  stripBoilerplate($extract);
+  const selectorGroups = [
+    waitForSelector,
+    ...(extraSelectors ?? []),
+    ...BODY_SELECTOR_GROUPS,
+  ].filter((selector): selector is string => Boolean(selector));
+
+  const candidates = selectorGroups
+    .flatMap((selector) =>
+      $extract(selector)
+        .toArray()
+        .map((element) =>
+          trimBodyFallbackPrefix($extract, cleanText(textWithBlockBreaks($extract, element))),
+        ),
+    )
+    .filter((text) => text.length > 0);
+
+  if (candidates.length > 0) {
+    return candidates.sort((a, b) => b.length - a.length)[0] ?? "";
+  }
+
+  return trimBodyFallbackPrefix($extract, cleanText(textWithBlockBreaks($extract, "body")));
+}
+
+/**
+ * PubMed Central(PMC)正文页 HTML 命中 Google reCAPTCHA 拿不到正文,但 NCBI 官方 EFetch
+ * 接口返回完整 JATS XML 全文(公开、稳定)。从 URL 抽 PMCID 走 EFetch + cheerio xmlMode 解析。
+ */
+async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | null> {
+  if (!/(^|\.)ncbi\.nlm\.nih\.gov$/.test(parsedUrl.hostname)) return null;
+  const m = parsedUrl.pathname.match(/\/articles\/PMC(\d+)/i);
+  if (!m) return null;
+  try {
+    const efetchUrl = parseFetchUrl(
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=${m[1]}&rettype=xml&retmode=xml`,
+    );
+    const { response } = await fetchWithSsrfGuard(efetchUrl);
+    if (!response.ok) return null;
+    const xml = Buffer.from(await response.arrayBuffer()).toString("utf-8");
+    const $x = cheerio.load(xml, { xmlMode: true });
+    const title = cleanText($x("article-title").first().text());
+    const paras = $x("abstract p, body p")
+      .toArray()
+      .map((el) => cleanText($x(el).text()))
+      .filter((t) => t.length > 0);
+    const body = paras.join("\n\n");
+    if (body.replace(/\s+/g, "").length < MIN_EXTRACTED_TEXT_LENGTH) return null;
+    return { title: title || parsedUrl.hostname, body, images: [], screenshot: null, ogImageUrl: null };
+  } catch {
+    return null; // EFetch 失败则回落到常规抓取
+  }
+}
+
+export async function extractArticleContent(
+  url: string,
+  waitForSelector?: string,
+): Promise<ExtractedArticleContent> {
+  const parsedUrl = parseFetchUrl(url);
+  // PMC 走官方 EFetch JATS XML(HTML 页有 reCAPTCHA)。命中则直接返回全文。
+  const pmc = await tryExtractPmc(parsedUrl);
+  if (pmc) return pmc;
+  // 站点适配器:已知"PC 反爬、移动端可抓"的站(百度百科/什么值得买等),改写到移动子域 + 移动 UA,
+  // 并追加站点正文选择器,从根上把 403/空壳变成可抓的 SSR 正文。
+  const adapter = resolveSiteAdapter(parsedUrl);
+  const initialUrl = adapter?.rewriteUrl ? adapter.rewriteUrl(parsedUrl) : parsedUrl;
+  const { url: finalUrl, response } = await fetchWithSsrfGuard(initialUrl, adapter?.headers);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${finalUrl.toString()}: HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type");
+  const ctLower = (contentType ?? "").toLowerCase();
+  // PDF 是可解析的(有文本)——路由到 pdf-parse 提取正文,而不是当"不支持"拒掉
+  //(目标:搜索链路 100% 解析率。论文/报告类结果常是 PDF)。按 Content-Type 或 .pdf 路径判定。
+  const isPdf = ctLower.includes("pdf") || /\.pdf(\?|#|$)/i.test(finalUrl.pathname);
+  if (isPdf) {
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > MAX_PDF_BYTES) {
+      throw new Error(
+        `${UNSUPPORTED_CONTENT_ERROR_PREFIX} PDF 过大(${Math.round(buf.length / 1048576)}MB),跳过解析`,
+      );
+    }
+    const { text, title: pdfTitle } = await extractPdfText(buf);
+    const body = trimArticleBoilerplateLines(cleanText(text.replace(/\f/g, "\n\n")));
+    if (body.replace(/\s+/g, "").length < MIN_EXTRACTED_TEXT_LENGTH) {
+      // 文本过少:多为扫描件/图片型 PDF(无文本层),按解析失败处理。
+      throw new Error(
+        "PDF 解析出的正文过少(疑似扫描件/图片型 PDF,无文本层),无法提取正文。",
+      );
+    }
+    return {
+      title: cleanText(pdfTitle ?? "") || finalUrl.hostname,
+      body,
+      images: [],
+      screenshot: null,
+      ogImageUrl: null,
+    };
+  }
+  // 其它非 HTML 二进制(下载附件 / 图片 / 压缩包等)不能喂给 cheerio——会爆栈,浏览器降级也救不了。
+  if (isUnsupportedForHtmlExtraction(contentType, response.headers.get("content-disposition"))) {
+    throw new Error(
+      `${UNSUPPORTED_CONTENT_ERROR_PREFIX} 非 HTML 内容(${contentType || "下载附件"}),无法按网页正文解析`,
+    );
+  }
+  const bodyBuffer = Buffer.from(await response.arrayBuffer());
+  const html = decodeHtml(bodyBuffer, contentType);
+  const $ = cheerio.load(html);
+
+  $("script, style, noscript, nav, footer, header").remove();
+
+  const title =
+    cleanText($("title").first().text()) ||
+    metaContent($, 'meta[property="og:title"]') ||
+    metaContent($, 'meta[name="og:title"]') ||
+    finalUrl.hostname;
+
+  const body = selectBodyText($, waitForSelector, adapter?.extraSelectors);
+  if (body.length < MIN_EXTRACTED_TEXT_LENGTH) {
+    throw new Error(
+      "Could not extract enough article text from static HTML. This page may require JavaScript rendering; please copy-paste the content manually.",
+    );
+  }
+
+  const images = $("img[src]")
+    .toArray()
+    .map((img) => {
+      const src = resolveUrl($(img).attr("src"), finalUrl);
+      if (!src) return null;
+      return { src, alt: $(img).attr("alt") ?? null };
+    })
+    .filter((item): item is { src: string; alt: string | null } => item !== null);
+
+  const ogImageUrl = resolveUrl(
+    metaContent($, 'meta[property="og:image"]') ??
+      metaContent($, 'meta[name="og:image"]') ??
+      metaContent($, 'meta[property="twitter:image"]') ??
+      metaContent($, 'meta[name="twitter:image"]') ??
+      undefined,
+    finalUrl,
+  );
+
+  return {
+    title,
+    body,
+    images,
+    screenshot: null,
+    ogImageUrl,
+  };
+}

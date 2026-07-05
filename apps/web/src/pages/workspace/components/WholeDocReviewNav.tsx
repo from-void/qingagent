@@ -1,0 +1,142 @@
+import { useEffect, useRef, useState } from "react";
+import { useConfirm } from "../../../system";
+
+const SUBMITTING_UNLOCK_TIMEOUT_MS = 8000;
+
+export interface WholeDocReviewNavProps {
+  /** 当前整篇审作用域；确认弹层异步返回后必须仍匹配，避免跨会话/跨审阅误执行。 */
+  reviewScopeKey: string;
+  version: "new" | "old";
+  onVersionChange: (v: "new" | "old") => void;
+  /** 应用新版 = 提交本轮全部修改(commit)。 */
+  onApply: () => void;
+  /** 退回旧版 = 放弃本轮全部修改(discard)。 */
+  onRevert: () => void;
+  onToast?: (message: string) => void;
+}
+
+/**
+ * 整篇审(大改)底部操作条:复用 `.patch-nav` 壳(自动获得输入框「变形飞来」+ 内容淡入)。
+ * [dot] [大改 · 整篇审] [新版 ‖ 旧版 互斥选择器] [spacer] [退回旧版] [应用新版]
+ */
+export function WholeDocReviewNav({
+  reviewScopeKey,
+  version,
+  onVersionChange,
+  onApply,
+  onRevert,
+  onToast,
+}: WholeDocReviewNavProps) {
+  const confirm = useConfirm();
+  const [submitting, setSubmitting] = useState(false);
+  const mountedRef = useRef(true);
+  const reviewScopeKeyRef = useRef(reviewScopeKey);
+  const unlockTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (unlockTimerRef.current !== null) window.clearTimeout(unlockTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    reviewScopeKeyRef.current = reviewScopeKey;
+  }, [reviewScopeKey]);
+
+  const armSubmitTimeout = () => {
+    if (unlockTimerRef.current !== null) window.clearTimeout(unlockTimerRef.current);
+    unlockTimerRef.current = window.setTimeout(() => {
+      unlockTimerRef.current = null;
+      setSubmitting(false);
+      onToast?.("操作仍未完成，请重试");
+    }, SUBMITTING_UNLOCK_TIMEOUT_MS);
+  };
+
+  const stopSubmitting = () => {
+    if (unlockTimerRef.current !== null) {
+      window.clearTimeout(unlockTimerRef.current);
+      unlockTimerRef.current = null;
+    }
+    setSubmitting(false);
+  };
+
+  const handleApply = () => {
+    if (submitting) return;
+    setSubmitting(true);
+    armSubmitTimeout();
+    try {
+      onApply();
+    } catch (error) {
+      stopSubmitting();
+      throw error;
+    }
+  };
+
+  const handleRevert = async () => {
+    if (submitting) return;
+    const activeScopeKey = reviewScopeKey;
+    const confirmed = await confirm({
+      title: "退回旧版？",
+      message: "退回旧版会放弃本轮全部修改。",
+      confirmLabel: "退回旧版",
+    });
+    if (!confirmed || !mountedRef.current || reviewScopeKeyRef.current !== activeScopeKey) return;
+    setSubmitting(true);
+    armSubmitTimeout();
+    try {
+      onRevert();
+    } catch (error) {
+      stopSubmitting();
+      throw error;
+    }
+  };
+
+  return (
+    <div className="patch-nav wdr-nav" data-wf="WholeDocReviewNav" aria-busy={submitting}>
+      <span className="pn-dot" aria-hidden="true" />
+      <span className="pn-label">整篇改写</span>
+      <div className="wdr-toggle" role="tablist" aria-label="新旧版本切换">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={version === "new"}
+          className={`wdr-opt${version === "new" ? " is-on" : ""}`}
+          onClick={() => onVersionChange("new")}
+          disabled={submitting}
+        >
+          新版
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={version === "old"}
+          className={`wdr-opt${version === "old" ? " is-on" : ""}`}
+          onClick={() => onVersionChange("old")}
+          disabled={submitting}
+        >
+          旧版
+        </button>
+        <span className={`wdr-thumb is-${version}`} aria-hidden="true" />
+      </div>
+      <span style={{ flex: 1 }} />
+      <button
+        type="button"
+        className="pn-commit"
+        onClick={handleApply}
+        disabled={submitting}
+        title="应用新版,提交本轮全部修改"
+      >
+        应用新版
+      </button>
+      <button
+        type="button"
+        className="pn-ghost"
+        onClick={() => void handleRevert()}
+        disabled={submitting}
+        title="退回旧版,放弃本轮全部修改"
+      >
+        退回旧版
+      </button>
+    </div>
+  );
+}

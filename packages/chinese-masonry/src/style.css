@@ -1,0 +1,45 @@
+.cm-card {
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 0 !important;
+  box-shadow:
+    0 0 12px rgba(0, 0, 0, 0.04),
+    0 2px 11px rgba(0, 0, 0, 0.04);
+}
+
+.cm-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Overlay reads its base opacity from the --cm-overlay-opacity custom prop
+   set inline by CardRenderer.  On hover we transition to 0. */
+.cm-card-color-overlay {
+  opacity: var(--cm-overlay-opacity, 1);
+}
+
+.cm-card:hover .cm-card-color-overlay {
+  opacity: 0 !important;
+}
+
+.cm-card:hover .cm-image {
+  filter: none !important;
+}
+
+.cm-card:hover .cm-line {
+  filter: none !important;
+}
+
+.cm-image-placeholder {
+  align-items: center;
+  color: rgba(42, 80, 128, 0.72);
+  display: flex;
+  font-size: 12px;
+  height: 100%;
+  justify-content: center;
+}
+
+.cm-empty {
+  border: 1px dashed rgba(122, 107, 93, 0.45);
+  color: #7a6b5d;
+  padding: 32px;
+  text-align: center;
+}

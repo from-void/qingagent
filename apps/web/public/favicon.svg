@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="paper" cx="50%" cy="45%" r="70%">
+      <stop offset="0%" stop-color="#fbfaf4"/>
+      <stop offset="72%" stop-color="#f4f0e4"/>
+      <stop offset="100%" stop-color="#e8dfcf"/>
+    </radialGradient>
+    <filter id="ink" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="2" seed="11" result="grain"/>
+      <feDisplacementMap in="SourceGraphic" in2="grain" scale="0.9"/>
+      <feGaussianBlur stdDeviation="0.08"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#paper)"/>
+  <path d="M12 13C23 11 38 11 52 13" stroke="#0e5961" stroke-width="5.6" stroke-linecap="round" fill="none" opacity="0.92"/>
+  <path d="M17 23C26 21 40 21 49 23" stroke="#123f45" stroke-width="4.2" stroke-linecap="round" fill="none" opacity="0.88"/>
+  <text
+    x="32"
+    y="49"
+    text-anchor="middle"
+    font-size="42"
+    font-weight="700"
+    font-family="STKaiti, KaiTi, Kaiti SC, Songti SC, Noto Serif SC, serif"
+    fill="#0b454c"
+    filter="url(#ink)"
+  >青</text>
+  <path d="M18 54C25 58 39 58 48 53" stroke="#0b454c" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.26"/>
+</svg>

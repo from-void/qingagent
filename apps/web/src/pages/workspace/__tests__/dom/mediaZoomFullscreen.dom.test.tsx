@@ -1,0 +1,110 @@
+// @vitest-environment jsdom
+
+import { createElement, useState } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MediaZoomFullscreen } from "../../components/MediaZoomFullscreen";
+
+function Harness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>打开</button>
+      <MediaZoomFullscreen open={open} onClose={() => setOpen(false)}>
+        <div style={{ width: 400, height: 200 }}>内容</div>
+      </MediaZoomFullscreen>
+    </>
+  );
+}
+
+describe("MediaZoomFullscreen", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    vi.restoreAllMocks();
+  });
+
+  it("支持打开、滚轮缩放和 Esc 关闭", async () => {
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    Element.prototype.setPointerCapture = function () {};
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const dialog = document.body.querySelector<HTMLElement>(".media-zoom-fullscreen");
+      expect(dialog).not.toBeNull();
+      const viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport");
+      const content = document.body.querySelector<HTMLElement>(".media-zoom-content");
+      expect(viewport).not.toBeNull();
+      expect(content).not.toBeNull();
+
+      await act(async () => {
+        viewport!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100, clientX: 50, clientY: 50 }));
+      });
+      expect(content!.style.transform).toContain("scale(1.12)");
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      });
+      expect(document.body.querySelector(".media-zoom-fullscreen")).toBeNull();
+    } finally {
+      rafSpy.mockRestore();
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it("静止时不挂 will-change:transform(矢量 SVG 全屏保持清晰),仅拖拽平移期间挂(防全屏发糊回归)", async () => {
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    Element.prototype.setPointerCapture = function () {};
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      const viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      const content = document.body.querySelector<HTMLElement>(".media-zoom-content")!;
+      // 静止:不能常驻 will-change:transform(否则内容上合成层 → 矢量 SVG 被栅格化 → 全屏发糊)。
+      expect(content.style.willChange === "transform").toBe(false);
+      // 开始拖拽平移:挂上 will-change 让平移顺滑。
+      await act(async () => {
+        viewport.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+      });
+      expect(content.style.willChange).toBe("transform");
+      // 松手:撤掉,回到矢量清晰。
+      await act(async () => {
+        viewport.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, button: 0 }));
+      });
+      expect(content.style.willChange === "transform").toBe(false);
+    } finally {
+      rafSpy.mockRestore();
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+});

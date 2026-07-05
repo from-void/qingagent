@@ -41,6 +41,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Windows Defender 实时扫描会在 makensis 读取 ~300MB payload 时逐文件拦截,让 nsis 打包
+      # 卡死/极慢(实测卡在 building target=nsis 后 30min+ 超时)。排除工作目录与 makensis 进程。
+      - name: Windows Defender exclusion (avoid AV stalling makensis)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "makensis.exe" -ErrorAction SilentlyContinue
+          Write-Host "Defender exclusions added for workspace + makensis"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

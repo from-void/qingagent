@@ -12,11 +12,10 @@ jobs:
   build:
     name: beta-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    # windows nsis 打包已知慢/卡(真因:electron-builder 用 7za -mx=9 压 ~300MB app 成 app.7z,
-    # 2 核 runner 30min+ 压不完;差分包/压缩档/Defender 都无法绕过,属 payload 瘦身 or tmate
-    # 交互调试的 follow-up)。设 continue-on-error 让 windows 不阻断整轮——linux+mac 稳定出包发布,
-    # windows 仍尝试供后续调试,但失败/超时不拖垮 beta 演练。
+    # 抬到 75min:windows nsis 卡因=7za -mx=9 压 ~300MB app.7z,2 核 runner 上是「慢」(LZMA 压
+    # 300MB 可达 30-60min)未必是「卡」,30min 不够跑完。给足时间看能否产出 installer;linux/mac
+    # <5min 不受影响。仍配 continue-on-error 兜底:即便 75min 也没压完,windows 不阻断 linux+mac 发布。
+    timeout-minutes: 75
     continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:

@@ -12,7 +12,7 @@ jobs:
   build:
     name: beta-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -28,7 +28,7 @@ jobs:
             electron_builder_args: --mac zip
           - name: windows
             os: windows-latest
-            electron_builder_args: --win nsis zip
+            electron_builder_args: --win nsis
     env:
       QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
       QINGAGENT_BUNDLE_PYODIDE: '1'

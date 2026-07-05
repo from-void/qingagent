@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
+import { RELEASES_URL, quitAndInstallUpdate, startDesktopUpdater } from "./update/updater.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -300,6 +301,13 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
   };
 });
 
+ipcMain.handle("qingagent:update-quit-install", async () => quitAndInstallUpdate());
+
+ipcMain.handle("qingagent:update-open-download", async () => {
+  await shell.openExternal(RELEASES_URL);
+  return true;
+});
+
 // 客户端凭证/模型配置持久化:落 userData/client-config.json,与端口/origin 解耦。
 // 背景:桌面打包版内置服务随机端口 → 窗口 origin 每次变 → localStorage 按 origin 隔离
 // → 之前 visitor key 等存 localStorage 的配置「每次启动/换版都像丢」。改存 userData 后稳定。
@@ -519,6 +527,13 @@ async function createWindow() {
     } catch {
       // URL 解析失败忽略,交回默认处理。
     }
+  });
+
+  const updateWindow = mainWindow;
+  updateWindow.webContents.once("did-finish-load", () => {
+    setTimeout(() => {
+      void startDesktopUpdater({ window: updateWindow });
+    }, 250);
   });
 
   const isDev = !app.isPackaged;

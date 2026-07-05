@@ -17,6 +17,12 @@ interface ElectronFolderSourceSelection {
   fileCountCapped: boolean;
 }
 
+interface ElectronUpdateStatus {
+  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none";
+  version?: string;
+  notesUrl?: string;
+}
+
 interface Window {
   electron?: {
     platform: string;
@@ -31,6 +37,9 @@ interface Window {
     // clientConfig 是 preload 阶段同步注入的初值快照;setClientConfig 异步落盘(value=null 删除)。
     clientConfig?: Record<string, string>;
     setClientConfig?: (patch: Record<string, string | null>) => Promise<boolean>;
+    onUpdateStatus?: (cb: (payload: ElectronUpdateStatus) => void) => () => void;
+    quitAndInstall?: () => Promise<unknown>;
+    openDownloadPage?: () => Promise<unknown>;
   };
   showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<FileSystemDirectoryHandle>;
 }

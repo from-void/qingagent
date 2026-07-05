@@ -1,0 +1,132 @@
+import { DEFAULT_UPDATE_POLICY_URL, readTelemetryBuildInfo } from "../telemetry/config.js";
+
+const DEFAULT_POLICY_TIMEOUT_MS = 1200;
+
+export type UpdatePolicy = {
+  minSupported: string | null;
+};
+
+type PolicyFetchResponse = {
+  ok: boolean;
+  status: number;
+  json: () => Promise<unknown>;
+};
+
+export type UpdatePolicyFetch = (url: string, init: RequestInit) => Promise<PolicyFetchResponse>;
+
+type PrereleaseIdentifier =
+  | { type: "number"; value: number; raw: string }
+  | { type: "string"; value: string };
+
+type ParsedSemVer = {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: PrereleaseIdentifier[];
+};
+
+function optionalString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function resolveUpdatePolicyUrl(): string {
+  return optionalString(readTelemetryBuildInfo()?.updatePolicyUrl) || DEFAULT_UPDATE_POLICY_URL;
+}
+
+function parsePrerelease(value: string | undefined): PrereleaseIdentifier[] | null {
+  if (!value) return [];
+  const parts = value.split(".");
+  const out: PrereleaseIdentifier[] = [];
+  for (const part of parts) {
+    if (!part || !/^[0-9A-Za-z-]+$/.test(part)) return null;
+    if (/^\d+$/.test(part)) {
+      if (part.length > 1 && part.startsWith("0")) return null;
+      out.push({ type: "number", value: Number(part), raw: part });
+    } else {
+      out.push({ type: "string", value: part });
+    }
+  }
+  return out;
+}
+
+function parseSemVer(value: string): ParsedSemVer | null {
+  const raw = value.trim();
+  const match =
+    /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(raw);
+  if (!match) return null;
+  const prerelease = parsePrerelease(match[4]);
+  if (!prerelease) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease,
+  };
+}
+
+function normalizeSemVer(value: string): string | null {
+  return parseSemVer(value) ? value.trim().replace(/^v/, "") : null;
+}
+
+function comparePrerelease(a: PrereleaseIdentifier[], b: PrereleaseIdentifier[]): number {
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
+
+  const max = Math.max(a.length, b.length);
+  for (let index = 0; index < max; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (!left) return -1;
+    if (!right) return 1;
+    if (left.type === "number" && right.type === "number") {
+      if (left.value !== right.value) return left.value < right.value ? -1 : 1;
+      continue;
+    }
+    if (left.type === "number") return -1;
+    if (right.type === "number") return 1;
+    if (left.value !== right.value) return left.value < right.value ? -1 : 1;
+  }
+  return 0;
+}
+
+function compareSemVer(a: ParsedSemVer, b: ParsedSemVer): number {
+  for (const key of ["major", "minor", "patch"] as const) {
+    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
+  }
+  return comparePrerelease(a.prerelease, b.prerelease);
+}
+
+export function isBelowMinSupported(current: string, minSupported: string): boolean {
+  const parsedCurrent = parseSemVer(current);
+  const parsedMin = parseSemVer(minSupported);
+  if (!parsedCurrent || !parsedMin) return false;
+  return compareSemVer(parsedCurrent, parsedMin) < 0;
+}
+
+function parseUpdatePolicy(policy: unknown): UpdatePolicy {
+  if (!policy || typeof policy !== "object") return { minSupported: null };
+  const value = (policy as { minSupported?: unknown }).minSupported;
+  if (typeof value !== "string") return { minSupported: null };
+  return { minSupported: normalizeSemVer(value) };
+}
+
+export async function fetchUpdatePolicy(
+  url = resolveUpdatePolicyUrl(),
+  fetchImpl?: UpdatePolicyFetch,
+  timeoutMs = DEFAULT_POLICY_TIMEOUT_MS,
+): Promise<UpdatePolicy> {
+  const fetcher = fetchImpl ?? (globalThis.fetch as unknown as UpdatePolicyFetch | undefined);
+  if (!fetcher || !url) return { minSupported: null };
+
+  try {
+    const res = await fetcher(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return parseUpdatePolicy(await res.json());
+  } catch {
+    return { minSupported: null };
+  }
+}

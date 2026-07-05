@@ -10,7 +10,7 @@
     "pack": "pnpm run build && electron-builder --dir",
     "dist": "pnpm run build && electron-builder",
     "build:win": "bash build-win.sh",
-    "test": "node --import tsx --test buildPyodideStage.test.mjs buildTelemetryInfo.test.mjs redact.test.mjs stageLarkCli.test.mjs src/main/exportRequestFilter.test.ts src/main/diagnostics/jsonlSpanSink.test.ts src/main/telemetry/config.test.ts src/main/telemetry/deadline.test.ts",
+    "test": "node --import tsx --test buildPyodideStage.test.mjs buildTelemetryInfo.test.mjs redact.test.mjs stageLarkCli.test.mjs src/main/exportRequestFilter.test.ts src/main/diagnostics/jsonlSpanSink.test.ts src/main/telemetry/config.test.ts src/main/telemetry/deadline.test.ts src/main/update/policy.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
@@ -18,6 +18,7 @@
     "@mastra/core": "^1.36.0",
     "@mastra/observability": "^1.13.0",
     "dotenv": "^16.4.7",
+    "electron-updater": "^6.8.9",
     "libsql": "^0.5.29",
     "playwright": "1.60.0"
   },

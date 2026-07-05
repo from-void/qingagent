@@ -1,5 +1,6 @@
 import { Router, useRoute } from "./shell";
 import type { RouteName } from "./shell";
+import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
 import { AuthTokenGate } from "./system/AuthTokenGate";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -36,6 +37,7 @@ export default function App() {
     <ToastProvider>
       <ConfirmProvider>
         <AppShell />
+        <AppUpdateWatcher />
         <AuthTokenGate />
       </ConfirmProvider>
     </ToastProvider>

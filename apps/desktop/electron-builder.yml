@@ -6,7 +6,14 @@ artifactName: qingagent-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: resources
   output: release
-asar: false
+# asar 打开:把 app 代码/依赖打进单个归档,大幅降文件数——否则 Windows runner 打包
+# (zip/nsis)要处理上万散文件被 FS/Defender 拖到卡死(实测 45min 超时)。运行时资源
+# (web/pyodide/lark-cli/skills)走 extraResources 在 asar 外不受影响;原生 .node 由
+# asarUnpack 解包到 app.asar.unpacked,electron 透明加载。
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/node_modules/@libsql/**"
 files:
   - dist/**/*
   - package.json

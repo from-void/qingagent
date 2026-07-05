@@ -1,0 +1,69 @@
+name: beta
+
+on:
+  push:
+    tags:
+      - 'v*-beta.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: beta-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            electron_builder_args: --linux
+          - name: mac
+            os: macos-latest
+            electron_builder_args: --mac zip
+          - name: windows
+            os: windows-latest
+            electron_builder_args: --win nsis zip
+    env:
+      QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
+      QINGAGENT_BUNDLE_PYODIDE: '1'
+      QINGAGENT_BUNDLE_LARK_CLI: '1'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 官方构建可注入下载站地址；fork 默认留空。
+      VITE_DESKTOP_SITE_URL: ''
+      # 不设置 QINGAGENT_UPDATE_POLICY_URL：policy 未托管时客户端 fail-open。
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: verify release tag
+        run: ./scripts/release.sh verify-tag "${{ github.ref_name }}"
+
+      - name: build desktop
+        run: pnpm build:desktop
+
+      - name: publish beta artifacts
+        run: >
+          pnpm --filter @qingagent/desktop exec electron-builder
+          ${{ matrix.electron_builder_args }}
+          --publish always
+          -c.publish.provider=github
+          -c.publish.releaseType=prerelease
+

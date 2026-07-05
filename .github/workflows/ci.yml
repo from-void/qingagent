@@ -7,6 +7,21 @@ on:
     branches: [main]
 
 jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action v2 用环境变量指定配置；根目录 .gitleaks.toml 也会被自动发现。
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30

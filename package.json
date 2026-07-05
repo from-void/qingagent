@@ -10,7 +10,7 @@
     "dev": "pnpm --filter @qingagent/web dev",
     "dev:server": "pnpm --filter @qingagent/server dev",
     "dev:desktop": "pnpm --filter @qingagent/desktop dev",
-    "build:desktop": "pnpm --filter @qingagent/desktop build",
+    "build:desktop": "pnpm --filter @qingagent/web build && pnpm --filter @qingagent/desktop build",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",

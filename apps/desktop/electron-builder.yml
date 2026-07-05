@@ -15,6 +15,8 @@ files:
 extraResources:
   - from: ../web/dist
     to: web
+  - from: ../../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
   - from: ../../packages/core/skills
     to: skills
   # Pyodide 运行时:由 build.mjs 按 QINGAGENT_BUNDLE_PYODIDE 暂存到 build/pyodide。
@@ -27,8 +29,8 @@ extraResources:
   - from: build/lark-cli
     to: lark-cli
 mac:
+  # mac 未签名时 Squirrel.Mac 自更不可用；仅保留 zip,避免 dmg 造成发布语义误导。
   target:
-    - dmg
     - zip
 win:
   # Linux 无 wine:关闭对 exe 的 rcedit/签名(图标/版本元数据),避免 wine 依赖。

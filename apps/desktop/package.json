@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "homepage": "https://github.com/from-void/qingagent",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "tsx src/main/index.ts",

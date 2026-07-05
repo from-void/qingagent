@@ -35,7 +35,12 @@ jobs:
       - name: Enable pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@9.15.0 --activate
+          # corepack prepare 从 registry 拉 pnpm,偶发瞬时网络错;重试 3 次。
+          for i in 1 2 3; do
+            corepack prepare pnpm@9.15.0 --activate && break
+            echo "corepack prepare failed (attempt $i/3), retrying in 5s..."
+            sleep 5
+          done
           pnpm --version
 
       - name: pnpm install

@@ -60,7 +60,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
 
       - name: install Playwright Chromium (PDF export render)
-        run: pnpm --filter @qingagent/core exec playwright install --with-deps chromium
+        run: |
+          pnpm --filter @qingagent/core exec playwright install --with-deps chromium
+          # 关键:显式把浏览器池指向 Playwright 装好的 Chromium。否则 systemBrowser 探测顺序会
+          # 优先命中 runner 上预装的 /usr/bin/microsoft-edge——edge 冷启动+渲染 math→PNG 慢且
+          # 非确定,导出烟测在 CI 上时而 >30s 超时(flaky)。用 gate 同款 chromium 即快又稳。
+          CHROMIUM_PATH="$(pnpm --filter @qingagent/core exec node -e 'console.log(require("playwright").chromium.executablePath())')"
+          echo "QINGAGENT_BROWSER_EXECUTABLE_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
+          echo "browser pool -> $CHROMIUM_PATH"
 
       # core 与 server 必须串行:并行时多个 test file 同时拉起浏览器池(导出 PDF/PNG 烟测)
       # 会互相争抢致浏览器崩溃("browser has been closed"),且有 pyodide worker/mock 污染的假红。

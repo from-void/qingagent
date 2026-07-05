@@ -26,21 +26,10 @@ Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `R
 ## 2. Workflow (lightweight)
 
 1. Get the project running via `README.md`.
-2. Work on a **feature branch** — don't commit straight to `main`. Prefer a
-   worktree at `../wt/<name>` (sibling of the main clone) for anything beyond
-   a trivial fix.
-3. **Rebase before merging**: rebase the feature branch onto the latest
-   integration branch (`main` for now; `dev` once the beta channel lands),
-   then re-run the three greens on the rebased result — pre-rebase greens
-   don't count. Never merge the integration branch *into* a feature branch;
-   that direction produces far worse conflicts. Keep feature branches
-   short-lived; if one lingers, rebase it daily instead of paying the whole
-   debt at merge time.
-4. Three greens before merging: `pnpm -r typecheck` / `pnpm -r --if-present build` / `pnpm -r --if-present test`.
-5. Commits: **Conventional Commits prefix + Chinese body**, e.g. `fix(web): 修复首页白屏`.
-6. Merge to `main`, and keep it green and deployable at all times. Feature
-   branches stay local — push only the integration branches (`main`/`dev`);
-   anything pushed to this repo should be assumed public.
+2. Work on a **feature branch** — don't commit straight to `main`.
+3. Before merging, three greens: `pnpm -r typecheck` / `pnpm -r --if-present build` / `pnpm -r --if-present test`.
+4. Commits: **Conventional Commits prefix + Chinese body**, e.g. `fix(web): 修复首页白屏`.
+5. Merge to `main`, and keep it green and deployable at all times.
 
 ## 3. Hard rules (MUST / MUST NOT)
 

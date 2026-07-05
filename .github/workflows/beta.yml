@@ -37,6 +37,8 @@ jobs:
       # 官方构建可注入下载站地址；fork 默认留空。
       VITE_DESKTOP_SITE_URL: ''
       # 不设置 QINGAGENT_UPDATE_POLICY_URL：policy 未托管时客户端 fail-open。
+      # 【诊断·待复原】DEBUG=electron-builder 吐详细阶段/makensis 命令行,定位 nsis 卡点。
+      DEBUG: electron-builder
     steps:
       - uses: actions/checkout@v4
 

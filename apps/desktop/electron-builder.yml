@@ -7,6 +7,10 @@ executableName: qingagent
 # 产物文件名用干净 ASCII:默认会取包名 @qingagent/desktop(含 @ 与 /)或中文 productName,
 # 上传 GitHub Release 时 "Request path contains unescaped characters"。固定为 qingagent-版本-os-arch。
 artifactName: qingagent-${version}-${os}-${arch}.${ext}
+# 【诊断档·待复原】compression: store —— 定论测试 win nsis 是否卡在 solid-lzma 压缩:
+# store=不压缩,若 win 由此出包=压缩耗时是真因(再回调为轻压缩/zlib);若仍卡=非压缩,
+# 转看 DEBUG=electron-builder 输出与进程树。此项会让 linux/mac 产物变大,验完复原。
+compression: store
 directories:
   buildResources: resources
   output: release

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../system/ToastProvider";
 
 // 「提需求」跳转的反馈站(独立网页,后续单独承载);「报bug」排查不了时的联系邮箱。
-const FEEDBACK_URL = "https://feedback.qingagent.com";
+const FEEDBACK_URL = "https://qingagent.com/feedback";
 const SUPPORT_EMAIL = "support@qingagent.com";
 // 列出最近多少篇文档供勾选;默认预勾选最近几篇。
 const MAX_DOCS = 20;

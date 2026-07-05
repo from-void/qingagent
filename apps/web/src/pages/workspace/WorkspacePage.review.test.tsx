@@ -1902,7 +1902,9 @@ describe("WorkspacePage review controls", () => {
 
     expect(apply!.disabled).toBe(false);
     expect(onToast).toHaveBeenCalledWith("操作仍未完成，请重试");
-  });
+    // 用 fakeTimers 但测试体含真实 await(React 异步更新),慢 CI runner 下
+    // 默认 5s 会超时;照本文件姊妹用例(第 583 行)补 per-test 超时。
+  }, 30000);
 
   it("R2-02 提交返回帧没有离开 pendingReview 时会触发前端逃生", async () => {
     const { reviewCommitFramesLeavePendingReview } = await import("./WorkspacePage");

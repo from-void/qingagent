@@ -13,6 +13,11 @@ jobs:
     name: beta-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # windows nsis 打包已知慢/卡(真因:electron-builder 用 7za -mx=9 压 ~300MB app 成 app.7z,
+    # 2 核 runner 30min+ 压不完;差分包/压缩档/Defender 都无法绕过,属 payload 瘦身 or tmate
+    # 交互调试的 follow-up)。设 continue-on-error 让 windows 不阻断整轮——linux+mac 稳定出包发布,
+    # windows 仍尝试供后续调试,但失败/超时不拖垮 beta 演练。
+    continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:
         shell: bash
@@ -37,8 +42,6 @@ jobs:
       # 官方构建可注入下载站地址；fork 默认留空。
       VITE_DESKTOP_SITE_URL: ''
       # 不设置 QINGAGENT_UPDATE_POLICY_URL：policy 未托管时客户端 fail-open。
-      # 【诊断·待复原】DEBUG=electron-builder 吐详细阶段/makensis 命令行,定位 nsis 卡点。
-      DEBUG: electron-builder
     steps:
       - uses: actions/checkout@v4
 

@@ -14,6 +14,9 @@ jobs:
     name: release-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # windows nsis 打包已知慢/卡(7za -mx=9 压 ~300MB app,属 follow-up)。设 continue-on-error
+    # 让 windows 不阻断整轮:linux+mac 稳定发布,windows 待瘦身/tmate 调试后再补。
+    continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:
         shell: bash

@@ -66,12 +66,16 @@ jobs:
         run: pnpm build:desktop
 
       - name: publish release artifacts
-        run: >
-          pnpm --filter @qingagent/desktop exec electron-builder
-          ${{ matrix.electron_builder_args }}
-          --publish always
-          -c.publish.provider=github
-          -c.publish.owner=from-void
-          -c.publish.repo=qingagent
-          -c.publish.releaseType=release
+        run: |
+          # 正式 tag 应与 package.json version 一致(verify-tag 已校验),仍显式用 tag 作
+          # app 版本,保持与 beta 通道一致的产物版本口径。
+          VERSION="${GITHUB_REF_NAME#v}"
+          pnpm --filter @qingagent/desktop exec electron-builder \
+            ${{ matrix.electron_builder_args }} \
+            --publish always \
+            -c.publish.provider=github \
+            -c.publish.owner=from-void \
+            -c.publish.repo=qingagent \
+            -c.publish.releaseType=release \
+            -c.extraMetadata.version="$VERSION"
 

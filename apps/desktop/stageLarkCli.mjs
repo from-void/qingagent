@@ -80,12 +80,14 @@ export function stageLarkCli({
   );
   // --ignore-scripts:跳过 @larksuite/cli 的交互式 postinstall(install-wizard),否则会卡构建;
   // run.js 不依赖该 postinstall,可独立运行(已实测)。--omit=dev/--no-audit/--no-fund 减体积提速。
-  // Windows 上 npm 是 npm.cmd,execFileSync 无 shell 找不到裸 "npm"(ENOENT);Linux/mac 直接可执行。
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  // Windows 上 npm 是 npm.cmd;Node 20+(CVE-2024-27980)禁止 execFileSync 不带 shell 直接跑
+  // .cmd/.bat(否则 EINVAL),必须 shell:true 交给 cmd.exe 解析(它据 PATHEXT 找到 npm.cmd)。
+  // Linux/mac 的 npm 是可执行文件,shell:false 直接跑。CI/常见路径无空格,shell 拼接安全。
+  const isWin = process.platform === "win32";
   execFileSync(
-    npmCmd,
+    "npm",
     ["install", "--prefix", stageDir, "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
-    { stdio: "inherit" },
+    { stdio: "inherit", shell: isWin },
   );
   if (!existsSync(join(stageDir, LARK_CLI_RUN_JS_RELATIVE))) {
     throw new Error("lark-cli 暂存失败:缺 run.js");

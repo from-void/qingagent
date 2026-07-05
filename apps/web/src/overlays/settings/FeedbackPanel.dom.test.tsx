@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedbackPanel } from "./FeedbackPanel";
+import { ToastProvider } from "../../system/ToastProvider";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,7 +31,7 @@ describe("FeedbackPanel", () => {
   it("提需求卡片链接指向反馈站", async () => {
     await render(<FeedbackPanel />);
     const link = host?.querySelector<HTMLAnchorElement>('[data-wf="FeedbackRequestLink"]');
-    expect(link?.getAttribute("href")).toBe("https://feedback.qingagent.com");
+    expect(link?.getAttribute("href")).toBe("https://qingagent.com/feedback");
     expect(link?.getAttribute("target")).toBe("_blank");
   });
 
@@ -87,7 +88,8 @@ async function render(element: ReactElement): Promise<void> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root?.render(element);
+    // 包 ToastProvider:FeedbackPanel 的瞬时反馈已改走 qa-toast,需 provider 才真渲染进 DOM。
+    root?.render(<ToastProvider>{element}</ToastProvider>);
   });
   await flush();
 }
@@ -95,13 +97,14 @@ async function render(element: ReactElement): Promise<void> {
 function makeFetchMock(sessionCount: number) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/v1/data/sessions")) {
-      const sessions = Array.from({ length: sessionCount }, (_, i) => ({
+    if (url.includes("/api/v1/home")) {
+      // /home 返回 recent_sessions(字段 updated_at),FeedbackPanel 映射为 {id,title,updatedAt}。
+      const recent_sessions = Array.from({ length: sessionCount }, (_, i) => ({
         id: `s${i}`,
         title: `文档 ${i}`,
-        updatedAt: new Date(2026, 6, 5, 12, 0, i).toISOString(),
+        updated_at: new Date(2026, 6, 5, 12, 0, i).toISOString(),
       }));
-      return json({ sessions });
+      return json({ recent_sessions });
     }
     if (url.includes("/api/v1/diagnostics/export") && init?.method === "POST") {
       return new Response(new Blob(["zip"]), {

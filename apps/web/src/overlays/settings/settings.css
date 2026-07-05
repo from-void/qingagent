@@ -579,3 +579,77 @@
     transition:none;
   }
 }
+
+/* —— 关于 tab:主区居中(产品标识 + 唯一「检查更新」),辅助区弱化在底部 —— */
+.settings-about{display:flex;flex-direction:column;gap:22px;padding:2px 6px 8px 0}
+/* 主区:整列居中 */
+.settings-about .ab-hero{
+  display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;
+  padding:8px 0 4px;
+}
+.settings-about .ab-logo{
+  display:flex;align-items:center;justify-content:center;
+  width:56px;height:56px;
+  border:1px solid var(--qj-cinnabar);border-radius:0;
+  background:var(--qj-switch-active-bg);
+  font-family:var(--font-zh-serif);font-size:28px;font-weight:800;color:var(--qj-ink);
+}
+.settings-about .ab-name{
+  font-family:var(--font-zh-serif);font-size:20px;font-weight:800;letter-spacing:.04em;color:var(--qj-ink);
+}
+.settings-about .ab-name-en{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--qj-header-sub)}
+.settings-about .ab-intro{
+  margin:0;max-width:360px;font-size:12px;line-height:1.7;color:var(--qj-header-sub);
+}
+/* 版本号:mono,点击复制,不作独立按钮外观 */
+.settings-about .ab-version{
+  margin-top:2px;padding:2px 6px;border:0;background:transparent;cursor:pointer;
+  font-family:var(--font-mono);font-size:12.5px;letter-spacing:.02em;color:var(--qj-switch-text);
+  transition:color .2s;
+}
+.settings-about .ab-version:hover{color:var(--qj-cinnabar)}
+.settings-about .ab-version-dot{color:var(--qj-header-sub)}
+/* 更新区:整页唯一按钮 + 其下一行状态文案 */
+.settings-about .ab-update{
+  display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:8px;
+}
+.settings-about .ab-check-btn{
+  height:34px;padding:0 26px;border-radius:0;cursor:pointer;
+  border:1px solid var(--qj-cinnabar);background:var(--qj-cinnabar);color:var(--qj-paper);
+  font-family:var(--font-zh-serif);font-size:12.5px;font-weight:700;letter-spacing:.12em;outline:none;
+  transition:transform .2s, background .2s, border-color .2s;
+}
+.settings-about .ab-check-btn:hover:not(:disabled),
+.settings-about .ab-check-btn:focus-visible{transform:translateY(-1px);background:var(--qj-seal-red-deep)}
+.settings-about .ab-check-btn:disabled{opacity:.5;cursor:default}
+.settings-about .ab-update-status{min-height:16px;font-size:11.5px;line-height:1.5;color:var(--qj-header-sub)}
+/* 辅助区:小方块几列,层级明显低于主区(小字、细边框、无强调色) */
+.settings-about .ab-aux{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;
+  padding-top:16px;border-top:1px solid var(--qj-switch-border);
+}
+.settings-about .ab-block{
+  display:flex;flex-direction:column;gap:7px;
+  padding:11px 12px;border-radius:0;border:1px solid var(--qj-switch-border);
+  background:rgba(8,11,14,.28);text-align:left;
+}
+.settings-about .ab-block--kernel{cursor:pointer;font:inherit;color:inherit;transition:border-color .2s}
+.settings-about .ab-block--kernel:hover{border-color:var(--qj-cinnabar)}
+.settings-about .ab-block-title{font-size:10.5px;font-weight:700;letter-spacing:.12em;color:var(--qj-header-sub)}
+.settings-about .ab-block-body{display:flex;flex-direction:column;gap:5px;font-size:11.5px;line-height:1.5}
+/* 链接/许可:链接样式(细,弱调色) */
+.settings-about .ab-linklike{
+  align-self:flex-start;padding:0;border:0;background:transparent;cursor:pointer;
+  font:inherit;font-size:11.5px;color:var(--qj-switch-text);text-decoration:none;text-align:left;
+  transition:color .2s;
+}
+.settings-about .ab-linklike:hover:not(:disabled){color:var(--qj-cinnabar);text-decoration:underline}
+.settings-about .ab-linklike:disabled{opacity:.5;cursor:default}
+.settings-about .ab-kernel{font-family:var(--font-mono);font-size:10.5px;color:var(--qj-header-sub)}
+/* 第三方声明:应用内滚动阅读 */
+.settings-about .ab-notices-body{
+  margin:8px 0 0;max-height:180px;overflow:auto;
+  padding:10px;border:1px solid var(--qj-switch-border);background:rgba(3,6,8,.4);
+  font-family:var(--font-mono);font-size:10.5px;line-height:1.6;color:var(--qj-switch-text);
+  white-space:pre-wrap;word-break:break-word;
+}

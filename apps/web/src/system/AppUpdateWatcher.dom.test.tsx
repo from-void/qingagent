@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppUpdateWatcher } from "./AppUpdateWatcher";
 import { ToastProvider } from "./ToastProvider";
+import { resetDesktopUpdateStoreForTest } from "./desktopUpdateStore";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,6 +27,8 @@ describe("AppUpdateWatcher", () => {
     host?.remove();
     host = null;
     callbacks = [];
+    // 共用 store 是模块级单例:清快照/监听,避免跨用例泄漏推送态。
+    resetDesktopUpdateStoreForTest();
     Object.defineProperty(window, "electron", {
       configurable: true,
       value: undefined,

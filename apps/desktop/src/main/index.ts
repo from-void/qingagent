@@ -5,7 +5,12 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
-import { RELEASES_URL, quitAndInstallUpdate, startDesktopUpdater } from "./update/updater.js";
+import {
+  RELEASES_URL,
+  manualCheckForUpdates,
+  quitAndInstallUpdate,
+  startDesktopUpdater,
+} from "./update/updater.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -306,6 +311,28 @@ ipcMain.handle("qingagent:update-quit-install", async () => quitAndInstallUpdate
 ipcMain.handle("qingagent:update-open-download", async () => {
   await shell.openExternal(RELEASES_URL);
   return true;
+});
+
+// 应用版本号:沿用 client-config-get 的同步 IPC 先例,让 preload 启动期同步注入 window.electron.appVersion。
+ipcMain.on("qingagent:app-version", (event) => {
+  event.returnValue = app.getVersion();
+});
+
+// 手动检查更新(关于页「检查更新」):请求-响应直接返回本次结果(含 error 态),不走推送假象。
+ipcMain.handle("qingagent:update-check", async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) return { kind: "none" as const };
+  return manualCheckForUpdates({ window: owner });
+});
+
+// 第三方开源声明:读打进安装包根部的 THIRD_PARTY_NOTICES.md;读不到返回 null,前端降级跳 GitHub。
+ipcMain.handle("qingagent:third-party-notices-get", async () => {
+  try {
+    const noticesPath = path.join(process.resourcesPath, "THIRD_PARTY_NOTICES.md");
+    return readFileSync(noticesPath, "utf8");
+  } catch {
+    return null;
+  }
 });
 
 // 客户端凭证/模型配置持久化:落 userData/client-config.json,与端口/origin 解耦。

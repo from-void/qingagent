@@ -3,6 +3,10 @@
 // 打包信息:vite.config.ts 编译期定值注入(build-win.sh 提供 QINGAGENT_BUILD_INFO,dev 为 "dev")。
 declare const __BUILD_INFO__: string;
 
+// 应用版本号:vite.config.ts 由 package.json version 编译期注入(web 端降级显示用)。
+// vitest 无此 define,引用处需用 typeof 兜底避免 ReferenceError。
+declare const __APP_VERSION__: string;
+
 // 构建期注入的前端环境变量(envPrefix: ["VITE_"])。
 interface ImportMetaEnv {
   // 桌面版站点地址;官方构建注入,fork 默认空(移动端提示不点名域名)。
@@ -18,9 +22,16 @@ interface ElectronFolderSourceSelection {
 }
 
 interface ElectronUpdateStatus {
-  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none";
+  // error:仅手动检查的请求-响应结果会带,区分「已是最新」与「检查失败」。
+  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
   version?: string;
   notesUrl?: string;
+}
+
+interface ElectronKernelVersions {
+  electron: string;
+  chrome: string;
+  node: string;
 }
 
 interface Window {
@@ -40,6 +51,11 @@ interface Window {
     onUpdateStatus?: (cb: (payload: ElectronUpdateStatus) => void) => () => void;
     quitAndInstall?: () => Promise<unknown>;
     openDownloadPage?: () => Promise<unknown>;
+    // 关于页:应用版本号(preload 启动期同步注入)、内核版本、手动检查、第三方声明全文。
+    appVersion?: string;
+    versions?: ElectronKernelVersions;
+    checkForUpdate?: () => Promise<ElectronUpdateStatus>;
+    getThirdPartyNotices?: () => Promise<string | null>;
   };
   showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<FileSystemDirectoryHandle>;
 }

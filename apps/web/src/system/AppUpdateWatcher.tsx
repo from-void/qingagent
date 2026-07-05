@@ -1,61 +1,60 @@
 import { Button, Modal } from "@qingagent/ui-kit";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useToast } from "./ToastProvider";
-
-type UpdateStatus = {
-  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none";
-  version?: string;
-  notesUrl?: string;
-};
+import {
+  getDesktopUpdateSnapshot,
+  subscribeDesktopUpdate,
+  type DesktopUpdateStatus,
+} from "./desktopUpdateStore";
 
 const UPDATE_TOAST_KEY = "desktop-update";
 
 export function AppUpdateWatcher() {
   const toast = useToast();
   const [forceOpen, setForceOpen] = useState(false);
+  // 共用一份订阅:软更 toast / 强更 Modal 与关于页读同一个 store 的推送快照,不各自挂 IPC 监听。
+  const status = useSyncExternalStore(subscribeDesktopUpdate, getDesktopUpdateSnapshot);
 
   useEffect(() => {
-    const electron = window.electron;
-    if (!electron?.isDesktop || !electron.onUpdateStatus) return;
+    if (!status) return;
+    const payload: DesktopUpdateStatus = status;
 
-    return electron.onUpdateStatus((payload: UpdateStatus) => {
-      if (payload.kind === "force") {
-        setForceOpen(true);
-        return;
-      }
+    if (payload.kind === "force") {
+      setForceOpen(true);
+      return;
+    }
 
-      if (payload.kind === "soft-ready") {
-        toast.show({
-          message: "新版本已就绪",
-          tone: "info",
-          sticky: true,
-          dedupeKey: UPDATE_TOAST_KEY,
-          action: {
-            label: "重启更新",
-            onClick: () => {
-              void window.electron?.quitAndInstall?.();
-            },
+    if (payload.kind === "soft-ready") {
+      toast.show({
+        message: "新版本已就绪",
+        tone: "info",
+        sticky: true,
+        dedupeKey: UPDATE_TOAST_KEY,
+        action: {
+          label: "重启更新",
+          onClick: () => {
+            void window.electron?.quitAndInstall?.();
           },
-        });
-        return;
-      }
+        },
+      });
+      return;
+    }
 
-      if (payload.kind === "soft-available" || payload.kind === "mac-manual") {
-        toast.show({
-          message: "新版本可用",
-          tone: "info",
-          sticky: true,
-          dedupeKey: UPDATE_TOAST_KEY,
-          action: {
-            label: "前往下载页",
-            onClick: () => {
-              void window.electron?.openDownloadPage?.();
-            },
+    if (payload.kind === "soft-available" || payload.kind === "mac-manual") {
+      toast.show({
+        message: "新版本可用",
+        tone: "info",
+        sticky: true,
+        dedupeKey: UPDATE_TOAST_KEY,
+        action: {
+          label: "前往下载页",
+          onClick: () => {
+            void window.electron?.openDownloadPage?.();
           },
-        });
-      }
-    });
-  }, [toast]);
+        },
+      });
+    }
+  }, [status, toast]);
 
   return (
     <Modal open={forceOpen} title="需要更新">

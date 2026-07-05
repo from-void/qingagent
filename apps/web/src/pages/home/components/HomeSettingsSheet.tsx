@@ -3,6 +3,7 @@ import { ModelSettingsPanel } from "../../../overlays/settings/ModelSettingsPane
 import { FeedbackPanel } from "../../../overlays/settings/FeedbackPanel";
 import { ShortcutsPanel } from "../../../overlays/settings/ShortcutsPanel";
 import { SkillsPanel } from "../../../overlays/settings/SkillsPanel";
+import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import "../../../overlays/settings/settings.css";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
@@ -10,7 +11,7 @@ import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
 // tab:外观(明暗/字体/进场/动效) · 模型(看板) · 技能 · 搜索 · 快捷键。数据 tab 暂隐藏。
 
-export type SettingsSheetTab = "appearance" | "model" | "skills" | "diagnostics" | "shortcuts";
+export type SettingsSheetTab = "appearance" | "model" | "skills" | "diagnostics" | "shortcuts" | "about";
 
 interface SheetOption<T extends string> {
   id: T;
@@ -43,6 +44,7 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   { id: "skills", label: "技能" },
   { id: "diagnostics", label: "反馈" },
   { id: "shortcuts", label: "快捷键" },
+  { id: "about", label: "关于" },
 ];
 
 export function HomeSettingsSheet<Mode extends string, AnimId extends string, Font extends string>({
@@ -276,6 +278,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
             {tab === "skills" && <SkillsPanel />}
             {tab === "diagnostics" && <FeedbackPanel />}
             {tab === "shortcuts" && <ShortcutsPanel />}
+            {tab === "about" && <AboutPanel />}
             </div>
           </div>
         </div>

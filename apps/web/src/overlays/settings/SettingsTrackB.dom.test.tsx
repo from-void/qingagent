@@ -3,6 +3,8 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../system/ToastProvider";
+import { resetDesktopUpdateStoreForTest } from "../../system/desktopUpdateStore";
+import { AboutPanel } from "./AboutPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
@@ -190,6 +192,172 @@ describe("Settings Track B", () => {
     expect(document.activeElement).toBe(trigger);
   });
 });
+
+let aboutPushCallbacks: Array<(payload: AboutUpdateStatus) => void> = [];
+
+type AboutUpdateStatus = {
+  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none" | "error";
+  version?: string;
+  notesUrl?: string;
+};
+
+describe("About Panel", () => {
+  beforeEach(() => {
+    aboutPushCallbacks = [];
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+    document.body.innerHTML = "";
+    aboutPushCallbacks = [];
+    resetDesktopUpdateStoreForTest();
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
+    vi.restoreAllMocks();
+  });
+
+  it("桌面端点「检查更新」→ 已是最新时状态显示已是最新版本", async () => {
+    installAboutElectron({ checkForUpdate: vi.fn(async () => ({ kind: "none" as const })) });
+    await renderAbout();
+
+    expect(getAboutVersion().textContent).toContain("v1.2.0");
+    await click(getButtonByWf("AboutUpdateButton"));
+    expect(getAboutStatus().textContent).toContain("已是最新版本");
+  });
+
+  it("发现新版本(win 自动下载)状态显示正在下载", async () => {
+    installAboutElectron({
+      checkForUpdate: vi.fn(async () => ({ kind: "soft-available" as const, version: "1.3.0" })),
+    });
+    await renderAbout();
+
+    await click(getButtonByWf("AboutUpdateButton"));
+    const status = getAboutStatus().textContent ?? "";
+    expect(status).toContain("发现新版本 v1.3.0");
+    expect(status).toContain("正在下载");
+  });
+
+  it("断网检查失败显示失败文案(不假报已是最新)", async () => {
+    installAboutElectron({ checkForUpdate: vi.fn(async () => ({ kind: "error" as const })) });
+    await renderAbout();
+
+    await click(getButtonByWf("AboutUpdateButton"));
+    const status = getAboutStatus().textContent ?? "";
+    expect(status).toContain("检查更新失败");
+    expect(status).not.toContain("已是最新");
+  });
+
+  it("mac 手动更新按钮变前往下载页并调用 openDownloadPage", async () => {
+    const openDownloadPage = vi.fn(async () => undefined);
+    installAboutElectron({
+      platform: "darwin",
+      openDownloadPage,
+      checkForUpdate: vi.fn(async () => ({ kind: "mac-manual" as const, version: "1.3.0" })),
+    });
+    await renderAbout();
+
+    await click(getButtonByWf("AboutUpdateButton"));
+    const btn = getButtonByWf("AboutUpdateButton");
+    expect(btn.textContent).toContain("前往下载页");
+    await click(btn);
+    expect(openDownloadPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("下载就绪推送到达后按钮变重启更新并调用 quitAndInstall", async () => {
+    const quitAndInstall = vi.fn(async () => undefined);
+    installAboutElectron({ quitAndInstall });
+    await renderAbout();
+
+    await emitAboutPush({ kind: "soft-ready", version: "1.3.0" });
+    const btn = getButtonByWf("AboutUpdateButton");
+    expect(btn.textContent).toContain("重启更新");
+    await click(btn);
+    expect(quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("开发构建按钮禁用且提示不参与更新", async () => {
+    installAboutElectron({ appVersion: "1.2.0-dev.3" });
+    await renderAbout();
+
+    const btn = getButtonByWf("AboutUpdateButton");
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(getAboutStatus().textContent).toContain("开发构建不参与更新");
+  });
+
+  it("web 端降级:显示网页版、无更新按钮、无内核信息", async () => {
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
+    await renderAbout();
+
+    expect(getAboutVersion().textContent).toContain("网页版");
+    expect(host?.querySelector('[data-wf="AboutUpdateButton"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="AboutKernel"]')).toBeNull();
+  });
+
+  it("点击版本号复制版本信息并走全局 toast", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    installAboutElectron({});
+    await renderAbout();
+
+    await click(getAboutVersion());
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("版本信息已复制");
+  });
+});
+
+function installAboutElectron(overrides: Record<string, unknown>): void {
+  const electron = {
+    platform: "win32",
+    isDesktop: true,
+    appVersion: "1.2.0",
+    versions: { electron: "33.4.11", chrome: "130.0.0", node: "20.18.0" },
+    onUpdateStatus: (cb: (payload: AboutUpdateStatus) => void) => {
+      aboutPushCallbacks.push(cb);
+      return () => {
+        aboutPushCallbacks = aboutPushCallbacks.filter((item) => item !== cb);
+      };
+    },
+    quitAndInstall: vi.fn(async () => undefined),
+    openDownloadPage: vi.fn(async () => undefined),
+    checkForUpdate: vi.fn(async () => ({ kind: "none" as const })),
+    getThirdPartyNotices: vi.fn(async () => null),
+    ...overrides,
+  };
+  Object.defineProperty(window, "electron", { configurable: true, value: electron });
+}
+
+async function renderAbout(): Promise<void> {
+  await render(
+    <ToastProvider>
+      <AboutPanel />
+    </ToastProvider>,
+  );
+}
+
+async function emitAboutPush(payload: AboutUpdateStatus): Promise<void> {
+  const cb = aboutPushCallbacks[0];
+  if (!cb) throw new Error("about update push listener not registered");
+  await act(async () => {
+    cb(payload);
+  });
+  await flush();
+}
+
+function getAboutVersion(): HTMLButtonElement {
+  const el = host?.querySelector<HTMLButtonElement>('[data-wf="AboutVersion"]');
+  if (!el) throw new Error("about version not found");
+  return el;
+}
+
+function getAboutStatus(): HTMLElement {
+  const el = host?.querySelector<HTMLElement>('[data-wf="AboutUpdateStatus"]');
+  if (!el) throw new Error("about update status not found");
+  return el;
+}
 
 async function render(element: ReactNode): Promise<void> {
   host = document.createElement("div");

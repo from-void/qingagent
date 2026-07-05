@@ -1,14 +1,11 @@
 import { app, type BrowserWindow } from "electron";
 import type { AppUpdater } from "electron-updater";
 import { fetchUpdatePolicy, isBelowMinSupported, resolveUpdatePolicyUrl } from "./policy.js";
+import { runManualCheck, type CheckableUpdater } from "./manualCheck.js";
+import { RELEASES_URL, type UpdateStatusPayload } from "./updateTypes.js";
 
-export const RELEASES_URL = "https://github.com/from-void/qingagent/releases";
-
-export type UpdateStatusPayload = {
-  kind: "soft-ready" | "soft-available" | "force" | "mac-manual" | "none";
-  version?: string;
-  notesUrl?: string;
-};
+export { RELEASES_URL } from "./updateTypes.js";
+export type { UpdateStatusPayload } from "./updateTypes.js";
 
 type UpdateInfoLike = {
   version?: string;
@@ -23,6 +20,9 @@ export type StartDesktopUpdaterOptions = {
 
 let updaterStarted = false;
 let cachedAutoUpdater: AppUpdater | null = null;
+// 常驻推送监听只挂一次:startDesktopUpdater 与 manualCheckForUpdates 共享同一个 autoUpdater,
+// 重复 configure 会叠加 .on 监听导致对渲染层重复推送。首配置后置真,后续只刷 feed/开关不再挂监听。
+let autoUpdaterConfigured = false;
 
 async function getAutoUpdater(): Promise<AppUpdater> {
   if (!cachedAutoUpdater) {
@@ -49,6 +49,10 @@ function configureAutoUpdater(updater: AppUpdater, window: BrowserWindow, appVer
     owner: "from-void",
     repo: "qingagent",
   });
+
+  // 常驻推送监听幂等:只在首次 configure 时挂。update-downloaded 等被动状态由这批监听推送。
+  if (autoUpdaterConfigured) return;
+  autoUpdaterConfigured = true;
 
   updater.on("update-available", (info: UpdateInfoLike) => {
     const version = payloadVersion(info);
@@ -107,6 +111,29 @@ export async function startDesktopUpdater(options: StartDesktopUpdaterOptions): 
     console.warn("[update] check failed:", err);
     sendUpdateStatus(options.window, { kind: "none" });
   }
+}
+
+// 手动检查更新(旁路补充,不动启动检查主链):请求-响应直接返回本次结果(含 error 态)。
+// 复用 cachedAutoUpdater 与 configureAutoUpdater(幂等),尊重 dev 短路;并发去重在 runManualCheck 内。
+export async function manualCheckForUpdates(options: {
+  window: BrowserWindow;
+  appVersion?: string;
+}): Promise<UpdateStatusPayload> {
+  const appVersion = options.appVersion ?? app.getVersion();
+  // dev 短路:未打包/开发版直接 none,连 electron-updater 都不 import。
+  if (!app.isPackaged || appVersion.includes("-dev.")) {
+    return { kind: "none" };
+  }
+
+  const updater = await getAutoUpdater();
+  configureAutoUpdater(updater, options.window, appVersion);
+  return runManualCheck({
+    updater: updater as unknown as CheckableUpdater,
+    platform: process.platform,
+    appVersion,
+    isPackaged: app.isPackaged,
+    onStatus: (payload) => sendUpdateStatus(options.window, payload),
+  });
 }
 
 export async function quitAndInstallUpdate(): Promise<boolean> {

@@ -1,5 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { createRequire } from "node:module";
+
+// 应用版本号:从 package.json 取,编译期以 __APP_VERSION__ 注入,供 web 端「网页版 vX.Y.Z」降级显示。
+const appVersion = (createRequire(import.meta.url)("./package.json") as { version?: string }).version ?? "0.0.0";
 
 const devPort = Number(process.env.QINGAGENT_WEB_PORT ?? process.env.PORT ?? 6173);
 const apiTarget = process.env.WE_API_TARGET ?? "http://127.0.0.1:8080";
@@ -14,6 +18,7 @@ export default defineConfig({
   envPrefix: ["VITE_"],
   define: {
     __BUILD_INFO__: JSON.stringify(buildInfo),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   server: {
     host: true,

@@ -2,7 +2,10 @@
 
 > 本地优先的 AI 中文写作工作台:对话式起稿、逐条审改、宋体暖纸的排版审美,文档始终在你自己手里。
 
-【徽章位:MIT License · CI · Latest Release】
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![CI](https://github.com/from-void/qingagent/actions/workflows/ci.yml/badge.svg)](https://github.com/from-void/qingagent/actions/workflows/ci.yml)
+<!-- Release 徽章待首个 release 后回填:[![Release](https://img.shields.io/github/v/release/from-void/qingagent)](https://github.com/from-void/qingagent/releases) -->
+
 
 【主截图:工作台全景——左侧对话流式生成,右侧文档同步成稿】
 
@@ -50,7 +53,7 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 
 打开 `http://localhost:5173`,新建会话即可开写。
 
-桌面端:到 Releases 下载安装包(macOS 为免签名 zip,首次打开按系统提示放行;Docker 部署规划中)。
+桌面端:到 [Releases](https://github.com/from-void/qingagent/releases) 下载安装包(macOS 为免签名 zip,首次打开按系统提示放行;Docker 部署规划中)。
 
 ## 配置参考
 

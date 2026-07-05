@@ -119,14 +119,21 @@ export async function fetchUpdatePolicy(
   const fetcher = fetchImpl ?? (globalThis.fetch as unknown as UpdatePolicyFetch | undefined);
   if (!fetcher || !url) return { minSupported: null };
 
+  // 用手动 AbortController + 可清理 timer 代替 AbortSignal.timeout:后者内部 timer 是 unref 的,
+  // 会在 node:test(Node 22.x)里让"event loop 已 resolve 但 promise 仍 pending"误报整文件失败。
+  // finally clearTimeout 恒清 → 无悬挂 timer;功能等价(超时即 abort)。
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetcher(url, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return parseUpdatePolicy(await res.json());
   } catch {
     return { minSupported: null };
+  } finally {
+    clearTimeout(timer);
   }
 }

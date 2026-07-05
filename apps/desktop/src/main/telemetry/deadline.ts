@@ -11,10 +11,13 @@ export async function awaitWithinMs(promise: Promise<unknown>, ms: number): Prom
     () => undefined,
   );
   if (ms <= 0) return;
+  // 不 unref:唯一调用方(telemetry.shutdown)始终 await 本函数,且 finally 恒 clearTimeout,
+  // 故 ref 的 timer 最多存活到 budget(ms)即被清/触发,绝不拖过退出预算——unref 在此冗余。
+  // 反而 unref 的 timer 会让 node:test(Node 22.x)误判"event loop 已 resolve 但 promise 仍
+  // pending"而整文件报错(该工具刻意让在途 promise 自生自灭,派生天然悬挂)。保持 ref 即两全。
   let timer: NodeJS.Timeout | undefined;
   const gate = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, ms);
-    timer.unref?.();
   });
   try {
     await Promise.race([settled, gate]);

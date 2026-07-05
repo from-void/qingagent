@@ -66,5 +66,7 @@ jobs:
           ${{ matrix.electron_builder_args }}
           --publish always
           -c.publish.provider=github
+          -c.publish.owner=from-void
+          -c.publish.repo=qingagent
           -c.publish.releaseType=release
 

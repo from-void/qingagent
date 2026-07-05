@@ -80,8 +80,10 @@ export function stageLarkCli({
   );
   // --ignore-scripts:跳过 @larksuite/cli 的交互式 postinstall(install-wizard),否则会卡构建;
   // run.js 不依赖该 postinstall,可独立运行(已实测)。--omit=dev/--no-audit/--no-fund 减体积提速。
+  // Windows 上 npm 是 npm.cmd,execFileSync 无 shell 找不到裸 "npm"(ENOENT);Linux/mac 直接可执行。
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   execFileSync(
-    "npm",
+    npmCmd,
     ["install", "--prefix", stageDir, "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
     { stdio: "inherit" },
   );

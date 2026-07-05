@@ -24,7 +24,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -57,8 +57,17 @@ jobs:
       - name: install Playwright Chromium (PDF export render)
         run: pnpm --filter @qingagent/core exec playwright install --with-deps chromium
 
-      - name: pnpm test
-        run: pnpm -r --if-present test
+      # core 与 server 必须串行:并行时多个 test file 同时拉起浏览器池(导出 PDF/PNG 烟测)
+      # 会互相争抢致浏览器崩溃("browser has been closed"),且有 pyodide worker/mock 污染的假红。
+      # 见项目约定:这两个包一律 --fileParallelism=false。其余包正常并行。
+      - name: pnpm test (core, serial)
+        run: pnpm --filter @qingagent/core test -- --fileParallelism=false
+
+      - name: pnpm test (server, serial)
+        run: pnpm --filter @qingagent/server test -- --fileParallelism=false
+
+      - name: pnpm test (rest)
+        run: pnpm -r --if-present --filter '!@qingagent/core' --filter '!@qingagent/server' test
 
       - name: deterministic scorers
         run: pnpm scorers

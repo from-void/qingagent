@@ -7,7 +7,10 @@
 <!-- Release 徽章待首个 release 后回填:[![Release](https://img.shields.io/github/v/release/from-void/qingagent)](https://github.com/from-void/qingagent/releases) -->
 
 
-【主截图:工作台全景——左侧对话流式生成,右侧文档同步成稿】
+![青简 · 新起一卷:一句起笔,选技能或传参考文件即可开写](./.github/assets/hero.png)
+
+<!-- 候选主图之一:新建页(新起一卷)。工作台流式成稿/审核 diff/导出效果等过程图,
+     可自行起服务(pnpm dev / dev:server)后补拍替换,占位见下。 -->
 
 qingagent is a local-first AI writing workbench for Chinese long-form content: chat-driven drafting, reviewable AI edits with per-change accept/reject, and high-fidelity export. Self-host it with a single DeepSeek API key, or grab the desktop app.
 
@@ -30,7 +33,11 @@ qingagent is a local-first AI writing workbench for Chinese long-form content: c
 - **高保真导出**:PDF(Chromium 渲染)/ Word / Markdown / HTML
 - **双形态**:桌面客户端(Windows/macOS)与自托管 Web
 
-【截图位 ×3:审核 diff 采纳 · 素材区解析 · 导出效果对比】
+**开场问卷收敛需求**——动笔前先问几句,把主题/侧重/文体确认清楚再生成:
+
+![开场问卷:动笔之前,先聊几句](./.github/assets/onboarding-questionnaire.png)
+
+<!-- 待补过程图:审核 diff 逐条采纳 · 素材区解析 · 导出效果对比(起服务后补拍)。 -->
 
 ## 快速开始(自托管 Web)
 

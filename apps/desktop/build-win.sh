@@ -40,7 +40,12 @@ pnpm --filter @qingagent/web build
 echo "==> [2/4] 构建 electron main/preload + 打包 win-unpacked"
 cd "$DESKTOP_DIR"
 pnpm run build
-pnpm exec electron-builder --win --dir          # 只出 win-unpacked,nsis 需 wine 故跳过
+# 本地跨平台构建强制 asar:false(-c.asar=false 覆盖 electron-builder.yml 的 asar:true):
+# Linux 上 pnpm 不装 win 原生 libsql,若开 asar,win32-x64-msvc 既不在 app.asar 也不在
+# asarUnpack 清单,下面往 app.asar.unpacked 手动注入 Node 也不认(会崩 Cannot find module
+# @libsql/win32-x64-msvc)。asar:false 让 node_modules 是普通目录,注入 resources/app/node_modules
+# 才生效。CI(windows-latest)原生装 win libsql,asar:true 正确,与此无关。
+pnpm exec electron-builder --win --dir -c.asar=false   # 只出 win-unpacked,nsis 需 wine 故跳过
 
 UNPACKED="$DESKTOP_DIR/release/win-unpacked"
 LIBSQL_DIR="$UNPACKED/resources/app/node_modules/@libsql"

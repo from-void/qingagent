@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "../../system/ToastProvider";
 
 // 「提需求」跳转的反馈站(独立网页,后续单独承载);「报bug」排查不了时的联系邮箱。
 const FEEDBACK_URL = "https://feedback.qingagent.com";
@@ -19,7 +20,7 @@ export function FeedbackPanel() {
   const [includeContent, setIncludeContent] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -59,13 +60,12 @@ export function FeedbackPanel() {
 
   const exportReport = useCallback(async () => {
     setExporting(true);
-    setMessage(null);
     const privacyLevel = includeContent ? "L2" : "L1";
     const sessionIds = Array.from(checked);
     try {
       if (window.electron?.isDesktop && typeof window.electron.exportDiagnostics === "function") {
         const result = await window.electron.exportDiagnostics({ privacyLevel, sessionIds });
-        setMessage(result.saved ? "报错记录已导出" : "已取消导出");
+        toast.show({ message: result.saved ? "报错记录已导出" : "已取消导出", tone: "success" });
       } else {
         const res = await fetch("/api/v1/diagnostics/export", {
           method: "POST",
@@ -75,14 +75,14 @@ export function FeedbackPanel() {
         if (!res.ok) throw new Error(`export failed: ${res.status}`);
         const blob = await res.blob();
         downloadBlob(blob, filenameFromContentDisposition(res.headers.get("content-disposition")));
-        setMessage("报错记录已下载");
+        toast.show({ message: "报错记录已下载", tone: "success" });
       }
     } catch {
-      setMessage("导出失败，请稍后重试");
+      toast.show({ message: "导出失败，请稍后重试", tone: "error" });
     } finally {
       setExporting(false);
     }
-  }, [includeContent, checked]);
+  }, [includeContent, checked, toast]);
 
   return (
     <div className="settings-feedback" data-wf="FeedbackPanel">
@@ -151,7 +151,6 @@ export function FeedbackPanel() {
             {exporting ? "导出中" : "导出报错记录"}
           </button>
         </div>
-        {message ? <div className="sm-message">{message}</div> : null}
         <p className="fb-contact">
           排查不了或不方便导出？发邮件联系我们：
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>

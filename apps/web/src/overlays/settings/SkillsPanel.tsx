@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useToast } from "../../system/ToastProvider";
 import { useSkills, type SkillDetailInfo, type SkillInfo } from "./useSkills";
 import { SearchPanel } from "./SearchPanel";
 import { VisionPanel } from "./VisionPanel";
@@ -92,7 +93,11 @@ export function SkillsPanel() {
     getSkillDetail,
   } = useSkills();
   const [busy, setBusy] = useState<string | null>(null);
+  // message 是瞬时动作反馈(已删除/已导入/操作失败等)——统一用 qa-toast 弹出,不再嵌进界面。
+  // 各处 setMessage 保持不动,由下面 effect 把它转成 toast 再清空。持久错误态(error/detailError)
+  // 仍内联显示,不走 toast。
   const [message, setMessage] = useState<string | null>(null);
+  const toast = useToast();
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -156,6 +161,14 @@ export function SkillsPanel() {
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
+
+  // 瞬时反馈统一走 qa-toast:message 一有值就弹 toast 再清空(错误类走 error 底色)。
+  useEffect(() => {
+    if (!message) return;
+    const isError = /失败|不可删除|错误|无法/.test(message);
+    toast.show({ message, tone: isError ? "error" : "success" });
+    setMessage(null);
+  }, [message, toast]);
 
   const toggle = async (name: string, enabled: boolean) => {
     setBusy(name);
@@ -281,7 +294,6 @@ export function SkillsPanel() {
         ) : (
           <p className="sm-message">{detailError ?? "技能不存在"}</p>
         )}
-        {message && <p className="sm-message">{message}</p>}
       </div>
     );
   }
@@ -387,7 +399,6 @@ export function SkillsPanel() {
         )}
 
       {!loading && !error && skills.length === 0 && <p className="sm-empty">暂无技能</p>}
-      {message && <p className="sm-message">{message}</p>}
     </div>
   );
 }

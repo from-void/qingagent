@@ -420,10 +420,17 @@
 .settings-feedback .fb-actions{display:flex;justify-content:flex-start;gap:8px;flex-wrap:wrap}
 .settings-feedback .sm-btn.primary{
   display:inline-flex;align-items:center;justify-content:center;
-  color:var(--qj-paper);
+  /* 金底(--qj-cinnabar #c8a96a 在设置里是暖金)配深墨字:原用 --qj-paper(浅奶油)
+     压浅金对比过低、字发白看不清。暖金 CTA 应配深墨,对比才够。 */
+  color:#241c0c;
   background:var(--qj-cinnabar);
   border-color:var(--qj-cinnabar);
   text-decoration:none;
+}
+.settings-feedback .sm-btn.primary:hover:not(:disabled),
+.settings-feedback .sm-btn.primary:focus-visible{
+  /* hover 用更亮的金(--qj-cinnabar-lite),字色仍深墨保持高对比 */
+  color:#241c0c;background:var(--qj-cinnabar-lite);border-color:var(--qj-cinnabar-lite);
 }
 /* 文档勾选列表:列最近文档,逐篇选择要包含哪几篇 */
 .settings-feedback .fb-doclist{

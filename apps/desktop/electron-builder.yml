@@ -1,8 +1,8 @@
 appId: com.qingagent.desktop
 productName: 青简
-# 可执行文件名固定 ASCII:productName「青简」会让产物 exe 命名为「青简.exe」,
-# Windows 上 makensis 编译含 CJK 文件名的安装器会卡死(实测 nsis 步 30min 超时)。
-# executableName 只改 exe/安装器文件名,应用显示名仍是 productName「青简」。
+# 可执行文件名固定 ASCII(避免产物 exe 命名为「青简.exe」的编码/URL 隐患);
+# 应用显示名仍是 productName「青简」。注:windows nsis 慢的真因是 solid-lzma 压缩,
+# 见 resources/installer.nsh 的压缩器覆盖,非 CJK 文件名。
 executableName: qingagent
 # 产物文件名用干净 ASCII:默认会取包名 @qingagent/desktop(含 @ 与 /)或中文 productName,
 # 上传 GitHub Release 时 "Request path contains unescaped characters"。固定为 qingagent-版本-os-arch。

@@ -154,13 +154,17 @@
 }
 .qj-sheet-close{
   position:absolute;top:6px;right:6px;z-index:3;
-  width:26px;height:26px;border-radius:0;cursor:pointer;
-  border:1px solid var(--qj-switch-border);
-  background:rgba(236,227,208,.05);color:var(--qj-header-sub);
-  font-size:12px;line-height:1;outline:none;
-  transition:border-color .2s, color .2s;
+  width:28px;height:28px;border-radius:0;cursor:pointer;
+  /* 原来底/边框/字色都过淡=幽灵按钮,暗底上几乎看不见。提亮:字用较亮的 switch-text、
+     底与边框加重,× 加大加粗;hover 仍变金。 */
+  border:1px solid rgba(236,227,208,.34);
+  background:rgba(236,227,208,.1);color:var(--qj-switch-text);
+  font-size:16px;font-weight:600;line-height:1;outline:none;
+  transition:border-color .2s, color .2s, background .2s;
 }
-.qj-sheet-close:hover,.qj-sheet-close:focus-visible{border-color:var(--qj-cinnabar);color:var(--qj-cinnabar)}
+.qj-sheet-close:hover,.qj-sheet-close:focus-visible{
+  border-color:var(--qj-cinnabar);color:var(--qj-cinnabar);background:rgba(200,169,106,.16);
+}
 .qj-sheet-body{
   flex:1 1 auto;min-height:0;overflow-y:auto;
   /* 底部留 ~3 行 buffer:内容不贴底被渐隐截断,且都能往上滚出空间 */

@@ -2693,7 +2693,10 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  margin-top: -28px; /* 抵消自身 sticky 偏移导致的额外底部空隙 */
+  /* margin-top:auto:.ws-right 是 flex column,吸走内容上方空白把本层稳定顶到底部。
+     内容矮(如生成期 QingLoading 占位)时不再落到顶部;内容高时无空白可吸(=0)、
+     紧随内容,由 sticky bottom 钉在视口底。 */
+  margin-top: auto;
 }
 body[data-tool="agentBusy"] #view-workspace .ws-edit-lock,
 body[data-tool="imageProgress"] #view-workspace .ws-edit-lock,

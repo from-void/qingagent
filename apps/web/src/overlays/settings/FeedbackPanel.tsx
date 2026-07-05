@@ -25,11 +25,17 @@ export function FeedbackPanel() {
     const controller = new AbortController();
     void (async () => {
       try {
-        const res = await fetch("/api/v1/data/sessions", { signal: controller.signal });
-        if (!res.ok) throw new Error(`sessions failed: ${res.status}`);
-        const body = (await res.json()) as { sessions: SessionRow[] };
+        // 用未门控的 /home(首页同源),而非 /data/sessions——后者是 dataAdmin 路由,
+        // 未设 QINGAGENT_ENABLE_DEBUG 时返回 404,导致报 bug 页永远「暂无文档」。
+        const res = await fetch("/api/v1/home", { signal: controller.signal });
+        if (!res.ok) throw new Error(`home failed: ${res.status}`);
+        const body = (await res.json()) as {
+          recent_sessions?: { id: string; title: string; updated_at?: string | null }[];
+        };
         if (controller.signal.aborted) return;
-        const recent = (body.sessions ?? []).slice(0, MAX_DOCS);
+        const recent: SessionRow[] = (body.recent_sessions ?? [])
+          .slice(0, MAX_DOCS)
+          .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updated_at ?? null }));
         setDocs(recent);
         // 默认预勾选最近 DEFAULT_CHECKED 篇(用户可自行增减)。
         setChecked(new Set(recent.slice(0, DEFAULT_CHECKED).map((s) => s.id)));

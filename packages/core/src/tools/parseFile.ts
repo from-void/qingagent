@@ -1042,6 +1042,27 @@ function stripPdfPaginationNoise(text: string): string {
     .trim();
 }
 
+async function parsePdfBufferOnce(buffer: Buffer): Promise<ParseFileBufferResult> {
+  // 用 interop 安全加载器(#11 桌面打包修复:CJS/ESM 互操作下 PDFParse 不是构造器),
+  // 不要退回裸 `import("pdf-parse")`——否则桌面包里 PDFParse2 is not a constructor 复发
+  const PDFParse = await loadPdfParseConstructor();
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const textResult = await parser.getText();
+    const text = stripPdfPaginationNoise(textResult.text);
+    const pages = textResult.total;
+    const infoResult = await parser.getInfo();
+    const title = infoResult.info?.Title ?? null;
+    return successResult(text, pages, title, text.trim().length > 0);
+  } finally {
+    await parser.destroy();
+  }
+}
+
+function shouldRetryEmptyPdfResult(result: ParseFileBufferResult): boolean {
+  return result.ok && result.text.trim().length === 0 && (result.metadata.pages ?? 0) > 0;
+}
+
 function successResult(text: string, pages: number | null, title: string | null, indexable = true): ParseFileBufferResult {
   const wordCount = text.replace(/\s+/g, "").length;
   return {
@@ -1074,28 +1095,29 @@ export async function parseFileBuffer({
   mimeType,
 }: ParseFileBufferInput): Promise<ParseFileBufferOutput> {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-
   let text = "";
   let pages: number | null = null;
   let title: string | null = null;
 
   if (ext === "pdf" || mimeType === "application/pdf") {
-    try {
-      const PDFParse = await loadPdfParseConstructor();
-      const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    // #16 冷启动有界重试 + #11 interop 加载器(在 parsePdfBufferOnce 内)合并
+    let emptyFallback: ParseFileBufferResult | null = null;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const textResult = await parser.getText();
-        text = stripPdfPaginationNoise(textResult.text);
-        pages = textResult.total;
-        const infoResult = await parser.getInfo();
-        title = infoResult.info?.Title ?? null;
-      } finally {
-        await parser.destroy();
+        const result = await parsePdfBufferOnce(buffer);
+        if (attempt === 1 && shouldRetryEmptyPdfResult(result)) {
+          emptyFallback = result;
+          continue;
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (attempt === 1) continue;
       }
-      return successResult(text, pages, title, text.trim().length > 0);
-    } catch (error) {
-      return parseFailure("PDF", error);
     }
+    if (emptyFallback) return emptyFallback;
+    return parseFailure("PDF", lastError);
   } else if (
     ext === "docx" ||
     mimeType ===

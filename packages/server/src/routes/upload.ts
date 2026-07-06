@@ -4,10 +4,9 @@ import { stream } from "hono/streaming";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { z } from "zod";
 import { findMaterial } from "../bridge/bridgeHandler";
-import { UPLOAD_DIR, isValidUploadId, isWithinUploadDir } from "../lib/uploadStorage";
+import { UPLOAD_DIR, findOrStoreUploadedFile, isValidUploadId, isWithinUploadDir } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
 
@@ -84,22 +83,35 @@ uploadRoutes.post("/upload", async (c) => {
     return c.json({ error: "filename must not contain path separators or '..'" }, 400);
   }
 
-  const fileId = crypto.randomUUID();
-  const dir = path.join(UPLOAD_DIR, fileId);
-  await fs.mkdir(dir, { recursive: true });
-
   const buffer = Buffer.from(content, "base64");
-  const filePath = path.resolve(dir, filename);
-  if (!isWithinUploadDir(filePath)) {
-    return c.json({ error: "invalid filename" }, 400);
+  const normalizedMimeType = mimeType || "application/octet-stream";
+  let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
+  try {
+    stored = await findOrStoreUploadedFile({
+      filename,
+      mimeType: normalizedMimeType,
+      buffer,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid filename") {
+      return c.json({ error: "invalid filename" }, 400);
+    }
+    throw error;
   }
-  await fs.writeFile(filePath, buffer);
+  const { record, deduped } = stored;
+
+  console.info("[upload] file stored", {
+    fileId: record.fileId,
+    filename: record.filename,
+    size: record.size,
+    deduped,
+  });
 
   return c.json({
-    fileId,
-    filename,
-    mimeType: mimeType || "application/octet-stream",
-    size: buffer.length,
+    fileId: record.fileId,
+    filename: record.filename,
+    mimeType: record.mimeType || normalizedMimeType,
+    size: record.size,
   });
 });
 

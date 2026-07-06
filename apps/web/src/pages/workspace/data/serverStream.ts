@@ -195,8 +195,8 @@ export class ServerStream {
     return () => this.listeners.delete(listener);
   }
 
-  async sendCommand(command: Command): Promise<void> {
-    await this.sendCommandInternal(command);
+  async sendCommand(command: Command): Promise<unknown> {
+    return this.sendCommandInternal(command);
   }
 
   /**
@@ -220,7 +220,7 @@ export class ServerStream {
     command: Command,
     /** When set, resolve with the sessionId from the first matching frame kind. */
     interceptKind?: "sessionMeta",
-  ): Promise<string | void> {
+  ): Promise<string | unknown> {
     const controller = new AbortController();
     this.activeControllers.add(controller);
 
@@ -305,6 +305,7 @@ export class ServerStream {
       }
 
       if (docWritePromise) await docWritePromise;
+      return result;
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         this.rejectWaiter(docWritePromise);

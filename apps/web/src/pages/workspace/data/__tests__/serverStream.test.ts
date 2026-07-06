@@ -251,6 +251,32 @@ describe("ServerStream", () => {
     expect(parsed.data.fileIds).toEqual(["file-abc-123"]);
   });
 
+  it("sendCommand 返回前台命令的 frame 数组，供 material retry 识别 busy", async () => {
+    const busyFrame: BridgeFrame = {
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: "active-stream",
+          reason: "生成中，请稍后再试",
+          retriable: false,
+        },
+      },
+    };
+    globalThis.fetch = commandResponse([busyFrame]);
+
+    const stream = new ServerStream();
+    const result = await stream.sendCommand({
+      kind: "reparseMaterial",
+      data: {
+        sessionId: "s-1",
+        fileId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+
+    expect(result).toEqual([busyFrame]);
+  });
+
   it("updateDoc waits for the matching docWriteResult frame", async () => {
     let capturedBody: string | undefined;
     globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
@@ -281,7 +307,7 @@ describe("ServerStream", () => {
       data: { ok: true, clientMutationId: "mutation-1", docVersion: 2 },
     } satisfies BridgeFrame, "3");
 
-    await expect(promise).resolves.toBeUndefined();
+    await expect(promise).resolves.toEqual([{ kind: "docWriteResult" }]);
     const parsed = JSON.parse(capturedBody!);
     expect(parsed.kind).toBe("updateDoc");
     expect(frames[0]?.kind).toBe("docWriteResult");

@@ -1039,6 +1039,12 @@ async function* handleCommandInner(
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
 
       if (session.streamId || session.runId) {
+        console.info("[materials] reparseMaterial busy", {
+          sessionId: session.sessionId,
+          fileId: command.data.fileId,
+          streamId: session.streamId,
+          runId: session.runId,
+        });
         yield materialCommandBusyFrame(session);
         return;
       }
@@ -1054,6 +1060,10 @@ async function* handleCommandInner(
       }
 
       if (!resolved) {
+        console.warn("[materials] reparseMaterial missing upload", {
+          sessionId: session.sessionId,
+          fileId,
+        });
         const { frame } = upsertMaterialByFileId(
           session,
           { fileId, filename, mimeType },
@@ -1072,6 +1082,11 @@ async function* handleCommandInner(
       try {
         buffer = await readFile(resolved.filePath);
       } catch {
+        console.warn("[materials] reparseMaterial read upload failed", {
+          sessionId: session.sessionId,
+          fileId,
+          filename,
+        });
         const { frame } = upsertMaterialByFileId(
           session,
           { fileId, filename, mimeType },
@@ -1086,6 +1101,14 @@ async function* handleCommandInner(
         return;
       }
 
+      const parseStartedAt = Date.now();
+      console.info("[materials] reparseMaterial parse start", {
+        sessionId: session.sessionId,
+        fileId,
+        filename,
+        mimeType,
+        size: buffer.length,
+      });
       const parseResult = await parseFileBuffer({ buffer, filename, mimeType });
       const { material, frame } = upsertMaterialByFileId(
         session,
@@ -1094,6 +1117,15 @@ async function* handleCommandInner(
       );
       cacheExtractedTextForMaterial(session, material, material.id);
 
+      console.info("[materials] reparseMaterial parse end", {
+        sessionId: session.sessionId,
+        fileId,
+        materialId: material.id,
+        ok: parseResult.ok,
+        failureKind: parseResult.ok ? null : parseResult.failureKind,
+        textLength: parseResult.ok ? parseResult.text.length : 0,
+        durationMs: Date.now() - parseStartedAt,
+      });
       yield frame;
       await schedulePersist(session, "command:reparseMaterial");
       return;

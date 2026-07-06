@@ -5,6 +5,8 @@ import {
   buildMaterialParseRows,
   buildReparseMaterialCommand,
   initialMaterialParseTrackerState,
+  materialRetryFailureReasonFromCommandResult,
+  MATERIAL_PARSE_BUSY_REASON,
   MATERIAL_PARSE_INCOMPLETE_REASON,
   reduceMaterialParseTrackerState,
   type MaterialParseTrackerState,
@@ -330,6 +332,79 @@ describe("buildMaterialParseRows", () => {
         source: "local",
       },
     ]);
+  });
+
+  it("不同 fileId 即使同名也会渲染两条，复核现场双条目来自上传生成了两个 fileId", () => {
+    const failed = resource({
+      id: "mat-old",
+      displayName: "逐宁简历.pdf",
+      fileId: "file-old",
+      parseState: "error",
+      parseError: "解析失败",
+    });
+    const ready = resource({
+      id: "mat-new",
+      displayName: "逐宁简历.pdf",
+      fileId: "file-new",
+      parseState: "ready",
+    });
+
+    const rows = buildMaterialParseRows(initialMaterialParseTrackerState, [failed, ready]);
+
+    expect(rows).toMatchObject([
+      {
+        id: "mat-old",
+        fileId: "file-old",
+        filename: "逐宁简历.pdf",
+        state: "error",
+        source: "resource",
+      },
+      {
+        id: "mat-new",
+        fileId: "file-new",
+        filename: "逐宁简历.pdf",
+        state: "ready",
+        source: "resource",
+      },
+    ]);
+  });
+});
+
+describe("materialRetryFailureReasonFromCommandResult", () => {
+  it("识别 reparseMaterial busy 帧并返回明确可 toast 文案", () => {
+    expect(
+      materialRetryFailureReasonFromCommandResult([
+        {
+          kind: "stream",
+          data: {
+            kind: "draftingFailed",
+            data: {
+              streamId: "active-stream",
+              reason: "生成中，请稍后再试",
+              retriable: false,
+            },
+          },
+        },
+      ]),
+    ).toBe(MATERIAL_PARSE_BUSY_REASON);
+  });
+
+  it("resourceUpserted 成功回包不被误判为 retry 失败", () => {
+    expect(
+      materialRetryFailureReasonFromCommandResult([
+        {
+          kind: "resourceUpserted",
+          data: {
+            resource: resource({
+              id: "mat-1",
+              displayName: "逐宁简历.pdf",
+              fileId: "file-1",
+              parseState: "ready",
+            }),
+          },
+        },
+      ]),
+    ).toBeNull();
   });
 });
 

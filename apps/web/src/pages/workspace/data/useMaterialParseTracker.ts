@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type {
+  BridgeFrame,
   Command,
   MaterialResourceMetadata,
   Resource,
@@ -44,6 +45,7 @@ export interface MaterialParseTrackerState {
 
 export const MATERIAL_PARSE_INCOMPLETE_REASON = "本轮未完成解析，可重试";
 export const MATERIAL_PARSE_RETRY_FAILED_REASON = "重试发送失败，请重试";
+export const MATERIAL_PARSE_BUSY_REASON = "生成进行中，请稍后重试";
 
 export const initialMaterialParseTrackerState: MaterialParseTrackerState = {
   entries: [],
@@ -85,6 +87,22 @@ export interface UseMaterialParseTrackerResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function materialRetryFailureReasonFromCommandResult(result: unknown): string | null {
+  if (!Array.isArray(result)) return null;
+  for (const item of result) {
+    const frame = item as Partial<BridgeFrame>;
+    if (!isRecord(frame) || frame.kind !== "stream") continue;
+    const data = frame.data;
+    if (!isRecord(data) || data.kind !== "draftingFailed") continue;
+    const payload = data.data;
+    if (!isRecord(payload)) return MATERIAL_PARSE_RETRY_FAILED_REASON;
+    const reason = typeof payload.reason === "string" ? payload.reason : "";
+    if (/生成中|busy/i.test(reason)) return MATERIAL_PARSE_BUSY_REASON;
+    return reason || MATERIAL_PARSE_RETRY_FAILED_REASON;
+  }
+  return null;
 }
 
 function materialMetadata(resource: Resource): Partial<MaterialResourceMetadata> {
@@ -368,15 +386,25 @@ export function useMaterialParseTracker({
       });
       const command = buildReparseMaterialCommand(sessionId, fileId);
       validateCommand(command);
+      let result: unknown;
       try {
-        await sendCommand(command);
+        result = await sendCommand(command);
       } catch (error) {
         dispatch({
           type: "markError",
           fileId,
           reason: MATERIAL_PARSE_RETRY_FAILED_REASON,
         });
-        throw error;
+        throw new Error(MATERIAL_PARSE_RETRY_FAILED_REASON);
+      }
+      const failureReason = materialRetryFailureReasonFromCommandResult(result);
+      if (failureReason) {
+        dispatch({
+          type: "markError",
+          fileId,
+          reason: failureReason,
+        });
+        throw new Error(failureReason);
       }
     },
     [sendCommand, sessionId],

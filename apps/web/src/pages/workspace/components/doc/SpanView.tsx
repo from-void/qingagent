@@ -117,7 +117,7 @@ export function SpanView({
       // hover 看被删的内容。与用户审核规范一致(删除=红光标+hover)。
       return (
         <PatchHoverFrame
-          className="wf-patch-del-marker"
+          className={`wf-patch-del-marker${activePatchId === span.patchId ? " is-current" : ""}`}
           patchId={span.patchId}
           patchState="delete"
           popup={(

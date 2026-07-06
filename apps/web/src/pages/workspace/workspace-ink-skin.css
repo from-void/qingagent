@@ -2647,6 +2647,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
      内容矮(如生成期 QingLoading 占位)时不再落到顶部;内容高时无空白可吸(=0)、
      紧随内容,由 sticky bottom 钉在视口底。 */
   margin-top: auto;
+  overflow: visible;
 }
 body[data-tool="agentBusy"] #view-workspace .ws-edit-lock,
 body[data-tool="imageProgress"] #view-workspace .ws-edit-lock,
@@ -2663,9 +2664,12 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .wf-doc {
 /* hover 提示:不 hover 不显示;贴底固定(由父级 .ws-edit-lock 的 sticky 钉在视口底),
    不随内容滚动跑。提示自身只管样式与显隐过渡。 */
 #view-workspace .ws-edit-lock-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
   pointer-events: none;
   width: fit-content;
-  max-width: 80%;
+  max-width: min(520px, calc(100vw - 48px));
   padding: 9px 18px;
   border-radius: 999px;
   background: rgba(38, 32, 22, 0.9);
@@ -2681,7 +2685,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .wf-doc {
   align-items: center;
   gap: 9px;
   opacity: 0;
-  transform: translateY(8px);
+  transform: translate(-50%, 8px);
   transition:
     opacity 0.22s ease,
     transform 0.22s ease;
@@ -2697,7 +2701,7 @@ body[data-patch-revealing="1"]
   .ws-right:hover
   .ws-edit-lock-hint {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, 0);
 }
 #view-workspace .ws-edit-lock-hint-dot {
   width: 7px;
@@ -2775,6 +2779,6 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::afte
   }
   #view-workspace .ws-edit-lock-hint {
     transition: opacity 0.22s ease;
-    transform: none;
+    transform: translate(-50%, 0);
   }
 }

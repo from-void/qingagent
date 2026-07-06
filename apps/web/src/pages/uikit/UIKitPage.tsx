@@ -1956,7 +1956,7 @@ export function UIKitPage() {
         <Section idx="25" zh="修订审批系" en="Patch review system" id="patchsys">
           <p className="uk-cap uk-lead">
             审批条走生产 <code>PatchNav</code>(单处 / 多处两态:多处才出「上/下一处」)。
-            勘误落地:<b>patch-popup 悬浮层只有「撤销」,没有采纳 / 拒绝</b>(采纳/拒绝在顶部 PatchNav 上做);
+            勘误落地:<b>patch-popup 悬浮层只有「撤销」,顶部 PatchNav 只保留导航 / 提交 / 放弃全部</b>;
             diff 只保留 <code>data-patch-state="replace|insert|delete"</code> 三态。
           </p>
           <div id="view-workspace" className="uk-sp-view" style={{ height: "auto", overflow: "visible" }}>
@@ -1967,13 +1967,13 @@ export function UIKitPage() {
                   <div className="uk-sp-row">
                     <div className="uk-sp-rowlbl">单处修改</div>
                     <div className="uk-sp-rowbody">
-                      <PatchNav remainingCount={1} totalCount={1} activePatchIndex={0} canActOnCurrent onJumpPrev={() => {}} onJumpNext={() => {}} onAcceptCurrent={() => {}} onRejectCurrent={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
+                      <PatchNav remainingCount={1} totalCount={1} activePatchIndex={0} onJumpPrev={() => {}} onJumpNext={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
                     </div>
                   </div>
                   <div className="uk-sp-row">
                     <div className="uk-sp-rowlbl">多处修改(3 处)</div>
                     <div className="uk-sp-rowbody">
-                      <PatchNav remainingCount={3} totalCount={3} activePatchIndex={1} canActOnCurrent onJumpPrev={() => {}} onJumpNext={() => {}} onAcceptCurrent={() => {}} onRejectCurrent={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
+                      <PatchNav remainingCount={3} totalCount={3} activePatchIndex={1} onJumpPrev={() => {}} onJumpNext={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
                     </div>
                   </div>
                 </section>

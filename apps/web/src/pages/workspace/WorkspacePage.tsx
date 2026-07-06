@@ -3324,14 +3324,6 @@ export function WorkspacePage() {
     activePatchId && visibleReviewPatchIds.includes(activePatchId)
       ? activePatchId
       : visibleReviewPatchIds[0] ?? null;
-  const currentPatch = currentPatchId
-    ? pendingReviewPatches.find((patch) => patch.id === currentPatchId) ?? null
-    : null;
-  const currentVerdict =
-    currentPatch?.status.kind === "accepted" || currentPatch?.status.kind === "rejected"
-      ? currentPatch.status.kind
-      : null;
-  const canActOnCurrent = currentPatchId !== null && currentPatch !== null;
   const activePatchIndex = currentPatchId ? visibleReviewPatchIds.indexOf(currentPatchId) : -1;
   const autoCommitReviewKey = useMemo(
     () =>
@@ -3356,15 +3348,6 @@ export function WorkspacePage() {
     remainingPatches,
     state.sessionId,
   ]);
-  const handleAcceptCurrent = useCallback(() => {
-    if (!currentPatchId) return;
-    handlePatchVerdict(currentPatchId, "accepted");
-  }, [currentPatchId, handlePatchVerdict]);
-  const handleRejectCurrent = useCallback(() => {
-    if (!currentPatchId) return;
-    handlePatchVerdict(currentPatchId, "rejected");
-  }, [currentPatchId, handlePatchVerdict]);
-
   return (
     <section
       ref={viewRef}
@@ -3542,10 +3525,6 @@ export function WorkspacePage() {
             onSubmitPlan={handleSubmitPlan}
             onJumpPrev={handleJumpPrev}
             onJumpNext={handleJumpNext}
-            canActOnCurrent={canActOnCurrent}
-            currentVerdict={currentVerdict}
-            onAcceptCurrent={handleAcceptCurrent}
-            onRejectCurrent={handleRejectCurrent}
             onRejectAll={handleRejectAll}
             onAcceptAll={handleAcceptAll}
             onCommit={handleCommit}

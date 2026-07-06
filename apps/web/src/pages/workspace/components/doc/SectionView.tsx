@@ -363,8 +363,9 @@ export const SectionView = React.memo(function SectionView({
         out.push(
           <PatchHoverFrame
             key={k++}
-            className="wf-patch-del-marker"
+            className={`wf-patch-del-marker${activePatchId === patchId ? " is-current" : ""}`}
             patchId={patchId}
+            patchState="delete"
             popup={
               <>
                 <span className="patch-popup-num">#{popupIndex ?? "?"} · 删除</span>

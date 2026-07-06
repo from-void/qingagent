@@ -28,6 +28,20 @@ describe("workspaceCssContract", () => {
     }
   });
 
+  it("keeps current patch locator as two-shot state-colored flash", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    expect(workspaceCss).toContain("@keyframes wf-patch-current-flash-green");
+    expect(workspaceCss).toContain("@keyframes wf-patch-current-flash-red");
+    expect(workspaceCss).toMatch(/is-current\[data-patch-state="insert"\][\s\S]*animation:wf-patch-current-flash-green \.72s ease-in-out 0s 2/);
+    expect(workspaceCss).toMatch(/wf-patch-replace-wrap\.is-current\[data-patch-state="insert"\][\s\S]*animation:wf-patch-current-flash-green \.72s ease-in-out 0s 2/);
+    expect(workspaceCss).toMatch(/is-current\[data-patch-state="replace"\][\s\S]*animation:wf-patch-current-flash-green \.72s ease-in-out 0s 2/);
+    expect(workspaceCss).toMatch(/is-current\[data-patch-state="delete"\][\s\S]*animation:wf-patch-current-flash-red \.72s ease-in-out 0s 2/);
+    expect(workspaceCss).toMatch(/@media \(prefers-reduced-motion:reduce\)\{[\s\S]*animation:none;[\s\S]*background-color:rgba\(74, 180, 100, 0\.10\);[\s\S]*background-color:rgba\(220, 80, 70, 0\.95\);[\s\S]*\n  \}/);
+    expect(workspaceCss).toMatch(/rgba\(74, 180, 100/);
+    expect(workspaceCss).toMatch(/rgba\(220, 80, 70/);
+  });
+
   it("keeps table color dropdowns wired to .open so the palette is visible (非display:none)", () => {
     // 回归 tbl-cell-color-palette-display-none(R34-c1):表格选择条的文字色/单元格底色
     // dt-group 必须随 openTableColor 加 .open class,否则 CSS .dt-menu{display:none} 永不解禁、

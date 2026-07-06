@@ -480,10 +480,6 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     onSubmitPlan: vi.fn(),
     onJumpPrev: vi.fn(),
     onJumpNext: vi.fn(),
-    canActOnCurrent: true,
-    currentVerdict: null,
-    onAcceptCurrent: vi.fn(),
-    onRejectCurrent: vi.fn(),
     onRejectAll: vi.fn(),
     onCommit: vi.fn(),
     onPatchVerdict: vi.fn(),
@@ -1434,9 +1430,7 @@ describe("WorkspacePage review controls", () => {
     ]);
     const pendingCommit = mockPendingCommit(stream);
 
-    // 采纳第 1 处,服务端回帧确认 accepted
-    await clickButton("采纳此处");
-    expect(patchVerdictCommands(stream).map((command) => command.kind)).toEqual(["acceptPatch"]);
+    // 服务端回帧确认第 1 处已 accepted,覆盖半采纳后再放弃剩余的状态机。
     await emitFrames(stream, [toolCallUpdatedFrame(reviewToolCall(
       "p-1",
       "batch-a",
@@ -1740,44 +1734,31 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).not.toContain("放弃本轮全部");
   });
 
-  it("A3 逐条采纳后当前项从第一处推进到第二处", async () => {
+  it("A3 工具栏不再逐条采纳,提交会保留全部剩余候选", async () => {
     const first = textReviewToolCall("p-1", "batch-a", 0);
     const second = textReviewToolCall("p-2", "batch-b", 1);
     const stream = await renderWorkspaceWithReview([first, second]);
 
     expect(host?.textContent).toContain("剩余 · 2 处");
-    expect(buttonByText("采纳此处").disabled).toBe(false);
+    expect(host?.textContent).not.toContain("采纳此处");
+    expect(host?.textContent).not.toContain("拒绝此处");
 
-    await clickButton("采纳此处");
-    expect(patchVerdictCommands(stream).map((command) => command.data.id)).toEqual(["p-1"]);
+    await clickButton("提交 ↵");
 
-    await emitFrames(stream, [toolCallUpdatedFrame(reviewToolCall(
-      "p-1",
-      "batch-a",
-      "accepted",
-      { blockId: "block-p-1", before: "旧句子1", after: "新句子1", index: 0, groupMode: "independent" },
-    ))]);
-
-    expect(host?.textContent).toContain("剩余 · 1 处");
-    expect(buttonByText("采纳此处").disabled).toBe(false);
-
-    await clickButton("采纳此处");
-    expect(patchVerdictCommands(stream).map((command) => command.data.id)).toEqual(["p-1", "p-2"]);
+    expect(patchVerdictCommands(stream)).toHaveLength(0);
+    expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
+      acceptReviewBatchIds: ["batch-a", "batch-b"],
+      rejectReviewBatchIds: [],
+    });
   });
 
-  it("A3 最后一处逐条表态后自动整体提交一次并解锁输入", async () => {
+  it("A3 单处候选点击提交后整体提交一次并解锁输入", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
     mockCommitWithFrames(stream, [docStateFrame("editing")]);
 
-    await clickButton("采纳此处");
-    await emitFrames(stream, [toolCallUpdatedFrame(reviewToolCall(
-      "p-1",
-      "batch-a",
-      "accepted",
-      { blockId: "block-p-1", before: "旧句子1", after: "新句子1", index: 0, groupMode: "independent" },
-    ))]);
+    await clickButton("提交 ↵");
     await flushMicrotasks(5);
 
     expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
@@ -1788,16 +1769,17 @@ describe("WorkspacePage review controls", () => {
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
-  it("A3 旧 atomic 数据逐条采纳一处后不再整组移出 pending 队列", async () => {
+  it("A3 旧 atomic 数据内联撤销一处后不再整组移出 pending 队列", async () => {
     const first = textReviewToolCall("p-1", "batch-atomic", 0, "reviewing", "atomic");
     const second = textReviewToolCall("p-2", "batch-atomic", 1, "reviewing", "atomic");
     const stream = await renderWorkspaceWithReview([first, second]);
 
-    await clickButton("采纳此处");
+    await clickButton("撤销");
+    expect(patchVerdictCommands(stream).map((command) => command.data.id)).toEqual(["p-1"]);
     await emitFrames(stream, [toolCallUpdatedFrame(reviewToolCall(
       "p-1",
       "batch-atomic",
-      "accepted",
+      "rejected",
       { blockId: "block-p-1", before: "旧句子1", after: "新句子1", index: 0, groupMode: "atomic" },
     ))]);
     await flushMicrotasks(5);

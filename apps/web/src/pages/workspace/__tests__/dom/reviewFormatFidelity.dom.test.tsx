@@ -152,6 +152,7 @@ describe("审核态格式保真(showPatches)", () => {
 
     const insert = host.querySelector('[data-patch-state="insert"].wf-patch-ins-wrap') as HTMLElement;
     expect(insert).not.toBeNull();
+    expect(insert.classList.contains("is-current")).toBe(true);
     expect(insert.querySelector(".wf-patch-add-badge")?.textContent).toBe("新增");
     expect(insert.querySelector(".wf-patch-ins")?.textContent).toBe("新增段落");
     expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
@@ -229,10 +230,12 @@ describe("审核态格式保真(showPatches)", () => {
         }],
       },
       new Map([["del-inline", { before: "删掉", after: "", kind: "delete", index: 1 }]]),
+      "del-inline",
     );
 
     const deleted = host.querySelector('[data-patch-state="delete"].wf-patch-del-marker') as HTMLElement;
     expect(deleted).not.toBeNull();
+    expect(deleted.classList.contains("is-current")).toBe(true);
     expect(deleted.querySelector(".patch-del-cursor")).not.toBeNull();
     expect(host.querySelector('[data-patch-state="insert"]')).toBeNull();
     expect(host.querySelector('[data-patch-state="replace"]')).toBeNull();

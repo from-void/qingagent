@@ -309,6 +309,78 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("用连飞书写摘要");
   });
 
+  it("用户回流的审核反馈卡不套用户气泡", async () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "m-review-outcome",
+        role: { kind: "user" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [
+          {
+            kind: "reviewOutcome",
+            data: {
+              acceptedCount: 1,
+              rejectedCount: 1,
+              hunks: [
+                { verdict: "accepted", blockSummary: "第一处", beforeText: "旧", afterText: "新" },
+                { verdict: "rejected", blockSummary: "第二处", beforeText: "保留", afterText: "改写" },
+              ],
+            },
+          },
+        ],
+        chips: null,
+      },
+    ];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    const card = host?.querySelector<HTMLElement>('[data-wf="ReviewOutcomeCard"]');
+    expect(card).not.toBeNull();
+    expect(card?.closest(".wf-msg.user")).toBeNull();
+    expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
+    expect(host?.textContent ?? "").toContain("采纳 1 处 · 拒绝 1 处");
+  });
+
+  it("用户回流的问卷答案卡复用 BigPlanPanel 样式类且不套用户气泡", async () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "m-ask-answer",
+        role: { kind: "user" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [
+          {
+            kind: "askUserAnswerCard",
+            data: {
+              toolCallId: "ask-1",
+              title: "已提交写作方向问卷",
+              items: [
+                {
+                  questionId: "q-tone",
+                  questionLabel: "希望怎么改？",
+                  answerText: "更克制",
+                  selectedOptionLabels: ["更克制"],
+                  freeText: null,
+                  numericText: null,
+                },
+              ],
+            },
+          },
+        ],
+        chips: null,
+      },
+    ];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    const card = host?.querySelector<HTMLElement>('[data-wf="AskUserAnswerCard"]');
+    expect(card?.classList.contains("bigplan-panel")).toBe(true);
+    expect(card?.querySelector(".bp-head h2")?.textContent).toBe("已提交写作方向问卷");
+    expect(card?.querySelector(".bp-q")).not.toBeNull();
+    expect(card?.querySelector(".bp-opt.on")?.textContent).toContain("更克制");
+    expect(card?.closest(".wf-msg.user")).toBeNull();
+    expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
+  });
+
   it("当前 reveal 进行中时历史 patchSummary 不误显示 loading", async () => {
     const messages: ChatMessage[] = [
       {

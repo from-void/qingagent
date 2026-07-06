@@ -509,6 +509,7 @@ async function createWindow() {
       preload: path.join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: false,
       // 窗口失焦时保持完整帧率,动效不被降到 1fps(注意键名是 backgroundThrottling)。
       backgroundThrottling: false,
     },

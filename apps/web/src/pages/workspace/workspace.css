@@ -344,53 +344,39 @@
   #view-workspace .wf-msg.agent > .wf-msg.tool + .wf-msg.tool{
     margin-top:6px !important;
   }
-  #view-workspace .askuser-answer-card{
+  #view-workspace .askuser-answer-card.bigplan-panel{
     width:min(430px,100%);
+    height:auto;
+    min-height:0;
     box-sizing:border-box;
-    color:#ece4d4;
+    overflow:visible;
+    background:transparent;
+    color:var(--ink-1);
   }
-  #view-workspace .askuser-answer-head{
-    display:flex;align-items:center;gap:7px;
-    margin-bottom:9px;font-size:12.5px;font-weight:600;
-    color:#d8c7a1;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-head{
+    padding:0 0 12px;
+    border-bottom:none;
   }
-  #view-workspace .askuser-answer-dot{
-    width:7px;height:7px;border-radius:999px;
-    background:#b8a98c;box-shadow:0 0 0 3px rgba(184,169,140,.15);
-    flex:0 0 auto;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-head h2{
+    font-size:15px;
   }
-  #view-workspace .askuser-answer-list{
-    display:flex;flex-direction:column;gap:8px;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-body{
+    padding:0;
+    overflow:visible;
+    gap:10px;
   }
-  #view-workspace .askuser-answer-item{
-    border:1px solid rgba(184,169,140,.24);
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-q{
+    padding:10px 12px;
     background:rgba(184,169,140,.08);
-    border-radius:0;
-    padding:9px 10px;
-    display:flex;flex-direction:column;gap:8px;
+    border-color:rgba(184,169,140,.24);
   }
-  #view-workspace .askuser-answer-q{
-    display:flex;align-items:baseline;gap:8px;
-    color:#f0e6d2;font-size:12.5px;font-weight:500;line-height:1.45;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-q-head{
+    margin-bottom:8px;
   }
-  #view-workspace .askuser-answer-num{
-    font-family:var(--font-mono);font-size:10.5px;color:rgba(236,228,212,.52);
-    letter-spacing:.08em;flex:0 0 auto;
-  }
-  #view-workspace .askuser-answer-opts{
-    display:flex;flex-wrap:wrap;gap:6px;
-  }
-  #view-workspace .askuser-answer-opt{
-    display:inline-flex;align-items:center;gap:5px;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-opt{
     max-width:100%;
-    padding:5px 9px;border-radius:0;
-    border:1px solid rgba(216,199,161,.34);
-    background:rgba(216,199,161,.14);
-    color:#f5ead5;font-size:12px;font-weight:500;line-height:1.45;
     overflow-wrap:anywhere;
-  }
-  #view-workspace .askuser-answer-opt::before{
-    content:"\2713";font-size:10px;color:#d8c7a1;flex:0 0 auto;
+    cursor:default;
   }
 
   /* ============ Chat markdown · headers, blockquotes, hr ============ */
@@ -777,6 +763,7 @@
     box-shadow:var(--shadow-3);
     display:flex;flex-direction:column;
     z-index:50;
+    contain:layout paint;
   }
   @keyframes au-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   #view-workspace .ws-input-wrap > .wf-input,
@@ -2418,9 +2405,74 @@
     -webkit-mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
     mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
   }
-  #view-workspace .wf-patch-ins-wrap.is-current .wf-patch-ins,
-  #view-workspace .wf-patch-replace-wrap.is-current .wf-patch-ins{
-    background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.4) 50%);
+  @keyframes wf-patch-current-flash-green{
+    0%,100%{
+      background-color:transparent;
+      box-shadow:none;
+      filter:none;
+    }
+    22%,68%{
+      background-color:rgba(74, 180, 100, 0.10);
+      box-shadow:0 0 0 3px rgba(74, 180, 100, 0.28), 0 0 18px rgba(74, 180, 100, 0.22);
+      filter:saturate(1.12);
+    }
+  }
+  @keyframes wf-patch-current-flash-red{
+    0%,100%{
+      background-color:rgba(220, 80, 70, 0.82);
+      box-shadow:none;
+      filter:none;
+    }
+    22%,68%{
+      background-color:rgba(220, 80, 70, 0.95);
+      box-shadow:0 0 0 3px rgba(220, 80, 70, 0.30), 0 0 18px rgba(220, 80, 70, 0.22);
+      filter:saturate(1.12);
+    }
+  }
+  #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+  #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"]{
+    animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins{
+    animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor{
+    animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+    animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
+  }
+  @media (prefers-reduced-motion:reduce){
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+      animation:none;
+    }
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins{
+      background-color:rgba(74, 180, 100, 0.10);
+      box-shadow:0 0 0 2px rgba(74, 180, 100, 0.24);
+    }
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+      background-color:rgba(220, 80, 70, 0.95);
+      box-shadow:0 0 0 2px rgba(220, 80, 70, 0.26);
+    }
   }
   #view-workspace .wf-row-diff-list .wf-patch-ins-wrap{
     display:inline;
@@ -2483,11 +2535,11 @@
       rgba(220,80,70,0.7) 0, rgba(220,80,70,0.7) 8px,
       transparent 8px, transparent 14px);
   }
-  /* hover 卡片:翻新 + 加宽。宽度自适应内容(width:max-content),长内容能撑开,
-     最宽到视口 92%;短内容也不会被拉满。配色用更亮的纸白 + 更轻的边与投影。 */
+  /* hover 卡片:翻新 + 加宽。定位由 patchHover.tsx 写入 fixed 坐标,
+     不参与正文流、不触发布局宽度变化。 */
   #view-workspace .patch-hover-popup{
     display:none;
-    position:absolute;
+    position:fixed;
     bottom:calc(100% + 10px);
     left:0;
     background:#fffdf8;
@@ -2495,7 +2547,7 @@
     border-radius:0;
     padding:11px 14px;
     box-shadow:0 10px 32px rgba(20,30,38,0.14), 0 2px 6px rgba(20,30,38,0.06);
-    width:max-content;
+    width:fit-content;
     min-width:min(240px, calc(100vw - 32px));
     max-width:min(540px, calc(100vw - 32px));
     z-index:20;
@@ -2503,6 +2555,7 @@
     white-space:normal;
     overflow-wrap:anywhere;
     line-height:1.6;
+    contain:layout paint;
   }
   #view-workspace .patch-hover-popup::before{
     content:"";
@@ -2527,12 +2580,7 @@
     left:auto;
     right:0;
   }
-  #view-workspace .patch-hover-popup.is-visible,
-  #view-workspace .wf-patch-ins-wrap:hover .patch-hover-popup,
-  #view-workspace .wf-patch-replace-wrap:hover .patch-hover-popup,
-  #view-workspace .wf-table-row-add-hover:hover .patch-hover-popup,
-  #view-workspace .wf-patch-del-marker:hover .patch-hover-popup,
-  #view-workspace .wf-blockmark:hover > .patch-hover-popup{
+  #view-workspace .patch-hover-popup.is-visible{
     display:flex;
     flex-direction:column;
     gap:7px;

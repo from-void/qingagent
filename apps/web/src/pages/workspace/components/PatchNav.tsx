@@ -4,12 +4,8 @@ export interface PatchNavProps {
   remainingCount: number;
   totalCount: number;
   activePatchIndex: number;
-  canActOnCurrent: boolean;
-  currentVerdict?: "accepted" | "rejected" | null;
   onJumpPrev: () => void;
   onJumpNext: () => void;
-  onAcceptCurrent: () => void;
-  onRejectCurrent: () => void;
   onRejectAll: () => void;
   onCommit: () => void;
 }
@@ -22,12 +18,8 @@ export function PatchNav({
   remainingCount,
   totalCount,
   activePatchIndex,
-  canActOnCurrent,
-  currentVerdict = null,
   onJumpPrev,
   onJumpNext,
-  onAcceptCurrent,
-  onRejectCurrent,
   onRejectAll,
   onCommit,
 }: PatchNavProps) {
@@ -65,24 +57,6 @@ export function PatchNav({
           </button>
         </>
       )}
-      <button
-        type="button"
-        className="pn-ghost"
-        onClick={onAcceptCurrent}
-        title="采纳当前改动"
-        disabled={!canActOnCurrent || currentVerdict === "accepted"}
-      >
-        采纳此处
-      </button>
-      <button
-        type="button"
-        className="pn-ghost"
-        onClick={onRejectCurrent}
-        title="拒绝当前改动"
-        disabled={!canActOnCurrent || currentVerdict === "rejected"}
-      >
-        拒绝此处
-      </button>
       <span style={{ flex: 1 }} />
       {/* 顺序:提交在前(左)、撤销全部在后(右) */}
       <button

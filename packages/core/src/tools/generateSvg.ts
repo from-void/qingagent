@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "../browser/svgSanitize.js";
+import { lintSvg, type SvgLintIssue } from "../browser/svgQualityLint.js";
 import {
   resolveBaseUrl,
   resolveDeepseekAuth,
@@ -137,6 +138,7 @@ export const generateSvgTool = createTool({
     width: z.number(),
     height: z.number(),
     alt: z.string(),
+    lintIssues: z.array(z.string()),
   }),
   execute: async (input, context) => {
     const requestContext = context?.requestContext as RequestContext | undefined;
@@ -166,6 +168,7 @@ export const generateSvgTool = createTool({
       width,
       height,
       alt,
+      lintIssues: [],
     });
     const emitProgress = async (
       stage: GenerateSvgStage,
@@ -212,27 +215,30 @@ export const generateSvgTool = createTool({
 - 背景与对比度（重要）：成品会嵌在【米黄色纸张 #efe7d6】上展示。请二选一处理底色：
   ① 画一个铺满画布的背景矩形(把 <rect x="0" y="0" width="${width}" height="${height}" fill="某个明确底色"/> 作为第一个元素),并保证其上所有文字/图形与该底色高对比;
   ② 或不画背景(透明),此时所有文字、线条、浅色元素必须用【深色】(如 #2b2b2b、#333)以便在米黄纸上清晰可读——严禁用白色/浅黄/浅米/接近 #efe7d6 的浅色做文字或细线(在米黄纸上会糊成一片看不清)。
+- 版式与几何（硬性）：
+  ① 按 12 列网格布局(viewBox 宽 ${width},列宽 ${Math.round(width / 12)}px),主元素贴列线;外留白 ≥32px,间距 ≥16px。
+  ② 文字宽度自检:CJK≈fontSize×1.0,英数≈×0.6;每个 <text> 先算 x+宽 ≤ 容器右缘;超长用 <tspan x=".." dy="1.4em"> 换行或降字号,禁溢出。
+  ③ 字号阶梯:标题28-36/正文16-20/标注12-14,最小12;同层级字号一致。
+  ④ 文本禁止互相重叠;色块文字必须与底色高对比。
+- 骨架:双栏对比卡
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#f7f1e6"/><text x="48" y="56" font-size="30" fill="#2b2b2b">标题</text>
+    <rect x="48" y="96" width="320" height="270" fill="#ffffff"/><text x="72" y="138" font-size="20" fill="#2b2b2b">左栏</text>
+    <text x="72" y="178" font-size="16" fill="#333333"><tspan x="72">要点</tspan><tspan x="72" dy="1.4em">换行</tspan></text>
+    <rect x="432" y="96" width="320" height="270" fill="#2f5d62"/><text x="456" y="138" font-size="20" fill="#ffffff">右栏</text>
+    <text x="456" y="178" font-size="16" fill="#ffffff"><tspan x="456">要点</tspan><tspan x="456" dy="1.4em">换行</tspan></text>
+  </svg>
+- 骨架:概念示意
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#efe7d6"/><circle cx="260" cy="220" r="74" fill="#d9b45f"/><circle cx="540" cy="220" r="74" fill="#315c72"/>
+    <line x1="334" y1="220" x2="466" y2="220" stroke="#2b2b2b" stroke-width="4"/>
+    <text x="260" y="224" text-anchor="middle" font-size="20" fill="#2b2b2b">概念A</text><text x="540" y="224" text-anchor="middle" font-size="20" fill="#ffffff">概念B</text>
+    <text x="400" y="196" text-anchor="middle" font-size="14" fill="#2b2b2b">关系</text>
+  </svg>
 - 颜色用十六进制；中文文字 font-family="sans-serif"。风格：${input.style ?? "简约线条扁平填色"}。`;
 
     const stopHeartbeat = startToolHeartbeat(context, { tool: "generateSvg" });
-    const linked = createLinkedAbortController(context?.abortSignal);
     let timedOut = false;
-    // 空闲看门狗:每收到一段输出就重置;只有连续 idle 超时(真卡死、没在吐字)才掐。
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    const armIdleTimer = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        timedOut = true;
-        linked.controller.abort(new DOMException("SVG idle timeout", "AbortError"));
-      }, SVG_IDLE_TIMEOUT_MS);
-    };
-    // 流式阶段硬上限:给上游 DeepSeek 流一个总时长上限(即便一直缓慢吐字也不无限等);
-    // 流结束即清理,不覆盖后续 sanitize/writeFile(本地快操作)。
-    const hardTimeoutId = setTimeout(() => {
-      timedOut = true;
-      linked.controller.abort(new DOMException("SVG hard timeout", "AbortError"));
-    }, SVG_HARD_TIMEOUT_MS);
-    armIdleTimer();
     const keepAliveId = setInterval(() => {
       void emitProgress(currentStage, { message: currentMessage }, true);
     }, SVG_PROGRESS_KEEPALIVE_MS);
@@ -245,55 +251,120 @@ export const generateSvgTool = createTool({
         GENERATE_SVG_MAX_OUTPUT_TOKENS,
       );
       const auth = resolveDeepseekAuth(requestContext);
-      const result = await callDeepseekDraft({
-        system: sys,
-        user: `插图内容：${input.description}`,
-        thinking: false,
-        temperature: temperature ?? 0.4,
-        stream: true,
-        baseUrl: resolveBaseUrl(requestContext),
-        model: resolveModelId(requestContext, "flash"),
-        apiKey: auth.apiKey || undefined,
-        protocol: resolveProtocol(requestContext),
-        abortSignal: linked.controller.signal,
-        maxRetries: 0,
-        maxTokens,
-        onContentStart: () => {
-          armIdleTimer();
-          void emitProgress("streaming", { message: "正在生成 SVG 结构", partialSvg: null }, true);
-        },
-        onContentDelta: (delta, raw) => {
-          armIdleTimer();
-          rawBytes += utf8ByteLength(delta);
-          if (rawBytes > GENERATE_SVG_RAW_MAX_BYTES) {
-            const error = new Error(`SVG 生成输出超过 ${GENERATE_SVG_RAW_MAX_BYTES} 字节上限`);
-            linked.controller.abort(error);
-            throw error;
-          }
-          // 流式草稿:只有当本次会真正推送(过了节流窗口)才花成本去构建草稿串,避免每 delta 都解析。
-          const willEmit = Date.now() - lastEmitAt >= SVG_PROGRESS_THROTTLE_MS;
-          const partialSvg = willEmit ? buildPartialSvgDraft(extractSvg(raw), { width, height }) : undefined;
-          void emitProgress("streaming", { message: "正在生成 SVG 结构", partialSvg });
-        },
-      });
 
-      // 上游流已结束:清理流式看门狗(后续消毒/落盘是本地快操作,不再受超时约束)
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(hardTimeoutId);
+      const runDraftAttempt = async (
+        userPrompt: string,
+        streamingMessage = "正在生成 SVG 结构",
+      ): Promise<{ raw: string }> => {
+        const linked = createLinkedAbortController(context?.abortSignal);
+        rawBytes = 0;
+        // 空闲看门狗:每收到一段输出就重置;只有连续 idle 超时(真卡死、没在吐字)才掐。
+        let idleTimer: ReturnType<typeof setTimeout> | null = null;
+        const armIdleTimer = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            timedOut = true;
+            linked.controller.abort(new DOMException("SVG idle timeout", "AbortError"));
+          }, SVG_IDLE_TIMEOUT_MS);
+        };
+        // 流式阶段硬上限:给上游 DeepSeek 流一个总时长上限(即便一直缓慢吐字也不无限等);
+        // 流结束即清理,不覆盖后续 sanitize/writeFile(本地快操作)。
+        const hardTimeoutId = setTimeout(() => {
+          timedOut = true;
+          linked.controller.abort(new DOMException("SVG hard timeout", "AbortError"));
+        }, SVG_HARD_TIMEOUT_MS);
+        armIdleTimer();
+        try {
+          const result = await callDeepseekDraft({
+            system: sys,
+            user: userPrompt,
+            thinking: false,
+            temperature: temperature ?? 0.4,
+            stream: true,
+            baseUrl: resolveBaseUrl(requestContext),
+            model: resolveModelId(requestContext, "flash"),
+            apiKey: auth.apiKey || undefined,
+            protocol: resolveProtocol(requestContext),
+            abortSignal: linked.controller.signal,
+            maxRetries: 0,
+            maxTokens,
+            onContentStart: () => {
+              armIdleTimer();
+              void emitProgress("streaming", { message: streamingMessage, partialSvg: null }, true);
+            },
+            onContentDelta: (delta, raw) => {
+              armIdleTimer();
+              rawBytes += utf8ByteLength(delta);
+              if (rawBytes > GENERATE_SVG_RAW_MAX_BYTES) {
+                const error = new Error(`SVG 生成输出超过 ${GENERATE_SVG_RAW_MAX_BYTES} 字节上限`);
+                linked.controller.abort(error);
+                throw error;
+              }
+              // 流式草稿:只有当本次会真正推送(过了节流窗口)才花成本去构建草稿串,避免每 delta 都解析。
+              const willEmit = Date.now() - lastEmitAt >= SVG_PROGRESS_THROTTLE_MS;
+              const partialSvg = willEmit ? buildPartialSvgDraft(extractSvg(raw), { width, height }) : undefined;
+              void emitProgress("streaming", { message: streamingMessage, partialSvg });
+            },
+          });
+          return { raw: result.raw };
+        } finally {
+          if (idleTimer) clearTimeout(idleTimer);
+          clearTimeout(hardTimeoutId);
+          linked.cleanup();
+        }
+      };
+
+      const buildCandidate = async (raw: string): Promise<{ svg: string; issues: SvgLintIssue[] } | null> => {
+        const svg = sanitizeSvg(extractSvg(raw), { width, height });
+        if (!hasVisibleSvgContent(svg)) return null;
+        return { svg, issues: lintSvg(svg, { width, height }) };
+      };
+
+      const shouldRetry = (issues: SvgLintIssue[]): boolean =>
+        issues.some((issue) => issue.rule === "text-overflow") || issues.length >= 3;
+
+      const issueSummaries = (issues: SvgLintIssue[]): string[] =>
+        issues.map((issue) => `${issue.rule}: ${issue.detail}`);
+
+      const firstResult = await runDraftAttempt(`插图内容：${input.description}`);
 
       await emitProgress("sanitizing", { message: "正在消毒 SVG" }, true);
-      const svg = sanitizeSvg(extractSvg(result.raw), { width, height });
-      if (!hasVisibleSvgContent(svg)) {
+      const firstCandidate = await buildCandidate(firstResult.raw);
+      if (!firstCandidate) {
         const error = "生成的 SVG 为空或消毒后没有可见内容，请换一个更具体的配图描述。";
         await emitProgress("failed", { message: error, error }, true);
         return fail(error);
+      }
+
+      let selected = firstCandidate;
+      if (shouldRetry(firstCandidate.issues)) {
+        await emitProgress("streaming", { message: "检测到版式问题,正在重新生成", partialSvg: null }, true);
+        const retryPrompt = [
+          `插图内容:${input.description}`,
+          "",
+          "上一版存在以下版式问题,逐条修复后重新输出完整 SVG(其余保持):",
+          ...issueSummaries(firstCandidate.issues).map((issue) => `- ${issue}`),
+          "",
+          "上一版 SVG:",
+          firstCandidate.svg.slice(0, 8192),
+        ].join("\n");
+        try {
+          const retryResult = await runDraftAttempt(retryPrompt, "正在重新生成 SVG 结构");
+          await emitProgress("sanitizing", { message: "正在消毒重试 SVG" }, true);
+          const retryCandidate = await buildCandidate(retryResult.raw);
+          if (retryCandidate && retryCandidate.issues.length < firstCandidate.issues.length) {
+            selected = retryCandidate;
+          }
+        } catch {
+          selected = firstCandidate;
+        }
       }
 
       const imageId = randomUUID();
       const filename = "illustration.svg";
       const dir = join(uploadsBaseDir(), imageId);
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, filename), svg, "utf8");
+      await writeFile(join(dir, filename), selected.svg, "utf8");
       const src = `/api/v1/files/${imageId}/${filename}`;
       await emitProgress("done", {
         message: "SVG 已生成",
@@ -306,10 +377,11 @@ export const generateSvgTool = createTool({
         error: null,
         imageId,
         src,
-        svg,
+        svg: selected.svg,
         width,
         height,
         alt,
+        lintIssues: issueSummaries(selected.issues),
       };
     } catch (error) {
       const reason = friendlyGenerateSvgError(error, {
@@ -319,10 +391,7 @@ export const generateSvgTool = createTool({
       await emitProgress("failed", { message: reason, error: reason }, true);
       return fail(reason);
     } finally {
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(hardTimeoutId);
       clearInterval(keepAliveId);
-      linked.cleanup();
       stopHeartbeat();
     }
   },

@@ -24,6 +24,7 @@ interface GenerateSvgResult {
   ok: boolean;
   error: string | null;
   svg: string;
+  lintIssues: string[];
 }
 
 async function executeGenerateSvg(
@@ -185,7 +186,45 @@ describe("generateSvg direct DeepSeek path", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("没有可见内容");
+    expect(result.lintIssues).toEqual([]);
     expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("首版存在版式问题时带反馈重试一次并采用更干净版本", async () => {
+    const overflowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+      <text x="760" y="80" font-size="20" fill="#2b2b2b">一二三四五六七八九十</text>
+    </svg>`;
+    const cleanSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+      <text x="80" y="80" font-size="20" fill="#2b2b2b">干净版本</text>
+    </svg>`;
+    callDeepseekDraftMock
+      .mockResolvedValueOnce({ raw: overflowSvg, contentStartMs: 0 })
+      .mockResolvedValueOnce({ raw: cleanSvg, contentStartMs: 0 });
+
+    const result = await executeGenerateSvg("生成对比插图");
+
+    expect(result.ok).toBe(true);
+    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(2);
+    expect(callDeepseekDraftMock.mock.calls[1]![0].user).toContain("上一版存在以下版式问题");
+    expect(result.svg).toContain("干净版本");
+    expect(result.svg).not.toContain("一二三四五六七八九十");
+    expect(result.lintIssues).toEqual([]);
+    expect(writeFileMock.mock.calls[0]![1]).toContain("干净版本");
+  });
+
+  it("首版无版式问题时不重试", async () => {
+    callDeepseekDraftMock.mockResolvedValueOnce({
+      raw: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
+        <text x="80" y="80" font-size="20" fill="#2b2b2b">干净版本</text>
+      </svg>`,
+      contentStartMs: 0,
+    });
+
+    const result = await executeGenerateSvg("生成简洁图标");
+
+    expect(result.ok).toBe(true);
+    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(1);
+    expect(result.lintIssues).toEqual([]);
   });
 
   it("流式输出超过原始字节上限时中止并失败", async () => {

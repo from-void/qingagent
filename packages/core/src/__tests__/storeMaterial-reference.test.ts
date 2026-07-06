@@ -650,6 +650,90 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     );
   });
 
+  it("research-fulltext→webSearch→storeMaterial:materialId 优先绑定全文,filename 写错也不串台", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("ref-websearch-material-id");
+    const OTHER_FULL =
+      "另一条搜索结果的完整正文，不能被错误绑定到目标素材上。".repeat(160);
+    const FULL =
+      "materialId 精确命中的搜索全文，包含完整事实、背景、关键数据、影响分析和来源信息。".repeat(180);
+
+    await drain(
+      processAgentStream(
+        streamOf(
+          toolCall("webSearch", "w-mid", { query: "material id 研究", count: 2 }),
+          toolOutput("w-mid", {
+            type: "research-fulltext",
+            items: [
+              {
+                url: "https://search.example.com/other",
+                title: "另一篇文章",
+                materialId: "mat-Y",
+                text: OTHER_FULL,
+              },
+              {
+                url: "https://search.example.com/mat-x",
+                title: "目标文章",
+                materialId: "mat-X",
+                text: FULL,
+              },
+            ],
+          }),
+          toolResult("webSearch", "w-mid", { query: "material id 研究", count: 2 }, {
+            ok: true,
+            query: "material id 研究",
+            items: [
+              {
+                url: "https://search.example.com/other",
+                title: "另一篇文章",
+                snippet: "另一篇摘要",
+                status: "done",
+                wordCount: OTHER_FULL.length,
+                materialId: "mat-Y",
+                truncated: true,
+                text: OTHER_FULL.slice(0, 2500),
+              },
+              {
+                url: "https://search.example.com/mat-x",
+                title: "目标文章",
+                snippet: "摘要",
+                status: "done",
+                wordCount: FULL.length,
+                materialId: "mat-X",
+                truncated: true,
+                text: FULL.slice(0, 2500),
+              },
+            ],
+          }),
+          toolCall("storeMaterial", "s-mid", {
+            materialId: "mat-X",
+            filename: "错误文件名",
+            mimeType: "text/html",
+            title: "错误标题",
+          }),
+          toolResult(
+            "storeMaterial",
+            "s-mid",
+            {
+              materialId: "mat-X",
+              filename: "错误文件名",
+              mimeType: "text/html",
+              title: "错误标题",
+            },
+            { materialId: "mat-X", stored: true },
+          ),
+        ),
+        { state, agentMessageId: "m", streamId: "s-websearch-mid", runId: "r" },
+      ),
+    );
+
+    expect(state.materials.get("mat-X")?.text).toBe(FULL);
+    expect(state.materials.get("mat-X")?.text).not.toBe(OTHER_FULL);
+    expect(state.materials.get("mat-X")?.metadata.sourceUrl).toBe(
+      "https://search.example.com/mat-x",
+    );
+  });
+
   it("去扩展名宽容匹配:storeMaterial 丢了扩展名仍能命中 parseFile 缓存", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("ref-stem");

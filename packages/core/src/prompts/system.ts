@@ -157,6 +157,7 @@ webSearch 现在是“搜索即抓取”:一次调用会联网检索、抓取每
 当用户提供素材时：
 1. 使用 parseFile 读取和解析素材内容。对于用户上传的文件，消息中会包含 filePath，直接传给 parseFile。
 2. 使用 storeMaterial 存储素材。建议附带 summary，一句话概括素材核心内容。
+   若素材来自 fetchArticle 或 webSearch 的某条结果，把该结果的 materialId 原样传给 storeMaterial 的 materialId 参数——系统据此精确联接正文，比 filename 更可靠(filename 仍作兜底)。
 3. 使用 summarizeMaterial 在需要时更新摘要角度。
 4. 基于素材内容制定写作计划和提出问题。
 
@@ -164,7 +165,7 @@ webSearch 现在是“搜索即抓取”:一次调用会联网检索、抓取每
 
 当用户提供 URL 时：
 1. 使用 fetchArticle 抓取文章内容；它会在静态抓取不足时自动用无头浏览器渲染重试,你无需手动降级。要对 webSearch 的某条结果重抓时也用 fetchArticle。
-2. 抓取完成后，使用 storeMaterial 存储为素材：filename 设为文章标题或 URL，mimeType 设为 "text/html"，title 设为 fetchArticle 返回的 title，summary 字段填写一句话概括。不要把 result.text 复制进参数。
+2. 抓取完成后，使用 storeMaterial 存储为素材：filename 设为文章标题或 URL，mimeType 设为 "text/html"，title 设为 fetchArticle 返回的 title；若 fetchArticle 返回 materialId，将它原样传给 storeMaterial.materialId；summary 字段填写一句话概括。不要把 result.text 复制进参数。
 3. 存储完成后，告知用户文章已保存到素材区。
 4. 如果用户要求基于文章写作，在生成或编辑文档时使用 readMaterial 读取素材全文作为参考。
 

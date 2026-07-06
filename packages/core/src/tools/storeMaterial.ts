@@ -16,8 +16,13 @@ export const storeMaterialTool = createTool({
     "将已解析/抓取的素材存入当前会话素材库。" +
     "⚠️ 正文全文由系统自动引用本地已提取的内容(parseFile 解析的、fetchArticle 抓取的)," +
     "你无需、也绝对不要传入正文——只需提供 filename(用于关联本地正文)、标题、可选的简短摘要。" +
+    "若素材来自 fetchArticle/webSearch 的结果,请把该结果的 materialId 原样传入本工具的 materialId 参数,可精确联接正文(比 filename 可靠)。" +
     "返回素材 ID，后续可通过 readMaterial 读取。",
   inputSchema: z.object({
+    materialId: z
+      .string()
+      .optional()
+      .describe("上游工具(fetchArticle/webSearch/parseFile)返回的素材 ID;传入则以它为主键、正文按它精确联接"),
     filename: z
       .string()
       .describe("原始文件名(用于关联本地已提取的正文,务必与 parseFile/抓取时一致)"),
@@ -36,7 +41,8 @@ export const storeMaterialTool = createTool({
   execute: async (input) => {
     // Pure computation — no session state dependency.
     // Bridge layer handles the actual persistence into state.materials.
-    const materialId = "mat-" + createHash("sha256").update(input.filename).digest("hex").slice(0, 12);
+    const materialId =
+      input.materialId ?? ("mat-" + createHash("sha256").update(input.filename).digest("hex").slice(0, 12));
     return { materialId, stored: true };
   },
 });

@@ -1009,7 +1009,7 @@ async function* handleCommandInner(
       if (!mat) return;
 
       session.materials.delete(command.data.materialId);
-      clearExtractedTextCacheForMaterial(session, mat);
+      clearExtractedTextCacheForMaterial(session, mat, command.data.materialId);
 
       const fileId = mat.fileId;
       if (fileId) {
@@ -1050,7 +1050,7 @@ async function* handleCommandInner(
       const mimeType = existing?.mimeType || resolved?.mimeType || "application/octet-stream";
 
       if (existing) {
-        clearExtractedTextCacheForMaterial(session, existing);
+        clearExtractedTextCacheForMaterial(session, existing, existing.id);
       }
 
       if (!resolved) {
@@ -1092,7 +1092,7 @@ async function* handleCommandInner(
         { fileId, filename, mimeType },
         parseResult,
       );
-      cacheExtractedTextForMaterial(session, material);
+      cacheExtractedTextForMaterial(session, material, material.id);
 
       yield frame;
       await schedulePersist(session, "command:reparseMaterial");
@@ -1443,22 +1443,36 @@ function materialResourceUpdatedFrame(mat: Material): BridgeFrame {
   };
 }
 
-function clearExtractedTextCacheForMaterial(session: SessionState, mat: Material): void {
+function clearExtractedTextCacheForMaterial(
+  session: SessionState,
+  mat: Material,
+  materialId?: string,
+): void {
   const keys = [mat.filename, mat.metadata.title, mat.metadata.sourceUrl].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
+  if (typeof materialId === "string" && materialId.length > 0) {
+    keys.push(materialId);
+  }
   for (const key of keys) {
     session._extractedTexts?.delete(key);
   }
 }
 
-function cacheExtractedTextForMaterial(session: SessionState, mat: Material): void {
+function cacheExtractedTextForMaterial(
+  session: SessionState,
+  mat: Material,
+  materialId?: string,
+): void {
   if (mat.metadata.parseState !== "ready" || mat.text.trim().length === 0) return;
   session._extractedTexts ??= new Map();
   const entry = { text: mat.text, sourceUrl: mat.metadata.sourceUrl ?? null, fileId: mat.fileId };
   session._extractedTexts.set(mat.filename, entry);
   if (typeof mat.metadata.title === "string" && mat.metadata.title.length > 0) {
     session._extractedTexts.set(mat.metadata.title, entry);
+  }
+  if (typeof materialId === "string" && materialId.length > 0) {
+    session._extractedTexts.set(materialId, entry);
   }
 }
 

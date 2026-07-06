@@ -540,6 +540,7 @@ export async function* processAgentStream(
           const title = typeof raw.title === "string" ? raw.title.trim() : "";
           if (url) researchFullTexts.set(url, entry);
           if (title) researchFullTexts.set(title, entry);
+          if (materialId) researchFullTexts.set(materialId, entry);
         }
         continue;
       }
@@ -1688,7 +1689,9 @@ export async function* processAgentStream(
           if (!isRecord(raw)) continue;
           const url = typeof raw.url === "string" && raw.url ? raw.url : null;
           const title = typeof raw.title === "string" ? raw.title.trim() : "";
+          const matId = typeof raw.materialId === "string" ? raw.materialId : null;
           const cachedFullText =
+            (matId ? researchFullTexts.get(matId) : undefined) ??
             (url ? researchFullTexts.get(url) : undefined) ??
             (title ? researchFullTexts.get(title) : undefined);
           const text =
@@ -1697,6 +1700,7 @@ export async function* processAgentStream(
           const entry = { text, sourceUrl: url, fileId: null };
           if (url) extractedTexts.set(url, entry);
           if (title) extractedTexts.set(title, entry);
+          if (matId) extractedTexts.set(matId, entry);
           extractionEventsThisTurn.push(entry);
         }
       } else if (DRAFT_MUTATION_TOOL_NAMES.has(toolName)) {
@@ -1962,6 +1966,8 @@ export async function* processAgentStream(
           const scrapedTitle =
             typeof toolResult.title === "string" ? (toolResult.title as string).trim() : "";
           if (scrapedTitle) extractedTexts.set(scrapedTitle, entry);
+          const matId = typeof toolResult.materialId === "string" ? toolResult.materialId : null;
+          if (matId) extractedTexts.set(matId, entry);
           extractionEventsThisTurn.push(entry);
         }
       }
@@ -1982,8 +1988,10 @@ export async function* processAgentStream(
         //   宁可空正文也不把别的素材正文绑过来(p08 串台根治,fail-closed)。
         const fnArg = typeof args.filename === "string" ? (args.filename as string) : undefined;
         const titleArg = typeof args.title === "string" ? (args.title as string) : undefined;
+        const matIdArg = typeof args.materialId === "string" ? (args.materialId as string) : undefined;
         const stripExt = (s: string) => s.replace(/\.[A-Za-z0-9]+$/, "").trim();
         let bound =
+          (matIdArg ? extractedTexts.get(matIdArg) : undefined) ??
           (fnArg ? extractedTexts.get(fnArg) : undefined) ??
           (titleArg ? extractedTexts.get(titleArg) : undefined);
         if (!bound && fnArg) {

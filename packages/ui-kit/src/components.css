@@ -199,29 +199,27 @@
   margin: 22px 0 8px;
   letter-spacing: 0.01em;
 }
+/* H3-H6 与 H1/H2 一样继承 .wf-doc 的 --ink-1 深色;曾用 --ink-2/--ink-3
+   逐级变浅做层级,但用户要求所有标题一律深色对齐 H1(靠字号/字重区分层级即可) */
 .wf-doc h3 {
   font-size: 17px;
   font-weight: 600;
   margin: 14px 0 4px;
-  color: var(--ink-2);
 }
 .wf-doc h4 {
   font-size: 15.5px;
   font-weight: 600;
   margin: 12px 0 4px;
-  color: var(--ink-2);
 }
 .wf-doc h5 {
   font-size: 14.8px;
   font-weight: 600;
   margin: 10px 0 4px;
-  color: var(--ink-3);
 }
 .wf-doc h6 {
   font-size: 14.5px;
   font-weight: 600;
   margin: 10px 0 4px;
-  color: var(--ink-3);
   letter-spacing: 0.02em;
 }
 .wf-doc p { margin: 8px 0; }

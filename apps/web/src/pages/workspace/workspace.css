@@ -2385,21 +2385,41 @@
     to{opacity:1;filter:var(--fx-native-char-enter-to)}
   }
 
-  /* review · patch insertion wrapper + hover popup */
-  #view-workspace .wf-patch-ins-wrap{
+  /* review · patch three-state wrappers + hover popup */
+  #view-workspace .wf-patch-ins-wrap,
+  #view-workspace .wf-patch-replace-wrap{
     position:relative;
     display:inline;
     cursor:pointer;
   }
+  #view-workspace .wf-patch-replace-wrap[data-patch-state="replace"]{
+    -webkit-box-decoration-break:clone;
+    box-decoration-break:clone;
+  }
   #view-workspace .wf-patch-ins{
     background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.25) 50%);
+  }
+  #view-workspace .wf-patch-add-badge{
+    display:inline-flex;
+    align-items:center;
+    height:16px;
+    margin-right:5px;
+    padding:0 5px;
+    border:1px solid rgba(74, 180, 100, 0.34);
+    background:rgba(74, 180, 100, 0.12);
+    color:#2f6d3b;
+    font-size:10px;
+    font-weight:700;
+    line-height:1;
+    vertical-align:1px;
   }
   /* 流式正文打字头:末尾几个刚打出的字用横向渐变遮罩,光标处最透明→变老变实,做半透明渐变淡入。 */
   #view-workspace .wf-patch-ins-head{
     -webkit-mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
     mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
   }
-  #view-workspace .wf-patch-ins-wrap.active .wf-patch-ins{
+  #view-workspace .wf-patch-ins-wrap.is-current .wf-patch-ins,
+  #view-workspace .wf-patch-replace-wrap.is-current .wf-patch-ins{
     background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.4) 50%);
   }
   #view-workspace .wf-row-diff-list .wf-patch-ins-wrap{
@@ -2509,6 +2529,7 @@
   }
   #view-workspace .patch-hover-popup.is-visible,
   #view-workspace .wf-patch-ins-wrap:hover .patch-hover-popup,
+  #view-workspace .wf-patch-replace-wrap:hover .patch-hover-popup,
   #view-workspace .wf-table-row-add-hover:hover .patch-hover-popup,
   #view-workspace .wf-patch-del-marker:hover .patch-hover-popup,
   #view-workspace .wf-blockmark:hover > .patch-hover-popup{
@@ -2516,56 +2537,52 @@
     flex-direction:column;
     gap:7px;
   }
-  /* hover 卡片:原→改为 的 key-value 行排版(修改时更清楚) */
-  #view-workspace .patch-popup-row{display:flex;gap:8px;align-items:baseline}
-  #view-workspace .patch-popup-k{
-    flex:0 0 auto;font-size:11px;font-weight:700;color:var(--ink-4);min-width:30px;
-  }
-  #view-workspace .patch-popup-num{
+  #view-workspace .patch-popup-title{
     font-family:var(--font-mono);
-    font-size:10px;
-    color:var(--ink-4);
+    font-size:11px;
+    font-weight:700;
+    color:var(--ink-2);
   }
-  #view-workspace .patch-popup-deleted{
-    font-size:12.5px;
-    color:var(--ink-3);
-    text-decoration:line-through;
+  #view-workspace .patch-popup-badge{
+    align-self:flex-start;
+    border:1px solid rgba(74, 180, 100, 0.34);
+    background:rgba(74, 180, 100, 0.12);
+    color:#2f6d3b;
+    padding:1px 7px;
+    font-size:12px;
+    font-weight:700;
     line-height:1.5;
   }
-  #view-workspace .patch-popup-info{
-    font-size:12.5px;
-    color:var(--ink-3);
-    font-style:italic;
-    line-height:1.55;
-  }
-  #view-workspace .patch-popup-change-list{
-    display:flex;
-    flex-direction:column;
-    gap:5px;
-    font-size:12.5px;
-    color:var(--ink-2);
-  }
-  #view-workspace .patch-popup-change{
+  #view-workspace .patch-popup-original{
     display:grid;
     grid-template-columns:auto minmax(0,1fr);
-    column-gap:6px;
+    gap:8px;
     align-items:start;
-  }
-  #view-workspace .patch-popup-bullet{
-    color:var(--ink-4);
+    font-size:13px;
     line-height:1.55;
   }
-  #view-workspace .patch-popup-change-label{
-    font-weight:600;
+  #view-workspace .patch-popup-label{
+    color:var(--ink-4);
+    font-size:11px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  #view-workspace .patch-popup-original-text{
     color:var(--ink-2);
+    overflow-wrap:anywhere;
   }
-  #view-workspace .patch-popup-old-text{
+  #view-workspace .patch-popup-note{
     color:var(--ink-3);
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.72);
+    font-size:12.5px;
+    line-height:1.55;
   }
-  #view-workspace .patch-popup-new-text{
-    color:#2f6d3b;
+  #view-workspace .patch-popup-muted{
+    color:var(--ink-4);
+  }
+  #view-workspace .patch-popup-removed-text{
+    color:#a8413a;
+    text-decoration:line-through;
+    text-decoration-color:rgba(220, 80, 70, 0.7);
     font-weight:600;
   }
   /* hover 卡片里的「被删块缩放原版」:把被删结构块(图表/表格/图片等)缩小渲染出来,看到删的是什么 */
@@ -2581,19 +2598,6 @@
     zoom:0.8;
   }
   #view-workspace .patch-popup-preview > *{margin:2px 0}
-  /* hover 卡片「原文」:算过 diff——未改片段淡显作上下文,真正删/改掉的片段红删除线 */
-  #view-workspace .patch-popup-orig{font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-  #view-workspace .patch-popup-ctx{color:var(--ink-4)}
-  #view-workspace .patch-popup-del-seg{
-    color:#a8413a;
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.7);
-    font-weight:600;
-  }
-  #view-workspace .patch-popup-arrow,
-  #view-workspace .patch-popup-mark-op{
-    color:var(--ink-4);
-  }
   #view-workspace .patch-popup-actions{
     display:flex;
     flex-wrap:wrap;
@@ -2642,10 +2646,23 @@
   }
   #view-workspace .wf-blockmark-del-line{
     display:block;
-    height:2px;border-radius:0;
-    background:repeating-linear-gradient(90deg,
-      rgba(220,80,70,0.7) 0, rgba(220,80,70,0.7) 8px,
-      transparent 8px, transparent 14px);
+    position:relative;
+    width:3px;
+    height:18px;
+    margin-left:2px;
+    border-radius:999px;
+    background:rgba(220, 80, 70, 0.82);
+  }
+  #view-workspace .wf-blockmark-del-line::after{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:-5px;
+    width:7px;
+    height:7px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.88);
+    transform:translateX(-50%);
   }
   /* 删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。 */
   #view-workspace .wf-patch-del-marker{
@@ -2656,18 +2673,19 @@
   #view-workspace .patch-del-cursor{
     display:inline-block;
     position:relative;
-    width:2px;height:1.05em;
+    width:3px;height:1.05em;
     vertical-align:text-bottom;
     margin:0 2px;
     background:rgba(220, 80, 70, 0.82);
-    border-radius:0;
+    border-radius:999px;
   }
   #view-workspace .patch-del-cursor::after{
     content:"";
-    position:absolute;left:-2px;top:-1px;
-    width:6px;height:3px;
-    border-radius:0;
-    background:rgba(220, 80, 70, 0.82);
+    position:absolute;left:50%;top:-5px;
+    width:7px;height:7px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.88);
+    transform:translateX(-50%);
   }
 
   /* pendingReview · patch 单独操作 · 插在 .wf-patch-ins 之后 */

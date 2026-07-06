@@ -1455,9 +1455,8 @@ export function suggestionToBlockPatchInput(
  * 也进不了块级 patch(上面的单数版只认 insert/delete)——在审阅界面被静默
  * 丢弃,出现"显示 0 处修改但请你审批"的盲签局面。
  *
- * 复数版补上 replace 通道:渲染为"删旧块 + 插新块"的可视对(旧块红、新块绿,
- * 共享同一 patchId,点任一侧都作用于同一条 suggestion)。insert/delete 仍是
- * 单条,行为与单数版一致。
+ * 复数版补上 replace 通道:同一 replace hunk 保持为单一 replace 视觉态,
+ * 正文显示 after 块,hover 展示 before 块。insert/delete 仍是单条。
  */
 export function suggestionToBlockPatchInputs(
   suggestion: WireDocSuggestion,
@@ -1510,6 +1509,15 @@ export function suggestionToBlockPatchInputs(
   const beforeBlocks = Array.isArray(hunk.before) ? pmNodesToViewBlocks(hunk.before) : [];
   const afterBlocks = Array.isArray(hunk.after) ? pmNodesToViewBlocks(hunk.after) : [];
   if (beforeBlocks.length === 0 && afterBlocks.length === 0) return [];
+  if (beforeBlocks.length === 1 && afterBlocks.length === 1) {
+    return [{
+      ...shared,
+      op: "replace",
+      blocks: afterBlocks,
+      replaceBeforeBlocks: beforeBlocks,
+      blockCount: 1,
+    }];
+  }
 
   const inputs: BlockPatchInput[] = [];
   if (beforeBlocks.length > 0) {

@@ -540,9 +540,9 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).not.toContain("提交已接受");
     expect(host?.querySelector(".wf-block-review")).toBeNull();
     expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(7);
-    expect(host?.querySelectorAll(".wf-patch-ins-wrap .patch-hover-popup")).toHaveLength(7);
-    const firstWrap = host!.querySelector(".wf-patch-ins-wrap")!;
-    const firstPopup = host!.querySelector(".wf-patch-ins-wrap .patch-hover-popup");
+    expect(host?.querySelectorAll("[data-patch-state] .patch-hover-popup")).toHaveLength(7);
+    const firstWrap = host!.querySelector("[data-patch-state]")!;
+    const firstPopup = firstWrap.querySelector(".patch-hover-popup");
     expect(firstPopup!.classList.contains("is-visible")).toBe(false);
     act(() => {
       firstWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
@@ -1807,7 +1807,7 @@ describe("WorkspacePage review controls", () => {
     expect(stream.commitReviewGroups).not.toHaveBeenCalled();
   });
 
-  it("内容和格式同处修改时 hover popup 分项展示", async () => {
+  it("内容和格式同处修改时 hover popup 收敛为替换态与格式态", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const doc = mixedContentMarkDoc();
     await render(
@@ -1824,15 +1824,18 @@ describe("WorkspacePage review controls", () => {
       </section>,
     );
 
-    const popup = host!.querySelector(".wf-patch-ins-wrap .patch-hover-popup");
-    expect(popup).not.toBeNull();
-    expect(popup!.querySelectorAll(".patch-popup-change")).toHaveLength(2);
-    expect(popup!.textContent).toContain("内容:");
-    expect(popup!.textContent).toContain("旧文");
-    expect(popup!.textContent).toContain("新文");
-    expect(popup!.textContent).toContain("格式:");
-    expect(popup!.textContent).toContain("加粗/高亮");
-    expect(popup!.textContent).toContain("(增加)");
+    const replacePopup = host!.querySelector(".wf-patch-replace-wrap .patch-hover-popup");
+    expect(replacePopup).not.toBeNull();
+    expect(replacePopup!.querySelector(".patch-popup-change")).toBeNull();
+    expect(replacePopup!.textContent).toContain("替换");
+    expect(replacePopup!.textContent).toContain("原文");
+    expect(replacePopup!.textContent).toContain("旧文");
+    expect(replacePopup!.textContent).not.toContain("内容:");
+
+    const formatPopup = host!.querySelector(".wf-patch-mark-wrap .patch-hover-popup");
+    expect(formatPopup).not.toBeNull();
+    expect(formatPopup!.textContent).toContain("新增格式");
+    expect(formatPopup!.textContent).toContain("加粗/高亮");
   });
 
   it("多组 pendingReview 无可见 patch 且 agentBusy 未清零时仍渲染放弃逃生入口", async () => {

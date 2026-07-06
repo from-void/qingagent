@@ -1306,11 +1306,11 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     // 行内通道必须拒收(此前锚点能命中段落就走文本通道,表格糊成拍平绿字)
     expect(suggestionToPatchOverlay(doc, sugg, 0)).toBeNull();
 
-    // 落到块通道:删旧段 + 插新表格,插入块保真为 table ViewBlock
+    // 落到块通道:保持单一 replace,after 块保真为 table ViewBlock
     const inputs = suggestionToBlockPatchInputs(sugg, 0);
-    expect(inputs.map((i) => i.op)).toEqual(["delete", "insert"]);
-    const insertBlocks = inputs.find((i) => i.op === "insert")!.blocks;
-    expect(insertBlocks.map((b) => b.kind)).toEqual(["table"]);
+    expect(inputs.map((i) => i.op)).toEqual(["replace"]);
+    expect(inputs[0]!.replaceBeforeBlocks?.map((b) => b.kind)).toEqual(["p"]);
+    expect(inputs[0]!.blocks.map((b) => b.kind)).toEqual(["table"]);
   });
 
   it("纯文本 replace 仍走行内文本通道(不回归划线+绿字体验)", () => {
@@ -1374,8 +1374,11 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(suggestionToPatchOverlay(doc, sugg, 0)).toBeNull();
     const inputs = suggestionToBlockPatchInputs(sugg, 0);
     expect(inputs).not.toHaveLength(0);
-    expect(inputs.map((input) => input.op)).toEqual(["delete", "insert"]);
-    expect(inputs.find((input) => input.op === "insert")!.blocks).toMatchObject([
+    expect(inputs.map((input) => input.op)).toEqual(["replace"]);
+    expect(inputs[0]!.replaceBeforeBlocks).toMatchObject([
+      { kind: "code", body: "const value = 1;\nconsole.log(value);" },
+    ]);
+    expect(inputs[0]!.blocks).toMatchObject([
       { kind: "code", body: "const value = 2;\nconsole.log(value);" },
     ]);
   });

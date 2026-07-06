@@ -6,7 +6,7 @@ import { ReadonlyImageFigure } from "../ImageView";
 import type { ViewBlock, ViewBlockSeqDiff, ViewDocSpan, ViewListRowDiff, ViewTableRowDiff } from "../../data/protocol";
 import { wordDiffSegments } from "../../data/protocol";
 import { PmBlockView, pmInlineText, textAlignStyle } from "./PmStaticView";
-import { PatchHoverBlockFrame, PatchHoverFrame, PatchPopupActions, renderOriginalDiff } from "./patchHover";
+import { PatchHoverBlockFrame, PatchHoverFrame, PatchPopupActions, PatchStatePopup, renderOriginalDiff } from "./patchHover";
 import { renderMarkedText, SpanView } from "./SpanView";
 
 interface SectionViewProps {
@@ -177,6 +177,10 @@ export const SectionView = React.memo(function SectionView({
     } else if (accepted) {
       renderedSection = cleanReplaceReviewBlock(section);
       blockPatch = renderedSection.blockPatch;
+    } else {
+      const activeReplacePatch = blockPatch;
+      renderedSection = cleanReplaceReviewBlock(section);
+      blockPatch = activeReplacePatch;
     }
   }
   if (showPatches && blockPatch) {
@@ -214,6 +218,39 @@ export const SectionView = React.memo(function SectionView({
   //   (wf-blockmark,不铺背景)+ hover 看"新增图片/删除表格"说明;删除时内容降透明示意。
   const wrapBlockPatch = (children: React.ReactNode) => {
     const marker = blockPatch?.marker;
+    if (replacePatchActive && blockPatch?.op === "replace") {
+      const patchId = blockPatch.patchId;
+      const popupIndex = patchMeta?.get(patchId)?.index;
+      const beforeBlock = blockPatch.beforeBlock ? cleanReplaceReviewBlock(blockPatch.beforeBlock) : null;
+      const original = beforeBlock ? (
+        <div className="patch-popup-preview">
+          <SectionView
+            section={beforeBlock}
+            showPatches={false}
+            acceptedPatches={EMPTY_PATCH_SET}
+            rejectedPatches={EMPTY_PATCH_SET}
+          />
+        </div>
+      ) : (patchMeta?.get(patchId)?.before ?? "");
+      return (
+        <PatchHoverBlockFrame
+          className={`wf-patch-replace-wrap${activePatchId === patchId ? " is-current" : ""}`}
+          patchId={patchId}
+          patchState="replace"
+          popup={(
+            <PatchStatePopup
+              state="replace"
+              index={popupIndex}
+              original={original}
+              patchId={patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
+        >
+          {children}
+        </PatchHoverBlockFrame>
+      );
+    }
     if (!blockPatchActive || !blockPatch || !marker) {
       return <>{children}</>;
     }
@@ -227,20 +264,25 @@ export const SectionView = React.memo(function SectionView({
         <PatchHoverBlockFrame
           className="wf-blockmark-del"
           patchId={blockPatch.patchId}
-          popup={
-            <>
-              <span className="patch-popup-num">#{popupIndex ?? "?"} · {marker.text}</span>
-              <div className="patch-popup-preview">
-                <SectionView
-                  section={cleanDeleted}
-                  showPatches={false}
-                  acceptedPatches={EMPTY_PATCH_SET}
-                  rejectedPatches={EMPTY_PATCH_SET}
-                />
-              </div>
-              <PatchPopupActions patchId={blockPatch.patchId} onPatchVerdict={onPatchVerdict} />
-            </>
-          }
+          patchState="delete"
+          popup={(
+            <PatchStatePopup
+              state="delete"
+              index={popupIndex}
+              original={(
+                <div className="patch-popup-preview">
+                  <SectionView
+                    section={cleanDeleted}
+                    showPatches={false}
+                    acceptedPatches={EMPTY_PATCH_SET}
+                    rejectedPatches={EMPTY_PATCH_SET}
+                  />
+                </div>
+              )}
+              patchId={blockPatch.patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
         >
           <span className="wf-blockmark-del-line" aria-hidden="true" />
         </PatchHoverBlockFrame>
@@ -251,14 +293,17 @@ export const SectionView = React.memo(function SectionView({
       <PatchHoverBlockFrame
         className="wf-blockmark insert"
         patchId={blockPatch.patchId}
-        popup={
-          <>
-            <span className="patch-popup-num">#{popupIndex ?? "?"}</span>
-            <span className="patch-popup-info">{marker.text}</span>
-            <PatchPopupActions patchId={blockPatch.patchId} onPatchVerdict={onPatchVerdict} />
-          </>
-        }
+        patchState="insert"
+        popup={(
+          <PatchStatePopup
+            state="insert"
+            index={popupIndex}
+            patchId={blockPatch.patchId}
+            onPatchVerdict={onPatchVerdict}
+          />
+        )}
       >
+        <span className="wf-patch-add-badge">新增</span>
         {children}
       </PatchHoverBlockFrame>
     );
@@ -293,8 +338,9 @@ export const SectionView = React.memo(function SectionView({
         out.push(
           <PatchHoverFrame
             key={k++}
-            className={`wf-patch-ins-wrap${isActive ? " active" : ""}`}
+            className={`wf-patch-replace-wrap${isActive ? " is-current" : ""}`}
             patchId={patchId}
+            patchState={delText ? "replace" : "insert"}
             popup={
               <>
                 <span className="patch-popup-num">#{popupIndex ?? "?"} · {delText ? "修改" : "新增"}</span>
@@ -409,8 +455,9 @@ export const SectionView = React.memo(function SectionView({
     const isActive = activePatchId === patchId;
     return (
       <PatchHoverFrame
-        className={`wf-patch-ins-wrap row-${row.status}${isActive ? " active" : ""}`}
+        className={`wf-patch-ins-wrap row-${row.status}${isActive ? " is-current" : ""}`}
         patchId={patchId}
+        patchState="insert"
         popup={renderRowPopup(row)}
       >
         {renderRowDiffInlineSpans(row.spans)}
@@ -511,8 +558,9 @@ export const SectionView = React.memo(function SectionView({
     if (row.status === "added") {
       return (
         <PatchHoverFrame
-          className={`wf-table-row-add-hover${isActive ? " active" : ""}`}
+          className={`wf-table-row-add-hover${isActive ? " is-current" : ""}`}
           patchId={patchId}
+          patchState="insert"
           popup={renderTableRowPopup(row)}
         >
           {renderRowDiffInlineSpans(cell.spans)}
@@ -693,8 +741,9 @@ export const SectionView = React.memo(function SectionView({
       return (
         <PatchHoverBlockFrame
           key={key}
-          className={`wf-patch-ins-wrap row-added${activePatchId === patchId ? " active" : ""}`}
+          className={`wf-patch-ins-wrap row-added${activePatchId === patchId ? " is-current" : ""}`}
           patchId={patchId}
+          patchState="insert"
           popup={renderBlockSeqPopup(entry)}
         >
           <div className="wf-patch-ins">

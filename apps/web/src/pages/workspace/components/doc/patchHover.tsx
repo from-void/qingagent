@@ -1,29 +1,29 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PatchMeta, PatchMetaChange } from "../DocumentSnapshotView";
+import type { PatchMeta } from "../DocumentSnapshotView";
 import { wordDiffSegments } from "../../data/protocol";
 
-/** hover 卡片里的「原文」:对 old vs new 算 diff,只把真正改掉/删掉的片段标红删除线,
- *  未改的片段淡显作上下文。不再展示整段原文、也不展示「改为」(新内容已在正文里)。 */
+const PATCH_POPUP_HIDE_DELAY_MS = 200;
+
+export type PatchReviewState = "replace" | "insert" | "delete";
+
 export function renderOriginalDiff(oldText: string, newText: string): React.ReactNode {
   const segs = wordDiffSegments(oldText, newText);
-  // 没有任何删除片段(纯新增)时,原文为空,直接不渲染
   if (!segs.some((seg) => seg.type === "del")) return null;
   return (
-    <span className="patch-popup-orig">
+    <span className="patch-popup-original-text">
       {segs.map((seg, i) => {
         if (seg.type === "ins") return null;
-        if (seg.type === "same") return <span key={i} className="patch-popup-ctx">{seg.text}</span>;
-        return <span key={i} className="patch-popup-del-seg">{seg.text}</span>;
+        if (seg.type === "same") return <span key={i} className="patch-popup-muted">{seg.text}</span>;
+        return <span key={i} className="patch-popup-removed-text">{seg.text}</span>;
       })}
     </span>
   );
 }
 
-const PATCH_POPUP_HIDE_DELAY_MS = 200;
-
 interface PatchHoverFrameProps {
   className: string;
   patchId: string;
+  patchState?: PatchReviewState;
   title?: string;
   children: React.ReactNode;
   popup: React.ReactNode;
@@ -70,6 +70,7 @@ function usePopupPlacement<T extends HTMLElement>(visible: boolean) {
 export function PatchHoverFrame({
   className,
   patchId,
+  patchState,
   title,
   children,
   popup,
@@ -106,6 +107,7 @@ export function PatchHoverFrame({
     <span
       className={className}
       data-patch-id={patchId}
+      data-patch-state={patchState}
       title={title}
       onMouseEnter={showPopup}
       onMouseLeave={(event) => {
@@ -142,6 +144,7 @@ export function PatchHoverFrame({
 export function PatchHoverBlockFrame({
   className,
   patchId,
+  patchState,
   title,
   children,
   popup,
@@ -178,6 +181,7 @@ export function PatchHoverBlockFrame({
     <div
       className={className}
       data-patch-id={patchId}
+      data-patch-state={patchState}
       title={title}
       style={{ display: "block" }}
       onMouseEnter={showPopup}
@@ -222,75 +226,80 @@ const PATCH_MARK_LABELS: Record<string, string> = {
   highlight: "高亮",
 };
 
-export function mixedPatchChanges(meta: PatchMeta | undefined): PatchMetaChange[] | null {
-  const changes = meta?.changes ?? [];
-  const hasContent = changes.some((change) => change.kind === "content");
-  const hasMark = changes.some((change) => change.kind === "mark");
-  return hasContent && hasMark ? changes : null;
+export function patchReviewState(meta: PatchMeta | undefined, fallback: PatchReviewState): PatchReviewState {
+  if (!meta) return fallback;
+  if (meta.kind === "insert" || (meta.before === "" && meta.after !== "")) return "insert";
+  if (meta.kind === "delete" || (meta.before !== "" && meta.after === "")) return "delete";
+  return "replace";
 }
 
-function markChangeNames(change: Extract<PatchMetaChange, { kind: "mark" }>): string {
-  const names = (change.marks ?? [])
+function markNames(meta: PatchMeta | undefined): string {
+  const names = (meta?.marks ?? [])
     .map((mark) => PATCH_MARK_LABELS[mark.type] ?? mark.type)
     .filter(Boolean);
   if (names.length > 0) return names.join("/");
-  return (change.label ?? "样式").replace(/^将/, "").replace(/^取消/, "") || "样式";
+  return (meta?.label ?? "样式").replace(/^将/, "").replace(/^取消/, "") || "样式";
 }
 
-export function PatchPopupChanges({ changes }: { changes: readonly PatchMetaChange[] }) {
-  return (
-    <span className="patch-popup-change-list">
-      {changes.map((change, index) => (
-        <span className="patch-popup-change" key={`${change.kind}-${index}`}>
-          <span className="patch-popup-bullet" aria-hidden="true">•</span>
-          <span className="patch-popup-change-body">
-            <span className="patch-popup-change-label">
-              {change.kind === "content" ? "内容" : "格式"}:
-            </span>{" "}
-            <PatchPopupChangeSummary change={change} />
-          </span>
-        </span>
-      ))}
+export function PatchStatePopup({
+  state,
+  index,
+  original,
+  patchId,
+  onPatchVerdict,
+}: {
+  state: PatchReviewState;
+  index?: number;
+  original?: React.ReactNode;
+  patchId: string;
+  onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
+}) {
+  const label = state === "replace" ? "替换" : state === "insert" ? "新增" : "删减";
+  const blockOriginal =
+    React.isValidElement(original) &&
+    typeof original.type === "string" &&
+    (original.type === "div" || original.type === "table" || original.type === "figure");
+  const originalNode = blockOriginal ? (
+    <div className="patch-popup-original">
+      <span className="patch-popup-label">原文</span>
+      <div className="patch-popup-original-text">{original}</div>
+    </div>
+  ) : (
+    <span className="patch-popup-original">
+      <span className="patch-popup-label">原文</span>
+      <span className="patch-popup-original-text">{original}</span>
     </span>
+  );
+  return (
+    <>
+      <span className="patch-popup-title">#{index ?? "?"} · {label}</span>
+      {state === "insert" ? (
+        <span className="patch-popup-badge">新增</span>
+      ) : (
+        originalNode
+      )}
+      <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
+    </>
   );
 }
 
-function PatchPopupChangeSummary({ change }: { change: PatchMetaChange }) {
-  if (change.kind === "mark") {
-    return (
-      <>
-        {markChangeNames(change)}
-        <span className="patch-popup-mark-op">
-          ({change.op === "markAdd" ? "增加" : "移除"})
-        </span>
-      </>
-    );
-  }
-
-  if (change.before && change.after) {
-    return (
-      <>
-        <span className="patch-popup-old-text">{change.before}</span>
-        <span className="patch-popup-arrow"> → </span>
-        <span className="patch-popup-new-text">{change.after}</span>
-      </>
-    );
-  }
-  if (change.after) {
-    return (
-      <>
-        新增 <span className="patch-popup-new-text">{change.after}</span>
-      </>
-    );
-  }
-  if (change.before) {
-    return (
-      <>
-        删除 <span className="patch-popup-old-text">{change.before}</span>
-      </>
-    );
-  }
-  return <>内容有调整</>;
+export function PatchFormatPopup({
+  meta,
+  patchId,
+  onPatchVerdict,
+}: {
+  meta: PatchMeta | undefined;
+  patchId: string;
+  onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
+}) {
+  const op = meta?.kind === "markRemove" ? "移除格式" : "新增格式";
+  return (
+    <>
+      <span className="patch-popup-title">#{meta?.index ?? "?"} · {op}</span>
+      <span className="patch-popup-note">{markNames(meta)}</span>
+      <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
+    </>
+  );
 }
 
 export function PatchPopupActions({

@@ -2461,57 +2461,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   clip-path: polygon(50% 0, 0 100%, 100% 100%); /* 气泡在下,箭头朝上 */
 }
 
-/* ============================================================================
-   审阅态「上一处/下一处」当前激活处的强调(问题A)
-   workspace.css 里 .wf-patch-ins-wrap.active 只是把绿底从 .25→.4 加深一点点,
-   多处绿之间根本分不清"当前激活的是哪一处"。这里在纸作用域(--mark = 赭金)
-   给当前激活的那段绿:① 赭金描边环 + 柔和外发光(明显但不刺眼,与暗皮 + 赭金色系协调)
-   ② 激活瞬间一次短促脉冲(activePatchId 变 → .active 在新 wrap 上重新挂载 → 动画重跑一次)。
-   非激活的其余绿处不受影响(只有 .active 命中)。inline 包裹用 box-decoration-break
-   让换行也连续描边。 */
-#view-workspace .wf-patch-ins-wrap.active {
-  position: relative;
-  border-radius:0;
-  outline: 1.5px solid color-mix(in srgb, var(--mark) 78%, transparent);
-  outline-offset: 1px;
-  background-color: color-mix(in srgb, var(--mark) 14%, transparent);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--mark) 16%, transparent),
-    0 0 14px 2px color-mix(in srgb, var(--mark) 28%, transparent);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-  animation: ws-active-patch-pulse 760ms cubic-bezier(0.16, 1, 0.3, 1);
-  scroll-margin: 30vh 0;
-}
-/* 激活的那段绿底加深一档,和环呼应(覆盖 workspace.css 的 .25→.4) */
-#view-workspace .wf-patch-ins-wrap.active .wf-patch-ins {
-  background: linear-gradient(
-    to bottom,
-    transparent 50%,
-    color-mix(in srgb, var(--mark) 30%, rgba(74, 180, 100, 0.5)) 50%
-  );
-}
-@keyframes ws-active-patch-pulse {
-  0% {
-    outline-color: color-mix(in srgb, var(--mark) 96%, transparent);
-    box-shadow:
-      0 0 0 5px color-mix(in srgb, var(--mark) 34%, transparent),
-      0 0 22px 5px color-mix(in srgb, var(--mark) 46%, transparent);
-  }
-  60% {
-    box-shadow:
-      0 0 0 3px color-mix(in srgb, var(--mark) 16%, transparent),
-      0 0 14px 2px color-mix(in srgb, var(--mark) 28%, transparent);
-  }
-  100% {
-    outline-color: color-mix(in srgb, var(--mark) 78%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  #view-workspace .wf-patch-ins-wrap.active {
-    animation: none;
-  }
-}
+/* 审阅态 diff 当前定位只保留 workspace.css 的绿色加深;不再加赭金描边 / 外发光。 */
 
 /* —— 文末落款:正文末尾续奶白纸,竖排两列「作于{干支年月初几} | 成文{中文数字}字+印章」——
    position + z-index:1 盖住正文纸(.wf-doc)向下投的那道阴影,消除接缝丑阴影,正文+落款连成一张纸。 */

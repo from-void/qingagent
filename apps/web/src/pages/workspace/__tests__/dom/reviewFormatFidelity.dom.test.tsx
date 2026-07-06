@@ -9,8 +9,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
-import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
-import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
+import { pmDocToViewDocumentSnapshot, type ViewDocumentSnapshot } from "../../data/protocol";
+import { DocumentSnapshotView, type PatchMeta } from "../../components/DocumentSnapshotView";
 
 let host: HTMLElement;
 let root: Root;
@@ -30,6 +30,14 @@ afterEach(() => {
 function renderReview(content: PmBlockNode[]) {
   const doc: PmDoc = { type: "doc", attrs: { schemaVersion: 1 }, content };
   const snapshot = pmDocToViewDocumentSnapshot(doc, 1, "t");
+  renderSnapshot(snapshot);
+}
+
+function renderSnapshot(
+  snapshot: ViewDocumentSnapshot,
+  patchMeta: Map<string, PatchMeta> = new Map(),
+  activePatchId: string | null = null,
+) {
   act(() => {
     root.render(
       <DocumentSnapshotView
@@ -38,6 +46,8 @@ function renderReview(content: PmBlockNode[]) {
         showPatches
         acceptedPatches={new Set()}
         rejectedPatches={new Set()}
+        patchMeta={patchMeta}
+        activePatchId={activePatchId}
       />,
     );
   });
@@ -123,5 +133,148 @@ describe("审核态格式保真(showPatches)", () => {
     // 旧的块状背景类彻底移除
     expect(host.querySelector(".wf-blockpatch")).toBeNull();
     expect(host.querySelector(".wf-block-patch-marker")).toBeNull();
+  });
+
+  it("整块新增渲染为 B 新增态:新内容 + 新增标识,不带金黄 active 类", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "p",
+          blockPatch: { patchId: "ins-block", op: "insert" },
+          spans: [{ kind: "patchIns", text: "新增段落", patchId: "ins-block" }],
+        }],
+      },
+      new Map([["ins-block", { before: "", after: "新增段落", kind: "insert", index: 1 }]]),
+      "ins-block",
+    );
+
+    const insert = host.querySelector('[data-patch-state="insert"].wf-patch-ins-wrap') as HTMLElement;
+    expect(insert).not.toBeNull();
+    expect(insert.querySelector(".wf-patch-add-badge")?.textContent).toBe("新增");
+    expect(insert.querySelector(".wf-patch-ins")?.textContent).toBe("新增段落");
+    expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
+    expect(host.querySelector('[data-patch-state="delete"]')).toBeNull();
+  });
+
+  it("块内替换渲染为 A 替换态:正文只显示新内容,hover 原文,不出现删除标记混合态", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "p",
+          spans: [
+            { kind: "text", text: "前 " },
+            { kind: "patchDel", text: "旧词", patchId: "rep-inline" },
+            { kind: "patchIns", text: "新词", patchId: "rep-inline" },
+            { kind: "text", text: " 后" },
+          ],
+        }],
+      },
+      new Map([["rep-inline", { before: "旧词", after: "新词", kind: "replace", index: 1 }]]),
+    );
+
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(replace.querySelector(".wf-patch-ins")?.textContent).toBe("新词");
+    expect(host.querySelector(".wf-patch-del-marker")).toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
+    const popup = replace.querySelector(".patch-hover-popup") as HTMLElement;
+    expect(popup.textContent).toContain("原文");
+    expect(popup.textContent).toContain("旧词");
+    expect((popup.querySelector(".patch-popup-original-text") as HTMLElement).tagName).toBe("SPAN");
+  });
+
+  it("追加文本渲染为 B 新增态:锚点原样显示,只高亮新增后缀", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "p",
+          spans: [
+            { kind: "text", text: "前 " },
+            { kind: "patchIns", text: "标题说明", patchId: "append-inline" },
+            { kind: "text", text: " 后" },
+          ],
+        }],
+      },
+      new Map([["append-inline", { before: "标题", after: "标题说明", kind: "replace", index: 1 }]]),
+    );
+
+    const insert = host.querySelector('[data-patch-state="insert"].wf-patch-ins-wrap') as HTMLElement;
+    expect(insert).not.toBeNull();
+    expect(insert.querySelector(".wf-patch-add-badge")?.textContent).toBe("新增");
+    expect(insert.querySelector(".wf-patch-ins")?.textContent).toBe("说明");
+    expect(insert.previousSibling?.textContent).toContain("标题");
+    expect(insert.nextSibling?.textContent).toContain(" 后");
+    expect(host.querySelector('[data-patch-state="replace"]')).toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
+  });
+
+  it("纯删减渲染为 C 删除态:正文只留红杆圆点标记,hover 原文", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "p",
+          spans: [
+            { kind: "text", text: "前" },
+            { kind: "patchDel", text: "删掉", patchId: "del-inline" },
+            { kind: "text", text: "后" },
+          ],
+        }],
+      },
+      new Map([["del-inline", { before: "删掉", after: "", kind: "delete", index: 1 }]]),
+    );
+
+    const deleted = host.querySelector('[data-patch-state="delete"].wf-patch-del-marker') as HTMLElement;
+    expect(deleted).not.toBeNull();
+    expect(deleted.querySelector(".patch-del-cursor")).not.toBeNull();
+    expect(host.querySelector('[data-patch-state="insert"]')).toBeNull();
+    expect(host.querySelector('[data-patch-state="replace"]')).toBeNull();
+    expect(deleted.querySelector(".patch-hover-popup")?.textContent).toContain("删掉");
+  });
+
+  it("结构 replace 收敛为单一 A 替换态,不再展开 added/removed/changed 混合子态", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "list",
+          ordered: false,
+          items: ["保留", "新行", "新增"],
+          blockPatch: {
+            patchId: "rep-list",
+            op: "replace",
+            beforeBlock: { kind: "list", ordered: false, items: ["保留", "旧行", "删掉"] },
+          },
+          rowDiff: [
+            { status: "same", spans: [{ kind: "text", text: "保留" }] },
+            { status: "changed", oldText: "旧行", spans: [{ kind: "patchIns", text: "新", patchId: "rep-list" }, { kind: "text", text: "行" }] },
+            { status: "removed", oldText: "删掉" },
+            { status: "added", spans: [{ kind: "patchIns", text: "新增", patchId: "rep-list" }] },
+          ],
+        }],
+      },
+      new Map([["rep-list", { before: "保留\n旧行\n删掉", after: "保留\n新行\n新增", kind: "replace", index: 1 }]]),
+    );
+
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(host.querySelector("[data-row-status]")).toBeNull();
+    expect(host.querySelector(".row-del")).toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap")).toBeNull();
+    expect(replace.textContent).toContain("新行");
+    expect(replace.textContent).toContain("新增");
+    expect(replace.querySelector(".patch-hover-popup")?.textContent).toContain("旧行");
+    const originalText = replace.querySelector(".patch-popup-original-text") as HTMLElement;
+    expect(originalText.tagName).toBe("DIV");
+    expect(originalText.querySelector(".patch-popup-preview")).not.toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
   });
 });

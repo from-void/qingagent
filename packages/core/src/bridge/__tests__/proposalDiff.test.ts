@@ -357,6 +357,35 @@ describe("proposalDiff shadow engine", () => {
     expect(firstBlockText(applied.doc)).toBe("e cce dcdbf feadcfbb cecffaec dce");
   });
 
+  it("B3:审核提交按 blockId 锚定——目标块被并发移动后仍改到正确块", () => {
+    const btext = (b: PmBlockNode | undefined): string =>
+      b && "content" in b && Array.isArray(b.content) ? texts(b.content) : "";
+    const base = doc([paragraph("blk-a", "alpha 原文"), paragraph("blk-b", "beta 原文")]);
+    const draft = doc([paragraph("blk-a", "alpha 原文"), paragraph("blk-b", "beta 改后")]);
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+
+    // 并发编辑把两块顺序调换(blockId 不变):blk-b 现在在 index 0,旧位置锚定会打到 blk-a。
+    const reordered = doc([paragraph("blk-b", "beta 原文"), paragraph("blk-a", "alpha 原文")]);
+    const committed = applyDiffHunks(reordered, hunks, { anchorByBlockId: true });
+    const byId = (id: string) => committed.content.find((b) => b.attrs.blockId === id);
+
+    expect(btext(byId("blk-b"))).toBe("beta 改后");
+    expect(btext(byId("blk-a"))).toBe("alpha 原文");
+  });
+
+  it("B3:目标块被并发删除时该 hunk 标失效跳过,绝不错位应用到其他块", () => {
+    const btext = (b: PmBlockNode): string =>
+      "content" in b && Array.isArray(b.content) ? texts(b.content) : "";
+    const base = doc([paragraph("blk-a", "alpha"), paragraph("blk-b", "beta"), paragraph("blk-c", "gamma")]);
+    const draft = doc([paragraph("blk-a", "alpha"), paragraph("blk-b", "beta 改后"), paragraph("blk-c", "gamma")]);
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+
+    // 并发删除 blk-b → 剩 [blk-a, blk-c];blk-b 的 hunk 应失效跳过,不错位改到 blk-a/blk-c。
+    const removed = doc([paragraph("blk-a", "alpha"), paragraph("blk-c", "gamma")]);
+    const committed = applyDiffHunks(removed, hunks, { anchorByBlockId: true });
+    expect(committed.content.map(btext)).toEqual(["alpha", "gamma"]);
+  });
+
   it("对多组 base/draft 满足 round-trip", () => {
     const bold: PmMark = { type: "bold" };
     const italic: PmMark = { type: "italic" };

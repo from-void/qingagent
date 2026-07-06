@@ -12,10 +12,11 @@ jobs:
   build:
     name: beta-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # 抬到 75min:windows nsis 卡因=7za -mx=9 压 ~300MB app.7z,2 核 runner 上是「慢」(LZMA 压
-    # 300MB 可达 30-60min)未必是「卡」,30min 不够跑完。给足时间看能否产出 installer;linux/mac
-    # <5min 不受影响。仍配 continue-on-error 兜底:即便 75min 也没压完,windows 不阻断 linux+mac 发布。
-    timeout-minutes: 75
+    # windows nsis 已实测定论:7za -mx=9 压 ~300MB app 成安装器,免费 2 核 runner 上
+    # 75min(近 CI 上限)都压不完——非配置可救,是算力不足。保留 35min 尝试(供日后瘦 payload
+    # 或换 4-8 核付费 runner 后自然通过)+ continue-on-error 兜底,不阻断 linux+mac 发布。
+    # 当前 windows 分发走 build-win.sh 的便携包(win-unpacked,不经 nsis 压缩,即时可用)。
+    timeout-minutes: 35
     continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:

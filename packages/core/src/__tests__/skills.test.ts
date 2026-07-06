@@ -104,4 +104,34 @@ describe("builtin skills", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  // 密闭回归(单②):此前本套件曾"单跑绿、全量红"——旧版第二个用例调 arg-less
+  // resolveEnabledSkillDirs(),它读本机 ~/.qingagent/skills 的 .disabled.json;当本机或
+  // 兄弟测试留下禁用 browser-ops 的 .disabled.json 时,browser-ops 被过滤 → 断言红。
+  // 修法(e2e98c2)是改喂显式 roots + 空 disabled 集。本用例把该隔离性钉死成回归:
+  // resolveEnabledSkillDirsFromRoots 必须是 (roots, disabled) 的纯函数——只看传入的 tmp
+  // roots 与显式 disabled 集,绝不回读真实 BUILTIN_SKILLS_DIR 或全局 .disabled.json。
+  it("resolveEnabledSkillDirsFromRoots 只认传入的 tmp roots 与显式禁用集(隔离全局 .disabled.json 污染)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-skills-hermetic-"));
+    try {
+      const category = join(root, "capability");
+      const makeSkill = async (name: string): Promise<void> => {
+        const dir = join(category, name);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: 测试技能 ${name}\n---\n`, "utf8");
+      };
+      await makeSkill("browser-ops"); // 未归档、未禁用 → 应存活
+      await makeSkill("dingtalk-docs"); // 归档名(location 无关)→ 应被过滤
+      await makeSkill("team-notes"); // 正常技能,但被显式塞进禁用集 → 应被过滤
+
+      const dirs = await resolveEnabledSkillDirsFromRoots([category], new Set(["team-notes"]));
+      const names = dirs.map((dir) => basename(dir));
+
+      expect(names).toContain("browser-ops");
+      expect(names).not.toContain("dingtalk-docs");
+      expect(names).not.toContain("team-notes");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

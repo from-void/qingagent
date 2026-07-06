@@ -12,6 +12,7 @@ export * from "./markdown/markdownToPm";
 export * from "./markdown/pmToMarkdown";
 export * from "./ai-ir/aiIrSchema";
 export * from "./ai-ir/aiIrToPm";
+export * from "./ai-ir/aiIrToQingml";
 export * from "./ai-ir/pmToAiIr";
 export * from "./ai-ir/applyBlockEdits";
 export * from "./ai-ir/draftBlockIds";

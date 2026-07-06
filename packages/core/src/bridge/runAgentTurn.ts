@@ -237,8 +237,8 @@ export async function* runAgentTurn(
                 `> ${exact.summary}${c.suffix ? `（位置：${c.suffix}）` : ""}` +
                 `\n\n[editDraft 定位提示]\n` +
                 `- 用户精确选中了 ref="${exact.ref}"（类型:${exact.type}）这个块，直接对它操作，不要再用 query 模糊查找别的块。\n` +
-                `- 读取该块:readDraft(mode:"range", from:"${exact.ref}", to:"${exact.ref}") 取得它的 aiIr。\n` +
-                `- 整块修改(图表/图片/公式等原子块或需重写的块):基于返回 aiIr 构造新块,调用 editDraft action:"replaceBlock" ref:"${exact.ref}"。\n` +
+                `- 读取该块:readDraft(mode:"range", from:"${exact.ref}", to:"${exact.ref}") 取得它的 qingml。\n` +
+                `- 整块修改(图表/图片/公式等原子块或需重写的块):基于返回 qingml 构造新 QingML 片段,调用 editDraft action:"replaceBlock" ref:"${exact.ref}"。\n` +
                 `- 只改其中一小段文字:调用 editDraft action:"replaceText" withinRef:"${exact.ref}"；只改格式或标记:调用 editDraft action:"markText" withinRef:"${exact.ref}";不要把标记写成聊天里的 Markdown。${subSelectionLine}\n` +
                 `- 工具失败时按 error 重新定位或询问用户，不能声称已生效。`
               );
@@ -255,7 +255,7 @@ export async function* runAgentTurn(
               `- 先调用 readDraft(query: ${JSON.stringify(selectedText)}) 定位含此文本的块并取得 ref。\n` +
               `- 只改一小段文字时，调用 editDraft action:"replaceText" withinRef:<上一步取得的ref>。\n` +
               `- 只改标记时，调用 editDraft action:"markText" withinRef:<上一步取得的ref>；不要把标记写成聊天里的 Markdown。\n` +
-              `- 需要整块重写时，基于 readDraft 返回的 aiIr 构造新块，然后调用 editDraft action:"replaceBlock"。\n` +
+              `- 需要整块重写时，基于 readDraft 返回的 qingml 构造新 QingML 片段，然后调用 editDraft action:"replaceBlock"。\n` +
               `- 工具失败时按 error 重新定位或询问用户，不能声称已生效。`
             );
           })

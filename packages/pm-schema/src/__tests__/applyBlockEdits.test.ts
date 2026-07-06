@@ -210,7 +210,7 @@ describe("applyBlockEdits", () => {
     expect(text(doc.content[1]!)).toBe("第一段"); // 原 doc 纯函数,从未被改
   });
 
-  it("readDraft 壳误传到底层时返回可操作提示", () => {
+  it("readDraft 壳误传到底层时返回 QingML 结构载荷提示", () => {
     const { doc, ref1 } = makeOriginal();
     const r = applyBlockEdits(doc, [
       {
@@ -227,7 +227,7 @@ describe("applyBlockEdits", () => {
     ]);
 
     expect(r.ok).toBe(false);
-    expect(r.error).toContain("请直接把 readDraft 返回的 aiIr 子对象作为 block");
+    expect(r.error).toContain("editDraft 结构载荷请传 QingML 片段");
     expect(r.error).not.toContain("heading/paragraph 顶层必须有 runs");
   });
 

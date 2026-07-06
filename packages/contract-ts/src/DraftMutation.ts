@@ -1,24 +1,12 @@
-export type DraftListItem = {
-  runs?: unknown[];
-  children?: unknown[];
-  checked?: boolean;
-};
-
-export type DraftTableCell = {
-  runs?: unknown[];
-  header?: boolean;
-  backgroundColor?: string;
-};
-
 export type DraftMutationOp =
-  | { action: "replaceBlock"; ref: string; block: unknown }
-  | { action: "insertBlock"; position: "after" | "before" | "start" | "end"; ref?: string; blocks: unknown[] }
+  | { action: "replaceBlock"; ref: string; block: string }
+  | { action: "insertBlock"; position: "after" | "before" | "start" | "end"; ref?: string; blocks: string }
   | { action: "deleteBlock"; ref: string }
-  | { action: "replaceListItem"; ref: string; item: DraftListItem }
-  | { action: "insertListItem"; parentRef: string; at: "before" | "after" | "start" | "end"; ref?: string; item: DraftListItem }
+  | { action: "replaceListItem"; ref: string; item: string }
+  | { action: "insertListItem"; parentRef: string; at: "before" | "after" | "start" | "end"; ref?: string; item: string }
   | { action: "deleteListItem"; ref: string }
-  | { action: "insertTableRow"; ref: string; at: "before" | "after" | "end"; rowIndex?: number; cells?: DraftTableCell[] }
-  | { action: "insertTableColumn"; ref: string; at: "before" | "after" | "end"; columnIndex?: number; cells?: DraftTableCell[] }
+  | { action: "insertTableRow"; ref: string; at: "before" | "after" | "end"; rowIndex?: number; cells: string }
+  | { action: "insertTableColumn"; ref: string; at: "before" | "after" | "end"; columnIndex?: number; cells: string }
   | { action: "deleteTableRow"; ref: string; rowIndex: number }
   | { action: "deleteTableColumn"; ref: string; columnIndex: number }
   | {

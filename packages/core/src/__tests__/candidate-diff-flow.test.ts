@@ -554,7 +554,14 @@ describe("candidate-diff backend flow", () => {
     state.docDraftCandidateSections = pmToLegacySections(draftDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
-    const args = { ops };
+    const args = {
+      ops: [{
+        action: "insertTableRow",
+        ref: "table-a",
+        at: "end",
+        cells: "<td>a2，新增。</td><td>b2</td>",
+      }],
+    };
     const frames = await collectFrames(
       processAgentStream(
         streamOf(
@@ -626,7 +633,14 @@ describe("candidate-diff backend flow", () => {
     state.docDraftCandidateSections = pmToLegacySections(draftDoc) as unknown as LegacySection[];
     await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
 
-    const args = { ops };
+    const args = {
+      ops: [{
+        action: "insertTableColumn",
+        ref: "table-a",
+        at: "end",
+        cells: "<th>列C</th><td>c1</td>",
+      }],
+    };
     await collectFrames(
       processAgentStream(
         streamOf(

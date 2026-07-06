@@ -46,7 +46,7 @@ function agentWriteDraftOutput(): ScorerRunOutputForAgent {
 }
 
 describe("D8 deterministic scorers", () => {
-  it("editDraft struct scorer rejects blocks that production AI-IR compilation rejects", () => {
+  it("editDraft struct scorer rejects QingML bad-block fragments", () => {
     const result = validateEditDraftStructOutput({
       scenarioKey: "insert-table",
       raw: JSON.stringify({
@@ -55,30 +55,14 @@ describe("D8 deterministic scorers", () => {
             action: "insertBlock",
             position: "after",
             ref: "para-compare",
-            blocks: [
-              {
-                type: "table",
-                rows: [
-                  {
-                    cells: [
-                      { header: true, blocks: [{ type: "paragraph", runs: [{ text: "维度" }] }] },
-                      { header: true, blocks: [{ type: "paragraph", runs: [{ text: "V2.6" }] }] },
-                      { header: true, blocks: [{ type: "paragraph", runs: [{ text: "V2.7" }] }] },
-                    ],
-                  },
-                  { cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "性能" }] }] }] },
-                  { cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "稳定性" }] }] }] },
-                  { cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "新特性" }] }] }] },
-                ],
-              },
-            ],
+            blocks: "<table><tr><th><p>维度</p></th><th>V2.6</th><th>V2.7</th></tr></table>",
           },
         ],
       }),
     });
 
     expect(result.ok).toBe(false);
-    expect(result.note).toContain("块编译失败");
+    expect(result.note).toContain("QingML bad-block");
   });
 
   it("editDraft struct scorer does not count two-level lists as three-level nesting", () => {
@@ -89,20 +73,7 @@ describe("D8 deterministic scorers", () => {
           {
             action: "replaceBlock",
             ref: "para-terms",
-            block: {
-              type: "bulletList",
-              items: [
-                {
-                  runs: [{ text: "第一章" }],
-                  children: [
-                    {
-                      type: "bulletList",
-                      items: [{ runs: [{ text: "第一条" }] }],
-                    },
-                  ],
-                },
-              ],
-            },
+            block: "<ul><li>第一章<ul><li>第一条</li></ul></li></ul>",
           },
         ],
       }),
@@ -112,7 +83,7 @@ describe("D8 deterministic scorers", () => {
     expect(result.note).toBe("深度<3");
   });
 
-  it("editDraft struct scorer accepts readDraft block envelopes through the production normalizer", () => {
+  it("editDraft struct scorer accepts QingML callout fragments", () => {
     const result = validateEditDraftStructOutput({
       scenarioKey: "insert-callout",
       raw: JSON.stringify({
@@ -121,17 +92,7 @@ describe("D8 deterministic scorers", () => {
             action: "insertBlock",
             position: "after",
             ref: "para-risk",
-            blocks: [
-              {
-                ref: "read-draft-callout",
-                editability: { replaceBlockAllowed: true },
-                aiIr: {
-                  type: "callout",
-                  tone: "warning",
-                  runs: [{ text: "上线前确认回滚预案。" }],
-                },
-              },
-            ],
+            blocks: "<callout tone=\"warning\">上线前确认回滚预案。</callout>",
           },
         ],
       }),

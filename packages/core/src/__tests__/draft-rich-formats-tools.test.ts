@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  aiBlockToQingml,
   compileAiDocumentToPm,
   countDocVisibleChars,
   pmToLegacySections,
@@ -35,6 +36,10 @@ vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
 });
 
 const ctx = {} as any;
+
+function qingmlBlock(block: unknown): string {
+  return aiBlockToQingml(block as never);
+}
 
 function text(value: string, marks?: PmMark[]): PmInlineNode {
   return marks && marks.length > 0
@@ -134,7 +139,7 @@ describe("draft rich formats session-scoped tools", () => {
     delete process.env.QINGAGENT_RACE_ROUNDS;
   });
 
-  it("readDraft 返回 taskList/callout/blockMath 的 AI-IR 结构与 editability,并能用占位符语义定位 inlineMath 周边文本", async () => {
+  it("readDraft 返回 taskList/callout/blockMath 的 QingML 片段与 editability,并能用占位符语义定位 inlineMath 周边文本", async () => {
     const state = createSession("rich-tools-read");
     bindDoc(state, doc([
       taskList("block-tasks", [
@@ -157,28 +162,17 @@ describe("draft rich formats session-scoped tools", () => {
     const byRef = new Map(full.blocks.map((block: any) => [block.ref, block]));
     expect(byRef.get("block-tasks")).toMatchObject({
       type: "taskList",
-      aiIr: {
-        type: "taskList",
-        items: [
-          { checked: false, runs: [{ text: "复核数据" }] },
-          { checked: true, runs: [{ text: "确认口径" }] },
-        ],
-      },
+      qingml: "<tasks><task>复核数据</task><task checked>确认口径</task></tasks>",
       editability: { replaceBlockAllowed: true, lossyReasons: [] },
     });
     expect(byRef.get("block-callout")).toMatchObject({
       type: "callout",
-      aiIr: {
-        type: "callout",
-        tone: "warning",
-        // 规范形:相邻同 marks run 合并(R3 fuzz 修复后,多段拍平为单 run 内嵌 \n)
-        runs: [{ text: "第一段提示\n第二段提示" }],
-      },
+      qingml: "<callout emoji=\"!\" tone=\"warning\">第一段提示<br/>第二段提示</callout>",
       editability: { replaceBlockAllowed: false, lossyReasons: ["multiBlockBlockquote"] },
     });
     expect(byRef.get("block-math")).toMatchObject({
       type: "blockMath",
-      aiIr: { type: "blockMath", latex: "\\sum_{i=1}^{n} i" },
+      qingml: "<math-block>\\sum_{i=1}^{n} i</math-block>",
       editability: { replaceBlockAllowed: true, lossyReasons: [] },
       text: "\\sum_{i=1}^{n} i",
     });
@@ -191,40 +185,33 @@ describe("draft rich formats session-scoped tools", () => {
     expect(query.blocks.map((block: any) => block.ref)).toEqual(["block-inline"]);
     expect(query.blocks[0]).toMatchObject({
       text: "行内公式前 \\alpha+\\beta 行内公式后",
-      aiIr: {
-        type: "paragraph",
-        runs: [
-          { text: "行内公式前 " },
-          { text: "\\alpha+\\beta", marks: [{ type: "math" }] },
-          { text: " 行内公式后" },
-        ],
-      },
+      qingml: "<p>行内公式前 <math>\\alpha+\\beta</math> 行内公式后</p>",
     });
   });
 
-  it.fails("editDraft replaceBlock 拒绝 readDraft 信封并提示直接传 aiIr", async () => {
+  it("editDraft replaceBlock 使用 readDraft qingml 片段改写", async () => {
     const state = createSession("rich-tools-envelope-contract");
     bindDoc(state, doc([paragraph("block-a", "原文")]));
     const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
     const draft = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
-    const envelope = {
-      ...draft.blocks[0],
-      aiIr: { type: "paragraph", runs: [{ text: "新文" }] },
-    };
+    expect(draft.blocks[0].qingml).toBe("<p>原文</p>");
 
     const result = await editDraft.execute!({
-      ops: [{ action: "replaceBlock", ref: "block-a", block: envelope }],
+      ops: [{ action: "replaceBlock", ref: "block-a", block: "<p>新文</p>" }],
     }, ctx) as any;
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("直接传 aiIr");
+    expect(result.ok).toBe(true);
+    expect(state.docDraftCandidateDoc?.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [{ type: "text", text: "新文" }],
+    });
   });
 
-  it("editDraft replaceBlock 对 taskList/callout/blockMath 必填字段缺失给出字段名错误", async () => {
-    const cases: Array<{ name: string; block: unknown; field: string }> = [
-      { name: "taskList", block: { type: "taskList" }, field: "items" },
-      { name: "callout", block: { type: "callout", tone: "info" }, field: "runs" },
-      { name: "blockMath", block: { type: "blockMath" }, field: "latex" },
+  it("editDraft replaceBlock 对 taskList/callout/blockMath 坏 QingML 给出字段或 bad-block 错误", async () => {
+    const cases: Array<{ name: string; block: string; field: string }> = [
+      { name: "taskList", block: "<tasks></tasks>", field: "items" },
+      { name: "callout", block: "<callout><p>块级越界</p></callout>", field: "QingML bad-block" },
+      { name: "blockMath", block: "<math-block></math-block>", field: "latex" },
     ];
 
     for (const item of cases) {
@@ -384,7 +371,7 @@ describe("draft rich formats session-scoped tools", () => {
           action: "insertBlock",
           position: "after",
           ref: mathRef,
-          blocks: [{ type: "callout", tone: "success", emoji: "OK", runs: [{ text: "一轮校对完成" }] }],
+          blocks: "<callout tone=\"success\" emoji=\"OK\">一轮校对完成</callout>",
         },
       ],
     }, ctx) as any;
@@ -406,14 +393,14 @@ describe("draft rich formats session-scoped tools", () => {
         {
           action: "replaceBlock",
           ref: taskRef,
-          block: {
+          block: qingmlBlock({
             type: "taskList",
             items: [
               { checked: true, runs: [{ text: "校验安全阈值" }] },
               { checked: true, runs: [{ text: "同步记录" }] },
               { checked: false, runs: [{ text: "发布结论" }] },
             ],
-          },
+          }),
         },
         { action: "replaceText", find: "需要复核", replace: "已经复核" },
       ],
@@ -432,8 +419,6 @@ describe("draft rich formats session-scoped tools", () => {
     ]));
 
     const afterSecond = await tools.readDraftAiIr.execute!({ query: "F=ma" }, ctx) as any;
-    expect(afterSecond.blocks[0].aiIr.runs).toEqual(expect.arrayContaining([
-      { text: "F=ma", marks: [{ type: "math" }] },
-    ]));
+    expect(afterSecond.blocks[0].qingml).toContain("<math>F=ma</math>");
   });
 });

@@ -1037,9 +1037,7 @@ function incomingBlockContractHints(blocks: readonly unknown[]): string[] {
     const reason = missingRequiredField
       ? `block ${index} 缺 ${missingRequiredField}`
       : `block ${index} 缺顶层字段`;
-    return [
-      `${reason}；请直接把 readDraft 返回的 aiIr 子对象作为 block，不要带 ref/text/editability 外壳。`,
-    ];
+    return [`${reason}；editDraft 结构载荷请传 QingML 片段，不要带 ref/text/editability 外壳。`];
   });
 }
 

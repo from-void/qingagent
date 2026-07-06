@@ -5,15 +5,10 @@ import { repairDraftToolCallInput } from "../llm/repairingModel.js";
 import { serverAiir3ToolCallInput } from "./fixtures/serverAiir3ToolCallInput.js";
 import { extractJson } from "../bridge/docGenerator.js";
 
-function fixMissingReplaceBlockBraces(input: string): string {
-  return input
-    .replaceAll("}]}, {\"action\": \"replaceBlock\"", "}]}}, {\"action\": \"replaceBlock\"")
-    .replace(/}]}\]}$/, "}]}}]}");
-}
-
 describe("repairToolCallJson", () => {
   it("纯字符串值裸双引号病可修复,且内容保真", () => {
-    const quoteOnly = fixMissingReplaceBlockBraces(serverAiir3ToolCallInput);
+    const quoteOnly =
+      '{"ops":[{"action":"replaceBlock","ref":"block-a","block":"<p>进入"土地争夺"和"五层大厦"阶段</p>"}]}';
     const repaired = repairToolCallJson(quoteOnly);
 
     expect(repaired.ok).toBe(true);
@@ -22,7 +17,7 @@ describe("repairToolCallJson", () => {
 
     const parsed = JSON.parse(repaired.json) as { ops: unknown[] };
     expect(editDraftInputSchema.safeParse(parsed).success).toBe(true);
-    expect(parsed.ops).toHaveLength(16);
+    expect(parsed.ops).toHaveLength(1);
     expect(repaired.json).toContain("\\\"土地争夺\\\"");
     expect(repaired.json).toContain("\\\"五层大厦\\\"");
     expect(JSON.stringify(parsed)).toContain("土地争夺");
@@ -191,13 +186,7 @@ describe("repairToolCallJson", () => {
       ops: [{
         action: "replaceListItem",
         ref: "item-a",
-        item: {
-          runs: [{ text: "正文里包含 ] 和 }，也包含转义引号 \\\"quoted\\\"" }],
-          children: [{
-            type: "bulletList",
-            items: [{ runs: [{ text: "子项" }] }],
-          }],
-        },
+        item: "<li>正文里包含 ] 和 }，也包含转义引号 \"quoted\"<ul><li>子项</li></ul></li>",
       }],
     };
     const raw = `已按行级结构编辑:\n\`\`\`json\n${JSON.stringify(input)}\n\`\`\`\n本轮只改这一行。`;
@@ -209,28 +198,21 @@ describe("repairToolCallJson", () => {
     expect(checked.success ? checked.data.ops[0] : null).toMatchObject({
       action: "replaceListItem",
       ref: "item-a",
+      item: expect.stringContaining("<li>正文里包含"),
     });
   });
 
-  it("P3a list item op 的 duplicate blockId 脏字段会被 schema 剥离,不进入执行层", () => {
-    const input = {
+  it("P3a list item op 只接受 QingML 字符串,旧对象 item 被 schema 拒绝", () => {
+    const accepted = {
       ops: [{
         action: "insertListItem",
         parentRef: "list-a",
         at: "end",
-        item: {
-          blockId: "item-a",
-          runs: [{ text: "新增行" }],
-          children: [{
-            type: "bulletList",
-            blockId: "list-a",
-            items: [{ blockId: "item-a", runs: [{ text: "子项" }] }],
-          }],
-        },
+        item: "<li>新增行<ul><li>子项</li></ul></li>",
       }],
     };
 
-    const parsed = JSON.parse(extractJson(JSON.stringify(input)));
+    const parsed = JSON.parse(extractJson(JSON.stringify(accepted)));
     const checked = editDraftInputSchema.safeParse(parsed);
 
     expect(checked.success).toBe(true);
@@ -239,13 +221,22 @@ describe("repairToolCallJson", () => {
     if (!op) return;
     expect(op.action).toBe("insertListItem");
     if (op.action !== "insertListItem") return;
-    expect("blockId" in op.item).toBe(false);
-    expect(op.item.children?.[0]).toMatchObject({ type: "bulletList" });
+    expect(op.item).toContain("<li>新增行");
+
+    const rejected = editDraftInputSchema.safeParse({
+      ops: [{
+        action: "insertListItem",
+        parentRef: "list-a",
+        at: "end",
+        item: { runs: [{ text: "旧对象" }] },
+      }],
+    });
+    expect(rejected.success).toBe(false);
   });
 
-  it("P3a children 深括号截断时 fail-closed,不从内部子数组捞半截 JSON", () => {
+  it("P3a QingML item 字符串所在 JSON 截断时 fail-closed,不从半截结构捞内容", () => {
     const broken =
-      '{"ops":[{"action":"replaceListItem","ref":"item-a","item":{"runs":[{"text":"父"}],"children":[{"type":"bulletList","items":[{"runs":[{"text":"子"}]}]}}]}';
+      '{"ops":[{"action":"replaceListItem","ref":"item-a","item":"<li>父<ul><li>子</li></ul></li>"}';
 
     expect(() => JSON.parse(extractJson(broken))).toThrow();
     expect(repairDraftToolCallInput("editDraft", broken)).toBeNull();

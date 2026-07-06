@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  aiBlockToQingml,
+  aiBlocksToQingml,
   aiRunMarkToPmMark,
   compileAiDocumentToPm,
   getStablePmJson,
@@ -21,6 +23,18 @@ const ctx = {} as any;
 
 function aiParagraph(text: string) {
   return { type: "paragraph", runs: [{ text }] };
+}
+
+function qingmlBlock(block: unknown): string {
+  return aiBlockToQingml(block as never);
+}
+
+function qingmlBlocks(blocks: readonly unknown[]): string {
+  return aiBlocksToQingml(blocks as never);
+}
+
+function qingmlParagraph(text: string): string {
+  return qingmlBlock(aiParagraph(text));
 }
 
 function compileDoc(blocks: unknown[]): PmDoc {
@@ -102,7 +116,7 @@ describe("parseAiDocumentOrBlockFromText", () => {
   });
 });
 
-describe("AI-IR draft tools", () => {
+describe("QingML draft tools", () => {
   it("agent 只暴露常驻基础工具,草稿工具由 sessionScoped toolset 注入", async () => {
     const tools = await qingagentAgent.listTools();
     expect(Object.keys(tools).sort()).toEqual([
@@ -118,18 +132,18 @@ describe("AI-IR draft tools", () => {
     const { editDraft } = createSessionScopedTools(state);
     const description = (editDraft as { description?: string }).description ?? "";
 
-    expect(description).toContain("children 递归");
-    expect(description).toContain("深层 AI-IR JSON");
+    expect(description).toContain("嵌套 QingML");
+    expect(description).toContain("QingML 片段字符串");
     expect(description).toContain("insertTableRow");
     expect(description).toContain("rowIndex/columnIndex 一律是当前表的 0-based 索引");
     expect(description).toContain("同一次 editDraft 调用内多个表格 op 按声明顺序依次应用");
-    expect(description).toContain("新增列在表头行对应的新 cell 自动带 header:true");
+    expect(description).toContain("新增列在表头行对应的新 cell 自动作为表头单元格");
     expect(description).toContain("在表头行前插入数据行");
     expect(description).not.toContain("items+depth");
     expect(description).not.toContain("必须用扁平");
   });
 
-  it("readDraft 默认只返回 aiIr,range/outline/query 使用顶层 ref", async () => {
+  it("readDraft 默认只返回 qingml,range/outline/query 使用顶层 ref", async () => {
     const state = createSession("s-read");
     bindDoc(state, doc([
       { type: "heading", attrs: { blockId: "block-h", level: 2 }, content: [{ type: "text", text: "标题" }] },
@@ -141,7 +155,7 @@ describe("AI-IR draft tools", () => {
     const full = await readDraftAiIr.execute!({ mode: "full" }, ctx) as any;
     expect(full.ok).toBe(true);
     expect(full.blocks[0].ref).toBe("block-h");
-    expect(full.blocks[0].aiIr).toMatchObject({ type: "heading", level: 2 });
+    expect(full.blocks[0].qingml).toBe("<h2>标题</h2>");
     expect(full.blocks[0].text).toBeUndefined();
 
     const range = await readDraftAiIr.execute!({ mode: "range", from: "block-a", to: "block-b", includeText: true }, ctx) as any;
@@ -184,7 +198,7 @@ describe("AI-IR draft tools", () => {
       text: "第二行",
       editability: { replaceBlockAllowed: false },
     });
-    expect(item.blocks[0].aiIr).toBeUndefined();
+    expect(item.blocks[0].qingml).toBeUndefined();
   });
 
   it("editDraft 混合事务先块后文本,成功后直接写候选", async () => {
@@ -194,7 +208,7 @@ describe("AI-IR draft tools", () => {
 
     const result = await editDraft.execute!({
       ops: [
-        { action: "replaceBlock", ref: "block-a", block: aiParagraph("新文本") },
+        { action: "replaceBlock", ref: "block-a", block: qingmlParagraph("新文本") },
         { action: "replaceText", find: "新文本", replace: "最终文本" },
       ],
     }, ctx) as any;
@@ -205,23 +219,19 @@ describe("AI-IR draft tools", () => {
     expect(inlineText(state.doc!.content[0]!)).toBe("旧文本");
   });
 
-  it("editDraft replaceBlock 接受 readDraft 返回壳并只取 aiIr 子对象", async () => {
+  it("editDraft replaceBlock 使用 readDraft 返回的 qingml 片段", async () => {
     const state = createSession("s-edit-envelope-replace");
     bindDoc(state, doc([paragraph("block-a", "旧文本")]));
     const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
     const draft = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
-    const envelope = {
-      ...draft.blocks[0],
-      aiIr: aiParagraph("壳内新文本"),
-      children: [{ ignored: true }],
-    };
+    expect(draft.blocks[0].qingml).toBe("<p>旧文本</p>");
 
     const result = await editDraft.execute!({
-      ops: [{ action: "replaceBlock", ref: "block-a", block: envelope }],
+      ops: [{ action: "replaceBlock", ref: "block-a", block: "<p>片段新文本</p>" }],
     }, ctx) as any;
 
     expect(result.ok).toBe(true);
-    expect(inlineText(state.docDraftCandidateDoc!.content[0]!)).toBe("壳内新文本");
+    expect(inlineText(state.docDraftCandidateDoc!.content[0]!)).toBe("片段新文本");
     expect(state.docDraftCandidateDoc!.content[0]!.attrs.blockId).toBe("block-a");
   });
 
@@ -234,13 +244,7 @@ describe("AI-IR draft tools", () => {
       ops: [{
         action: "replaceBlock",
         ref: "block-code",
-        block: {
-          ref: "readonly-ref",
-          type: "codeBlock",
-          language: "ts",
-          text: "const nextValue = 2;",
-          editability: { replaceBlockAllowed: true, lossyReasons: [] },
-        },
+        block: "<pre lang=\"ts\">const nextValue = 2;</pre>",
       }],
     }, ctx) as any;
 
@@ -254,35 +258,17 @@ describe("AI-IR draft tools", () => {
     });
   });
 
-  it("editDraft insertBlock 逐个解包多元素 readDraft 壳,裸块保持原样", async () => {
+  it("editDraft insertBlock 接受一段含多个块的 QingML", async () => {
     const state = createSession("s-edit-envelope-insert");
     bindDoc(state, doc([paragraph("block-a", "基准")]));
-    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
-    const draft = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
-    const outlineEnvelope = {
-      ...draft.blocks[0],
-      aiIr: aiParagraph("第一段"),
-      sectionFrom: "block-a",
-      sectionTo: "block-a",
-    };
-    const textEnvelope = {
-      ref: "readonly-ref",
-      type: "paragraph",
-      aiIr: aiParagraph("第二段"),
-      text: "模型顶层补的只读文本",
-      editability: { replaceBlockAllowed: true, lossyReasons: [] },
-    };
+    const { editDraft } = createSessionScopedTools(state);
 
     const result = await editDraft.execute!({
       ops: [{
         action: "insertBlock",
         position: "after",
         ref: "block-a",
-        blocks: [
-          outlineEnvelope,
-          textEnvelope,
-          aiParagraph("裸块"),
-        ],
+        blocks: "<p>第一段</p><p>第二段</p><p>裸块</p>",
       }],
     }, ctx) as any;
 
@@ -295,24 +281,24 @@ describe("AI-IR draft tools", () => {
     ]);
   });
 
-  it("editDraft 坏壳仍给块级错误,insertBlock.blocks 非数组也不崩", async () => {
+  it("editDraft 坏 QingML 片段返回 ok:false,非字符串 blocks 也不崩", async () => {
     const state = createSession("s-edit-envelope-bad");
     bindDoc(state, doc([paragraph("block-a", "基准")]));
     const { editDraft } = createSessionScopedTools(state);
 
-    const badShell = await editDraft.execute!({
+    const badFragment = await editDraft.execute!({
       ops: [{
         action: "insertBlock",
         position: "after",
         ref: "block-a",
-        blocks: [{ ref: "r", type: "paragraph", text: "缺 runs", editability: {} }],
+        blocks: "<callout><p>块级越界</p></callout>",
       }],
     }, ctx) as any;
-    expect(badShell.ok).toBe(false);
-    expect(badShell.failedOpIndex).toBe(0);
-    expect(badShell.error).toContain("block 0");
+    expect(badFragment.ok).toBe(false);
+    expect(badFragment.failedOpIndex).toBe(0);
+    expect(badFragment.error).toContain("QingML bad-block");
 
-    // createTool 会先按 z.array 拦截；这里钉住“不会落到 flatMap TypeError / 不污染草稿”的脏输入行为。
+    // 这里钉住“不会落到 TypeError / 不污染草稿”的脏输入行为。
     const nonArray = await editDraft.execute!({
       ops: [{
         action: "insertBlock",
@@ -322,7 +308,7 @@ describe("AI-IR draft tools", () => {
       }],
     } as any, ctx) as any;
     expect(nonArray?.ok).not.toBe(true);
-    expect(state.docDraftCandidateDoc?.content.map(inlineText)).toEqual(["基准"]);
+    expect((state.docDraftCandidateDoc ?? state.doc)!.content.map(inlineText)).toEqual(["基准"]);
   });
 
   it("editDraft 任一文本 op 失败则整组回滚", async () => {
@@ -333,7 +319,7 @@ describe("AI-IR draft tools", () => {
 
     const result = await editDraft.execute!({
       ops: [
-        { action: "replaceBlock", ref: "block-a", block: aiParagraph("新文本") },
+        { action: "replaceBlock", ref: "block-a", block: qingmlParagraph("新文本") },
         { action: "replaceText", find: "不存在", replace: "不会写入" },
       ],
     }, ctx) as any;
@@ -357,7 +343,7 @@ describe("AI-IR draft tools", () => {
     const { editDraft } = createSessionScopedTools(state);
 
     const rejected = await editDraft.execute!({
-      ops: [{ action: "replaceBlock", ref: "block-callout", block: aiParagraph("普通段") }],
+      ops: [{ action: "replaceBlock", ref: "block-callout", block: qingmlParagraph("普通段") }],
     }, ctx) as any;
     expect(rejected.ok).toBe(false);
     expect(rejected.error).toContain("replaceBlock 拒绝有损块");
@@ -392,8 +378,8 @@ describe("AI-IR draft tools", () => {
 
     const result = await editDraft.execute!({
       ops: [
-        { action: "insertBlock", position: "after", ref: "block-a", blocks: [aiParagraph("")] },
-        { action: "insertBlock", position: "after", ref: "block-a", blocks: [aiParagraph("")] },
+        { action: "insertBlock", position: "after", ref: "block-a", blocks: qingmlParagraph("") },
+        { action: "insertBlock", position: "after", ref: "block-a", blocks: qingmlParagraph("") },
       ],
     }, ctx) as any;
 
@@ -418,10 +404,10 @@ describe("AI-IR draft tools", () => {
           action: "insertBlock",
           position: "after",
           ref: "block-top",
-          blocks: [
+          blocks: qingmlBlocks([
             aiParagraph("不应留下的残块"),
             { type: "heading", level: 2, runs: [{ text: "小标题" }] },
-          ],
+          ]),
         },
       ],
     }, ctx) as any;
@@ -450,13 +436,7 @@ describe("AI-IR draft tools", () => {
       ops: [{
         action: "replaceListItem",
         ref: "item-b",
-        item: {
-          runs: [{ text: "第二行已改" }],
-          children: [{
-            type: "bulletList",
-            items: [{ runs: [{ text: "新增子项" }] }],
-          }],
-        },
+        item: "<li>第二行已改<ul><li>新增子项</li></ul></li>",
       }],
     }, ctx) as any;
 
@@ -493,7 +473,7 @@ describe("AI-IR draft tools", () => {
       ops: [{
         action: "replaceListItem",
         ref: "missing-item",
-        item: { runs: [{ text: "不应写入" }] },
+        item: "<li>不应写入</li>",
       }],
     }, ctx) as any;
 
@@ -533,7 +513,7 @@ describe("AI-IR draft tools", () => {
         action: "insertTableColumn",
         ref: tableRef,
         at: "end",
-        cells: [{ runs: [{ text: "列C，新增。" }] }, { runs: [{ text: "c1，新增。" }] }],
+        cells: "<th>列C，新增。</th><td>c1，新增。</td>",
       }],
     }, ctx) as any;
 

@@ -21,6 +21,7 @@ import {
   type EditDraftStructOutput,
 } from "./editDraftStructScorers.js";
 import type { OfflineScorerFixture, OfflineScorerSuite } from "./types.js";
+import { aiBlockToQingml, type AiBlock } from "@qingagent/pm-schema";
 
 function paragraph(text: string): Record<string, unknown> {
   return { type: "paragraph", runs: [{ text }] };
@@ -193,6 +194,10 @@ function op(rawOp: Record<string, unknown>): string {
   return JSON.stringify({ ops: [rawOp] });
 }
 
+function blockQingml(block: Record<string, unknown>): string {
+  return aiBlockToQingml(block as AiBlock);
+}
+
 function tableBlock(): Record<string, unknown> {
   const cell = (text: string, header = false) => ({
     ...(header ? { header: true } : {}),
@@ -250,7 +255,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
     source: "eval-editdraft-struct.ts:SCENARIOS/insert-table",
     output: {
       scenarioKey: "insert-table",
-      raw: op({ action: "insertBlock", position: "after", ref: "para-compare", blocks: [tableBlock()] }),
+      raw: op({ action: "insertBlock", position: "after", ref: "para-compare", blocks: blockQingml(tableBlock()) }),
     },
   },
   {
@@ -261,10 +266,10 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
       raw: op({
         action: "replaceBlock",
         ref: "faq-list",
-        block: {
+        block: blockQingml({
           type: "orderedList",
           items: ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"].map((text) => ({ runs: [{ text }] })),
-        },
+        }),
       }),
     },
   },
@@ -277,7 +282,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
         action: "insertBlock",
         position: "after",
         ref: "para-actions",
-        blocks: [taskList(["制定计划", "分配负责人", "设定截止", "复盘"])],
+        blocks: blockQingml(taskList(["制定计划", "分配负责人", "设定截止", "复盘"])),
       }), "```"].join("\n"),
     },
   },
@@ -290,7 +295,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
         action: "insertBlock",
         position: "after",
         ref: "para-arch2",
-        blocks: [nestedList()],
+        blocks: blockQingml(nestedList()),
       })}\n已完成。`,
     },
   },
@@ -303,7 +308,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
         action: "insertBlock",
         position: "after",
         ref: "para-warn",
-        blocks: [{ type: "callout", tone: "warning", runs: [{ text: "注意数据备份与权限。" }] }],
+        blocks: blockQingml({ type: "callout", tone: "warning", runs: [{ text: "注意数据备份与权限。" }] }),
       }),
     },
   },
@@ -316,7 +321,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
         action: "insertBlock",
         position: "after",
         ref: "para-plan",
-        blocks: [taskList(["立项", "调研", "设计", "开发", "测试", "上线"])],
+        blocks: blockQingml(taskList(["立项", "调研", "设计", "开发", "测试", "上线"])),
       }),
     },
   },
@@ -325,7 +330,7 @@ export const editDraftStructFixtures: OfflineScorerFixture<undefined, EditDraftS
     source: "eval-editdraft-struct.ts:SCENARIOS/nested-3level",
     output: {
       scenarioKey: "nested-3level",
-      raw: op({ action: "replaceBlock", ref: "para-org", block: nestedList() }),
+      raw: op({ action: "replaceBlock", ref: "para-org", block: blockQingml(nestedList()) }),
     },
   },
 ];

@@ -9,14 +9,14 @@ describe("editDraftInputSchema", () => {
           action: "insertTableRow",
           ref: "table-a",
           at: "end",
-          cells: [{ runs: [{ text: "新增，A。" }] }],
+          cells: "<td>新增，A。</td>",
         },
         {
           action: "insertTableColumn",
           ref: "table-a",
           at: "after",
           columnIndex: 1,
-          cells: [{ runs: [{ text: "列C" }], header: true }],
+          cells: "<th>列C</th>",
         },
         { action: "deleteTableRow", ref: "table-a", rowIndex: 2 },
         { action: "deleteTableColumn", ref: "table-a", columnIndex: 0 },
@@ -29,6 +29,18 @@ describe("editDraftInputSchema", () => {
   it("rejects negative table indexes", () => {
     const parsed = editDraftInputSchema.safeParse({
       ops: [{ action: "deleteTableRow", ref: "table-a", rowIndex: -1 }],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects legacy object structural payloads", () => {
+    const parsed = editDraftInputSchema.safeParse({
+      ops: [{
+        action: "replaceBlock",
+        ref: "block-a",
+        block: { type: "paragraph", runs: [{ text: "旧对象载体" }] },
+      }],
     });
 
     expect(parsed.success).toBe(false);

@@ -4,7 +4,7 @@ import { qingagentAgent } from "../agents/qingagent.js";
 import { buildSystemPrompt, AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 
 describe("system prompt S3", () => {
-  it("返回单一 AI-IR prompt,包含新工具契约", () => {
+  it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 
     // buildSystemPrompt = 基础常量 + 懒计算的运行时能力指令(见 system.ts 说明),
@@ -17,7 +17,7 @@ describe("system prompt S3", () => {
       "readDiff",
       "writeDraft",
       "action",
-      "aiIr",
+      "qingml",
       'action:"replaceText"',
       "replaceListItem",
       "insertListItem",
@@ -37,8 +37,8 @@ describe("system prompt S3", () => {
       "改动待确认",
       "不要声称改动已生效",
       "safeRegex",
-      "严格合法 JSON",
-      "中文「」",
+      "QingML 片段",
+      "&lt; / &amp;",
       "耗时或重操作工具前",
       "不要在每个工具调用前都说话",
       "run_js",
@@ -70,13 +70,13 @@ describe("system prompt S3", () => {
       "结构摘要 / 自检纪律",
       "以工具返回为唯一事实来源",
       "核对该块真实的 lang 属性",
-      "多级待办用 children 放子 taskList",
+      "多级待办用 <task> 内嵌子 <tasks>",
       "不要把所有任务平铺到同一级",
       "不能用 \"- [ ]\" 文本或平铺 sibling 假装子任务",
-      // V4 writeDraft:用户明确拍板继续深层 AI-IR JSON,编辑侧也必须给 children 递归范本。
-      "children 递归",
-      '{"type":"taskList","items":[{"checked":false,"runs":[{"text":"父任务"}],"children":[{"type":"taskList"',
-      "children 里放子 taskList 表示子任务层级",
+      // V4 writeDraft:用户明确拍板继续深层 QingML,编辑侧也必须给嵌套标签范本。
+      "QingML 嵌套",
+      "<tasks><task>父任务<tasks><task>子任务",
+      "子任务层级只能靠 <task> 内的子 <tasks> 表达",
       // 回归(e2e-loop-0704 R15):分栏等结构改写重发既有嵌套列表时把三级拍成两级——
       // 层级保真范本必须在编辑侧上下文里。
       "重发既有结构时层级保真",
@@ -95,7 +95,7 @@ describe("system prompt S3", () => {
     }
   });
 
-  it("AI-IR prompt 不泄漏旧编辑协议词", () => {
+  it("QingML prompt 不泄漏旧编辑协议词", () => {
     const prompt = buildSystemPrompt();
     for (const forbidden of [
       "propose" + "Patch",
@@ -115,7 +115,7 @@ describe("system prompt S3", () => {
     }
   });
 
-  it("连续两次构建 AI-IR prompt 逐字节稳定", () => {
+  it("连续两次构建 QingML prompt 逐字节稳定", () => {
     expect(buildSystemPrompt()).toBe(buildSystemPrompt());
   });
 

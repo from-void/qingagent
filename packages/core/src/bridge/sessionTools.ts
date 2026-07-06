@@ -31,7 +31,6 @@ import { mastra } from "../mastra.js";
 import { createUpdateWorkingMemoryTool } from "./workingMemory.js";
 import type { SessionState, SuspensionToolName } from "./sessionState.js";
 import { isRecord } from "./redaction.js";
-import { normalizeIncomingBlock } from "./docGenerationEvents.js";
 import { fillLocalSvgImageDimensions } from "./imageDimensionFallback.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import {
@@ -54,26 +53,65 @@ import {
   markTextRuns,
   replaceTextRuns,
 } from "./textEditOps.js";
-import { parseAiDocumentOrBlockFromText } from "../tools/generateDoc.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,
+  aiBlockToQingml,
   aiRunMarkToPmMark,
   aiRunMarkSchema,
   analyzeAiIrEditability,
   blockToAi,
   countDocVisibleChars,
+  qingmlParseFragment,
   safeParsePmDoc,
   type AiRunMark,
   type BlockEdit,
+  type FragmentAction,
+  type QingmlFragmentResult,
 } from "@qingagent/pm-schema";
 
 const logger = mastra.getLogger();
 
 // BB① 埋点用:按 turn(runId)累计 editDraft.execute 次数(模块级,跨同一 turn 内多次调用)。
 const editDraftExecuteCounts = new Map<string, number>();
+
+type QingmlFragmentKind = Extract<QingmlFragmentResult, { ok: true }>["kind"];
+type ParsedQingmlFragment<K extends QingmlFragmentKind> = Extract<QingmlFragmentResult, { ok: true; kind: K }>;
+
+function parseEditDraftQingmlFragment<K extends QingmlFragmentKind>(
+  text: unknown,
+  action: FragmentAction,
+  expectedKind: K,
+): { ok: true; fragment: ParsedQingmlFragment<K> } | { ok: false; error: string } {
+  if (typeof text !== "string") {
+    return { ok: false, error: `${action} 需要 QingML 片段字符串。` };
+  }
+  const parsed = qingmlParseFragment(text, action);
+  if (!parsed.ok) {
+    const badWarnings = parsed.warnings.filter((warning) => warning.severity === "bad-block");
+    if (badWarnings.length > 0) {
+      return {
+        ok: false,
+        error: `QingML bad-block: ${badWarnings.map((warning) => `${warning.kind}:${warning.detail}`).join("; ")}`,
+      };
+    }
+    return { ok: false, error: parsed.error };
+  }
+
+  const badWarnings = parsed.warnings.filter((warning) => warning.severity === "bad-block");
+  if (badWarnings.length > 0) {
+    return {
+      ok: false,
+      error: `QingML bad-block: ${badWarnings.map((warning) => `${warning.kind}:${warning.detail}`).join("; ")}`,
+    };
+  }
+  if (parsed.kind !== expectedKind) {
+    return { ok: false, error: `${action} 期望 ${expectedKind} 片段,实际得到 ${parsed.kind}。` };
+  }
+  return { ok: true, fragment: parsed as ParsedQingmlFragment<K> };
+}
 
 const CAPABILITY_TOOLS = {
   "browser-ops": {},
@@ -489,7 +527,7 @@ export function createSessionScopedTools(
   const readDraftAiIr = createTool({
     id: "readDraft",
     description:
-      "按 AI-IR 块 ref 读取当前候选草稿。默认只返回 aiIr,不要把 text 当编辑蓝本。",
+      "按块 ref 读取当前候选草稿。默认只返回 qingml 片段,不要把 text 当编辑蓝本。",
     inputSchema: z.object({
       mode: z.enum(["full", "range", "outline"]).optional(),
       from: z.string().optional(),
@@ -504,7 +542,7 @@ export function createSessionScopedTools(
         ref: z.string(),
         type: z.string(),
         level: z.number().optional(),
-        aiIr: z.unknown().optional(),
+        qingml: z.string().optional(),
         text: z.string().optional(),
         editability: z.object({
           replaceBlockAllowed: z.boolean(),
@@ -580,7 +618,7 @@ export function createSessionScopedTools(
           ref: string;
           type: string;
           level?: number;
-          aiIr?: unknown;
+          qingml?: string;
           text?: string;
           editability: { replaceBlockAllowed: boolean; lossyReasons: string[] };
           sectionFrom?: string;
@@ -590,7 +628,7 @@ export function createSessionScopedTools(
           type: entry.node.type,
           editability,
         };
-        if (topBlock) out.aiIr = blockToAi(topBlock);
+        if (topBlock) out.qingml = aiBlockToQingml(blockToAi(topBlock));
         if (topBlock?.type === "heading") out.level = topBlock.attrs.level;
         if (includeText) out.text = textByRef.get(entry.ref) ?? "";
         if (mode === "outline" && topBlock?.type === "heading") {
@@ -632,12 +670,11 @@ export function createSessionScopedTools(
     description:
       "对候选草稿执行原子编辑,支持 ops: replaceBlock/insertBlock/deleteBlock/replaceListItem/insertListItem/deleteListItem/insertTableRow/insertTableColumn/deleteTableRow/deleteTableColumn/replaceText/markText。\n" +
       "把已有正文整理/重构成嵌套列表、或改成章>条>款层级时,先 readDraft 取目标块,再用 replaceBlock 把这些块重写成带层级的嵌套列表,尽量逐字保留原文,只动用户指定的范围。" +
-      "多级列表统一用 children 递归表达:父 item 的 children 里放子 bulletList/orderedList/taskList 块,子块的 items 才是下一层。3 级及以上也继续使用同一套深层 AI-IR JSON,不要改成扁平中间格式,不要用 1.1/①/缩进文本假装层级。\n" +
-      "只替换、插入或删除列表中的整行时,优先用行级 op: replaceListItem {ref,item} 保留目标行 ref; insertListItem {parentRef,at,ref?,item}; deleteListItem {ref}。item 形如 {runs:[...],children:[子 list 块],checked?:boolean}; children 里放 bulletList/orderedList/taskList 等块,不要把 1.1/① 写进 runs.text 假装层级。taskList 行未传 checked 时 replaceListItem 保留原勾选状态。\n" +
-      "只给已有表格加/删行列时,优先用表格增量 op,不要 replaceBlock 重写整表: insertTableRow {ref,at,rowIndex?,cells?}; insertTableColumn {ref,at,columnIndex?,cells?}; deleteTableRow {ref,rowIndex}; deleteTableColumn {ref,columnIndex}。ref 指向 table 块本身;表格 cell/row 无稳定 id,rowIndex/columnIndex 一律是当前表的 0-based 索引;insert 的 at 只能是 before/after/end,before/after 必须传对应 rowIndex/columnIndex,end 不需要索引。同一次 editDraft 调用内多个表格 op 按声明顺序依次应用,后续 op 的索引以前序 op 应用后的当前表为准。跨轮引用索引不可靠,改表前先 readDraft 确认当前表结构。删除表头行、在表头行前插入数据行、索引越界、删除到 0 行/0 列会失败并返回可自纠错误;删除唯一数据行后只剩表头是合法的。新增行缺省 cell 为空 runs;新增列在表头行对应的新 cell 自动带 header:true。\n" +
-      "block 必须是裸 AI-IR 块(即 readDraft 返回里的 aiIr 子对象),不要带 ref/editability/text 外壳。\n" +
-      'run 的样式只能放进 marks 数组:超链接写 {"text":"标题","marks":[{"type":"link","href":"https://…"}]};加粗写 marks:[{"type":"bold"}]。' +
-      '【禁止】把 link/href/bold 当作 run 的字段(如 {"text":"标题","link":"https://…"}),这些裸字段会被忽略、链接不会生效。\n' +
+      "多级列表统一用 QingML 嵌套标签表达:父 <li>/<task> 内放子 <ul>/<ol>/<tasks>,子列表的 <li>/<task> 才是下一层。3 级及以上也继续使用同一套嵌套 QingML,不要改成扁平中间格式,不要用 1.1/①/缩进文本假装层级。\n" +
+      "只替换、插入或删除列表中的整行时,优先用行级 op: replaceListItem {ref,item} 保留目标行 ref; insertListItem {parentRef,at,ref?,item}; deleteListItem {ref}。item 是一个 <li>/<task> QingML 片段或裸行内片段;子层级放在该 <li>/<task> 内的子列表标签里,不要把 1.1/① 写成正文假装层级。taskList 行未传 checked 时 replaceListItem 保留原勾选状态。\n" +
+      "只给已有表格加/删行列时,优先用表格增量 op,不要 replaceBlock 重写整表: insertTableRow {ref,at,rowIndex?,cells}; insertTableColumn {ref,at,columnIndex?,cells}; deleteTableRow {ref,rowIndex}; deleteTableColumn {ref,columnIndex}。cells 是 <tr> 或 <td>/<th> QingML 片段。ref 指向 table 块本身;表格 cell/row 无稳定 id,rowIndex/columnIndex 一律是当前表的 0-based 索引;insert 的 at 只能是 before/after/end,before/after 必须传对应 rowIndex/columnIndex,end 不需要索引。同一次 editDraft 调用内多个表格 op 按声明顺序依次应用,后续 op 的索引以前序 op 应用后的当前表为准。跨轮引用索引不可靠,改表前先 readDraft 确认当前表结构。删除表头行、在表头行前插入数据行、索引越界、删除到 0 行/0 列会失败并返回可自纠错误;删除唯一数据行后只剩表头是合法的。新增列在表头行对应的新 cell 自动作为表头单元格。\n" +
+      "block/blocks/item/cells 必须是 QingML 片段字符串(即 readDraft 返回里的 qingml 片段或按同规格改写后的片段),不要带 ref/editability/text 外壳。QingML 行内样式用 <b>/<i>/<a href=\"...\">/<mark color=\"...\">/<color val=\"...\"> 等标签表达。\n" +
+      'markText 的 mark 参数仍是 JSON 标记对象:加链接用 {"type":"link","href":"https://…"},加粗用 {"type":"bold"}。\n' +
       "给已有正文里的某段文字加超链接:优先用 markText(find 命中该文字,mark:{\"type\":\"link\",\"href\":\"https://…\"},op:\"add\"),不必重写整块。",
     inputSchema: editDraftInputSchema,
     outputSchema: z.object({
@@ -690,53 +727,60 @@ export function createSessionScopedTools(
                 failedOpIndex: i,
               };
             }
-            const parsed = parseAiDocumentOrBlockFromText(normalizeIncomingBlock(op.block));
-            if (parsed.blocks.length !== 1) {
-              return { ok: false, applied: [], error: "replaceBlock 期望单个 AI-IR block", failedOpIndex: i };
+            const parsed = parseEditDraftQingmlFragment(op.block, "replaceBlock", "blocks");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            if (parsed.fragment.blocks.length !== 1) {
+              return { ok: false, applied: [], error: "replaceBlock 期望单个 QingML block", failedOpIndex: i };
             }
-            blockOps.push({ action: "replaceBlock", ref: op.ref, block: parsed.blocks[0] });
+            blockOps.push({ action: "replaceBlock", ref: op.ref, block: parsed.fragment.blocks[0] });
             blockOpIndexes.push(i);
           } else if (op.action === "insertBlock") {
-            if (!Array.isArray(op.blocks)) {
-              return { ok: false, applied: [], error: "insertBlock.blocks 必须是 AI-IR block 数组", failedOpIndex: i };
-            }
-            const blocks = op.blocks.flatMap((raw) => parseAiDocumentOrBlockFromText(normalizeIncomingBlock(raw)).blocks);
-            blockOps.push({ action: "insertBlock", position: op.position, ref: op.ref, blocks });
+            const parsed = parseEditDraftQingmlFragment(op.blocks, "insertBlock", "blocks");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            blockOps.push({ action: "insertBlock", position: op.position, ref: op.ref, blocks: parsed.fragment.blocks });
             blockOpIndexes.push(i);
           } else if (op.action === "deleteBlock") {
             blockOps.push({ action: "deleteBlock", ref: op.ref });
             blockOpIndexes.push(i);
           } else if (op.action === "replaceListItem") {
-            blockOps.push({ action: "replaceListItem", ref: op.ref, item: op.item });
+            const parsed = parseEditDraftQingmlFragment(op.item, "replaceListItem", "listItem");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
+            blockOps.push({ action: "replaceListItem", ref: op.ref, item: parsed.fragment.item });
             blockOpIndexes.push(i);
           } else if (op.action === "insertListItem") {
+            const parsed = parseEditDraftQingmlFragment(op.item, "insertListItem", "listItem");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
             blockOps.push({
               action: "insertListItem",
               parentRef: op.parentRef,
               at: op.at,
               ref: op.ref,
-              item: op.item,
+              item: parsed.fragment.item,
             });
             blockOpIndexes.push(i);
           } else if (op.action === "deleteListItem") {
             blockOps.push({ action: "deleteListItem", ref: op.ref });
             blockOpIndexes.push(i);
           } else if (op.action === "insertTableRow") {
+            const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableRow", "row");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
             blockOps.push({
               action: "insertTableRow",
               ref: op.ref,
               at: op.at,
               rowIndex: op.rowIndex,
-              cells: op.cells,
+              cells: parsed.fragment.cells,
             });
             blockOpIndexes.push(i);
           } else if (op.action === "insertTableColumn") {
+            const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableColumn", "column");
+            if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
             blockOps.push({
               action: "insertTableColumn",
               ref: op.ref,
               at: op.at,
               columnIndex: op.columnIndex,
-              cells: op.cells,
+              cells: parsed.fragment.cells,
             });
             blockOpIndexes.push(i);
           } else if (op.action === "deleteTableRow") {

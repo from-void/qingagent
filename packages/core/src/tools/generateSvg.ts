@@ -146,8 +146,9 @@ export const generateSvgTool = createTool({
     "生成一张安全、可消毒的 SVG 矢量插图。传入对插图内容的中文描述，可选 style/aspect。" +
     "适合：装饰性插画/图标/自由构图/氛围配图/数据示意卡。流程图、结构示意、关系图、时序图、组织架构、常规对比图一律改用文档的 diagram(mermaid)块表达,不要调本工具——mermaid 可编辑、可主题化且更省;只有 mermaid 表达不了的自由视觉构图才用本工具。不要用于照片级写实图。" +
     "【本工具只负责生成图片资产，不会把图插进文档】返回 imageId 与 src（形如 /api/v1/files/<id>/illustration.svg）。" +
-    "要把图放进文档，请在本工具返回后【另调 editDraft 的 insertBlock】插入一个 image 块来放置，例如 " +
-    'editDraft({ops:[{action:"insertBlock",position:"after",ref:"<目标块 blockId>",blocks:[{type:"image",src:"<本工具返回的 src>",alt:"<简短说明>",width:<本工具返回的 width>,height:<本工具返回的 height>}]}]})。' +
+    "要把图放进文档，请在本工具返回后【另调 editDraft 的 insertBlock】插入一个 image QingML 片段来放置，例如 " +
+    'editDraft({ops:[{action:"insertBlock",position:"after",ref:"<目标块 blockId>",blocks:"<img src=\\"<本工具返回的 src>\\" alt=\\"<简短说明>\\" width=\\"<本工具返回的 width>\\" height=\\"<本工具返回的 height>\\"/>"}]})。' +
+    "【务必把本工具返回的 width/height 一并写进 image 块】——SVG 是无内禀尺寸的矢量图，缺 width 会渲染成 0×0 不可见。" +
     "内置模板（对比/要点/数据条形这三类需求必须用 template 参数，不要自由描述直出；自由插画才用 description 直出）：compare-card 双栏对比卡，params={title?,left:{title,items},right:{title,items},accent?}; points-card 要点卡，params={title?,points:[{label,desc?}],accent?}; bar-card 数据条形示意，params={title?,unit?,bars:[{label,value}],accent?}。accent 可为 warm/cool/mono。" +
     "（position 可用 after/before + ref 指定相邻块，或 start/end 放文首文末；需要 ref 时先 readDraft 取目标块 blockId。）" +
     "务必先用 writeDraft 出完整文本文档，再配图；一轮最多 1-2 张，失败后不要反复重试。",

@@ -3,6 +3,7 @@ import {
   aiBlockSchema,
   compileAiDocumentToPm,
   pmToAiIr,
+  qingmlParse,
   repairAiIrShorthand,
   safeParsePmDoc,
   type AiBlock,
@@ -46,6 +47,13 @@ function expectInlineMathRunExample(prompt: string, runs: string[]): void {
     return JSON.parse(run);
   });
   expect(aiBlockSchema.safeParse({ type: "paragraph", runs: parsedRuns }).success).toBe(true);
+}
+
+function expectQingmlExample(prompt: string, example: string): void {
+  expect(prompt).toContain(example);
+  const parsed = qingmlParse(example);
+  expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
+  expect(parsed.blocks.length).toBeGreaterThan(0);
 }
 
 describe("C3 模型脏输出 -> 富格式文档管线", () => {
@@ -240,10 +248,10 @@ describe("C3 模型脏输出 -> 富格式文档管线", () => {
     expect(AIIR_SYSTEM_PROMPT).toContain("行内公式");
     expect(AIIR_SYSTEM_PROMPT).toContain("math 不能与其他 mark 混用");
 
-    expectBlockExample(AIIR_SYSTEM_PROMPT, '{"type":"taskList","items":[{"checked":false,"runs":[{"text":"待办项"}]}]}');
-    expectBlockExample(AIIR_SYSTEM_PROMPT, '{"type":"callout","emoji":"💡","tone":"info","runs":[{"text":"内容"}]}');
-    expectBlockExample(AIIR_SYSTEM_PROMPT, '{"type":"blockMath","latex":"E = mc^2"}');
-    expectInlineMathRunExample(AIIR_SYSTEM_PROMPT, ['{"text":"E=mc^2","marks":[{"type":"math"}]}']);
+    expectQingmlExample(AIIR_SYSTEM_PROMPT, "<tasks><task>待办项</task></tasks>");
+    expectQingmlExample(AIIR_SYSTEM_PROMPT, "<callout emoji=\"💡\" tone=\"info\">内容</callout>");
+    expectQingmlExample(AIIR_SYSTEM_PROMPT, "<math-block>E = mc^2</math-block>");
+    expectQingmlExample(AIIR_SYSTEM_PROMPT, "<math>E=mc^2</math>");
   });
 
   it("端到端:带 fence 与收尾散文的完整富格式输出走提取、修复、编译、PM 校验和回转", () => {

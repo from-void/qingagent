@@ -379,6 +379,81 @@ describe("上游错误脱敏", () => {
   });
 });
 
+describe("POST /api/v1/ask-more 请求体契约", () => {
+  async function expectAskMoreBodyAccepted(body: unknown) {
+    const res = await request("POST", "/api/v1/ask-more", body);
+    expect(res.status).not.toBe(400);
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Session not found" });
+  }
+
+  it("接受无 options 的自由文本题", async () => {
+    await expectAskMoreBodyAccepted({
+      sessionId: "missing-askmore-session",
+      currentQuestions: [
+        {
+          id: "other_requirements",
+          label: "还有哪些其他重要信息或特别要求",
+          kind: { kind: "text" },
+        },
+      ],
+      currentAnswers: {
+        other_requirements: { chosen: [], freeText: null },
+      },
+    });
+  });
+
+  it("接受选项题与无 options 文本题混合", async () => {
+    await expectAskMoreBodyAccepted({
+      sessionId: "missing-askmore-session",
+      currentQuestions: [
+        {
+          id: "audience",
+          label: "目标读者",
+          kind: { kind: "single" },
+          options: [{ value: "public", label: "大众读者" }],
+        },
+        {
+          id: "notes",
+          label: "补充说明",
+          kind: { kind: "text" },
+        },
+      ],
+      currentAnswers: {
+        audience: { chosen: ["public"], freeText: null },
+        notes: { chosen: [], freeText: "需要兼顾专业性和可读性" },
+      },
+    });
+  });
+
+  it("保留全带 options 的既有问题形状", async () => {
+    await expectAskMoreBodyAccepted({
+      sessionId: "missing-askmore-session",
+      currentQuestions: [
+        {
+          id: "tone",
+          label: "语气",
+          kind: { kind: "multi" },
+          options: [
+            { value: "warm", label: "温和" },
+            { value: "sharp", label: "锋利" },
+          ],
+        },
+      ],
+      currentAnswers: {
+        tone: { chosen: ["warm"] },
+      },
+    });
+  });
+
+  it("接受空 currentQuestions 且允许缺省 currentAnswers", async () => {
+    await expectAskMoreBodyAccepted({
+      sessionId: "missing-askmore-session",
+      currentQuestions: [],
+    });
+  });
+});
+
 // -----------------------------------------------------------------------
 // History
 // -----------------------------------------------------------------------

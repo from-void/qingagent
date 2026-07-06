@@ -402,6 +402,11 @@ function parseInlineNodes(nodes: readonly DomNode[], ctx: ParseContext, options:
     if (!isTag(node)) return;
 
     const name = node.name;
+    if (name === "script" || name === "style") {
+      // htmlparser2 把 script/style 内容当特殊 raw 文本;不能把 alert(1)/CSS 当正文吞进 runs。
+      warn(ctx, "script-style-dropped", "harmless", `<${name}> 已忽略,不作为正文。`);
+      return;
+    }
     if (name === "br") {
       appendText(runs, "\n", marks, true);
       warn(ctx, "br-soft-break", "harmless", "<br> 已归一为当前 run 内的换行。");

@@ -233,6 +233,16 @@ describe("qingmlParse", () => {
     expectValidBlocks(cjk.blocks);
     expect(cjk.blocks).toEqual([{ type: "paragraph", runs: [{ text: "中文　全角 连续 空白" }] }]);
   });
+
+  it("script/style 被忽略,内容不当正文吞进 runs", () => {
+    const r = qingmlParse(`<p>正文</p><script>alert(1)</script><style>.x{color:red}</style>`);
+    expectValidBlocks(r.blocks);
+    expect(r.blocks).toEqual([{ type: "paragraph", runs: [{ text: "正文" }] }]);
+    const joined = JSON.stringify(r.blocks);
+    expect(joined).not.toContain("alert");
+    expect(joined).not.toContain("color:red");
+    expect(r.warnings.some((w) => w.kind === "script-style-dropped" && w.severity === "harmless")).toBe(true);
+  });
 });
 
 describe("qingmlParseFragment", () => {

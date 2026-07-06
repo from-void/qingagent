@@ -49,7 +49,7 @@ jobs:
       # 7822 文件)<2min 就完,但 Windows runner 上跑 32min 未完被掐——即 Windows-runner 特有,
       # 最可能是 Defender 实时扫描 **7za.exe** 的海量 I/O(之前只排除了 makensis.exe,漏了真正
       # 卡死的 7za!)。这里:①直接关实时监控 ②排除工作目录 ③排除 7za/7z/makensis 进程。仅 win 生效。
-      - name: Windows Defender off (real slow cause: AV scanning 7za.exe I/O)
+      - name: Windows Defender off (AV scanning 7za.exe I/O is the stall cause)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

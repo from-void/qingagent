@@ -1062,7 +1062,10 @@
 
   /* ============ 工具栏 · 浮现式 (选中文本时出现在选区上方) ============ */
   #view-workspace .doc-toolbar{
-    position:fixed;z-index:99999;
+    /* z-index 必须高于表格列/行头热区(.tbl-col-hdr/.tbl-row-hdr=100010、.tbl-dot=100020):
+       在表格单元格内选中文字时,本浮层会盖在表格顶部,层级不够会被列头热区反盖住,
+       重叠处点击穿透去触发选列(bug)。抬到 100050 让工具栏始终在最上、挡住下层点击 */
+    position:fixed;z-index:100050;
     display:flex;align-items:center;gap:2px;
     padding:5px 6px;
     background:var(--ink-1);

@@ -20,14 +20,21 @@ const askMoreBodySchema = z.object({
         id: z.string(),
         label: z.string(),
         kind: z.object({ kind: z.string() }),
-        options: z.array(z.object({ value: z.string(), label: z.string() })),
+        options: z.array(z.object({ value: z.string(), label: z.string() })).default([]),
       }),
     )
     .optional(),
   currentAnswers: z
     .record(
       z.string(),
-      z.object({ chosen: z.array(z.string()).optional(), freeText: z.string().optional() }),
+      z.object({
+        chosen: z.array(z.string()).optional(),
+        freeText: z
+          .string()
+          .nullable()
+          .optional()
+          .transform((value) => value ?? undefined),
+      }),
     )
     .optional(),
 });

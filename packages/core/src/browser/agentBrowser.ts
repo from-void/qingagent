@@ -12,10 +12,9 @@ import { isTruthyFlag } from "../bridge/draftFeatureFlags.js";
 /**
  * 0603 — 浏览器自主操作(browser_*)能力接入点。
  *
- * 这是"三级抓取"的最后一级,逐级升级、不要一上来就用重工具:
- *   1) fetchArticle      静态抓取(最快)
- *   2) scrapeWithBrowser 无头浏览器渲染 JS(应对 SPA / needsBrowserFallback)
- *   3) browser_*         浏览器自主操作(登录 / 付费墙 / 交互翻页,最重)  ← 本模块
+ * 这是交互式浏览器能力入口,只在需要真实页面操作时启用:
+ *   1) fetchArticle      静态抓取,必要时内部自动渲染降级
+ *   2) browser_*         浏览器自主操作(登录 / 付费墙 / 交互翻页,最重)  ← 本模块
  *
  * 两种部署形态:
  *   - 客户端 agent:可走 cdpUrl(接本机已登录的真 Chrome),也可用内置 AgentBrowser。

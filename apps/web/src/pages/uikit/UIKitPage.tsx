@@ -1273,7 +1273,7 @@ export function UIKitPage() {
                   <div className="uk-sp-row">
                     <div className="uk-sp-rowlbl">failed(仅「未完成」,不报红)</div>
                     <div className="uk-sp-rowbody u-scope">
-                      <UToolBar spec={tool("scrapeWithBrowser", ST.failed("超时"), generic({ url: "https://x.com" }))} />
+                      <UToolBar spec={tool("fetchArticle", ST.failed("超时"), generic({ url: "https://x.com" }))} />
                     </div>
                   </div>
                   <div className="uk-sp-row">

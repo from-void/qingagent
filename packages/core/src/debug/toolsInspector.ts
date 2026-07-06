@@ -9,7 +9,6 @@ import {
 import { qingagentAgent } from "../agents/qingagent.js";
 import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
-import { scrapeWithBrowserTool } from "../tools/scrapeWithBrowser.js";
 import { runJsTool } from "../tools/runJs.js";
 import { getPyodideTools } from "../tools/runPython.js";
 
@@ -18,7 +17,6 @@ import { getPyodideTools } from "../tools/runPython.js";
 const CAPABILITY_TOOL_ENTRIES: Array<[string, unknown]> = [
   ["webSearch", webSearchTool],
   ["generateSvg", generateSvgTool],
-  ["scrapeWithBrowser", scrapeWithBrowserTool],
   ["run_js", runJsTool],
 ];
 

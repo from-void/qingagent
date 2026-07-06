@@ -1861,8 +1861,7 @@ export async function* processAgentStream(
         }
       }
 
-      const isArticleScrapeTool =
-        toolName === "fetchArticle" || toolName === "scrapeWithBrowser";
+      const isArticleScrapeTool = toolName === "fetchArticle";
       // 抓取成功必出一张卡:有截图/og图走图片卡;无图或图片下载失败降级为
       // 文字卡(src=null,前端渲染简化样式)——卡片是用户对账"N 个链接都抓回来没有"
       // 的唯一可见凭据,不能因为站点没配 og:image 就静默消失。
@@ -1932,7 +1931,7 @@ export async function* processAgentStream(
           extractionEventsThisTurn.push(entry);
         }
       }
-      // 抓取类(fetchArticle/scrapeWithBrowser)的正文也缓存,供 storeMaterial 引用。
+      // 抓取类(fetchArticle)的正文也缓存,供 storeMaterial 引用。
       // 抓取结果没有天然 filename,按 url 和返回的 title 建键(模型存素材时常用标题当 filename)。
       // 抓取失败文本、以及"空洞壳"(只有标题+导航/分享控件、无实质正文,如动态渲染未出正文的页面)
       // 都按解析失败处理:不缓存、不绑定、不落库——避免污染绑定池,也兜住直接落库

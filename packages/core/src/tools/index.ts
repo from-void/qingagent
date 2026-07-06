@@ -16,7 +16,6 @@ export {
 export type { ReadDocumentResult, SearchDocumentsResult, ResolvedFolderSourcePath } from "./folderDocuments.js";
 export { storeMaterialTool } from "./storeMaterial.js";
 export { fetchArticleTool } from "./fetchArticle.js";
-export { scrapeWithBrowserTool } from "./scrapeWithBrowser.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
 export { readImageTool } from "./readImage.js";

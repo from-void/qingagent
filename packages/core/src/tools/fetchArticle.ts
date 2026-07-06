@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { extractArticleContent, UNSUPPORTED_CONTENT_ERROR_PREFIX } from "../browser/extractor.js";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
+import { scrapeWithBrowserImpl, type ScrapeResult } from "../browser/scrapePage.js";
 import { persistScreenshot } from "../workspace/persistScreenshot.js";
+import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const MIN_EXTRACTED_TEXT_LENGTH = 40;
 // JS 内容未渲染时的占位标记(短正文里出现 → 抓到的是壳而非正文)。
@@ -31,9 +33,29 @@ export function shouldFallbackToBrowser(extractedBody: string): boolean {
   }
   // 兜底:静态抓到的正文"无实质内容"(剔除导航/分享控件后仍过短)→ 升级浏览器再试一次。
   // 动态渲染页静态常只拿到标题+控件壳,浏览器渲染 JS 后可能恢复真正文;即便恢复不了,
-  // 也由 scrapeWithBrowser/落库门按解析失败兜住,不会把空洞壳当正文存下。
+  // 也由浏览器结果校验/落库门按解析失败兜住,不会把空洞壳当正文存下。
   if (!isSubstantiveContent(extractedBody)) return true;
   return false;
+}
+
+type FetchArticleResult = {
+  title: string;
+  text: string;
+  wordCount: number;
+  images: { src: string; alt: string | null }[];
+  screenshotSrc: string | null;
+  ogImageUrl: string | null;
+  sourceUrl: string;
+  materialId: string;
+  via: "static" | "browser";
+};
+
+function shouldUseBrowserResult(staticResult: FetchArticleResult, browserResult: ScrapeResult): boolean {
+  return (
+    browserResult.ok &&
+    isSubstantiveContent(browserResult.text) &&
+    (!isSubstantiveContent(staticResult.text) || browserResult.wordCount > staticResult.wordCount)
+  );
 }
 
 export const fetchArticleTool = createTool({
@@ -53,9 +75,10 @@ export const fetchArticleTool = createTool({
     ogImageUrl: z.string().nullable(),
     sourceUrl: z.string(),
     materialId: z.string(),
-    needsBrowserFallback: z.boolean(),
+    via: z.enum(["static", "browser"]),
   }),
-  execute: async (input) => {
+  execute: async (input, context) => {
+    const stop = startToolHeartbeat(context, { tool: "fetchArticle" });
     const materialId = "mat-" + createHash("sha256").update(input.url).digest("hex").slice(0, 12);
 
     try {
@@ -63,7 +86,7 @@ export const fetchArticleTool = createTool({
       const wordCount = result.body.replace(/\s+/g, "").length;
       const screenshotSrc = result.screenshot ? await persistScreenshot(result.screenshot) : null;
 
-      return {
+      let selected: FetchArticleResult = {
         title: result.title,
         text: result.body,
         wordCount,
@@ -72,15 +95,64 @@ export const fetchArticleTool = createTool({
         ogImageUrl: result.ogImageUrl,
         sourceUrl: input.url,
         materialId,
-        // 抽取正文过少(静态抓取常见于 JS 渲染页/被反爬截断)时置 true,
-        // 让 agent 按提示词三级降级升级到 scrapeWithBrowser 重抓,避免存入残缺正文。
-        needsBrowserFallback: shouldFallbackToBrowser(result.body),
+        via: "static",
       };
+
+      if (shouldFallbackToBrowser(result.body)) {
+        try {
+          const browserResult = await scrapeWithBrowserImpl(input.url, {
+            waitForSelector: input.waitForSelector,
+          });
+          if (shouldUseBrowserResult(selected, browserResult)) {
+            selected = {
+              title: browserResult.title,
+              text: browserResult.text,
+              wordCount: browserResult.wordCount,
+              images: browserResult.images,
+              screenshotSrc: browserResult.screenshotSrc,
+              ogImageUrl: browserResult.ogImageUrl,
+              sourceUrl: input.url,
+              materialId,
+              via: "browser",
+            };
+          }
+        } catch {
+          // 浏览器降级失败时保留静态最佳结果,不让单一路径失败吞掉可用内容。
+        }
+      }
+
+      return selected;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // 二进制/下载型链接(PDF/附件等):浏览器降级也只会触发下载、救不回正文 → 不升级浏览器,
       // 直接判为不支持(文本前缀 [Unsupported] 会被落库门当解析失败,不写入素材)。
       const isUnsupported = message.startsWith(UNSUPPORTED_CONTENT_ERROR_PREFIX);
+      // 静态抓取抛错(反爬 403 / 连接失败等,非"不支持类型")时仍尝试无头浏览器降级——
+      // stealth 浏览器常能过静态被挡的反爬。等价合并前 needsBrowserFallback=!isUnsupported 的契约:
+      // extractor 对 403/非 2xx 是 throw(非返回空壳),故这条降级必须覆盖"静态抛错",
+      // 否则反爬站(静态 403、浏览器可过)在 fetchArticle 直调与 webSearch 里都丢掉浏览器恢复路。
+      if (!isUnsupported) {
+        try {
+          const browserResult = await scrapeWithBrowserImpl(input.url, {
+            waitForSelector: input.waitForSelector,
+          });
+          if (browserResult.ok && isSubstantiveContent(browserResult.text)) {
+            return {
+              title: browserResult.title,
+              text: browserResult.text,
+              wordCount: browserResult.wordCount,
+              images: browserResult.images,
+              screenshotSrc: browserResult.screenshotSrc,
+              ogImageUrl: browserResult.ogImageUrl,
+              sourceUrl: input.url,
+              materialId,
+              via: "browser" as const,
+            };
+          }
+        } catch {
+          // 浏览器也失败 → 落到下方 [Error] 返回,保持原有失败语义。
+        }
+      }
       return {
         title: isUnsupported ? "不支持的内容类型" : "抓取失败",
         text: isUnsupported
@@ -92,8 +164,10 @@ export const fetchArticleTool = createTool({
         ogImageUrl: null,
         sourceUrl: input.url,
         materialId,
-        needsBrowserFallback: !isUnsupported,
+        via: "static" as const,
       };
+    } finally {
+      stop();
     }
   },
 });

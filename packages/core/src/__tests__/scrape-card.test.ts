@@ -113,13 +113,14 @@ describe("抓取卡片:成功必出卡", () => {
     const frames = await collect(
       processAgentStream(
         streamOf(
-          toolCall("scrapeWithBrowser", "f1", { url: "https://shot.example.com" }),
-          toolResult("scrapeWithBrowser", "f1", { url: "https://shot.example.com" }, {
+          toolCall("fetchArticle", "f1", { url: "https://shot.example.com" }),
+          toolResult("fetchArticle", "f1", { url: "https://shot.example.com" }, {
             text: "正文。".repeat(30),
             title: "带截图的文章",
             sourceUrl: "https://shot.example.com",
             screenshotSrc,
             ogImageUrl: null,
+            via: "browser",
           }),
         ),
         { state, agentMessageId: "m", streamId: "s3", runId: "r" },

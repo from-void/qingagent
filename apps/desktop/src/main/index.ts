@@ -90,7 +90,7 @@ if (!process.env.QINGAGENT_UPLOADS_DIR) {
 process.env.QINGAGENT_RUNTIME = "desktop";
 process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
 
-// 浏览器类能力(网页抓取 scrapeWithBrowser / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
+// 浏览器类能力(fetchArticle 内置渲染降级 / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
 // 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装
 // Edge,多数开箱即用,且是真 Chrome 内核,newContext/newPage 全正常(Electron 自带 Chromium 的
 // CDP 不支持这两个,不能那样复用)。无系统浏览器时这些能力优雅降级——PDF 导出由 printToPDF

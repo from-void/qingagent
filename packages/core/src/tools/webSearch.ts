@@ -10,7 +10,6 @@ import { fetchDeepseekSearchLinks } from "../search/deepseekWebSearch.js";
 import type { SearchResult } from "../search/provider.js";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
 import { fetchArticleTool } from "./fetchArticle.js";
-import { scrapeWithBrowserTool } from "./scrapeWithBrowser.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const MAX_QUERY_LEN = 400;
@@ -34,7 +33,7 @@ type ArticleFetchResult = {
   title?: string;
   text?: string;
   wordCount?: number;
-  needsBrowserFallback?: boolean;
+  via?: "static" | "browser";
 };
 
 type WebSearchItemStatus = "done" | "browser" | "skipped";
@@ -167,7 +166,7 @@ export const webSearchTool = createTool({
   id: "webSearch",
   description:
     "联网检索并自动抓取每条来源正文(静态抓取,必要时自动浏览器降级),返回带正文的结果。" +
-    "是否采用/重新检索/对某条重抓(用 fetchArticle/scrapeWithBrowser)/存为素材(storeMaterial)由你判断。",
+    "是否采用/重新检索/对某条重抓(用 fetchArticle)/存为素材(storeMaterial)由你判断。",
   inputSchema: z.object({
     query: z.string().min(1).max(MAX_QUERY_LEN).describe("搜索关键词或问题"),
     count: z
@@ -267,9 +266,8 @@ export const webSearchTool = createTool({
           title: result.title,
           text: "",
           wordCount: 0,
-          needsBrowserFallback: false,
+          via: "static",
         };
-        let usedBrowserResult = false;
 
         try {
           const article = (await withSourceTimeout(
@@ -278,29 +276,9 @@ export const webSearchTool = createTool({
             "fetchArticle",
           )) as ArticleFetchResult;
           best = article;
-
-          if (article.needsBrowserFallback === true) {
+          if (article.via === "browser") {
             progressItems[index] = { ...progressItems[index]!, status: "browser", wordCount: null };
             await emitSnapshot("fetching", results.length);
-
-            try {
-              const browser = (await withSourceTimeout(
-                scrapeWithBrowserTool.execute!({ url: result.url }, context) as Promise<ArticleFetchResult>,
-                SOURCE_FETCH_TIMEOUT_MS,
-                "scrapeWithBrowser",
-              )) as ArticleFetchResult;
-              if (
-                browser.ok === true &&
-                isSubstantiveContent(browser.text) &&
-                (!isSubstantiveContent(article.text) ||
-                  (browser.wordCount ?? 0) > (article.wordCount ?? 0))
-              ) {
-                best = browser;
-                usedBrowserResult = true;
-              }
-            } catch {
-              // 浏览器降级失败则继续评估静态抓取结果。
-            }
           }
         } catch {
           // 单条来源失败不应拖垮整次 webSearch。
@@ -322,7 +300,7 @@ export const webSearchTool = createTool({
           url: result.url,
           title: typeof best.title === "string" && best.title.trim() ? best.title : result.title,
           snippet: result.snippet,
-          status: substantive ? (usedBrowserResult ? "browser" : "done") : "skipped",
+          status: substantive ? (best.via === "browser" ? "browser" : "done") : "skipped",
           wordCount: progressWordCount ?? 0,
           text,
         };

@@ -4,6 +4,38 @@ import { systemBrowserExecutablePath } from "./systemBrowser.js";
 // PDF-only browser pool. Web article scraping uses Node.js fetch in extractor.ts.
 let browserPromise: Promise<Browser> | null = null;
 let browserInstance: Browser | null = null;
+const BROWSER_CONTEXT_CONCURRENCY = 3;
+let activeBrowserContexts = 0;
+const browserContextQueue: Array<() => void> = [];
+
+async function acquireBrowserContextSlot(): Promise<void> {
+  if (activeBrowserContexts < BROWSER_CONTEXT_CONCURRENCY) {
+    activeBrowserContexts += 1;
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    browserContextQueue.push(() => {
+      activeBrowserContexts += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseBrowserContextSlot(): void {
+  activeBrowserContexts = Math.max(0, activeBrowserContexts - 1);
+  const next = browserContextQueue.shift();
+  if (next) next();
+}
+
+export async function withBrowserContextSlot<T>(fn: () => Promise<T>): Promise<T> {
+  await acquireBrowserContextSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseBrowserContextSlot();
+  }
+}
 
 export function proxyFromEnv(): { server: string; bypass?: string } | undefined {
   const server =

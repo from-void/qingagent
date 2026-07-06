@@ -1067,7 +1067,6 @@ const TOOL_AUDIT: ToolAudit[] = [
   { name: "fetchArticle", label: "网页抓取", render: "通用行+来源卡", usage: "核心", param: "url→host", output: "N 字(wordCount)", note: "agent 固定工具" },
   { name: "webSearch", label: "联网搜索", render: "ResearchCard", usage: "核心", param: "query", output: "N 条(itemsCount;走 ResearchCard 时另有进度)", note: "capability(web-search)" },
   { name: "generateSvg", label: "生成配图", render: "GenerateSvgRow", usage: "核心", param: "—", output: "(走配图卡,非灰行)", note: "capability(image-gen)" },
-  { name: "scrapeWithBrowser", label: "网页抓取", render: "通用行+来源卡", usage: "核心", param: "url→host", output: "N 字(wordCount)", note: "capability(browser-ops)" },
   { name: "run_js", label: "运行JS脚本", render: "CommandCard(脚本卡)", usage: "核心", param: "—", output: "运行成功 / 运行失败(ok)", note: "capability(run-js) ← JS 工具,在用" },
   { name: "readMaterial", label: "读取素材", render: "通用灰行", usage: "核心", param: "materialId", output: "N 字(wordCount)", note: "会话作用域" },
   { name: "summarizeMaterial", label: "更新素材", render: "通用灰行", usage: "核心", param: "materialId", output: "已更新 / 未更新(updated)", note: "会话作用域" },

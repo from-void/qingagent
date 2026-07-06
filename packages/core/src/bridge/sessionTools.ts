@@ -20,7 +20,6 @@ import { readDisabledSet } from "../skills/enabledStore.js";
 import { getAgentBrowserTools } from "../browser/agentBrowser.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
-import { scrapeWithBrowserTool } from "../tools/scrapeWithBrowser.js";
 import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
 import { readImageTool } from "../tools/readImage.js";
@@ -76,7 +75,7 @@ const logger = mastra.getLogger();
 const editDraftExecuteCounts = new Map<string, number>();
 
 const CAPABILITY_TOOLS = {
-  "browser-ops": { scrapeWithBrowser: scrapeWithBrowserTool },
+  "browser-ops": {},
   "web-search": { webSearch: webSearchTool },
   "image-gen": { generateSvg: generateSvgTool },
   "image-reading": { readImage: readImageTool },
@@ -94,7 +93,6 @@ const MATERIAL_TOOL_SEARCH_TOOLS = {
 } as const;
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
-  "browser-ops": ["fetchArticle", "scrapeWithBrowser"],
   "web-search": ["webSearch"],
   "image-gen": ["generateSvg"],
   "image-reading": ["readImage"],
@@ -191,20 +189,7 @@ export function missingGenericToolResultFields(
       requireNullableString("ogImageUrl");
       requireString("sourceUrl");
       requireString("materialId");
-      requireBoolean("needsBrowserFallback");
-      break;
-    case "scrapeWithBrowser":
-      requireBoolean("ok");
-      requireNullableString("error");
-      requireString("title");
-      requireString("text");
-      requireNumber("wordCount");
-      requireArray("images");
-      requireNullableString("screenshotSrc");
-      requireNullableString("ogImageUrl");
-      requireString("sourceUrl");
-      requireString("materialId");
-      requireBoolean("needsBrowserFallback");
+      requireString("via");
       break;
     case "webSearch":
       requireBoolean("ok");

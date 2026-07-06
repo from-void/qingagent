@@ -1,7 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+
+const mockFetchArticleDeps = vi.hoisted(() => ({
+  extractArticleContent: vi.fn(),
+  scrapeWithBrowserImpl: vi.fn(),
+}));
+
+vi.mock("../browser/extractor.js", async () => {
+  const actual = await vi.importActual<typeof import("../browser/extractor.js")>(
+    "../browser/extractor.js",
+  );
+  return {
+    ...actual,
+    extractArticleContent: mockFetchArticleDeps.extractArticleContent,
+  };
+});
+
+vi.mock("../browser/scrapePage.js", () => ({
+  scrapeWithBrowserImpl: mockFetchArticleDeps.scrapeWithBrowserImpl,
+}));
+
 import { fetchArticleTool, shouldFallbackToBrowser } from "../tools/fetchArticle.js";
 import { isUnsupportedForHtmlExtraction, resolveSiteAdapter } from "../browser/extractor.js";
+
+function wordCount(text: string): number {
+  return text.replace(/\s+/g, "").length;
+}
 
 describe("resolveSiteAdapter 反爬站适配(移动子域+移动UA)", () => {
   const ua = (a: ReturnType<typeof resolveSiteAdapter>) => a?.headers?.["User-Agent"] ?? "";
@@ -46,7 +70,12 @@ describe("isUnsupportedForHtmlExtraction", () => {
 });
 
 describe("fetchArticle fallback signal", () => {
-  it("exposes needsBrowserFallback in the output schema", () => {
+  beforeEach(() => {
+    mockFetchArticleDeps.extractArticleContent.mockReset();
+    mockFetchArticleDeps.scrapeWithBrowserImpl.mockReset();
+  });
+
+  it("exposes via in the output schema", () => {
     const outputSchema = fetchArticleTool.outputSchema as z.ZodType;
     expect(() =>
       outputSchema.parse({
@@ -58,7 +87,7 @@ describe("fetchArticle fallback signal", () => {
         ogImageUrl: null,
         sourceUrl: "https://example.com/article",
         materialId: "mat-123",
-        needsBrowserFallback: false,
+        via: "static",
       }),
     ).not.toThrow();
   });
@@ -109,14 +138,54 @@ describe("fetchArticle fallback signal", () => {
     expect(shouldFallbackToBrowser(realLong)).toBe(false);
   });
 
-  it("returns needsBrowserFallback on fetch failure instead of rejecting", async () => {
+  it("静态不足时内部走浏览器并采纳更好的浏览器结果", async () => {
+    const staticText = "正在加载... 返回首页 分享到微信";
+    const browserText =
+      "浏览器渲染后得到的完整正文，包含事件经过、关键数据、来源背景和后续影响。".repeat(12);
+    mockFetchArticleDeps.extractArticleContent.mockResolvedValueOnce({
+      title: "静态壳",
+      body: staticText,
+      images: [],
+      screenshot: null,
+      ogImageUrl: null,
+    });
+    mockFetchArticleDeps.scrapeWithBrowserImpl.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      title: "浏览器正文",
+      text: browserText,
+      wordCount: wordCount(browserText),
+      images: [{ src: "https://example.com/a.jpg", alt: null }],
+      screenshotSrc: "/api/v1/files/shot/screenshot.jpg",
+      ogImageUrl: "https://example.com/og.jpg",
+    });
+
     const execute = fetchArticleTool.execute as unknown as (
       input: { url: string },
       context: unknown,
     ) => Promise<Record<string, unknown>>;
-    const result = await execute({ url: "http://127.0.0.1/article" }, {});
+    const result = await execute({ url: "https://example.com/article" }, {});
+
+    expect(mockFetchArticleDeps.scrapeWithBrowserImpl).toHaveBeenCalledWith(
+      "https://example.com/article",
+      { waitForSelector: undefined },
+    );
+    expect(result.title).toBe("浏览器正文");
+    expect(result.text).toBe(browserText);
+    expect(result.wordCount).toBe(wordCount(browserText));
+    expect(result.screenshotSrc).toBe("/api/v1/files/shot/screenshot.jpg");
+    expect(result.via).toBe("browser");
+  });
+
+  it("returns via=static on fetch failure instead of rejecting", async () => {
+    mockFetchArticleDeps.extractArticleContent.mockRejectedValueOnce(new Error("blocked"));
+    const execute = fetchArticleTool.execute as unknown as (
+      input: { url: string },
+      context: unknown,
+    ) => Promise<Record<string, unknown>>;
+    const result = await execute({ url: "https://example.com/article" }, {});
     expect(result.title).toBe("抓取失败");
-    expect(result.needsBrowserFallback).toBe(true);
+    expect(result.via).toBe("static");
     expect(result.text).toMatch(/^\[Error]/);
   });
 });

@@ -255,7 +255,7 @@ describe("UToolBar", () => {
   it("readMaterial / fetchArticle 显示字数", () => {
     renderBar(doneSpec("readMaterial", { filename: "a.md", wordCount: 642 }));
     expect(host.textContent).toContain("642 字");
-    renderBar(doneSpec("fetchArticle", { wordCount: 2048, imagesCount: 3, needsBrowserFallback: false }));
+    renderBar(doneSpec("fetchArticle", { wordCount: 2048, imagesCount: 3, via: "static" }));
     expect(host.textContent).toContain("2K 字");
   });
 

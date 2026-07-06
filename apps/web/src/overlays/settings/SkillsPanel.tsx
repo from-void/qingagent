@@ -29,7 +29,6 @@ interface CtxMenu {
 const TOOL_LABELS: Record<string, string> = {
   webSearch: "联网搜索",
   fetchArticle: "网页抓取",
-  scrapeWithBrowser: "浏览器渲染",
   "browser_*": "浏览器操作",
   generateSvg: "生成配图",
   readImage: "图像识别",

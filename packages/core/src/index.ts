@@ -33,7 +33,6 @@ export type {
 } from "./tools/index.js";
 export { storeMaterialTool } from "./tools/index.js";
 export { fetchArticleTool } from "./tools/index.js";
-export { scrapeWithBrowserTool } from "./tools/index.js";
 export { systemBrowserExecutablePath, systemBrowserCandidates } from "./browser/systemBrowser.js";
 export { webSearchTool } from "./tools/index.js";
 export { generateSvgTool } from "./tools/index.js";

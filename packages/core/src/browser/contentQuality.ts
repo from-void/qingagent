@@ -2,7 +2,7 @@
 // 而不是只有标题 + 导航/分享控件拼出来的空洞壳(如 CCTV JS 渲染页:
 // "超300款AI产品全球首发 扫一扫 分享到微信 手机看 A+")。
 // 用于:① storeMaterial 落库前的硬门(不实不落库,当解析失败);
-//       ② fetchArticle 决定是否升级浏览器;③ scrapeWithBrowser 渲染后判失败。
+//       ② fetchArticle 决定是否升级浏览器;③ 浏览器渲染后判失败。
 
 // 站点导航/分享/控件等"非正文"词:计算真内容长度时先剔除。
 const CONTROL_WORD_RE =

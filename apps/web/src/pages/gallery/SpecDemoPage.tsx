@@ -129,7 +129,7 @@ export function SpecDemoPage() {
             <Row label="done（出参概要 + 详情折叠）"><UToolBar spec={tool("mastra_workspace_read_file", ST.done, generic({ path: "/work/draft.md" }), gres({ bytes: 4096 }))} /></Row>
             <Row label="running（三个点 + 入参）"><UToolBar spec={tool("parseFile", ST.running, generic({ filePath: "/uploads/赛事手册.pdf" }))} /></Row>
             <Row label="pending（等待 = 三个点）"><UToolBar spec={tool("editDraft", ST.pending, generic({ blockId: "b-12" }))} /></Row>
-            <Row label="failed（同图标，仅「未完成」，不报红）"><UToolBar spec={tool("scrapeWithBrowser", ST.failed("超时"), generic({ url: "https://x.com" }))} /></Row>
+            <Row label="failed（同图标，仅「未完成」，不报红）"><UToolBar spec={tool("fetchArticle", ST.failed("超时"), generic({ url: "https://x.com" }))} /></Row>
             <Row label="只有标题（无参数 → 省 ③；无折叠 → 省 ⑤）"><UToolBar spec={tool("summarizeMaterial", ST.done, generic({}))} /></Row>
             <Row label="带 query 参数"><UToolBar spec={tool("skill_search", ST.done, generic({ query: "飞书多维表格" }), gres({ results: [1, 2, 3] }))} /></Row>
           </Section>

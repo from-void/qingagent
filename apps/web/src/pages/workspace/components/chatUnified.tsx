@@ -56,7 +56,7 @@ function Countdown({ seconds }: { seconds: number }) {
 export const TOOL_LABELS: Record<string, string> = {
   parseFile: "解析文件", storeMaterial: "存储素材", summarizeMaterial: "更新素材", readMaterial: "读取素材",
   readDraft: "读取草稿", editDraft: "修改草稿", readDiff: "核对修改",
-  webSearch: "联网搜索", fetchArticle: "网页抓取", scrapeWithBrowser: "网页抓取",
+  webSearch: "联网搜索", fetchArticle: "网页抓取",
   skill: "调用技能", skill_read: "读取技能", skill_search: "搜索技能",
   browser_goto: "打开网页", browser_snapshot: "网页浏览", browser_click: "网页点击",
   browser_type: "网页输入", browser_press: "按键", browser_wait: "等待", browser_scroll: "滚动", browser_back: "返回",
@@ -99,7 +99,7 @@ function bodyKindLabel(spec: ToolCallSpec): string {
 // loading 两态:较久任务转圈,较快任务点点。
 const LONG_RUNNING = new Set([
   "generateSvg", "readImage", "webSearch", "run_js", "run_python",
-  "scrapeWithBrowser", "fetchArticle", "parseFile",
+  "fetchArticle", "parseFile",
   "mastra_workspace_get_process_output", "mastra_workspace_execute_command",
 ]);
 
@@ -234,7 +234,6 @@ function pickOutputSummary(result: ToolCallResult | null, toolName?: string): st
     case "readMaterial":
     case "readDocument":
     case "fetchArticle":
-    case "scrapeWithBrowser":
       return words();
     case "storeMaterial":
       return bool("stored") === false ? "未存储" : "已存素材";

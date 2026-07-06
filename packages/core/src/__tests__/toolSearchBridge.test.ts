@@ -45,7 +45,6 @@ describe("ToolSearch bridge", () => {
       "parseFile",
       "readImage",
       "run_js",
-      "scrapeWithBrowser",
       "webSearch",
     ]));
     expect(Object.keys(bridge.searchableTools)).not.toContain("show_qr");

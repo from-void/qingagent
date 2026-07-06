@@ -47,7 +47,6 @@ describe("enabledStore", () => {
     const tools = await buildCapabilityTools();
 
     expect(tools).not.toHaveProperty("webSearch");
-    expect(tools).toHaveProperty("scrapeWithBrowser");
     expect(tools).toHaveProperty("generateSvg");
     expect(tools).toHaveProperty("run_js");
   });
@@ -62,7 +61,7 @@ describe("enabledStore", () => {
     expect(tools).toHaveProperty("run_js");
   });
 
-  it("omits scrapeWithBrowser and browser tools when browser-ops is disabled", async () => {
+  it("omits browser tools when browser-ops is disabled", async () => {
     const store = await withStore();
     await store.setEnabled("browser-ops", false);
     vi.doMock("../browser/agentBrowser.js", () => ({
@@ -75,7 +74,6 @@ describe("enabledStore", () => {
     const { buildCapabilityTools } = await import("../bridge/sessionTools.js");
     const tools = await buildCapabilityTools();
 
-    expect(tools).not.toHaveProperty("scrapeWithBrowser");
     expect(Object.keys(tools).filter((name) => name.startsWith("browser_"))).toEqual([]);
   });
 });

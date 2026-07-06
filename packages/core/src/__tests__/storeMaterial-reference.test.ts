@@ -4,7 +4,7 @@ import { parseFileTool } from "../tools/parseFile.js";
 
 // storeMaterial 不再让模型传正文(避免吐几万字、生成巨慢)。正文走"引用本地已提取内容":
 //   - parseFile 解析的全文 → bridge 按 filename 缓存 → storeMaterial 按名引用;
-//   - fetchArticle/scrapeWithBrowser 抓取的全文 → 无天然 filename → 回退"本轮最近一次提取"兜底引用。
+//   - fetchArticle 抓取的全文 → 无天然 filename → 回退"本轮最近一次提取"兜底引用。
 //   - webSearch 搜索即抓取的全文 → bridge 按 url/title 缓存 → storeMaterial 按名引用。
 // 本测试用不带 text 的 storeMaterial 参数,断言落库正文等于上游提取的全文。
 

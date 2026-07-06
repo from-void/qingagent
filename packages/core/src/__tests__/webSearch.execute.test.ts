@@ -17,7 +17,6 @@ const mockSearchDeps = vi.hoisted(() => {
 
 const mockFetchDeps = vi.hoisted(() => ({
   fetchArticleExecute: vi.fn(),
-  scrapeWithBrowserExecute: vi.fn(),
 }));
 
 vi.mock("../search/deepseekWebSearch.js", () => ({
@@ -31,10 +30,6 @@ vi.mock("../search/managedSearch.js", () => ({
 
 vi.mock("../tools/fetchArticle.js", () => ({
   fetchArticleTool: { execute: mockFetchDeps.fetchArticleExecute },
-}));
-
-vi.mock("../tools/scrapeWithBrowser.js", () => ({
-  scrapeWithBrowserTool: { execute: mockFetchDeps.scrapeWithBrowserExecute },
 }));
 
 import { webSearchTool } from "../tools/webSearch.js";
@@ -76,7 +71,12 @@ function wordCount(text: string): number {
   return text.replace(/\s+/g, "").length;
 }
 
-function articleResult(url: string, title = "静态标题", text = goodText, needsBrowserFallback = false) {
+function articleResult(
+  url: string,
+  title = "静态标题",
+  text = goodText,
+  via: "static" | "browser" = "static",
+) {
   return {
     title,
     text,
@@ -86,23 +86,7 @@ function articleResult(url: string, title = "静态标题", text = goodText, nee
     ogImageUrl: null,
     sourceUrl: url,
     materialId: "mat-test",
-    needsBrowserFallback,
-  };
-}
-
-function browserResult(url: string, title = "浏览器标题", text = browserText, ok = true) {
-  return {
-    ok,
-    error: ok ? null : "failed",
-    title,
-    text,
-    wordCount: wordCount(text),
-    images: [],
-    screenshotSrc: null,
-    ogImageUrl: null,
-    sourceUrl: url,
-    materialId: "mat-browser",
-    needsBrowserFallback: false,
+    via,
   };
 }
 
@@ -126,10 +110,6 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     mockFetchDeps.fetchArticleExecute.mockReset();
     mockFetchDeps.fetchArticleExecute.mockImplementation(async ({ url }: { url: string }) =>
       articleResult(url),
-    );
-    mockFetchDeps.scrapeWithBrowserExecute.mockReset();
-    mockFetchDeps.scrapeWithBrowserExecute.mockImplementation(async ({ url }: { url: string }) =>
-      browserResult(url),
     );
     delete process.env.DEEPSEEK_API_KEY;
   });
@@ -246,13 +226,10 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
     mockSearchDeps.fallbackSearch.mockResolvedValue(results);
     mockFetchDeps.fetchArticleExecute.mockImplementation(async ({ url }: { url: string }) => {
-      if (url.endsWith("/browser")) return articleResult(url, "二静态壳", hollowText, true);
-      if (url.endsWith("/empty")) return articleResult(url, "三空壳", "[Error] blocked", false);
-      return articleResult(url, "一静态正文", goodText, false);
+      if (url.endsWith("/browser")) return articleResult(url, "二浏览器正文", browserText, "browser");
+      if (url.endsWith("/empty")) return articleResult(url, "三空壳", "[Error] blocked", "static");
+      return articleResult(url, "一静态正文", goodText, "static");
     });
-    mockFetchDeps.scrapeWithBrowserExecute.mockImplementation(async ({ url }: { url: string }) =>
-      browserResult(url, "二浏览器正文", browserText, true),
-    );
     const writes: Array<{ type?: string; progress?: ResearchCardBody }> = [];
     const writer = { write: vi.fn((chunk) => writes.push(chunk)) };
 
@@ -265,8 +242,8 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(result.items[1]?.text).toBe(browserText);
     expect(result.items[2]?.wordCount).toBe(0);
     expect(result.items[2]?.text).toBe("");
-    expect(mockFetchDeps.scrapeWithBrowserExecute).toHaveBeenCalledTimes(1);
-    expect(mockFetchDeps.scrapeWithBrowserExecute).toHaveBeenCalledWith(
+    expect(mockFetchDeps.fetchArticleExecute).toHaveBeenCalledTimes(3);
+    expect(mockFetchDeps.fetchArticleExecute).toHaveBeenCalledWith(
       { url: "https://example.com/browser" },
       expect.objectContaining({ writer }),
     );

@@ -1,81 +1,61 @@
-import { createTool } from "@mastra/core/tools";
-import { createHash } from "node:crypto";
-import { z } from "zod";
 import {
   resolveSiteAdapter,
   trimArticleBoilerplateLines,
   validateFetchUrl,
-} from "../browser/extractor.js";
-import { isSubstantiveContent } from "../browser/contentQuality.js";
-import { getBrowser } from "../browser/pool.js";
+} from "./extractor.js";
+import { isSubstantiveContent } from "./contentQuality.js";
+import { getBrowser, withBrowserContextSlot } from "./pool.js";
 import {
   browserErrorMessage,
   formatBrowserUnavailableError,
   isBrowserAvailabilityError,
-} from "../browser/browserErrors.js";
+} from "./browserErrors.js";
 import { persistScreenshot } from "../workspace/persistScreenshot.js";
-import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const MIN_TEXT = 40;
 // 30s:慢/重页面(政务、大列表、富媒体资讯)20s 到不了 domcontentloaded 会超时丢失;
-// 心跳已覆盖 idle 看门狗,可放宽。仍有总预算上限,不会无限等。
+// 调用方工具心跳会覆盖 idle 看门狗。仍有总预算上限,不会无限等。
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 18_000;
 
-export const scrapeWithBrowserTool = createTool({
-  id: "scrapeWithBrowser",
-  description:
-    "无头浏览器降级抓取：fetchArticle 静态抓取失败或正文过少(needsBrowserFallback)时使用。" +
-    "用 Chromium 渲染 JS 后再提取完整正文。抓后应调 storeMaterial 存完整原文。",
-  inputSchema: z.object({
-    url: z.string().url().describe("要抓取的页面 URL"),
-    waitForSelector: z.string().optional().describe("等待该 CSS 选择器出现后再提取（可选）"),
-    timeoutMs: z.number().int().positive().max(60000).optional().describe("导航超时，默认 20000ms"),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    error: z.string().nullable(),
-    title: z.string(),
-    text: z.string(),
-    wordCount: z.number(),
-    images: z.array(z.object({ src: z.string(), alt: z.string().nullable() })),
-    screenshotSrc: z.string().nullable(),
-    ogImageUrl: z.string().nullable(),
-    sourceUrl: z.string(),
-    materialId: z.string(),
-    needsBrowserFallback: z.boolean(),
-  }),
-  execute: async (input, toolContext) => {
-    const materialId = "mat-" + createHash("sha256").update(input.url).digest("hex").slice(0, 12);
-    const fail = (error: string) => {
-      // 关键:浏览器启动/导航失败的真因往往被吞进返回值(模型能看到、但 stdout 看不到),
-      // 排查时只能靠猜。这里把 fail 原因打到 stdout,客户端日志可直接定位。
-      console.warn(`[scrapeWithBrowser] 抓取失败 url=${input.url} 原因=${error}`);
-      return {
-        ok: false,
-        error,
-        title: "抓取失败",
-        text: `[Error] ${error}`,
-        wordCount: 0,
-        images: [],
-        screenshotSrc: null,
-        ogImageUrl: null,
-        sourceUrl: input.url,
-        materialId,
-        needsBrowserFallback: false,
-      };
+export type ScrapeResult = {
+  ok: boolean;
+  error: string | null;
+  title: string;
+  text: string;
+  wordCount: number;
+  images: { src: string; alt: string | null }[];
+  screenshotSrc: string | null;
+  ogImageUrl: string | null;
+};
+
+export async function scrapeWithBrowserImpl(
+  url: string,
+  opts?: { waitForSelector?: string },
+): Promise<ScrapeResult> {
+  const fail = (error: string): ScrapeResult => {
+    // 关键:浏览器启动/导航失败的真因往往被吞进返回值(模型能看到、但 stdout 看不到),
+    // 排查时只能靠猜。这里把 fail 原因打到 stdout,客户端日志可直接定位。
+    console.warn(`[scrapeWithBrowser] 抓取失败 url=${url} 原因=${error}`);
+    return {
+      ok: false,
+      error,
+      title: "抓取失败",
+      text: `[Error] ${error}`,
+      wordCount: 0,
+      images: [],
+      screenshotSrc: null,
+      ogImageUrl: null,
     };
+  };
 
-    let finalUrl: URL;
-    try {
-      finalUrl = await validateFetchUrl(input.url);
-    } catch (error) {
-      return fail(error instanceof Error ? error.message : String(error));
-    }
+  let finalUrl: URL;
+  try {
+    finalUrl = await validateFetchUrl(url);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
 
-    // 浏览器导航单轮最长 ~36s(page.goto 20s + waitForSelector 8s + waitForLoadState 8s),
-    // 多段等待/慢环境下会逼近 90s 空闲看门狗(withIdleTimeout);
-    // 用心跳在整段耗时执行期间周期性注入瞬时 chunk 清零看门狗。
-    const stopHeartbeat = startToolHeartbeat(toolContext, { tool: "scrapeWithBrowser" });
+  return withBrowserContextSlot(async () => {
     let context: import("playwright").BrowserContext | null = null;
     try {
       const browser = await getBrowser();
@@ -181,7 +161,7 @@ export const scrapeWithBrowserTool = createTool({
       // 整个浏览器抓取硬预算(用户要求外部抓取≤15s):默认 13s,留 ~2s 给提取/截图。
       // 每一步都从"剩余预算"取时间,预算用完立刻收手提取现有内容——绝不死等。
       // 极硬/极慢的站(Anubis 需 ~15s 的那种)会在预算内放弃,这是为了交互速度的明确取舍。
-      const SCRAPE_BUDGET_MS = Math.min(input.timeoutMs ?? 12_000, DEFAULT_NAVIGATION_TIMEOUT_MS);
+      const SCRAPE_BUDGET_MS = Math.min(12_000, DEFAULT_NAVIGATION_TIMEOUT_MS);
       const deadline = Date.now() + SCRAPE_BUDGET_MS;
       const left = () => Math.max(0, deadline - Date.now());
 
@@ -206,8 +186,8 @@ export const scrapeWithBrowserTool = createTool({
       // Defense-in-depth: redirect chain 可能落到别的 host,提取前重新校验落地 URL。
       await validateFetchUrl(page.url());
 
-      if (input.waitForSelector && left() > 800) {
-        await page.waitForSelector(input.waitForSelector, { timeout: Math.min(3000, left()) }).catch(() => {});
+      if (opts?.waitForSelector && left() > 800) {
+        await page.waitForSelector(opts.waitForSelector, { timeout: Math.min(3000, left()) }).catch(() => {});
       }
       if (left() > 800) {
         await page.waitForLoadState("networkidle", { timeout: Math.min(2500, left()) }).catch(() => {});
@@ -465,9 +445,6 @@ export const scrapeWithBrowserTool = createTool({
         images: extracted.images.map((image) => ({ src: image.src, alt: image.alt })),
         screenshotSrc,
         ogImageUrl: extracted.ogImageUrl,
-        sourceUrl: input.url,
-        materialId,
-        needsBrowserFallback: false,
       };
     } catch (error) {
       return fail(
@@ -477,7 +454,6 @@ export const scrapeWithBrowserTool = createTool({
       );
     } finally {
       await context?.close().catch(() => {});
-      stopHeartbeat();
     }
-  },
-});
+  });
+}

@@ -14,7 +14,7 @@ export const storeMaterialTool = createTool({
   id: "storeMaterial",
   description:
     "将已解析/抓取的素材存入当前会话素材库。" +
-    "⚠️ 正文全文由系统自动引用本地已提取的内容(parseFile 解析的、fetchArticle/scrapeWithBrowser 抓取的)," +
+    "⚠️ 正文全文由系统自动引用本地已提取的内容(parseFile 解析的、fetchArticle 抓取的)," +
     "你无需、也绝对不要传入正文——只需提供 filename(用于关联本地正文)、标题、可选的简短摘要。" +
     "返回素材 ID，后续可通过 readMaterial 读取。",
   inputSchema: z.object({

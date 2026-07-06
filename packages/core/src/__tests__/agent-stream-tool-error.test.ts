@@ -62,12 +62,12 @@ describe("processAgentStream tool-error", () => {
           // 1) 占位卡:spec 进 running
           {
             type: "tool-call-input-streaming-start",
-            payload: { toolCallId: "te-1", toolName: "scrapeWithBrowser" },
+            payload: { toolCallId: "te-1", toolName: "fetchArticle" },
           },
           // 2) 工具 execute 抛错 → tool-error
           {
             type: "tool-error",
-            payload: { toolCallId: "te-1", toolName: "scrapeWithBrowser", error: { message: "boom" } },
+            payload: { toolCallId: "te-1", toolName: "fetchArticle", error: { message: "boom" } },
           },
         ),
         {

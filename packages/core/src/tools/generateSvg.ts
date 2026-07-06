@@ -16,6 +16,7 @@ import {
 import { callDeepseekDraft } from "./deepseekDraftClient.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { uploadsBaseDir } from "../workspace/uploadsDir.js";
+import { SVG_TEMPLATES } from "../svgTemplates/index.js";
 
 // 空闲看门狗:连续无任何输出超过该时长才判定卡死掐断——只要还在流式吐字就不断重置,
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。
@@ -94,6 +95,31 @@ function rawKb(rawBytes: number): number {
   return Math.round((rawBytes / 1024) * 10) / 10;
 }
 
+async function persistSvg(svg: string): Promise<{ imageId: string; src: string }> {
+  const imageId = randomUUID();
+  const filename = "illustration.svg";
+  const dir = join(uploadsBaseDir(), imageId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, filename), svg, "utf8");
+  return {
+    imageId,
+    src: `/api/v1/files/${imageId}/${filename}`,
+  };
+}
+
+function issueSummaries(issues: SvgLintIssue[]): string[] {
+  return issues.map((issue) => `${issue.rule}: ${issue.detail}`);
+}
+
+function zodErrorSummary(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "params";
+      return `${path}: ${issue.message}`;
+    })
+    .join("; ");
+}
+
 // 推理模型有时会把 SVG 包在 ```svg / ```xml markdown 围栏里，strict XML 解析会拒绝。
 // 这里先剥掉围栏并抽取 <svg>…</svg> 主体；抽取不到则返回原文，交给 sanitizeSvg 处理。
 export function extractSvg(raw: string): string {
@@ -122,12 +148,16 @@ export const generateSvgTool = createTool({
     "【本工具只负责生成图片资产，不会把图插进文档】返回 imageId 与 src（形如 /api/v1/files/<id>/illustration.svg）。" +
     "要把图放进文档，请在本工具返回后【另调 editDraft 的 insertBlock】插入一个 image 块来放置，例如 " +
     'editDraft({ops:[{action:"insertBlock",position:"after",ref:"<目标块 blockId>",blocks:[{type:"image",src:"<本工具返回的 src>",alt:"<简短说明>",width:<本工具返回的 width>,height:<本工具返回的 height>}]}]})。' +
+    "内置模板（对比/要点/数据条形这三类需求必须用 template 参数，不要自由描述直出；自由插画才用 description 直出）：compare-card 双栏对比卡，params={title?,left:{title,items},right:{title,items},accent?}; points-card 要点卡，params={title?,points:[{label,desc?}],accent?}; bar-card 数据条形示意，params={title?,unit?,bars:[{label,value}],accent?}。accent 可为 warm/cool/mono。" +
     "（position 可用 after/before + ref 指定相邻块，或 start/end 放文首文末；需要 ref 时先 readDraft 取目标块 blockId。）" +
     "务必先用 writeDraft 出完整文本文档，再配图；一轮最多 1-2 张，失败后不要反复重试。",
   inputSchema: z.object({
-    description: z.string().describe("插图内容的详细描述"),
+    description: z.string().optional().default("").describe("自由插画内容的详细描述；使用 template 时可留空"),
     style: z.string().nullable().optional().describe("风格，如 简约线条/扁平填色/手绘/等距3D；默认简约"),
     aspect: z.enum(["16:9", "4:3", "1:1", "3:2"]).nullable().optional().describe("宽高比，默认 16:9"),
+    template: z.enum(["compare-card", "points-card", "bar-card"]).nullable().optional()
+      .describe("套用内置模板(质量稳定、秒出),能套用时优先于自由描述"),
+    params: z.record(z.string(), z.unknown()).nullable().optional().describe("模板参数,见工具说明"),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -206,6 +236,49 @@ export const generateSvgTool = createTool({
         // 进度推送失败不影响生成
       }
     };
+
+    if (input.template) {
+      const template = SVG_TEMPLATES[input.template];
+      if (!template) {
+        return fail(`未知 SVG 模板:${input.template}`);
+      }
+      const parsed = template.paramsSchema.safeParse(input.params ?? {});
+      if (!parsed.success) {
+        return fail(`模板参数不合法:${zodErrorSummary(parsed.error)}`);
+      }
+      try {
+        const rendered = template.render(parsed.data, { width, height });
+        const svg = sanitizeSvg(rendered, { width, height });
+        if (!hasVisibleSvgContent(svg)) {
+          const error = "模板 SVG 消毒后没有可见内容。";
+          await emitProgress("failed", { message: error, error }, true);
+          return fail(error);
+        }
+        const issues = lintSvg(svg, { width, height });
+        const { imageId, src } = await persistSvg(svg);
+        await emitProgress("done", {
+          message: "SVG 已生成",
+          src,
+          width,
+          height,
+        }, true);
+        return {
+          ok: true,
+          error: null,
+          imageId,
+          src,
+          svg,
+          width,
+          height,
+          alt,
+          lintIssues: issueSummaries(issues),
+        };
+      } catch (error) {
+        const reason = error instanceof Error ? `模板 SVG 生成失败：${error.message}` : "模板 SVG 生成失败。";
+        await emitProgress("failed", { message: reason, error: reason }, true);
+        return fail(reason);
+      }
+    }
 
     const sys = `你是 SVG 插画师。仅输出一个完整、自包含的 <svg> 元素，不要任何解释或 markdown 代码块。
 硬性要求：
@@ -323,9 +396,6 @@ export const generateSvgTool = createTool({
       const shouldRetry = (issues: SvgLintIssue[]): boolean =>
         issues.some((issue) => issue.rule === "text-overflow") || issues.length >= 3;
 
-      const issueSummaries = (issues: SvgLintIssue[]): string[] =>
-        issues.map((issue) => `${issue.rule}: ${issue.detail}`);
-
       const firstResult = await runDraftAttempt(`插图内容：${input.description}`);
 
       await emitProgress("sanitizing", { message: "正在消毒 SVG" }, true);
@@ -360,12 +430,7 @@ export const generateSvgTool = createTool({
         }
       }
 
-      const imageId = randomUUID();
-      const filename = "illustration.svg";
-      const dir = join(uploadsBaseDir(), imageId);
-      await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, filename), selected.svg, "utf8");
-      const src = `/api/v1/files/${imageId}/${filename}`;
+      const { imageId, src } = await persistSvg(selected.svg);
       await emitProgress("done", {
         message: "SVG 已生成",
         src,

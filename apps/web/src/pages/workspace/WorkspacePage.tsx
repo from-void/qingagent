@@ -159,6 +159,7 @@ import {
   TRANSIENT_DOC_SAVE_TOAST,
 } from "./data/docSaveError";
 import {
+  MATERIAL_PARSE_BUSY_REASON,
   useMaterialParseTracker,
   type UploadedAsset,
 } from "./data/useMaterialParseTracker";
@@ -316,6 +317,14 @@ const FOCUS_LABELS: Record<string, string> = {
   ops: "运营效率",
   tech: "技术架构",
 };
+
+export async function sendMaterialParseCommandWithStream(
+  stream: Pick<ServerStream, "sendCommand"> | null,
+  command: Command,
+): Promise<unknown> {
+  if (!stream) throw new Error("连接未就绪");
+  return stream.sendCommand(command);
+}
 
 export function WorkspacePage() {
   // 初始化不带标题(空),真实会话标题加载后再 setTitle 覆盖。
@@ -754,9 +763,7 @@ export function WorkspacePage() {
   const agentActive = state.streamActive || dim.agentBusy || sendPending;
   const fileResources = useResourceList({ kind: "file" });
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
-    const stream = streamRef.current;
-    if (!stream) throw new Error("连接未就绪");
-    await stream.sendCommand(command);
+    return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
   const {
     rows: materialParseRows,
@@ -770,12 +777,16 @@ export function WorkspacePage() {
   });
   const handleRetryMaterialParse = useCallback(
     (fileId: string) => {
+      if (agentActive) {
+        showToast(MATERIAL_PARSE_BUSY_REASON);
+        return;
+      }
       retryMaterialParse(fileId).catch((error) => {
         console.error("[workspace] reparseMaterial failed", error);
-        showToast("重试解析失败，请稍后再试");
+        showToast(error instanceof Error && error.message ? error.message : "重试解析失败，请稍后再试");
       });
     },
-    [retryMaterialParse, showToast],
+    [agentActive, retryMaterialParse, showToast],
   );
   const folderSource = useMemo(() => {
     const source = state.folderSources[0] ?? null;

@@ -1922,6 +1922,37 @@ describe("WorkspacePage review controls", () => {
   });
 });
 
+describe("WorkspacePage material parse retry", () => {
+  it("素材重试命令适配器会把 /commands 返回帧继续交给 tracker", async () => {
+    const { sendMaterialParseCommandWithStream } = await import("./WorkspacePage");
+    const busyFrame: BridgeFrame = {
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: "active-stream",
+          reason: "生成中，请稍后再试",
+          retriable: false,
+        },
+      },
+    };
+    const command: Command = {
+      kind: "reparseMaterial",
+      data: {
+        sessionId: "s-1",
+        fileId: "33333333-3333-4333-8333-333333333333",
+      },
+    };
+    const stream = {
+      sendCommand: vi.fn(async () => [busyFrame]),
+    };
+
+    await expect(sendMaterialParseCommandWithStream(stream, command)).resolves.toEqual([busyFrame]);
+    expect(stream.sendCommand).toHaveBeenCalledWith(command);
+    await expect(sendMaterialParseCommandWithStream(null, command)).rejects.toThrow("连接未就绪");
+  });
+});
+
 describe("WorkspacePage optimistic send rollback", () => {
   it("上传失败后撤回刚插入的用户气泡并恢复输入快照", async () => {
     const { rollbackOptimisticChatSend } = await import("./WorkspacePage");

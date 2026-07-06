@@ -70,4 +70,34 @@ describe("uploadStorage", () => {
     await expect(pathExists(uploadDir)).resolves.toBe(false);
     await expect(pathExists(storage.UPLOAD_DIR)).resolves.toBe(true);
   });
+
+  it("deletes indexed uploads, prunes the content index, and reuploads same content with a new id", async () => {
+    const storage = await loadStorage();
+    const buffer = Buffer.from("same bytes");
+    const first = await storage.findOrStoreUploadedFile({
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      buffer,
+    });
+    const firstUploadDir = path.join(storage.UPLOAD_DIR, first.record.fileId);
+
+    await expect(storage.deleteUploadedFile(first.record.fileId)).resolves.toBe(true);
+    await expect(pathExists(firstUploadDir)).resolves.toBe(false);
+
+    const rawIndex = await fs.readFile(path.join(storage.UPLOAD_DIR, ".content-index.json"), "utf8");
+    const index = JSON.parse(rawIndex) as {
+      records: Record<string, { fileId: string }>;
+    };
+    expect(Object.values(index.records).some((record) => record.fileId === first.record.fileId)).toBe(false);
+
+    const second = await storage.findOrStoreUploadedFile({
+      filename: "report.pdf",
+      mimeType: "application/pdf",
+      buffer,
+    });
+
+    expect(second.deduped).toBe(false);
+    expect(second.record.fileId).not.toBe(first.record.fileId);
+    await expect(pathExists(path.join(storage.UPLOAD_DIR, second.record.fileId, "report.pdf"))).resolves.toBe(true);
+  });
 });

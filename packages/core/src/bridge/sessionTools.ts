@@ -456,8 +456,11 @@ export function createSessionScopedTools(
           wordCount: 0,
         };
       }
-      const text =
-        input.mode === "summary" ? (mat.summary ?? "(No summary)") : mat.text;
+      const text = input.mode === "summary"
+        ? (mat.summary ?? "(No summary)")
+        : mat.visionSummary
+          ? `【图像识别摘要】${mat.visionSummary}\n\n${mat.text}`
+          : mat.text;
       return { text, filename: mat.filename, wordCount: mat.metadata.wordCount };
     },
   });

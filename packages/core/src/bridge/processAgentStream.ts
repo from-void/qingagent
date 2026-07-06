@@ -1606,6 +1606,16 @@ export async function* processAgentStream(
         const ok = result && typeof result === "object" && result.ok === true;
         const text = result && typeof result.text === "string" ? result.text : "";
         const error = result && typeof result.error === "string" ? result.error : "";
+        const materialId = isRecord(result) && typeof result.materialId === "string" ? result.materialId : null;
+        if (ok && materialId && text) {
+          const mat = state.materials.get(materialId);
+          if (mat) {
+            mat.visionSummary = text.slice(0, 500);
+            schedulePersist(state, "tool_result:readImage").catch((err) =>
+              logger.error("Persist after readImage material vision summary failed", { error: String(err) }),
+            );
+          }
+        }
         const reason = error || "图片识别失败";
         const origMsg = state.chatHistory.find((m) =>
           m.parts.some((p) => p.kind === "toolCall" && p.data.id === toolCallId),

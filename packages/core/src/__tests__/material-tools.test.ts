@@ -456,6 +456,18 @@ describe("readMaterial execute — session-scoped closure", () => {
     createdAt: "2026-05-23T10:00:00Z",
     updatedAt: "2026-05-23T10:00:00Z",
   });
+  materials.set("mat-read-image", {
+    id: "mat-read-image",
+    filename: "photo.png",
+    mimeType: "image/png",
+    text: "原始图片素材正文占位",
+    summary: "图片摘要",
+    visionSummary: "图片里有一张手写会议纪要。",
+    fileId: "file-photo",
+    metadata: { pages: null, wordCount: 12, title: "图片素材" },
+    createdAt: "2026-05-23T10:00:00Z",
+    updatedAt: "2026-05-23T10:00:00Z",
+  });
 
   const { readMaterial } = createSessionScopedTools(materials);
 
@@ -481,6 +493,29 @@ describe("readMaterial execute — session-scoped closure", () => {
     expect(result.text).toBe("这是文章摘要");
     expect(result.filename).toBe("article.pdf");
     expect(result.wordCount).toBe(5000);
+  });
+
+  it("returns full text with vision summary prefix when material has readImage result", async () => {
+    const raw = await readMaterial.execute!(
+      { materialId: "mat-read-image", mode: "full" },
+      ctx,
+    );
+    const result = raw as { text: string; filename: string; wordCount: number };
+
+    expect(result.text).toBe("【图像识别摘要】图片里有一张手写会议纪要。\n\n原始图片素材正文占位");
+    expect(result.filename).toBe("photo.png");
+    expect(result.wordCount).toBe(12);
+  });
+
+  it("summary mode does not include vision summary prefix", async () => {
+    const raw = await readMaterial.execute!(
+      { materialId: "mat-read-image", mode: "summary" },
+      ctx,
+    );
+    const result = raw as { text: string; filename: string; wordCount: number };
+
+    expect(result.text).toBe("图片摘要");
+    expect(result.text).not.toContain("【图像识别摘要】");
   });
 
   it("returns '(No summary)' for material without summary", async () => {

@@ -5,6 +5,7 @@ export interface Material {
   mimeType: string;
   text: string;
   summary: string | null;
+  visionSummary?: string;
   /** Server-assigned upload UUID, used for file serving via /api/v1/files/:fileId. */
   fileId: string | null;
   metadata: {

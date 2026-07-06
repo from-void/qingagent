@@ -803,6 +803,7 @@ describe("thread persistence", () => {
       mimeType: "text/plain",
       text: "素材正文",
       summary: "素材摘要",
+      visionSummary: "图像识别摘要",
       fileId: "file-1",
       metadata: { pages: null, wordCount: 4, title: "素材", parseState: "ready" },
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -861,6 +862,45 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(sessionId);
 
     expect(restored?.materials.get("material-old")?.metadata.parseState).toBe("ready");
+  });
+
+  it("restores material visionSummary and ignores invalid visionSummary", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "material-vision-summary";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      materials: [
+        {
+          id: "material-image",
+          filename: "photo.png",
+          mimeType: "image/png",
+          text: "图片素材正文",
+          summary: null,
+          visionSummary: "图中是一张手写便签。",
+          fileId: "file-image",
+          metadata: { pages: null, wordCount: 6, title: null },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "material-invalid-vision",
+          filename: "bad.png",
+          mimeType: "image/png",
+          text: "坏字段素材正文",
+          summary: null,
+          visionSummary: 123,
+          fileId: "file-bad",
+          metadata: { pages: null, wordCount: 6, title: null },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ] as never,
+    })));
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(restored?.materials.get("material-image")?.visionSummary).toBe("图中是一张手写便签。");
+    expect(restored?.materials.get("material-invalid-vision")).toBeTruthy();
+    expect(restored?.materials.get("material-invalid-vision")?.visionSummary).toBeUndefined();
   });
 
   it("round-trips material parse error metadata", async () => {

@@ -22,6 +22,7 @@ describe("readImageTool", () => {
       ok: false,
       text: "",
       error: "还未配置图像识别模型,请在 设置 → 技能 → 图像识别 里填写模型 API Key。",
+      materialId: null,
     });
   });
 });

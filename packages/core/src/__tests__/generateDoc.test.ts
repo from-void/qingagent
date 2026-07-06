@@ -175,6 +175,27 @@ describe("generateDoc PM AI-IR helpers", () => {
     expect(ctx).not.toContain("本地上传.md（来源URL");
   });
 
+  it("materialContextFrom 把图像识别摘要放在素材正文前", () => {
+    const materials = new Map<string, Material>([
+      ["img-1", {
+        id: "img-1",
+        filename: "照片.png",
+        mimeType: "image/png",
+        text: "图片素材正文占位",
+        summary: null,
+        visionSummary: "图中是一张活动签到表。",
+        fileId: "file-img-1",
+        metadata: { pages: null, wordCount: 8, title: null },
+        createdAt: "",
+        updatedAt: "",
+      }],
+    ]);
+
+    const ctx = materialContextFrom(materials);
+
+    expect(ctx).toBe("素材: 照片.png\n【图像识别摘要】图中是一张活动签到表。\n图片素材正文占位");
+  });
+
   it("含 blockquote/list/hr 的文档:legacySections 通过 output 校验(真 bug 回归)", async () => {
     // 长新闻稿会用引用块/列表/分隔线 → pmToLegacySections 转出 quote/list/hr,
     // 此前 docSectionSchema/LegacySection 漏了这些 kind → output validation 失败、generateDoc 挂。

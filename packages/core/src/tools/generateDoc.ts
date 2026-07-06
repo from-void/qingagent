@@ -315,7 +315,10 @@ export function materialContextFrom(materials: Map<string, Material> | undefined
           // 模型用 url 原值挂 link mark,模型却看不到 url,只能省略或瞎猜(回归 search-ref-not-citation-block)。
           const url = m.metadata?.sourceUrl;
           const head = url ? `素材: ${m.filename}（来源URL: ${url}）` : `素材: ${m.filename}`;
-          return `${head}\n${m.text}`;
+          const body = m.visionSummary
+            ? `【图像识别摘要】${m.visionSummary}\n${m.text}`
+            : m.text;
+          return `${head}\n${body}`;
         })
         .join("\n\n")
     : "";

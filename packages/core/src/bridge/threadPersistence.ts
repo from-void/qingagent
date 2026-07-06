@@ -69,6 +69,7 @@ export interface MaterialRecord {
   mimeType: string;
   text: string;
   summary: string | null;
+  visionSummary?: string;
   fileId: string | null;
   metadata: {
     pages: number | null;
@@ -160,6 +161,7 @@ function serializeMaterial(m: Material): MaterialRecord {
     mimeType: m.mimeType,
     text: m.text,
     summary: m.summary,
+    ...(typeof m.visionSummary === "string" ? { visionSummary: m.visionSummary } : {}),
     fileId: m.fileId,
     metadata: m.metadata,
     createdAt: m.createdAt,
@@ -203,12 +205,14 @@ function deserializeMaterials(records: unknown): Map<string, Material> {
     }
     const metadata = r.metadata;
     const parseError = isNullableString(metadata.parseError) ? metadata.parseError : undefined;
+    const visionSummary = typeof r.visionSummary === "string" ? r.visionSummary : undefined;
     map.set(r.id, {
       id: r.id,
       filename: r.filename,
       mimeType: r.mimeType,
       text: r.text,
       summary: r.summary,
+      ...(visionSummary !== undefined ? { visionSummary } : {}),
       fileId: r.fileId,
       metadata: {
         ...metadata,

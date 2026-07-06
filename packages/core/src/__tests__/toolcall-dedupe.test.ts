@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, ChatMessage, ToolCallSpec } from "@qingagent/contract-ts";
+import type { Material } from "../types/material.js";
 
 // 工具卡协议硬不变式:同一个 agent message 内,同一 toolCallId 只能有一个 toolCall part。
 // 参数流占位、正式 tool-call、progress、tool-result/suspend 只能原位更新这张卡。
@@ -156,6 +157,20 @@ async function runChunks(chunks: StreamChunk[], sessionId: string) {
   return { state, frames };
 }
 
+function imageMaterial(id: string): Material {
+  return {
+    id,
+    filename: `${id}.png`,
+    mimeType: "image/png",
+    text: "图片素材正文",
+    summary: null,
+    fileId: `file-${id}`,
+    metadata: { pages: null, wordCount: 6, title: null },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 describe("toolCall part 去重", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -229,6 +244,70 @@ describe("toolCall part 去重", () => {
     expect(updates.some((spec) => spec.body.kind === "readImageCard" && spec.body.data.excerpt === "正在识别图中文字")).toBe(true);
     expect(updates.at(-1)?.status.kind).toBe("done");
     expect(updates.at(-1)?.result).toEqual({ kind: "genericText", data: "最终识别结果" });
+  });
+
+  it("readImage 成功识别素材后写回 visionSummary 并截断 500 字", STREAM_TEST_TIMEOUT, async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("read-image-material-writeback");
+    state.materials.set("mat-image", imageMaterial("mat-image"));
+    const longText = "识别结果".repeat(100);
+
+    await collect(
+      processAgentStream(
+        streamOf(
+          toolCallInputStart("call_read_image_material", "readImage"),
+          readImageCall("call_read_image_material"),
+          readImageResult("call_read_image_material", {
+            ok: true,
+            text: longText,
+            materialId: "mat-image",
+          }),
+        ),
+        {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-read-image-material-writeback",
+          runId: "run-read-image-material-writeback",
+        },
+      ),
+    );
+
+    expect(state.materials.get("mat-image")?.visionSummary).toBe(longText.slice(0, 500));
+  });
+
+  it("readImage materialId 为空或素材不存在时不写回 visionSummary", STREAM_TEST_TIMEOUT, async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("read-image-material-noop");
+    state.materials.set("mat-image", imageMaterial("mat-image"));
+
+    await collect(
+      processAgentStream(
+        streamOf(
+          toolCallInputStart("call_read_image_null_material", "readImage"),
+          readImageCall("call_read_image_null_material"),
+          readImageResult("call_read_image_null_material", {
+            ok: true,
+            text: "识别结果",
+            materialId: null,
+          }),
+          toolCallInputStart("call_read_image_missing_material", "readImage"),
+          readImageCall("call_read_image_missing_material"),
+          readImageResult("call_read_image_missing_material", {
+            ok: true,
+            text: "识别结果",
+            materialId: "missing-material",
+          }),
+        ),
+        {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-read-image-material-noop",
+          runId: "run-read-image-material-noop",
+        },
+      ),
+    );
+
+    expect(state.materials.get("mat-image")?.visionSummary).toBeUndefined();
   });
 
   it("askUser 占位→tool-call→suspend 仍只 append 一张问卷卡", STREAM_TEST_TIMEOUT, async () => {

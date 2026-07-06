@@ -48,6 +48,7 @@ interface ReadImageResult {
   ok: boolean;
   text: string;
   error: string | null;
+  materialId: string | null;
 }
 
 async function run(
@@ -91,7 +92,7 @@ describe("readImage stream error handling", () => {
       ]),
     });
     const r = await run();
-    expect(r).toEqual({ ok: true, text: "这是一张测试图片。", error: null });
+    expect(r).toEqual({ ok: true, text: "这是一张测试图片。", error: null, materialId: null });
   });
 
   it("上游 error part(限流)不再被吞成成功,返回 ok:false 且带原因", async () => {
@@ -128,6 +129,7 @@ describe("readImage stream error handling", () => {
     ]);
     const r = await run("mat-1", contextWithMaterials(materials));
     expect(r.ok).toBe(true);
+    expect(r.materialId).toBe("mat-1");
     // resolveImageInput 应收到素材的 fileId,而不是 materialId
     expect(resolveImageInputMock).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
   });
@@ -188,7 +190,7 @@ describe("readImage stream error handling", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     const r = await pending;
 
-    expect(r).toEqual({ ok: true, text: "重试成功", error: null });
+    expect(r).toEqual({ ok: true, text: "重试成功", error: null, materialId: null });
     expect(streamTextMock).toHaveBeenCalledTimes(2);
   });
 
@@ -248,7 +250,22 @@ describe("readImage stream error handling", () => {
     const first = await run("img-cache-same", {}, "同一问题");
     const second = await run("img-cache-same", {}, "同一问题");
 
-    expect(first).toEqual({ ok: true, text: "缓存结果", error: null });
+    expect(first).toEqual({ ok: true, text: "缓存结果", error: null, materialId: null });
+    expect(second).toEqual(first);
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("素材输入命中缓存时仍返回同一 materialId", async () => {
+    streamTextMock.mockReturnValue(visionText("素材缓存结果"));
+    const materials = new Map<string, unknown>([
+      ["mat-cache", { id: "mat-cache", filename: "cache.png", mimeType: "image/png", fileId: "22222222-2222-4222-8222-222222222222" }],
+    ]);
+    const context = contextWithMaterials(materials);
+
+    const first = await run("mat-cache", context, "同一问题");
+    const second = await run("mat-cache", context, "同一问题");
+
+    expect(first).toEqual({ ok: true, text: "素材缓存结果", error: null, materialId: "mat-cache" });
     expect(second).toEqual(first);
     expect(streamTextMock).toHaveBeenCalledTimes(1);
   });

@@ -117,19 +117,22 @@ function recentTextConversation(requestContext?: RequestContext): string {
 
 /** 素材区图片(场景5):若 image 命中会话素材库的某个 materialId,改用该素材的原始上传文件
  *  (Material.fileId → /uploads/<fileId>)。非素材则原样返回交给 resolveImageInput。 */
-function resolveMaterialRef(requestContext: RequestContext | undefined, image: string): string {
+function resolveMaterialRef(
+  requestContext: RequestContext | undefined,
+  image: string,
+): { imageRef: string; materialId: string | null } {
   const materials = requestContext?.get("materials") as
     | { get?: (id: string) => { fileId?: string | null; mimeType?: string; filename?: string } | undefined }
     | undefined;
   const mat = materials && typeof materials.get === "function" ? materials.get(image) : undefined;
-  if (!mat || typeof mat !== "object") return image;
+  if (!mat || typeof mat !== "object") return { imageRef: image, materialId: null };
   if (mat.mimeType && !mat.mimeType.startsWith("image/")) {
     throw new Error(`素材「${mat.filename ?? image}」不是图片文件,识图只能识别图片。`);
   }
   if (!mat.fileId) {
     throw new Error(`素材「${mat.filename ?? image}」没有可识别的原始图片文件(可能是抓取类纯文本素材)`);
   }
-  return mat.fileId;
+  return { imageRef: mat.fileId, materialId: image };
 }
 
 function errorMessageFromUnknown(error: unknown): string {
@@ -179,6 +182,7 @@ export const readImageTool = createTool({
     ok: z.boolean(),
     text: z.string(),
     error: z.string().nullable(),
+    materialId: z.string().nullable(),
   }),
   execute: async (input, context) => {
     const requestContext = context?.requestContext as RequestContext | undefined;
@@ -189,12 +193,13 @@ export const readImageTool = createTool({
           ok: false,
           text: "",
           error: "还未配置图像识别模型,请在 设置 → 技能 → 图像识别 里填写模型 API Key。",
+          materialId: null,
         };
       }
 
       const prompt = input.prompt.trim() || "请识别并描述这张图片的主要内容。";
       // 先把素材区 materialId 折算成原始上传文件,再统一交给安全 resolver。
-      const imageRef = resolveMaterialRef(requestContext, input.image.trim());
+      const { imageRef, materialId } = resolveMaterialRef(requestContext, input.image.trim());
       const image = await resolveImageInput(imageRef);
       // 工具流式进度:副基模(GLM-4.6V 等推理模型 + 免费档限流)识图常耗数十秒,期间若主流
       // 无 chunk 会触发 agent 空闲看门狗(默认 45s)abort 整轮,且 UI 看着卡住像没响应。
@@ -229,7 +234,7 @@ export const readImageTool = createTool({
           if (cached !== undefined) {
             display += "命中此前识别结果";
             emitProgress(true);
-            return { ok: true, text: cached, error: null };
+            return { ok: true, text: cached, error: null, materialId };
           }
         }
 
@@ -311,7 +316,7 @@ export const readImageTool = createTool({
           try {
             trimmed = await runVisionOnce();
           } catch {
-            return { ok: false, text: "", error: READ_IMAGE_RATE_LIMIT_ERROR };
+            return { ok: false, text: "", error: READ_IMAGE_RATE_LIMIT_ERROR, materialId: null };
           }
         }
 
@@ -321,17 +326,18 @@ export const readImageTool = createTool({
             ok: false,
             text: "",
             error: "图像识别没有返回结果,请检查模型配置或稍后重试。",
+            materialId: null,
           };
         }
         if (cacheKey) {
           writeVisionCache(cacheKey, trimmed);
         }
-        return { ok: true, text: trimmed, error: null };
+        return { ok: true, text: trimmed, error: null, materialId };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
       }
     } catch (error) {
-      return { ok: false, text: "", error: errorMessageFromUnknown(error) };
+      return { ok: false, text: "", error: errorMessageFromUnknown(error), materialId: null };
     }
   },
 });

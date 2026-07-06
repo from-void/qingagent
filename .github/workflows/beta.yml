@@ -42,8 +42,6 @@ jobs:
       # 官方构建可注入下载站地址；fork 默认留空。
       VITE_DESKTOP_SITE_URL: ''
       # 不设置 QINGAGENT_UPDATE_POLICY_URL：policy 未托管时客户端 fail-open。
-      # 【诊断·待撤】验证 compression:store 是否把 7za 降到 -mx=0。
-      DEBUG: electron-builder
     steps:
       - uses: actions/checkout@v4
 

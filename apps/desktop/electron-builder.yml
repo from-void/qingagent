@@ -7,11 +7,6 @@ executableName: qingagent
 # 产物文件名用干净 ASCII:默认会取包名 @qingagent/desktop(含 @ 与 /)或中文 productName,
 # 上传 GitHub Release 时 "Request path contains unescaped characters"。固定为 qingagent-版本-os-arch。
 artifactName: qingagent-${version}-${os}-${arch}.${ext}
-# compression: store + nsis.differentialPackage:false 组合——之前二者分开试(store 那轮差分 7za
-# 仍 -mx=9;differentialPackage 那轮又撤了 store),未同时验证。store 把安装器 app.7z 降到 -mx=0
-# (不压/极快),differentialPackage:false 砍掉差分包的 -mx=9 步,两个一起才可能让 2 核 runner
-# 压得完。代价:安装器体积变大(~原始大小),但能出包;后续可视 runner 能力回调 normal。
-compression: store
 directories:
   buildResources: resources
   output: release

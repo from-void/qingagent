@@ -39,6 +39,7 @@ const oldDeepseekEnv = process.env.DEEPSEEK_API_KEY;
 type WebSearchOutput = {
   ok: boolean;
   query: string;
+  note?: string;
   items: Array<{
     url: string;
     title: string;
@@ -211,6 +212,17 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
 
     expect(result.items.map((item) => item.url)).toEqual([fallbackResult.url]);
     expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("empty ds", 3);
+  });
+
+  it("最终 0 召回时返回可执行重试建议 note", async () => {
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+    mockSearchDeps.fallbackSearch.mockResolvedValue([]);
+
+    const result = await executeWebSearch({ query: "无结果 查询", count: 3 });
+
+    expect(result.items).toEqual([]);
+    expect(result.note).toBe("未检索到相关结果;请精简为 2-6 个关键词后重试,或改写检索角度");
+    expect(mockFetchDeps.fetchArticleExecute).not.toHaveBeenCalled();
   });
 
   it("DeepSeek 5s 内没回来 → 超时后用多源(整体 5s 封顶)", async () => {

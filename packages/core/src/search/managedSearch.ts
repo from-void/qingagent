@@ -6,6 +6,7 @@ import {
 import { SearchProviderError } from "./errors.js";
 import { MultiSourceSearchProvider, type SearchSource } from "./multiSource.js";
 import type { SearchProvider, SearchResult } from "./provider.js";
+import { filterByRelevance } from "./relevanceGate.js";
 import {
   SEARCH_PROVIDER_REGISTRY,
   type SearchProviderConfig,
@@ -170,6 +171,15 @@ class ManagedApiProvider implements SearchProvider {
   }
 }
 
+class RelevanceGatedProvider implements SearchProvider {
+  constructor(private readonly inner: SearchProvider) {}
+
+  async search(query: string, count: number): Promise<SearchResult[]> {
+    const results = await this.inner.search(query, count);
+    return filterByRelevance(results, query).kept;
+  }
+}
+
 function buildProviderSignature(configSignature: string): string {
   const healthSignature = SEARCH_PROVIDER_REGISTRY
     .map((entry) => {
@@ -199,11 +209,19 @@ function buildManagedProvider(config: SearchProviderConfigMap): SearchProvider {
       });
       continue;
     }
+    if (entry.id === "ddg" && shouldSkipSearchProvider("ddg")) continue;
     if (entry.id === "searxng" && !sourceConfig?.url) continue;
-    sources.push({ name: entry.id, provider: entry.buildProvider(sourceConfig ?? {}) });
+    sources.push({
+      name: entry.id,
+      provider: new RelevanceGatedProvider(entry.buildProvider(sourceConfig ?? {})),
+    });
   }
 
   return new MultiSourceSearchProvider(sources);
+}
+
+export function __buildManagedProviderForTest(config: SearchProviderConfigMap): SearchProvider {
+  return buildManagedProvider(config);
 }
 
 export async function getManagedSearchProvider(): Promise<SearchProvider> {

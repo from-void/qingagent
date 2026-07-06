@@ -5,6 +5,7 @@ import {
   parseLiteSerp,
   type SearchResult,
 } from "./parseDuckDuckGo.js";
+import { markSearchProviderQuota } from "./health.js";
 
 export type { SearchResult } from "./parseDuckDuckGo.js";
 
@@ -28,6 +29,18 @@ const ENDPOINTS = [
   },
 ] as const;
 
+function isConnectionFailure(err: unknown): boolean {
+  const record =
+    err && typeof err === "object" ? (err as { name?: unknown; message?: unknown }) : null;
+  const name = typeof record?.name === "string" ? record.name : "";
+  const message = typeof record?.message === "string" ? record.message : String(err);
+  return (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    /fetch failed|ECONNREFUSED|ETIMEDOUT/i.test(message)
+  );
+}
+
 export class DuckDuckGoProvider implements SearchProvider {
   async search(query: string, count: number): Promise<SearchResult[]> {
     const limit = Math.max(0, Math.floor(count));
@@ -37,7 +50,10 @@ export class DuckDuckGoProvider implements SearchProvider {
       try {
         const results = await this.searchOne(endpoint.url, endpoint.parse, query, limit);
         if (results.length > 0) return results;
-      } catch {
+      } catch (err) {
+        if (isConnectionFailure(err)) {
+          markSearchProviderQuota("ddg", 10 * 60 * 1000);
+        }
         // Best-effort provider: try the next endpoint, then return [].
       }
     }
@@ -62,7 +78,7 @@ export class DuckDuckGoProvider implements SearchProvider {
         Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
       },
       body: new URLSearchParams({ q: query, kl: "wt-wt" }).toString(),
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(2_500),
     });
 
     if (!response.ok) throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`);

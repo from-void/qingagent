@@ -25,6 +25,7 @@ const WEBSEARCH_EXCERPT_CHARS = 2500;
 // 整体超时:DeepSeek(只取链接,流式掐断,~2s)与多源(Bing/DDG,~1-3s)并发竞速,
 // DeepSeek 质量更好故优先;5s 内 DeepSeek 没回来就用多源,谁都没回就返回空。
 const SEARCH_TIMEOUT_MS = 5000;
+const ZERO_HIT_NOTE = "未检索到相关结果;请精简为 2-6 个关键词后重试,或改写检索角度";
 
 type ToolWriter = {
   write: (chunk: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -203,6 +204,7 @@ export const webSearchTool = createTool({
   outputSchema: z.object({
     ok: z.boolean(),
     query: z.string(),
+    note: z.string().optional(),
     items: z.array(
       z.object({
         url: z.string(),
@@ -273,7 +275,7 @@ export const webSearchTool = createTool({
           okCount: 0,
           skippedCount: 0,
         });
-        return { ok: true, query, items: [] };
+        return { ok: true, query, items: [], note: ZERO_HIT_NOTE };
       }
 
       // 本请求 agent 用的 DeepSeek key(桌面端=visitor 层 header,只能从 requestContext 取)。
@@ -362,7 +364,12 @@ export const webSearchTool = createTool({
         }
       }
       const modelItems: WebSearchItem[] = items.map(({ __fullText: _fullText, ...item }) => item);
-      return { ok: true, query, items: modelItems };
+      return {
+        ok: true,
+        query,
+        items: modelItems,
+        ...(modelItems.length === 0 ? { note: ZERO_HIT_NOTE } : {}),
+      };
     } finally {
       stopHeartbeat();
     }

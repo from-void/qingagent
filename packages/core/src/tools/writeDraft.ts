@@ -280,18 +280,6 @@ function buildDraftMessages(
   ];
 }
 
-function shouldUseJsonObjectMode(baseUrl: string, model: string): boolean {
-  const value = process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT?.trim().toLowerCase();
-  if (value === "0" || value === "false" || value === "off") return false;
-  if (value === "1" || value === "true" || value === "on") return true;
-  try {
-    const host = new URL(baseUrl).hostname.toLowerCase();
-    return host === "api.deepseek.com" && model.toLowerCase().startsWith("deepseek-");
-  } catch {
-    return false;
-  }
-}
-
 function failureKindFromError(error: unknown, finishReason: string | null | undefined): string {
   if (isLengthTruncatedFinishReason(finishReason)) return "length_truncated";
   if (error && typeof error === "object" && "diagnostics" in error) {
@@ -536,7 +524,6 @@ export function createWriteDraftTool(opts: {
             model,
             apiKey: resolveDeepseekAuth(context?.requestContext).apiKey || undefined,
             protocol,
-            responseFormat: undefined,
             abortSignal: params.abortSignal,
             maxRetries: 2,
             onContentStart: params.onContentStart,

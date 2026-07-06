@@ -54,7 +54,7 @@ describe("selection chip edit context", () => {
     agentStreamCalls.length = 0;
   });
 
-  it("sends exact selected document text as AI-IR edit guidance", async () => {
+  it("blockId 缺失时用 chip label 作为 readDraft 模糊定位文本", async () => {
     const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
 
     const state = createSession("sess-selection-ctx");
@@ -89,12 +89,12 @@ describe("selection chip edit context", () => {
     expect(userMsg).toBeDefined();
     const content = userMsg!.content as string;
     expect(content).toContain("【用户选中的文档片段】");
-    expect(content).toContain(selected);
-    expect(content).toContain(`readDraft(query: ${JSON.stringify(selected)})`);
+    expect(content).toContain("AI 修改");
+    expect(content).toContain('readDraft(query: "AI 修改")');
+    expect(content).not.toContain(selected);
     expect(content).toContain('action:"replaceText"');
     expect(content).toContain('action:"markText"');
     expect(content).toContain("withinRef");
-    expect(content).not.toContain("AI 修改");
 
     expect(agentStreamCalls).toHaveLength(1);
     expect(agentStreamCalls[0]!.options.toolChoice).toBeUndefined();

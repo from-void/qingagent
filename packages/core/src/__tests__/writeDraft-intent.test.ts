@@ -6,8 +6,6 @@ import {
   pmToPlainText,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { extractJson } from "../bridge/docGenerator.js";
-import { parseAiDocumentFromText } from "../tools/generateDoc.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -30,7 +28,6 @@ interface DeepseekCall {
   user?: string;
   messages?: unknown[];
   protocol?: "openai" | "anthropic";
-  responseFormat?: "json_object";
   thinking: boolean;
   temperature: number;
   stream: boolean;
@@ -45,10 +42,6 @@ function qingmlText(text: string): string {
 
 function qingmlParagraph(text: string): string {
   return `<p>${qingmlText(text)}</p>`;
-}
-
-function aiIrParagraphJson(text: string): string {
-  return JSON.stringify([{ type: "paragraph", runs: [{ text }] }]);
 }
 
 function twoLevelListQingml(): string {
@@ -150,17 +143,10 @@ describe("writeDraft intent 调度", () => {
     callDeepseekDraftMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;
-    delete process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT;
   });
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("测试直接 import 项目真实 parseAiDocumentFromText/extractJson", () => {
-    const raw = `前导说明 ${aiIrParagraphJson("真实解析")}\n收尾散文`;
-    expect(extractJson(raw)).toBe(aiIrParagraphJson("真实解析"));
-    expect(parseAiDocumentFromText(raw, "t").blocks).toHaveLength(1);
   });
 
   it("DeepSeek 请求体注入 thinking; enabled 不带 temperature, disabled 带 temperature", async () => {
@@ -211,7 +197,6 @@ describe("writeDraft intent 调度", () => {
       thinking: false,
       temperature: 0.4,
       stream: true,
-      responseFormat: undefined,
     });
     expect(firstCall.abortSignal).toBeInstanceOf(AbortSignal);
     expect(firstCall.messages?.length).toBeGreaterThanOrEqual(2);
@@ -245,7 +230,6 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
     expect(firstCall.protocol).toBe("anthropic");
-    expect(firstCall.responseFormat).toBeUndefined();
     expect(firstCall.messages).toEqual([
       expect.objectContaining({
         role: "system",
@@ -258,19 +242,7 @@ describe("writeDraft intent 调度", () => {
     expect(JSON.stringify(firstCall.messages)).not.toContain("母对话 agent system 不应成为 draft system");
   });
 
-  it("QingML 生成永不带 json_object,环境变量不影响", async () => {
-    process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT = "1";
-    const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("关闭 json mode"), contentStartMs: 0, finishReason: "stop" });
-
-    const out = await run(tool, { title: "t", outline: "o" });
-
-    expect(out.ok).toBe(true);
-    const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
-    expect(firstCall.responseFormat).toBeUndefined();
-  });
-
-  it("自定义 OpenAI 兼容端点默认不带 json_object,避免不支持 response_format 的端点 400", async () => {
+  it("自定义 OpenAI 兼容端点默认不带 response_format,避免不支持该参数的端点 400", async () => {
     const { tool } = await makeTool();
     callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("兼容端点"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([
@@ -282,7 +254,6 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
     expect(firstCall.protocol).toBe("openai");
-    expect(firstCall.responseFormat).toBeUndefined();
   });
 
   it("两级嵌套列表首稿使用 children 递归表示，一轮 4 路即可编译成真实嵌套 PM", async () => {

@@ -104,7 +104,6 @@ describe("writeDraft 赛马式字数控制", () => {
     callDeepseekDraftMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;
-    delete process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT;
   });
 
   afterEach(() => {

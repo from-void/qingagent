@@ -25,7 +25,7 @@ describe("deepseekDraftClient", () => {
     else process.env.DEEPSEEK_API_KEY = originalDeepseekApiKey;
   });
 
-  it("OpenAI 请求体优先复用完整 messages,并按需开启 json_object", () => {
+  it("OpenAI 请求体优先复用完整 messages", () => {
     const messages = [
       { role: "system" as const, content: "母对话 system" },
       { role: "user" as const, content: "用户原文" },
@@ -40,16 +40,15 @@ describe("deepseekDraftClient", () => {
       thinking: false,
       temperature: 0.4,
       stream: false,
-      responseFormat: "json_object",
     });
 
     expect(body.messages).toBe(messages);
     expect(body).toMatchObject({
-      response_format: { type: "json_object" },
       thinking: { type: "disabled" },
       temperature: 0.4,
       stream: false,
     });
+    expect(body).not.toHaveProperty("response_format");
   });
 
   it("Anthropic 请求体保留 V4 messages 上下文", () => {

@@ -6,21 +6,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function normalizeIncomingBlock(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-  const o = raw as Record<string, unknown>;
-  if (o.aiIr && typeof o.aiIr === "object") return o.aiIr;
-  const looksLikeReadDraftEnvelope =
-    "ref" in o || "editability" in o || "sectionFrom" in o || "sectionTo" in o;
-  if (!looksLikeReadDraftEnvelope) return raw;
-  const bare = { ...o };
-  delete bare.ref;
-  delete bare.editability;
-  delete bare.sectionFrom;
-  delete bare.sectionTo;
-  return bare;
-}
-
 export function asDocGenerationEvent(value: unknown): DocGenerationEvent | null {
   const record = asRecord(value);
   if (!record || typeof record.kind !== "string") return null;

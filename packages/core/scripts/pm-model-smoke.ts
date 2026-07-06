@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject, streamText } from "ai";
 import { aiBlockSchema, compileAiDocumentToPm } from "@qingagent/pm-schema";
-import { parseAiDocumentFromText } from "../src/tools/generateDoc.js";
+import { parseAiDocumentFromQingml } from "../src/tools/generateDoc.js";
 
 type SmokeStatus = "PASS" | "FAIL" | "ENV_SKIP" | "ERROR";
 
@@ -17,7 +17,7 @@ interface SmokeArtifact {
   structuredOutput: SmokeStatus;
   streamElementGranularity: SmokeStatus;
   zodBlockErrors: SmokeStatus;
-  fallbackStreamTextToIr: SmokeStatus;
+  fallbackStreamTextToQingml: SmokeStatus;
   verdict: SmokeStatus;
   evidence: string[];
   error?: string;
@@ -47,7 +47,7 @@ function envSkip(message: string): SmokeArtifact {
     structuredOutput: "ENV_SKIP",
     streamElementGranularity: "ENV_SKIP",
     zodBlockErrors: "PASS",
-    fallbackStreamTextToIr: "ENV_SKIP",
+    fallbackStreamTextToQingml: "ENV_SKIP",
     verdict: "ENV_SKIP",
     evidence: [],
     error: message,
@@ -138,7 +138,7 @@ async function runSmoke(): Promise<SmokeArtifact> {
     structuredOutput: "ERROR",
     streamElementGranularity: "ERROR",
     zodBlockErrors,
-    fallbackStreamTextToIr: "ERROR",
+    fallbackStreamTextToQingml: "ERROR",
     verdict: "ERROR",
     evidence: [evidencePath],
   };
@@ -169,16 +169,16 @@ async function runSmoke(): Promise<SmokeArtifact> {
     const fallback = await retry(async () => {
       const textResult = streamText({
         model,
-        system: "只输出 JSON：{\"blocks\":[{\"type\":\"paragraph\",\"runs\":[{\"text\":\"fallback ok\"}]}]}",
-        prompt: "输出 fallback JSON",
+        system: "只输出 QingML：<p>fallback ok</p>",
+        prompt: "输出 fallback QingML",
         toolChoice: "none",
       });
       let text = "";
       for await (const delta of textResult.textStream) text += delta;
-      return parseAiDocumentFromText(text);
+      return parseAiDocumentFromQingml(text).document;
     });
     const fallbackCompiled = compileAiDocumentToPm(fallback);
-    artifact.fallbackStreamTextToIr = fallbackCompiled.ok ? "PASS" : "FAIL";
+    artifact.fallbackStreamTextToQingml = fallbackCompiled.ok ? "PASS" : "FAIL";
     await appendEvidence({ type: "fallback", fallback, blockErrors: fallbackCompiled.blockErrors });
 
     artifact.verdict = [
@@ -186,7 +186,7 @@ async function runSmoke(): Promise<SmokeArtifact> {
       artifact.structuredOutput,
       artifact.streamElementGranularity,
       artifact.zodBlockErrors,
-      artifact.fallbackStreamTextToIr,
+      artifact.fallbackStreamTextToQingml,
     ].every((status) => status === "PASS") ? "PASS" : "FAIL";
     return artifact;
   } catch (err) {
@@ -195,7 +195,7 @@ async function runSmoke(): Promise<SmokeArtifact> {
         ...artifact,
         structuredOutput: artifact.structuredOutput === "ERROR" ? "ENV_SKIP" : artifact.structuredOutput,
         streamElementGranularity: artifact.streamElementGranularity === "ERROR" ? "ENV_SKIP" : artifact.streamElementGranularity,
-        fallbackStreamTextToIr: artifact.fallbackStreamTextToIr === "ERROR" ? "ENV_SKIP" : artifact.fallbackStreamTextToIr,
+        fallbackStreamTextToQingml: artifact.fallbackStreamTextToQingml === "ERROR" ? "ENV_SKIP" : artifact.fallbackStreamTextToQingml,
         verdict: "ENV_SKIP",
         error: err instanceof Error ? err.message : String(err),
       };

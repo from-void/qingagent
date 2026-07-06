@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { extractJson } from "../bridge/docGenerator.js";
-import { parseAiDocumentFromText } from "../tools/generateDoc.js";
 
 // extractJson 的职责:从 LLM 的"脏输出"里抠出第一个完整 JSON 值。
 // 它的全部价值就是对付脏输入,所以这里用 LLM 真实会吐的各种脏形态逐条测(对抗性输入测试)。
@@ -37,7 +36,6 @@ describe("extractJson — 对抗 LLM 脏输出(契约测试)", () => {
     const out = extractJson(raw);
     expect(out).toBe(ARR);
     expect(parses(out)).toBe(true);
-    expect(parseAiDocumentFromText(raw, "测试").blocks).toHaveLength(1);
   });
 
   it("前导 + JSON + 尾随都有:只截中间 JSON", () => {
@@ -55,7 +53,6 @@ describe("extractJson — 对抗 LLM 脏输出(契约测试)", () => {
     const out = extractJson(raw);
     expect(out).toBe(ARR);
     expect(parses(out)).toBe(true);
-    expect(parseAiDocumentFromText(raw, "测试").blocks).toHaveLength(1);
   });
 
   it("```json fence + 前后散文:取内部 JSON", () => {
@@ -104,11 +101,8 @@ describe("extractJson — 对抗 LLM 脏输出(契约测试)", () => {
     expect(() => JSON.parse(out)).toThrow();
   });
 
-  it("空数组文档:parseAiDocumentFromText 拒绝,避免空白草稿假成功", () => {
-    expect(() => parseAiDocumentFromText("[]", "测试")).toThrow(/生成的文档为空/);
-  });
-
-  it("空 blocks envelope:parseAiDocumentFromText 拒绝,避免空白草稿假成功", () => {
-    expect(() => parseAiDocumentFromText('{"blocks":[]}', "测试")).toThrow(/生成的文档为空/);
+  it("空数组和空 blocks envelope 仍只负责截取,语义拒收由上层格式 parser 处理", () => {
+    expect(extractJson("[]")).toBe("[]");
+    expect(extractJson('{"blocks":[]}')).toBe('{"blocks":[]}');
   });
 });

@@ -2,15 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   aiRunMarkToPmMark,
   applyBlockEdits,
-  compileAiDocumentToPm,
-  getStablePmJson,
   legacySectionsToPm,
   pmToAiIr,
   pmToPlainText,
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { extractJson } from "../bridge/docGenerator.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
 import {
   collectTopLevelTextBlocks,
@@ -18,9 +15,6 @@ import {
   markTextRuns,
   replaceTextRuns,
 } from "../bridge/textEditOps.js";
-import { parseAiDocumentOrBlockFromText, parseAiDocumentFromText } from "../tools/generateDoc.js";
-
-type RawEditResult = { ok: true; doc: PmDoc; applied: string[] } | { ok: false; error: string };
 
 function p(text: string) {
   return { kind: "p", data: { text } } as const;
@@ -49,85 +43,6 @@ function secondRef(doc: PmDoc): string {
   if (!ref) throw new Error("missing second ref");
   return ref;
 }
-
-function replaceRawBlock(doc: PmDoc, ref: string, raw: unknown): RawEditResult {
-  try {
-    const parsed = parseAiDocumentOrBlockFromText(raw);
-    const compiled = compileAiDocumentToPm(parsed);
-    if (!compiled.ok || !compiled.doc) {
-      return { ok: false, error: compiled.blockErrors.map((e) => e.message).join("; ") };
-    }
-    const result = applyBlockEdits(doc, [{ action: "replaceBlock", ref, block: parsed.blocks[0] }]);
-    if (!result.ok || !result.doc) return { ok: false, error: result.error ?? "apply failed" };
-    return { ok: true, doc: result.doc, applied: result.applied };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function expectDirtyBlockApplies(raw: string, expectedText: string): void {
-  const base = makeBaseDoc();
-  const ref = firstRef(base);
-  const untouchedBefore = getStablePmJson(base.content[1]);
-  const json = extractJson(raw);
-  const parsed = parseAiDocumentOrBlockFromText(raw);
-  const compiled = compileAiDocumentToPm(parsed);
-  expect(JSON.parse(json)).toBeTruthy();
-  expect(compiled.ok).toBe(true);
-
-  const result = applyBlockEdits(base, [{ action: "replaceBlock", ref, block: parsed.blocks[0] }]);
-  expect(result.ok).toBe(true);
-  expect(result.applied).toEqual([ref]);
-  expect(result.doc?.content[0]?.attrs.blockId).toBe(ref);
-  expect(blockText(result.doc!.content[0]!)).toBe(expectedText);
-  expect(getStablePmJson(result.doc!.content[1])).toBe(untouchedBefore);
-}
-
-describe("S7 L1 editDraft 单块脏输出回归", () => {
-  it("块前导话会由真实 extractJson 截到首个完整 block", () => {
-    expectDirtyBlockApplies(`这是改好的：\n${JSON.stringify(block("A段前导话已清理。"))}`, "A段前导话已清理。");
-  });
-
-  it("收尾散文不会进入 runs", () => {
-    const raw = `${JSON.stringify(block("A段只保留 JSON。"))}\n\n已替换该段,共 1 块`;
-    expectDirtyBlockApplies(raw, "A段只保留 JSON。");
-    const parsed = parseAiDocumentOrBlockFromText(raw);
-    expect(JSON.stringify(parsed)).not.toContain("已替换该段");
-  });
-
-  it("fence、转义引号、正文含 ]} 都走真实平衡截断", () => {
-    expectDirtyBlockApplies(
-      ["```json", JSON.stringify(block("A段含转义引号 \"quote\" 与括号 ]}。")), "```"].join("\n"),
-      "A段含转义引号 \"quote\" 与括号 ]}。",
-    );
-  });
-
-  it("截断 JSON 不假成功", () => {
-    const raw = '{"type":"paragraph","runs":[{"text":"半截';
-    expect(() => JSON.parse(extractJson(raw))).toThrow();
-    expect(() => parseAiDocumentOrBlockFromText(raw)).toThrow();
-  });
-
-  it("askUser 误触会失败且草稿不动", () => {
-    const base = makeBaseDoc();
-    const before = getStablePmJson(base);
-    const result = replaceRawBlock(base, firstRef(base), { askUser: { question: "要不要继续?" } });
-    expect(result.ok).toBe(false);
-    expect(getStablePmJson(base)).toBe(before);
-  });
-
-  it("数组、单块对象、envelope 三种载体都归一到真实 AI-IR envelope", () => {
-    const single = parseAiDocumentOrBlockFromText(block("单块对象"));
-    const array = parseAiDocumentOrBlockFromText([block("数组单块")]);
-    const envelope = parseAiDocumentOrBlockFromText({ title: "标题", blocks: [block("包裹对象")] });
-    const fromDocumentParser = parseAiDocumentFromText(JSON.stringify([block("数组文档")]), "文档标题");
-
-    expect(single.blocks).toHaveLength(1);
-    expect(array.blocks).toHaveLength(1);
-    expect(envelope).toMatchObject({ title: "标题", blocks: [block("包裹对象")] });
-    expect(fromDocumentParser).toMatchObject({ title: "文档标题", blocks: [block("数组文档")] });
-  });
-});
 
 describe("S7 L1 editDraft 指标 ④⑤⑥", () => {
   it("④ 零幽灵 hunk：只改 A 不应影响 B/C", () => {

@@ -19,8 +19,6 @@ export interface DeepseekDraftCall {
   apiKey?: string;
   /** API 协议:openai(默认,/chat/completions)或 anthropic(/v1/messages,智谱 GLM Coding 等)。 */
   protocol?: "openai" | "anthropic";
-  /** DeepSeek 原生 JSON mode；仅 OpenAI 兼容协议支持。 */
-  responseFormat?: "json_object";
 }
 
 export interface DeepseekDraftResult {
@@ -98,7 +96,6 @@ function buildRequestBody(input: DeepseekDraftCall): Record<string, unknown> {
     ...(typeof input.maxTokens === "number" && Number.isFinite(input.maxTokens)
       ? { max_tokens: Math.max(1, Math.floor(input.maxTokens)) }
       : {}),
-    ...(input.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
     stream: input.stream,
   };
 }

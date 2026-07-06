@@ -48,7 +48,7 @@ vi.mock("../agents/qingagent.js", () => ({
 
 /**
  * 复现真实 bug:文档里第 9 章是一个【图表】原子块,前面隔着若干表格/列表,后面第 11 章是表格。
- * 旧实现用 estimatedPmTextBlockSize(text.length+2) 反推 PM 位置——表格/列表/原子块全算错,
+ * 旧实现用 PM text block 长度估算反推位置——表格/列表/原子块全算错,
  * from/to 漂移,图表(无内联文字)又只剩 label,readDraft(query) 模糊命中到了第 11 章表格。
  * 新实现:chip 携带稳定 blockId(放进 resourceRef.id),后端按 id 精确命中该图表块。
  */
@@ -361,8 +361,10 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     const userMsg = state.messages.find((m) => m.role === "user");
     const content = userMsg!.content as string;
     expect(content).toContain("【用户选中的文档片段】");
-    // 降级路径(估算切片可能不精确,这正是我们靠 blockId 绕开的旧行为)仍给出 query 提示、不抛错
+    // 降级路径不再做位置估算,直接使用 chip label 做 readDraft query,仍给出 query 提示、不抛错。
     expect(content).toContain("readDraft(query:");
+    expect(content).toContain('readDraft(query: "三月的阳光")');
+    expect(content).not.toContain("透过窗子");
     expect(content).toContain('action:"replaceText"');
     expect(content).toContain('action:"markText"');
     expect(content).toContain("withinRef");

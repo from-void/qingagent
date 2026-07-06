@@ -42,7 +42,6 @@ import {
 } from "./agentSpans.js";
 import {
   buildSectionToLineMap,
-  getTextBetweenPositions,
   resolveSelectionChipBlocks,
 } from "./draftReadContext.js";
 import { syncContentAndProjectDocState } from "./docStateSync.js";
@@ -244,11 +243,7 @@ export async function* runAgentTurn(
               );
             }
             // 降级(老链路/无可命中 blockId):退回基于选中文本的模糊定位。
-            const fullText =
-              c.from !== undefined && c.to !== undefined
-                ? getTextBetweenPositions(state.legacySections, c.from, c.to)
-                : null;
-            const selectedText = fullText ?? c.label;
+            const selectedText = c.label;
             return (
               `> ${selectedText}${c.suffix ? `（位置：${c.suffix}）` : ""}` +
               `\n\n[editDraft 定位提示]\n` +

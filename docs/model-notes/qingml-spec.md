@@ -80,7 +80,7 @@
   纯文本/CJK 全角/连续空白/`<br>`/非白名单标签/`<pre>` 内含 `<stdio.h>` 等尖括号/`<blockquote><p>×N`/
   全 `<th>` 表头行),快照锚死 htmlparser2 行为。
 
-## 8. editDraft 片段规则（Fable 评审新增;随 C1 定,防"三载体归一"在 QingML 形态复活）
+## 8. editDraft 片段规则（Fable 评审新增;随 C1 定,防数组/单块/envelope 宽容归一在 QingML 形态复活）
 editDraft 的 op 载荷是 QingML **片段**(非整篇),按 action 规定合法根标签;解析用同一 qingmlParse,
 但按 action 取目标节点、**剥掉模型多包的容器**(裸 `<li>` 被写成 `<ul><li>…</ul>` 时剥外层 `<ul>`):
 
@@ -93,4 +93,4 @@ editDraft 的 op 载荷是 QingML **片段**(非整篇),按 action 规定合法�
 | replaceText / markText | 无结构载荷(find/replace 纯文本) | 不涉及 |
 
 **硬约束**:片段解析只接受该 action 的合法根;越界(如给 replaceListItem 一个 `<table>`)→ 拒收报错,
-**不做"数组/单块/envelope 三载体归一"那种宽容兼容**(否则旧坑在 QingML 形态原样长回来)。
+**不做"数组/单块/envelope 宽容归一"那种兼容**(否则旧坑在 QingML 形态原样长回来)。

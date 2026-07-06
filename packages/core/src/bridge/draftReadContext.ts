@@ -11,14 +11,7 @@ import {
 import type { SessionState } from "./sessionState.js";
 import {
   currentPmDoc,
-  getSectionText,
 } from "./draftScratch.js";
-
-const PM_TEXT_BLOCK_BOUNDARY_SIZE = 2;
-
-export function estimatedPmTextBlockSize(text: string): number {
-  return text.length + PM_TEXT_BLOCK_BOUNDARY_SIZE;
-}
 
 export function buildSectionToLineMap(sections: LegacySection[]): Map<number, number> {
   const sectionToLine = new Map<number, number>();
@@ -170,26 +163,4 @@ export function resolveSelectionChipBlocks(
     });
   }
   return out;
-}
-
-export function getTextBetweenPositions(
-  sections: LegacySection[],
-  from: number,
-  to: number,
-): string | null {
-  let offset = 1;
-  const parts: string[] = [];
-  for (let i = 0; i < sections.length; i++) {
-    const section = sections[i]!;
-    const text = getSectionText(section) ?? "";
-    const sectionStart = offset + 1; // after open tag
-    const sectionEnd = sectionStart + text.length;
-    if (sectionEnd > from && sectionStart < to) {
-      const sliceStart = Math.max(0, from - sectionStart);
-      const sliceEnd = Math.min(text.length, to - sectionStart);
-      parts.push(text.slice(sliceStart, sliceEnd));
-    }
-    offset += estimatedPmTextBlockSize(text);
-  }
-  return parts.length > 0 ? parts.join("\n") : null;
 }

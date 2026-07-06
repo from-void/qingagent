@@ -17,7 +17,6 @@ import {
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
-import { parseAiDocumentOrBlockFromText } from "../tools/generateDoc.js";
 
 const ctx = {} as any;
 
@@ -85,36 +84,6 @@ function inlineText(block: PmBlockNode): string {
   if (!("content" in block) || !Array.isArray(block.content)) return "";
   return block.content.map((node: any) => node.type === "hardBreak" ? "\n" : node.text).join("");
 }
-
-describe("parseAiDocumentOrBlockFromText", () => {
-  it("解析单块、数组和 envelope", () => {
-    expect(parseAiDocumentOrBlockFromText(aiParagraph("单块")).blocks).toEqual([aiParagraph("单块")]);
-    expect(parseAiDocumentOrBlockFromText([aiParagraph("数组")]).blocks).toEqual([aiParagraph("数组")]);
-    expect(parseAiDocumentOrBlockFromText({ title: "t", blocks: [aiParagraph("包裹")] })).toEqual({
-      title: "t",
-      blocks: [aiParagraph("包裹")],
-    });
-  });
-
-  it("复用 extractJson 处理 fence、前导话、收尾散文和正文括号", () => {
-    const block = { type: "paragraph", runs: [{ text: "他说 \"春天] } 仍在\"" }] };
-    const raw = `这是改好的:\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\`\n已替换该段。`;
-
-    const parsed = parseAiDocumentOrBlockFromText(raw);
-
-    expect(parsed.blocks).toEqual([block]);
-    const compiled = compileAiDocumentToPm(parsed);
-    expect(compiled.ok).toBe(true);
-  });
-
-  it("缺闭合符可修复；未闭字符串截断和 askUser 误触不会假成功", () => {
-    expect(parseAiDocumentOrBlockFromText('{"type":"paragraph","runs":[{"text":"半截"}]').blocks).toEqual([
-      aiParagraph("半截"),
-    ]);
-    expect(() => parseAiDocumentOrBlockFromText('{"type":"paragraph","runs":[{"text":"半')).toThrow();
-    expect(() => parseAiDocumentOrBlockFromText('{"askUser":{"question":"要不要继续?"}}')).toThrow();
-  });
-});
 
 describe("QingML draft tools", () => {
   it("agent 只暴露常驻基础工具,草稿工具由 sessionScoped toolset 注入", async () => {

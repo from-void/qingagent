@@ -480,7 +480,10 @@ export async function* commitPatches(
       apply: (currentDoc) => {
         if (shouldCommitDiffHunks) {
           return {
-            nextDoc: applyDiffHunks(currentDoc, acceptedDiffHunks),
+            nextDoc: applyDiffHunks(currentDoc, acceptedDiffHunks, {
+              oldBaseDoc,
+              anchorByBlockId: true,
+            }),
             steps: acceptedDiffHunks.map((hunk) =>
               diffHunkToStep(
                 hunk,

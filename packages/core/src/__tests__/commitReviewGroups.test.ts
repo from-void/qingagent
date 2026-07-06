@@ -56,6 +56,15 @@ function docText(pmDoc: PmDoc | undefined): string {
     .join("\n");
 }
 
+function docBlocks(pmDoc: PmDoc | undefined): Array<{ blockId: string | undefined; text: string }> {
+  return (pmDoc?.content ?? []).map((block) => ({
+    blockId: block.attrs.blockId,
+    text: "content" in block
+      ? (block.content ?? []).map((node) => (node.type === "text" ? node.text : "\n")).join("")
+      : "",
+  }));
+}
+
 async function collectFrames(gen: AsyncIterable<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
   for await (const frame of gen) frames.push(frame);
@@ -600,6 +609,53 @@ describe("commitReviewGroups", () => {
 
     expect(docText(state.doc)).toBe("A\nX 插入\nB 新\nC 旧");
     expect([...state.suggestions.values()].map((record) => record.diffHunk?.anchor.blockId)).toEqual(["block-c"]);
+  });
+
+  it("提交局部采纳时按 blockId 锚定,避免位移后把被拒 hunk 落成已采纳内容", async () => {
+    const state = createSession("partial-commit-anchor-block-id");
+    const base = doc([
+      paragraph("block-a", "A 原文"),
+      paragraph("block-b", "B 原文"),
+      paragraph("block-c", "C 原文"),
+      paragraph("block-d", "D 原文"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "A 原文"),
+      paragraph("block-b", "B 新文"),
+      paragraph("block-c", "C 新文"),
+      paragraph("block-d", "D 新文"),
+    ]);
+    const hunks = seedDiffState(state, base, draft);
+    const shiftedCurrent = doc([
+      paragraph("user-block", "用户新增前置段"),
+      ...base.content,
+    ]);
+    state.doc = shiftedCurrent;
+    state.legacySections = pmToLegacySections(shiftedCurrent) as never;
+    state.docVersion = 2;
+    state.docState = { kind: "pendingReview" };
+    await seedDocumentRow(state);
+
+    const hunkB = hunks.find((hunk) => hunk.anchor.blockId === "block-b");
+    const hunkC = hunks.find((hunk) => hunk.anchor.blockId === "block-c");
+    const hunkD = hunks.find((hunk) => hunk.anchor.blockId === "block-d");
+    if (!hunkB || !hunkC || !hunkD) throw new Error("fixture missing hunks");
+    expect(hunks.map((hunk) => hunk.anchor.blockId)).toEqual(["block-b", "block-c", "block-d"]);
+
+    await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [hunkC.reviewBatchId, hunkD.reviewBatchId],
+      rejectReviewBatchIds: [hunkB.reviewBatchId],
+    }));
+
+    expect(docBlocks(state.doc)).toEqual([
+      { blockId: "user-block", text: "用户新增前置段" },
+      { blockId: "block-a", text: "A 原文" },
+      { blockId: "block-b", text: "B 原文" },
+      { blockId: "block-c", text: "C 新文" },
+      { blockId: "block-d", text: "D 新文" },
+    ]);
+    expect(state.suggestions.size).toBe(0);
+    expect(deriveContentState(state)).toEqual({ kind: "editing" });
   });
 
   it("A2: 接受一个多块 delete review group 会删除该 hunk 覆盖的全部连续块", async () => {

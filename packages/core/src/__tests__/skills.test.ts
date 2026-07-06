@@ -3,7 +3,7 @@ import { LocalFilesystem, Workspace } from "@mastra/core/workspace";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { resolveEnabledSkillDirs, resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
+import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 
@@ -57,7 +57,14 @@ describe("builtin skills", () => {
   });
 
   it("filters archived builtin skills before Mastra Workspace can discover them", async () => {
-    const skillDirs = await resolveEnabledSkillDirs();
+    const skillDirs = await resolveEnabledSkillDirsFromRoots(
+      [
+        join(BUILTIN_SKILLS_DIR, "capability"),
+        join(BUILTIN_SKILLS_DIR, "native"),
+        join(BUILTIN_SKILLS_DIR, "style"),
+      ],
+      new Set(),
+    );
 
     expect(skillDirs.some((dir) => isArchivedBuiltinSkillName(basename(dir)))).toBe(false);
     expect(skillDirs.some((dir) => basename(dir) === "browser-ops")).toBe(true);

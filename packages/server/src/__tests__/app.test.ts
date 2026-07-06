@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import * as core from "@qingagent/core";
 import { getMemory, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
 import { app } from "../app";
 import {
@@ -253,7 +254,9 @@ describe("GET /api/v1/home", () => {
 // -----------------------------------------------------------------------
 describe("GET /api/v1/skills", () => {
   it("returns built-in skills enabled by default", async () => {
+    const readDisabledSet = vi.spyOn(core, "readDisabledSet").mockResolvedValue(new Set());
     const res = await request("GET", "/api/v1/skills");
+    readDisabledSet.mockRestore();
     expect(res.status).toBe(200);
     const json = await res.json() as {
       skills: Array<{

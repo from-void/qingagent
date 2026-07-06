@@ -138,12 +138,21 @@ export function annotateReviewGroups(
   }));
 }
 
-export function applyDiffHunks(baseDoc: PmDoc, hunks: readonly DiffHunk[]): PmDoc {
+export interface ApplyDiffHunksOptions {
+  oldBaseDoc?: PmDoc;
+  anchorByBlockId?: boolean;
+}
+
+export function applyDiffHunks(
+  baseDoc: PmDoc,
+  hunks: readonly DiffHunk[],
+  options: ApplyDiffHunksOptions = {},
+): PmDoc {
   let doc = cloneValue(normalizePmDoc(baseDoc));
   const ordered = [...hunks].sort(compareHunksForApply);
 
   for (const hunk of ordered) {
-    const applied = applyDiffHunkToDoc(doc, hunk);
+    const applied = applyDiffHunkToDoc(doc, hunk, options);
     if (applied.ok) doc = applied.doc;
   }
 
@@ -157,7 +166,7 @@ export type ApplyDiffHunkToDocResult =
 export function applyDiffHunkToDoc(
   baseDoc: PmDoc,
   hunk: DiffHunk,
-  options: { oldBaseDoc?: PmDoc; anchorByBlockId?: boolean } = {},
+  options: ApplyDiffHunksOptions = {},
 ): ApplyDiffHunkToDocResult {
   const doc = cloneValue(normalizePmDoc(baseDoc));
   const content = doc.content;

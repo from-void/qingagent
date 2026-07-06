@@ -14,9 +14,6 @@ jobs:
     name: release-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # windows nsis 打包已知慢/卡(7za -mx=9 压 ~300MB app,属 follow-up)。设 continue-on-error
-    # 让 windows 不阻断整轮:linux+mac 稳定发布,windows 待瘦身/tmate 调试后再补。
-    continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:
         shell: bash
@@ -30,9 +27,6 @@ jobs:
           - name: mac
             os: macos-latest
             electron_builder_args: --mac zip
-          - name: windows
-            os: windows-latest
-            electron_builder_args: --win nsis
     env:
       QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
       QINGAGENT_BUNDLE_PYODIDE: '1'
@@ -43,16 +37,6 @@ jobs:
       # 不设置 QINGAGENT_UPDATE_POLICY_URL：policy 未托管时客户端 fail-open。
     steps:
       - uses: actions/checkout@v4
-
-      # Windows Defender 实时扫描会在 makensis 读取 ~300MB payload 时逐文件拦截,让 nsis 打包
-      # 卡死/极慢(实测卡在 building target=nsis 后 30min+ 超时)。排除工作目录与 makensis 进程。
-      - name: Windows Defender exclusion (avoid AV stalling makensis)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
-          Add-MpPreference -ExclusionProcess "makensis.exe" -ErrorAction SilentlyContinue
-          Write-Host "Defender exclusions added for workspace + makensis"
 
       - uses: actions/setup-node@v4
         with:
@@ -91,4 +75,48 @@ jobs:
             -c.publish.repo=qingagent \
             -c.publish.releaseType=release \
             -c.extraMetadata.version="$VERSION"
+
+  # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(理由同 build-win-installer.sh:2 核 windows
+  # runner 压不完整包 solid-LZMA,Linux 多核 <2min)。needs: build 确保 linux/mac 已建好 release。
+  build-windows:
+    if: ${{ !contains(github.ref_name, 'beta') }}
+    name: release-windows
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        shell: bash
+    env:
+      QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
+      QINGAGENT_BUNDLE_PYODIDE: '1'
+      QINGAGENT_BUNDLE_LARK_CLI: '1'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VITE_DESKTOP_SITE_URL: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: verify release tag
+        run: ./scripts/release.sh verify-tag "${{ github.ref_name }}"
+
+      - name: build windows installer (wine cross-build)
+        run: bash apps/desktop/build-win-installer.sh "${GITHUB_REF_NAME#v}"
+
+      - name: upload installer + update feed to release
+        run: |
+          gh release upload "${{ github.ref_name }}" --repo from-void/qingagent \
+            apps/desktop/release/qingagent-*-win-x64.exe \
+            apps/desktop/release/latest.yml --clobber
 

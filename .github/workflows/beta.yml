@@ -12,12 +12,6 @@ jobs:
   build:
     name: beta-${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # windows nsis 已实测定论:7za -mx=9 压 ~300MB app 成安装器,免费 2 核 runner 上
-    # 75min(近 CI 上限)都压不完——非配置可救,是算力不足。保留 35min 尝试(供日后瘦 payload
-    # 或换 4-8 核付费 runner 后自然通过)+ continue-on-error 兜底,不阻断 linux+mac 发布。
-    # 当前 windows 分发走 build-win.sh 的便携包(win-unpacked,不经 nsis 压缩,即时可用)。
-    timeout-minutes: 35
-    continue-on-error: ${{ matrix.name == 'windows' }}
     defaults:
       run:
         shell: bash
@@ -31,9 +25,6 @@ jobs:
           - name: mac
             os: macos-latest
             electron_builder_args: --mac zip
-          - name: windows
-            os: windows-latest
-            electron_builder_args: --win nsis
     env:
       QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
       QINGAGENT_BUNDLE_PYODIDE: '1'
@@ -45,15 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # win nsis 卡死已穷尽排查并定论(见下,均实测证伪/无效,不再重试):
-      #   · 本地对照:同一个 electron-builder 7za,在 Linux 跑 win-unpacked(410MB/7822 文件)<2min
-      #     就完;Windows runner 上 30min+ 未完被掐 → Windows-runner 特有。
-      #   · Defender 假设已证伪:关实时监控 + 排除 7za/7z/makensis 进程,轮询 25min 仍卡在 publish。
-      #   · differentialPackage:false 已跳过差分 app.7z,仍卡 → 卡的是 makensis 对整包 ~300MB payload
-      #     的 solid-LZMA 压缩(electron-builder 自生成 nsis 脚本,installer.nsh 的 SetCompressor 覆盖
-      #     不生效);compression:store / 自定义 SetCompressor / CJK 文件名 均实测无效。
-      #   结论:免费 2 核 runner 压不完这个整包 solid 压缩,非配置可救。windows 分发走 build-win.sh
-      #   的便携包(win-unpacked,即时可用);continue-on-error 保证不阻断 linux+mac 发布。
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -92,4 +74,50 @@ jobs:
             -c.publish.repo=qingagent \
             -c.publish.releaseType=prerelease \
             -c.extraMetadata.version="$VERSION"
+
+  # Windows 安装器在 ubuntu runner 上用 wine 交叉构建(不再用 windows-latest)。
+  # 实测定论:免费 2 核 windows runner 压不完整包 solid-LZMA(30-75min 超时),但同一 payload
+  # 在多核 Linux 上 <2min 压完。electron-builder 从 Linux 打 NSIS 需 wine 跑 32 位卸载器 stub,
+  # 用 Kron4ek wow64 静态 wine(纯 64 位/免 root/免 32 位宿主库)解决。全流程封装在
+  # apps/desktop/build-win-installer.sh。needs: build 确保 linux/mac 已建好 release 再往里 upload。
+  build-windows:
+    name: beta-windows
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        shell: bash
+    env:
+      QINGAGENT_TELEMETRY_ENDPOINT: ${{ secrets.QINGAGENT_TELEMETRY_ENDPOINT }}
+      QINGAGENT_BUNDLE_PYODIDE: '1'
+      QINGAGENT_BUNDLE_LARK_CLI: '1'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VITE_DESKTOP_SITE_URL: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: verify release tag
+        run: ./scripts/release.sh verify-tag "${{ github.ref_name }}"
+
+      - name: build windows installer (wine cross-build)
+        run: bash apps/desktop/build-win-installer.sh "${GITHUB_REF_NAME#v}"
+
+      - name: upload installer + update feed to release
+        run: |
+          gh release upload "${{ github.ref_name }}" --repo from-void/qingagent \
+            apps/desktop/release/qingagent-*-win-x64.exe \
+            apps/desktop/release/latest.yml --clobber
 

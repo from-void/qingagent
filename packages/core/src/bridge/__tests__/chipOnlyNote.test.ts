@@ -21,6 +21,14 @@ const attachChip = (label: string): ChatChip => ({
   label,
   suffix: null,
 });
+const textChip = (label: string, text?: string | null): ChatChip => ({
+  kind: { kind: "text" },
+  resourceRef: null,
+  prefix: null,
+  label,
+  suffix: null,
+  ...(text !== undefined ? { text } : {}),
+});
 
 const loader =
   (contents: Record<string, string>): SkillChipInstructionLoader =>
@@ -78,6 +86,26 @@ describe("composeInlineChipText", () => {
     ]);
     expect(text).toContain("先看「文件：报告.pdf」,再用「技能：联网搜」");
     expect(text).toContain("<qa_chip_context");
+  });
+
+  it("长文本 text chip 按 richText 原位展开完整原文,不退化成 label", async () => {
+    const longText = [
+      "BEGIN_LONG_TEXT",
+      ...Array.from({ length: 80 }, (_, index) => `第 ${index + 1} 段:用户粘贴的完整正文内容,需要原样交给模型。`),
+      "END_LONG_TEXT",
+    ].join("\n");
+    const { text } = await compose("前文 {{chip:0}} 后文", [textChip("长文本", longText)]);
+
+    expect(text).toBe(`前文 ${longText} 后文`);
+    expect(text).toContain("BEGIN_LONG_TEXT");
+    expect(text).toContain("END_LONG_TEXT");
+    expect(text).not.toContain("「长文本」");
+  });
+
+  it("长文本 text chip 缺少原文时回退短锚点", async () => {
+    const { text } = await compose("前文{{chip:0}}后文", [textChip("长文本", "")]);
+
+    expect(text).toBe("前文「长文本」后文");
   });
 
   it("缺失下标的占位符原样保留(不静默吞)", async () => {

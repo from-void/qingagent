@@ -85,6 +85,12 @@ function plainChipAnchor(chip: ChatChip): string {
   }
 }
 
+function inlineTextChipContent(chip: ChatChip): string | null {
+  return chip.kind.kind === "text" && typeof chip.text === "string" && chip.text.length > 0
+    ? chip.text
+    : null;
+}
+
 function failureText(label: string, reason: SkillChipLoadFailureReason, detail?: string): string {
   switch (reason) {
     case "missing-skill-id":
@@ -148,7 +154,8 @@ function renderSkillContextBlock(args: {
  * 把带 `{{chip:N}}` 占位的 richText 展开成**模型可读的内联文本**。
  *
  * 技能 chip 使用“短锚点 + 紧随结构化块”:锚点保留用户句中位置,结构化块强制注入
- * 完整 SKILL.md。文件/引用/选区 chip 保持原有短锚点行为,不把资料当指令执行。
+ * 完整 SKILL.md。长文本 text chip 是用户正文,按原位内联完整原文。文件/引用/选区
+ * chip 保持原有短锚点行为,不把资料当指令执行。
  * 缺失下标的占位符原样保留(宁可模型看到痕迹,不静默吞内容)。
  */
 export async function composeInlineChipText(
@@ -177,7 +184,7 @@ export async function composeInlineChipText(
 
     const anchor = plainChipAnchor(chip);
     if (!isSkillLikeChip(chip)) {
-      out += anchor;
+      out += inlineTextChipContent(chip) ?? anchor;
       lastIndex = markerRe.lastIndex;
       continue;
     }

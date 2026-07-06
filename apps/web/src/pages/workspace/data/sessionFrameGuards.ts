@@ -65,7 +65,7 @@ export function toContractChip(spec: ChatChipSpec): ChatChip {
   if (spec.from !== undefined) chip.from = spec.from;
   if (spec.to !== undefined) chip.to = spec.to;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) chip.selectionRefs = spec.selectionRefs;
-  // 长文本卡片携带完整原文,供气泡里展开还原(后端不消费;原文已展开进 SendMessage.text)。
+  // 长文本卡片携带完整原文,供后端 composeInlineChipText 原位内联,并供气泡还原展示。
   if (spec.text !== undefined) chip.text = spec.text;
   return chip;
 }

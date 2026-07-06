@@ -93,7 +93,7 @@ function articleResult(
 }
 
 async function executeWebSearch(
-  input: { query: string; count?: number },
+  input: { query: string; keywords?: string | null; count?: number },
   context: Record<string, unknown> = {},
 ) {
   return (await webSearchTool.execute!(input as never, context as never)) as WebSearchOutput;
@@ -126,7 +126,11 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: true, apiKey: "cfg-key" });
     mockSearchDeps.fetchDeepseekSearchLinks.mockResolvedValue([deepseekResult]);
 
-    const result = await executeWebSearch({ query: "  今日 新闻  ", count: 4 });
+    const result = await executeWebSearch({
+      query: "  今日 新闻  ",
+      keywords: " 今日\n新闻   2026 ",
+      count: 4,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.query).toBe("今日 新闻");
@@ -143,8 +147,9 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       },
     ]);
     expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith("今日 新闻", "cfg-key", 4);
-    // 多源始终并发起跑(兜底),即便最终没用到它
+    // 多源始终并发起跑(兜底),即便最终没用到它;传统源使用 keywords。
     expect(mockSearchDeps.getManagedSearchProvider).toHaveBeenCalled();
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("今日 新闻 2026", 4);
   });
 
   // 回归(0702 桌面验收根因):桌面端 DeepSeek key 是 visitor 层(x-deepseek-key header,服务端不落盘),
@@ -173,12 +178,19 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     process.env.DEEPSEEK_API_KEY = "env-key";
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false, apiKey: "cfg-key" });
 
-    const result = await executeWebSearch({ query: "fallback" });
+    const result = await executeWebSearch({ query: "fallback", keywords: "fallback keyword" });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.url).toBe(fallbackResult.url);
     expect(mockSearchDeps.fetchDeepseekSearchLinks).not.toHaveBeenCalled();
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("fallback", 8);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("fallback keyword", 8);
+  });
+
+  it("keywords 为 null/缺省时,多源回退使用 query", async () => {
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+
+    await executeWebSearch({ query: "fallback query", keywords: null, count: 2 });
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("fallback query", 2);
   });
 
   it("配置 key 优先级高于 env key", async () => {

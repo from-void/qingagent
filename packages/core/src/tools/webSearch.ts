@@ -67,6 +67,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 async function searchLinks(
   query: string,
+  keywords: string | null,
   limit: number,
   requestDeepseekKey: string,
 ): Promise<SearchResult[]> {
@@ -94,8 +95,9 @@ async function searchLinks(
   const useDeepseek = primaryConfig.enabled && !!deepseekKey;
 
   // 多源(Bing/DuckDuckGo + 已配置 API 源)始终并发起跑,作为兜底/补充。
+  const effectiveKeywords = keywords?.trim() || query;
   const fastPromise: Promise<SearchResult[]> = getManagedSearchProvider()
-    .then((provider) => provider.search(query, limit))
+    .then((provider) => provider.search(effectiveKeywords, limit))
     .catch((e) => {
       // eslint-disable-next-line no-console
       console.warn(`[webSearch] 多源失败: ${String(e).slice(0, 80)}`);
@@ -175,9 +177,21 @@ export const webSearchTool = createTool({
   id: "webSearch",
   description:
     "联网检索并自动抓取每条来源正文(静态抓取,必要时自动浏览器降级),返回带正文的结果。" +
+    "query 写完整问题,keywords 给 2-6 个关键词——两者都给,检索质量最好。" +
     "是否采用/重新检索/对某条重抓(用 fetchArticle)/存为素材(storeMaterial)由你判断。",
   inputSchema: z.object({
-    query: z.string().min(1).max(MAX_QUERY_LEN).describe("搜索关键词或问题"),
+    query: z
+      .string()
+      .min(1)
+      .max(MAX_QUERY_LEN)
+      .describe("检索问题,可用自然语言完整表述(交给 DeepSeek 联网检索,它会自行改写检索词)"),
+    keywords: z
+      .string()
+      .min(1)
+      .max(80)
+      .nullable()
+      .optional()
+      .describe("2-6 个空格分隔的检索关键词(给传统搜索引擎用,例:特斯拉 Q4 财报 2025)。请总是提供;整句放 query、关键词放这里"),
     count: z
       .number()
       .int()
@@ -209,6 +223,12 @@ export const webSearchTool = createTool({
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, MAX_QUERY_LEN);
+    const keywords =
+      input.keywords
+        ?.replace(/[\r\n]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80) || null;
     const limit = Math.min(input.count ?? DEFAULT_COUNT, MAX_COUNT);
     const writer = (context as { writer?: ToolWriter } | undefined)?.writer;
 
@@ -258,7 +278,7 @@ export const webSearchTool = createTool({
 
       // 本请求 agent 用的 DeepSeek key(桌面端=visitor 层 header,只能从 requestContext 取)。
       const requestDeepseekKey = resolveDeepseekAuth(context?.requestContext).apiKey;
-      const results = (await searchLinks(query, limit, requestDeepseekKey)).slice(0, limit);
+      const results = (await searchLinks(query, keywords, limit, requestDeepseekKey)).slice(0, limit);
       progressItems.push(
         ...results.map((result) => ({
           url: result.url,

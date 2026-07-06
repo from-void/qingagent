@@ -4,11 +4,10 @@ import type { ViewDocSpan } from "../../data/protocol";
 import type { PatchMeta } from "../DocumentSnapshotView";
 import { applyMarks } from "./PmStaticView";
 import {
-  mixedPatchChanges,
+  PatchFormatPopup,
   PatchHoverFrame,
-  PatchPopupActions,
-  PatchPopupChanges,
-  renderOriginalDiff,
+  PatchStatePopup,
+  patchReviewState,
 } from "./patchHover";
 
 interface SpanViewProps {
@@ -107,30 +106,29 @@ export function SpanView({
       if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return <>{span.text}</>;
 
       const meta = patchMeta?.get(span.patchId);
+      const state = patchReviewState(meta, "delete");
       const isBlockDeletion = meta?.kind === "delete";
-      const isPureDeletion = meta != null && meta.after === "";
+      const isPureDeletion = state === "delete";
 
       // 修改里的删除部分:原位不显示,挂到对应 patchIns 的 hover(见 patchIns 分支)。
       if (!isBlockDeletion && !isPureDeletion) return null;
 
       // 统一删除呈现:行内删除 / 整段删除一律【不显示被删内容】,只在删除位置留一道红色光标,
       // hover 看被删的内容。与用户审核规范一致(删除=红光标+hover)。
-      const changes = mixedPatchChanges(meta);
       return (
         <PatchHoverFrame
-          className="wf-patch-del-marker"
+          className={`wf-patch-del-marker${activePatchId === span.patchId ? " is-current" : ""}`}
           patchId={span.patchId}
-          popup={
-            <>
-              <span className="patch-popup-num">#{meta?.index ?? "?"}</span>
-              {changes ? (
-                <PatchPopupChanges changes={changes} />
-              ) : (
-                <span className="patch-popup-deleted">{meta?.before || span.text}</span>
-              )}
-              <PatchPopupActions patchId={span.patchId} onPatchVerdict={onPatchVerdict} />
-            </>
-          }
+          patchState="delete"
+          popup={(
+            <PatchStatePopup
+              state="delete"
+              index={meta?.index}
+              original={meta?.before || span.text}
+              patchId={span.patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
         >
           {revealCursors?.has(span.patchId) && (
             <RevealCursor tone="red" lane={revealCursors.get(span.patchId)} />
@@ -149,18 +147,15 @@ export function SpanView({
 
       const meta = patchMeta?.get(span.patchId);
       const isActive = activePatchId === span.patchId;
-      const isPureInsert = meta != null && meta.before === "";
-      // Pure addition: after starts with before and extends it
-      const isAddition =
+      const isAppendInsert =
         meta != null &&
         meta.before.length > 0 &&
         meta.after.startsWith(meta.before) &&
-        meta.after.length > meta.before.length;
-
-      // For additions, split the text: show the anchor (before) part as
-      // plain text and only the appended portion with green highlight.
-      const anchorPart = isAddition ? meta.before : "";
-      const newPart = isAddition ? span.text.slice(meta.before.length) : span.text;
+        meta.after.length > meta.before.length &&
+        span.text.startsWith(meta.before);
+      const state = isAppendInsert ? "insert" : patchReviewState(meta, "replace");
+      const anchorPart = isAppendInsert ? meta.before : "";
+      const newPart = isAppendInsert ? span.text.slice(anchorPart.length) : span.text;
       // 改动B 逐字打字:正在打字时只显示已打出的前 N 个字符(按 code point 截,中文/emoji 不截半);
       // typedByPatch 为 null/未含该处 → 全显示(静态审批/恢复/降级态)。
       const typed = typedByPatch?.get(span.patchId);
@@ -173,32 +168,26 @@ export function SpanView({
       const headLen = isTyping ? Math.min(REVEAL_HEAD, shownArr.length) : 0;
       const bodyText = shownArr.slice(0, shownArr.length - headLen).join("");
       const headText = shownArr.slice(shownArr.length - headLen).join("");
-      const changes = mixedPatchChanges(meta);
+      const wrapClass = state === "insert" ? "wf-patch-ins-wrap" : "wf-patch-replace-wrap";
 
       return (
+        <>
+          {anchorPart}
         <PatchHoverFrame
-          className={`wf-patch-ins-wrap${isActive ? " active" : ""}`}
+          className={`${wrapClass}${isActive ? " is-current" : ""}`}
           patchId={span.patchId}
-          popup={
-            <>
-              <span className="patch-popup-num">#{meta?.index ?? "?"}</span>
-              {changes ? (
-                <PatchPopupChanges changes={changes} />
-              ) : isAddition || isPureInsert ? (
-                <span className="patch-popup-info">
-                  {meta?.kind === "insert" ? "新增内容" : "新增内容"}
-                </span>
-              ) : (
-                <span className="patch-popup-row">
-                  <span className="patch-popup-k">原文</span>
-                  {renderOriginalDiff(meta?.before ?? "", meta?.after ?? span.text)}
-                </span>
-              )}
-              <PatchPopupActions patchId={span.patchId} onPatchVerdict={onPatchVerdict} />
-            </>
-          }
+          patchState={state}
+          popup={(
+            <PatchStatePopup
+              state={state}
+              index={meta?.index}
+              original={meta?.before ?? ""}
+              patchId={span.patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
         >
-          {isAddition && <>{anchorPart}</>}
+          {state === "insert" && <span className="wf-patch-add-badge">新增</span>}
           <span className="wf-patch-ins">
             {bodyText}
             {headText && <span className="wf-patch-ins-head">{headText}</span>}
@@ -207,6 +196,7 @@ export function SpanView({
             <RevealCursor lane={revealCursors.get(span.patchId)} />
           )}
         </PatchHoverFrame>
+        </>
       );
     }
     case "patchMark": {
@@ -231,25 +221,14 @@ export function SpanView({
         textDecoration: isAdd ? undefined : "line-through",
         textDecorationColor: isAdd ? undefined : "rgba(87, 121, 155, 0.65)",
       };
-      const changes = mixedPatchChanges(meta);
       // 格式变更:去掉行内文字徽章("加粗/删除线"),只保留下划线高亮提示此处有格式改动,
       // 具体说明移到 hover 卡片里(label / changes)。与用户"不要行内标签"诉求一致。
       return (
         <PatchHoverFrame
-          className={`wf-patch-ins-wrap wf-patch-mark-wrap ${isAdd ? "add" : "remove"}${isActive ? " active" : ""}`}
+          className={`wf-patch-ins-wrap wf-patch-mark-wrap ${isAdd ? "add" : "remove"}${isActive ? " is-current" : ""}`}
           title={label}
           patchId={span.patchId}
-          popup={
-            <>
-              <span className="patch-popup-num">#{meta?.index ?? "?"}</span>
-              {changes ? (
-                <PatchPopupChanges changes={changes} />
-              ) : (
-                <span className="patch-popup-info">{label}</span>
-              )}
-              <PatchPopupActions patchId={span.patchId} onPatchVerdict={onPatchVerdict} />
-            </>
-          }
+          popup={<PatchFormatPopup meta={meta} patchId={span.patchId} onPatchVerdict={onPatchVerdict} />}
         >
           <span className="wf-patch-ins wf-patch-mark" style={markStyle}>
             {isAdd ? applyMarks(span.text, span.marks) : span.text}

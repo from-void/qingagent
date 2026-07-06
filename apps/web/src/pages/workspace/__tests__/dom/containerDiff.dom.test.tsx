@@ -76,8 +76,8 @@ function renderDoc(doc: ViewDocumentSnapshot) {
   });
 }
 
-describe("容器递归 diff 渲染", () => {
-  it("callout 保留外壳,内部 changed 段有词级绿色标记和 hover", () => {
+describe("容器 replace 三态渲染", () => {
+  it("callout 保留外壳,replace 收敛为单一替换态", () => {
     const afterNode = callout("callout-1", ["保留提示", "新风险提示", "补充事项"]);
     const beforeNode = callout("callout-1", ["保留提示", "旧风险提示", "归档旧块"]);
 
@@ -115,23 +115,26 @@ describe("容器递归 diff 渲染", () => {
 
     expect(host.querySelector(".pm-callout.pm-callout--warning")).not.toBeNull();
     expect(host.querySelector(".pm-callout .pm-callout-emoji")?.textContent).toBe("!");
-    const changed = host.querySelector(".pm-callout .wf-patch-ins");
-    expect(changed?.textContent).toBe("新");
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(host.querySelector(".pm-callout .wf-patch-ins")).toBeNull();
+    expect(host.querySelector(".pm-callout .row-del")).toBeNull();
+    expect(host.querySelector("[data-row-status]")).toBeNull();
+    expect(replace.textContent).toContain("新风险提示");
+    expect(replace.textContent).toContain("补充事项");
 
-    const changedWrap = host.querySelector(".pm-callout .wf-patch-ins-wrap") as HTMLElement;
-    const popup = changedWrap.querySelector(".patch-hover-popup") as HTMLElement;
+    const popup = replace.querySelector(".patch-hover-popup") as HTMLElement;
     expect(popup.classList.contains("is-visible")).toBe(false);
     act(() => {
-      changedWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+      replace.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     });
     expect(popup.classList.contains("is-visible")).toBe(true);
-    // 每处改动各自 hover:绿块「新」只展示该处改前的「旧」(diff 片段),不再整段原文
     expect(popup.textContent).toContain("原文");
-    expect(popup.querySelector(".patch-popup-del-seg")?.textContent).toBe("旧");
-    expect(host.querySelector(".pm-callout .row-del")).not.toBeNull();
+    expect(popup.textContent).toContain("旧风险提示");
+    expect(popup.textContent).toContain("归档旧块");
   });
 
-  it("columnList 保留分栏,某栏内部渲染局部 diff", () => {
+  it("columnList 保留分栏,replace 收敛为单一替换态", () => {
     const afterNode = columnList("columns-1", "左栏新文", "右栏保留");
     const beforeNode = columnList("columns-1", "左栏旧文", "右栏保留");
 
@@ -169,9 +172,15 @@ describe("容器递归 diff 渲染", () => {
     });
 
     expect(host.querySelector(".pm-column-list[data-pm-node='columnList']")).not.toBeNull();
-    expect(host.querySelectorAll(".pm-column")).toHaveLength(2);
-    const leftColumn = host.querySelector(".pm-column") as HTMLElement;
-    expect(leftColumn.querySelector(".wf-patch-ins")?.textContent).toBe("新");
+    const columns = [...host.querySelectorAll(".pm-column")]
+      .filter((column) => !column.closest(".patch-hover-popup"));
+    expect(columns).toHaveLength(2);
+    const leftColumn = columns[0] as HTMLElement;
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(leftColumn.querySelector(".wf-patch-ins")).toBeNull();
+    expect(host.querySelector(".wf-row-diff-list")).toBeNull();
     expect(host.textContent).toContain("右栏保留");
+    expect(host.textContent).toContain("左栏新文");
   });
 });

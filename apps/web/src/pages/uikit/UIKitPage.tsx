@@ -1952,12 +1952,12 @@ export function UIKitPage() {
           </Group>
         </Section>
 
-        {/* 25. 修订审批系:PatchNav 真组件 + patch-popup / wf-patch-ins-wrap / wf-blockmark 真实类 */}
+        {/* 25. 修订审批系:PatchNav 真组件 + 三态 diff / patch-popup / wf-patch-ins-wrap / wf-blockmark 真实类 */}
         <Section idx="25" zh="修订审批系" en="Patch review system" id="patchsys">
           <p className="uk-cap uk-lead">
             审批条走生产 <code>PatchNav</code>(单处 / 多处两态:多处才出「上/下一处」)。
-            勘误落地:<b>patch-popup 悬浮层只有「撤销」,没有采纳 / 拒绝</b>(采纳/拒绝在顶部 PatchNav 上做);
-            新增高亮 <code>wf-patch-ins-wrap &gt; wf-patch-ins</code>、块级标记 <code>wf-blockmark</code> 取真实类最小 DOM。
+            勘误落地:<b>patch-popup 悬浮层只有「撤销」,顶部 PatchNav 只保留导航 / 提交 / 放弃全部</b>;
+            diff 只保留 <code>data-patch-state="replace|insert|delete"</code> 三态。
           </p>
           <div id="view-workspace" className="uk-sp-view" style={{ height: "auto", overflow: "visible" }}>
             <div className="ws-left uk-sp-scope">
@@ -1967,13 +1967,13 @@ export function UIKitPage() {
                   <div className="uk-sp-row">
                     <div className="uk-sp-rowlbl">单处修改</div>
                     <div className="uk-sp-rowbody">
-                      <PatchNav remainingCount={1} totalCount={1} activePatchIndex={0} canActOnCurrent onJumpPrev={() => {}} onJumpNext={() => {}} onAcceptCurrent={() => {}} onRejectCurrent={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
+                      <PatchNav remainingCount={1} totalCount={1} activePatchIndex={0} onJumpPrev={() => {}} onJumpNext={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
                     </div>
                   </div>
                   <div className="uk-sp-row">
                     <div className="uk-sp-rowlbl">多处修改(3 处)</div>
                     <div className="uk-sp-rowbody">
-                      <PatchNav remainingCount={3} totalCount={3} activePatchIndex={1} canActOnCurrent onJumpPrev={() => {}} onJumpNext={() => {}} onAcceptCurrent={() => {}} onRejectCurrent={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
+                      <PatchNav remainingCount={3} totalCount={3} activePatchIndex={1} onJumpPrev={() => {}} onJumpNext={() => {}} onRejectAll={() => {}} onCommit={() => {}} />
                     </div>
                   </div>
                 </section>
@@ -1998,16 +1998,13 @@ export function UIKitPage() {
               </div>
             </div>
           </div>
-          <Group title="patch-popup 悬浮层(勘误:只有撤销)" code=".patch-hover-popup.is-visible(容器,DocumentSnapshotView.tsx:4687)+ .patch-popup-* · 仅「撤销」">
+          <Group title="patch-popup 悬浮层(勘误:只有撤销)" code=".patch-hover-popup.is-visible + .patch-popup-title/original/badge/actions · 仅「撤销」">
             <div id="view-workspace" className="uk-portal" style={{ height: 200 }}>
-              <div className="patch-hover-popup is-visible patch-popup-row" style={{ position: "absolute", top: 20, left: 20, background: "var(--bg-canvas)", border: "1px solid var(--line-2)", boxShadow: "var(--shadow-2)", padding: 12, maxWidth: 320, display: "block" }}>
-                <div className="patch-popup-info">
-                  <span className="patch-popup-num">第 2 处</span>
-                  <span className="patch-popup-k">删除</span>
-                </div>
-                <div className="patch-popup-ctx">
-                  原文:<span className="patch-popup-orig">总之这届办得很成功。</span>
-                  <span className="patch-popup-del-seg">(整句删除)</span>
+              <div className="patch-hover-popup is-visible" style={{ position: "absolute", top: 20, left: 20, background: "var(--bg-canvas)", border: "1px solid var(--line-2)", boxShadow: "var(--shadow-2)", padding: 12, maxWidth: 320, display: "flex", flexDirection: "column", gap: 7 }}>
+                <span className="patch-popup-title">#2 · 替换</span>
+                <div className="patch-popup-original">
+                  <span className="patch-popup-label">原文</span>
+                  <div className="patch-popup-original-text">总之这届办得很成功。</div>
                 </div>
                 <div className="patch-popup-actions">
                   <button className="patch-popup-btn" type="button">撤销</button>
@@ -2015,12 +2012,16 @@ export function UIKitPage() {
               </div>
             </div>
           </Group>
-          <Group title="行内新增高亮 / 块级标记" code=".wf-patch-ins-wrap > .wf-patch-ins / .wf-blockmark">
+          <Group title="三态正文标记" code="[data-patch-state=replace|insert|delete] / .wf-patch-ins / .patch-del-cursor">
             <div id="view-workspace" style={{ background: "transparent" }}>
               <div className="wf-doc" style={{ fontSize: 14 }}>
                 <p>
-                  <span className="wf-blockmark" aria-hidden="true" />
-                  这段含 <span className="wf-patch-ins-wrap"><span className="wf-patch-ins">被高亮的新增内容</span></span>,左侧 wf-blockmark 是块级改动标记。
+                  替换:
+                  <span className="wf-patch-replace-wrap" data-patch-state="replace"><span className="wf-patch-ins">新内容</span></span>
+                  {" "}新增:
+                  <span className="wf-patch-ins-wrap" data-patch-state="insert"><span className="wf-patch-add-badge">新增</span><span className="wf-patch-ins">补充内容</span></span>
+                  {" "}删减:
+                  <span className="wf-patch-del-marker" data-patch-state="delete"><span className="patch-del-cursor" /></span>
                 </p>
               </div>
             </div>

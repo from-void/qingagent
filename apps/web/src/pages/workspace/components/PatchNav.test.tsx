@@ -19,12 +19,8 @@ function baseProps(overrides: Partial<PatchNavProps> = {}): PatchNavProps {
     remainingCount: 2,
     totalCount: 2,
     activePatchIndex: 0,
-    canActOnCurrent: true,
-    currentVerdict: null,
     onJumpPrev: vi.fn(),
     onJumpNext: vi.fn(),
-    onAcceptCurrent: vi.fn(),
-    onRejectCurrent: vi.fn(),
     onRejectAll: vi.fn(),
     onCommit: vi.fn(),
     ...overrides,
@@ -56,20 +52,15 @@ describe("PatchNav", () => {
     host = null;
   });
 
-  it("采纳/拒绝此处会调用当前项回调", async () => {
-    const onAcceptCurrent = vi.fn();
-    const onRejectCurrent = vi.fn();
-    await renderPatchNav(baseProps({ onAcceptCurrent, onRejectCurrent }));
+  it("工具栏不再渲染逐处采纳/拒绝按钮", async () => {
+    await renderPatchNav(baseProps());
 
-    act(() => {
-      buttonByText("采纳此处").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    act(() => {
-      buttonByText("拒绝此处").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onAcceptCurrent).toHaveBeenCalledTimes(1);
-    expect(onRejectCurrent).toHaveBeenCalledTimes(1);
+    expect(host?.textContent).not.toContain("采纳此处");
+    expect(host?.textContent).not.toContain("拒绝此处");
+    expect(host?.textContent).toContain("上一处");
+    expect(host?.textContent).toContain("下一处");
+    expect(host?.textContent).toContain("提交 ↵");
+    expect(host?.textContent).toContain("放弃全部");
   });
 
   it("用剩余口径展示待处理处数", async () => {
@@ -79,21 +70,18 @@ describe("PatchNav", () => {
     expect(host?.querySelector(".pn-label")?.getAttribute("title")).toBe("剩余 2 处");
   });
 
-  it("当前 verdict 对应按钮禁用,另一个按钮可切换", async () => {
-    await renderPatchNav(baseProps({ currentVerdict: "accepted" }));
+  it("放弃全部仍保留确认二次点击", async () => {
+    const onRejectAll = vi.fn();
+    await renderPatchNav(baseProps({ onRejectAll }));
 
-    expect(buttonByText("采纳此处").disabled).toBe(true);
-    expect(buttonByText("拒绝此处").disabled).toBe(false);
-  });
+    act(() => {
+      buttonByText("放弃全部").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(host?.textContent).toContain("确认放弃全部");
 
-  it("当前无 hunk 时逐条操作禁用", async () => {
-    await renderPatchNav(baseProps({
-      totalCount: 0,
-      activePatchIndex: -1,
-      canActOnCurrent: false,
-    }));
-
-    expect(buttonByText("采纳此处").disabled).toBe(true);
-    expect(buttonByText("拒绝此处").disabled).toBe(true);
+    act(() => {
+      buttonByText("确认放弃全部").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
 });

@@ -50,6 +50,7 @@ export async function renderPdfViaElectron(html: string): Promise<Buffer> {
       session: exportSession(),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: false,
       backgroundThrottling: false,
     },
   });

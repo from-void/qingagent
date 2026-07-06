@@ -72,10 +72,6 @@ interface RightPaneProps {
   onSubmitPlan: (toolCallId: string, answers: AskUserAnswers) => void;
   onJumpPrev: () => void;
   onJumpNext: () => void;
-  canActOnCurrent: boolean;
-  currentVerdict?: "accepted" | "rejected" | null;
-  onAcceptCurrent: () => void;
-  onRejectCurrent: () => void;
   onRejectAll: () => void;
   onAcceptAll?: () => void;
   onCommit: () => void;
@@ -155,10 +151,6 @@ export function RightPane({
   onSubmitPlan,
   onJumpPrev,
   onJumpNext,
-  canActOnCurrent,
-  currentVerdict,
-  onAcceptCurrent,
-  onRejectCurrent,
   onRejectAll,
   onAcceptAll,
   onCommit,
@@ -388,12 +380,8 @@ export function RightPane({
           remainingCount={remainingCount}
           totalCount={visiblePatchCount}
           activePatchIndex={activePatchIndex}
-          canActOnCurrent={canActOnCurrent}
-          currentVerdict={currentVerdict}
           onJumpPrev={onJumpPrev}
           onJumpNext={onJumpNext}
-          onAcceptCurrent={onAcceptCurrent}
-          onRejectCurrent={onRejectCurrent}
           onRejectAll={onRejectAll}
           onCommit={onCommit}
         />

@@ -39,8 +39,8 @@ function renderDoc(doc: ViewDocumentSnapshot) {
   });
 }
 
-describe("表格单元格级 diff 渲染", () => {
-  it("same 格无绿,changed 格有绿色词级标记和 hover,removed/added 行用行级样式", () => {
+describe("表格 replace 三态渲染", () => {
+  it("表格 replace 收敛为单一替换态,不再展开 changed/removed/added 单元格混合态", () => {
     renderDoc({
       version: 1,
       ts: "t",
@@ -120,24 +120,26 @@ describe("表格单元格级 diff 渲染", () => {
       ],
     });
 
-    expect(host.querySelector('[data-row-status="same"] [data-cell-status="same"] .wf-patch-ins')).toBeNull();
-    const changed = host.querySelector('[data-cell-status="changed"] .wf-patch-ins');
-    expect(changed?.textContent).toBe("5");
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(host.querySelector(".wf-table-diff")).toBeNull();
+    expect(host.querySelector("[data-row-status]")).toBeNull();
+    expect(host.querySelector("[data-cell-status]")).toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap")).toBeNull();
+    expect(host.querySelector(".row-del")).toBeNull();
+    expect(host.querySelector("tr.row-add")).toBeNull();
+    expect(replace.textContent).toContain("250");
+    expect(replace.textContent).toContain("新渠道");
 
-    const changedWrap = host.querySelector('[data-cell-status="changed"] .wf-patch-ins-wrap') as HTMLElement;
-    const popup = changedWrap.querySelector(".patch-hover-popup") as HTMLElement;
+    const popup = replace.querySelector(".patch-hover-popup") as HTMLElement;
     expect(popup.classList.contains("is-visible")).toBe(false);
     act(() => {
-      changedWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+      replace.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     });
     expect(popup.classList.contains("is-visible")).toBe(true);
-    // 每处改动各自 hover,卡片只展示该处改前原文的 diff 片段(200→250 即「0」),不再展示「改为」
     expect(popup.textContent).toContain("原文");
-    expect(popup.querySelector(".patch-popup-del-seg")?.textContent).toBe("0");
+    expect(popup.textContent).toContain("200");
+    expect(popup.textContent).toContain("旧渠道");
     expect(popup.textContent).not.toContain("改为");
-
-    expect(host.querySelector('[data-row-status="removed"] .row-del')).not.toBeNull();
-    expect(host.querySelector('[data-row-status="removed"] .row-del-line')).not.toBeNull();
-    expect(host.querySelector("tr.row-add[data-row-status='added']")).not.toBeNull();
   });
 });

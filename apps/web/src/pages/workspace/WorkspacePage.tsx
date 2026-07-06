@@ -1601,15 +1601,6 @@ export function WorkspacePage() {
           pmDocToViewDocumentSnapshot(frame.data.data.doc, frame.data.data.finalVersion),
         );
       }
-      if (frame.kind === "docCommitted") {
-        showToast(`版本 #${frame.data.version} 已生成`);
-      }
-      if (
-        frame.kind === "docStateChanged" &&
-        frame.data.state.kind === "committed"
-      ) {
-        showToast(`版本 #${docVersionRef.current} 已生成`);
-      }
       if (frame.kind === "folderSourceOperationResult") {
         const result = frame.data;
         if (!result.ok) {
@@ -2949,7 +2940,6 @@ export function WorkspacePage() {
     const acceptReviewBatchIds = [
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
-    showToast("已提交 · 生成新版本");
     stream
       .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
       .then((frames) => {
@@ -3046,7 +3036,6 @@ export function WorkspacePage() {
     // 提交成功后,若非全量采纳则以用户名义回流给模型。
     const reviewOutcome = buildReviewOutcome(currentPatches);
 
-    showToast("已提交 · 生成新版本");
     stream
       .commitReviewGroups(currentSessionId, {
         acceptReviewBatchIds,
@@ -3335,14 +3324,6 @@ export function WorkspacePage() {
     activePatchId && visibleReviewPatchIds.includes(activePatchId)
       ? activePatchId
       : visibleReviewPatchIds[0] ?? null;
-  const currentPatch = currentPatchId
-    ? pendingReviewPatches.find((patch) => patch.id === currentPatchId) ?? null
-    : null;
-  const currentVerdict =
-    currentPatch?.status.kind === "accepted" || currentPatch?.status.kind === "rejected"
-      ? currentPatch.status.kind
-      : null;
-  const canActOnCurrent = currentPatchId !== null && currentPatch !== null;
   const activePatchIndex = currentPatchId ? visibleReviewPatchIds.indexOf(currentPatchId) : -1;
   const autoCommitReviewKey = useMemo(
     () =>
@@ -3367,15 +3348,6 @@ export function WorkspacePage() {
     remainingPatches,
     state.sessionId,
   ]);
-  const handleAcceptCurrent = useCallback(() => {
-    if (!currentPatchId) return;
-    handlePatchVerdict(currentPatchId, "accepted");
-  }, [currentPatchId, handlePatchVerdict]);
-  const handleRejectCurrent = useCallback(() => {
-    if (!currentPatchId) return;
-    handlePatchVerdict(currentPatchId, "rejected");
-  }, [currentPatchId, handlePatchVerdict]);
-
   return (
     <section
       ref={viewRef}
@@ -3553,10 +3525,6 @@ export function WorkspacePage() {
             onSubmitPlan={handleSubmitPlan}
             onJumpPrev={handleJumpPrev}
             onJumpNext={handleJumpNext}
-            canActOnCurrent={canActOnCurrent}
-            currentVerdict={currentVerdict}
-            onAcceptCurrent={handleAcceptCurrent}
-            onRejectCurrent={handleRejectCurrent}
             onRejectAll={handleRejectAll}
             onAcceptAll={handleAcceptAll}
             onCommit={handleCommit}

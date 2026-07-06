@@ -1,7 +1,7 @@
 {
   "file": "apps/web/src/pages/workspace/workspace.css",
-  "sha256": "787a8849c1f8bd8e6fc272c986ce8d7abc30fd56e7d89eb71256fcbc9878d45d",
-  "lineCount": 2851,
+  "sha256": "92bca32f39f6518a4f2186df6bf8e0d31d0c3857f8a4cbbee0870819ac1e4358",
+  "lineCount": 2917,
   "selectors": [
     ".wf-doc",
     ".dt-btn",
@@ -15,6 +15,7 @@
     ".tbl-sel-toolbar",
     ".tbl-cell-sel",
     ".wf-patch-ins-wrap",
+    ".wf-patch-replace-wrap",
     ".wf-blockmark",
     ".patch-del-cursor",
     ".wf-patch-del-marker",

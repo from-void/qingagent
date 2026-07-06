@@ -41,8 +41,8 @@ function renderDoc(doc: ViewDocumentSnapshot) {
   });
 }
 
-describe("列表行级 diff 渲染", () => {
-  it("same 行不标绿,changed 行有绿色词级标记和 hover,removed 行折叠红线", () => {
+describe("列表 replace 三态渲染", () => {
+  it("列表 replace 收敛为单一替换态,不再展开 changed/removed/added 行混合态", () => {
     renderDoc({
       version: 1,
       ts: "t",
@@ -70,26 +70,26 @@ describe("列表行级 diff 渲染", () => {
       ],
     });
 
-    expect(host.querySelector('[data-row-status="same"] .wf-patch-ins')).toBeNull();
-    const changed = host.querySelector('[data-row-status="changed"] .wf-patch-ins');
-    expect(changed?.textContent).toBe("新");
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    expect(host.querySelector("[data-row-status]")).toBeNull();
+    expect(host.querySelector(".row-del")).toBeNull();
+    expect(host.querySelector(".wf-patch-ins-wrap")).toBeNull();
+    expect(replace.textContent).toContain("新行");
+    expect(replace.textContent).toContain("新增");
 
-    const changedWrap = host.querySelector('[data-row-status="changed"] .wf-patch-ins-wrap') as HTMLElement;
-    const popup = changedWrap.querySelector(".patch-hover-popup") as HTMLElement;
+    const popup = replace.querySelector(".patch-hover-popup") as HTMLElement;
     expect(popup.classList.contains("is-visible")).toBe(false);
     act(() => {
-      changedWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+      replace.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     });
     expect(popup.classList.contains("is-visible")).toBe(true);
-    // 每处改动各自 hover:绿块「新」的卡片只展示该处改前原文「旧」(算过 diff 的那段),不再整行原文
     expect(popup.textContent).toContain("原文");
-    expect(popup.querySelector(".patch-popup-del-seg")?.textContent).toBe("旧");
-
-    expect(host.querySelector('[data-row-status="removed"] .row-del')).not.toBeNull();
-    expect(host.querySelector('[data-row-status="removed"] .row-del-line')).not.toBeNull();
+    expect(popup.textContent).toContain("旧行");
+    expect(popup.textContent).toContain("删掉");
   });
 
-  it("taskList rowDiff 的 same 行仍渲染真实复选框,勾选变更有绿圈", () => {
+  it("taskList replace 保留真实复选框,不再渲染勾选变更绿圈子态", () => {
     const taskNode: PmBlockNode = {
       type: "taskList",
       attrs: { blockId: "tasks-1" },
@@ -134,10 +134,14 @@ describe("列表行级 diff 渲染", () => {
       ],
     });
 
-    const sameCheckbox = host.querySelector('[data-row-status="same"] input[type="checkbox"]') as HTMLInputElement;
-    expect(sameCheckbox).not.toBeNull();
-    expect(sameCheckbox.checked).toBe(true);
-    expect(host.querySelector('[data-row-status="same"] .wf-patch-ins')).toBeNull();
-    expect(host.querySelector('[data-row-status="changed"] input.cb-changed')).not.toBeNull();
+    const replace = host.querySelector('[data-patch-state="replace"].wf-patch-replace-wrap') as HTMLElement;
+    expect(replace).not.toBeNull();
+    const checkboxes = [...host.querySelectorAll('input[type="checkbox"]')]
+      .filter((checkbox) => !checkbox.closest(".patch-hover-popup"));
+    expect(checkboxes).toHaveLength(2);
+    expect((checkboxes[0] as HTMLInputElement).checked).toBe(true);
+    expect((checkboxes[1] as HTMLInputElement).checked).toBe(true);
+    expect(host.querySelector("[data-row-status]")).toBeNull();
+    expect(host.querySelector("input.cb-changed")).toBeNull();
   });
 });

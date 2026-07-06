@@ -344,53 +344,39 @@
   #view-workspace .wf-msg.agent > .wf-msg.tool + .wf-msg.tool{
     margin-top:6px !important;
   }
-  #view-workspace .askuser-answer-card{
+  #view-workspace .askuser-answer-card.bigplan-panel{
     width:min(430px,100%);
+    height:auto;
+    min-height:0;
     box-sizing:border-box;
-    color:#ece4d4;
+    overflow:visible;
+    background:transparent;
+    color:var(--ink-1);
   }
-  #view-workspace .askuser-answer-head{
-    display:flex;align-items:center;gap:7px;
-    margin-bottom:9px;font-size:12.5px;font-weight:600;
-    color:#d8c7a1;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-head{
+    padding:0 0 12px;
+    border-bottom:none;
   }
-  #view-workspace .askuser-answer-dot{
-    width:7px;height:7px;border-radius:999px;
-    background:#b8a98c;box-shadow:0 0 0 3px rgba(184,169,140,.15);
-    flex:0 0 auto;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-head h2{
+    font-size:15px;
   }
-  #view-workspace .askuser-answer-list{
-    display:flex;flex-direction:column;gap:8px;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-body{
+    padding:0;
+    overflow:visible;
+    gap:10px;
   }
-  #view-workspace .askuser-answer-item{
-    border:1px solid rgba(184,169,140,.24);
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-q{
+    padding:10px 12px;
     background:rgba(184,169,140,.08);
-    border-radius:0;
-    padding:9px 10px;
-    display:flex;flex-direction:column;gap:8px;
+    border-color:rgba(184,169,140,.24);
   }
-  #view-workspace .askuser-answer-q{
-    display:flex;align-items:baseline;gap:8px;
-    color:#f0e6d2;font-size:12.5px;font-weight:500;line-height:1.45;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-q-head{
+    margin-bottom:8px;
   }
-  #view-workspace .askuser-answer-num{
-    font-family:var(--font-mono);font-size:10.5px;color:rgba(236,228,212,.52);
-    letter-spacing:.08em;flex:0 0 auto;
-  }
-  #view-workspace .askuser-answer-opts{
-    display:flex;flex-wrap:wrap;gap:6px;
-  }
-  #view-workspace .askuser-answer-opt{
-    display:inline-flex;align-items:center;gap:5px;
+  #view-workspace .askuser-answer-card.bigplan-panel .bp-opt{
     max-width:100%;
-    padding:5px 9px;border-radius:0;
-    border:1px solid rgba(216,199,161,.34);
-    background:rgba(216,199,161,.14);
-    color:#f5ead5;font-size:12px;font-weight:500;line-height:1.45;
     overflow-wrap:anywhere;
-  }
-  #view-workspace .askuser-answer-opt::before{
-    content:"\2713";font-size:10px;color:#d8c7a1;flex:0 0 auto;
+    cursor:default;
   }
 
   /* ============ Chat markdown · headers, blockquotes, hr ============ */
@@ -777,6 +763,7 @@
     box-shadow:var(--shadow-3);
     display:flex;flex-direction:column;
     z-index:50;
+    contain:layout paint;
   }
   @keyframes au-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   #view-workspace .ws-input-wrap > .wf-input,
@@ -2385,22 +2372,107 @@
     to{opacity:1;filter:var(--fx-native-char-enter-to)}
   }
 
-  /* review · patch insertion wrapper + hover popup */
-  #view-workspace .wf-patch-ins-wrap{
+  /* review · patch three-state wrappers + hover popup */
+  #view-workspace .wf-patch-ins-wrap,
+  #view-workspace .wf-patch-replace-wrap{
     position:relative;
     display:inline;
     cursor:pointer;
   }
+  #view-workspace .wf-patch-replace-wrap[data-patch-state="replace"]{
+    -webkit-box-decoration-break:clone;
+    box-decoration-break:clone;
+  }
   #view-workspace .wf-patch-ins{
     background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.25) 50%);
+  }
+  #view-workspace .wf-patch-add-badge{
+    display:inline-flex;
+    align-items:center;
+    height:16px;
+    margin-right:5px;
+    padding:0 5px;
+    border:1px solid rgba(74, 180, 100, 0.34);
+    background:rgba(74, 180, 100, 0.12);
+    color:#2f6d3b;
+    font-size:10px;
+    font-weight:700;
+    line-height:1;
+    vertical-align:1px;
   }
   /* 流式正文打字头:末尾几个刚打出的字用横向渐变遮罩,光标处最透明→变老变实,做半透明渐变淡入。 */
   #view-workspace .wf-patch-ins-head{
     -webkit-mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
     mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
   }
-  #view-workspace .wf-patch-ins-wrap.active .wf-patch-ins{
-    background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.4) 50%);
+  @keyframes wf-patch-current-flash-green{
+    0%,100%{
+      background-color:transparent;
+      box-shadow:none;
+      filter:none;
+    }
+    22%,68%{
+      background-color:rgba(74, 180, 100, 0.10);
+      box-shadow:0 0 0 3px rgba(74, 180, 100, 0.28), 0 0 18px rgba(74, 180, 100, 0.22);
+      filter:saturate(1.12);
+    }
+  }
+  @keyframes wf-patch-current-flash-red{
+    0%,100%{
+      background-color:rgba(220, 80, 70, 0.82);
+      box-shadow:none;
+      filter:none;
+    }
+    22%,68%{
+      background-color:rgba(220, 80, 70, 0.95);
+      box-shadow:0 0 0 3px rgba(220, 80, 70, 0.30), 0 0 18px rgba(220, 80, 70, 0.22);
+      filter:saturate(1.12);
+    }
+  }
+  #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+  #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"]{
+    animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+  #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins{
+    animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor{
+    animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+    animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
+  }
+  @media (prefers-reduced-motion:reduce){
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+      animation:none;
+    }
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
+    #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
+    #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins{
+      background-color:rgba(74, 180, 100, 0.10);
+      box-shadow:0 0 0 2px rgba(74, 180, 100, 0.24);
+    }
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+      background-color:rgba(220, 80, 70, 0.95);
+      box-shadow:0 0 0 2px rgba(220, 80, 70, 0.26);
+    }
   }
   #view-workspace .wf-row-diff-list .wf-patch-ins-wrap{
     display:inline;
@@ -2463,11 +2535,11 @@
       rgba(220,80,70,0.7) 0, rgba(220,80,70,0.7) 8px,
       transparent 8px, transparent 14px);
   }
-  /* hover 卡片:翻新 + 加宽。宽度自适应内容(width:max-content),长内容能撑开,
-     最宽到视口 92%;短内容也不会被拉满。配色用更亮的纸白 + 更轻的边与投影。 */
+  /* hover 卡片:翻新 + 加宽。定位由 patchHover.tsx 写入 fixed 坐标,
+     不参与正文流、不触发布局宽度变化。 */
   #view-workspace .patch-hover-popup{
     display:none;
-    position:absolute;
+    position:fixed;
     bottom:calc(100% + 10px);
     left:0;
     background:#fffdf8;
@@ -2475,7 +2547,7 @@
     border-radius:0;
     padding:11px 14px;
     box-shadow:0 10px 32px rgba(20,30,38,0.14), 0 2px 6px rgba(20,30,38,0.06);
-    width:max-content;
+    width:fit-content;
     min-width:min(240px, calc(100vw - 32px));
     max-width:min(540px, calc(100vw - 32px));
     z-index:20;
@@ -2483,6 +2555,7 @@
     white-space:normal;
     overflow-wrap:anywhere;
     line-height:1.6;
+    contain:layout paint;
   }
   #view-workspace .patch-hover-popup::before{
     content:"";
@@ -2507,65 +2580,57 @@
     left:auto;
     right:0;
   }
-  #view-workspace .patch-hover-popup.is-visible,
-  #view-workspace .wf-patch-ins-wrap:hover .patch-hover-popup,
-  #view-workspace .wf-table-row-add-hover:hover .patch-hover-popup,
-  #view-workspace .wf-patch-del-marker:hover .patch-hover-popup,
-  #view-workspace .wf-blockmark:hover > .patch-hover-popup{
+  #view-workspace .patch-hover-popup.is-visible{
     display:flex;
     flex-direction:column;
     gap:7px;
   }
-  /* hover 卡片:原→改为 的 key-value 行排版(修改时更清楚) */
-  #view-workspace .patch-popup-row{display:flex;gap:8px;align-items:baseline}
-  #view-workspace .patch-popup-k{
-    flex:0 0 auto;font-size:11px;font-weight:700;color:var(--ink-4);min-width:30px;
-  }
-  #view-workspace .patch-popup-num{
+  #view-workspace .patch-popup-title{
     font-family:var(--font-mono);
-    font-size:10px;
-    color:var(--ink-4);
+    font-size:11px;
+    font-weight:700;
+    color:var(--ink-2);
   }
-  #view-workspace .patch-popup-deleted{
-    font-size:12.5px;
-    color:var(--ink-3);
-    text-decoration:line-through;
+  #view-workspace .patch-popup-badge{
+    align-self:flex-start;
+    border:1px solid rgba(74, 180, 100, 0.34);
+    background:rgba(74, 180, 100, 0.12);
+    color:#2f6d3b;
+    padding:1px 7px;
+    font-size:12px;
+    font-weight:700;
     line-height:1.5;
   }
-  #view-workspace .patch-popup-info{
-    font-size:12.5px;
-    color:var(--ink-3);
-    font-style:italic;
-    line-height:1.55;
-  }
-  #view-workspace .patch-popup-change-list{
-    display:flex;
-    flex-direction:column;
-    gap:5px;
-    font-size:12.5px;
-    color:var(--ink-2);
-  }
-  #view-workspace .patch-popup-change{
+  #view-workspace .patch-popup-original{
     display:grid;
     grid-template-columns:auto minmax(0,1fr);
-    column-gap:6px;
+    gap:8px;
     align-items:start;
-  }
-  #view-workspace .patch-popup-bullet{
-    color:var(--ink-4);
+    font-size:13px;
     line-height:1.55;
   }
-  #view-workspace .patch-popup-change-label{
-    font-weight:600;
+  #view-workspace .patch-popup-label{
+    color:var(--ink-4);
+    font-size:11px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  #view-workspace .patch-popup-original-text{
     color:var(--ink-2);
+    overflow-wrap:anywhere;
   }
-  #view-workspace .patch-popup-old-text{
+  #view-workspace .patch-popup-note{
     color:var(--ink-3);
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.72);
+    font-size:12.5px;
+    line-height:1.55;
   }
-  #view-workspace .patch-popup-new-text{
-    color:#2f6d3b;
+  #view-workspace .patch-popup-muted{
+    color:var(--ink-4);
+  }
+  #view-workspace .patch-popup-removed-text{
+    color:#a8413a;
+    text-decoration:line-through;
+    text-decoration-color:rgba(220, 80, 70, 0.7);
     font-weight:600;
   }
   /* hover 卡片里的「被删块缩放原版」:把被删结构块(图表/表格/图片等)缩小渲染出来,看到删的是什么 */
@@ -2581,19 +2646,6 @@
     zoom:0.8;
   }
   #view-workspace .patch-popup-preview > *{margin:2px 0}
-  /* hover 卡片「原文」:算过 diff——未改片段淡显作上下文,真正删/改掉的片段红删除线 */
-  #view-workspace .patch-popup-orig{font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-  #view-workspace .patch-popup-ctx{color:var(--ink-4)}
-  #view-workspace .patch-popup-del-seg{
-    color:#a8413a;
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.7);
-    font-weight:600;
-  }
-  #view-workspace .patch-popup-arrow,
-  #view-workspace .patch-popup-mark-op{
-    color:var(--ink-4);
-  }
   #view-workspace .patch-popup-actions{
     display:flex;
     flex-wrap:wrap;
@@ -2642,10 +2694,23 @@
   }
   #view-workspace .wf-blockmark-del-line{
     display:block;
-    height:2px;border-radius:0;
-    background:repeating-linear-gradient(90deg,
-      rgba(220,80,70,0.7) 0, rgba(220,80,70,0.7) 8px,
-      transparent 8px, transparent 14px);
+    position:relative;
+    width:3px;
+    height:18px;
+    margin-left:2px;
+    border-radius:999px;
+    background:rgba(220, 80, 70, 0.82);
+  }
+  #view-workspace .wf-blockmark-del-line::after{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:-5px;
+    width:7px;
+    height:7px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.88);
+    transform:translateX(-50%);
   }
   /* 删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。 */
   #view-workspace .wf-patch-del-marker{
@@ -2656,18 +2721,19 @@
   #view-workspace .patch-del-cursor{
     display:inline-block;
     position:relative;
-    width:2px;height:1.05em;
+    width:3px;height:1.05em;
     vertical-align:text-bottom;
     margin:0 2px;
     background:rgba(220, 80, 70, 0.82);
-    border-radius:0;
+    border-radius:999px;
   }
   #view-workspace .patch-del-cursor::after{
     content:"";
-    position:absolute;left:-2px;top:-1px;
-    width:6px;height:3px;
-    border-radius:0;
-    background:rgba(220, 80, 70, 0.82);
+    position:absolute;left:50%;top:-5px;
+    width:7px;height:7px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.88);
+    transform:translateX(-50%);
   }
 
   /* pendingReview · patch 单独操作 · 插在 .wf-patch-ins 之后 */

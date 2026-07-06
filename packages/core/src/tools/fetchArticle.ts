@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { extractArticleContent, UNSUPPORTED_CONTENT_ERROR_PREFIX } from "../browser/extractor.js";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
+import { persistScreenshot } from "../workspace/persistScreenshot.js";
 
 const MIN_EXTRACTED_TEXT_LENGTH = 40;
 // JS 内容未渲染时的占位标记(短正文里出现 → 抓到的是壳而非正文)。
@@ -48,7 +49,7 @@ export const fetchArticleTool = createTool({
     text: z.string(),
     wordCount: z.number(),
     images: z.array(z.object({ src: z.string(), alt: z.string().nullable() })),
-    screenshotBase64: z.string().nullable(),
+    screenshotSrc: z.string().nullable(),
     ogImageUrl: z.string().nullable(),
     sourceUrl: z.string(),
     materialId: z.string(),
@@ -60,13 +61,14 @@ export const fetchArticleTool = createTool({
     try {
       const result = await extractArticleContent(input.url, input.waitForSelector);
       const wordCount = result.body.replace(/\s+/g, "").length;
+      const screenshotSrc = result.screenshot ? await persistScreenshot(result.screenshot) : null;
 
       return {
         title: result.title,
         text: result.body,
         wordCount,
         images: result.images,
-        screenshotBase64: result.screenshot ? result.screenshot.toString("base64") : null,
+        screenshotSrc,
         ogImageUrl: result.ogImageUrl,
         sourceUrl: input.url,
         materialId,
@@ -86,7 +88,7 @@ export const fetchArticleTool = createTool({
           : `[Error] ${message}`,
         wordCount: 0,
         images: [],
-        screenshotBase64: null,
+        screenshotSrc: null,
         ogImageUrl: null,
         sourceUrl: input.url,
         materialId,

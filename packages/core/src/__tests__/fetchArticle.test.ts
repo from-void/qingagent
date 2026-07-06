@@ -54,7 +54,7 @@ describe("fetchArticle fallback signal", () => {
         text: "这是一段足够长的正文，用于验证输出结构中包含浏览器降级信号字段。",
         wordCount: 42,
         images: [],
-        screenshotBase64: null,
+        screenshotSrc: null,
         ogImageUrl: null,
         sourceUrl: "https://example.com/article",
         materialId: "mat-123",

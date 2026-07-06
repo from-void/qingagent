@@ -13,6 +13,7 @@ import {
   formatBrowserUnavailableError,
   isBrowserAvailabilityError,
 } from "../browser/browserErrors.js";
+import { persistScreenshot } from "../workspace/persistScreenshot.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const MIN_TEXT = 40;
@@ -37,7 +38,7 @@ export const scrapeWithBrowserTool = createTool({
     text: z.string(),
     wordCount: z.number(),
     images: z.array(z.object({ src: z.string(), alt: z.string().nullable() })),
-    screenshotBase64: z.string().nullable(),
+    screenshotSrc: z.string().nullable(),
     ogImageUrl: z.string().nullable(),
     sourceUrl: z.string(),
     materialId: z.string(),
@@ -56,7 +57,7 @@ export const scrapeWithBrowserTool = createTool({
         text: `[Error] ${error}`,
         wordCount: 0,
         images: [],
-        screenshotBase64: null,
+        screenshotSrc: null,
         ogImageUrl: null,
         sourceUrl: input.url,
         materialId,
@@ -454,6 +455,7 @@ export const scrapeWithBrowserTool = createTool({
       const screenshot = await page
         .screenshot({ fullPage: false, type: "jpeg", quality: 80 })
         .catch(() => null);
+      const screenshotSrc = screenshot ? await persistScreenshot(screenshot) : null;
       return {
         ok: true,
         error: null,
@@ -461,7 +463,7 @@ export const scrapeWithBrowserTool = createTool({
         text: body,
         wordCount,
         images: extracted.images.map((image) => ({ src: image.src, alt: image.alt })),
-        screenshotBase64: screenshot ? screenshot.toString("base64") : null,
+        screenshotSrc,
         ogImageUrl: extracted.ogImageUrl,
         sourceUrl: input.url,
         materialId,

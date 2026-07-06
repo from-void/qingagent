@@ -1874,22 +1874,19 @@ export async function* processAgentStream(
           let imageLabel = "";
           try {
             const hasShot =
-              typeof toolResult.screenshotBase64 === "string" && toolResult.screenshotBase64;
+              typeof toolResult.screenshotSrc === "string" && toolResult.screenshotSrc;
             const hasOg = typeof toolResult.ogImageUrl === "string" && toolResult.ogImageUrl;
-            if (hasShot || hasOg) {
+            if (hasShot) {
+              imageSrc = toolResult.screenshotSrc as string;
+              imageLabel = "网页截图";
+            } else if (hasOg) {
               const imageId = crypto.randomUUID();
               const imageDir = join(UPLOADS_BASE, imageId);
               await mkdir(imageDir, { recursive: true });
-              const image = hasShot
-                ? {
-                    buffer: Buffer.from(toolResult.screenshotBase64 as string, "base64"),
-                    filename: "screenshot.jpg",
-                    label: "网页截图",
-                  }
-                : {
-                    ...(await downloadRemoteImage(toolResult.ogImageUrl as string)),
-                    label: "网页缩略图",
-                  };
+              const image = {
+                ...(await downloadRemoteImage(toolResult.ogImageUrl as string)),
+                label: "网页缩略图",
+              };
               await writeFile(join(imageDir, image.filename), image.buffer);
               imageSrc = "/api/v1/files/" + imageId + "/" + image.filename;
               imageLabel = image.label;

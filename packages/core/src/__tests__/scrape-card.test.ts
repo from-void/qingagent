@@ -67,7 +67,7 @@ describe("抓取卡片:成功必出卡", () => {
             text: "正文内容。".repeat(30),
             title: "没有预览图的文章",
             sourceUrl: "https://no-og.example.com/post",
-            screenshotBase64: null,
+            screenshotSrc: null,
             ogImageUrl: null,
           }),
         ),
@@ -94,7 +94,7 @@ describe("抓取卡片:成功必出卡", () => {
             text: "[Error] fetch failed",
             title: "抓取失败",
             sourceUrl: "https://dead.example.com",
-            screenshotBase64: null,
+            screenshotSrc: null,
             ogImageUrl: null,
           }),
         ),
@@ -108,7 +108,7 @@ describe("抓取卡片:成功必出卡", () => {
   it("有截图仍走图片卡(原行为不回归)", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("card-shot");
-    const shot = Buffer.from("fake-jpeg-bytes").toString("base64");
+    const screenshotSrc = "/api/v1/files/shot-id/screenshot.jpg";
 
     const frames = await collect(
       processAgentStream(
@@ -118,7 +118,7 @@ describe("抓取卡片:成功必出卡", () => {
             text: "正文。".repeat(30),
             title: "带截图的文章",
             sourceUrl: "https://shot.example.com",
-            screenshotBase64: shot,
+            screenshotSrc,
             ogImageUrl: null,
           }),
         ),
@@ -128,6 +128,6 @@ describe("抓取卡片:成功必出卡", () => {
 
     const cards = imageParts(frames);
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.src).toMatch(/^\/api\/v1\/files\//);
+    expect(cards[0]?.src).toBe(screenshotSrc);
   });
 });

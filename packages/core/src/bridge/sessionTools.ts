@@ -187,7 +187,7 @@ export function missingGenericToolResultFields(
       requireString("text");
       requireNumber("wordCount");
       requireArray("images");
-      requireNullableString("screenshotBase64");
+      requireNullableString("screenshotSrc");
       requireNullableString("ogImageUrl");
       requireString("sourceUrl");
       requireString("materialId");
@@ -200,7 +200,7 @@ export function missingGenericToolResultFields(
       requireString("text");
       requireNumber("wordCount");
       requireArray("images");
-      requireNullableString("screenshotBase64");
+      requireNullableString("screenshotSrc");
       requireNullableString("ogImageUrl");
       requireString("sourceUrl");
       requireString("materialId");

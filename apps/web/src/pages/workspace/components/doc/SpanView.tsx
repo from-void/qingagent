@@ -187,7 +187,8 @@ export function SpanView({
             />
           )}
         >
-          {state === "insert" && <span className="wf-patch-add-badge">新增</span>}
+          {/* 审阅态所见≈应用后:新增只留低调绿色高亮,不再叠常显「新增」文字徽章
+             (标注减负;需要标签/撤销时 hover 弹层里已有「#N · 新增」) */}
           <span className="wf-patch-ins">
             {bodyText}
             {headText && <span className="wf-patch-ins-head">{headText}</span>}

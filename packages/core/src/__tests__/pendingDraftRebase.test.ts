@@ -126,7 +126,7 @@ describe("rebaseRemainingPendingDraft", () => {
       paragraph("block-c", "C 新"),
     ]);
     const records = recordsFromDiff(base, draft, 1);
-    const committed = applyDiffHunks(base, [records[0]!.diffHunk!]);
+    const committed = applyDiffHunks(base, [records[0]!.diffHunk!]).doc;
 
     const result = await rebaseRemainingPendingDraft({
       docId: "doc-partial",
@@ -160,7 +160,7 @@ describe("rebaseRemainingPendingDraft", () => {
       paragraph("block-c", "C 新"),
     ]);
     const records = recordsFromDiff(base, draft, 1);
-    const committed = applyDiffHunks(base, [records[0]!.diffHunk!]);
+    const committed = applyDiffHunks(base, [records[0]!.diffHunk!]).doc;
 
     const result = await rebaseRemainingPendingDraft({
       docId: "doc-read-diff",
@@ -188,7 +188,7 @@ describe("rebaseRemainingPendingDraft", () => {
       ["", "e"],
       ["b", "ebff"],
     ]);
-    const committed = applyDiffHunks(base, [records[0]!.diffHunk!, records[2]!.diffHunk!]);
+    const committed = applyDiffHunks(base, [records[0]!.diffHunk!, records[2]!.diffHunk!]).doc;
 
     const result = await rebaseRemainingPendingDraft({
       docId: "doc-inline-repeat-rebase",

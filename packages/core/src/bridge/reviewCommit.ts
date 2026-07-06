@@ -457,6 +457,10 @@ export async function* commitPatches(
     return;
   }
 
+  // 审核提交按 blockId 锚定应用;目标块被并发删除的 hunk 会被 applyDiffHunks 跳过。
+  // 跳过集合在 apply 闭包内产生,captured 到外层以便提交成功后据此结算 + 提示用户。
+  // (commitDocumentOp 在带 opId 的提交路径里 apply 恰好执行一次,captured 值即最终结果。)
+  let skippedHunks: DiffHunk[] = [];
   let result: Awaited<ReturnType<typeof commitDocumentOp>>;
   try {
     result = await commitDocumentOp({
@@ -479,12 +483,15 @@ export async function* commitPatches(
         : {}),
       apply: (currentDoc) => {
         if (shouldCommitDiffHunks) {
+          const applyResult = applyDiffHunks(currentDoc, acceptedDiffHunks, {
+            oldBaseDoc,
+            anchorByBlockId: true,
+          });
+          skippedHunks = applyResult.skipped;
           return {
-            nextDoc: applyDiffHunks(currentDoc, acceptedDiffHunks, {
-              oldBaseDoc,
-              anchorByBlockId: true,
-            }),
-            steps: acceptedDiffHunks.map((hunk) =>
+            nextDoc: applyResult.doc,
+            // steps 只为真正落上的 hunk 生成——被跳过的 hunk 不再写进 document_ops(修记假账)。
+            steps: applyResult.applied.map((hunk) =>
               diffHunkToStep(
                 hunk,
                 hunk.anchor.pmFrom ?? 0,
@@ -576,7 +583,31 @@ export async function* commitPatches(
     }
   }
 
-  yield* settleResolvedReviewRecords(state, records);
+  // 失效 hunk(目标块被并发删除等)对应的 suggestion 按"未应用"结算,不能显示为已提交;
+  // 沿既有 settleUnappliedReviewRecords 冲突帧通路把失效原因带给前端(不新造帧类型)。
+  const skippedHunkIds = new Set(skippedHunks.map((hunk) => hunk.hunkId));
+  const skippedRecords = skippedHunkIds.size === 0
+    ? []
+    : records.filter((record) => record.diffHunk && skippedHunkIds.has(record.diffHunk.hunkId));
+  const settledRecords = skippedRecords.length === 0
+    ? records
+    : records.filter((record) => !skippedRecords.includes(record));
+
+  yield* settleResolvedReviewRecords(state, settledRecords);
+  if (skippedRecords.length > 0) {
+    const message = `有 ${skippedRecords.length} 处修改因文档已变化而失效，未写入；其余修改已提交。`;
+    yield* settleUnappliedReviewRecords(
+      state,
+      skippedRecords,
+      skippedRecords.map((record): PatchConflict => ({
+        kind: "block_removed",
+        message,
+        suggestionId: record.suggestion.id,
+        blockId: record.suggestion.anchor.blockId,
+      })),
+      message,
+    );
+  }
 
   const doc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
   yield { kind: "documentSnapshotWritten", data: { doc } };

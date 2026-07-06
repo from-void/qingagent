@@ -130,7 +130,7 @@ describe("proposalDiff shadow engine", () => {
     expect(texts(hunks[0]!.before)).toBe("柳");
     expect(texts(hunks[0]!.after)).toBe("胡桃");
     expect(hunks[0]!.beforeText).not.toContain("映在半边湖里。");
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("文本不变时把纯 mark 变化产成 markAdd, 不产文本 replace 或空 hunk", () => {
@@ -153,7 +153,7 @@ describe("proposalDiff shadow engine", () => {
     });
     expect(hunks[0]!.op).not.toBe("replace");
     expect(hunks[0]!.before).not.toEqual(hunks[0]!.after);
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("支持块级插入、删除和整段替换", () => {
@@ -169,7 +169,7 @@ describe("proposalDiff shadow engine", () => {
     const insertHunks = buildDraftDiff(insertBase, insertDraft);
     expect(insertHunks).toHaveLength(1);
     expect(insertHunks[0]).toMatchObject({ op: "insert", blockPath: [1], afterText: "第二段" });
-    expect(applyDiffHunks(insertBase, insertHunks)).toEqual(insertDraft);
+    expect(applyDiffHunks(insertBase, insertHunks).doc).toEqual(insertDraft);
 
     const deleteBase = doc([
       paragraph("ai-block-a", "第一段"),
@@ -183,7 +183,7 @@ describe("proposalDiff shadow engine", () => {
     const deleteHunks = buildDraftDiff(deleteBase, deleteDraft);
     expect(deleteHunks).toHaveLength(1);
     expect(deleteHunks[0]).toMatchObject({ op: "delete", blockPath: [1], beforeText: "第二段" });
-    expect(applyDiffHunks(deleteBase, deleteHunks)).toEqual(deleteDraft);
+    expect(applyDiffHunks(deleteBase, deleteHunks).doc).toEqual(deleteDraft);
 
     const replaceBase = doc([
       paragraph("ai-block-a", "第一段"),
@@ -196,7 +196,7 @@ describe("proposalDiff shadow engine", () => {
     const replaceHunks = buildDraftDiff(replaceBase, replaceDraft);
     expect(replaceHunks).toHaveLength(1);
     expect(replaceHunks[0]).toMatchObject({ op: "replace", blockPath: [1], beforeText: "旧", afterText: "新" });
-    expect(applyDiffHunks(replaceBase, replaceHunks)).toEqual(replaceDraft);
+    expect(applyDiffHunks(replaceBase, replaceHunks).doc).toEqual(replaceDraft);
   });
 
   it("columnList 参与块级 diff,并用拍平文本生成摘要与回放内容", () => {
@@ -214,7 +214,7 @@ describe("proposalDiff shadow engine", () => {
       afterText: "左栏内容\n右栏内容",
     });
     expect(hunks[0]?.after?.[0]?.type).toBe("columnList");
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("多处修改会产多个独立最小 hunk", () => {
@@ -237,7 +237,7 @@ describe("proposalDiff shadow engine", () => {
       ["replace", "蓝", "黄"],
     ]);
     expect(hunks.every((hunk) => !hunk.beforeText?.includes("湖边有") && !hunk.beforeText?.includes("他拿着"))).toBe(true);
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("同块多 hunk 也保持逐 hunk independent review batch", () => {
@@ -288,7 +288,7 @@ describe("proposalDiff shadow engine", () => {
     const onlyTree = hunks.find((hunk) => hunk.afterText === "胡桃");
     if (!onlyTree) throw new Error("fixture missing tree hunk");
 
-    expect(applyDiffHunks(base, [onlyTree])).toEqual(
+    expect(applyDiffHunks(base, [onlyTree]).doc).toEqual(
       doc([paragraph("block-a", "湖边有胡桃树。他拿着蓝毛巾。")]),
     );
   });
@@ -303,7 +303,7 @@ describe("proposalDiff shadow engine", () => {
       ["b", "ebff"],
     ]);
 
-    const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]);
+    const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]).doc;
     const applied = applyDiffHunkToDoc(committed, hunks[1]!, {
       oldBaseDoc: base,
       anchorByBlockId: true,
@@ -325,7 +325,7 @@ describe("proposalDiff shadow engine", () => {
     const insert = hunks.find((hunk) => hunk.beforeText === "" && hunk.afterText === "e");
     if (!insert) throw new Error("fixture missing pure insert hunk");
 
-    const committed = applyDiffHunks(base, hunks.filter((hunk) => hunk !== insert));
+    const committed = applyDiffHunks(base, hunks.filter((hunk) => hunk !== insert)).doc;
     const applied = applyDiffHunkToDoc(committed, insert, {
       oldBaseDoc: base,
       anchorByBlockId: true,
@@ -346,7 +346,7 @@ describe("proposalDiff shadow engine", () => {
       ["a", "ec d"],
     ]);
 
-    const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]);
+    const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]).doc;
     const applied = applyDiffHunkToDoc(committed, hunks[1]!, {
       oldBaseDoc: base,
       anchorByBlockId: true,
@@ -366,7 +366,7 @@ describe("proposalDiff shadow engine", () => {
 
     // 并发编辑把两块顺序调换(blockId 不变):blk-b 现在在 index 0,旧位置锚定会打到 blk-a。
     const reordered = doc([paragraph("blk-b", "beta 原文"), paragraph("blk-a", "alpha 原文")]);
-    const committed = applyDiffHunks(reordered, hunks, { anchorByBlockId: true });
+    const committed = applyDiffHunks(reordered, hunks, { anchorByBlockId: true }).doc;
     const byId = (id: string) => committed.content.find((b) => b.attrs.blockId === id);
 
     expect(btext(byId("blk-b"))).toBe("beta 改后");
@@ -382,8 +382,26 @@ describe("proposalDiff shadow engine", () => {
 
     // 并发删除 blk-b → 剩 [blk-a, blk-c];blk-b 的 hunk 应失效跳过,不错位改到 blk-a/blk-c。
     const removed = doc([paragraph("blk-a", "alpha"), paragraph("blk-c", "gamma")]);
-    const committed = applyDiffHunks(removed, hunks, { anchorByBlockId: true });
+    const committed = applyDiffHunks(removed, hunks, { anchorByBlockId: true }).doc;
     expect(committed.content.map(btext)).toEqual(["alpha", "gamma"]);
+  });
+
+  it("单①:applyDiffHunks 回吐 applied/skipped——失效 hunk 计入 skipped,doc 只落存活块", () => {
+    const btext = (b: PmBlockNode): string =>
+      "content" in b && Array.isArray(b.content) ? texts(b.content) : "";
+    const base = doc([paragraph("blk-a", "alpha"), paragraph("blk-b", "beta")]);
+    const draft = doc([paragraph("blk-a", "alpha 改后"), paragraph("blk-b", "beta 改后")]);
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    expect(hunks.length).toBe(2);
+
+    // 并发删除 blk-b:该 hunk 进 skipped,blk-a 的 hunk 照常应用。
+    const removed = doc([paragraph("blk-a", "alpha")]);
+    const result = applyDiffHunks(removed, hunks, { anchorByBlockId: true });
+    expect(result.applied.length).toBe(1);
+    expect(result.skipped.length).toBe(1);
+    expect(result.applied[0]!.anchor.blockId).toBe("blk-a");
+    expect(result.skipped[0]!.anchor.blockId).toBe("blk-b");
+    expect(result.doc.content.map(btext)).toEqual(["alpha 改后"]);
   });
 
   it("对多组 base/draft 满足 round-trip", () => {
@@ -421,7 +439,7 @@ describe("proposalDiff shadow engine", () => {
     ];
 
     for (const [base, draft] of cases) {
-      expect(applyDiffHunks(base, buildDraftDiff(base, draft))).toEqual(draft);
+      expect(applyDiffHunks(base, buildDraftDiff(base, draft)).doc).toEqual(draft);
     }
   });
 
@@ -468,7 +486,7 @@ describe("proposalDiff shadow engine", () => {
         after: [{ type }],
         afterBlock: { type },
       });
-      expect(applyDiffHunks(base, [hunks[0]!])).toEqual(draft);
+      expect(applyDiffHunks(base, [hunks[0]!]).doc).toEqual(draft);
     }
   });
 
@@ -498,7 +516,7 @@ describe("proposalDiff shadow engine", () => {
     expect(hunks[0]!.afterText).not.toBe("后续段一");
     expect(overlapRatio).toBeGreaterThan(0);
     expect(overlapRatio).toBeLessThan(1);
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 });
 describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () => {
@@ -518,7 +536,7 @@ describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () =>
 
     // 诊断 p06 的最小复现:此前这里是 0 个 hunk,level 变更全部蒸发。
     expect(hunks.filter((h) => h.op === "replace")).toHaveLength(2);
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("codeBlock 仅改 language 产出 hunk,不再被当 noop(p09 死锁解除)", () => {
@@ -529,7 +547,7 @@ describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () =>
 
     expect(hunks).toHaveLength(1);
     expect(hunks[0]!.op).toBe("replace");
-    expect(applyDiffHunks(base, hunks)).toEqual(draft);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
   it("attrs 完全相同(仅键序不同)不产生虚假 hunk", () => {

@@ -143,20 +143,40 @@ export interface ApplyDiffHunksOptions {
   anchorByBlockId?: boolean;
 }
 
+export interface ApplyDiffHunksResult {
+  doc: PmDoc;
+  /** 实际落上的 hunk(保持传入顺序)。 */
+  applied: DiffHunk[];
+  /** 因目标块已被并发删除等原因被跳过、未落上的 hunk(保持传入顺序)。 */
+  skipped: DiffHunk[];
+}
+
 export function applyDiffHunks(
   baseDoc: PmDoc,
   hunks: readonly DiffHunk[],
   options: ApplyDiffHunksOptions = {},
-): PmDoc {
+): ApplyDiffHunksResult {
   let doc = cloneValue(normalizePmDoc(baseDoc));
+  // 落库排序(逆文档序)只影响应用顺序,不影响 applied/skipped 的对外顺序。
   const ordered = [...hunks].sort(compareHunksForApply);
+  const appliedIds = new Set<string>();
 
   for (const hunk of ordered) {
     const applied = applyDiffHunkToDoc(doc, hunk, options);
-    if (applied.ok) doc = applied.doc;
+    if (applied.ok) {
+      doc = applied.doc;
+      appliedIds.add(hunk.hunkId);
+    }
   }
 
-  return normalizePmDoc(doc);
+  // applied/skipped 按传入顺序回吐,便于调用方按原顺序生成 steps / 结算 suggestion。
+  const applied: DiffHunk[] = [];
+  const skipped: DiffHunk[] = [];
+  for (const hunk of hunks) {
+    (appliedIds.has(hunk.hunkId) ? applied : skipped).push(hunk);
+  }
+
+  return { doc: normalizePmDoc(doc), applied, skipped };
 }
 
 export type ApplyDiffHunkToDocResult =

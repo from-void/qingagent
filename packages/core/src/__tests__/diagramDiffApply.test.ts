@@ -23,7 +23,7 @@ describe("diagram diff 应用(BLOCK_NODE_TYPES 回归)", () => {
     const base = doc([para("p1", "第一段")]);
     const draft = doc([para("p1", "第一段"), diagram("d1", "flowchart TD\n A-->B")]);
     const hunks = buildDraftDiff(base, draft);
-    const applied = applyDiffHunks(base, hunks);
+    const applied = applyDiffHunks(base, hunks).doc;
     expect(diagramSources(applied)).toEqual(["flowchart TD\n A-->B"]);
   });
 
@@ -31,7 +31,7 @@ describe("diagram diff 应用(BLOCK_NODE_TYPES 回归)", () => {
     const base = doc([diagram("d1", "flowchart TD\n A-->B")]);
     const draft = doc([diagram("d1", "sequenceDiagram\n A->>B: hi")]);
     const hunks = buildDraftDiff(base, draft);
-    const applied = applyDiffHunks(base, hunks);
+    const applied = applyDiffHunks(base, hunks).doc;
     expect(diagramSources(applied)).toEqual(["sequenceDiagram\n A->>B: hi"]);
   });
 
@@ -39,7 +39,7 @@ describe("diagram diff 应用(BLOCK_NODE_TYPES 回归)", () => {
     const base = doc([para("p1", "第一段"), diagram("d1", "flowchart TD\n A-->B")]);
     const draft = doc([para("p1", "第一段")]);
     const hunks = buildDraftDiff(base, draft);
-    const applied = applyDiffHunks(base, hunks);
+    const applied = applyDiffHunks(base, hunks).doc;
     expect(diagramSources(applied)).toEqual([]);
   });
 

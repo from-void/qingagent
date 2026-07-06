@@ -1369,7 +1369,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       before: [{ type: "codeBlock" }],
       after: [{ type: "codeBlock" }],
     });
-    expect(applyDiffHunks(base, [hunk])).toEqual(draft);
+    expect(applyDiffHunks(base, [hunk]).doc).toEqual(draft);
 
     expect(suggestionToPatchOverlay(doc, sugg, 0)).toBeNull();
     const inputs = suggestionToBlockPatchInputs(sugg, 0);

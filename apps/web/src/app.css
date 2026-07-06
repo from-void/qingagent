@@ -63,8 +63,10 @@
   gap: 10px;
   padding: 12px 14px;
   border-radius: 0;
-  /* 暖白纸实底,跟左侧技能面板(.qa-skill-menu)同一套配色 */
-  background: var(--bg-canvas);
+  /* 暖白纸实底,跟左侧技能面板(.qa-skill-menu)同一套配色。
+     必须用 --bg-paper-deep:深墨 chrome 下 --bg-canvas 被设为 transparent
+     (workspace-ink-skin.css:203),用它气泡会透出底下文档/输入框(半透明 bug) */
+  background: var(--bg-paper-deep);
   border: 1px solid var(--line-2);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.18);
   opacity: 0;
@@ -89,7 +91,7 @@
   bottom: -6px;
   width: 11px;
   height: 11px;
-  background: var(--bg-canvas);
+  background: var(--bg-paper-deep);
   border-right: 1px solid var(--line-2);
   border-bottom: 1px solid var(--line-2);
   transform: rotate(45deg);

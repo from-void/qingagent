@@ -17,4 +17,5 @@ export * from "./ai-ir/applyBlockEdits";
 export * from "./ai-ir/draftBlockIds";
 export * from "./ai-ir/aiIrEditability";
 export * from "./ai-ir/nestedListStructure";
+export * from "./ai-ir/qingmlParse";
 export * from "./mermaid/normalizeMermaidQuotes";

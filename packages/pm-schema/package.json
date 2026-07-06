@@ -24,14 +24,15 @@
     "@tiptap/extension-text-align": "^3.23.1",
     "@tiptap/extension-underline": "^3.23.1",
     "@tiptap/starter-kit": "^3.23.1",
+    "htmlparser2": "10",
     "katex": "^0.16.47",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@qingagent/contract-ts": "workspace:*",
     "@tiptap/core": "^3.23.1",
     "@tiptap/pm": "^3.23.1",
     "@types/katex": "^0.16.8",
-    "@qingagent/contract-ts": "workspace:*",
     "typescript": "5.4.5",
     "vitest": "2.1.9"
   },

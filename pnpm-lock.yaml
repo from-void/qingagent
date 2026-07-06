@@ -340,6 +340,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^3.23.1
         version: 3.23.1
+      htmlparser2:
+        specifier: '10'
+        version: 10.1.0
       katex:
         specifier: ^0.16.47
         version: 0.16.47

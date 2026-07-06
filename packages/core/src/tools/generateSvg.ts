@@ -3,7 +3,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "../browser/svgSanitize.js";
 import {
   resolveBaseUrl,
@@ -14,8 +14,8 @@ import {
 } from "../llm/modelConfig.js";
 import { callDeepseekDraft } from "./deepseekDraftClient.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { uploadsBaseDir } from "../workspace/uploadsDir.js";
 
-const UPLOADS_BASE = resolve("./uploads");
 // 空闲看门狗:连续无任何输出超过该时长才判定卡死掐断——只要还在流式吐字就不断重置,
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。
 export const SVG_IDLE_TIMEOUT_MS = 45_000;
@@ -117,11 +117,10 @@ export const generateSvgTool = createTool({
   description: "【触发限制：仅当用户在本轮或对话中明确要求配图/插图/SVG/矢量图/示意图时才调用；" +
     "用户没要求配图就绝不主动配图，也不要因为‘文章可以更有画面感’之类理由自作主张生成】" +
     "生成一张安全、可消毒的 SVG 矢量插图。传入对插图内容的中文描述，可选 style/aspect。" +
-    "适合：流程图/结构示意/对比图/数据示意/装饰配图/图标。不要用于照片级写实图。" +
+    "适合：装饰性插画/图标/自由构图/氛围配图/数据示意卡。流程图、结构示意、关系图、时序图、组织架构、常规对比图一律改用文档的 diagram(mermaid)块表达,不要调本工具——mermaid 可编辑、可主题化且更省;只有 mermaid 表达不了的自由视觉构图才用本工具。不要用于照片级写实图。" +
     "【本工具只负责生成图片资产，不会把图插进文档】返回 imageId 与 src（形如 /api/v1/files/<id>/illustration.svg）。" +
     "要把图放进文档，请在本工具返回后【另调 editDraft 的 insertBlock】插入一个 image 块来放置，例如 " +
     'editDraft({ops:[{action:"insertBlock",position:"after",ref:"<目标块 blockId>",blocks:[{type:"image",src:"<本工具返回的 src>",alt:"<简短说明>",width:<本工具返回的 width>,height:<本工具返回的 height>}]}]})。' +
-    "【务必把本工具返回的 width/height 一并写进 image 块】——SVG 是无内禀尺寸的矢量图，缺 width 会渲染成 0×0 不可见。" +
     "（position 可用 after/before + ref 指定相邻块，或 start/end 放文首文末；需要 ref 时先 readDraft 取目标块 blockId。）" +
     "务必先用 writeDraft 出完整文本文档，再配图；一轮最多 1-2 张，失败后不要反复重试。",
   inputSchema: z.object({
@@ -292,7 +291,7 @@ export const generateSvgTool = createTool({
 
       const imageId = randomUUID();
       const filename = "illustration.svg";
-      const dir = join(UPLOADS_BASE, imageId);
+      const dir = join(uploadsBaseDir(), imageId);
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, filename), svg, "utf8");
       const src = `/api/v1/files/${imageId}/${filename}`;

@@ -32,6 +32,7 @@ import { createUpdateWorkingMemoryTool } from "./workingMemory.js";
 import type { SessionState, SuspensionToolName } from "./sessionState.js";
 import { isRecord } from "./redaction.js";
 import { normalizeIncomingBlock } from "./docGenerationEvents.js";
+import { fillLocalSvgImageDimensions } from "./imageDimensionFallback.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import {
   clonePmDoc,
@@ -754,6 +755,7 @@ export function createSessionScopedTools(
 
       let skippedDuplicateInserts = 0;
       if (blockOps.length > 0) {
+        await fillLocalSvgImageDimensions(blockOps);
         const blockResult = applyBlockEdits(workingDoc, blockOps);
         if (!blockResult.ok || !blockResult.doc) {
           return {

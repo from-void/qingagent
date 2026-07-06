@@ -2019,7 +2019,7 @@ export function UIKitPage() {
                   替换:
                   <span className="wf-patch-replace-wrap" data-patch-state="replace"><span className="wf-patch-ins">新内容</span></span>
                   {" "}新增:
-                  <span className="wf-patch-ins-wrap" data-patch-state="insert"><span className="wf-patch-add-badge">新增</span><span className="wf-patch-ins">补充内容</span></span>
+                  <span className="wf-patch-ins-wrap" data-patch-state="insert"><span className="wf-patch-ins">补充内容</span></span>
                   {" "}删减:
                   <span className="wf-patch-del-marker" data-patch-state="delete"><span className="patch-del-cursor" /></span>
                 </p>

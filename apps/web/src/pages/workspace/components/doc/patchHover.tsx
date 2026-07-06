@@ -273,11 +273,8 @@ export function PatchStatePopup({
   return (
     <>
       <span className="patch-popup-title">#{index ?? "?"} · {label}</span>
-      {state === "insert" ? (
-        <span className="patch-popup-badge">新增</span>
-      ) : (
-        originalNode
-      )}
+      {/* 纯新增:标题「#N · 新增」已足够,不再叠冗余「新增」徽章;非新增才展示被改/删原文 */}
+      {state !== "insert" && originalNode}
       <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
     </>
   );

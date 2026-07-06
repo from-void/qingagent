@@ -153,7 +153,9 @@ describe("审核态格式保真(showPatches)", () => {
     const insert = host.querySelector('[data-patch-state="insert"].wf-patch-ins-wrap') as HTMLElement;
     expect(insert).not.toBeNull();
     expect(insert.classList.contains("is-current")).toBe(true);
-    expect(insert.querySelector(".wf-patch-add-badge")?.textContent).toBe("新增");
+    // 审阅态减负:不再有常显「新增」文字徽章,标签只在 hover 弹层「#N · 新增」里
+    expect(insert.querySelector(".wf-patch-add-badge")).toBeNull();
+    expect(insert.querySelector(".patch-hover-popup")?.textContent).toContain("新增");
     expect(insert.querySelector(".wf-patch-ins")?.textContent).toBe("新增段落");
     expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
     expect(host.querySelector('[data-patch-state="delete"]')).toBeNull();
@@ -207,7 +209,8 @@ describe("审核态格式保真(showPatches)", () => {
 
     const insert = host.querySelector('[data-patch-state="insert"].wf-patch-ins-wrap') as HTMLElement;
     expect(insert).not.toBeNull();
-    expect(insert.querySelector(".wf-patch-add-badge")?.textContent).toBe("新增");
+    // 审阅态减负:不再有常显「新增」文字徽章,标签只在 hover 弹层里
+    expect(insert.querySelector(".wf-patch-add-badge")).toBeNull();
     expect(insert.querySelector(".wf-patch-ins")?.textContent).toBe("说明");
     expect(insert.previousSibling?.textContent).toContain("标题");
     expect(insert.nextSibling?.textContent).toContain(" 后");

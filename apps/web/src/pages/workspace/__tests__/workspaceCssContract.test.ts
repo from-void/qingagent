@@ -90,6 +90,37 @@ describe("workspaceCssContract", () => {
     }
   });
 
+  it("keeps block handle submenus outside the vertical menu scrollport", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const blockHandle = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/BlockHandle.tsx"),
+      "utf8",
+    );
+
+    const menuRule = cssRule(workspaceCss, "#view-workspace .block-handle-menu");
+    const panelRule = cssRule(workspaceCss, "#view-workspace .bh-submenu-panel");
+
+    expect(menuRule).toContain("overflow-y:auto");
+    expect(menuRule).not.toContain("overflow-x:hidden");
+    expect(panelRule).toContain("position:fixed");
+    expect(panelRule).toContain("left:var(--bh-submenu-left, -9999px)");
+    expect(panelRule).toContain("top:var(--bh-submenu-top, -9999px)");
+    expect(panelRule).not.toContain("position:absolute");
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.bh-submenu\.is-left \.bh-submenu-panel,\s*#view-workspace \.bh-submenu-panel\.is-left\{/,
+    );
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.bh-submenu:hover \.bh-submenu-panel,\s*#view-workspace \.bh-submenu:focus-within \.bh-submenu-panel,\s*#view-workspace \.bh-submenu-panel\.is-open\{/,
+    );
+    expect(workspaceCss).not.toContain("right:calc(100% + 4px)");
+    expect(blockHandle).toContain('import { createPortal } from "react-dom";');
+    expect(blockHandle).toContain('editor.view.dom.closest("#view-workspace")');
+    expect(blockHandle).toContain("createPortal(submenuPanels, submenuPortalTarget)");
+    expect(blockHandle).toContain("bh-submenu-portal");
+    expect(blockHandle).toContain('"--bh-submenu-left": `${alignPlacement.left}px`');
+    expect(blockHandle).toContain('"--bh-submenu-left": `${insertPlacement.left}px`');
+  });
+
   it("keeps bigplan options scrollable above the floating action bar", () => {
     const inkSkinCss = readFileSync(
       path.join(repoRoot, "apps/web/src/pages/workspace/workspace-ink-skin.css"),
@@ -206,8 +237,14 @@ describe("workspaceCssContract", () => {
 });
 
 function cssFontSize(css: string, selector: string): number {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`${escaped}\\s*\\{[^}]*font-size:\\s*([0-9.]+)px`, "s").exec(css);
+  const match = /font-size:\s*([0-9.]+)px/.exec(cssRule(css, selector));
   if (!match) throw new Error(`font-size not found: ${selector}`);
   return Number(match[1]);
+}
+
+function cssRule(css: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`${escaped}\\s*\\{[^}]*\\}`, "s").exec(css);
+  if (!match) throw new Error(`rule not found: ${selector}`);
+  return match[0];
 }

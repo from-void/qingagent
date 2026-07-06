@@ -303,7 +303,8 @@ export const SectionView = React.memo(function SectionView({
           />
         )}
       >
-        <span className="wf-patch-add-badge">新增</span>
+        {/* 审阅态所见≈应用后:整块新增只留左侧绿色细竖条(wf-blockmark insert),
+           不叠常显「新增」文字徽章;标签/撤销在 hover 弹层「#N · 新增」里 */}
         {children}
       </PatchHoverBlockFrame>
     );
@@ -344,13 +345,12 @@ export const SectionView = React.memo(function SectionView({
             popup={
               <>
                 <span className="patch-popup-num">#{popupIndex ?? "?"} · {delText ? "修改" : "新增"}</span>
-                {delText ? (
+                {/* 纯新增:标题已够,不叠「此处为新增内容」填充;仅「修改」时展示被替换原文 */}
+                {delText && (
                   <span className="patch-popup-row">
                     <span className="patch-popup-k">原文</span>
                     <span className="patch-popup-del-seg">{delText}</span>
                   </span>
-                ) : (
-                  <span className="patch-popup-info">此处为新增内容</span>
                 )}
                 <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
               </>

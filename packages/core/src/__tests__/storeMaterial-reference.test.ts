@@ -57,6 +57,10 @@ const toolResult = (
   args: Record<string, unknown>,
   result: Record<string, unknown>,
 ) => ({ type: "tool-result", payload: { toolName, toolCallId, args, result } });
+const toolOutput = (
+  toolCallId: string,
+  output: Record<string, unknown>,
+) => ({ type: "tool-output", payload: { toolCallId, output } });
 
 async function executeParseFileFixture(
   filename: string,
@@ -582,6 +586,67 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     expect(state.materials.get("mat-websearch")?.text).toBe(WEB);
     expect(state.materials.get("mat-websearch")?.metadata.sourceUrl).toBe(
       "https://search.example.com/a",
+    );
+  });
+
+  it("research-fulltext→webSearch→storeMaterial:模型面节选不影响素材落全文", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("ref-websearch-fulltext");
+    const FULL =
+      "旁路传入的搜索全文，包含完整事实、背景、关键数据、影响分析和来源信息。".repeat(180);
+    const EXCERPT = FULL.slice(0, 2500);
+
+    await drain(
+      processAgentStream(
+        streamOf(
+          toolCall("webSearch", "w-full", { query: "长文研究", count: 1 }),
+          toolOutput("w-full", {
+            type: "research-fulltext",
+            items: [
+              {
+                url: "https://search.example.com/full",
+                title: "搜索长文",
+                materialId: "mat-search-full",
+                text: FULL,
+              },
+            ],
+          }),
+          toolResult("webSearch", "w-full", { query: "长文研究", count: 1 }, {
+            ok: true,
+            query: "长文研究",
+            items: [
+              {
+                url: "https://search.example.com/full",
+                title: "搜索长文",
+                snippet: "摘要",
+                status: "done",
+                wordCount: FULL.length,
+                materialId: "mat-search-full",
+                truncated: true,
+                text: EXCERPT,
+              },
+            ],
+          }),
+          toolCall("storeMaterial", "s-full", {
+            filename: "搜索长文",
+            mimeType: "text/html",
+            title: "搜索长文",
+          }),
+          toolResult(
+            "storeMaterial",
+            "s-full",
+            { filename: "搜索长文", mimeType: "text/html", title: "搜索长文" },
+            { materialId: "mat-websearch-full", stored: true },
+          ),
+        ),
+        { state, agentMessageId: "m", streamId: "s-websearch-full", runId: "r" },
+      ),
+    );
+
+    expect(state.materials.get("mat-websearch-full")?.text).toBe(FULL);
+    expect(state.materials.get("mat-websearch-full")?.text).not.toBe(EXCERPT);
+    expect(state.materials.get("mat-websearch-full")?.metadata.sourceUrl).toBe(
+      "https://search.example.com/full",
     );
   });
 

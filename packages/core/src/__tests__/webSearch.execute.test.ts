@@ -45,6 +45,8 @@ type WebSearchOutput = {
     snippet: string;
     status: "done" | "browser" | "skipped";
     wordCount: number;
+    materialId: string;
+    truncated: boolean;
     text: string;
   }>;
 };
@@ -135,6 +137,8 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
         snippet: deepseekResult.snippet,
         status: "done",
         wordCount: wordCount(goodText),
+        materialId: "mat-test",
+        truncated: false,
         text: goodText,
       },
     ]);
@@ -264,5 +268,37 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(done.skippedCount).toBe(1);
     expect(done.items.map((item) => item.status)).toEqual(["done", "done", "skipped"]);
     expect(done.items[1]?.wordCount).toBe(wordCount(browserText));
+  });
+
+  it("返回给模型的 text 只含节选,全文经 research-fulltext 旁路写给 bridge", async () => {
+    const longText =
+      "这是一篇超长研究材料，包含事实、背景、关键数据、影响分析、来源信息和完整论证。".repeat(180);
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+    mockSearchDeps.fallbackSearch.mockResolvedValue([
+      { title: "长文来源", url: "https://example.com/long", snippet: "长文摘要" },
+    ]);
+    mockFetchDeps.fetchArticleExecute.mockResolvedValue(
+      articleResult("https://example.com/long", "长文标题", longText, "static"),
+    );
+    const writes: Array<{ type?: string; items?: Array<{ text: string; materialId: string }> }> = [];
+    const writer = { write: vi.fn((chunk) => writes.push(chunk)) };
+
+    const result = await executeWebSearch({ query: "long", count: 1 }, { writer });
+
+    const item = result.items[0]!;
+    expect(item.text.length).toBeLessThanOrEqual(2500);
+    expect(item.text).toBe(longText.slice(0, 2500));
+    expect(item.truncated).toBe(true);
+    expect(item.materialId).toEqual(expect.any(String));
+    expect(item.materialId.length).toBeGreaterThan(0);
+    expect(item.wordCount).toBe(wordCount(longText));
+    expect(item).not.toHaveProperty("__fullText");
+
+    const fullTextChunk = writes.find((write) => write.type === "research-fulltext");
+    expect(fullTextChunk).toBeTruthy();
+    expect(fullTextChunk?.items).toHaveLength(1);
+    expect(fullTextChunk?.items?.[0]?.text).toBe(longText);
+    expect(fullTextChunk?.items?.[0]?.text.length).toBeGreaterThan(2500);
+    expect(fullTextChunk?.items?.[0]?.materialId).toBe(item.materialId);
   });
 });

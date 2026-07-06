@@ -1,4 +1,5 @@
 import { createTool } from "@mastra/core/tools";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ResearchCardBody, ResearchCardItem } from "@qingagent/contract-ts";
 import {
@@ -20,6 +21,7 @@ const DEFAULT_COUNT = 8;
 const MAX_COUNT = 10;
 // 抓取并发 = 召回上限:一次把召回的所有链接并行抓完(不再分批分轮,用户要求全并行)。
 const FETCH_CONCURRENCY = MAX_COUNT;
+const WEBSEARCH_EXCERPT_CHARS = 2500;
 // 整体超时:DeepSeek(只取链接,流式掐断,~2s)与多源(Bing/DDG,~1-3s)并发竞速,
 // DeepSeek 质量更好故优先;5s 内 DeepSeek 没回来就用多源,谁都没回就返回空。
 const SEARCH_TIMEOUT_MS = 5000;
@@ -33,6 +35,7 @@ type ArticleFetchResult = {
   title?: string;
   text?: string;
   wordCount?: number;
+  materialId?: string;
   via?: "static" | "browser";
 };
 
@@ -44,7 +47,13 @@ type WebSearchItem = {
   snippet: string;
   status: WebSearchItemStatus;
   wordCount: number;
+  materialId: string;
+  truncated: boolean;
   text: string;
+};
+
+type WebSearchItemInternal = WebSearchItem & {
+  __fullText: string;
 };
 
 /** 给一个 promise 套超时:超时返回 fallback,并清掉定时器避免泄漏。 */
@@ -187,7 +196,9 @@ export const webSearchTool = createTool({
         snippet: z.string(),
         status: z.enum(["done", "browser", "skipped"]),
         wordCount: z.number(),
-        text: z.string(),
+        materialId: z.string(),
+        truncated: z.boolean(),
+        text: z.string().describe("来源正文节选；truncated=true 表示存在更长全文"),
       }),
     ),
   }),
@@ -258,7 +269,7 @@ export const webSearchTool = createTool({
       );
       await emitSnapshot("fetching", results.length);
 
-      const fetchOne = async (result: SearchResult, index: number): Promise<WebSearchItem> => {
+      const fetchOne = async (result: SearchResult, index: number): Promise<WebSearchItemInternal> => {
         progressItems[index] = { ...progressItems[index]!, status: "fetching", wordCount: null };
         await emitSnapshot("fetching", results.length);
 
@@ -287,7 +298,11 @@ export const webSearchTool = createTool({
         const substantive = isSubstantiveContent(best.text);
         const progressStatus = substantive ? "done" : "skipped";
         const progressWordCount = substantive ? (best.wordCount ?? 0) : null;
-        const text = substantive ? (best.text ?? "") : "";
+        const materialId =
+          best.materialId ?? "mat-" + createHash("sha256").update(result.url).digest("hex").slice(0, 12);
+        const fullText = substantive ? (best.text ?? "") : "";
+        const excerpt = fullText.slice(0, WEBSEARCH_EXCERPT_CHARS);
+        const truncated = fullText.length > WEBSEARCH_EXCERPT_CHARS;
         progressItems[index] = {
           ...progressItems[index]!,
           title: typeof best.title === "string" && best.title.trim() ? best.title : result.title,
@@ -302,13 +317,32 @@ export const webSearchTool = createTool({
           snippet: result.snippet,
           status: substantive ? (best.via === "browser" ? "browser" : "done") : "skipped",
           wordCount: progressWordCount ?? 0,
-          text,
+          materialId,
+          truncated,
+          text: excerpt,
+          __fullText: fullText,
         };
       };
 
       const items = await mapWithConcurrency(results, FETCH_CONCURRENCY, fetchOne);
       await emitSnapshot("done", results.length);
-      return { ok: true, query, items };
+      const fullTexts = items
+        .filter((item) => item.__fullText && isSubstantiveContent(item.__fullText))
+        .map((item) => ({
+          url: item.url,
+          title: item.title,
+          materialId: item.materialId,
+          text: item.__fullText,
+        }));
+      if (fullTexts.length > 0) {
+        try {
+          await writer?.write({ type: "research-fulltext", items: fullTexts });
+        } catch {
+          // 全文旁路只服务 bridge 落库,失败不影响模型侧搜索结果。
+        }
+      }
+      const modelItems: WebSearchItem[] = items.map(({ __fullText: _fullText, ...item }) => item);
+      return { ok: true, query, items: modelItems };
     } finally {
       stopHeartbeat();
     }

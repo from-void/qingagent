@@ -223,6 +223,7 @@ export async function* processAgentStream(
     string,
     { text: string; sourceUrl: string | null; fileId: string | null }
   >());
+  const researchFullTexts = new Map<string, { text: string; materialId: string | null }>();
   const extractionEventsThisTurn: Array<{ text: string; sourceUrl: string | null; fileId: string | null }> = [];
   // 已被某次 storeMaterial 消费的提取:每条提取只绑一次,避免多条素材绑到同一份正文(p08 串台),
   // 同时让多条抓取结果按顺序各自落库可见,而非多次提取时一律 fail-closed 拒绝。
@@ -530,6 +531,18 @@ export async function* processAgentStream(
       if (output?.type === "doc-generation-event") outcome.sawSideEffectToolCall = true;
       const toolOutputCallId =
         typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+      if (output?.type === "research-fulltext" && Array.isArray(output.items)) {
+        for (const raw of output.items) {
+          if (!isRecord(raw) || typeof raw.text !== "string" || !raw.text) continue;
+          const materialId = typeof raw.materialId === "string" ? raw.materialId : null;
+          const entry = { text: raw.text, materialId };
+          const url = typeof raw.url === "string" && raw.url ? raw.url : "";
+          const title = typeof raw.title === "string" ? raw.title.trim() : "";
+          if (url) researchFullTexts.set(url, entry);
+          if (title) researchFullTexts.set(title, entry);
+        }
+        continue;
+      }
       if (output?.type === "doc-generation-event") {
         const event = asDocGenerationEvent(output.event);
         if (!event) {
@@ -1673,12 +1686,16 @@ export async function* processAgentStream(
 
         for (const raw of rawItems) {
           if (!isRecord(raw)) continue;
-          const text = typeof raw.text === "string" ? raw.text : "";
-          if (!text || isExtractionFailureText(text) || !isSubstantiveContent(text)) continue;
           const url = typeof raw.url === "string" && raw.url ? raw.url : null;
+          const title = typeof raw.title === "string" ? raw.title.trim() : "";
+          const cachedFullText =
+            (url ? researchFullTexts.get(url) : undefined) ??
+            (title ? researchFullTexts.get(title) : undefined);
+          const text =
+            cachedFullText?.text ?? (typeof raw.text === "string" ? raw.text : "");
+          if (!text || isExtractionFailureText(text) || !isSubstantiveContent(text)) continue;
           const entry = { text, sourceUrl: url, fileId: null };
           if (url) extractedTexts.set(url, entry);
-          const title = typeof raw.title === "string" ? raw.title.trim() : "";
           if (title) extractedTexts.set(title, entry);
           extractionEventsThisTurn.push(entry);
         }

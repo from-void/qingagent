@@ -1,4 +1,6 @@
 import { createTool } from "@mastra/core/tools";
+import { SpanType } from "@mastra/core/observability";
+import type { Span } from "@mastra/core/observability";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ResearchCardBody, ResearchCardItem } from "@qingagent/contract-ts";
@@ -9,9 +11,11 @@ import {
 import { resolveDeepseekAuth } from "../llm/modelConfig.js";
 import { fetchDeepseekSearchLinks } from "../search/deepseekWebSearch.js";
 import type { SearchResult } from "../search/provider.js";
+import { getCachedSearch, setCachedSearch } from "../search/searchCache.js";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
 import { fetchArticleTool } from "./fetchArticle.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { getObservability } from "../mastra.js";
 
 const MAX_QUERY_LEN = 400;
 // 单轮召回条数放宽(用户走查:每轮只回 4 条,模型要多搜好几轮才够素材,又慢又费)。
@@ -26,6 +30,8 @@ const WEBSEARCH_EXCERPT_CHARS = 2500;
 // DeepSeek 质量更好故优先;5s 内 DeepSeek 没回来就用多源,谁都没回就返回空。
 const SEARCH_TIMEOUT_MS = 5000;
 const ZERO_HIT_NOTE = "未检索到相关结果;请精简为 2-6 个关键词后重试,或改写检索角度";
+
+type SearchLinksSource = "deepseek" | "multisource(DS兜底)" | "multisource(无DeepSeek)" | "cache";
 
 type ToolWriter = {
   write: (chunk: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -66,6 +72,81 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
+function normalizeSearchCachePart(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function buildSearchCacheKey(query: string, keywords: string | null, limit: number, useDeepseek: boolean): string {
+  return [
+    normalizeSearchCachePart(query),
+    normalizeSearchCachePart(keywords ?? ""),
+    String(limit),
+    `ds:${useDeepseek ? 1 : 0}`,
+  ].join("|");
+}
+
+function recordSearchLinksSpan(opts: {
+  query: string;
+  keywords: string | null;
+  source: SearchLinksSource;
+  elapsedMs: number;
+  resultCount: number;
+  cacheHit: boolean;
+  gateDropped?: number;
+}): void {
+  let span: Span<SpanType.GENERIC> | null = null;
+  const telemetry = {
+    queryLen: opts.query.length,
+    keywordsProvided: !!opts.keywords?.trim(),
+    source: opts.source,
+    elapsedMs: opts.elapsedMs,
+    resultCount: opts.resultCount,
+    zeroHit: opts.resultCount === 0,
+    cacheHit: opts.cacheHit,
+    ...(typeof opts.gateDropped === "number" ? { gateDropped: opts.gateDropped } : {}),
+  };
+  try {
+    const instance = getObservability()?.getDefaultInstance();
+    if (!instance) return;
+    span = instance.startSpan({
+      type: SpanType.GENERIC,
+      name: "webSearch.links",
+      attributes: telemetry as never,
+      metadata: {
+        eventKind: "web_search_links",
+        ...telemetry,
+      },
+      input: {
+        queryLen: telemetry.queryLen,
+        keywordsProvided: telemetry.keywordsProvided,
+      },
+    }) as Span<SpanType.GENERIC>;
+  } catch {
+    return;
+  }
+
+  try {
+    span.end({
+      attributes: {
+        success: true,
+        ...telemetry,
+      } as never,
+      metadata: {
+        status: "done",
+        ...telemetry,
+      },
+      output: {
+        resultCount: opts.resultCount,
+        zeroHit: telemetry.zeroHit,
+        cacheHit: opts.cacheHit,
+        source: opts.source,
+      },
+    });
+  } catch {
+    // 可观测写入失败不能影响搜索主链。
+  }
+}
+
 async function searchLinks(
   query: string,
   keywords: string | null,
@@ -73,13 +154,22 @@ async function searchLinks(
   requestDeepseekKey: string,
 ): Promise<SearchResult[]> {
   const t0 = Date.now();
-  const done = (results: SearchResult[], src: string) => {
-    const msg = `[webSearch] "${query.slice(0, 24)}" ${Date.now() - t0}ms via ${src} ${results.length}条`;
+  const done = (results: SearchResult[], src: SearchLinksSource) => {
+    const elapsedMs = Date.now() - t0;
+    const msg = `[webSearch] "${query.slice(0, 24)}" ${elapsedMs}ms via ${src} ${results.length}条`;
     // 0 召回升级为 warn,便于生产里定位"搜了个常见词却空"的瞬时双重落空。
     // eslint-disable-next-line no-console
     if (results.length === 0) console.warn(`${msg} ⚠0召回`);
     // eslint-disable-next-line no-console
     else console.log(msg);
+    recordSearchLinksSpan({
+      query,
+      keywords,
+      source: src,
+      elapsedMs,
+      resultCount: results.length,
+      cacheHit: src === "cache",
+    });
     return results;
   };
 
@@ -94,6 +184,14 @@ async function searchLinks(
   // web_search 即自动走 DeepSeek。
   const deepseekKey = primaryConfig.apiKey || requestDeepseekKey || "";
   const useDeepseek = primaryConfig.enabled && !!deepseekKey;
+  const cacheKey = buildSearchCacheKey(query, keywords, limit, useDeepseek);
+  const cached = getCachedSearch(cacheKey);
+  if (cached) return done(cached, "cache");
+
+  const doneAndCache = (results: SearchResult[], src: Exclude<SearchLinksSource, "cache">) => {
+    if (results.length > 0) setCachedSearch(cacheKey, results);
+    return done(results, src);
+  };
 
   // 多源(Bing/DuckDuckGo + 已配置 API 源)始终并发起跑,作为兜底/补充。
   const effectiveKeywords = keywords?.trim() || query;
@@ -106,7 +204,7 @@ async function searchLinks(
     });
 
   if (!useDeepseek) {
-    return done(await withTimeout(fastPromise, SEARCH_TIMEOUT_MS, []), "multisource(无DeepSeek)");
+    return doneAndCache(await withTimeout(fastPromise, SEARCH_TIMEOUT_MS, []), "multisource(无DeepSeek)");
   }
 
   // DeepSeek 只取来源链接(流式读到搜索结果即掐断,不等综述,典型 ~2s),质量优先。
@@ -119,11 +217,20 @@ async function searchLinks(
   // 质量优先:5s 内等 DeepSeek;有结果就用它。
   const startedAt = Date.now();
   const deepseekLinks = await withTimeout(deepseekPromise, SEARCH_TIMEOUT_MS, []);
-  if (deepseekLinks.length > 0) return done(deepseekLinks, "deepseek");
+  if (deepseekLinks.length > 0) return doneAndCache(deepseekLinks, "deepseek");
 
   // DeepSeek 超时/空 → 用并发已就绪的多源(在 5s 总预算的剩余时间内)。
   const remain = SEARCH_TIMEOUT_MS - (Date.now() - startedAt);
-  return done(await withTimeout(fastPromise, remain, []), "multisource(DS兜底)");
+  return doneAndCache(await withTimeout(fastPromise, remain, []), "multisource(DS兜底)");
+}
+
+export async function searchLinksForEval(
+  query: string,
+  keywords: string | null,
+  limit: number,
+  requestDeepseekKey: string,
+): Promise<SearchResult[]> {
+  return searchLinks(query, keywords, limit, requestDeepseekKey);
 }
 
 async function mapWithConcurrency<T, U>(

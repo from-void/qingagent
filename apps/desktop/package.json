@@ -21,6 +21,7 @@
     "dotenv": "^16.4.7",
     "electron-updater": "^6.8.9",
     "libsql": "^0.5.29",
+    "pdf-parse": "^2.4.5",
     "playwright": "1.60.0"
   },
   "devDependencies": {

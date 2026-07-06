@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { Buffer } from "node:buffer";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
+import { loadPdfParseConstructor } from "../utils/pdfParse.js";
 
 export interface ExtractedArticleContent {
   title: string;
@@ -93,7 +94,7 @@ const MAX_PDF_BYTES = 30 * 1024 * 1024;
 async function extractPdfText(
   buffer: Buffer,
 ): Promise<{ text: string; pages: number; title: string | null }> {
-  const { PDFParse } = await import("pdf-parse");
+  const PDFParse = await loadPdfParseConstructor();
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
     const textResult = await parser.getText();

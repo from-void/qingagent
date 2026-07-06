@@ -49,7 +49,7 @@ electron-builder ...      # ② 套壳出安装包(读 electron-builder.yml)
 ### 2.2 main 是 ESM,但 native 模块要 external + 运行时 require
 
 `build.mjs` 的 `sharedOptions.external` 把这些留给运行时解析,不让 esbuild 打:
-- `electron`、`libsql` / `@libsql/*`(原生 `.node`,按平台)、`playwright` / `playwright-core` / `chromium-bidi`、`pyodide`。
+- `electron`、`libsql` / `@libsql/*`(原生 `.node`,按平台)、`pdf-parse`、`playwright` / `playwright-core` / `chromium-bidi`、`pyodide`。
 - 工作区包(`@qingagent/server`、`@qingagent/core` 等导出的是裸 `.ts`)**要被 bundle 进** main(不在 external)。
 
 ### 2.3 libsql 原生按平台打
@@ -57,6 +57,9 @@ electron-builder ...      # ② 套壳出安装包(读 electron-builder.yml)
 每个目标平台都要带对应的 `@libsql/<platform>` 原生:
 - mac:`@libsql/darwin-arm64` / `darwin-x64`(在对应 Mac 上 `pnpm install` 自带)。
 - win 交叉构建:必须**手动注入** `@libsql/win32-x64-msvc`(见 BUILD-windows.md §2),否则启动 `Cannot find module`。
+
+PDF 解析的 `pdf-parse` 运行时依赖 `@napi-rs/canvas` 的平台原生包:
+- win 交叉构建:必须**手动注入** `@napi-rs/canvas-win32-x64-msvc`(见 BUILD-windows.md §2),否则 PDF 解析链路可能在 native canvas 加载时失败。
 
 ### 2.4 asar 关闭、agent-browser 二进制排除
 

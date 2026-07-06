@@ -4,9 +4,9 @@
 # 做四件事:
 #   1) 构建 web 前端 + electron main/preload(esbuild)
 #   2) electron-builder --win --dir 出 win-unpacked(无 wine,不出 nsis)
-#   3) 注入 win 版 libsql 原生(@libsql/win32-x64-msvc),去掉错误平台的 linux 原生
+#   3) 注入 win 版原生依赖(libsql + @napi-rs/canvas),去掉错误平台的 linux 原生
 #      —— pnpm 在 Linux 上只装 linux 原生,直接打进 win 包会导致
-#         Windows 上 "Cannot find module '@libsql/win32-x64-msvc'"
+#         Windows 上 "Cannot find module '@libsql/win32-x64-msvc'" 或 canvas native 加载失败
 #   4) 把整个 win-unpacked 复制到 Windows 本地盘 C:\qingagent\win-unpacked
 #      —— 从本地盘运行才有硬件加速;从 \\wsl.localhost UNC 路径运行 GPU 子进程会崩
 #
@@ -20,6 +20,7 @@ set -euo pipefail
 DESKTOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$DESKTOP_DIR/../.." && pwd)"
 LIBSQL_VERSION="0.5.29"                       # 须与 desktop/package.json 中 libsql 主包一致
+CANVAS_WIN_PACKAGE="@napi-rs/canvas-win32-x64-msvc"
 # Windows 落地目录,默认 C:\qingagent;多 worktree 并行打包时用 QINGAGENT_WIN_DEST 覆盖
 # (如 /mnt/c/qingagent-skillmanage),避免互相 rm -rf/文件锁冲突。
 WIN_DEST="${QINGAGENT_WIN_DEST:-/mnt/c/qingagent}"
@@ -49,16 +50,26 @@ pnpm exec electron-builder --win --dir -c.asar=false   # 只出 win-unpacked,nsi
 
 UNPACKED="$DESKTOP_DIR/release/win-unpacked"
 LIBSQL_DIR="$UNPACKED/resources/app/node_modules/@libsql"
+NAPI_RS_DIR="$UNPACKED/resources/app/node_modules/@napi-rs"
+CANVAS_WIN_VERSION="$(node -e 'const { createRequire } = require("node:module"); const { dirname, join } = require("node:path"); const { existsSync, readFileSync } = require("node:fs"); const req = createRequire(process.argv[1] + "/package.json"); let dir = dirname(req.resolve("pdf-parse")); while (dir !== dirname(dir)) { const pkg = join(dir, "package.json"); if (existsSync(pkg) && JSON.parse(readFileSync(pkg, "utf8")).name === "pdf-parse") break; dir = dirname(dir); } const canvasPkg = createRequire(join(dir, "package.json")).resolve("@napi-rs/canvas/package.json"); const canvas = JSON.parse(readFileSync(canvasPkg, "utf8")); process.stdout.write(canvas.optionalDependencies["@napi-rs/canvas-win32-x64-msvc"]);' "$DESKTOP_DIR")"
 
-echo "==> [3/4] 注入 win 版 libsql 原生 ($LIBSQL_VERSION)"
+echo "==> [3/4] 注入 win 版原生依赖"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-( cd "$TMP" && npm pack "@libsql/win32-x64-msvc@$LIBSQL_VERSION" >/dev/null && tar -xzf ./*.tgz )
+( mkdir -p "$TMP/libsql" && cd "$TMP/libsql" && npm pack "@libsql/win32-x64-msvc@$LIBSQL_VERSION" >/dev/null && tar -xzf ./*.tgz )
 # 去掉打进来的错误平台原生,只留 win32
 rm -rf "$LIBSQL_DIR"/linux-x64-gnu "$LIBSQL_DIR"/linux-x64-musl "$LIBSQL_DIR"/darwin-* 2>/dev/null || true
 mkdir -p "$LIBSQL_DIR/win32-x64-msvc"
-cp -r "$TMP"/package/* "$LIBSQL_DIR/win32-x64-msvc/"
+cp -r "$TMP"/libsql/package/* "$LIBSQL_DIR/win32-x64-msvc/"
 echo "    @libsql 现有平台: $(ls "$LIBSQL_DIR")"
+
+( mkdir -p "$TMP/canvas" && cd "$TMP/canvas" && npm pack "$CANVAS_WIN_PACKAGE@$CANVAS_WIN_VERSION" >/dev/null && tar -xzf ./*.tgz )
+# pdf-parse 依赖的 @napi-rs/canvas 也有平台原生包。WSL/Linux 只会装 linux 包,
+# win-unpacked 需要 win32-x64-msvc,否则 Windows 运行时会从 js-binding 加载失败。
+rm -rf "$NAPI_RS_DIR"/canvas-linux-* "$NAPI_RS_DIR"/canvas-darwin-* "$NAPI_RS_DIR"/canvas-android-* 2>/dev/null || true
+mkdir -p "$NAPI_RS_DIR/canvas-win32-x64-msvc"
+cp -r "$TMP"/canvas/package/* "$NAPI_RS_DIR/canvas-win32-x64-msvc/"
+echo "    @napi-rs 现有平台: $(find "$NAPI_RS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f ')"
 
 echo "==> [4/4] 复制到 Windows 本地盘 $WIN_DEST"
 if [ -d /mnt/c ]; then

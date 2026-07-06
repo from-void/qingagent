@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 import { aiIrToPm, type AiDocument } from "@qingagent/pm-schema";
 import { extractJson } from "../bridge/docGenerator.js";
 import {
+  AiDocumentParseError,
   buildAiIrPrompt,
   buildAiIrRetryUserPrompt,
   compileAiDocumentWithBlockRetry,
   materialContextFrom,
+  parseAiDocumentFromQingml,
   parseAiDocumentFromText,
   parseAiDocumentFromTextDetailed,
 } from "../tools/generateDoc.js";
@@ -102,6 +104,42 @@ describe("generateDoc PM AI-IR helpers", () => {
       type: "heading",
       runs: [{ text: 'AI落地的"最后一公里"为什么卡在流程上' }],
     });
+  });
+
+  it("parseAiDocumentFromQingml:正常 QingML 解析为 document.blocks", () => {
+    const parsed = parseAiDocumentFromQingml(
+      `<title>QingML 标题</title><h2>小节</h2><p>正文 <b>重点</b></p>`,
+      "回退标题",
+    );
+
+    expect(parsed.document.title).toBe("QingML 标题");
+    expect(parsed.document.blocks).toMatchObject([
+      { type: "heading", level: 2, runs: [{ text: "小节" }] },
+      { type: "paragraph", runs: [{ text: "正文 " }, { text: "重点", marks: [{ type: "bold" }] }] },
+    ]);
+    expect(parsed.diagnostics).toMatchObject({ extracted: expect.stringContaining("<p>正文"), repaired: false });
+  });
+
+  it("parseAiDocumentFromQingml:bad-block 映射为 AiDocumentParseError/qingml_bad_block", () => {
+    expect(() => parseAiDocumentFromQingml(`<pre>text<p>block</p></pre>`, "坏块")).toThrow(AiDocumentParseError);
+    try {
+      parseAiDocumentFromQingml(`<pre>text<p>block</p></pre>`, "坏块");
+      throw new Error("expected parse failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiDocumentParseError);
+      expect((error as AiDocumentParseError).diagnostics.failureKind).toBe("qingml_bad_block");
+      expect((error as Error).message).toContain("raw-text-child-tag");
+    }
+  });
+
+  it("parseAiDocumentFromQingml:空 blocks 映射为 qingml_empty", () => {
+    try {
+      parseAiDocumentFromQingml("", "空文档");
+      throw new Error("expected parse failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiDocumentParseError);
+      expect((error as AiDocumentParseError).diagnostics.failureKind).toBe("qingml_empty");
+    }
   });
 
   it("extractJson:真实 flat-04 裸引号失败样本可由真实解析器修复", () => {

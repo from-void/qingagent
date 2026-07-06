@@ -48,6 +48,8 @@ type DomNode = {
   attribs?: Record<string, string>;
   data?: string;
   children?: DomNode[];
+  startIndex?: number | null;
+  endIndex?: number | null;
 };
 
 type DomElement = DomNode & {
@@ -59,6 +61,7 @@ type DomElement = DomNode & {
 type ParseContext = {
   warnings: QingmlWarning[];
   warningKeys: Set<string>;
+  source: string;
 };
 
 type InlineOptions = {
@@ -167,7 +170,7 @@ export function qingmlParseFragment(text: string, action: FragmentAction): Qingm
 }
 
 function createContext(): ParseContext {
-  return { warnings: [], warningKeys: new Set() };
+  return { warnings: [], warningKeys: new Set(), source: "" };
 }
 
 function warn(ctx: ParseContext, kind: string, severity: QingmlWarning["severity"], detail: string): void {
@@ -179,11 +182,14 @@ function warn(ctx: ParseContext, kind: string, severity: QingmlWarning["severity
 
 function parseQingmlNodes(text: string, ctx: ParseContext): DomNode[] {
   const stripped = stripFence(text, ctx);
+  ctx.source = stripped;
   const document = parseDocument(stripped, {
     decodeEntities: true,
     lowerCaseAttributeNames: true,
     lowerCaseTags: true,
     recognizeSelfClosing: true,
+    withStartIndices: true,
+    withEndIndices: true,
   }) as unknown as DomNode;
   return document.children ?? [];
 }
@@ -257,8 +263,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "hr":
       return { type: "horizontalRule" };
     case "pre":
-      warnIfRawTextElementHasTags(element, ctx);
-      return { type: "codeBlock", language: optionalString(element.attribs.lang), text: textContent(element.children) };
+      return { type: "codeBlock", language: optionalString(element.attribs.lang), text: rawTextElementText(element, ctx) };
     case "table":
       return { type: "table", rows: parseTableRows(element, ctx) };
     case "callout": {
@@ -272,11 +277,9 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "columns":
       return { type: "columnList", columns: parseColumns(element, ctx) };
     case "mermaid":
-      warnIfRawTextElementHasTags(element, ctx);
-      return { type: "diagram", lang: "mermaid", source: textContent(element.children).trim() };
+      return { type: "diagram", lang: "mermaid", source: rawTextElementText(element, ctx).trim() };
     case "math-block":
-      warnIfRawTextElementHasTags(element, ctx);
-      return { type: "blockMath", latex: textContent(element.children).trim() };
+      return { type: "blockMath", latex: rawTextElementText(element, ctx).trim() };
     case "img": {
       const block: AiBlock = { type: "image", src: element.attribs.src ?? "" };
       const alt = optionalString(element.attribs.alt);
@@ -711,13 +714,112 @@ function appendSyntheticBreakIfNeeded(nodes: DomNode[]): void {
   nodes.push({ type: "text", data: "\n" });
 }
 
-function warnIfRawTextElementHasTags(element: DomElement, ctx: ParseContext): void {
-  if (!containsAnyTag(element.children)) return;
+function rawTextElementText(element: DomElement, ctx: ParseContext): string {
+  if (!containsAnyTag(element.children)) return textContent(element.children);
+  if (!canRebuildRawTextElement(element)) {
+    warnRawTextChildTag(element, ctx);
+    return textContent(element.children);
+  }
+  return rebuildRawTextElementChildren(element, ctx);
+}
+
+function canRebuildRawTextElement(element: DomElement): boolean {
+  return !containsBlockTag(element.children);
+}
+
+function warnRawTextChildTag(element: DomElement, ctx: ParseContext): void {
   warn(ctx, "raw-text-child-tag", "bad-block", `<${element.name}> 内出现子标签，通常表示代码/公式里的 < 没有按 &lt; 转义。`);
 }
 
 function containsAnyTag(nodes: readonly DomNode[]): boolean {
   return nodes.some((node) => isTag(node) || containsAnyTag(node.children ?? []));
+}
+
+function containsBlockTag(nodes: readonly DomNode[]): boolean {
+  return nodes.some((node) => {
+    if (!isTag(node)) return false;
+    if (isBlockTagName(node.name)) return true;
+    return containsBlockTag(node.children);
+  });
+}
+
+function rebuildRawTextElementChildren(element: DomElement, ctx: ParseContext): string {
+  const sourceText = rawTextSourceSlice(element, ctx.source);
+  if (sourceText !== null) return decodeRawTextEntities(sourceText);
+  return serializeRawTextNodes(element.children);
+}
+
+function rawTextSourceSlice(element: DomElement, source: string): string | null {
+  if (!source) return null;
+  if (typeof element.startIndex !== "number" || typeof element.endIndex !== "number") return null;
+  const openEnd = source.indexOf(">", element.startIndex);
+  if (openEnd < 0 || openEnd > element.endIndex) return null;
+  const fullElementSource = source.slice(element.startIndex, element.endIndex + 1);
+  const closing = new RegExp(`</\\s*${escapeRegExp(element.name)}\\s*>\\s*$`, "i").exec(fullElementSource);
+  const innerEnd = closing ? element.startIndex + closing.index : element.endIndex + 1;
+  if (innerEnd < openEnd + 1) return null;
+  return source.slice(openEnd + 1, innerEnd);
+}
+
+function serializeRawTextNodes(nodes: readonly DomNode[]): string {
+  let out = "";
+  for (const node of nodes) {
+    if (isText(node)) {
+      out += node.data ?? "";
+      continue;
+    }
+    if (!isTag(node)) {
+      out += serializeRawTextNodes(node.children ?? []);
+      continue;
+    }
+    const attrs = serializeRawTextAttrs(node.attribs);
+    if (node.children.length === 0) {
+      out += `<${node.name}${attrs}/>`;
+      continue;
+    }
+    out += `<${node.name}${attrs}>${serializeRawTextNodes(node.children)}</${node.name}>`;
+  }
+  return out;
+}
+
+function serializeRawTextAttrs(attribs: Record<string, string>): string {
+  return Object.entries(attribs)
+    .map(([key, value]) => value === "" ? ` ${key}` : ` ${key}="${escapeRawTextAttr(value)}"`)
+    .join("");
+}
+
+function escapeRawTextAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function decodeRawTextEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-fA-F]+|#\d+|lt|gt|amp|quot|apos);/g, (_, entity: string) => {
+    switch (entity) {
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "amp":
+        return "&";
+      case "quot":
+        return '"';
+      case "apos":
+        return "'";
+      default:
+        if (entity.startsWith("#x")) return codePointToString(Number.parseInt(entity.slice(2), 16));
+        if (entity.startsWith("#")) return codePointToString(Number.parseInt(entity.slice(1), 10));
+        return `&${entity};`;
+    }
+  });
+}
+
+function codePointToString(codePoint: number): string {
+  if (!Number.isFinite(codePoint)) return "";
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return "";
+  }
 }
 
 function containsStructuralTag(nodes: readonly DomNode[]): boolean {
@@ -817,4 +919,8 @@ function describeNode(node: DomNode): string {
   if (isText(node)) return "text";
   if (isTag(node)) return `<${node.name}>`;
   return node.type;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

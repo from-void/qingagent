@@ -125,10 +125,17 @@ describe("qingmlParse", () => {
     ]);
   });
 
-  it("检测未转义 pre 子标签为 bad-block，转义版本正常还原尖括号", () => {
-    const bad = qingmlParse(`<pre lang="cpp">#include <stdio.h>`);
-    expectValidBlocks(bad.blocks);
-    expect(bad.warnings).toContainEqual({
+  it("未转义 pre 子标签按 raw island 静默重建，块级泄漏仍记 bad-block", () => {
+    const repaired = qingmlParse(`<pre lang="cpp">#include <stdio.h>\nvector<int> v;</pre>`);
+    expectValidBlocks(repaired.blocks);
+    expect(repaired.blocks[0]).toMatchObject({ type: "codeBlock", language: "cpp" });
+    expect(repaired.blocks[0]?.type === "codeBlock" ? repaired.blocks[0].text : "").toContain("#include <stdio.h>");
+    expect(repaired.blocks[0]?.type === "codeBlock" ? repaired.blocks[0].text : "").toContain("vector<int>");
+    expect(repaired.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
+
+    const leaked = qingmlParse(`<pre>text<p>block</p></pre>`);
+    expectValidBlocks(leaked.blocks);
+    expect(leaked.warnings).toContainEqual({
       kind: "raw-text-child-tag",
       severity: "bad-block",
       detail: "<pre> 内出现子标签，通常表示代码/公式里的 < 没有按 &lt; 转义。",

@@ -21,8 +21,8 @@ vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
   };
 });
 
-function aiIrParagraph(text: string): string {
-  return JSON.stringify([{ type: "paragraph", runs: [{ text }] }]);
+function qingmlParagraph(text: string): string {
+  return `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>`;
 }
 
 function mockGenerateReturning(...payloads: string[]) {
@@ -115,10 +115,10 @@ describe("writeDraft 赛马式字数控制", () => {
     const { tool, state } = await makeTool();
     // 目标 100(±10% → 90-110):两路分别 200/95,第二路达标
     mockGenerateReturning(
-      aiIrParagraph("a".repeat(200)),
-      aiIrParagraph("b".repeat(95)),
-      aiIrParagraph("c".repeat(140)),
-      aiIrParagraph("d".repeat(160)),
+      qingmlParagraph("a".repeat(200)),
+      qingmlParagraph("b".repeat(95)),
+      qingmlParagraph("c".repeat(140)),
+      qingmlParagraph("d".repeat(160)),
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
@@ -135,10 +135,10 @@ describe("writeDraft 赛马式字数控制", () => {
   it("最快候选未达标时不截停慢一点的达标候选", async () => {
     const { tool } = await makeTool();
     mockGenerateReturningDelayed(
-      { raw: aiIrParagraph("a".repeat(200)), delayMs: 0 },
-      { raw: aiIrParagraph("b".repeat(100)), delayMs: 25 },
-      { raw: aiIrParagraph("c".repeat(95)), delayMs: 500 },
-      { raw: aiIrParagraph("d".repeat(80)), delayMs: 500 },
+      { raw: qingmlParagraph("a".repeat(200)), delayMs: 0 },
+      { raw: qingmlParagraph("b".repeat(100)), delayMs: 25 },
+      { raw: qingmlParagraph("c".repeat(95)), delayMs: 500 },
+      { raw: qingmlParagraph("d".repeat(80)), delayMs: 500 },
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
@@ -152,10 +152,10 @@ describe("writeDraft 赛马式字数控制", () => {
   it("min bound 首轮全合格:count>=min 即接受,不启动第二轮", async () => {
     const { tool } = await makeTool();
     mockGenerateReturning(
-      aiIrParagraph("a".repeat(120)),
-      aiIrParagraph("b".repeat(125)),
-      aiIrParagraph("c".repeat(140)),
-      aiIrParagraph("d".repeat(160)),
+      qingmlParagraph("a".repeat(120)),
+      qingmlParagraph("b".repeat(125)),
+      qingmlParagraph("c".repeat(140)),
+      qingmlParagraph("d".repeat(160)),
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100, lengthBound: "min" });
@@ -170,10 +170,10 @@ describe("writeDraft 赛马式字数控制", () => {
   it("一轮 4 路中有命中:不加赛,标 accepted_first_pass", async () => {
     const { tool } = await makeTool();
     mockGenerateReturning(
-      aiIrParagraph("a".repeat(200)),
-      aiIrParagraph("b".repeat(250)),
-      aiIrParagraph("e".repeat(100)),
-      aiIrParagraph("f".repeat(400)),
+      qingmlParagraph("a".repeat(200)),
+      qingmlParagraph("b".repeat(250)),
+      qingmlParagraph("e".repeat(100)),
+      qingmlParagraph("f".repeat(400)),
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
@@ -189,8 +189,8 @@ describe("writeDraft 赛马式字数控制", () => {
     const { tool } = await makeTool();
     // 4 路全脱靶,全场最近 = 150
     mockGenerateReturning(
-      ...["a", "b"].map((ch) => aiIrParagraph(ch.repeat(300))),
-      ...["e", "f"].map((ch, i) => aiIrParagraph(ch.repeat(i === 0 ? 150 : 280))),
+      ...["a", "b"].map((ch) => qingmlParagraph(ch.repeat(300))),
+      ...["e", "f"].map((ch, i) => qingmlParagraph(ch.repeat(i === 0 ? 150 : 280))),
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
@@ -203,10 +203,10 @@ describe("writeDraft 赛马式字数控制", () => {
   it("不带字数:也固定一轮 4 路,取首个可用候选", async () => {
     const { tool } = await makeTool();
     mockGenerateReturning(
-      aiIrParagraph("随便写".repeat(50)),
-      aiIrParagraph("第二路"),
-      aiIrParagraph("第三路"),
-      aiIrParagraph("第四路"),
+      qingmlParagraph("随便写".repeat(50)),
+      qingmlParagraph("第二路"),
+      qingmlParagraph("第三路"),
+      qingmlParagraph("第四路"),
     );
 
     const out = await run(tool, { title: "t", outline: "o" });
@@ -222,10 +222,10 @@ describe("writeDraft 赛马式字数控制", () => {
     process.env.QINGAGENT_RACE_ROUNDS = "1";
     const { tool } = await makeTool();
     mockGenerateReturning(
-      aiIrParagraph("a".repeat(200)),
-      aiIrParagraph("b".repeat(95)),
-      aiIrParagraph("c".repeat(180)),
-      aiIrParagraph("d".repeat(170)),
+      qingmlParagraph("a".repeat(200)),
+      qingmlParagraph("b".repeat(95)),
+      qingmlParagraph("c".repeat(180)),
+      qingmlParagraph("d".repeat(170)),
     );
 
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
@@ -236,9 +236,9 @@ describe("writeDraft 赛马式字数控制", () => {
 
   it("赛马全路解析失败:不串行兜底,快速返回 ok:false、发 failed 进度帧并提示重调 writeDraft", async () => {
     const { tool } = await makeTool();
-    // 4 路全吐半截 JSON → 不再串行补救。
+    // 4 路全吐坏 QingML → 不再串行补救。
     mockGenerateReturning(
-      ...Array.from({ length: 4 }, () => '[{"type":"paragraph","runs":[{"text":"半'),
+      ...Array.from({ length: 4 }, () => "<pre>text<p>block</p></pre>"),
     );
     const writes: Array<Record<string, unknown>> = [];
     const ctx = { writer: { write: (chunk: Record<string, unknown>) => void writes.push(chunk) } };
@@ -254,10 +254,10 @@ describe("writeDraft 赛马式字数控制", () => {
   it("流式展示粘滞:首个吐正文的 lane 获得展示权,其它 lane 字数反超也不切", async () => {
     const { tool } = await makeTool();
     mockGenerateReturningDelayed(
-      { raw: aiIrParagraph("a".repeat(40)), delayMs: 40, streamRaw: true },
-      { raw: aiIrParagraph("b".repeat(180)), delayMs: 45, streamRaw: true },
-      { raw: aiIrParagraph("c".repeat(100)), delayMs: 60, streamRaw: true },
-      { raw: aiIrParagraph("d".repeat(80)), delayMs: 80, streamRaw: true },
+      { raw: qingmlParagraph("a".repeat(40)), delayMs: 40, streamRaw: true },
+      { raw: qingmlParagraph("b".repeat(180)), delayMs: 45, streamRaw: true },
+      { raw: qingmlParagraph("c".repeat(100)), delayMs: 60, streamRaw: true },
+      { raw: qingmlParagraph("d".repeat(80)), delayMs: 80, streamRaw: true },
     );
     const writes: Array<Record<string, unknown>> = [];
     const ctx = { writer: { write: (chunk: Record<string, unknown>) => void writes.push(chunk) } };
@@ -278,7 +278,7 @@ describe("writeDraft 赛马式字数控制", () => {
     callDeepseekDraftMock
       .mockImplementationOnce((input: DeepseekCall) =>
         new Promise((resolve, reject) => {
-          const raw = aiIrParagraph("a".repeat(100));
+          const raw = qingmlParagraph("a".repeat(100));
           const timer = setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 80);
           const onAbort = () => {
             clearTimeout(timer);
@@ -291,7 +291,7 @@ describe("writeDraft 赛马式字数控制", () => {
       )
       .mockImplementationOnce((input: DeepseekCall) =>
         new Promise((resolve) => {
-          const raw = aiIrParagraph("b".repeat(90));
+          const raw = qingmlParagraph("b".repeat(90));
           input.onContentStart?.();
           input.onContentDelta?.(raw, raw);
           setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 20);
@@ -299,7 +299,7 @@ describe("writeDraft 赛马式字数控制", () => {
       )
       .mockImplementationOnce((input: DeepseekCall) =>
         new Promise((resolve) => {
-          const raw = aiIrParagraph("c".repeat(80));
+          const raw = qingmlParagraph("c".repeat(80));
           input.onContentStart?.();
           input.onContentDelta?.(raw, raw);
           setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 40);
@@ -307,7 +307,7 @@ describe("writeDraft 赛马式字数控制", () => {
       )
       .mockImplementationOnce((input: DeepseekCall) =>
         new Promise((resolve) => {
-          const raw = aiIrParagraph("d".repeat(70));
+          const raw = qingmlParagraph("d".repeat(70));
           input.onContentStart?.();
           input.onContentDelta?.(raw, raw);
           setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 60);
@@ -329,19 +329,19 @@ describe("writeDraft 赛马式字数控制", () => {
     const { tool } = await makeTool();
     callDeepseekDraftMock
       .mockImplementationOnce((input: DeepseekCall) => {
-        const raw = aiIrParagraph("a".repeat(40));
+        const raw = qingmlParagraph("a".repeat(40));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
         return new Promise((_resolve, reject) => setTimeout(() => reject(new Error("stream broke")), 20));
       })
       .mockImplementationOnce((input: DeepseekCall) => {
-        const raw = aiIrParagraph("b".repeat(80));
+        const raw = qingmlParagraph("b".repeat(80));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
         return new Promise((resolve) => setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 80));
       })
       .mockImplementationOnce((input: DeepseekCall) => {
-        const raw = aiIrParagraph("c".repeat(100));
+        const raw = qingmlParagraph("c".repeat(100));
         return new Promise((resolve) => setTimeout(() => {
           input.onContentStart?.();
           input.onContentDelta?.(raw, raw);
@@ -349,7 +349,7 @@ describe("writeDraft 赛马式字数控制", () => {
         }, 120));
       })
       .mockImplementationOnce((input: DeepseekCall) => {
-        const raw = aiIrParagraph("d".repeat(60));
+        const raw = qingmlParagraph("d".repeat(60));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
         return new Promise((resolve) => setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 120));
@@ -373,13 +373,13 @@ describe("writeDraft 赛马式字数控制", () => {
     callDeepseekDraftMock.mockImplementation((input: DeepseekCall) =>
       new Promise((resolve) => {
         input.onContentStart?.();
-        const raw10 = aiIrParagraph("a".repeat(10));
+        const raw10 = qingmlParagraph("a".repeat(10));
         input.onContentDelta?.(raw10, raw10);
-        const raw20 = aiIrParagraph("a".repeat(20));
+        const raw20 = qingmlParagraph("a".repeat(20));
         input.onContentDelta?.(raw20, raw20);
-        const raw35 = aiIrParagraph("a".repeat(35));
+        const raw35 = qingmlParagraph("a".repeat(35));
         input.onContentDelta?.(raw35, raw35);
-        setTimeout(() => resolve({ raw: aiIrParagraph("a".repeat(100)), contentStartMs: 0, finishReason: "stop" }), 10);
+        setTimeout(() => resolve({ raw: qingmlParagraph("a".repeat(100)), contentStartMs: 0, finishReason: "stop" }), 10);
       }),
     );
     const writes: Array<Record<string, unknown>> = [];
@@ -401,10 +401,10 @@ describe("writeDraft 赛马式字数控制", () => {
     vi.useFakeTimers();
     const { tool } = await makeTool();
     mockGenerateReturningDelayed(
-      { raw: aiIrParagraph("a".repeat(100)), delayMs: 11_000 },
-      { raw: aiIrParagraph("b".repeat(90)), delayMs: 11_000 },
-      { raw: aiIrParagraph("c".repeat(95)), delayMs: 11_000 },
-      { raw: aiIrParagraph("d".repeat(80)), delayMs: 11_000 },
+      { raw: qingmlParagraph("a".repeat(100)), delayMs: 11_000 },
+      { raw: qingmlParagraph("b".repeat(90)), delayMs: 11_000 },
+      { raw: qingmlParagraph("c".repeat(95)), delayMs: 11_000 },
+      { raw: qingmlParagraph("d".repeat(80)), delayMs: 11_000 },
     );
     const writes: Array<Record<string, unknown>> = [];
     const ctx = { writer: { write: (chunk: Record<string, unknown>) => void writes.push(chunk) } };

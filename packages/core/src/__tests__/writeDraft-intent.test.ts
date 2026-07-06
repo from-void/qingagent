@@ -39,80 +39,38 @@ interface DeepseekCall {
   onContentDelta?: (delta: string, raw: string) => void;
 }
 
-function aiIrParagraph(text: string): string {
+function qingmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+function qingmlParagraph(text: string): string {
+  return `<p>${qingmlText(text)}</p>`;
+}
+
+function aiIrParagraphJson(text: string): string {
   return JSON.stringify([{ type: "paragraph", runs: [{ text }] }]);
 }
 
-function twoLevelListAiIr(): string {
-  return JSON.stringify([{
-    type: "bulletList",
-    items: [
-      {
-        runs: [{ text: "打开项目" }],
-        children: [{
-          type: "bulletList",
-          items: [
-            { runs: [{ text: "安装依赖" }] },
-            { runs: [{ text: "启动服务" }] },
-          ],
-        }],
-      },
-      { runs: [{ text: "运行测试" }] },
-    ],
-  }]);
+function twoLevelListQingml(): string {
+  return [
+    "<ul>",
+    "<li>打开项目<ul><li>安装依赖</li><li>启动服务</li></ul></li>",
+    "<li>运行测试</li>",
+    "</ul>",
+  ].join("");
 }
 
-function threeLevelListAiIr(): string {
-  return JSON.stringify([{
-    type: "bulletList",
-    items: [
-      {
-        runs: [{ text: "选题阶段" }],
-        children: [{
-          type: "bulletList",
-          items: [{
-            runs: [{ text: "明确问题" }],
-            children: [{
-              type: "bulletList",
-              items: [{ runs: [{ text: "确认对象" }] }],
-            }],
-          }],
-        }],
-      },
-      {
-        runs: [{ text: "写作阶段" }],
-        children: [{
-          type: "bulletList",
-          items: [{
-            runs: [{ text: "搭建结构" }],
-            children: [{
-              type: "bulletList",
-              items: [{ runs: [{ text: "补充案例" }] }],
-            }],
-          }],
-        }],
-      },
-    ],
-  }]);
+function threeLevelListQingml(): string {
+  return [
+    "<ul>",
+    "<li>选题阶段<ul><li>明确问题<ul><li>确认对象</li></ul></li></ul></li>",
+    "<li>写作阶段<ul><li>搭建结构<ul><li>补充案例</li></ul></li></ul></li>",
+    "</ul>",
+  ].join("");
 }
 
-function structurallyValidThreeLevelAiIr(): string {
-  return JSON.stringify([{
-    type: "bulletList",
-    items: [{
-      runs: [{ text: "达标一级" }],
-      children: [{
-        type: "bulletList",
-        items: [{
-          runs: [{ text: "达标二级" }],
-          children: [{
-            type: "bulletList",
-            items: [{ runs: [{ text: "达标三级" }] }],
-          }],
-        }],
-      }],
-    }],
-  }]);
+function structurallyValidThreeLevelQingml(): string {
+  return "<ul><li>达标一级<ul><li>达标二级<ul><li>达标三级</li></ul></li></ul></li></ul>";
 }
 
 function bindDoc(state: { doc?: PmDoc | null; legacySections: unknown; docVersion: number }, value: PmDoc): void {
@@ -200,8 +158,8 @@ describe("writeDraft intent 调度", () => {
   });
 
   it("测试直接 import 项目真实 parseAiDocumentFromText/extractJson", () => {
-    const raw = `前导说明 ${aiIrParagraph("真实解析")}\n收尾散文`;
-    expect(extractJson(raw)).toBe(aiIrParagraph("真实解析"));
+    const raw = `前导说明 ${aiIrParagraphJson("真实解析")}\n收尾散文`;
+    expect(extractJson(raw)).toBe(aiIrParagraphJson("真实解析"));
     expect(parseAiDocumentFromText(raw, "t").blocks).toHaveLength(1);
   });
 
@@ -239,7 +197,7 @@ describe("writeDraft intent 调度", () => {
 
   it("默认 intent=express:thinking disabled,流式固定 4 路并携带 V4 messages", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValueOnce({ raw: aiIrParagraph("默认 express"), contentStartMs: 0 });
+    callDeepseekDraftMock.mockResolvedValueOnce({ raw: qingmlParagraph("默认 express"), contentStartMs: 0 });
     const parent = new AbortController();
 
     const out = await run(tool, { title: "t", outline: "o" }, { abortSignal: parent.signal });
@@ -253,26 +211,26 @@ describe("writeDraft intent 调度", () => {
       thinking: false,
       temperature: 0.4,
       stream: true,
-      responseFormat: "json_object",
+      responseFormat: undefined,
     });
     expect(firstCall.abortSignal).toBeInstanceOf(AbortSignal);
     expect(firstCall.messages?.length).toBeGreaterThanOrEqual(2);
     expect(firstCall.messages?.[0]).toMatchObject({
       role: "system",
-      content: expect.stringContaining("输出 AI-IR JSON"),
+      content: expect.stringContaining("输出 QingML"),
     });
     expect(String((firstCall.messages?.[0] as { content?: unknown } | undefined)?.content)).not.toContain(
       "永远不要在聊天中输出内部结构化文档",
     );
     expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain(
-      "首字符必须是 [ 或 {",
+      "首字符必须是 <",
     );
     expect(firstCall.user).toContain("标题: t");
   });
 
   it("Anthropic 协议也保留 V4 messages 上下文", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: aiIrParagraph("anthropic 上下文"), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("anthropic 上下文"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([
       ["modelOverrides", { protocol: "anthropic" }],
       ["messages", [
@@ -291,7 +249,7 @@ describe("writeDraft intent 调度", () => {
     expect(firstCall.messages).toEqual([
       expect.objectContaining({
         role: "system",
-        content: expect.stringContaining("输出 AI-IR JSON"),
+        content: expect.stringContaining("输出 QingML"),
       }),
       { role: "user", content: "历史用户细节: 枣树" },
       { role: "assistant", content: "历史助手确认" },
@@ -300,10 +258,10 @@ describe("writeDraft intent 调度", () => {
     expect(JSON.stringify(firstCall.messages)).not.toContain("母对话 agent system 不应成为 draft system");
   });
 
-  it("OpenAI json_object 默认开启,但可用环境变量显式关闭", async () => {
-    process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT = "0";
+  it("QingML 生成永不带 json_object,环境变量不影响", async () => {
+    process.env.QINGAGENT_DEEPSEEK_JSON_OBJECT = "1";
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: aiIrParagraph("关闭 json mode"), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("关闭 json mode"), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(tool, { title: "t", outline: "o" });
 
@@ -314,7 +272,7 @@ describe("writeDraft intent 调度", () => {
 
   it("自定义 OpenAI 兼容端点默认不带 json_object,避免不支持 response_format 的端点 400", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: aiIrParagraph("兼容端点"), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("兼容端点"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([
       ["modelOverrides", { baseUrl: "https://compat.example.com/v1", modelIds: { flash: "compat-chat" } }],
     ]);
@@ -329,7 +287,7 @@ describe("writeDraft intent 调度", () => {
 
   it("两级嵌套列表首稿使用 children 递归表示，一轮 4 路即可编译成真实嵌套 PM", async () => {
     const { tool, state } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListAiIr(), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -346,7 +304,7 @@ describe("writeDraft intent 调度", () => {
   it("写新文章成嵌套列表仍走 writeDraft 生成路径", async () => {
     const { tool, state } = await makeTool();
     bindDoc(state, pmFlatOrderedList(["旧内容"]));
-    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListAiIr(), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -363,16 +321,7 @@ describe("writeDraft intent 调度", () => {
 
   it("两级嵌套列表首稿若模型仍给旧平铺列表，不再额外补一路结构重试，但仍返回结构失败诊断标记", async () => {
     const { tool, state } = await makeTool();
-    const flatBlock = {
-      type: "bulletList",
-      items: [
-        { runs: [{ text: "苹果" }] },
-        { runs: [{ text: "香蕉" }] },
-        { runs: [{ text: "橙子" }] },
-        { runs: [{ text: "梨子" }] },
-      ],
-    };
-    const flatList = JSON.stringify([flatBlock]);
+    const flatList = `<ul><li>苹果</li><li>香蕉</li><li>橙子</li><li>梨子</li></ul>`;
     callDeepseekDraftMock.mockResolvedValue({ raw: flatList, contentStartMs: 0 });
 
     const out = await run(
@@ -398,7 +347,7 @@ describe("writeDraft intent 调度", () => {
 
   it("三级嵌套诉求下 children 递归直接编译到三级，不继续 LLM 重构", async () => {
     const { tool, state } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: threeLevelListAiIr(), contentStartMs: 0, finishReason: "stop" });
+    callDeepseekDraftMock.mockResolvedValue({ raw: threeLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -415,8 +364,8 @@ describe("writeDraft intent 调度", () => {
     process.env.QINGAGENT_RACE_LANES = "2";
     process.env.QINGAGENT_RACE_ROUNDS = "1";
     const { tool, state } = await makeTool();
-    const lengthBestButFlat = aiIrParagraph("字".repeat(120));
-    const structurallyValidButShort = structurallyValidThreeLevelAiIr();
+    const lengthBestButFlat = qingmlParagraph("字".repeat(120));
+    const structurallyValidButShort = structurallyValidThreeLevelQingml();
     callDeepseekDraftMock
       .mockResolvedValueOnce({ raw: lengthBestButFlat, contentStartMs: 0 })
       .mockResolvedValueOnce({ raw: structurallyValidButShort, contentStartMs: 0 })
@@ -452,14 +401,14 @@ describe("writeDraft intent 调度", () => {
       calls.push(input);
       const index = calls.length - 1;
       if (index === 1) {
-        input.onContentDelta?.("partial", aiIrParagraph("x".repeat(400)));
+        input.onContentDelta?.("partial", qingmlParagraph("x".repeat(400)));
         return new Promise((_resolve, reject) => {
           input.abortSignal?.addEventListener("abort", () => reject(abortError()), { once: true });
         });
       }
 
       const text = index === 0 ? "a".repeat(80) : index === 2 ? "b".repeat(100) : "c".repeat(50);
-      const raw = aiIrParagraph(text);
+      const raw = qingmlParagraph(text);
       input.onContentStart?.();
       input.onContentDelta?.(raw, raw);
       if (index === 3) {
@@ -503,7 +452,7 @@ describe("writeDraft intent 调度", () => {
       calls.push(input);
       const index = calls.length - 1;
       const text = index === 0 ? "fallback".repeat(20) : index === 1 ? "refinement".repeat(30) : "slow".repeat(30);
-      const raw = aiIrParagraph(text);
+      const raw = qingmlParagraph(text);
 
       if (index === 0) {
         input.onContentStart?.();

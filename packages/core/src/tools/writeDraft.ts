@@ -11,11 +11,11 @@ import type { SessionState } from "../bridge/sessionState.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {
-  buildAiIrPrompt,
+  buildQingmlPrompt,
   compileAiDocumentWithBlockRetry,
   isLengthTruncatedFinishReason,
   materialContextFrom,
-  parseAiDocumentFromTextDetailed,
+  parseAiDocumentFromQingml,
 } from "./generateDoc.js";
 import {
   countByUnit,
@@ -26,7 +26,7 @@ import {
   withinSpec,
   type LengthSpec,
 } from "../utils/lengthSpec.js";
-import { extractStreamingText, tailExcerpt, headExcerpt } from "../utils/aiIrStreamPreview.js";
+import { aiIrStreamPreviewFromMarkup, tailExcerpt, headExcerpt } from "../utils/aiIrStreamPreview.js";
 import { callDeepseekDraft, deepseekDraftClientInternals } from "./deepseekDraftClient.js";
 import { resolveBaseUrl, resolveDeepseekAuth, resolveModelId, resolveProtocol } from "../llm/modelConfig.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
@@ -117,7 +117,7 @@ function pickMaterials(
 }
 
 type CompiledAiDocument = Awaited<ReturnType<typeof compileAiDocumentWithBlockRetry>>;
-type ParsedAiDocument = ReturnType<typeof parseAiDocumentFromTextDetailed>["document"];
+type ParsedAiDocument = ReturnType<typeof parseAiDocumentFromQingml>["document"];
 
 /** 离验收区间的距离(区间内为 0),best-of 候选挑选用。 */
 function distanceToSpec(count: number, spec: LengthSpec): number {
@@ -262,7 +262,7 @@ function buildWriteDraftFinalInstruction(
       : "",
     input.styleHint ? `风格: ${input.styleHint}` : "",
     `请充分吸收以上对话中用户提出的所有具体要求。`,
-    `现在进入文档生成模式:只输出一个完整闭合、可 JSON.parse 的 AI-IR JSON array 或 {"blocks":[...]} object。首字符必须是 [ 或 {。不要输出确认、解释、markdown fence 或收尾总结。`,
+    `现在进入文档生成模式:只输出完整闭合的 QingML 标记。首字符必须是 <。不要输出确认、解释、markdown fence 或收尾总结。`,
   ].filter(Boolean).join("\n");
 }
 
@@ -328,7 +328,7 @@ export function createWriteDraftTool(opts: {
       const messages = context?.requestContext?.get("messages");
       const selectedMaterials = pickMaterials(materials, input.basedOnMaterialIds);
       const materialContext = materialContextFrom(selectedMaterials);
-      const system = buildAiIrPrompt(materialContext);
+      const system = buildQingmlPrompt(materialContext);
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
@@ -392,7 +392,7 @@ export function createWriteDraftTool(opts: {
       const updateLaneRaw = (laneKey: number, raw: string) => {
         const lane = laneState(laneKey);
         lane.raw = raw;
-        lane.charCount = countVisibleChars(extractStreamingText(raw));
+        lane.charCount = countVisibleChars(aiIrStreamPreviewFromMarkup(raw));
         if (lane.charCount > 0) {
           lane.contentStarted = true;
           if (displayLaneKey === null) displayLaneKey = laneKey;
@@ -423,7 +423,7 @@ export function createWriteDraftTool(opts: {
         force = false,
         fullExcerpt = false,
       ) => {
-        const text = extractStreamingText(rawSoFar);
+        const text = aiIrStreamPreviewFromMarkup(rawSoFar);
         const charCount = countVisibleChars(text);
         const now = Date.now();
         // 相位切换强制发并复位计数;否则按 200ms 或 24 字节流。
@@ -536,7 +536,7 @@ export function createWriteDraftTool(opts: {
             model,
             apiKey: resolveDeepseekAuth(context?.requestContext).apiKey || undefined,
             protocol,
-            responseFormat: protocol === "anthropic" || !shouldUseJsonObjectMode(baseUrl, model) ? undefined : "json_object",
+            responseFormat: undefined,
             abortSignal: params.abortSignal,
             maxRetries: 2,
             onContentStart: params.onContentStart,
@@ -550,10 +550,7 @@ export function createWriteDraftTool(opts: {
           finishReason = result.finishReason;
           updateLaneRaw(laneKey, raw);
           if (displayLaneKey === laneKey) await emitDisplayProgress(true, params.roundIdx > 0 ? "revising" : "writing");
-          const parsed = parseAiDocumentFromTextDetailed(raw, input.title, {
-            finishReason,
-            failOnMissingFinishReasonForCloserRepair: true,
-          });
+          const parsed = parseAiDocumentFromQingml(raw, input.title);
           const document = parsed.document;
           const compiled = await compileAiDocumentWithBlockRetry(document, undefined, 0);
           if (!compiled.success || !compiled.doc) {
@@ -714,9 +711,9 @@ export function createWriteDraftTool(opts: {
         return {
           ok: false,
           error:
-            `writeDraft 失败: 4 路并行候选都未通过 JSON/AI-IR 校验。` +
+            `writeDraft 失败: 4 路并行候选都未通过 QingML/AI-IR 校验。` +
             `失败分型: ${JSON.stringify(failureSummary)}。` +
-            `请直接重新调用 writeDraft 进行工具维度重试，不要改用 editDraft；这通常是模型随机 JSON 语法错误，前缀缓存命中后重调成本较低。`,
+            `请直接重新调用 writeDraft 进行工具维度重试，不要改用 editDraft；这通常是模型随机 QingML 结构错误，前缀缓存命中后重调成本较低。`,
         };
       }
 
@@ -762,7 +759,7 @@ export function createWriteDraftTool(opts: {
         minLength: lengthSpec?.min,
         maxLength: lengthSpec?.max,
         firstVisibleCharCount: lengthSpec ? firstCount : undefined,
-        previewExcerpt: headExcerpt(extractStreamingText(champion.raw || JSON.stringify(finalDocument.blocks)), 240),
+        previewExcerpt: headExcerpt(aiIrStreamPreviewFromMarkup(champion.raw || JSON.stringify(finalDocument.blocks)), 240),
         // reason 模式下该字段复用为"成功精修路数";express 仍表示加赛轮数。
         revisionCount: runConfig.schedule === "budgeted"
           ? reasonRefinementCount

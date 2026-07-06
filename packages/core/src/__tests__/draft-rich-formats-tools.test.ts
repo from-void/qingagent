@@ -107,9 +107,9 @@ function assertSafeDoc(value: PmDoc | null | undefined, label: string): void {
   expect(parsed.success ? "ok" : parsed.error.message).toBe("ok");
 }
 
-function mockWriteDraftBlocks(blocks: readonly unknown[]): void {
-  callDeepseekDraftMock.mockImplementationOnce(async () => ({
-    raw: JSON.stringify(blocks),
+function mockWriteDraftQingml(raw: string): void {
+  callDeepseekDraftMock.mockImplementation(async () => ({
+    raw,
     contentStartMs: 0,
   }));
 }
@@ -349,27 +349,13 @@ describe("draft rich formats session-scoped tools", () => {
   });
 
   it("writeDraft 风格产出富文档后,两轮 editDraft/readDiff 闭环每步都保持 PM doc 合法", async () => {
-    const initialBlocks = [
-      { type: "heading", level: 2, runs: [{ text: "实验记录" }] },
-      {
-        type: "paragraph",
-        runs: [
-          { text: "核心指标 " },
-          { text: "F=ma", marks: [{ type: "math" }] },
-          { text: " 需要复核" },
-        ],
-      },
-      {
-        type: "taskList",
-        items: [
-          { checked: false, runs: [{ text: "校验风险阈值" }] },
-          { checked: true, runs: [{ text: "同步记录" }] },
-        ],
-      },
-      { type: "callout", tone: "warning", emoji: "!", runs: [{ text: "风险阈值暂按旧版" }] },
-      { type: "blockMath", latex: "\\int_0^1 x dx" },
-    ];
-    mockWriteDraftBlocks(initialBlocks);
+    mockWriteDraftQingml([
+      `<h2>实验记录</h2>`,
+      `<p>核心指标 <math>F=ma</math> 需要复核</p>`,
+      `<tasks><task>校验风险阈值</task><task checked="true">同步记录</task></tasks>`,
+      `<callout tone="warning" emoji="!">风险阈值暂按旧版</callout>`,
+      `<math-block>\\int_0^1 x dx</math-block>`,
+    ].join(""));
     const state = createSession("rich-tools-full-loop");
     const tools = createSessionScopedTools(state);
 

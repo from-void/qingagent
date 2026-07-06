@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Buffer } from "node:buffer";
 
 // 回归:readImage 早期用 result.textStream 迭代,上游 API 报错(限流 1305 / 鉴权)时
@@ -31,15 +31,33 @@ function fullStream(parts: Part[]): AsyncIterable<Part> {
   })();
 }
 
+function visionText(text: string): { fullStream: AsyncIterable<Part> } {
+  return {
+    fullStream: fullStream([
+      { type: "text-delta", textDelta: text },
+      { type: "finish", finishReason: "stop" },
+    ]),
+  };
+}
+
+function rateLimitError(message = "too many requests"): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 429 });
+}
+
 interface ReadImageResult {
   ok: boolean;
   text: string;
   error: string | null;
 }
 
-async function run(image = "00000000-0000-4000-8000-000000000abc", context: unknown = {}): Promise<ReadImageResult> {
+async function run(
+  image = "00000000-0000-4000-8000-000000000abc",
+  context: unknown = {},
+  prompt = "描述图片",
+  includeConversation: boolean | null | undefined = false,
+): Promise<ReadImageResult> {
   return (await readImageTool.execute!(
-    { image, prompt: "描述图片", includeConversation: false },
+    { image, prompt, includeConversation },
     context as never,
   )) as ReadImageResult;
 }
@@ -50,12 +68,18 @@ function contextWithMaterials(map: Map<string, unknown>): unknown {
 }
 
 describe("readImage stream error handling", () => {
+  let modelSeq = 0;
+
   beforeEach(() => {
     streamTextMock.mockReset();
     getVisionModelMock.mockReset();
     resolveImageInputMock.mockReset();
-    getVisionModelMock.mockResolvedValue({});
+    getVisionModelMock.mockResolvedValue({ modelId: `vision-test-${++modelSeq}` });
     resolveImageInputMock.mockResolvedValue({ buffer: Buffer.from([0x89, 0x50]), mimeType: "image/png" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("有文本时返回 ok:true 与识别结果", async () => {
@@ -151,5 +175,116 @@ describe("readImage stream error handling", () => {
     expect(r.ok).toBe(false);
     expect(r.error).toContain("没有可识别的原始图片");
     expect(resolveImageInputMock).not.toHaveBeenCalled();
+  });
+
+  it("首调 429 → 等待 20s 后重试一次并成功", async () => {
+    vi.useFakeTimers();
+    streamTextMock
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: rateLimitError() }]) })
+      .mockReturnValueOnce(visionText("重试成功"));
+
+    const pending = run("img-rate-limit-once");
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r = await pending;
+
+    expect(r).toEqual({ ok: true, text: "重试成功", error: null });
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("两调均 429 → 返回限流文案且只调用 2 次", async () => {
+    vi.useFakeTimers();
+    streamTextMock
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: rateLimitError("1305 rate limit") }]) })
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: rateLimitError("当前使用人数过多") }]) });
+
+    const pending = run("img-rate-limit-twice");
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r = await pending;
+
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe("");
+    expect(r.error).toBe(
+      "图像识别模型限流(免费档常见)。已自动重试仍未成功;请等待至少 30 秒后再调 readImage,期间先继续其他写作步骤,不要立即重试。",
+    );
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("非限流错误 → 不重试", async () => {
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([{ type: "error", error: new Error("模型鉴权失败") }]),
+    });
+    const r = await run("img-non-rate-limit");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("模型鉴权失败");
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("限流等待期间强制 emitProgress 写入保活提示", async () => {
+    vi.useFakeTimers();
+    const writes: Array<Record<string, unknown>> = [];
+    const writer = { write: (c: Record<string, unknown>) => void writes.push(c) };
+    streamTextMock
+      .mockReturnValueOnce({ fullStream: fullStream([{ type: "error", error: rateLimitError() }]) })
+      .mockReturnValueOnce(visionText("重试后结果"));
+
+    const pending = run("img-rate-limit-progress", { writer });
+    await vi.waitFor(() =>
+      expect(
+        writes.some((w) => {
+          const excerpt = (w.progress as { excerpt?: unknown } | undefined)?.excerpt;
+          return typeof excerpt === "string" && excerpt.includes("等待 20 秒后自动重试");
+        }),
+      ).toBe(true),
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    await pending;
+  });
+
+  it("同图同 prompt 二次调用命中缓存,streamText 只触发一次", async () => {
+    streamTextMock.mockReturnValue(visionText("缓存结果"));
+
+    const first = await run("img-cache-same", {}, "同一问题");
+    const second = await run("img-cache-same", {}, "同一问题");
+
+    expect(first).toEqual({ ok: true, text: "缓存结果", error: null });
+    expect(second).toEqual(first);
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("同图不同 prompt → 不命中缓存", async () => {
+    streamTextMock.mockReturnValueOnce(visionText("问题一")).mockReturnValueOnce(visionText("问题二"));
+
+    const first = await run("img-cache-different-prompt", {}, "问题一");
+    const second = await run("img-cache-different-prompt", {}, "问题二");
+
+    expect(first.text).toBe("问题一");
+    expect(second.text).toBe("问题二");
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("includeConversation:true 不读写缓存", async () => {
+    streamTextMock.mockReturnValueOnce(visionText("上下文结果一")).mockReturnValueOnce(visionText("上下文结果二"));
+
+    const first = await run("img-cache-with-context", {}, "同一问题", true);
+    const second = await run("img-cache-with-context", {}, "同一问题", true);
+
+    expect(first.text).toBe("上下文结果一");
+    expect(second.text).toBe("上下文结果二");
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("第 51 个缓存键逐出最旧项", async () => {
+    streamTextMock.mockImplementation(() => visionText(`结果 ${streamTextMock.mock.calls.length}`));
+
+    for (let i = 0; i < 51; i += 1) {
+      await run("img-cache-evict", {}, `问题 ${i}`);
+    }
+    expect(streamTextMock).toHaveBeenCalledTimes(51);
+
+    const again = await run("img-cache-evict", {}, "问题 0");
+    expect(again.text).toBe("结果 52");
+    expect(streamTextMock).toHaveBeenCalledTimes(52);
   });
 });

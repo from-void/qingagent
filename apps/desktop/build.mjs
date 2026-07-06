@@ -15,12 +15,15 @@ const sharedOptions = {
   // which export raw .ts source and have no pre-built output).
   // libsql / @libsql contain native bindings — keep them external so
   // electron-builder can package the platform-specific .node files.
+  // pdf-parse/pdfjs-dist rely on package export/runtime optional deps; bundling
+  // breaks their Node entry initialization and ESM/CJS interop in packaged apps.
+  // Keep them external and package the real runtime dependency.
   // playwright / playwright-core ship a browser driver and lazily require
   // optional deps (chromium-bidi) that esbuild cannot resolve at bundle
   // time; like the native modules above, keep them external and let them
   // resolve from node_modules at runtime.
   // pyodide:wasm/动态加载,运行时从 Resources/pyodide(打包)或 node_modules(dev)解析,esbuild 不打它。
-  external: ["electron", "libsql", "@libsql/linux-x64-gnu", "@libsql/linux-x64-musl", "@libsql/darwin-arm64", "@libsql/darwin-x64", "@libsql/win32-x64-msvc", "playwright", "playwright-core", "chromium-bidi", "pyodide"],
+  external: ["electron", "libsql", "@libsql/linux-x64-gnu", "@libsql/linux-x64-musl", "@libsql/darwin-arm64", "@libsql/darwin-x64", "@libsql/win32-x64-msvc", "pdf-parse", "playwright", "playwright-core", "chromium-bidi", "pyodide"],
   sourcemap: false,
   banner: {
     js: [

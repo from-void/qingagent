@@ -14,7 +14,7 @@ pnpm --filter @qingagent/desktop build:win
 脚本 `build-win.sh` 一条龙做四件事:
 1. 构建 web 前端(`@qingagent/web`)
 2. esbuild 打包 electron main/preload + `electron-builder --win --dir` 出 win-unpacked
-3. 注入 win 版 libsql 原生 `@libsql/win32-x64-msvc`,清掉打错的 linux 原生
+3. 注入 win 版原生依赖：`@libsql/win32-x64-msvc` 和 `@napi-rs/canvas-win32-x64-msvc`,清掉打错的 linux 原生
 4. 整个 win-unpacked 复制到 `C:\qingagent\win-unpacked`
 
 ---
@@ -30,13 +30,17 @@ electron 的 GPU 子进程会启动失败(`error_code=18`)→ 反复崩溃 → F
 `main/index.ts` 里:仅在「Linux」或「从 UNC 路径运行」时
 `app.disableHardwareAcceleration()` 走软件渲染;本地 Windows 盘运行保留全速硬件加速。
 
-### 2. 必须手动注入 win 版 libsql 原生(交叉构建专属)
+### 2. 必须手动注入 win 版原生依赖(交叉构建专属)
 pnpm 在 Linux 上只装 libsql 的 linux 原生(`@libsql/linux-x64-gnu`),
 不装 `@libsql/win32-x64-msvc`;electron-builder 会把 linux 原生打进 win 包 →
 Windows 上 `Cannot find module '@libsql/win32-x64-msvc'` 启动报错。
 脚本第 3 步用 `npm pack @libsql/win32-x64-msvc@<版本>` 解决。
 **版本号(当前 0.5.29)必须与 `package.json` 里 libsql 主包一致**,
 升级 libsql 时同步改 `build-win.sh` 里的 `LIBSQL_VERSION`。
+
+PDF 解析依赖 `pdf-parse` → `@napi-rs/canvas`,后者同样按平台安装 native 包。
+WSL/Linux 交叉构建时也必须注入 `@napi-rs/canvas-win32-x64-msvc`;脚本会从
+`@napi-rs/canvas` 的 `optionalDependencies` 读取版本并自动注入。
 
 ### 3. DATABASE_URL 必须用 pathToFileURL 生成
 Windows 路径含盘符+反斜杠(`C:\Users\...`),`file:${dbPath}` 是非法 URL,

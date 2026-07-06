@@ -35,6 +35,9 @@ importers:
       libsql:
         specifier: ^0.5.29
         version: 0.5.29
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
       playwright:
         specifier: 1.60.0
         version: 1.60.0

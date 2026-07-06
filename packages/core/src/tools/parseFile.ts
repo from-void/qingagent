@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { resolveFileIds } from "../bridge/uploadFileResolver.js";
+import { loadPdfParseConstructor } from "../utils/pdfParse.js";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
 
 type ParsedFileContent = {
@@ -1080,7 +1081,7 @@ export async function parseFileBuffer({
 
   if (ext === "pdf" || mimeType === "application/pdf") {
     try {
-      const { PDFParse } = await import("pdf-parse");
+      const PDFParse = await loadPdfParseConstructor();
       const parser = new PDFParse({ data: new Uint8Array(buffer) });
       try {
         const textResult = await parser.getText();

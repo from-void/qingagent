@@ -45,16 +45,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows Defender 实时扫描会在 makensis 读取 ~300MB payload(electron+app.asar)时逐文件
-      # 拦截,让 nsis 打包卡死/极慢(实测卡在 building target=nsis 后 30min+ 超时)。排除工作目录
-      # 与 makensis 进程,规避 AV 拖累。仅 windows 生效,失败静默不阻断。
-      - name: Windows Defender exclusion (avoid AV stalling makensis)
+      # win nsis 卡死真因定位:同一个 7za + 同 -mm=Copy 参数在 Linux 本地跑 win-unpacked(410MB/
+      # 7822 文件)<2min 就完,但 Windows runner 上跑 32min 未完被掐——即 Windows-runner 特有,
+      # 最可能是 Defender 实时扫描 **7za.exe** 的海量 I/O(之前只排除了 makensis.exe,漏了真正
+      # 卡死的 7za!)。这里:①直接关实时监控 ②排除工作目录 ③排除 7za/7z/makensis 进程。仅 win 生效。
+      - name: Windows Defender off (real slow cause: AV scanning 7za.exe I/O)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
-          Add-MpPreference -ExclusionProcess "makensis.exe" -ErrorAction SilentlyContinue
-          Write-Host "Defender exclusions added for workspace + makensis"
+          Add-MpPreference -ExclusionProcess "7za.exe","7z.exe","makensis.exe" -ErrorAction SilentlyContinue
+          Write-Host "Defender realtime disabled + 7za/7z/makensis excluded"
 
       - uses: actions/setup-node@v4
         with:

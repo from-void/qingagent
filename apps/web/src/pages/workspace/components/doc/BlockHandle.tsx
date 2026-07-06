@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import { pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
@@ -27,16 +28,22 @@ import {
   type HandleState,
 } from "./blockHandleGeometry";
 
+type SubmenuKey = "align" | "insert";
+
 export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (message: string) => void }) {
   const [handle, setHandle] = useState<HandleState | null>(null);
   const [collapsedCarets, setCollapsedCarets] = useState<CollapsedCaret[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuFlipUp, setMenuFlipUp] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const [submenuPlacement, setSubmenuPlacement] = useState<Record<string, { side: "left" | "right"; top: number }>>({});
+  const [activeSubmenu, setActiveSubmenu] = useState<SubmenuKey | null>(null);
+  const [submenuPlacement, setSubmenuPlacement] = useState<Partial<Record<SubmenuKey, { side: "left" | "right"; top: number; left: number }>>>({});
   const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const alignPanelRef = useRef<HTMLDivElement>(null);
+  const insertPanelRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submenuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggingRef = useRef(false);
   const lastMouseRef = useRef<MouseEvent | null>(null);
 
@@ -47,9 +54,17 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     }
   }, []);
 
+  const clearSubmenuCloseTimer = useCallback(() => {
+    if (submenuCloseTimer.current) {
+      clearTimeout(submenuCloseTimer.current);
+      submenuCloseTimer.current = null;
+    }
+  }, []);
+
   const resetMenuPlacement = useCallback(() => {
     setMenuPos(null);
     setMenuFlipUp(false);
+    setActiveSubmenu(null);
     setSubmenuPlacement({});
   }, []);
 
@@ -63,6 +78,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     if (!placement) return false;
     setMenuPos({ top: placement.top, left: placement.left });
     setMenuFlipUp(placement.flipUp);
+    setActiveSubmenu(null);
     setSubmenuPlacement({});
     return true;
   }, []);
@@ -90,8 +106,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   );
 
   useEffect(() => {
-    return () => clearHideTimer();
-  }, [clearHideTimer]);
+    return () => {
+      clearHideTimer();
+      clearSubmenuCloseTimer();
+    };
+  }, [clearHideTimer, clearSubmenuCloseTimer]);
 
   // 折叠态常驻三角(gutter 悬浮层):随文档内容/折叠态/滚动重算位置。rAF 节流。
   useEffect(() => {
@@ -372,7 +391,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       const target = e.target as Node;
       const insideHandle = wrapRef.current?.contains(target) ?? false;
       const insideMenu = menuRef.current?.contains(target) ?? false;
-      if (!insideHandle && !insideMenu) {
+      const insideSubmenuPanel =
+        (alignPanelRef.current?.contains(target) ?? false) ||
+        (insertPanelRef.current?.contains(target) ?? false);
+      if (!insideHandle && !insideMenu && !insideSubmenuPanel) {
         setMenuOpen(false);
         setHandle(null);
         resetMenuPlacement();
@@ -397,6 +419,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     if (!menuOpen) {
       setMenuFlipUp(false);
       setMenuPos(null);
+      setActiveSubmenu(null);
       setSubmenuPlacement({});
       return;
     }
@@ -412,8 +435,16 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     });
   }, [menuOpen, handle, applyBlockMenuPlacement, resetMenuPlacement]);
 
-  const placeSubmenu = useCallback((key: string, wrapper: HTMLDivElement) => {
-    const panel = wrapper.querySelector<HTMLElement>(".bh-submenu-panel");
+  const scheduleSubmenuClose = useCallback(() => {
+    clearSubmenuCloseTimer();
+    submenuCloseTimer.current = setTimeout(() => {
+      setActiveSubmenu(null);
+    }, 90);
+  }, [clearSubmenuCloseTimer]);
+
+  const placeSubmenu = useCallback((key: SubmenuKey, wrapper: HTMLDivElement) => {
+    clearSubmenuCloseTimer();
+    const panel = key === "align" ? alignPanelRef.current : insertPanelRef.current;
     if (!panel) return;
     const rect = wrapper.getBoundingClientRect();
     const panelWidth = panel.offsetWidth || 164;
@@ -423,8 +454,32 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     const preferredTop = rect.top - 6;
     const maxTop = Math.max(margin, window.innerHeight - Math.min(panelHeight, window.innerHeight - margin * 2) - margin);
     const clampedTop = Math.min(Math.max(preferredTop, margin), maxTop);
-    setSubmenuPlacement((current) => ({ ...current, [key]: { side, top: Math.round(clampedTop - rect.top) } }));
-  }, []);
+    const left = side === "right"
+      ? rect.right + 4
+      : Math.max(margin, rect.left - panelWidth - 4);
+    setSubmenuPlacement((current) => ({
+      ...current,
+      [key]: { side, top: Math.round(clampedTop), left: Math.round(left) },
+    }));
+    setActiveSubmenu(key);
+  }, [clearSubmenuCloseTimer]);
+
+  const keepSubmenuOpen = useCallback(() => {
+    clearSubmenuCloseTimer();
+  }, [clearSubmenuCloseTimer]);
+
+  const closeSubmenuOnBlur = useCallback((e: React.FocusEvent<HTMLElement>, key: SubmenuKey) => {
+    const next = e.relatedTarget;
+    if (next instanceof Node) {
+      const panel = key === "align" ? alignPanelRef.current : insertPanelRef.current;
+      if (
+        e.currentTarget.contains(next) ||
+        (panel?.contains(next) ?? false) ||
+        (menuRef.current?.contains(next) ?? false)
+      ) return;
+    }
+    scheduleSubmenuClose();
+  }, [scheduleSubmenuClose]);
 
   // 把光标放到"该插入新块的位置":空块原地;非空块在其下方插一个空段落并进入。
   const seedInsertChain = useCallback(
@@ -714,12 +769,97 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       : ({ top: menuPos.top, left: menuPos.left } as React.CSSProperties);
   const alignPlacement = submenuPlacement.align;
   const alignSubmenuStyle = alignPlacement
-    ? ({ "--bh-submenu-top": `${alignPlacement.top}px` } as React.CSSProperties)
+    ? ({
+      "--bh-submenu-left": `${alignPlacement.left}px`,
+      "--bh-submenu-top": `${alignPlacement.top}px`,
+    } as React.CSSProperties)
     : undefined;
   const insertPlacement = submenuPlacement.insert;
   const insertSubmenuStyle = insertPlacement
-    ? ({ "--bh-submenu-top": `${insertPlacement.top}px` } as React.CSSProperties)
+    ? ({
+      "--bh-submenu-left": `${insertPlacement.left}px`,
+      "--bh-submenu-top": `${insertPlacement.top}px`,
+    } as React.CSSProperties)
     : undefined;
+  const submenuPortalTarget = typeof document === "undefined"
+    ? null
+    : (editor.view.dom.closest("#view-workspace") ?? document.body);
+  const submenuPanels = (
+    <>
+      <div
+        id="block-handle-align-submenu"
+        ref={alignPanelRef}
+        className={`bh-submenu-panel bh-submenu-portal${activeSubmenu === "align" ? " is-open" : ""}${alignPlacement?.side === "left" ? " is-left" : ""}`}
+        role="menu"
+        style={alignSubmenuStyle}
+        onMouseEnter={keepSubmenuOpen}
+        onMouseLeave={scheduleSubmenuClose}
+        onFocus={keepSubmenuOpen}
+        onBlur={(e) => closeSubmenuOnBlur(e, "align")}
+      >
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("left")}>
+          <span className="bh-icon"><BlockHandleIcon name="alignLeft" /></span>
+          左对齐
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("center")}>
+          <span className="bh-icon"><BlockHandleIcon name="alignCenter" /></span>
+          居中
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("right")}>
+          <span className="bh-icon"><BlockHandleIcon name="alignRight" /></span>
+          右对齐
+        </button>
+      </div>
+      <div
+        id="block-handle-insert-submenu"
+        ref={insertPanelRef}
+        className={`bh-submenu-panel bh-submenu-portal${activeSubmenu === "insert" ? " is-open" : ""}${insertPlacement?.side === "left" ? " is-left" : ""}`}
+        role="menu"
+        style={insertSubmenuStyle}
+        onMouseEnter={keepSubmenuOpen}
+        onMouseLeave={scheduleSubmenuClose}
+        onFocus={keepSubmenuOpen}
+        onBlur={(e) => closeSubmenuOnBlur(e, "insert")}
+      >
+        <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
+          <span className="bh-icon"><BlockHandleIcon name="image" /></span>
+          插入图片
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertFile}>
+          <span className="bh-icon"><BlockHandleIcon name="file" /></span>
+          插入文件
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("inlineMath")}>
+          <span className="bh-icon"><BlockHandleIcon name="inlineMath" /></span>
+          行内公式
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("blockMath")}>
+          <span className="bh-icon"><BlockHandleIcon name="blockMath" /></span>
+          公式块
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
+          <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
+          插入图表
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
+          <span className="bh-icon"><BlockHandleIcon name="table" /></span>
+          插入表格
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
+          <span className="bh-icon"><BlockHandleIcon name="columns" /></span>
+          插入分栏
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("codeBlock")}>
+          <span className="bh-icon"><BlockHandleIcon name="code" /></span>
+          代码块
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("horizontalRule")}>
+          <span className="bh-icon"><BlockHandleIcon name="divider" /></span>
+          插入分隔线
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <>
@@ -862,27 +1002,23 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               <div
                 className={`bh-submenu${alignPlacement?.side === "left" ? " is-left" : ""}`}
                 onMouseEnter={(e) => placeSubmenu("align", e.currentTarget)}
+                onMouseLeave={scheduleSubmenuClose}
                 onFocus={(e) => placeSubmenu("align", e.currentTarget)}
+                onBlur={(e) => closeSubmenuOnBlur(e, "align")}
               >
-                <button type="button" role="menuitem" className="block-handle-item bh-submenu-trigger" aria-haspopup="menu" onClick={(e) => e.preventDefault()}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block-handle-item bh-submenu-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded={activeSubmenu === "align"}
+                  aria-controls="block-handle-align-submenu"
+                  onClick={(e) => e.preventDefault()}
+                >
                   <span className="bh-icon"><BlockHandleIcon name="align" /></span>
                   对齐
                   <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
                 </button>
-                <div className="bh-submenu-panel" role="menu" style={alignSubmenuStyle}>
-                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("left")}>
-                    <span className="bh-icon"><BlockHandleIcon name="alignLeft" /></span>
-                    左对齐
-                  </button>
-                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("center")}>
-                    <span className="bh-icon"><BlockHandleIcon name="alignCenter" /></span>
-                    居中
-                  </button>
-                  <button type="button" role="menuitem" className="block-handle-item" onClick={() => handleAlign("right")}>
-                    <span className="bh-icon"><BlockHandleIcon name="alignRight" /></span>
-                    右对齐
-                  </button>
-                </div>
               </div>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(false)}>
                 <span className="bh-icon"><BlockHandleIcon name="copy" /></span>
@@ -942,55 +1078,30 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
             <div
               className={`bh-submenu${insertPlacement?.side === "left" ? " is-left" : ""}`}
               onMouseEnter={(e) => placeSubmenu("insert", e.currentTarget)}
+              onMouseLeave={scheduleSubmenuClose}
               onFocus={(e) => placeSubmenu("insert", e.currentTarget)}
+              onBlur={(e) => closeSubmenuOnBlur(e, "insert")}
             >
-              <button type="button" role="menuitem" className="block-handle-item bh-submenu-trigger" aria-haspopup="menu" onClick={(e) => e.preventDefault()}>
+              <button
+                type="button"
+                role="menuitem"
+                className="block-handle-item bh-submenu-trigger"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === "insert"}
+                aria-controls="block-handle-insert-submenu"
+                onClick={(e) => e.preventDefault()}
+              >
                 <span className="bh-icon"><BlockHandleIcon name="insert" /></span>
                 插入
                 <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
               </button>
-              <div className="bh-submenu-panel" role="menu" style={insertSubmenuStyle}>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
-                  <span className="bh-icon"><BlockHandleIcon name="image" /></span>
-                  插入图片
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertFile}>
-                  <span className="bh-icon"><BlockHandleIcon name="file" /></span>
-                  插入文件
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("inlineMath")}>
-                  <span className="bh-icon"><BlockHandleIcon name="inlineMath" /></span>
-                  行内公式
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("blockMath")}>
-                  <span className="bh-icon"><BlockHandleIcon name="blockMath" /></span>
-                  公式块
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
-                  <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
-                  插入图表
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
-                  <span className="bh-icon"><BlockHandleIcon name="table" /></span>
-                  插入表格
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
-                  <span className="bh-icon"><BlockHandleIcon name="columns" /></span>
-                  插入分栏
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("codeBlock")}>
-                  <span className="bh-icon"><BlockHandleIcon name="code" /></span>
-                  代码块
-                </button>
-                <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("horizontalRule")}>
-                  <span className="bh-icon"><BlockHandleIcon name="divider" /></span>
-                  插入分隔线
-                </button>
-              </div>
             </div>
           )}
         </div>
       )}
+      {menuOpen && handle.kind === "block" && submenuPortalTarget
+        ? createPortal(submenuPanels, submenuPortalTarget)
+        : null}
         </>
       )}
     </>

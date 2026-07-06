@@ -1737,7 +1737,8 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 /* 块手柄菜单(转换为 / 插入)暖化:它是 fixed/absolute 浮层,在 .wf-doc 暖作用域外,
    基础 --bg-canvas 现已暖化为 #faf6ec(tokens.css)。这里给整套暖 token + 暖白底(比纸面略亮、
    靠阴影分离),让面板/分组标题/列表项/图标/网格/hover 全部跟随暖墨纸面,不再白。 */
-#view-workspace .block-handle-menu {
+#view-workspace .block-handle-menu,
+#view-workspace .bh-submenu-panel {
   background: var(--bg-canvas) !important;
   border-color: rgba(120, 90, 50, 0.22) !important;
   --line-1: rgba(120, 90, 50, 0.14);

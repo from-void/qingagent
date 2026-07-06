@@ -494,6 +494,12 @@
   animation: none;
   margin: 0;
 }
+#view-workspace.uk-blockhandle-demo .bh-submenu-panel {
+  position: static !important;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
 
 /* 行内浮层:链接卡 / 公式编辑 */
 #view-workspace.uk-inlinepop-demo {

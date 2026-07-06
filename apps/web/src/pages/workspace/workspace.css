@@ -1359,7 +1359,7 @@
   }
   #view-workspace .bh-caret .bh-svg{width:13px;height:13px}
   #view-workspace .bh-submenu-panel{
-    position:absolute;left:calc(100% + 4px);top:var(--bh-submenu-top, -6px);z-index:1;
+    position:fixed;left:var(--bh-submenu-left, -9999px);top:var(--bh-submenu-top, -9999px);z-index:100061;
     min-width:164px;padding:6px 0;
     background:var(--bg-canvas);border:1px solid var(--line-2);
     border-radius:var(--r);
@@ -1368,12 +1368,13 @@
     transition:opacity .1s ease-out,transform .1s ease-out;
     max-height:calc(100vh - 16px);overflow:auto;
   }
-  #view-workspace .bh-submenu.is-left .bh-submenu-panel{
-    left:auto;right:calc(100% + 4px);
+  #view-workspace .bh-submenu.is-left .bh-submenu-panel,
+  #view-workspace .bh-submenu-panel.is-left{
     transform:translateX(4px);
   }
   #view-workspace .bh-submenu:hover .bh-submenu-panel,
-  #view-workspace .bh-submenu:focus-within .bh-submenu-panel{
+  #view-workspace .bh-submenu:focus-within .bh-submenu-panel,
+  #view-workspace .bh-submenu-panel.is-open{
     opacity:1;pointer-events:auto;transform:none;
   }
   #view-workspace .bh-submenu-panel .block-handle-item{white-space:nowrap}

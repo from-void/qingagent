@@ -466,6 +466,7 @@ export const askUserTool = createTool({
     "例如“帮我写篇文章”“写个报告吧”“帮我弄一份总结”“写诗”都必须先调用本工具。 " +
     "仅当用户明确说“直接写/别问/不要问/现在就写”或消息与写作无关时才不调用；这类话只表示跳过 askUser，新文档直写才直接 writeDraft，已有文档局部编辑仍走 readDraft/editDraft。 " +
     "写代码/SQL 查询等编程技术求助不算本工具场景；brainstorm、取名、想标题、想口号等短产出若未明确要写入右侧文档，也不要调用本工具。 " +
+    "如果 purpose=quickClarification 且 topic/rationale 提到用户拒绝了上一轮修改，必须把被拒内容理解为“模型提出但用户不接受的改动”，问题只能问用户不想应用的原因、哪里不满意、或更希望的方向；严禁把这个被拒改法当成用户主动想要的方案来追问目的。 " +
     "提供 topic 字符串即可，具体问题由工具自动生成。必须单独调用本工具：同一步/同一响应里绝不能并发调用 webSearch、fetchArticle、writeDraft 等任何其它工具。 " +
     "本工具会结束本轮并等待用户回答，并发工具调用会白跑且体验割裂。需要先搜集信息或读取材料时，先在前面的步骤单独完成，再在新的一步里只调用 askUser。",
   inputSchema: z.object({
@@ -541,7 +542,15 @@ export const askUserTool = createTool({
       // 通道,与 askuser-progress 不冲突,只负责静默期持续重置看门狗。
       const stopHeartbeat = startToolHeartbeat(context, { tool: "askUser" });
       try {
-      const genPrompt = `你是一位写作需求分析专家。根据以下写作方向，生成 2-4 个问卷问题帮助确认用户的写作需求。
+      const questionCountInstruction =
+        input.purpose === "quickClarification"
+          ? "生成 1-3 个轻量澄清问题，帮助确认用户需要拍板的局部分叉。"
+          : "生成 2-4 个问卷问题帮助确认用户的写作需求。";
+      const textQuestionInstruction =
+        input.purpose === "quickClarification"
+          ? "text 类型开放题是可选的：只有自由补充确实有价值时才加，不要为了格式硬塞。"
+          : "至少包含一个 text 类型的开放式问题。";
+      const genPrompt = `你是一位写作需求分析专家。根据以下写作方向，${questionCountInstruction}
 
 写作方向和已知信息：
 ${input.rationale}
@@ -560,7 +569,7 @@ ${input.topic}
 5. slider 只用于连续量（字数、篇幅、段落数等）：必须带 slider 字段，范围要合理（字数最小不低于 50，最大值滑到头表示"X 以上"）
 6. 使用中文
 7. 如果用户已提供了某些信息，不要重复问
-8. 至少包含一个 text 类型的开放式问题
+8. ${textQuestionInstruction}
 9. 问题与选项的 label/description 一律用自然中文，不要出现英文工具或函数标识符（如 run_js、readDraft 等代码名），要提及某能力请用中文说法（如"运行脚本""读取草稿"）
 10. 最外层必须是"问题"数组，不要直接输出"选项"数组（每个问题对象必须含 id、kind、label 字段）`;
 

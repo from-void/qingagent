@@ -2,6 +2,8 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./components/ChatInput";
@@ -1529,6 +1531,126 @@ describe("WorkspacePage review controls", () => {
     // 发送失败 → restoreAskUser 回滚:弹层回来,输入仍锁,可重新提交
     expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
     expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("#25 回归:编辑锁提示 portal 到 body 顶层 fixed,不再留在 .ws-right 滚动流内", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "编辑锁提示" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(pmDoc([pmParagraph("p-lock", "正文内容")]), 1) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+      },
+    ]);
+
+    const portal = Array.from(document.body.children).find((child) =>
+      child.classList.contains("ws-edit-lock"),
+    ) as HTMLElement | undefined;
+    expect(portal).not.toBeUndefined();
+    expect(portal?.parentElement).toBe(document.body);
+    expect(portal?.textContent).toContain("请等待青简完成编辑后再做修改");
+    expect(host?.querySelector(".ws-right .ws-edit-lock")).toBeNull();
+
+    const inkSkinCss = readFileSync(
+      resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"),
+      "utf8",
+    );
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*position:\s*fixed/s);
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*right:\s*max\(28px, env\(safe-area-inset-right\)\)/s);
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*bottom:\s*max\(28px, env\(safe-area-inset-bottom\)\)/s);
+  });
+
+  it("#29 回归:整篇改写 busy 发光层独立覆盖编辑视口,不被审阅条或编辑锁条接管", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    const baseDoc = pmDoc([pmParagraph("rewrite-base", "旧文")]);
+    const editedDoc = pmDoc([
+      pmHeading("rewrite-title", "新版标题"),
+      pmParagraph("rewrite-p-1", "这是完全改写后的第一段,用于触发整篇审阅。"),
+      pmParagraph("rewrite-p-2", "这是完全改写后的第二段,长度明显超过旧文。"),
+    ]);
+    const spec = reviewToolCall("rewrite-hunk", "batch-rewrite", "reviewing", {
+      blockId: "rewrite-base",
+      before: "旧文",
+      after: "新版标题\n这是完全改写后的第一段,用于触发整篇审阅。\n这是完全改写后的第二段,长度明显超过旧文。",
+    });
+    const suggestion = docSuggestionFromToolCall(spec);
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "整篇改写 busy 发光" } },
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) } },
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc,
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: true },
+      },
+    ]);
+
+    const wsRight = host!.querySelector<HTMLElement>(".ws-right");
+    const glow = host!.querySelector<HTMLElement>('[data-wf="WorkspaceEditorGlow"]');
+    const reviewNav = host!.querySelector<HTMLElement>('[data-wf="WholeDocReviewNav"]');
+    const paperSurface = host!.querySelector<HTMLElement>('[data-wf="WorkspacePaperSurface"]');
+    const editLock = Array.from(document.body.children).find((child) =>
+      child.classList.contains("ws-edit-lock"),
+    ) as HTMLElement | undefined;
+
+    expect(document.body.dataset.tool).toBe("agentBusy");
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(wsRight).not.toBeNull();
+    expect(glow).not.toBeNull();
+    expect(reviewNav).not.toBeNull();
+    expect(paperSurface).not.toBeNull();
+    expect(editLock).not.toBeUndefined();
+    expect(glow!.parentElement).toBe(wsRight);
+    expect(wsRight!.firstElementChild).toBe(glow);
+    expect(paperSurface!.contains(glow)).toBe(false);
+    expect(reviewNav!.contains(glow)).toBe(false);
+    expect(editLock!.contains(glow)).toBe(false);
+    expect(host!.querySelector(".ws-paper-surface > .ws-editor-glow")).toBeNull();
+    expect(host!.querySelector(".patch-nav .ws-editor-glow")).toBeNull();
+
+    const workspace = host!.querySelector<HTMLElement>("#view-workspace")!;
+    const wsBody = host!.querySelector<HTMLElement>(".ws-body")!;
+    const rect = (left: number): DOMRect => ({
+      left,
+      right: left + 800,
+      top: 52,
+      bottom: 652,
+      x: left,
+      y: 52,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    }) as DOMRect;
+    wsRight!.getBoundingClientRect = () => rect(124);
+    act(() => {
+      wsBody.dispatchEvent(new Event("scroll"));
+    });
+    expect(workspace.style.getPropertyValue("--doc-left")).toBe("124px");
+    expect(workspace.style.getPropertyValue("--doc-right")).toBe("924px");
+
+    wsRight!.getBoundingClientRect = () => rect(-220);
+    act(() => {
+      wsBody.dispatchEvent(new Event("scroll"));
+    });
+    expect(workspace.style.getPropertyValue("--doc-left")).toBe("-220px");
+    expect(workspace.style.getPropertyValue("--doc-right")).toBe("580px");
   });
 
   it("e2e-loop-0704 R15 回归:#/new 携带的首条消息在建会话完成前就渲染乐观气泡(消除首发空窗)", async () => {

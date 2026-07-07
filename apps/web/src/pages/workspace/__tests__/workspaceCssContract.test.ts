@@ -172,21 +172,9 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;");
   });
 
-  it("keeps edit lock as the final flow child of ws-right", () => {
+  it("keeps edit lock as a body-level fixed portal instead of a ws-right flow child", () => {
     const workspacePage = readFileSync(
       path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
-      "utf8",
-    );
-
-    expect(workspacePage).toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
-    expect(workspacePage).toMatch(
-      /<DocToolbar[\s\S]*?<AssetPreview[\s\S]*?<div className="ws-edit-lock"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/div>\s*\{\/\* 调试调参面板/s,
-    );
-  });
-
-  it("keeps paper and colophon glow on one continuous surface", () => {
-    const snapshotView = readFileSync(
-      path.join(repoRoot, "apps/web/src/pages/workspace/components/DocumentSnapshotView.tsx"),
       "utf8",
     );
     const inkSkinCss = readFileSync(
@@ -194,12 +182,51 @@ describe("workspaceCssContract", () => {
       "utf8",
     );
 
-    expect(snapshotView.match(/className="ws-paper-surface"/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(inkSkinCss).toContain("#view-workspace .ws-paper-surface::after");
+    expect(workspacePage).toContain('import { createPortal } from "react-dom";');
+    expect(workspacePage).toContain('data-wf="WorkspaceEditLockHint"');
+    expect(workspacePage).toContain("createPortal(");
+    expect(workspacePage).not.toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
+
+    const lockRule = cssRule(inkSkinCss, "body > .ws-edit-lock");
+    expect(lockRule).toContain("position: fixed");
+    expect(lockRule).toContain("right: max(28px, env(safe-area-inset-right))");
+    expect(lockRule).toContain("bottom: max(28px, env(safe-area-inset-bottom))");
+    expect(lockRule).toContain("z-index: 9999");
+    expect(lockRule).toContain("pointer-events: none");
+    const hintRule = cssRule(inkSkinCss, "body > .ws-edit-lock .ws-edit-lock-hint");
+    expect(hintRule).toContain("position: relative");
+    expect(hintRule).toContain("transform: translateY(8px)");
+    expect(hintRule).not.toContain("left: 50%");
+    expect(inkSkinCss).toContain(':has(#view-workspace .ws-right:hover)');
+  });
+
+  it("keeps busy glow as an editor-viewport layer decoupled from review bars", () => {
+    const workspacePage = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
+      "utf8",
+    );
+    const inkSkinCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/workspace-ink-skin.css"),
+      "utf8",
+    );
+
+    expect(workspacePage).toContain('data-wf="WorkspaceEditorGlow"');
+    const glowRule = cssStandaloneRule(inkSkinCss, "#view-workspace .ws-right > .ws-editor-glow");
+    expect(glowRule).toContain("position: fixed");
+    expect(glowRule).toContain("top: 52px");
+    expect(glowRule).toContain("right: calc(100vw - var(--doc-right, 100%))");
+    expect(glowRule).toContain("bottom: 0");
+    expect(glowRule).toContain("left: var(--doc-left, 0px)");
+    expect(glowRule).toContain("pointer-events: none");
     expect(inkSkinCss).toMatch(
-      /body\[data-tool="agentBusy"\] #view-workspace \.ws-right \.ws-paper-surface::after,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
+      /body\[data-tool="agentBusy"\] #view-workspace \.ws-right > \.ws-editor-glow,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
+    );
+    expect(inkSkinCss).not.toContain(
+      'body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after',
     );
     expect(inkSkinCss).not.toMatch(/\.ws-colophon[^{]*\{[^}]*animation:\s*ws-paper-breathe/s);
+    expect(inkSkinCss).not.toMatch(/\.patch-nav[^{]*\.ws-editor-glow/s);
+    expect(inkSkinCss).not.toMatch(/\.ws-edit-lock[^{]*\.ws-editor-glow/s);
   });
 
   it("keeps confirmed legacy workspace CSS removed", () => {
@@ -246,5 +273,12 @@ function cssRule(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`${escaped}\\s*\\{[^}]*\\}`, "s").exec(css);
   if (!match) throw new Error(`rule not found: ${selector}`);
+  return match[0];
+}
+
+function cssStandaloneRule(css: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\n)${escaped}\\s*\\{[^}]*\\}`, "s").exec(css);
+  if (!match) throw new Error(`standalone rule not found: ${selector}`);
   return match[0];
 }

@@ -262,7 +262,7 @@ export const SectionView = React.memo(function SectionView({
       const cleanDeleted: ViewBlock = { ...renderedSection, blockPatch: undefined };
       return (
         <PatchHoverBlockFrame
-          className="wf-blockmark-del"
+          className={`wf-blockmark-del${activePatchId === blockPatch.patchId ? " is-current" : ""}`}
           patchId={blockPatch.patchId}
           patchState="delete"
           popup={(
@@ -291,7 +291,7 @@ export const SectionView = React.memo(function SectionView({
     // 结构块新增:新内容可见 + 左侧绿色细竖条 + hover 标签(自适应翻转,不被裁)
     return (
       <PatchHoverBlockFrame
-        className="wf-blockmark insert"
+        className={`wf-blockmark insert${activePatchId === blockPatch.patchId ? " is-current" : ""}`}
         patchId={blockPatch.patchId}
         patchState="insert"
         popup={(
@@ -439,8 +439,9 @@ export const SectionView = React.memo(function SectionView({
     if (row.status === "removed") {
       return (
         <PatchHoverFrame
-          className="row-del"
+          className={`row-del${activePatchId === patchId ? " is-current" : ""}`}
           patchId={patchId}
+          patchState="delete"
           popup={renderRowPopup(row)}
         >
           <span className="row-del-line" aria-hidden="true" />
@@ -589,8 +590,9 @@ export const SectionView = React.memo(function SectionView({
         <tr key={key} data-row-status="removed">
           <CellTag colSpan={columnCount}>
             <PatchHoverFrame
-              className="row-del"
+              className={`row-del${activePatchId === patchId ? " is-current" : ""}`}
               patchId={patchId}
+              patchState="delete"
               popup={renderTableRowPopup(row)}
             >
               <span className="row-del-line" aria-hidden="true" />
@@ -758,8 +760,9 @@ export const SectionView = React.memo(function SectionView({
       return (
         <PatchHoverFrame
           key={key}
-          className="row-del"
+          className={`row-del${activePatchId === patchId ? " is-current" : ""}`}
           patchId={patchId}
+          patchState="delete"
           popup={renderBlockSeqPopup(entry)}
         >
           <span className="row-del-line" aria-hidden="true" />

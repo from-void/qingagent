@@ -517,6 +517,7 @@
     box-shadow:0 30px 80px rgba(0,0,0,0.5);
     padding:52px 64px;
     width:100%;max-width:800px;box-sizing:border-box;
+    flex:0 0 auto;height:auto;
     min-height:calc(100vh - 52px);
     margin:0 auto;
     display:flex;flex-direction:column;
@@ -569,7 +570,7 @@
   #view-workspace .fd-rp-x:hover{background:var(--bg-hover);color:var(--ink-1);border-color:var(--ink-4)}
   /* 正文区:不再内部滚动,整段随 .ws-right 一起滚 */
   #view-workspace .fd-rp-body{
-    flex:1 1 auto;min-height:0;
+    flex:0 0 auto;min-height:auto;
     display:flex;flex-direction:column;gap:22px;
   }
   /* 区块标签:对齐文章质感(serif,低调) */
@@ -595,6 +596,7 @@
   #view-workspace .fd-rp-body-text{
     font-family:var(--font-zh-serif);font-size:14.5px;color:var(--ink-2);
     line-height:1.85;white-space:pre-wrap;
+    overflow:visible;
     padding:14px 16px;background:var(--bg-subtle);border:1px solid var(--line-1);
   }
 
@@ -2436,6 +2438,7 @@
   #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+  #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
   #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"]{
     animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
   }
@@ -2447,24 +2450,32 @@
   #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor{
     animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
   }
-  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+  #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after,
+  #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line,
+  #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line::after,
+  #view-workspace .row-del.is-current[data-patch-state="delete"] .row-del-line{
     animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
   }
   @media (prefers-reduced-motion:reduce){
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
     #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins,
     #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
-    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after,
+    #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line,
+    #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line::after,
+    #view-workspace .row-del.is-current[data-patch-state="delete"] .row-del-line{
       animation:none;
     }
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
+    #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
     #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
@@ -2473,7 +2484,10 @@
       box-shadow:0 0 0 2px rgba(74, 180, 100, 0.24);
     }
     #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor,
-    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after{
+    #view-workspace .wf-patch-del-marker.is-current[data-patch-state="delete"] .patch-del-cursor::after,
+    #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line,
+    #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line::after,
+    #view-workspace .row-del.is-current[data-patch-state="delete"] .row-del-line{
       background-color:rgba(220, 80, 70, 0.95);
       box-shadow:0 0 0 2px rgba(220, 80, 70, 0.26);
     }

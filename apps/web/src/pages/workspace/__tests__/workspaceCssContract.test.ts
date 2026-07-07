@@ -172,6 +172,22 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;");
   });
 
+  it("keeps material text preview as auto-height paper scrolled by ws-right", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    const previewRule = cssRule(workspaceCss, "#view-workspace .fd-right-preview");
+    expect(previewRule).toContain("flex:0 0 auto");
+    expect(previewRule).toContain("height:auto");
+
+    const bodyRule = cssRule(workspaceCss, "#view-workspace .fd-rp-body");
+    expect(bodyRule).toContain("flex:0 0 auto");
+    expect(bodyRule).toContain("min-height:auto");
+    expect(bodyRule).not.toContain("min-height:0");
+
+    const bodyTextRule = cssRule(workspaceCss, "#view-workspace .fd-rp-body-text");
+    expect(bodyTextRule).toContain("overflow:visible");
+  });
+
   it("keeps edit lock as a body-level fixed portal instead of a ws-right flow child", () => {
     const workspacePage = readFileSync(
       path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),

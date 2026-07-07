@@ -283,4 +283,40 @@ describe("审核态格式保真(showPatches)", () => {
     expect(originalText.querySelector(".patch-popup-preview")).not.toBeNull();
     expect(host.querySelector(".wf-patch-ins-wrap.active")).toBeNull();
   });
+
+  it("结构新增列表整块有 hover,并能响应 patch-nav 当前定位态", () => {
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "list",
+          ordered: false,
+          items: ["第一条", "第二条"],
+          blockPatch: {
+            patchId: "ins-list",
+            op: "insert",
+            marker: { kind: "patchIns", text: "新增列表", patchId: "ins-list" },
+          },
+        }],
+      },
+      new Map([["ins-list", { before: "", after: "第一条\n第二条", kind: "insert", index: 3 }]]),
+      "ins-list",
+    );
+
+    const listBlock = host.querySelector('[data-patch-id="ins-list"].wf-blockmark.insert') as HTMLElement;
+    expect(listBlock).not.toBeNull();
+    expect(listBlock.dataset.patchState).toBe("insert");
+    expect(listBlock.classList.contains("is-current")).toBe(true);
+    expect(listBlock.textContent).toContain("第一条");
+    expect(listBlock.textContent).toContain("第二条");
+
+    const popup = listBlock.querySelector(".patch-hover-popup") as HTMLElement;
+    expect(popup.classList.contains("is-visible")).toBe(false);
+    act(() => {
+      listBlock.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    expect(popup.classList.contains("is-visible")).toBe(true);
+    expect(popup.textContent).toContain("#3 · 新增");
+  });
 });

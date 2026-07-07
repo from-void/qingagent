@@ -51,6 +51,7 @@ describe("commandSchema", () => {
     ["acceptPatch 两者皆空", { kind: "acceptPatch", data: {} }],
     ["commitPatches 空 ids", { kind: "commitPatches", data: { ids: [] } }],
     ["resumeAskUser 空 answers", { kind: "resumeAskUser", data: { sessionId: "s", answers: {} } }],
+    ["resumeAskUser 空 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "", answers: { q1: { chosen: [], freeText: "x" } } } }],
     ["reparseMaterial sessionId 空", { kind: "reparseMaterial", data: { sessionId: "", fileId: "file-1" } }],
     ["reparseMaterial fileId 空", { kind: "reparseMaterial", data: { sessionId: "s", fileId: "" } }],
     ["attachFolder 未知 provider", { kind: "attachFolder", data: { sessionId: "s", source: { provider: "ftp" } } }],

@@ -288,6 +288,12 @@ export function legacyValidateCommandKind(body: unknown): string | null {
         return "resumeAskUser.data.sessionId must be a non-empty string";
       }
       if (
+        data.toolCallId !== undefined &&
+        (typeof data.toolCallId !== "string" || !data.toolCallId)
+      ) {
+        return "resumeAskUser.data.toolCallId must be a non-empty string";
+      }
+      if (
         data.answers === null ||
         typeof data.answers !== "object" ||
         Array.isArray(data.answers)

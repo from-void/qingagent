@@ -367,6 +367,85 @@ describe("askUser answer user message", () => {
     });
   });
 
+  it("内联问卷 spec 查找跳过同 id generic 占位,用真实 askUser spec 解析选项 label", async () => {
+    const {
+      buildVisibleAskUserAnswerMessage,
+      findAskUserToolCallSpecInChatHistory,
+    } = await import("../bridge/askUserAnswerMessage.js");
+    const placeholder: ToolCallSpec = {
+      id: "ask-inline-placeholder",
+      name: "askUser",
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      body: { kind: "generic", data: { argsJson: "" } },
+      result: null,
+    };
+    const base = askUserSpec("ask-inline-placeholder");
+    const realSpec: ToolCallSpec = {
+      ...base,
+      body: {
+        kind: "askUser",
+        data: { ...askUserData(base), mode: { kind: "overlay" } },
+      },
+    };
+    const chatHistory: ChatMessage[] = [
+      {
+        id: "msg-legacy-placeholder",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [
+          {
+            kind: "toolCall",
+            data: {
+              id: "ask-inline-placeholder",
+              name: "askUser",
+              render: { kind: "chatInline" },
+              status: { kind: "running", data: { progressPct: null, etaSec: null } },
+              result: null,
+            } as unknown as ToolCallSpec,
+          },
+        ],
+        chips: null,
+      },
+      {
+        id: "msg-placeholder",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [{ kind: "toolCall", data: placeholder }],
+        chips: null,
+      },
+      {
+        id: "msg-real",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:00:01.000Z",
+        parts: [{ kind: "toolCall", data: realSpec }],
+        chips: null,
+      },
+    ];
+
+    const found = findAskUserToolCallSpecInChatHistory(chatHistory, "ask-inline-placeholder");
+    expect(found?.body.kind).toBe("askUser");
+
+    const visible = buildVisibleAskUserAnswerMessage(
+      "ask-inline-placeholder",
+      { "q-style": { chosen: ["guide"], freeText: null } },
+      found,
+    );
+    expect(visible?.parts[0]).toMatchObject({
+      kind: "askUserAnswerCard",
+      data: {
+        items: [
+          {
+            questionId: "q-style",
+            questionLabel: "文章类型",
+            answerText: "实用指南",
+            selectedOptionLabels: ["实用指南"],
+          },
+        ],
+      },
+    });
+  });
+
   it("askUser tool-result backstop 会补建答案 message 且更新 chatHistory", async () => {
     const {
       createSession,

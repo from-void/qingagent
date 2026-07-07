@@ -400,6 +400,7 @@ function deserializeChatHistory(value: unknown): ChatMessage[] {
 interface RestoreToolCallFacts {
   hasOpenAskUserToolCall: boolean;
   openAskUserToolCallId: string | null;
+  openAskUserToolCallIds: string[];
 }
 
 function isOpenAskUserToolCall(spec: ToolCallSpec): boolean {
@@ -412,6 +413,7 @@ function isOpenAskUserToolCall(spec: ToolCallSpec): boolean {
 function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts {
   let hasOpenAskUserToolCall = false;
   let openAskUserToolCallId: string | null = null;
+  const openAskUserToolCallIds: string[] = [];
 
   for (const message of messages) {
     for (const part of message.parts) {
@@ -419,6 +421,7 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
       if (isOpenAskUserToolCall(part.data)) {
         hasOpenAskUserToolCall = true;
         openAskUserToolCallId ??= part.data.id;
+        openAskUserToolCallIds.push(part.data.id);
       }
     }
   }
@@ -426,6 +429,7 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
   return {
     hasOpenAskUserToolCall,
     openAskUserToolCallId,
+    openAskUserToolCallIds,
   };
 }
 
@@ -1180,6 +1184,7 @@ function extractTextFromDbContent(content: unknown): string {
  */
 export async function loadSessionFromThread(
   sessionId: string,
+  options: { preferredAskUserToolCallId?: string | null } = {},
 ): Promise<SessionState | null> {
   const memory = mastra.getMemory("default");
   if (!memory) return null;
@@ -1292,12 +1297,23 @@ export async function loadSessionFromThread(
   }
   let chatHistory = deserializeChatHistory(meta.chatHistory);
   const toolCallFacts = scanRestoreToolCallFacts(chatHistory);
-  const hasRestorableAskUserSuspension =
-    toolCallFacts.openAskUserToolCallId !== null &&
-    typeof meta.runId === "string" &&
-    meta.runId.length > 0 &&
+  const preferredAskUserToolCallId =
+    typeof options.preferredAskUserToolCallId === "string" &&
+    options.preferredAskUserToolCallId.length > 0 &&
+    toolCallFacts.openAskUserToolCallIds.includes(options.preferredAskUserToolCallId)
+      ? options.preferredAskUserToolCallId
+      : null;
+  const persistedAskUserToolCallId =
     typeof meta.toolCallId === "string" &&
-    meta.toolCallId === toolCallFacts.openAskUserToolCallId;
+    toolCallFacts.openAskUserToolCallIds.includes(meta.toolCallId)
+      ? meta.toolCallId
+      : null;
+  const restorableAskUserToolCallId =
+    preferredAskUserToolCallId ?? persistedAskUserToolCallId;
+  const hasRestorableAskUserSuspension =
+    restorableAskUserToolCallId !== null &&
+    typeof meta.runId === "string" &&
+    meta.runId.length > 0;
   const normalizedDocStateKind = normalizeRestoredDocStateKind({
     persistedKind: meta.docState?.kind ?? "init",
     hasDoc: legacySections.length > 0,
@@ -1310,7 +1326,7 @@ export async function loadSessionFromThread(
   if (toolCallFacts.hasOpenAskUserToolCall) {
     chatHistory = terminalizeStaleRestoreToolCalls(chatHistory, {
       preserveOpenAskUserToolCallId: hasRestorableAskUserSuspension
-        ? toolCallFacts.openAskUserToolCallId
+        ? restorableAskUserToolCallId
         : null,
     });
   }
@@ -1326,7 +1342,7 @@ export async function loadSessionFromThread(
       ? {
           streamId: `restored:${meta.runId}`,
           runId: meta.runId!,
-          toolCallId: meta.toolCallId!,
+          toolCallId: restorableAskUserToolCallId!,
           toolName: "askUser",
         }
       : null;

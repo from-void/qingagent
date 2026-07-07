@@ -1119,6 +1119,45 @@ describe("thread persistence", () => {
     }
   });
 
+  it("cold restore uses submitted askUser toolCallId to recover stale persisted suspension id", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { hasActiveSuspension } = await import("../bridge/sessionState.js");
+    const askUser = toolCall(
+      "askUser",
+      { kind: "running", data: { progressPct: null, etaSec: null } },
+      "ask-real",
+    );
+    threads.set("askuser-preferred", storedThread("askuser-preferred", metadata({
+      docState: legacyDocState("plan"),
+      legacySections: [],
+      runId: "run-ask",
+      toolCallId: "ask-stale",
+      chatHistory: [toolMessage(askUser)],
+    })));
+
+    const restored = await loadSessionFromThread("askuser-preferred", {
+      preferredAskUserToolCallId: "ask-real",
+    });
+    const restoredTool = restored?.chatHistory[0]?.parts[0];
+
+    expect(restored?.runId).toBe("run-ask");
+    expect(restored?.toolCallId).toBe("ask-real");
+    expect(restored?._suspensionOwner).toEqual({
+      streamId: "restored:run-ask",
+      runId: "run-ask",
+      toolCallId: "ask-real",
+      toolName: "askUser",
+    });
+    expect(restored ? hasActiveSuspension(restored) : false).toBe(true);
+    expect(restoredTool?.kind).toBe("toolCall");
+    if (restoredTool?.kind === "toolCall") {
+      expect(restoredTool.data.status).toEqual({
+        kind: "running",
+        data: { progressPct: null, etaSec: null },
+      });
+    }
+  });
+
   it("从旧 chatHistory 的 askUserAnswers 尾部补建答案 user message 且只补一次", async () => {
     const {
       buildAskUserAnswerUserMessage,

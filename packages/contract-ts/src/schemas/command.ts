@@ -139,6 +139,7 @@ type _AskUserAnswerExact = Expect<Equal<z.infer<typeof askUserAnswerSchema>, Ask
 
 const resumeAskUserDataSchema = z.object({
   sessionId: z.string().min(1),
+  toolCallId: z.string().min(1).optional(),
   // 值用 .optional():契约 answers 是 partial record(`{[key in string]?: AskUserAnswer}`),
   // z.record 值加 optional 才与之精确等价;旧校验本就不校验答案值形状,这里更贴近旧行为。
   answers: z

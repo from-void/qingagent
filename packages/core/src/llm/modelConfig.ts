@@ -36,9 +36,12 @@ function envModelProtocol(): ModelProtocol | undefined {
 export type DeepseekTier = "flash" | "pro";
 export type ModelProtocol = "openai" | "anthropic";
 
-/** 模型 id 单一来源。PRO 当前只做支持不引入调用点(产品决策)。 */
+/** 模型 id 单一来源。
+ * 全切 pro(用户拍板):flash 档默认值临时指向 deepseek-v4-pro,使所有走
+ * resolveModelId(ctx,"flash") 的出口(主 agent / om-sidecar / writeDraft / generateSvg / processors)
+ * 统一用 pro。回退只需把此值改回 "deepseek-v4-flash"。 */
 export const DEEPSEEK_MODEL_IDS: Record<DeepseekTier, string> = {
-  flash: "deepseek-v4-flash",
+  flash: "deepseek-v4-pro",
   pro: "deepseek-v4-pro",
 };
 

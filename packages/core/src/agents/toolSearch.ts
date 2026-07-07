@@ -61,7 +61,7 @@ export async function preloadQingagentToolSearchTools({
     steps: [],
     systemMessages: [],
     state: {},
-    model: "deepseek/deepseek-v4-flash" as never,
+    model: "deepseek/deepseek-v4-pro" as never, // 全切 pro(用户拍板);回退改回 deepseek-v4-flash
     tools: {},
     requestContext,
     retryCount: 0,

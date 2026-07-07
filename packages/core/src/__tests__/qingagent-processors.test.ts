@@ -150,7 +150,7 @@ describe("qingagent processors", () => {
     ]);
 
     expect(resolveQingagentGuardrailModel(requestContext as unknown as RequestContext)).toEqual({
-      id: "deepseek/deepseek-v4-flash",
+      id: "deepseek/deepseek-v4-pro",
       url: "https://proxy.example.com/openai/v1",
       apiKey: "visitor-key",
     });

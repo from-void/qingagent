@@ -13,7 +13,7 @@ export interface DeepseekDraftCall {
   maxTokens?: number;
   /** 自定义 baseURL(缺省官方);形如 https://host/v1。 */
   baseUrl?: string;
-  /** 自定义模型名(缺省 deepseek-v4-flash)。 */
+  /** 自定义模型名(缺省 deepseek-v4-pro)。 */
   model?: string;
   /** 本请求实际 key(缺省读 env)。 */
   apiKey?: string;
@@ -53,7 +53,7 @@ class UpstreamHttpError extends Error {
 }
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
-const DEEPSEEK_DRAFT_MODEL = "deepseek-v4-flash";
+const DEEPSEEK_DRAFT_MODEL = "deepseek-v4-pro"; // 全切 pro(用户拍板);回退改回 deepseek-v4-flash
 
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
 const TEXT_SECRET_HEADER_RE = /\b(authorization|x-api-key)\b(\s*[:=]\s*)(?:Bearer\s+)?[^\s"',;}\]]+/gi;

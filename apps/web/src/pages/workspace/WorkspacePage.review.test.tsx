@@ -2,6 +2,8 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./components/ChatInput";
@@ -1529,6 +1531,40 @@ describe("WorkspacePage review controls", () => {
     // 发送失败 → restoreAskUser 回滚:弹层回来,输入仍锁,可重新提交
     expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
     expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("#25 回归:编辑锁提示 portal 到 body 顶层 fixed,不再留在 .ws-right 滚动流内", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "编辑锁提示" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(pmDoc([pmParagraph("p-lock", "正文内容")]), 1) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: true },
+      },
+    ]);
+
+    const portal = Array.from(document.body.children).find((child) =>
+      child.classList.contains("ws-edit-lock"),
+    ) as HTMLElement | undefined;
+    expect(portal).not.toBeUndefined();
+    expect(portal?.parentElement).toBe(document.body);
+    expect(portal?.textContent).toContain("请等待青简完成编辑后再做修改");
+    expect(host?.querySelector(".ws-right .ws-edit-lock")).toBeNull();
+
+    const inkSkinCss = readFileSync(
+      resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"),
+      "utf8",
+    );
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*position:\s*fixed/s);
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*right:\s*max\(28px, env\(safe-area-inset-right\)\)/s);
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*bottom:\s*max\(28px, env\(safe-area-inset-bottom\)\)/s);
   });
 
   it("e2e-loop-0704 R15 回归:#/new 携带的首条消息在建会话完成前就渲染乐观气泡(消除首发空窗)", async () => {

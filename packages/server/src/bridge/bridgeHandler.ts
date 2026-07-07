@@ -1698,6 +1698,38 @@ function findAskUserToolCallSpec(
   return null;
 }
 
+function markAskUserToolCallAnsweredForResume(
+  session: SessionState,
+  toolCallId: string | null,
+  answersRecord: ReturnType<typeof normalizeAskUserAnswers>,
+): { messageId: string; toolCallId: string; spec: ToolCallSpec } | null {
+  if (!toolCallId) return null;
+  for (const message of session.chatHistory) {
+    for (let index = 0; index < message.parts.length; index += 1) {
+      const part = message.parts[index];
+      if (
+        part?.kind !== "toolCall" ||
+        part.data.id !== toolCallId ||
+        part.data.name !== "askUser"
+      ) {
+        continue;
+      }
+      if (part.data.status.kind === "done") return null;
+      const spec: ToolCallSpec = {
+        ...part.data,
+        status: { kind: "done" },
+        result:
+          Object.keys(answersRecord).length > 0
+            ? { kind: "askUserAnswers", data: answersRecord }
+            : { kind: "genericText", data: "已提交" },
+      };
+      message.parts[index] = { kind: "toolCall", data: spec };
+      return { messageId: message.id, toolCallId, spec };
+    }
+  }
+  return null;
+}
+
 function formatChatHistoryForFreshResume(session: SessionState): string {
   const lines: string[] = [];
   for (const message of session.chatHistory) {
@@ -1981,6 +2013,19 @@ async function* handleResume(
         throw resumeErr; // non-retryable or exhausted retries
       }
     }
+
+    const answeredAskUserUpdate = markAskUserToolCallAnsweredForResume(
+      session,
+      toolCallId,
+      resumeAnswers,
+    );
+    if (answeredAskUserUpdate) {
+      yield {
+        kind: "toolCallUpdated",
+        data: answeredAskUserUpdate,
+      };
+    }
+    yield* emitProjectedDocState(session, "resume_ask_user_answered");
 
     // processAgentStream clears session.runId / session.toolCallId on
     // natural completion.

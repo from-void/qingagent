@@ -45,7 +45,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     ]);
 
     const text = host?.textContent ?? "";
-    expect(text).toContain("生成草稿");
+    expect(text).toContain("酝酿中…");
     expect(text).toContain("生成配图");
     expect(text).toContain("生成二维码");
     expect(text).toContain("确认方向");

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import {
   countDocVisibleChars,
@@ -1232,6 +1233,7 @@ export function WorkspacePage() {
       : dim.content.kind === "pendingReview"
         ? "请先确认或放弃当前修改候选"
         : null;
+  const editLockPortalTarget = typeof document !== "undefined" ? document.body : null;
 
   // 出 diff 后(逐字揭示动画结束、审阅条就绪)自动定位并滚到第 1 处 diff:
   // 揭示动画通常把视口带到最后一处,这里把焦点拉回 #1,方便用户从头审。每组 patch 只做一次。
@@ -3565,25 +3567,22 @@ export function WorkspacePage() {
               closing={previewExit.closing}
             />
           )}
-          {/* ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级:sticky bottom
-              依赖这个 DOM 位置锚定到右侧滚动视口底部。生成/编辑期间的文档区编辑锁:
-              遮罩本身 pointer-events:none(滚轮穿透给
-              .ws-right 滚动容器,故"能滚"),靠同步给 .wf-doc 加 pointer-events:none
-              屏蔽点击/编辑(故"不能点")。仅在 body[data-tool=agentBusy|imageProgress]
-              / data-patch-revealing=1 时由 CSS 点亮(hover 才显提示)。提示文案按态挂载,
-              避免 idle/pendingReview 把"请等待"误暴露进 innerText。 */}
-          <div className="ws-edit-lock" aria-hidden="true">
-            <div className="ws-edit-lock-hint">
-              {editLockHint ? (
-                <>
-                  <span className="ws-edit-lock-hint-dot" aria-hidden="true" />
-                  {editLockHint}
-                </>
-              ) : null}
-            </div>
-          </div>
         </div>
       </div>
+      {/* 编辑锁提示与 qa-toast 同挂到 body 顶层:fixed 贴右下,避免被 .ws-right
+          滚动流、sticky 或 transform/backdrop-filter 祖先影响。遮罩仍 pointer-events:none,
+          不吃滚轮/点击;实际编辑屏蔽继续交给忙态下 .wf-doc pointer-events:none。 */}
+      {editLockHint && editLockPortalTarget
+        ? createPortal(
+            <div className="ws-edit-lock" aria-hidden="true" data-wf="WorkspaceEditLockHint">
+              <div className="ws-edit-lock-hint">
+                <span className="ws-edit-lock-hint-dot" aria-hidden="true" />
+                {editLockHint}
+              </div>
+            </div>,
+            editLockPortalTarget,
+          )
+        : null}
       {/* 调试调参面板(动效/入场)默认隐藏,Ctrl+Shift+H 唤起。HumanCursorOverlay 是
           真实光标渲染、非调试按钮,始终保留。 */}
       {devToolsOpen && (

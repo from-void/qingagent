@@ -172,16 +172,32 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;");
   });
 
-  it("keeps edit lock as the final flow child of ws-right", () => {
+  it("keeps edit lock as a body-level fixed portal instead of a ws-right flow child", () => {
     const workspacePage = readFileSync(
       path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
       "utf8",
     );
-
-    expect(workspacePage).toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
-    expect(workspacePage).toMatch(
-      /<DocToolbar[\s\S]*?<AssetPreview[\s\S]*?<div className="ws-edit-lock"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/div>\s*\{\/\* 调试调参面板/s,
+    const inkSkinCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/workspace-ink-skin.css"),
+      "utf8",
     );
+
+    expect(workspacePage).toContain('import { createPortal } from "react-dom";');
+    expect(workspacePage).toContain('data-wf="WorkspaceEditLockHint"');
+    expect(workspacePage).toContain("createPortal(");
+    expect(workspacePage).not.toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
+
+    const lockRule = cssRule(inkSkinCss, "body > .ws-edit-lock");
+    expect(lockRule).toContain("position: fixed");
+    expect(lockRule).toContain("right: max(28px, env(safe-area-inset-right))");
+    expect(lockRule).toContain("bottom: max(28px, env(safe-area-inset-bottom))");
+    expect(lockRule).toContain("z-index: 9999");
+    expect(lockRule).toContain("pointer-events: none");
+    const hintRule = cssRule(inkSkinCss, "body > .ws-edit-lock .ws-edit-lock-hint");
+    expect(hintRule).toContain("position: relative");
+    expect(hintRule).toContain("transform: translateY(8px)");
+    expect(hintRule).not.toContain("left: 50%");
+    expect(inkSkinCss).toContain(':has(#view-workspace .ws-right:hover)');
   });
 
   it("keeps paper and colophon glow on one continuous surface", () => {

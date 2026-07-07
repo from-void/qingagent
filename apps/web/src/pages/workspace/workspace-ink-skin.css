@@ -2634,27 +2634,23 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
    给 .ws-right 滚动容器(故"能滚");屏蔽点击/编辑则交给"忙时给 .wf-doc 加
    pointer-events:none"——纸面所有点击/调色浮层/块手柄全部不可点(故"不能点"),
    而滚动作用在 .ws-right 上、不受子级 pointer-events 影响。 */
-/* 遮罩/提示锚:作为 .ws-right 的最后一个流内子级,position:sticky + bottom 让其钉在
-   滚动视口底部(不随内容滚走)。height:0 不占布局;子级提示用 sticky 容器的 bottom 锚。 */
-#view-workspace .ws-edit-lock {
-  position: sticky;
-  bottom: 28px;
-  z-index: 40;
-  height: 0;
+/* 遮罩/提示锚:portal 到 body 顶层,与 qa-toast 同一 fixed 层级。它不再属于
+   .ws-right 滚动流,因此不会被右侧滚动、sticky 或 transform/backdrop-filter 祖先带走。 */
+body > .ws-edit-lock {
+  position: fixed;
+  right: max(28px, env(safe-area-inset-right));
+  bottom: max(28px, env(safe-area-inset-bottom));
+  z-index: 9999;
+  height: auto;
   pointer-events: none; /* 关键:遮罩不吃事件,滚轮穿透到 .ws-right */
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
-  /* margin-top:auto:.ws-right 是 flex column,吸走内容上方空白把本层稳定顶到底部。
-     内容矮(如生成期 QingLoading 占位)时不再落到顶部;内容高时无空白可吸(=0)、
-     紧随内容,由 sticky bottom 钉在视口底。 */
-  margin-top: auto;
   overflow: visible;
 }
-body[data-tool="agentBusy"] #view-workspace .ws-edit-lock,
-body[data-tool="imageProgress"] #view-workspace .ws-edit-lock,
-body[data-patch-revealing="1"] #view-workspace .ws-edit-lock {
+body[data-tool="agentBusy"] > .ws-edit-lock,
+body[data-tool="imageProgress"] > .ws-edit-lock,
+body[data-patch-revealing="1"] > .ws-edit-lock {
   opacity: 1;
 }
 /* 忙时屏蔽纸面所有点击/编辑(浮层、块手柄、调色钮),但 .ws-right 滚动不受影响 */
@@ -2664,14 +2660,13 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .wf-doc {
   pointer-events: none;
 }
 
-/* hover 提示:不 hover 不显示;贴底固定(由父级 .ws-edit-lock 的 sticky 钉在视口底),
-   不随内容滚动跑。提示自身只管样式与显隐过渡。 */
-#view-workspace .ws-edit-lock-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
+/* hover 提示:不 hover 不显示;fixed 父层贴右下,提示自身只管样式与显隐过渡。 */
+body > .ws-edit-lock .ws-edit-lock-hint {
+  position: relative;
   pointer-events: none;
   width: fit-content;
+  min-height: 38px;
+  box-sizing: border-box;
   max-width: min(520px, calc(100vw - 48px));
   padding: 9px 18px;
   border-radius: 999px;
@@ -2688,25 +2683,26 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .wf-doc {
   align-items: center;
   gap: 9px;
   opacity: 0;
-  transform: translate(-50%, 8px);
+  transform: translateY(8px);
   transition:
     opacity 0.22s ease,
     transform 0.22s ease;
 }
-/* 仅在文档区(.ws-right) hover 且处于忙态时浮现提示 */
-body[data-tool="agentBusy"] #view-workspace .ws-right:hover .ws-edit-lock-hint,
-body[data-tool="imageProgress"]
-  #view-workspace
-  .ws-right:hover
+/* 仅在文档区(.ws-right) hover 且处于忙态时浮现提示。portal 在 body 下,
+   这里用 :has 连接右侧 hover 状态与顶层 fixed 提示。 */
+body[data-tool="agentBusy"]:has(#view-workspace .ws-right:hover)
+  > .ws-edit-lock
   .ws-edit-lock-hint,
-body[data-patch-revealing="1"]
-  #view-workspace
-  .ws-right:hover
+body[data-tool="imageProgress"]:has(#view-workspace .ws-right:hover)
+  > .ws-edit-lock
+  .ws-edit-lock-hint,
+body[data-patch-revealing="1"]:has(#view-workspace .ws-right:hover)
+  > .ws-edit-lock
   .ws-edit-lock-hint {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
 }
-#view-workspace .ws-edit-lock-hint-dot {
+body > .ws-edit-lock .ws-edit-lock-hint-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -2770,18 +2766,18 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::afte
 :root[data-perf="low"] body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
 :root[data-perf="low"] body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
 :root[data-perf="low"] body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
-:root[data-perf="low"] #view-workspace .ws-edit-lock-hint-dot {
+:root[data-perf="low"] body > .ws-edit-lock .ws-edit-lock-hint-dot {
   animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
   body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
   body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
   body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
-  #view-workspace .ws-edit-lock-hint-dot {
+  body > .ws-edit-lock .ws-edit-lock-hint-dot {
     animation: none;
   }
-  #view-workspace .ws-edit-lock-hint {
+  body > .ws-edit-lock .ws-edit-lock-hint {
     transition: opacity 0.22s ease;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }

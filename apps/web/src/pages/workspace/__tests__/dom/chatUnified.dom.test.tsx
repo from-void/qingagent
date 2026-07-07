@@ -160,6 +160,14 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("已完成");
   });
 
+  it("#27 writeDraft 参数生成期占位显示「酝酿中…」", () => {
+    renderBar(genericSpec("running", "", "writeDraft"));
+
+    expect(host.querySelector('[data-wf="ToolPrep"]')).not.toBeNull();
+    expect(host.textContent).toContain("酝酿中…");
+    expect(host.textContent).not.toContain("正在准备生成草稿");
+  });
+
   it("Mastra workspace 真实注入工具 id 都有中文标签,含 grep/search", () => {
     const expected: Record<string, string> = {
       mastra_workspace_read_file: "读取文件",

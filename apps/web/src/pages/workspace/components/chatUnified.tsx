@@ -289,7 +289,7 @@ export function UToolBar({ spec, skillLabels = EMPTY_SKILL_LABELS }: { spec: Too
           <span />
         </span>
         <span className="u-prep-text">
-          正在准备<b>{label}</b>
+          {spec.name === "writeDraft" ? "酝酿中…" : <>正在准备<b>{label}</b></>}
         </span>
       </div>
     );

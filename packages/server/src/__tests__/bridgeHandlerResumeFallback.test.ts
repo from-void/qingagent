@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
+import { legacySectionsToPm } from "@qingagent/pm-schema";
 
 const mockState = vi.hoisted(() => ({
   ...(() => {
@@ -91,6 +92,16 @@ function showQrCall(toolCallId: string): unknown {
         refreshQuery: "飞书授权二维码过期了,请帮我重新生成",
         confirmQuery: "我已完成飞书扫码授权,请继续收尾",
       },
+    },
+  };
+}
+
+function writeDraftStreamingStart(toolCallId: string): unknown {
+  return {
+    type: "tool-call-input-streaming-start",
+    payload: {
+      toolName: "writeDraft",
+      toolCallId,
     },
   };
 }
@@ -445,6 +456,59 @@ describe("handleResume askUser fresh-turn fallback", () => {
       turnIndex: null,
       turnStartMessageIndex: null,
     });
+  });
+
+  it("resumeAskUser 续写 writeDraft 参数生成前先投影 agentBusy,右侧保持锁定发光", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(session, "run-resume-busy");
+    session.legacySections = [{ kind: "p", data: { text: "已有正文" } }];
+    session.doc = legacySectionsToPm(session.legacySections as never);
+    session.docState = { kind: "editing" };
+
+    mockState.resumeStream.mockResolvedValue({
+      runId: "run-resume-busy-resumed",
+      fullStream: streamOf(writeDraftStreamingStart("wd-param-1")),
+    });
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: {
+            "q-one": { chosen: [], freeText: "继续写" },
+          },
+        },
+      }),
+    );
+
+    const askDoneIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === "ask-1" &&
+        frame.data.spec.status.kind === "done",
+    );
+    const busyIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "docStateChanged" &&
+        frame.data.state.kind === "editing" &&
+        frame.data.activeOverlay === null &&
+        frame.data.agentBusy === true,
+    );
+    const writeDraftPlaceholderIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "chatMessageAppended" &&
+        frame.data.part.kind === "toolCall" &&
+        frame.data.part.data.id === "wd-param-1" &&
+        frame.data.part.data.name === "writeDraft" &&
+        frame.data.part.data.body.kind === "generic" &&
+        frame.data.part.data.body.data.argsJson === "",
+    );
+
+    expect(askDoneIndex).toBeGreaterThanOrEqual(0);
+    expect(busyIndex).toBeGreaterThan(askDoneIndex);
+    expect(writeDraftPlaceholderIndex).toBeGreaterThan(busyIndex);
   });
 
   it("askUser resume 不推进 OM turnCounter，答案由 sidecar fallback 并回挂起轮次", async () => {

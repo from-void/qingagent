@@ -161,7 +161,7 @@ describe("writeDraft intent 调度", () => {
       stream: false,
     });
     expect(expressBody).toMatchObject({
-      model: "deepseek-v4-pro",
+      model: "deepseek-v4-flash",
       thinking: { type: "disabled" },
       temperature: 0.7,
       stream: false,

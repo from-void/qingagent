@@ -65,7 +65,7 @@ export type RepairableLanguageModelV2 = {
 
 /** 默认(env 兜底)模型配置;访客/全局 key 覆盖见 createRepairingQingagentModel(auth)。 */
 export const qingagentModelConfig = {
-  id: "deepseek/deepseek-v4-pro", // 全切 pro(用户拍板);回退改回 deepseek-v4-flash
+  id: "deepseek/deepseek-v4-flash",
   url: "https://api.deepseek.com/v1",
   apiKey: process.env.DEEPSEEK_API_KEY ?? "",
 } satisfies OpenAICompatibleConfig;

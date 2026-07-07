@@ -358,7 +358,7 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
     }, 400);
   }
   const isAnthropic = body.protocol === "anthropic";
-  const model = (body.model ?? "").trim() || (isAnthropic ? "glm-4.6" : "deepseek-v4-pro");
+  const model = (body.model ?? "").trim() || (isAnthropic ? "glm-4.6" : "deepseek-v4-flash");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {

@@ -15,7 +15,7 @@ export async function fetchDeepseekSearchLinks(
   query: string,
   apiKey: string,
   count: number,
-  model = "deepseek-v4-pro", // 全切 pro(用户拍板);回退改回 deepseek-v4-flash
+  model = "deepseek-v4-flash",
 ): Promise<SearchResult[]> {
   const limit = Math.max(1, Math.floor(count));
   if (!query.trim() || !apiKey) return [];

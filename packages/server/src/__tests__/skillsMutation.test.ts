@@ -175,6 +175,96 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
   });
 });
 
+describe("技能导入 UX 元数据", () => {
+  const installedNames = new Set<string>();
+
+  beforeEach(async () => {
+    process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
+    const { mkdir } = await import("node:fs/promises");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+  });
+
+  afterEach(async () => {
+    delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
+    if (installedNames.size > 0) {
+      const { rm } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+      await Promise.all(
+        Array.from(installedNames, (name) =>
+          rm(join(SKILLS_INSTALL_DIR, name), { recursive: true, force: true }).catch(() => undefined),
+        ),
+      );
+      installedNames.clear();
+    }
+  });
+
+  it("PATCH /skills/:name 只改显示名 label，不改 slug，且不截断长中文", async () => {
+    const app = await loadApp();
+    const skillName = "rename-label-demo";
+    const skillMd = `---\nname: ${skillName}\ndescription: 演示\nlabel: 旧名\nuser-invocable: true\n---\n# demo`;
+    const install = await app.request("/api/v1/skills/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skillMd }),
+    });
+    expect(install.status).toBe(200);
+    installedNames.add(skillName);
+
+    const longLabel = "这是一个很长很长的中文显示名用于确认保存后不会被静默截断并且底层标识保持稳定";
+    const rename = await app.request(`/api/v1/skills/${skillName}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: longLabel }),
+    });
+
+    expect(rename.status).toBe(200);
+    expect(await rename.json()).toEqual({ name: skillName, label: longLabel });
+
+    const detail = await app.request(`/api/v1/skills/${skillName}`);
+    expect(detail.status).toBe(200);
+    await expect(detail.json()).resolves.toMatchObject({
+      name: skillName,
+      label: longLabel,
+    });
+
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    const saved = await readFile(join(SKILLS_INSTALL_DIR, skillName, "SKILL.md"), "utf8");
+    expect(saved).toContain(`name: ${skillName}`);
+    expect(parseSkillFrontmatter(saved)?.label).toBe(longLabel);
+  });
+
+  it("安装技能缺省 user-invocable 时按已安装技能默认可插入，显式 false 仍不进菜单", async () => {
+    const app = await loadApp();
+    const defaultInvocable = "default-invocable-demo";
+    const explicitFalse = "explicit-hidden-demo";
+    for (const skillMd of [
+      `---\nname: ${defaultInvocable}\ndescription: 演示\nlabel: 默认可用\n---\n# demo`,
+      `---\nname: ${explicitFalse}\ndescription: 演示\nlabel: 显式隐藏\nuser-invocable: false\n---\n# demo`,
+    ]) {
+      const res = await app.request("/api/v1/skills/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillMd }),
+      });
+      expect(res.status).toBe(200);
+    }
+    installedNames.add(defaultInvocable);
+    installedNames.add(explicitFalse);
+
+    const res = await app.request("/api/v1/skills");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { skills: Array<{ name: string; userInvocable: boolean; enabled: boolean }> };
+    const defaultSkill = body.skills.find((skill) => skill.name === defaultInvocable);
+    const hiddenSkill = body.skills.find((skill) => skill.name === explicitFalse);
+    expect(defaultSkill).toMatchObject({ userInvocable: true, enabled: true });
+    expect(hiddenSkill).toMatchObject({ userInvocable: false, enabled: true });
+  });
+});
+
 describe("parseSkillFrontmatter 扩展字段脏路径", () => {
   it("解析完整字段、引号/无引号、内联 tools 数组和额外字段", () => {
     const parsed = parseSkillFrontmatter(`---
@@ -215,7 +305,7 @@ description: 第一段摘要，后面不应进入摘要。第二句
 
     expect(parsed).toMatchObject({
       name: "fallback-demo-skill",
-      label: "fallba",
+      label: "fallback-demo-skill",
       summary: "第一段摘要",
       icon: "star",
       userInvocable: false,

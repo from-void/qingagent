@@ -8,7 +8,10 @@ import { isSkillMutationAllowed } from "./skills";
 
 export const capabilitiesRoutes = new Hono();
 
+let folderSourceEnvLogged = false;
+
 capabilitiesRoutes.get("/capabilities", (c) => {
+  logFolderSourceEnvOnce();
   const capabilities: ClientCapabilities = {
     folderSources: {
       desktopLocal: { enabled: localFolderSourcesEnabled() },
@@ -20,3 +23,16 @@ capabilitiesRoutes.get("/capabilities", (c) => {
   };
   return c.json(capabilities);
 });
+
+function logFolderSourceEnvOnce(): void {
+  if (folderSourceEnvLogged) return;
+  folderSourceEnvLogged = true;
+  console.info("[capabilities] folderSources env", {
+    runtime: process.env.QINGAGENT_RUNTIME ?? null,
+    localFolderSources: process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES ?? null,
+    browserFolderSources: process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES ?? null,
+    desktopLocalEnabled: localFolderSourcesEnabled(),
+    platform: process.platform,
+    pid: process.pid,
+  });
+}

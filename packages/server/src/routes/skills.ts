@@ -24,6 +24,7 @@ interface ParsedSkillFrontmatter {
   summary: string;
   icon: string;
   userInvocable: boolean;
+  userInvocableExplicit: boolean;
   placeholder?: string;
   config?: string;
   tools: string[];
@@ -39,6 +40,7 @@ export interface SkillListItem extends ParsedSkillFrontmatter {
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_ZIP_ENTRIES = 200;
 const MAX_UNZIPPED_BYTES = 10 * 1024 * 1024;
+const MAX_LABEL_LENGTH = 256;
 const BUILTIN_SKILL_ORDER = [
   "browser-ops",
   "web-search",
@@ -192,6 +194,39 @@ skillsRoutes.post("/skills/:name/:action", async (c) => {
   }
 });
 
+skillsRoutes.patch("/skills/:name", async (c) => {
+  const rejected = requireTrustedOrigin(c);
+  if (rejected) return rejected;
+
+  if (!isSkillMutationAllowed()) {
+    return c.json({ error: "当前环境已禁止修改技能（仅管理员可在部署层开启）" }, 403);
+  }
+
+  const name = c.req.param("name");
+  if (!isValidSkillName(name)) return c.json({ error: "not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { label?: unknown };
+  const labelResult = normalizeSkillLabel(body.label);
+  if (!labelResult.ok) return c.json({ error: labelResult.error }, 400);
+
+  try {
+    const skill = await findSkillOnDisk(name);
+    if (!skill) return c.json({ error: "not found" }, 404);
+    if (skill.source !== "installed") {
+      return c.json({ error: "内置技能不能修改显示名" }, 400);
+    }
+
+    const skillMdPath = join(skill.path, "SKILL.md");
+    const skillMd = await readFile(skillMdPath, "utf8");
+    const updated = setSkillLabelInMarkdown(skillMd, labelResult.label);
+    await writeFile(skillMdPath, updated, "utf8");
+    await refreshSkills();
+    return c.json({ name, label: labelResult.label });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "update failed";
+    return c.json({ error: message }, 500);
+  }
+});
+
 skillsRoutes.delete("/skills/:name", async (c) => {
   const rejected = requireTrustedOrigin(c);
   if (rejected) return rejected;
@@ -312,13 +347,15 @@ export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | 
   const placeholder = nonEmptyString(data.placeholder);
   const config = nonEmptyString(data.config);
   const tools = Array.isArray(data.tools) ? data.tools.filter(Boolean) : [];
+  const userInvocable = parseBooleanValue(data["user-invocable"]);
   return {
     name,
     description,
     label,
     summary,
     icon,
-    userInvocable: parseBooleanValue(data["user-invocable"]) === true,
+    userInvocable: userInvocable === true,
+    userInvocableExplicit: userInvocable !== undefined,
     ...(placeholder ? { placeholder } : {}),
     ...(config ? { config } : {}),
     tools,
@@ -403,7 +440,13 @@ function stripYamlComment(value: string): string {
 }
 
 function stripQuotes(value: string): string {
-  return value.replace(/^["']|["']$/g, "");
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+  return value;
 }
 
 function nonEmptyString(value: FrontmatterValue | undefined): string | undefined {
@@ -420,7 +463,7 @@ function parseBooleanValue(value: FrontmatterValue | undefined): boolean | undef
 }
 
 function fallbackLabel(name: string): string {
-  return name.length > 6 ? name.slice(0, 6) : name;
+  return name;
 }
 
 function fallbackSummary(description: string): string {
@@ -450,6 +493,7 @@ export async function listAllSkillItems(disabled: Set<string>): Promise<SkillLis
       if (!parsed) continue;
       items.push({
         ...parsed,
+        userInvocable: parsed.userInvocableExplicit ? parsed.userInvocable : source === "installed",
         path,
         source,
         enabled: !disabled.has(parsed.name),
@@ -529,4 +573,46 @@ function sourceLabel(path: string): SkillSourceLabel {
 function isInside(root: string, child: string): boolean {
   const rel = relative(root, child);
   return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function normalizeSkillLabel(value: unknown): { ok: true; label: string } | { ok: false; error: string } {
+  if (typeof value !== "string") return { ok: false, error: "显示名不能为空" };
+  const label = value.trim();
+  if (!label) return { ok: false, error: "显示名不能为空" };
+  if (/[\r\n]/.test(label)) return { ok: false, error: "显示名不能换行" };
+  if (Array.from(label).length > MAX_LABEL_LENGTH) {
+    return { ok: false, error: `显示名不能超过 ${MAX_LABEL_LENGTH} 个字符` };
+  }
+  return { ok: true, label };
+}
+
+function setSkillLabelInMarkdown(source: string, label: string): string {
+  const hasBom = source.startsWith("\uFEFF");
+  const body = hasBom ? source.slice(1) : source;
+  const match = body.match(/^---(\r?\n)([\s\S]*?)(\r?\n)---/);
+  if (!match || match.index !== 0) throw new Error("SKILL.md missing valid frontmatter");
+
+  const newline = match[1]!;
+  const block = match[2]!;
+  const lines = block.split(/\r?\n/);
+  const labelLine = `label: ${formatFrontmatterString(label)}`;
+  let replaced = false;
+  const nextLines = lines.map((line) => {
+    if (/^label\s*:/.test(line)) {
+      replaced = true;
+      return labelLine;
+    }
+    return line;
+  });
+  if (!replaced) {
+    const nameIndex = nextLines.findIndex((line) => /^name\s*:/.test(line));
+    nextLines.splice(nameIndex >= 0 ? nameIndex + 1 : 0, 0, labelLine);
+  }
+
+  const head = `---${newline}${nextLines.join(newline)}${match[3]}---`;
+  return `${hasBom ? "\uFEFF" : ""}${head}${body.slice(match[0].length)}`;
+}
+
+function formatFrontmatterString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }

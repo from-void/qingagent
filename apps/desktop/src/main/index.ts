@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
+import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import {
   RELEASES_URL,
@@ -87,11 +88,8 @@ if (!process.env.QINGAGENT_UPLOADS_DIR) {
   process.env.QINGAGENT_UPLOADS_DIR = path.join(userDataDir, "uploads");
 }
 
-process.env.QINGAGENT_RUNTIME = "desktop";
-process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-// 桌面端跑在用户自己机器上,技能导入/新建/编辑理应放开(isSkillMutationAllowed 默认 false,
-// 只对多租户服务端收紧);不设这个 flag 会导致"客户端不支持导入技能"。必须在 import server/core 前设。
-process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
+// 桌面端能力必须在 import server/core 前设好:capabilities、技能导入 gate 都从服务端同进程读取。
+configureDesktopRuntimeEnv(process.env);
 
 // 浏览器类能力(fetchArticle 内置渲染降级 / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
 // 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装

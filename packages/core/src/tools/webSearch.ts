@@ -8,7 +8,7 @@ import {
   getManagedSearchProvider,
   getPrimarySearchConfig,
 } from "../search/managedSearch.js";
-import { resolveDeepseekAuth } from "../llm/modelConfig.js";
+import { DEEPSEEK_MODEL_IDS, resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
 import { fetchDeepseekSearchLinks } from "../search/deepseekWebSearch.js";
 import type { SearchResult } from "../search/provider.js";
 import { getCachedSearch, setCachedSearch } from "../search/searchCache.js";
@@ -76,12 +76,21 @@ function normalizeSearchCachePart(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function buildSearchCacheKey(query: string, keywords: string | null, limit: number, useDeepseek: boolean): string {
+function buildSearchCacheKey(
+  query: string,
+  keywords: string | null,
+  limit: number,
+  useDeepseek: boolean,
+  deepseekModel?: string,
+): string {
   return [
     normalizeSearchCachePart(query),
     normalizeSearchCachePart(keywords ?? ""),
     String(limit),
     `ds:${useDeepseek ? 1 : 0}`,
+    ...(useDeepseek && deepseekModel && deepseekModel !== DEEPSEEK_MODEL_IDS.flash
+      ? [`model:${normalizeSearchCachePart(deepseekModel)}`]
+      : []),
   ].join("|");
 }
 
@@ -152,6 +161,7 @@ async function searchLinks(
   keywords: string | null,
   limit: number,
   requestDeepseekKey: string,
+  deepseekModel?: string,
 ): Promise<SearchResult[]> {
   const t0 = Date.now();
   const done = (results: SearchResult[], src: SearchLinksSource) => {
@@ -184,7 +194,7 @@ async function searchLinks(
   // web_search 即自动走 DeepSeek。
   const deepseekKey = primaryConfig.apiKey || requestDeepseekKey || "";
   const useDeepseek = primaryConfig.enabled && !!deepseekKey;
-  const cacheKey = buildSearchCacheKey(query, keywords, limit, useDeepseek);
+  const cacheKey = buildSearchCacheKey(query, keywords, limit, useDeepseek, deepseekModel);
   const cached = getCachedSearch(cacheKey);
   if (cached) return done(cached, "cache");
 
@@ -208,7 +218,11 @@ async function searchLinks(
   }
 
   // DeepSeek 只取来源链接(流式读到搜索结果即掐断,不等综述,典型 ~2s),质量优先。
-  const deepseekPromise = fetchDeepseekSearchLinks(query, deepseekKey, limit).catch((e) => {
+  const deepseekPromise = (
+    deepseekModel && deepseekModel !== DEEPSEEK_MODEL_IDS.flash
+      ? fetchDeepseekSearchLinks(query, deepseekKey, limit, deepseekModel)
+      : fetchDeepseekSearchLinks(query, deepseekKey, limit)
+  ).catch((e) => {
     // eslint-disable-next-line no-console
     console.warn(`[webSearch] DeepSeek 链接失败: ${String(e).slice(0, 80)}`);
     return [] as SearchResult[];
@@ -229,8 +243,9 @@ export async function searchLinksForEval(
   keywords: string | null,
   limit: number,
   requestDeepseekKey: string,
+  deepseekModel?: string,
 ): Promise<SearchResult[]> {
-  return searchLinks(query, keywords, limit, requestDeepseekKey);
+  return searchLinks(query, keywords, limit, requestDeepseekKey, deepseekModel);
 }
 
 async function mapWithConcurrency<T, U>(
@@ -387,7 +402,8 @@ export const webSearchTool = createTool({
 
       // 本请求 agent 用的 DeepSeek key(桌面端=visitor 层 header,只能从 requestContext 取)。
       const requestDeepseekKey = resolveDeepseekAuth(context?.requestContext).apiKey;
-      const results = (await searchLinks(query, keywords, limit, requestDeepseekKey)).slice(0, limit);
+      const deepseekModel = resolveModelId(context?.requestContext, "flash");
+      const results = (await searchLinks(query, keywords, limit, requestDeepseekKey, deepseekModel)).slice(0, limit);
       progressItems.push(
         ...results.map((result) => ({
           url: result.url,

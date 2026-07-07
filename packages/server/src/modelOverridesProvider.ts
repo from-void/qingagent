@@ -6,6 +6,7 @@ import {
   sanitizeModelId,
   validateFetchUrl,
   type ModelOverrides,
+  type DeepseekTier,
   type ModelProtocol,
   type ModelParamOverrides,
 } from "@qingagent/core";
@@ -38,6 +39,11 @@ function sanitizeHeaderValue(raw: string | undefined | null, maxLen: number): st
   if (!value || value.length > maxLen) return undefined;
   if (!/^[\x21-\x7e]+$/.test(value)) return undefined;
   return value;
+}
+
+function sanitizeModelTier(raw: string | undefined | null): DeepseekTier | undefined {
+  const value = raw?.trim().toLowerCase();
+  return value === "flash" || value === "pro" ? value : undefined;
 }
 
 async function validateVisitorBaseUrl(raw: string | undefined): Promise<string | undefined> {
@@ -103,6 +109,7 @@ export interface RequestModelHeaders {
   baseUrl?: string | null;
   modelFlash?: string | null;
   modelPro?: string | null;
+  modelTier?: string | null;
   protocol?: string | null;
   visionKey?: string | null;
   visionBaseUrl?: string | null;
@@ -121,6 +128,7 @@ export async function resolveRequestModelOverrides(
     : undefined;
   const modelFlash = visitorApiKey ? sanitizeHeaderValue(headers.modelFlash, 120) : undefined;
   const modelPro = visitorApiKey ? sanitizeHeaderValue(headers.modelPro, 120) : undefined;
+  const tier = sanitizeModelTier(headers.modelTier);
   // protocol override 必须和合法自定义 baseUrl 成对出现;否则回到默认 OpenAI 兼容协议/地址。
   const protocol = baseUrl && headers.protocol === "anthropic" ? "anthropic" : undefined;
   const settings = await readCachedSettings();
@@ -153,6 +161,7 @@ export async function resolveRequestModelOverrides(
     ...(settings.params ? { params: settings.params } : {}),
     ...(baseUrl ? { baseUrl } : {}),
     ...(modelIds ? { modelIds } : {}),
+    ...(tier ? { tier } : {}),
     ...(protocol ? { protocol } : {}),
     ...(vision ? { vision } : {}),
   };

@@ -3,6 +3,7 @@ import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import { writeDraftInputSchema } from "../tools/writeDraft.js";
 import { guardBeforeProviderCall } from "./prefixCacheGuard.js";
 import { repairToolCallJson } from "./repairToolCallJson.js";
+import { resolveDeepseekRouterModelId } from "./modelConfig.js";
 
 type ModelCallOptions = Parameters<ModelRouterLanguageModel["doStream"]>[0];
 type ModelStreamResult = Awaited<ReturnType<ModelRouterLanguageModel["doStream"]>>;
@@ -65,7 +66,7 @@ export type RepairableLanguageModelV2 = {
 
 /** 默认(env 兜底)模型配置;访客/全局 key 覆盖见 createRepairingQingagentModel(auth)。 */
 export const qingagentModelConfig = {
-  id: "deepseek/deepseek-v4-flash",
+  id: resolveDeepseekRouterModelId(),
   url: "https://api.deepseek.com/v1",
   apiKey: process.env.DEEPSEEK_API_KEY ?? "",
 } satisfies OpenAICompatibleConfig;

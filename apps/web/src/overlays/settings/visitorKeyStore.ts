@@ -11,9 +11,13 @@ import { readPersisted, writePersisted } from "./clientPersist";
 const STORAGE_KEY = "qingagent.deepseek_api_key";
 const CUSTOM_PROVIDER_KEY = "qingagent.custom_provider";
 const OFFICIAL_MODEL_KEY = "qingagent.official_model";
+const MODEL_TIER_KEY = "qingagent.model_tier";
 
 const DEFAULT_FLASH = "deepseek-v4-flash";
 const DEFAULT_PRO = "deepseek-v4-pro";
+const DEFAULT_MODEL_TIER: ModelTier = "flash";
+
+export type ModelTier = "flash" | "pro";
 
 /** 其他云厂商/中转配置:整体覆盖。 */
 export interface CustomProvider {
@@ -106,11 +110,24 @@ export function writeOfficialModelOverride(v: OfficialModelOverride): void {
   }
 }
 
+// —— 当前模型档位:默认 flash;pro 仅在用户显式选择后透传 ——
+
+export function getSelectedModelTier(): ModelTier {
+  const value = readPersisted(MODEL_TIER_KEY)?.trim();
+  return value === "pro" ? "pro" : DEFAULT_MODEL_TIER;
+}
+
+export function setSelectedModelTier(tier: ModelTier): void {
+  writePersisted(MODEL_TIER_KEY, tier === "pro" ? "pro" : "flash");
+}
+
 /** 给请求层用:按当前配置返回要附加的 header(对话 / 余额等请求统一带上)。
  *  主模型(x-deepseek-key / x-model-*)与图像识别副基模(x-vision-*,见
  *  visionProviderStore)各自独立,合并到同一出口随请求透传。 */
 export function visitorKeyHeaders(): Record<string, string> {
   const vision = visionKeyHeaders();
+  const tier = getSelectedModelTier();
+  const tierHeaders: Record<string, string> = tier === "pro" ? { "x-model-tier": "pro" } : {};
   // 其他云厂商:整体覆盖 baseURL + key + 模型别名
   const custom = readCustomProvider();
   if (custom) {
@@ -120,11 +137,12 @@ export function visitorKeyHeaders(): Record<string, string> {
       "x-model-flash": custom.modelFlash,
       "x-model-pro": custom.modelPro,
       "x-model-protocol": custom.protocol,
+      ...tierHeaders,
       ...vision,
     };
   }
   // 官方:key + 可选模型前缀覆盖(baseURL 仍官方,不传 base-url)
-  const headers: Record<string, string> = { ...vision };
+  const headers: Record<string, string> = { ...tierHeaders, ...vision };
   const key = getVisitorDeepseekKey();
   if (key) headers["x-deepseek-key"] = key;
   const official = readOfficialModelOverride();

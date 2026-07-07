@@ -7,6 +7,7 @@ import {
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
   resolveModelId,
+  resolveModelTier,
   resolveProtocol,
 } from "../llm/modelConfig.js";
 
@@ -63,6 +64,21 @@ describe("resolveModelId", () => {
     const c = ctx({ modelIds: { flash: "custom-flash" } });
     expect(resolveModelId(c, "flash")).toBe("custom-flash");
     expect(resolveModelId(c, "pro")).toBe(DEEPSEEK_MODEL_IDS.pro);
+  });
+
+  it("当前档位为 pro 时,默认 flash 出口解析到 pro,且自定义 pro 别名生效", () => {
+    expect(resolveModelTier(ctx({ tier: "pro" }))).toBe("pro");
+    expect(resolveModelId(ctx({ tier: "pro" }), "flash")).toBe(DEEPSEEK_MODEL_IDS.pro);
+    expect(resolveModelId(ctx({ tier: "pro", modelIds: { pro: "custom-pro" } }), "flash")).toBe(
+      "custom-pro",
+    );
+  });
+
+  it("当前档位缺省/非法时仍是 flash;显式请求 pro 不被 flash 档覆盖", () => {
+    expect(resolveModelTier(ctx({}))).toBe("flash");
+    expect(resolveModelTier(ctx({ tier: "ultra" }))).toBe("flash");
+    expect(resolveModelId(ctx({ tier: "flash" }), "flash")).toBe(DEEPSEEK_MODEL_IDS.flash);
+    expect(resolveModelId(ctx({ tier: "flash" }), "pro")).toBe(DEEPSEEK_MODEL_IDS.pro);
   });
 
   it.each(["", "   ", "has space", "bad|pipe", "emoji😀", "x".repeat(121)])(

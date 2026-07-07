@@ -27,6 +27,7 @@ vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
 interface DeepseekCall {
   user?: string;
   messages?: unknown[];
+  model?: string;
   protocol?: "openai" | "anthropic";
   thinking: boolean;
   temperature: number;
@@ -254,6 +255,38 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
     expect(firstCall.protocol).toBe("openai");
+  });
+
+  it("pro 档 reason 使用 pro 模型并放大预算;默认 flash 预算保持旧值", async () => {
+    const { writeDraftInternals } = await import("../tools/writeDraft.js");
+    expect(writeDraftInternals.makeReasonBudget(1000, "flash")).toEqual({
+      outputMs: 10_000,
+      thinkMs: 15_000,
+      totalMs: 25_000,
+      thinkEffectiveMs: 15_000,
+    });
+    expect(writeDraftInternals.reasonBudgetMultiplier("pro")).toBe(3);
+    expect(writeDraftInternals.makeReasonBudget(1000, "pro")).toEqual({
+      outputMs: 30_000,
+      thinkMs: 45_000,
+      totalMs: 75_000,
+      thinkEffectiveMs: 45_000,
+    });
+
+    const { tool } = await makeTool();
+    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("pro 档正文"), contentStartMs: 0, finishReason: "stop" });
+    const requestContext = new RequestContext([["modelOverrides", { tier: "pro" }]]);
+
+    const out = await run(tool, { title: "t", outline: "o", intent: "reason" }, { requestContext });
+
+    expect(out.ok).toBe(true);
+    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(callDeepseekDraftMock.mock.calls.map((call) => (call[0] as DeepseekCall).model)).toEqual([
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+    ]);
   });
 
   it("两级嵌套列表首稿使用 children 递归表示，一轮 4 路即可编译成真实嵌套 PM", async () => {
@@ -488,7 +521,11 @@ describe("writeDraft intent 调度", () => {
     expect(calls.slice(0, 4).every((call) => call.abortSignal?.aborted)).toBe(true);
 
     const { writeDraftInternals } = await import("../tools/writeDraft.js");
-    const budget = writeDraftInternals.makeReasonBudget(1000);
-    expect(Object.values(budget).every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+    expect(writeDraftInternals.makeReasonBudget(1000)).toEqual({
+      outputMs: 10_000,
+      thinkMs: 15_000,
+      totalMs: 25_000,
+      thinkEffectiveMs: 15_000,
+    });
   });
 });

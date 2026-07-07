@@ -1,3 +1,5 @@
+import { DEEPSEEK_MODEL_IDS } from "../llm/modelConfig.js";
+
 export interface DeepseekDraftCall {
   system: string;
   user: string;
@@ -53,7 +55,7 @@ class UpstreamHttpError extends Error {
 }
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
-const DEEPSEEK_DRAFT_MODEL = "deepseek-v4-flash";
+const DEEPSEEK_DRAFT_MODEL = DEEPSEEK_MODEL_IDS.flash;
 
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
 const TEXT_SECRET_HEADER_RE = /\b(authorization|x-api-key)\b(\s*[:=]\s*)(?:Bearer\s+)?[^\s"',;}\]]+/gi;

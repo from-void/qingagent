@@ -2,6 +2,7 @@
 // answer 综合版已删(260706 拍板):掐流取链接是刻意取舍——速度优先、正文走自有抓取管线保证过程可视化;如需 answer 回看 git 历史。
 // 参考 github.com/lyumeng/websearch-deepseek(MCP server,同一机制)。
 import type { SearchResult } from "./provider.js";
+import { DEEPSEEK_MODEL_IDS } from "../llm/modelConfig.js";
 
 const DEEPSEEK_ANTHROPIC_MESSAGES_URL = "https://api.deepseek.com/anthropic/v1/messages";
 
@@ -15,7 +16,7 @@ export async function fetchDeepseekSearchLinks(
   query: string,
   apiKey: string,
   count: number,
-  model = "deepseek-v4-flash",
+  model = DEEPSEEK_MODEL_IDS.flash,
 ): Promise<SearchResult[]> {
   const limit = Math.max(1, Math.floor(count));
   if (!query.trim() || !apiKey) return [];

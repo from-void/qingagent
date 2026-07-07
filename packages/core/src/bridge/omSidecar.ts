@@ -24,6 +24,7 @@ import {
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
   resolveDeepseekAuth,
+  resolveDeepseekRouterModelId,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -1018,7 +1019,7 @@ function getObserverFlashModelFor(
     return model;
   }
 
-  const modelId = `deepseek/${resolveModelId(requestContext, "flash")}` as `${string}/${string}`;
+  const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
   const cacheKey = `${baseUrl}|${modelId}|${effectiveKey}`;
   let model = observerModelCache.get(cacheKey);
   if (!model) {

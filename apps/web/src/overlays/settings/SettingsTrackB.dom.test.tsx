@@ -9,7 +9,7 @@ import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
 import { resetSettingsDialogA11yForTest, ensureSettingsDialogA11y } from "./settingsDialogA11y";
-import { setVisitorDeepseekKey } from "./visitorKeyStore";
+import { getSelectedModelTier, setVisitorDeepseekKey, visitorKeyHeaders } from "./visitorKeyStore";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,6 +94,30 @@ describe("Settings Track B", () => {
     expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
     setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://proxy.example/v1");
     expect(saveBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("Model 档位默认 Flash,切 Pro 后持久化并随请求 header 透传", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ModelTierFlash").getAttribute("aria-checked")).toBe("true");
+    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("false");
+    expect(getSelectedModelTier()).toBe("flash");
+    expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
+
+    await click(getButtonByWf("ModelTierPro"));
+    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("true");
+    expect(getSelectedModelTier()).toBe("pro");
+    expect(visitorKeyHeaders()["x-model-tier"]).toBe("pro");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("Pro");
+
+    await click(getButtonByWf("ModelTierFlash"));
+    expect(getSelectedModelTier()).toBe("flash");
+    expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
   });
 
   it("Vision 测试保存成功走全局 toast,失败提示位置不被成功文案占用", async () => {

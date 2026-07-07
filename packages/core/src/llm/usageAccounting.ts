@@ -1,8 +1,8 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { recordUsageEvent } from "../db/usageRepo.js";
 import {
-  DEEPSEEK_MODEL_IDS,
   resolveDeepseekAuth,
+  resolveModelId,
 } from "./modelConfig.js";
 
 export interface NormalizedLlmUsageCounts {
@@ -106,7 +106,7 @@ export async function recordDeepseekUsageFromResult(
       sessionId: (requestContext?.get("sessionId") as string | undefined) ?? "unknown",
       runId: (requestContext?.get("runId") as string | null | undefined) ?? null,
       callSite,
-      modelId: DEEPSEEK_MODEL_IDS.flash,
+      modelId: resolveModelId(requestContext, "flash"),
       keyOrigin: resolveDeepseekAuth(requestContext).origin,
       inputTokens: normalized.inputTokens,
       outputTokens: normalized.outputTokens,

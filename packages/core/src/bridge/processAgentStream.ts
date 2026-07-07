@@ -18,7 +18,7 @@ import { basename, join } from "node:path";
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
 import { downloadRemoteImage, thumbnailSrcForImageInput } from "../tools/imageInput.js";
-import { resolveDeepseekAuth, DEEPSEEK_MODEL_IDS } from "../llm/modelConfig.js";
+import { resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
 import { recordUsageEvent } from "../db/usageRepo.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { mastra } from "../mastra.js";
@@ -503,7 +503,7 @@ export async function* processAgentStream(
             sessionId: state.sessionId,
             runId,
             callSite: "agent",
-            modelId: DEEPSEEK_MODEL_IDS.flash,
+            modelId: resolveModelId(requestContext, "flash"),
             keyOrigin: origin,
             inputTokens: toNumber(usage.inputTokens),
             outputTokens: toNumber(usage.outputTokens),

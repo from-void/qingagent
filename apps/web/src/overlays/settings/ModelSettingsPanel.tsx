@@ -6,12 +6,15 @@ import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
   type CustomProvider,
+  type ModelTier,
   clearCustomProvider,
   clearVisitorDeepseekKey,
+  getSelectedModelTier,
   getVisitorDeepseekKey,
   maskKey,
   readCustomProvider,
   readOfficialModelOverride,
+  setSelectedModelTier,
   setVisitorDeepseekKey,
   visitorKeyHeaders,
   writeCustomProvider,
@@ -79,6 +82,7 @@ export function ModelSettingsPanel() {
   // 官方模型前缀覆盖(仅 editing 态可改;防官方升级改名)
   const [officialFlash, setOfficialFlash] = useState(() => readOfficialModelOverride()?.flash ?? "");
   const [officialPro, setOfficialPro] = useState(() => readOfficialModelOverride()?.pro ?? "");
+  const [modelTier, setModelTier] = useState<ModelTier>(() => getSelectedModelTier());
   // 官方 key 输入即自动验证的状态
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "verifying" | "ok" | "fail">("idle");
   const [verifyMsg, setVerifyMsg] = useState("");
@@ -332,6 +336,17 @@ export function ModelSettingsPanel() {
     return true;
   };
 
+  const handleModelTierChange = useCallback((tier: ModelTier) => {
+    if (tier === modelTier) return;
+    setSelectedModelTier(tier);
+    setModelTier(tier);
+    toast.show({
+      message: tier === "pro" ? "已切换到 Pro 档,生成会更慢" : "已切换到 Flash 档",
+      tone: "success",
+      dedupeKey: "model-tier",
+    });
+  }, [modelTier, toast]);
+
   // 其他云厂商(进阶):先调后端测试接口(代理避免 CORS),通了再保存并启用
   const handleSaveCustom = async () => {
     const baseUrl = customBaseUrl.trim();
@@ -419,6 +434,31 @@ export function ModelSettingsPanel() {
   // 官方 DeepSeek key 表单(未配置态官方 tab 与 editing 态共用)。配置只存本机,无 scope 选择。
   const keyFormatOk = keyInput.trim() === "" ? null : /^sk-[A-Za-z0-9]{32}$/.test(keyInput.trim());
   const customBaseUrlValid = customBaseUrl.trim() === "" ? null : isHttpUrl(customBaseUrl.trim());
+  const modelTierSection = (
+    <div className="sm-tier-row" data-wf="ModelTierSelector">
+      <div className="sm-tier-copy">
+        <span className="sm-tier-title">模型档位</span>
+        <span className="sm-tier-note">默认 Flash;Pro 更强但更慢</span>
+      </div>
+      <div className="sm-tier-control" role="radiogroup" aria-label="模型档位">
+        {(["flash", "pro"] as const).map((tier) => (
+          <button
+            key={tier}
+            type="button"
+            role="radio"
+            aria-checked={modelTier === tier}
+            aria-pressed={modelTier === tier}
+            className={`sm-tier-option${modelTier === tier ? " sm-active" : ""}`}
+            onClick={() => handleModelTierChange(tier)}
+            data-wf={tier === "flash" ? "ModelTierFlash" : "ModelTierPro"}
+          >
+            <span>{tier === "flash" ? "Flash" : "Pro"}</span>
+            <small>{tier === "flash" ? "快" : "更强更慢"}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
   const officialKeyForm = (
     <>
       <div className="sm-keyrow">
@@ -496,6 +536,7 @@ export function ModelSettingsPanel() {
   const configSection = (
     <div className="sm-config">
       <div className="sm-faq-q">{editing ? "切换 / 修改模型配置" : "如何配置 DeepSeek?"}</div>
+      {modelTierSection}
       <div className="sm-setup-tabs" role="tablist" aria-label="配置方式">
         <button
           type="button"
@@ -713,6 +754,8 @@ export function ModelSettingsPanel() {
                 </>
               )}
             </div>
+
+            {modelTierSection}
 
             <div className={`md-metrics${usingCustom ? " md-metrics--3" : ""}`}>
               <div className="md-metric">

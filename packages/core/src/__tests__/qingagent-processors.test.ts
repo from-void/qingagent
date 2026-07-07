@@ -137,21 +137,39 @@ describe("qingagent processors", () => {
     ]);
   });
 
-  it("LLM detector 模型固定指向 DeepSeek flash,但沿用请求级 key/baseURL", () => {
+  it("LLM detector 默认走当前 flash 解析,并沿用请求级 key/baseURL/模型别名", () => {
     const requestContext = new RequestContext([
       [
         "modelOverrides",
         {
           visitorApiKey: "visitor-key",
           baseUrl: "https://proxy.example.com/openai/chat/completions",
-          modelIds: { flash: "not-used-by-guardrail" },
+          modelIds: { flash: "custom-flash" },
         },
       ],
     ]);
 
     expect(resolveQingagentGuardrailModel(requestContext as unknown as RequestContext)).toEqual({
-      id: "deepseek/deepseek-v4-flash",
+      id: "deepseek/custom-flash",
       url: "https://proxy.example.com/openai/v1",
+      apiKey: "visitor-key",
+    });
+  });
+
+  it("LLM detector 在 pro 档解析到 pro 模型", () => {
+    const requestContext = new RequestContext([
+      [
+        "modelOverrides",
+        {
+          visitorApiKey: "visitor-key",
+          tier: "pro",
+          modelIds: { flash: "custom-flash", pro: "custom-pro" },
+        },
+      ],
+    ]);
+
+    expect(resolveQingagentGuardrailModel(requestContext as unknown as RequestContext)).toMatchObject({
+      id: "deepseek/custom-pro",
       apiKey: "visitor-key",
     });
   });

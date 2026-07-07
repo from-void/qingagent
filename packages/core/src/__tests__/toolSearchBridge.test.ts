@@ -98,6 +98,32 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(loaded)).toEqual(["generateSvg"]);
   });
 
+  it("ToolSearch preload 在 pro 档使用 pro router model", async () => {
+    const { preloadQingagentToolSearchTools } = await import("../agents/toolSearch.js");
+    const processInputStep = vi.fn(async () => ({
+      tools: {
+        search_tools: {
+          execute: vi.fn(async () => ({ results: [{ name: "parseFile" }] })),
+        },
+      },
+    }));
+    const requestContext = new RequestContext([
+      [MASTRA_THREAD_ID_KEY, "tool-search-pro-session"],
+      ["modelOverrides", { tier: "pro" }],
+    ]) as unknown as RequestContext;
+
+    await expect(preloadQingagentToolSearchTools({
+      processor: { processInputStep } as never,
+      requestContext,
+      messages: [],
+      toolNames: ["parseFile"],
+    })).resolves.toEqual(["parseFile"]);
+
+    expect(processInputStep).toHaveBeenCalledWith(expect.objectContaining({
+      model: "deepseek/deepseek-v4-pro",
+    }));
+  });
+
   it("动态 search 结果记录后,下一轮会从会话 state 预加载已加载工具", async () => {
     const { createSession } = await import("../bridge/sessionState.js");
     const {

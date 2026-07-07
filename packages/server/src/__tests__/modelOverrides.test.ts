@@ -127,6 +127,21 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
   });
 });
 
+describe("resolveRequestModelOverrides — 模型档位 header", () => {
+  it("x-model-tier 不依赖 visitor key,可切换官方 pro/flash", async () => {
+    const pro = await resolveRequestModelOverrides({ visitorKey: null, modelTier: "pro" });
+    const flash = await resolveRequestModelOverrides({ visitorKey: null, modelTier: "flash" });
+
+    expect(pro.tier).toBe("pro");
+    expect(flash.tier).toBe("flash");
+  });
+
+  it("非法档位忽略,保持服务端默认 flash", async () => {
+    const r = await resolveRequestModelOverrides({ visitorKey: VKEY, modelTier: "ultra" });
+    expect(r.tier).toBeUndefined();
+  });
+});
+
 describe("resolveRequestModelOverrides — vision header 安全解析", () => {
   it("无 x-vision-key 时,vision baseUrl/protocol/model 一律忽略", async () => {
     const r = await resolveRequestModelOverrides({

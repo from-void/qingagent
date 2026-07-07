@@ -36,7 +36,7 @@ function envModelProtocol(): ModelProtocol | undefined {
 export type DeepseekTier = "flash" | "pro";
 export type ModelProtocol = "openai" | "anthropic";
 
-/** 模型 id 单一来源。PRO 当前只做支持不引入调用点(产品决策)。 */
+/** 模型 id 单一来源。Flash 为默认档位,Pro 由请求档位显式选择。 */
 export const DEEPSEEK_MODEL_IDS: Record<DeepseekTier, string> = {
   flash: "deepseek-v4-flash",
   pro: "deepseek-v4-pro",
@@ -62,6 +62,8 @@ export interface ModelOverrides {
   baseUrl?: string;
   /** 自定义模型别名(flash/pro);缺省走 DEEPSEEK_MODEL_IDS。 */
   modelIds?: { flash?: string; pro?: string };
+  /** 当前模型档位;缺省 flash。只影响默认 flash 出口,显式请求 pro 仍走 pro。 */
+  tier?: DeepseekTier;
   /** API 协议:openai(默认,DeepSeek/多数厂商)或 anthropic(智谱 GLM Coding 等)。 */
   protocol?: ModelProtocol;
   /** 图像识别副基模(多模态)独立配置;缺省=未配置。 */
@@ -171,19 +173,37 @@ export function resolveBaseUrl(requestContext?: RequestContext): string {
   return sanitizeBaseUrl(readOverrides(requestContext)?.baseUrl) ?? DEEPSEEK_BASE_URL;
 }
 
+/** 当前请求选择的模型档位;非法/缺省均回退 fallback(默认 flash)。 */
+export function resolveModelTier(
+  requestContext?: RequestContext,
+  fallback: DeepseekTier = "flash",
+): DeepseekTier {
+  const tier = readOverrides(requestContext)?.tier;
+  return tier === "pro" || tier === "flash" ? tier : fallback;
+}
+
 /** 本请求生效的模型 id:访客自定义别名 > env 默认(QINGAGENT_MODEL_FLASH/_PRO) > 官方默认。
  *  访客自带 endpoint(baseUrl) 时不套用 env 模型名——那是给默认/env endpoint 的。 */
 export function resolveModelId(requestContext?: RequestContext, tier: DeepseekTier = "flash"): string {
   const overrides = readOverrides(requestContext);
-  const visitor = sanitizeModelId(overrides?.modelIds?.[tier]);
+  const effectiveTier = tier === "flash" ? resolveModelTier(requestContext, tier) : tier;
+  const visitor = sanitizeModelId(overrides?.modelIds?.[effectiveTier]);
   if (visitor) return visitor;
   if (!overrides?.baseUrl) {
     const envId = sanitizeModelId(
-      tier === "flash" ? process.env.QINGAGENT_MODEL_FLASH : process.env.QINGAGENT_MODEL_PRO,
+      effectiveTier === "flash" ? process.env.QINGAGENT_MODEL_FLASH : process.env.QINGAGENT_MODEL_PRO,
     );
     if (envId) return envId;
   }
-  return DEEPSEEK_MODEL_IDS[tier];
+  return DEEPSEEK_MODEL_IDS[effectiveTier];
+}
+
+/** Mastra ModelRouter 用模型 id(DeepSeek provider 前缀 + 当前档位模型名)。 */
+export function resolveDeepseekRouterModelId(
+  requestContext?: RequestContext,
+  tier: DeepseekTier = "flash",
+): `${string}/${string}` {
+  return `deepseek/${resolveModelId(requestContext, tier)}` as `${string}/${string}`;
 }
 
 /** 本请求 API 协议:访客覆盖 > env 默认(QINGAGENT_MODEL_PROTOCOL) > openai。
@@ -240,7 +260,7 @@ export function createDeepseekProvider(requestContext?: RequestContext): (modelI
   return (modelId) => provider(modelId);
 }
 
-/** 工具内层取模型实例的捷径(默认 flash)。 */
+/** 工具内层取模型实例的捷径;默认出口受当前模型档位影响。 */
 export function getDeepseekModel(requestContext?: RequestContext, tier: DeepseekTier = "flash") {
   return createDeepseekProvider(requestContext)(resolveModelId(requestContext, tier));
 }

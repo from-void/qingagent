@@ -175,6 +175,24 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(result.items[0]?.url).toBe(deepseekResult.url);
   });
 
+  it("pro 档 DeepSeek 搜索显式传 pro 模型", async () => {
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: true });
+    mockSearchDeps.fetchDeepseekSearchLinks.mockResolvedValue([deepseekResult]);
+    const requestContext = {
+      get: (key: string) =>
+        key === "modelOverrides" ? { visitorApiKey: "sk-visitor-pro", tier: "pro" } : undefined,
+    };
+
+    await executeWebSearch({ query: "pro tier search" }, { requestContext });
+
+    expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith(
+      "pro tier search",
+      "sk-visitor-pro",
+      8,
+      "deepseek-v4-pro",
+    );
+  });
+
   it("disabled 时跳过 DeepSeek 只走多源,默认抓取 8 条", async () => {
     process.env.DEEPSEEK_API_KEY = "env-key";
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false, apiKey: "cfg-key" });

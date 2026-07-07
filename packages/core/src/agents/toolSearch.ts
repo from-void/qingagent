@@ -1,6 +1,7 @@
 import type { Tool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
 import { ToolSearchProcessor } from "@mastra/core/processors";
+import { resolveDeepseekRouterModelId } from "../llm/modelConfig.js";
 
 export const QINGAGENT_TOOL_SEARCH_ENV = "QINGAGENT_TOOL_SEARCH";
 export const QINGAGENT_TOOL_SEARCH_PROCESSOR_CONTEXT_KEY =
@@ -61,7 +62,7 @@ export async function preloadQingagentToolSearchTools({
     steps: [],
     systemMessages: [],
     state: {},
-    model: "deepseek/deepseek-v4-flash" as never,
+    model: resolveDeepseekRouterModelId(requestContext, "flash") as never,
     tools: {},
     requestContext,
     retryCount: 0,

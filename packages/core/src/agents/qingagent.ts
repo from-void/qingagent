@@ -30,6 +30,7 @@ import {
   anthropicBaseUrl,
   resolveBaseUrl,
   resolveDeepseekAuth,
+  resolveDeepseekRouterModelId,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -86,7 +87,7 @@ function getRepairingModelFor(
     );
   }
 
-  const modelId = `deepseek/${resolveModelId(requestContext, "flash")}` as `${string}/${string}`;
+  const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
   // 缓存键含 baseURL + modelId + key:不同中转/别名/key 各自命中独立实例
   const cacheKey = `${baseUrl}|${modelId}|${effectiveKey}`;
   let model = modelCache.get(cacheKey);

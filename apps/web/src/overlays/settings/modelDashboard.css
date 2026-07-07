@@ -132,6 +132,101 @@
   cursor: default;
 }
 
+/* 模型档位:设置区和账户区共用,默认 Flash;Pro 明示更慢 */
+.qj-sheet-body .sm-tier-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  margin: 0 0 12px;
+  border-top: 1px solid var(--qj-switch-border);
+  border-bottom: 1px solid var(--qj-switch-border);
+}
+.qj-sheet-body .md-account .sm-tier-row {
+  border-top: 0;
+}
+.qj-sheet-body .sm-tier-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.qj-sheet-body .sm-tier-title {
+  font-family: var(--font-zh-serif);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--qj-ink);
+}
+.qj-sheet-body .sm-tier-note {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .sm-tier-control {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 0 0 auto;
+  border: 1px solid var(--qj-switch-border);
+  background: rgba(236, 227, 208, 0.04);
+}
+.qj-sheet-body .sm-tier-option {
+  min-width: 78px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--qj-switch-border);
+  border-radius:0;
+  cursor: pointer;
+  background: transparent;
+  color: var(--qj-switch-text);
+  font-family: var(--font-zh-serif);
+  outline: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+.qj-sheet-body .sm-tier-option:first-child {
+  border-left: 0;
+}
+.qj-sheet-body .sm-tier-option span {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.qj-sheet-body .sm-tier-option small {
+  font-size: 9px;
+  line-height: 1.1;
+  color: var(--qj-header-sub);
+}
+.qj-sheet-body .sm-tier-option:hover,
+.qj-sheet-body .sm-tier-option:focus-visible {
+  background: rgba(236, 227, 208, 0.08);
+}
+.qj-sheet-body .sm-tier-option.sm-active {
+  background: var(--qj-cinnabar);
+  color: #1a140b;
+}
+.qj-sheet-body .sm-tier-option.sm-active small {
+  color: #1a140b;
+}
+@media (max-width: 560px) {
+  .qj-sheet-body .sm-tier-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .qj-sheet-body .sm-tier-control {
+    width: 100%;
+  }
+  .qj-sheet-body .sm-tier-option {
+    flex: 1 1 0;
+  }
+}
+
 /* 三格指标 */
 .qj-sheet-body .md-metrics {
   display: grid;

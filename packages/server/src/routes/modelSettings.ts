@@ -276,6 +276,7 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),
+    modelTier: c.req.header("x-model-tier"),
     protocol: c.req.header("x-model-protocol"),
     visionKey: c.req.header("x-vision-key"),
     visionBaseUrl: c.req.header("x-vision-base-url"),

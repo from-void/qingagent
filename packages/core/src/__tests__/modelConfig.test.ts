@@ -79,6 +79,14 @@ describe("modelConfig", () => {
     ).toBe("visitor-model");
   });
 
+  it("当前档位为 pro 时,QINGAGENT_MODEL_PRO 生效且 flash 默认仍不变", () => {
+    process.env.QINGAGENT_MODEL_FLASH = "env-flash";
+    process.env.QINGAGENT_MODEL_PRO = "env-pro";
+
+    expect(resolveModelId(requestContext(), "flash")).toBe("env-flash");
+    expect(resolveModelId(requestContext([["modelOverrides", { tier: "pro" }]]), "flash")).toBe("env-pro");
+  });
+
   it("访客自带 endpoint(baseUrl)时不套用 env 协议/模型名,避免误把 anthropic 套到访客 openai 端点", () => {
     process.env.QINGAGENT_MODEL_PROTOCOL = "anthropic";
     process.env.QINGAGENT_MODEL_FLASH = "glm-4.6";

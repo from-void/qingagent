@@ -28,7 +28,14 @@ import {
 } from "../utils/lengthSpec.js";
 import { aiIrStreamPreviewFromMarkup, tailExcerpt, headExcerpt } from "../utils/aiIrStreamPreview.js";
 import { callDeepseekDraft, deepseekDraftClientInternals } from "./deepseekDraftClient.js";
-import { resolveBaseUrl, resolveDeepseekAuth, resolveModelId, resolveProtocol } from "../llm/modelConfig.js";
+import {
+  resolveBaseUrl,
+  resolveDeepseekAuth,
+  resolveModelId,
+  resolveModelTier,
+  resolveProtocol,
+  type DeepseekTier,
+} from "../llm/modelConfig.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 export const writeDraftInputSchema = z.object({
@@ -159,6 +166,7 @@ const EXPRESS_TEMPERATURE = 0.4;
 const REASON_TEMPERATURE = 0.3;
 const REASON_HEARTBEAT_MS = 7_500;
 const REASON_BUDGET_MAX_MS = 75_000;
+const PRO_REASON_BUDGET_MULTIPLIER = 3;
 const RACE_ABORT_SETTLE_GRACE_MS = 250;
 
 function runConfigForIntent(intent: DraftIntent): RunConfig {
@@ -171,11 +179,16 @@ function clampMs(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function makeReasonBudget(target: number): ReasonBudget {
+function reasonBudgetMultiplier(tier: DeepseekTier): number {
+  return tier === "pro" ? PRO_REASON_BUDGET_MULTIPLIER : 1;
+}
+
+function makeReasonBudget(target: number, tier: DeepseekTier = "flash"): ReasonBudget {
   const targetUnits = Math.max(1, Math.ceil(target / 1000));
-  const outputMs = clampMs(targetUnits * 6_000, 10_000, 25_000);
-  const thinkMs = clampMs(targetUnits * 12_000, 15_000, 50_000);
-  const totalMs = Math.min(thinkMs + outputMs, REASON_BUDGET_MAX_MS);
+  const multiplier = reasonBudgetMultiplier(tier);
+  const outputMs = Math.round(clampMs(targetUnits * 6_000, 10_000, 25_000) * multiplier);
+  const thinkMs = Math.round(clampMs(targetUnits * 12_000, 15_000, 50_000) * multiplier);
+  const totalMs = Math.min(thinkMs + outputMs, Math.round(REASON_BUDGET_MAX_MS * multiplier));
   return {
     outputMs,
     thinkMs,
@@ -287,6 +300,10 @@ function failureKindFromError(error: unknown, finishReason: string | null | unde
     if (diagnostics?.failureKind) return diagnostics.failureKind;
   }
   const message = error instanceof Error ? error.message : String(error);
+  // 时间预算/abort:lane 被 thinkTimer/hardTimer 掐(reason 预算超时)或通用 AbortError。
+  // 归到明确 kind,与真 QingML 结构错(compile_failed)区分,避免报错甩锅"QingML 校验失败"。
+  if (error instanceof Error && error.name === "AbortError") return "reason_budget_exceeded";
+  if (/budget exceeded|\baborted\b/i.test(message)) return "reason_budget_exceeded";
   if (/Unexpected end|end of JSON|Expected ',' or ']'|Expected ',' or '}'/i.test(message)) return "unclosed_brackets";
   if (/property value|after property|unterminated string|bad control character/i.test(message)) return "unescaped_quote";
   return "unknown";
@@ -474,6 +491,8 @@ export function createWriteDraftTool(opts: {
       };
       const candidates: DraftCandidate[] = [];
       const failureKinds: string[] = [];
+      const activeModelTier = resolveModelTier(context?.requestContext);
+      const activeModelId = resolveModelId(context?.requestContext, "flash");
       const countOf = (doc: PmDoc) =>
         // 字数/长度验收只算正文文字:跳过图片/图表/附件等媒体节点(与右下角落款 countDocVisibleChars 同口径)
         countByUnit(pmToPlainText(doc, { skipMedia: true }), lengthSpec?.unit ?? "withPunct");
@@ -499,7 +518,7 @@ export function createWriteDraftTool(opts: {
           origin: opts.state.origin ?? "manual",
           toolName: "writeDraft",
           toolCallId: context?.agent?.toolCallId ?? null,
-          modelName: resolveModelId(context?.requestContext, "flash"),
+          modelName: activeModelId,
           system,
           user: params.prompt,
           attempt: laneKey + 1,
@@ -512,7 +531,6 @@ export function createWriteDraftTool(opts: {
           await emitDisplayProgress(false, params.roundIdx > 0 ? "revising" : "writing");
           const protocol = resolveProtocol(context?.requestContext);
           const baseUrl = resolveBaseUrl(context?.requestContext);
-          const model = resolveModelId(context?.requestContext, "flash");
           const result = await callDeepseekDraft({
             system,
             user: params.prompt,
@@ -521,7 +539,7 @@ export function createWriteDraftTool(opts: {
             temperature: params.temperature,
             stream: true,
             baseUrl,
-            model,
+            model: activeModelId,
             apiKey: resolveDeepseekAuth(context?.requestContext).apiKey || undefined,
             protocol,
             abortSignal: params.abortSignal,
@@ -627,7 +645,7 @@ export function createWriteDraftTool(opts: {
       };
 
       const budget = runConfig.schedule === "budgeted"
-        ? makeReasonBudget(lengthSpec?.target ?? 1000)
+        ? makeReasonBudget(lengthSpec?.target ?? 1000, activeModelTier)
         : null;
       const heartbeat = runConfig.schedule === "budgeted"
         ? setInterval(() => {
@@ -697,10 +715,23 @@ export function createWriteDraftTool(opts: {
         await progressWriteChain;
         return {
           ok: false,
-          error:
-            `writeDraft 失败: 4 路并行候选都未通过 QingML/AI-IR 校验。` +
-            `失败分型: ${JSON.stringify(failureSummary)}。` +
-            `请直接重新调用 writeDraft 进行工具维度重试，不要改用 editDraft；这通常是模型随机 QingML 结构错误，前缀缓存命中后重调成本较低。`,
+          error: (() => {
+            // 按主导失败分型条件化文案:超时/被掐 ≠ QingML 结构错,别再无脑甩锅"校验失败"(否则 debug 走沟里)。
+            const totalFails = failureKinds.length || 1;
+            const budgetFails = failureSummary["reason_budget_exceeded"] ?? 0;
+            const detail = `失败分型: ${JSON.stringify(failureSummary)}。`;
+            if (budgetFails > totalFails / 2) {
+              return (
+                `writeDraft 失败: ${budgetFails}/${totalFails} 路因生成超时(时间预算内未完成、当前模型较慢)被中止,` +
+                `非 QingML 结构错误。${detail}` +
+                `请直接重新调用 writeDraft 重试(慢模型可考虑切更快的 flash 档,或加大 reason 预算)。`
+              );
+            }
+            return (
+              `writeDraft 失败: 4 路并行候选都未通过 QingML/AI-IR 校验。${detail}` +
+              `请直接重新调用 writeDraft 进行工具维度重试，不要改用 editDraft；多为模型随机 QingML 结构错误，前缀缓存命中后重调成本较低。`
+            );
+          })(),
         };
       }
 
@@ -766,6 +797,8 @@ export function createWriteDraftTool(opts: {
 
 export const writeDraftInternals = {
   makeReasonBudget,
+  reasonBudgetMultiplier,
   runConfigForIntent,
+  failureKindFromError,
   deepseekDraftClientInternals,
 };

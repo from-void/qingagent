@@ -30,6 +30,13 @@ function expectQingmlExample(prompt: string, example: string): void {
   expect(parsed.blocks.length).toBeGreaterThan(0);
 }
 
+const alignMathBlockExample = [
+  "<math-block>\\begin{align}",
+  "\\nabla \\cdot \\mathbf{E} &amp;= \\frac{\\rho}{\\varepsilon_0} \\\\",
+  "\\nabla \\times \\mathbf{B} &amp;= \\mu_0\\mathbf{J}+\\mu_0\\varepsilon_0\\frac{\\partial \\mathbf{E}}{\\partial t}",
+  "\\end{align}</math-block>",
+].join("\n");
+
 describe("C3 QingML 富格式文档管线", () => {
   it("模型脏输出样本库: fence、前导话、收尾散文经 QingML 解析与编译通过", () => {
     const samples = [
@@ -106,6 +113,8 @@ describe("C3 QingML 富格式文档管线", () => {
     expect(prompt).toContain("块级公式 <math-block>");
     expect(prompt).toContain("分栏 <columns>");
     expect(prompt).toContain("行内公式 <math>");
+    expect(prompt).toContain("## 展示公式硬规则");
+    expect(prompt).toContain("绝不把这类公式写成普通 <p> 段落文本");
     expect(prompt).toContain("多级列表必须用 <li> 内嵌子 <ul>/<ol>");
     expect(prompt).toContain("分栏必须用 <columns>");
     expect(prompt).not.toContain("items+depth");
@@ -114,6 +123,7 @@ describe("C3 QingML 富格式文档管线", () => {
     expectQingmlExample(prompt, "<tasks><task checked>已完成</task><task>未完成</task></tasks>");
     expectQingmlExample(prompt, "<callout emoji=\"💡\" tone=\"info\">提示内容</callout>");
     expectQingmlExample(prompt, "<math-block>E=mc^2</math-block>");
+    expectQingmlExample(prompt, alignMathBlockExample);
     expectQingmlExample(prompt, "<columns><column ratio=\"0.5\">块级内容</column><column ratio=\"0.5\">块级内容</column></columns>");
   });
 
@@ -122,12 +132,16 @@ describe("C3 QingML 富格式文档管线", () => {
     expect(AIIR_SYSTEM_PROMPT).toContain("待办清单 taskList");
     expect(AIIR_SYSTEM_PROMPT).toContain("高亮框 callout");
     expect(AIIR_SYSTEM_PROMPT).toContain("块级公式 blockMath");
+    expect(AIIR_SYSTEM_PROMPT).toContain("展示公式硬规则");
+    expect(AIIR_SYSTEM_PROMPT).toContain("\\begin{align|aligned|equation|gather");
+    expect(AIIR_SYSTEM_PROMPT).toContain("绝不把这类公式写成普通 <p> 段落文本");
     expect(AIIR_SYSTEM_PROMPT).toContain("行内公式");
     expect(AIIR_SYSTEM_PROMPT).toContain("math 不能与其他 mark 混用");
 
     expectQingmlExample(AIIR_SYSTEM_PROMPT, "<tasks><task>待办项</task></tasks>");
     expectQingmlExample(AIIR_SYSTEM_PROMPT, "<callout emoji=\"💡\" tone=\"info\">内容</callout>");
     expectQingmlExample(AIIR_SYSTEM_PROMPT, "<math-block>E = mc^2</math-block>");
+    expectQingmlExample(AIIR_SYSTEM_PROMPT, alignMathBlockExample);
     expectQingmlExample(AIIR_SYSTEM_PROMPT, "<math>E=mc^2</math>");
   });
 

@@ -220,10 +220,22 @@ if (a &lt; b &amp;&amp; ok) run();</pre>
 - 表格 <table><tr><th>表头</th></tr><tr><td bg="rose">单元格</td></tr></table>（<th> 为表头单元格；整行全 <th> 即表头行；bg 为单元格底色，改写带色表格时原值照抄，别丢）
 - 提示框 <callout emoji="💡" tone="info">提示内容</callout>（tone 只允许 info/success/warning/danger/neutral）
 - 分栏 <columns><column ratio="0.5">块级内容</column><column ratio="0.5">块级内容</column></columns>（至少 2 个 <column>，每栏放块级标签）
-- 块级公式 <math-block>E=mc^2</math-block>（LaTeX，不带 $）
+- 块级公式 <math-block>E=mc^2</math-block>（LaTeX，不带 $；展示公式硬规则见下）
 - 图表 <mermaid>flowchart TD
   A[开始] --> B[结束]</mermaid>（Mermaid 源码；源码内的 < 仍按"字符转义"写 &lt;；严禁用 <pre> 写 mermaid 冒充图表）
 - 图片 <img src="/api/v1/files/<uuid>/<filename>" alt="…"/>；文件 <file id="…" filename="…"/>（两者都只用素材/原文已有的 id/url，绝不编造）
+
+## 展示公式硬规则
+多行公式、\\begin{align|aligned|equation|gather|gathered|cases|matrix|bmatrix|pmatrix|split|alignat...} 环境、带 & 对齐的公式、独立成行的公式，必须用 <math-block>…</math-block>。<math-block> 内文只放纯 LaTeX，不带 $/$$/\\[\\] 定界符；LaTeX 里的 & 必须写成 &amp;。绝不把这类公式写成普通 <p> 段落文本、裸 LaTeX 或 Markdown 代码块。
+
+✅ 正确：多行 align 整体包进 <math-block>，并把 & 写成 &amp;：
+<math-block>\\begin{align}
+\\nabla \\cdot \\mathbf{E} &amp;= \\frac{\\rho}{\\varepsilon_0} \\\\
+\\nabla \\times \\mathbf{B} &amp;= \\mu_0\\mathbf{J}+\\mu_0\\varepsilon_0\\frac{\\partial \\mathbf{E}}{\\partial t}
+\\end{align}</math-block>
+
+❌ 错误：把展示公式当段落正文吐出，不会渲染：
+<p>\\begin{align} \\nabla \\cdot \\mathbf{E} &amp;= \\frac{\\rho}{\\varepsilon_0} \\\\ \\nabla \\times \\mathbf{B} &amp;= \\mu_0\\mathbf{J} \\end{align}</p>
 
 边界与克制:
 - 表格单元格、callout、blockquote 内只放文字与行内标记；列表、表格等块级内容放在它们外面。

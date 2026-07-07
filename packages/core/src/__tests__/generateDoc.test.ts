@@ -239,6 +239,12 @@ describe("generateDoc QingML helpers", () => {
 
   it("buildQingmlPrompt 富格式提示词契约:高级块说明与示例可解析", () => {
     const prompt = buildQingmlPrompt("");
+    const alignMathBlockExample = [
+      "<math-block>\\begin{align}",
+      "\\nabla \\cdot \\mathbf{E} &amp;= \\frac{\\rho}{\\varepsilon_0} \\\\",
+      "\\nabla \\times \\mathbf{B} &amp;= \\mu_0\\mathbf{J}+\\mu_0\\varepsilon_0\\frac{\\partial \\mathbf{E}}{\\partial t}",
+      "\\end{align}</math-block>",
+    ].join("\n");
 
     expect(prompt).toContain("<tasks>");
     expect(prompt).toContain("<callout");
@@ -247,6 +253,10 @@ describe("generateDoc QingML helpers", () => {
     expect(prompt).toContain("多级列表必须用 <li> 内嵌子 <ul>/<ol>");
     expect(prompt).toContain("提示框 <callout");
     expect(prompt).toContain("tone 只允许 info/success/warning/danger/neutral");
+    expect(prompt).toContain("## 展示公式硬规则");
+    expect(prompt).toContain("多行公式");
+    expect(prompt).toContain("\\begin{align|aligned|equation|gather");
+    expect(prompt).toContain("绝不把这类公式写成普通 <p> 段落文本");
     expect(prompt).toContain("分栏必须用 <columns>");
     expect(prompt).not.toContain("items+depth");
     expect(prompt).not.toContain("必须用扁平");
@@ -255,6 +265,7 @@ describe("generateDoc QingML helpers", () => {
       "<tasks><task>待办项</task></tasks>",
       "<callout emoji=\"💡\" tone=\"info\">提示内容</callout>",
       "<math-block>E = mc^2</math-block>",
+      alignMathBlockExample,
       "<columns><column ratio=\"0.5\"><p>左栏</p></column><column ratio=\"0.5\"><p>右栏</p></column></columns>",
     ];
     for (const example of examples) {
@@ -263,6 +274,12 @@ describe("generateDoc QingML helpers", () => {
       expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
       expect(parsed.blocks.length).toBeGreaterThan(0);
     }
+
+    const alignExample = qingmlParse(alignMathBlockExample);
+    expect(alignExample.blocks[0]).toMatchObject({
+      type: "blockMath",
+      latex: expect.stringContaining("\\begin{align}"),
+    });
   });
 
   it("QingML 解析失败重试时追加严格自解析修复指令", () => {

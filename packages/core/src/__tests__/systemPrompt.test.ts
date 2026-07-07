@@ -73,6 +73,11 @@ describe("system prompt S3", () => {
       "多级待办用 <task> 内嵌子 <tasks>",
       "不要把所有任务平铺到同一级",
       "不能用 \"- [ ]\" 文本或平铺 sibling 假装子任务",
+      // 展示公式范本必须在编辑侧上下文里,不能只放 writeDraft 生成侧。
+      "展示公式硬规则",
+      "\\begin{align|aligned|equation|gather",
+      "绝不把这类公式写成普通 <p> 段落文本",
+      "<math-block>\\begin{align}",
       // V4 writeDraft:用户明确拍板继续深层 QingML,编辑侧也必须给嵌套标签范本。
       "QingML 嵌套",
       "<tasks><task>父任务<tasks><task>子任务",

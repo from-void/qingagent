@@ -635,6 +635,11 @@ export function WorkspacePage() {
             })();
       el.style.setProperty("--doc-left", `${r.left}px`);
       el.style.setProperty("--doc-right", `${r.right}px`);
+      // 同步到 :root:「请等待完成编辑」提示条 portal 到 document.body(#25),不在 #view-workspace
+      // 子树里,读不到写在 #view-workspace 上的 --doc-left/--doc-right → 会 fallback 到 50vw 全屏居中。
+      // 写一份到 documentElement,让 body 层 portal 也能按文稿真实左右边居中。
+      document.documentElement.style.setProperty("--doc-left", `${r.left}px`);
+      document.documentElement.style.setProperty("--doc-right", `${r.right}px`);
     };
     const body = el.querySelector<HTMLElement>(".ws-body");
     apply();
@@ -643,6 +648,8 @@ export function WorkspacePage() {
     return () => {
       window.removeEventListener("resize", apply);
       body?.removeEventListener("scroll", apply);
+      document.documentElement.style.removeProperty("--doc-left");
+      document.documentElement.style.removeProperty("--doc-right");
     };
   }, []);
 

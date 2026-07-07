@@ -377,7 +377,10 @@ function summarizeCommandInput(command: Command): Record<string, unknown> {
         fileCount: command.data.fileIds?.length ?? 0,
       };
     case "resumeAskUser":
-      return { answerCount: Object.keys(command.data.answers ?? {}).length };
+      return {
+        toolCallId: command.data.toolCallId ?? null,
+        answerCount: Object.keys(command.data.answers ?? {}).length,
+      };
     case "cancelAskUser":
       return {
         sessionId: command.data.sessionId,
@@ -805,7 +808,9 @@ async function* handleCommandInner(
       // 重启/部署后用户仍停在问卷直接提交时,内存 miss 也能恢复后继续(下方 !runId 门控不变)。
       // WM 不在冷 resume 补读:D8 后会话已在 start/run 冻结进 messages;
       // D8 前遗留挂起保持 no-WM 语义,避免恢复时改变旧会话前缀。
-      const session = await getOrRestoreSession(command.data.sessionId);
+      const session = await getOrRestoreSession(command.data.sessionId, {
+        preferredAskUserToolCallId: command.data.toolCallId,
+      });
       if (!session) {
         throw new Error("没有待恢复的操作");
       }
@@ -824,6 +829,8 @@ async function* handleCommandInner(
           await new Promise((r) => setTimeout(r, POLL_MS));
         }
       }
+
+      applySubmittedAskUserToolCallId(session, command.data.toolCallId);
 
       if (!session.runId) {
         throw new Error("没有待恢复的操作");
@@ -1679,6 +1686,10 @@ function isSnapshotNotFoundError(error: unknown): boolean {
   );
 }
 
+function isAskUserQuestionSpec(spec: ToolCallSpec): boolean {
+  return spec.name === "askUser" && spec.body?.kind === "askUser";
+}
+
 function findAskUserToolCallSpec(
   session: SessionState,
   toolCallId: string | null,
@@ -1689,13 +1700,31 @@ function findAskUserToolCallSpec(
       if (
         part.kind === "toolCall" &&
         part.data.id === toolCallId &&
-        part.data.name === "askUser"
+        isAskUserQuestionSpec(part.data)
       ) {
         return part.data;
       }
     }
   }
   return null;
+}
+
+function applySubmittedAskUserToolCallId(
+  session: SessionState,
+  submittedToolCallId: string | null | undefined,
+): void {
+  if (!submittedToolCallId || submittedToolCallId === session.toolCallId) return;
+  const submittedSpec = findAskUserToolCallSpec(session, submittedToolCallId);
+  if (!submittedSpec) {
+    return;
+  }
+  session.toolCallId = submittedToolCallId;
+  if (session._suspensionOwner?.toolName === "askUser") {
+    session._suspensionOwner = {
+      ...session._suspensionOwner,
+      toolCallId: submittedToolCallId,
+    };
+  }
 }
 
 function markAskUserToolCallAnsweredForResume(
@@ -1710,7 +1739,7 @@ function markAskUserToolCallAnsweredForResume(
       if (
         part?.kind !== "toolCall" ||
         part.data.id !== toolCallId ||
-        part.data.name !== "askUser"
+        !isAskUserQuestionSpec(part.data)
       ) {
         continue;
       }
@@ -2495,27 +2524,62 @@ export async function collectRestoreFrames(sessionId: string): Promise<BridgeFra
  */
 const restoreInflight = new Map<string, Promise<SessionState | undefined>>();
 
+function restoreInflightKey(
+  sessionId: string,
+  options: { preferredAskUserToolCallId?: string | null } = {},
+): string {
+  return `${sessionId}\0${options.preferredAskUserToolCallId ?? ""}`;
+}
+
+function normalizedRestoreOptions(
+  options: { preferredAskUserToolCallId?: string | null } = {},
+): { preferredAskUserToolCallId: string } | undefined {
+  return typeof options.preferredAskUserToolCallId === "string" &&
+    options.preferredAskUserToolCallId.length > 0
+    ? { preferredAskUserToolCallId: options.preferredAskUserToolCallId }
+    : undefined;
+}
+
 async function getOrRestoreSession(
   sessionId: string,
+  options: { preferredAskUserToolCallId?: string | null } = {},
 ): Promise<SessionState | undefined> {
+  const restoreOptions = normalizedRestoreOptions(options);
   const cached = sessions.get(sessionId);
-  if (cached) return cached;
+  if (cached) {
+    if (!restoreOptions || cached.runId) return cached;
+    const restored = await loadSessionFromThread(sessionId, restoreOptions);
+    if (restored?.runId) {
+      sessions.set(sessionId, restored);
+      return restored;
+    }
+    return cached;
+  }
   // 并发去重:同一 session 的并发冷命令共用一条恢复 promise,避免恢复出两个
   // SessionState 后相互覆盖(后返回的把内存态连同已发生的 docVersion/busy/materials 改动盖回旧对象)。
-  let inflight = restoreInflight.get(sessionId);
+  const inflightKey = restoreInflightKey(sessionId, options);
+  let inflight = restoreInflight.get(inflightKey);
   if (!inflight) {
     inflight = (async () => {
-      const restored = await loadSessionFromThread(sessionId);
+      const restored = restoreOptions
+        ? await loadSessionFromThread(sessionId, restoreOptions)
+        : await loadSessionFromThread(sessionId);
       if (!restored) return undefined;
       // await 期间可能已有别的路径(如 startSession existing)把 session 放回内存,以内存态为准,不覆盖。
       const existing = sessions.get(sessionId);
-      if (existing) return existing;
+      if (existing) {
+        if (restoreOptions && !existing.runId && restored.runId) {
+          sessions.set(sessionId, restored);
+          return restored;
+        }
+        return existing;
+      }
       sessions.set(sessionId, restored);
       return restored;
     })().finally(() => {
-      restoreInflight.delete(sessionId);
+      restoreInflight.delete(inflightKey);
     });
-    restoreInflight.set(sessionId, inflight);
+    restoreInflight.set(inflightKey, inflight);
   }
   return inflight;
 }

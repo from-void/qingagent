@@ -63,7 +63,8 @@ export function findAskUserToolCallSpecInChatHistory(
       if (
         part.kind === "toolCall" &&
         part.data.id === toolCallId &&
-        part.data.name === "askUser"
+        part.data.name === "askUser" &&
+        part.data.body?.kind === "askUser"
       ) {
         return part.data;
       }

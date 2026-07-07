@@ -3131,7 +3131,7 @@ export function WorkspacePage() {
       try {
         validateCommand({
           kind: "resumeAskUser",
-          data: { sessionId: current.sessionId, answers },
+          data: { sessionId: current.sessionId, toolCallId, answers },
         });
       } catch (e) {
         console.error("[workspace] resumeAskUser validation failed", e);
@@ -3151,7 +3151,7 @@ export function WorkspacePage() {
       stream
         .sendCommand({
           kind: "resumeAskUser",
-          data: { sessionId: current.sessionId, answers },
+          data: { sessionId: current.sessionId, toolCallId, answers },
         })
         .catch((e) => {
           console.error("[workspace] resumeAskUser failed", e);

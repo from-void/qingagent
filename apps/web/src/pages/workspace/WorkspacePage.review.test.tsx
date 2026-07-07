@@ -1494,8 +1494,10 @@ describe("WorkspacePage review controls", () => {
     // resumeAskUser 已发出
     const resumes = stream.sendCommand.mock.calls
       .map(([command]) => command as Command)
-      .filter((command) => command.kind === "resumeAskUser");
+      .filter((command): command is Extract<Command, { kind: "resumeAskUser" }> =>
+        command.kind === "resumeAskUser");
     expect(resumes).toHaveLength(1);
+    expect(resumes[0]?.data.toolCallId).toBe("ask-1");
 
     // 核心断言:提交后不需要再点"关闭"——弹层立即收起,输入/导出恢复可用
     expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();

@@ -39,6 +39,7 @@ const mockState = vi.hoisted(() => ({
           askStatus: readAskStatus(session),
         });
       }),
+      loadSessionFromThread: vi.fn(),
       runAgentTurn: vi.fn(async function* (session: any, userText: string) {
         events.push({
           kind: "runAgentTurn",
@@ -155,6 +156,9 @@ async function loadBridge() {
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: mockState.persistSessionMetadata,
       schedulePersist: mockState.persistSessionMetadata,
+      loadSessionFromThread: mockState.loadSessionFromThread.mockImplementation(
+        actual.loadSessionFromThread,
+      ),
       ensureWorkingMemorySnapshot: mockState.ensureWorkingMemorySnapshot,
       prepareOmContextForTurn: mockState.prepareOmContextForTurn,
       runAgentTurn: mockState.runAgentTurn,
@@ -229,6 +233,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
     mockState.ensureWorkingMemorySnapshot.mockClear();
     mockState.prepareOmContextForTurn.mockClear();
     mockState.persistSessionMetadata.mockClear();
+    mockState.loadSessionFromThread.mockReset();
     mockState.runAgentTurn.mockClear();
     mockState.scheduleOmSidecarAfterTurn.mockClear();
   });
@@ -509,6 +514,154 @@ describe("handleResume askUser fresh-turn fallback", () => {
     expect(askDoneIndex).toBeGreaterThanOrEqual(0);
     expect(busyIndex).toBeGreaterThan(askDoneIndex);
     expect(writeDraftPlaceholderIndex).toBeGreaterThan(busyIndex);
+  });
+
+  it("内联 askUser 提交优先使用命令里的 toolCallId,避免 stale session id 导致答案卡回退 raw value", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    const spec: ToolCallSpec = {
+      ...askUserToolCall("ask-inline-real"),
+      body: {
+        kind: "askUser",
+        data: {
+          id: "ask-inline-real",
+          mode: { kind: "overlay" },
+          purpose: { kind: "quickClarification" },
+          source: null,
+          rationale: null,
+          questions: [
+            {
+              id: "q-format",
+              label: "想怎么调整结构？",
+              kind: { kind: "single" },
+              options: [
+                { value: "v1", label: "保持原结构", description: null, preview: null },
+                { value: "v2", label: "改成落地步骤", description: null, preview: null },
+              ],
+              placeholder: null,
+            },
+          ],
+        },
+      },
+    };
+    session.docState = { kind: "editing" };
+    session.chatHistory = [
+      {
+        id: "msg-ask-real",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [{ kind: "toolCall", data: spec }],
+        chips: null,
+      },
+    ];
+    session.runId = "run-inline-stale";
+    session.toolCallId = "ask-inline-stale";
+    session._suspensionOwner = {
+      streamId: "restored:run-inline-stale",
+      runId: "run-inline-stale",
+      toolCallId: "ask-inline-stale",
+      toolName: "askUser",
+    };
+
+    mockState.resumeStream.mockResolvedValue({
+      runId: "run-inline-stale-resumed",
+      fullStream: streamOf({ type: "finish", payload: {} }),
+    });
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          toolCallId: "ask-inline-real",
+          answers: {
+            "q-format": { chosen: ["v2"], freeText: null },
+          },
+        },
+      }),
+    );
+
+    expect(mockState.resumeStream.mock.calls[0]?.[1]).toMatchObject({
+      toolCallId: "ask-inline-real",
+    });
+    const answerCardFrame = frames.find(
+      (frame) =>
+        frame.kind === "chatMessageAdded" &&
+        frame.data.message.parts.some((part) => part.kind === "askUserAnswerCard"),
+    );
+    expect(answerCardFrame).toMatchObject({
+      kind: "chatMessageAdded",
+      data: {
+        message: {
+          id: "askuser-answer:ask-inline-real",
+          parts: [
+            {
+              kind: "askUserAnswerCard",
+              data: {
+                toolCallId: "ask-inline-real",
+                items: [
+                  {
+                    questionId: "q-format",
+                    questionLabel: "想怎么调整结构？",
+                    answerText: "改成落地步骤",
+                    selectedOptionLabels: ["改成落地步骤"],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("冷恢复 askUser 提交把命令里的 toolCallId 传给持久层恢复,避免 stale meta id 丢 runId", async () => {
+    const bridge = await loadBridge();
+    const { createSession } = await import("@qingagent/core");
+    const session = createSession("cold-inline-session");
+    const spec = askUserToolCall("ask-inline-real");
+    session.docState = { kind: "editing" };
+    session.chatHistory = [
+      {
+        id: "msg-ask-real",
+        role: { kind: "agent" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [{ kind: "toolCall", data: spec }],
+        chips: null,
+      },
+    ];
+    session.runId = "run-cold";
+    session.toolCallId = "ask-inline-real";
+    session._suspensionOwner = {
+      streamId: "restored:run-cold",
+      runId: "run-cold",
+      toolCallId: "ask-inline-real",
+      toolName: "askUser",
+    };
+    mockState.loadSessionFromThread.mockResolvedValueOnce(session);
+    mockState.resumeStream.mockResolvedValue({
+      runId: "run-cold-resumed",
+      fullStream: streamOf({ type: "finish", payload: {} }),
+    });
+
+    await collectFrames(
+      bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: "cold-inline-session",
+          toolCallId: "ask-inline-real",
+          answers: { "q-one": { chosen: [], freeText: "答案A" } },
+        },
+      }),
+    );
+
+    expect(mockState.loadSessionFromThread).toHaveBeenCalledWith("cold-inline-session", {
+      preferredAskUserToolCallId: "ask-inline-real",
+    });
+    expect(mockState.resumeStream.mock.calls[0]?.[1]).toMatchObject({
+      runId: "run-cold",
+      toolCallId: "ask-inline-real",
+    });
   });
 
   it("askUser resume 不推进 OM turnCounter，答案由 sidecar fallback 并回挂起轮次", async () => {

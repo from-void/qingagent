@@ -20,6 +20,10 @@ export interface SkillDetailInfo extends SkillInfo {
   body: string;
 }
 
+export interface SkillInstallResult {
+  name: string;
+}
+
 export function useSkills() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -87,21 +91,23 @@ export function useSkills() {
 
   const installSkillMd = useCallback(
     // name 不再从前端解析传入:后端以 SKILL.md frontmatter 为唯一真源自行取名校验。
-    async (skillMd: string) => {
+    async (skillMd: string): Promise<SkillInstallResult> => {
       const res = await fetch("/api/v1/skills/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skillMd }),
       });
       if (!res.ok) throw new Error(await readError(res, "安装技能失败"));
+      const result = await readInstallResult(res);
       await refresh();
       notifySkillsChanged();
+      return result;
     },
     [refresh],
   );
 
   const installZip = useCallback(
-    async (file: File) => {
+    async (file: File): Promise<SkillInstallResult> => {
       const form = new FormData();
       form.set("file", file);
       const res = await fetch("/api/v1/skills/install", {
@@ -109,8 +115,10 @@ export function useSkills() {
         body: form,
       });
       if (!res.ok) throw new Error(await readError(res, "安装技能失败"));
+      const result = await readInstallResult(res);
       await refresh();
       notifySkillsChanged();
+      return result;
     },
     [refresh],
   );
@@ -121,6 +129,21 @@ export function useSkills() {
     return (await res.json()) as SkillDetailInfo;
   }, []);
 
+  const setSkillLabel = useCallback(
+    async (name: string, label: string): Promise<SkillDetailInfo> => {
+      const res = await fetch(`/api/v1/skills/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      if (!res.ok) throw new Error(await readError(res, "显示名保存失败"));
+      await refresh();
+      notifySkillsChanged();
+      return await getSkillDetail(name);
+    },
+    [getSkillDetail, refresh],
+  );
+
   return {
     skills,
     loading,
@@ -130,6 +153,7 @@ export function useSkills() {
     deleteSkill,
     installSkillMd,
     installZip,
+    setSkillLabel,
     getSkillDetail,
   };
 }
@@ -145,4 +169,10 @@ async function readError(res: Response, fallback: string): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+async function readInstallResult(res: Response): Promise<SkillInstallResult> {
+  const data = (await res.json()) as { name?: unknown };
+  if (typeof data.name !== "string" || !data.name) throw new Error("安装技能失败");
+  return { name: data.name };
 }

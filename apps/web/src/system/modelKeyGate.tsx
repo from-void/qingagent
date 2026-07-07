@@ -55,15 +55,30 @@ export function goConfigureModel(navigateHome: () => void): void {
   navigateHome();
 }
 
-// 首页挂载时消费信号:返回 true 表示应打开设置。
-export function consumeOpenSettingsFlag(): boolean {
+export type OpenSettingsTarget = "model";
+
+export function readOpenSettingsFlag(): OpenSettingsTarget | null {
   try {
-    if (sessionStorage.getItem(OPEN_SETTINGS_FLAG)) {
-      sessionStorage.removeItem(OPEN_SETTINGS_FLAG);
-      return true;
-    }
+    return sessionStorage.getItem(OPEN_SETTINGS_FLAG) === "model" ? "model" : null;
   } catch {
     /* ignore */
+  }
+  return null;
+}
+
+export function clearOpenSettingsFlag(): void {
+  try {
+    sessionStorage.removeItem(OPEN_SETTINGS_FLAG);
+  } catch {
+    /* ignore */
+  }
+}
+
+// 首页挂载时消费信号:返回 true 表示应打开设置。
+export function consumeOpenSettingsFlag(): boolean {
+  if (readOpenSettingsFlag()) {
+    clearOpenSettingsFlag();
+    return true;
   }
   return false;
 }

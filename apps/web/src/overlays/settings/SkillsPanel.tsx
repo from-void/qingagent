@@ -89,6 +89,7 @@ export function SkillsPanel() {
     deleteSkill,
     installSkillMd,
     installZip,
+    setSkillLabel,
     getSkillDetail,
   } = useSkills();
   const [busy, setBusy] = useState<string | null>(null);
@@ -205,16 +206,36 @@ export function SkillsPanel() {
     setBusy("__import__");
     setMessage(null);
     try {
+      let result: { name: string };
       if (lower.endsWith(".zip")) {
-        await installZip(file);
+        result = await installZip(file);
       } else if (lower.endsWith(".md")) {
-        await installSkillMd(await file.text());
+        result = await installSkillMd(await file.text());
       } else {
         throw new Error("仅支持 .zip 技能包或 .md 文件");
       }
-      if (mountedRef.current) setMessage("技能已导入");
+      if (mountedRef.current) {
+        setSelectedName(result.name);
+        setMessage("技能已导入");
+      }
     } catch (e) {
       if (mountedRef.current) setMessage(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      if (mountedRef.current) setBusy(null);
+    }
+  };
+
+  const saveLabel = async (name: string, label: string) => {
+    setBusy(name);
+    setMessage(null);
+    try {
+      const updated = await setSkillLabel(name, label);
+      if (mountedRef.current) {
+        setDetail(updated);
+        setMessage("显示名已保存");
+      }
+    } catch (e) {
+      if (mountedRef.current) setMessage(e instanceof Error ? e.message : "显示名保存失败");
     } finally {
       if (mountedRef.current) setBusy(null);
     }
@@ -286,6 +307,7 @@ export function SkillsPanel() {
             busy={busy === selectedSkill.name}
             canMutate={canMutate}
             onToggle={(enabled) => void toggle(selectedSkill.name, enabled)}
+            onSaveLabel={(label) => void saveLabel(selectedSkill.name, label)}
             onDelete={() => void confirmDelete(selectedSkill.name, selectedSkill.label, selectedSkill.source === "builtin")}
           />
         ) : detailLoading ? (
@@ -410,6 +432,7 @@ function SkillDetail({
   busy,
   canMutate,
   onToggle,
+  onSaveLabel,
   onDelete,
 }: {
   skill: SkillInfo;
@@ -419,11 +442,19 @@ function SkillDetail({
   busy: boolean;
   canMutate: boolean;
   onToggle: (enabled: boolean) => void;
+  onSaveLabel: (label: string) => void;
   onDelete: () => void;
 }) {
+  const [labelDraft, setLabelDraft] = useState(skill.label);
   const configNode = renderConfig(skill.config);
   const isBuiltin = skill.source === "builtin";
+  useEffect(() => {
+    setLabelDraft(skill.label);
+  }, [skill.name, skill.label]);
   const deleteDisabled = isBuiltin || !canMutate || busy;
+  const labelDisabled = isBuiltin || !canMutate || busy;
+  const normalizedDraft = labelDraft.trim();
+  const labelChanged = normalizedDraft.length > 0 && normalizedDraft !== skill.label;
   const deleteHint = isBuiltin
     ? "内置技能不可删除,仅可停用。"
     : canMutate
@@ -450,9 +481,39 @@ function SkillDetail({
       <p className="sk-detail-meta">
         <span className="sk-card-tag">{sourceLabel(skill.source)}</span>
         &nbsp;&nbsp;
+        <span className="k">标识</span>：<code>{skill.name}</code>
+        &nbsp;&nbsp;
         <span className="k">引出工具</span>：
         {skill.tools.length > 0 ? skill.tools.map(toolLabel).join("、") : "无"}
       </p>
+
+      <form
+        className="sk-label-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (labelChanged) onSaveLabel(normalizedDraft);
+        }}
+      >
+        <label className="sk-label-field">
+          <span className="sk-detail-sec-title">显示名</span>
+          <input
+            type="text"
+            className="sk-label-input"
+            value={labelDraft}
+            disabled={labelDisabled}
+            data-wf="SkillLabelInput"
+            onChange={(e) => setLabelDraft(e.currentTarget.value)}
+          />
+        </label>
+        <button
+          type="submit"
+          className="sk-label-save"
+          disabled={labelDisabled || !labelChanged}
+          data-wf="SkillLabelSave"
+        >
+          保存
+        </button>
+      </form>
 
       {configNode && (
         <>

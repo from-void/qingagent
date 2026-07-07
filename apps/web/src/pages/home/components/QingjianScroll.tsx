@@ -19,7 +19,7 @@ import {
 import "chinese-masonry/style.css";
 import type { ArticleData, SelectorOptions, TemplateDefinition } from "chinese-masonry";
 import type { HomeSession } from "../data/sessions";
-import { consumeOpenSettingsFlag } from "../../../system/modelKeyGate";
+import { clearOpenSettingsFlag, readOpenSettingsFlag } from "../../../system/modelKeyGate";
 import {
   BIRD_WING_L,
   BIRD_WING_R,
@@ -43,7 +43,7 @@ import {
   type HomeTransitionStage,
 } from "../../new-session/transition/homeStage";
 import "./qingjian.css";
-import { HomeSettingsSheet } from "./HomeSettingsSheet";
+import { HomeSettingsSheet, type SettingsSheetTab } from "./HomeSettingsSheet";
 import {
   SETTINGS_INK_VARIANT_LABEL,
   SETTINGS_INK_VARIANTS,
@@ -1094,10 +1094,16 @@ export function QingjianScroll({
   const [secondaryFont, setSecondaryFont] = useState<FontId>(() => readFontPref(STORE_FONT_SECONDARY));
   // 全部设置统一从首页 ⚙ 打开弹框,不再保留右上角二级浮层。
   const [settingsSheetOpen, setSettingsSheetOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsSheetTab>("model");
   // 从编辑/新建页「去配置」返回:消费信号 → 略等返回转场落定后打开设置(默认第一个 tab=模型)。
   useEffect(() => {
-    if (!consumeOpenSettingsFlag()) return;
-    const t = window.setTimeout(() => setSettingsSheetOpen(true), 650);
+    const target = readOpenSettingsFlag();
+    if (!target) return;
+    const t = window.setTimeout(() => {
+      setSettingsInitialTab(target);
+      setSettingsSheetOpen(true);
+      clearOpenSettingsFlag();
+    }, 650);
     return () => window.clearTimeout(t);
   }, []);
   const [inkDebugOpen, setInkDebugOpen] = useState(false);
@@ -2105,6 +2111,7 @@ export function QingjianScroll({
 
       {settingsSheetOpen && (
         <HomeSettingsSheet
+          initialTab={settingsInitialTab}
           inkVariant={settingsInkVariant}
           themeMode={themeMode}
           themeModeOptions={THEME_MODE_OPTIONS}

@@ -36,8 +36,20 @@ const h = vi.hoisted(() => ({
     enabled: boolean;
     body: string;
   }>(),
-  installSkillMd: vi.fn(async (_md: string) => undefined),
-  installZip: vi.fn(async (_file: File) => undefined),
+  installSkillMd: vi.fn(async (_md: string) => ({ name: "demo-skill" })),
+  installZip: vi.fn(async (_file: File) => ({ name: "pack-skill" })),
+  setSkillLabel: vi.fn(async (name: string, label: string) => ({
+    name,
+    description: "",
+    label,
+    summary: "",
+    icon: "star",
+    source: "installed" as "builtin" | "installed",
+    userInvocable: true,
+    tools: [] as string[],
+    enabled: true,
+    body: "",
+  })),
   setSkillEnabled: vi.fn(async () => undefined),
   deleteSkill: vi.fn(async () => undefined),
   refresh: vi.fn(async () => undefined),
@@ -54,6 +66,7 @@ vi.mock("./useSkills", () => ({
     deleteSkill: h.deleteSkill,
     installSkillMd: h.installSkillMd,
     installZip: h.installZip,
+    setSkillLabel: h.setSkillLabel,
     getSkillDetail: h.getSkillDetail,
   }),
 }));
@@ -96,6 +109,7 @@ describe("SkillsPanel 导入门控", () => {
     h.details.clear();
     h.installSkillMd.mockClear();
     h.installZip.mockClear();
+    h.setSkillLabel.mockClear();
     h.setSkillEnabled.mockClear();
     h.deleteSkill.mockClear();
     h.getSkillDetail.mockClear();
@@ -171,6 +185,42 @@ describe("SkillsPanel 导入门控", () => {
     expect(h.installZip).toHaveBeenCalledWith(file);
   });
 
+  it("导入成功后自动进入新技能详情页", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.installSkillMd.mockResolvedValueOnce({ name: "custom-research" });
+    h.details.set("custom-research", {
+      name: "custom-research",
+      description: "自装研究技能",
+      label: "研资料",
+      summary: "整理用户资料",
+      icon: "star",
+      source: "installed",
+      userInvocable: true,
+      tools: [],
+      enabled: true,
+      body: "# 研资料\n\n导入后进入详情。",
+    });
+    await render();
+
+    const input = q('[data-wf="SkillImportInput"]') as HTMLInputElement;
+    const md = "---\nname: custom-research\ndescription: 自装研究技能\n---\n# 研资料";
+    const file = new File([md], "custom.md", { type: "text/markdown" });
+    Object.defineProperty(file, "text", { value: async () => md, configurable: true });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(h.installSkillMd).toHaveBeenCalledWith(md);
+    expect(h.getSkillDetail).toHaveBeenCalledWith("custom-research");
+    expect(host?.textContent).toContain("技能详情");
+    expect(host?.textContent).toContain("研资料");
+  });
+
   it("列表态只渲染技能网格和末尾导入卡，卡片使用 API 下发短名与 summary", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = sampleSkills();
@@ -213,6 +263,61 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.querySelector('[data-wf="SearchPanelMock"]')).not.toBeNull();
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).toContain("联网搜索");
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).not.toContain("---");
+  });
+
+  it("详情页可保存超长中文显示名，底层 slug 不变且不截断", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "custom-research",
+        description: "自装研究技能",
+        label: "研资料",
+        summary: "整理用户资料",
+        icon: "star",
+        source: "installed",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+    ];
+    h.details.set("custom-research", {
+      ...h.skills[0]!,
+      body: "# 研资料",
+    });
+    const longLabel = "这是一个很长很长的中文显示名用于确认保存后不会被截断";
+    h.setSkillLabel.mockImplementationOnce(async (name: string, label: string) => ({
+      ...h.skills[0]!,
+      name,
+      label,
+      body: "# 研资料",
+    }));
+    await render();
+
+    const card = Array.from(host?.querySelectorAll<HTMLElement>(".sk-card") ?? []).find((node) =>
+      node.textContent?.includes("研资料"),
+    );
+    if (!card) throw new Error("custom skill card not found");
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const input = q('[data-wf="SkillLabelInput"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, longLabel);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const save = q('[data-wf="SkillLabelSave"]') as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await act(async () => {
+      save.closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(h.setSkillLabel).toHaveBeenCalledWith("custom-research", longLabel);
+    expect(host?.textContent).toContain("标识：custom-research");
+    expect(host?.textContent).toContain(longLabel);
   });
 
   it("点击开关只启停，不进入详情页", async () => {

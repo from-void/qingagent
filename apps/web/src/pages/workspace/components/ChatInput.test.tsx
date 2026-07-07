@@ -537,6 +537,7 @@ describe("ChatInput", () => {
   });
 
   it("技能变更事件会刷新已挂载输入框菜单", async () => {
+    const ref = createRef<ChatInputHandle>();
     let skillsPayload = [
       skillPayload({
         name: "web-search",
@@ -562,6 +563,7 @@ describe("ChatInput", () => {
     await render(
       <ChatInput
         {...baseFolderProps()}
+        ref={ref}
         placeholder="输入"
         onSubmit={() => undefined}
       />,
@@ -601,6 +603,19 @@ describe("ChatInput", () => {
     const menu = host?.querySelector<HTMLElement>('[data-wf="SkillMenu"]');
     expect(menu?.textContent).toContain("研资料");
     expect(menu?.textContent).not.toContain("联网搜");
+
+    const row = Array.from(host?.querySelectorAll<HTMLButtonElement>(".qa-skill-row") ?? []).find((node) =>
+      node.textContent?.includes("研资料"),
+    );
+    if (!row) throw new Error("imported skill row not found");
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    const chip = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="mention"]');
+    expect(chip?.dataset.skillId).toBe("custom-research");
+    expect(chip?.dataset.label).toBe("研资料");
+    expect(ref.current?.snapshot().skills).toEqual([{ id: "custom-research", version: null }]);
   });
 });
 

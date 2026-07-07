@@ -42,6 +42,20 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toMatch(/rgba\(220, 80, 70/);
   });
 
+  it("keeps pendingReview hover targets pointer-hit-testable", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    expect(workspaceCss).toMatch(
+      /body\[data-content="pendingReview"\] #view-workspace \.wf-doc\s*\{\s*pointer-events:none;user-select:text;cursor:default;\s*\}/,
+    );
+    expect(workspaceCss).toMatch(
+      /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-ins-wrap,\s*body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-replace-wrap\s*\{\s*pointer-events:auto;\s*\}/,
+    );
+    expect(workspaceCss).toMatch(
+      /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-del-marker\s*\{\s*pointer-events:auto;\s*\}/,
+    );
+  });
+
   it("keeps table color dropdowns wired to .open so the palette is visible (非display:none)", () => {
     // 回归 tbl-cell-color-palette-display-none(R34-c1):表格选择条的文字色/单元格底色
     // dt-group 必须随 openTableColor 加 .open class,否则 CSS .dt-menu{display:none} 永不解禁、

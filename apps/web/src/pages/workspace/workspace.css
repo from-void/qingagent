@@ -2758,7 +2758,8 @@
   body[data-content="pendingReview"] #view-workspace .wf-doc{
     pointer-events:none;user-select:text;cursor:default;
   }
-  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-ins-wrap{
+  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-ins-wrap,
+  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-replace-wrap{
     pointer-events:auto;
   }
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-blockmark,

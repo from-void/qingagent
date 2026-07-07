@@ -1563,7 +1563,9 @@ describe("WorkspacePage review controls", () => {
       "utf8",
     );
     expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*position:\s*fixed/s);
-    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*right:\s*max\(28px, env\(safe-area-inset-right\)\)/s);
+    // 水平居中于文档纸(--doc-left/--doc-right 中点 + translateX(-50%)),不再钉视口右下角
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*left:\s*calc\(\(var\(--doc-left, 0px\) \+ var\(--doc-right, 100vw\)\) \/ 2\)/s);
+    expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*justify-content:\s*center/s);
     expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*bottom:\s*max\(28px, env\(safe-area-inset-bottom\)\)/s);
   });
 

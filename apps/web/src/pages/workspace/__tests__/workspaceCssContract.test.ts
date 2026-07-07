@@ -205,7 +205,10 @@ describe("workspaceCssContract", () => {
 
     const lockRule = cssRule(inkSkinCss, "body > .ws-edit-lock");
     expect(lockRule).toContain("position: fixed");
-    expect(lockRule).toContain("right: max(28px, env(safe-area-inset-right))");
+    // 水平居中于文档纸(--doc-left/--doc-right 中点),而非视口右下角
+    expect(lockRule).toContain("left: calc((var(--doc-left, 0px) + var(--doc-right, 100vw)) / 2)");
+    expect(lockRule).toContain("transform: translateX(-50%)");
+    expect(lockRule).toContain("justify-content: center");
     expect(lockRule).toContain("bottom: max(28px, env(safe-area-inset-bottom))");
     expect(lockRule).toContain("z-index: 9999");
     expect(lockRule).toContain("pointer-events: none");

@@ -2641,14 +2641,17 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
    .ws-right 滚动流,因此不会被右侧滚动、sticky 或 transform/backdrop-filter 祖先带走。 */
 body > .ws-edit-lock {
   position: fixed;
-  right: max(28px, env(safe-area-inset-right));
+  /* 水平居中于文档纸(--doc-left/--doc-right 由 WorkspacePage 写=纸的真实左右边),而非视口右下角。
+     用户口径:"贴右侧底部"指右侧编辑面板的底部居中,不是右对齐。默认回退到视口中心。 */
+  left: calc((var(--doc-left, 0px) + var(--doc-right, 100vw)) / 2);
+  transform: translateX(-50%);
   bottom: max(28px, env(safe-area-inset-bottom));
   z-index: 9999;
   height: auto;
   pointer-events: none; /* 关键:遮罩不吃事件,滚轮穿透到 .ws-right */
   display: flex;
   align-items: flex-end;
-  justify-content: flex-end;
+  justify-content: center;
   overflow: visible;
 }
 body[data-tool="agentBusy"] > .ws-edit-lock,

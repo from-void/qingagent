@@ -200,9 +200,9 @@ describe("workspaceCssContract", () => {
     expect(inkSkinCss).toContain(':has(#view-workspace .ws-right:hover)');
   });
 
-  it("keeps paper and colophon glow on one continuous surface", () => {
-    const snapshotView = readFileSync(
-      path.join(repoRoot, "apps/web/src/pages/workspace/components/DocumentSnapshotView.tsx"),
+  it("keeps busy glow as an editor-viewport layer decoupled from review bars", () => {
+    const workspacePage = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
       "utf8",
     );
     const inkSkinCss = readFileSync(
@@ -210,12 +210,23 @@ describe("workspaceCssContract", () => {
       "utf8",
     );
 
-    expect(snapshotView.match(/className="ws-paper-surface"/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(inkSkinCss).toContain("#view-workspace .ws-paper-surface::after");
+    expect(workspacePage).toContain('data-wf="WorkspaceEditorGlow"');
+    const glowRule = cssStandaloneRule(inkSkinCss, "#view-workspace .ws-right > .ws-editor-glow");
+    expect(glowRule).toContain("position: fixed");
+    expect(glowRule).toContain("top: 52px");
+    expect(glowRule).toContain("right: calc(100vw - var(--doc-right, 100%))");
+    expect(glowRule).toContain("bottom: 0");
+    expect(glowRule).toContain("left: var(--doc-left, 0px)");
+    expect(glowRule).toContain("pointer-events: none");
     expect(inkSkinCss).toMatch(
-      /body\[data-tool="agentBusy"\] #view-workspace \.ws-right \.ws-paper-surface::after,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
+      /body\[data-tool="agentBusy"\] #view-workspace \.ws-right > \.ws-editor-glow,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
+    );
+    expect(inkSkinCss).not.toContain(
+      'body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after',
     );
     expect(inkSkinCss).not.toMatch(/\.ws-colophon[^{]*\{[^}]*animation:\s*ws-paper-breathe/s);
+    expect(inkSkinCss).not.toMatch(/\.patch-nav[^{]*\.ws-editor-glow/s);
+    expect(inkSkinCss).not.toMatch(/\.ws-edit-lock[^{]*\.ws-editor-glow/s);
   });
 
   it("keeps confirmed legacy workspace CSS removed", () => {
@@ -262,5 +273,12 @@ function cssRule(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`${escaped}\\s*\\{[^}]*\\}`, "s").exec(css);
   if (!match) throw new Error(`rule not found: ${selector}`);
+  return match[0];
+}
+
+function cssStandaloneRule(css: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\n)${escaped}\\s*\\{[^}]*\\}`, "s").exec(css);
+  if (!match) throw new Error(`standalone rule not found: ${selector}`);
   return match[0];
 }

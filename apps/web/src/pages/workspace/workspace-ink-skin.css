@@ -1695,13 +1695,16 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   max-width: 800px;
   min-height: var(--ws-paper-min-height);
 }
-#view-workspace .ws-paper-surface::after {
-  content: "";
-  position: absolute;
-  inset: 0;
+#view-workspace .ws-right > .ws-editor-glow {
+  position: fixed;
+  top: 52px;
+  right: calc(100vw - var(--doc-right, 100%));
+  bottom: 0;
+  left: var(--doc-left, 0px);
   z-index: 2;
   pointer-events: none;
   opacity: 0;
+  box-sizing: border-box;
 }
 #view-workspace .native-presentation-shell {
   min-height: var(--ws-paper-min-height);
@@ -2720,15 +2723,15 @@ body > .ws-edit-lock .ws-edit-lock-hint-dot {
   }
 }
 
-/* 纸面内发光呼吸:表示"正在编辑中"。inner glow 打在正文纸 + 落款的共同
-   .ws-paper-surface 上,形成连续表面;不再分别打到 .wf-doc/.ws-colophon,
-   避免两块相邻边 inset 叠出亮线。低端/reduced-motion 守卫见下方。 */
+/* 编辑视口环境发光:表示"正在编辑中"。发光层挂在 .ws-right 的独立 fixed 层,
+   几何跟随文档列变量,不再依赖 .ws-paper-surface 的内容高度,也不被 patch-nav /
+   body 级 .ws-edit-lock 的存在或位置裁剪。低端/reduced-motion 守卫见下方。 */
 #view-workspace .ws-right .wf-doc {
   position: relative;
 }
-body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
-body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
-body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after {
+body[data-tool="agentBusy"] #view-workspace .ws-right > .ws-editor-glow,
+body[data-tool="imageProgress"] #view-workspace .ws-right > .ws-editor-glow,
+body[data-patch-revealing="1"] #view-workspace .ws-right > .ws-editor-glow {
   opacity: 1;
   animation: ws-paper-breathe 3.6s ease-in-out infinite;
 }
@@ -2763,16 +2766,16 @@ body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::afte
 }
 
 /* 低端 / 减少动态:关掉呼吸与提示点动画,保留遮罩"能滚不能点"的纯功能态 */
-:root[data-perf="low"] body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
-:root[data-perf="low"] body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
-:root[data-perf="low"] body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
+:root[data-perf="low"] body[data-tool="agentBusy"] #view-workspace .ws-right > .ws-editor-glow,
+:root[data-perf="low"] body[data-tool="imageProgress"] #view-workspace .ws-right > .ws-editor-glow,
+:root[data-perf="low"] body[data-patch-revealing="1"] #view-workspace .ws-right > .ws-editor-glow,
 :root[data-perf="low"] body > .ws-edit-lock .ws-edit-lock-hint-dot {
   animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after,
-  body[data-tool="imageProgress"] #view-workspace .ws-right .ws-paper-surface::after,
-  body[data-patch-revealing="1"] #view-workspace .ws-right .ws-paper-surface::after,
+  body[data-tool="agentBusy"] #view-workspace .ws-right > .ws-editor-glow,
+  body[data-tool="imageProgress"] #view-workspace .ws-right > .ws-editor-glow,
+  body[data-patch-revealing="1"] #view-workspace .ws-right > .ws-editor-glow,
   body > .ws-edit-lock .ws-edit-lock-hint-dot {
     animation: none;
   }

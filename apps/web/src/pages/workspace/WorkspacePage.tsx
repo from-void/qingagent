@@ -618,19 +618,32 @@ export function WorkspacePage() {
     [showToast],
   );
 
-  // 把奶白文档纸的左边 / 右边坐标写成 CSS 变量,供顶部带的 doc-topbar 图标按钮精准贴右上角。
-  // 与 computeWorkspaceDocRect 同一几何(= 新建页翻转落点),保证按钮跟着纸走、随窗口缩放。
-  useEffect(() => {
+  // 把奶白文档纸的左边 / 右边 viewport 坐标写成 CSS 变量,供 doc-topbar / patch-nav /
+  // editor glow 等 fixed 层精准跟随。优先实测 .ws-right,这样窄屏横向滚动时也会同步;
+  // 首帧或 jsdom 无布局时再回退 computeWorkspaceDocRect(= 新建页翻转落点几何)。
+  useLayoutEffect(() => {
     const el = viewRef.current;
     if (!el) return;
     const apply = () => {
-      const r = computeWorkspaceDocRect();
+      const measured = docScrollRef.current?.getBoundingClientRect();
+      const r =
+        measured && measured.width > 0
+          ? { left: measured.left, right: measured.right }
+          : (() => {
+              const fallback = computeWorkspaceDocRect();
+              return { left: fallback.left, right: fallback.left + fallback.width };
+            })();
       el.style.setProperty("--doc-left", `${r.left}px`);
-      el.style.setProperty("--doc-right", `${r.left + r.width}px`);
+      el.style.setProperty("--doc-right", `${r.right}px`);
     };
+    const body = el.querySelector<HTMLElement>(".ws-body");
     apply();
     window.addEventListener("resize", apply);
-    return () => window.removeEventListener("resize", apply);
+    body?.addEventListener("scroll", apply, { passive: true });
+    return () => {
+      window.removeEventListener("resize", apply);
+      body?.removeEventListener("scroll", apply);
+    };
   }, []);
 
   // 悬浮输入框会盖住对话内容 → 测它的实际高度写入 --ws-input-h,给对话滚动区留等高底部空白
@@ -3496,6 +3509,7 @@ export function WorkspacePage() {
         </div>
 
         <div className={`ws-right${previewExit.source ? " is-previewing" : ""}`} ref={docScrollRef}>
+          <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
           <RightPane
             dimensions={dim}
             agentReasoning={agentActive}

@@ -272,6 +272,7 @@ export const DocumentSnapshotView = forwardRef<
 
   return (
     <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+      <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
       <article
         ref={articleRef}
         className="wf-doc"
@@ -919,6 +920,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     >
       {presentationRun ? <div className="native-presentation-vignette" aria-hidden="true" /> : null}
       <div className="ws-paper-surface" data-wf="WorkspacePaperSurface">
+        <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
         <EditorContent editor={editor} />
         {!presentationRun ? <DocColophon doc={doc} /> : null}
       </div>

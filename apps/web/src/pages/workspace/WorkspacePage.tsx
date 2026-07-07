@@ -3516,7 +3516,6 @@ export function WorkspacePage() {
         </div>
 
         <div className={`ws-right${previewExit.source ? " is-previewing" : ""}`} ref={docScrollRef}>
-          <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
           <RightPane
             dimensions={dim}
             agentReasoning={agentActive}

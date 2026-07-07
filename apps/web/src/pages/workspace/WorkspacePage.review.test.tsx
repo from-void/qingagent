@@ -1619,12 +1619,12 @@ describe("WorkspacePage review controls", () => {
     expect(reviewNav).not.toBeNull();
     expect(paperSurface).not.toBeNull();
     expect(editLock).not.toBeUndefined();
-    expect(glow!.parentElement).toBe(wsRight);
-    expect(wsRight!.firstElementChild).toBe(glow);
-    expect(paperSurface!.contains(glow)).toBe(false);
+    expect(glow!.parentElement).toBe(paperSurface);
+    expect(wsRight!.firstElementChild).not.toBe(glow);
+    expect(paperSurface!.contains(glow)).toBe(true);
     expect(reviewNav!.contains(glow)).toBe(false);
     expect(editLock!.contains(glow)).toBe(false);
-    expect(host!.querySelector(".ws-paper-surface > .ws-editor-glow")).toBeNull();
+    expect(host!.querySelector(".ws-paper-surface > .ws-editor-glow")).toBe(glow);
     expect(host!.querySelector(".patch-nav .ws-editor-glow")).toBeNull();
 
     const workspace = host!.querySelector<HTMLElement>("#view-workspace")!;

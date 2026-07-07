@@ -219,9 +219,9 @@ describe("workspaceCssContract", () => {
     expect(inkSkinCss).toContain(':has(#view-workspace .ws-right:hover)');
   });
 
-  it("keeps busy glow as an editor-viewport layer decoupled from review bars", () => {
-    const workspacePage = readFileSync(
-      path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
+  it("keeps busy glow attached to the scrolling paper surface and decoupled from review bars", () => {
+    const documentSnapshotView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/DocumentSnapshotView.tsx"),
       "utf8",
     );
     const inkSkinCss = readFileSync(
@@ -229,17 +229,16 @@ describe("workspaceCssContract", () => {
       "utf8",
     );
 
-    expect(workspacePage).toContain('data-wf="WorkspaceEditorGlow"');
-    const glowRule = cssStandaloneRule(inkSkinCss, "#view-workspace .ws-right > .ws-editor-glow");
-    expect(glowRule).toContain("position: fixed");
-    expect(glowRule).toContain("top: 52px");
-    expect(glowRule).toContain("right: calc(100vw - var(--doc-right, 100%))");
-    expect(glowRule).toContain("bottom: 0");
-    expect(glowRule).toContain("left: var(--doc-left, 0px)");
+    expect(documentSnapshotView).toContain('data-wf="WorkspaceEditorGlow"');
+    const glowRule = cssStandaloneRule(inkSkinCss, "#view-workspace .ws-paper-surface > .ws-editor-glow");
+    expect(glowRule).toContain("position: absolute");
+    expect(glowRule).toContain("inset: 0");
     expect(glowRule).toContain("pointer-events: none");
     expect(inkSkinCss).toMatch(
-      /body\[data-tool="agentBusy"\] #view-workspace \.ws-right > \.ws-editor-glow,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
+      /body\[data-tool="agentBusy"\] #view-workspace \.ws-paper-surface > \.ws-editor-glow,[\s\S]*animation:\s*ws-paper-breathe 3\.6s ease-in-out infinite/s,
     );
+    expect(inkSkinCss).not.toContain("#view-workspace .ws-right > .ws-editor-glow");
+    expect(glowRule).not.toContain("position: fixed");
     expect(inkSkinCss).not.toContain(
       'body[data-tool="agentBusy"] #view-workspace .ws-right .ws-paper-surface::after',
     );

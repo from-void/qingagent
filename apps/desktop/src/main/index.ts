@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
+import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
   RELEASES_URL,
   manualCheckForUpdates,
@@ -524,6 +525,7 @@ async function createWindow() {
     },
   });
 
+  attachRendererDiagnostics(mainWindow.webContents, desktopLogDir);
   attachRendererTelemetry(mainWindow, telemetry.getRendererBootstrap());
 
   // 启动直出:首帧就绪即显示;幂等 revealWindow + 5s 兜底(并清掉 timer),避免

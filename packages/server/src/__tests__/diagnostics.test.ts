@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { diagnosticsRoutes } from "../routes/diagnostics";
+import { collectLogs } from "../diagnostics/collect";
 
 describe("diagnostics routes", () => {
   const savedLogDir = process.env.QINGAGENT_LOG_DIR;
@@ -47,6 +48,14 @@ describe("diagnostics routes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ logsDir: null, totalBytes: 0, files: [] });
+  });
+
+  it("collectLogs 收集 renderer 滚动日志", async () => {
+    await writeFile(path.join(dir, "renderer-2026-07-04.log"), "[2026-07-04T00:00:00.000Z] [ERROR] boom\n");
+
+    const logs = await collectLogs(dir);
+
+    expect(logs.map((file) => file.path)).toContain("logs/renderer-2026-07-04.log");
   });
 
   it("clear 受 Origin 守卫，并保留当天滚动日志", async () => {

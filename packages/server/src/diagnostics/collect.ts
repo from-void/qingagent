@@ -12,7 +12,7 @@ import { aggregateFrameLogEntries, type FrameLogExportEntry } from "./frameAggre
 import { redactDiagnosticText, redactValueDeep } from "./redact.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const LOG_FILE_RE = /^(server|main)-\d{4}-\d{2}-\d{2}\.log$/;
+const LOG_FILE_RE = /^(server|main|renderer)-\d{4}-\d{2}-\d{2}\.log$/;
 const SPAN_FILE_RE = /^spans-\d{4}-\d{2}-\d{2}\.jsonl$/;
 
 export interface CollectedTextFile {

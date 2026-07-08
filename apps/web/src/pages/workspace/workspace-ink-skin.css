@@ -136,6 +136,10 @@
   max-width: 800px !important;
   padding: 52px 0 0 !important;
   overflow-y: auto;
+  /* 内容变长出滚动条时,经典占位滚动条(自定义 4px)会吃掉内容区宽,居中的纸右边被挤、
+     视觉上「往左缩一点」。both-edges 让两侧恒留同宽的滚动槽 → 滚动条出不出,内容区宽度
+     与纸面中心都恒定不跳。 */
+  scrollbar-gutter: stable both-edges;
 }
 
 #view-workspace .ws-left,

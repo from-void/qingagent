@@ -25,6 +25,8 @@ function createBrowserMock() {
   const page = {
     goto: vi.fn().mockResolvedValue(undefined),
     waitForSelector: vi.fn().mockResolvedValue(qrElement),
+    waitForFunction: vi.fn().mockResolvedValue(undefined),
+    waitForTimeout: vi.fn().mockResolvedValue(undefined),
     waitForURL: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockReturnValue("https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token=ABC&lang=zh_CN"),
     locator: vi.fn().mockReturnValue({

@@ -116,7 +116,24 @@ export const wechatAuthStartTool = createTool({
             const page = await browserContext.newPage();
             await page.goto(WECHAT_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 15_000 });
             const qrElement = await page.waitForSelector(WECHAT_QR_SELECTOR, { timeout: 10_000 });
-            const screenshot = await qrElement.screenshot({ type: "png" });
+            // .login__type__container__scan__qrcode 本身是个 <img>(src=scanloginqrcode 接口),
+            // waitForSelector 只保证元素在、二维码图未必已下载完 → 立即截图会得到白框。
+            // 先等该 img 的 naturalWidth 有值(图已解码),再截;仍偏小(空框仅几百字节)则再等再截。
+            await page
+              .waitForFunction(
+                (sel) => {
+                  const img = document.querySelector(sel);
+                  return img instanceof HTMLImageElement && img.naturalWidth > 50;
+                },
+                WECHAT_QR_SELECTOR,
+                { timeout: 10_000 },
+              )
+              .catch(() => {});
+            let screenshot = await qrElement.screenshot({ type: "png" });
+            for (let i = 0; i < 5 && screenshot.length < 1500; i += 1) {
+              await page.waitForTimeout(400);
+              screenshot = await qrElement.screenshot({ type: "png" });
+            }
             settled = true;
             resolve(`data:image/png;base64,${screenshot.toString("base64")}`);
 

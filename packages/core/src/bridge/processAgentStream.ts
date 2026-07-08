@@ -149,10 +149,22 @@ import {
 const logger = mastra.getLogger();
 const SESSION_STATE_TOOL_NAMES = new Set(["updateTodos"]);
 
+export function formatTurnLog(evt: string, fields: Record<string, string | number>): string {
+  const parts = [`[turn] evt=${safeTurnLogValue(evt)}`];
+  for (const [key, value] of Object.entries(fields)) {
+    parts.push(`${key}=${safeTurnLogValue(String(value))}`);
+  }
+  return parts.join(" ");
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function safeTurnLogValue(value: string): string {
+  return value.replace(/\s+/g, "_");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +223,7 @@ export async function* processAgentStream(
   }
   try {
   const streamStartTime = Date.now();
+  let firstChunkLogged = false;
 
   let accumulatedText = "";
   let reasoningId: string | null = null;
@@ -406,6 +419,14 @@ export async function* processAgentStream(
     abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
   });
   for await (const chunk of monitoredStream) {
+    if (!firstChunkLogged) {
+      firstChunkLogged = true;
+      console.info(formatTurnLog("firstChunk", {
+        session: state.sessionId,
+        stream: streamId,
+        waitMs: Date.now() - streamStartTime,
+      }));
+    }
     // 上游 LLM 调用失败(网络/超时/服务异常,且重试已耗尽):Mastra 把错误作为
     // type:"error" 的 chunk(deferredErrorChunk)推上来。此前主循环没有这个分支 →
     // 错误被静默丢弃,表现为"文档出来了却没收尾、也不报错"(other side closed 实测)。

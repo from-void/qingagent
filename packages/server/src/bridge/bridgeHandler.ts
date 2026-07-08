@@ -550,6 +550,7 @@ export async function* handleCommand(
   // sessionId / traceId / clientTraceId 兜底都正确归属本会话。
   const cmdSessionId = resolveCommandSessionId(command);
   const resolvedClientTraceId = normalizeClientTraceId(clientTraceId, cmdSessionId);
+  console.info(formatAcceptedTurnLog(cmdSessionId ?? "unknown", command.kind));
   // 0603 — 已在内存的会话(非 startSession/restore)在此直接绑 origin,覆盖 db_write 等
   // 不经 bindClientTraceId 的命令分支(acceptPatch/updateDoc/export…);新建/恢复会话
   // 在 handleCommandInner 的 bind 点再绑。
@@ -589,6 +590,14 @@ export async function* handleCommand(
       });
     }
   }
+}
+
+function formatAcceptedTurnLog(sessionId: string, commandKind: string): string {
+  return `[turn] evt=accepted session=${safeTurnLogValue(sessionId)} cmd=${safeTurnLogValue(commandKind)}`;
+}
+
+function safeTurnLogValue(value: string): string {
+  return value.replace(/\s+/g, "_");
 }
 
 /**

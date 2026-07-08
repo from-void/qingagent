@@ -89,7 +89,7 @@ import {
   streamErrorMessage,
   turnRetryDelayMs,
 } from "./streamErrors.js";
-import { processAgentStream } from "./processAgentStream.js";
+import { formatTurnLog, processAgentStream } from "./processAgentStream.js";
 
 const logger = mastra.getLogger();
 
@@ -109,7 +109,10 @@ export async function* runAgentTurn(
   clientMessageId?: string,
   richText?: string,
 ): AsyncGenerator<BridgeFrame> {
+  const turnStartedAt = Date.now();
   const streamId = newId();
+  let activeRunId: string | null = null;
+  let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();
   const turnCompletion = createTurnCompletion();
   let turnWasUserAborted = false;
@@ -162,6 +165,11 @@ export async function* runAgentTurn(
     serverReanchorEnabled: isServerReanchorEnabled(),
   });
 
+  console.info(formatTurnLog("streamStart", {
+    session: state.sessionId,
+    stream: streamId,
+    prepMs: Date.now() - turnStartedAt,
+  }));
   yield streamStart(streamId);
   yield* emitProjectedDocState(state, "agent_turn_started");
 
@@ -634,6 +642,12 @@ export async function* runAgentTurn(
         scopeId: attempt === 0 ? streamId : `${streamId}:retry:${attempt}`,
       };
       const result = await makeStream(attempt, scopedPrefixGuardContext);
+      const runId = result.runId ?? "unknown";
+      activeRunId = runId;
+      console.info(formatTurnLog("start", {
+        session: state.sessionId,
+        run: runId,
+      }));
       requestContext.set("runId", result.runId);
       const outcome = yield* withPrefixCacheGuardContext(scopedPrefixGuardContext, () =>
         processAgentStream(result.fullStream, {
@@ -648,6 +662,7 @@ export async function* runAgentTurn(
         }),
       );
       turnWasUserAborted ||= outcome.streamWasUserAborted;
+      if (outcome.streamWasUserAborted) turnOutcome = "cancelled";
       const shouldRetry =
         outcome.transientErrorChunk !== undefined &&
         !outcome.producedVisibleFrame &&
@@ -667,6 +682,7 @@ export async function* runAgentTurn(
         continue;
       }
       if (shouldRetry) {
+        turnOutcome = "error";
         const errorDetails = streamErrorDetails(outcome.transientErrorChunk);
         yield appendVisibleStreamErrorText(state, agentMessageId, errorDetails.userMessage);
         state.messages.push({ role: "assistant", content: errorDetails.userMessage });
@@ -679,12 +695,14 @@ export async function* runAgentTurn(
       err instanceof Error ? err.message : "Unknown error during agent turn";
     if (isUserAbortSignal(abortController.signal)) {
       turnWasUserAborted = true;
+      turnOutcome = "cancelled";
       logger.info("Agent turn aborted by user; suppressing failure frame", {
         sessionId: state.sessionId,
         streamId,
         error: reason,
       });
     } else {
+      turnOutcome = "error";
       logger.error("Agent turn failed", {
         sessionId: state.sessionId,
         streamId,
@@ -703,6 +721,15 @@ export async function* runAgentTurn(
       yield* syncContentAndProjectDocState(state, "agent_turn_failed");
     }
   } finally {
+    if (turnOutcome === "ok" && (turnWasUserAborted || isUserAbortSignal(abortController.signal))) {
+      turnOutcome = "cancelled";
+    }
+    console.info(formatTurnLog("end", {
+      session: state.sessionId,
+      run: activeRunId ?? "unknown",
+      totalMs: Date.now() - turnStartedAt,
+      outcome: turnOutcome,
+    }));
     // Clear turn-scoped selection chips so they don't leak into the next turn.
     state._currentChips = null;
     if (!hasActiveSuspension(state)) {

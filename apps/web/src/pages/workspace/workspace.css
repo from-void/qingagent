@@ -344,37 +344,85 @@
   #view-workspace .wf-msg.agent > .wf-msg.tool + .wf-msg.tool{
     margin-top:6px !important;
   }
-  #view-workspace .askuser-answer-card.bigplan-panel{
-    width:min(430px,100%);
+  #view-workspace .askuser-answer-card{
+    width:100%;
+    max-width:430px;
     height:auto;
     min-height:0;
     box-sizing:border-box;
     overflow:visible;
-    background:transparent;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    padding:12px 14px;
+    margin:4px 0 6px;
+    border:1px solid var(--line-1);
+    border-radius:0;
+    background:var(--bg-subtle);
+    color:var(--ink-1);
+    font-family:var(--font-zh-serif);
+  }
+  #view-workspace .askuser-answer-head{
+    padding:0;
+  }
+  #view-workspace .askuser-answer-head h2{
+    margin:0;
+    font-family:var(--font-zh-serif);
+    font-weight:500;
+    font-size:15px;
+    line-height:1.45;
     color:var(--ink-1);
   }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-head{
-    padding:0 0 12px;
-    border-bottom:none;
-  }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-head h2{
-    font-size:15px;
-  }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-body{
-    padding:0;
-    overflow:visible;
+  #view-workspace .askuser-answer-list{
+    display:flex;
+    flex-direction:column;
     gap:10px;
   }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-q{
+  #view-workspace .askuser-answer-item{
     padding:10px 12px;
     background:rgba(184,169,140,.08);
-    border-color:rgba(184,169,140,.24);
+    border:1px solid rgba(184,169,140,.24);
+    border-radius:0;
   }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-q-head{
+  #view-workspace .askuser-answer-q{
+    display:flex;
+    align-items:baseline;
+    gap:8px;
     margin-bottom:8px;
   }
-  #view-workspace .askuser-answer-card.bigplan-panel .bp-opt{
+  #view-workspace .askuser-answer-num{
+    flex:0 0 auto;
+    font-family:var(--font-mono);
+    font-size:11px;
+    line-height:1;
+    color:var(--mark);
+    letter-spacing:.08em;
+  }
+  #view-workspace .askuser-answer-title{
+    min-width:0;
+    font-size:13px;
+    font-weight:500;
+    line-height:1.55;
+    color:var(--ink-1);
+    overflow-wrap:anywhere;
+  }
+  #view-workspace .askuser-answer-opts{
+    display:flex;
+    flex-wrap:wrap;
+    gap:7px;
+  }
+  #view-workspace .askuser-answer-opt{
+    display:inline-flex;
+    align-items:center;
     max-width:100%;
+    padding:3px 8px;
+    border:1px solid var(--mark);
+    border-radius:0;
+    background:var(--mark-soft);
+    color:var(--ink-1);
+    font-size:12px;
+    line-height:1.5;
+    font-weight:500;
     overflow-wrap:anywhere;
     cursor:default;
   }

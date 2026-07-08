@@ -811,22 +811,22 @@ function UserPartView({ part }: { part: MessagePart }) {
 function AskUserAnswerCard({ data }: { data: AskUserAnswerCardPart }) {
   if (data.items.length === 0) return null;
   return (
-    <section className="askuser-answer-card bigplan-panel" data-wf="AskUserAnswerCard" aria-label={data.title}>
-      <div className="bp-head askuser-answer-head">
+    <section className="askuser-answer-card" data-wf="AskUserAnswerCard" aria-label={data.title}>
+      <div className="askuser-answer-head">
         <h2>{data.title}</h2>
       </div>
-      <div className="bp-body askuser-answer-list">
+      <div className="askuser-answer-list">
         {data.items.map((item, index) => (
-          <div className="bp-q askuser-answer-item" key={`${item.questionId}-${index}`}>
-            <div className="bp-q-head askuser-answer-q">
-              <span className="bp-q-num askuser-answer-num" aria-hidden="true">
+          <div className="askuser-answer-item" key={`${item.questionId}-${index}`}>
+            <div className="askuser-answer-q">
+              <span className="askuser-answer-num" aria-hidden="true">
                 {String(index + 1).padStart(2, "0")}
               </span>
-              <span className="bp-q-title">{item.questionLabel}</span>
+              <span className="askuser-answer-title">{item.questionLabel}</span>
             </div>
-            <div className="bp-opts askuser-answer-opts">
+            <div className="askuser-answer-opts">
               {answerCardChips(item).map((label, chipIndex) => (
-                <span className="bp-opt on askuser-answer-opt" key={`${item.questionId}-${chipIndex}`}>
+                <span className="askuser-answer-opt" key={`${item.questionId}-${chipIndex}`}>
                   {label}
                 </span>
               ))}

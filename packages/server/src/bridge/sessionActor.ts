@@ -3,7 +3,7 @@ import type { ModelOverrides } from "@qingagent/core";
 import type { FrameLog, LoggedFrame } from "./frameLog";
 
 export type SessionActorState = "idle" | "running" | "cancelling" | "disposed";
-export type CommandOrigin = "manual" | "agent" | "e2e";
+export type CommandOrigin = "manual" | "agent" | "e2e" | "external";
 
 export interface ActorCommand {
   command: Command;

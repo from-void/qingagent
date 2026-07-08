@@ -6,9 +6,9 @@ import { commandSchema, COMMAND_KINDS, COMMAND_KIND_SET } from "../command";
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
-  it("COMMAND_KINDS 覆盖 15 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(15);
-    expect(COMMAND_KIND_SET.size).toBe(15);
+  it("COMMAND_KINDS 覆盖 16 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(16);
+    expect(COMMAND_KIND_SET.size).toBe(16);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
   });
 

@@ -19,10 +19,12 @@ import { searchSettingsRoutes } from "./routes/searchSettings";
 import { usageRoutes } from "./routes/usage";
 import { capabilitiesRoutes } from "./routes/capabilities";
 import { diagnosticsRoutes } from "./routes/diagnostics";
+import { externalRoutes } from "./routes/external";
 import { authRoutes } from "./routes/auth";
 import { folderEntriesRoutes } from "./routes/folderEntries";
 import { cleanupOldFolderSourceCaches } from "@qingagent/core";
 import { authTokenMiddleware } from "./lib/authToken";
+import { externalTokenMiddleware } from "./lib/externalAuth";
 import { csrfMutationGuard, isTrustedOrigin } from "./lib/trustedOrigin";
 
 export const app = new Hono();
@@ -47,6 +49,7 @@ app.use(
 app.use("*", logger((message: string, ...rest: string[]) => console.log(redactAuthInLog(message), ...rest)));
 app.use("/api/*", csrfMutationGuard);
 app.use("/api/*", authTokenMiddleware);
+app.use("/api/v1/external/*", externalTokenMiddleware);
 
 // Routes
 app.route("/", healthRoutes);
@@ -69,3 +72,4 @@ app.route("/api/v1", usageRoutes);
 app.route("/api/v1", capabilitiesRoutes);
 app.route("/api/v1", folderEntriesRoutes);
 app.route("/api/v1", diagnosticsRoutes);
+app.route("/api/v1/external", externalRoutes);

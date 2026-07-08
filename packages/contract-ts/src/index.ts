@@ -33,6 +33,7 @@ export * from "./DiffHunk";
 export * from "./DiagSpan";
 export * from "./EndReason";
 export * from "./ExportFormat";
+export * from "./ExternalPropose";
 export * from "./HistoryEntry";
 export * from "./HistoryList";
 export * from "./HistorySnapshot";

@@ -371,6 +371,9 @@ export function WorkspacePage() {
   // 乐观"请求在途"标记:用户点发送的那一刻即置真,补上"气泡已发出、但流还没激活"的空窗
   // (此前那段没有任何 loading,容易被误以为断网)。真实 streamActive/agentBusy 一到就交棒、撤掉。
   const [sendPending, setSendPending] = useState(false);
+  const [externalToolConnected, setExternalToolConnected] = useState(false);
+  const [externalPatchCount, setExternalPatchCount] = useState(0);
+  const pendingExternalReviewRef = useRef(false);
   const [browserFolderOverrides, setBrowserFolderOverrides] = useState<Record<string, {
     status: FolderSource["status"];
     error: string | null;
@@ -1622,6 +1625,14 @@ export function WorkspacePage() {
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
         sessionIdRef.current = frame.data.sessionId;
+      }
+      if (frame.kind === "chatMessageAdded" && frame.data.message.id.startsWith("external-")) {
+        pendingExternalReviewRef.current = true;
+        setExternalToolConnected(true);
+      }
+      if (frame.kind === "docDiffReady" && pendingExternalReviewRef.current) {
+        pendingExternalReviewRef.current = false;
+        setExternalPatchCount(frame.data.suggestions.length);
       }
       if (frame.kind === "documentSnapshotWritten") {
         stagePresentationRunForDocFrame(frame.data.doc);
@@ -3409,6 +3420,13 @@ export function WorkspacePage() {
 
       {/* 文档纸顶部带:右上角图标按钮(无文字)—— 历史 / 导出 */}
       <div className="ws-doc-topbar" data-wf="WorkspaceDocTopbar">
+        {(externalPatchCount > 0 || externalToolConnected) && (
+          <div className="ws-external-badge" aria-live="polite">
+            {externalPatchCount > 0
+              ? `外部工具提交了 ${externalPatchCount} 处修改`
+              : "外部工具已连接"}
+          </div>
+        )}
         {/* 历史版本功能暂未迭代,先隐藏入口(及"即将上线"toast);后端已就绪,功能做完把 false 翻开即可。 */}
         {HISTORY_ENTRY_ENABLED && (
           <button

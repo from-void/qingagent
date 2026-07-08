@@ -1801,6 +1801,20 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   gap: 8px;
   pointer-events: none;
 }
+#view-workspace .ws-external-badge {
+  pointer-events: none;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(196, 154, 76, 0.34);
+  background: rgba(43, 34, 23, 0.82);
+  color: rgba(236, 227, 208, 0.86);
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
 #view-workspace .ws-doc-btn {
   pointer-events: auto;
   width: 32px;

@@ -8,6 +8,7 @@ import {
   type DiagSpan,
 } from "@qingagent/contract-ts";
 import { collectFrameLogs, collectLogs, collectSpans, type CollectedFrameLogFile, type CollectedTextFile } from "./collect.js";
+import { summarizeLogErrors } from "./logErrorSummary.js";
 import { redactDiagnosticText, redactValueDeep } from "./redact.js";
 import { collectEnvSnapshot, collectSettingsSnapshot } from "./snapshot.js";
 
@@ -45,7 +46,7 @@ export async function buildDiagnosticsZip(
     collectFrameLogs(opts.privacyLevel, { maxSessions: FRAMELOG_SESSIONS, sessionIds: opts.sessionIds }),
   ]);
 
-  const report = truncateReport(redactDiagnosticText(opts.report ?? ""));
+  const report = truncateReport(buildReportWithErrorSummary(redactDiagnosticText(opts.report ?? ""), logs));
   const state = {
     report: report.content,
     envJson: `${JSON.stringify(redactValueDeep(envSnapshot), null, 2)}\n`,
@@ -70,6 +71,12 @@ export async function buildDiagnosticsZip(
     manifest,
     filename: `qingagent-diag-v1-${formatFilenameDate(createdAt)}.zip`,
   };
+}
+
+function buildReportWithErrorSummary(report: string, logs: CollectedTextFile[]): string {
+  const summary = summarizeLogErrors(logs, { windowHours: 24, topN: 20 });
+  const section = `\n\n最近 24h 错误摘要(top 20)\n${summary}\n`;
+  return `${report}${section}`;
 }
 
 function makeEntries(state: {

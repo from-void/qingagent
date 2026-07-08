@@ -8,6 +8,7 @@ import {
   buildEmptyHintTypewriterPlan,
   ChatMessageList,
   EMPTY_HINT_TEXT,
+  shouldShowPreTokenLoading,
   splitStreamingInlineRuns,
 } from "./ChatMessageList";
 
@@ -42,6 +43,16 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let restoreMatchMedia: (() => void) | null = null;
 
+function userMessage(id = "m-user"): ChatMessage {
+  return {
+    id,
+    role: { kind: "user" },
+    ts: "2026-01-01T00:00:00.000Z",
+    parts: [{ kind: "text", data: { body: "写一段开头" } }],
+    chips: null,
+  };
+}
+
 describe("ChatMessageList", () => {
   afterEach(() => {
     restoreMatchMedia?.();
@@ -55,6 +66,53 @@ describe("ChatMessageList", () => {
     }
     host?.remove();
     host = null;
+  });
+
+  it("shouldShowPreTokenLoading 只在流进行且末条为用户消息时显示", () => {
+    const message = userMessage();
+    const agentMessage: ChatMessage = {
+      id: "m-agent",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:01.000Z",
+      parts: [{ kind: "thinking", data: { id: "think-1", steps: ["正在分析"] } }],
+      chips: null,
+    };
+
+    expect(shouldShowPreTokenLoading([], false)).toBe(false);
+    expect(shouldShowPreTokenLoading([message], false)).toBe(false);
+    expect(shouldShowPreTokenLoading([message], true)).toBe(true);
+    expect(shouldShowPreTokenLoading([message, agentMessage], true)).toBe(false);
+  });
+
+  it("首 token 前 loading 文案 2 秒后切换", async () => {
+    vi.useFakeTimers();
+    const messages = [userMessage()];
+    await render(<ChatMessageList messages={messages} streamActive={false} showLoading />);
+
+    expect(host?.textContent ?? "").toContain("正在连接模型");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_999);
+    });
+    expect(host?.textContent ?? "").toContain("正在连接模型");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(host?.textContent ?? "").toContain("正在准备上下文,首次对话会稍慢");
+  });
+
+  it("首 token 前 loading 隐藏时清理分档文案定时器", async () => {
+    vi.useFakeTimers();
+    const messages = [userMessage()];
+    await render(<ChatMessageList messages={messages} streamActive={false} showLoading />);
+
+    await act(async () => {
+      root?.render(<ChatMessageList messages={messages} streamActive={false} showLoading={false} />);
+    });
+
+    expect(host?.textContent ?? "").not.toContain("正在连接模型");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("skill/skill_read 工具卡技能名使用 skills API label", async () => {
@@ -510,7 +568,7 @@ describe("ChatMessageList", () => {
     });
 
     expect(host?.textContent ?? "").toContain("帮我润色这一段");
-    expect(host?.textContent ?? "").toContain("正在生成内容");
+    expect(host?.textContent ?? "").toContain("正在连接模型");
     expect(inkBubbleRenderSpy).toHaveBeenCalledTimes(1);
   });
 

@@ -36,7 +36,7 @@ import { AssetPreview } from "./components/AssetPreview";
 import { MorphDebugPanel, type DemoBarKind } from "./components/MorphDebugPanel";
 import { ChatInput } from "./components/ChatInput";
 import type { ChatInputHandle, ChatInputSnapshot } from "./components/ChatInput";
-import { buildWholeDocReviewKey, ChatMessageList } from "./components/ChatMessageList";
+import { buildWholeDocReviewKey, ChatMessageList, shouldShowPreTokenLoading } from "./components/ChatMessageList";
 import { ScrollToBottomButton } from "./components/ScrollToBottomButton";
 import { TaskPill } from "./components/TaskPill";
 import type { StarterBlankTarget } from "./components/StarterPanel";
@@ -3452,9 +3452,9 @@ export function WorkspacePage() {
           <ChatMessageList
             messages={state.messages}
             streamActive={state.streamActive}
-            // 配图进行中由 generateSvg 自己的"生成配图中"工具行表示,不再额外显示
-            // 通用"正在生成内容…",避免两个 loading 冲突。
-            showLoading={false}
+            // 首 token 前还没有任何助手 part,不可能有工具行;与 generateSvg 的"生成配图中"不冲突。
+            // 助手 thinking/text/toolCall 任意 part 一到,最后一条消息变 agent,这里自动隐去。
+            showLoading={shouldShowPreTokenLoading(state.messages, state.streamActive)}
             patchRevealing={effectivePatchRevealing}
             livePatchCount={reviewUiState.livePatchCount}
             liveHunkKey={liveHunkKey}

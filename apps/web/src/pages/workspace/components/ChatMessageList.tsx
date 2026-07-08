@@ -50,6 +50,11 @@ export interface ChatMessageListProps {
   debugMode?: boolean;
 }
 
+/** 首 token 前窗口:流已开始但助手第一个 part 还没到 —— 最后一条消息还是 user。 */
+export function shouldShowPreTokenLoading(messages: ChatMessage[], streamActive: boolean): boolean {
+  return streamActive && messages.length > 0 && messages[messages.length - 1]?.role.kind === "user";
+}
+
 export function ChatMessageList({
   messages,
   showLoading,
@@ -63,6 +68,7 @@ export function ChatMessageList({
   scrollRef,
   debugMode = false,
 }: ChatMessageListProps) {
+  const [loadingSlow, setLoadingSlow] = useState(false);
   // Track message IDs that existed on first render — those should not animate
   const initialIdsRef = useRef<Set<string> | null>(null);
   if (initialIdsRef.current === null) {
@@ -129,6 +135,16 @@ export function ChatMessageList({
     ],
   );
 
+  useEffect(() => {
+    if (!showLoading) {
+      setLoadingSlow(false);
+      return;
+    }
+    setLoadingSlow(false);
+    const timer = window.setTimeout(() => setLoadingSlow(true), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [showLoading]);
+
   return (
     <div className="ws-chat u-scope" data-wf="ChatMessageList" ref={scrollRef}>
       {messageRows}
@@ -137,7 +153,7 @@ export function ChatMessageList({
           <span className="chat-loading-dots">
             <span /><span /><span />
           </span>
-          正在生成内容…
+          {loadingSlow ? "正在准备上下文,首次对话会稍慢…" : "正在连接模型…"}
         </div>
       )}
       {messages.length === 0 && <EmptyHint />}

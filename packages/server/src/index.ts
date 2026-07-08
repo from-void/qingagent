@@ -1,11 +1,14 @@
 import "dotenv/config";
 import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
+import { installLongKeepAliveDispatcher } from "./lib/httpDispatcher.js";
 
 // WSL/受限网络:宿主透明代理形态变化时 Node 直连外网(api.deepseek.com 等)会整体不通。
 // 设了 HTTP(S)_PROXY 即让全部出网走代理(EnvHttpProxyAgent 尊重 NO_PROXY,本地回环不受影响);
 // 生产 VPS 不设 env 则零影响、保持直连。
 if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
-  setGlobalDispatcher(new EnvHttpProxyAgent());
+  setGlobalDispatcher(new EnvHttpProxyAgent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 120_000 }));
+} else {
+  installLongKeepAliveDispatcher();
 }
 import "./crashGuard.js"; // Install crash/signal handlers + in-process durable log FIRST
 import { serve } from "@hono/node-server";
@@ -41,7 +44,12 @@ try {
 // import "./observability.js" 先于 import "./app",只是推迟到迁移之后以错开 DB 写锁。
 await import("./observability.js");
 const { app } = await import("./app");
-const { migrateThreadMetadataToDocuments } = await import("@qingagent/core");
+const {
+  installNetProbe,
+  migrateThreadMetadataToDocuments,
+  resolveBaseUrl,
+  warmUpModelEndpoint,
+} = await import("@qingagent/core");
 
 // 迁移完成后,后台尽力而为回填 thread metadata → documents(失败不阻断启动)。
 void migrateThreadMetadataToDocuments()
@@ -50,4 +58,6 @@ void migrateThreadMetadataToDocuments()
 
 serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`Qingagent server listening on http://${hostname}:${info.port}`);
+  installNetProbe();
+  warmUpModelEndpoint(resolveBaseUrl());
 });

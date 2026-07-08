@@ -56,6 +56,7 @@ export {
   DEEPSEEK_MODEL_IDS,
   DEEPSEEK_CONTEXT_WINDOWS,
   MODEL_OVERRIDES_CONTEXT_KEY,
+  resolveBaseUrl,
   resolveDeepseekAuth,
   resolveDeepseekRouterModelId,
   resolveModelId,
@@ -69,6 +70,8 @@ export {
   getVisionModel,
   anthropicBaseUrl,
 } from "./llm/modelConfig.js";
+export { installNetProbe } from "./llm/netProbe.js";
+export { warmUpModelEndpoint } from "./llm/modelWarmup.js";
 export {
   VISION_TEST_TIMEOUT_MS,
   testVisionConnection,

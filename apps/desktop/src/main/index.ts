@@ -211,6 +211,11 @@ if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
 const { installDesktopObservability } = await import("./diagnostics/observability.js");
 installDesktopObservability(desktopLogDir);
 const { startServer } = await import("./server.js");
+// 长 keep-alive 必须经 server 包转导出取 undici(desktop 无直接依赖且 esbuild 整包
+// bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。
+const { installLongKeepAliveDispatcher } = await import("@qingagent/server/httpDispatcher");
+installLongKeepAliveDispatcher();
+const { installNetProbe, resolveBaseUrl, warmUpModelEndpoint } = await import("@qingagent/core");
 const { telemetry } = await import("./telemetry/index.js");
 const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
 
@@ -481,6 +486,9 @@ async function createWindow() {
 
   const { port } = await startServer();
   embeddedServerPort = port;
+  installNetProbe();
+  // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
+  warmUpModelEndpoint(resolveBaseUrl());
   await maybeSeedInitialContent();
 
   // 顶部菜单栏(File / Edit / View / Window / Help)对终端用户无意义,整窗去掉。

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./app": "./src/app.ts",
     "./src/app": "./src/app.ts",
-    "./desktopFolderSelection": "./src/lib/desktopFolderSelection.ts"
+    "./desktopFolderSelection": "./src/lib/desktopFolderSelection.ts",
+    "./httpDispatcher": "./src/lib/httpDispatcher.ts"
   },
   "scripts": {
     "dev": "NODE_OPTIONS='--use-env-proxy' tsx watch src/index.ts",

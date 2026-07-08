@@ -98,4 +98,51 @@ describe("diagnostics collectFrameLogs", () => {
     expect(files[0]?.content).not.toContain("助手回答：已经完成修改");
     expect(files[0]?.content).toContain("[redacted:len=");
   });
+
+  it("导出前聚合 FrameLog,但 frameCount 保留原始帧数", async () => {
+    mocks.sessionManager.frameLog.readFrom.mockReturnValue({
+      ...emptyRead(),
+      frames: [
+        appended(1, "a1", "甲"),
+        appended(2, "a1", "乙"),
+        appended(3, "a1", "丙"),
+      ],
+    });
+    mocks.collectRestoreFrames.mockResolvedValue([]);
+
+    const files = await collectFrameLogs("L2", { sessionIds: ["s-hot"] });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.frameCount).toBe(3);
+    const lines = files[0]!.content.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      frame: {
+        kind: "chatMessageAppended@merged",
+        data: {
+          messageId: "a1",
+          frames: 3,
+          seqFirst: 1,
+          seqLast: 3,
+          chars: 3,
+        },
+      },
+    });
+  });
 });
+
+function appended(seq: number, messageId: string, body: string) {
+  return {
+    seq,
+    epoch: 20,
+    generation: 1,
+    frame: {
+      kind: "chatMessageAppended",
+      data: {
+        messageId,
+        seq,
+        part: { kind: "text", data: { body } },
+      },
+    },
+  };
+}

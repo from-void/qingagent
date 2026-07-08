@@ -8,6 +8,7 @@ import {
   statusFromError,
   truncateField,
 } from "@qingagent/core";
+import { aggregateFrameLogEntries, type FrameLogExportEntry } from "./frameAggregate.js";
 import { redactDiagnosticText, redactValueDeep } from "./redact.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,13 +56,6 @@ interface DuckSpanRow {
   input: unknown;
   output: unknown;
   error: unknown;
-}
-
-interface FrameLogExportEntry {
-  seq: number;
-  epoch: number;
-  generation: number;
-  frame: BridgeFrame;
 }
 
 export async function collectLogs(logsDir: string | null | undefined, days = 7): Promise<CollectedTextFile[]> {
@@ -164,13 +158,14 @@ export async function collectFrameLogs(
         });
         continue;
       }
-      const redactedEntries = frames.map((entry) => redactFrameEntry(entry, privacyLevel));
+      const aggregatedEntries = aggregateFrameLogEntries(frames);
+      const redactedEntries = aggregatedEntries.map((entry) => redactFrameEntry(entry, privacyLevel));
       logFrameLogCollection({
         sessionId,
         privacyLevel,
         source,
         frameLogFrames: read.frames.length,
-        exportedFrames: frames.length,
+        exportedFrames: aggregatedEntries.length,
         summary: summarizeFrameLogEntries(redactedEntries),
       });
       const lines = redactedEntries.map((entry) => JSON.stringify(entry));

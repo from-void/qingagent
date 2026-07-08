@@ -36,8 +36,12 @@ export type ToolCallBody = { "kind": "askUser", "data": AskUserSpec } | { "kind"
  * 悬停变「刷新」按钮,点击发送 refreshQuery(预设文案)让 agent 重新生成。抽象统一,任意平台授权/分享均可复用。
  */
 export interface QrCardBody {
-  /** 要编码进二维码的字符串(如 OAuth 验证 URL)。 */
+  /** 要编码进二维码的字符串(如 OAuth 验证 URL)。图片模式(imageDataUri 非空)下可为空串。 */
   content: string;
+  /** 直接展示的二维码图片(data URI)。用于码本身就是一张图、无法用字符串编码的场景
+   *  (如微信公众平台后台登录码是页面渲染的图片元素);非空时前端直接显示它,不再编码 content。
+   *  可选(向后兼容:编码模式不传);缺省即走 content 编码模式。 */
+  imageDataUri?: string | null;
   /** 标题,如「扫码授权飞书」。 */
   title: string | null;
   /** 附带展示的用户码/配对码;不是每个平台都有,没有则传 null,前端隐藏。 */

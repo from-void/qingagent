@@ -22,14 +22,19 @@ export function QrCard({ data }: { data: QrCardBody }) {
   const [remain, setRemain] = useState(remainOf);
   const expired = remain <= 0;
 
-  // 生成二维码图(content 是我们自己产出的 URL/字符串,安全)。
+  // 图片模式(imageDataUri 非空):码本身就是一张图(如微信公众平台后台登录码),直接显示;
+  // 否则编码模式:把 content 字符串(自产 URL,安全)编码成二维码图。
   useEffect(() => {
     let alive = true;
+    if (data.imageDataUri) {
+      setQrUrl(data.imageDataUri);
+      return () => { alive = false; };
+    }
     QRCode.toDataURL(data.content, { margin: 1, width: 240, errorCorrectionLevel: "M" })
       .then((u) => { if (alive) setQrUrl(u); })
       .catch(() => { if (alive) setQrUrl(null); });
     return () => { alive = false; };
-  }, [data.content]);
+  }, [data.content, data.imageDataUri]);
 
   // 按绝对过期时间戳倒计时(每秒刷新;到点即作废)。
   useEffect(() => {

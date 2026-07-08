@@ -171,8 +171,28 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(final?.body.kind).toBe("generic");
     expect(final?.result).toEqual({
       kind: "genericText",
-      data: "show_qr 缺少 content,无法渲染二维码",
+      data: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
     });
+  });
+
+  it("图片模式:传 imageDataUri(无 content)产出 qrCard 并透传图片", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("qr-image-mode");
+    const img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
+    const args = { imageDataUri: img, title: "扫码登录微信公众号", confirmQuery: "我已扫码完成" };
+    const frames = await collect(
+      processAgentStream(
+        streamOf(showQrCall("qr-img", args), showQrResult("qr-img", args)),
+        { state, agentMessageId: "m", streamId: "s", runId: "r" },
+      ),
+    );
+    const final = toolSpecs(frames, "qr-img").at(-1);
+    expect(final?.status.kind).toBe("done");
+    expect(final?.body.kind).toBe("qrCard");
+    if (final?.body.kind === "qrCard") {
+      expect(final.body.data.imageDataUri).toBe(img);
+      expect(final.body.data.content).toBe("");
+    }
   });
 
   it("show_qr-only 回合结束等待用户时不发 draftingFailed", async () => {

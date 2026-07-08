@@ -1519,7 +1519,7 @@ export async function* processAgentStream(
             ...origPart.data,
             status: { kind: "done" },
             result: origPart.data.body.kind === "generic" && origPart.data.result == null
-              ? { kind: "genericText", data: "show_qr 缺少 content,无法渲染二维码" }
+              ? { kind: "genericText", data: "show_qr 缺少 content/imageDataUri,无法渲染二维码" }
               : origPart.data.result,
           };
           updateToolCallInChatHistory(state, origMsg.id, toolCallId, doneSpec);

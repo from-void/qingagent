@@ -290,7 +290,9 @@ export function qrCardToolCallSpec(
 ): ToolCallSpec {
   const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
   const content = str(args.content);
-  if (!content) {
+  const imageDataUri = str(args.imageDataUri);
+  // content(编码模式)与 imageDataUri(图片模式)至少给一个,两者都无才无法渲染。
+  if (!content && !imageDataUri) {
     return {
       id: toolCallId,
       name: "show_qr",
@@ -301,7 +303,7 @@ export function qrCardToolCallSpec(
         data: { argsJson: redactedSerializedText(args) },
       },
       result: status.kind === "done"
-        ? { kind: "genericText", data: "show_qr 缺少 content,无法渲染二维码" }
+        ? { kind: "genericText", data: "show_qr 缺少 content/imageDataUri,无法渲染二维码" }
         : null,
     };
   }
@@ -319,7 +321,8 @@ export function qrCardToolCallSpec(
     body: {
       kind: "qrCard",
       data: {
-        content,
+        content: content ?? "",
+        imageDataUri,
         title: str(args.title),
         code: str(args.code),
         note: str(args.note),

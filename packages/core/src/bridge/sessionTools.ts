@@ -25,6 +25,8 @@ import { generateSvgTool } from "../tools/generateSvg.js";
 import { readImageTool } from "../tools/readImage.js";
 import { runJsTool } from "../tools/runJs.js";
 import { showQrTool } from "../tools/showQr.js";
+import { wechatAuthStartTool, wechatAuthStatusTool } from "../tools/wechatAuth.js";
+import { wechatSearchMpTool, wechatListArticlesTool } from "../tools/wechatSearch.js";
 import { updateTodosTool } from "../tools/updateTodos.js";
 import { getPyodideTools } from "../tools/runPython.js";
 import { mastra } from "../mastra.js";
@@ -118,6 +120,12 @@ const CAPABILITY_TOOLS = {
   "web-search": { webSearch: webSearchTool },
   "image-gen": { generateSvg: generateSvgTool },
   "image-reading": { readImage: readImageTool },
+  "wechat-official-account": {
+    wechat_auth_start: wechatAuthStartTool,
+    wechat_auth_status: wechatAuthStatusTool,
+    wechat_search_mp: wechatSearchMpTool,
+    wechat_list_articles: wechatListArticlesTool,
+  },
 } as const;
 
 // run_js 是系统提示长期承诺的通用精确计算工具。doc-calc 技能只负责点召/preload 与方法论说明,
@@ -137,6 +145,12 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "image-reading": ["readImage"],
   "materials": ["parseFile", "fetchArticle"],
   "doc-calc": ["run_js"],
+  "wechat-official-account": [
+    "wechat_auth_status",
+    "wechat_search_mp",
+    "wechat_list_articles",
+    "fetchArticle",
+  ],
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {
@@ -234,6 +248,29 @@ export function missingGenericToolResultFields(
       requireBoolean("ok");
       requireString("query");
       requireArray("items");
+      break;
+    case "wechat_auth_start":
+      requireBoolean("ok");
+      requireString("imageDataUri");
+      requireNumber("expiresInSec");
+      break;
+    case "wechat_auth_status":
+      requireBoolean("ok");
+      requireString("state");
+      requireString("mpName");
+      requireString("message");
+      break;
+    case "wechat_search_mp":
+      requireBoolean("ok");
+      requireString("state");
+      requireArray("accounts");
+      requireNullableString("error");
+      break;
+    case "wechat_list_articles":
+      requireBoolean("ok");
+      requireString("state");
+      requireArray("articles");
+      requireNullableString("error");
       break;
     case "readImage":
       requireBoolean("ok");

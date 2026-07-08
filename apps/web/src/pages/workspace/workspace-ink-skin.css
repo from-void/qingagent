@@ -1694,6 +1694,10 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   width: 100%;
   max-width: 800px;
   min-height: var(--ws-paper-min-height);
+  /* 审阅态纸面是 .ws-right(列 flex 容器)的直接弹性子项;默认 flex-shrink:1 会把纸面
+     从内容真实高压缩到 min-height(一屏),正文靠 overflow 溢出照常滚,但发光层 inset:0
+     只认被压扁的一屏高度 → 滚过一屏发光断裂出横切。锁死 flex-shrink,让纸面按内容撑满。 */
+  flex-shrink: 0;
 }
 #view-workspace .ws-paper-surface > .ws-editor-glow {
   position: absolute;

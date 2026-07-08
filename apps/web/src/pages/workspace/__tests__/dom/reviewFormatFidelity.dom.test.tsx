@@ -53,6 +53,18 @@ function renderSnapshot(
   });
 }
 
+function textOutsideKatex(root: HTMLElement): string {
+  const walker = document.createTreeWalker(root, window.NodeFilter.SHOW_TEXT);
+  const parts: string[] = [];
+  let node = walker.nextNode();
+  while (node) {
+    const parent = node.parentElement;
+    if (!parent?.closest(".katex, .tiptap-mathematics-render")) parts.push(node.textContent ?? "");
+    node = walker.nextNode();
+  }
+  return parts.join("");
+}
+
 describe("审核态格式保真(showPatches)", () => {
   it("taskList 渲染真实复选框,不再是 [ ]/[x] 字面文本", () => {
     renderReview([
@@ -118,6 +130,203 @@ describe("审核态格式保真(showPatches)", () => {
     // KaTeX 渲染产物(MathView 用 tiptap-mathematics-render 容器),不是裸代码块
     expect(host.querySelector(".tiptap-mathematics-render, .katex")).not.toBeNull();
     expect(host.querySelector("pre.md-code-block")).toBeNull();
+  });
+
+  it("普通段落内 inlineMath 渲染 KaTeX,不在正文吐 latex 源码", () => {
+    const latex = String.raw`\sqrt{\sigma^{}}`;
+    renderReview([
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-inline-math" },
+        content: [
+          { type: "text", text: "标准差 " },
+          { type: "inlineMath", attrs: { latex } },
+          { type: "text", text: " 完成" },
+        ],
+      } as PmBlockNode,
+    ]);
+
+    expect(host.querySelector(".tiptap-mathematics-render .katex")).not.toBeNull();
+    expect(textOutsideKatex(host)).not.toContain(String.raw`\sqrt`);
+    expect(textOutsideKatex(host)).toContain("标准差");
+    expect(textOutsideKatex(host)).toContain("完成");
+  });
+
+  it("dirty inlineMath latex 含空上标、&、< 时审阅态不 crash、不漏到普通文本", () => {
+    const latex = String.raw`\sqrt{\sigma^{}} & x < y`;
+    renderReview([
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-inline-math-dirty" },
+        content: [
+          { type: "text", text: "脏公式 " },
+          { type: "inlineMath", attrs: { latex } },
+          { type: "text", text: " 结束" },
+        ],
+      } as PmBlockNode,
+    ]);
+
+    expect(host.querySelector(".tiptap-mathematics-render, .pm-math-error")).not.toBeNull();
+    expect(textOutsideKatex(host)).not.toContain(String.raw`\sqrt`);
+    expect(textOutsideKatex(host)).toContain("脏公式");
+    expect(textOutsideKatex(host)).toContain("结束");
+  });
+
+  it("截断/非法 inlineMath latex 审阅态降级为错误代码,不抛异常", () => {
+    const latex = String.raw`\sqrt{`;
+    renderReview([
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-inline-math-truncated" },
+        content: [{ type: "inlineMath", attrs: { latex } }],
+      } as PmBlockNode,
+    ]);
+
+    expect(host.querySelector(".tiptap-mathematics-render, .pm-math-error")).not.toBeNull();
+  });
+
+  it("patchIns / patchDel 里的 inlineMath 仍渲染 KaTeX", () => {
+    const latex = String.raw`\sqrt{\sigma^{}}`;
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "p",
+          spans: [
+            { kind: "text", text: "新增 " },
+            { kind: "patchInsMath", latex, patchId: "ins-math" },
+            { kind: "text", text: " 删除 " },
+            { kind: "patchDelMath", latex, patchId: "del-math" },
+          ],
+        }],
+      },
+      new Map([
+        ["ins-math", { before: "", after: latex, kind: "insert", index: 1 }],
+        ["del-math", { before: latex, after: "", kind: "delete", index: 2 }],
+      ]),
+    );
+
+    const inserted = host.querySelector('[data-patch-id="ins-math"] .tiptap-mathematics-render .katex');
+    const deletedPopup = host.querySelector('[data-patch-id="del-math"] .patch-hover-popup .tiptap-mathematics-render .katex');
+    expect(inserted).not.toBeNull();
+    expect(deletedPopup).not.toBeNull();
+    expect(textOutsideKatex(host)).not.toContain(String.raw`\sqrt`);
+  });
+
+  it("textColor mark 在审阅态保留 data-text-color,与结果态 CSS 对齐", () => {
+    renderReview([
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-color" },
+        content: [{ type: "text", text: "红色文字", marks: [{ type: "textColor", attrs: { color: "red" } }] }],
+      } as PmBlockNode,
+    ]);
+
+    expect(host.querySelector('span[data-text-color="red"]')?.textContent).toBe("红色文字");
+  });
+
+  it("table 静态审阅路径使用与 PmBlockView 一致的 tbody/th 结构", () => {
+    renderReview([
+      {
+        type: "table",
+        attrs: { blockId: "tbl-head" },
+        content: [{
+          type: "tableRow",
+          content: [{
+            type: "tableHeader",
+            content: [{ type: "paragraph", attrs: { blockId: "tbl-head-h" }, content: [{ type: "text", text: "指标" }] }],
+          }],
+        }],
+      } as PmBlockNode,
+    ]);
+
+    expect(host.querySelector("table > thead")).toBeNull();
+    expect(host.querySelector("table > tbody > tr > th")?.textContent).toBe("指标");
+  });
+
+  it("容器内列表行/表格单元格 changed diff 中 inlineMath 保持 KaTeX,不退回 latex 文本", () => {
+    const latex = String.raw`\sqrt{\sigma^{}}`;
+    renderSnapshot(
+      {
+        version: 1,
+        ts: "t",
+        sections: [{
+          kind: "callout",
+          text: "公式 old",
+          node: {
+            type: "callout",
+            attrs: { blockId: "callout-math-change", emoji: "💡", tone: "info" },
+            content: [
+              { type: "paragraph", attrs: { blockId: "callout-p" }, content: [{ type: "text", text: "公式 old" }] },
+            ],
+          } as PmBlockNode,
+          blockPatch: { patchId: "container-math-change", op: "replace" },
+          bodyDiff: [
+            {
+              status: "changed",
+              kind: "list",
+              node: {
+                type: "bulletList",
+                attrs: { blockId: "list-math-change" },
+                content: [{
+                  type: "listItem",
+                  attrs: { blockId: "li-math-change" },
+                  content: [{ type: "paragraph", attrs: { blockId: "li-p" }, content: [] }],
+                }],
+              } as PmBlockNode,
+              rowDiff: [{
+                status: "changed",
+                oldText: "公式 old",
+                spans: [
+                  { kind: "text", text: "公式 " },
+                  { kind: "patchInsMath", latex, patchId: "container-math-change" },
+                ],
+              }],
+            },
+            {
+              status: "changed",
+              kind: "table",
+              node: {
+                type: "table",
+                attrs: { blockId: "table-math-change" },
+                content: [{ type: "tableRow", content: [{ type: "tableCell", content: [] }] }],
+              } as PmBlockNode,
+              cellDiff: [{
+                status: "changed",
+                cells: [{
+                  status: "changed",
+                  oldText: "公式 old",
+                  spans: [
+                    { kind: "text", text: "公式 " },
+                    { kind: "patchInsMath", latex, patchId: "container-math-change" },
+                  ],
+                }],
+              }],
+            },
+          ],
+        }],
+      },
+      new Map([["container-math-change", { before: "公式 old", after: `公式 ${latex}`, kind: "replace", index: 1 }]]),
+    );
+
+    expect(host.querySelectorAll('[data-patch-id="container-math-change"] .tiptap-mathematics-render .katex').length).toBeGreaterThanOrEqual(2);
+    expect(textOutsideKatex(host)).not.toContain(String.raw`\sqrt`);
+  });
+
+  it("quote 静态审阅路径保留内部段落结构,不拍平成单段文本", () => {
+    renderReview([
+      {
+        type: "blockquote",
+        attrs: { blockId: "quote-2p" },
+        content: [
+          { type: "paragraph", attrs: { blockId: "quote-p1" }, content: [{ type: "text", text: "第一段" }] },
+          { type: "paragraph", attrs: { blockId: "quote-p2" }, content: [{ type: "text", text: "第二段" }] },
+        ],
+      } as PmBlockNode,
+    ]);
+
+    expect(Array.from(host.querySelectorAll("blockquote > p")).map((node) => node.textContent)).toEqual(["第一段", "第二段"]);
   });
 
   it("文字块(标题/段落)保真渲染,审核态不套块状背景", () => {

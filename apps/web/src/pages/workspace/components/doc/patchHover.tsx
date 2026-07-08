@@ -223,6 +223,7 @@ const PATCH_MARK_LABELS: Record<string, string> = {
   strike: "删除线",
   code: "等宽",
   link: "链接",
+  textColor: "文字颜色",
   highlight: "高亮",
 };
 

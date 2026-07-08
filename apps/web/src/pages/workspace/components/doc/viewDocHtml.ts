@@ -1,5 +1,6 @@
 import { legacySectionsToPm, pmToClipboardHtml, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import { normalizeImageAlign } from "../ImageView";
+import { viewDocSpanText } from "../../data/protocol";
 import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "../../data/protocol";
 
 export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
@@ -107,17 +108,18 @@ function sectionToHtml(section: ViewBlock): string {
     case "p":
       return `<p>${section.spans.map(spanToText).join("")}</p>`;
     case "quote":
-      return `<blockquote>${esc(section.text)}</blockquote>`;
+      if (section.node && !hasPatchSpan(section.spans)) return faithfulNodeToHtml(section.node);
+      return `<blockquote><p>${section.spans ? section.spans.map(spanToText).join("") : esc(section.text)}</p></blockquote>`;
     case "list": {
       const tag = section.ordered ? "ol" : "ul";
-      return `<${tag}>${section.items.map((item) => `<li>${esc(item)}</li>`).join("")}</${tag}>`;
+      return `<${tag}>${section.items.map((item, i) => `<li><p>${section.itemSpans?.[i]?.length ? section.itemSpans[i]!.map(spanToText).join("") : esc(item)}</p></li>`).join("")}</${tag}>`;
     }
     case "hr":
       return "<hr />";
     case "table": {
-      const ths = section.head.map((h) => `<th>${esc(h)}</th>`).join("");
+      const ths = section.head.map((h, i) => `<th>${section.headSpans?.[i]?.length ? section.headSpans[i]!.map(spanToText).join("") : esc(h)}</th>`).join("");
       const trs = section.rows
-        .map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`)
+        .map((r, rowIndex) => `<tr>${r.map((c, cellIndex) => `<td>${section.rowSpans?.[rowIndex]?.[cellIndex]?.length ? section.rowSpans[rowIndex]![cellIndex]!.map(spanToText).join("") : esc(c)}</td>`).join("")}</tr>`)
         .join("");
       return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
     }
@@ -128,7 +130,7 @@ function sectionToHtml(section: ViewBlock): string {
       // 而不是退化成代码块——这是"生成的图在编辑器里渲染成代码块"那个 bug 的修复点。
       return `<div data-pm-node="diagram" data-lang="${escAttr(section.lang)}" data-source="${escAttr(section.source)}"${section.overlay ? ` data-overlay="${escAttr(JSON.stringify(section.overlay))}"` : ""}></div>`;
     case "penNote":
-      return `<p><em>${esc(section.text)}</em></p>`;
+      return `<aside data-pm-node="penNote" class="pm-pen-note">${section.spans ? section.spans.map(spanToText).join("") : esc(section.text)}</aside>`;
 	    case "image": {
 	      const align = normalizeImageAlign(section.align);
 	      const width = positiveImageSize(section.width);
@@ -163,11 +165,29 @@ function faithfulNodeToHtml(node: PmBlockNode): string {
 }
 
 function spanToText(span: ViewDocSpan): string {
+  if (span.kind === "math" || span.kind === "patchInsMath" || span.kind === "patchDelMath") {
+    return inlineMathToHtml(span.latex);
+  }
   return esc(span.text);
 }
 
 function spanToTextRaw(span: ViewDocSpan): string {
-  return span.text;
+  return viewDocSpanText(span);
+}
+
+function hasPatchSpan(spans: readonly ViewDocSpan[] | undefined): boolean {
+  return spans?.some((span) =>
+    span.kind === "patchDel" ||
+    span.kind === "patchIns" ||
+    span.kind === "patchDelMath" ||
+    span.kind === "patchInsMath" ||
+    span.kind === "patchMark",
+  ) ?? false;
+}
+
+function inlineMathToHtml(latex: string): string {
+  const escaped = esc(latex);
+  return `<span data-type="inline-math" data-latex="${escAttr(latex)}">$${escaped}$</span>`;
 }
 
 function esc(s: string): string {

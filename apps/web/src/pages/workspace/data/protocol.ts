@@ -97,13 +97,24 @@ export const DOC_EDITABLE: Record<EditorState, boolean> = {
  * `docSuggestion` tool-calls can render inline.
  */
 
+export const INLINE_ATOM_PLACEHOLDER = "￼";
+
+export type ViewTextSpan = { kind: "text"; text: string; marks?: PmMark[] };
+export type ViewMathSpan = { kind: "math"; latex: string };
+
 export type ViewPatchTextSpan =
-  | { kind: "patchDel"; text: string; patchId: string }
-  | { kind: "patchIns"; text: string; patchId: string };
+  | { kind: "patchDel"; text: string; patchId: string; marks?: PmMark[] }
+  | { kind: "patchIns"; text: string; patchId: string; marks?: PmMark[] };
+
+export type ViewPatchMathSpan =
+  | { kind: "patchDelMath"; latex: string; patchId: string }
+  | { kind: "patchInsMath"; latex: string; patchId: string };
 
 export type ViewDocSpan =
-  | { kind: "text"; text: string; marks?: PmMark[] }
+  | ViewTextSpan
+  | ViewMathSpan
   | ViewPatchTextSpan
+  | ViewPatchMathSpan
   | {
       kind: "patchMark";
       text: string;
@@ -161,7 +172,7 @@ export type ViewBlock = ViewBlockMeta & (
   | { kind: "h2"; text: string; anchor?: string; spans?: ViewDocSpan[]; textAlign?: string }
   | { kind: "h3" | "h4" | "h5" | "h6"; text: string; spans?: ViewDocSpan[]; textAlign?: string }
   | { kind: "p"; spans: ViewDocSpan[]; textAlign?: string }
-  | { kind: "quote"; text: string; spans?: ViewDocSpan[] }
+  | { kind: "quote"; text: string; spans?: ViewDocSpan[]; node?: PmBlockNode }
   | { kind: "list"; ordered: boolean; items: string[]; itemSpans?: ViewDocSpan[][]; start?: number; rowDiff?: ViewListRowDiff[] }
   | { kind: "hr" }
   | {
@@ -284,18 +295,19 @@ function pmBlockToViewSections(node: PmBlockNode): ViewBlock[] {
       // 计数仍由 pmBlockToViewSections().length 派生(此处为 1),块级 patch 索引映射自洽。
       return [{ ...meta, kind: "columnList", node, text: pmBlockText(node) }];
     case "heading": {
-      const text = pmInlineText(node.content ?? []);
+      const spans = pmInlineSpans(node.content ?? []);
+      const text = viewSpansText(spans);
       const textAlign = node.attrs.textAlign ?? undefined;
-      if (node.attrs.level === 1) return [{ ...meta, kind: "h1", text, textAlign }];
+      if (node.attrs.level === 1) return [{ ...meta, kind: "h1", text, spans, textAlign }];
       if (node.attrs.level === 2) {
-        return [{ ...meta, kind: "h2", text, anchor: node.attrs.anchor ?? undefined, textAlign }];
+        return [{ ...meta, kind: "h2", text, anchor: node.attrs.anchor ?? undefined, spans, textAlign }];
       }
-      return [{ ...meta, kind: `h${node.attrs.level}` as "h3" | "h4" | "h5" | "h6", text, textAlign }];
+      return [{ ...meta, kind: `h${node.attrs.level}` as "h3" | "h4" | "h5" | "h6", text, spans, textAlign }];
     }
     case "paragraph":
-      return [{ ...meta, kind: "p", spans: [{ kind: "text", text: pmInlineText(node.content ?? []) }], textAlign: node.attrs.textAlign ?? undefined }];
+      return [{ ...meta, kind: "p", spans: pmInlineSpans(node.content ?? []), textAlign: node.attrs.textAlign ?? undefined }];
     case "blockquote":
-      return [{ ...meta, kind: "quote", text: node.content.map(pmBlockText).join("\n") }];
+      return [{ ...meta, kind: "quote", text: node.content.map(pmBlockText).join("\n"), spans: pmBlocksInlineSpans(node.content), node }];
     case "bulletList":
     case "orderedList":
       return [{
@@ -345,7 +357,7 @@ function pmBlockToViewSections(node: PmBlockNode): ViewBlock[] {
         size: node.attrs.size,
       }];
     case "penNote":
-      return [{ ...meta, kind: "penNote", text: pmInlineText(node.content ?? []) }];
+      return [{ ...meta, kind: "penNote", text: pmInlineText(node.content ?? []), spans: pmInlineSpans(node.content ?? []) }];
     // 审核态保真:taskList/callout/blockMath 携带原始 pm 节点,用 PmBlockView 渲染(真复选框 /
     // 提示框 / KaTeX),与最终态一致;不再降级成 [ ] 列表 / 引用 / latex 代码块。
     case "taskList":
@@ -389,19 +401,57 @@ function pmBlocksInlineSpans(blocks: readonly PmBlockNode[]): ViewDocSpan[] {
   const spans: ViewDocSpan[] = [];
   blocks.forEach((block, i) => {
     if (i > 0) spans.push({ kind: "text", text: "\n" });
-    const content = ("content" in block ? block.content : undefined) as
-      | readonly { type: string; text?: string; marks?: PmMark[] }[]
-      | undefined;
-    for (const inline of content ?? []) {
-      if (inline.type !== "text" || !inline.text) continue;
-      spans.push(
-        inline.marks && inline.marks.length > 0
-          ? { kind: "text", text: inline.text, marks: inline.marks }
-          : { kind: "text", text: inline.text },
-      );
-    }
+    spans.push(...pmInlineSpansForBlock(block));
   });
   return spans;
+}
+
+function pmInlineSpansForBlock(block: PmBlockNode): ViewDocSpan[] {
+  switch (block.type) {
+    case "heading":
+    case "paragraph":
+    case "penNote":
+      return pmInlineSpans(block.content ?? []);
+    case "codeBlock":
+      return block.content?.length ? [{ kind: "text", text: pmInlineText(block.content) }] : [];
+    case "blockquote":
+      return pmBlocksInlineSpans(block.content);
+    default:
+      return [];
+  }
+}
+
+function pmInlineSpans(content: readonly PmInlineNode[]): ViewDocSpan[] {
+  const spans: ViewDocSpan[] = [];
+  for (const node of content) {
+    if (node.type === "hardBreak") {
+      spans.push({ kind: "text", text: "\n" });
+      continue;
+    }
+    if (node.type === "inlineMath") {
+      spans.push({ kind: "math", latex: node.attrs.latex });
+      continue;
+    }
+    if (!node.text) continue;
+    spans.push(
+      node.marks && node.marks.length > 0
+        ? { kind: "text", text: node.text, marks: node.marks }
+        : { kind: "text", text: node.text },
+    );
+  }
+  return spans;
+}
+
+function pmInlineNodesToViewSpans(nodes: DiffHunk["before"] | DiffHunk["after"]): ViewDocSpan[] | null {
+  if (!Array.isArray(nodes)) return null;
+  if (!nodes.every(isPmInlineNode)) return null;
+  return pmInlineSpans(nodes);
+}
+
+function isPmInlineNode(node: unknown): node is PmInlineNode {
+  if (node === null || typeof node !== "object") return false;
+  const type = (node as { type?: unknown }).type;
+  return type === "text" || type === "hardBreak" || type === "inlineMath";
 }
 
 function pmCellText(cell: PmTableCellNode): string {
@@ -454,6 +504,29 @@ function pmInlineText(content: readonly (PmInlineNode | { type: "text"; text?: s
     .join("");
 }
 
+function pmBlockOffsetText(node: PmBlockNode): string {
+  switch (node.type) {
+    case "heading":
+    case "paragraph":
+    case "penNote":
+      return pmInlineOffsetText(node.content ?? []);
+    case "codeBlock":
+      return pmInlineOffsetText(node.content ?? []);
+    default:
+      return pmBlockText(node);
+  }
+}
+
+function pmInlineOffsetText(content: readonly (PmInlineNode | { type: "text"; text?: string; marks?: PmMark[] })[]): string {
+  return content
+    .map((node) => {
+      if (node.type === "hardBreak") return "\n";
+      if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
+      return node.text ?? "";
+    })
+    .join("");
+}
+
 function viewSectionText(section: ViewBlock): string {
   switch (section.kind) {
     case "h1":
@@ -468,7 +541,7 @@ function viewSectionText(section: ViewBlock): string {
     case "penNote":
       return section.spans ? viewSpansText(section.spans) : section.text;
     case "p":
-      return section.spans.map((span) => span.text).join("");
+      return viewSpansText(section.spans);
     case "list":
       return section.items.join("\n");
     case "hr":
@@ -495,8 +568,62 @@ function viewSectionText(section: ViewBlock): string {
   }
 }
 
+export function viewDocSpanText(span: ViewDocSpan): string {
+  switch (span.kind) {
+    case "math":
+    case "patchDelMath":
+    case "patchInsMath":
+      return span.latex;
+    case "text":
+    case "patchDel":
+    case "patchIns":
+    case "patchMark":
+    case "selectable":
+      return span.text;
+  }
+}
+
+export function viewDocSpanOffsetText(span: ViewDocSpan): string {
+  switch (span.kind) {
+    case "math":
+    case "patchDelMath":
+    case "patchInsMath":
+      return INLINE_ATOM_PLACEHOLDER;
+    case "text":
+    case "patchDel":
+    case "patchIns":
+    case "patchMark":
+    case "selectable":
+      return span.text;
+  }
+}
+
 function viewSpansText(spans: readonly ViewDocSpan[]): string {
-  return spans.map((span) => span.text).join("");
+  return spans.map(viewDocSpanText).join("");
+}
+
+function viewSpansOffsetText(spans: readonly ViewDocSpan[]): string {
+  return spans.map(viewDocSpanOffsetText).join("");
+}
+
+function viewSectionOffsetText(section: ViewBlock): string {
+  switch (section.kind) {
+    case "h1":
+    case "h2":
+    case "h3":
+    case "h4":
+    case "h5":
+    case "h6":
+      return section.spans ? viewSpansOffsetText(section.spans) : section.text;
+    case "quote":
+      return section.spans ? viewSpansOffsetText(section.spans) : section.text;
+    case "penNote":
+      return section.spans ? viewSpansOffsetText(section.spans) : section.text;
+    case "p":
+      return viewSpansOffsetText(section.spans);
+    default:
+      return viewSectionText(section);
+  }
 }
 
 function patchableSectionSpans(section: ViewBlock): ViewDocSpan[] | null {
@@ -728,24 +855,33 @@ function singleColumnListPmBlock(nodes: DiffHunk["before"] | DiffHunk["after"]):
 
 function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
   if (node.type === "taskList") {
-    return node.content.map((item) => ({
-      text: item.content.map(pmBlockText).join("\n"),
-      spans: pmBlocksInlineSpans(item.content),
-      checked: item.attrs.checked,
-    }));
+    return node.content.map((item) => {
+      const spans = pmBlocksInlineSpans(item.content);
+      return {
+        text: viewSpansText(spans),
+        spans,
+        checked: item.attrs.checked,
+      };
+    });
   }
-  return node.content.map((item) => ({
-    text: item.content.map(pmBlockText).join("\n"),
-    spans: pmBlocksInlineSpans(item.content),
-  }));
+  return node.content.map((item) => {
+    const spans = pmBlocksInlineSpans(item.content);
+    return {
+      text: viewSpansText(spans),
+      spans,
+    };
+  });
 }
 
 function tableRowsFromPmBlock(node: TablePmBlock): TableRowData[] {
   return node.content.map((row) => {
-    const cells = row.content.map((cell) => ({
-      text: pmCellText(cell),
-      spans: pmBlocksInlineSpans(cell.content),
-    }));
+    const cells = row.content.map((cell) => {
+      const spans = pmBlocksInlineSpans(cell.content);
+      return {
+        text: viewSpansText(spans),
+        spans,
+      };
+    });
     return {
       text: cells.map((cell) => cell.text).join("\t"),
       cells,
@@ -757,8 +893,105 @@ function cloneSpans(spans: readonly ViewDocSpan[]): ViewDocSpan[] {
   return spans.map((span) => ({ ...span }));
 }
 
+type InlineDiffUnit =
+  | { kind: "text"; text: string; marks?: PmMark[] }
+  | { kind: "math"; latex: string };
+
+function spansToInlineDiffUnits(spans: readonly ViewDocSpan[]): InlineDiffUnit[] {
+  const units: InlineDiffUnit[] = [];
+  for (const span of spans) {
+    switch (span.kind) {
+      case "text":
+      case "patchIns":
+      case "patchDel":
+      case "patchMark":
+      case "selectable":
+        for (const ch of Array.from(span.text)) {
+          units.push(span.kind === "text" || span.kind === "patchIns" || span.kind === "patchDel"
+            ? { kind: "text", text: ch, ...(span.marks ? { marks: span.marks } : {}) }
+            : { kind: "text", text: ch });
+        }
+        break;
+      case "math":
+      case "patchInsMath":
+      case "patchDelMath":
+        units.push({ kind: "math", latex: span.latex });
+        break;
+    }
+  }
+  return units;
+}
+
+function sameInlineDiffUnit(a: InlineDiffUnit, b: InlineDiffUnit): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "math") return b.kind === "math" && a.latex === b.latex;
+  return b.kind === "text" && a.text === b.text;
+}
+
+function sameMarks(a: readonly PmMark[] | undefined, b: readonly PmMark[] | undefined): boolean {
+  if (!a?.length && !b?.length) return true;
+  return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+}
+
+function pushTextSpan(spans: ViewDocSpan[], text: string, marks?: PmMark[]): void {
+  if (!text) return;
+  const last = spans[spans.length - 1];
+  if (last?.kind === "text" && sameMarks(last.marks, marks)) {
+    last.text += text;
+    return;
+  }
+  spans.push(marks && marks.length > 0 ? { kind: "text", text, marks } : { kind: "text", text });
+}
+
+function pushPatchTextSpan(spans: ViewDocSpan[], kind: "patchIns" | "patchDel", text: string, patchId: string, marks?: PmMark[]): void {
+  if (!text) return;
+  const last = spans[spans.length - 1];
+  if (last?.kind === kind && last.patchId === patchId && sameMarks(last.marks, marks)) {
+    last.text += text;
+    return;
+  }
+  spans.push(marks && marks.length > 0 ? { kind, text, patchId, marks } : { kind, text, patchId });
+}
+
+function pushInlineDiffUnit(spans: ViewDocSpan[], unit: InlineDiffUnit): void {
+  if (unit.kind === "math") {
+    spans.push({ kind: "math", latex: unit.latex });
+    return;
+  }
+  pushTextSpan(spans, unit.text, unit.marks);
+}
+
+function pushPatchInlineDiffUnit(spans: ViewDocSpan[], unit: InlineDiffUnit, op: "insert" | "delete", patchId: string): void {
+  if (unit.kind === "math") {
+    spans.push({ kind: op === "insert" ? "patchInsMath" : "patchDelMath", latex: unit.latex, patchId });
+    return;
+  }
+  pushPatchTextSpan(spans, op === "insert" ? "patchIns" : "patchDel", unit.text, patchId, unit.marks);
+}
+
+function patchSpans(spans: readonly ViewDocSpan[], op: "insert" | "delete", patchId: string): ViewDocSpan[] {
+  const out: ViewDocSpan[] = [];
+  for (const unit of spansToInlineDiffUnits(spans)) {
+    pushPatchInlineDiffUnit(out, unit, op, patchId);
+  }
+  return out;
+}
+
+function inlineSpanDiffSpans(beforeSpans: readonly ViewDocSpan[], afterSpans: readonly ViewDocSpan[], patchId: string): ViewDocSpan[] {
+  const beforeUnits = spansToInlineDiffUnits(beforeSpans);
+  const afterUnits = spansToInlineDiffUnits(afterSpans);
+  if (beforeUnits.length === 0 && afterUnits.length === 0) return [];
+  const raw = lcsDiff(beforeUnits, afterUnits, sameInlineDiffUnit);
+  const out: ViewDocSpan[] = [];
+  for (const op of raw) {
+    if (op.kind === "same" && op.b) pushInlineDiffUnit(out, op.b);
+    if (op.kind === "add" && op.b) pushPatchInlineDiffUnit(out, op.b, "insert", patchId);
+  }
+  return out.length > 0 ? out : cloneSpans(afterSpans);
+}
+
 function patchInsSpansForRow(row: ListRowData, patchId: string): ViewDocSpan[] {
-  return row.text ? [{ kind: "patchIns", text: row.text, patchId }] : [];
+  return patchSpans(row.spans, "insert", patchId);
 }
 
 function listRowTextSimilarity(a: string, b: string): number {
@@ -789,7 +1022,7 @@ function changedListRow(before: ListRowData, after: ListRowData, patchId: string
     before.checked !== after.checked;
   const spans = before.text === after.text
     ? cloneSpans(after.spans)
-    : inlineWordDiffSpans(before.text, after.text, patchId);
+    : inlineSpanDiffSpans(before.spans, after.spans, patchId);
   return {
     status: "changed",
     spans,
@@ -890,11 +1123,10 @@ function sameTableCell(cell: TableCellData): ViewTableCellDiff {
 
 function changedTableCell(before: TableCellData | undefined, after: TableCellData | undefined, patchId: string): ViewTableCellDiff {
   const oldText = before?.text ?? "";
-  const newText = after?.text ?? "";
   return {
     status: "changed",
     oldText,
-    spans: inlineWordDiffSpans(oldText, newText, patchId),
+    spans: inlineSpanDiffSpans(before?.spans ?? [], after?.spans ?? [], patchId),
   };
 }
 
@@ -1054,13 +1286,12 @@ function changedContainerBlock(
 ): ViewBlockSeqDiff[number] | null {
   if (isTextDiffPmBlock(beforeNode) && isTextDiffPmBlock(afterNode) && beforeNode.type === afterNode.type) {
     const oldText = pmBlockText(beforeNode);
-    const newText = pmBlockText(afterNode);
     return {
       status: "changed",
       kind: "text",
       node: afterNode,
       oldText,
-      spans: inlineWordDiffSpans(oldText, newText, patchId),
+      spans: inlineSpanDiffSpans(pmInlineSpans(beforeNode.content ?? []), pmInlineSpans(afterNode.content ?? []), patchId),
     };
   }
   if (isListPmBlock(beforeNode) && isListPmBlock(afterNode) && beforeNode.type === afterNode.type) {
@@ -1258,10 +1489,11 @@ function findViewTargetByQuote(
   if (!quote) return null;
   const quoteCharLen = Array.from(quote).length;
   let best: { blockIndex: number; start: number; score: number } | null = null;
+  const usesAtomOffset = quote.includes(INLINE_ATOM_PLACEHOLDER);
   for (let i = 0; i < doc.sections.length; i++) {
     const section = doc.sections[i];
     if (!section || !patchableSectionSpans(section)) continue;
-    const text = viewSectionText(section);
+    const text = usesAtomOffset ? viewSectionOffsetText(section) : viewSectionText(section);
     let from = 0;
     for (;;) {
       const idx = text.indexOf(quote, from);
@@ -1290,7 +1522,7 @@ function findSuggestionViewTarget(
     let viewSectionIndex = 0;
     for (const block of doc.pmDoc.content) {
       const blockStart = pmPos + 1;
-      const blockEnd = blockStart + pmBlockText(block).length;
+      const blockEnd = blockStart + pmBlockOffsetText(block).length;
       if (
         block.attrs.blockId === suggestion.anchor.blockId &&
         isPatchRenderablePmBlock(block) &&
@@ -1299,7 +1531,7 @@ function findSuggestionViewTarget(
       ) {
         const viewSection = doc.sections[viewSectionIndex];
         if (viewSection && patchableSectionSpans(viewSection)) {
-          const text = viewSectionText(viewSection);
+          const text = viewSectionOffsetText(viewSection);
           const start = codeUnitOffsetToCharIndex(text, suggestion.anchor.pmFrom - blockStart);
           const end = codeUnitOffsetToCharIndex(text, suggestion.anchor.pmTo - blockStart);
           return { blockIndex: viewSectionIndex, range: { start, end } };
@@ -1333,6 +1565,10 @@ export interface PatchOverlayInput {
   kind?: "text" | "markAdd" | "markRemove";
   marks?: PmMark[];
   label?: string;
+  matchBefore?: string;
+  matchAfter?: string;
+  beforeSpans?: ViewDocSpan[];
+  afterSpans?: ViewDocSpan[];
 }
 
 export interface BlockPatchInput {
@@ -1351,15 +1587,13 @@ export interface BlockPatchInput {
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
 const INLINE_SAFE_PM_TYPES = new Set(["paragraph", "heading", "blockquote", "penNote"]);
-/** 行内节点类型:纯文本 replace 的 hunk.before/after 是「行内切片」(text/hardBreak),
+/** 行内节点类型:replace 的 hunk.before/after 是「行内切片」(text/hardBreak/inlineMath),
  * 本就属行内、该走行内文本通道。此前漏列 → pmNodesInlineSafe 误判其为结构块 → 内联通道返 null、
  * 块通道(pmNodesToViewBlocks 过滤行内节点)又返 [] → 纯文本改动被双通道丢弃(表现为"无法定位")。
  * 实证:packages/core buildDraftDiff 对段内文本 replace 产出的 before=[{type:"text",...}](见
  * proposalDiff inlineSliceAsNodes)。结构块(表格/列表/代码)的 replace 仍是块节点、不在此集 → 照旧落块通道。
- * 注意:**故意不含 inlineMath** —— 生成端把公式投影为 U+FFFC、前端视图投影为 latex 文本,offset 口径
- * 不一致,放行后 overlay 会生成但 spliceSpans 定位不到/打错位置(round-3 实证)。公式 replace 暂维持
- * 落块通道(其本身定位也待修),不在行内放行,避免"看似可审实则改错位置"。 */
-const INLINE_NODE_PM_TYPES = new Set(["text", "hardBreak"]);
+ * inlineMath 在视图层按 math span 保留,offset 投影统一用 U+FFFC,不会再把 latex 源码长度当 PM 位置。 */
+const INLINE_NODE_PM_TYPES = new Set(["text", "hardBreak", "inlineMath"]);
 
 function pmNodesInlineSafe(nodes: unknown): boolean {
   if (!Array.isArray(nodes)) return true;
@@ -1403,8 +1637,12 @@ export function suggestionToPatchOverlay(
   const target = findSuggestionViewTarget(doc, suggestion);
   if (!target) return null;
   const markOp = markHunkOp(suggestion, hunk);
-  const before = hunk?.beforeText ?? suggestion.preview.deleteText;
-  const after = hunk?.afterText ?? suggestion.preview.insertText;
+  const beforeSpans = hunk ? pmInlineNodesToViewSpans(hunk.before) : null;
+  const afterSpans = hunk ? pmInlineNodesToViewSpans(hunk.after) : null;
+  const before = beforeSpans ? viewSpansText(beforeSpans) : hunk?.beforeText ?? suggestion.preview.deleteText;
+  const after = afterSpans ? viewSpansText(afterSpans) : hunk?.afterText ?? suggestion.preview.insertText;
+  const matchBefore = hunk?.beforeText ?? before;
+  const matchAfter = hunk?.afterText ?? after;
   return {
     id: suggestion.id,
     reviewBatchId: suggestion.reviewBatchId ?? hunk?.reviewBatchId ?? suggestion.id,
@@ -1414,6 +1652,10 @@ export function suggestionToPatchOverlay(
     after,
     blockIndex: target.blockIndex,
     range: target.range,
+    matchBefore,
+    matchAfter,
+    ...(beforeSpans ? { beforeSpans } : {}),
+    ...(afterSpans ? { afterSpans } : {}),
     ...(markOp
       ? {
           kind: markOp,
@@ -1737,7 +1979,9 @@ function withBlockPatch(section: ViewBlock, input: BlockPatchInput, op: "insert"
     case "quote":
     case "penNote":
       if (patchSpan.text.length > 0) {
-        return { ...cloned, blockPatch, spans: [patchSpan] } as ViewBlock;
+        const baseSpans = patchableSectionSpans(cloned);
+        const spans = baseSpans ? patchSpans(baseSpans, op, input.patchId) : [patchSpan];
+        return { ...cloned, blockPatch, spans } as ViewBlock;
       }
       break;
   }
@@ -1762,18 +2006,18 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
   };
   switch (section.kind) {
     case "h1":
-      return { ...meta, kind: "h1", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+      return { ...meta, kind: "h1", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
     case "h2":
-      return { ...meta, kind: "h2", text: section.text, anchor: section.anchor, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+      return { ...meta, kind: "h2", text: section.text, anchor: section.anchor, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
     case "h3":
     case "h4":
     case "h5":
     case "h6":
-      return { ...meta, kind: section.kind, text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+      return { ...meta, kind: section.kind, text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
     case "p":
-      return { ...meta, kind: "p", spans: section.spans.map((span) => ({ ...span })) };
+      return { ...meta, kind: "p", spans: section.spans.map((span) => ({ ...span })), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
     case "quote":
-      return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+      return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.node ? { node: section.node } : {}) };
     case "list":
       return {
         ...meta,
@@ -1799,7 +2043,7 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
     case "code":
       return { ...meta, kind: "code", body: section.body, language: section.language ?? null };
     case "diagram":
-      return { ...meta, kind: "diagram", source: section.source, lang: section.lang, svg: section.svg };
+      return { ...meta, kind: "diagram", source: section.source, lang: section.lang, svg: section.svg, overlay: section.overlay ?? null };
     case "penNote":
       return { ...meta, kind: "penNote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
     case "image":
@@ -2156,7 +2400,7 @@ export function collectPatchMarkerIds(doc: ViewDocumentSnapshot): Set<string> {
     const spans = sectionPatchMarkerSpans(section);
     if (!spans) continue;
     for (const span of spans) {
-      if (span.kind === "patchDel" || span.kind === "patchIns") ids.add(span.patchId);
+      if (span.kind === "patchDel" || span.kind === "patchIns" || span.kind === "patchDelMath" || span.kind === "patchInsMath") ids.add(span.patchId);
       if (span.kind === "patchMark") ids.add(span.patchId);
     }
   }
@@ -2235,7 +2479,7 @@ export function materializeDoc(
     if (!scopedPatches || scopedPatches.length === 0) return section;
 
     let text = section.spans
-      .map((s) => ("text" in s ? s.text : ""))
+      .map(viewDocSpanText)
       .join("");
     for (const p of scopedPatches) {
       const replacement = p.verdict === "accepted" ? p.after : p.before;
@@ -2280,158 +2524,207 @@ function spliceSpans(
     kind?: "text" | "markAdd" | "markRemove";
     marks?: PmMark[];
     label?: string;
+    matchBefore?: string;
+    matchAfter?: string;
+    beforeSpans?: ViewDocSpan[];
+    afterSpans?: ViewDocSpan[];
   },
 ): { spans: ViewDocSpan[]; injected: boolean } {
   if (patch.kind === "markAdd" || patch.kind === "markRemove") {
     return spliceMarkSpans(spans, patch as PatchOverlayInput & { kind: "markAdd" | "markRemove" });
   }
 
-  const out: ViewDocSpan[] = [];
-  let injected = false;
-  for (const s of spans) {
-    if (injected || s.kind !== "text") {
-      out.push(s);
-      continue;
-    }
+  const matchBefore = patch.matchBefore ?? patch.before;
+  const matchAfter = patch.matchAfter ?? patch.after;
+  const beforePatchSpans = patch.beforeSpans?.length
+    ? patchSpans(patch.beforeSpans, "delete", patch.id)
+    : patch.before
+      ? [{ kind: "patchDel", text: patch.before, patchId: patch.id } satisfies ViewDocSpan]
+      : [];
+  const afterPatchSpans = patch.afterSpans?.length
+    ? patchSpans(patch.afterSpans, "insert", patch.id)
+    : patch.after
+      ? [{ kind: "patchIns", text: patch.after, patchId: patch.id } satisfies ViewDocSpan]
+      : [];
 
-    if (patch.range) {
-      const chars = Array.from(s.text);
-      const start = Math.max(0, Math.min(patch.range.start, chars.length));
-      const end = Math.max(start, Math.min(patch.range.end, chars.length));
-      const rangedBefore = chars.slice(start, end).join("");
-      if (rangedBefore === patch.before) {
-        const head = chars.slice(0, start).join("");
-        const tail = chars.slice(end).join("");
-        const didInject = patch.before.length > 0 || patch.after.length > 0;
-        if (didInject) {
-          if (head.length > 0) out.push({ kind: "text", text: head });
-          if (patch.before.length > 0) {
-            out.push({ kind: "patchDel", text: patch.before, patchId: patch.id });
-          }
-          if (patch.after.length > 0) {
-            out.push({ kind: "patchIns", text: patch.after, patchId: patch.id });
-          }
-          if (tail.length > 0) out.push({ kind: "text", text: tail });
-          injected = true;
-          continue;
-        }
-      }
-    }
+  const injectAt = (start: number, end: number, mode: "replace" | "insert"): { spans: ViewDocSpan[]; injected: boolean } => {
+    const splitStart = splitSpansAt(spans, start);
+    if (!splitStart) return { spans, injected: false };
+    const splitEnd = splitSpansAt(splitStart.right, end - start);
+    if (!splitEnd) return { spans, injected: false };
+    if (splitEnd.left.some(isPatchSpan)) return { spans, injected: false };
+    const selectedOffsetText = viewSpansOffsetText(splitEnd.left);
+    if (mode === "replace" && selectedOffsetText !== matchBefore) return { spans, injected: false };
+    const injectedSpans = mode === "replace" ? [...beforePatchSpans, ...afterPatchSpans] : afterPatchSpans;
+    if (injectedSpans.length === 0) return { spans, injected: false };
+    return {
+      spans: [...splitStart.left, ...injectedSpans, ...splitEnd.right],
+      injected: true,
+    };
+  };
 
-    // Case A (original path): `before` found in text — splice patchDel + patchIns.
-    // Skip when the doc already contains the edited text (i.e. `after`
-    // starts with `before` and the full `after` text appears at the same
-    // position) — that scenario is handled by Case B.
-    if (patch.before !== "") {
-      const idx = s.text.indexOf(patch.before);
-      if (idx >= 0) {
-        const isEditedDoc =
-          patch.after.length > patch.before.length &&
-          patch.after.startsWith(patch.before) &&
-          s.text.startsWith(patch.after, idx);
-        if (!isEditedDoc) {
-          const head = s.text.slice(0, idx);
-          const tail = s.text.slice(idx + patch.before.length);
-          if (head.length > 0) out.push({ kind: "text", text: head });
-          out.push({ kind: "patchDel", text: patch.before, patchId: patch.id });
-          if (patch.after.length > 0)
-            out.push({ kind: "patchIns", text: patch.after, patchId: patch.id });
-          if (tail.length > 0) out.push({ kind: "text", text: tail });
-          injected = true;
-          continue;
-        }
-      }
-    }
-
-    // Case B: `before` not found but `after` is non-empty — the doc
-    // already contains the edited text. Wrap the `after` text as a
-    // patchIns span (no patchDel needed).
-    if (!injected && patch.after.length > 0) {
-      const idxAfter = s.text.indexOf(patch.after);
-      if (idxAfter >= 0) {
-        const head = s.text.slice(0, idxAfter);
-        const tail = s.text.slice(idxAfter + patch.after.length);
-        if (head.length > 0) out.push({ kind: "text", text: head });
-        out.push({ kind: "patchIns", text: patch.after, patchId: patch.id });
-        if (tail.length > 0) out.push({ kind: "text", text: tail });
-        injected = true;
-        continue;
-      }
-    }
-
-    // Case C: pure deletion (after="") — the doc has a zero-width space
-    // marker (​) at the deletion point. Find it and emit a
-    // zero-length patchDel span.
-    if (!injected && patch.after === "" && patch.before !== "") {
-      const zwsIdx = s.text.indexOf("​");
-      if (zwsIdx >= 0) {
-        const head = s.text.slice(0, zwsIdx);
-        const tail = s.text.slice(zwsIdx + 1); // skip the ZWS character
-        if (head.length > 0) out.push({ kind: "text", text: head });
-        out.push({ kind: "patchDel", text: patch.before, patchId: patch.id });
-        if (tail.length > 0) out.push({ kind: "text", text: tail });
-        injected = true;
-        continue;
-      }
-    }
-
-    out.push(s);
+  if (patch.range) {
+    const textLength = Array.from(viewSpansOffsetText(spans)).length;
+    const start = Math.max(0, Math.min(patch.range.start, textLength));
+    const end = Math.max(start, Math.min(patch.range.end, textLength));
+    const ranged = injectAt(start, end, "replace");
+    if (ranged.injected) return ranged;
   }
-  return { spans: out, injected };
+
+  // Case A: `before` found in the offset projection — splice patchDel + patchIns.
+  if (matchBefore !== "") {
+    const text = viewSpansOffsetText(spans);
+    const idx = text.indexOf(matchBefore);
+    if (idx >= 0) {
+      const isEditedDoc =
+        matchAfter.length > matchBefore.length &&
+        matchAfter.startsWith(matchBefore) &&
+        text.startsWith(matchAfter, idx);
+      if (!isEditedDoc) {
+        const replaced = injectAt(
+          Array.from(text.slice(0, idx)).length,
+          Array.from(text.slice(0, idx + matchBefore.length)).length,
+          "replace",
+        );
+        if (replaced.injected) return replaced;
+      }
+    }
+  }
+
+  // Case B: the doc already contains edited content; wrap `after` as inserted.
+  if (matchAfter.length > 0) {
+    const text = viewSpansOffsetText(spans);
+    const idxAfter = text.indexOf(matchAfter);
+    if (idxAfter >= 0) {
+      const inserted = injectAt(
+        Array.from(text.slice(0, idxAfter)).length,
+        Array.from(text.slice(0, idxAfter + matchAfter.length)).length,
+        "insert",
+      );
+      if (inserted.injected) return inserted;
+    }
+  }
+
+  // Case C: pure deletion marker.
+  if (matchAfter === "" && matchBefore !== "") {
+    const text = viewSpansOffsetText(spans);
+    const zwsIdx = text.indexOf("​");
+    if (zwsIdx >= 0) {
+      const deleted = injectAt(
+        Array.from(text.slice(0, zwsIdx)).length,
+        Array.from(text.slice(0, zwsIdx + 1)).length,
+        "replace",
+      );
+      if (deleted.injected) return deleted;
+    }
+  }
+
+  return { spans, injected: false };
+}
+
+function isPatchSpan(span: ViewDocSpan): boolean {
+  return (
+    span.kind === "patchDel" ||
+    span.kind === "patchIns" ||
+    span.kind === "patchDelMath" ||
+    span.kind === "patchInsMath" ||
+    span.kind === "patchMark"
+  );
+}
+
+function splitSpansAt(spans: readonly ViewDocSpan[], offset: number): { left: ViewDocSpan[]; right: ViewDocSpan[] } | null {
+  if (offset <= 0) return { left: [], right: cloneSpans(spans) };
+  let remaining = offset;
+  const left: ViewDocSpan[] = [];
+  for (let i = 0; i < spans.length; i += 1) {
+    const span = spans[i]!;
+    const len = Array.from(viewDocSpanOffsetText(span)).length;
+    if (remaining === len) {
+      return { left: [...left, { ...span }], right: cloneSpans(spans.slice(i + 1)) };
+    }
+    if (remaining < len) {
+      const split = splitSpanAt(span, remaining);
+      if (!split) return null;
+      return {
+        left: [...left, ...split.left],
+        right: [...split.right, ...cloneSpans(spans.slice(i + 1))],
+      };
+    }
+    left.push({ ...span });
+    remaining -= len;
+  }
+  return remaining === 0 ? { left, right: [] } : null;
+}
+
+function splitSpanAt(span: ViewDocSpan, offset: number): { left: ViewDocSpan[]; right: ViewDocSpan[] } | null {
+  if (offset <= 0) return { left: [], right: [{ ...span }] };
+  if (span.kind !== "text" && span.kind !== "patchIns" && span.kind !== "patchDel" && span.kind !== "patchMark" && span.kind !== "selectable") {
+    return offset === 1 ? { left: [{ ...span }], right: [] } : null;
+  }
+  const chars = Array.from(span.text);
+  if (offset >= chars.length) return { left: [{ ...span }], right: [] };
+  const leftText = chars.slice(0, offset).join("");
+  const rightText = chars.slice(offset).join("");
+  const left = leftText ? [{ ...span, text: leftText } as ViewDocSpan] : [];
+  const right = rightText ? [{ ...span, text: rightText } as ViewDocSpan] : [];
+  return { left, right };
 }
 
 function spliceMarkSpans(
   spans: ViewDocSpan[],
   patch: PatchOverlayInput & { kind: "markAdd" | "markRemove" },
 ): { spans: ViewDocSpan[]; injected: boolean } {
-  const out: ViewDocSpan[] = [];
-  let injected = false;
-  for (const s of spans) {
-    if (injected || s.kind !== "text") {
-      out.push(s);
-      continue;
+  const matchBefore = patch.matchBefore ?? patch.before;
+  const injectAt = (start: number, end: number): { spans: ViewDocSpan[]; injected: boolean } => {
+    const splitStart = splitSpansAt(spans, start);
+    if (!splitStart) return { spans, injected: false };
+    const splitEnd = splitSpansAt(splitStart.right, end - start);
+    if (!splitEnd) return { spans, injected: false };
+    if (splitEnd.left.some(isPatchSpan)) return { spans, injected: false };
+    if (viewSpansOffsetText(splitEnd.left) !== matchBefore) return { spans, injected: false };
+    if (splitEnd.left.some((span) => span.kind === "math" || span.kind === "patchInsMath" || span.kind === "patchDelMath")) {
+      return { spans, injected: false };
     }
-
-    const injectAt = (start: number, end: number) => {
-      const chars = Array.from(s.text);
-      const head = chars.slice(0, start).join("");
-      const body = chars.slice(start, end).join("");
-      const tail = chars.slice(end).join("");
-      if (body.length === 0) return false;
-      if (head.length > 0) out.push({ kind: "text", text: head });
-      out.push({
-        kind: "patchMark",
-        text: body,
-        patchId: patch.id,
-        op: patch.kind,
-        marks: patch.marks ?? [],
-        label: patch.label ?? markActionLabel(patch.kind, patch.marks ?? []),
-      });
-      if (tail.length > 0) out.push({ kind: "text", text: tail });
-      injected = true;
-      return true;
+    const body = viewSpansText(splitEnd.left);
+    if (body.length === 0) return { spans, injected: false };
+    return {
+      spans: [
+        ...splitStart.left,
+        {
+          kind: "patchMark",
+          text: body,
+          patchId: patch.id,
+          op: patch.kind,
+          marks: patch.marks ?? [],
+          label: patch.label ?? markActionLabel(patch.kind, patch.marks ?? []),
+        },
+        ...splitEnd.right,
+      ],
+      injected: true,
     };
+  };
 
-    if (patch.range) {
-      const chars = Array.from(s.text);
-      const start = Math.max(0, Math.min(patch.range.start, chars.length));
-      const end = Math.max(start, Math.min(patch.range.end, chars.length));
-      const rangedBefore = chars.slice(start, end).join("");
-      if (rangedBefore === patch.before && injectAt(start, end)) continue;
-    }
-
-    if (patch.before.length > 0) {
-      const idx = s.text.indexOf(patch.before);
-      if (idx >= 0) {
-        const start = codeUnitOffsetToCharIndex(s.text, idx);
-        const end = start + Array.from(patch.before).length;
-        if (injectAt(start, end)) continue;
-      }
-    }
-
-    out.push(s);
+  if (patch.range) {
+    const textLength = Array.from(viewSpansOffsetText(spans)).length;
+    const start = Math.max(0, Math.min(patch.range.start, textLength));
+    const end = Math.max(start, Math.min(patch.range.end, textLength));
+    const ranged = injectAt(start, end);
+    if (ranged.injected) return ranged;
   }
-  return { spans: out, injected };
+
+  if (matchBefore.length > 0) {
+    const text = viewSpansOffsetText(spans);
+    const idx = text.indexOf(matchBefore);
+    if (idx >= 0) {
+      const matched = injectAt(
+        Array.from(text.slice(0, idx)).length,
+        Array.from(text.slice(0, idx + matchBefore.length)).length,
+      );
+      if (matched.injected) return matched;
+    }
+  }
+
+  return { spans, injected: false };
 }
 
 type DiffBackedSuggestion = WireDocSuggestion & { diffHunk?: DiffHunk };

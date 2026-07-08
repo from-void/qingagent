@@ -26,6 +26,7 @@ type FlatTextUnit = {
   from: number;
   to: number;
   marks: PmMark[];
+  inlineMathLatex?: string;
 };
 
 type MarkGroup = {
@@ -362,6 +363,20 @@ function appendMatchedBlockHunks(input: {
   const baseText = inlineText(baseBlock.content);
   const draftText = inlineText(draftBlock.content);
   if (baseText === draftText) {
+    appendInlineAtomReplaceHunks({
+      baseBlock,
+      draftBlock,
+      baseIndex: input.baseIndex,
+      draftIndex: input.draftIndex,
+      textStart: input.textStart,
+      overlapRatio: input.overlapRatio,
+      hunks: input.hunks,
+      baseText,
+      draftText,
+      baseFrom: 0,
+      draftFrom: 0,
+      length: baseText.length,
+    });
     appendMarkHunks({
       baseBlock,
       draftBlock,
@@ -408,6 +423,20 @@ function appendMatchedBlockHunks(input: {
   for (const [op, text] of diffs) {
     if (op === DiffMatchPatch.DIFF_EQUAL) {
       flushPending();
+      appendInlineAtomReplaceHunks({
+        baseBlock,
+        draftBlock,
+        baseIndex: input.baseIndex,
+        draftIndex: input.draftIndex,
+        textStart: input.textStart,
+        overlapRatio: input.overlapRatio,
+        hunks: input.hunks,
+        baseText,
+        draftText,
+        baseFrom: baseOffset,
+        draftFrom: draftOffset,
+        length: text.length,
+      });
       appendMarkHunks({
         baseBlock,
         draftBlock,
@@ -434,6 +463,109 @@ function appendMatchedBlockHunks(input: {
   }
 
   flushPending();
+}
+
+function appendInlineAtomReplaceHunks(input: {
+  baseBlock: InlineTextBlock;
+  draftBlock: InlineTextBlock;
+  baseIndex: number;
+  draftIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  hunks: DiffHunk[];
+  baseText: string;
+  draftText: string;
+  baseFrom: number;
+  draftFrom: number;
+  length: number;
+}): void {
+  if (input.length <= 0) return;
+  const baseUnits = flattenInlineUnits(input.baseBlock.content);
+  const draftUnits = flattenInlineUnits(input.draftBlock.content);
+  let baseOffset = input.baseFrom;
+  let draftOffset = input.draftFrom;
+  const baseEnd = input.baseFrom + input.length;
+  while (baseOffset < baseEnd) {
+    const baseUnit = unitAtOffset(baseUnits, baseOffset);
+    const draftUnit = unitAtOffset(draftUnits, draftOffset);
+    if (!baseUnit || !draftUnit) break;
+    const unitLength = baseUnit.to - baseUnit.from;
+    if (
+      baseUnit.text === "￼" &&
+      draftUnit.text === "￼" &&
+      baseUnit.inlineMathLatex !== undefined &&
+      draftUnit.inlineMathLatex !== undefined &&
+      baseUnit.inlineMathLatex !== draftUnit.inlineMathLatex
+    ) {
+      const hunk = createInlineAtomReplaceHunk({
+        baseBlock: input.baseBlock,
+        draftBlock: input.draftBlock,
+        baseIndex: input.baseIndex,
+        draftIndex: input.draftIndex,
+        textStart: input.textStart,
+        overlapRatio: input.overlapRatio,
+        baseText: input.baseText,
+        draftText: input.draftText,
+        baseFrom: baseOffset,
+        baseTo: baseOffset + unitLength,
+        draftFrom: draftOffset,
+        draftTo: draftOffset + (draftUnit.to - draftUnit.from),
+      });
+      if (hunk) input.hunks.push(hunk);
+    }
+    baseOffset += unitLength;
+    draftOffset += draftUnit.to - draftUnit.from;
+  }
+}
+
+function createInlineAtomReplaceHunk(input: {
+  baseBlock: InlineTextBlock;
+  draftBlock: InlineTextBlock;
+  baseIndex: number;
+  draftIndex: number;
+  textStart: number;
+  overlapRatio: number;
+  baseText: string;
+  draftText: string;
+  baseFrom: number;
+  baseTo: number;
+  draftFrom: number;
+  draftTo: number;
+}): DiffHunk {
+  const before = inlineSliceAsNodes(input.baseBlock, input.baseFrom, input.baseTo);
+  const after = inlineSliceAsNodes(input.draftBlock, input.draftFrom, input.draftTo);
+  const beforeText = input.baseText.slice(input.baseFrom, input.baseTo);
+  const afterText = input.draftText.slice(input.draftFrom, input.draftTo);
+  const hunkId = createHunkId(
+    "replace-inline-atom",
+    input.baseIndex,
+    input.draftIndex,
+    input.baseFrom,
+    input.baseTo,
+    getStablePmJson(before),
+    getStablePmJson(after),
+  );
+  return createUngroupedHunk({
+    hunkId,
+    op: "replace",
+    blockPath: [input.baseIndex],
+    anchor: {
+      blockId: input.baseBlock.attrs.blockId,
+      quoteBefore: beforeText,
+      quoteAfter: afterText,
+      pmFrom: input.textStart + input.baseFrom,
+      pmTo: input.textStart + input.baseTo,
+      anchorKind: "range",
+    },
+    before,
+    after,
+    beforeText,
+    afterText,
+    beforeBlock: cloneValue(input.baseBlock) as DiffHunk["beforeBlock"],
+    afterBlock: cloneValue(input.draftBlock) as DiffHunk["afterBlock"],
+    summary: "替换行内公式",
+    overlapRatio: input.overlapRatio,
+  });
 }
 
 function appendMarkHunks(input: {
@@ -801,7 +933,7 @@ function flattenInlineUnits(content: readonly PmInlineNode[] | undefined): FlatT
     }
     // inlineMath 原子节点:占 1 个单位,文本投影用 U+FFFC 占位(与 PM nodeSize 一致)。
     if (node.type === "inlineMath") {
-      units.push({ text: "￼", from: offset, to: offset + 1, marks: [] });
+      units.push({ text: "￼", from: offset, to: offset + 1, marks: [], inlineMathLatex: node.attrs.latex });
       offset += 1;
       continue;
     }

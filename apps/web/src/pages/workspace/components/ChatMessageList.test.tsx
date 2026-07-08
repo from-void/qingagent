@@ -399,7 +399,7 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("采纳 1 处 · 拒绝 1 处");
   });
 
-  it("用户回流的问卷答案卡复用 BigPlanPanel 样式类且不套用户气泡", async () => {
+  it("用户回流的问卷答案卡使用自有紧凑结构且不套用户气泡", async () => {
     const messages: ChatMessage[] = [
       {
         id: "m-ask-answer",
@@ -431,10 +431,11 @@ describe("ChatMessageList", () => {
     await render(<ChatMessageList messages={messages} streamActive={false} />);
 
     const card = host?.querySelector<HTMLElement>('[data-wf="AskUserAnswerCard"]');
-    expect(card?.classList.contains("bigplan-panel")).toBe(true);
-    expect(card?.querySelector(".bp-head h2")?.textContent).toBe("已提交写作方向问卷");
-    expect(card?.querySelector(".bp-q")).not.toBeNull();
-    expect(card?.querySelector(".bp-opt.on")?.textContent).toContain("更克制");
+    expect(card?.classList.contains("bigplan-panel")).toBe(false);
+    expect(card?.querySelector(".askuser-answer-head h2")?.textContent).toBe("已提交写作方向问卷");
+    expect(card?.querySelector(".askuser-answer-item")).not.toBeNull();
+    expect(card?.querySelector(".askuser-answer-opt")?.textContent).toContain("更克制");
+    expect(card?.querySelector(".bp-head, .bp-body, .bp-q, .bp-opt")).toBeNull();
     expect(card?.closest(".wf-msg.user")).toBeNull();
     expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../data/protocol";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
+import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 
 // round-1 真机端到端发现的根因回归:生成的图表在编辑器里显示成代码块。
 // 根因是 PM→ViewBlock 把 diagram 降级成 code,而编辑器经 viewSectionsToHtml(sections)
@@ -27,5 +28,28 @@ describe("ViewBlock 保留 diagram(不降级为 code)", () => {
     expect(dg && dg.kind === "diagram" ? dg.source : "").toContain("flowchart TD");
     // pmDoc 原样(编辑器优先用 pmDoc)
     expect(snap.pmDoc?.content.some((b) => b.type === "diagram")).toBe(true);
+  });
+});
+
+describe("viewSectionsToHtml 审阅态行内 patch 保真", () => {
+  it("quote 带 patch inlineMath 时不被原始 pm 节点序列化吞掉", () => {
+    const latex = String.raw`\sqrt{\sigma^{}} & x < y`;
+    const html = viewSectionsToHtml([{
+      kind: "quote",
+      text: "旧引文",
+      node: {
+        type: "blockquote",
+        attrs: { blockId: "q-node" },
+        content: [{ type: "paragraph", attrs: { blockId: "q-p" }, content: [{ type: "text", text: "旧引文" }] }],
+      } as PmBlockNode,
+      spans: [
+        { kind: "text", text: "引用 " },
+        { kind: "patchInsMath", latex, patchId: "q-math" },
+      ],
+    }]);
+
+    expect(html).toContain("data-type=\"inline-math\"");
+    expect(html).toContain("data-latex=\"\\sqrt{\\sigma^{}} &amp; x &lt; y\"");
+    expect(html).not.toContain("旧引文");
   });
 });

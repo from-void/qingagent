@@ -2,7 +2,7 @@ import React from "react";
 import type { PmMark } from "@qingagent/pm-schema";
 import type { ViewDocSpan } from "../../data/protocol";
 import type { PatchMeta } from "../DocumentSnapshotView";
-import { applyMarks } from "./PmStaticView";
+import { applyMarks, MathView } from "./PmStaticView";
 import {
   PatchFormatPopup,
   PatchHoverFrame,
@@ -71,10 +71,13 @@ export function renderMarkedText(text: string, marks?: readonly PmMark[]): React
         break;
       case "link":
         node = (
-          <a href={mark.attrs.href} target="_blank" rel="noreferrer">
+          <a href={mark.attrs.href} title={mark.attrs.title ?? undefined} target="_blank" rel="noopener noreferrer">
             {node}
           </a>
         );
+        break;
+      case "textColor":
+        node = <span data-text-color={mark.attrs.color}>{node}</span>;
         break;
     }
   }
@@ -97,13 +100,16 @@ export function SpanView({
     case "text": {
       return <>{renderMarkedText(span.text, span.marks)}</>;
     }
+    case "math": {
+      return <MathView latex={span.latex} />;
+    }
     case "patchDel": {
       const accepted = acceptedPatches.has(span.patchId);
       const rejected = rejectedPatches.has(span.patchId);
       if (!showPatches || accepted) return null;
-      if (rejected) return <>{span.text}</>;
+      if (rejected) return <>{renderMarkedText(span.text, span.marks)}</>;
       // 改动B:未入场的 patchDel 显示原文（baseline 态——删除标记尚未"演"出来）
-      if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return <>{span.text}</>;
+      if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return <>{renderMarkedText(span.text, span.marks)}</>;
 
       const meta = patchMeta?.get(span.patchId);
       const state = patchReviewState(meta, "delete");
@@ -137,10 +143,45 @@ export function SpanView({
         </PatchHoverFrame>
       );
     }
+    case "patchDelMath": {
+      const accepted = acceptedPatches.has(span.patchId);
+      const rejected = rejectedPatches.has(span.patchId);
+      if (!showPatches || accepted) return null;
+      if (rejected) return <MathView latex={span.latex} />;
+      if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return <MathView latex={span.latex} />;
+
+      const meta = patchMeta?.get(span.patchId);
+      const state = patchReviewState(meta, "delete");
+      const isBlockDeletion = meta?.kind === "delete";
+      const isPureDeletion = state === "delete";
+      if (!isBlockDeletion && !isPureDeletion) return null;
+
+      return (
+        <PatchHoverFrame
+          className={`wf-patch-del-marker${activePatchId === span.patchId ? " is-current" : ""}`}
+          patchId={span.patchId}
+          patchState="delete"
+          popup={(
+            <PatchStatePopup
+              state="delete"
+              index={meta?.index}
+              original={<MathView latex={span.latex} />}
+              patchId={span.patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
+        >
+          {revealCursors?.has(span.patchId) && (
+            <RevealCursor tone="red" lane={revealCursors.get(span.patchId)} />
+          )}
+          <span className="patch-del-cursor" />
+        </PatchHoverFrame>
+      );
+    }
     case "patchIns": {
       const accepted = acceptedPatches.has(span.patchId);
       const rejected = rejectedPatches.has(span.patchId);
-      if (!showPatches || accepted) return <>{span.text}</>;
+      if (!showPatches || accepted) return <>{renderMarkedText(span.text, span.marks)}</>;
       if (rejected) return null;
       // 改动B:未入场的 patchIns 隐藏新增（baseline 态——新增标记尚未"演"出来）
       if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return null;
@@ -172,7 +213,7 @@ export function SpanView({
 
       return (
         <>
-          {anchorPart}
+          {renderMarkedText(anchorPart, span.marks)}
         <PatchHoverFrame
           className={`${wrapClass}${isActive ? " is-current" : ""}`}
           patchId={span.patchId}
@@ -190,14 +231,49 @@ export function SpanView({
           {/* 审阅态所见≈应用后:新增只留低调绿色高亮,不再叠常显「新增」文字徽章
              (标注减负;需要标签/撤销时 hover 弹层里已有「#N · 新增」) */}
           <span className="wf-patch-ins">
-            {bodyText}
-            {headText && <span className="wf-patch-ins-head">{headText}</span>}
+            {renderMarkedText(bodyText, span.marks)}
+            {headText && <span className="wf-patch-ins-head">{renderMarkedText(headText, span.marks)}</span>}
           </span>
           {revealCursors?.has(span.patchId) && (
             <RevealCursor lane={revealCursors.get(span.patchId)} />
           )}
         </PatchHoverFrame>
         </>
+      );
+    }
+    case "patchInsMath": {
+      const accepted = acceptedPatches.has(span.patchId);
+      const rejected = rejectedPatches.has(span.patchId);
+      if (!showPatches || accepted) return <MathView latex={span.latex} />;
+      if (rejected) return null;
+      if (revealedPatchIds && !revealedPatchIds.has(span.patchId)) return null;
+
+      const meta = patchMeta?.get(span.patchId);
+      const isActive = activePatchId === span.patchId;
+      const state = patchReviewState(meta, "replace");
+      const wrapClass = state === "insert" ? "wf-patch-ins-wrap" : "wf-patch-replace-wrap";
+      return (
+        <PatchHoverFrame
+          className={`${wrapClass}${isActive ? " is-current" : ""}`}
+          patchId={span.patchId}
+          patchState={state}
+          popup={(
+            <PatchStatePopup
+              state={state}
+              index={meta?.index}
+              original={meta?.before ?? ""}
+              patchId={span.patchId}
+              onPatchVerdict={onPatchVerdict}
+            />
+          )}
+        >
+          <span className="wf-patch-ins">
+            <MathView latex={span.latex} />
+          </span>
+          {revealCursors?.has(span.patchId) && (
+            <RevealCursor lane={revealCursors.get(span.patchId)} />
+          )}
+        </PatchHoverFrame>
       );
     }
     case "patchMark": {

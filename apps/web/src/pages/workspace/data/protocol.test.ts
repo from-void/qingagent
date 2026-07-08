@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legacySectionsToPm, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import { legacySectionsToPm, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/bridge/proposalDiff.js";
 import {
@@ -11,6 +11,7 @@ import {
   suggestionToBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
   suggestionToPatchOverlay,
+  viewDocSpanText,
   wordDiffSegments,
   inlineWordDiffSpans,
   type PatchOverlayInput,
@@ -117,11 +118,23 @@ function pmText(text: string) {
   return { type: "text" as const, text };
 }
 
+function pmInlineMath(latex: string): PmInlineNode {
+  return { type: "inlineMath", attrs: { latex } };
+}
+
 function pmParagraph(blockId: string, text: string): PmBlockNode {
   return {
     type: "paragraph",
     attrs: { blockId },
     content: text ? [pmText(text)] : [],
+  };
+}
+
+function pmParagraphContent(blockId: string, content: PmInlineNode[]): PmBlockNode {
+  return {
+    type: "paragraph",
+    attrs: { blockId },
+    content,
   };
 }
 
@@ -231,6 +244,51 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
     // text 投影仍含两列内容,供锚点回退 / 块级 patch 文本派生
     expect(columnSection.text).toContain("左栏标题");
     expect(columnSection.text).toContain("右栏列表");
+  });
+
+  it("行内公式保留为 math span,不再拍平成 latex 文本", () => {
+    const latex = String.raw`\sqrt{\sigma^{}} & x < y`;
+    const snapshot = pmDocToViewDocumentSnapshot(pmDoc([
+      pmParagraphContent("p-math", [
+        pmText("标准差 "),
+        pmInlineMath(latex),
+        pmText(" 说明"),
+      ]),
+      {
+        type: "bulletList",
+        attrs: { blockId: "list-math" },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "li-math" },
+          content: [pmParagraphContent("li-math-p", [pmText("列表 "), pmInlineMath(latex)])],
+        }],
+      } as PmBlockNode,
+      {
+        type: "table",
+        attrs: { blockId: "tbl-math" },
+        content: [{
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [pmParagraphContent("tbl-math-c", [pmText("单元格 "), pmInlineMath(latex)])],
+          }],
+        }],
+      } as PmBlockNode,
+    ]), 1, "t");
+
+    const paragraph = snapshot.sections[0] as Extract<ViewBlock, { kind: "p" }>;
+    expect(paragraph.spans).toEqual([
+      { kind: "text", text: "标准差 " },
+      { kind: "math", latex },
+      { kind: "text", text: " 说明" },
+    ]);
+    expect(paragraph.spans.map(viewDocSpanText).join("")).toBe(`标准差 ${latex} 说明`);
+
+    const list = snapshot.sections[1] as Extract<ViewBlock, { kind: "list" }>;
+    expect(list.itemSpans?.[0]).toContainEqual({ kind: "math", latex });
+
+    const table = snapshot.sections[2] as Extract<ViewBlock, { kind: "table" }>;
+    expect(table.rowSpans?.[0]?.[0]).toContainEqual({ kind: "math", latex });
   });
 });
 
@@ -436,6 +494,45 @@ describe("derivePatchPresentation — 单一真相源", () => {
       expect(section.spans.some((span) => span.kind === "patchMark")).toBe(false);
     }
     assertInternallyConsistent(result);
+  });
+
+  it("行内公式作为原子参与 draft diff:新增/删除/替换都注入 math patch span", () => {
+    const latex = String.raw`\sqrt{\sigma^{}} & x < y`;
+    const nextLatex = String.raw`\frac{a}{b}`;
+    const cases = [
+      {
+        id: "math-insert",
+        base: pmDoc([pmParagraphContent("p-math-insert", [pmText("公式 "), pmText(" 完成")])]),
+        draft: pmDoc([pmParagraphContent("p-math-insert", [pmText("公式 "), pmInlineMath(latex), pmText(" 完成")])]),
+        expectedKinds: ["patchInsMath"],
+      },
+      {
+        id: "math-delete",
+        base: pmDoc([pmParagraphContent("p-math-delete", [pmText("公式 "), pmInlineMath(latex), pmText(" 完成")])]),
+        draft: pmDoc([pmParagraphContent("p-math-delete", [pmText("公式 "), pmText(" 完成")])]),
+        expectedKinds: ["patchDelMath"],
+      },
+      {
+        id: "math-replace",
+        base: pmDoc([pmParagraphContent("p-math-replace", [pmText("公式 "), pmInlineMath(latex), pmText(" 完成")])]),
+        draft: pmDoc([pmParagraphContent("p-math-replace", [pmText("公式 "), pmInlineMath(nextLatex), pmText(" 完成")])]),
+        expectedKinds: ["patchDelMath", "patchInsMath"],
+      },
+    ] as const;
+
+    for (const item of cases) {
+      const hunks = buildDraftDiff(item.base, item.draft, { baseVersion: 1 });
+      expect(hunks).toHaveLength(1);
+      const doc = pmDocToViewDocumentSnapshot(item.base, 1, "t");
+      const overlay = suggestionToPatchOverlay(doc, blockSuggestion(item.id, hunks[0]!), 0);
+      expect(overlay).not.toBeNull();
+      const result = derivePatchPresentation(doc, overlay ? [overlay] : []);
+      expect(result.droppedIds).toEqual([]);
+      const section = result.doc.sections[0] as Extract<ViewBlock, { kind: "p" }>;
+      expect(item.expectedKinds.every((kind) => section.spans.some((span) => span.kind === kind))).toBe(true);
+      expect(section.spans.some((span) => span.kind === "patchIns" && span.text.includes("\\sqrt"))).toBe(false);
+      assertInternallyConsistent(result);
+    }
   });
 
   it("editDraft 标题 suggestion 能渲染为可见审批组,避免 pendingReview 0 处死锁", () => {
@@ -854,6 +951,50 @@ describe("derivePatchPresentation — 单一真相源", () => {
     assertInternallyConsistent(result);
   });
 
+  it("块级 patch clone 保留 heading textAlign 与 diagram overlay", () => {
+    const doc = pmDocToViewDocumentSnapshot(pmDoc([pmParagraph("anchor", "锚点")]), 1, "t");
+    const overlay = { positions: { A: { x: 12, y: 24 } } };
+    const hunk: DiffHunk = {
+      hunkId: "insert-fidelity-blocks",
+      reviewBatchId: "insert-fidelity-blocks",
+      groupMode: "independent",
+      op: "insert",
+      blockPath: [0],
+      anchor: { blockId: "anchor", anchorKind: "position", gravity: "after" },
+      before: null,
+      after: [
+        {
+          type: "heading",
+          attrs: { blockId: "insert-heading", level: 2, textAlign: "center" },
+          content: [{ type: "text", text: "居中标题" }],
+        },
+        {
+          type: "diagram",
+          attrs: {
+            blockId: "insert-diagram",
+            lang: "flowchart",
+            source: "graph TD; A-->B",
+            svg: null,
+            overlay,
+          },
+        },
+      ] as never,
+      summary: "插入保真块",
+      afterText: "居中标题\ngraph TD; A-->B",
+    };
+    const input = suggestionToBlockPatchInput(blockSuggestion("insert-fidelity-blocks", hunk), 0);
+    const result = derivePatchPresentation(doc, [], input ? [input] : []);
+
+    const heading = result.doc.sections[1] as Extract<ViewBlock, { kind: "h2" }>;
+    expect(heading.kind).toBe("h2");
+    expect(heading.textAlign).toBe("center");
+
+    const diagram = result.doc.sections[2] as Extract<ViewBlock, { kind: "diagram" }>;
+    expect(diagram.kind).toBe("diagram");
+    expect(diagram.overlay).toEqual(overlay);
+    assertInternallyConsistent(result);
+  });
+
   it("R31 回归:insert + delete 混合时 delete 原位标记,insert 仍按 base blockPath 定位", () => {
     const doc = pmDocToViewDocumentSnapshot(pmDoc([
       pmParagraph("ai-block-a", "A"),
@@ -1140,7 +1281,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
   function tableRowPlainText(
     row: NonNullable<Extract<ViewBlock, { kind: "table" }>["cellDiff"]>[number] | undefined,
   ): string {
-    return row?.cells.map((cell) => cell.spans.map((span) => span.text).join("")).join("\t") ?? "";
+    return row?.cells.map((cell) => cell.spans.map(viewDocSpanText).join("")).join("\t") ?? "";
   }
 
   it("表格单元格/列表项保留行内样式 spans——审阅态链接可点、加粗可见,与正式态一致", () => {

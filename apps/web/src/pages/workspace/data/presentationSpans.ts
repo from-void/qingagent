@@ -1,3 +1,4 @@
+import { viewDocSpanText } from "./protocol";
 import type { ViewBlock } from "./protocol";
 
 type SegmenterCtor = new (
@@ -32,11 +33,11 @@ export function sectionText(section: ViewBlock): string {
     case "h5":
     case "h6":
     case "quote":
-      return section.spans ? section.spans.map((span) => span.text).join("") : section.text;
+      return section.spans ? section.spans.map(viewDocSpanText).join("") : section.text;
     case "penNote":
-      return section.spans ? section.spans.map((span) => span.text).join("") : section.text;
+      return section.spans ? section.spans.map(viewDocSpanText).join("") : section.text;
     case "p":
-      return section.spans.map((span) => span.text).join("");
+      return section.spans.map(viewDocSpanText).join("");
     case "list":
       return section.items.join("\n");
     case "hr":

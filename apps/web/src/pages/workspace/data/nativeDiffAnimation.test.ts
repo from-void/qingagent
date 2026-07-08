@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { legacySectionsToPm, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import {
   advanceNativeConcurrentState,
   buildNativeDiffInstructions,
@@ -126,6 +126,70 @@ describe("native PM presentation animation", () => {
 
     expect(sectionText(run.finalSections[0]!)).toBe("正文");
     expect(sectionText(cloned.finalSections[0]!)).toBe("修改");
+  });
+
+  it("cloneNativePresentationRun 保留 quote node 与容器内部 diff,避免动画路径降级", () => {
+    const latex = String.raw`\sqrt{\sigma^{}}`;
+    const quoteNode: PmBlockNode = {
+      type: "blockquote",
+      attrs: { blockId: "quote-native" },
+      content: [{ type: "paragraph", attrs: { blockId: "quote-native-p" }, content: [{ type: "text", text: "引文" }] }],
+    } as PmBlockNode;
+    const calloutNode: PmBlockNode = {
+      type: "callout",
+      attrs: { blockId: "callout-native", emoji: "💡", tone: "info" },
+      content: [{ type: "paragraph", attrs: { blockId: "callout-native-p" }, content: [{ type: "text", text: "公式 old" }] }],
+    } as PmBlockNode;
+    const run: NativePresentationRun = {
+      id: 11,
+      docVersion: 2,
+      sessionId: "s",
+      mode: "diff",
+      baselineSections: [],
+      finalSections: [
+        { kind: "quote", text: "引文", node: quoteNode, spans: [{ kind: "text", text: "引文" }] },
+        {
+          kind: "callout",
+          text: "公式 old",
+          node: calloutNode,
+          bodyDiff: [{
+            status: "changed",
+            kind: "list",
+            node: {
+              type: "bulletList",
+              attrs: { blockId: "list-native" },
+              content: [{
+                type: "listItem",
+                attrs: { blockId: "li-native" },
+                content: [{ type: "paragraph", attrs: { blockId: "li-native-p" }, content: [] }],
+              }],
+            } as PmBlockNode,
+            rowDiff: [{
+              status: "changed",
+              oldText: "公式 old",
+              spans: [{ kind: "patchInsMath", latex, patchId: "native-math" }],
+            }],
+          }],
+        },
+      ],
+    };
+
+    const cloned = cloneNativePresentationRun(run);
+    const clonedQuote = cloned.finalSections[0] as Extract<ViewBlock, { kind: "quote" }>;
+    const clonedCallout = cloned.finalSections[1] as Extract<ViewBlock, { kind: "callout" }>;
+    expect(clonedQuote.node).toEqual(quoteNode);
+    expect(clonedQuote.node).not.toBe(quoteNode);
+    const clonedEntry = clonedCallout.bodyDiff?.[0];
+    expect(clonedEntry?.status).toBe("changed");
+    expect(clonedEntry?.status === "changed" ? clonedEntry.kind : null).toBe("list");
+
+    const row = clonedEntry?.status === "changed" && clonedEntry.kind === "list" ? clonedEntry.rowDiff[0] : null;
+    const span = row?.status === "changed" ? row.spans[0] : null;
+    if (span?.kind === "patchInsMath") span.latex = "changed";
+    const originalCallout = run.finalSections[1] as Extract<ViewBlock, { kind: "callout" }>;
+    const originalEntry = originalCallout.bodyDiff?.[0];
+    const originalRow = originalEntry?.status === "changed" && originalEntry.kind === "list" ? originalEntry.rowDiff[0] : null;
+    expect(originalRow?.status === "changed" ? originalRow.spans[0] : null).toEqual({ kind: "patchInsMath", latex, patchId: "native-math" });
   });
 
   it("creates concurrent whole-document tasks and advances them", () => {

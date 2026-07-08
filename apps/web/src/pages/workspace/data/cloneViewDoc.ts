@@ -16,7 +16,7 @@ export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
       case "p":
         return { ...meta, kind: "p", spans: section.spans.map((span) => ({ ...span })), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
       case "quote":
-        return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+        return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.node ? { node: section.node } : {}) };
       case "list":
         return {
           ...meta,

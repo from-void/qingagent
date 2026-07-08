@@ -138,7 +138,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
   }
 }
 
-function MathView({ latex, display }: { latex: string; display?: boolean }) {
+export function MathView({ latex, display }: { latex: string; display?: boolean }) {
   const html = useMemo(() => {
     try {
       return katex.renderToString(latex, { displayMode: display === true, throwOnError: false });
@@ -190,7 +190,7 @@ export function applyMarks(text: string, marks: PmMark[]): React.ReactNode {
       case "code":
         return <code className="inline-code">{child}</code>;
       case "link":
-        return <a href={mark.attrs.href} title={mark.attrs.title ?? undefined}>{child}</a>;
+        return <a href={mark.attrs.href} title={mark.attrs.title ?? undefined} target="_blank" rel="noopener noreferrer">{child}</a>;
       case "textColor":
         return <span data-text-color={mark.attrs.color}>{child}</span>;
       case "highlight":
@@ -199,6 +199,12 @@ export function applyMarks(text: string, marks: PmMark[]): React.ReactNode {
   }, text);
 }
 
-export function pmInlineText(content: readonly { type: string; text?: string }[]): string {
-  return content.map((node) => (node.type === "hardBreak" ? "\n" : node.text ?? "")).join("");
+export function pmInlineText(content: readonly { type: string; text?: string; attrs?: { latex?: string } }[]): string {
+  return content
+    .map((node) => {
+      if (node.type === "hardBreak") return "\n";
+      if (node.type === "inlineMath") return node.attrs?.latex ?? "";
+      return node.text ?? "";
+    })
+    .join("");
 }

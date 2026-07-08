@@ -874,7 +874,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
     case "p":
       return { ...meta, kind: "p", spans: section.spans.map((span) => ({ ...span })), ...(section.textAlign ? { textAlign: section.textAlign } : {}) };
     case "quote":
-      return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}) };
+      return { ...meta, kind: "quote", text: section.text, ...(section.spans ? { spans: section.spans.map((span) => ({ ...span })) } : {}), ...(section.node ? { node: cloneJson(section.node) } : {}) };
     case "list":
       return {
         ...meta,
@@ -883,6 +883,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         ...(section.start != null ? { start: section.start } : {}),
         items: section.items.slice(),
         ...(section.itemSpans ? { itemSpans: section.itemSpans.map((spans) => spans.map((sp) => ({ ...sp }))) } : {}),
+        ...(section.rowDiff ? { rowDiff: cloneJson(section.rowDiff) } : {}),
       };
     case "hr":
       return { ...meta, kind: "hr" };
@@ -898,6 +899,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         ...(section.rowSpans
           ? { rowSpans: section.rowSpans.map((row) => row.map((spans) => spans.map((sp) => ({ ...sp })))) }
           : {}),
+        ...(section.cellDiff ? { cellDiff: cloneJson(section.cellDiff) } : {}),
       };
     case "code":
       return { ...meta, kind: "code", body: section.body, language: section.language ?? null };
@@ -926,11 +928,11 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         size: section.size,
       };
     case "taskList":
-      return { ...meta, kind: "taskList", node: section.node, text: section.text };
+      return { ...meta, kind: "taskList", node: cloneJson(section.node), text: section.text, ...(section.rowDiff ? { rowDiff: cloneJson(section.rowDiff) } : {}) };
     case "callout":
-      return { ...meta, kind: "callout", node: section.node, text: section.text };
+      return { ...meta, kind: "callout", node: cloneJson(section.node), text: section.text, ...(section.bodyDiff ? { bodyDiff: cloneJson(section.bodyDiff) } : {}) };
     case "columnList":
-      return { ...meta, kind: "columnList", node: section.node, text: section.text };
+      return { ...meta, kind: "columnList", node: cloneJson(section.node), text: section.text, ...(section.columnsDiff ? { columnsDiff: cloneJson(section.columnsDiff) } : {}) };
     case "math":
       return { ...meta, kind: "math", node: section.node, latex: section.latex };
   }

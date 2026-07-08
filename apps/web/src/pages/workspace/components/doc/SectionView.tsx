@@ -4,8 +4,8 @@ import type { PatchMeta } from "../DocumentSnapshotView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
 import { ReadonlyImageFigure } from "../ImageView";
 import type { ViewBlock, ViewBlockSeqDiff, ViewDocSpan, ViewListRowDiff, ViewTableRowDiff } from "../../data/protocol";
-import { wordDiffSegments } from "../../data/protocol";
-import { PmBlockView, pmInlineText, textAlignStyle } from "./PmStaticView";
+import { viewDocSpanText, wordDiffSegments } from "../../data/protocol";
+import { MathView, PmBlockView, pmInlineText, textAlignStyle } from "./PmStaticView";
 import { PatchHoverBlockFrame, PatchHoverFrame, PatchPopupActions, PatchStatePopup, renderOriginalDiff } from "./patchHover";
 import { renderMarkedText, SpanView } from "./SpanView";
 
@@ -54,25 +54,43 @@ function cleanReplaceReviewBlock(section: ViewBlock): ViewBlock {
     };
   }
   if (section.kind === "callout") {
-    return { ...meta, kind: "callout", node: section.node, text: section.text };
+    return { ...meta, kind: "callout", node: section.node, text: section.text, ...(section.bodyDiff ? { bodyDiff: section.bodyDiff } : {}) };
   }
   if (section.kind === "columnList") {
-    return { ...meta, kind: "columnList", node: section.node, text: section.text };
+    return { ...meta, kind: "columnList", node: section.node, text: section.text, ...(section.columnsDiff ? { columnsDiff: section.columnsDiff } : {}) };
   }
   return { ...section, blockPatch: undefined };
 }
 
 function rowDiffText(row: ViewListRowDiff): string {
   if (row.status === "removed") return row.oldText;
-  return row.spans.map((span) => span.text).join("");
+  return row.spans.map(viewDocSpanText).join("");
 }
 
 function tableCellDiffText(cell: ViewTableRowDiff["cells"][number]): string {
-  return cell.spans.map((span) => span.text).join("");
+  return cell.spans.map(viewDocSpanText).join("");
 }
 
 function tableRowDiffText(row: ViewTableRowDiff): string {
   return row.cells.map(tableCellDiffText).join("\t");
+}
+
+function hasInlinePatchSpan(spans: readonly ViewDocSpan[] | undefined): boolean {
+  return spans?.some((span) =>
+    span.kind === "patchDel" ||
+    span.kind === "patchIns" ||
+    span.kind === "patchDelMath" ||
+    span.kind === "patchInsMath" ||
+    span.kind === "patchMark",
+  ) ?? false;
+}
+
+function hasMathSpan(spans: readonly ViewDocSpan[]): boolean {
+  return spans.some((span) =>
+    span.kind === "math" ||
+    span.kind === "patchDelMath" ||
+    span.kind === "patchInsMath",
+  );
 }
 
 function pmCellPlainText(cell: PmTableCellNode): string {
@@ -123,9 +141,14 @@ function renderRowDiffInlineSpans(spans: readonly ViewDocSpan[]): React.ReactNod
     switch (span.kind) {
       case "text":
         return <React.Fragment key={i}>{renderMarkedText(span.text, span.marks)}</React.Fragment>;
+      case "math":
+        return <MathView key={i} latex={span.latex} />;
       case "patchIns":
-        return <span key={i} className="wf-patch-ins">{span.text}</span>;
+        return <span key={i} className="wf-patch-ins">{renderMarkedText(span.text, span.marks)}</span>;
+      case "patchInsMath":
+        return <span key={i} className="wf-patch-ins"><MathView latex={span.latex} /></span>;
       case "patchDel":
+      case "patchDelMath":
         return null;
       case "patchMark":
         return <React.Fragment key={i}>{renderMarkedText(span.text, span.marks)}</React.Fragment>;
@@ -209,6 +232,7 @@ export const SectionView = React.memo(function SectionView({
     !acceptedPatches.has(blockPatch.patchId) &&
     !rejectedPatches.has(blockPatch.patchId) &&
     (!revealedPatchIds || revealedPatchIds.has(blockPatch.patchId));
+  const canRenderNestedReplaceDiff = replacePatchActive && !blockPatch?.beforeBlock;
 
   // 块级改动呈现原则(用户确认):改动一律就近、行内显示。
   // - 文字块(标题/段落/引用/批注):整块新增/删除已由 withBlockPatch 把整段文本投影成
@@ -385,6 +409,32 @@ export const SectionView = React.memo(function SectionView({
     return <>{out}</>;
   };
 
+  const renderInlineDiffWithRichSpans = (oldText: string, spans: readonly ViewDocSpan[]): React.ReactNode => {
+    const newText = spans.map(viewDocSpanText).join("");
+    if (!hasMathSpan(spans)) return renderInlineDiffWithHovers(oldText, newText);
+    const patchId = blockPatch?.patchId;
+    if (!patchId) return <>{renderRowDiffInlineSpans(spans)}</>;
+    const popupIndex = patchMeta?.get(patchId)?.index;
+    const isActive = activePatchId === patchId;
+    const state = oldText ? "replace" : "insert";
+    const className = state === "insert" ? "wf-patch-ins-wrap" : "wf-patch-replace-wrap";
+    return (
+      <PatchHoverFrame
+        className={`${className}${isActive ? " is-current" : ""}`}
+        patchId={patchId}
+        patchState={state}
+        popup={
+          <>
+            <span className="patch-popup-num">#{popupIndex ?? "?"} · {state === "insert" ? "新增" : "修改"}</span>
+            <PatchPopupActions patchId={patchId} onPatchVerdict={onPatchVerdict} />
+          </>
+        }
+      >
+        {renderRowDiffInlineSpans(spans)}
+      </PatchHoverFrame>
+    );
+  };
+
   const renderRowPopup = (row: ViewListRowDiff) => {
     const patchId = blockPatch?.patchId;
     if (!patchId) return null;
@@ -450,8 +500,7 @@ export const SectionView = React.memo(function SectionView({
     }
     // 修改行:每处改动各自 hover(行内多处改动 → 多个绿块,各看各的原文)
     if (row.status === "changed") {
-      const newText = row.spans.map((span) => span.text).join("");
-      return <>{renderInlineDiffWithHovers(row.oldText, newText)}</>;
+      return <>{renderInlineDiffWithRichSpans(row.oldText, row.spans)}</>;
     }
     // 新增行:整行新增,单个 hover
     const isActive = activePatchId === patchId;
@@ -571,8 +620,7 @@ export const SectionView = React.memo(function SectionView({
     }
     if (cell.status === "changed") {
       // 单元格内多处改动各自 hover
-      const newText = tableCellDiffText(cell);
-      return <>{renderInlineDiffWithHovers(cell.oldText, newText)}</>;
+      return <>{renderInlineDiffWithRichSpans(cell.oldText, cell.spans)}</>;
     }
     return <>{renderRowDiffInlineSpans(cell.spans)}</>;
   };
@@ -636,7 +684,7 @@ export const SectionView = React.memo(function SectionView({
       );
     }
     if (entry.status === "changed" && entry.kind === "text") {
-      const newText = entry.spans.map((span) => span.text).join("");
+      const newText = entry.spans.map(viewDocSpanText).join("");
       return (
         <>
           <span className="patch-popup-num">#{popupIndex ?? "?"} · 修改块</span>
@@ -655,8 +703,7 @@ export const SectionView = React.memo(function SectionView({
 
   const renderChangedTextBlock = (entry: Extract<ViewBlockSeqDiff[number], { status: "changed"; kind: "text" }>) => {
     // 容器内文本块的多处改动也各自 hover
-    const newText = entry.spans.map((span) => span.text).join("");
-    const inline = renderInlineDiffWithHovers(entry.oldText, newText);
+    const inline = renderInlineDiffWithRichSpans(entry.oldText, entry.spans);
 
     switch (entry.node.type) {
       case "paragraph":
@@ -724,12 +771,8 @@ export const SectionView = React.memo(function SectionView({
     );
     return (
       <table className="wf-table-diff">
-        {hasHead ? (
-          <thead>
-            {headDiffRows.map((row, i) => renderTableDiffRow(row, `h-${i}`, "th", columnCount))}
-          </thead>
-        ) : null}
         <tbody>
+          {headDiffRows.map((row, i) => renderTableDiffRow(row, `h-${i}`, "th", columnCount))}
           {bodyDiffRows.map((row, i) => renderTableDiffRow(row, `b-${i}`, "td", columnCount))}
         </tbody>
       </table>
@@ -805,10 +848,13 @@ export const SectionView = React.memo(function SectionView({
         </p>,
       );
     case "quote":
-      return wrapBlockPatch(<blockquote>{renderedSection.spans ? renderSpans(renderedSection.spans) : renderedSection.text}</blockquote>);
+      if (renderedSection.node && !hasInlinePatchSpan(renderedSection.spans)) {
+        return wrapBlockPatch(<PmBlockView node={renderedSection.node} />);
+      }
+      return wrapBlockPatch(<blockquote><p>{renderedSection.spans ? renderSpans(renderedSection.spans) : renderedSection.text}</p></blockquote>);
     case "list": {
       const Tag = renderedSection.ordered ? "ol" : "ul";
-      if (replacePatchActive && renderedSection.rowDiff?.length) {
+      if (canRenderNestedReplaceDiff && renderedSection.rowDiff?.length) {
         return wrapBlockPatch(
           <Tag
             className="wf-row-diff-list"
@@ -831,7 +877,7 @@ export const SectionView = React.memo(function SectionView({
     case "hr":
       return wrapBlockPatch(<hr />);
     case "table": {
-      if (replacePatchActive && renderedSection.cellDiff?.length) {
+      if (canRenderNestedReplaceDiff && renderedSection.cellDiff?.length) {
         const diffRows = renderedSection.cellDiff;
         const hasHead = renderedSection.head.length > 0;
         const headDiffRows = hasHead ? diffRows.slice(0, 1) : [];
@@ -844,12 +890,8 @@ export const SectionView = React.memo(function SectionView({
         );
         return wrapBlockPatch(
           <table className="wf-table-diff">
-            {hasHead ? (
-              <thead>
-                {headDiffRows.map((row, i) => renderTableDiffRow(row, `h-${i}`, "th", columnCount))}
-              </thead>
-            ) : null}
             <tbody>
+              {headDiffRows.map((row, i) => renderTableDiffRow(row, `h-${i}`, "th", columnCount))}
               {bodyDiffRows.map((row, i) => renderTableDiffRow(row, `b-${i}`, "td", columnCount))}
             </tbody>
           </table>,
@@ -857,16 +899,16 @@ export const SectionView = React.memo(function SectionView({
       }
       return wrapBlockPatch(
         <table>
-          <thead>
-            <tr>
+          <tbody>
+            {renderedSection.head.length > 0 ? (
+              <tr>
               {renderedSection.head.map((h, i) => (
                 <th key={i}>
                   {renderedSection.headSpans?.[i]?.length ? renderSpans(renderedSection.headSpans[i]!) : h}
                 </th>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+              </tr>
+            ) : null}
             {renderedSection.rows.map((row, i) => (
               <tr key={i}>
                 {row.map((cell, j) => (
@@ -926,7 +968,7 @@ export const SectionView = React.memo(function SectionView({
     // 并排分栏 / KaTeX 公式),保证"审核态展示=最终态展示"。这几类只参与整块插入/删除,
     // 行内 diff 不锚定到它们(patchableSectionSpans 返回 null),故无需在内部叠 patch span。
     case "taskList":
-      if (replacePatchActive && renderedSection.rowDiff?.length) {
+      if (canRenderNestedReplaceDiff && renderedSection.rowDiff?.length) {
         return wrapBlockPatch(
           <ul className="pm-task-list wf-row-diff-list" data-type="taskList">
             {renderTaskRowDiffItems(renderedSection.rowDiff)}
@@ -936,7 +978,7 @@ export const SectionView = React.memo(function SectionView({
       return wrapBlockPatch(<PmBlockView node={renderedSection.node} />);
     case "callout": {
       const node = renderedSection.node;
-      if (replacePatchActive && renderedSection.bodyDiff?.length && node.type === "callout") {
+      if (canRenderNestedReplaceDiff && renderedSection.bodyDiff?.length && node.type === "callout") {
         return wrapBlockPatch(
           <div className={`pm-callout pm-callout--${node.attrs.tone ?? "info"}`} data-pm-node="callout">
             <span className="pm-callout-emoji">{node.attrs.emoji ?? "💡"}</span>
@@ -950,7 +992,7 @@ export const SectionView = React.memo(function SectionView({
     }
     case "columnList": {
       const node = renderedSection.node;
-      if (replacePatchActive && renderedSection.columnsDiff?.length && node.type === "columnList") {
+      if (canRenderNestedReplaceDiff && renderedSection.columnsDiff?.length && node.type === "columnList") {
         const ratios = node.content.map((column) => {
           const ratio = column.attrs.widthRatio;
           return typeof ratio === "number" && Number.isFinite(ratio) && ratio > 0

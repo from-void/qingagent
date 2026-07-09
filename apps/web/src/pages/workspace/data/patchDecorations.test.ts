@@ -113,6 +113,45 @@ describe("buildPatchDecorations", () => {
     });
   });
 
+  it("未入场的补丁不产出 decoration", () => {
+    const { decorations, dropped } = buildPatchDecorations({
+      baselineDoc,
+      suggestions: [suggestion("p-hidden", 4, 4, "", "X", "replace")],
+      applied: [applied("p-hidden", 1, "insert", "", "X")],
+      revealedPatchIds: new Set(),
+    });
+
+    expect(decorations).toEqual([]);
+    expect(dropped).toEqual([]);
+  });
+
+  it("按 typedByPatch 用 grapheme 截断新增 widget 文本", () => {
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      suggestions: [suggestion("p-type", 4, 4, "", "中😀文", "replace")],
+      applied: [applied("p-type", 1, "insert", "", "中😀文")],
+      typedByPatch: new Map([["p-type", 2]]),
+    });
+
+    expect(decorations).toHaveLength(1);
+    expect(widgetDom(decorations[0]).querySelector(".wf-patch-ins")?.textContent).toBe("中😀");
+  });
+
+  it("打字数为 0 时可只渲染 nativePresentationPm 游标 widget", () => {
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      suggestions: [suggestion("p-cursor", 4, 4, "", "新增", "replace")],
+      applied: [applied("p-cursor", 1, "insert", "", "新增")],
+      typedByPatch: new Map([["p-cursor", 0]]),
+      revealCursors: new Map([["p-cursor", 1]]),
+    });
+
+    expect(decorations).toHaveLength(1);
+    const dom = widgetDom(decorations[0]);
+    expect(dom.className).toContain("native-presentation-cursor");
+    expect(dom.className).toContain("ai-cursor");
+  });
+
   it("把删除补丁构建为覆盖 pmFrom..pmTo 的 wf-patch-del inline decoration 加光标 widget", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,

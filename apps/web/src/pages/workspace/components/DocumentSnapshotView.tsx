@@ -278,6 +278,9 @@ export const DocumentSnapshotView = forwardRef<
         showPatches={showPatches}
         acceptedPatches={acceptedPatches}
         rejectedPatches={rejectedPatches}
+        revealedPatchIds={revealedPatchIds}
+        revealCursors={revealCursors}
+        typedByPatch={typedByPatch}
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
@@ -351,6 +354,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   showPatches: boolean;
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
+  revealedPatchIds?: ReadonlySet<string> | null;
+  revealCursors?: ReadonlyMap<string, number> | null;
+  typedByPatch?: ReadonlyMap<string, number> | null;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
   patchMeta?: Map<string, PatchMeta>;
   activePatchId?: string | null;
@@ -374,6 +380,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     showPatches,
     acceptedPatches,
     rejectedPatches,
+    revealedPatchIds,
+    revealCursors,
+    typedByPatch,
     onPatchVerdict,
     patchMeta,
     activePatchId,
@@ -581,6 +590,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     acceptedPatches,
     rejectedPatches,
     activePatchId,
+    revealedPatchIds,
+    typedByPatch,
+    revealCursors,
   });
 
   // 公式点击 → 弹 LaTeX 编辑浮层(只在可编辑态响应)
@@ -1016,6 +1028,9 @@ function useReviewPatchDecorations({
   acceptedPatches,
   rejectedPatches,
   activePatchId,
+  revealedPatchIds,
+  typedByPatch,
+  revealCursors,
 }: {
   editor: Editor | null;
   enabled: boolean;
@@ -1027,6 +1042,9 @@ function useReviewPatchDecorations({
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
   activePatchId?: string | null;
+  revealedPatchIds?: ReadonlySet<string> | null;
+  typedByPatch?: ReadonlyMap<string, number> | null;
+  revealCursors?: ReadonlyMap<string, number> | null;
 }) {
   const suggestionsKey = useMemo(
     () => (suggestions ?? []).map((s) => [
@@ -1074,6 +1092,18 @@ function useReviewPatchDecorations({
   );
   const acceptedKey = useMemo(() => setKey(acceptedPatches), [acceptedPatches]);
   const rejectedKey = useMemo(() => setKey(rejectedPatches), [rejectedPatches]);
+  const revealedPatchIdsKey = useMemo(
+    () => (revealedPatchIds ? setKey(revealedPatchIds) : ""),
+    [revealedPatchIds],
+  );
+  const typedByPatchKey = useMemo(
+    () => (typedByPatch ? mapKey(typedByPatch) : ""),
+    [typedByPatch],
+  );
+  const revealCursorsKey = useMemo(
+    () => (revealCursors ? mapKey(revealCursors) : ""),
+    [revealCursors],
+  );
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -1090,6 +1120,9 @@ function useReviewPatchDecorations({
       acceptedIds: acceptedPatches,
       rejectedIds: rejectedPatches,
       activePatchId,
+      revealedPatchIds,
+      typedByPatch,
+      revealCursors,
     });
     if (dropped.length > 0) {
       console.warn(
@@ -1119,11 +1152,24 @@ function useReviewPatchDecorations({
     rejectedPatches,
     rejectedKey,
     activePatchId,
+    revealedPatchIds,
+    revealedPatchIdsKey,
+    typedByPatch,
+    typedByPatchKey,
+    revealCursors,
+    revealCursorsKey,
   ]);
 }
 
 function setKey(values: ReadonlySet<string>): string {
   return Array.from(values).sort().join(",");
+}
+
+function mapKey(values: ReadonlyMap<string, number>): string {
+  return Array.from(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join(",");
 }
 
 function canResolveNativePresentationCoordinates(

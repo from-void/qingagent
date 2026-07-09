@@ -4,6 +4,8 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
+import { createNativeCursorWidget } from "./nativePresentationPm";
+import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";
 import type { AppliedPatch, BlockPatchInput, PatchOverlayInput } from "./protocol";
 import type { PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
@@ -41,6 +43,9 @@ export type BuildPatchDecorationsArgs = {
   acceptedIds?: ReadonlySet<string> | readonly string[];
   rejectedIds?: ReadonlySet<string> | readonly string[];
   activePatchId?: string | null;
+  revealedPatchIds?: ReadonlySet<string> | null;
+  typedByPatch?: ReadonlyMap<string, number> | null;
+  revealCursors?: ReadonlyMap<string, number> | null;
 };
 
 export const patchDecorationKey = new PluginKey<DecorationSet>(
@@ -120,6 +125,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     const after = applied?.after ?? source.after;
     const kind = resolvePatchDecorationKind(applied?.kind ?? source.kind, before, after);
     if (!kind) continue;
+    if (!isPatchRevealed(source.id, args.revealedPatchIds)) continue;
 
     const from = source.pmFrom;
     const to = source.pmTo;
@@ -190,35 +196,50 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     }
 
     if (kind === "insert" || kind === "replace") {
-      const insertedText = after;
-      if (insertedText.length === 0) continue;
-      decorations.push(
-        Decoration.widget(
-          from!,
-          () => {
-            const dom = renderInsertDOM(
-              insertedText,
-              applied?.marks ?? source.marks,
-              kind === "replace" ? "replace" : "insert",
-            );
-            dom.className = `${dom.className}${currentClass}${statusClass}`;
-            dom.dataset.patchId = source.id;
-            dom.dataset.patchIndex = String(index);
-            dom.dataset.patchState = kind === "replace" ? "replace" : "insert";
-            return dom;
-          },
-          {
-            ...spec,
-            side: 1,
-            ignoreSelection: true,
-          },
-        ),
-      );
+      const insertedText = revealedInsertedText(source.id, after, args.typedByPatch);
+      if (insertedText.length > 0) {
+        decorations.push(
+          Decoration.widget(
+            from!,
+            () => {
+              const dom = renderInsertDOM(
+                insertedText,
+                applied?.marks ?? source.marks,
+                kind === "replace" ? "replace" : "insert",
+              );
+              dom.className = `${dom.className}${currentClass}${statusClass}`;
+              dom.dataset.patchId = source.id;
+              dom.dataset.patchIndex = String(index);
+              dom.dataset.patchState = kind === "replace" ? "replace" : "insert";
+              return dom;
+            },
+            {
+              ...spec,
+              side: 1,
+              ignoreSelection: true,
+            },
+          ),
+        );
+      }
+      if (args.revealCursors?.has(source.id)) {
+        decorations.push(
+          Decoration.widget(
+            from!,
+            () => createNativeCursorWidget({ tone: "blue", label: "" }),
+            {
+              ...spec,
+              side: 2,
+              ignoreSelection: true,
+            },
+          ),
+        );
+      }
     }
   }
 
   for (const input of args.blockPatches ?? []) {
     if (rejectedIds.has(input.patchId)) continue;
+    if (!isPatchRevealed(input.patchId, args.revealedPatchIds)) continue;
     const applied = appliedById.get(input.patchId);
     const index = applied?.index ?? input.order ?? 0;
     const status = acceptedIds.has(input.patchId) ? "accepted" : "reviewing";
@@ -519,6 +540,25 @@ function toReadonlySet(
 ): ReadonlySet<string> {
   if (!ids) return new Set();
   return ids instanceof Set ? ids : new Set(ids);
+}
+
+function isPatchRevealed(
+  id: string,
+  revealedPatchIds: ReadonlySet<string> | null | undefined,
+): boolean {
+  return revealedPatchIds == null || revealedPatchIds.has(id);
+}
+
+function revealedInsertedText(
+  id: string,
+  text: string,
+  typedByPatch: ReadonlyMap<string, number> | null | undefined,
+): string {
+  const typed = typedByPatch?.get(id);
+  if (typed == null) return text;
+  const count = Math.max(0, Math.floor(typed));
+  if (count === 0) return "";
+  return splitGraphemes(text).slice(0, count).join("");
 }
 
 function renderMarkedTextDom(text: string, marks?: readonly PmMark[]): Node {

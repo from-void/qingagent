@@ -2690,9 +2690,6 @@
     font-size:12.5px;
     line-height:1.55;
   }
-  #view-workspace .patch-popup-muted{
-    color:var(--ink-4);
-  }
   #view-workspace .patch-popup-removed-text{
     color:#a8413a;
     text-decoration:line-through;

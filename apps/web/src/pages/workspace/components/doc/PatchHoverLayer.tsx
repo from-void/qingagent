@@ -127,7 +127,7 @@ export function PatchHoverLayer({
     <PatchStatePopup
       state={state}
       index={meta?.index}
-      original={renderOriginalDiff(meta?.before ?? "", meta?.after ?? "") ?? meta?.before ?? ""}
+      original={renderOriginalDiff(meta?.before ?? "") ?? meta?.before ?? ""}
       patchId={target.patchId}
       onPatchVerdict={onPatchVerdict}
     />

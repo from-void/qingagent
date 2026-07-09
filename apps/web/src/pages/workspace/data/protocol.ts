@@ -642,39 +642,6 @@ function patchableSectionSpans(section: ViewBlock): ViewDocSpan[] | null {
   }
 }
 
-/** 词级 diff 段:对 old/new 做逐字符 LCS,合并相邻同类为段。
- *  same=两边都有(未改),ins=只在新文本(新增),del=只在旧文本(删除)。
- *  多区段(不再是单一公共前后缀),能把分散的多处改动各自标出来。 */
-export type WordDiffSeg = { type: "same" | "ins" | "del"; text: string };
-
-export function wordDiffSegments(oldText: string, newText: string): WordDiffSeg[] {
-  if (oldText === newText) return oldText ? [{ type: "same", text: oldText }] : [];
-  const raw = lcsDiff(Array.from(oldText), Array.from(newText), (x, y) => x === y);
-  const segs: WordDiffSeg[] = [];
-  const push = (type: WordDiffSeg["type"], ch: string) => {
-    const last = segs[segs.length - 1];
-    if (last && last.type === type) last.text += ch;
-    else segs.push({ type, text: ch });
-  };
-  for (const op of raw) {
-    if (op.kind === "same") push("same", op.b ?? op.a ?? "");
-    else if (op.kind === "add") push("ins", op.b ?? "");
-    else push("del", op.a ?? "");
-  }
-  return segs;
-}
-
-/** 新内容的行内 spans:未改段为普通文本、新增段为 patchIns(绿)。删除段不进新内容(在 hover 看)。 */
-export function inlineWordDiffSpans(oldText: string, newText: string, patchId: string): ViewDocSpan[] {
-  const spans: ViewDocSpan[] = [];
-  for (const seg of wordDiffSegments(oldText, newText)) {
-    if (seg.type === "del") continue;
-    if (seg.type === "same") spans.push({ kind: "text", text: seg.text });
-    else spans.push({ kind: "patchIns", text: seg.text, patchId });
-  }
-  return spans.length > 0 ? spans : (newText ? [{ kind: "text", text: newText }] : []);
-}
-
 export function lcsDiff<T>(
   a: readonly T[],
   b: readonly T[],

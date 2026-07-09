@@ -84,7 +84,6 @@ import type {
   DocSuggestion,
   PatchOverlayInput,
 } from "../data/protocol";
-import { wordDiffSegments } from "../data/protocol";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { MathEditPopover, type MathEditTarget } from "./MathEditPopover";
 import { DocColophon } from "./DocColophon";

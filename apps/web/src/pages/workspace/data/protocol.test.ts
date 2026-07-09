@@ -9,38 +9,10 @@ import {
   pmDocToViewDocumentSnapshot,
   suggestionToPatchOverlay,
   viewDocSpanText,
-  wordDiffSegments,
-  inlineWordDiffSpans,
   type PatchOverlayInput,
   type ViewBlock,
   type ViewDocumentSnapshot,
 } from "./protocol";
-
-describe("wordDiffSegments — 多区段词级 diff(hover 卡片「原文」算 diff 用)", () => {
-  it("分散的多处改动各自成段,不再整中段一锅端", () => {
-    // 旧:含两处改动(加括注 + 85→90),中间大片未改应保持 same
-    const segs = wordDiffSegments(
-      "测试覆盖率从60%提到了85%,代码干净了",
-      "测试覆盖率从60%提到了90%(很稳),代码干净了",
-    );
-    // 头尾未改段为 same;真正变动只在 85→90 与新增「(很稳)」处
-    expect(segs[0]).toMatchObject({ type: "same" });
-    expect(segs.some((s) => s.type === "del" && s.text.includes("85"))).toBe(true);
-    expect(segs.some((s) => s.type === "ins" && s.text.includes("90"))).toBe(true);
-    expect(segs.some((s) => s.type === "ins" && s.text.includes("很稳"))).toBe(true);
-    // 未改的大段「,代码干净了」必须作为 same 复用,不被算进改动
-    expect(segs.some((s) => s.type === "same" && s.text.includes("代码干净了"))).toBe(true);
-  });
-
-  it("纯新增(原文为空段)→ 原文里没有 del 段", () => {
-    const segs = wordDiffSegments("产品定位", "产品核心定位");
-    expect(segs.some((s) => s.type === "ins")).toBe(true);
-    expect(segs.some((s) => s.type === "del")).toBe(false);
-    // 行内新内容:未改段为 text、新增段为 patchIns(绿)
-    const spans = inlineWordDiffSpans("产品定位", "产品核心定位", "p1");
-    expect(spans.some((s) => s.kind === "patchIns" && s.text === "核心")).toBe(true);
-  });
-});
 
 /** 构造若干段落的只读文档(每段一个 text span)。 */
 function pdoc(...texts: string[]): ViewDocumentSnapshot {

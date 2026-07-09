@@ -1,23 +1,16 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PatchMeta } from "../DocumentSnapshotView";
-import { wordDiffSegments } from "../../data/protocol";
 
 const PATCH_POPUP_HIDE_DELAY_MS = 200;
 
 export type PatchReviewState = "replace" | "insert" | "delete";
 
-export function renderOriginalDiff(oldText: string, newText: string): React.ReactNode {
-  const segs = wordDiffSegments(oldText, newText);
-  if (!segs.some((seg) => seg.type === "del")) return null;
-  return (
-    <span className="patch-popup-original-text">
-      {segs.map((seg, i) => {
-        if (seg.type === "ins") return null;
-        if (seg.type === "same") return <span key={i} className="patch-popup-muted">{seg.text}</span>;
-        return <span key={i} className="patch-popup-removed-text">{seg.text}</span>;
-      })}
-    </span>
-  );
+/** 原文呈现:锚点粒度已在 core(proposalDiff)拆干净成纯增/纯删/覆盖三态,卡片一律
+ *  不再做二次逐字 diff(那正是"绿色晚风"自相矛盾的病根)。覆盖/删除卡把整段原文划
+ *  删除线;纯新增无原文(调用方 state==="insert" 时不渲染此节点)。 */
+export function renderOriginalDiff(oldText: string): React.ReactNode {
+  if (oldText === "") return null;
+  return <span className="patch-popup-removed-text">{oldText}</span>;
 }
 
 interface PatchHoverFrameProps {

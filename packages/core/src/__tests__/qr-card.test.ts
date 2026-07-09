@@ -224,6 +224,13 @@ describe("show_qr 二维码卡帧协议", () => {
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
       expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
     }
+    // review #1:喂模型的 transcript 不含 ~7KB base64(卡片已渲染给用户,模型不需 base64),只含摘要。
+    const transcript = state.messages
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join("\n");
+    expect(transcript).not.toContain("data:image");
+    expect(transcript).not.toContain(img);
+    expect(transcript).toContain("二维码已展示给用户");
   });
 
   it("show_qr-only 回合结束等待用户时不发 draftingFailed", async () => {

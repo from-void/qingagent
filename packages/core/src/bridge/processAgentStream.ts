@@ -1451,7 +1451,14 @@ export async function* processAgentStream(
       if (toolName !== "askUser" && !PURE_UI_TOOL_NAMES.has(toolName)) {
         outcome.sawSideEffectToolCall = true;
       }
-      appendToolTranscriptMessage(state, { toolName, toolCallId, args, result: toolResult });
+      // wechat_auth_start 的 result 含 ~7–10KB base64 二维码图。原样写进喂模型的 transcript 会
+      // 白烧 token,且违背"base64 不经过模型"(该字段只是给前端渲染卡片用)。给模型摘要即可——
+      // 它只需知道"授权已发起、等用户扫码"。二维码卡本身已由 processAgentStream 直接渲染给用户。
+      const transcriptResult =
+        toolName === "wechat_auth_start" && toolResult && typeof toolResult === "object"
+          ? { ok: (toolResult as { ok?: unknown }).ok ?? true, note: "二维码已展示给用户,等其扫码后点『我已扫码完成』" }
+          : toolResult;
+      appendToolTranscriptMessage(state, { toolName, toolCallId, args, result: transcriptResult });
       endToolIoSpan(
         toolIoSpans.get(toolCallId),
         toolResult,

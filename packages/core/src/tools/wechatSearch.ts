@@ -33,19 +33,32 @@ interface AuthErr {
 /** 读登录态凭据;缺失或过期时返回可识别错误,交由 SKILL 引导重新扫码。 */
 async function requireWechatAuth(): Promise<AuthOk | AuthErr> {
   const creds = await getCredentialsForPlatform(WECHAT_PLATFORM);
-  if (!creds.token) {
+  // 与 wechat_auth_status 判据对齐:token 与 expiry 都要有。缺 expiry=半授权(凭据非原子写、中途断),
+  // 若放行会被当"永不过期"照用,和 status 说"未授权"矛盾——统一视为未授权。
+  if (!creds.token || !creds.expiry) {
     return { ok: false, state: "NO_CREDENTIAL", error: "尚未扫码登录微信公众号后台" };
   }
-  if (creds.expiry && new Date(creds.expiry).getTime() <= Date.now()) {
+  if (new Date(creds.expiry).getTime() <= Date.now()) {
     return { ok: false, state: "EXPIRED", error: "微信登录态已过期(约3~4天一过期),需重新扫码" };
   }
   return { ok: true, token: creds.token, cookie: creds.cookie ?? "" };
 }
 
+// 串行化:并发调用排队,防 read-then-write 竞态(两并发都算出 wait≈0 同时发,限速形同虚设)。
+// 注:lastRequestAt/rateLimitChain 为模块级——**单用户桌面的单实例假设**;多会话托管需按 session 隔离。
+let rateLimitChain: Promise<void> = Promise.resolve();
 async function rateLimit(): Promise<void> {
-  const wait = REQUEST_MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  lastRequestAt = Date.now();
+  const prev = rateLimitChain;
+  let release!: () => void;
+  rateLimitChain = new Promise<void>((r) => (release = r));
+  try {
+    await prev;
+    const wait = REQUEST_MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastRequestAt = Date.now();
+  } finally {
+    release();
+  }
 }
 
 /** 带登录态请求后台 cgi 接口,返回解析后的 JSON。 */
@@ -87,7 +100,13 @@ class WechatCgiError extends Error {
 function assertBaseResp(data: Record<string, unknown>): void {
   const baseResp = data.base_resp as { ret?: number; err_msg?: string } | undefined;
   const ret = baseResp?.ret;
-  if (ret === undefined || ret === RET_OK) return;
+  if (ret === RET_OK) return;
+  if (ret === undefined) {
+    // 无 base_resp:只有确实带了数据(list/publish_page)才算正常;否则是畸形/被重定向到验证页的响应,
+    // 按会话失效抛出(不静默返回空列表掩盖问题)。
+    if (Array.isArray(data.list) || typeof data.publish_page === "string") return;
+    throw new WechatCgiError("SESSION", "微信返回了无法识别的响应(无 base_resp 也无数据),请重新扫码");
+  }
   if (RET_SESSION_INVALID.has(ret)) {
     throw new WechatCgiError("SESSION", "微信登录态已失效,请重新扫码登录");
   }
@@ -252,6 +271,8 @@ export const wechatListArticlesTool = createTool({
         auth.cookie,
       );
       assertBaseResp(data);
+      // 注:appmsgpublish 的 count 是"群发条数",每条群发可含多篇文章;这里 flatten 所有文章后再按
+      // "文章数"截到 count 篇——所以实际请求的群发条数=count,拿到的文章数≈count(可能略多/少),要精确需翻页。
       const articles = parsePublishedArticles(data.publish_page).slice(0, count);
       return { ok: true, state: "READY", articles, error: null };
     } catch (error) {

@@ -59,4 +59,19 @@ describe("wechatArticle", () => {
     expect(result.images[0]?.src).toBe("https://mmbiz.qpic.cn/x/640");
     expect(result.markdown).toContain("![图](https://mmbiz.qpic.cn/x/640)");
   });
+
+  it("pre 代码块用 <br> 换行时保留多行,不塌成一行(review #2)", () => {
+    const html = `<div id="js_content"><pre><code>const a = 1;<br>const b = 2;<br>return a + b;</code></pre></div>`;
+    const result = extractWechatArticle(html, "https://mp.weixin.qq.com/s/pre");
+    expect(result.markdown).toContain("```");
+    expect(result.markdown).toContain("const a = 1;\nconst b = 2;\nreturn a + b;");
+  });
+
+  it("正文内漏网的 <script> 不吐成正文(review #8)", () => {
+    const html = `<div id="js_content"><p>正文段落。</p><script>alert('x'); var secret=1;</script></div>`;
+    const result = extractWechatArticle(html, "https://mp.weixin.qq.com/s/sc");
+    expect(result.markdown).toContain("正文段落");
+    expect(result.markdown).not.toContain("alert");
+    expect(result.markdown).not.toContain("secret");
+  });
 });

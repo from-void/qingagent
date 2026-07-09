@@ -148,8 +148,10 @@ function renderBlock(context: RenderContext, element: HtmlElement): string {
   }
 
   if (tag === "pre") {
-    const code = textContent(element).replace(/\n{3,}/g, "\n\n").trim();
-    return code ? "```\n" + code + "\n```" : "";
+    // 保留换行:pre 里可能用 <br> 或逐行块元素(p/div)换行,不能用只拼 text 节点的 textContent
+    // (会把多行代码塌成一行)。preTextContent 处理 br→\n、块级子元素尾部换行。
+    const code = preTextContent(element).replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "");
+    return code.trim() ? "```\n" + code + "\n```" : "";
   }
 
   if (tag === "blockquote") {
@@ -253,6 +255,8 @@ function renderInline(context: RenderContext, node: HtmlNode): string {
   const tag = tagName(node);
   const children = node.children ?? [];
 
+  // 纵深防御:script/style 被 isElement 视为 element,若漏过噪声选择器,兜底不把 JS/CSS 源码当正文吐出。
+  if (tag === "script" || tag === "style") return "";
   if (tag === "br") return "\n";
   if (tag === "img") return renderImage(context, node);
   if (tag === "strong" || tag === "b") return wrapInline("**", renderChildrenInline(context, children));
@@ -334,6 +338,18 @@ function getAttr(element: HtmlElement, name: string): string | undefined {
 function textContent(node: HtmlNode): string {
   if (node.type === "text") return node.data ?? "";
   return (node.children ?? []).map(textContent).join("");
+}
+
+// pre 专用文本收集:保留 <br>→换行、块级子元素(逐行 p/div)尾部换行,避免多行代码塌成一行
+// (textContent 只拼 text 节点会丢换行)。
+function preTextContent(node: HtmlNode): string {
+  if (node.type === "text") return node.data ?? "";
+  if (!isElement(node)) return "";
+  const tag = tagName(node);
+  if (tag === "br") return "\n";
+  if (tag === "script" || tag === "style") return "";
+  const inner = (node.children ?? []).map(preTextContent).join("");
+  return BLOCK_TAGS.has(tag) && tag !== "pre" ? inner + "\n" : inner;
 }
 
 function isElement(node: HtmlNode): node is HtmlElement {

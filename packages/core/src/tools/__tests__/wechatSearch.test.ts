@@ -45,6 +45,16 @@ describe("wechatSearch 路径B", () => {
     expect(r.state).toBe("EXPIRED");
   });
 
+  it("半授权(有 token 无 expiry) → 视为未授权,与 status 判据一致(review #3)", async () => {
+    // 凭据非原子写、中途断:token 写成、expiry 没写。旧实现会当"永不过期"放行,和 status 矛盾。
+    vi.mocked(getCredentialsForPlatform).mockResolvedValue({ token: "TK", cookie: "c" });
+    global.fetch = vi.fn() as never;
+    const r = await search("x");
+    expect(r.ok).toBe(false);
+    expect(r.state).toBe("NO_CREDENTIAL");
+    expect(global.fetch).not.toHaveBeenCalled(); // 未放行到真实请求
+  });
+
   it("搜号解析出候选公众号(nickname/fakeid)", async () => {
     vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
     mockFetchJson({

@@ -9,6 +9,8 @@ import {
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const WECHAT_PLATFORM = "wechat";
+// **单用户桌面的单实例假设**:scope 恒 "default",authState/activeAuthBrowser 为模块级全局。
+// 多会话托管时会互相干扰(互关 browser、状态串写),届时需按 session 隔离状态与 browser。
 const WECHAT_SCOPE = "default";
 const WECHAT_LOGIN_URL = "https://mp.weixin.qq.com/";
 const WECHAT_HOME_URL_RE = /\/cgi-bin\/home/;
@@ -174,9 +176,11 @@ export const wechatAuthStartTool = createTool({
             await saveCredentialRecord({ platform: WECHAT_PLATFORM, key: "cookie", value: cookie });
             await saveCredentialRecord({ platform: WECHAT_PLATFORM, key: "expiry", value: expiry });
             await saveCredentialRecord({ platform: WECHAT_PLATFORM, key: "mp_name", value: mpName });
-            authState.set(WECHAT_SCOPE, "ready");
+            // 只有自己仍是当前 active 扫码时才写状态:被新扫码取代的旧调用(其 browser 已被新调用
+            // close、waitForURL 抛错走 catch)不该把新调用的 authorizing 覆盖成 failed。
+            if (activeAuthBrowser === authBrowser) authState.set(WECHAT_SCOPE, "ready");
           } catch (error) {
-            authState.set(WECHAT_SCOPE, "failed");
+            if (activeAuthBrowser === authBrowser) authState.set(WECHAT_SCOPE, "failed");
             if (!settled) reject(error);
           } finally {
             await authBrowser?.close().catch(() => {});

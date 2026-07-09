@@ -19,7 +19,7 @@ historyRoutes.get("/history", async (c) => {
       docVersion: row.docVersion,
       content_hash: row.contentHash,
       schemaVersion: row.schemaVersion,
-      actor_type: row.actorType,
+      actor_type: historyActorType(row.actorType),
       summary: row.summary ?? versionSummary(row.actorType),
       created_at: row.createdAt,
     })),
@@ -44,7 +44,11 @@ historyRoutes.get("/history/:versionId", async (c) => {
   return c.json(snapshot);
 });
 
-function versionSummary(actorType: "user" | "agent" | "system"): string {
+function historyActorType(actorType: "user" | "agent" | "system" | "restore-rescue"): "user" | "agent" | "system" {
+  return actorType === "restore-rescue" ? "system" : actorType;
+}
+
+function versionSummary(actorType: "user" | "agent" | "system" | "restore-rescue"): string {
   switch (actorType) {
     case "user":
       return "你编辑保存";
@@ -52,5 +56,7 @@ function versionSummary(actorType: "user" | "agent" | "system"): string {
       return "助手写入";
     case "system":
       return "系统写入";
+    case "restore-rescue":
+      return "恢复冲突败方快照";
   }
 }

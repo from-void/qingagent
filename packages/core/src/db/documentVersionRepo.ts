@@ -7,7 +7,7 @@ import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { parsePmDoc } from "./documentRepo.js";
 import { ensureMigrated } from "./migrations.js";
 
-export type DocumentVersionActorType = "user" | "agent" | "system";
+export type DocumentVersionActorType = "user" | "agent" | "system" | "restore-rescue";
 
 export interface DocumentVersionRow {
   versionId: string;
@@ -183,6 +183,18 @@ export async function getMaxDocumentSnapshotVersion(
     args: [docId],
   });
   return valueAsNullableNumber(result.rows[0]?.max_doc_version);
+}
+
+export async function getMinDocumentSnapshotVersion(
+  docId: string,
+  client?: Client,
+): Promise<number | null> {
+  const c = await readyClient(client);
+  const result = await c.execute({
+    sql: "SELECT MIN(doc_version) AS min_doc_version FROM document_versions WHERE doc_id = ?",
+    args: [docId],
+  });
+  return valueAsNullableNumber(result.rows[0]?.min_doc_version);
 }
 
 export async function getVersionSnapshot(

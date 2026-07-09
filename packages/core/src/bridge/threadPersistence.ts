@@ -23,7 +23,12 @@ import type {
 } from "./sessionState.js";
 import { sessionIdToTraceId } from "./agentSpans.js";
 import type { Material } from "../types/material.js";
-import { documentRepo } from "../db/documentRepo.js";
+import { documentRepo, type DocumentRow } from "../db/documentRepo.js";
+import {
+  getMinDocumentSnapshotVersion,
+  getVersionSnapshot,
+  insertVersion,
+} from "../db/documentVersionRepo.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { rehydratePendingDraft } from "./pendingDraftRehydrate.js";
 import {
@@ -627,6 +632,7 @@ function recordRestoreReconcileSpan(context: {
   docId: string;
   metadataDocVersion: number | null;
   documentsDocVersion: number;
+  resolution: "documents" | "metadata" | "conflict-rescue";
   lastPersistedAt: string | null;
 }): void {
   try {
@@ -645,12 +651,14 @@ function recordRestoreReconcileSpan(context: {
       input: {
         metadataDocVersion: context.metadataDocVersion,
         documentsDocVersion: context.documentsDocVersion,
+        resolution: context.resolution,
         lastPersistedAt: context.lastPersistedAt,
       },
     });
     span.end({
       output: {
-        winner: "documents",
+        winner: context.resolution === "metadata" ? "metadata" : "documents",
+        resolution: context.resolution,
       },
     });
   } catch (err) {
@@ -659,6 +667,80 @@ function recordRestoreReconcileSpan(context: {
       docId: context.docId,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+function applyRestoredDocumentRow(
+  meta: QingagentThreadMetadata,
+  docRow: DocumentRow,
+): QingagentThreadMetadata {
+  return {
+    ...meta,
+    docState: coerceLegacyContentKind(docRow.docState),
+    docVersion: docRow.docVersion,
+    doc: docRow.pmDoc,
+    legacySections: docRow.legacySections,
+  };
+}
+
+function isUniqueConstraintError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /unique|constraint/i.test(message);
+}
+
+async function rescueMetadataSnapshotOnRestoreConflict(input: {
+  sessionId: string;
+  docId: string;
+  docVersion: number;
+  metadataDoc: PmDoc;
+  metadataHash: string;
+}): Promise<void> {
+  const versionId = `rescue-${input.docId}-${input.docVersion}-${input.metadataHash.slice(0, 8)}`;
+  if (await getVersionSnapshot(versionId)) return;
+
+  // 正常提交使用非负版本号；救援快照落在负空间，既不抢获胜方版本，也能按最小值继续递减。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const minVersion = await getMinDocumentSnapshotVersion(input.docId);
+    const rescueDocVersion = Math.min(0, minVersion ?? 0) - 1;
+    try {
+      await insertVersion({
+        versionId,
+        docId: input.docId,
+        docVersion: rescueDocVersion,
+        contentHash: input.metadataHash,
+        schemaVersion: input.metadataDoc.attrs.schemaVersion,
+        actorType: "restore-rescue",
+        summary: "恢复冲突败方快照",
+        snapshotPm: input.metadataDoc,
+        parentVersion: null,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) {
+        logger.error("Failed to rescue metadata snapshot during restore conflict", {
+          sessionId: input.sessionId,
+          docId: input.docId,
+          docVersion: input.docVersion,
+          versionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+
+      // 仅 version_id 已实际入库时才是幂等成功；doc_version 撞号要重新取最小值再试。
+      if (await getVersionSnapshot(versionId)) return;
+      if (attempt === 0) continue;
+
+      logger.error("Failed to rescue metadata snapshot during restore conflict", {
+        sessionId: input.sessionId,
+        docId: input.docId,
+        docVersion: input.docVersion,
+        versionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 }
 
@@ -1204,24 +1286,76 @@ export async function loadSessionFromThread(
     const docRow = await documentRepo.load(docId);
     if (docRow) {
       recordDocRowReadOutcome("hit", { sessionId, docId });
-      restoredFromDocuments = true;
-      if (docRow.docVersion !== metadataDocVersion) {
+      const metadataDoc = meta.doc;
+      const metadataHash = metadataDoc ? getPmContentHash(metadataDoc) : null;
+      const documentsHash = docRow.contentHash ?? null;
+      const metadataWins =
+        metadataDoc &&
+        metadataDocVersion !== null &&
+        docRow.docVersion < metadataDocVersion;
+      const sameVersionHashConflict =
+        metadataDoc &&
+        metadataDocVersion !== null &&
+        docRow.docVersion === metadataDocVersion &&
+        documentsHash !== metadataHash;
+
+      if (metadataWins) {
         needsRestoreReconcilePersist = true;
         recordRestoreReconcileSpan({
           sessionId,
           docId,
           metadataDocVersion,
           documentsDocVersion: docRow.docVersion,
+          resolution: "metadata",
           lastPersistedAt: meta.lastPersistedAt ?? null,
         });
+        logger.warn("Restore reconcile selected metadata because metadata doc_version is newer", {
+          sessionId,
+          docId,
+          metadataDocVersion,
+          documentsDocVersion: docRow.docVersion,
+        });
+      } else if (sameVersionHashConflict) {
+        restoredFromDocuments = true;
+        needsRestoreReconcilePersist = true;
+        recordRestoreReconcileSpan({
+          sessionId,
+          docId,
+          metadataDocVersion,
+          documentsDocVersion: docRow.docVersion,
+          resolution: "conflict-rescue",
+          lastPersistedAt: meta.lastPersistedAt ?? null,
+        });
+        logger.error("Restore reconcile detected same-version content hash conflict; documents wins", {
+          sessionId,
+          docId,
+          docVersion: docRow.docVersion,
+          metadataHash,
+          documentsHash,
+        });
+        await rescueMetadataSnapshotOnRestoreConflict({
+          sessionId,
+          docId,
+          docVersion: docRow.docVersion,
+          metadataDoc,
+          metadataHash: metadataHash!,
+        });
+        meta = applyRestoredDocumentRow(meta, docRow);
+      } else {
+        restoredFromDocuments = true;
+        if (docRow.docVersion !== metadataDocVersion) {
+          needsRestoreReconcilePersist = true;
+          recordRestoreReconcileSpan({
+            sessionId,
+            docId,
+            metadataDocVersion,
+            documentsDocVersion: docRow.docVersion,
+            resolution: "documents",
+            lastPersistedAt: meta.lastPersistedAt ?? null,
+          });
+        }
+        meta = applyRestoredDocumentRow(meta, docRow);
       }
-      meta = {
-        ...meta,
-        docState: coerceLegacyContentKind(docRow.docState),
-        docVersion: docRow.docVersion,
-        doc: docRow.pmDoc,
-        legacySections: docRow.legacySections,
-      };
     } else {
       recordDocRowReadOutcome("miss", { sessionId, docId });
     }

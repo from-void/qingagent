@@ -12,6 +12,7 @@ import type { SessionState } from "../bridge/sessionState.js";
 import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { documentRepo } from "../db/documentRepo.js";
+import { insertVersion, listVersions } from "../db/documentVersionRepo.js";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
@@ -21,9 +22,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { memory, threads, spans, observability } = vi.hoisted(() => {
+const { memory, threads, spans, observability, logger } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();
   const spans: Array<{ input: unknown; output: unknown }> = [];
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const observability = {
     getDefaultInstance: () => ({
       startSpan: vi.fn((input: unknown) => {
@@ -97,17 +104,12 @@ const { memory, threads, spans, observability } = vi.hoisted(() => {
     }),
     recall: vi.fn(async () => ({ messages: [] })),
   };
-  return { memory, threads, spans, observability };
+  return { memory, threads, spans, observability, logger };
 });
 
 vi.mock("../mastra.js", () => ({
   mastra: {
-    getLogger: () => ({
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    }),
+    getLogger: () => logger,
     getMemory: () => memory,
   },
   getObservability: () => observability,
@@ -252,6 +254,36 @@ function metadata(overrides: Partial<QingagentThreadMetadata> = {}): QingagentTh
     lastPersistedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
+}
+
+function pmDoc(text: string) {
+  return legacySectionsToPm([textSection(text)] as never);
+}
+
+async function saveDocumentRow(input: {
+  docId: string;
+  sessionId: string;
+  text: string;
+  docVersion: number;
+}): Promise<void> {
+  const doc = pmDoc(input.text);
+  await documentRepo.save({
+    id: input.docId,
+    threadId: input.sessionId,
+    resourceId: "qingagent-user",
+    title: `doc-${input.docId}`,
+    docState: "editing",
+    docVersion: input.docVersion,
+    lastSyncedVersion: input.docVersion,
+    pmDoc: doc,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+}
+
+function expectRestoredText(restored: SessionState | null, expected: string): void {
+  expect(restored?.doc).toEqual(pmDoc(expected));
+  expect(restored?.legacySections).toEqual([textSection(expected)]);
 }
 
 function folderSourceRecord(sessionId: string, root: string): FolderSourceRecord {
@@ -824,6 +856,238 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(state.sessionId);
 
     expectRestoredStableFields(restored, state);
+  });
+
+  it("恢复仲裁场景1: documents 无行时继续使用 metadata", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-metadata-only";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 2,
+      doc: pmDoc("metadata only"),
+      legacySections: [textSection("metadata only")],
+    })));
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expectRestoredText(restored, "metadata only");
+    expect(restored?.docVersion).toBe(2);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(spans).toHaveLength(0);
+    expect(await listVersions(sessionId)).toHaveLength(0);
+  });
+
+  it("恢复仲裁场景2: documents 版本高于 metadata 时使用 documents 并触发 reconcile persist", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-documents-newer";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 1,
+      doc: pmDoc("metadata old"),
+      legacySections: [textSection("metadata old")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents new", docVersion: 2 });
+    vi.clearAllMocks();
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+
+    expectRestoredText(restored, "documents new");
+    expect(restored?.docVersion).toBe(2);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(spans.at(-1)?.output).toMatchObject({ output: { resolution: "documents" } });
+    expect(memory.updateThread).toHaveBeenCalled();
+    expect(await listVersions(sessionId)).toHaveLength(0);
+  });
+
+  it("恢复仲裁场景2: metadata.doc 为空时视为 documents 胜出", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-metadata-empty-doc";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 3,
+      doc: undefined,
+      legacySections: [textSection("metadata legacy")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents authoritative", docVersion: 3 });
+    vi.clearAllMocks();
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+
+    expectRestoredText(restored, "documents authoritative");
+    expect(restored?.docVersion).toBe(3);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(memory.updateThread).not.toHaveBeenCalled();
+    expect(await listVersions(sessionId)).toHaveLength(0);
+  });
+
+  it("恢复仲裁场景3: metadata 版本高于 documents 时使用 metadata 并触发 reconcile persist", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-metadata-newer";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 3,
+      doc: pmDoc("metadata new"),
+      legacySections: [textSection("metadata new")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents old", docVersion: 2 });
+    vi.clearAllMocks();
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+
+    expectRestoredText(restored, "metadata new");
+    expect(restored?.docVersion).toBe(3);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("metadata doc_version is newer"),
+      expect.objectContaining({ sessionId, docId: sessionId, metadataDocVersion: 3, documentsDocVersion: 2 }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(spans.at(-1)?.output).toMatchObject({ output: { resolution: "metadata" } });
+    expect(memory.updateThread).toHaveBeenCalled();
+    expect(await listVersions(sessionId)).toHaveLength(0);
+  });
+
+  it("恢复仲裁场景4: 同版本同 hash 时使用 documents 且不触发 reconcile", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-same-hash";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 4,
+      doc: pmDoc("same body"),
+      legacySections: [textSection("same body")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "same body", docVersion: 4 });
+    vi.clearAllMocks();
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+
+    expectRestoredText(restored, "same body");
+    expect(restored?.docVersion).toBe(4);
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(spans).toHaveLength(0);
+    expect(memory.updateThread).not.toHaveBeenCalled();
+    expect(await listVersions(sessionId)).toHaveLength(0);
+  });
+
+  it("恢复仲裁场景5: 同版本异 hash 时 documents 胜出并救援 metadata 快照", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-hash-conflict";
+    const metadataDoc = pmDoc("metadata loser");
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 5,
+      doc: metadataDoc,
+      legacySections: [textSection("metadata loser")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents winner", docVersion: 5 });
+    const winnerDoc = pmDoc("documents winner");
+    await insertVersion({
+      versionId: `winner-${sessionId}-5`,
+      docId: sessionId,
+      docVersion: 5,
+      contentHash: getPmContentHash(winnerDoc),
+      schemaVersion: winnerDoc.attrs.schemaVersion,
+      actorType: "agent",
+      summary: "获胜方正常版本",
+      snapshotPm: winnerDoc,
+      parentVersion: 4,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    vi.clearAllMocks();
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+    const versions = await listVersions(sessionId);
+
+    expectRestoredText(restored, "documents winner");
+    expect(restored?.docVersion).toBe(5);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("same-version content hash conflict"),
+      expect.objectContaining({ sessionId, docId: sessionId, docVersion: 5 }),
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(spans.at(-1)?.output).toMatchObject({ output: { resolution: "conflict-rescue" } });
+    expect(memory.updateThread).toHaveBeenCalled();
+    expect(versions).toHaveLength(2);
+    expect(versions[0]).toMatchObject({
+      versionId: `winner-${sessionId}-5`,
+      docId: sessionId,
+      docVersion: 5,
+      actorType: "agent",
+      snapshotPm: winnerDoc,
+    });
+    expect(versions[1]).toMatchObject({
+      versionId: `rescue-${sessionId}-5-${getPmContentHash(metadataDoc).slice(0, 8)}`,
+      docId: sessionId,
+      docVersion: -1,
+      actorType: "restore-rescue",
+      summary: "恢复冲突败方快照",
+    });
+    expect(versions[1]?.snapshotPm).toEqual(metadataDoc);
+  });
+
+  it("恢复仲裁场景5救援幂等: 连续恢复两次只保留一条 rescue 版本", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-arb-hash-conflict-idempotent";
+    const metadataDoc = pmDoc("metadata loser twice");
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 6,
+      doc: metadataDoc,
+      legacySections: [textSection("metadata loser twice")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents winner twice", docVersion: 6 });
+    vi.clearAllMocks();
+
+    const first = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 6,
+      doc: metadataDoc,
+      legacySections: [textSection("metadata loser twice")],
+    })));
+    const second = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+    const versions = await listVersions(sessionId);
+
+    expectRestoredText(first, "documents winner twice");
+    expectRestoredText(second, "documents winner twice");
+    expect(versions).toHaveLength(1);
+    expect(versions[0]?.versionId).toBe(`rescue-${sessionId}-6-${getPmContentHash(metadataDoc).slice(0, 8)}`);
+    expect(versions[0]?.docVersion).toBe(-1);
+  });
+
+  it("documents 读取失败时仍 fallback metadata", async () => {
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const sessionId = "restore-documents-read-error-fallback";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 7,
+      doc: pmDoc("metadata fallback"),
+      legacySections: [textSection("metadata fallback")],
+    })));
+    vi.spyOn(documentRepo, "load").mockRejectedValueOnce(new Error("documents unavailable"));
+
+    const restored = await loadSessionFromThread(sessionId);
+    await drainSessionPersistence();
+
+    expectRestoredText(restored, "metadata fallback");
+    expect(restored?.docVersion).toBe(7);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to read documents table during session restore; falling back to metadata",
+      expect.objectContaining({ sessionId, docId: sessionId, error: "documents unavailable" }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(memory.updateThread).not.toHaveBeenCalled();
+    expect(await listVersions(sessionId)).toHaveLength(0);
   });
 
   it("does not persist OM metadata defaults when sidecar state is inactive", async () => {

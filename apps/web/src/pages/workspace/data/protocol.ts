@@ -204,10 +204,7 @@ export interface ViewDocumentSnapshot {
   pmDoc?: PmDoc;
 }
 
-/** Convert a wire DocumentSnapshot into the view shape (P sections wrapped in
- * a single text span). Patch overlays are layered on top via
- * `applyPatchOverlaysWithReport` once the open `docSuggestion` tool-calls are
- * known to the reducer / page. */
+/** Convert a wire DocumentSnapshot into the view shape (P sections wrapped in a single text span). */
 export function wireDocToView(doc: WireDocumentSnapshot): ViewDocumentSnapshot {
   // doc(PmDoc)现在是 contract 必填字段且优先消费;运行时仍保留 fallback,
   // 兼容旧客户端缓存里只有 sections 的历史快照(@deprecated 过渡窗口)。
@@ -642,72 +639,6 @@ function patchableSectionSpans(section: ViewBlock): ViewDocSpan[] | null {
       return section.spans ?? [{ kind: "text", text: section.text }];
     default:
       return null;
-  }
-}
-
-function sectionPatchMarkerSpans(section: ViewBlock): ViewDocSpan[] | null {
-  const spans = patchableSectionSpans(section) ?? [];
-  const marker = section.blockPatch?.marker;
-  if (!marker) return spans.length > 0 ? spans : null;
-  return [...spans, marker];
-}
-
-function withPatchableSectionSpans(section: ViewBlock, spans: ViewDocSpan[]): ViewBlock {
-  switch (section.kind) {
-    case "p":
-      return { ...section, spans };
-    case "h1":
-    case "h2":
-    case "h3":
-    case "h4":
-    case "h5":
-    case "h6":
-    case "quote":
-    case "penNote":
-      return { ...section, spans };
-    default:
-      return section;
-  }
-}
-
-function blockPatchMarkerText(section: ViewBlock, op: "insert" | "delete"): string {
-  const prefix = op === "insert" ? "新增" : "删除";
-  switch (section.kind) {
-    case "list":
-      return `${prefix}列表`;
-    case "table":
-      return `${prefix}表格`;
-    case "code":
-      return `${prefix}代码块`;
-    case "diagram":
-      return `${prefix}图表`;
-    case "image":
-      return `${prefix}图片`;
-    case "hr":
-      return `${prefix}分隔线`;
-    case "fileAttachment":
-      return `${prefix}附件`;
-    case "quote":
-      return `${prefix}引用`;
-    case "penNote":
-      return `${prefix}批注`;
-    case "h1":
-    case "h2":
-    case "h3":
-    case "h4":
-    case "h5":
-    case "h6":
-      return `${prefix}标题`;
-    case "p":
-      return `${prefix}段落`;
-    case "taskList":
-      return `${prefix}待办`;
-    case "callout":
-      return `${prefix}提示`;
-    case "columnList":
-      return `${prefix}分栏`;
-    case "math":
-      return `${prefix}公式`;
   }
 }
 
@@ -1783,124 +1714,6 @@ export function suggestionToBlockPatchInputs(
   return inputs;
 }
 
-/**
- * 把 patch 折进文档,并**如实报告**哪些 patch 真正落地(产出了 patchDel/patchIns 标记)、
- * 哪些因锚点匹配失败被丢弃。dropped 非空即意味着"正文会比意图少几处"——这是
- * 数量不一致(左侧计数 ≠ 正文处数 ≠ 序号)的根因,必须能被发现。
- */
-export function applyPatchOverlaysWithReport(
-  doc: ViewDocumentSnapshot,
-  patches: ReadonlyArray<PatchOverlayInput>,
-): { doc: ViewDocumentSnapshot; appliedIds: Set<string>; droppedIds: string[] } {
-  const appliedIds = new Set<string>();
-  if (patches.length === 0) return { doc, appliedIds, droppedIds: [] };
-  const activePatches = patches.filter((patch) => patch.conflict !== true);
-
-  const patchesBySection = new Map<number, PatchOverlayInput[]>();
-  for (const patch of activePatches) {
-    const sectionPatches = patchesBySection.get(patch.blockIndex) ?? [];
-    sectionPatches.push(patch);
-    patchesBySection.set(patch.blockIndex, sectionPatches);
-  }
-
-  const sections = doc.sections.map((section, blockIndex): ViewBlock => {
-    const baseSpans = patchableSectionSpans(section);
-    if (!baseSpans) return section;
-    const scopedPatches = patchesBySection.get(blockIndex);
-    if (!scopedPatches || scopedPatches.length === 0) return section;
-
-    let spans: ViewDocSpan[] = baseSpans;
-    const orderedPatches = scopedPatches.slice().sort((a, b) => {
-      const ar = a.range?.start;
-      const br = b.range?.start;
-      if (ar == null || br == null) return 0;
-      return br - ar;
-    });
-    for (const patch of orderedPatches) {
-      const result = spliceSpans(spans, patch);
-      spans = result.spans;
-      if (result.injected) appliedIds.add(patch.id);
-    }
-    return withPatchableSectionSpans(section, spans);
-  });
-
-  const droppedIds = patches
-    .filter((p) => p.conflict !== true)
-    .filter((p) => !appliedIds.has(p.id))
-    .map((p) => p.id);
-  return { doc: { ...doc, sections }, appliedIds, droppedIds };
-}
-
-export function applyBlockPatchOverlays(
-  doc: ViewDocumentSnapshot,
-  inputs: ReadonlyArray<BlockPatchInput>,
-): { doc: ViewDocumentSnapshot; appliedIds: Set<string>; droppedIds: string[] } {
-  if (inputs.length === 0) return { doc, appliedIds: new Set(), droppedIds: [] };
-  const sections = doc.sections.map(cloneViewBlock);
-  const appliedIds = new Set<string>();
-  const droppedIds: string[] = [];
-  const insertions: Array<{ input: BlockPatchInput; targetIndex: number; seq: number }> = [];
-
-  inputs.forEach((input) => {
-    if (input.op !== "replace") return;
-    if (input.blocks.length !== 1) {
-      droppedIds.push(input.patchId);
-      return;
-    }
-    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "replace");
-    if (targetIndex === null || targetIndex >= sections.length) {
-      droppedIds.push(input.patchId);
-      return;
-    }
-    sections[targetIndex] = withReplaceBlockPatch(input.blocks[0]!, input);
-    appliedIds.add(input.patchId);
-  });
-
-  inputs.forEach((input) => {
-    if (input.op !== "delete") return;
-    const count = Math.max(1, input.blockCount ?? input.blocks.length);
-    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "delete");
-    if (targetIndex === null || targetIndex + count > sections.length) {
-      droppedIds.push(input.patchId);
-      return;
-    }
-    for (let i = targetIndex; i < targetIndex + count; i += 1) {
-      const section = sections[i];
-      if (section) sections[i] = withBlockPatch(section, input, "delete");
-    }
-    appliedIds.add(input.patchId);
-  });
-
-  inputs.forEach((input, seq) => {
-    if (input.op !== "insert") return;
-    if (input.blocks.length === 0) {
-      droppedIds.push(input.patchId);
-      return;
-    }
-    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "insert");
-    if (targetIndex === null) {
-      droppedIds.push(input.patchId);
-      return;
-    }
-    insertions.push({ input, targetIndex, seq });
-  });
-
-  insertions.sort((a, b) => a.targetIndex - b.targetIndex || a.seq - b.seq);
-  let insertOffset = 0;
-  for (const insertion of insertions) {
-    const insertAt = clampIndex(insertion.targetIndex + insertOffset, sections.length);
-    sections.splice(
-      insertAt,
-      0,
-      ...insertion.input.blocks.map((block) => withBlockPatch(block, insertion.input, "insert")),
-    );
-    insertOffset += insertion.input.blocks.length;
-    appliedIds.add(insertion.input.patchId);
-  }
-
-  return { doc: { ...doc, sections }, appliedIds, droppedIds };
-}
-
 function resolveBlockPatchTargetIndex(
   doc: ViewDocumentSnapshot,
   sections: readonly ViewBlock[],
@@ -1941,62 +1754,6 @@ function validBlockPathIndex(value: unknown): value is number {
 
 function clampIndex(index: number, length: number): number {
   return Math.max(0, Math.min(index, length));
-}
-
-function withReplaceBlockPatch(section: ViewBlock, input: BlockPatchInput): ViewBlock {
-  const cloned = cloneViewBlock(section);
-  const beforeBlock = input.replaceBeforeBlocks?.[0];
-  return {
-    ...cloned,
-    blockPatch: {
-      patchId: input.patchId,
-      op: "replace",
-      ...(beforeBlock ? { beforeBlock: cloneViewBlock(beforeBlock) } : {}),
-    },
-  };
-}
-
-function withBlockPatch(section: ViewBlock, input: BlockPatchInput, op: "insert" | "delete"): ViewBlock {
-  const cloned = cloneViewBlock(section);
-  const patchSpan: ViewPatchTextSpan = {
-    kind: op === "insert" ? "patchIns" : "patchDel",
-    text: viewSectionText(cloned),
-    patchId: input.patchId,
-  };
-  const blockPatch: ViewBlockPatch = {
-    patchId: input.patchId,
-    op,
-  };
-
-  switch (cloned.kind) {
-    case "h1":
-    case "h2":
-    case "h3":
-    case "h4":
-    case "h5":
-    case "h6":
-    case "p":
-    case "quote":
-    case "penNote":
-      if (patchSpan.text.length > 0) {
-        const baseSpans = patchableSectionSpans(cloned);
-        const spans = baseSpans ? patchSpans(baseSpans, op, input.patchId) : [patchSpan];
-        return { ...cloned, blockPatch, spans } as ViewBlock;
-      }
-      break;
-  }
-
-  return {
-    ...cloned,
-    blockPatch: {
-      ...blockPatch,
-      marker: {
-        kind: op === "insert" ? "patchIns" : "patchDel",
-        text: blockPatchMarkerText(cloned, op),
-        patchId: input.patchId,
-      },
-    },
-  };
 }
 
 function cloneViewBlock(section: ViewBlock): ViewBlock {
@@ -2206,12 +1963,11 @@ export interface ReviewPatchGroup {
 }
 
 /**
- * 审批态 patch 呈现的**单一真相源**:对 baseline 文档折叠 patch,产出
- * - `doc`:带 patchDel/patchIns 标记的文档;
- * - `applied`:真正落地的 patch(含连续序号),计数 / 序号 / 正文标记都从这里派生;
+ * 审批态 patch 呈现的**单一真相源**:对 baseline 文档定位 patch,产出
+ * - `applied`:真正可定位的 patch(含连续序号),计数 / 序号 / decoration 元数据都从这里派生;
  * - `droppedIds`:锚点失败被丢弃的 patch(完整性缺口,需被发现)。
  *
- * 这样"左侧已修改 N 处 / 正文标记 / 悬浮序号"三者同源,天然一致,不会再出现
+ * 这样"左侧已修改 N 处 / decoration 标记 / 悬浮序号"三者同源,天然一致,不会再出现
  * "说 4 处实际 3 处、序号缺 1"的错乱。
  */
 export function derivePatchPresentation(
@@ -2219,7 +1975,6 @@ export function derivePatchPresentation(
   patches: ReadonlyArray<PatchOverlayInput>,
   blockPatches: ReadonlyArray<BlockPatchInput> = [],
 ): {
-  doc: ViewDocumentSnapshot;
   applied: AppliedPatch[];
   groups: ReviewPatchGroup[];
   appliedGroupIds: Set<string>;
@@ -2230,15 +1985,14 @@ export function derivePatchPresentation(
   const conflictIds = patches
     .filter((patch) => patch.conflict === true)
     .map((patch) => patch.id);
-  const { doc: overlaidDoc, appliedIds, droppedIds } = applyPatchOverlaysWithReport(
+  const { appliedIds, droppedIds } = collectPatchOverlayReport(
     doc,
     patches,
   );
   const {
-    doc: blockPatchedDoc,
     appliedIds: blockAppliedIds,
     droppedIds: blockDroppedIds,
-  } = applyBlockPatchOverlays(overlaidDoc, blockPatches);
+  } = collectBlockPatchOverlayReport(doc, blockPatches);
   const allAppliedIds = new Set([...appliedIds, ...blockAppliedIds]);
   type AppliedCandidate = {
     order: number;
@@ -2350,7 +2104,6 @@ export function derivePatchPresentation(
     }),
   );
   return {
-    doc: blockPatchedDoc,
     applied,
     groups,
     appliedGroupIds: new Set(groups.map((group) => group.reviewBatchId)),
@@ -2358,6 +2111,173 @@ export function derivePatchPresentation(
     droppedIds: [...droppedIds, ...blockDroppedIds],
     conflictIds,
   };
+}
+
+function collectPatchOverlayReport(
+  doc: ViewDocumentSnapshot,
+  patches: ReadonlyArray<PatchOverlayInput>,
+): { appliedIds: Set<string>; droppedIds: string[] } {
+  const appliedIds = new Set<string>();
+  if (patches.length === 0) return { appliedIds, droppedIds: [] };
+  const activePatches = patches.filter((patch) => patch.conflict !== true);
+
+  const patchesBySection = new Map<number, PatchOverlayInput[]>();
+  for (const patch of activePatches) {
+    const sectionPatches = patchesBySection.get(patch.blockIndex) ?? [];
+    sectionPatches.push(patch);
+    patchesBySection.set(patch.blockIndex, sectionPatches);
+  }
+
+  doc.sections.forEach((section, blockIndex) => {
+    const baseSpans = patchableSectionSpans(section);
+    if (!baseSpans) return;
+    const scopedPatches = patchesBySection.get(blockIndex);
+    if (!scopedPatches || scopedPatches.length === 0) return;
+    for (const patch of scopedPatches) {
+      if (patchResolvesInSpans(baseSpans, patch)) appliedIds.add(patch.id);
+    }
+  });
+
+  const droppedIds = patches
+    .filter((p) => p.conflict !== true)
+    .filter((p) => !appliedIds.has(p.id))
+    .map((p) => p.id);
+  return { appliedIds, droppedIds };
+}
+
+function patchResolvesInSpans(spans: readonly ViewDocSpan[], patch: PatchOverlayInput): boolean {
+  if (patch.kind === "markAdd" || patch.kind === "markRemove") {
+    return markPatchResolvesInSpans(spans, patch as PatchOverlayInput & { kind: "markAdd" | "markRemove" });
+  }
+
+  const matchBefore = patch.matchBefore ?? patch.before;
+  const matchAfter = patch.matchAfter ?? patch.after;
+  const hasVisiblePatch =
+    Boolean(patch.beforeSpans?.length) ||
+    Boolean(patch.afterSpans?.length) ||
+    patch.before.length > 0 ||
+    patch.after.length > 0;
+  if (!hasVisiblePatch) return false;
+
+  const text = viewSpansOffsetText(spans);
+  const range = resolvePatchRange(text, patch.range, matchBefore);
+  if (range) return true;
+
+  if (matchBefore !== "") {
+    const idx = text.indexOf(matchBefore);
+    if (idx >= 0) {
+      const isEditedDoc =
+        matchAfter.length > matchBefore.length &&
+        matchAfter.startsWith(matchBefore) &&
+        text.startsWith(matchAfter, idx);
+      if (!isEditedDoc) return true;
+    }
+  }
+
+  if (matchAfter.length > 0 && text.includes(matchAfter)) return true;
+  return matchAfter === "" && matchBefore !== "" && text.includes("​");
+}
+
+function markPatchResolvesInSpans(
+  spans: readonly ViewDocSpan[],
+  patch: PatchOverlayInput & { kind: "markAdd" | "markRemove" },
+): boolean {
+  const matchBefore = patch.matchBefore ?? patch.before;
+  const text = viewSpansOffsetText(spans);
+  const range = resolvePatchRange(text, patch.range, matchBefore);
+  if (range) return markPatchRangeHasBody(spans, range.start, range.end);
+  if (matchBefore.length === 0) return false;
+  const idx = text.indexOf(matchBefore);
+  if (idx < 0) return false;
+  const start = Array.from(text.slice(0, idx)).length;
+  const end = Array.from(text.slice(0, idx + matchBefore.length)).length;
+  return markPatchRangeHasBody(spans, start, end);
+}
+
+function resolvePatchRange(
+  text: string,
+  range: PatchOverlayInput["range"] | undefined,
+  matchBefore: string,
+): { start: number; end: number } | null {
+  if (!range) return null;
+  const textLength = Array.from(text).length;
+  const start = Math.max(0, Math.min(range.start, textLength));
+  const end = Math.max(start, Math.min(range.end, textLength));
+  const selected = Array.from(text).slice(start, end).join("");
+  return selected === matchBefore ? { start, end } : null;
+}
+
+function markPatchRangeHasBody(spans: readonly ViewDocSpan[], start: number, end: number): boolean {
+  const splitStart = splitSpansAt(spans, start);
+  if (!splitStart) return false;
+  const splitEnd = splitSpansAt(splitStart.right, end - start);
+  if (!splitEnd) return false;
+  if (splitEnd.left.some((span) => span.kind === "math" || span.kind === "patchInsMath" || span.kind === "patchDelMath")) {
+    return false;
+  }
+  return viewSpansText(splitEnd.left).length > 0;
+}
+
+function collectBlockPatchOverlayReport(
+  doc: ViewDocumentSnapshot,
+  inputs: ReadonlyArray<BlockPatchInput>,
+): { appliedIds: Set<string>; droppedIds: string[] } {
+  if (inputs.length === 0) return { appliedIds: new Set(), droppedIds: [] };
+  const sections = doc.sections.map(cloneViewBlock);
+  const appliedIds = new Set<string>();
+  const droppedIds: string[] = [];
+  const insertions: Array<{ input: BlockPatchInput; targetIndex: number; seq: number }> = [];
+
+  inputs.forEach((input) => {
+    if (input.op !== "replace") return;
+    if (input.blocks.length !== 1) {
+      droppedIds.push(input.patchId);
+      return;
+    }
+    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "replace");
+    if (targetIndex === null || targetIndex >= sections.length) {
+      droppedIds.push(input.patchId);
+      return;
+    }
+    sections[targetIndex] = cloneViewBlock(input.blocks[0]!);
+    appliedIds.add(input.patchId);
+  });
+
+  inputs.forEach((input) => {
+    if (input.op !== "delete") return;
+    const count = Math.max(1, input.blockCount ?? input.blocks.length);
+    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "delete");
+    if (targetIndex === null || targetIndex + count > sections.length) {
+      droppedIds.push(input.patchId);
+      return;
+    }
+    appliedIds.add(input.patchId);
+  });
+
+  inputs.forEach((input, seq) => {
+    if (input.op !== "insert") return;
+    if (input.blocks.length === 0) {
+      droppedIds.push(input.patchId);
+      return;
+    }
+    const targetIndex = resolveBlockPatchTargetIndex(doc, sections, input, "insert");
+    if (targetIndex === null) {
+      droppedIds.push(input.patchId);
+      return;
+    }
+    insertions.push({ input, targetIndex, seq });
+  });
+
+  insertions.sort((a, b) => a.targetIndex - b.targetIndex || a.seq - b.seq);
+  let insertOffset = 0;
+  for (const insertion of insertions) {
+    const insertAt = clampIndex(insertion.targetIndex + insertOffset, sections.length);
+    sections.splice(insertAt, 0, ...insertion.input.blocks.map(cloneViewBlock));
+    insertOffset += insertion.input.blocks.length;
+    appliedIds.add(insertion.input.patchId);
+  }
+
+  return { appliedIds, droppedIds };
 }
 
 function patchReviewBatchId(patch: PatchOverlayInput): string {
@@ -2390,63 +2310,6 @@ function joinBlockPatchText(left: string, right: string): string {
   if (!left) return right;
   if (!right) return left;
   return `${left}\n${right}`;
-}
-
-/** 扫文档,只收集 patchDel/patchIns/patchMark span 携带的 distinct patchId(= 正文实际可见的处)。 */
-export function collectPatchMarkerIds(doc: ViewDocumentSnapshot): Set<string> {
-  const ids = new Set<string>();
-  for (const section of doc.sections) {
-    if (section.blockPatch?.op === "replace") ids.add(section.blockPatch.patchId);
-    const spans = sectionPatchMarkerSpans(section);
-    if (!spans) continue;
-    for (const span of spans) {
-      if (span.kind === "patchDel" || span.kind === "patchIns" || span.kind === "patchDelMath" || span.kind === "patchInsMath") ids.add(span.patchId);
-      if (span.kind === "patchMark") ids.add(span.patchId);
-    }
-  }
-  return ids;
-}
-
-/**
- * 内部一致性自检("沉淀的验证方法"):派生结果必须满足
- * 1. 决策组序号连续 1..N(同组多 hunk 可共享序号);
- * 2. 正文标记 id 集合 === applied id 集合(不多不少);
- * 3. 计数(applied 数)=== 正文 distinct 标记数。
- *
- * 这是 derivePatchPresentation 的**不变量**,任何场景都应返回空数组。返回非空 =
- * 数数逻辑出 bug,开发态据此报警、单测据此断言——"一旦数量不对,自己立刻知道"。
- *
- * 注意:这里只查"内部一致性"(显示给用户的数全都自洽)。完整性缺口(droppedIds 非空,
- * 即正文比 agent 意图少几处)单独通过 droppedIds 暴露,不计入本函数。
- */
-export function checkPatchPresentationConsistency(p: {
-  doc: ViewDocumentSnapshot;
-  applied: AppliedPatch[];
-  appliedIds: Set<string>;
-}): string[] {
-  const violations: string[] = [];
-
-  const uniqueIndexes = [...new Set(p.applied.map((a) => a.index))].sort((a, b) => a - b);
-  uniqueIndexes.forEach((index, i) => {
-    if (index !== i + 1) {
-      violations.push(`组序号不连续:第 ${i} 个组 index=${index}(应为 ${i + 1})`);
-    }
-  });
-
-  const markerIds = collectPatchMarkerIds(p.doc);
-  for (const id of markerIds) {
-    if (!p.appliedIds.has(id)) violations.push(`正文标记 ${id} 不在 applied 集合`);
-  }
-  for (const a of p.applied) {
-    if (!markerIds.has(a.id)) violations.push(`applied ${a.id} 在正文无标记`);
-  }
-  if (markerIds.size !== p.applied.length) {
-    violations.push(
-      `计数不一致:正文标记 ${markerIds.size} 处,applied ${p.applied.length} 处`,
-    );
-  }
-
-  return violations;
 }
 
 /**

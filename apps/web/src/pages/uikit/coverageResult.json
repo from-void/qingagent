@@ -2520,7 +2520,7 @@
       },
       {
         "cls": "wf-region",
-        "evidence": "WorkspacePage.tsx:4963 PatchUnresolvableBanner · 4988 PatchUnrenderableHint(审核态可达);历史横幅变体 4779 已停摆(hash-only 无入口)"
+        "evidence": "RightPane.tsx PatchUnrenderableHint(审核态坏锚点兜底);历史横幅变体已停摆(hash-only 无入口)"
       },
       {
         "cls": "wf-sel",

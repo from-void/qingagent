@@ -88,7 +88,6 @@ import {
   getChatInputBlockReason,
 } from "./data/chatInputBlockReason";
 import {
-  checkPatchPresentationConsistency,
   derivePatchPresentation,
   pmDocToViewDocumentSnapshot,
   suggestionToBlockPatchInput,
@@ -971,21 +970,6 @@ export function WorkspacePage() {
       return suggestionToBlockPatchInputs(tc.body.data.data, order);
     });
   }, [allReviewPatches, overlayCoveredIds]);
-  // 诊断 p03 计数诚实:连输入都没进的 suggestion(此前被静默丢弃)也计入不可视。
-  const unpresentedPatchCount = useMemo(() => {
-    const presented = new Set<string>([
-      ...overlayInputs.map((o) => o.id),
-      ...blockPatchInputs.map((b) => b.patchId),
-    ]);
-    let missing = 0;
-    for (const tc of allReviewPatches) {
-      if (tc.body.kind !== "docSuggestion" || tc.body.data.kind !== "suggestion") continue;
-      const s = tc.status.kind;
-      if (s !== "reviewing" && s !== "accepted" && s !== "rejected") continue;
-      if (!presented.has(tc.body.data.data.id)) missing += 1;
-    }
-    return missing;
-  }, [allReviewPatches, overlayInputs, blockPatchInputs]);
   // 数数单一真相源:计数 / 序号 / 正文标记 / 打字调度都从这里派生,天然一致。
   const patchPresentation = useMemo(
     () =>
@@ -994,7 +978,6 @@ export function WorkspacePage() {
         : null,
     [state.doc, overlayInputs, blockPatchInputs],
   );
-  const docWithPatches = patchPresentation?.doc ?? state.doc;
   // 修改处数按「正文实际渲染的绿色 diff 段数」算 = 真正落地的 patch 数(applied)。
   // 一个 editDraft 若产出多段不连续的 diff(如替换文本里多了几处空格 →
   // buildDraftDiff 切成多个 hunk),正文里有几段绿,就显示几处。
@@ -1032,14 +1015,9 @@ export function WorkspacePage() {
       editedDoc: editedNewDoc?.pmDoc ?? null,
     });
   }, [allReviewPatches, state.doc?.pmDoc, editedNewDoc?.pmDoc]);
-  // 自检:内部不一致(序号/计数/标记不自洽)=数数逻辑 bug → 报错;
-  // dropped(锚点失败、正文少几处)=完整性缺口 → 警告。"一旦数量不对,自己立刻知道"。
+  // 自检:dropped/conflict 是 PM decoration 无法定位的诚实缺口;正文标记由 decoration 层负责。
   useEffect(() => {
     if (!patchPresentation || !import.meta.env?.DEV) return;
-    const violations = checkPatchPresentationConsistency(patchPresentation);
-    if (violations.length > 0) {
-      console.error("[patch] 计数/序号内部不一致(数数逻辑 bug):", violations);
-    }
     if (patchPresentation.droppedIds.length > 0) {
       console.warn(
         `[patch] ${patchPresentation.droppedIds.length} 处改动锚点匹配失败、未在正文呈现:`,
@@ -1170,7 +1148,7 @@ export function WorkspacePage() {
   const [revealedPatchIds, setRevealedPatchIds] = useState<ReadonlySet<string> | null>(null);
   // 改动B 微调(逐字打字版):
   // - revealedPatchIds:已"开始入场"(mount 标记)的处;null = 不约束(非审批/恢复态全显示)。
-  // - typedByPatch:每处新增文案已"打"出的字符数(SpanView 据此截断 newPart);null = 全显示。
+  // - typedByPatch:每处新增文案已"打"出的字符数(decoration 据此截断新增文本);null = 全显示。
   // - revealCursors:当前正在打字的那几处(打字头位置,可并发)→ 通道号 lane。现仅用于给 RevealCursor
   //   打 data-hc-lane 锚点(供拟人鼠标 HumanCursorOverlay 定位);Agent·N 名字已迁移到鼠标承载,光标不带文字。
   // - patchRevealing:整个打字过程布尔(隐藏顶部审批条 / 左侧 loading / 右栏发光)。
@@ -1189,7 +1167,6 @@ export function WorkspacePage() {
     presentationCount,
   });
   const effectiveReview = reviewUiState.effectiveReview;
-  const showForceUnlock = reviewUiState.showForceUnlock;
   // 整篇审触发:审阅中 + 拿到干净新文档 + 改动幅度 ≥ 70% → 走新旧版整篇审
   const WHOLE_DOC_REVIEW_THRESHOLD = 0.7;
   const reviewRenderMode = deriveReviewRenderMode({
@@ -1249,8 +1226,7 @@ export function WorkspacePage() {
   }, [wholeDocVersion, wholeDocReview]);
   const unrenderablePatchCount =
     (patchPresentation?.droppedIds.length ?? 0) +
-    (patchPresentation?.conflictIds.length ?? 0) +
-    unpresentedPatchCount;
+    (patchPresentation?.conflictIds.length ?? 0);
   const effectivePatchRevealing = inlinePatchReview && patchRevealing;
   const editLockHint =
     dataAttrs.tool === "agentBusy" ||
@@ -3572,7 +3548,6 @@ export function WorkspacePage() {
             streamError={state.streamError}
             generationDraftDoc={state.generationDraft?.doc ?? null}
             viewingSnapshotDoc={state.viewingSnapshotDoc}
-            docWithPatches={docWithPatches}
             wholeDocReview={wholeDocReview}
             wholeDocVersion={wholeDocVersion}
             editedNewDoc={editedNewDoc}
@@ -3586,7 +3561,6 @@ export function WorkspacePage() {
             unrenderablePatchCount={unrenderablePatchCount}
             effectiveReview={inlinePatchReview}
             reviewMaterializing={awaitingWholeDocReviewMaterial}
-            showForceUnlock={showForceUnlock}
             fullpageAsk={fullpageAsk}
             submittingAskUserId={submittingAskUserId}
             viewingVersion={state.viewingVersion}

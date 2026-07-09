@@ -1326,7 +1326,7 @@ function ToolCallRow({ spec, skillLabels }: { spec: ToolCallSpec; skillLabels?: 
   // 真正的二维码由 MessageRow 后置到最终回复之后、圆角展示(不再在这里内联整张卡)。
   // ⚠️【勿删·铁律】docSuggestion **不是死代码**:它是右侧补丁审阅系统的**数据骨架**——
   //   bridge 把每个 patch 作为 docSuggestion `toolCallUpdated` 帧发出,前端 workspaceState
-  //   存进 draft.toolCalls,protocol.ts 的 applyPatchOverlaysWithReport 据此构建绿色 diff /
+  //   存进 draft.toolCalls,protocol.ts 的 derivePatchPresentation 与 PM decoration 路径据此构建 diff /
   //   上一处下一处 / 接受拒绝 / patchSummary。**删掉 docSuggestion 的 emit 会让整个右侧审阅失效**
   //   (曾被自动评审误判为"早期废弃工具"而删,导致绿diff/审批条消失,已回退)。
   //   这里只是聊天侧的轻量状态行(右侧审阅另由 draft.toolCalls 驱动,与这条渲染无关)。

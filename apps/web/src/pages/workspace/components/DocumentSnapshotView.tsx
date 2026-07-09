@@ -130,7 +130,6 @@ import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
-import { SectionView } from "./doc/SectionView";
 import { TableControls } from "./doc/TableControls";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
@@ -311,23 +310,7 @@ export const DocumentSnapshotView = forwardRef<
         data-version={doc.version}
         spellCheck={false}
       >
-        {doc.pmDoc && !showPatches
-          ? doc.pmDoc.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)
-          : doc.sections.map((section, i) => (
-              <SectionView
-                key={`v${doc.version}-s${i}`}
-                section={section}
-                showPatches={showPatches}
-                acceptedPatches={acceptedPatches}
-                rejectedPatches={rejectedPatches}
-                revealedPatchIds={revealedPatchIds}
-                revealCursors={revealCursors}
-                typedByPatch={typedByPatch}
-                onPatchVerdict={onPatchVerdict}
-                patchMeta={patchMeta}
-                activePatchId={activePatchId}
-              />
-            ))}
+        {doc.pmDoc?.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)}
       </article>
       {/* 审阅态(静态补丁路径,editable=false)也把落款这块奶白纸提前占好位:
           内容(署名文字/印章)以占位态隐藏、不跑入场动画,只把高度预留出来。

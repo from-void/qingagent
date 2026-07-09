@@ -600,7 +600,6 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     streamError: null,
     generationDraftDoc: null,
     viewingSnapshotDoc: null,
-    docWithPatches: doc,
     wholeDocReview: false,
     wholeDocVersion: "new" as const,
     editedNewDoc: null,
@@ -614,7 +613,6 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     unrenderablePatchCount: 0,
     effectiveReview: true,
     reviewMaterializing: false,
-    showForceUnlock: false,
     fullpageAsk: null,
     viewingVersion: null,
     committedToastVersion: null,
@@ -804,7 +802,6 @@ describe("WorkspacePage review controls", () => {
               agentBusy: false,
             }),
             doc,
-            docWithPatches: doc,
             effectiveReview: false,
             remainingCount: 0,
             visiblePatchCount: 0,
@@ -828,7 +825,6 @@ describe("WorkspacePage review controls", () => {
         <RightPane
           {...rightPaneProps({
             doc,
-            docWithPatches: doc,
             patchMeta: insertBlockPatchMeta(),
             reviewSuggestions: reviewData.suggestions,
             reviewAppliedPatches: reviewData.applied,
@@ -871,7 +867,6 @@ describe("WorkspacePage review controls", () => {
         <RightPane
           {...rightPaneProps({
             doc: baseDoc,
-            docWithPatches: presentation.doc,
             patchMeta,
             remainingCount: 1,
             visiblePatchCount: 1,
@@ -886,7 +881,6 @@ describe("WorkspacePage review controls", () => {
       </section>,
     );
 
-    expect(host?.querySelector('[data-wf="PatchUnresolvableBanner"]')).toBeNull();
     expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')).toBeNull();
     const inserted = host?.querySelector('[data-patch-id="insert-docdiff"].wf-blockmark.insert') as HTMLElement | null;
     expect(inserted).not.toBeNull();
@@ -910,7 +904,6 @@ describe("WorkspacePage review controls", () => {
           <RightPane
             {...rightPaneProps({
               doc: baseDoc,
-              docWithPatches: presentation.doc,
               patchesRejected: new Set(["insert-docdiff"]),
               patchMeta,
               remainingCount: 0,
@@ -981,7 +974,6 @@ describe("WorkspacePage review controls", () => {
               agentBusy: false,
             }),
             doc: currentDoc,
-            docWithPatches: currentDoc,
             effectiveReview: false,
             viewingVersion: 2,
             viewingSnapshotDoc: null,
@@ -1018,7 +1010,6 @@ describe("WorkspacePage review controls", () => {
               agentBusy: false,
             }),
             doc: currentDoc,
-            docWithPatches: currentDoc,
             effectiveReview: false,
             viewingVersion: 2,
             viewingSnapshotDoc: historyDoc,
@@ -2093,7 +2084,6 @@ describe("WorkspacePage review controls", () => {
         <RightPane
           {...rightPaneProps({
             doc,
-            docWithPatches: doc,
             patchMeta: mixedContentMarkPatchMeta(),
             reviewSuggestions: reviewData.suggestions,
             reviewAppliedPatches: reviewData.applied,
@@ -2125,35 +2115,25 @@ describe("WorkspacePage review controls", () => {
     expect(formatPopup!.textContent).toContain("加粗/高亮");
   });
 
-  it("多组 pendingReview 无可见 patch 且 agentBusy 未清零时仍渲染放弃逃生入口", async () => {
+  it("多组 pendingReview 无可见 patch 时仍显示无法定位提示", async () => {
     const { RightPane } = await import("./WorkspacePage");
-    const onRejectAll = vi.fn();
     await render(
       <section id="view-workspace">
         <RightPane
           {...rightPaneProps({
-            docWithPatches: multiGroupDoc(1),
             effectiveReview: false,
-            showForceUnlock: true,
             visiblePatchCount: 0,
             remainingCount: 0,
             unrenderablePatchCount: 7,
             patchMeta: new Map(),
-            onRejectAll,
           })}
         />
       </section>,
     );
 
-    expect(host?.querySelector('[data-wf="PatchUnresolvableBanner"]')).not.toBeNull();
-    const abandon = [...host!.querySelectorAll("button")].find(
-      (button) => button.textContent === "放弃本轮修改",
+    expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')?.textContent).toContain(
+      "另有 7 处改动无法在正文定位",
     );
-    expect(abandon).toBeTruthy();
-
-    abandon!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
 
   it("R2-02 整篇审提交若没有状态回帧，底部条会超时复位并提示重试", async () => {
@@ -2382,7 +2362,6 @@ describe("WorkspacePage existing session restore retry", () => {
         <RightPane
           {...rightPaneProps({
             doc: null,
-            docWithPatches: null,
             streamError: { kind: "failed", reason: "恢复会话失败，请重试", retriable: true },
           })}
         />

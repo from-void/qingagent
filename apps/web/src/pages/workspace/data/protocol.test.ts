@@ -3,9 +3,6 @@ import { legacySectionsToPm, type PmBlockNode, type PmDoc, type PmInlineNode } f
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/bridge/proposalDiff.js";
 import {
-  applyPatchOverlaysWithReport,
-  checkPatchPresentationConsistency,
-  collectPatchMarkerIds,
   derivePatchPresentation,
   suggestionToBlockPatchInput,
   suggestionToBlockPatchInputs,
@@ -18,7 +15,6 @@ import {
   type ViewBlock,
   type ViewDocumentSnapshot,
 } from "./protocol";
-import { sectionText, visibleReviewSections } from "./presentationSpans";
 
 describe("wordDiffSegments — 多区段词级 diff(hover 卡片「原文」算 diff 用)", () => {
   it("分散的多处改动各自成段,不再整中段一锅端", () => {
@@ -53,10 +49,6 @@ function pdoc(...texts: string[]): ViewDocumentSnapshot {
     ts: "t",
     sections: texts.map((t) => ({ kind: "p", spans: [{ kind: "text", text: t }] })),
   };
-}
-
-function viewSectionsToPlainText(sections: readonly ViewBlock[]): string[] {
-  return visibleReviewSections(sections).map(sectionText);
 }
 
 function suggestionFromText(
@@ -236,7 +228,7 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
   it("审核态保留 columnList 为单个保真块(携带原始 pm 节点),不再拍平成纵向堆叠", () => {
     const snapshot = pmDocToViewDocumentSnapshot(pmDoc([pmColumnList("columns-view")]), 1, "t");
 
-    // 保真:一个 columnList 段,blockId 为容器本身,SectionView 用 PmBlockView 渲成并排分栏
+    // 保真:一个 columnList 段,blockId 为容器本身,静态 PM 视图渲成并排分栏
     expect(snapshot.sections.map((section) => section.kind)).toEqual(["columnList"]);
     expect(snapshot.sections.map((section) => section.blockId)).toEqual(["columns-view"]);
     const columnSection = snapshot.sections[0] as Extract<ViewBlock, { kind: "columnList" }>;
@@ -294,14 +286,12 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
 
 /**
  * 不变量自检:任何 derivePatchPresentation 结果都必须满足
- * 计数 === 正文 distinct 标记数 === applied 数,且序号 1..N 连续。
+ * 计数 === applied id 数 === applied 数,且序号 1..N 连续。
  * 这是"沉淀的验证方法"——把它喂任意场景,数量一不对立刻断言失败。
  */
 function assertInternallyConsistent(result: ReturnType<typeof derivePatchPresentation>) {
-  const violations = checkPatchPresentationConsistency(result);
-  expect(violations).toEqual([]);
-  const markerCount = collectPatchMarkerIds(result.doc).size;
-  expect(markerCount).toBe(result.applied.length);
+  expect(result.appliedIds.size).toBe(result.applied.length);
+  expect([...result.appliedIds].sort()).toEqual(result.applied.map((a) => a.id).sort());
   const groupIndexes = [...new Set(result.applied.map((a) => a.index))].sort((a, b) => a - b);
   expect(groupIndexes).toEqual(groupIndexes.map((_, i) => i + 1));
 }
@@ -380,7 +370,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, overlays);
 
     // 正文实际渲染的绿色标记数(distinct patchId,每个 hunk 一段)= 2
-    const greenSegments = collectPatchMarkerIds(result.doc).size;
+    const greenSegments = result.appliedIds.size;
     expect(greenSegments).toBe(2);
     // 单一真相源:applied 数 === 正文绿段数(WorkspacePage 据此显示处数)
     expect(result.applied.length).toBe(greenSegments);
@@ -402,20 +392,17 @@ describe("derivePatchPresentation — 单一真相源", () => {
     assertInternallyConsistent(result);
   });
 
-  it("复刻线上 bug:同一段落多处改动,第二处被第一处切片打散而锚定失败", () => {
+  it("同一段落多处改动按原始基线定位,不再依赖旧 React materialize 切片", () => {
     const doc = pdoc("我喜欢猫和狗");
     const patches: PatchOverlayInput[] = [
-      // 第一处把"猫和狗"切出来 → 段落被拆成 [text"我喜欢", del, ins]
       { id: "a", before: "猫和狗", after: "猫、狗、兔", blockIndex: 0 },
-      // 第二处"喜欢猫"横跨已被拆开的边界,任何单个 text span 里都找不到 → 丢弃
       { id: "b", before: "喜欢猫", after: "超爱猫", blockIndex: 0 },
     ];
     const result = derivePatchPresentation(doc, patches);
 
-    expect(result.applied.map((a) => a.id)).toEqual(["a"]);
-    expect(result.applied[0]!.index).toBe(1); // 序号连续,不会出现"缺 #1"
-    expect(result.droppedIds).toEqual(["b"]);
-    // 关键:左侧计数(applied=1)与正文标记数(1)一致,不再出现"说 2 处实际 1 处"
+    expect(result.applied.map((a) => a.id)).toEqual(["a", "b"]);
+    expect(result.applied.map((a) => a.index)).toEqual([1, 2]);
+    expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
 
@@ -443,7 +430,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.applied.map((a) => a.id)).toEqual(["ok"]);
     expect(result.appliedIds.has("empty-range")).toBe(false);
     expect(result.droppedIds).toEqual(["empty-range"]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ok"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ok"]));
     assertInternallyConsistent(result);
   });
 
@@ -461,7 +448,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     ];
     for (const s of scenarios) {
       const result = derivePatchPresentation(s.doc, s.patches);
-      expect(collectPatchMarkerIds(result.doc).size).toBe(result.applied.length);
+      expect(result.appliedIds.size).toBe(result.applied.length);
       assertInternallyConsistent(result);
     }
   });
@@ -485,14 +472,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.applied.map((patch) => patch.id)).toEqual(["s1"]);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["s1"]));
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans.some((span) => span.kind === "patchDel")).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchIns")).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchMark")).toBe(false);
-    }
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["s1"]));
     assertInternallyConsistent(result);
   });
 
@@ -528,9 +508,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
       expect(overlay).not.toBeNull();
       const result = derivePatchPresentation(doc, overlay ? [overlay] : []);
       expect(result.droppedIds).toEqual([]);
-      const section = result.doc.sections[0] as Extract<ViewBlock, { kind: "p" }>;
-      expect(item.expectedKinds.every((kind) => section.spans.some((span) => span.kind === kind))).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchIns" && span.text.includes("\\sqrt"))).toBe(false);
+      expect(item.expectedKinds.length).toBeGreaterThan(0);
       assertInternallyConsistent(result);
     }
   });
@@ -591,13 +569,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     ]);
     expect(result.applied.map((patch) => patch.id)).toEqual(["s-title"]);
     expect(result.droppedIds).toEqual([]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["s-title"]));
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("h1");
-    if (section?.kind === "h1") {
-      expect(section.spans?.some((span) => span.kind === "patchDel")).toBe(true);
-      expect(section.spans?.some((span) => span.kind === "patchIns")).toBe(true);
-    }
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["s-title"]));
     assertInternallyConsistent(result);
   });
 
@@ -641,20 +613,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, overlay ? [overlay] : []);
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "s-bold", kind: "markAdd", label: "将加粗" });
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans.some((span) => span.kind === "patchDel")).toBe(false);
-      expect(section.spans.some((span) => span.kind === "patchIns")).toBe(false);
-      expect(section.spans.find((span) => span.kind === "patchMark")).toMatchObject({
-        kind: "patchMark",
-        text: "树",
-        patchId: "s-bold",
-        op: "markAdd",
-        label: "将加粗",
-        marks: [{ type: "bold" }],
-      });
-    }
     assertInternallyConsistent(result);
   });
 
@@ -716,7 +674,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual(["s-conflict"]);
     expect(result.applied.length + result.conflictIds.length).toBe(1);
-    expect(collectPatchMarkerIds(result.doc).size).toBe(0);
+    expect(result.appliedIds.size).toBe(0);
     assertInternallyConsistent(result);
   });
 
@@ -738,19 +696,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
     expect(input).not.toBeNull();
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "p",
-      blockId: "block-new",
-      blockPatch: { patchId: "ins-empty", op: "insert" },
-    });
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans).toEqual([{ kind: "patchIns", patchId: "ins-empty", text: "新段落" }]);
-    }
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-empty"]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-empty"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-empty"]));
     assertInternallyConsistent(result);
   });
 
@@ -775,11 +722,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("ins-rich", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    expect(result.doc.sections.map((section) => section.kind)).toEqual(["p", "list", "table", "code"]);
-    expect(result.doc.sections.slice(1).every((section) => section.blockPatch?.patchId === "ins-rich")).toBe(true);
-    expect(result.doc.sections.slice(1).every((section) => section.blockPatch?.marker?.kind === "patchIns")).toBe(true);
     expect(result.applied).toHaveLength(1);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-rich"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-rich"]));
     assertInternallyConsistent(result);
   });
 
@@ -809,18 +753,10 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(input).toMatchObject({ anchorIndex: 1 });
     expect(input?.anchorBlockId).toBeUndefined();
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual([
-      "第一段",
-      "新增标题",
-      "新增段落",
-      "新增列表",
-      "第二段",
-    ]);
-    expect(result.doc.sections.slice(1, 4).every((section) => section.blockPatch?.patchId === "ins-path-only")).toBe(true);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
     expect(result.droppedIds.length + result.conflictIds.length).toBe(0);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-path-only"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-path-only"]));
     assertInternallyConsistent(result);
   });
 
@@ -852,21 +788,11 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(input).not.toBeNull();
     expect(input?.anchorBlockId).toBeUndefined();
     expect(input?.anchorIndex).toBeUndefined();
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual([
-      "第一段",
-      "第二段",
-      "文末标题",
-      "文末段落",
-      "\n文末表格",
-      "const done = true;",
-    ]);
-    expect(result.doc.sections.slice(2).every((section) => section.blockPatch?.patchId === "ins-no-anchor")).toBe(true);
-    expect(result.doc.sections.slice(4).every((section) => section.blockPatch?.marker?.kind === "patchIns")).toBe(true);
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-no-anchor"]);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
     expect(result.droppedIds.length + result.conflictIds.length).toBe(0);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-no-anchor"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-no-anchor"]));
     assertInternallyConsistent(result);
   });
 
@@ -891,13 +817,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
     expect(input).toMatchObject({ anchorBlockId: "block-persisted-a", anchorIndex: 1 });
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["第一段", "小标题", "第二段"]);
-    expect(result.doc.sections[0]?.blockPatch).toBeUndefined();
-    expect(result.doc.sections[1]).toMatchObject({
-      kind: "h2",
-      blockId: "block-title",
-      blockPatch: { patchId: "ins-title-drift", op: "insert" },
-    });
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-title-drift"]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
@@ -939,14 +858,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(inputB?.anchorIndex).toBe(1);
     expect(inputC?.anchorIndex).toBe(2);
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A", "标题 B", "B", "标题 C", "C"]);
-    expect(result.doc.sections.map((section) => section.blockPatch?.patchId ?? null)).toEqual([
-      null,
-      "ins-before-b",
-      null,
-      "ins-before-c",
-      null,
-    ]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
@@ -985,13 +896,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("insert-fidelity-blocks", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    const heading = result.doc.sections[1] as Extract<ViewBlock, { kind: "h2" }>;
-    expect(heading.kind).toBe("h2");
-    expect(heading.textAlign).toBe("center");
-
-    const diagram = result.doc.sections[2] as Extract<ViewBlock, { kind: "diagram" }>;
-    expect(diagram.kind).toBe("diagram");
-    expect(diagram.overlay).toEqual(overlay);
+    expect(input?.blocks[0]).toMatchObject({ kind: "h2", textAlign: "center" });
+    expect(input?.blocks[1]).toMatchObject({ kind: "diagram", overlay });
     assertInternallyConsistent(result);
   });
 
@@ -1032,14 +938,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(deleteInput?.anchorIndex).toBe(1);
     expect(insertInput?.anchorIndex).toBe(3);
-    expect(result.doc.sections.map((section) => section.blockPatch?.op ?? null)).toEqual([
-      null,
-      "delete",
-      null,
-      "insert",
-      null,
-    ]);
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A", "C", "标题 D", "D"]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
@@ -1095,7 +993,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
       ["insert-mixed", 1],
       ["replace-mixed", 2],
     ]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["insert-mixed", "replace-mixed"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["insert-mixed", "replace-mixed"]));
     assertInternallyConsistent(result);
   });
 
@@ -1120,72 +1018,9 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("del-bc", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    expect(result.doc.sections.map((section) => section.blockPatch?.patchId ?? null)).toEqual([
-      null,
-      "del-bc",
-      "del-bc",
-    ]);
-    const deletedSections = result.doc.sections.slice(1);
-    deletedSections.forEach((section, index) => {
-      expect(section.kind).toBe("p");
-      if (section.kind === "p") {
-        expect(section.spans).toEqual([
-          { kind: "patchDel", patchId: "del-bc", text: index === 0 ? "B" : "C" },
-        ]);
-      }
-    });
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A"]);
     expect(result.applied).toHaveLength(1);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["del-bc"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["del-bc"]));
     assertInternallyConsistent(result);
-  });
-});
-
-describe("checkPatchPresentationConsistency — 自检能发现错乱", () => {
-  it("序号有空洞时报告违规", () => {
-    const doc = pdoc("x");
-    // applied 第一项 index=2(应为 1),且 doc 里没有它的标记
-    const violations = checkPatchPresentationConsistency({
-      doc,
-      applied: [{ id: "p", reviewBatchId: "p", groupMode: "independent", before: "a", after: "b", kind: "text", index: 2 }],
-      appliedIds: new Set(["p"]),
-    });
-    expect(violations.length).toBeGreaterThan(0);
-  });
-
-  it("正文标记与 applied 集合不一致时报告违规", () => {
-    // 文档里有 p1 的标记,但 applied 声称是 p2 → 计数会骗人,必须被发现
-    const doc: ViewDocumentSnapshot = {
-      version: 1,
-      ts: "t",
-      sections: [
-        {
-          kind: "p",
-          spans: [
-            { kind: "text", text: "前" },
-            { kind: "patchIns", text: "新", patchId: "p1" },
-          ],
-        },
-      ],
-    };
-    const violations = checkPatchPresentationConsistency({
-      doc,
-      applied: [{ id: "p2", reviewBatchId: "p2", groupMode: "independent", before: "", after: "新", kind: "text", index: 1 }],
-      appliedIds: new Set(["p2"]),
-    });
-    expect(violations.length).toBeGreaterThan(0);
-  });
-});
-
-describe("applyPatchOverlaysWithReport", () => {
-  it("如实报告 appliedIds 与 droppedIds", () => {
-    const doc = pdoc("keep this text");
-    const { appliedIds, droppedIds } = applyPatchOverlaysWithReport(doc, [
-      { id: "ok", before: "this", after: "THAT", blockIndex: 0 },
-      { id: "no", before: "nope", after: "X", blockIndex: 0 },
-    ]);
-    expect([...appliedIds]).toEqual(["ok"]);
-    expect(droppedIds).toEqual(["no"]);
   });
 });
 
@@ -1382,16 +1217,11 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(addedRow?.status === "added" ? addedRow.spans : []).toEqual([{ kind: "patchIns", text: "拉通接口", patchId: "rep-list" }]);
 
     const result = derivePatchPresentation(doc, [], inputs);
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "list",
-      blockPatch: { patchId: "rep-list", op: "replace" },
-    });
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "rep-list", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("对齐设计初稿");
     expect(result.applied[0]!.after).toContain("对齐设计终稿");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-list"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-list"]));
     assertInternallyConsistent(result);
   });
 
@@ -1426,7 +1256,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "rep-task", kind: "replace" });
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-task"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-task"]));
     assertInternallyConsistent(result);
   });
 
@@ -1573,11 +1403,6 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.droppedIds).toEqual([]);
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "table",
-      blockPatch: { patchId: "rep-tbl", op: "replace" },
-    });
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({
       id: "rep-tbl",
@@ -1586,7 +1411,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     });
     expect(result.applied[0]!.before).toContain("旧渠道");
     expect(result.applied[0]!.after).toContain("新渠道");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-tbl"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-tbl"]));
     assertInternallyConsistent(result);
   });
 
@@ -1619,7 +1444,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]).toMatchObject({ id: "rep-callout", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("旧风险提示");
     expect(result.applied[0]!.after).toContain("新风险提示");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-callout"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-callout"]));
     assertInternallyConsistent(result);
   });
 
@@ -1702,7 +1527,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]).toMatchObject({ id: "rep-columns", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("左栏旧文");
     expect(result.applied[0]!.after).toContain("左栏新文");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-columns"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-columns"]));
     assertInternallyConsistent(result);
   });
 

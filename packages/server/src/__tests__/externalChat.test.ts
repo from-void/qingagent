@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("external chat", () => {
-  it("POST chat 立即 accepted,并以 origin=external 入队 sendMessage", async () => {
+  it("POST chat 立即 queued,并以 origin=external 入队 sendMessage", async () => {
     const sessionId = await createSession();
     const submit = vi.spyOn(sessionManager, "submit").mockResolvedValueOnce([]);
     const res = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
@@ -33,7 +33,7 @@ describe("external chat", () => {
       body: JSON.stringify({ text: "请继续写" }),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ accepted: true });
+    expect(await res.json()).toEqual({ queued: true, note: "已入队,执行结果以 events 为准" });
     expect(submit).toHaveBeenCalledWith(
       sessionId,
       expect.objectContaining({
@@ -53,7 +53,7 @@ describe("external chat", () => {
     );
   });
 
-  it("会话不存在时返回 NOT_FOUND 且不提交 sendMessage", async () => {
+  it("会话不存在时返回 SESSION_NOT_FOUND 且不提交 sendMessage", async () => {
     const submit = vi.spyOn(sessionManager, "submit");
     const res = await app.request("/api/v1/external/sessions/missing-chat/chat", {
       method: "POST",
@@ -61,7 +61,7 @@ describe("external chat", () => {
       body: JSON.stringify({ text: "请继续写" }),
     });
     expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({ code: "NOT_FOUND" });
+    expect(await res.json()).toMatchObject({ code: "SESSION_NOT_FOUND" });
     expect(submit).not.toHaveBeenCalled();
   });
 });

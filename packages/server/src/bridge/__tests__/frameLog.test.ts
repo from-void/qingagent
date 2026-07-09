@@ -69,6 +69,15 @@ describe("InMemoryFrameLog", () => {
     expect(read.gap).toBe(true);
   });
 
+  it("after 超过当前 nextSeq 时检测为 gap", () => {
+    const log = new InMemoryFrameLog();
+    const read = log.readFrom("s-restarted", 999);
+
+    expect(read.minSeq).toBe(1);
+    expect(read.nextSeq).toBe(1);
+    expect(read.gap).toBe(true);
+  });
+
   it("subscribe 先补 delta 再推实时帧，且单个监听异常不影响其它监听", () => {
     const log = new InMemoryFrameLog();
     log.append("s1", frame("one"));

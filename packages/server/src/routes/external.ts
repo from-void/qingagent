@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import type { BridgeFrame, Command, ContentDocState } from "@qingagent/contract-ts";
+import type { BridgeFrame, ChatMessage, Command, ContentDocState, FolderSourceRecord, MessagePart } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import {
   deriveActiveOverlay,
@@ -10,11 +10,12 @@ import {
   documentRepo,
   QINGAGENT_RESOURCE_ID,
 } from "@qingagent/core";
-import { pmToMarkdown } from "@qingagent/pm-schema";
+import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { getOrRestoreSession, sessionManager } from "../bridge/bridgeHandler";
 import type { LoggedFrame } from "../bridge/frameLog";
+import type { Material } from "@qingagent/core";
 
 export const externalRoutes = new Hono();
 
@@ -25,14 +26,20 @@ type ExternalErrorCode =
   | "VERSION_CONFLICT"
   | "VALIDATION"
   | "NOT_FOUND"
+  | "SESSION_NOT_FOUND"
+  | "MATERIAL_NOT_FOUND"
   | "RATE_LIMITED";
 
+const DEFAULT_MATERIAL_TEXT_MAX_BYTES = 200_000;
+
 const NEXT_STEP: Record<ExternalErrorCode, string> = {
-  REVIEW_PENDING: "清简里有待处理的修改建议,请先采纳或拒绝;然后用 `qa doc events --follow` 等 docCommitted 再继续",
-  AGENT_BUSY: "清简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
+  REVIEW_PENDING: "青简里有待处理的修改建议,请先采纳或拒绝;然后用 `qa doc events --follow` 等 docCommitted 再继续",
+  AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
   VERSION_CONFLICT: "文档已被改过,请 `qa doc read` 重读,基于新版本重做提案,绝不原样重发",
-  AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开清简",
-  NOT_FOUND: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开清简",
+  AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
+  NOT_FOUND: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
+  SESSION_NOT_FOUND: "会话不存在,用 `qa sessions list` 重新对号,不要重试原 id",
+  MATERIAL_NOT_FOUND: "材料不存在,用 `qa files list` 重新对号,不要重试原 id",
   VALIDATION: "提案不合法(空文档只能 fullDraft / 已有文档禁整篇覆写 / 未命中 / 超 50 处),按提示改",
   RATE_LIMITED: "请求太频繁,请降低读取频率并优先使用 `qa doc events --follow`",
 };
@@ -56,31 +63,51 @@ externalRoutes.get("/health", (c) => {
 externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
   const { rows } = await documentRepo.list({ resourceId: QINGAGENT_RESOURCE_ID, page: 0, perPage: 50 });
-  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: rows.length });
-  return c.json({
-    sessions: rows.map((row) => ({
+  const byId = new Map<string, { id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }>();
+  for (const row of rows) {
+    if (!await getOrRestoreSession(row.id)) continue;
+    byId.set(row.id, {
       id: row.id,
       title: row.title || "未命名草稿",
       state: stateFromDocRow(row.docState),
       updatedAt: row.updatedAt,
-    })),
+    });
+  }
+  for (const sessionId of sessionManager.listSessionIds(50)) {
+    const session = await getOrRestoreSession(sessionId);
+    if (!session) continue;
+    byId.set(session.sessionId, {
+      id: session.sessionId,
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  const sessions = [...byId.values()];
+  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: sessions.length });
+  return c.json({
+    sessions,
   });
 });
 
 externalRoutes.post("/sessions", async (c) => {
   const startedAt = Date.now();
-  const body = await c.req.json().catch(() => ({})) as { title?: unknown };
   const sessionId = crypto.randomUUID();
   const command: Command = {
     kind: "startSession",
     data: { mode: { kind: "new", data: { template: null, sessionId } } },
   };
   const frames = await sessionManager.submit(sessionId, { command, origin: "external" });
-  const meta = frames.map((entry) => entry.frame).find((frame) => frame.kind === "sessionMeta");
+  await saveEmptySessionDocument(sessionId).catch((error) => {
+    console.warn("[external] evt=sessions result=empty_shadow_failed", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
   externalLog("sessions", { sessionId, ms: elapsed(startedAt), result: "created" });
   return c.json({
     sessionId,
-    title: meta?.kind === "sessionMeta" ? meta.data.title : typeof body.title === "string" ? body.title : "未命名草稿",
+    seq: maxSeq(frames),
   });
 });
 
@@ -94,8 +121,8 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
   const sessionId = c.req.param("id");
   const session = await getOrRestoreSession(sessionId);
   if (!session) {
-    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:NOT_FOUND" });
-    return externalError(c, 404, "NOT_FOUND");
+    externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
   }
   const state = deriveContentState(session);
   const markdown = session.doc ? pmToMarkdown(session.doc) : "";
@@ -107,6 +134,80 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     agentBusy: deriveAgentBusy(session),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
+  });
+});
+
+externalRoutes.get("/sessions/:id/chat", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) {
+    externalLog("chatlog", { sessionId: c.req.param("id"), ms: elapsed(startedAt), result: "rejected:RATE_LIMITED" });
+    return limited;
+  }
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) {
+    externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const messages = applyLimit(session.chatHistory, c.req.query("limit")).map((message) => ({
+    id: message.id,
+    role: message.role,
+    ts: message.ts,
+    text: message.parts.map(partText).filter(Boolean).join("\n"),
+  }));
+  externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "ok", count: messages.length });
+  return c.json({ sessionId, messages });
+});
+
+externalRoutes.get("/sessions/:id/files", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) {
+    externalLog("files", { sessionId: c.req.param("id"), ms: elapsed(startedAt), result: "rejected:RATE_LIMITED" });
+    return limited;
+  }
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) {
+    externalLog("files", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const materials = Array.from(session.materials.values()).map(materialForExternal);
+  const folderSources = Array.from(session.folderSources.values()).map(folderSourceForExternal);
+  externalLog("files", { sessionId, ms: elapsed(startedAt), result: "ok", count: materials.length });
+  return c.json({ sessionId, materials, folderSources });
+});
+
+externalRoutes.get("/sessions/:id/files/:materialId/text", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) {
+    externalLog("files", { sessionId: c.req.param("id"), ms: elapsed(startedAt), result: "rejected:RATE_LIMITED" });
+    return limited;
+  }
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) {
+    externalLog("files", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const materialId = c.req.param("materialId");
+  const material = session.materials.get(materialId);
+  if (!material) {
+    externalLog("files", { sessionId, ms: elapsed(startedAt), result: "rejected:MATERIAL_NOT_FOUND" });
+    return externalError(c, 404, "MATERIAL_NOT_FOUND");
+  }
+  const maxBytes = parseMaxBytes(c.req.query("maxBytes"), DEFAULT_MATERIAL_TEXT_MAX_BYTES);
+  const limitedText = limitUtf8Bytes(material.text, maxBytes);
+  externalLog("files", { sessionId, ms: elapsed(startedAt), result: "ok" });
+  return c.json({
+    id: material.id,
+    filename: material.filename,
+    mime: material.mimeType,
+    text: limitedText.text,
+    byteLen: limitedText.byteLen,
+    truncated: limitedText.truncated,
   });
 });
 
@@ -146,8 +247,8 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
   }
   const session = await getOrRestoreSession(sessionId);
   if (!session) {
-    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:NOT_FOUND" });
-    return externalError(c, 404, "NOT_FOUND");
+    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
   }
   const command: Command = {
     kind: "sendMessage",
@@ -164,15 +265,28 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
   void sessionManager.submit(sessionId, { command, origin: "external" }).catch(() => {
     console.warn(`[external] evt=chat session=${sessionId} result=async_failed`);
   });
-  externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "accepted" });
-  return c.json({ accepted: true });
+  externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "queued" });
+  return c.json({ queued: true, note: "已入队,执行结果以 events 为准" });
 });
 
 externalRoutes.get("/sessions/:id/events", (c) => {
   const sessionId = c.req.param("id");
-  const afterSeq = parseSeq(c.req.query("after"));
+  const afterParam = c.req.query("after");
   return streamSSE(c, async (stream) => {
+    const afterSeq = afterParam === "tip"
+      ? Math.max(0, sessionManager.frameLog.readFrom(sessionId, 0).nextSeq - 1)
+      : parseSeq(afterParam);
     let writeChain = Promise.resolve();
+    const meta = sessionManager.frameLog.readFrom(sessionId, afterSeq);
+    await stream.writeSSE({
+      event: "meta",
+      data: JSON.stringify({
+        epoch: meta.epoch,
+        minSeq: meta.minSeq,
+        nextSeq: meta.nextSeq,
+        gap: meta.gap,
+      }),
+    });
     const enqueue = (entry: LoggedFrame) => {
       writeChain = writeChain.then(() =>
         stream.writeSSE({
@@ -183,9 +297,6 @@ externalRoutes.get("/sessions/:id/events", (c) => {
       ).catch(() => undefined);
       return writeChain;
     };
-    for (const entry of sessionManager.frameLog.readFrom(sessionId, afterSeq).frames) {
-      await enqueue(entry);
-    }
     const unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, (entry) => {
       void enqueue(entry);
     });
@@ -208,18 +319,21 @@ interface ProposalSummary {
   body: unknown;
   logResult: string;
   hunks: number;
+  seq: number | null;
 }
 
 function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
   const frames = entries.map((entry) => entry.frame);
+  const seq = maxSeq(entries);
   const diff = frames.find((frame) => frame.kind === "docDiffReady");
   if (diff?.kind === "docDiffReady") {
     const patchIds = diff.data.suggestions.map((suggestion) => suggestion.id);
     return {
       status: 200,
-      body: { status: "review", patchIds, count: patchIds.length },
+      body: withSeq({ status: "review", patchIds, count: patchIds.length }, seq),
       logResult: "review",
       hunks: patchIds.length,
+      seq,
     };
   }
   const write = frames.find((frame) => frame.kind === "docWriteResult");
@@ -227,30 +341,32 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
     if (write.data.ok) {
       return {
         status: 200,
-        body: { status: "committed", docVersion: write.data.docVersion },
+        body: withSeq({ status: "committed", docVersion: write.data.docVersion }, seq),
         logResult: "committed",
         hunks: 0,
+        seq,
       };
     }
     if ("conflict" in write.data) {
       return {
         status: 409,
-        body: {
+        body: withSeq({
           code: "VERSION_CONFLICT",
           expected: write.data.conflict.expectedDocumentSnapshot,
           actual: write.data.conflict.actualDocumentSnapshot,
           nextStep: NEXT_STEP.VERSION_CONFLICT,
-        },
+        }, seq),
         logResult: "rejected:VERSION_CONFLICT",
         hunks: 0,
+        seq,
       };
     }
-    if (write.data.reason === "agent_busy") return errorSummary(409, "AGENT_BUSY");
-    if (write.data.reason === "not_editable") return errorSummary(409, "REVIEW_PENDING");
-    if (write.data.reason === "not_found") return errorSummary(404, "NOT_FOUND");
-    return errorSummary(400, "VALIDATION", "未命中,请重读文档");
+    if (write.data.reason === "agent_busy") return errorSummary(409, "AGENT_BUSY", undefined, seq);
+    if (write.data.reason === "not_editable") return errorSummary(409, "REVIEW_PENDING", undefined, seq);
+    if (write.data.reason === "not_found") return errorSummary(404, "SESSION_NOT_FOUND", undefined, seq);
+    return errorSummary(400, "VALIDATION", "未命中,请重读文档", seq);
   }
-  return errorSummary(400, "VALIDATION", "提案未产生有效变更");
+  return errorSummary(400, "VALIDATION", "提案未产生有效变更", seq);
 }
 
 function proposalResponse(c: Context, summary: ProposalSummary) {
@@ -261,13 +377,23 @@ function errorSummary(
   status: 400 | 404 | 409,
   code: ExternalErrorCode,
   message?: string,
+  seq: number | null = null,
 ): ProposalSummary {
   return {
     status,
-    body: { error: message ?? code, code, nextStep: NEXT_STEP[code] },
+    body: withSeq({ error: message ?? code, code, nextStep: NEXT_STEP[code] }, seq),
     logResult: `rejected:${code}`,
     hunks: 0,
+    seq,
   };
+}
+
+function maxSeq(entries: LoggedFrame[]): number | null {
+  return entries.reduce<number | null>((max, entry) => max === null ? entry.seq : Math.max(max, entry.seq), null);
+}
+
+function withSeq<T extends Record<string, unknown>>(body: T, seq: number | null): T & { seq?: number } {
+  return seq === null ? body : { ...body, seq };
 }
 
 function frameForExternal(entry: LoggedFrame): { seq: number; kind: BridgeFrame["kind"]; data: unknown } {
@@ -286,6 +412,11 @@ function externalError(
 function rateLimit(c: Context) {
   const key = c.req.path;
   const now = Date.now();
+  if (readBuckets.size > 1_000) {
+    for (const [bucketKey, bucket] of readBuckets) {
+      if (now - bucket.windowStart >= 1000) readBuckets.delete(bucketKey);
+    }
+  }
   const bucket = readBuckets.get(key);
   if (!bucket || now - bucket.windowStart >= 1000) {
     readBuckets.set(key, { windowStart: now, count: 1 });
@@ -315,12 +446,97 @@ function withLineNumbers(markdown: string): string {
     .join("\n");
 }
 
+function applyLimit(messages: ChatMessage[], value: string | undefined): ChatMessage[] {
+  if (!value) return messages;
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  return messages.slice(-Math.floor(limit));
+}
+
+function partText(part: MessagePart): string {
+  switch (part.kind) {
+    case "text":
+    case "code":
+      return part.data.body;
+    case "toolCall":
+      return "[工具调用]";
+    case "thinking":
+      return "";
+    case "image":
+      return "[图片]";
+    case "patchSummary":
+      return `[修改建议 ${part.data.count} 处]`;
+    case "reviewOutcome":
+      return "[审阅结果]";
+    case "citation":
+      return "[引用]";
+    case "askUserAnswerCard":
+      return "[用户答复]";
+  }
+}
+
+function materialForExternal(material: Material) {
+  return {
+    id: material.id,
+    filename: material.filename,
+    mime: material.mimeType,
+    summary: material.summary ?? "",
+    wordCount: material.metadata.wordCount,
+    byteLen: Buffer.byteLength(material.text, "utf8"),
+    parseState: material.metadata.parseState ?? "ready",
+    sourceUrl: material.metadata.sourceUrl ?? null,
+    createdAt: material.createdAt,
+  };
+}
+
+function folderSourceForExternal(source: FolderSourceRecord) {
+  return {
+    id: source.id,
+    displayName: source.name,
+    provider: source.provider,
+    status: source.status,
+  };
+}
+
+function parseMaxBytes(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function limitUtf8Bytes(text: string, maxBytes: number): { text: string; byteLen: number; truncated: boolean } {
+  const byteLen = Buffer.byteLength(text, "utf8");
+  if (byteLen <= maxBytes) return { text, byteLen, truncated: false };
+  return {
+    text: Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8").replace(/\uFFFD+$/, ""),
+    byteLen,
+    truncated: true,
+  };
+}
+
+async function saveEmptySessionDocument(sessionId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await documentRepo.save({
+    id: sessionId,
+    threadId: sessionId,
+    resourceId: QINGAGENT_RESOURCE_ID,
+    title: "未命名草稿",
+    docState: "empty",
+    docVersion: 0,
+    lastSyncedVersion: 0,
+    pmDoc: normalizePmDoc(markdownToPm("")),
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 function elapsed(startedAt: number): number {
   return Date.now() - startedAt;
 }
 
 function externalLog(
-  evt: "propose" | "chat" | "read" | "health" | "sessions",
+  evt: "propose" | "chat" | "chatlog" | "files" | "read" | "health" | "sessions",
   fields: { sessionId?: string; ms: number; result: string; hunks?: number; count?: number },
 ): void {
   const parts = [

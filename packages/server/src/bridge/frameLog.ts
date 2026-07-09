@@ -123,7 +123,7 @@ export class InMemoryFrameLog implements FrameLog {
       minSeq,
       nextSeq: state.nextSeq,
       epoch: state.epoch,
-      gap: normalizedAfter + 1 < minSeq,
+      gap: normalizedAfter + 1 < minSeq || normalizedAfter >= state.nextSeq,
       activeRunner: state.activeRunner,
     };
   }

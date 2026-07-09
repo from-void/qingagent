@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ApiClient } from "./apiClient.js";
 import { discoverInstance } from "./discovery.js";
 import { NEXT_STEP, QaCliError } from "./errors.js";
@@ -12,8 +15,56 @@ type ExternalProposeOp =
   | { kind: "appendSection"; markdown: string }
   | { kind: "insertAfterLine"; line: number; markdown: string };
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+interface ChatLogResponse {
+  sessionId: string;
+  messages: Array<{ id: string; role: { kind: string }; ts: string; text: string }>;
+}
+
+interface FilesListResponse {
+  sessionId: string;
+  materials: Array<{
+    id: string;
+    filename: string;
+    mime: string;
+    summary: string;
+    wordCount: number;
+    byteLen: number | null;
+    parseState: string;
+    sourceUrl: string | null;
+    createdAt: string;
+  }>;
+  folderSources: Array<{
+    id: string;
+    displayName: string;
+    provider: string;
+    status: string;
+  }>;
+}
+
+interface FileTextResponse {
+  id: string;
+  filename: string;
+  mime: string;
+  text: string;
+  byteLen: number;
+  truncated: boolean;
+}
+
+interface EventOptions {
+  follow: boolean;
+  after: string;
+  timeoutMs: number | null;
+  until: string | null;
+}
+
+interface EventsMeta {
+  epoch: number;
+  minSeq: number;
+  nextSeq: number;
+  gap: boolean;
+}
+
+export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.length === 0 || hasFlag(args, "--help") || hasFlag(args, "-h")) return help();
   const [group, command] = args;
   if (group === "status") return status(hasFlag(args, "--json"));
@@ -33,8 +84,7 @@ async function main(): Promise<void> {
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "sessions" && command === "create") {
-    const title = optionValue(args, "--title");
-    const data = await client.request<unknown>("/sessions", { method: "POST", body: JSON.stringify({ title }) });
+    const data = await client.request<unknown>("/sessions", { method: "POST", body: JSON.stringify({}) });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "read") {
@@ -62,7 +112,18 @@ async function main(): Promise<void> {
   }
   if (group === "doc" && command === "events") {
     const sessionId = requireOption(args, "-s");
-    return events(client, sessionId, hasFlag(args, "--follow"));
+    const explicitAfter = optionValue(args, "--after");
+    const until = optionValue(args, "--until") ?? null;
+    const after = explicitAfter ?? (until ? "tip" : "0");
+    if (until && !explicitAfter) {
+      process.stderr.write("[qa] warning: --until 未提供 --after,将从当前 tip 开始监听;提案闭环请优先使用 propose 返回的 seq\n");
+    }
+    return events(client, sessionId, {
+      follow: hasFlag(args, "--follow"),
+      after,
+      timeoutMs: parseDuration(optionValue(args, "--timeout")),
+      until,
+    });
   }
   if (group === "chat" && command === "send") {
     const sessionId = requireOption(args, "-s");
@@ -73,9 +134,43 @@ async function main(): Promise<void> {
     });
     return output(data, hasFlag(args, "--json"));
   }
+  if (group === "chat" && command === "log") {
+    const sessionId = requireOption(args, "-s");
+    const limit = optionValue(args, "--limit");
+    const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+    const data = await client.request<ChatLogResponse>(`/sessions/${encodeURIComponent(sessionId)}/chat${query}`);
+    if (hasFlag(args, "--json")) return printJson(data);
+    for (const message of data.messages) {
+      process.stdout.write(`${roleLabel(message.role.kind)}  ${message.text}\n`);
+    }
+    return;
+  }
   if (group === "chat" && command === "tail") {
     const sessionId = requireOption(args, "-s");
-    return events(client, sessionId, true);
+    return events(client, sessionId, { follow: true, after: "0", timeoutMs: null, until: null });
+  }
+  if (group === "files" && command === "list") {
+    const sessionId = requireOption(args, "-s");
+    const data = await client.request<FilesListResponse>(`/sessions/${encodeURIComponent(sessionId)}/files`);
+    if (hasFlag(args, "--json")) return printJson(data);
+    printFilesList(data);
+    return;
+  }
+  if (group === "files" && command === "read") {
+    const sessionId = requireOption(args, "-s");
+    const materialId = requireOption(args, "--material");
+    const maxBytes = optionValue(args, "--max-bytes");
+    const query = maxBytes ? `?maxBytes=${encodeURIComponent(maxBytes)}` : "";
+    const data = await client.request<FileTextResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(materialId)}/text${query}`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    process.stdout.write(data.text);
+    if (!data.text.endsWith("\n")) process.stdout.write("\n");
+    if (data.truncated) {
+      process.stderr.write(`[qa] material truncated id=${data.id} byteLen=${data.byteLen}\n`);
+    }
+    return;
   }
   throw new QaCliError("VALIDATION", "未知命令");
 }
@@ -84,7 +179,7 @@ async function status(json: boolean): Promise<void> {
   const info = await discoverInstance();
   const data = { ok: true, version: info.version, pid: info.pid, startedAt: info.startedAt };
   if (json) printJson(data);
-  else process.stdout.write(`清简正在运行 version=${info.version} pid=${info.pid}\n`);
+  else process.stdout.write(`青简正在运行 version=${info.version} pid=${info.pid}\n`);
 }
 
 async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
@@ -102,25 +197,111 @@ async function parseOps(args: string[]): Promise<ExternalProposeOp[]> {
   return ops;
 }
 
-async function events(client: ApiClient, sessionId: string, follow: boolean): Promise<void> {
-  const res = await fetch(client.eventsUrl(sessionId), { headers: { Authorization: client.authHeader() } });
-  if (!res.ok || !res.body) throw new QaCliError("VALIDATION", "events 连接失败");
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+async function events(client: ApiClient, sessionId: string, options: EventOptions): Promise<void> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = options.timeoutMs === null ? null : setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, options.timeoutMs);
+  let reader: ReadableStreamDefaultReader<string> | null = null;
   let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      const line = chunk.split(/\r?\n/).find((part) => part.startsWith("data: "));
-      if (!line) continue;
-      const data = line.slice(6);
-      if (data === "{}") continue;
-      process.stdout.write(`${data}\n`);
+  let received = 0;
+  let reason: string | null = null;
+  let meta: EventsMeta | null = null;
+  let maxSeq = parseAfterSeq(options.after);
+  try {
+    const res = await fetch(client.eventsUrl(sessionId, options.after), {
+      headers: { Authorization: client.authHeader() },
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) throw new QaCliError("VALIDATION", "events 连接失败");
+    process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
+    reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const event = parseSseEvent(chunk);
+        if (!event) continue;
+        const data = event.data;
+        if (data === "{}") continue;
+        if (event.event === "meta") {
+          meta = parseEventsMeta(data);
+          if (meta?.gap) {
+            reason = "gap";
+            break;
+          }
+          continue;
+        }
+        process.stdout.write(`${data}\n`);
+        received += 1;
+        maxSeq = Math.max(maxSeq, frameSeq(data));
+        const hit = untilHit(options.until, data);
+        if (hit) {
+          reason = hit;
+          break;
+        }
+      }
+      if (reason) break;
+      if (!options.follow && !options.until && options.timeoutMs === null && meta && maxSeq >= meta.nextSeq - 1) {
+        reason = "limit";
+        break;
+      }
     }
-    if (!follow) break;
+  } catch (error) {
+    if (!timedOut) throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    await reader?.cancel().catch(() => undefined);
+  }
+  if (timedOut && !reason) reason = "timeout";
+  if (reason) process.stderr.write(`[qa] events exited reason=${reason} received=${received}\n`);
+}
+
+function parseSseEvent(chunk: string): { event: string; data: string } | null {
+  let event = "message";
+  const data: string[] = [];
+  for (const line of chunk.split(/\r?\n/)) {
+    if (line.startsWith("event: ")) event = line.slice(7);
+    else if (line.startsWith("data: ")) data.push(line.slice(6));
+  }
+  if (data.length === 0) return null;
+  return { event, data: data.join("\n") };
+}
+
+function parseEventsMeta(data: string): EventsMeta | null {
+  try {
+    const parsed = JSON.parse(data) as Partial<EventsMeta>;
+    if (
+      typeof parsed.epoch === "number" &&
+      typeof parsed.minSeq === "number" &&
+      typeof parsed.nextSeq === "number" &&
+      typeof parsed.gap === "boolean"
+    ) {
+      return parsed as EventsMeta;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function parseAfterSeq(after: string): number {
+  if (after === "tip") return 0;
+  const seq = Number(after);
+  return Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
+}
+
+function frameSeq(data: string): number {
+  try {
+    const parsed = JSON.parse(data) as { seq?: unknown };
+    return typeof parsed.seq === "number" && Number.isFinite(parsed.seq) ? parsed.seq : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -151,25 +332,110 @@ function chatText(args: string[]): string {
   return text;
 }
 
+function parseDuration(value: string | undefined): number | null {
+  if (!value) return null;
+  const match = /^(\d+)(ms|s|m)?$/.exec(value);
+  if (!match) throw new QaCliError("VALIDATION", "timeout 格式应为 600s/10m/1000ms");
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "ms";
+  if (unit === "m") return amount * 60_000;
+  if (unit === "s") return amount * 1_000;
+  return amount;
+}
+
+function untilHit(until: string | null, data: string): string | null {
+  if (!until) return null;
+  let frame: { kind?: string; data?: unknown };
+  try {
+    frame = JSON.parse(data) as { kind?: string; data?: unknown };
+  } catch {
+    return null;
+  }
+  if (until === "committed" && frame.kind === "docCommitted") return "committed";
+  if (until === "review" && frame.kind === "docDiffReady") return "review";
+  if (until === "reviewed") {
+    if (frame.kind === "docCommitted") return "reviewed";
+    if (frame.kind === "docStateChanged" && docStateKind(frame.data) !== "pendingReview") return "reviewed";
+  }
+  return null;
+}
+
+function docStateKind(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const state = (data as { state?: unknown }).state;
+  if (!state || typeof state !== "object") return undefined;
+  return (state as { kind?: unknown }).kind as string | undefined;
+}
+
+function roleLabel(role: string): string {
+  if (role === "user") return "你";
+  if (role === "agent") return "青简";
+  return role;
+}
+
+function printFilesList(data: FilesListResponse): void {
+  process.stdout.write(`材料区 session=${data.sessionId}\n`);
+  if (data.materials.length === 0) {
+    process.stdout.write("材料: 无\n");
+  } else {
+    process.stdout.write("材料:\n");
+    for (const material of data.materials) {
+      const state = material.parseState === "ready" ? "" : ` ${material.parseState}`;
+      process.stdout.write(
+        `- ${material.id}  ${material.filename}  ${material.wordCount}字${state}\n`,
+      );
+      const summary = compactText(material.summary, 120);
+      if (summary) process.stdout.write(`  摘要: ${summary}\n`);
+    }
+  }
+  if (data.folderSources.length === 0) {
+    process.stdout.write("文件夹源: 无\n");
+  } else {
+    process.stdout.write("文件夹源:\n");
+    for (const source of data.folderSources) {
+      process.stdout.write(`- ${source.id}  ${source.displayName}  ${source.provider}/${source.status}\n`);
+    }
+  }
+}
+
+function compactText(value: string, maxChars: number): string {
+  const singleLine = value.replace(/\s+/g, " ").trim();
+  return singleLine.length > maxChars ? `${singleLine.slice(0, maxChars)}...` : singleLine;
+}
+
 function help(): void {
   process.stdout.write(`AI agents MUST read: qa skills read writer —— 不要只凭 --help 猜用法
 
 qa status
 qa sessions list [--json]
-qa sessions create --title "..."
+qa sessions create
 qa doc read -s <id> [--lines] [--json]
 qa doc state -s <id>
 qa doc propose -s <id> --expect-version N (--full draft.md | --str-replace <old> <new> | --append section.md | --ops ops.json)
-qa doc events -s <id> [--follow]
+qa doc events -s <id> [--follow] [--after <seq>] [--until reviewed|committed|review] [--timeout 10m]
 qa chat send -s <id> "指令"
+qa chat log -s <id> [--limit N] [--json]
 qa chat tail -s <id>
+qa files list -s <id> [--json]
+qa files read -s <id> --material <id> [--max-bytes N] [--json]
 qa skills read writer
 qa skills install claude|codex
 `);
 }
 
-main().catch((error) => {
-  const err = error instanceof QaCliError ? error : new QaCliError("VALIDATION", error instanceof Error ? error.message : String(error));
-  process.stderr.write(`${err.code}: ${err.message}\n下一步: ${NEXT_STEP[err.code]}\n`);
-  process.exitCode = 1;
-});
+if (isDirectRun()) {
+  main().catch((error) => {
+    const err = error instanceof QaCliError ? error : new QaCliError("VALIDATION", error instanceof Error ? error.message : String(error));
+    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${NEXT_STEP[err.code]}\n`);
+    process.exitCode = 1;
+  });
+}
+
+export function isDirectRun(argvPath = process.argv[1]): boolean {
+  if (!argvPath) return false;
+  try {
+    return realpathSync.native(fileURLToPath(import.meta.url)) === realpathSync.native(argvPath);
+  } catch {
+    return fileURLToPath(import.meta.url) === path.resolve(argvPath);
+  }
+}

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,6 +38,21 @@ describe("external instance + auth", () => {
     const ok = await app.request("/api/v1/external/health", { headers: { Authorization: `Bearer ${token}` } });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, version: "test", pid: process.pid });
+  });
+
+  it("stop 不删除其他进程写入的 instance.json", async () => {
+    const filePath = await tempInstancePath();
+    await writeFile(filePath, JSON.stringify({
+      port: 52341,
+      pid: process.pid + 100_000,
+      version: "other",
+      token: "x",
+      startedAt: "2026-07-10T00:00:00.000Z",
+    }));
+
+    await stopExternalInstance(filePath);
+
+    await expect(stat(filePath)).resolves.toBeTruthy();
   });
 });
 

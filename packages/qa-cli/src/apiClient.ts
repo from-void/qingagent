@@ -18,19 +18,38 @@ export class ApiClient {
       },
     });
     const text = await res.text();
-    const json = text ? JSON.parse(text) as unknown : null;
+    const json = parseJsonResponse(text);
     if (!res.ok) {
       const body = json as { code?: QaErrorCode; error?: string } | null;
-      throw new QaCliError(body?.code ?? "VALIDATION", body?.error ?? res.statusText, body);
+      if (body && typeof body === "object") {
+        throw new QaCliError(body.code ?? "VALIDATION", body.error ?? res.statusText, body);
+      }
+      throw new QaCliError("VALIDATION", compactErrorText(text, res.statusText));
     }
     return json as T;
   }
 
-  eventsUrl(sessionId: string): string {
-    return `http://127.0.0.1:${this.instance.port}/api/v1/external/sessions/${encodeURIComponent(sessionId)}/events`;
+  eventsUrl(sessionId: string, after?: string): string {
+    const query = after ? `?after=${encodeURIComponent(after)}` : "";
+    return `http://127.0.0.1:${this.instance.port}/api/v1/external/sessions/${encodeURIComponent(sessionId)}/events${query}`;
   }
 
   authHeader(): string {
     return `Bearer ${this.instance.token}`;
   }
+}
+
+function parseJsonResponse(text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function compactErrorText(text: string, fallback: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (!trimmed) return fallback;
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}...` : trimmed;
 }

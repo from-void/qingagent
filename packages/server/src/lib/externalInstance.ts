@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile, chmod } from "node:fs/promises";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -67,7 +67,9 @@ export async function startExternalInstance(opts: {
 
 export async function stopExternalInstance(filePath = externalInstancePath()): Promise<void> {
   current = null;
-  await rm(filePath, { force: true }).catch(() => undefined);
+  if (await instanceFileOwnedByCurrentProcess(filePath)) {
+    await rm(filePath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function writeInstanceFile(filePath: string, info: ExternalInstanceInfo): Promise<void> {
@@ -84,7 +86,7 @@ function installCleanupHooks(filePath: string): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   process.once("exit", () => {
-    if (existsSync(filePath)) {
+    if (existsSync(filePath) && instanceFileOwnedByCurrentProcessSync(filePath)) {
       try {
         rmSync(filePath, { force: true });
       } catch {
@@ -96,6 +98,24 @@ function installCleanupHooks(filePath: string): void {
     process.once(signal, () => {
       void stopExternalInstance(filePath).finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
     });
+  }
+}
+
+async function instanceFileOwnedByCurrentProcess(filePath: string): Promise<boolean> {
+  try {
+    const parsed = JSON.parse(await readFile(filePath, "utf8")) as { pid?: unknown };
+    return parsed.pid === process.pid;
+  } catch {
+    return false;
+  }
+}
+
+function instanceFileOwnedByCurrentProcessSync(filePath: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf8")) as { pid?: unknown };
+    return parsed.pid === process.pid;
+  } catch {
+    return false;
   }
 }
 

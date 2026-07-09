@@ -1118,8 +1118,6 @@ async function* handleCommandInner(
         parts: [],
         chips: null,
       };
-      session.chatHistory.push(agentMessage);
-      yield { kind: "chatMessageAdded", data: { message: agentMessage } };
 
       const settled = yield* settleDraftCandidate({
         state: session,
@@ -1132,6 +1130,12 @@ async function* handleCommandInner(
         yield docWriteReason(clientMutationId, "validation_error");
         return;
       }
+      agentMessage.parts.push({
+        kind: "patchSummary",
+        data: { count: settled.hunkCount, hunkIds: Array.from(session.suggestions.keys()) },
+      });
+      session.chatHistory.push(agentMessage);
+      yield { kind: "chatMessageAdded", data: { message: agentMessage } };
       return;
     }
 
@@ -1461,14 +1465,16 @@ function applyExternalProposalOps(
 
 function blockIndexForMarkdownLine(doc: PmDoc, line: number): number {
   if (doc.content.length === 0) return -1;
-  let previousLineCount = 0;
+  let consumedLines = 0;
   for (let index = 0; index < doc.content.length; index += 1) {
-    const partialDoc = normalizePmDoc({ ...doc, content: doc.content.slice(0, index + 1) });
-    const currentLineCount = countMarkdownLines(pmToMarkdown(partialDoc));
-    if (line <= currentLineCount) return index;
-    previousLineCount = currentLineCount;
+    const blockDoc = normalizePmDoc({ ...doc, content: [doc.content[index]!] });
+    const blockLineCount = countMarkdownLines(pmToMarkdown(blockDoc));
+    const trailingBlankLineCount = index < doc.content.length - 1 ? 1 : 0;
+    const blockEndLine = consumedLines + blockLineCount + trailingBlankLineCount;
+    if (line <= blockEndLine) return index;
+    consumedLines = blockEndLine;
   }
-  return line <= previousLineCount + 1 ? doc.content.length - 1 : -1;
+  return line <= consumedLines + 1 ? doc.content.length - 1 : -1;
 }
 
 function countMarkdownLines(markdown: string): number {

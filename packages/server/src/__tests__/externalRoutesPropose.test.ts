@@ -35,14 +35,16 @@ describe("external proposals", () => {
       ops: [{ kind: "fullDraft", markdown: "# 标题\n\n第一段旧文。" }],
     });
     expect(fullDraft.status).toBe(200);
-    expect(await fullDraft.json()).toMatchObject({ status: "committed", docVersion: 1 });
+    const fullDraftBody = await fullDraft.json() as { status: string; docVersion: number; seq: number };
+    expect(fullDraftBody).toMatchObject({ status: "committed", docVersion: 1 });
+    expect(fullDraftBody.seq).toBeGreaterThan(0);
 
     const conflict = await propose(sessionId, {
       expectedDocVersion: 0,
       ops: [{ kind: "strReplace", old: "旧文", new: "新文" }],
     });
     expect(conflict.status).toBe(409);
-    expect(await conflict.json()).toMatchObject({ code: "VERSION_CONFLICT", expected: 0, actual: 1 });
+    expect(await conflict.json()).toMatchObject({ code: "VERSION_CONFLICT", expected: 0, actual: 1, seq: expect.any(Number) });
 
     const fullDraftAgain = await propose(sessionId, {
       expectedDocVersion: 1,
@@ -63,17 +65,21 @@ describe("external proposals", () => {
       ops: [{ kind: "strReplace", old: "旧文", new: "新文" }],
     });
     expect(review.status).toBe(200);
-    const reviewBody = await review.json() as { status: string; count: number; patchIds: string[] };
+    const reviewBody = await review.json() as { status: string; count: number; patchIds: string[]; seq: number };
     expect(reviewBody.status).toBe("review");
     expect(reviewBody.count).toBeGreaterThan(0);
     expect(reviewBody.patchIds.length).toBe(reviewBody.count);
+    expect(reviewBody.seq).toBeGreaterThan(fullDraftBody.seq);
+
+    const afterProposal = sessionManager.frameLog.readFrom(sessionId, reviewBody.seq).frames;
+    expect(afterProposal.some((entry) => entry.frame.kind === "docCommitted")).toBe(false);
 
     const pending = await propose(sessionId, {
       expectedDocVersion: 1,
       ops: [{ kind: "appendSection", markdown: "第二段。" }],
     });
     expect(pending.status).toBe(409);
-    expect(await pending.json()).toMatchObject({ code: "REVIEW_PENDING" });
+    expect(await pending.json()).toMatchObject({ code: "REVIEW_PENDING", seq: expect.any(Number) });
   });
 
   it("streamId 非空时返回 AGENT_BUSY", async () => {
@@ -91,6 +97,45 @@ describe("external proposals", () => {
     });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ code: "AGENT_BUSY" });
+  });
+
+  it("0 hunk validation 失败不残留空 agent 气泡", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。" }],
+    });
+
+    const noop = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "strReplace", old: "第一段。", new: "第一段。" }],
+    });
+
+    expect(noop.status).toBe(400);
+    expect(await noop.json()).toMatchObject({ code: "VALIDATION" });
+    const session = await getOrRestoreSession(sessionId);
+    expect(session?.chatHistory.filter((message) => message.role.kind === "agent" && message.parts.length === 0)).toHaveLength(0);
+  });
+
+  it("insertAfterLine 把块间空行归到上一块", async () => {
+    const sessionId = await createSession();
+    await propose(sessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。\n\n第二段。\n\n第三段。" }],
+    });
+
+    const inserted = await propose(sessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "insertAfterLine", line: 2, markdown: "插入段。" }],
+    });
+
+    expect(inserted.status).toBe(200);
+    const session = await getOrRestoreSession(sessionId);
+    expect(session).toBeTruthy();
+    expect(session!.docDraftCandidateDoc).toBeTruthy();
+    const markdown = session!.docDraftCandidateDoc!.content.map((block) => JSON.stringify(block)).join("\n");
+    expect(markdown.indexOf("插入段。")).toBeGreaterThan(markdown.indexOf("第一段。"));
+    expect(markdown.indexOf("插入段。")).toBeLessThan(markdown.indexOf("第二段。"));
   });
 });
 

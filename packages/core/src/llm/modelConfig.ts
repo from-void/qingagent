@@ -21,10 +21,13 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV1 } from "ai";
 import type { RequestContext } from "@mastra/core/request-context";
 import { validateFetchUrl } from "../browser/extractor.js";
-
-// 默认官方端点;QINGAGENT_DEEPSEEK_BASE_URL 可覆盖(自托管 / 本地 mock 端点做确定性 e2e / GLM 中转)。
-export const DEEPSEEK_BASE_URL =
-  process.env.QINGAGENT_DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/v1";
+export {
+  DEEPSEEK_BASE_URL,
+  MODEL_OVERRIDES_CONTEXT_KEY,
+  resolveBaseUrl,
+  sanitizeBaseUrl,
+} from "./modelBaseUrl.js";
+import { MODEL_OVERRIDES_CONTEXT_KEY, resolveBaseUrl, sanitizeBaseUrl } from "./modelBaseUrl.js";
 
 // env 层默认协议:QINGAGENT_MODEL_PROTOCOL=anthropic|openai(GLM Coding 走 anthropic)。
 // 调用时读取(而非模块加载常量),便于 dotenv 时序与测试;非法值忽略 -> undefined。
@@ -86,8 +89,6 @@ export interface ResolvedDeepseekAuth {
   origin: ApiKeyOrigin;
 }
 
-export const MODEL_OVERRIDES_CONTEXT_KEY = "modelOverrides";
-
 function readOverrides(requestContext?: RequestContext): ModelOverrides | undefined {
   const value = requestContext?.get(MODEL_OVERRIDES_CONTEXT_KEY);
   if (value && typeof value === "object") return value as ModelOverrides;
@@ -129,36 +130,6 @@ export function resolveModelParams(requestContext?: RequestContext): ModelParamO
   return out;
 }
 
-/** 用户常把"最终 endpoint"也填进 baseURL,这些尾段要剥掉(只取一段,见下)。 */
-const ENDPOINT_TAIL_RE = /\/(?:chat\/completions|messages|completions|responses|embeddings)\/?$/i;
-
-/**
- * 归一化自定义 baseURL —— **全栈唯一 canonical 入口**(core 运行时 + server 测连接共用)。
- * 规则:① 合法 http(s) 且长度受限,否则 undefined;② 丢掉 query/hash(baseURL 不该带);
- * ③ 剥掉用户多填的最终 endpoint 段(/chat/completions、/messages、/responses 等);
- * ④ 没有 /vN 版本段就补 /v1(AI SDK 会再拼 /chat/completions|/messages,缺 /v1 会 404)。
- * 用 new URL() 解析,避免对带 query/hash 的串做正则替换出 `/v1?x=1/v1`、`/v1/responses/v1` 之类脏值。
- */
-export function sanitizeBaseUrl(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const value = raw.trim();
-  if (!value || value.length > 300) return undefined;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-  url.search = "";
-  url.hash = "";
-  let path = url.pathname.replace(/\/+$/, "");
-  path = path.replace(ENDPOINT_TAIL_RE, "").replace(/\/+$/, "");
-  if (!/\/v\d+$/.test(path)) path = `${path}/v1`;
-  url.pathname = path;
-  return url.toString().replace(/\/+$/, "");
-}
-
 /** 自定义模型别名:非空、长度受限、字符白名单,否则回退官方默认。 */
 export function sanitizeModelId(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -166,11 +137,6 @@ export function sanitizeModelId(raw: string | undefined): string | undefined {
   if (!value || value.length > 120) return undefined;
   if (!/^[A-Za-z0-9._:\/-]+$/.test(value)) return undefined;
   return value;
-}
-
-/** 本请求生效的 baseURL:自定义中转/厂商 > 官方默认。 */
-export function resolveBaseUrl(requestContext?: RequestContext): string {
-  return sanitizeBaseUrl(readOverrides(requestContext)?.baseUrl) ?? DEEPSEEK_BASE_URL;
 }
 
 /** 当前请求选择的模型档位;非法/缺省均回退 fallback(默认 flash)。 */

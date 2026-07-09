@@ -160,7 +160,10 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
 if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
   console.warn("[sandbox] QINGAGENT_SANDBOX_NODE_RUNTIME=system, using host node for diagnostics only");
 } else {
-  const { ensureNodeRuntimeShim, isElectronRuntime, ensureLarkCliShim } = await import("@qingagent/core");
+  const { ensureNodeRuntimeShim, isElectronRuntime } = await import(
+    "@qingagent/core/src/workspace/nodeRuntimeShim.js"
+  );
+  const { ensureLarkCliShim } = await import("@qingagent/core/src/workspace/larkCliShim.js");
   const nodeShimPath = ensureNodeRuntimeShim({ execPath: process.execPath, electron: isElectronRuntime() });
 
   // 飞书 lark-cli:随包带到 Resources/lark-cli(build.mjs 暂存,electron-builder extraResources),
@@ -207,31 +210,32 @@ if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
   process.env.QINGAGENT_PYODIDE_ENABLED = "1";
 }
 
-// Dynamic import after env is configured — server (and transitively
-// @qingagent/core) reads DATABASE_URL at module-evaluation time.
-const { installDesktopObservability } = await import("./diagnostics/observability.js");
-installDesktopObservability(desktopLogDir);
+// Dynamic import after env is configured — server/core reads DATABASE_URL at module-evaluation time.
+// TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一串起迁移、Mastra 与 server app。
 const { startServer } = await import("./server.js");
 // 长 keep-alive 必须经 server 包转导出取 undici(desktop 无直接依赖且 esbuild 整包
 // bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。
 const { installLongKeepAliveDispatcher } = await import("@qingagent/server/httpDispatcher");
 installLongKeepAliveDispatcher();
-const { installNetProbe, resolveBaseUrl, warmUpModelEndpoint } = await import("@qingagent/core");
+const { installNetProbe } = await import("@qingagent/core/src/llm/netProbe.js");
+const { resolveBaseUrl } = await import("@qingagent/core/src/llm/modelBaseUrl.js");
+const { warmUpModelEndpoint } = await import("@qingagent/core/src/llm/modelWarmup.js");
 const { telemetry } = await import("./telemetry/index.js");
 const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
 
 // PDF 导出复用 Electron 自带 Chromium(printToPDF):打包后没有随包 Playwright Chromium,
 // 默认路径会硬失败到 500。注册自定义渲染器后,htmlToPdf 优先走 Electron,零增量体积。
 {
-  const core = await import("@qingagent/core");
+  const { setHtmlToPdfRenderer } = await import("@qingagent/core/src/export/pdfRenderer.js");
+  const { systemBrowserExecutablePath } = await import("@qingagent/core/src/browser/systemBrowser.js");
   const { renderPdfViaElectron } = await import("./pdfRenderer.js");
-  core.setHtmlToPdfRenderer(renderPdfViaElectron);
+  setHtmlToPdfRenderer(renderPdfViaElectron);
 
   // agent 浏览器(browser_*)桌面启用:探测到系统已装浏览器(Edge/Chrome)就默认开,并把
   // 可执行路径透传给 @mastra/agent-browser 的 executablePath。没有系统浏览器则不开(避免注入了
   // 又起不来)。用户已设环境变量则尊重不覆盖。pool.ts 的抓取/渲染走 channel(上面已设),此处补
   // browser_* 的 executablePath 通道。
-  const sysBrowser = core.systemBrowserExecutablePath();
+  const sysBrowser = systemBrowserExecutablePath();
   if (sysBrowser && !process.env.QINGAGENT_BROWSER_EXECUTABLE_PATH) {
     process.env.QINGAGENT_BROWSER_EXECUTABLE_PATH = sysBrowser;
   }
@@ -466,26 +470,10 @@ function filenameFromContentDisposition(value: string | null): string | null {
   return plain ? plain.trim() : null;
 }
 
-// 首启示例内容(分叉骨架):桌面端「一辈子只 seed 一次」。
-// once 门 = userData 下的版本化标记文件;seed 写入本身在 @qingagent/core 里(进程内、幂等)。
-// 失败只记日志、绝不阻塞开窗。版本号便于将来需要换一套示例时另起 v2。
-async function maybeSeedInitialContent() {
-  const flagFile = path.join(app.getPath("userData"), ".qingagent-seeded-v1");
-  if (existsSync(flagFile)) return;
-  try {
-    const { seedInitialContent } = await import("@qingagent/core");
-    await seedInitialContent();
-    writeFileSync(flagFile, new Date().toISOString());
-  } catch (err) {
-    // 落标记失败 / seed 失败都不影响主流程,下次启动会再试一次。
-    console.warn("[seed] initial content seeding skipped:", err);
-  }
-}
-
 async function createWindow() {
   captureAppOpenedOnce();
 
-  const { port } = await startServer();
+  const { port } = await startServer({ desktopLogDir });
   embeddedServerPort = port;
   installNetProbe();
   // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
@@ -591,6 +579,22 @@ async function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+// 首启示例内容(分叉骨架):桌面端「一辈子只 seed 一次」。
+// once 门 = userData 下的版本化标记文件;seed 写入本身在 @qingagent/core 里(进程内、幂等)。
+// 失败只记日志、绝不阻塞开窗。版本号便于将来需要换一套示例时另起 v2。
+async function maybeSeedInitialContent() {
+  const flagFile = path.join(app.getPath("userData"), ".qingagent-seeded-v1");
+  if (existsSync(flagFile)) return;
+  try {
+    const { seedInitialContent } = await import("@qingagent/core");
+    await seedInitialContent();
+    writeFileSync(flagFile, new Date().toISOString());
+  } catch (err) {
+    // 落标记失败 / seed 失败都不影响主流程,下次启动会再试一次。
+    console.warn("[seed] initial content seeding skipped:", err);
+  }
 }
 
 // macOS GPU/渲染实验性开关:**默认关**,仅 QINGAGENT_MAC_GPU_TWEAKS=1 时启用。

@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SANDBOX_BIN_DIR } from "./sessionWorkspace.js";
+import { SANDBOX_BIN_DIR } from "./sandboxPaths.js";
 
 export interface NodeRuntimeShimOptions {
   execPath: string;

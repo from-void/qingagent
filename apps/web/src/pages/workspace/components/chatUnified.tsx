@@ -74,6 +74,9 @@ export const TOOL_LABELS: Record<string, string> = {
   // tool-call-input-streaming-start 占位期 generic body 只能靠真实工具名取显示名。
   writeDraft: "生成草稿", generateSvg: "生成配图", larkConfigInit: "配置飞书",
   show_qr: "生成二维码", askUser: "确认方向",
+  // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body,不加映射会裸显"工具调用"。
+  wechat_auth_status: "检查微信授权状态", wechat_auth_start: "生成二维码",
+  wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
 };
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。

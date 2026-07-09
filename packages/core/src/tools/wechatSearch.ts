@@ -116,6 +116,50 @@ function assertBaseResp(data: Record<string, unknown>): void {
   throw new WechatCgiError("OTHER", `微信接口返回错误(ret=${ret}${baseResp?.err_msg ? ", " + baseResp.err_msg : ""})`);
 }
 
+/**
+ * 授权探针:用刚拿到的 token+cookie 打一次 searchbiz(良性 query),验证凭据是否真能用。
+ * 复用 wechatCgiGet(含 rateLimit)+ assertBaseResp,不另造请求路径。授权成功判据 = 本探针通过,
+ * 而非落地页 URL 形状(URL 形状判断脆,曾死等 /cgi-bin/home 把成功当失败)。
+ * - ok:true          → 凭据可用(账号良性,可搜号)
+ * - kind:"unusable"  → 会话/权限被拒(账号注销中/未认证/登录态无效)→ 不该存凭据,引导换号
+ * - kind:"transient" → 频控/网络类瞬时失败 → 调用方可重试一次,再失败按超时处理(不误判账号不可用)
+ */
+export type WechatAuthProbeResult =
+  | { ok: true }
+  | { ok: false; kind: "unusable" | "transient"; message: string };
+
+export async function probeWechatSearchbiz(
+  token: string,
+  cookie: string,
+): Promise<WechatAuthProbeResult> {
+  try {
+    const data = await wechatCgiGet(
+      "searchbiz",
+      {
+        action: "search_biz",
+        begin: "0",
+        count: "1",
+        query: "人民日报",
+        token,
+        lang: "zh_CN",
+        f: "json",
+        ajax: "1",
+      },
+      cookie,
+    );
+    assertBaseResp(data);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof WechatCgiError) {
+      // 频控可重试;会话失效/权限/畸形响应=账号态问题,视为不可用。
+      const kind = error.kind === "RATE_LIMIT" ? "transient" : "unusable";
+      return { ok: false, kind, message: error.message };
+    }
+    // fetch 网络异常=瞬时。
+    return { ok: false, kind: "transient", message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export const wechatSearchMpTool = createTool({
   id: "wechat_search_mp",
   description:

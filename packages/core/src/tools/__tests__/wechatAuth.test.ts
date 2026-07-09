@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserLaunchCandidates } from "../../browser/pool.js";
 import {
   getCredentialsForPlatform,
   saveCredentialRecord,
 } from "../../credentials/credentialsRepo.js";
+import { probeWechatSearchbiz } from "../wechatSearch.js";
 import { wechatAuthStartTool, wechatAuthStatusTool } from "../wechatAuth.js";
 
 vi.mock("../../browser/pool.js", () => ({
@@ -15,9 +16,14 @@ vi.mock("../../credentials/credentialsRepo.js", () => ({
   getCredentialsForPlatform: vi.fn(),
 }));
 
+// 只 mock 探针这一个导出——wechatAuth 只从 wechatSearch 引入它。
+vi.mock("../wechatSearch.js", () => ({
+  probeWechatSearchbiz: vi.fn(),
+}));
+
 const toolInvocationOptions = { toolCallId: "wechat-auth-test", messages: [] } as never;
 
-function createBrowserMock() {
+function createBrowserMock(landingUrl?: string) {
   const qrElement = {
     screenshot: vi.fn().mockResolvedValue(Buffer.from([1, 2, 3])),
   };
@@ -27,7 +33,13 @@ function createBrowserMock() {
     waitForFunction: vi.fn().mockResolvedValue(undefined),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     waitForURL: vi.fn().mockResolvedValue(undefined),
-    url: vi.fn().mockReturnValue("https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token=ABC&lang=zh_CN"),
+    on: vi.fn(),
+    mainFrame: vi.fn().mockReturnValue({}),
+    url: vi
+      .fn()
+      .mockReturnValue(
+        landingUrl ?? "https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token=ABC&lang=zh_CN",
+      ),
     locator: vi.fn().mockReturnValue({
       innerText: vi.fn().mockResolvedValue("测试公众号"),
     }),
@@ -38,16 +50,25 @@ function createBrowserMock() {
     cookies: vi.fn().mockResolvedValue([{ name: "slave_sid", value: "x" }]),
     close: vi.fn().mockResolvedValue(undefined),
   };
+  const launch = vi.fn(async () => browser as never);
   const browser = {
     newContext: vi.fn().mockResolvedValue(context),
     close: vi.fn().mockResolvedValue(undefined),
   };
-  return { browser, context, page, qrElement };
+  return { browser, context, page, qrElement, launch };
+}
+
+function mountBrowser(landingUrl?: string) {
+  const mock = createBrowserMock(landingUrl);
+  vi.mocked(browserLaunchCandidates).mockReturnValue([
+    { kind: "default", label: "test", launch: mock.launch },
+  ]);
+  return mock;
 }
 
 async function executeStart() {
   if (!wechatAuthStartTool.execute) throw new Error("wechat_auth_start execute missing");
-  return await wechatAuthStartTool.execute({}, toolInvocationOptions) as {
+  return (await wechatAuthStartTool.execute({}, toolInvocationOptions)) as {
     ok: boolean;
     imageDataUri: string;
     expiresInSec: number;
@@ -56,7 +77,7 @@ async function executeStart() {
 
 async function executeStatus() {
   if (!wechatAuthStatusTool.execute) throw new Error("wechat_auth_status execute missing");
-  return await wechatAuthStatusTool.execute({}, toolInvocationOptions) as {
+  return (await wechatAuthStatusTool.execute({}, toolInvocationOptions)) as {
     ok: boolean;
     state: string;
     mpName: string;
@@ -69,28 +90,33 @@ describe("wechat auth tools", () => {
     vi.clearAllMocks();
     vi.mocked(saveCredentialRecord).mockResolvedValue(undefined);
     vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
+    vi.mocked(probeWechatSearchbiz).mockResolvedValue({ ok: true });
   });
 
-  it("wechat_auth_start 返回二维码,后台登录成功后保存 token/cookie/expiry", async () => {
-    const { browser, context, page, qrElement } = createBrowserMock();
-    vi.mocked(browserLaunchCandidates).mockReturnValue([
-      { kind: "default", label: "test", launch: async () => browser as never },
-    ]);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // 排最前:此刻模块级 authState 尚为空,才测得到 NO_CREDENTIAL 兜底(后续 start 测试会污染 authState)。
+  it("wechat_auth_status 对空凭据返回 NO_CREDENTIAL", async () => {
+    vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
+
+    await expect(executeStatus()).resolves.toEqual({
+      ok: false,
+      state: "NO_CREDENTIAL",
+      mpName: "",
+      message: "未授权",
+    });
+  });
+
+  it("落地 /cgi-bin/home + 探针通过 → 存 token/cookie/expiry + READY", async () => {
+    const { browser } = mountBrowser();
 
     const result = await executeStart();
 
     expect(result.ok).toBe(true);
     expect(result.imageDataUri).toMatch(/^data:image\/png;base64,/);
     expect(result.expiresInSec).toBe(240);
-    expect(context.addInitScript).toHaveBeenCalledTimes(1);
-    expect(page.goto).toHaveBeenCalledWith("https://mp.weixin.qq.com/", {
-      waitUntil: "domcontentloaded",
-      timeout: 15_000,
-    });
-    expect(page.waitForSelector).toHaveBeenCalledWith(".login__type__container__scan__qrcode", {
-      timeout: 10_000,
-    });
-    expect(qrElement.screenshot).toHaveBeenCalledWith({ type: "png" });
 
     await vi.waitFor(() => {
       expect(saveCredentialRecord).toHaveBeenCalledWith({
@@ -103,20 +129,83 @@ describe("wechat auth tools", () => {
         key: "cookie",
         value: "slave_sid=x",
       });
-      expect(saveCredentialRecord).toHaveBeenCalledWith(
-        expect.objectContaining({
-          platform: "wechat",
-          key: "expiry",
-          value: expect.any(String),
-        }),
-      );
+    });
+    // token 最后写(半授权防护):cookie/expiry/mp_name 都在 token 之前。
+    const order = vi
+      .mocked(saveCredentialRecord)
+      .mock.calls.map((c) => (c[0] as { key: string }).key);
+    expect(order[order.length - 1]).toBe("token");
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("落地 /cgi-bin/acctclose(带 token)+ 探针通过 → 照样存凭据 + READY(不猜落地页语义)", async () => {
+    mountBrowser(
+      "https://mp.weixin.qq.com/cgi-bin/acctclose?action=page&token=XYZ&lang=zh_CN",
+    );
+
+    await executeStart();
+
+    await vi.waitFor(() => {
       expect(saveCredentialRecord).toHaveBeenCalledWith({
         platform: "wechat",
-        key: "mp_name",
-        value: "测试公众号",
+        key: "token",
+        value: "XYZ",
       });
     });
-    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("探针返回权限/会话错误 → 不存凭据,状态 ACCOUNT_UNUSABLE", async () => {
+    mountBrowser("https://mp.weixin.qq.com/cgi-bin/acctclose?action=page&token=XYZ");
+    vi.mocked(probeWechatSearchbiz).mockResolvedValue({
+      ok: false,
+      kind: "unusable",
+      message: "微信登录态已失效,请重新扫码登录",
+    });
+
+    await executeStart();
+
+    await vi.waitFor(async () => {
+      const st = await executeStatus();
+      expect(st.state).toBe("ACCOUNT_UNUSABLE");
+      expect(st.message).toContain("已认证公众号");
+    });
+    expect(saveCredentialRecord).not.toHaveBeenCalled();
+  });
+
+  it("落地 URL 无 token → 兜底带 cookie 请求首页,从最终 URL 提取 token", async () => {
+    mountBrowser("https://mp.weixin.qq.com/cgi-bin/home?t=home/index"); // 无 token
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        url: "https://mp.weixin.qq.com/cgi-bin/home?token=FALLBACK&lang=zh_CN",
+      }),
+    );
+
+    await executeStart();
+
+    await vi.waitFor(() => {
+      expect(saveCredentialRecord).toHaveBeenCalledWith({
+        platform: "wechat",
+        key: "token",
+        value: "FALLBACK",
+      });
+    });
+  });
+
+  it("waitForURL 超时(没等到扫码确认)→ 不存凭据,状态 TIMEOUT", async () => {
+    const { page } = mountBrowser();
+    page.waitForURL.mockRejectedValue(new Error("Timeout 240000ms exceeded"));
+
+    const result = await executeStart(); // 二维码已 resolve,超时发生在后台
+    expect(result.ok).toBe(true);
+
+    await vi.waitFor(async () => {
+      const st = await executeStatus();
+      expect(st.state).toBe("TIMEOUT");
+      expect(st.message).toContain("没等到扫码确认");
+    });
+    expect(saveCredentialRecord).not.toHaveBeenCalled();
+    expect(probeWechatSearchbiz).not.toHaveBeenCalled();
   });
 
   it("wechat_auth_status 对有效凭据返回 READY", async () => {
@@ -149,14 +238,18 @@ describe("wechat auth tools", () => {
     });
   });
 
-  it("wechat_auth_status 对空凭据返回 NO_CREDENTIAL", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
+  // 压轴:幂等守卫会把 authState 留在 authorizing(waitForURL 永不 resolve),故排最后,不污染前面。
+  it("§3 幂等守卫:authorizing 中二次调用复用同一张码,不新开浏览器", async () => {
+    const { launch, page } = mountBrowser();
+    // 让 waitForURL 永不 resolve,保持 authorizing 态 + pendingQr 存活。
+    page.waitForURL.mockReturnValue(new Promise(() => {}));
 
-    await expect(executeStatus()).resolves.toEqual({
-      ok: false,
-      state: "NO_CREDENTIAL",
-      mpName: "",
-      message: "未授权",
-    });
+    const first = await executeStart();
+    const second = await executeStart();
+
+    expect(second.imageDataUri).toBe(first.imageDataUri);
+    expect(launch).toHaveBeenCalledTimes(1); // 第二次没 launch 新浏览器
+    expect(second.expiresInSec).toBeLessThanOrEqual(240);
+    expect(second.expiresInSec).toBeGreaterThan(0);
   });
 });

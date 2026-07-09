@@ -24,6 +24,7 @@ import type {
 import { sessionIdToTraceId } from "./agentSpans.js";
 import type { Material } from "../types/material.js";
 import { documentRepo, type DocumentRow } from "../db/documentRepo.js";
+import { deleteDocumentFamily } from "../db/documentFamilyRepo.js";
 import {
   getMinDocumentSnapshotVersion,
   getVersionSnapshot,
@@ -1651,5 +1652,6 @@ export async function deleteSessionThread(sessionId: string): Promise<void> {
   const memory = mastra.getMemory("default");
   if (!memory) return;
 
+  await deleteDocumentFamily(sessionId);
   await memory.deleteThread(sessionId);
 }

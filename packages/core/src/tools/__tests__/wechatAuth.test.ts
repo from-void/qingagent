@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getBrowser, withBrowserContextSlot } from "../../browser/pool.js";
+import { browserLaunchCandidates } from "../../browser/pool.js";
 import {
   getCredentialsForPlatform,
   saveCredentialRecord,
@@ -7,8 +7,7 @@ import {
 import { wechatAuthStartTool, wechatAuthStatusTool } from "../wechatAuth.js";
 
 vi.mock("../../browser/pool.js", () => ({
-  getBrowser: vi.fn(),
-  withBrowserContextSlot: vi.fn(),
+  browserLaunchCandidates: vi.fn(),
 }));
 
 vi.mock("../../credentials/credentialsRepo.js", () => ({
@@ -41,6 +40,7 @@ function createBrowserMock() {
   };
   const browser = {
     newContext: vi.fn().mockResolvedValue(context),
+    close: vi.fn().mockResolvedValue(undefined),
   };
   return { browser, context, page, qrElement };
 }
@@ -67,14 +67,15 @@ async function executeStatus() {
 describe("wechat auth tools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(withBrowserContextSlot).mockImplementation(async (fn) => await fn());
     vi.mocked(saveCredentialRecord).mockResolvedValue(undefined);
     vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
   });
 
   it("wechat_auth_start 返回二维码,后台登录成功后保存 token/cookie/expiry", async () => {
     const { browser, context, page, qrElement } = createBrowserMock();
-    vi.mocked(getBrowser).mockResolvedValue(browser as never);
+    vi.mocked(browserLaunchCandidates).mockReturnValue([
+      { kind: "default", label: "test", launch: async () => browser as never },
+    ]);
 
     const result = await executeStart();
 
@@ -115,7 +116,7 @@ describe("wechat auth tools", () => {
         value: "测试公众号",
       });
     });
-    expect(context.close).toHaveBeenCalledTimes(1);
+    expect(browser.close).toHaveBeenCalledTimes(1);
   });
 
   it("wechat_auth_status 对有效凭据返回 READY", async () => {

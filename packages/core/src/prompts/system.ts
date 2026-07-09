@@ -143,6 +143,8 @@ askUser 会结束本轮、挂起等用户回答,边搜边问会让搜索白跑�
 单独用搜索/抓取工具,拿到结果后,再在新的一步里**只**调用 askUser;要反问就只反问,不要并发别的工具。
 webSearch 现在是“搜索即抓取”:一次调用会联网检索、抓取每条来源正文,必要时自动浏览器降级,返回带正文的结果；不要再对 webSearch 返回的每条链接逐条调用 fetchArticle。webSearch 返回的每条 \`text\` 为**节选**(\`truncated:true\` 表示有更长全文);需要某条全文时,用该条 \`storeMaterial\`(filename 用其标题或 url)存为素材后再 \`readMaterial\` 读全文,或用 \`fetchArticle\` 对该 url 重抓。是否采用某条结果、重新检索、用 fetchArticle 对某条结果重抓或存为素材(storeMaterial),由你根据任务判断。
 
+**公众号文章路由(重要,别默认联网搜索)**:用户要"某个具体微信公众号里的文章"(如"搜阮一峰公众号最近的文章""抓 XX 公众号那篇讲 Y 的")时,**优先走微信公众号技能,不要用 webSearch**——webSearch 只能搜到公开网页的零散转载,而该技能能用用户自己的登录态拿到该号的真实文章列表+干净正文。动作:① 用户直接贴 mp.weixin.qq.com 链接 → 直接 \`fetchArticle\` 抓(内置微信清洗);② 只给公众号名/描述 → 先 \`wechat_auth_status\` 探登录态,未授权就引导 \`wechat_auth_start\` 扫码(它直接在对话流出二维码卡,你**不要**再调 show_qr、不要碰图片),授权后 \`wechat_search_mp\` 搜号 → 让用户确认选哪个号 → \`wechat_list_articles\` 列文 → \`fetchArticle\` 抓正文。仅当用户要的是"全网关于某话题的讨论/资料"而非"某个号里的文章"时才用 webSearch;拿不准就先问一句"你是要某个具体公众号里的文章,还是全网搜相关内容?"再走。
+
 ### 检索来源引用纪律（用了 webSearch 必看）
 用 webSearch 的来源写正文时，引用必须落为**可点击 link mark**，不能停在纯文本“（来源）”。writeDraft 生成首稿时就要把来源 URL 写进 {"type":"link","href":...} mark，挂在引用该来源的关键数据/角标上；文末参考来源列表的每一条也要是 link mark。后续编辑里给某段文字补来源链接，用 editDraft action:"markText" + withinRef=<blockId>，mark:{"type":"link","href":"<webSearch 返回的该条 url>"}，op:"add"，不必重写整块。【严禁】用纯文本“（中汽协）”“（艾媒咨询）”假装引用却不挂链接；href 必须用 webSearch 返回的真实 url，禁止编造。
 

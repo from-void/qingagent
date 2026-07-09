@@ -113,6 +113,7 @@ import {
   normalizeGenerateSvgProgress,
   qrCardToolCallSpec,
   readImageToolCallSpec,
+  wechatAuthQrToolCallSpec,
   researchCardToolCallSpec,
   scriptCardFromResult,
   writeDraftCardFromResult,
@@ -1273,6 +1274,14 @@ export async function* processAgentStream(
         });
         yield* emitOrUpdateToolCall(spec, alreadyPlaced);
         outcome.producedVisibleFrame = true;
+      } else if (toolName === "wechat_auth_start") {
+        // 微信授权:running 显示"生成二维码中"占位,done(tool-result)从 result.imageDataUri 渲染真二维码卡。
+        const spec = wechatAuthQrToolCallSpec(toolCallId, null, {
+          kind: "running",
+          data: { progressPct: null, etaSec: null },
+        });
+        yield* emitOrUpdateToolCall(spec, alreadyPlaced);
+        outcome.producedVisibleFrame = true;
       } else {
         const spec: ToolCallSpec = {
           id: toolCallId,
@@ -1538,6 +1547,26 @@ export async function* processAgentStream(
           updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
           outcome.producedVisibleFrame = true;
         }
+      } else if (toolName === "wechat_auth_start") {
+        // 授权二维码卡:从工具 result.imageDataUri 直接渲染 qrCard,base64 不经过模型(模型复述 7KB 会卡死)。
+        const authResult = toolResult as Record<string, unknown> | null;
+        const doneSpec = wechatAuthQrToolCallSpec(toolCallId, authResult, { kind: "done" });
+        const origMsg = state.chatHistory.find((m) =>
+          m.parts.some((p) => p.kind === "toolCall" && p.data.id === toolCallId),
+        );
+        if (origMsg) {
+          updateToolCallInChatHistory(state, origMsg.id, toolCallId, doneSpec);
+          yield toolCallUpdated(origMsg.id, toolCallId, doneSpec);
+        } else {
+          const seq = nextSeq(state, agentMessageId);
+          const tcPart: MessagePart = { kind: "toolCall", data: doneSpec };
+          yield chatMessageAppended(agentMessageId, seq, tcPart);
+          ensureAgentChatHistoryMessage(state, agentMessageId);
+          appendPartToChatHistory(state, agentMessageId, tcPart);
+          yield toolCallUpdated(agentMessageId, toolCallId, doneSpec);
+          updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
+        }
+        outcome.producedVisibleFrame = true;
       } else if (
         toolName === "generateSvg"
       ) {

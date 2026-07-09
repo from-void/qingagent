@@ -195,6 +195,37 @@ describe("show_qr 二维码卡帧协议", () => {
     }
   });
 
+  it("wechat_auth_start 从工具 result 直接渲染二维码卡(base64 不经模型)", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("wechat-auth-qr");
+    const img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          { type: "tool-call", payload: { toolName: "wechat_auth_start", toolCallId: "wa1", args: {} } },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "wechat_auth_start",
+              toolCallId: "wa1",
+              args: {},
+              result: { ok: true, imageDataUri: img, expiresInSec: 240 },
+            },
+          },
+        ),
+        { state, agentMessageId: "m", streamId: "s", runId: "r" },
+      ),
+    );
+    const final = toolSpecs(frames, "wa1").at(-1);
+    expect(final?.status.kind).toBe("done");
+    expect(final?.body.kind).toBe("qrCard");
+    if (final?.body.kind === "qrCard") {
+      expect(final.body.data.imageDataUri).toBe(img);
+      expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
+      expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
+    }
+  });
+
   it("show_qr-only 回合结束等待用户时不发 draftingFailed", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("qr-wait-user");

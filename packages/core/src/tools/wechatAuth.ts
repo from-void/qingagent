@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
-import type { BrowserContext, Page } from "playwright";
+import type { Browser, Page } from "playwright";
 import { z } from "zod";
-import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
+import { browserLaunchCandidates } from "../browser/pool.js";
 import {
   getCredentialsForPlatform,
   saveCredentialRecord,
@@ -23,6 +23,8 @@ const DESKTOP_UA =
 type AuthState = "authorizing" | "ready" | "failed";
 
 const authState = new Map<string, AuthState>();
+// 同一时刻只保留一个扫码 browser:新扫码先关旧的,防后台轮询(240s)期间 headless chromium 进程堆积拖慢新 launch。
+let activeAuthBrowser: Browser | null = null;
 
 function applyStealthInitScript(): void {
   (globalThis as unknown as { __name?: (fn: unknown) => unknown }).__name ||= (fn) => fn;
@@ -88,6 +90,20 @@ function cookieHeaderFromCookies(cookies: Array<{ name: string; value: string }>
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
 
+// 扫码专用:独立 launch 一个 browser(复用 pool 的启动候选顺序),与共享抓取池隔离。
+// 扫码要等用户扫码 ~240s,若共用抓取池的并发槽会把槽占满、拖垮文章抓取。
+async function launchStandaloneBrowser(): Promise<Browser> {
+  let lastError: unknown;
+  for (const candidate of browserLaunchCandidates()) {
+    try {
+      return await candidate.launch();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export const wechatAuthStartTool = createTool({
   id: "wechat_auth_start",
   description: "打开微信公众号后台登录页,返回扫码二维码图片,并在后台等待扫码成功后保存微信登录凭据。",
@@ -102,13 +118,19 @@ export const wechatAuthStartTool = createTool({
     try {
       authState.set(WECHAT_SCOPE, "authorizing");
       let settled = false;
+      // 新扫码作废上一张未完成的:关掉上一个扫码 browser,防其后台轮询期间 chromium 堆积。
+      await activeAuthBrowser?.close().catch(() => {});
+      activeAuthBrowser = null;
 
+      let authBrowser: Browser | null = null;
       const imageDataUri = await new Promise<string>((resolve, reject) => {
-        void withBrowserContextSlot(async () => {
-          let browserContext: BrowserContext | null = null;
+        void (async () => {
+          // 扫码用独立 browser(见 launchStandaloneBrowser),不占共享抓取池的并发槽——
+          // 否则多次扫码的后台轮询(各 240s)会把 3 个槽占满、拖垮文章抓取(实测:server 里卡死不返回)。
           try {
-            const browser = await getBrowser();
-            browserContext = await browser.newContext({
+            authBrowser = await launchStandaloneBrowser();
+            activeAuthBrowser = authBrowser;
+            const browserContext = await authBrowser.newContext({
               userAgent: DESKTOP_UA,
               locale: "zh-CN",
             });
@@ -153,12 +175,10 @@ export const wechatAuthStartTool = createTool({
             authState.set(WECHAT_SCOPE, "failed");
             if (!settled) reject(error);
           } finally {
-            await browserContext?.close().catch(() => {});
+            await authBrowser?.close().catch(() => {});
+            if (activeAuthBrowser === authBrowser) activeAuthBrowser = null;
           }
-        }).catch((error) => {
-          authState.set(WECHAT_SCOPE, "failed");
-          if (!settled) reject(error);
-        });
+        })();
       });
 
       return { ok: true, imageDataUri, expiresInSec: WECHAT_AUTH_EXPIRES_IN_SEC };

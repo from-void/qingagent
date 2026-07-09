@@ -336,6 +336,62 @@ export function qrCardToolCallSpec(
   };
 }
 
+/**
+ * wechat_auth_start 授权卡:工具**直接**产出二维码卡片,base64 图片不经过模型
+ * (微信登录码是 7KB+ base64,若让模型当 show_qr 参数复述会卡死/出错)。
+ * running(无 result)显示生成中占位;done 从 result.imageDataUri 渲染 qrCard(图片模式),
+ * 授权交互文案(标题/引导/确认/刷新)在此硬编码,模型无需操心。
+ */
+export function wechatAuthQrToolCallSpec(
+  toolCallId: string,
+  result: Record<string, unknown> | null,
+  status: ToolCallStatus,
+): ToolCallSpec {
+  const imageDataUri =
+    result && typeof result.imageDataUri === "string" && result.imageDataUri
+      ? result.imageDataUri
+      : null;
+  if (!imageDataUri) {
+    return {
+      id: toolCallId,
+      name: "wechat_auth_start",
+      render: { kind: "chatInline" },
+      status,
+      body: { kind: "generic", data: { argsJson: "正在生成微信登录二维码…" } },
+      result:
+        status.kind === "done"
+          ? { kind: "genericText", data: "微信登录二维码生成失败,请重试" }
+          : null,
+    };
+  }
+  const expiresInSec =
+    typeof result?.expiresInSec === "number" && Number.isFinite(result.expiresInSec) && result.expiresInSec > 0
+      ? (result.expiresInSec as number)
+      : 240;
+  const expiresAt = Date.now() + expiresInSec * 1000;
+  return {
+    id: toolCallId,
+    name: "wechat_auth_start",
+    render: { kind: "chatInline" },
+    status,
+    body: {
+      kind: "qrCard",
+      data: {
+        content: "",
+        imageDataUri,
+        title: "扫码登录微信公众号",
+        code: null,
+        note: "用你**公众号管理员**的那个微信扫码,扫完手机上点「登录」,再点下方按钮",
+        expiresAt,
+        refreshQuery: "微信登录二维码过期了,请帮我重新生成",
+        confirmQuery: "我已扫完码,请继续",
+        confirmLabel: "我已扫码完成",
+      },
+    },
+    result: null,
+  };
+}
+
 export const PURE_UI_TOOL_NAMES = new Set(["show_qr"]);
 
 /** 模型提问的语义意图（camelCase，与契约 AskUserPurpose / 工具 enum 一致）。 */

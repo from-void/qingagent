@@ -3,7 +3,7 @@
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { describe, expect, it } from "vitest";
-import type { AppliedPatch } from "./protocol";
+import type { AppliedPatch, BlockPatchInput, ViewBlock } from "./protocol";
 import { buildPatchDecorations } from "./patchDecorations";
 
 const baselineDoc: PmDoc = {
@@ -15,7 +15,18 @@ const baselineDoc: PmDoc = {
       attrs: { blockId: "p-1" },
       content: [{ type: "text", text: "abcdef" }],
     },
+    {
+      type: "paragraph",
+      attrs: { blockId: "p-2" },
+      content: [{ type: "text", text: "ghij" }],
+    },
   ],
+};
+
+const insertedBlock: ViewBlock = {
+  kind: "p",
+  blockId: "p-new",
+  spans: [{ kind: "text", text: "新增段落" }],
 };
 
 function suggestion(
@@ -195,4 +206,82 @@ describe("buildPatchDecorations", () => {
     expect(result.decorations).toEqual([]);
     expect(result.dropped).toEqual(["p-bad"]);
   });
+
+  it("把块级新增构建为块边界处的 widget decoration，并复用 viewSectionsToHtml 输出块 DOM", () => {
+    const { decorations, dropped } = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [blockPatch("block-ins", "insert", { anchorBlockId: "p-1", gravity: "after" })],
+      applied: [applied("block-ins", 6, "insert", "", "新增段落")],
+    });
+
+    expect(dropped).toEqual([]);
+    expect(decorations).toHaveLength(1);
+    expect(decorations[0]?.from).toBe(8);
+    expect(spec(decorations[0])).toMatchObject({
+      "data-patch-id": "block-ins",
+      "data-patch-index": 6,
+      patchKind: "insert",
+    });
+    const dom = widgetDom(decorations[0]);
+    expect(dom.className).toContain("wf-blockmark insert");
+    expect(dom.dataset.patchId).toBe("block-ins");
+    expect(dom.querySelector(".wf-patch-ins p")?.textContent).toBe("新增段落");
+  });
+
+  it("把块级删除构建为覆盖整块的 node decoration 加红色块标记 widget", () => {
+    const { decorations, dropped } = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [blockPatch("block-del", "delete", { anchorBlockId: "p-2", blockCount: 1 })],
+      applied: [applied("block-del", 7, "delete", "ghij", "")],
+    });
+
+    expect(dropped).toEqual([]);
+    expect(decorations).toHaveLength(2);
+    expect(decorations[0]?.from).toBe(8);
+    expect(decorations[0]?.to).toBe(14);
+    expect(className(decorations[0])).toContain("wf-blockmark delete");
+    expect(attrs(decorations[0])["data-patch-id"]).toBe("block-del");
+    expect(attrs(decorations[0])["data-patch-state"]).toBe("delete");
+    expect(widgetDom(decorations[1]).querySelector(".wf-blockmark-del-line")).not.toBeNull();
+  });
+
+  it("把块级替换构建为删除旧块 node decoration 加新增块 widget", () => {
+    const { decorations, dropped } = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [blockPatch("block-rep", "replace", { anchorBlockId: "p-1" })],
+      applied: [applied("block-rep", 8, "replace", "abcdef", "新增段落")],
+    });
+
+    expect(dropped).toEqual([]);
+    expect(decorations).toHaveLength(3);
+    expect(className(decorations[0])).toContain("wf-blockmark delete");
+    expect(widgetDom(decorations[2]).className).toContain("wf-blockmark insert");
+    expect(widgetDom(decorations[2]).dataset.patchState).toBe("replace");
+  });
+
+  it("块级坏锚点进入 dropped 且不产出 decoration", () => {
+    const result = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [blockPatch("block-bad", "insert", { anchorBlockId: "missing" })],
+      applied: [applied("block-bad", 9, "insert", "", "新增段落")],
+    });
+
+    expect(result.decorations).toEqual([]);
+    expect(result.dropped).toEqual(["block-bad"]);
+  });
 });
+
+function blockPatch(
+  patchId: string,
+  op: BlockPatchInput["op"],
+  overrides: Partial<BlockPatchInput> = {},
+): BlockPatchInput {
+  return {
+    patchId,
+    op,
+    anchorBlockId: "p-1",
+    blocks: [insertedBlock],
+    blockCount: 1,
+    ...overrides,
+  };
+}

@@ -377,7 +377,7 @@ function docDiffInsertReviewFixture() {
       },
     ]),
   );
-  return { baseDoc, presentation, patchMeta: meta };
+  return { baseDoc, presentation, patchMeta: meta, blockPatchInputs };
 }
 
 function insertBlockDoc(): ViewDocumentSnapshot {
@@ -858,10 +858,10 @@ describe("WorkspacePage review controls", () => {
     expect(onPatchVerdict).toHaveBeenCalledWith("insert-block", "rejected");
   });
 
-  it("P7 docDiffReady 无锚新增块本步不走行内 decoration,保留不可视提示", async () => {
+  it("P7 docDiffReady 无锚新增块渲染为待接受块且可撤销", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const onPatchVerdict = vi.fn();
-    const { baseDoc, presentation, patchMeta } = docDiffInsertReviewFixture();
+    const { baseDoc, presentation, patchMeta, blockPatchInputs } = docDiffInsertReviewFixture();
 
     expect(presentation.droppedIds).toEqual([]);
     expect(presentation.conflictIds).toEqual([]);
@@ -874,11 +874,12 @@ describe("WorkspacePage review controls", () => {
             docWithPatches: presentation.doc,
             patchMeta,
             remainingCount: 1,
-            visiblePatchCount: 0,
-            unrenderablePatchCount: 1,
+            visiblePatchCount: 1,
+            unrenderablePatchCount: 0,
             reviewSuggestions: [],
             reviewOverlayInputs: [],
-            reviewAppliedPatches: [],
+            reviewBlockPatches: blockPatchInputs,
+            reviewAppliedPatches: presentation.applied,
             onPatchVerdict,
           })}
         />
@@ -886,11 +887,22 @@ describe("WorkspacePage review controls", () => {
     );
 
     expect(host?.querySelector('[data-wf="PatchUnresolvableBanner"]')).toBeNull();
-    expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')).not.toBeNull();
-    expect(host?.textContent).toContain("另有 1 处改动无法在正文定位");
-    expect(host?.textContent).not.toContain("新增标题");
-    expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(0);
-    expect(onPatchVerdict).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')).toBeNull();
+    const inserted = host?.querySelector('[data-patch-id="insert-docdiff"].wf-blockmark.insert') as HTMLElement | null;
+    expect(inserted).not.toBeNull();
+    expect(inserted?.querySelector(".wf-patch-ins")?.textContent).toContain("新增标题");
+    expect(inserted?.querySelector(".wf-patch-ins")?.textContent).toContain("新增段落");
+    expect(inserted?.querySelector(".wf-patch-ins")?.textContent).toContain("新增列表");
+
+    act(() => {
+      inserted?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    const popup = host?.querySelector(".patch-hover-popup");
+    expect(popup).not.toBeNull();
+    const buttons = [...popup!.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual(["撤销"]);
+    buttons[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onPatchVerdict).toHaveBeenCalledWith("insert-docdiff", "rejected");
 
     await act(async () => {
       root?.render(
@@ -906,7 +918,8 @@ describe("WorkspacePage review controls", () => {
               unrenderablePatchCount: 0,
               reviewSuggestions: [],
               reviewOverlayInputs: [],
-              reviewAppliedPatches: [],
+              reviewBlockPatches: blockPatchInputs,
+              reviewAppliedPatches: presentation.applied,
               onPatchVerdict,
             })}
           />

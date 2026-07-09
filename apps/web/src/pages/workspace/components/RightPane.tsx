@@ -18,6 +18,7 @@ import type { NativePresentationRun } from "../data/nativeDiffAnimation";
 import type {
   AppliedPatch,
   AskUserAnswers,
+  BlockPatchInput,
   DocSuggestion,
   PatchOverlayInput,
   StreamError,
@@ -70,6 +71,7 @@ interface RightPaneProps {
   activePatchId: string | null;
   reviewSuggestions?: readonly DocSuggestion[];
   reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
@@ -152,6 +154,7 @@ export function RightPane({
   activePatchId,
   reviewSuggestions = [],
   reviewOverlayInputs = [],
+  reviewBlockPatches = [],
   reviewAppliedPatches = [],
   revealedPatchIds,
   revealCursors,
@@ -457,6 +460,7 @@ export function RightPane({
         activePatchId={activePatchId}
         reviewSuggestions={reviewSuggestions}
         reviewOverlayInputs={reviewOverlayInputs}
+        reviewBlockPatches={reviewBlockPatches}
         reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}

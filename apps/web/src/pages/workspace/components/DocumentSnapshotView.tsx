@@ -80,6 +80,7 @@ import type {
   ViewListRowDiff,
   ViewTableRowDiff,
   AppliedPatch,
+  BlockPatchInput,
   DocSuggestion,
   PatchOverlayInput,
 } from "../data/protocol";
@@ -180,6 +181,7 @@ export interface DocumentSnapshotViewProps {
   activePatchId?: string | null;
   reviewSuggestions?: readonly DocSuggestion[];
   reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
@@ -210,6 +212,7 @@ export const DocumentSnapshotView = forwardRef<
     activePatchId,
     reviewSuggestions,
     reviewOverlayInputs,
+    reviewBlockPatches,
     reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
@@ -280,6 +283,7 @@ export const DocumentSnapshotView = forwardRef<
         activePatchId={activePatchId}
         reviewSuggestions={reviewSuggestions}
         reviewOverlayInputs={reviewOverlayInputs}
+        reviewBlockPatches={reviewBlockPatches}
         reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
@@ -352,6 +356,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   activePatchId?: string | null;
   reviewSuggestions?: readonly DocSuggestion[];
   reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
@@ -374,6 +379,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     activePatchId,
     reviewSuggestions,
     reviewOverlayInputs,
+    reviewBlockPatches,
     reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
@@ -570,6 +576,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     doc,
     suggestions: reviewSuggestions,
     overlayInputs: reviewOverlayInputs,
+    blockPatches: reviewBlockPatches,
     applied: reviewAppliedPatches,
     acceptedPatches,
     rejectedPatches,
@@ -1004,6 +1011,7 @@ function useReviewPatchDecorations({
   doc,
   suggestions,
   overlayInputs,
+  blockPatches,
   applied,
   acceptedPatches,
   rejectedPatches,
@@ -1014,6 +1022,7 @@ function useReviewPatchDecorations({
   doc: ViewDocumentSnapshot;
   suggestions?: readonly DocSuggestion[];
   overlayInputs?: readonly PatchOverlayInput[];
+  blockPatches?: readonly BlockPatchInput[];
   applied?: readonly AppliedPatch[];
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
@@ -1051,6 +1060,18 @@ function useReviewPatchDecorations({
     ].join(":")).join("|"),
     [overlayInputs],
   );
+  const blockPatchesKey = useMemo(
+    () => (blockPatches ?? []).map((input) => [
+      input.patchId,
+      input.op,
+      input.anchorBlockId ?? "",
+      input.anchorIndex ?? "",
+      input.gravity ?? "",
+      input.blocks.length,
+      input.blockCount ?? "",
+    ].join(":")).join("|"),
+    [blockPatches],
+  );
   const acceptedKey = useMemo(() => setKey(acceptedPatches), [acceptedPatches]);
   const rejectedKey = useMemo(() => setKey(rejectedPatches), [rejectedPatches]);
 
@@ -1063,6 +1084,7 @@ function useReviewPatchDecorations({
     const { decorations, dropped } = buildPatchDecorations({
       suggestions: suggestions ?? [],
       overlayInputs: overlayInputs ?? [],
+      blockPatches: blockPatches ?? [],
       applied: applied ?? [],
       baselineDoc: doc.pmDoc,
       acceptedIds: acceptedPatches,
@@ -1088,6 +1110,8 @@ function useReviewPatchDecorations({
     suggestionsKey,
     overlayInputs,
     overlayInputsKey,
+    blockPatches,
+    blockPatchesKey,
     applied,
     appliedKey,
     acceptedPatches,

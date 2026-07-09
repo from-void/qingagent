@@ -3595,6 +3595,7 @@ export function WorkspacePage() {
             activePatchId={currentPatchId}
             reviewSuggestions={state.docDiff?.suggestions ?? []}
             reviewOverlayInputs={overlayInputs}
+            reviewBlockPatches={blockPatchInputs}
             reviewAppliedPatches={patchPresentation?.applied ?? []}
             revealedPatchIds={revealedPatchIds}
             revealCursors={revealCursors}

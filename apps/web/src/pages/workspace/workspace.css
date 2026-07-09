@@ -2749,6 +2749,7 @@
     width:2px;border-radius:0;
   }
   #view-workspace .wf-blockmark.insert::before{background:rgba(74, 180, 100, 0.72)}
+  #view-workspace .wf-blockmark.delete::before{background:rgba(220, 80, 70, 0.72)}
   #view-workspace .wf-blockmark{cursor:pointer}
   /* 结构块删除:折叠成一道红色细线标记(不显示被删内容),hover 看被删内容。
      与行内删除"红光标 + hover"同口径——删除一律不把旧内容留在原位。 */

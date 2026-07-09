@@ -3,8 +3,9 @@ import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
 import type { DocSuggestion } from "./protocol";
-import type { AppliedPatch, PatchOverlayInput } from "./protocol";
+import type { AppliedPatch, BlockPatchInput, PatchOverlayInput } from "./protocol";
 import type { PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
 
 type PatchDecorationMeta =
@@ -34,6 +35,7 @@ type PatchDecorationSpec = {
 export type BuildPatchDecorationsArgs = {
   suggestions?: readonly DocSuggestion[];
   overlayInputs?: readonly PatchOverlayInput[];
+  blockPatches?: readonly BlockPatchInput[];
   applied: readonly AppliedPatch[];
   baselineDoc: PmDoc;
   acceptedIds?: ReadonlySet<string> | readonly string[];
@@ -110,6 +112,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   const rejectedIds = toReadonlySet(args.rejectedIds);
   const decorations: Decoration[] = [];
   const dropped: string[] = [];
+  const blockRanges = topLevelBlockRanges(args.baselineDoc);
 
   for (const source of collectSources(args)) {
     const applied = appliedById.get(source.id);
@@ -214,6 +217,72 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     }
   }
 
+  for (const input of args.blockPatches ?? []) {
+    if (rejectedIds.has(input.patchId)) continue;
+    const applied = appliedById.get(input.patchId);
+    const index = applied?.index ?? input.order ?? 0;
+    const status = acceptedIds.has(input.patchId) ? "accepted" : "reviewing";
+    const currentClass = args.activePatchId === input.patchId ? " is-current" : "";
+    const statusClass = status === "accepted" ? " is-accepted" : "";
+    const spec = patchSpec(input.patchId, index, status, input.op);
+    const range = resolveBlockPatchRange(input, blockRanges);
+    if (!range) {
+      dropped.push(input.patchId);
+      continue;
+    }
+
+    if (input.op === "delete" || input.op === "replace") {
+      const count = Math.max(1, input.blockCount ?? input.replaceBeforeBlocks?.length ?? input.blocks.length);
+      const toRange = blockRanges[range.index + count - 1];
+      if (!toRange) {
+        dropped.push(input.patchId);
+        continue;
+      }
+      decorations.push(
+        Decoration.node(
+          range.from,
+          toRange.to,
+          {
+            class: `wf-blockmark delete${currentClass}${statusClass}`,
+            "data-patch-id": input.patchId,
+            "data-patch-index": String(index),
+            "data-patch-state": "delete",
+          },
+          spec,
+        ),
+      );
+      decorations.push(
+        Decoration.widget(
+          range.from,
+          () => renderBlockDeleteMarkerDOM(input.patchId, index, currentClass, statusClass),
+          {
+            ...spec,
+            side: -1,
+            ignoreSelection: true,
+          },
+        ),
+      );
+    }
+
+    if (input.op === "insert" || input.op === "replace") {
+      if (input.blocks.length === 0) {
+        dropped.push(input.patchId);
+        continue;
+      }
+      decorations.push(
+        Decoration.widget(
+          input.op === "insert" ? range.boundary : range.to,
+          () => renderBlockInsertDOM(input, index, currentClass, statusClass),
+          {
+            ...spec,
+            side: 1,
+            ignoreSelection: true,
+          },
+        ),
+      );
+    }
+  }
+
   return { decorations, dropped };
 }
 
@@ -246,6 +315,43 @@ function renderDeleteMarkerDOM(
   const cursor = document.createElement("span");
   cursor.className = "patch-del-cursor";
   outer.appendChild(cursor);
+  return outer;
+}
+
+function renderBlockDeleteMarkerDOM(
+  patchId: string,
+  index: number,
+  currentClass: string,
+  statusClass: string,
+): HTMLElement {
+  const outer = document.createElement("span");
+  outer.className = `wf-blockmark-del${currentClass}${statusClass}`;
+  outer.dataset.patchId = patchId;
+  outer.dataset.patchIndex = String(index);
+  outer.dataset.patchState = "delete";
+  const line = document.createElement("span");
+  line.className = "wf-blockmark-del-line";
+  line.setAttribute("aria-hidden", "true");
+  outer.appendChild(line);
+  return outer;
+}
+
+function renderBlockInsertDOM(
+  input: BlockPatchInput,
+  index: number,
+  currentClass: string,
+  statusClass: string,
+): HTMLElement {
+  const outer = document.createElement("div");
+  outer.className = `wf-blockmark insert${currentClass}${statusClass}`;
+  outer.dataset.patchId = input.patchId;
+  outer.dataset.patchIndex = String(index);
+  outer.dataset.patchState = input.op === "replace" ? "replace" : "insert";
+  outer.style.display = "block";
+  const inner = document.createElement("div");
+  inner.className = "wf-patch-ins";
+  inner.innerHTML = viewSectionsToHtml(input.blocks);
+  outer.appendChild(inner);
   return outer;
 }
 
@@ -483,6 +589,46 @@ function resolveOverlayPmRange(
   };
 }
 
+function resolveBlockPatchRange(
+  input: BlockPatchInput,
+  blockRanges: readonly { index: number; blockId: string | null; from: number; to: number }[],
+): { index: number; from: number; to: number; boundary: number } | null {
+  const blockIdRange = input.anchorBlockId
+    ? blockRanges.find((range) => range.blockId === input.anchorBlockId)
+    : undefined;
+  const indexRange = blockIdRange
+    ? undefined
+    : validBlockIndex(input.anchorIndex)
+      ? blockRanges[input.anchorIndex]
+      : undefined;
+  const range = blockIdRange ?? indexRange;
+  if (!range) {
+    if (!input.anchorBlockId && !validBlockIndex(input.anchorIndex) && input.op === "insert") {
+      const end = blockRanges[blockRanges.length - 1]?.to ?? 0;
+      return { index: blockRanges.length, from: end, to: end, boundary: end };
+    }
+    return null;
+  }
+  const boundary = input.op === "insert" && input.gravity === "before" ? range.from : range.to;
+  return { ...range, boundary };
+}
+
+function topLevelBlockRanges(doc: PmDoc): { index: number; blockId: string | null; from: number; to: number }[] {
+  const ranges: { index: number; blockId: string | null; from: number; to: number }[] = [];
+  let pos = 0;
+  doc.content.forEach((block, index) => {
+    const size = pmNodeSize(block);
+    ranges.push({
+      index,
+      blockId: readBlockId(block),
+      from: pos,
+      to: pos + size,
+    });
+    pos += size;
+  });
+  return ranges;
+}
+
 function lazyTopLevelTextRanges(doc: PmDoc): { index: number; from: number; to: number }[] {
   const ranges: { index: number; from: number; to: number }[] = [];
   let pos = 0;
@@ -493,6 +639,16 @@ function lazyTopLevelTextRanges(doc: PmDoc): { index: number; from: number; to: 
     pos += pmNodeSize(block);
   });
   return ranges;
+}
+
+function readBlockId(node: PmNode): string | null {
+  const attrs = "attrs" in node ? node.attrs : undefined;
+  const blockId = attrs && typeof attrs === "object" ? (attrs as { blockId?: unknown }).blockId : undefined;
+  return typeof blockId === "string" && blockId.length > 0 ? blockId : null;
+}
+
+function validBlockIndex(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function pmDocContentSize(doc: PmDoc): number {

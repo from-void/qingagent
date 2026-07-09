@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { describe, expect, it } from "vitest";
@@ -72,6 +74,15 @@ function spec(decoration: unknown): Record<string, unknown> {
   return (decoration as { spec: Record<string, unknown> }).spec;
 }
 
+function attrs(decoration: unknown): Record<string, unknown> {
+  return (decoration as { type: { attrs?: Record<string, unknown> } }).type.attrs ?? {};
+}
+
+function widgetDom(decoration: unknown): HTMLElement {
+  const widget = decoration as { type: { toDOM: unknown } };
+  return (widget.type.toDOM as () => HTMLElement)();
+}
+
 describe("buildPatchDecorations", () => {
   it("把新增补丁构建为 pmFrom 处的 widget decoration", () => {
     const { decorations, dropped } = buildPatchDecorations({
@@ -91,37 +102,58 @@ describe("buildPatchDecorations", () => {
     });
   });
 
-  it("把删除补丁构建为覆盖 pmFrom..pmTo 的 wf-patch-del inline decoration", () => {
+  it("把删除补丁构建为覆盖 pmFrom..pmTo 的 wf-patch-del inline decoration 加光标 widget", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       suggestions: [suggestion("p-del", 2, 4, "bc", "", "replace")],
       applied: [applied("p-del", 2, "delete", "bc", "")],
     });
 
-    expect(decorations).toHaveLength(1);
+    expect(decorations).toHaveLength(2);
     expect(decorations[0]?.from).toBe(2);
     expect(decorations[0]?.to).toBe(4);
     expect(className(decorations[0])).toContain("wf-patch-del");
+    expect(attrs(decorations[0]).style).toBeUndefined();
+    expect(attrs(decorations[0])["data-patch-state"]).toBe("delete");
     expect(spec(decorations[0])["data-patch-id"]).toBe("p-del");
+    expect(decorations[1]?.from).toBe(2);
+    expect(decorations[1]?.to).toBe(2);
+    expect(spec(decorations[1])).toMatchObject({
+      "data-patch-id": "p-del",
+      patchKind: "delete",
+    });
+    expect(widgetDom(decorations[1]).className).toContain("wf-patch-del-marker");
+    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
   });
 
-  it("把替换补丁构建为删除 inline 加新增 widget", () => {
+  it("把替换补丁构建为删除 inline 加红光标 widget 加新增 widget", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       suggestions: [suggestion("p-replace", 3, 5, "cd", "XY", "replace")],
       applied: [applied("p-replace", 3, "replace", "cd", "XY")],
     });
 
-    expect(decorations).toHaveLength(2);
+    expect(decorations).toHaveLength(3);
     expect(decorations[0]?.from).toBe(3);
     expect(decorations[0]?.to).toBe(5);
     expect(className(decorations[0])).toContain("wf-patch-del");
+    expect(attrs(decorations[0]).style).toBeUndefined();
     expect(decorations[1]?.from).toBe(3);
     expect(decorations[1]?.to).toBe(3);
     expect(spec(decorations[1])).toMatchObject({
       "data-patch-id": "p-replace",
       patchKind: "replace",
     });
+    expect(widgetDom(decorations[1]).className).toContain("wf-patch-del-marker");
+    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
+    expect(decorations[2]?.from).toBe(3);
+    expect(decorations[2]?.to).toBe(3);
+    expect(spec(decorations[2])).toMatchObject({
+      "data-patch-id": "p-replace",
+      patchKind: "replace",
+    });
+    expect(widgetDom(decorations[2]).className).toContain("wf-patch-replace-wrap");
+    expect(widgetDom(decorations[2]).querySelector(".wf-patch-ins")).not.toBeNull();
   });
 
   it("把 markChange 构建为 wf-patch-mark inline decoration", () => {

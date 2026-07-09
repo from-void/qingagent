@@ -13,6 +13,7 @@ import {
   pmDocToViewDocumentSnapshot,
   suggestionToBlockPatchInput,
   suggestionToPatchOverlay,
+  type AppliedPatch,
   type ViewDocumentSnapshot,
 } from "./data/protocol";
 import {
@@ -106,9 +107,14 @@ function reviewDimensions(overrides: Partial<DocDimensions> = {}): DocDimensions
 }
 
 function multiGroupDoc(count: number): ViewDocumentSnapshot {
+  const paragraphs = Array.from({ length: count }, (_, index) => {
+    const id = `p-${index + 1}`;
+    return pmParagraph(`block-${id}`, `第 ${index + 1} 段 旧句子`);
+  });
   return {
     version: 1,
     ts: "t",
+    pmDoc: pmDoc(paragraphs),
     sections: Array.from({ length: count }, (_, index) => {
       const id = `p-${index + 1}`;
       return {
@@ -138,6 +144,34 @@ function patchMeta(count: number) {
       ] as const;
     }),
   );
+}
+
+function multiGroupReviewData(count: number): {
+  suggestions: DocSuggestion[];
+  applied: AppliedPatch[];
+} {
+  const suggestions: DocSuggestion[] = [];
+  const applied: AppliedPatch[] = [];
+  let pos = 0;
+  for (let index = 0; index < count; index++) {
+    const id = `p-${index + 1}`;
+    const prefix = `第 ${index + 1} 段 `;
+    const before = "旧句子";
+    const after = "新句子";
+    const pmFrom = pos + 1 + prefix.length;
+    const pmTo = pmFrom + before.length;
+    suggestions.push(reviewSuggestion({
+      id,
+      blockId: `block-${id}`,
+      pmFrom,
+      pmTo,
+      before,
+      after,
+    }));
+    applied.push(reviewAppliedPatch(id, index + 1, "replace", before, after));
+    pos += prefix.length + before.length + 2;
+  }
+  return { suggestions, applied };
 }
 
 function pmText(text: string) {
@@ -228,6 +262,64 @@ function blockSuggestion(id: string, hunk: DiffHunk): DocSuggestion {
   };
 }
 
+function reviewSuggestion({
+  id,
+  blockId,
+  pmFrom,
+  pmTo,
+  before,
+  after,
+  stepType = "replace",
+}: {
+  id: string;
+  blockId: string;
+  pmFrom: number;
+  pmTo: number;
+  before: string;
+  after: string;
+  stepType?: string;
+}): DocSuggestion {
+  return {
+    id,
+    reviewBatchId: id,
+    groupMode: "independent",
+    docId: "doc-1",
+    baseVersion: 1,
+    baseSchemaVersion: 1,
+    status: "reviewing",
+    anchor: {
+      blockId,
+      pmFrom,
+      pmTo,
+      quote: before || after,
+      textHash: `hash-${id}`,
+    },
+    patch: { kind: "prosemirror_steps", steps: [{ stepType, from: pmFrom, to: pmTo }] },
+    preview: { deleteText: before, insertText: after },
+    summary: "测试修改",
+  };
+}
+
+function reviewAppliedPatch(
+  id: string,
+  index: number,
+  kind: AppliedPatch["kind"],
+  before: string,
+  after: string,
+  marks?: AppliedPatch["marks"],
+): AppliedPatch {
+  return {
+    id,
+    reviewBatchId: id,
+    groupMode: "independent",
+    before,
+    after,
+    kind,
+    ...(marks ? { marks } : {}),
+    index,
+  };
+}
+
 function docDiffInsertReviewFixture() {
   const baseDoc = pmDocToViewDocumentSnapshot(pmDoc([
     pmParagraph("block-a", "第一段"),
@@ -292,6 +384,7 @@ function insertBlockDoc(): ViewDocumentSnapshot {
   return {
     version: 1,
     ts: "t",
+    pmDoc: pmDoc([pmParagraph("block-new", "")]),
     sections: [{
       kind: "p",
       blockId: "block-new",
@@ -315,10 +408,30 @@ function insertBlockPatchMeta() {
   ]);
 }
 
+function insertBlockReviewData(): {
+  suggestions: DocSuggestion[];
+  applied: AppliedPatch[];
+} {
+  return {
+    suggestions: [
+      reviewSuggestion({
+        id: "insert-block",
+        blockId: "block-new",
+        pmFrom: 1,
+        pmTo: 1,
+        before: "",
+        after: "新增段落",
+      }),
+    ],
+    applied: [reviewAppliedPatch("insert-block", 1, "insert", "", "新增段落")],
+  };
+}
+
 function mixedContentMarkDoc(): ViewDocumentSnapshot {
   return {
     version: 1,
     ts: "t",
+    pmDoc: pmDoc([pmParagraph("mixed-block", "前 旧文 重点")]),
     sections: [{
       kind: "p",
       spans: [
@@ -373,6 +486,44 @@ function mixedContentMarkPatchMeta() {
       },
     ],
   ]);
+}
+
+function mixedContentMarkReviewData(): {
+  suggestions: DocSuggestion[];
+  applied: AppliedPatch[];
+} {
+  return {
+    suggestions: [
+      reviewSuggestion({
+        id: "mixed-text",
+        blockId: "mixed-block",
+        pmFrom: 3,
+        pmTo: 5,
+        before: "旧文",
+        after: "新文",
+      }),
+      reviewSuggestion({
+        id: "mixed-mark",
+        blockId: "mixed-block",
+        pmFrom: 6,
+        pmTo: 8,
+        before: "重点",
+        after: "重点",
+        stepType: "addMark",
+      }),
+    ],
+    applied: [
+      reviewAppliedPatch("mixed-text", 1, "replace", "旧文", "新文"),
+      reviewAppliedPatch(
+        "mixed-mark",
+        1,
+        "markAdd",
+        "重点",
+        "重点",
+        [{ type: "bold" }, { type: "highlight", attrs: { color: "yellow" } }],
+      ),
+    ],
+  };
 }
 
 function reviewToolCall(
@@ -441,6 +592,7 @@ function reviewToolCall(
 
 function rightPaneProps(overrides: Record<string, unknown> = {}) {
   const doc = multiGroupDoc(7);
+  const reviewData = multiGroupReviewData(7);
   return {
     dimensions: reviewDimensions(),
     agentReasoning: false,
@@ -469,6 +621,8 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     docViewRef: { current: null },
     patchMeta: patchMeta(7),
     activePatchId: null,
+    reviewSuggestions: reviewData.suggestions,
+    reviewAppliedPatches: reviewData.applied,
     revealedPatchIds: null,
     revealCursors: new Map<string, number>(),
     typedByPatch: null,
@@ -538,21 +692,12 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).not.toContain("提交已接受");
     expect(host?.querySelector(".wf-block-review")).toBeNull();
     expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(7);
-    expect(host?.querySelectorAll("[data-patch-state] .patch-hover-popup")).toHaveLength(7);
+    expect(host?.querySelector(".patch-hover-popup")).toBeNull();
     const firstWrap = host!.querySelector("[data-patch-state]")!;
-    const firstPopup = firstWrap.querySelector(".patch-hover-popup");
-    expect(firstPopup!.classList.contains("is-visible")).toBe(false);
     act(() => {
       firstWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     });
-    expect(firstPopup!.classList.contains("is-visible")).toBe(true);
-    act(() => {
-      firstWrap.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    });
-    expect(firstPopup!.classList.contains("is-visible")).toBe(false);
-    act(() => {
-      firstWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
-    });
+    const firstPopup = host!.querySelector(".patch-hover-popup")!;
     expect(firstPopup!.classList.contains("is-visible")).toBe(true);
     act(() => {
       firstWrap.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: host }));
@@ -565,14 +710,18 @@ describe("WorkspacePage review controls", () => {
     });
     expect(firstPopup!.classList.contains("is-visible")).toBe(true);
     act(() => {
-      firstPopup!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: host }));
+      firstPopup.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: host }));
       vi.advanceTimersByTime(200);
     });
-    expect(firstPopup!.classList.contains("is-visible")).toBe(false);
-    const buttons = [...firstPopup!.querySelectorAll("button")];
+    expect(host!.querySelector(".patch-hover-popup")).toBeNull();
+    act(() => {
+      firstWrap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    const visiblePopup = host!.querySelector(".patch-hover-popup")!;
+    const buttons = [...visiblePopup.querySelectorAll("button")];
     expect(buttons.map((button) => button.textContent)).toEqual(["撤销"]);
-    expect(firstPopup!.textContent).not.toContain("接受");
-    expect(firstPopup!.textContent).not.toContain("拒绝");
+    expect(visiblePopup.textContent).not.toContain("接受");
+    expect(visiblePopup.textContent).not.toContain("拒绝");
 
     buttons[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
@@ -673,6 +822,7 @@ describe("WorkspacePage review controls", () => {
     const { RightPane } = await import("./WorkspacePage");
     const onPatchVerdict = vi.fn();
     const doc = insertBlockDoc();
+    const reviewData = insertBlockReviewData();
     await render(
       <section id="view-workspace">
         <RightPane
@@ -680,6 +830,8 @@ describe("WorkspacePage review controls", () => {
             doc,
             docWithPatches: doc,
             patchMeta: insertBlockPatchMeta(),
+            reviewSuggestions: reviewData.suggestions,
+            reviewAppliedPatches: reviewData.applied,
             remainingCount: 1,
             visiblePatchCount: 1,
             onPatchVerdict,
@@ -691,7 +843,10 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector(".wf-block-review")).toBeNull();
     const inserted = host?.querySelector(".wf-patch-ins");
     expect(inserted?.textContent).toBe("新增段落");
-    const popup = host?.querySelector(".wf-patch-ins-wrap .patch-hover-popup");
+    act(() => {
+      host?.querySelector(".wf-patch-ins-wrap")?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    const popup = host?.querySelector(".patch-hover-popup");
     expect(popup).not.toBeNull();
     const buttons = [...popup!.querySelectorAll("button")];
     expect(buttons.map((button) => button.textContent)).toEqual(["撤销"]);
@@ -703,7 +858,7 @@ describe("WorkspacePage review controls", () => {
     expect(onPatchVerdict).toHaveBeenCalledWith("insert-block", "rejected");
   });
 
-  it("P7 docDiffReady 无锚新增块渲染为待接受绿块,不弹不可视横幅", async () => {
+  it("P7 docDiffReady 无锚新增块本步不走行内 decoration,保留不可视提示", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const onPatchVerdict = vi.fn();
     const { baseDoc, presentation, patchMeta } = docDiffInsertReviewFixture();
@@ -719,8 +874,11 @@ describe("WorkspacePage review controls", () => {
             docWithPatches: presentation.doc,
             patchMeta,
             remainingCount: 1,
-            visiblePatchCount: 1,
-            unrenderablePatchCount: presentation.droppedIds.length + presentation.conflictIds.length,
+            visiblePatchCount: 0,
+            unrenderablePatchCount: 1,
+            reviewSuggestions: [],
+            reviewOverlayInputs: [],
+            reviewAppliedPatches: [],
             onPatchVerdict,
           })}
         />
@@ -728,19 +886,11 @@ describe("WorkspacePage review controls", () => {
     );
 
     expect(host?.querySelector('[data-wf="PatchUnresolvableBanner"]')).toBeNull();
-    expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')).toBeNull();
-    expect(host?.textContent).toContain("新增标题");
-    expect(host?.textContent).toContain("新增段落");
-    expect(host?.textContent).toContain("新增列表");
-    // 新设计:文字块(标题/段落)整段铺绿 → 2 处 wf-patch-ins;
-    // 结构块(列表)走 wf-blockmark 左侧细竖条(标记移入 hover),不再算 wf-patch-ins。
-    expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(2);
-    expect(host?.querySelector(".wf-blockmark.insert")).not.toBeNull();
-
-    const firstReject = host!.querySelector(".wf-patch-ins-wrap .patch-hover-popup button");
-    expect(firstReject?.textContent).toBe("撤销");
-    firstReject!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(onPatchVerdict).toHaveBeenCalledWith("insert-docdiff", "rejected");
+    expect(host?.querySelector('[data-wf="PatchUnrenderableHint"]')).not.toBeNull();
+    expect(host?.textContent).toContain("另有 1 处改动无法在正文定位");
+    expect(host?.textContent).not.toContain("新增标题");
+    expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(0);
+    expect(onPatchVerdict).not.toHaveBeenCalled();
 
     await act(async () => {
       root?.render(
@@ -754,6 +904,9 @@ describe("WorkspacePage review controls", () => {
               remainingCount: 0,
               visiblePatchCount: 1,
               unrenderablePatchCount: 0,
+              reviewSuggestions: [],
+              reviewOverlayInputs: [],
+              reviewAppliedPatches: [],
               onPatchVerdict,
             })}
           />
@@ -1900,6 +2053,9 @@ describe("WorkspacePage review controls", () => {
     const second = textReviewToolCall("p-2", "batch-atomic", 1, "reviewing", "atomic");
     const stream = await renderWorkspaceWithReview([first, second]);
 
+    act(() => {
+      host!.querySelector("[data-patch-id='p-1']")!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
     await clickButton("撤销");
     expect(patchVerdictCommands(stream).map((command) => command.data.id)).toEqual(["p-1"]);
     await emitFrames(stream, [toolCallUpdatedFrame(reviewToolCall(
@@ -1918,6 +2074,7 @@ describe("WorkspacePage review controls", () => {
   it("内容和格式同处修改时 hover popup 收敛为替换态与格式态", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const doc = mixedContentMarkDoc();
+    const reviewData = mixedContentMarkReviewData();
     await render(
       <section id="view-workspace">
         <RightPane
@@ -1925,6 +2082,8 @@ describe("WorkspacePage review controls", () => {
             doc,
             docWithPatches: doc,
             patchMeta: mixedContentMarkPatchMeta(),
+            reviewSuggestions: reviewData.suggestions,
+            reviewAppliedPatches: reviewData.applied,
             remainingCount: 1,
             visiblePatchCount: 1,
           })}
@@ -1932,7 +2091,10 @@ describe("WorkspacePage review controls", () => {
       </section>,
     );
 
-    const replacePopup = host!.querySelector(".wf-patch-replace-wrap .patch-hover-popup");
+    act(() => {
+      host!.querySelector(".wf-patch-replace-wrap")!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    let replacePopup = host!.querySelector(".patch-hover-popup");
     expect(replacePopup).not.toBeNull();
     expect(replacePopup!.querySelector(".patch-popup-change")).toBeNull();
     expect(replacePopup!.textContent).toContain("替换");
@@ -1940,7 +2102,11 @@ describe("WorkspacePage review controls", () => {
     expect(replacePopup!.textContent).toContain("旧文");
     expect(replacePopup!.textContent).not.toContain("内容:");
 
-    const formatPopup = host!.querySelector(".wf-patch-mark-wrap .patch-hover-popup");
+    act(() => {
+      host!.querySelector(".wf-patch-replace-wrap")!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: host }));
+      host!.querySelector(".wf-patch-mark-wrap")!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    });
+    const formatPopup = host!.querySelector(".patch-hover-popup");
     expect(formatPopup).not.toBeNull();
     expect(formatPopup!.textContent).toContain("新增格式");
     expect(formatPopup!.textContent).toContain("加粗/高亮");

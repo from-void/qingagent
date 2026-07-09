@@ -36,6 +36,23 @@ function containsEventTarget(node: Node, target: EventTarget | null): boolean {
 /** hover 卡片定位:用 position:fixed + JS 实算坐标,**escape 任何祖先 overflow 裁剪**
  *  (审核区面板会横向裁掉绝对定位的卡片)。优先放锚点上方、左对齐;放不下翻到下方;
  *  超出右/下边界则回拉并 clamp 到视口内。在 useLayoutEffect 里测(paint 前,无闪烁)。 */
+export function placePatchPopupByAnchorRect(
+  anchorRect: DOMRect,
+  popupRect: DOMRect,
+): React.CSSProperties {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const gap = 10;
+  const margin = 8;
+  let top = anchorRect.top - popupRect.height - gap;
+  if (top < margin) top = Math.min(anchorRect.bottom + gap, vh - popupRect.height - margin);
+  top = Math.max(margin, top);
+  let left = anchorRect.left;
+  if (left + popupRect.width > vw - margin) left = vw - margin - popupRect.width;
+  left = Math.max(margin, left);
+  return { position: "fixed", top, left, right: "auto", bottom: "auto", margin: 0 };
+}
+
 function usePopupPlacement<T extends HTMLElement>(visible: boolean) {
   const popupRef = useRef<T>(null);
   const [style, setStyle] = useState<React.CSSProperties | undefined>(undefined);
@@ -48,21 +65,7 @@ function usePopupPlacement<T extends HTMLElement>(visible: boolean) {
     if (!el || typeof window === "undefined") return;
     const anchor = el.parentElement;
     if (!anchor) return;
-    const a = anchor.getBoundingClientRect();
-    const p = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const gap = 10;
-    const margin = 8;
-    // 垂直:优先上方;上方放不下则下方;再 clamp
-    let top = a.top - p.height - gap;
-    if (top < margin) top = Math.min(a.bottom + gap, vh - p.height - margin);
-    top = Math.max(margin, top);
-    // 水平:左对齐锚点;右溢出则回拉;再 clamp
-    let left = a.left;
-    if (left + p.width > vw - margin) left = vw - margin - p.width;
-    left = Math.max(margin, left);
-    setStyle({ position: "fixed", top, left, right: "auto", bottom: "auto", margin: 0 });
+    setStyle(placePatchPopupByAnchorRect(anchor.getBoundingClientRect(), el.getBoundingClientRect()));
   }, [visible]);
   return { popupRef, style };
 }

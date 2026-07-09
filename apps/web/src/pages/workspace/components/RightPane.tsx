@@ -15,7 +15,15 @@ import { clientPerformanceNow } from "../data/sessionFrameGuards";
 import { logClientEvent } from "../data/clientLog";
 import type { DocDimensions } from "../data/docDimensions";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
-import type { AskUserAnswers, StreamError, ToolCallSpec, ViewDocumentSnapshot } from "../data/protocol";
+import type {
+  AppliedPatch,
+  AskUserAnswers,
+  DocSuggestion,
+  PatchOverlayInput,
+  StreamError,
+  ToolCallSpec,
+  ViewDocumentSnapshot,
+} from "../data/protocol";
 import type { ServerStream } from "../data/serverStream";
 import type { StarterTemplate } from "../data/starterTemplates";
 import { canEditDocument, generationDraftHasContent, selectRenderDoc } from "../data/workspacePageView";
@@ -60,6 +68,9 @@ interface RightPaneProps {
   docViewRef: React.RefObject<DocumentSnapshotViewHandle>;
   patchMeta: Map<string, PatchMeta>;
   activePatchId: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
   typedByPatch: ReadonlyMap<string, number> | null;
@@ -139,6 +150,9 @@ export function RightPane({
   docViewRef,
   patchMeta,
   activePatchId,
+  reviewSuggestions = [],
+  reviewOverlayInputs = [],
+  reviewAppliedPatches = [],
   revealedPatchIds,
   revealCursors,
   typedByPatch,
@@ -316,14 +330,20 @@ export function RightPane({
     overlay: dimensions.overlay,
   });
   if (!renderDoc) return <DocInit />;
+  const surfaceDoc = showPatches && dimensions.content.kind === "pendingReview" && doc
+    ? doc
+    : renderDoc;
   const baseEditable = canEditDocument(dimensions, viewingVersion) && !generationDraftDoc;
-  const presentationMatchesRenderDoc = presentationRun?.docVersion === renderDoc.version;
+  const presentationMatchesRenderDoc = presentationRun?.docVersion === surfaceDoc.version;
   // inline askUser(中途反问)期间 overlay 锁住 → baseEditable=false → 原本会落到静态 .wf-doc 渲染,
   // 而 editing 态下静态文档分支会被隐藏(display:none)→ 右侧整片黑("文档消失")。
   // 修法:askUser 浮层期文档仍挂 TipTap(走和正常 editing 一致、确定可见的渲染路径),
   // 但 interactiveEditable 保持 false(只读,不可编辑)。
   const mountEditableSurface =
-    baseEditable || presentationMatchesRenderDoc || dimensions.overlay === "askUser";
+    baseEditable ||
+    presentationMatchesRenderDoc ||
+    dimensions.overlay === "askUser" ||
+    dimensions.content.kind === "pendingReview";
   const interactiveEditable = baseEditable && !presentationRun;
 
   // 大改(≥70%):整篇新旧版审 —— 右侧直接展示选中版本的完整文档(干净,无内联红绿),
@@ -369,7 +389,7 @@ export function RightPane({
       <RightPaneBranchLog
         branch={presentationRun?.docVersion === renderDoc.version ? "main-presentation" : "main-document"}
         sessionId={sessionId}
-        docVersion={renderDoc.version}
+        docVersion={surfaceDoc.version}
         runId={presentationRun?.id ?? null}
       />
       {historyBanner}
@@ -422,7 +442,7 @@ export function RightPane({
       )}
       <DocumentSnapshotView
         ref={docViewRef}
-        doc={renderDoc}
+        doc={surfaceDoc}
         docId={sessionId}
         editable={mountEditableSurface}
         interactiveEditable={interactiveEditable}
@@ -435,6 +455,9 @@ export function RightPane({
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
+        reviewSuggestions={reviewSuggestions}
+        reviewOverlayInputs={reviewOverlayInputs}
+        reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}

@@ -1,4 +1,6 @@
 import { Extension } from "@tiptap/core";
+import type { Editor } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { DocSuggestion } from "./protocol";
@@ -56,7 +58,12 @@ export const PatchDecorations = Extension.create({
               | PatchDecorationMeta
               | undefined;
             if (meta?.kind === "set") {
-              return DecorationSet.create(tr.doc, meta.decorations);
+              try {
+                return DecorationSet.create(tr.doc, meta.decorations);
+              } catch (error) {
+                console.warn("[patch] decoration set 创建失败，已逐条过滤坏 decoration", error);
+                return createBestEffortDecorationSet(tr.doc, meta.decorations);
+              }
             }
             if (meta?.kind === "clear") return DecorationSet.empty;
             return value.map(tr.mapping, tr.doc);
@@ -71,6 +78,27 @@ export const PatchDecorations = Extension.create({
     ];
   },
 });
+
+export function setPatchDecorations(
+  editor: Editor | null,
+  decorations: Decoration[],
+): void {
+  if (!editor || editor.isDestroyed) return;
+  const safeDecorations = sanitizePatchDecorations(editor, decorations);
+  const tr = editor.state.tr.setMeta(patchDecorationKey, {
+    kind: safeDecorations.length > 0 ? "set" : "clear",
+    decorations: safeDecorations,
+  } satisfies PatchDecorationMeta);
+  editor.view.dispatch(tr);
+}
+
+export function clearPatchDecorations(editor: Editor | null): void {
+  if (!editor || editor.isDestroyed) return;
+  const tr = editor.state.tr.setMeta(patchDecorationKey, {
+    kind: "clear",
+  } satisfies PatchDecorationMeta);
+  editor.view.dispatch(tr);
+}
 
 export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   decorations: Decoration[];
@@ -106,14 +134,19 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     const statusClass = status === "accepted" ? " is-accepted" : "";
 
     if (kind === "markAdd" || kind === "markRemove") {
+      if (to! <= from!) {
+        dropped.push(source.id);
+        continue;
+      }
       decorations.push(
         Decoration.inline(
           from!,
           to!,
           {
-            class: `wf-patch-mark ${kind === "markAdd" ? "add" : "remove"}${currentClass}${statusClass}`,
+            class: `wf-patch-ins-wrap wf-patch-mark-wrap wf-patch-mark ${kind === "markAdd" ? "add" : "remove"}${currentClass}${statusClass}`,
             "data-patch-id": source.id,
             "data-patch-index": String(index),
+            "data-patch-state": "format",
             ...markDecorationStyle(kind, args.activePatchId === source.id),
           },
           spec,
@@ -123,6 +156,10 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     }
 
     if (kind === "delete" || kind === "replace") {
+      if (to! <= from!) {
+        dropped.push(source.id);
+        continue;
+      }
       decorations.push(
         Decoration.inline(
           from!,
@@ -131,8 +168,20 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             class: `wf-patch-del${currentClass}${statusClass}`,
             "data-patch-id": source.id,
             "data-patch-index": String(index),
+            "data-patch-state": "delete",
           },
           spec,
+        ),
+      );
+      decorations.push(
+        Decoration.widget(
+          from!,
+          () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
+          {
+            ...spec,
+            side: 1,
+            ignoreSelection: true,
+          },
         ),
       );
     }
@@ -144,7 +193,11 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         Decoration.widget(
           from!,
           () => {
-            const dom = renderInsertDOM(insertedText, applied?.marks ?? source.marks);
+            const dom = renderInsertDOM(
+              insertedText,
+              applied?.marks ?? source.marks,
+              kind === "replace" ? "replace" : "insert",
+            );
             dom.className = `${dom.className}${currentClass}${statusClass}`;
             dom.dataset.patchId = source.id;
             dom.dataset.patchIndex = String(index);
@@ -164,11 +217,87 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   return { decorations, dropped };
 }
 
-export function renderInsertDOM(text: string, marks?: readonly PmMark[]): HTMLElement {
+export function renderInsertDOM(
+  text: string,
+  marks?: readonly PmMark[],
+  state: "insert" | "replace" = "insert",
+): HTMLElement {
   const outer = document.createElement("span");
-  outer.className = "wf-patch-ins";
-  outer.appendChild(renderMarkedTextDom(text, marks));
+  outer.className = state === "replace" ? "wf-patch-replace-wrap" : "wf-patch-ins-wrap";
+  outer.dataset.patchState = state;
+  const inner = document.createElement("span");
+  inner.className = "wf-patch-ins";
+  inner.appendChild(renderMarkedTextDom(text, marks));
+  outer.appendChild(inner);
   return outer;
+}
+
+function renderDeleteMarkerDOM(
+  patchId: string,
+  index: number,
+  currentClass: string,
+  statusClass: string,
+): HTMLElement {
+  const outer = document.createElement("span");
+  outer.className = `wf-patch-del-marker${currentClass}${statusClass}`;
+  outer.dataset.patchId = patchId;
+  outer.dataset.patchIndex = String(index);
+  outer.dataset.patchState = "delete";
+  const cursor = document.createElement("span");
+  cursor.className = "patch-del-cursor";
+  outer.appendChild(cursor);
+  return outer;
+}
+
+function sanitizePatchDecorations(
+  editor: Editor,
+  decorations: Decoration[],
+): Decoration[] {
+  const size = editor.state.doc.content.size;
+  const bounded = decorations.filter((decoration) => {
+    const from = decoration.from;
+    const to = decoration.to;
+    return (
+      Number.isInteger(from) &&
+      Number.isInteger(to) &&
+      from >= 0 &&
+      to >= from &&
+      from <= size &&
+      to <= size
+    );
+  });
+  try {
+    DecorationSet.create(editor.state.doc, bounded.slice());
+    return bounded;
+  } catch (error) {
+    console.warn("[patch] decoration set 创建失败，已逐条过滤坏 decoration", error);
+    return bounded.filter((decoration) => canCreateDecorationSet(editor.state.doc, [decoration]));
+  }
+}
+
+function createBestEffortDecorationSet(
+  doc: ProseMirrorNode,
+  decorations: Decoration[],
+): DecorationSet {
+  const safe = decorations.filter((decoration) => canCreateDecorationSet(doc, [decoration]));
+  if (safe.length === 0) return DecorationSet.empty;
+  try {
+    return DecorationSet.create(doc, safe.slice());
+  } catch {
+    return DecorationSet.empty;
+  }
+}
+
+function canCreateDecorationSet(
+  doc: ProseMirrorNode,
+  decorations: Decoration[],
+): boolean {
+  try {
+    DecorationSet.create(doc, decorations.slice());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function collectSources(args: BuildPatchDecorationsArgs): PatchDecorationSource[] {

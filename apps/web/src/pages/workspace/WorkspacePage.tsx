@@ -1278,7 +1278,7 @@ export function WorkspacePage() {
     const firstId = ids[0]!;
     setActivePatchId(firstId);
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-patch-id="${firstId}"]`);
+      const el = document.querySelector(patchIdSelector(firstId));
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }, [effectivePatchRevealing, visibleReviewPatchIds, inlinePatchReview]);
@@ -3043,7 +3043,7 @@ export function WorkspacePage() {
     const nextId = allPatchIds[nextIdx];
     if (!nextId) return;
     setActivePatchId(nextId);
-    const el = document.querySelector(`[data-patch-id="${nextId}"]`);
+    const el = document.querySelector(patchIdSelector(nextId));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [visibleReviewPatchIds, activePatchId]);
 
@@ -3055,7 +3055,7 @@ export function WorkspacePage() {
     const prevId = allPatchIds[prevIdx];
     if (!prevId) return;
     setActivePatchId(prevId);
-    const el = document.querySelector(`[data-patch-id="${prevId}"]`);
+    const el = document.querySelector(patchIdSelector(prevId));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [visibleReviewPatchIds, activePatchId]);
 
@@ -3593,6 +3593,9 @@ export function WorkspacePage() {
             docViewRef={docViewRef}
             patchMeta={patchMeta}
             activePatchId={currentPatchId}
+            reviewSuggestions={state.docDiff?.suggestions ?? []}
+            reviewOverlayInputs={overlayInputs}
+            reviewAppliedPatches={patchPresentation?.applied ?? []}
             revealedPatchIds={revealedPatchIds}
             revealCursors={revealCursors}
             typedByPatch={typedByPatch}
@@ -3753,4 +3756,11 @@ export function WorkspacePage() {
       )}
     </section>
   );
+}
+
+function patchIdSelector(patchId: string): string {
+  const escape = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape
+    : (value: string) => value.replace(/["\\]/g, "\\$&");
+  return `[data-patch-id="${escape(patchId)}"]:not(.wf-patch-del)`;
 }

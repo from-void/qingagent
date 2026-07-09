@@ -62,6 +62,11 @@ import {
   setNativePresentationDecorations,
   type NativeEditorOperationRuntime,
 } from "../data/nativePresentationPm";
+import {
+  buildPatchDecorations,
+  clearPatchDecorations,
+  setPatchDecorations,
+} from "../data/patchDecorations";
 import { sectionText } from "../data/presentationSpans";
 import {
   classifyIncomingDoc,
@@ -74,6 +79,9 @@ import type {
   ViewDocumentSnapshot,
   ViewListRowDiff,
   ViewTableRowDiff,
+  AppliedPatch,
+  DocSuggestion,
+  PatchOverlayInput,
 } from "../data/protocol";
 import { wordDiffSegments } from "../data/protocol";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
@@ -119,6 +127,7 @@ export { pickFile } from "./doc/pickFile";
 import { hasMissingPresentationBlockId, viewDocToPm, viewSectionsToHtml } from "./doc/viewDocHtml";
 import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
+import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
 import { SectionView } from "./doc/SectionView";
 import { TableControls } from "./doc/TableControls";
@@ -169,6 +178,9 @@ export interface DocumentSnapshotViewProps {
   patchMeta?: Map<string, PatchMeta>;
   /** Currently navigated-to patch for highlight. */
   activePatchId?: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -196,6 +208,9 @@ export const DocumentSnapshotView = forwardRef<
     onPatchVerdict,
     patchMeta,
     activePatchId,
+    reviewSuggestions,
+    reviewOverlayInputs,
+    reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -256,8 +271,16 @@ export const DocumentSnapshotView = forwardRef<
         doc={doc}
         interactiveEditable={tiptapInteractiveEditable}
         docId={docId}
-        editable={editable && !presentationRun}
         forceExpandCollapse={showPatches || !editable || Boolean(presentationRun)}
+        showPatches={showPatches}
+        acceptedPatches={acceptedPatches}
+        rejectedPatches={rejectedPatches}
+        onPatchVerdict={onPatchVerdict}
+        patchMeta={patchMeta}
+        activePatchId={activePatchId}
+        reviewSuggestions={reviewSuggestions}
+        reviewOverlayInputs={reviewOverlayInputs}
+        reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
@@ -320,8 +343,16 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   doc: ViewDocumentSnapshot;
   interactiveEditable: boolean;
   docId: string | null;
-  editable: boolean;
   forceExpandCollapse: boolean;
+  showPatches: boolean;
+  acceptedPatches: ReadonlySet<string>;
+  rejectedPatches: ReadonlySet<string>;
+  onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
+  patchMeta?: Map<string, PatchMeta>;
+  activePatchId?: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -334,8 +365,16 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     doc,
     interactiveEditable,
     docId,
-    editable,
     forceExpandCollapse,
+    showPatches,
+    acceptedPatches,
+    rejectedPatches,
+    onPatchVerdict,
+    patchMeta,
+    activePatchId,
+    reviewSuggestions,
+    reviewOverlayInputs,
+    reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -524,6 +563,18 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       return () => onEditorReady(null);
     }
   }, [editor, onEditorReady]);
+
+  useReviewPatchDecorations({
+    editor,
+    enabled: showPatches && !presentationRun,
+    doc,
+    suggestions: reviewSuggestions,
+    overlayInputs: reviewOverlayInputs,
+    applied: reviewAppliedPatches,
+    acceptedPatches,
+    rejectedPatches,
+    activePatchId,
+  });
 
   // 公式点击 → 弹 LaTeX 编辑浮层(只在可编辑态响应)
   const [mathEdit, setMathEdit] = useState<MathEditTarget | null>(null);
@@ -924,10 +975,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         <EditorContent editor={editor} />
         {!presentationRun ? <DocColophon doc={doc} /> : null}
       </div>
-      {editable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
-      {editable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
-      {editable && editor ? <TableControls editor={editor} /> : null}
-      {editable && mathEdit ? (
+      {showPatches && !presentationRun ? (
+        <PatchHoverLayer
+          editor={editor}
+          patchMeta={patchMeta}
+          onPatchVerdict={onPatchVerdict}
+        />
+      ) : null}
+      {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
+      {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
+      {interactiveEditable && editor ? <TableControls editor={editor} /> : null}
+      {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}
           onSave={saveMathEdit}
@@ -939,6 +997,110 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     </div>
   );
 });
+
+function useReviewPatchDecorations({
+  editor,
+  enabled,
+  doc,
+  suggestions,
+  overlayInputs,
+  applied,
+  acceptedPatches,
+  rejectedPatches,
+  activePatchId,
+}: {
+  editor: Editor | null;
+  enabled: boolean;
+  doc: ViewDocumentSnapshot;
+  suggestions?: readonly DocSuggestion[];
+  overlayInputs?: readonly PatchOverlayInput[];
+  applied?: readonly AppliedPatch[];
+  acceptedPatches: ReadonlySet<string>;
+  rejectedPatches: ReadonlySet<string>;
+  activePatchId?: string | null;
+}) {
+  const suggestionsKey = useMemo(
+    () => (suggestions ?? []).map((s) => [
+      s.id,
+      s.status,
+      s.anchor.pmFrom,
+      s.anchor.pmTo,
+      s.preview.deleteText,
+      s.preview.insertText,
+    ].join(":")).join("|"),
+    [suggestions],
+  );
+  const appliedKey = useMemo(
+    () => (applied ?? []).map((patch) => [
+      patch.id,
+      patch.index,
+      patch.kind,
+      patch.before,
+      patch.after,
+    ].join(":")).join("|"),
+    [applied],
+  );
+  const overlayInputsKey = useMemo(
+    () => (overlayInputs ?? []).map((input) => [
+      input.id,
+      input.blockIndex,
+      input.range?.start ?? "",
+      input.range?.end ?? "",
+      input.before,
+      input.after,
+    ].join(":")).join("|"),
+    [overlayInputs],
+  );
+  const acceptedKey = useMemo(() => setKey(acceptedPatches), [acceptedPatches]);
+  const rejectedKey = useMemo(() => setKey(rejectedPatches), [rejectedPatches]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    if (!enabled || !doc.pmDoc) {
+      clearPatchDecorations(editor);
+      return;
+    }
+    const { decorations, dropped } = buildPatchDecorations({
+      suggestions: suggestions ?? [],
+      overlayInputs: overlayInputs ?? [],
+      applied: applied ?? [],
+      baselineDoc: doc.pmDoc,
+      acceptedIds: acceptedPatches,
+      rejectedIds: rejectedPatches,
+      activePatchId,
+    });
+    if (dropped.length > 0) {
+      console.warn(
+        `[patch] ${dropped.length} 处改动 decoration 锚点越界、未上屏:`,
+        dropped,
+      );
+    }
+    setPatchDecorations(editor, decorations);
+    return () => {
+      clearPatchDecorations(editor);
+    };
+  }, [
+    editor,
+    enabled,
+    doc.pmDoc,
+    doc.version,
+    suggestions,
+    suggestionsKey,
+    overlayInputs,
+    overlayInputsKey,
+    applied,
+    appliedKey,
+    acceptedPatches,
+    acceptedKey,
+    rejectedPatches,
+    rejectedKey,
+    activePatchId,
+  ]);
+}
+
+function setKey(values: ReadonlySet<string>): string {
+  return Array.from(values).sort().join(",");
+}
 
 function canResolveNativePresentationCoordinates(
   editor: Editor,

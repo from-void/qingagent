@@ -2779,6 +2779,17 @@
     transform:translateX(-50%);
   }
   /* 删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。 */
+  #view-workspace .wf-doc .wf-patch-del{
+    display:inline-block;
+    width:0;
+    max-width:0;
+    overflow:hidden;
+    white-space:pre;
+    font-size:0;
+    line-height:0;
+    color:transparent;
+    vertical-align:baseline;
+  }
   #view-workspace .wf-patch-del-marker{
     position:relative;
     display:inline;

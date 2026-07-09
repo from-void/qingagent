@@ -47,6 +47,7 @@ import {
   isEditorRangeWithinSingleTextBlock,
   isEditorRangeSingleAtomBlock,
 } from "./components/DocToolbar";
+import { DocFindBar } from "./components/DocFindBar";
 import { DocWordCount } from "./components/DocWordCount";
 import { ContextDebugPill } from "./components/ContextDebugPill";
 import type { DocumentSnapshotViewHandle } from "./components/DocumentSnapshotView";
@@ -131,6 +132,10 @@ import {
   type WorkspaceAction,
 } from "./data/workspaceState";
 import { deriveDocDimensions } from "./data/docDimensions";
+import {
+  resolveFindBarMode,
+  shouldInterceptFindShortcut,
+} from "./data/docFindModel";
 import {
   buildCancelStreamCommands,
   canEditDocument,
@@ -454,6 +459,8 @@ export function WorkspacePage() {
     (msg: string, durationMs?: number) => toast.show(msg, durationMs),
     [toast],
   );
+  const [findOpen, setFindOpen] = useState(false);
+  const [findInitialQuery, setFindInitialQuery] = useState("");
   useEffect(() => {
     workspaceMountedRef.current = true;
     return () => {
@@ -1376,6 +1383,46 @@ export function WorkspacePage() {
     contentKind: dim.content.kind,
   });
   const effectivePresentationRun = suppressPresentationRun ? null : presentationRun;
+  const findMode = useMemo(
+    () => resolveFindBarMode(dim, state.viewingVersion, effectivePresentationRun),
+    [dim, effectivePresentationRun, state.viewingVersion],
+  );
+  useEffect(() => {
+    if (findMode === "hidden") setFindOpen(false);
+  }, [findMode]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const isFindChord =
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "f" || e.key === "F");
+      if (!isFindChord) return;
+
+      const active = document.activeElement as HTMLElement | null;
+      const activeElInLeft = !!active?.closest?.("#view-workspace .ws-left");
+      if (activeElInLeft) return;
+
+      const shouldOpen = shouldInterceptFindShortcut(e, false, findMode);
+      e.preventDefault();
+      if (!shouldOpen) return;
+
+      const editor = tiptapEditorRef.current;
+      let selectedText = "";
+      if (editor && !editor.isDestroyed) {
+        const { from, to } = editor.state.selection;
+        if (from !== to) {
+          const text = editor.state.doc.textBetween(from, to, "\n", "\n");
+          if (text.trim() !== "") selectedText = text;
+        }
+      }
+      setFindInitialQuery(selectedText);
+      setFindOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [findMode]);
   // 打字只覆盖"真正落地"的 patch(applied),与正文可见处、计数严格一致。
   const appliedIdsKey = useMemo(
     () => (patchPresentation?.applied ?? []).map((a) => a.id).join(","),
@@ -3569,6 +3616,28 @@ export function WorkspacePage() {
             onPresentationFinish={clearPresentationRun}
             onPresentationCancel={clearPresentationRun}
           />
+          {findOpen && findMode !== "hidden" && (
+            <DocFindBar
+              editor={tiptapEditor}
+              mode={findMode}
+              docVersion={state.doc?.version ?? 0}
+              initialQuery={findInitialQuery}
+              badgeText={
+                findMode === "find-only"
+                  ? dim.content.kind === "pendingReview"
+                    ? "审阅中 · 仅查找"
+                    : dim.agentBusy || state.streamActive || effectivePresentationRun
+                      ? "生成中 · 仅查找"
+                      : undefined
+                  : undefined
+              }
+              onClose={() => {
+                setFindOpen(false);
+                setFindInitialQuery("");
+              }}
+              onToast={showToast}
+            />
+          )}
           <DocToolbar
             active={canUseDocumentEditing(dim, state.viewingVersion, effectivePresentationRun)}
             editor={tiptapEditor}

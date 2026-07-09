@@ -75,6 +75,20 @@ export const TOOL_LABELS: Record<string, string> = {
   writeDraft: "生成草稿", generateSvg: "生成配图", larkConfigInit: "配置飞书",
   show_qr: "生成二维码", askUser: "确认方向",
 };
+
+// 已报过的未映射工具名(去重,防止 render 反复刷屏)。
+const anonToolReported = new Set<string>();
+// 未映射工具 = 会裸显示成"工具调用",属 TOOL_LABELS 配置遗漏。首次遇到即 console.error 报警,
+// 便于开发在控制台一眼揪出并回补中文名(用户诉求:一旦出现匿名工具就报错,后续去修)。
+function reportAnonTool(name: string, spec: ToolCallSpec): void {
+  if (anonToolReported.has(name)) return;
+  anonToolReported.add(name);
+  console.error(
+    `[anon-tool] 工具「${name}」未在 TOOL_LABELS 映射,前端裸显示成"工具调用"。请在 chatUnified.tsx 的 TOOL_LABELS 补中文名。`,
+    { toolName: name, bodyKind: spec.body.kind },
+  );
+}
+
 function bodyKindLabel(spec: ToolCallSpec): string {
   // 旧契约残留 body.kind(0-emit)兜底,避免裸 name
   switch (spec.body.kind) {
@@ -92,6 +106,7 @@ function bodyKindLabel(spec: ToolCallSpec): string {
       if (spec.name.startsWith("mastra_workspace_")) return "工作区操作";
       // 兜底:任何未显式映射的 browser_* 工具,统一成"浏览器操作",不裸"工具调用"。
       if (spec.name.startsWith("browser_")) return "浏览器操作";
+      reportAnonTool(spec.name, spec);
       return "工具调用";
   }
 }

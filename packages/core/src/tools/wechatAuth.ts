@@ -114,6 +114,10 @@ export const wechatAuthStartTool = createTool({
     expiresInSec: z.number(),
   }),
   execute: async (_input, context) => {
+    // 路由评测短路:只测"模型是否选中本工具",不真开浏览器截码(WECHAT_AUTH_EVAL_NOOP=1)。
+    if (process.env.WECHAT_AUTH_EVAL_NOOP === "1") {
+      return { ok: true, imageDataUri: "data:image/png;base64,ZVZBTA==", expiresInSec: 240 };
+    }
     const stop = startToolHeartbeat(context, { tool: "wechat_auth_start" });
     try {
       authState.set(WECHAT_SCOPE, "authorizing");

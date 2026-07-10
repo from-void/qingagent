@@ -152,6 +152,21 @@ describe("buildPatchDecorations", () => {
     expect(dom.className).toContain("ai-cursor");
   });
 
+  it("revealCursors 命中的游标 widget 带 data-hc-lane 锚点(供拟人鼠标画出小赵/小钱名)", () => {
+    // 回归:二次修改揭示时光标必须打 lane 锚点,否则 HumanCursorOverlay 扫不到、无名字。
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      suggestions: [suggestion("p-cursor", 4, 4, "", "新增", "replace")],
+      applied: [applied("p-cursor", 1, "insert", "", "新增")],
+      typedByPatch: new Map([["p-cursor", 0]]),
+      revealCursors: new Map([["p-cursor", 2]]),
+    });
+
+    const dom = widgetDom(decorations[0]);
+    expect(dom.getAttribute("data-hc-lane")).toBe("2");
+    expect(dom.getAttribute("data-hc-name")).toBe("小钱");
+  });
+
   it("把删除补丁构建为覆盖 pmFrom..pmTo 的 wf-patch-del inline decoration 加光标 widget", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,

@@ -222,10 +222,14 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         );
       }
       if (args.revealCursors?.has(source.id)) {
+        // revealCursors 的 value = 并发通道号 lane。经 label 传入,
+        // createNativeCursorWidget 据此打 data-hc-lane 锚点,供 HumanCursorOverlay
+        // 自发现并画出"小赵/小钱"名字(迁移自旧 RevealCursor,不可丢 lane 否则光标无名)。
+        const lane = args.revealCursors.get(source.id)!;
         decorations.push(
           Decoration.widget(
             from!,
-            () => createNativeCursorWidget({ tone: "blue", label: "" }),
+            () => createNativeCursorWidget({ tone: "blue", label: `Agent·${lane}` }),
             {
               ...spec,
               side: 2,

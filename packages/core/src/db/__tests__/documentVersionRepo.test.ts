@@ -3,6 +3,7 @@ import { getPmContentHash } from "@qingagent/pm-schema";
 import {
   getLatestVersionSnapshot,
   getMaxDocumentSnapshotVersion,
+  getMinDocumentSnapshotVersion,
   getVersionSnapshot,
   insertVersion,
   listVersions,
@@ -70,6 +71,8 @@ describe("documentVersionRepo", () => {
     expect(await getVersionSnapshot("missing")).toBeNull();
     expect(await getMaxDocumentSnapshotVersion("doc-versions")).toBe(2);
     expect(await getMaxDocumentSnapshotVersion("missing")).toBeNull();
+    expect(await getMinDocumentSnapshotVersion("doc-versions")).toBe(1);
+    expect(await getMinDocumentSnapshotVersion("missing")).toBeNull();
     expect(await getLatestVersionSnapshot("doc-versions")).toMatchObject({
       versionId: "version-2",
       docVersion: 2,

@@ -119,6 +119,7 @@ export { seedInitialContent } from "./seed/seedInitialContent.js";
 
 // Documents shadow table
 export { documentRepo, projectPmDocToSections } from "./db/documentRepo.js";
+export { deleteDocumentFamily } from "./db/documentFamilyRepo.js";
 export type {
   DocumentRepo,
   DocumentRow,

@@ -1,7 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 
 let client: Client | null = null;
-let pragmaSet = false;
+let txnClient: Client | null = null;
+let pragmaClients = new WeakSet<Client>();
+let txnChain: Promise<unknown> = Promise.resolve();
 
 let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
@@ -21,13 +23,20 @@ export function getDocumentsClient(): Client {
   return client;
 }
 
+export function getTxnClient(): Client {
+  if (!txnClient) {
+    txnClient = createClient({ url: resolveDbUrl() });
+  }
+  return txnClient;
+}
+
 export async function ensurePragmas(c: Client): Promise<void> {
-  if (pragmaSet) return;
+  if (pragmaClients.has(c)) return;
   if (resolveDbUrl().startsWith("file:")) {
     await c.execute("PRAGMA journal_mode=WAL");
     await c.execute("PRAGMA busy_timeout=5000");
   }
-  pragmaSet = true;
+  pragmaClients.add(c);
 }
 
 function isBusyError(err: unknown): boolean {
@@ -70,15 +79,16 @@ export function rollbackTransaction<T>(value: T): TransactionOutcome<T> {
   return { action: "rollback", value };
 }
 
-export async function withTransaction<T>(
-  c: Client,
-  fn: () => Promise<TransactionOutcome<T>>,
+async function runExclusiveTransaction<T>(
+  fn: (client: Client) => Promise<TransactionOutcome<T>>,
 ): Promise<T> {
   return withWriteRetry(async () => {
+    const c = getTxnClient();
+    await ensurePragmas(c);
     await c.execute("BEGIN IMMEDIATE");
     let finished = false;
     try {
-      const outcome = await fn();
+      const outcome = await fn(c);
       if (outcome.action === "commit") {
         await c.execute("COMMIT");
       } else {
@@ -97,6 +107,14 @@ export async function withTransaction<T>(
       throw err;
     }
   });
+}
+
+export async function withTransaction<T>(
+  fn: (client: Client) => Promise<TransactionOutcome<T>>,
+): Promise<T> {
+  const run = txnChain.then(() => runExclusiveTransaction(fn));
+  txnChain = run.catch(() => {});
+  return run;
 }
 
 export function shadowCircuitOpen(now: number): boolean {
@@ -138,7 +156,12 @@ export function __resetDocumentsClientForTest(): void {
   if (client && !client.closed) {
     client.close();
   }
+  if (txnClient && !txnClient.closed) {
+    txnClient.close();
+  }
   client = null;
-  pragmaSet = false;
+  txnClient = null;
+  pragmaClients = new WeakSet<Client>();
+  txnChain = Promise.resolve();
   __resetShadowCircuitForTest();
 }

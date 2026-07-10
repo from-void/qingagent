@@ -44,8 +44,8 @@ homeRoutes.delete("/sessions/:id", async (c) => {
   const rejected = requireTrustedOrigin(c);
   if (rejected) return rejected;
   const sessionId = c.req.param("id");
-  await deleteSessionThread(sessionId);
   await sessionManager.disposeSession(sessionId);
+  await deleteSessionThread(sessionId);
   return c.json({ deleted: true });
 });
 

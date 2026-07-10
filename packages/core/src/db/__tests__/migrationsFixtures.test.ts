@@ -197,10 +197,10 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     const client = getDocumentsClient();
 
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1]);
+    expect(r.appliedIds).toEqual([1, 2]);
     expect(r.backupPath).toBeNull(); // 全新库不备份
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1]);
+    expect(await ledgerIds(client)).toEqual([1, 2]);
   });
 
   it("v-oldest:缺列/含 doc_sections/含 feishu → 收敛到黄金 schema,探针无损,feishu 清除,已备份", async () => {
@@ -208,11 +208,11 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
 
     await buildOldest(client);
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1]);
+    expect(r.appliedIds).toEqual([1, 2]);
     expect(r.backupPath).toBeTruthy(); // 既有库升级前备份
 
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1]);
+    expect(await ledgerIds(client)).toEqual([1, 2]);
 
     // 探针数据无损 + 新列默认值
     const doc = await client.execute("SELECT * FROM documents WHERE id = 'doc-old'");
@@ -234,7 +234,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
 
     await buildMid(client);
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1]);
+    expect(r.appliedIds).toEqual([1, 2]);
     expect(await captureSchema(client)).toEqual(golden);
 
     const doc = await client.execute("SELECT * FROM documents WHERE id = 'doc-mid'");
@@ -259,9 +259,9 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     __resetMigrationsForTest();
 
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1]);
+    expect(r.appliedIds).toEqual([1, 2]);
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1]);
+    expect(await ledgerIds(client)).toEqual([1, 2]);
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-cur'")).toBe(1);
   });
 
@@ -279,7 +279,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(r.appliedIds).toEqual([]); // 无未应用迁移
     expect(r.backupPath).toBeNull(); // 无 pending → 不备份
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1]);
+    expect(await ledgerIds(client)).toEqual([1, 2]);
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-mig'")).toBe(1);
   });
 });

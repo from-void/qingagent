@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SANDBOX_BIN_DIR } from "./sessionWorkspace.js";
+import { SANDBOX_BIN_DIR } from "./sandboxPaths.js";
 import { posixSingleQuote, writeIfChanged } from "./nodeRuntimeShim.js";
 
 /**

@@ -1,8 +1,5 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
-import { runMigrations } from "@qingagent/core";
-import { app as honoApp } from "@qingagent/server/app";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { app as electronApp, dialog } from "electron";
 import path from "node:path";
 import { telemetry } from "./telemetry/index.js";
@@ -10,7 +7,35 @@ import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
 
 const toolCallStreamScanner = new ToolCallStreamScanner((name) => telemetry.trackToolUsed(name));
 
-export async function startServer(): Promise<{ port: number }> {
+export interface StartServerOptions {
+  desktopLogDir: string;
+}
+
+export async function startServer(options: StartServerOptions): Promise<{ port: number }> {
+  // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
+  // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
+  // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一管理这段启动顺序。
+  const { runMigrations } = await import("@qingagent/core/src/db/migrations.js");
+  try {
+    await runMigrations();
+  } catch (err) {
+    const detail = err instanceof Error ? err.stack ?? err.message : String(err);
+    dialog.showErrorBox(
+      "数据库迁移失败",
+      "青简无法完成数据库升级,已停止启动以保护你的数据。\n" +
+        "最近一次迁移前的自动备份位于数据目录下的 qingagent.db.bak-pre-v* 文件。\n\n" +
+        detail,
+    );
+    electronApp.exit(1);
+    throw err;
+  }
+
+  const { installDesktopObservability } = await import("./diagnostics/observability.js");
+  installDesktopObservability(options.desktopLogDir);
+
+  const { app: honoApp } = await import("@qingagent/server/app");
+  const { serveStatic } = await import("@hono/node-server/serve-static");
+
   // 桌面端专有:渲染端埋点同源中继。渲染端 POST 到本 localhost 服务器(同源,无 CORS、
   // 不经系统代理),由主进程转发到 Umami。必须注册在静态服务之前。
   honoApp.post("/__telemetry/send", async (c) => {
@@ -74,20 +99,6 @@ export async function startServer(): Promise<{ port: number }> {
     }
     return res;
   };
-
-  try {
-    await runMigrations();
-  } catch (err) {
-    const detail = err instanceof Error ? err.stack ?? err.message : String(err);
-    dialog.showErrorBox(
-      "数据库迁移失败",
-      "青简无法完成数据库升级,已停止启动以保护你的数据。\n" +
-        "最近一次迁移前的自动备份位于数据目录下的 qingagent.db.bak-pre-v* 文件。\n\n" +
-        detail,
-    );
-    electronApp.exit(1);
-    throw err;
-  }
 
   return new Promise((resolve) => {
     // 桌面渲染端只加载本机 localhost 服务,固定回环监听可减少局域网暴露面。

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
  * 系统已装浏览器(Edge 优先、其次 Chrome)的可执行文件探测。
  *
  * 用途:桌面客户端不随包 ~170MB Chromium,改用系统已装浏览器二进制——
- * @mastra/agent-browser 的 BrowserConfig 支持 executablePath,可直接指过去启动 browser_*;
+ * agent-browser 的 BrowserConfig 支持 executablePath,可直接指过去启动 browser_*;
  * agentBrowser 的代理 spawn 路径也用它替代缺失的 Playwright 自带 chromium。Windows 预装 Edge,
  * 故多数桌面开箱即用。Playwright channel 路径见 pool.ts(getBrowser 走 channel,这里走
  * executablePath,因为这两套库各自只接受其一)。

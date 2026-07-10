@@ -1,4 +1,4 @@
-import { commitTransaction, getDocumentsClient, withTransaction } from "./documentsClient.js";
+import { commitTransaction, withTransaction } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
 function placeholders(count: number): string {
@@ -11,19 +11,19 @@ function placeholders(count: number): string {
  */
 export async function deleteDocumentFamily(sessionId: string): Promise<void> {
   await ensureMigrated();
-  const client = getDocumentsClient();
-  const rows = await client.execute({
-    sql: "SELECT id FROM documents WHERE thread_id = ? OR id = ?",
-    args: [sessionId, sessionId],
-  });
-  const docIds = new Set<string>([sessionId]);
-  for (const row of rows.rows) {
-    if (row.id != null) docIds.add(String(row.id));
-  }
-
-  const ids = Array.from(docIds);
-  const inSql = placeholders(ids.length);
   await withTransaction(async (txnClient) => {
+    // 与提交事务共用同一串行事务边界，不能在事务外读取到过期 doc id 集合。
+    const rows = await txnClient.execute({
+      sql: "SELECT id FROM documents WHERE thread_id = ? OR id = ?",
+      args: [sessionId, sessionId],
+    });
+    const docIds = new Set<string>([sessionId]);
+    for (const row of rows.rows) {
+      if (row.id != null) docIds.add(String(row.id));
+    }
+
+    const ids = Array.from(docIds);
+    const inSql = placeholders(ids.length);
     await txnClient.execute({
       sql: `DELETE FROM document_drafts WHERE doc_id IN (${inSql}) OR thread_id = ?`,
       args: [...ids, sessionId],

@@ -6,10 +6,19 @@ import {
 } from "../../../core/src/db/documentsClient.js";
 import { __resetMigrationsForTest, ensureMigrated } from "../../../core/src/db/migrations.js";
 
+const callOrder: string[] = [];
+
 const deleteSessionThread = vi.fn(async (sessionId: string) => {
+  callOrder.push(`delete:${sessionId}`);
   const { deleteDocumentFamily } = await import("../../../core/src/db/documentFamilyRepo.js");
   await deleteDocumentFamily(sessionId);
 });
+
+const sessionManager = {
+  disposeSession: vi.fn(async (sessionId: string) => {
+    callOrder.push(`dispose:${sessionId}`);
+  }),
+};
 
 type DocumentsClient = ReturnType<typeof getDocumentsClient>;
 
@@ -26,6 +35,7 @@ beforeEach(async () => {
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
   vi.clearAllMocks();
+  callOrder.length = 0;
 });
 
 afterEach(async () => {
@@ -54,9 +64,7 @@ async function loadApp() {
     };
   });
   vi.doMock("../bridge/bridgeHandler", () => ({
-    sessionManager: {
-      disposeSession: vi.fn(async () => undefined),
-    },
+    sessionManager,
   }));
   const { Hono } = await import("hono");
   const { homeRoutes } = await import("../routes/home");
@@ -133,6 +141,8 @@ describe("DELETE /sessions/:id documents 级联", () => {
     });
 
     expect(deleted.status).toBe(200);
+    expect(callOrder).toEqual([`dispose:${sessionId}`, `delete:${sessionId}`]);
+    expect(sessionManager.disposeSession).toHaveBeenCalledWith(sessionId);
     expect(deleteSessionThread).toHaveBeenCalledWith(sessionId);
     const after = await app.request(`/api/v1/history?sessionId=${sessionId}`);
     expect(await after.json()).toEqual({ entries: [] });

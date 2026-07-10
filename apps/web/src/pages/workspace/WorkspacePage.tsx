@@ -631,21 +631,27 @@ export function WorkspacePage() {
     const el = viewRef.current;
     if (!el) return;
     const apply = () => {
-      const measured = docScrollRef.current?.getBoundingClientRect();
+      const scrollEl = docScrollRef.current;
+      const measured = scrollEl?.getBoundingClientRect();
+      // --doc-top 取纸面「静止顶部」= 容器视口顶 + .ws-right 的 padding-top 留白(52px)。
+      // 用 padding 常量而非当前纸的实时 top → 与滚动无关,查找条 fixed 贴纸顶、不随文档滚动。
+      const padTop = scrollEl ? parseFloat(getComputedStyle(scrollEl).paddingTop) || 0 : 0;
       const r =
         measured && measured.width > 0
-          ? { left: measured.left, right: measured.right }
+          ? { left: measured.left, right: measured.right, top: measured.top + padTop }
           : (() => {
               const fallback = computeWorkspaceDocRect();
-              return { left: fallback.left, right: fallback.left + fallback.width };
+              return { left: fallback.left, right: fallback.left + fallback.width, top: fallback.top };
             })();
       el.style.setProperty("--doc-left", `${r.left}px`);
       el.style.setProperty("--doc-right", `${r.right}px`);
+      el.style.setProperty("--doc-top", `${r.top}px`);
       // 同步到 :root:「请等待完成编辑」提示条 portal 到 document.body(#25),不在 #view-workspace
       // 子树里,读不到写在 #view-workspace 上的 --doc-left/--doc-right → 会 fallback 到 50vw 全屏居中。
       // 写一份到 documentElement,让 body 层 portal 也能按文稿真实左右边居中。
       document.documentElement.style.setProperty("--doc-left", `${r.left}px`);
       document.documentElement.style.setProperty("--doc-right", `${r.right}px`);
+      document.documentElement.style.setProperty("--doc-top", `${r.top}px`);
     };
     const body = el.querySelector<HTMLElement>(".ws-body");
     apply();
@@ -656,6 +662,7 @@ export function WorkspacePage() {
       body?.removeEventListener("scroll", apply);
       document.documentElement.style.removeProperty("--doc-left");
       document.documentElement.style.removeProperty("--doc-right");
+      document.documentElement.style.removeProperty("--doc-top");
     };
   }, []);
 
@@ -3600,15 +3607,6 @@ export function WorkspacePage() {
               mode={findMode}
               docVersion={state.doc?.version ?? 0}
               initialQuery={findInitialQuery}
-              badgeText={
-                findMode === "find-only"
-                  ? dim.content.kind === "pendingReview"
-                    ? "审阅中 · 仅查找"
-                    : dim.agentBusy || state.streamActive || effectivePresentationRun
-                      ? "生成中 · 仅查找"
-                      : undefined
-                  : undefined
-              }
               onClose={() => {
                 setFindOpen(false);
                 setFindInitialQuery("");

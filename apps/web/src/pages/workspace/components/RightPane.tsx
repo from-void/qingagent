@@ -288,6 +288,7 @@ export function RightPane({
           rejectedPatches={new Set()}
           patchMeta={patchMeta}
           activePatchId={activePatchId}
+          onEditorReady={onEditorReady}
         />
       </>
     );
@@ -367,12 +368,14 @@ export function RightPane({
             ref={docViewRef}
             doc={shownDoc}
             docId={sessionId}
-            editable={false}
+            editable={true}
+            interactiveEditable={false}
             showPatches={false}
             acceptedPatches={new Set<string>()}
             rejectedPatches={new Set<string>()}
             patchMeta={patchMeta}
             activePatchId={null}
+            onEditorReady={onEditorReady}
           />
         </div>
       </>

@@ -23,7 +23,6 @@ interface DocFindBarProps {
   docVersion: number;
   initialQuery?: string;
   scrollContainerSelector?: string;
-  badgeText?: string;
   onClose: () => void;
   onToast: (msg: string) => void;
 }
@@ -55,13 +54,11 @@ export function DocFindBar({
   docVersion,
   initialQuery = "",
   scrollContainerSelector = "#view-workspace .ws-right",
-  badgeText,
   onClose,
   onToast,
 }: DocFindBarProps) {
   const [query, setQuery] = useState(initialQuery);
   const [replacement, setReplacement] = useState("");
-  const [caseSensitive, setCaseSensitive] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [matches, setMatches] = useState<FindMatch[]>([]);
   const [total, setTotal] = useState(0);
@@ -72,7 +69,6 @@ export function DocFindBar({
   const findInputRef = useRef<HTMLInputElement>(null);
   const queryRef = useRef(initialQuery);
   const replacementRef = useRef("");
-  const caseSensitiveRef = useRef(false);
   const matchesRef = useRef<FindMatch[]>([]);
   const currentIndexRef = useRef(-1);
   const currentFromRef = useRef<number | null>(null);
@@ -107,7 +103,7 @@ export function DocFindBar({
       const result = collectMatches(
         collectDocFindSegments(editor.state.doc),
         currentQuery,
-        caseSensitiveRef.current,
+        false,
         FIND_MATCH_LIMIT,
       );
       const preferredFrom =
@@ -147,6 +143,11 @@ export function DocFindBar({
     },
     [runSearch],
   );
+  // scheduleSearch 的身份随 editor 变(runSearch 依赖 editor)。种入 initialQuery 的 effect
+  // 只该在「外部换了新 initialQuery」时跑一次,绝不能随 editor 更换(审阅态切新/旧版)重跑——
+  // 否则会 setQuery(initialQuery="") 把用户正在查的关键词冲掉。故走 ref,不进依赖数组。
+  const scheduleSearchRef = useRef(scheduleSearch);
+  scheduleSearchRef.current = scheduleSearch;
 
   useLayoutEffect(() => {
     const input = findInputRef.current;
@@ -158,8 +159,8 @@ export function DocFindBar({
   useEffect(() => {
     queryRef.current = initialQuery;
     setQuery(initialQuery);
-    scheduleSearch({ resetCursor: true, scroll: initialQuery !== "" });
-  }, [initialQuery, scheduleSearch]);
+    scheduleSearchRef.current({ resetCursor: true, scroll: initialQuery !== "" });
+  }, [initialQuery]);
 
   useEffect(() => {
     scheduleSearch({ resetCursor: false, scroll: false });
@@ -176,7 +177,9 @@ export function DocFindBar({
       }
     };
     editor.on("update", onUpdate);
-    runSearch({ resetCursor: false, scroll: false });
+    // editor 身份变=审阅态切新/旧版换了实例:保留关键词对新 doc 重算,并滚到命中直出结果。
+    // 普通编辑单实例稳定,此处一生只跑一次;命中为空时 scroll 自然无副作用。
+    runSearch({ resetCursor: false, scroll: true });
     return () => {
       editor.off("update", onUpdate);
     };
@@ -208,12 +211,6 @@ export function DocFindBar({
 
   const composing = inputComposing || inputComposingRef.current || !!editor?.view.composing;
   const canReplace = mode === "full" && !composing;
-  const replaceDisabledTitle =
-    mode === "full"
-      ? "替换"
-      : badgeText?.startsWith("审阅中")
-        ? "审阅中不可替换,先处理完修改建议"
-        : "生成中不可替换";
 
   const handleClose = useCallback(() => {
     clearFindDecorations(editor);
@@ -283,43 +280,30 @@ export function DocFindBar({
       }}
     >
       <div className="ws-find-row">
-        <input
-          ref={findInputRef}
-          className={`ws-find-input${noHit ? " is-nohit" : ""}`}
-          placeholder="在文档中查找"
-          aria-label="查找"
-          value={query}
-          onChange={(event) => {
-            const next = event.currentTarget.value;
-            queryRef.current = next;
-            setQuery(next);
-            scheduleSearch({ resetCursor: true, scroll: next !== "" });
-          }}
-          onCompositionStart={() => {
-            inputComposingRef.current = true;
-            setInputComposing(true);
-          }}
-          onCompositionEnd={() => {
-            inputComposingRef.current = false;
-            setInputComposing(false);
-          }}
-        />
-        <span className="ws-find-count">{countText}</span>
-        <button
-          type="button"
-          className="ws-find-btn"
-          title="区分大小写"
-          aria-pressed={caseSensitive}
-          onClick={() => {
-            const next = !caseSensitiveRef.current;
-            caseSensitiveRef.current = next;
-            setCaseSensitive(next);
-            runSearch({ resetCursor: false, scroll: false });
-          }}
-        >
-          Aa
-        </button>
-        <span className="ws-find-sep"></span>
+        <div className="ws-find-field">
+          <input
+            ref={findInputRef}
+            className={`ws-find-input${noHit ? " is-nohit" : ""}`}
+            placeholder="在文档中查找"
+            aria-label="查找"
+            value={query}
+            onChange={(event) => {
+              const next = event.currentTarget.value;
+              queryRef.current = next;
+              setQuery(next);
+              scheduleSearch({ resetCursor: true, scroll: next !== "" });
+            }}
+            onCompositionStart={() => {
+              inputComposingRef.current = true;
+              setInputComposing(true);
+            }}
+            onCompositionEnd={() => {
+              inputComposingRef.current = false;
+              setInputComposing(false);
+            }}
+          />
+          <span className="ws-find-count">{countText}</span>
+        </div>
         <button
           type="button"
           className="ws-find-btn"
@@ -336,23 +320,17 @@ export function DocFindBar({
         >
           ↓
         </button>
-        <span className="ws-find-sep"></span>
-        <button
-          type="button"
-          className="ws-find-btn"
-          title={replaceDisabledTitle}
-          aria-pressed={replaceOpen}
-          disabled={mode !== "full"}
-          onClick={() => {
-            if (mode !== "full") return;
-            setReplaceOpen((value) => !value);
-          }}
-        >
-          ⇄
-        </button>
-        <span className="ws-find-mode-badge" hidden={mode !== "find-only" || !badgeText}>
-          {badgeText}
-        </span>
+        {mode === "full" && (
+          <button
+            type="button"
+            className="ws-find-btn"
+            title="替换"
+            aria-pressed={replaceOpen}
+            onClick={() => setReplaceOpen((value) => !value)}
+          >
+            ⇄
+          </button>
+        )}
         <button
           type="button"
           className="ws-find-btn"

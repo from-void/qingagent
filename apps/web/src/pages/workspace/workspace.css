@@ -2997,14 +2997,19 @@
 
 /* ===== 文档查找/替换条 DocFindBar(跟随奶白纸右缘的固定浮层;字体走宋体 serif;直角;既有 token) ===== */
 #view-workspace .ws-find-bar{
-  position:fixed; top:12px; z-index:20;
-  right:max(72px, calc(100vw - var(--doc-right,100%) + 66px)); /* 让出右上角 topbar 图标,不遮挡 */
+  position:fixed; z-index:20;
+  /* 水平居中于文档纸(--doc-left/--doc-right=纸真实左右边);--doc-top=纸面静止顶部,再进纸内 10px */
+  top:calc(var(--doc-top, 12px) + 10px);
+  left:calc((var(--doc-left, 0px) + var(--doc-right, 100vw)) / 2);
+  transform:translateX(-50%);
   display:flex; flex-direction:column; gap:6px;
   background:var(--bg-paper-deep); border:1px solid var(--line-2); border-radius:0;
   box-shadow:0 6px 24px rgba(20,24,32,.14); padding:8px 10px; min-width:360px;
   font-family:var(--font-zh-serif); font-size:13px; color:var(--ink-1);
 }
 #view-workspace .ws-find-row{display:flex; align-items:center; gap:6px}
+#view-workspace .ws-find-field{position:relative; flex:1; min-width:0; display:flex}
+#view-workspace .ws-find-field .ws-find-input{padding-right:46px}
 #view-workspace .ws-find-input{
   flex:1; min-width:0; border:1px solid var(--line-2); border-radius:0; padding:5px 8px;
   font-family:var(--font-zh-serif); font-size:13px; background:var(--bg-canvas); color:var(--ink-1); outline:none;
@@ -3012,7 +3017,7 @@
 #view-workspace .ws-find-input:focus{border-color:var(--ink-3)}
 #view-workspace .ws-find-input.is-nohit{animation:ws-find-nohit .5s ease}
 @keyframes ws-find-nohit{0%,100%{border-color:var(--line-2)} 30%{border-color:#9e2b25; background:rgba(158,43,37,.06)}}
-#view-workspace .ws-find-count{color:var(--ink-3); min-width:52px; text-align:center; font-variant-numeric:tabular-nums; white-space:nowrap}
+#view-workspace .ws-find-count{position:absolute; right:8px; top:50%; transform:translateY(-50%); color:var(--ink-3); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; pointer-events:none}
 #view-workspace .ws-find-btn{
   border:none; background:transparent; border-radius:0; width:26px; height:26px;
   display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
@@ -3021,7 +3026,6 @@
 #view-workspace .ws-find-btn:hover{background:rgba(0,0,0,.06)}
 #view-workspace .ws-find-btn[aria-pressed="true"]{background:rgba(0,0,0,.08); color:var(--ink-1)}
 #view-workspace .ws-find-btn:disabled{opacity:.35; cursor:default}
-#view-workspace .ws-find-sep{width:1px; height:18px; background:var(--line-2); margin:0 2px}
 #view-workspace .ws-find-replace-row[hidden]{display:none}
 #view-workspace .ws-find-act{
   border:1px solid var(--line-2); border-radius:0; background:var(--bg-canvas); color:var(--ink-1);
@@ -3029,11 +3033,6 @@
 }
 #view-workspace .ws-find-act:hover{background:rgba(0,0,0,.05)}
 #view-workspace .ws-find-act:disabled{opacity:.4; cursor:not-allowed}
-#view-workspace .ws-find-mode-badge{
-  font-family:var(--font-zh-serif); font-size:12px; color:var(--ink-3);
-  padding:2px 8px; border-radius:var(--r-pill,999px); background:rgba(0,0,0,.05); white-space:nowrap;
-}
-#view-workspace .ws-find-mode-badge[hidden]{display:none}
 /* 命中高亮:普通命中=青蓝浅底;当前命中=描金描边+淡金底(非审阅态,状态①) */
 #view-workspace .wf-doc .ws-find-hit{background:rgba(64,120,150,.22); color:inherit; border-radius:0}
 #view-workspace .wf-doc .ws-find-hit.is-current{background:rgba(196,150,58,.38); outline:2px solid rgba(176,128,32,.85); outline-offset:0}

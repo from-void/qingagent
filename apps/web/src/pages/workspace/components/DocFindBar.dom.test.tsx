@@ -65,22 +65,41 @@ describe("DocFindBar", () => {
     }
   });
 
-  it("find-only 模式禁用替换入口并显示 badge", async () => {
+  it("find-only 模式不出替换入口(⇄ 与替换行都不渲染)", async () => {
     const editor = editorWithText("alpha");
     try {
-      await renderDocFind(
-        <Harness
-          editor={editor}
-          mode="find-only"
-          badgeText="审阅中 · 仅查找"
-        />,
-      );
+      await renderDocFind(<Harness editor={editor} mode="find-only" />);
 
-      expect(buttonByTitle("审阅中不可替换,先处理完修改建议").disabled).toBe(true);
-      expect(host?.querySelector(".ws-find-mode-badge")?.textContent).toBe("审阅中 · 仅查找");
+      const replaceToggle = Array.from(
+        host?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      ).find((node) => node.title === "替换");
+      expect(replaceToggle).toBeUndefined();
       expect(replaceRow().hidden).toBe(true);
     } finally {
       editor.destroy();
+    }
+  });
+
+  it("切换新旧版(editor 实例更换)保留关键词并直出新结果", async () => {
+    const oldEditor = editorWithText("alpha beta alpha");
+    const newEditor = editorWithText("alpha");
+    try {
+      await renderDocFind(<Harness editor={oldEditor} mode="find-only" />);
+      await inputText(findInput(), "alpha");
+      await flushSearch();
+      expect(countText()).toBe("1/2");
+
+      // 模拟审阅态切新/旧版:wdr-swap key 变 → DocumentSnapshotView 整体重挂 →
+      // editor 实例更换。DocFindBar 不卸载,query 保留,应对新 doc 直出结果。
+      await renderDocFind(<Harness editor={newEditor} mode="find-only" />);
+      await flushSearch();
+
+      expect(findInput().value).toBe("alpha");
+      expect(countText()).toBe("1/1");
+      expect(newEditor.view.dom.querySelectorAll(".ws-find-hit")).toHaveLength(1);
+    } finally {
+      oldEditor.destroy();
+      newEditor.destroy();
     }
   });
 
@@ -103,12 +122,10 @@ describe("DocFindBar", () => {
 function Harness({
   editor,
   mode,
-  badgeText,
   onToast = vi.fn(),
 }: {
   editor: Editor;
   mode: "full" | "find-only";
-  badgeText?: string;
   onToast?: (msg: string) => void;
 }) {
   return (
@@ -121,7 +138,6 @@ function Harness({
           editor={editor}
           mode={mode}
           docVersion={1}
-          badgeText={badgeText}
           onClose={() => undefined}
           onToast={onToast}
         />

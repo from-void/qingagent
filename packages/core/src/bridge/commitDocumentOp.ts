@@ -13,7 +13,6 @@ import {
 } from "../db/documentRepo.js";
 import {
   commitTransaction,
-  getDocumentsClient,
   rollbackTransaction,
   withTransaction,
 } from "../db/documentsClient.js";
@@ -95,7 +94,6 @@ export type CommitDocumentOpResult =
   | { status: "validation_error"; errors: PmValidationError[] };
 
 export interface CommitDocumentOpOptions {
-  client?: Client;
   now?: () => string;
   makeVersionId?: (input: {
     docId: string;
@@ -288,7 +286,6 @@ export async function commitDocumentOp(
   input: CommitDocumentOpInput,
   options: CommitDocumentOpOptions = {},
 ): Promise<CommitDocumentOpResult> {
-  const client = options.client ?? getDocumentsClient();
   await ensureMigrated();
 
   const providedOpId = normalizeKey((input as { opId?: unknown }).opId);
@@ -298,7 +295,7 @@ export async function commitDocumentOp(
   const now = options.now ?? (() => new Date().toISOString());
   const makeVersionId = options.makeVersionId ?? defaultVersionId;
 
-  const runTransaction = () => withTransaction<CommitDocumentOpResult>(client, async () => {
+  const runTransaction = () => withTransaction<CommitDocumentOpResult>(async (client) => {
     let current = await getCurrentDocument(client, input.docId);
     const snapshotHighWater = await getMaxDocumentSnapshotVersion(input.docId, client);
 

@@ -108,9 +108,8 @@ async function expectCommittedVersion(
 }
 
 describe("commitDocumentOp", () => {
-  it("reproduces the shared-connection transaction collision without the commit queue", async () => {
+  it("serializes raw withTransaction calls without relying on the commit queue", async () => {
     await seedDocument("doc-raw-collision", "base", 1);
-    const client = getDocumentsClient();
 
     let releaseFirst = () => {};
     const firstCanFinish = new Promise<void>((resolve) => {
@@ -121,8 +120,8 @@ describe("commitDocumentOp", () => {
       markFirstStarted = resolve;
     });
 
-    const first = withTransaction(client, async () => {
-      await client.execute({
+    const first = withTransaction(async (txnClient) => {
+      await txnClient.execute({
         sql: "UPDATE documents SET title = ? WHERE id = ?",
         args: ["raw-first", "doc-raw-collision"],
       });
@@ -132,23 +131,18 @@ describe("commitDocumentOp", () => {
     });
 
     await firstStarted;
-    try {
-      await expect(
-        withTransaction(client, async () => {
-          await client.execute({
-            sql: "UPDATE documents SET title = ? WHERE id = ?",
-            args: ["raw-second", "doc-raw-collision"],
-          });
-          return commitTransaction(null);
-        }),
-      ).rejects.toThrow(/transaction within a transaction/i);
-    } finally {
-      releaseFirst();
-    }
-    await first;
+    const second = withTransaction(async (txnClient) => {
+      await txnClient.execute({
+        sql: "UPDATE documents SET title = ? WHERE id = ?",
+        args: ["raw-second", "doc-raw-collision"],
+      });
+      return commitTransaction(null);
+    });
+    releaseFirst();
+    await Promise.all([first, second]);
 
     const loaded = await documentRepo.load("doc-raw-collision");
-    expect(loaded?.title).toBe("raw-first");
+    expect(loaded?.title).toBe("raw-second");
   });
 
   it("serializes concurrent commits for the same docId so no write is dropped", async () => {

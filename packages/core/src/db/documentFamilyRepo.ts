@@ -23,24 +23,24 @@ export async function deleteDocumentFamily(sessionId: string): Promise<void> {
 
   const ids = Array.from(docIds);
   const inSql = placeholders(ids.length);
-  await withTransaction(client, async () => {
-    await client.execute({
+  await withTransaction(async (txnClient) => {
+    await txnClient.execute({
       sql: `DELETE FROM document_drafts WHERE doc_id IN (${inSql}) OR thread_id = ?`,
       args: [...ids, sessionId],
     });
-    await client.execute({
+    await txnClient.execute({
       sql: `DELETE FROM document_suggestions WHERE doc_id IN (${inSql})`,
       args: ids,
     });
-    await client.execute({
+    await txnClient.execute({
       sql: `DELETE FROM document_ops WHERE doc_id IN (${inSql})`,
       args: ids,
     });
-    await client.execute({
+    await txnClient.execute({
       sql: `DELETE FROM document_versions WHERE doc_id IN (${inSql})`,
       args: ids,
     });
-    await client.execute({
+    await txnClient.execute({
       sql: `DELETE FROM documents WHERE id IN (${inSql})`,
       args: ids,
     });

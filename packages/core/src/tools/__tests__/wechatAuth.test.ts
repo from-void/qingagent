@@ -102,11 +102,63 @@ describe("wechat auth tools", () => {
     vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
 
     await expect(executeStatus()).resolves.toEqual({
-      ok: false,
+      ok: true,
       state: "NO_CREDENTIAL",
       mpName: "",
       message: "未授权",
     });
+  });
+
+  it("wechat_auth_status 对有效凭据返回 READY", async () => {
+    vi.mocked(getCredentialsForPlatform).mockResolvedValue({
+      token: "ABC",
+      expiry: new Date(Date.now() + 60_000).toISOString(),
+      mp_name: "测试公众号",
+    });
+
+    await expect(executeStatus()).resolves.toEqual({
+      ok: true,
+      state: "READY",
+      mpName: "测试公众号",
+      message: "已授权",
+    });
+  });
+
+  it("wechat_auth_status 对过期凭据返回 EXPIRED", async () => {
+    vi.mocked(getCredentialsForPlatform).mockResolvedValue({
+      token: "ABC",
+      expiry: new Date(Date.now() - 60_000).toISOString(),
+      mp_name: "测试公众号",
+    });
+
+    await expect(executeStatus()).resolves.toEqual({
+      ok: true,
+      state: "EXPIRED",
+      mpName: "测试公众号",
+      message: "授权已过期",
+    });
+  });
+
+  it("扫码尚未落地时 status 立即返回 AUTHORIZING，不等待核验 deferred", async () => {
+    const { page } = mountBrowser();
+    let rejectWaitForUrl!: (error: Error) => void;
+    page.waitForURL.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectWaitForUrl = reject;
+      }),
+    );
+
+    await executeStart();
+
+    await expect(executeStatus()).resolves.toEqual({
+      ok: true,
+      state: "AUTHORIZING",
+      mpName: "",
+      message: "正在等待扫码授权",
+    });
+
+    rejectWaitForUrl(new Error("test cleanup"));
+    await vi.waitFor(async () => expect((await executeStatus()).state).toBe("TIMEOUT"));
   });
 
   it("落地 /cgi-bin/home + 探针通过 → 存 token/cookie/expiry + READY", async () => {
@@ -154,19 +206,117 @@ describe("wechat auth tools", () => {
     });
   });
 
-  it("探针返回权限/会话错误 → 不存凭据,状态 ACCOUNT_UNUSABLE", async () => {
+  it("已扫码进入 verifying 后，status 等本次探针完成并重读为 READY", async () => {
+    const saved: Record<string, string> = {
+      token: "OLD",
+      expiry: new Date(Date.now() - 60_000).toISOString(),
+    };
+    vi.mocked(saveCredentialRecord).mockImplementation(async ({ key, value }) => {
+      saved[key] = value;
+    });
+    vi.mocked(getCredentialsForPlatform).mockImplementation(async () => saved);
+    let resolveProbe!: (result: { ok: true }) => void;
+    vi.mocked(probeWechatSearchbiz).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProbe = resolve;
+      }),
+    );
+    mountBrowser();
+
+    await executeStart();
+    await vi.waitFor(() => expect(probeWechatSearchbiz).toHaveBeenCalledTimes(1));
+
+    const statusPromise = executeStatus();
+    let statusSettled = false;
+    void statusPromise.then(() => {
+      statusSettled = true;
+    });
+    await Promise.resolve();
+    expect(statusSettled).toBe(false);
+
+    resolveProbe({ ok: true });
+
+    await expect(statusPromise).resolves.toMatchObject({
+      ok: true,
+      state: "READY",
+      mpName: "测试公众号",
+    });
+  });
+
+  it("已扫码进入 verifying 后，status 等本次探针完成并重读为 CAPABILITY_DENIED", async () => {
+    let resolveProbe!: (result: {
+      ok: false;
+      kind: "capability_denied";
+      message: string;
+    }) => void;
+    vi.mocked(probeWechatSearchbiz).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProbe = resolve;
+      }),
+    );
+    mountBrowser();
+
+    await executeStart();
+    await vi.waitFor(() => expect(probeWechatSearchbiz).toHaveBeenCalledTimes(1));
+    const statusPromise = executeStatus();
+    let statusSettled = false;
+    void statusPromise.then(() => {
+      statusSettled = true;
+    });
+    await Promise.resolve();
+    expect(statusSettled).toBe(false);
+
+    resolveProbe({
+      ok: false,
+      kind: "capability_denied",
+      message: "当前所选公众号无法使用搜索能力",
+    });
+
+    await expect(statusPromise).resolves.toMatchObject({
+      ok: true,
+      state: "CAPABILITY_DENIED",
+      message: expect.stringContaining("搜索能力"),
+    });
+    expect(saveCredentialRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["capability_denied", "CAPABILITY_DENIED", 1],
+    ["reauth", "TIMEOUT", 1],
+    ["transient", "TIMEOUT", 2],
+    ["unknown", "TIMEOUT", 1],
+  ] as const)("探针分类 %s 映射为状态 %s", async (kind, expectedState, callCount) => {
+    mountBrowser();
+    vi.mocked(probeWechatSearchbiz).mockResolvedValue({
+      ok: false,
+      kind,
+      message: `probe ${kind}`,
+    });
+
+    await executeStart();
+
+    await vi.waitFor(async () => {
+      const status = await executeStatus();
+      expect(status).toMatchObject({ ok: true, state: expectedState });
+    });
+    expect(probeWechatSearchbiz).toHaveBeenCalledTimes(callCount);
+    expect(saveCredentialRecord).not.toHaveBeenCalled();
+  });
+
+  it("探针返回搜索能力拒绝 → 不存凭据,状态 CAPABILITY_DENIED", async () => {
     mountBrowser("https://mp.weixin.qq.com/cgi-bin/acctclose?action=page&token=XYZ");
     vi.mocked(probeWechatSearchbiz).mockResolvedValue({
       ok: false,
-      kind: "unusable",
-      message: "微信登录态已失效,请重新扫码登录",
+      kind: "capability_denied",
+      message: "当前所选公众号无法使用搜索能力",
     });
 
     await executeStart();
 
     await vi.waitFor(async () => {
       const st = await executeStatus();
-      expect(st.state).toBe("ACCOUNT_UNUSABLE");
+      expect(st.ok).toBe(true);
+      expect(st.state).toBe("CAPABILITY_DENIED");
       expect(st.message).toContain("已认证公众号");
     });
     expect(saveCredentialRecord).not.toHaveBeenCalled();
@@ -201,6 +351,7 @@ describe("wechat auth tools", () => {
 
     await vi.waitFor(async () => {
       const st = await executeStatus();
+      expect(st.ok).toBe(true);
       expect(st.state).toBe("TIMEOUT");
       expect(st.message).toContain("没等到扫码确认");
     });
@@ -208,43 +359,14 @@ describe("wechat auth tools", () => {
     expect(probeWechatSearchbiz).not.toHaveBeenCalled();
   });
 
-  it("wechat_auth_status 对有效凭据返回 READY", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({
-      token: "ABC",
-      expiry: new Date(Date.now() + 60_000).toISOString(),
-      mp_name: "测试公众号",
-    });
-
-    await expect(executeStatus()).resolves.toEqual({
-      ok: true,
-      state: "READY",
-      mpName: "测试公众号",
-      message: "已授权",
-    });
-  });
-
-  it("wechat_auth_status 对过期凭据返回 EXPIRED", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({
-      token: "ABC",
-      expiry: new Date(Date.now() - 60_000).toISOString(),
-      mp_name: "测试公众号",
-    });
-
-    await expect(executeStatus()).resolves.toEqual({
-      ok: false,
-      state: "EXPIRED",
-      mpName: "测试公众号",
-      message: "授权已过期",
-    });
-  });
-
-  // 压轴:幂等守卫会把 authState 留在 authorizing(waitForURL 永不 resolve),故排最后,不污染前面。
-  it("§3 幂等守卫:authorizing 中二次调用复用同一张码,不新开浏览器", async () => {
-    const { launch, page } = mountBrowser();
-    // 让 waitForURL 永不 resolve,保持 authorizing 态 + pendingQr 存活。
-    page.waitForURL.mockReturnValue(new Promise(() => {}));
+  // 压轴:幂等守卫会把 authState 留在 verifying(探针不返回),故排最后,不污染前面。
+  it("§3 幂等守卫:verifying 中二次调用复用同一张码,不新开浏览器", async () => {
+    const { launch } = mountBrowser();
+    // 让探针不返回，保持 verifying 态 + pendingQr 存活。
+    vi.mocked(probeWechatSearchbiz).mockReturnValue(new Promise(() => {}));
 
     const first = await executeStart();
+    await vi.waitFor(() => expect(probeWechatSearchbiz).toHaveBeenCalledTimes(1));
     const second = await executeStart();
 
     expect(second.imageDataUri).toBe(first.imageDataUri);

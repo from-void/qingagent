@@ -18,6 +18,9 @@ let lastRequestAt = 0;
 const RET_OK = 0;
 const RET_SESSION_INVALID = new Set([-6, 200003, 200002]); // 登录态失效/需重新登录
 const RET_RATE_LIMITED = new Set([200013, 200040]); // 频控/操作过于频繁
+const ACCESS_DENIED = new Set([200007]); // 当前所选公众号没有搜索能力
+const DEFAULT_CGI_TIMEOUT_MS = 15_000;
+const WECHAT_AUTH_PROBE_TIMEOUT_MS = 6_000;
 
 interface AuthOk {
   ok: true;
@@ -66,30 +69,44 @@ async function wechatCgiGet(
   path: string,
   params: Record<string, string>,
   cookie: string,
+  timeoutMs = DEFAULT_CGI_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
   await rateLimit();
   const url = `${WECHAT_CGI_BASE}/${path}?${new URLSearchParams(params).toString()}`;
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": DESKTOP_UA,
-      Referer: "https://mp.weixin.qq.com/",
-      Cookie: cookie,
-      Accept: "application/json, text/plain, */*",
-      "Accept-Language": "zh-CN,zh;q=0.9",
-    },
-  });
-  const text = await res.text();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    // 返回非 JSON(常见于被风控重定向到验证页/HTML) → 当作会话失效。
-    throw new WechatCgiError("SESSION", "微信返回了非预期内容(可能登录态失效或被要求验证),请重新扫码");
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": DESKTOP_UA,
+        Referer: "https://mp.weixin.qq.com/",
+        Cookie: cookie,
+        Accept: "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+      },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    if (res.status === 429) {
+      throw new WechatCgiError("RATE_LIMIT", "微信临时限制了访问,请过一阵再试");
+    }
+    if (res.status >= 500 && res.status <= 599) {
+      throw new WechatCgiError("TRANSIENT", `微信服务暂时不可用(HTTP ${res.status}),请稍后再试`);
+    }
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // 非 JSON 多见于验证页/风控页,不能据此断言账号不可用；按瞬时问题允许一次重试。
+      throw new WechatCgiError("TRANSIENT", "微信返回了非预期内容,可能触发临时验证或风控,请稍后再试");
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 class WechatCgiError extends Error {
   constructor(
-    public kind: "SESSION" | "RATE_LIMIT" | "OTHER",
+    public kind: "SESSION" | "RATE_LIMIT" | "ACCESS_DENIED" | "TRANSIENT" | "UNKNOWN",
     message: string,
   ) {
     super(message);
@@ -103,9 +120,9 @@ function assertBaseResp(data: Record<string, unknown>): void {
   if (ret === RET_OK) return;
   if (ret === undefined) {
     // 无 base_resp:只有确实带了数据(list/publish_page)才算正常;否则是畸形/被重定向到验证页的响应,
-    // 按会话失效抛出(不静默返回空列表掩盖问题)。
+    // 这是畸形 JSON 响应,不能据此断言登录态或公众号能力失效。
     if (Array.isArray(data.list) || typeof data.publish_page === "string") return;
-    throw new WechatCgiError("SESSION", "微信返回了无法识别的响应(无 base_resp 也无数据),请重新扫码");
+    throw new WechatCgiError("UNKNOWN", "微信返回了无法识别的响应(无 base_resp 也无数据)");
   }
   if (RET_SESSION_INVALID.has(ret)) {
     throw new WechatCgiError("SESSION", "微信登录态已失效,请重新扫码登录");
@@ -113,7 +130,10 @@ function assertBaseResp(data: Record<string, unknown>): void {
   if (RET_RATE_LIMITED.has(ret)) {
     throw new WechatCgiError("RATE_LIMIT", "操作过于频繁,已被微信临时限制,请过一阵再试");
   }
-  throw new WechatCgiError("OTHER", `微信接口返回错误(ret=${ret}${baseResp?.err_msg ? ", " + baseResp.err_msg : ""})`);
+  if (ACCESS_DENIED.has(ret)) {
+    throw new WechatCgiError("ACCESS_DENIED", "当前所选公众号无法使用搜索能力");
+  }
+  throw new WechatCgiError("UNKNOWN", `微信接口返回错误(ret=${ret}${baseResp?.err_msg ? ", " + baseResp.err_msg : ""})`);
 }
 
 /**
@@ -121,12 +141,18 @@ function assertBaseResp(data: Record<string, unknown>): void {
  * 复用 wechatCgiGet(含 rateLimit)+ assertBaseResp,不另造请求路径。授权成功判据 = 本探针通过,
  * 而非落地页 URL 形状(URL 形状判断脆,曾死等 /cgi-bin/home 把成功当失败)。
  * - ok:true          → 凭据可用(账号良性,可搜号)
- * - kind:"unusable"  → 会话/权限被拒(账号注销中/未认证/登录态无效)→ 不该存凭据,引导换号
- * - kind:"transient" → 频控/网络类瞬时失败 → 调用方可重试一次,再失败按超时处理(不误判账号不可用)
+ * - kind:"capability_denied" → 当前所选公众号没有搜索能力 → 不存凭据,引导换号
+ * - kind:"reauth"            → 登录态已失效 → 重新扫码
+ * - kind:"transient"         → 频控、服务端、网络或风控页等瞬时失败 → 调用方可重试一次
+ * - kind:"unknown"           → 微信返回未知业务错误 → 保守引导重试/换号,不误判账号不可用
  */
 export type WechatAuthProbeResult =
   | { ok: true }
-  | { ok: false; kind: "unusable" | "transient"; message: string };
+  | {
+      ok: false;
+      kind: "capability_denied" | "reauth" | "transient" | "unknown";
+      message: string;
+    };
 
 export async function probeWechatSearchbiz(
   token: string,
@@ -146,13 +172,20 @@ export async function probeWechatSearchbiz(
         ajax: "1",
       },
       cookie,
+      WECHAT_AUTH_PROBE_TIMEOUT_MS,
     );
     assertBaseResp(data);
     return { ok: true };
   } catch (error) {
     if (error instanceof WechatCgiError) {
-      // 频控可重试;会话失效/权限/畸形响应=账号态问题,视为不可用。
-      const kind = error.kind === "RATE_LIMIT" ? "transient" : "unusable";
+      const kind =
+        error.kind === "ACCESS_DENIED"
+          ? "capability_denied"
+          : error.kind === "SESSION"
+            ? "reauth"
+            : error.kind === "RATE_LIMIT" || error.kind === "TRANSIENT"
+              ? "transient"
+              : "unknown";
       return { ok: false, kind, message: error.message };
     }
     // fetch 网络异常=瞬时。

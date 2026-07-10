@@ -26,10 +26,12 @@ const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// authorizing:等扫码中;ready:已授权;failed_account_unusable:探针判定账号后台不可用;
-// failed_timeout:没等到扫码确认/瞬时失败。后两者供 wechat_auth_status 给不同话术。
+// authorizing:等扫码中;verifying:已扫码落地、正在验证搜索能力;ready:已授权;
+// failed_account_unusable:探针判定当前公众号没有搜索能力;failed_timeout:没等到扫码确认/核验瞬时失败。
+// 后两者供 wechat_auth_status 给不同话术。
 type AuthState =
   | "authorizing"
+  | "verifying"
   | "ready"
   | "failed_account_unusable"
   | "failed_timeout";
@@ -37,8 +39,49 @@ type AuthState =
 const authState = new Map<string, AuthState>();
 // 同一时刻只保留一个扫码 browser:新扫码先关旧的,防后台轮询(240s)期间 headless chromium 进程堆积拖慢新 launch。
 let activeAuthBrowser: Browser | null = null;
-// 幂等守卫用:当前 authorizing 期间已产出的二维码——模型一轮内重复调 start 时复用,不新开浏览器、不关旧的。
+// 幂等守卫用:当前扫码/核验期间已产出的二维码——模型一轮内重复调 start 时复用,不新开浏览器、不关旧的。
 let pendingQr: { imageDataUri: string; generatedAt: number } | null = null;
+// 状态查询只在已扫码后的核验阶段短等这一个 deferred。browser 是本次授权尝试的身份，
+// 新扫码替换旧 browser 后，旧尝试的结束绝不能误唤醒新尝试的状态查询。
+let authVerification:
+  | { browser: Browser; promise: Promise<void>; resolve: () => void }
+  | null = null;
+let authFailureMessage: string | null = null;
+
+function beginAuthVerification(browser: Browser): void {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  authVerification = { browser, promise, resolve };
+}
+
+function settleAuthVerification(browser: Browser): void {
+  if (authVerification?.browser !== browser) return;
+  authVerification.resolve();
+  authVerification = null;
+}
+
+function setAuthTerminalState(
+  browser: Browser | null,
+  state: Extract<AuthState, "ready" | "failed_account_unusable" | "failed_timeout">,
+  message: string | null = null,
+): void {
+  if (!browser) {
+    authState.set(WECHAT_SCOPE, state);
+    authFailureMessage = message;
+    return;
+  }
+  if (activeAuthBrowser === browser) {
+    authState.set(WECHAT_SCOPE, state);
+    authFailureMessage = message;
+  }
+  settleAuthVerification(browser);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // 日志脱敏:URL 里的 token=xxx 一律打成 token=***(明文 token 绝不落日志/入库)。
 function redactToken(text: string): string {
@@ -152,7 +195,11 @@ export const wechatAuthStartTool = createTool({
     }
     // 幂等守卫:模型一轮内常重复调本工具(实证)。若已有进行中的授权且二维码仍在有效期,直接复用同一张码——
     // 不新开浏览器、不 close 正在等扫码的旧浏览器(否则用户扫着扫着码就失效)。
-    if (authState.get(WECHAT_SCOPE) === "authorizing" && pendingQr) {
+    if (
+      (authState.get(WECHAT_SCOPE) === "authorizing" ||
+        authState.get(WECHAT_SCOPE) === "verifying") &&
+      pendingQr
+    ) {
       const remainingSec =
         WECHAT_AUTH_EXPIRES_IN_SEC - Math.floor((Date.now() - pendingQr.generatedAt) / 1000);
       if (remainingSec > 5) {
@@ -162,6 +209,7 @@ export const wechatAuthStartTool = createTool({
     const stop = startToolHeartbeat(context, { tool: "wechat_auth_start" });
     try {
       authState.set(WECHAT_SCOPE, "authorizing");
+      authFailureMessage = null;
       let settled = false;
       // 新扫码作废上一张未完成的:关掉上一个扫码 browser,防其后台轮询期间 chromium 堆积。
       await activeAuthBrowser?.close().catch(() => {});
@@ -218,6 +266,12 @@ export const wechatAuthStartTool = createTool({
 
             // 等登录成功落地(任意带 token= 的 mp 页,不限 /cgi-bin/home)。落地只用于取凭据,成败看探针。
             await page.waitForURL(WECHAT_AUTH_LANDING_RE, { timeout: WECHAT_AUTH_TIMEOUT_MS });
+            // waitForURL 返回代表用户已在手机端完成扫码落地。必须在首个 await 前同步改态，
+            // 否则紧随「我已扫码完成」发起的 status 会误读为 authorizing。
+            if (activeAuthBrowser === authBrowser) {
+              authState.set(WECHAT_SCOPE, "verifying");
+              beginAuthVerification(authBrowser);
+            }
             const cookie = cookieHeaderFromCookies(await browserContext.cookies());
             let token = page.url().match(/[?&]token=([^&]+)/)?.[1] ?? null;
             // 兜底:落地 URL 无 token → 带已登录 cookie 请求首页,跟随重定向从最终 URL 提取。
@@ -235,12 +289,15 @@ export const wechatAuthStartTool = createTool({
 
             // 只在自己仍是当前 active 扫码时才写状态(被新扫码取代的旧调用不该回写)。
             if (!probe.ok) {
-              if (activeAuthBrowser === authBrowser) {
-                authState.set(
-                  WECHAT_SCOPE,
-                  probe.kind === "unusable" ? "failed_account_unusable" : "failed_timeout",
-                );
-              }
+              setAuthTerminalState(
+                authBrowser,
+                probe.kind === "capability_denied"
+                  ? "failed_account_unusable"
+                  : "failed_timeout",
+                probe.kind === "capability_denied"
+                  ? "当前所选公众号无法使用搜索能力(可能已注销或受限),请重扫并在手机上换一个正常的已认证公众号"
+                  : "扫码已收到,但未能完成公众号能力核验,请稍后重新发起授权或换一个正常的公众号",
+              );
               return; // 探针不过=不存凭据
             }
 
@@ -253,10 +310,10 @@ export const wechatAuthStartTool = createTool({
             await saveCredentialRecord({ platform: WECHAT_PLATFORM, key: "mp_name", value: mpName });
             await saveCredentialRecord({ platform: WECHAT_PLATFORM, key: "token", value: token });
             console.info("[wechat-auth] credentials saved");
-            if (activeAuthBrowser === authBrowser) authState.set(WECHAT_SCOPE, "ready");
+            setAuthTerminalState(authBrowser, "ready");
           } catch (error) {
             // 走到这多是 waitForURL 超时(用户没扫完/没在手机点确认)→ 归 timeout 话术。
-            if (activeAuthBrowser === authBrowser) authState.set(WECHAT_SCOPE, "failed_timeout");
+            setAuthTerminalState(authBrowser, "failed_timeout", "没等到扫码确认,请重新发起授权");
             if (!settled) reject(error);
           } finally {
             await authBrowser?.close().catch(() => {});
@@ -286,29 +343,67 @@ export const wechatAuthStatusTool = createTool({
     message: z.string(),
   }),
   execute: async () => {
-    const creds = await getCredentialsForPlatform(WECHAT_PLATFORM);
-    const mpName = creds.mp_name ?? "";
-    if (creds.token && creds.expiry) {
-      if (new Date(creds.expiry).getTime() > Date.now()) {
+    const readStatus = async (): Promise<{
+      ok: true;
+      state:
+        | "READY"
+        | "NO_CREDENTIAL"
+        | "AUTHORIZING"
+        | "VERIFYING"
+        | "EXPIRED"
+        | "CAPABILITY_DENIED"
+        | "TIMEOUT";
+      mpName: string;
+      message: string;
+    }> => {
+      const creds = await getCredentialsForPlatform(WECHAT_PLATFORM);
+      const mpName = creds.mp_name ?? "";
+      const st = authState.get(WECHAT_SCOPE);
+      if (st === "authorizing") {
+        return { ok: true, state: "AUTHORIZING", mpName, message: "正在等待扫码授权" };
+      }
+      if (st === "verifying") {
+        return {
+          ok: true,
+          state: "VERIFYING",
+          mpName,
+          message: "扫码已收到,正在核验该公众号是否可用,请稍候再检查",
+        };
+      }
+      if (creds.token && creds.expiry && new Date(creds.expiry).getTime() > Date.now()) {
         return { ok: true, state: "READY", mpName, message: "已授权" };
       }
-      return { ok: false, state: "EXPIRED", mpName, message: "授权已过期" };
+      if (st === "failed_account_unusable") {
+        return {
+          ok: true,
+          state: "CAPABILITY_DENIED",
+          mpName,
+          message:
+            "当前所选公众号无法使用搜索能力(可能已注销或受限),请重扫并在手机上换一个正常的已认证公众号",
+        };
+      }
+      if (st === "failed_timeout") {
+        return {
+          ok: true,
+          state: "TIMEOUT",
+          mpName,
+          message: authFailureMessage ?? "没等到扫码确认,请重新发起授权",
+        };
+      }
+      if (creds.token && creds.expiry) {
+        return { ok: true, state: "EXPIRED", mpName, message: "授权已过期" };
+      }
+      return { ok: true, state: "NO_CREDENTIAL", mpName, message: "未授权" };
+    };
+
+    let status = await readStatus();
+    // 授权落地后仅在核验阶段短等；还没扫码的 authorizing 必须立即返回，避免模型误以为 status 卡死。
+    const verification = authVerification;
+    if (status.state === "VERIFYING" && verification) {
+      await Promise.race([verification.promise, delay(15_000)]);
+      // 等待结束必须重读凭据与状态：探针可能已保存凭据，也可能刚写入终态。
+      status = await readStatus();
     }
-    const st = authState.get(WECHAT_SCOPE);
-    if (st === "authorizing") {
-      return { ok: false, state: "AUTHORIZING", mpName, message: "正在等待扫码授权" };
-    }
-    if (st === "failed_account_unusable") {
-      return {
-        ok: false,
-        state: "ACCOUNT_UNUSABLE",
-        mpName,
-        message: "该公众号后台不可用(可能注销中/未认证),请重扫并在手机上选另一个已认证公众号",
-      };
-    }
-    if (st === "failed_timeout") {
-      return { ok: false, state: "TIMEOUT", mpName, message: "没等到扫码确认,请重新发起授权" };
-    }
-    return { ok: false, state: "NO_CREDENTIAL", mpName, message: "未授权" };
+    return status;
   },
 });

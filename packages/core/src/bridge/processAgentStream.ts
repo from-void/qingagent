@@ -306,9 +306,10 @@ export async function* processAgentStream(
     if (!hasToolCallPart(agentMessageId, spec.id)) {
       const seq = nextSeq(state, agentMessageId);
       const tcPart: MessagePart = { kind: "toolCall", data: spec };
-      yield chatMessageAppended(agentMessageId, seq, tcPart);
       ensureAgentChatHistoryMessage(state, agentMessageId);
       appendPartToChatHistory(state, agentMessageId, tcPart);
+      // 先写会话状态再下发帧：流在帧后突然 EOF 时，轮末通用 finalizer 才能看见此占位并收口。
+      yield chatMessageAppended(agentMessageId, seq, tcPart);
     }
     yield toolCallUpdated(agentMessageId, spec.id, spec);
     updateToolCallInChatHistory(state, agentMessageId, spec.id, spec);
@@ -1041,9 +1042,10 @@ export async function* processAgentStream(
       };
       const seq = nextSeq(state, agentMessageId);
       const tcPart: MessagePart = { kind: "toolCall", data: spec };
-      yield chatMessageAppended(agentMessageId, seq, tcPart);
       ensureAgentChatHistoryMessage(state, agentMessageId);
       appendPartToChatHistory(state, agentMessageId, tcPart);
+      // 与正式 tool-call 路径一致：占位先落 chatHistory，保证轮末通用 finalizer 能处理 EOF 孤儿。
+      yield chatMessageAppended(agentMessageId, seq, tcPart);
       streamingPlaceholders.add(toolCallId);
       outcome.producedVisibleFrame = true;
       continue;

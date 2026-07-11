@@ -105,6 +105,9 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
   const noteNodes = useMemo(() => renderQrNote(data.note), [data.note]);
   const confirmQuery = data.confirmQuery;
+  // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
+  // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
+  const codeFirst = data.connectorId === "github" && !data.imageDataUri;
 
   useEffect(() => {
     refreshSentRef.current = false;
@@ -147,7 +150,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
       ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
-      <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
+      {!codeFirst && <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
         {qrUrl ? (
           <img className="qr-card__img" src={qrUrl} alt={data.title ?? "二维码"} draggable={false} />
         ) : (
@@ -166,9 +169,14 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
             <span>{refreshSent ? "已请求刷新" : "二维码已过期,点此刷新"}</span>
           </button>
         )}
-      </div>
-      {data.code && (
-        <div className="qr-card__usercode">
+      </div>}
+      {codeFirst && expired && (
+        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>
+          {refreshSent ? "已请求重新发起" : "配对码已过期，重新发起"}
+        </button>
+      )}
+      {data.code && !(codeFirst && expired) && (
+        <div className={`qr-card__usercode${codeFirst ? " is-hero" : ""}`}>
           配对码 <b>{data.code}</b>
           {data.connectorId === "github" && (
             <button type="button" className="qr-card__confirm" onClick={() => {

@@ -52,7 +52,10 @@ export function mapConnectorStart(id: ConnectorId, value: unknown, now = Date.no
 }
 
 function startLabel(connector: ConnectorInfo): string {
-  if (connector.id === "github") return connector.status.state === "needs_reauth" ? "重新授权" : "连 接";
+  if (connector.id === "github") {
+    if (connector.status.state === "connected") return "升级私有仓授权";
+    return connector.status.state === "needs_reauth" ? "重新授权" : "连 接";
+  }
   if (connector.id === "feishu") return connector.status.state === "unconfigured" ? "创建应用" : connector.status.state === "needs_reauth" ? "重新扫码" : "扫码授权";
   return connector.status.state === "needs_reauth" ? "重新扫码" : "扫码登录";
 }
@@ -198,16 +201,22 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         ? "到对话里说「连接 GitHub」发起授权。"
         : "到对话里说「登录公众号」发起授权。";
     const showGuide = ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
+    // GitHub 已连接但只有公开仓授权:提供一键升级到 repo(含私有仓)。
+    const needsRepoUpgrade = selected.id === "github"
+      && selected.status.state === "connected"
+      && !selected.status.scopes.includes("repo");
     const canStart = (selected.id === "feishu"
       ? ["unconfigured", "disconnected", "needs_reauth"]
-      : ["disconnected", "needs_reauth"]).includes(selected.status.state);
+      : ["disconnected", "needs_reauth"]).includes(selected.status.state) || needsRepoUpgrade;
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
     const selectedAuthCard = authCard?.connectorId === selected.id ? authCard.data : null;
     const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
     const initiate = async () => {
       setBusy(true);
       try {
-        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id)) });
+        // GitHub 默认请求 repo(含私有仓):用户点「连接」的预期就是能读自己的全部仓库。
+        const body = selected.id === "github" ? { scope: "repo" } : {};
+        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id, body)) });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
         throw cause;
@@ -240,8 +249,8 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         {showGuide ? (
           <div className="cnd-guide">{guide}<br />你也可以继续在对话中按需发起授权。</div>
         ) : null}
-        {selected.id === "github" && selected.status.state === "connected" && !selected.status.scopes.includes("repo") && (
-          <div className="cnd-guide">当前仅授权公开仓。需要读取私有仓时，系统会在对话中说明并请求增量 repo 授权；授权失败不会影响现有连接。</div>
+        {needsRepoUpgrade && !selectedAuthCard && (
+          <div className="cnd-guide">当前仅授权公开仓。点击上方按钮可升级到含私有仓的完整授权；升级失败不会影响现有连接。</div>
         )}
         {selected.status.canProbe && (
           <div className="cnd-action">

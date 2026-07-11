@@ -466,6 +466,19 @@ describe("QrCard — validation loop 3", () => {
       refreshQuery: "重新连接", confirmQuery: null, connectorId: "github", pendingId: "pending-safe-id",
     });
 
+    it("GitHub 输码卡不渲染二维码,配对码大字化", () => {
+      render(<QrCard data={connectorCard()} />);
+      expect(document.querySelector(".qr-card__frame")).toBeNull();
+      expect(document.querySelector(".qr-card__usercode.is-hero")?.textContent).toContain("ABCD-EFGH");
+    });
+
+    it("GitHub 输码卡过期后显示重新发起按钮而非二维码刷新", () => {
+      render(<QrCard data={{ ...connectorCard(), expiresAt: Date.now() - 1_000 }} />);
+      expect(document.querySelector(".qr-card__frame")).toBeNull();
+      expect(document.querySelector(".qr-card__usercode")).toBeNull();
+      expect(document.querySelector(".qr-card__confirm")?.textContent).toContain("重新发起");
+    });
+
     it("新帧轮询成功后原地显示账号", async () => {
       vi.useFakeTimers();
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "@octocat" } } }), { status: 200 })));

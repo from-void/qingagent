@@ -41,11 +41,11 @@ export function useConnectors() {
     return connector;
   }, []);
 
-  const start = useCallback(async (id: ConnectorId) => {
+  const start = useCallback(async (id: ConnectorId, body: Record<string, unknown> = {}) => {
     const response = await fetch(`/api/v1/connectors/${encodeURIComponent(id)}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error(`连接操作失败 (${response.status})`);
     return response.json() as Promise<unknown>;

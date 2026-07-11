@@ -89,7 +89,7 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).toContain("发起中…");
     expect(button.disabled).toBe(true);
     await act(async () => { resolve({ user_code: "ABCD-EFGH", verification_uri: "https://github.test/device", expiresAt: "2026-07-12T10:00:00.000Z", pendingId: "gh-1" }); });
-    expect(h.start).toHaveBeenCalledWith("github");
+    expect(h.start).toHaveBeenCalledWith("github", { scope: "repo" });
     expect(host.querySelector('[data-component="AuthCard"]')).toBeTruthy();
     expect(host.textContent).toContain("ABCD-EFGH");
     expect(host.textContent).toContain("等待授权");
@@ -161,11 +161,11 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).not.toContain("飞书");
   });
 
-  it("GitHub 已上线并提示私有仓增量授权与账号切换确认", () => {
+  it("GitHub 已上线并提示私有仓升级与账号切换确认", () => {
     h.connectors = [github("connected")];
     act(() => root.render(<ConnectionsPanel selectedId="github" />));
     expect(host.textContent).toContain("当前仅授权公开仓");
-    expect(host.textContent).toContain("增量 repo 授权");
+    expect(host.textContent).toContain("升级私有仓授权");
     expect(host.textContent).not.toContain("即将上线");
 
     h.connectors = [github("connected", "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED")];

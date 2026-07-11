@@ -1006,7 +1006,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       ) : null}
       {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
       {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
-      {interactiveEditable && editor && onAiModify ? <TableControls editor={editor} onAiModify={onAiModify} /> : null}
+      {interactiveEditable && editor && onAiModify ? (
+        <TableControls editor={editor} onAiModify={onAiModify} onToast={onToast} />
+      ) : null}
       {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}

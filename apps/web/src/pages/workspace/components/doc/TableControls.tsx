@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import type { AiModifyTarget } from "../../data/aiModifyTarget";
-import { chatInputBus } from "../../../../system";
+import { createTableAiModifyTarget, tableAiModifyDisabledReason } from "../../data/tableSelection";
 import {
   applyTableToolbarFormat,
   isTableToolbarFormatCommand,
@@ -38,9 +38,10 @@ export function resolveWorkspaceFloatingPortalTarget(doc: Document = document): 
   return doc.querySelector<HTMLElement>("#view-workspace") ?? doc.body;
 }
 
-export function TableControls({ editor, onAiModify: _onAiModify }: {
+export function TableControls({ editor, onAiModify, onToast }: {
   editor: Editor;
   onAiModify: (target: AiModifyTarget) => Promise<boolean>;
+  onToast?: (message: string) => void;
 }) {
   const [info, setInfo] = useState<TblInfo | null>(null);
   const [selCols, setSelCols] = useState<Range2 | null>(null);
@@ -176,6 +177,7 @@ export function TableControls({ editor, onAiModify: _onAiModify }: {
   const fmtSel = useCallback((cmd: string, val?: string | null) => {
     if (!editor.isEditable) return;
     if (!info) return;
+    if (tableAiModifyDisabledReason(info.el)) return;
     if (!isTableToolbarFormatCommand(cmd) || !isTableToolbarCommandEnabled(cmd, toolbarUnlock)) return;
     let normalizedValue = val;
     if (cmd === "textColor") {
@@ -200,33 +202,33 @@ export function TableControls({ editor, onAiModify: _onAiModify }: {
     setOpenTableColor(null);
   }, [editor, selCols, selRows, cellCmd]);
 
-  const doAiModify = useCallback(() => {
+  const doAiModify = useCallback(async () => {
     if (!editor.isEditable) return;
     if (!info) return;
-    let text = "";
-    if (selCols) {
-      const [a, b] = [Math.min(selCols[0], selCols[1]), Math.max(selCols[0], selCols[1])];
-      for (const row of Array.from(info.el.rows))
-        for (let ci = a; ci <= b; ci++) text += (row.cells[ci]?.textContent?.trim() ?? "") + " ";
-    } else if (selRows) {
-      const [a, b] = [Math.min(selRows[0], selRows[1]), Math.max(selRows[0], selRows[1])];
-      for (let ri = a; ri <= b; ri++) {
-        const row = info.el.rows[ri];
-        if (row) for (const cell of Array.from(row.cells)) text += (cell.textContent?.trim() ?? "") + " | ";
-        text += "\n";
-      }
+    const blockId = info.el.dataset.blockId;
+    if (!blockId) {
+      onToast?.("无法定位表格,请重新选择");
+      return;
     }
-    text = text.trim();
-    if (!text) return;
-    // 审计修复:此处原是 require()——浏览器 ESM 里必抛 ReferenceError 且被空 catch
-    // 吞掉,表格「AI 修改」推送聊天功能因此静默失效。改为顶部静态 import。
-    chatInputBus.push(`§ "${text.length > 120 ? text.slice(0, 120) + "…" : text}"`);
-    setSelCols(null); setSelRows(null);
-  }, [editor, info, selCols, selRows]);
+    const rows = Array.from(info.el.rows).map((row) =>
+      Array.from(row.cells).map((cell) => cell.textContent?.trim() ?? ""),
+    );
+    const target = selCols
+      ? createTableAiModifyTarget({ blockId, rows, axis: "column", range: selCols })
+      : selRows
+        ? createTableAiModifyTarget({ blockId, rows, axis: "row", range: selRows })
+        : null;
+    if (!target) return;
+    if (await onAiModify(target)) {
+      setSelCols(null);
+      setSelRows(null);
+    }
+  }, [editor, info, onAiModify, onToast, selCols, selRows]);
 
   if (!editor.isEditable || !info) return null;
   const { rect, cols, rows } = info;
   const hasSel = selCols !== null || selRows !== null;
+  const aiModifyDisabledReason = tableAiModifyDisabledReason(info.el);
 
   const controls = (
     <>
@@ -321,7 +323,12 @@ export function TableControls({ editor, onAiModify: _onAiModify }: {
             )}
           </div>
           <div className="dt-divider" />
-          <button className="dt-btn dt-ai" title="发送到对话" onClick={doAiModify}>
+          <button
+            className="dt-btn dt-ai"
+            title={aiModifyDisabledReason ?? "发送到对话"}
+            disabled={aiModifyDisabledReason !== null}
+            onClick={() => { void doAiModify(); }}
+          >
             <span className="dt-ai-ico">✨</span><span>修改选中文字</span>
           </button>
           <div className="dt-divider" />

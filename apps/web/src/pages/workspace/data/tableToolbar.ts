@@ -119,6 +119,37 @@ export function selectTableRows(
   return selectTableAxis(editor, tableBlockId, "row", startRow, endRow);
 }
 
+/** 在逻辑网格边界插入行/列；边界内优先选择从该边界起始的物理 cell，避免 span 吞掉插入点。 */
+export function insertTableAxisAtBoundary(
+  editor: Editor,
+  tableBlockId: string,
+  axis: "column" | "row",
+  boundary: number,
+): boolean {
+  const located = findTableByBlockId(editor, tableBlockId);
+  if (!located) return false;
+  const map = TableMap.get(located.table);
+  const limit = axis === "column" ? map.width : map.height;
+  if (!Number.isInteger(boundary) || boundary < 0 || boundary > limit) return false;
+  const atEnd = boundary === limit;
+  let offset: number | null = null;
+  for (const candidate of new Set(map.map)) {
+    const rect = map.findCell(candidate);
+    if ((axis === "column" ? rect.left : rect.top) !== (atEnd ? boundary - 1 : boundary)) continue;
+    offset ??= candidate;
+    if ((axis === "column" ? rect.right - rect.left : rect.bottom - rect.top) === 1) {
+      offset = candidate;
+      break;
+    }
+  }
+  if (offset == null) return false;
+  const cellPos = located.pos + 1 + offset;
+  editor.view.dispatch(editor.state.tr.setSelection(CellSelection.create(editor.state.doc, cellPos)));
+  const chain = editor.chain().focus();
+  if (axis === "column") return atEnd ? chain.addColumnAfter().run() : chain.addColumnBefore().run();
+  return atEnd ? chain.addRowAfter().run() : chain.addRowBefore().run();
+}
+
 /** TableControls 的 active 状态只从当前 PM 选区投影，不另存一份真源。 */
 export function readTableAxisSelection(
   editor: Editor,

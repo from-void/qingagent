@@ -5,7 +5,7 @@ import { CellSelection } from "@tiptap/pm/tables";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { selectTableColumns, TableAxisSelectionExtension } from "../../data/tableToolbar";
+import { selectTableColumns, setTableCellSelectionFromDom, TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableControls } from "./TableControls";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -200,6 +200,17 @@ async function mouseDown(element: Element | null): Promise<void> {
 }
 
 describe("TableControls 真选区与 chrome", () => {
+  it("矩形 CellSelection 可见合并按钮，合并后可见拆分按钮", async () => {
+    const { editor, portal, tables } = setupTable({ blockId: "table-1" });
+    const cells = tables[0]!.querySelectorAll("td");
+    expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[1] as HTMLTableCellElement)).toBe(true);
+    await renderControls(editor);
+    const merge = portal.querySelector<HTMLButtonElement>('[title="合并单元格"]');
+    expect(merge?.disabled).toBe(false);
+    await act(async () => { merge?.click(); });
+    const split = portal.querySelector<HTMLButtonElement>('[title="拆分单元格"]');
+    expect(split?.disabled).toBe(false);
+  });
   it("HTML 粘贴合并表后可显示逻辑列头、删列、AI 回填并正确导出 md", async () => {
     const { editor, portal } = setupTable({ blockId: "table-1" });
     const tail = editor.view.dom.querySelector('[data-block-id="tail"]')?.firstChild;
@@ -268,6 +279,17 @@ describe("TableControls 真选区与 chrome", () => {
     expect(portal.querySelector(".tbl-span-hint")).toBeNull();
     await mouseDown(portal.querySelectorAll(".tbl-col-hdr")[1] ?? null);
     expect((editor.state.selection as CellSelection).isColSelection()).toBe(true);
+  });
+
+  it("colspan 表每个逻辑列插入点都生效，内部边界扩展原 span", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1", merged: true });
+    await renderControls(editor);
+    const dots = portal.querySelectorAll<HTMLButtonElement>(".tbl-dot-col");
+    expect(dots).toHaveLength(3);
+    await act(async () => { dots[1]?.click(); });
+    const json = editor.getJSON() as unknown as PmDoc;
+    const table = json.content[0];
+    expect(table?.type === "table" ? table.content[0]?.content[0]?.attrs?.colspan : null).toBe(3);
   });
 
   it("只读态不渲染表格 chrome", async () => {

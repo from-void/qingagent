@@ -115,6 +115,12 @@ describe("table selection post-edit scope validator", () => {
       tableRef: "table-1",
       selection: { axis: "column", startIndex: 0, endIndex: 1 },
     })).toEqual({ ok: true });
+    expect(validateTableSelectionScope({
+      before,
+      after: selected,
+      tableRef: "table-1",
+      selection: { axis: "column", startIndex: 0, endIndex: 0 },
+    })).toEqual({ ok: true });
 
     const outside = clonePmDoc({ type: "doc", attrs: { schemaVersion: 1 }, content: [before] }).content[0] as PmTableNode;
     outside.content[0]!.content[1]!.attrs = { backgroundColor: "amber" };

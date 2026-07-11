@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import { findPmTableByBlockId, pmTableSelectionCellTexts, pmTableTextRows, type PmDoc } from "@qingagent/pm-schema";
-import { TableMap } from "@tiptap/pm/tables";
+import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import type { AiModifyTarget } from "../../data/aiModifyTarget";
 import { createTableAiModifyTarget } from "../../data/tableSelection";
 import {
@@ -12,6 +12,7 @@ import {
   canApplyTableToolbarStructure,
   isSingleTableCellTextSelection,
   isTableToolbarFormatCommand,
+  insertTableAxisAtBoundary,
   readTableAxisSelection,
   selectTableColumns,
   selectTableRows,
@@ -182,15 +183,6 @@ export function TableControls({ editor, onAiModify, onToast }: {
 
   /* ── helpers ── */
   const prevent = useCallback((e: React.MouseEvent) => e.preventDefault(), []);
-  const cellCmd = useCallback(
-    (rI: number, cI: number, fn: (c: ReturnType<Editor["chain"]>) => void) => {
-      if (!editor.isEditable) return;
-      if (!info) return;
-      const cell = info.el.rows[rI]?.cells[cI];
-      if (!cell) return;
-      try { fn(editor.chain().focus().setTextSelection(editor.view.posAtDOM(cell, 0))); } catch { /* stale */ }
-    }, [editor, info]);
-
   /* ── header mousedown → 真 CellSelection；mousemove 每帧最多 dispatch 一次 ── */
   const startHeaderDrag = useCallback((axis: "col" | "row", idx: number, e: React.MouseEvent) => {
     e.preventDefault();
@@ -333,7 +325,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
   if (!editor.isEditable || !info) return null;
   const { rect, wrapperRect, cols, rows } = info;
   const hasAxisSelection = selCols !== null || selRows !== null;
-  const hasSel = hasAxisSelection || singleCellTextSelection;
+  const hasCellSelection = editor.state.selection instanceof CellSelection;
+  const hasSel = hasAxisSelection || hasCellSelection || singleCellTextSelection;
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
 
   const chromeTop = COL_HDR + DOT_EXT;
@@ -388,7 +381,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
               left: cols[0].left - viewport.left,
               "--tbl-guide": `${rect.height + COL_HDR + 5}px`,
             } as React.CSSProperties}
-            onClick={() => cellCmd(0, 0, (c) => c.addColumnBefore().run())}
+            onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "column", 0)}
             onMouseDown={prevent}
           >
             <span className="tbl-dot-mark">│</span>
@@ -402,7 +395,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
               left: col.right - viewport.left,
               "--tbl-guide": `${rect.height + COL_HDR + 5}px`,
             } as React.CSSProperties}
-            onClick={() => cellCmd(0, i, (c) => c.addColumnAfter().run())} onMouseDown={prevent}>
+            onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "column", i + 1)} onMouseDown={prevent}>
             <span className="tbl-dot-mark">│</span>
           </button>
         ))}
@@ -418,7 +411,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
               left: rect.left - ROW_HDR - 5 - viewport.left,
               "--tbl-guide": `${rect.width + ROW_HDR + 5}px`,
             } as React.CSSProperties}
-            onClick={() => cellCmd(0, 0, (c) => c.addRowBefore().run())}
+            onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "row", 0)}
             onMouseDown={prevent}
           >
             <span className="tbl-dot-mark">─</span>
@@ -432,7 +425,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
               left: rect.left - ROW_HDR - 5 - viewport.left,
               "--tbl-guide": `${rect.width + ROW_HDR + 5}px`,
             } as React.CSSProperties}
-            onClick={() => cellCmd(i, 0, (c) => c.addRowAfter().run())} onMouseDown={prevent}>
+            onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "row", i + 1)} onMouseDown={prevent}>
             <span className="tbl-dot-mark">─</span>
           </button>
         ))}

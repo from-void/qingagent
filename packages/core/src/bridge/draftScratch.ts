@@ -315,28 +315,35 @@ export function validateTableSelectionScope(input: {
   }
   const beforeGrid = pmTableLogicalGrid(before);
   const afterGrid = pmTableLogicalGrid(after);
-  for (let rowIndex = 0; rowIndex < before.content.length; rowIndex += 1) {
-    const beforeRow = beforeGrid[rowIndex]!;
-    const afterRow = afterGrid[rowIndex]!;
-    const prefixCount = selection.startIndex;
-    const suffixCount = Math.max(0, beforeRow.length - selection.endIndex - 1);
-    if (afterRow.length < prefixCount + suffixCount) {
-      return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: prefixCount > 0 ? 0 : selection.endIndex + 1 });
-    }
-    for (let columnIndex = 0; columnIndex < prefixCount; columnIndex += 1) {
-      if (tableCellFingerprint(beforeRow[columnIndex]) !== tableCellFingerprint(afterRow[columnIndex])) {
-        return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex });
-      }
-    }
-    for (let offset = 0; offset < suffixCount; offset += 1) {
-      const beforeColumnIndex = selection.endIndex + 1 + offset;
-      const afterColumnIndex = afterRow.length - suffixCount + offset;
-      if (tableCellFingerprint(beforeRow[beforeColumnIndex]) !== tableCellFingerprint(afterRow[afterColumnIndex])) {
-        return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: beforeColumnIndex });
-      }
+  const beforeWidth = Math.max(0, ...beforeGrid.map((row) => row.length));
+  const afterWidth = Math.max(0, ...afterGrid.map((row) => row.length));
+  const suffixCount = Math.max(0, beforeWidth - selection.endIndex - 1);
+  if (afterWidth < selection.startIndex + suffixCount) {
+    return scopeViolation({ ...selection, tableRef, rowIndex: 0, columnIndex: selection.startIndex > 0 ? 0 : selection.endIndex + 1 });
+  }
+  // 每个物理 cell 只按起点列归属一次；colspan 占位格不重复审计。
+  for (const origin of tableCellOrigins(before)) {
+    if (origin.columnIndex >= selection.startIndex && origin.columnIndex <= selection.endIndex) continue;
+    const mappedColumn = origin.columnIndex < selection.startIndex
+      ? origin.columnIndex
+      : afterWidth - (beforeWidth - origin.columnIndex);
+    if (tableCellFingerprint(origin.cell) !== tableCellFingerprint(afterGrid[origin.rowIndex]?.[mappedColumn])) {
+      return scopeViolation({ ...selection, tableRef, rowIndex: origin.rowIndex, columnIndex: origin.columnIndex });
     }
   }
   return { ok: true };
+}
+
+function tableCellOrigins(table: PmTableNode): Array<{ rowIndex: number; columnIndex: number; cell: PmTableCellNode }> {
+  const grid = pmTableLogicalGrid(table);
+  const seen = new Set<PmTableCellNode>();
+  const origins: Array<{ rowIndex: number; columnIndex: number; cell: PmTableCellNode }> = [];
+  grid.forEach((row, rowIndex) => row.forEach((cell, columnIndex) => {
+    if (seen.has(cell)) return;
+    seen.add(cell);
+    origins.push({ rowIndex, columnIndex, cell });
+  }));
+  return origins;
 }
 
 export function validateCurrentTableSelectionScopes(

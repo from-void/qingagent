@@ -34,11 +34,11 @@ metadata:
 
 ## 登录流程（human-in-the-loop）
 
-- 手机号 + 短信验证码：登录页选「验证码登录 / 手机号登录」→ 用 `askUser` 索取手机号
-  → `browser_type` 填入 → `browser_click`「获取验证码 / 发送验证码」→ 用 `askUser` 索取刚收到的短信验证码
+- 手机号 + 短信验证码：登录页选「验证码登录 / 手机号登录」→ 用 `askUserQuestion` 索取手机号
+  → `browser_type` 填入 → `browser_click`「获取验证码 / 发送验证码」→ 用 `askUserQuestion` 索取刚收到的短信验证码
   → `browser_type` 填入验证码 → `browser_click` 登录/提交 → `browser_snapshot` 确认已登录。
-- 账号密码登录：用 `askUser` 索取账号与密码 → `browser_type` 分别填入 → 提交。
-- 浏览器会话在 `askUser` 等待期间保持存活，拿到验证码后继续在原页面操作即可。
+- 账号密码登录：用 `askUserQuestion` 索取账号与密码 → `browser_type` 分别填入 → 提交。
+- 浏览器会话在 `askUserQuestion` 等待期间保持存活，拿到验证码后继续在原页面操作即可。
   登录成功后登录态自动持久化，后续访问同站通常无需重复登录。
 
 ## 禁止

@@ -26,7 +26,7 @@ export {
   adaptAskUserQuestionInput,
   askUserQuestionInputSchema,
   askUserQuestionTool,
-  askUserTool,
+  planDraftTool,
   buildQuestionnaireRejectedResult,
   questionnaireRejectedResultSchema,
 } from "./tools/index.js";

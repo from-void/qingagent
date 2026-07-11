@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
-import { askUserTool } from "../tools/askUser.js";
+import { planDraftTool } from "../tools/planDraft.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: extract the Zod schema from the Mastra tool and validate.
@@ -50,80 +50,57 @@ function validateToolOutput(
 }
 
 // ---------------------------------------------------------------------------
-// Tests: askUser tool schema
+// Tests: planDraft tool schema
 // ---------------------------------------------------------------------------
 
-describe("askUser tool schema", () => {
-  it("validates a correct initialBrief askUser input", () => {
+describe("planDraft tool schema", () => {
+  it("validates a correct planDraft input without purpose", () => {
     const input = {
       id: "direction-gathering",
-      purpose: "initialBrief",
       rationale: "需要了解写作方向",
       topic: "用户想写一篇关于春天校园生活的文章",
     };
 
-    const result = validateToolInput(askUserTool, input);
+    const result = validateToolInput(planDraftTool, input);
     expect(result.success).toBe(true);
   });
 
-  it("validates quickClarification and directionChange purposes", () => {
-    const base = {
-      id: "test",
-      rationale: "test",
-      topic: "test topic",
+  it("inputSchema 不再向模型暴露 purpose", () => {
+    const schema = planDraftTool.inputSchema as unknown as {
+      shape: Record<string, unknown>;
     };
-
-    expect(
-      validateToolInput(askUserTool, { ...base, purpose: "quickClarification" }).success,
-    ).toBe(true);
-    expect(
-      validateToolInput(askUserTool, { ...base, purpose: "directionChange" }).success,
-    ).toBe(true);
-  });
-
-  it("rejects invalid purpose", () => {
-    const input = {
-      id: "test",
-      purpose: "fullpage", // 旧 mode 值，现已非法
-      rationale: "test",
-      topic: "test topic",
-    };
-
-    const result = validateToolInput(askUserTool, input);
-    expect(result.success).toBe(false);
+    expect(Object.keys(schema.shape)).toEqual(["id", "rationale", "topic"]);
   });
 
   it("rejects missing required fields", () => {
-    expect(validateToolInput(askUserTool, {}).success).toBe(false);
+    expect(validateToolInput(planDraftTool, {}).success).toBe(false);
     expect(
-      validateToolInput(askUserTool, { id: "test" }).success,
+      validateToolInput(planDraftTool, { id: "test" }).success,
     ).toBe(false);
     // missing topic
     expect(
-      validateToolInput(askUserTool, { id: "test", purpose: "initialBrief", rationale: "r" }).success,
+      validateToolInput(planDraftTool, { id: "test", rationale: "r" }).success,
     ).toBe(false);
   });
 
   it("validates with all required fields", () => {
     const input = {
       id: "test",
-      purpose: "initialBrief",
       rationale: "testing rationale",
       topic: "detailed topic description with context about what the user wants",
     };
 
-    const result = validateToolInput(askUserTool, input);
+    const result = validateToolInput(planDraftTool, input);
     expect(result.success).toBe(true);
   });
 
-  it("returns semantic suppressed output after askUser has already completed", async () => {
+  it("returns semantic suppressed output after planDraft has already completed", async () => {
     const requestContext = new RequestContext([
       ["askUserAlreadyCompleted", true],
     ]);
-    const result = await askUserTool.execute!(
+    const result = await planDraftTool.execute!(
       {
         id: "direction-gathering",
-        purpose: "initialBrief",
         rationale: "需要了解写作方向",
         topic: "用户想写一篇关于春天校园生活的文章",
       },
@@ -139,7 +116,7 @@ describe("askUser tool schema", () => {
     expect(result.instruction).toContain("writeDraft");
     expect(result.instruction).not.toContain("已弹出表单");
     expect(result.instruction).not.toContain("请填表单");
-    expect(validateToolOutput(askUserTool, result).success).toBe(true);
+    expect(validateToolOutput(planDraftTool, result).success).toBe(true);
   });
 
   it("suppresses repeated directionChange when no write happened since last completed directionChange", async () => {
@@ -147,10 +124,9 @@ describe("askUser tool schema", () => {
       ["askUserAlreadyCompleted", true],
       ["directionChangeAskedSinceLastWrite", true],
     ]);
-    const result = await askUserTool.execute!(
+    const result = await planDraftTool.execute!(
       {
         id: "direction-change-repeat",
-        purpose: "directionChange",
         rationale: "模型再次误判要换方向",
         topic: "已有文档方向调整",
       },
@@ -163,6 +139,6 @@ describe("askUser tool schema", () => {
 
     expect(result.suppressed).toBe(true);
     expect(result.reason).toBe("askUserAlreadyCompleted");
-    expect(validateToolOutput(askUserTool, result).success).toBe(true);
+    expect(validateToolOutput(planDraftTool, result).success).toBe(true);
   });
 });

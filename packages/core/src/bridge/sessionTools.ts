@@ -32,6 +32,7 @@ import { githubRepoTreeTool } from "../tools/githubRepoTree.js";
 import { githubReadFileTool } from "../tools/githubReadFile.js";
 import { githubSearchCodeTool } from "../tools/githubSearchCode.js";
 import { githubAuthStartTool } from "../tools/githubAuthStart.js";
+import { feishuAuthStartTool } from "../tools/feishuAuthStart.js";
 import { updateTodosTool } from "../tools/updateTodos.js";
 import { getPyodideTools } from "../tools/runPython.js";
 import { mastra } from "../mastra.js";
@@ -141,6 +142,7 @@ const CAPABILITY_TOOLS = {
     github_read_file: githubReadFileTool,
     github_search_code: githubSearchCodeTool,
   },
+  feishu: { feishu_auth_start: feishuAuthStartTool },
 } as const;
 
 // run_js 是系统提示长期承诺的通用精确计算工具。doc-calc 技能只负责点召/preload 与方法论说明,
@@ -167,6 +169,7 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
     "fetchArticle",
   ],
   "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
+  feishu: ["feishu_auth_start"],
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {
@@ -223,6 +226,12 @@ export function missingGenericToolResultFields(
   switch (toolName) {
     case "github_auth_start":
       requireString("user_code"); requireString("verification_uri"); requireString("expiresAt"); requireString("pendingId"); requireBoolean("reused");
+      break;
+    case "feishu_auth_start":
+      requireString("mode"); requireString("connectorId"); requireString("expiresAt"); requireString("pendingId"); requireBoolean("reused");
+      if (result.mode === "authorization") { requireString("verification_url"); requireString("user_code"); }
+      else if (result.mode === "configuration") requireString("configuration_url");
+      else missing.push("mode:authorization|configuration");
       break;
     case "github_list_repos":
       requireArray("repos"); requireNumber("count"); requireBoolean("anonymous"); requireRecord("rateLimit");

@@ -107,6 +107,7 @@ import {
   commandCardStatusFromCard,
   generateSvgProgressFromResult,
   generateSvgToolCallSpec,
+  feishuAuthCardToolCallSpec,
   githubAuthCardToolCallSpec,
   latestGenerateSvgProgress,
   normalizeGenerateSvgProgress,
@@ -1825,6 +1826,18 @@ export async function* processAgentStream(
         const verificationUri = typeof toolResult.verification_uri === "string" ? toolResult.verification_uri : "";
         const expiresAt = typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "";
         const spec = githubAuthCardToolCallSpec(toolCallId, { pendingId, userCode, verificationUri, expiresAt });
+        yield toolCallUpdated(agentMessageId, toolCallId, spec);
+        updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+        outcome.producedVisibleFrame = true;
+      } else if (toolName === "feishu_auth_start" && isRecord(toolResult)) {
+        const mode = toolResult.mode === "configuration" ? "configuration" : "authorization";
+        const pendingId = typeof toolResult.pendingId === "string" ? toolResult.pendingId : "";
+        const url = mode === "configuration"
+          ? (typeof toolResult.configuration_url === "string" ? toolResult.configuration_url : "")
+          : (typeof toolResult.verification_url === "string" ? toolResult.verification_url : "");
+        const userCode = typeof toolResult.user_code === "string" ? toolResult.user_code : undefined;
+        const expiresAt = typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "";
+        const spec = feishuAuthCardToolCallSpec(toolCallId, { mode, pendingId, url, userCode, expiresAt });
         yield toolCallUpdated(agentMessageId, toolCallId, spec);
         updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
         outcome.producedVisibleFrame = true;

@@ -37,6 +37,7 @@ export { githubRepoTreeTool } from "./githubRepoTree.js";
 export { githubReadFileTool } from "./githubReadFile.js";
 export { githubSearchCodeTool } from "./githubSearchCode.js";
 export { githubAuthStartTool } from "./githubAuthStart.js";
+export { feishuAuthStartTool, feishuAuthDomainSchema } from "./feishuAuthStart.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
 export { readImageTool } from "./readImage.js";

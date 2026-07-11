@@ -11,6 +11,13 @@ export interface ParsedLarkAuthStatus {
   scopes: string[] | null;
 }
 
+export interface ParsedLarkDeviceFlow {
+  verificationUrl: string;
+  userCode: string;
+  deviceCode: string;
+  expiresIn: number;
+}
+
 export type LarkParseResult<T> =
   | { ok: true; value: T }
   | { ok: false; reasonCode: "LARK_CLI_DIRTY_OUTPUT"; message: string };
@@ -119,6 +126,26 @@ export function parseLarkAuthStatusOutput(output: string): LarkParseResult<Parse
         scopes,
       },
     };
+  } catch (error) {
+    return dirty(error);
+  }
+}
+
+export function parseLarkDeviceFlowOutput(output: string): LarkParseResult<ParsedLarkDeviceFlow> {
+  try {
+    const root = record(extractFirstJsonObject(output));
+    if (!root) throw new Error("device flow 根节点不是对象");
+    const verificationUrl = stringField(root, "verification_url", "verification_uri", "verificationUrl");
+    const userCode = stringField(root, "user_code", "userCode");
+    const deviceCode = stringField(root, "device_code", "deviceCode");
+    const expiresIn = root.expires_in ?? root.expiresIn;
+    if (!verificationUrl || !userCode || !deviceCode || typeof expiresIn !== "number" ||
+        !Number.isFinite(expiresIn) || expiresIn <= 0) {
+      throw new Error("device flow 核心字段缺失或类型非法");
+    }
+    const url = new URL(verificationUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("verification_url 协议非法");
+    return { ok: true, value: { verificationUrl, userCode, deviceCode, expiresIn } };
   } catch (error) {
     return dirty(error);
   }

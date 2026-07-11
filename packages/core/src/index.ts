@@ -131,6 +131,7 @@ export {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
   githubAuthCardToolCallSpec,
+  feishuAuthCardToolCallSpec,
 } from "./bridge/toolCards.js";
 export type {
   AskUserPurposeKind,

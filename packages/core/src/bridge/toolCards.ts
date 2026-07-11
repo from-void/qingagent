@@ -367,6 +367,44 @@ export function githubAuthCardToolCallSpec(
   };
 }
 
+export function feishuAuthCardToolCallSpec(
+  toolCallId: string,
+  input: {
+    mode: "authorization" | "configuration";
+    pendingId: string;
+    url: string;
+    userCode?: string;
+    expiresAt: string;
+  },
+): ToolCallSpec {
+  const expiresAt = Date.parse(input.expiresAt);
+  const configuration = input.mode === "configuration";
+  return {
+    id: toolCallId,
+    name: "feishu_auth_start",
+    render: { kind: "chatInline" },
+    status: { kind: "done" },
+    body: {
+      kind: "qrCard",
+      data: {
+        content: input.url,
+        imageDataUri: null,
+        title: configuration ? "创建你的飞书应用" : "扫码授权飞书",
+        code: input.userCode ?? null,
+        note: configuration
+          ? `用飞书扫码，或 [点此打开创建向导](${input.url})，完成后连接器会自动继续。`
+          : `用飞书 App 扫码，或 [点此在浏览器授权](${input.url})。`,
+        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60_000,
+        refreshQuery: configuration ? "创建应用的链接过期了，请重新发起" : "飞书授权二维码过期了，请重新生成",
+        confirmQuery: null,
+        connectorId: "feishu",
+        pendingId: input.pendingId,
+      },
+    },
+    result: null,
+  };
+}
+
 /**
  * wechat_auth_start 授权卡:工具**直接**产出二维码卡片,base64 图片不经过模型
  * (微信登录码是 7KB+ base64,若让模型当 show_qr 参数复述会卡死/出错)。

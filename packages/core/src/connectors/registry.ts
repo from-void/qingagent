@@ -38,7 +38,7 @@ export const CONNECTOR_REGISTRY = [
     authStrategy: "device-flow-cli",
     custody: "external-cli",
     scopeGroups: [],
-    tools: [],
+    tools: ["feishu_auth_start"],
     usedBySkills: ["feishu"],
   },
   {

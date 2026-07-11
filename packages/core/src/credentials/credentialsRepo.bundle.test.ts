@@ -1,0 +1,191 @@
+import { randomBytes } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { commitTransaction, getDocumentsClient, withTransaction } from "../db/documentsClient.js";
+import { prepareTempDocumentsDb, type TempDocumentsDb } from "../db/__tests__/dbTestUtils.js";
+import { __resetCredentialKeyForTest } from "./crypto.js";
+import {
+  ConnectorCredentialCasError,
+  deleteConnectorCredentialBundle,
+  getConnectorCredentialBundle,
+  readThroughMigrateConnectorBundle,
+  saveConnectorCredentialBundle,
+  saveCredentialRecordsBatch,
+} from "./credentialsRepo.js";
+
+let db: TempDocumentsDb;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+beforeEach(() => {
+  db = prepareTempDocumentsDb("qa-connector-bundle-");
+  process.env.QINGAGENT_CREDENTIAL_KEY = randomBytes(32).toString("base64");
+  __resetCredentialKeyForTest();
+});
+
+afterEach(() => {
+  __resetCredentialKeyForTest();
+  delete process.env.QINGAGENT_CREDENTIAL_KEY;
+  db.cleanup();
+});
+
+async function seedWechatLegacy(): Promise<void> {
+  await saveCredentialRecordsBatch([
+    { platform: "wechat", key: "cookie", value: "old-cookie" },
+    { platform: "wechat", key: "expiry", value: "2026-07-12T00:00:00.000Z" },
+    { platform: "wechat", key: "mp_name", value: "旧账号" },
+    { platform: "wechat", key: "token", value: "old-token" },
+  ]);
+}
+
+const legacyKeys = ["cookie", "expiry", "mp_name", "token"] as const;
+
+describe("connector credential bundle", () => {
+  it("bundle 单行版本化写入，CAS 成功递增且冲突为 409", async () => {
+    const first = await saveConnectorCredentialBundle(
+      "github",
+      { token: "one" },
+      { expectedRevision: null },
+    );
+    expect(first).toMatchObject({ version: 1, connectorId: "github", revision: 1 });
+    const second = await saveConnectorCredentialBundle(
+      "github",
+      { token: "two" },
+      { expectedRevision: 1 },
+    );
+    expect(second.revision).toBe(2);
+    await expect(
+      saveConnectorCredentialBundle("github", { token: "stale" }, { expectedRevision: 1 }),
+    ).rejects.toMatchObject({
+      code: "CONNECTOR_CREDENTIAL_CAS_MISMATCH",
+      status: 409,
+      expectedRevision: 1,
+      actualRevision: 2,
+    } satisfies Partial<ConnectorCredentialCasError>);
+    await expect(getConnectorCredentialBundle("github")).resolves.toEqual(second);
+
+    const raw = await getDocumentsClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = ? AND cred_key = ?",
+      args: ["connector:github", "bundle"],
+    });
+    expect(Number(raw.rows[0]?.n)).toBe(1);
+  });
+
+  it("并发顺序 A：连接页事务先读旧 key，agent 新写排队后最终不得被旧回填覆盖", async () => {
+    await seedWechatLegacy();
+    const blockerEntered = deferred();
+    const releaseBlocker = deferred();
+    const blocker = withTransaction(async () => {
+      blockerEntered.resolve();
+      await releaseBlocker.promise;
+      return commitTransaction(undefined);
+    });
+    await blockerEntered.promise;
+    const migration = readThroughMigrateConnectorBundle({
+      connectorId: "wechat-mp",
+      legacyPlatform: "wechat",
+      legacyKeys,
+      migrate: (legacy) => ({ ...legacy, source: "legacy" }),
+    });
+    const agentWrite = saveConnectorCredentialBundle("wechat-mp", {
+      cookie: "new-cookie",
+      token: "new-token",
+      source: "agent",
+    });
+    releaseBlocker.resolve();
+    await Promise.all([blocker, migration, agentWrite]);
+
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toMatchObject({
+      revision: 2,
+      payload: { cookie: "new-cookie", token: "new-token", source: "agent" },
+    });
+  });
+
+  it("并发顺序 B：agent 新 bundle 先落库，连接页 read-through 不执行旧迁移", async () => {
+    await seedWechatLegacy();
+    const blockerEntered = deferred();
+    const releaseBlocker = deferred();
+    const blocker = withTransaction(async () => {
+      blockerEntered.resolve();
+      await releaseBlocker.promise;
+      return commitTransaction(undefined);
+    });
+    await blockerEntered.promise;
+    const agentWrite = saveConnectorCredentialBundle("wechat-mp", {
+      cookie: "new-cookie",
+      source: "agent",
+    });
+    let migrateCalls = 0;
+    const migration = readThroughMigrateConnectorBundle({
+      connectorId: "wechat-mp",
+      legacyPlatform: "wechat",
+      legacyKeys,
+      migrate: () => {
+        migrateCalls += 1;
+        return { source: "legacy" };
+      },
+    });
+    releaseBlocker.resolve();
+    const [, , result] = await Promise.all([blocker, agentWrite, migration]);
+
+    expect(migrateCalls).toBe(0);
+    expect(result.migrated).toBe(false);
+    expect(result.bundle?.payload).toEqual({ cookie: "new-cookie", source: "agent" });
+  });
+
+  it("迁移中断回滚，不留下部分 bundle，legacy key 保持完整", async () => {
+    await seedWechatLegacy();
+    await expect(
+      readThroughMigrateConnectorBundle({
+        connectorId: "wechat-mp",
+        legacyPlatform: "wechat",
+        legacyKeys,
+        migrate: () => {
+          throw new Error("simulated interruption");
+        },
+      }),
+    ).rejects.toThrow("simulated interruption");
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
+    const count = await getDocumentsClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = 'wechat'",
+      args: [],
+    });
+    expect(Number(count.rows[0]?.n)).toBe(4);
+  });
+
+  it("损坏单 legacy key 时 fail-closed，不用残缺集合生成 bundle", async () => {
+    await seedWechatLegacy();
+    await getDocumentsClient().execute({
+      sql: "UPDATE sandbox_credentials SET value_enc = 'broken' WHERE platform = 'wechat' AND cred_key = 'token'",
+      args: [],
+    });
+    await expect(
+      readThroughMigrateConnectorBundle({
+        connectorId: "wechat-mp",
+        legacyPlatform: "wechat",
+        legacyKeys,
+        migrate: (legacy) => legacy,
+      }),
+    ).rejects.toThrow();
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
+  });
+
+  it("disconnect 删除携带 revision CAS，迟到删除不得抹掉并发重连", async () => {
+    const first = await saveConnectorCredentialBundle("github", { token: "old" });
+    const reconnected = await saveConnectorCredentialBundle("github", { token: "new" });
+    await expect(
+      deleteConnectorCredentialBundle("github", { expectedRevision: first.revision }),
+    ).rejects.toMatchObject({
+      code: "CONNECTOR_CREDENTIAL_CAS_MISMATCH",
+      actualRevision: reconnected.revision,
+    });
+    await expect(getConnectorCredentialBundle("github")).resolves.toEqual(reconnected);
+    await deleteConnectorCredentialBundle("github", { expectedRevision: reconnected.revision });
+    await expect(getConnectorCredentialBundle("github")).resolves.toBeNull();
+  });
+});

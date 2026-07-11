@@ -1672,7 +1672,6 @@
   #view-workspace .wf-doc .selectedCell::after{
     content:"";position:absolute;inset:0;
     background:color-mix(in srgb,var(--mark) 18%,transparent);pointer-events:none;
-    box-shadow:inset 0 0 0 1.5px var(--mark);
   }
   #view-workspace .wf-doc .column-resize-handle{
     position:absolute;top:0;right:-4px;bottom:-2px;width:8px;

@@ -74,8 +74,10 @@ describe("workspaceCssContract", () => {
 
   it("keeps table CellSelection overlay, clipped chrome and PM resize cursor styles", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const selectedCellRule = cssRule(workspaceCss, "#view-workspace .wf-doc .selectedCell::after");
 
-    expect(workspaceCss).toMatch(/\.selectedCell::after\{[\s\S]*background:color-mix\(in srgb,var\(--mark\) 18%,transparent\)/);
+    expect(selectedCellRule).toContain("background:color-mix(in srgb,var(--mark) 18%,transparent)");
+    expect(selectedCellRule).not.toMatch(/box-shadow|outline|border/);
     expect(workspaceCss).toMatch(/\.tbl-chrome-viewport\{\s*overflow:clip;pointer-events:none/);
     expect(workspaceCss).toContain("#view-workspace .wf-doc .column-resize-handle");
     expect(workspaceCss).toContain("#view-workspace .wf-doc.resize-cursor");
@@ -139,8 +141,6 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("#view-workspace .wf-doc pre .hljs-keyword");
     expect(workspaceCss).toContain("border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;");
     expect(workspaceCss).toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
-    expect(workspaceCss).toContain("box-shadow:inset 0 0 0 1.5px var(--mark)");
-
     expect(componentCss).toMatch(/\.wf-doc h3\s*\{[^}]*font-size:\s*17px/s);
     expect(componentCss).toMatch(/\.wf-doc h4\s*\{[^}]*font-size:\s*15\.5px/s);
     expect(componentCss).toMatch(/\.wf-doc h5\s*\{[^}]*font-size:\s*14\.8px/s);

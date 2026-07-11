@@ -59,6 +59,34 @@ describe("BigPlanPanel", () => {
 
     expect(isBigPlanQuestionnaireReady(pending)).toBe(false);
   });
+
+  it("自由输入聚焦和输入后仍保留选项且可以切回选项", async () => {
+    const spec = answerableSpec();
+    await render(
+      <BigPlanPanel
+        toolCallId="test-free-text"
+        spec={spec}
+        isStreaming={false}
+        onSubmit={vi.fn()}
+        sessionId="s1"
+        stream={null}
+        onToast={vi.fn()}
+      />,
+    );
+    const other = host!.querySelector<HTMLInputElement>(".bp-other")!;
+
+    await act(async () => {
+      other.focus();
+      setNativeInputValue(other, "补充说明");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(host?.querySelectorAll(".bp-opt")).toHaveLength(2);
+    await click(optionButton("长文"));
+    expect(optionButton("长文").getAttribute("aria-pressed")).toBe("true");
+  });
 });
 
 function answerableSpec(): AskUserSpec {
@@ -108,4 +136,9 @@ function buttonByText(text: string): HTMLButtonElement {
   );
   if (!button) throw new Error(`button not found: ${text}`);
   return button;
+}
+
+function setNativeInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
 }

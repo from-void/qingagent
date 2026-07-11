@@ -393,9 +393,6 @@ const QuestionRow = memo(function QuestionRow({
   onOtherText,
   onNumeric,
 }: QuestionRowProps) {
-  const [otherFocused, setOtherFocused] = useState(false);
-  const hideOptions = otherFocused || (answer.freeText ?? "").trim().length > 0;
-
   return (
     <div className="bp-q bp-q-enter" data-wf={`BigPlanQ-${question.id}`}>
       <div className="bp-q-head">
@@ -431,28 +428,24 @@ const QuestionRow = memo(function QuestionRow({
         />
       ) : (
         <>
-          {!hideOptions && (
-            <div className="bp-opts">
-              {(question.options ?? []).map((opt) => (
-                <OptChip
-                  key={`${question.id}:${opt.value}`}
-                  qid={question.id}
-                  option={opt}
-                  multi={question.kind.kind === "multi"}
-                  selectedValues={answer.chosen}
-                  onSingle={onSingle}
-                  onMulti={onMulti}
-                />
-              ))}
-            </div>
-          )}
+          <div className="bp-opts">
+            {(question.options ?? []).map((opt) => (
+              <OptChip
+                key={`${question.id}:${opt.value}`}
+                qid={question.id}
+                option={opt}
+                multi={question.kind.kind === "multi"}
+                selectedValues={answer.chosen}
+                onSingle={onSingle}
+                onMulti={onMulti}
+              />
+            ))}
+          </div>
           <input
             className="bp-other"
             type="text"
             placeholder="补充说明…"
             value={answer.freeText ?? ""}
-            onFocus={() => setOtherFocused(true)}
-            onBlur={() => setOtherFocused(false)}
             onChange={(e) => onOtherText(question.id, e.target.value)}
           />
         </>

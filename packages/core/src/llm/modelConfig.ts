@@ -191,6 +191,13 @@ function captureSessionSnapshot(
   if (!Array.isArray(body.messages)) return;
   const entry = sessionSnapshots.get(sessionId);
   if (!entry || entry.activeGeneration !== generation || entry.leaseId !== leaseId) return;
+  {
+    // 写入时校验:问题在发生那一步就报警,不潜伏到某次借道才炸。快照仍保存(回放前另有 preflight 兜底)。
+    const violation = validateWireMessages(body.messages);
+    if (violation) {
+      console.warn(`[snapshot] session=${sessionId} gen=${generation} INVALID: ${violation}(快照仍存,回放依赖 normalize+preflight)`);
+    }
+  }
   const endpoint = String(url);
   const ordinal = entry.nextOrdinal + 1;
   entry.nextOrdinal = ordinal;
@@ -269,7 +276,7 @@ export type BranchCallResult =
     }
   | {
       ok: false;
-      reason: "stale_snapshot" | "tool_call" | "provider_error" | "invalid_response";
+      reason: "stale_snapshot" | "tool_call" | "provider_error" | "invalid_response" | "preflight_failed";
       attempts: number;
       toolCallRetries: number;
       error?: string;
@@ -374,6 +381,49 @@ function jsonArguments(value: unknown): string {
  * 捕获体来自不同 AI SDK/provider serializer 版本，历史 tool-call 字段可能使用
  * args/input/toolCallId 等内部表示。回放前统一成 OpenAI wire shape，并丢弃孤儿调用/结果。
  */
+/**
+ * wire 形态校验：返回第一处违规描述，合法返回 null。
+ * 快照跨越 AI SDK 内部表示与 OpenAI wire 两个序列化世界——边界数据必须设卡：
+ * 写入时校验让问题在发生那一步就报警，回放前 preflight 兜底省一次必败的网络往返。
+ */
+export function validateWireMessages(messages: unknown[]): string | null {
+  const pendingToolIds = new Set<string>();
+  for (let i = 0; i < messages.length; i += 1) {
+    const m = asRecord(messages[i]);
+    if (!m) return `messages[${i}] 非对象`;
+    const role = m.role;
+    if (role !== "system" && role !== "user" && role !== "assistant" && role !== "tool") {
+      return `messages[${i}].role 非法:${String(role)}`;
+    }
+    if (role === "assistant" && m.tool_calls !== undefined) {
+      if (!Array.isArray(m.tool_calls)) return `messages[${i}].tool_calls 非数组`;
+      for (let j = 0; j < m.tool_calls.length; j += 1) {
+        const call = asRecord(m.tool_calls[j]);
+        const fn = call ? asRecord(call.function) : null;
+        if (!call || typeof call.id !== "string" || !call.id || !fn) {
+          return `messages[${i}].tool_calls[${j}] 结构缺失`;
+        }
+        if (typeof fn.name !== "string" || !fn.name) {
+          return `messages[${i}].tool_calls[${j}].function.name 缺失`;
+        }
+        if (typeof fn.arguments !== "string") {
+          return `messages[${i}].tool_calls[${j}].function.arguments 缺失`;
+        }
+        pendingToolIds.add(call.id);
+      }
+    }
+    if (role === "tool") {
+      if (typeof m.tool_call_id !== "string" || !m.tool_call_id) {
+        return `messages[${i}].tool_call_id 缺失`;
+      }
+      if (!pendingToolIds.has(m.tool_call_id)) {
+        return `messages[${i}] 孤儿 tool 结果:${m.tool_call_id}`;
+      }
+    }
+  }
+  return null;
+}
+
 export function normalizeReplayMessages(messages: unknown[]): BranchMessage[] {
   const normalized: BranchMessage[] = [];
   for (let index = 0; index < messages.length; index += 1) {
@@ -549,9 +599,19 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     const attempt = input.requestContext
       ? nextUsageAttempt(input.requestContext, input.callSite, input.lane)
       : (input.attempt ?? 1) + retry;
+    const replayMessages = [...normalizeReplayMessages(baseBody.messages), ...tail];
+    {
+      // 回放前 preflight:不合法就不发——省一次必败的网络往返,秒降级且日志可诊断。
+      const violation = validateWireMessages(replayMessages);
+      if (violation) {
+        console.warn(`[branchCall] site=${input.callSite} preflight-fail: ${violation} → fallback(0ms)`);
+        void recordBranchUsage(input, null, attempt, `preflight: ${violation}`.slice(0, 200));
+        return { ok: false, reason: "preflight_failed", attempts: retry, toolCallRetries: retry, error: violation };
+      }
+    }
     const body = {
       ...baseBody,
-      messages: [...normalizeReplayMessages(baseBody.messages), ...tail],
+      messages: replayMessages,
       stream: true,
       stream_options: { include_usage: true },
       // 定稿纪律(260712 spike):禁止 tool_choice:"none"——它会把 tools 块从渲染中移除,

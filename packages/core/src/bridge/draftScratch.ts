@@ -189,13 +189,35 @@ export interface TableSelectionScopeViolation {
 
 export type TableSelectionScopeResult = { ok: true } | TableSelectionScopeViolation;
 
+/**
+ * cell 内的块 id 会在整表 replaceBlock 时由 aiIrToPm 重新派生，不代表内容变化。
+ * diagram.svg 是客户端渲染缓存，aiIrToPm 也会归零；除此之外的 attrs、marks、文本与结构都保留。
+ */
+function stripBlockIdsDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripBlockIdsDeep);
+  if (!value || typeof value !== "object") return value;
+
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => {
+    if (key !== "attrs" || !item || typeof item !== "object" || Array.isArray(item)) {
+      return [key, stripBlockIdsDeep(item)];
+    }
+    return [key, Object.fromEntries(
+      Object.entries(item)
+        .filter(([attrName]) => attrName !== "blockId" && !(record.type === "diagram" && attrName === "svg"))
+        .map(([attrName, attrValue]) => [attrName, stripBlockIdsDeep(attrValue)]),
+    )];
+  }));
+}
+
 function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null {
   if (!cell) return null;
   const attrs = cell.attrs;
   return JSON.stringify({
+    type: cell.type,
     text: pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: cell.content }).trim(),
     // 纯文本相同时仍需识别未选单元格里的 mark、链接及子块结构变化。
-    content: getStablePmJson(cell.content),
+    content: getStablePmJson(stripBlockIdsDeep(cell.content)),
     attrs: {
       colspan: attrs?.colspan ?? null,
       rowspan: attrs?.rowspan ?? null,
@@ -281,7 +303,7 @@ function compareRowsAt(
 
 /**
  * 比较表格编辑前后未选范围。选中轴允许增删，因此前缀按起点对齐、后缀按表尾对齐；
- * 未选单元格只比较纯文本和 cell attrs，不做任何结构修补或内容猜测。
+ * 未选单元格比较去除派生 blockId 后的完整内容和 cell attrs，不做任何结构修补或内容猜测。
  */
 export function validateTableSelectionScope(input: {
   before: PmTableNode;

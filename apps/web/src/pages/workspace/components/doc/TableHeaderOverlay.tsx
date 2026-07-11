@@ -161,7 +161,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
   if (!firstRow) return null;
   const content = (
     <div
-      className="wf-doc table-header-overlay-viewport"
+      className="table-header-overlay-viewport"
       data-table-pos={overlay.tablePos}
       style={{
         position: "fixed",
@@ -171,31 +171,33 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
         height: overlay.height,
       }}
     >
-      <table
-        className="table-header-overlay__table"
-        style={{
-          position: "absolute",
-          top: 0,
-          left: overlay.tableLeft,
-          width: overlay.tableWidth,
-          tableLayout: "fixed",
-        }}
-      >
-        <tbody>
-          <tr>
-            {firstRow.content.map((cell, cellIndex) => (
-              <PmTableCellView
-                key={cellIndex}
-                cell={cell}
-                cellStyle={{ width: overlay.cellWidths[cellIndex] }}
-                onClick={() => focusTrueCell(cellIndex)}
-              >
-                {cell.content.map((block, blockIndex) => <PmBlockView key={block.attrs.blockId ?? blockIndex} node={block} />)}
-              </PmTableCellView>
-            ))}
-          </tr>
-        </tbody>
-      </table>
+      <div className="wf-doc table-header-overlay-content">
+        <table
+          className="table-header-overlay__table"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: overlay.tableLeft,
+            width: overlay.tableWidth,
+            tableLayout: "fixed",
+          }}
+        >
+          <tbody>
+            <tr>
+              {firstRow.content.map((cell, cellIndex) => (
+                <PmTableCellView
+                  key={cellIndex}
+                  cell={cell}
+                  cellStyle={{ width: overlay.cellWidths[cellIndex] }}
+                  onClick={() => focusTrueCell(cellIndex)}
+                >
+                  {cell.content.map((block, blockIndex) => <PmBlockView key={block.attrs.blockId ?? blockIndex} node={block} />)}
+                </PmTableCellView>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
   return createPortal(content, resolveWorkspaceFloatingPortalTarget());

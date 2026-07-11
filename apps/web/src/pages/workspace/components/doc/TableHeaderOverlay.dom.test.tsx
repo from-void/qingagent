@@ -101,13 +101,16 @@ describe("TableHeaderOverlay", () => {
     expect(overlayCells[1]?.style.width).toBe("110px");
   });
 
-  it("复用正文语义样式作用域，并保留单元格底色与文字标记", async () => {
+  it("复用正文语义样式但隔离整页纸面盒模型，并保留单元格底色与文字标记", async () => {
     const setup = setupEditor(true, false, true);
     await renderOverlay(setup.overlayHost);
 
     const overlay = setup.portal.querySelector<HTMLElement>(".table-header-overlay-viewport");
     expect(overlay).not.toBeNull();
-    expect(overlay?.classList.contains("wf-doc")).toBe(true);
+    expect(overlay?.classList.contains("wf-doc")).toBe(false);
+    const content = overlay?.querySelector<HTMLElement>(".table-header-overlay-content");
+    expect(content).not.toBeNull();
+    expect(overlay?.style.width).toBe("240px");
     expect(overlay?.querySelector("th")?.getAttribute("data-bg-color")).toBe("rose");
     expect(overlay?.querySelector("mark")?.getAttribute("data-color")).toBe("yellow");
     expect(overlay?.querySelector("span")?.getAttribute("data-text-color")).toBe("red");

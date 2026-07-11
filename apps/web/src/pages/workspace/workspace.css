@@ -1643,6 +1643,11 @@
     overflow:clip;z-index:100005;background:var(--bg-canvas);pointer-events:auto;
     box-shadow:0 1px 0 var(--line-2);
   }
+  /* 只借用 wf-doc 的正文语义样式；display:contents 隔离墨水皮肤的整页纸面盒模型。 */
+  #view-workspace .wf-doc.table-header-overlay-content{
+    display:contents!important;background:transparent!important;box-shadow:none!important;
+    padding:0!important;width:auto!important;max-width:none!important;min-height:0!important;margin:0!important;
+  }
   #view-workspace .table-header-overlay__table{
     margin:0;border-collapse:collapse;background:var(--bg-canvas);color:var(--ink-1);
     font-family:var(--font-zh-serif);

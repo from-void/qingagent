@@ -1164,7 +1164,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               >
                 <span className="bh-icon"><BlockHandleIcon name="table" /></span>
                 插入表格
-                <span className="block-handle-submenu-caret" aria-hidden="true">›</span>
+                <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
               </button>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
                 <span className="bh-icon"><BlockHandleIcon name="columns" /></span>

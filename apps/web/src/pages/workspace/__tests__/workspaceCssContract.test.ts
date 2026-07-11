@@ -92,12 +92,19 @@ describe("workspaceCssContract", () => {
       path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/PmStaticView.tsx"),
       "utf8",
     );
+    const headerOverlay = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/TableHeaderOverlay.tsx"),
+      "utf8",
+    );
 
     expect(workspaceCss).toContain(".tableWrapper:not(:has(> table > tbody > tr > td:first-child))");
     expect(workspaceCss).toContain(".pm-table-scroll:not(:has(> table > tbody > tr > td:first-child))");
     expect(workspaceCss).toMatch(/th:first-child\{\s*position:sticky;left:0;z-index:4;background:var\(--bg-canvas\)/);
     expect(staticView).toContain('className="pm-table-scroll"');
     expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
+    expect(headerOverlay).toContain('className="table-header-overlay-viewport"');
+    expect(headerOverlay).not.toContain('className="wf-doc table-header-overlay-viewport"');
+    expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content\{\s*display:contents!important;[\s\S]*padding:0!important;width:auto!important;max-width:none!important;min-height:0!important/);
   });
 
   it("keeps round-1 editor CSS fixes present", () => {

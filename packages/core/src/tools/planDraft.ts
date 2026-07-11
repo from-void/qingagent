@@ -1,14 +1,12 @@
 import { createTool } from "@mastra/core/tools";
-import { SpanType } from "@mastra/core/observability";
 import type { RequestContext } from "@mastra/core/request-context";
 import { streamText } from "ai";
 import { z } from "zod";
-import { getObservability } from "../mastra.js";
-import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
 import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
 import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
 import { repairModelJson } from "../llm/repairToolCallJson.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
 import { questionnaireRejectedResultSchema } from "./askUserQuestionAdapter.js";
 
 // ---------------------------------------------------------------------------
@@ -270,36 +268,15 @@ function extractTopLevelStringField(
 function recordAskUserSuppressedSpan(
   context: { requestContext?: { get?: (key: string) => unknown } } | undefined,
 ): void {
-  const requestContext = context?.requestContext;
-  const sessionId = requestContext?.get?.("sessionId") as string | undefined;
-  if (!sessionId) return;
-  try {
-    const instance = getObservability()?.getDefaultInstance();
-    if (!instance) return;
-    const traceId = deriveSessionTraceId(sessionId);
-    const span = instance.startSpan({
-      type: SpanType.GENERIC,
-      name: "askuser_suppressed",
-      ...(traceId ? { traceId } : {}),
-      metadata: {
-        eventKind: "askuser_suppressed",
-        sessionId,
-        clientTraceId: (requestContext?.get?.("clientTraceId") as string | null | undefined) ?? null,
-        streamId: (requestContext?.get?.("streamId") as string | null | undefined) ?? null,
-        runId: (requestContext?.get?.("runId") as string | null | undefined) ?? null,
-        origin: (requestContext?.get?.("origin") as string | null | undefined) ?? "manual",
-        suppressed: true,
-        suppressReason: "askUserAlreadyCompleted",
-      },
-      input: { reason: "askUserAlreadyCompleted" },
-    });
-    span.end({ output: { ok: true, suppressed: true } });
-  } catch (err) {
-    console.warn("[askUser] record suppressed span failed (non-fatal)", {
-      sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  recordQuestionnaireEventSpan(context, {
+    eventKind: "askuser_suppressed",
+    metadata: {
+      suppressed: true,
+      suppressReason: "askUserAlreadyCompleted",
+    },
+    input: { reason: "askUserAlreadyCompleted" },
+    output: { ok: true, suppressed: true },
+  });
 }
 
 export function tryParsePartialQuestions(accumulated: string): ParsedQuestion[] {

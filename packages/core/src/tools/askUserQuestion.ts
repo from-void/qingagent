@@ -6,6 +6,7 @@ import {
   buildQuestionnaireRejectedResult,
   questionnaireRejectedResultSchema,
 } from "./askUserQuestionAdapter.js";
+import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
 
 const answerSchema = z.object({
   chosen: z.array(z.string()),
@@ -36,7 +37,8 @@ const questionSchema = z.object({
 export const askUserQuestionTool = createTool({
   id: "askUserQuestion",
   description:
-    "向用户提出 1 至 4 道通用单选或多选题。questions 会逐字传给问卷通道；每题至少两个选项。工具会挂起当前轮并等待用户回答。",
+    "向用户弹出 1 至 4 道单选或多选题，确认分叉、路由或其他需要用户拍板的选择；问题与选项由你给出并逐字传给问卷通道。" +
+    "必须单独调用，不能和任何其他工具并发；本工具会挂起当前轮并等待用户回答。写作方向建模不要用本工具，改用 planDraft。",
   inputSchema: askUserQuestionInputSchema,
   outputSchema: z.union([resumeSchema, questionnaireRejectedResultSchema]),
   suspendSchema: z.object({
@@ -52,6 +54,23 @@ export const askUserQuestionTool = createTool({
     if (resumeData) return resumeData;
 
     const adapted = adaptAskUserQuestionInput(input);
+    const salvagedCount = adapted.inputQuestionCount - adapted.questions.length;
+    recordQuestionnaireEventSpan(context, {
+      eventKind: "askuserquestion_direct",
+      metadata: {
+        inputQuestionCount: adapted.inputQuestionCount,
+        survivingQuestionCount: adapted.questions.length,
+        salvagedCount,
+      },
+      input: {
+        questionCount: adapted.inputQuestionCount,
+      },
+      output: {
+        ok: adapted.questions.length > 0,
+        survivingQuestionCount: adapted.questions.length,
+        salvagedCount,
+      },
+    });
     if (adapted.questions.length === 0) {
       return buildQuestionnaireRejectedResult();
     }

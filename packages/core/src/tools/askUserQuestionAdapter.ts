@@ -22,6 +22,7 @@ export type AskUserQuestionInput = z.infer<typeof askUserQuestionInputSchema>;
 export interface AdaptedAskUserQuestionInput {
   id: string;
   rationale: string;
+  inputQuestionCount: number;
   questions: AdaptedAskUserQuestion[];
 }
 
@@ -125,7 +126,8 @@ function normalizeQuestion(raw: unknown): Omit<AdaptedAskUserQuestion, "id"> | n
 export function adaptAskUserQuestionInput(
   input: AskUserQuestionInput,
 ): AdaptedAskUserQuestionInput {
-  const questions = parseQuestions(input.questions)
+  const parsedQuestions = parseQuestions(input.questions);
+  const questions = parsedQuestions
     .map(normalizeQuestion)
     .filter((question): question is NonNullable<typeof question> => question !== null)
     .slice(0, MAX_QUESTIONS)
@@ -134,6 +136,7 @@ export function adaptAskUserQuestionInput(
   return {
     id: input.id,
     rationale: input.rationale,
+    inputQuestionCount: parsedQuestions.length,
     questions,
   };
 }

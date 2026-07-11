@@ -303,6 +303,28 @@ describe("QingML draft tools", () => {
     expect(state.docDraftCandidateDoc ? getStablePmJson(state.docDraftCandidateDoc) : before).toBe(before);
   });
 
+  it("editDraft 保留重复 blockId 防线，并把刷新自愈指引返回给模型", async () => {
+    const state = createSession("s-duplicate-block-id-guidance");
+    bindDoc(state, doc([
+      paragraph("duplicate-ref", "第一段"),
+      paragraph("duplicate-ref", "第二段"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "duplicate-ref",
+        block: qingmlParagraph("尝试修改"),
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("重复 blockId");
+    expect(result.error).toContain("请提示用户刷新文档");
+    expect(state.docDraftCandidateDoc).toBeNull();
+  });
+
   it("editDraft 服务端 fail-closed 拒绝仍有损的 replaceBlock,但 deleteBlock 放行", async () => {
     const state = createSession("s-lossy");
     const multiParagraphCallout: PmBlockNode = {

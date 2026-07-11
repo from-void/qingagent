@@ -73,6 +73,7 @@ import {
   type AiRunMark,
   type BlockEdit,
   type FragmentAction,
+  type PmDoc,
   type QingmlFragmentResult,
 } from "@qingagent/pm-schema";
 
@@ -736,7 +737,18 @@ export function createSessionScopedTools(
       const editDraftToolCallId =
         (context as { agent?: { toolCallId?: string | null } } | undefined)?.agent?.toolCallId ?? null;
       const editDraftExecuteSeq = bumpEditDraftExecuteCount(turnRunId);
-      const candidateDoc = ensureDraftCandidateDoc(state);
+      let candidateDoc: PmDoc;
+      try {
+        candidateDoc = ensureDraftCandidateDoc(state);
+      } catch (error) {
+        return {
+          ok: false,
+          applied: [],
+          error: addDuplicateBlockIdRecoveryGuidance(
+            error instanceof Error ? error.message : String(error),
+          ),
+        };
+      }
       const candidateBlocksBefore = candidateDoc.content.length;
       logger.info("[editDraft.execute] enter", {
         sessionId: state.sessionId,
@@ -848,7 +860,7 @@ export function createSessionScopedTools(
           return {
             ok: false,
             applied: [],
-            error: blockResult.error,
+            error: addDuplicateBlockIdRecoveryGuidance(blockResult.error),
             failedOpIndex:
               blockResult.failedOpIndex === undefined
                 ? undefined
@@ -1071,4 +1083,9 @@ export function createSessionScopedTools(
     updateWorkingMemory,
     ...(writeDraft ? { writeDraft } : {}),
   };
+}
+
+function addDuplicateBlockIdRecoveryGuidance(error: string | undefined): string | undefined {
+  if (!error || !/重复 blockId/.test(error)) return error;
+  return `${error}；文档标识发生冲突，请提示用户刷新文档以触发自动修复后再试。`;
 }

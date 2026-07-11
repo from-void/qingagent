@@ -269,23 +269,27 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
     const duplicateDoc = duplicateTableDoc();
 
-    act(() => {
-      root.render(
-        <DocumentSnapshotView
-          doc={pmDocToViewDocumentSnapshot(duplicateDoc, 7)}
-          docId="session-duplicate-load"
-          editable
-          interactiveEditable
-          showPatches={false}
-          acceptedPatches={new Set()}
-          rejectedPatches={new Set()}
-          onEditorReady={(readyEditor) => {
-            editor = readyEditor;
-          }}
-          onEditorChange={onEditorChange}
-        />,
-      );
-    });
+    const render = (doc: PmDoc, version: number) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            doc={pmDocToViewDocumentSnapshot(doc, version)}
+            docId="session-duplicate-load"
+            editable
+            interactiveEditable
+            showPatches={false}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+
+    render(duplicateDoc, 7);
     await flush();
 
     expect(editor).not.toBeNull();
@@ -295,6 +299,17 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(onEditorChange).toHaveBeenCalledTimes(1);
     expect(collectAllBlockIds(onEditorChange.mock.calls[0]![0])).toEqual(ids);
+
+    // 服务器把自愈保存以 version+1 原样回显时，应命中 pendingSelfDocKeys，既不 setContent
+    // 重设正文/选区，也不再次触发保存。
+    let echoedDocChanges = 0;
+    editor!.on("transaction", ({ transaction }) => {
+      if (transaction.docChanged) echoedDocChanges += 1;
+    });
+    render(onEditorChange.mock.calls[0]![0], 8);
+    await flush();
+    expect(echoedDocChanges).toBe(0);
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
 
     const editable = applyBlockEdits(healed, [
       {

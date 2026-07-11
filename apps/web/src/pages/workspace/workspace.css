@@ -957,13 +957,16 @@
   }
   #view-workspace .aus2-input:focus-visible{outline:2px solid var(--mark);outline-offset:4px}
   #view-workspace .aus2-bubble{
-    position:absolute;top:-14px;transform:translateX(-50%);padding:1px 8px;
+    position:absolute;top:-21px;z-index:3;transform:translateX(-50%);padding:1px 8px;
     font-size:11px;white-space:nowrap;pointer-events:none;transition:left .06s linear;
   }
+  #view-workspace .aus2-bubble::before,
   #view-workspace .aus2-bubble::after{
-    content:"";position:absolute;left:50%;bottom:-4px;transform:translateX(-50%) rotate(45deg);
-    width:6px;height:6px;
+    content:"";position:absolute;left:50%;transform:translateX(-50%);
+    width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;
   }
+  #view-workspace .aus2-bubble::before{bottom:-6px;border-top:6px solid var(--mark)}
+  #view-workspace .aus2-bubble::after{bottom:-4px;border-top:5px solid transparent}
   #view-workspace .aus2-scale{display:flex;justify-content:space-between;margin-top:8px;padding:0 1px}
   #view-workspace .aus2-scale span{font-size:10px;position:relative;padding-top:7px}
   #view-workspace .aus2-scale span::before{

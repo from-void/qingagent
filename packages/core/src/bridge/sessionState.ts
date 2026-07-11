@@ -226,7 +226,7 @@ export interface SessionState {
  * 0603 — 触发来源三态（日志可观测）。manual=真人前端操作；agent=AI 经 agent-browser 等触发；
  * e2e=自动化（Playwright）。
  */
-export type SpanOrigin = "manual" | "agent" | "e2e";
+export type SpanOrigin = "manual" | "agent" | "e2e" | "external";
 
 export interface OmSidecarCursor {
   turnIndex: number;

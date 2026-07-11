@@ -12,9 +12,10 @@ import type { StartSession } from "./StartSession";
 import type { SubmitReviewOutcome } from "./SubmitReviewOutcome";
 import type { UpdateDoc } from "./UpdateDoc";
 import type { UpdateMaterialSummary } from "./UpdateMaterialSummary";
+import type { ExternalPropose } from "./ExternalPropose";
 
 /**
  * Tagged union over every command kind. Wire format:
  * `{ "kind": "sendMessage", "data": { ... } }`.
  */
-export type Command = { "kind": "startSession", "data": StartSession } | { "kind": "sendMessage", "data": SendMessage } | { "kind": "cancelStream", "data": CancelStream } | { "kind": "acceptPatch", "data": AcceptPatch } | { "kind": "rejectPatch", "data": RejectPatch } | { "kind": "commitPatches", "data": CommitPatches } | { "kind": "submitReviewOutcome", "data": SubmitReviewOutcome } | { "kind": "resumeAskUser", "data": ResumeAskUser } | { "kind": "cancelAskUser", "data": CancelAskUser } | { "kind": "updateDoc", "data": UpdateDoc } | { "kind": "updateMaterialSummary", "data": UpdateMaterialSummary } | { "kind": "removeMaterial", "data": RemoveMaterial } | { "kind": "reparseMaterial", "data": ReparseMaterial } | { "kind": "attachFolder", "data": AttachFolder } | { "kind": "detachFolder", "data": DetachFolder };
+export type Command = { "kind": "startSession", "data": StartSession } | { "kind": "sendMessage", "data": SendMessage } | { "kind": "cancelStream", "data": CancelStream } | { "kind": "acceptPatch", "data": AcceptPatch } | { "kind": "rejectPatch", "data": RejectPatch } | { "kind": "commitPatches", "data": CommitPatches } | { "kind": "submitReviewOutcome", "data": SubmitReviewOutcome } | { "kind": "resumeAskUser", "data": ResumeAskUser } | { "kind": "cancelAskUser", "data": CancelAskUser } | { "kind": "updateDoc", "data": UpdateDoc } | { "kind": "updateMaterialSummary", "data": UpdateMaterialSummary } | { "kind": "removeMaterial", "data": RemoveMaterial } | { "kind": "reparseMaterial", "data": ReparseMaterial } | { "kind": "attachFolder", "data": AttachFolder } | { "kind": "detachFolder", "data": DetachFolder } | { "kind": "externalPropose", "data": ExternalPropose };

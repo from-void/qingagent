@@ -44,6 +44,7 @@ try {
 // import "./observability.js" 先于 import "./app",只是推迟到迁移之后以错开 DB 写锁。
 await import("./observability.js");
 const { app } = await import("./app");
+const { startExternalInstance, stopExternalInstance } = await import("./lib/externalInstance.js");
 const {
   installNetProbe,
   migrateThreadMetadataToDocuments,
@@ -58,6 +59,13 @@ void migrateThreadMetadataToDocuments()
 
 serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`Qingagent server listening on http://${hostname}:${info.port}`);
+  void startExternalInstance({ port: info.port }).catch((error) => {
+    console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
+  });
   installNetProbe();
   warmUpModelEndpoint(resolveBaseUrl());
+});
+
+process.once("beforeExit", () => {
+  void stopExternalInstance();
 });

@@ -9,9 +9,11 @@ import type {
   ToolCallStatus,
   BridgeFrame,
   FolderSourceRecord,
+  ExternalProposeOp,
 } from "@qingagent/contract-ts";
 import { readFile } from "node:fs/promises";
-import { normalizePmDoc, pmToLegacySections } from "@qingagent/pm-schema";
+import { markdownToPm, normalizePmDoc, pmToLegacySections, pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
+import crypto from "node:crypto";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { SpanType } from "@mastra/core/observability";
 import type { Span } from "@mastra/core/observability";
@@ -57,6 +59,13 @@ import {
   deriveContentState,
   deriveEditorState,
   emitProjectedDocState,
+  settleDraftCandidate,
+  clonePmDoc,
+  ensureDraftCandidateDoc,
+  replaceDraftCandidateDoc,
+  collectTopLevelTextBlocks,
+  findLiteralMatches,
+  replaceTextRuns,
   normalizeRestoredDocStateKind,
   normalizeTargetDocState,
   sessionIdToTraceId,
@@ -337,10 +346,10 @@ export function normalizeClientTraceId(
  * 0603 — 触发来源三态(日志可观测)。读 `x-origin` header:manual=真人前端 /
  * agent=AI 经 agent-browser 等触发 / e2e=自动化。非法/缺省 → manual。纯函数,便于单测。
  */
-export type Origin = "manual" | "agent" | "e2e";
+export type Origin = "manual" | "agent" | "e2e" | "external";
 export function parseOrigin(raw: string | undefined): Origin {
   const v = (raw ?? "").trim().toLowerCase();
-  return v === "agent" || v === "e2e" ? v : "manual";
+  return v === "agent" || v === "e2e" || v === "external" ? v : "manual";
 }
 
 /**
@@ -400,6 +409,13 @@ function summarizeCommandInput(command: Command): Record<string, unknown> {
         sectionsCount: command.data.legacySections?.length ?? null,
         hasPmDoc: Boolean(command.data.doc),
         expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
+      };
+    case "externalPropose":
+      return {
+        sessionId: command.data.sessionId,
+        expectedDocVersion: command.data.expectedDocVersion,
+        opCount: command.data.ops.length,
+        opKinds: command.data.ops.map((op) => op.kind),
       };
     case "updateMaterialSummary":
       return {
@@ -544,6 +560,7 @@ export async function* handleCommand(
   clientTraceId?: string,
   origin: Origin = "manual",
   modelOverrides?: ModelOverrides,
+  client?: string,
 ): AsyncGenerator<BridgeFrame> {
   // 阶段4 — 在统一分发点归一化 clientTraceId 并记一条 command span（Layer ②）。
   // sessionId 在分发前已解析（含 patch/toolCall 反查），保证 command span 的
@@ -570,6 +587,7 @@ export async function* handleCommand(
       resolvedClientTraceId,
       origin,
       modelOverrides,
+      client,
     )) {
       failure ??= getFailureFromFrame(frame);
       yield frame;
@@ -631,6 +649,7 @@ async function* handleCommandInner(
   resolvedClientTraceId: string | undefined,
   origin: Origin,
   modelOverrides: ModelOverrides | undefined,
+  client: string | undefined,
 ): AsyncGenerator<BridgeFrame> {
   switch (command.kind) {
     case "startSession": {
@@ -986,6 +1005,143 @@ async function* handleCommandInner(
       return;
     }
 
+    case "externalPropose": {
+      const session = await getOrRestoreSession(command.data.sessionId);
+      const clientMutationId = command.data.clientMutationId ?? crypto.randomUUID();
+      if (!session) {
+        yield docWriteReason(clientMutationId, "not_found");
+        return;
+      }
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+
+      if (deriveAgentBusy(session) || deriveActiveOverlay(session) !== null) {
+        yield docWriteReason(clientMutationId, "agent_busy");
+        return;
+      }
+      const contentState = deriveContentState(session);
+      if (contentState.kind === "pendingReview") {
+        yield docWriteReason(clientMutationId, "not_editable");
+        return;
+      }
+      if (session.docVersion !== command.data.expectedDocVersion) {
+        yield {
+          kind: "docWriteResult",
+          data: {
+            ok: false,
+            clientMutationId,
+            conflict: {
+              expectedDocumentSnapshot: command.data.expectedDocVersion,
+              actualDocumentSnapshot: session.docVersion,
+            },
+          },
+        };
+        return;
+      }
+
+      const fullDraftOp = command.data.ops[0]?.kind === "fullDraft" ? command.data.ops[0] : null;
+      if (contentState.kind === "empty") {
+        if (!fullDraftOp || command.data.ops.length !== 1) {
+          yield docWriteReason(clientMutationId, "validation_error");
+          return;
+        }
+        const submittedDoc = normalizePmDoc(markdownToPm(fullDraftOp.markdown));
+        const result = await commitDocumentOp({
+          docId: session.docId ?? session.sessionId,
+          threadId: session.threadId ?? session.sessionId,
+          resourceId: session.resourceId,
+          expectedDocumentSnapshot: command.data.expectedDocVersion,
+          clientMutationId,
+          opKind: "replace_doc",
+          actorType: "agent",
+          createIfMissing: {
+            title: session.title,
+            docState: "editing",
+            lastSyncedVersion: 0,
+          },
+          summary: "外部工具首写文档",
+          apply: () => ({ nextDoc: submittedDoc }),
+        });
+        if (result.status === "conflict") {
+          yield {
+            kind: "docWriteResult",
+            data: {
+              ok: false,
+              clientMutationId,
+              conflict: {
+                expectedDocumentSnapshot: command.data.expectedDocVersion,
+                actualDocumentSnapshot: result.currentVersion,
+              },
+            },
+          };
+          return;
+        }
+        if (result.status !== "committed") {
+          yield docWriteReason(clientMutationId, result.status === "not_found" ? "not_found" : "validation_error");
+          return;
+        }
+        session.doc = result.doc;
+        session.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
+        session.docVersion = result.docVersion;
+        session._directionChangeAskedSinceLastWrite = false;
+        transitionDocState(session, deriveContentState(session), "user_doc_write", { mode: "normalize" });
+        const nextTitle = deriveTitleFromSections(session.legacySections);
+        if (nextTitle && nextTitle !== session.title) {
+          session.title = nextTitle;
+          yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };
+        }
+        await persistSessionMetadata(session);
+        yield* emitProjectedDocState(session, "external_full_draft");
+        yield { kind: "docWriteResult", data: { ok: true, clientMutationId, docVersion: session.docVersion } };
+        return;
+      }
+
+      if (fullDraftOp) {
+        yield docWriteReason(clientMutationId, "validation_error");
+        return;
+      }
+
+      const baseCandidate = ensureDraftCandidateDoc(session);
+      let workingDoc = clonePmDoc(baseCandidate);
+      const applied = applyExternalProposalOps(workingDoc, command.data.ops);
+      if (!applied.ok) {
+        yield docWriteReason(clientMutationId, "validation_error");
+        return;
+      }
+      workingDoc = applied.doc;
+      replaceDraftCandidateDoc(session, workingDoc);
+
+      const externalId = `external-${client ?? "agent"}-${crypto.randomUUID()}`;
+      const agentMessageId = externalId;
+      const streamId = externalId;
+      const runId = externalId;
+      const agentMessage: ChatMessage = {
+        id: agentMessageId,
+        role: { kind: "agent" },
+        ts: new Date().toISOString(),
+        parts: [],
+        chips: null,
+      };
+
+      const settled = yield* settleDraftCandidate({
+        state: session,
+        agentMessageId,
+        streamId,
+        runId,
+        wholeDocument: false,
+      });
+      if (settled.hunkCount <= 0) {
+        yield docWriteReason(clientMutationId, "validation_error");
+        return;
+      }
+      agentMessage.parts.push({
+        kind: "patchSummary",
+        data: { count: settled.hunkCount, hunkIds: Array.from(session.suggestions.keys()) },
+      });
+      session.chatHistory.push(agentMessage);
+      yield { kind: "chatMessageAdded", data: { message: agentMessage } };
+      return;
+    }
+
     case "updateMaterialSummary": {
       const session = await getOrRestoreSession(command.data.sessionId);
       if (!session) {
@@ -1266,6 +1422,67 @@ function docWriteReason(
       reason,
     },
   };
+}
+
+function applyExternalProposalOps(
+  doc: PmDoc,
+  ops: ExternalProposeOp[],
+): { ok: true; doc: PmDoc } | { ok: false; error: string } {
+  let workingDoc = clonePmDoc(doc);
+  for (const op of ops) {
+    if (op.kind === "strReplace") {
+      const blocks = collectTopLevelTextBlocks(workingDoc);
+      const matches = op.nth
+        ? findLiteralMatches(blocks, op.old, true).slice(op.nth - 1, op.nth)
+        : findLiteralMatches(blocks, op.old, false);
+      if (matches.length === 0) return { ok: false, error: "文本未命中或未唯一命中" };
+      workingDoc = replaceTextRuns(workingDoc, matches, op.new);
+      continue;
+    }
+    if (op.kind === "appendSection") {
+      const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
+      workingDoc = normalizePmDoc({
+        ...workingDoc,
+        content: [...workingDoc.content, ...insertDoc.content],
+      });
+      continue;
+    }
+    if (op.kind === "insertAfterLine") {
+      const insertDoc = normalizePmDoc(markdownToPm(op.markdown));
+      const index = blockIndexForMarkdownLine(workingDoc, op.line);
+      if (index < 0) return { ok: false, error: "行号超出范围" };
+      workingDoc = normalizePmDoc({
+        ...workingDoc,
+        content: [
+          ...workingDoc.content.slice(0, index + 1),
+          ...insertDoc.content,
+          ...workingDoc.content.slice(index + 1),
+        ],
+      });
+      continue;
+    }
+    return { ok: false, error: "已有文档不允许 fullDraft" };
+  }
+  return { ok: true, doc: workingDoc };
+}
+
+function blockIndexForMarkdownLine(doc: PmDoc, line: number): number {
+  if (doc.content.length === 0) return -1;
+  let consumedLines = 0;
+  for (let index = 0; index < doc.content.length; index += 1) {
+    const blockDoc = normalizePmDoc({ ...doc, content: [doc.content[index]!] });
+    const blockLineCount = countMarkdownLines(pmToMarkdown(blockDoc));
+    const trailingBlankLineCount = index < doc.content.length - 1 ? 1 : 0;
+    const blockEndLine = consumedLines + blockLineCount + trailingBlankLineCount;
+    if (line <= blockEndLine) return index;
+    consumedLines = blockEndLine;
+  }
+  return line <= consumedLines + 1 ? doc.content.length - 1 : -1;
+}
+
+function countMarkdownLines(markdown: string): number {
+  if (markdown.length === 0) return 1;
+  return markdown.split(/\r?\n/).length;
 }
 
 type AttachFolderSource = Extract<Command, { kind: "attachFolder" }>["data"]["source"];
@@ -2549,7 +2766,7 @@ function normalizedRestoreOptions(
     : undefined;
 }
 
-async function getOrRestoreSession(
+export async function getOrRestoreSession(
   sessionId: string,
   options: { preferredAskUserToolCallId?: string | null } = {},
 ): Promise<SessionState | undefined> {
@@ -2648,8 +2865,8 @@ export function findSessionByReviewBatchId(reviewBatchId: string): SessionState 
 }
 
 export const sessionManager = new SessionManager({
-  handleCommand: (command, clientTraceId, origin, modelOverrides) =>
-    handleCommand(command, clientTraceId, origin, modelOverrides),
+  handleCommand: (command, clientTraceId, origin, modelOverrides, client) =>
+    handleCommand(command, clientTraceId, origin, modelOverrides, client),
   abortSession: (sessionId) => {
     sessions.get(sessionId)?._abortController?.abort();
   },

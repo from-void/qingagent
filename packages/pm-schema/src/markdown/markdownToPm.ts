@@ -4,7 +4,7 @@ import {
   type LegacyListSectionLike,
   type LegacyTaskItem,
 } from "../legacy/legacySectionsToPm";
-import type { PmBlockNode, PmDoc, PmInlineNode } from "../types";
+import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "../types";
 
 type ParsedMarkdownListKind = "bullet" | "ordered" | "task";
 
@@ -333,15 +333,29 @@ function parseInlineMarkdown(text: string): PmInlineNode[] {
     if (match.kind === "code") {
       nodes.push({ type: "text", text: match.body, marks: [{ type: "code" }] });
     } else if (match.kind === "bold") {
-      nodes.push({ type: "text", text: match.body, marks: [{ type: "bold" }] });
+      nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "bold" }));
     } else if (match.kind === "italic") {
-      nodes.push({ type: "text", text: match.body, marks: [{ type: "italic" }] });
+      nodes.push(...addInlineMark(parseInlineMarkdown(match.body), { type: "italic" }));
     } else {
       nodes.push({ type: "inlineMath", attrs: { latex: match.body } });
     }
     cursor = match.end;
   }
   return nodes;
+}
+
+/**
+ * 粗体/斜体包裹的内容仍要先识别行内 code 与数学公式。持久 PM 合同禁止 inlineMath 带 mark，
+ * 而 Tiptap 的 code mark 又排斥其它 mark，因此这两类叶子节点保持原样。
+ */
+function addInlineMark(nodes: readonly PmInlineNode[], mark: Extract<PmMark, { type: "bold" | "italic" }>): PmInlineNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "text" || node.marks?.some((current) => current.type === "code")) return node;
+    const marks = node.marks ?? [];
+    if (marks.some((current) => current.type === mark.type)) return node;
+    // 内层 mark 在前、外层 mark 在后，既稳定又与 markdown 序列化的包裹顺序一致。
+    return { ...node, marks: [...marks, mark] };
+  });
 }
 
 type InlineMatch = {
@@ -383,12 +397,18 @@ function boundedToken(
       continue;
     }
     const bodyStart = index + open.length;
-    const end = text.indexOf(close, bodyStart);
-    if (end > bodyStart) {
+    let end = text.indexOf(close, bodyStart);
+    while (end > bodyStart) {
+      // 例如 **斜体*嵌套*** 的尾部三个 *：第一个 * 属于内层斜体，粗体应取最后两个 *。
+      if (kind === "bold" && text[end + close.length] === "*") {
+        end = text.indexOf(close, end + 1);
+        continue;
+      }
       const body = text.slice(bodyStart, end);
       if (!/^\s|\s$/.test(body)) {
         return { kind, index, end: end + close.length, body };
       }
+      end = text.indexOf(close, end + 1);
     }
     index = text.indexOf(open, index + 1);
   }

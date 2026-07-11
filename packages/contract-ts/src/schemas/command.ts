@@ -18,6 +18,7 @@ import type { UpdateMaterialSummary } from "../UpdateMaterialSummary";
 import type { RemoveMaterial } from "../RemoveMaterial";
 import type { ReparseMaterial } from "../ReparseMaterial";
 import type { AttachFolder, DetachFolder } from "../FolderSource";
+import type { ExternalPropose, ExternalProposeOp } from "../ExternalPropose";
 import {
   boundedNonEmptyString,
   chatChipSchema,
@@ -207,6 +208,36 @@ const detachFolderDataSchema = z.object({
 }) satisfies z.ZodType<DetachFolder>;
 type _DetachFolderExact = Expect<Equal<z.infer<typeof detachFolderDataSchema>, DetachFolder>>;
 
+const externalProposeOpSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fullDraft"), markdown: z.string() }),
+  z.object({
+    kind: z.literal("strReplace"),
+    old: z.string().min(1),
+    new: z.string(),
+    nth: z.number().int().positive().optional(),
+  }),
+  z.object({
+    kind: z.literal("insertAfterLine"),
+    line: z.number().int().positive(),
+    markdown: z.string(),
+  }),
+  z.object({ kind: z.literal("appendSection"), markdown: z.string() }),
+]) satisfies z.ZodType<ExternalProposeOp>;
+type _ExternalProposeOpExact = Expect<Equal<z.infer<typeof externalProposeOpSchema>, ExternalProposeOp>>;
+
+const externalProposeDataSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    expectedDocVersion: z.number().int().nonnegative(),
+    clientMutationId: z.string().min(1).optional(),
+    ops: z.array(externalProposeOpSchema).min(1).max(50),
+  })
+  .refine((data) => {
+    const fullDraftCount = data.ops.filter((op) => op.kind === "fullDraft").length;
+    return fullDraftCount === 0 || (fullDraftCount === 1 && data.ops.length === 1);
+  }, "fullDraft must not be mixed with other ops") satisfies z.ZodType<ExternalPropose>;
+type _ExternalProposeExact = Expect<Equal<z.infer<typeof externalProposeDataSchema>, ExternalPropose>>;
+
 // ---- 顶层 Command 联合 ----
 
 /**
@@ -229,6 +260,7 @@ export const COMMAND_KINDS = [
   "reparseMaterial",
   "attachFolder",
   "detachFolder",
+  "externalPropose",
 ] as const;
 type _CommandKindsExact = Expect<Equal<(typeof COMMAND_KINDS)[number], Command["kind"]>>;
 
@@ -254,5 +286,6 @@ export const commandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("reparseMaterial"), data: reparseMaterialDataSchema }),
   z.object({ kind: z.literal("attachFolder"), data: attachFolderDataSchema }),
   z.object({ kind: z.literal("detachFolder"), data: detachFolderDataSchema }),
+  z.object({ kind: z.literal("externalPropose"), data: externalProposeDataSchema }),
 ]) satisfies z.ZodType<Command>;
 type _CommandExact = Expect<Equal<z.infer<typeof commandSchema>, Command>>;

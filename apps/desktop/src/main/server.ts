@@ -104,6 +104,11 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     // 桌面渲染端只加载本机 localhost 服务,固定回环监听可减少局域网暴露面。
     const server = serve({ fetch: observedFetch, port: 0, hostname: "127.0.0.1" }, (info) => {
       console.log(`Embedded server started on port ${info.port}`);
+      void import("@qingagent/server/externalInstance").then(({ startExternalInstance }) =>
+        startExternalInstance({ port: info.port }),
+      ).catch((error) => {
+        console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
+      });
       resolve({ port: info.port });
     });
   });

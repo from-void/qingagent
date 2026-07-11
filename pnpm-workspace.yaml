@@ -10,5 +10,6 @@ packages:
   - "packages/core"
   - "packages/diagram-engine"
   - "packages/pm-schema"
+  - "packages/qa-cli"
   - "packages/server"
   - "packages/ui-kit"

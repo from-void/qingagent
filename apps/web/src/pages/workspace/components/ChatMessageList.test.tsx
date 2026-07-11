@@ -8,6 +8,7 @@ import {
   buildEmptyHintTypewriterPlan,
   ChatMessageList,
   EMPTY_HINT_TEXT,
+  parseExternalClient,
   shouldShowPreTokenLoading,
   splitStreamingInlineRuns,
 } from "./ChatMessageList";
@@ -734,6 +735,55 @@ describe("ChatMessageList", () => {
     expect(host?.querySelector(".u-procdiv")).not.toBeNull();
     expect(host?.textContent ?? "").toContain("过程 · 1 步");
     expect(host?.textContent ?? "").toContain("已修改 2 处");
+  });
+
+  it("parseExternalClient 从消息 id 解析调用方,非外部消息返回 null", () => {
+    expect(parseExternalClient("external-claudecode-3f2a1b2c-0000")).toBe("claude-code");
+    expect(parseExternalClient("external-codex-3f2a1b2c-0000")).toBe("codex");
+    // 未知 token / 老格式 external-<uuid> 归到通用 agent
+    expect(parseExternalClient("external-3f2a1b2c-0000")).toBe("agent");
+    expect(parseExternalClient("external-something-x")).toBe("agent");
+    // 非外部消息
+    expect(parseExternalClient("agent-turn-1")).toBeNull();
+    expect(parseExternalClient("m-123")).toBeNull();
+  });
+
+  it("external-* 提案单独挂一条外部信息条，审阅 chip 与普通 agent 保持一致(解耦)", async () => {
+    const messages: ChatMessage[] = [
+      {
+        ...turn([{ kind: "patchSummary", data: { count: 3, hunkIds: ["external-h1", "external-h2", "external-h3"] } }]),
+        id: "external-proposal-1",
+      },
+      turn([{ kind: "patchSummary", data: { count: 2, hunkIds: ["agent-h1", "agent-h2"] } }]),
+    ];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    // 独立的外部信息条只挂在 external-* 消息上,且不掺 count(count 归审阅 chip)。
+    const notes = host?.querySelectorAll('[data-wf="ExternalOpNote"]') ?? [];
+    expect(notes.length).toBe(1);
+    expect(notes[0]?.textContent ?? "").toContain("提交了修改");
+    expect(notes[0]?.querySelector("svg")).not.toBeNull();
+    // 审阅 chip 与来源解耦:外部、普通两条都是通用的「已修改 N 处」。
+    expect(host?.textContent ?? "").toContain("已修改 3 处");
+    expect(host?.textContent ?? "").toContain("已修改 2 处");
+    expect(host?.textContent ?? "").not.toContain("外部工具提交了 3 处修改");
+  });
+
+  it("external-* 用户消息(代发)在气泡上方挂一条「代你发送了一条消息」信息条", async () => {
+    const messages: ChatMessage[] = [
+      userMessage("external-claudecode-3f2a1b2c-0000"),
+      userMessage("m-user-normal"),
+    ];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    // 只在 external-* 用户消息上挂一条,文案是"代发"而非"提交修改"。
+    const notes = host?.querySelectorAll('[data-wf="ExternalOpNote"]') ?? [];
+    expect(notes.length).toBe(1);
+    expect(notes[0]?.textContent ?? "").toContain("Claude Code 代你发送了一条消息");
+    expect(notes[0]?.textContent ?? "").not.toContain("提交了修改");
+    expect(notes[0]?.querySelector("svg")).not.toBeNull();
   });
 
   it("审批进行中(live · 待确认)的修改轮不折叠——接受/放弃后才折", async () => {

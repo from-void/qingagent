@@ -26,7 +26,15 @@ export {
 export {
   clearDraftMutationScratch,
   clearInMemoryDraftDocs,
+  clonePmDoc,
+  currentPmDoc,
+  ensureDraftCandidateDoc,
+  replaceDraftCandidateDoc,
 } from "./draftScratch.js";
+
+export {
+  settleDraftCandidate,
+} from "./settleDraftCandidate.js";
 
 export {
   abortAndCleanupTurn,

@@ -255,6 +255,84 @@ function isInternalTextLine(line: string): boolean {
   return /\b(?:different approach|tool result|tool call|system prompt|developer instruction)\b/i.test(text);
 }
 
+// 外部提案来源:服务端把调用方编进消息 id(external-<client>-<uuid>);web 只做展示映射。
+export type ExternalClient = "claude-code" | "codex" | "agent";
+
+export function parseExternalClient(id: string): ExternalClient | null {
+  const match = /^external-([a-z0-9]+)-/.exec(id);
+  if (!match) return null;
+  switch (match[1]) {
+    case "claudecode":
+      return "claude-code";
+    case "codex":
+      return "codex";
+    default:
+      // 老格式 external-<uuid> 或未知来源:统一按"外部 Agent"展示。
+      return "agent";
+  }
+}
+
+const EXTERNAL_AGENT_LABEL: Record<ExternalClient, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  agent: "外部 Agent",
+};
+
+// 官方 Claude Code 标志(块状机器人脸,clay 橙),path 取自 @lobehub/icons 的 claudecode 图标。
+function ClaudeCodeRobot() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="#D97757" fillRule="evenodd" clipRule="evenodd">
+      <path d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" />
+    </svg>
+  );
+}
+
+// 官方 Codex 标志(白底圆角方 + 蓝紫渐变脸),取自 @lobehub/icons 的 codex 图标。
+function CodexLogo() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff" />
+      <path
+        fill="url(#qa-codex-grad)"
+        d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"
+      />
+      <defs>
+        <linearGradient id="qa-codex-grad" gradientUnits="userSpaceOnUse" x1="12" x2="12" y1="3" y2="21">
+          <stop stopColor="#B1A7FF" />
+          <stop offset=".5" stopColor="#7A9DFF" />
+          <stop offset="1" stopColor="#3941FF" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function ExternalAgentLogo({ client }: { client: ExternalClient }) {
+  if (client === "claude-code") return <ClaudeCodeRobot />;
+  if (client === "codex") return <CodexLogo />;
+  // 通用外部 agent:终端提示符记号。
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 8 L9 12 L5 16 M12 16 H18" />
+    </svg>
+  );
+}
+
+// 外部工具代用户操作的两种来源:改文档(提交修改)与代发消息。文案随动作走,来源 logo 复用。
+const EXTERNAL_ACTION_TEXT: Record<"edit" | "send", string> = {
+  edit: "提交了修改",
+  send: "代你发送了一条消息",
+};
+
+function ExternalOpNote({ client, action }: { client: ExternalClient; action: "edit" | "send" }) {
+  return (
+    <div className="wf-external-op" data-wf="ExternalOpNote">
+      <ExternalAgentLogo client={client} />
+      <span>{EXTERNAL_AGENT_LABEL[client]} {EXTERNAL_ACTION_TEXT[action]}</span>
+    </div>
+  );
+}
+
 const MessageRow = memo(function MessageRow({
   message,
   isNew,
@@ -272,6 +350,9 @@ const MessageRow = memo(function MessageRow({
   skillLabels,
 }: MessageRowProps) {
   const role = message.role.kind;
+  // 审阅 chip 不需要知道来源、其下游逻辑不受影响。判据 = 服务端约定的 external-* 消息 id。
+  const isExternalMessage = message.id.startsWith("external-");
+  const externalClient = isExternalMessage ? parseExternalClient(message.id) : null;
   if (role === "user") {
     if (message.parts.length > 0 && message.parts.every(isUserStandaloneCardPart)) {
       return (
@@ -291,11 +372,13 @@ const MessageRow = memo(function MessageRow({
       /\{\{chip:\d+\}\}/.test(body);
 
     return (
-      <InkBubble
-        animate={isNew}
-        className="wf-msg user"
-      >
-        <div data-wf="ChatMsg-user">
+      <>
+        {isExternalMessage && externalClient && <ExternalOpNote client={externalClient} action="send" />}
+        <InkBubble
+          animate={isNew}
+          className="wf-msg user"
+        >
+          <div data-wf="ChatMsg-user">
           {hasChipMarkers ? (
             <>
               {message.parts.map((p, i) =>
@@ -331,8 +414,9 @@ const MessageRow = memo(function MessageRow({
               )}
             </>
           )}
-        </div>
-      </InkBubble>
+          </div>
+        </InkBubble>
+      </>
     );
   }
   if (role === "system") {
@@ -435,8 +519,11 @@ const MessageRow = memo(function MessageRow({
     lastTextIdx > 0 &&
     stepCount > 0;
 
+  // 外部工具提案:在消息行顶部单独挂一条"外部操作"信息条,表达来源(改文档);与下方通用审阅 chip 解耦,
+  // 审阅 chip 不需要知道来源、其下游逻辑不受影响。isExternalMessage/externalClient 已在函数顶部算好。
   return (
     <div className="wf-msg agent" data-wf="ChatMsg-agent">
+      {isExternalMessage && externalClient && <ExternalOpNote client={externalClient} action="edit" />}
       {foldProcess ? (
         <>
           <UProcessFold steps={stepCount}>{processParts.map(renderPart)}</UProcessFold>
@@ -1064,6 +1151,7 @@ const PartView = memo(function PartView({
       // "· 待您审批"只在「当前活动审批轮」挂;已确认/历史气泡不再挂(审完了不该还显"待您审核")。
       const pendingSuffix = isLive ? " · 待确认" : "";
       // 打字进行中显示 loading;大改显「整篇改写」,小改显「已修改 N 处」(去 emoji)。
+      // 注:审阅 chip 保持通用,不掺入"外部工具"维度——外部来源由 MessageRow 顶部一条独立信息条表达,二者解耦。
       return (
         <div data-wf="PatchSummary" style={{ marginBottom: 2 }}>
           <span

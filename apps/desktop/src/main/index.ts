@@ -622,6 +622,7 @@ let quitFlushStarted = false;
 let quitResumed = false;
 
 app.on("before-quit", (event) => {
+  void import("@qingagent/server/externalInstance").then(({ stopExternalInstance }) => stopExternalInstance());
   if (!telemetry.enabled || quitResumed) return;
   if (quitFlushStarted) {
     event.preventDefault();

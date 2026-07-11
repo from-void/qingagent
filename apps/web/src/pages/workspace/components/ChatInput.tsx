@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@qingagent/ui-kit";
-import type { FolderSource, Resource, SkillRef } from "@qingagent/contract-ts";
+import type { FolderSource, Resource, SkillRef, TableSelection } from "@qingagent/contract-ts";
 import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources/hooks";
 import { invocableSkillActionsFromApi } from "../../../system/skillDisplay";
@@ -53,6 +53,8 @@ export interface ChatChipSpec {
   blockId?: string;
   /** 多行列表选区覆盖的 item refs，按文档顺序排列。 */
   selectionRefs?: string[];
+  /** 表格行/列选区，0-based inclusive。 */
+  tableSelection?: TableSelection;
   /**
    * 技能占位 chip 携带的 skill id(mention chip 用)。选技能=往正文插一个带 skillId 的占位
    * token,提交时由 snapshot() 从这些 token 反推出本轮 skills(去重)发后端做检索预加载/记录。
@@ -76,7 +78,7 @@ export interface ChatInputSnapshot {
 
 export interface ChatInputHandle {
   /** Insert a chip at the current caret. */
-  insertChip: (spec: ChatChipSpec) => void;
+  insertChip: (spec: ChatChipSpec) => boolean;
   /** Insert plain text at the current caret. */
   insertText: (text: string) => void;
   /** Clear the editor. */
@@ -428,7 +430,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       },
       insertChip(spec) {
         const edit = editRef.current;
-        if (!edit || disabled) return;
+        if (!edit || disabled) return false;
         // 选区批注 chip 同一时刻只应有一个:连续 ✨AI修改 换选区却未发送时,先清掉上一个未发送的
         // 旧 sel chip(及其相邻的尾随空格/前导换行),避免多个 sel chip 叠加导致候选误改多处/错字
         // (e2e ai-modify-chip-residue,高频)。attach/mention chip 可多个,不受影响。
@@ -494,6 +496,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             }
           }, 0);
         });
+        return true;
       },
     }),
     [restoreOrEndRange, reportChange, attachedFiles, disabled],
@@ -1184,6 +1187,9 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   if (spec.selectionRefs && spec.selectionRefs.length > 0) {
     chip.dataset.selectionRefs = JSON.stringify(spec.selectionRefs);
   }
+  if (spec.tableSelection !== undefined) {
+    chip.dataset.tableSelection = JSON.stringify(spec.tableSelection);
+  }
 
   // Display text: for selection chips, truncate for compact display
   const displayLabel = spec.kind === "sel" ? truncateLabel(spec.label) : spec.label;
@@ -1313,6 +1319,28 @@ function parseSelectionRefs(raw: string | undefined): string[] | undefined {
   }
 }
 
+function parseTableSelection(raw: string | undefined): TableSelection | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const value = parsed as Record<string, unknown>;
+    if (value.axis !== "row" && value.axis !== "column") return undefined;
+    if (!Number.isInteger(value.startIndex) || (value.startIndex as number) < 0) return undefined;
+    if (!Number.isInteger(value.endIndex) || (value.endIndex as number) < 0) return undefined;
+    if ((value.startIndex as number) > (value.endIndex as number)) return undefined;
+    if (value.signature !== undefined && typeof value.signature !== "string") return undefined;
+    return {
+      axis: value.axis,
+      startIndex: value.startIndex as number,
+      endIndex: value.endIndex as number,
+      ...(typeof value.signature === "string" ? { signature: value.signature } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Rebuild a ChatChipSpec from a chip DOM node's data-* attributes. */
 function readChipNode(el: HTMLElement): ChatChipSpec {
   const kind = (el.dataset.kind as ChatChipSpec["kind"]) ?? "sel";
@@ -1329,5 +1357,7 @@ function readChipNode(el: HTMLElement): ChatChipSpec {
   if (el.dataset.text !== undefined) spec.text = el.dataset.text;
   const selectionRefs = parseSelectionRefs(el.dataset.selectionRefs);
   if (selectionRefs) spec.selectionRefs = selectionRefs;
+  const tableSelection = parseTableSelection(el.dataset.tableSelection);
+  if (tableSelection) spec.tableSelection = tableSelection;
   return spec;
 }

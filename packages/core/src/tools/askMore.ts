@@ -2,7 +2,6 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { streamText } from "ai";
 import { extractJsonArray } from "../utils/extractJsonArray.js";
 import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
-import { recordDeepseekUsageFromResult } from "../llm/usageAccounting.js";
 
 /**
  * Shape of a single generated question — matches the contract
@@ -276,7 +275,7 @@ export async function* streamMoreQuestions(context: {
     .join("\n");
 
   const result = streamText({
-    model: getDeepseekModel(context.requestContext),
+    model: getDeepseekModel(context.requestContext, "flash", { callSite: "askMore" }),
     ...resolveModelParams(context.requestContext),
     prompt: `你是一位写作需求分析专家。根据以下对话上下文和已有的问卷问题及回答，生成 1-3 个补充问题，帮助更好地理解用户的写作需求。
 
@@ -317,8 +316,6 @@ ${existingQSummary}
       yield partial;
     }
   }
-  await recordDeepseekUsageFromResult(context.requestContext, "askMore", result.usage, result.providerMetadata);
-
   // Final yield with complete result
   const jsonStr = extractJsonArray(accumulated);
   if (jsonStr === null) {

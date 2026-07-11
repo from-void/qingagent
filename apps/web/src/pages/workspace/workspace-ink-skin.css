@@ -230,6 +230,8 @@
   width: calc(100% + var(--ws-chat-scrollbar-outset));
   margin-right: calc(var(--ws-chat-scrollbar-outset) * -1);
   padding-right: calc(18px + var(--ws-chat-scrollbar-outset)) !important;
+  /* 确定性防抖:滚动条槽常驻,有无滚动条内容宽恒定(不再随滚动条出现而缩)。 */
+  scrollbar-gutter: stable;
 }
 /* 模型回复(agent)正文浅色;用户行下面单独做泼墨气泡(P1 后段) */
 #view-workspace .ws-left .wf-msg.agent {
@@ -657,12 +659,14 @@
 #view-workspace .patch-nav .wdr-thumb {
   background: #b59a63 !important;
 }
-/* 整篇审条统一用产品衬线字体(与正文/品牌一致),比默认无衬线更稳重 */
-#view-workspace .patch-nav.wdr-nav,
-#view-workspace .patch-nav.wdr-nav .pn-label,
-#view-workspace .patch-nav.wdr-nav .pn-commit,
-#view-workspace .patch-nav.wdr-nav .pn-ghost,
-#view-workspace .patch-nav.wdr-nav .wdr-opt {
+/* 审阅条(逐处审 + 整篇审)统一用产品衬线字体(与正文/品牌一致),比默认无衬线更稳重。
+   <button> 默认不继承 font-family(UA 强制无衬线),故对导航/提交/放弃各钮显式指定。 */
+#view-workspace .patch-nav,
+#view-workspace .patch-nav .pn-label,
+#view-workspace .patch-nav .pn-jump,
+#view-workspace .patch-nav .pn-commit,
+#view-workspace .patch-nav .pn-ghost,
+#view-workspace .patch-nav .wdr-opt {
   font-family: var(--font-zh-serif);
   letter-spacing: 0.02em;
 }
@@ -2109,6 +2113,17 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: #b8a98c !important;
   display: inline-flex;
   align-items: center;
+}
+/* 答卷卡(用户回流答案):答案可能多选/长自由文本,放开换行,不走汇总卡的单行省略号。 */
+#view-workspace .askuser-card--answers .askuser-card-row {
+  align-items: flex-start;
+}
+#view-workspace .askuser-card--answers .askuser-card-a {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 /* —— bigplan 选项勾选标记:✓ 字符换成金色描线 SVG —— */
 #view-workspace .bigplan-panel .bp-opt.on::before,

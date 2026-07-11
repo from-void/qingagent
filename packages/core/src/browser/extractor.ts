@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import { loadPdfParseConstructor } from "../utils/pdfParse.js";
+import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
 
 export interface ExtractedArticleContent {
   title: string;
@@ -973,6 +974,35 @@ export async function extractArticleContent(
   const bodyBuffer = Buffer.from(await response.arrayBuffer());
   const html = decodeHtml(bodyBuffer, contentType);
   const $ = cheerio.load(html);
+
+  if (isWechatArticleUrl(finalUrl.toString())) {
+    try {
+      const wechatArticle = extractWechatArticle(html, finalUrl.toString());
+      if (wechatArticle.markdown.length >= MIN_EXTRACTED_TEXT_LENGTH) {
+        const fallbackTitle =
+          cleanText($("title").first().text()) ||
+          metaContent($, 'meta[property="og:title"]') ||
+          metaContent($, 'meta[name="og:title"]') ||
+          finalUrl.hostname;
+        return {
+          title: wechatArticle.title || fallbackTitle,
+          body: wechatArticle.markdown,
+          images: wechatArticle.images,
+          screenshot: null,
+          ogImageUrl: resolveUrl(
+            metaContent($, 'meta[property="og:image"]') ??
+              metaContent($, 'meta[name="og:image"]') ??
+              metaContent($, 'meta[property="twitter:image"]') ??
+              metaContent($, 'meta[name="twitter:image"]') ??
+              undefined,
+            finalUrl,
+          ),
+        };
+      }
+    } catch {
+      // 微信专用清洗失败时回落通用抽取,避免单站适配 bug 吞掉可用正文。
+    }
+  }
 
   $("script, style, noscript, nav, footer, header").remove();
 

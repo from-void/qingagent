@@ -1011,6 +1011,71 @@ describe("workspaceReducer", () => {
         actualDocumentSnapshot: 3,
       });
     });
+
+    it("pendingReview 已观测到审阅推进版本时忽略迟到 docWriteConflict,不误弹重载", () => {
+      const reviewing = reduce(
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: legacyWireSnapshot({
+              version: 3,
+              ts: "2026-05-08T00:00:00Z",
+              sections: [{ kind: "p", data: { text: "审阅基线" } }],
+            }),
+          },
+        },
+        {
+          kind: "docStateChanged",
+          data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: false },
+        },
+      );
+
+      const next = workspaceReducer(reviewing, {
+        kind: "docWriteResult",
+        data: {
+          ok: false,
+          clientMutationId: "stale-edit-save",
+          conflict: { expectedDocumentSnapshot: 2, actualDocumentSnapshot: 3 },
+        },
+      });
+
+      expect(next.docState.kind).toBe("pendingReview");
+      expect(next.version).toBe(3);
+      expect(next.streamError).toBeNull();
+    });
+
+    it("pendingReview 遇到尚未观测的更高外部版本时仍保留重载提示", () => {
+      const reviewing = reduce(
+        {
+          kind: "documentSnapshotWritten",
+          data: {
+            doc: legacyWireSnapshot({
+              version: 3,
+              ts: "2026-05-08T00:00:00Z",
+              sections: [{ kind: "p", data: { text: "审阅基线" } }],
+            }),
+          },
+        },
+        {
+          kind: "docStateChanged",
+          data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: false },
+        },
+      );
+
+      const next = workspaceReducer(reviewing, {
+        kind: "docWriteResult",
+        data: {
+          ok: false,
+          clientMutationId: "external-conflict",
+          conflict: { expectedDocumentSnapshot: 3, actualDocumentSnapshot: 4 },
+        },
+      });
+
+      expect(next.streamError).toMatchObject({
+        kind: "docWriteConflict",
+        actualDocumentSnapshot: 4,
+      });
+    });
   });
 
   describe("history snapshot", () => {

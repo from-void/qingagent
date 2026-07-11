@@ -19,9 +19,9 @@ export interface RevealFrame {
 }
 
 /**
- * 算一处 patch 的"新增文案"字数(按 code point,与 DocumentSnapshotView SpanView 的 newPart 对齐)。
+ * 算一处 patch 的"新增文案"字数(按 code point,与 PM decoration 新增文本对齐)。
  * 纯新增(after 以 before 开头且更长)→ 只数追加部分;其余 → 数 after 全文;纯删除 → 0。
- * 必须与 SpanView 的 newPart 切分逻辑保持一致,否则光标停位会偏。
+ * 必须与 decoration 的新增文本切分逻辑保持一致,否则光标停位会偏。
  */
 export function revealNewPartLen(before: string, after: string): number {
   const isAddition =

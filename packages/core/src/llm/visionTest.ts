@@ -24,7 +24,7 @@ export async function testVisionConnection(vision: NonNullable<ModelOverrides["v
     ],
   ];
   const requestContext = new RequestContext<unknown>(entries);
-  const visionModel = await getVisionModel(requestContext);
+  const visionModel = await getVisionModel(requestContext, { callSite: "visionTest" });
   if (!visionModel) {
     throw new Error("图像识别配置未生效");
   }

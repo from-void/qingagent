@@ -19,7 +19,6 @@ export function selectRenderDoc(input: {
   viewingSnapshotDoc: ViewDocumentSnapshot | null;
   doc: ViewDocumentSnapshot | null;
   generationDraftDoc: ViewDocumentSnapshot | null;
-  docWithPatches: ViewDocumentSnapshot | null;
   showPatches: boolean;
   overlay: DocDimensions["overlay"];
 }): ViewDocumentSnapshot | null {
@@ -28,7 +27,6 @@ export function selectRenderDoc(input: {
     viewingSnapshotDoc,
     doc,
     generationDraftDoc,
-    docWithPatches,
     showPatches,
     overlay,
   } = input;
@@ -36,7 +34,7 @@ export function selectRenderDoc(input: {
   const preferDraft =
     generationDraftHasContent(generationDraftDoc) && overlay !== "askUser";
   if (preferDraft && !showPatches) return generationDraftDoc;
-  if (showPatches) return docWithPatches ?? doc ?? generationDraftDoc;
+  if (showPatches) return doc ?? generationDraftDoc;
   return doc ?? generationDraftDoc;
 }
 

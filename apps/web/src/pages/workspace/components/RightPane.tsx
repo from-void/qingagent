@@ -15,7 +15,16 @@ import { clientPerformanceNow } from "../data/sessionFrameGuards";
 import { logClientEvent } from "../data/clientLog";
 import type { DocDimensions } from "../data/docDimensions";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
-import type { AskUserAnswers, StreamError, ToolCallSpec, ViewDocumentSnapshot } from "../data/protocol";
+import type {
+  AppliedPatch,
+  AskUserAnswers,
+  BlockPatchInput,
+  DocSuggestion,
+  PatchOverlayInput,
+  StreamError,
+  ToolCallSpec,
+  ViewDocumentSnapshot,
+} from "../data/protocol";
 import type { ServerStream } from "../data/serverStream";
 import type { StarterTemplate } from "../data/starterTemplates";
 import { canEditDocument, generationDraftHasContent, selectRenderDoc } from "../data/workspacePageView";
@@ -36,8 +45,6 @@ interface RightPaneProps {
   streamError: StreamError | null;
   generationDraftDoc: ViewDocumentSnapshot | null;
   viewingSnapshotDoc: ViewDocumentSnapshot | null;
-  /** 已折叠 patch 标记的文档(单一真相源派生),review/正常渲染直接用,RightPane 不再自算 overlay。 */
-  docWithPatches: ViewDocumentSnapshot | null;
   /** 大改(≥70%)走整篇新旧版审,而非内联逐处。 */
   wholeDocReview: boolean;
   wholeDocVersion: "new" | "old";
@@ -53,13 +60,16 @@ interface RightPaneProps {
   unrenderablePatchCount: number;
   effectiveReview: boolean;
   reviewMaterializing: boolean;
-  showForceUnlock: boolean;
   fullpageAsk: ToolCallSpec | null;
   submittingAskUserId?: string | null;
   viewingVersion: number | null;
   docViewRef: React.RefObject<DocumentSnapshotViewHandle>;
   patchMeta: Map<string, PatchMeta>;
   activePatchId: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
   typedByPatch: ReadonlyMap<string, number> | null;
@@ -118,7 +128,6 @@ export function RightPane({
   streamError,
   generationDraftDoc,
   viewingSnapshotDoc,
-  docWithPatches,
   wholeDocReview,
   wholeDocVersion,
   editedNewDoc,
@@ -132,13 +141,16 @@ export function RightPane({
   unrenderablePatchCount,
   effectiveReview,
   reviewMaterializing,
-  showForceUnlock,
   fullpageAsk,
   submittingAskUserId,
   viewingVersion,
   docViewRef,
   patchMeta,
   activePatchId,
+  reviewSuggestions = [],
+  reviewOverlayInputs = [],
+  reviewBlockPatches = [],
+  reviewAppliedPatches = [],
   revealedPatchIds,
   revealCursors,
   typedByPatch,
@@ -276,6 +288,7 @@ export function RightPane({
           rejectedPatches={new Set()}
           patchMeta={patchMeta}
           activePatchId={activePatchId}
+          onEditorReady={onEditorReady}
         />
       </>
     );
@@ -302,8 +315,6 @@ export function RightPane({
     unrenderablePatchCount > 0 &&
     dimensions.content.kind === "pendingReview";
 
-  // 已折叠 patch 标记的文档由单一真相源(WorkspacePage derivePatchPresentation)派生并下传;
-  // RightPane 不再自算 overlay,确保计数 / 序号 / 正文标记同源一致。
   // askUser 浮层(中途反问)期间 agent 已挂起,generationDraft 即便存在也只是空/半成品占位,
   // 不能盖掉已落库的 doc。渲染选择收敛进 selectRenderDoc(同一不变量,带单测锁)。
   const renderDoc = selectRenderDoc({
@@ -311,19 +322,24 @@ export function RightPane({
     viewingSnapshotDoc,
     doc,
     generationDraftDoc,
-    docWithPatches,
     showPatches,
     overlay: dimensions.overlay,
   });
   if (!renderDoc) return <DocInit />;
+  const surfaceDoc = showPatches && dimensions.content.kind === "pendingReview" && doc
+    ? doc
+    : renderDoc;
   const baseEditable = canEditDocument(dimensions, viewingVersion) && !generationDraftDoc;
-  const presentationMatchesRenderDoc = presentationRun?.docVersion === renderDoc.version;
+  const presentationMatchesRenderDoc = presentationRun?.docVersion === surfaceDoc.version;
   // inline askUser(中途反问)期间 overlay 锁住 → baseEditable=false → 原本会落到静态 .wf-doc 渲染,
   // 而 editing 态下静态文档分支会被隐藏(display:none)→ 右侧整片黑("文档消失")。
   // 修法:askUser 浮层期文档仍挂 TipTap(走和正常 editing 一致、确定可见的渲染路径),
   // 但 interactiveEditable 保持 false(只读,不可编辑)。
   const mountEditableSurface =
-    baseEditable || presentationMatchesRenderDoc || dimensions.overlay === "askUser";
+    baseEditable ||
+    presentationMatchesRenderDoc ||
+    dimensions.overlay === "askUser" ||
+    dimensions.content.kind === "pendingReview";
   const interactiveEditable = baseEditable && !presentationRun;
 
   // 大改(≥70%):整篇新旧版审 —— 右侧直接展示选中版本的完整文档(干净,无内联红绿),
@@ -352,12 +368,14 @@ export function RightPane({
             ref={docViewRef}
             doc={shownDoc}
             docId={sessionId}
-            editable={false}
+            editable={true}
+            interactiveEditable={false}
             showPatches={false}
             acceptedPatches={new Set<string>()}
             rejectedPatches={new Set<string>()}
             patchMeta={patchMeta}
             activePatchId={null}
+            onEditorReady={onEditorReady}
           />
         </div>
       </>
@@ -369,7 +387,7 @@ export function RightPane({
       <RightPaneBranchLog
         branch={presentationRun?.docVersion === renderDoc.version ? "main-presentation" : "main-document"}
         sessionId={sessionId}
-        docVersion={renderDoc.version}
+        docVersion={surfaceDoc.version}
         runId={presentationRun?.id ?? null}
       />
       {historyBanner}
@@ -386,32 +404,7 @@ export function RightPane({
           onCommit={onCommit}
         />
       )}
-      {!showPatches && showForceUnlock && !patchRevealing && (
-        <div
-          className="wf-region"
-          data-wf="PatchUnresolvableBanner"
-          style={{
-            marginBottom: 10,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-          }}
-        >
-          <span className="font-mono">
-            本轮 {unrenderablePatchCount} 处块级或无法定位的改动暂不可视，请提交或放弃本轮修改。
-          </span>
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button type="button" className="wf-btn small" onClick={onAcceptAll}>
-              提交本轮修改
-            </button>
-            <button type="button" className="wf-btn small ghost" onClick={onRejectAll}>
-              放弃本轮修改
-            </button>
-          </div>
-        </div>
-      )}
-      {showPatches && showUnrenderableHint && (
+      {showUnrenderableHint && (
         <div
           className="wf-region"
           data-wf="PatchUnrenderableHint"
@@ -422,7 +415,7 @@ export function RightPane({
       )}
       <DocumentSnapshotView
         ref={docViewRef}
-        doc={renderDoc}
+        doc={surfaceDoc}
         docId={sessionId}
         editable={mountEditableSurface}
         interactiveEditable={interactiveEditable}
@@ -435,6 +428,10 @@ export function RightPane({
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
+        reviewSuggestions={reviewSuggestions}
+        reviewOverlayInputs={reviewOverlayInputs}
+        reviewBlockPatches={reviewBlockPatches}
+        reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}

@@ -2,9 +2,19 @@
 // answer 综合版已删(260706 拍板):掐流取链接是刻意取舍——速度优先、正文走自有抓取管线保证过程可视化;如需 answer 回看 git 历史。
 // 参考 github.com/lyumeng/websearch-deepseek(MCP server,同一机制)。
 import type { SearchResult } from "./provider.js";
-import { DEEPSEEK_MODEL_IDS } from "../llm/modelConfig.js";
+import { DEEPSEEK_MODEL_IDS, type ApiKeyOrigin } from "../llm/modelConfig.js";
+import { recordUsageEvent } from "../db/usageRepo.js";
+import type { RequestContext } from "@mastra/core/request-context";
+import { nextUsageAttempt } from "../llm/usageAttempt.js";
 
 const DEEPSEEK_ANTHROPIC_MESSAGES_URL = "https://api.deepseek.com/anthropic/v1/messages";
+
+export interface DeepseekSearchUsageContext {
+  sessionId: string;
+  runId?: string | null;
+  keyOrigin: ApiKeyOrigin;
+  requestContext?: RequestContext;
+}
 
 /**
  * 流式调 DeepSeek web_search,**只取来源链接就掐断**(不等它写综述)。
@@ -17,11 +27,23 @@ export async function fetchDeepseekSearchLinks(
   apiKey: string,
   count: number,
   model = DEEPSEEK_MODEL_IDS.flash,
+  usageContext?: DeepseekSearchUsageContext,
 ): Promise<SearchResult[]> {
   const limit = Math.max(1, Math.floor(count));
   if (!query.trim() || !apiKey) return [];
 
   const controller = new AbortController();
+  const recordMissing = (reason: string) => {
+    if (!usageContext) return;
+    void recordUsageEvent({
+      ...usageContext,
+      callSite: "webSearch",
+      modelId: model,
+      usageState: "missing",
+      reason,
+      attempt: nextUsageAttempt(usageContext.requestContext, "webSearch", null),
+    });
+  };
   let response: Response;
   try {
     response = await fetch(DEEPSEEK_ANTHROPIC_MESSAGES_URL, {
@@ -42,11 +64,15 @@ export async function fetchDeepseekSearchLinks(
       }),
       signal: controller.signal,
     });
-  } catch {
+  } catch (error) {
+    recordMissing(error instanceof Error && error.name === "AbortError"
+      ? "provider_request_aborted"
+      : "provider_request_error");
     return [];
   }
   if (!response.ok || !response.body) {
     controller.abort();
+    recordMissing(response.ok ? "provider_stream_missing_body" : `provider_http_${response.status}`);
     return [];
   }
 
@@ -68,6 +94,7 @@ export async function fetchDeepseekSearchLinks(
     }
   };
 
+  let settleReason = "search_links_early_abort";
   try {
     let done = false;
     while (!done) {
@@ -112,6 +139,7 @@ export async function fetchDeepseekSearchLinks(
       }
     }
   } catch {
+    settleReason = "provider_stream_error";
     /* 流读取异常:返回已拿到的链接(可能为空) */
   } finally {
     controller.abort(); // 关连接 → 服务端停止继续生成综述
@@ -120,6 +148,8 @@ export async function fetchDeepseekSearchLinks(
     } catch {
       /* ignore */
     }
+    // 设计上拿到链接立即掐流，永远等不到 provider usage；只留请求事实，不伪造 token。
+    recordMissing(settleReason);
   }
 
   return links.slice(0, limit);

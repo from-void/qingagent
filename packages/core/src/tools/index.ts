@@ -16,6 +16,8 @@ export {
 export type { ReadDocumentResult, SearchDocumentsResult, ResolvedFolderSourcePath } from "./folderDocuments.js";
 export { storeMaterialTool } from "./storeMaterial.js";
 export { fetchArticleTool } from "./fetchArticle.js";
+export { wechatAuthStartTool, wechatAuthStatusTool } from "./wechatAuth.js";
+export { wechatSearchMpTool, wechatListArticlesTool } from "./wechatSearch.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
 export { readImageTool } from "./readImage.js";

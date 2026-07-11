@@ -273,8 +273,12 @@ function checkToolBody(b: ToolCallBody): void {
       checkRef("BrowserOpen.urlRef", b.data.urlRef, ["url"]);
       return;
     case "qrCard":
-      if (typeof b.data.content !== "string" || !b.data.content) {
-        fail(`QrCard.content must be non-empty`);
+      // content(编码模式)或 imageDataUri(图片模式,如微信后台登录码是图片非 URL)至少一个非空。
+      if (
+        (typeof b.data.content !== "string" || !b.data.content) &&
+        (typeof b.data.imageDataUri !== "string" || !b.data.imageDataUri)
+      ) {
+        fail(`QrCard needs non-empty content or imageDataUri`);
       }
       for (const field of ["title", "code", "note", "confirmQuery"] as const) {
         const value = b.data[field];

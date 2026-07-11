@@ -15,23 +15,23 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => null,
 }));
 
-const callDeepseekDraftMock = vi.fn();
-vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
+const streamInnerModelMock = vi.fn();
+vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    callDeepseekDraft: (...args: unknown[]) => callDeepseekDraftMock(...args),
+    streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args),
   };
 });
 
-interface DeepseekCall {
-  user?: string;
+interface InnerModelCall {
   messages?: unknown[];
-  model?: string;
-  protocol?: "openai" | "anthropic";
+  requestContext?: RequestContext;
+  callSite: string;
+  lane?: number;
+  tier?: "flash" | "pro";
   thinking: boolean;
   temperature: number;
-  stream: boolean;
   abortSignal?: AbortSignal;
   onContentStart?: () => void;
   onContentDelta?: (delta: string, raw: string) => void;
@@ -141,7 +141,7 @@ async function run(tool: unknown, input: Record<string, unknown>, ctx?: Record<s
 
 describe("writeDraft intent 调度", () => {
   beforeEach(() => {
-    callDeepseekDraftMock.mockReset();
+    streamInnerModelMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;
   });
@@ -150,41 +150,9 @@ describe("writeDraft intent 调度", () => {
     vi.useRealTimers();
   });
 
-  it("DeepSeek 请求体注入 thinking; enabled 不带 temperature, disabled 带 temperature", async () => {
-    const { writeDraftInternals } = await import("../tools/writeDraft.js");
-    const buildRequestBody = writeDraftInternals.deepseekDraftClientInternals.buildRequestBody;
-
-    const expressBody = buildRequestBody({
-      system: "s",
-      user: "u",
-      thinking: false,
-      temperature: 0.7,
-      stream: false,
-    });
-    expect(expressBody).toMatchObject({
-      model: "deepseek-v4-flash",
-      thinking: { type: "disabled" },
-      temperature: 0.7,
-      stream: false,
-    });
-
-    const reasonBody = buildRequestBody({
-      system: "s",
-      user: "u",
-      thinking: true,
-      temperature: 0.3,
-      stream: true,
-    });
-    expect(reasonBody).toMatchObject({
-      thinking: { type: "enabled" },
-      stream: true,
-    });
-    expect(reasonBody).not.toHaveProperty("temperature");
-  });
-
   it("默认 intent=express:thinking disabled,流式固定 4 路并携带 V4 messages", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValueOnce({ raw: qingmlParagraph("默认 express"), contentStartMs: 0 });
+    streamInnerModelMock.mockResolvedValueOnce({ raw: qingmlParagraph("默认 express"), contentStartMs: 0 });
     const parent = new AbortController();
 
     const out = await run(tool, { title: "t", outline: "o" }, { abortSignal: parent.signal });
@@ -192,12 +160,13 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     expect(out.lengthStatus).toBe("not_requested");
     expect(out.revisionCount).toBeUndefined();
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
-    const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
+    const firstCall = streamInnerModelMock.mock.calls[0]![0] as InnerModelCall;
     expect(firstCall).toMatchObject({
       thinking: false,
       temperature: 0.4,
-      stream: true,
+      callSite: "writeDraft",
+      lane: 0,
     });
     expect(firstCall.abortSignal).toBeInstanceOf(AbortSignal);
     expect(firstCall.messages?.length).toBeGreaterThanOrEqual(2);
@@ -211,12 +180,12 @@ describe("writeDraft intent 调度", () => {
     expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain(
       "首字符必须是 <",
     );
-    expect(firstCall.user).toContain("标题: t");
+    expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain("标题: t");
   });
 
   it("Anthropic 协议也保留 V4 messages 上下文", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("anthropic 上下文"), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: qingmlParagraph("anthropic 上下文"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([
       ["modelOverrides", { protocol: "anthropic" }],
       ["messages", [
@@ -229,8 +198,8 @@ describe("writeDraft intent 调度", () => {
     const out = await run(tool, { title: "t", outline: "o" }, { requestContext });
 
     expect(out.ok).toBe(true);
-    const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
-    expect(firstCall.protocol).toBe("anthropic");
+    const firstCall = streamInnerModelMock.mock.calls[0]![0] as InnerModelCall;
+    expect(firstCall.requestContext).toBe(requestContext);
     expect(firstCall.messages).toEqual([
       expect.objectContaining({
         role: "system",
@@ -245,7 +214,7 @@ describe("writeDraft intent 调度", () => {
 
   it("自定义 OpenAI 兼容端点默认不带 response_format,避免不支持该参数的端点 400", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("兼容端点"), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: qingmlParagraph("兼容端点"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([
       ["modelOverrides", { baseUrl: "https://compat.example.com/v1", modelIds: { flash: "compat-chat" } }],
     ]);
@@ -253,8 +222,8 @@ describe("writeDraft intent 调度", () => {
     const out = await run(tool, { title: "t", outline: "o" }, { requestContext });
 
     expect(out.ok).toBe(true);
-    const firstCall = callDeepseekDraftMock.mock.calls[0]![0] as DeepseekCall;
-    expect(firstCall.protocol).toBe("openai");
+    const firstCall = streamInnerModelMock.mock.calls[0]![0] as InnerModelCall;
+    expect(firstCall.requestContext).toBe(requestContext);
   });
 
   it("pro 档 reason 使用 pro 模型并放大预算;默认 flash 预算保持旧值", async () => {
@@ -274,24 +243,21 @@ describe("writeDraft intent 调度", () => {
     });
 
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: qingmlParagraph("pro 档正文"), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: qingmlParagraph("pro 档正文"), contentStartMs: 0, finishReason: "stop" });
     const requestContext = new RequestContext([["modelOverrides", { tier: "pro" }]]);
 
     const out = await run(tool, { title: "t", outline: "o", intent: "reason" }, { requestContext });
 
     expect(out.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
-    expect(callDeepseekDraftMock.mock.calls.map((call) => (call[0] as DeepseekCall).model)).toEqual([
-      "deepseek-v4-pro",
-      "deepseek-v4-pro",
-      "deepseek-v4-pro",
-      "deepseek-v4-pro",
-    ]);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock.mock.calls.every((call) =>
+      (call[0] as InnerModelCall).requestContext === requestContext
+    )).toBe(true);
   });
 
   it("两级嵌套列表首稿使用 children 递归表示，一轮 4 路即可编译成真实嵌套 PM", async () => {
     const { tool, state } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -300,7 +266,7 @@ describe("writeDraft intent 调度", () => {
     );
 
     expect(out.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(state.docDraftCandidateDoc).toBeTruthy();
     expect(pmDocHasNestedList(state.docDraftCandidateDoc!, 2)).toBe(true);
   });
@@ -308,7 +274,7 @@ describe("writeDraft intent 调度", () => {
   it("写新文章成嵌套列表仍走 writeDraft 生成路径", async () => {
     const { tool, state } = await makeTool();
     bindDoc(state, pmFlatOrderedList(["旧内容"]));
-    callDeepseekDraftMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: twoLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -317,7 +283,7 @@ describe("writeDraft intent 调度", () => {
     );
 
     expect(out.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(state.docDraftCandidateDoc).toBeTruthy();
     expect(pmDocHasNestedList(state.docDraftCandidateDoc!, 2)).toBe(true);
     expect(pmToPlainText(state.docDraftCandidateDoc!)).toContain("打开项目");
@@ -326,7 +292,7 @@ describe("writeDraft intent 调度", () => {
   it("两级嵌套列表首稿若模型仍给旧平铺列表，不再额外补一路结构重试，但仍返回结构失败诊断标记", async () => {
     const { tool, state } = await makeTool();
     const flatList = `<ul><li>苹果</li><li>香蕉</li><li>橙子</li><li>梨子</li></ul>`;
-    callDeepseekDraftMock.mockResolvedValue({ raw: flatList, contentStartMs: 0 });
+    streamInnerModelMock.mockResolvedValue({ raw: flatList, contentStartMs: 0 });
 
     const out = await run(
       tool,
@@ -340,8 +306,8 @@ describe("writeDraft intent 调度", () => {
     expect(out.structuralFailures).toContain("nested-list");
     // 不再触发"上一版未达 N 层"那一路额外重试。
     expect(
-      callDeepseekDraftMock.mock.calls.some((c) =>
-        ((c[0] as DeepseekCall).user ?? "").includes("上一版未达到"),
+      streamInnerModelMock.mock.calls.some((c) =>
+        JSON.stringify((c[0] as InnerModelCall).messages ?? []).includes("上一版未达到"),
       ),
     ).toBe(false);
     expect(state.docDraftCandidateDoc).toBeTruthy();
@@ -351,7 +317,7 @@ describe("writeDraft intent 调度", () => {
 
   it("三级嵌套诉求下 children 递归直接编译到三级，不继续 LLM 重构", async () => {
     const { tool, state } = await makeTool();
-    callDeepseekDraftMock.mockResolvedValue({ raw: threeLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
+    streamInnerModelMock.mockResolvedValue({ raw: threeLevelListQingml(), contentStartMs: 0, finishReason: "stop" });
 
     const out = await run(
       tool,
@@ -360,7 +326,7 @@ describe("writeDraft intent 调度", () => {
     );
 
     expect(out.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(pmDocHasNestedList(state.docDraftCandidateDoc!, 3)).toBe(true);
   });
 
@@ -370,7 +336,7 @@ describe("writeDraft intent 调度", () => {
     const { tool, state } = await makeTool();
     const lengthBestButFlat = qingmlParagraph("字".repeat(120));
     const structurallyValidButShort = structurallyValidThreeLevelQingml();
-    callDeepseekDraftMock
+    streamInnerModelMock
       .mockResolvedValueOnce({ raw: lengthBestButFlat, contentStartMs: 0 })
       .mockResolvedValueOnce({ raw: structurallyValidButShort, contentStartMs: 0 })
       .mockResolvedValueOnce({ raw: lengthBestButFlat, contentStartMs: 0 })
@@ -390,7 +356,7 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     expect(out.nestedListReachedDepth).toBe(true);
     expect(out.structuralFailures).toBeUndefined();
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(state.docDraftCandidateDoc).toBeTruthy();
     expect(pmDocHasNestedList(state.docDraftCandidateDoc!, 3)).toBe(true);
     expect(pmToPlainText(state.docDraftCandidateDoc!)).toContain("达标三级");
@@ -400,8 +366,8 @@ describe("writeDraft intent 调度", () => {
   it("reason:1 保底 + 3 精修,未出正文精修路到 T_think 被 abort 且不入候选,心跳清 timer", async () => {
     vi.useFakeTimers();
     const { tool } = await makeTool();
-    const calls: DeepseekCall[] = [];
-    callDeepseekDraftMock.mockImplementation((input: DeepseekCall) => {
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
       calls.push(input);
       const index = calls.length - 1;
       if (index === 1) {
@@ -441,7 +407,7 @@ describe("writeDraft intent 调度", () => {
     expect(out.revisionCount).toBe(1);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(calls.map((call) => call.thinking)).toEqual([false, true, true, true]);
-    expect(calls.every((call) => call.stream)).toBe(true);
+    expect(calls.map((call) => call.lane)).toEqual([0, 1, 2, 3]);
     expect(calls[1]!.abortSignal?.aborted).toBe(true);
     const progressEvents = writes.filter((w) => w.type === "writedraft-progress");
     expect(progressEvents.length).toBeGreaterThanOrEqual(1);
@@ -451,8 +417,8 @@ describe("writeDraft intent 调度", () => {
 
   it("reason 无字数时 fallback 不提前截停 thinking 精修", async () => {
     const { tool, state } = await makeTool();
-    const calls: DeepseekCall[] = [];
-    callDeepseekDraftMock.mockImplementation((input: DeepseekCall) => {
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
       calls.push(input);
       const index = calls.length - 1;
       const text = index === 0 ? "fallback".repeat(20) : index === 1 ? "refinement".repeat(30) : "slow".repeat(30);
@@ -498,8 +464,8 @@ describe("writeDraft intent 调度", () => {
 
   it("reason 合并 context.abortSignal,外层 abort 会取消内层 lane; 4 路全废快速返回 ok:false", async () => {
     const { tool } = await makeTool();
-    const calls: DeepseekCall[] = [];
-    callDeepseekDraftMock.mockImplementation((input: DeepseekCall) => {
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
       calls.push(input);
       return new Promise((_resolve, reject) => {
         input.abortSignal?.addEventListener("abort", () => reject(abortError()), { once: true });

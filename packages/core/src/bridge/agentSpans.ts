@@ -78,6 +78,7 @@ function collectUsageRecords(record: Record<string, unknown>): Array<Record<stri
   // R2-B 排查:DeepSeek 走 @ai-sdk/openai 时缓存字段落在 providerMetadata.openai
   // (cachedPromptTokens),原生 prompt_cache_hit_tokens 在 deepseek.usage。两路都收。
   const openaiMetadata = providerMetadata ? asRecord(providerMetadata.openai) : null;
+  const anthropicMetadata = providerMetadata ? asRecord(providerMetadata.anthropic) : null;
   const providerUsage = providerMetadata ? asRecord(providerMetadata.usage) : null;
   const deepseekUsage = deepseekMetadata ? asRecord(deepseekMetadata.usage) : null;
   const openaiUsage = openaiMetadata ? asRecord(openaiMetadata.usage) : null;
@@ -85,6 +86,7 @@ function collectUsageRecords(record: Record<string, unknown>): Array<Record<stri
   if (providerMetadata) records.push(providerMetadata);
   if (deepseekMetadata) records.push(deepseekMetadata);
   if (openaiMetadata) records.push(openaiMetadata);
+  if (anthropicMetadata) records.push(anthropicMetadata);
   if (providerUsage) records.push(providerUsage);
   if (deepseekUsage) records.push(deepseekUsage);
   if (openaiUsage) records.push(openaiUsage);
@@ -104,6 +106,8 @@ export function normalizeLlmUsage(usage: unknown): Record<string, unknown> | nul
   const usageRecord = asRecord(usage);
   if (!usageRecord) return null;
   const records = collectUsageRecords(usageRecord);
+  const providerMetadata = asRecord(usageRecord.providerMetadata) ?? asRecord(usageRecord.experimental_providerMetadata);
+  const hasAnthropicMetadata = !!asRecord(providerMetadata?.anthropic);
   const inputTokens = readFirstUsageNumber(records, ["inputTokens", "promptTokens", "prompt_tokens"]);
   const outputTokens = readFirstUsageNumber(records, ["outputTokens", "completionTokens", "completion_tokens"]);
   const promptCacheHitTokens = readFirstUsageNumber(records, [
@@ -112,13 +116,19 @@ export function normalizeLlmUsage(usage: unknown): Record<string, unknown> | nul
     "cachedPromptTokens",
     "cachedInputTokens",
     "cache_read_input_tokens",
+    "cacheReadInputTokens",
+  ]);
+  const promptCacheCreationTokens = readFirstUsageNumber(records, [
+    "promptCacheCreationTokens",
+    "cache_creation_input_tokens",
+    "cacheCreationInputTokens",
   ]);
   let promptCacheMissTokens = readFirstUsageNumber(records, [
     "promptCacheMissTokens",
     "prompt_cache_miss_tokens",
   ]);
   // 只有命中数时按 DeepSeek 语义推导 miss = input - hit(input = hit + miss)。
-  if (promptCacheMissTokens == null && promptCacheHitTokens != null && inputTokens != null) {
+  if (!hasAnthropicMetadata && promptCacheMissTokens == null && promptCacheHitTokens != null && inputTokens != null) {
     promptCacheMissTokens = Math.max(0, inputTokens - promptCacheHitTokens);
   }
   const promptCacheTotalTokens =
@@ -135,6 +145,7 @@ export function normalizeLlmUsage(usage: unknown): Record<string, unknown> | nul
     ...(outputTokens != null ? { outputTokens } : {}),
     ...(promptCacheHitTokens != null ? { promptCacheHitTokens } : {}),
     ...(promptCacheMissTokens != null ? { promptCacheMissTokens } : {}),
+    ...(promptCacheCreationTokens != null ? { promptCacheCreationTokens } : {}),
     ...(promptCacheTotalTokens != null ? { promptCacheTotalTokens } : {}),
     ...(promptCacheHitRate != null ? { promptCacheHitRate } : {}),
   };

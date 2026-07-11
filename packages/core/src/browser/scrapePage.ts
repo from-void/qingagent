@@ -4,6 +4,7 @@ import {
   validateFetchUrl,
 } from "./extractor.js";
 import { isSubstantiveContent } from "./contentQuality.js";
+import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
 import { getBrowser, withBrowserContextSlot } from "./pool.js";
 import {
   browserErrorMessage,
@@ -421,6 +422,33 @@ export async function scrapeWithBrowserImpl(
           .filter((image) => image.src);
         return { title, body, ogImageUrl, images };
       });
+
+      // 微信公众号文章:用渲染后 HTML 过专用清洗器(输出 Markdown + data-src 懒加载图),
+      // 与静态路对齐——避免大页(常 3MB+)走浏览器降级时退回纯文本、漏掉全部配图。
+      if (isWechatArticleUrl(finalUrl.toString())) {
+        try {
+          const wxHtml = await page.content();
+          const wx = extractWechatArticle(wxHtml, finalUrl.toString());
+          if (wx.markdown.replace(/\s+/g, "").length >= MIN_TEXT) {
+            const wxShot = await page
+              .screenshot({ fullPage: false, type: "jpeg", quality: 80 })
+              .catch(() => null);
+            const wxShotSrc = wxShot ? await persistScreenshot(wxShot) : null;
+            return {
+              ok: true,
+              error: null,
+              title: wx.title || extracted.title,
+              text: wx.markdown,
+              wordCount: wx.markdown.replace(/\s+/g, "").length,
+              images: wx.images,
+              screenshotSrc: wxShotSrc,
+              ogImageUrl: extracted.ogImageUrl,
+            };
+          }
+        } catch {
+          // 微信专用清洗失败 → 回落通用抽取,不吞掉可用正文。
+        }
+      }
 
       const body = trimArticleBoilerplateLines(extracted.body);
       const wordCount = body.replace(/\s+/g, "").length;

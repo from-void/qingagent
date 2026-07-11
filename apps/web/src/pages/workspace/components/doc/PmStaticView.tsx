@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
@@ -68,16 +68,19 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
     case "codeBlock":
       return <pre className="md-code-block" data-language={node.attrs.language ?? "plaintext"}>{pmInlineText(node.content ?? [])}</pre>;
     case "table":
+      // 裹一层横滚容器:持久化 colwidth 总和超过可用宽度时,宽表在容器内横向滚动而非撑破/裁切正文与卡片。
       return (
-        <table>
-          <tbody>
-            {node.content.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.content.map((cell, cellIndex) => <PmTableCellView key={cellIndex} cell={cell} />)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="pm-table-scroll">
+          <table>
+            <tbody>
+              {node.content.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.content.map((cell, cellIndex) => <PmTableCellView key={cellIndex} cell={cell} />)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
 	    case "image":
 	      return (
@@ -129,7 +132,6 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
     case "blockMath":
       return <MathView latex={node.attrs.latex} display />;
     case "diagram":
-      // 只读渲染:节点-边图走 React Flow overlay,其他 Mermaid 走静态预览。
       return (
         <div className="pm-diagram" data-pm-node="diagram">
           <DiagramRenderer source={node.attrs.source} cachedSvg={node.attrs.svg} lang={node.attrs.lang ?? "mermaid"} overlay={node.attrs.overlay ?? null} readOnly />
@@ -157,11 +159,41 @@ function PmListItemView({ node }: { node: PmBlockNode[] }) {
   return <li>{node.map((child, i) => <PmBlockView key={i} node={child} />)}</li>;
 }
 
-function PmTableCellView({ cell }: { cell: PmTableCellNode }) {
+export function PmTableCellView({
+  cell,
+  className,
+  cellRef,
+  children,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  cell: PmTableCellNode;
+  className?: string;
+  cellRef?: Ref<HTMLTableCellElement>;
+  children?: ReactNode;
+  onMouseEnter?: MouseEventHandler<HTMLTableCellElement>;
+  onMouseLeave?: MouseEventHandler<HTMLTableCellElement>;
+}) {
   const Tag = cell.type === "tableHeader" ? "th" : "td";
+  const attrs = cell.attrs as { backgroundColor?: string | null; colspan?: number; rowspan?: number; colwidth?: number[] | null } | undefined;
+  const colspan = attrs?.colspan;
+  const rowspan = attrs?.rowspan;
+  const colwidth = attrs?.colwidth;
+  const width = Array.isArray(colwidth) && colwidth.length > 0
+    ? colwidth.reduce((sum, w) => sum + (Number.isFinite(w) ? w : 0), 0)
+    : undefined;
   return (
-    <Tag data-bg-color={cell.attrs?.backgroundColor ?? undefined}>
-      {cell.content.map((child, i) => <PmBlockView key={i} node={child} />)}
+    <Tag
+      ref={cellRef}
+      className={className}
+      data-bg-color={attrs?.backgroundColor ?? undefined}
+      colSpan={typeof colspan === "number" && colspan > 1 ? colspan : undefined}
+      rowSpan={typeof rowspan === "number" && rowspan > 1 ? rowspan : undefined}
+      style={width && width > 0 ? { width } : undefined}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {children ?? cell.content.map((child, i) => <PmBlockView key={i} node={child} />)}
     </Tag>
   );
 }

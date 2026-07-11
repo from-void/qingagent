@@ -132,6 +132,8 @@ describe("handleCommand updateDoc", () => {
       contentHash: "hash-2",
       doc: submittedDoc,
       versionId: "version-2",
+      createdNewVersion: true,
+      committedAt: "2026-03-04T05:06:07.000Z",
     });
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
@@ -154,8 +156,33 @@ describe("handleCommand updateDoc", () => {
     ]);
     expect(session.legacySections).toEqual([section("new")]);
     expect(session.docVersion).toBe(2);
+    expect(session.lastContentEditedAt).toBe("2026-03-04T05:06:07.000Z");
     expect(session.lastSyncedDocumentSnapshot).toBe(1);
     expect(persistSessionMetadata).toHaveBeenCalledWith(session);
+  });
+
+  it("幂等回放即使返回版本高于陈旧内存，也不推进内容时间", async () => {
+    const { bridge, commitDocumentOp } = await loadBridge();
+    const session = await createDraftSession(bridge);
+    const originalContentTime = "2025-01-02T03:04:05.000Z";
+    session.lastContentEditedAt = originalContentTime;
+    const submittedDoc = legacySectionsToPm([section("replayed")]);
+    commitDocumentOp.mockResolvedValue({
+      status: "committed",
+      docVersion: 2,
+      contentHash: "hash-replayed",
+      doc: submittedDoc,
+      versionId: "version-replayed",
+      createdNewVersion: false,
+      committedAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
+      doc: submittedDoc as never,
+    })));
+
+    expect(session.docVersion).toBe(2);
+    expect(session.lastContentEditedAt).toBe(originalContentTime);
   });
 
   it("commits PM updateDoc through commitDocumentOp and keeps the legacy mirror derived", async () => {
@@ -286,6 +313,7 @@ describe("handleCommand updateDoc", () => {
   it("returns machine-readable conflict with actual doc_version", async () => {
     const { bridge, commitDocumentOp } = await loadBridge();
     const session = await createDraftSession(bridge);
+    const contentTimeBeforeConflict = session.lastContentEditedAt;
     commitDocumentOp.mockResolvedValue({ status: "conflict", currentVersion: 5 });
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId)));
@@ -300,6 +328,7 @@ describe("handleCommand updateDoc", () => {
         },
       },
     ]);
+    expect(session.lastContentEditedAt).toBe(contentTimeBeforeConflict);
   });
 
   it("rejects while an agent run is suspended and does not write", async () => {

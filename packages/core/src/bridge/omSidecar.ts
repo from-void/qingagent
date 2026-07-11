@@ -32,6 +32,7 @@ import {
   buildOmObservationsContent,
   buildOmObservationsPromptMessage,
 } from "../llm/omObservationsPrompt.js";
+import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
 import { isWorkingMemoryPromptMessage } from "../llm/workingMemoryPrompt.js";
 import { getMemory, getObservability, mastra } from "../mastra.js";
 import type { OmSidecarCursor, SessionState } from "./sessionState.js";
@@ -1016,7 +1017,12 @@ function getObserverFlashModelFor(
       evict();
       observerModelCache.set(anthKey, model);
     }
-    return model;
+    return wrapModernModelUsage(model, {
+      requestContext,
+      callSite: "omSidecar",
+      modelId: anthModel,
+      keyOrigin: resolveDeepseekAuth(requestContext).origin,
+    });
   }
 
   const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
@@ -1027,7 +1033,12 @@ function getObserverFlashModelFor(
     evict();
     observerModelCache.set(cacheKey, model);
   }
-  return model;
+  return wrapModernModelUsage(model, {
+    requestContext,
+    callSite: "omSidecar",
+    modelId: resolveModelId(requestContext, "flash"),
+    keyOrigin: resolveDeepseekAuth(requestContext).origin,
+  });
 }
 
 function normalizeCurrentTurn(

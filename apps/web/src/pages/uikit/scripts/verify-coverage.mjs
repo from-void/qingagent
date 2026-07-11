@@ -278,7 +278,7 @@ const CONDITIONAL_LIVE = {
   // 芯片:AskUserOverlay 问卷标签 / ChatMessageList 引用 chip
   "wf-chip": "AskUserOverlay.tsx:361 · ChatMessageList.tsx:999(census 42 态未采到该出现点)",
   // 区域:审核态 patch 条带
-  "wf-region": "WorkspacePage.tsx:4963 PatchUnresolvableBanner · 4988 PatchUnrenderableHint(审核态可达);历史横幅变体 4779 已停摆(hash-only 无入口)",
+  "wf-region": "RightPane.tsx PatchUnrenderableHint(审核态坏锚点兜底);历史横幅变体已停摆(hash-only 无入口)",
   // 修订删除游标:审核态文档快照渲染
   "wf-sel": "DocumentSnapshotView.tsx:3736/5090(选区态 span)",
   "wf-patch-del-marker": "DocumentSnapshotView.tsx:3923",

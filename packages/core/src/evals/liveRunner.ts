@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createTool } from "@mastra/core/tools";
 import { runEvals } from "@mastra/core/evals";
+import { RequestContext } from "@mastra/core/request-context";
 import { z } from "zod";
 import {
   askUserLiveNoReaskScorer,
@@ -131,6 +132,15 @@ function createWriteDraftEvalTool() {
   });
 }
 
+function liveEvalRequestContext(caseId: string): RequestContext {
+  return new RequestContext([
+    ["sessionId", `live-eval:${caseId}`],
+    ["runId", `live-eval:${caseId}:${Date.now()}`],
+    // runEvals 直接执行 agent.generate，不经过 bridge 的 step usage 记账。
+    ["usageCallSite", "liveEval"],
+  ] as never);
+}
+
 export async function runLiveScorers(): Promise<LiveScorerArtifact> {
   loadServerEnv();
 
@@ -151,6 +161,7 @@ export async function runLiveScorers(): Promise<LiveScorerArtifact> {
     return {
       input: buildAskUserResumeMessages(fixture.input),
       groundTruth: fixture.input,
+      requestContext: liveEvalRequestContext(`answer-${fixture.id}`),
     };
   });
 
@@ -402,6 +413,7 @@ export async function runAskUserTriggerEvals(
       return {
         input: fixture.message,
         groundTruth,
+        requestContext: liveEvalRequestContext(caseKey),
       };
     }),
   );

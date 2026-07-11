@@ -113,6 +113,7 @@ import {
   normalizeGenerateSvgProgress,
   qrCardToolCallSpec,
   readImageToolCallSpec,
+  wechatAuthQrToolCallSpec,
   researchCardToolCallSpec,
   scriptCardFromResult,
   writeDraftCardFromResult,
@@ -305,9 +306,10 @@ export async function* processAgentStream(
     if (!hasToolCallPart(agentMessageId, spec.id)) {
       const seq = nextSeq(state, agentMessageId);
       const tcPart: MessagePart = { kind: "toolCall", data: spec };
-      yield chatMessageAppended(agentMessageId, seq, tcPart);
       ensureAgentChatHistoryMessage(state, agentMessageId);
       appendPartToChatHistory(state, agentMessageId, tcPart);
+      // 先写会话状态再下发帧：流在帧后突然 EOF 时，轮末通用 finalizer 才能看见此占位并收口。
+      yield chatMessageAppended(agentMessageId, seq, tcPart);
     }
     yield toolCallUpdated(agentMessageId, spec.id, spec);
     updateToolCallInChatHistory(state, agentMessageId, spec.id, spec);
@@ -1040,9 +1042,10 @@ export async function* processAgentStream(
       };
       const seq = nextSeq(state, agentMessageId);
       const tcPart: MessagePart = { kind: "toolCall", data: spec };
-      yield chatMessageAppended(agentMessageId, seq, tcPart);
       ensureAgentChatHistoryMessage(state, agentMessageId);
       appendPartToChatHistory(state, agentMessageId, tcPart);
+      // 与正式 tool-call 路径一致：占位先落 chatHistory，保证轮末通用 finalizer 能处理 EOF 孤儿。
+      yield chatMessageAppended(agentMessageId, seq, tcPart);
       streamingPlaceholders.add(toolCallId);
       outcome.producedVisibleFrame = true;
       continue;
@@ -1273,6 +1276,14 @@ export async function* processAgentStream(
         });
         yield* emitOrUpdateToolCall(spec, alreadyPlaced);
         outcome.producedVisibleFrame = true;
+      } else if (toolName === "wechat_auth_start") {
+        // 微信授权:running 显示"生成二维码中"占位,done(tool-result)从 result.imageDataUri 渲染真二维码卡。
+        const spec = wechatAuthQrToolCallSpec(toolCallId, null, {
+          kind: "running",
+          data: { progressPct: null, etaSec: null },
+        });
+        yield* emitOrUpdateToolCall(spec, alreadyPlaced);
+        outcome.producedVisibleFrame = true;
       } else {
         const spec: ToolCallSpec = {
           id: toolCallId,
@@ -1442,7 +1453,14 @@ export async function* processAgentStream(
       if (toolName !== "askUser" && !PURE_UI_TOOL_NAMES.has(toolName)) {
         outcome.sawSideEffectToolCall = true;
       }
-      appendToolTranscriptMessage(state, { toolName, toolCallId, args, result: toolResult });
+      // wechat_auth_start 的 result 含 ~7–10KB base64 二维码图。原样写进喂模型的 transcript 会
+      // 白烧 token,且违背"base64 不经过模型"(该字段只是给前端渲染卡片用)。给模型摘要即可——
+      // 它只需知道"授权已发起、等用户扫码"。二维码卡本身已由 processAgentStream 直接渲染给用户。
+      const transcriptResult =
+        toolName === "wechat_auth_start" && toolResult && typeof toolResult === "object"
+          ? { ok: (toolResult as { ok?: unknown }).ok ?? true, note: "二维码已展示给用户,等其扫码后点『我已扫码完成』" }
+          : toolResult;
+      appendToolTranscriptMessage(state, { toolName, toolCallId, args, result: transcriptResult });
       endToolIoSpan(
         toolIoSpans.get(toolCallId),
         toolResult,
@@ -1519,7 +1537,7 @@ export async function* processAgentStream(
             ...origPart.data,
             status: { kind: "done" },
             result: origPart.data.body.kind === "generic" && origPart.data.result == null
-              ? { kind: "genericText", data: "show_qr 缺少 content,无法渲染二维码" }
+              ? { kind: "genericText", data: "show_qr 缺少 content/imageDataUri,无法渲染二维码" }
               : origPart.data.result,
           };
           updateToolCallInChatHistory(state, origMsg.id, toolCallId, doneSpec);
@@ -1538,6 +1556,26 @@ export async function* processAgentStream(
           updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
           outcome.producedVisibleFrame = true;
         }
+      } else if (toolName === "wechat_auth_start") {
+        // 授权二维码卡:从工具 result.imageDataUri 直接渲染 qrCard,base64 不经过模型(模型复述 7KB 会卡死)。
+        const authResult = toolResult as Record<string, unknown> | null;
+        const doneSpec = wechatAuthQrToolCallSpec(toolCallId, authResult, { kind: "done" });
+        const origMsg = state.chatHistory.find((m) =>
+          m.parts.some((p) => p.kind === "toolCall" && p.data.id === toolCallId),
+        );
+        if (origMsg) {
+          updateToolCallInChatHistory(state, origMsg.id, toolCallId, doneSpec);
+          yield toolCallUpdated(origMsg.id, toolCallId, doneSpec);
+        } else {
+          const seq = nextSeq(state, agentMessageId);
+          const tcPart: MessagePart = { kind: "toolCall", data: doneSpec };
+          yield chatMessageAppended(agentMessageId, seq, tcPart);
+          ensureAgentChatHistoryMessage(state, agentMessageId);
+          appendPartToChatHistory(state, agentMessageId, tcPart);
+          yield toolCallUpdated(agentMessageId, toolCallId, doneSpec);
+          updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
+        }
+        outcome.producedVisibleFrame = true;
       } else if (
         toolName === "generateSvg"
       ) {

@@ -2,9 +2,11 @@ import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamObject, streamText } from "ai";
+import { streamObject, streamText, wrapLanguageModel } from "ai";
+import { RequestContext } from "@mastra/core/request-context";
 import { aiBlockSchema, compileAiDocumentToPm } from "@qingagent/pm-schema";
 import { parseAiDocumentFromQingml } from "../src/tools/generateDoc.js";
+import { createUsageMiddleware } from "../src/llm/usageMiddleware.js";
 
 type SmokeStatus = "PASS" | "FAIL" | "ENV_SKIP" | "ERROR";
 
@@ -79,17 +81,31 @@ function versions(): Record<string, string> {
   };
 }
 
-function createModel() {
+function createModel(callSite: string) {
+  const requestContext = new RequestContext([
+    ["sessionId", "pm-model-smoke"],
+    ["runId", `pm-model-smoke:${Date.now()}`],
+  ] as never);
+  const wrap = (model: ReturnType<ReturnType<typeof createOpenAI>>) => wrapLanguageModel({
+    model,
+    middleware: createUsageMiddleware({
+      requestContext,
+      callSite,
+      modelId: modelName(),
+      keyOrigin: "env",
+    }),
+  });
   if (process.env.DEEPSEEK_API_KEY) {
     const deepseek = createOpenAI({
       baseURL: "https://api.deepseek.com/v1",
       apiKey: process.env.DEEPSEEK_API_KEY,
+      compatibility: "strict",
     });
-    return deepseek(modelName());
+    return wrap(deepseek(modelName()));
   }
   if (process.env.OPENAI_API_KEY) {
     const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openai(modelName());
+    return wrap(openai(modelName()));
   }
   return null;
 }
@@ -118,7 +134,7 @@ async function appendEvidence(value: unknown): Promise<void> {
 }
 
 async function runSmoke(): Promise<SmokeArtifact> {
-  const model = createModel();
+  const model = createModel("pmModelSmokeStructured");
   const localBad = compileAiDocumentToPm({
     blocks: [
       { type: "paragraph", runs: [{ text: "本地校验" }] },
@@ -128,6 +144,7 @@ async function runSmoke(): Promise<SmokeArtifact> {
   const zodBlockErrors: SmokeStatus = !localBad.ok && localBad.blockErrors[0]?.index === 1 ? "PASS" : "FAIL";
 
   if (!model) return envSkip("missing DEEPSEEK_API_KEY or OPENAI_API_KEY");
+  const fallbackModel = createModel("pmModelSmokeText")!;
 
   const artifact: SmokeArtifact = {
     timestamp: new Date().toISOString(),
@@ -168,7 +185,7 @@ async function runSmoke(): Promise<SmokeArtifact> {
 
     const fallback = await retry(async () => {
       const textResult = streamText({
-        model,
+        model: fallbackModel,
         system: "只输出 QingML：<p>fallback ok</p>",
         prompt: "输出 fallback QingML",
         toolChoice: "none",

@@ -28,11 +28,11 @@ vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => () => ({ modelId: "mock-rich-format-tools" }),
 }));
 
-// writeDraft 现走裸 fetch helper callDeepseekDraft(非 streamText),按其形态 mock
-const callDeepseekDraftMock = vi.hoisted(() => vi.fn());
-vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
+// writeDraft 现走AI SDK 流式适配层 streamInnerModel(非 streamText),按其形态 mock
+const streamInnerModelMock = vi.hoisted(() => vi.fn());
+vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, callDeepseekDraft: (...args: unknown[]) => callDeepseekDraftMock(...args) };
+  return { ...actual, streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args) };
 });
 
 const ctx = {} as any;
@@ -113,7 +113,7 @@ function assertSafeDoc(value: PmDoc | null | undefined, label: string): void {
 }
 
 function mockWriteDraftQingml(raw: string): void {
-  callDeepseekDraftMock.mockImplementation(async () => ({
+  streamInnerModelMock.mockImplementation(async () => ({
     raw,
     contentStartMs: 0,
   }));
@@ -134,7 +134,7 @@ function acceptCandidateAsCanonical(state: ReturnType<typeof createSession>): vo
 describe("draft rich formats session-scoped tools", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
-    callDeepseekDraftMock.mockReset();
+    streamInnerModelMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;
   });

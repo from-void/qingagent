@@ -316,6 +316,7 @@ async function writeSample(sample: SeedSample): Promise<void> {
     docId: sample.id,
     docState: { kind: "editing" },
     docVersion: 1,
+    lastContentEditedAt: createdIso,
     lastSyncedDocumentSnapshot: 1,
     doc: sample.pmDoc,
     legacySections,

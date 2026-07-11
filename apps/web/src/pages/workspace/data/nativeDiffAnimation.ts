@@ -882,6 +882,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         ordered: section.ordered,
         ...(section.start != null ? { start: section.start } : {}),
         items: section.items.slice(),
+        ...(section.node ? { node: cloneJson(section.node) } : {}),
         ...(section.itemSpans ? { itemSpans: section.itemSpans.map((spans) => spans.map((sp) => ({ ...sp }))) } : {}),
         ...(section.rowDiff ? { rowDiff: cloneJson(section.rowDiff) } : {}),
       };
@@ -893,6 +894,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         kind: "table",
         head: section.head.slice(),
         rows: section.rows.map((row) => row.slice()),
+        ...(section.node ? { node: cloneJson(section.node) } : {}),
         ...(section.headSpans
           ? { headSpans: section.headSpans.map((spans) => spans.map((sp) => ({ ...sp }))) }
           : {}),

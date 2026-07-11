@@ -18,24 +18,22 @@ function derive(
 }
 
 describe("deriveReviewUiState", () => {
-  it("pendingReview with no patch calls still exposes force-unlock recovery", () => {
+  it("pendingReview with no patch calls is not an effective inline review", () => {
     const state = derive();
 
     expect(state.effectiveReview).toBe(false);
     expect(state.showPatchNav).toBe(false);
     expect(state.showPatches).toBe(false);
     expect(state.livePatchCount).toBe(0);
-    expect(state.showForceUnlock).toBe(true);
     expect(state.canReplayReviewReveal).toBe(false);
   });
 
-  it("review with no visible patches still exposes force-unlock recovery", () => {
+  it("review with no visible patches stays outside inline review", () => {
     const state = derive({ hasPatchCalls: true, visiblePatchCount: 0 });
 
     expect(state.hasVisibleReviewPatches).toBe(false);
     expect(state.effectiveReview).toBe(false);
     expect(state.showPatchNav).toBe(false);
-    expect(state.showForceUnlock).toBe(true);
     expect(state.livePatchCount).toBe(0);
   });
 
@@ -50,7 +48,6 @@ describe("deriveReviewUiState", () => {
     expect(state.showPatchNav).toBe(true);
     expect(state.visiblePatchCount).toBe(2);
     expect(state.livePatchCount).toBe(2);
-    expect(state.showForceUnlock).toBe(false);
     expect(state.showPatches).toBe(true);
     expect(state.canReplayReviewReveal).toBe(true);
   });
@@ -68,7 +65,7 @@ describe("deriveReviewUiState", () => {
     expect(state.showPatches).toBe(true);
   });
 
-  it("pendingReview 但 0 可见 patch 时仍显示逃生入口", () => {
+  it("pendingReview 但 0 可见 patch 时不进入 inline review", () => {
     const state = derive({
       hasPatchCalls: true,
       visiblePatchCount: 0,
@@ -77,7 +74,6 @@ describe("deriveReviewUiState", () => {
 
     expect(state.effectiveReview).toBe(false);
     expect(state.showPatchNav).toBe(false);
-    expect(state.showForceUnlock).toBe(true);
     expect(state.livePatchCount).toBe(0);
   });
 

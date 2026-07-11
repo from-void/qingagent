@@ -12,10 +12,11 @@ import {
   PromptInjectionDetector,
   UnicodeNormalizer,
 } from "@mastra/core/processors";
-import type { OpenAICompatibleConfig } from "@mastra/core/llm";
+import type { MastraModelConfig, OpenAICompatibleConfig } from "@mastra/core/llm";
 import type { RequestContext } from "@mastra/core/request-context";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import {
+  getDeepseekModel,
   resolveBaseUrl,
   resolveDeepseekAuth,
   resolveDeepseekRouterModelId,
@@ -178,7 +179,7 @@ const STRUCTURED_OUTPUT_OPTIONS = {
   jsonPromptInjection: true,
 } as const;
 
-function createPromptInjectionDetector(model: OpenAICompatibleConfig): PromptInjectionDetector {
+function createPromptInjectionDetector(model: MastraModelConfig): PromptInjectionDetector {
   return new PromptInjectionDetector({
     model,
     strategy: "block",
@@ -190,7 +191,7 @@ function createPromptInjectionDetector(model: OpenAICompatibleConfig): PromptInj
   });
 }
 
-function createModerationProcessor(model: OpenAICompatibleConfig): ModerationProcessor {
+function createModerationProcessor(model: MastraModelConfig): ModerationProcessor {
   return new ModerationProcessor({
     model,
     strategy: "warn",
@@ -201,7 +202,7 @@ function createModerationProcessor(model: OpenAICompatibleConfig): ModerationPro
   });
 }
 
-function createPiiDetector(model: OpenAICompatibleConfig): PIIDetector {
+function createPiiDetector(model: MastraModelConfig): PIIDetector {
   return new PIIDetector({
     model,
     strategy: "redact",
@@ -233,12 +234,18 @@ function asOutputProcessorWorkflow(workflow: unknown): OutputProcessorOrWorkflow
 
 function buildInputGuardrailWorkflow(
   flags: QingagentProcessorFlags,
-  model: OpenAICompatibleConfig,
+  requestContext?: RequestContext,
 ): InputProcessorOrWorkflow | null {
   const steps = [
-    ...(flags.pii ? [createStep(createPiiDetector(model))] : []),
-    ...(flags.promptInjection ? [createStep(createPromptInjectionDetector(model))] : []),
-    ...(flags.moderation ? [createStep(createModerationProcessor(model))] : []),
+    ...(flags.pii ? [createStep(createPiiDetector(
+      getDeepseekModel(requestContext, "flash", { callSite: "guardPii" }),
+    ))] : []),
+    ...(flags.promptInjection ? [createStep(createPromptInjectionDetector(
+      getDeepseekModel(requestContext, "flash", { callSite: "guardPromptInjection" }),
+    ))] : []),
+    ...(flags.moderation ? [createStep(createModerationProcessor(
+      getDeepseekModel(requestContext, "flash", { callSite: "guardModeration" }),
+    ))] : []),
   ];
   if (steps.length === 0) return null;
   const carryBranch = flags.pii ? "processor:pii-detector" : steps[0]!.id;
@@ -254,11 +261,15 @@ function buildInputGuardrailWorkflow(
 
 function buildOutputGuardrailWorkflow(
   flags: QingagentProcessorFlags,
-  model: OpenAICompatibleConfig,
+  requestContext?: RequestContext,
 ): OutputProcessorOrWorkflow | null {
   const steps = [
-    ...(flags.pii ? [createStep(createPiiDetector(model))] : []),
-    ...(flags.moderation ? [createStep(createModerationProcessor(model))] : []),
+    ...(flags.pii ? [createStep(createPiiDetector(
+      getDeepseekModel(requestContext, "flash", { callSite: "guardPii" }),
+    ))] : []),
+    ...(flags.moderation ? [createStep(createModerationProcessor(
+      getDeepseekModel(requestContext, "flash", { callSite: "guardModeration" }),
+    ))] : []),
   ];
   if (steps.length === 0) return null;
   const carryBranch = flags.pii ? "processor:pii-detector" : steps[0]!.id;
@@ -284,7 +295,7 @@ export function buildQingagentInputProcessors({
   if (hasInputLlmGuardrail(flags)) {
     const llmGuardrails = buildInputGuardrailWorkflow(
       flags,
-      resolveQingagentGuardrailModel(requestContext),
+      requestContext,
     );
     if (llmGuardrails) processors.push(llmGuardrails);
   }
@@ -301,7 +312,7 @@ export function buildQingagentOutputProcessors({
   if (hasOutputLlmGuardrail(flags)) {
     const llmGuardrails = buildOutputGuardrailWorkflow(
       flags,
-      resolveQingagentGuardrailModel(requestContext),
+      requestContext,
     );
     if (llmGuardrails) processors.push(llmGuardrails);
   }

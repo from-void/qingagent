@@ -6,7 +6,9 @@ import { ListItemDnDExtension } from "../ListItemDnD";
 import { BlockCollapseExtension } from "../BlockCollapse";
 import { DiagramCM } from "../DiagramView";
 import { ImageCM } from "../ImageView";
+import { DocFindDecorations } from "../../data/docFindPm";
 import { NativePresentationDecorations } from "../../data/nativePresentationPm";
+import { PatchDecorations } from "../../data/patchDecorations";
 
 export const MATH_CLICK_EVENT = "qingagent:math-click";
 
@@ -31,6 +33,8 @@ export function createWorkspaceTiptapExtensions(options: {
     docId: options.docId,
     forceExpanded: options.forceExpandCollapse,
   }),
+  DocFindDecorations,
   NativePresentationDecorations,
+  PatchDecorations,
   ];
 }

@@ -12,6 +12,7 @@ import {
   type PmMark,
 } from "@qingagent/pm-schema";
 import { documentRepo } from "../db/documentRepo.js";
+import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { listVersions } from "../db/documentVersionRepo.js";
 import {
@@ -509,6 +510,8 @@ describe("candidate-diff backend flow", () => {
     expect(commitFrames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(true);
     expect(state.docVersion).toBe(2);
     expect(docText(state.doc)).toBe("第一版正文");
+    expect(state.lastContentEditedAt)
+      .toBe((await findOpByDocumentVersion(state.docId, state.docVersion))?.createdAt);
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
   });
 

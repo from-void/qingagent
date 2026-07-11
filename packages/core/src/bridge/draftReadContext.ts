@@ -2,7 +2,9 @@ import type {
   ChatChip,
   LegacySection,
 } from "@qingagent/contract-ts";
+import { tableSelectionTextSignature } from "@qingagent/contract-ts";
 import {
+  pmTableSelectionCellTexts,
   pmToPlainText,
   type PmBlockNode,
   type PmDoc,
@@ -163,4 +165,38 @@ export function resolveSelectionChipBlocks(
     });
   }
   return out;
+}
+
+export function buildTableSelectionContext(
+  state: SessionState,
+  chip: ChatChip,
+): string | null {
+  const selection = chip.tableSelection;
+  if (!selection) return null;
+  const tableRef = chip.resourceRef?.id;
+  if (!tableRef) return null;
+
+  const doc = state.docDraftCandidateDoc ?? currentPmDoc(state);
+  const cellTexts = pmTableSelectionCellTexts(doc, tableRef, selection);
+  const signatureMismatch = Boolean(
+    selection.signature &&
+    (!cellTexts || tableSelectionTextSignature(cellTexts) !== selection.signature),
+  );
+  const axisLabel = selection.axis === "row" ? "行" : "列";
+  const physicalAxis = selection.axis === "row" ? "物理行" : "物理列";
+  const range = selection.startIndex === selection.endIndex
+    ? String(selection.startIndex)
+    : `${selection.startIndex}..${selection.endIndex}`;
+  const staleGuidance = signatureMismatch
+    ? `\n- **选区可能已过期**：签名与当前表格不一致。当前只把 ref="${tableRef}" 当作整表引用；务必先 readDraft 核对，谨慎缩小操作范围，不能盲信旧索引。`
+    : `\n- 仅对第 ${range} ${axisLabel}操作，不要改选区外的${axisLabel}或其它块。`;
+
+  return (
+    `> ${chip.label}${chip.suffix ? `（位置：${chip.suffix}）` : ""}` +
+    `\n\n[表格选区定位提示]\n` +
+    `- 用户选中该表第 ${range} ${axisLabel}（0-based ${physicalAxis}），表 ref="${tableRef}"。\n` +
+    `- 行列没有稳定 id，索引以当前结构为准；先调用 readDraft(mode:"range", from:"${tableRef}", to:"${tableRef}") 确认当前表格结构，再调用 editDraft。` +
+    staleGuidance +
+    `\n- 工具失败时按 error 重新定位或询问用户，不能声称已生效。`
+  );
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../bridge/sessionState.js";
-import type { BridgeFrame, PmDoc } from "@qingagent/contract-ts";
+import { tableSelectionTextSignature, type BridgeFrame, type PmDoc } from "@qingagent/contract-ts";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -368,5 +368,63 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     expect(content).toContain('action:"replaceText"');
     expect(content).toContain('action:"markText"');
     expect(content).toContain("withinRef");
+  });
+
+  it("表格 selectionCtx 注入 0-based 范围与先 readDraft 约束", async () => {
+    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const state = createSession("sess-table-selection");
+    state.doc = makeDocWithDiagram();
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+
+    await collectFrames(runAgentTurn(state, "把这一行写得更清楚", [], [{
+      kind: { kind: "selection" },
+      resourceRef: { id: "tbl-ch11", domain: { kind: "docSpan" } },
+      prefix: null,
+      label: "项目 | 金额",
+      suffix: "表格·第1行",
+      tableSelection: {
+        axis: "row",
+        startIndex: 0,
+        endIndex: 0,
+        signature: tableSelectionTextSignature(["项目", "金额"]),
+      },
+    }]));
+
+    const content = state.messages.find((message) => message.role === "user")!.content as string;
+    expect(content).toContain("[表格选区定位提示]");
+    expect(content).toContain("第 0 行（0-based 物理行）");
+    expect(content).toContain('readDraft(mode:"range", from:"tbl-ch11", to:"tbl-ch11")');
+    expect(content).toContain("行列没有稳定 id");
+    expect(content).toContain("仅对第 0 行操作");
+    expect(content).not.toContain("选区可能已过期");
+  });
+
+  it("表格签名失配时降级整表引用并提示谨慎缩小范围", async () => {
+    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const state = createSession("sess-table-selection-stale");
+    state.doc = makeDocWithDiagram();
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+
+    await collectFrames(runAgentTurn(state, "修改这一列", [], [{
+      kind: { kind: "selection" },
+      resourceRef: { id: "tbl-ch11", domain: { kind: "docSpan" } },
+      prefix: null,
+      label: "项目",
+      suffix: "表格·第1列",
+      tableSelection: {
+        axis: "column",
+        startIndex: 0,
+        endIndex: 0,
+        signature: "fnv1-deadbeef",
+      },
+    }]));
+
+    const content = state.messages.find((message) => message.role === "user")!.content as string;
+    expect(content).toContain("选区可能已过期");
+    expect(content).toContain("整表引用");
+    expect(content).toContain("务必先 readDraft 核对，谨慎缩小操作范围");
+    expect(content).not.toContain("仅对第 0 列操作");
   });
 });

@@ -46,6 +46,7 @@ import {
   sessionIdToTraceId,
 } from "./agentSpans.js";
 import {
+  buildTableSelectionContext,
   buildSectionToLineMap,
   resolveSelectionChipBlocks,
 } from "./draftReadContext.js";
@@ -202,6 +203,8 @@ export async function* runAgentTurn(
     selectionChips.length > 0
       ? `\n\n【用户选中的文档片段】\n${selectionChips
           .map((c) => {
+            const tableSelectionContext = buildTableSelectionContext(state, c);
+            if (tableSelectionContext) return tableSelectionContext;
             // 优先按稳定 blockId 精确命中(对图表/图片等原子块也有效,且不受位置估算漂移影响)。
             const exactBlocks = resolveSelectionChipBlocks(state, c);
             if (exactBlocks.length > 0) {

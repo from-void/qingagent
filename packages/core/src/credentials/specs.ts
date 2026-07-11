@@ -1,4 +1,4 @@
-/** 平台凭据规格:声明每个平台需要哪些 env 键(供前端设置页渲染表单、校验)。 */
+/** 平台凭据规格:表单型 secret 与 connector namespace 分开登记；值只入不出。 */
 export interface PlatformCredentialSpec {
   platform: string;
   label: string;
@@ -17,5 +17,13 @@ export const PLATFORM_CREDENTIAL_SPECS: PlatformCredentialSpec[] = [
       { key: "DINGTALK_APP_SECRET", label: "AppSecret", secret: true },
     ],
     helpUrl: "https://open-dev.dingtalk.com",
+  },
+  {
+    platform: "connector:wechat-mp",
+    label: "微信公众号",
+    fields: [
+      { key: "bundle", label: "扫码会话凭据", secret: true },
+    ],
+    helpUrl: "https://mp.weixin.qq.com/",
   },
 ];

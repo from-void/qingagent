@@ -1,18 +1,23 @@
 import {
-  deleteCredentialRecordsBatch,
-  getCredentialsForPlatform,
+  deleteConnectorCredentialBundle,
+  type ConnectorCredentialBundle,
 } from "../credentials/credentialsRepo.js";
 import { probeWechatSearchbiz, type WechatAuthProbeResult } from "../tools/wechatSearch.js";
 import { createConnectorStatus } from "./service.js";
 import type { ConnectorAdapter, ConnectorStatusDto } from "./types.js";
-
-const WECHAT_PLATFORM = "wechat";
-const WECHAT_CREDENTIAL_KEYS = ["cookie", "expiry", "mp_name", "token"] as const;
+import { wechatAuthService } from "./wechatAuthService.js";
+import {
+  clearWechatSessionIssue,
+  getWechatSessionIssue,
+  readWechatCredentialBundle,
+  WECHAT_LEGACY_CREDENTIAL_KEYS,
+  type WechatCredentialPayload,
+} from "./wechatCredentials.js";
 
 interface WechatConnectorDependencies {
-  getCredentials: () => Promise<Record<string, string>>;
+  readBundle: () => Promise<ConnectorCredentialBundle<WechatCredentialPayload> | null>;
   probeSearchbiz: (token: string, cookie: string) => Promise<WechatAuthProbeResult>;
-  deleteCredentials: () => Promise<void>;
+  deleteBundle: (revision: number | null) => Promise<void>;
   now: () => Date;
 }
 
@@ -21,78 +26,70 @@ export class WechatConnector implements ConnectorAdapter {
 
   constructor(deps: Partial<WechatConnectorDependencies> = {}) {
     this.deps = {
-      getCredentials: () => getCredentialsForPlatform(WECHAT_PLATFORM),
+      readBundle: readWechatCredentialBundle,
       probeSearchbiz: probeWechatSearchbiz,
-      deleteCredentials: () => deleteCredentialRecordsBatch(WECHAT_PLATFORM, WECHAT_CREDENTIAL_KEYS),
+      deleteBundle: (revision) => deleteConnectorCredentialBundle("wechat-mp", {
+        expectedRevision: revision,
+        legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS },
+      }),
       now: () => new Date(),
       ...deps,
     };
   }
 
-  async status(): Promise<ConnectorStatusDto> {
-    const credentials = await this.deps.getCredentials();
-    return this.statusFromCredentials(credentials);
+  async start(): Promise<unknown> { return wechatAuthService.start(); }
+
+  async status(pendingId?: string): Promise<ConnectorStatusDto> {
+    if (pendingId) {
+      const pending = await wechatAuthService.status(pendingId);
+      if (pending.state === "AUTHORIZING" || pending.state === "VERIFYING") {
+        return createConnectorStatus("pending", { reasonCode: null, statusFreshness: "fresh", canProbe: false });
+      }
+      if (pending.state === "CAPABILITY_DENIED" || pending.state === "TIMEOUT") {
+        return createConnectorStatus("disconnected", {
+          reasonCode: pending.state === "TIMEOUT" ? "PENDING_EXPIRED" : "ACCESS_DENIED",
+          statusFreshness: "fresh", canProbe: false,
+        });
+      }
+    }
+    try { return this.statusFromBundle(await this.deps.readBundle()); }
+    catch { return createConnectorStatus("disconnected", { reasonCode: "WECHAT_CREDENTIAL_CORRUPT", statusFreshness: "ttl", canProbe: false }); }
   }
 
   async probe(): Promise<ConnectorStatusDto> {
-    const credentials = await this.deps.getCredentials();
-    const ttlStatus = this.statusFromCredentials(credentials);
-    if (ttlStatus.state !== "connected" || !credentials.token) return ttlStatus;
+    const bundle = await this.deps.readBundle();
+    const ttlStatus = this.statusFromBundle(bundle);
+    if (ttlStatus.state !== "connected" || !bundle) return ttlStatus;
     const checkedAt = this.deps.now().toISOString();
-    const result = await this.deps.probeSearchbiz(credentials.token, credentials.cookie ?? "");
-    if (result.ok) {
-      return { ...ttlStatus, reasonCode: null, lastCheckedAt: checkedAt, statusFreshness: "fresh" };
-    }
+    const result = await this.deps.probeSearchbiz(bundle.payload.token, bundle.payload.cookie);
+    if (result.ok) return { ...ttlStatus, reasonCode: null, lastCheckedAt: checkedAt, statusFreshness: "fresh" };
     if (result.kind === "reauth") {
-      return createConnectorStatus("needs_reauth", {
-        reasonCode: "SESSION",
-        account: ttlStatus.account,
-        lastCheckedAt: checkedAt,
-        statusFreshness: "fresh",
-        canProbe: true,
-      });
+      return createConnectorStatus("needs_reauth", { reasonCode: "needs_reauth", account: ttlStatus.account, lastCheckedAt: checkedAt, statusFreshness: "fresh", canProbe: true });
     }
-    const reasonCode = result.kind === "rate_limit" ? "RATE_LIMIT" :
-      result.kind === "capability_denied" ? "ACCESS_DENIED" :
-        result.kind === "transient" ? "TRANSIENT" : "UNKNOWN";
-    // 频控/瞬时错误不能反向证明 session 失效，保留 TTL 判读并如实标新鲜度。
+    const reasonCode = result.kind === "rate_limit"
+      ? "rate_limit"
+      : result.kind === "capability_denied" ? "ACCESS_DENIED" : "transient";
     return { ...ttlStatus, reasonCode, lastCheckedAt: checkedAt, statusFreshness: "ttl" };
   }
 
   async disconnect(): Promise<ConnectorStatusDto> {
-    await this.deps.deleteCredentials();
-    return createConnectorStatus("disconnected", {
-      reasonCode: "USER_DISCONNECTED",
-      lastCheckedAt: this.deps.now().toISOString(),
-      statusFreshness: "fresh",
-      canProbe: false,
-    });
+    wechatAuthService.disconnectPending();
+    const bundle = await this.deps.readBundle();
+    await this.deps.deleteBundle(bundle?.revision ?? null);
+    clearWechatSessionIssue();
+    return createConnectorStatus("disconnected", { reasonCode: "USER_DISCONNECTED", lastCheckedAt: this.deps.now().toISOString(), statusFreshness: "fresh", canProbe: false });
   }
 
-  private statusFromCredentials(credentials: Record<string, string>): ConnectorStatusDto {
-    const token = credentials.token;
-    const cookie = credentials.cookie;
-    const expiryMs = credentials.expiry ? Date.parse(credentials.expiry) : Number.NaN;
-    if (!token || !cookie || !Number.isFinite(expiryMs)) {
-      return createConnectorStatus("disconnected", {
-        reasonCode: "WECHAT_CREDENTIAL_MISSING",
-        statusFreshness: "ttl",
-        canProbe: false,
-      });
+  private statusFromBundle(bundle: ConnectorCredentialBundle<WechatCredentialPayload> | null): ConnectorStatusDto {
+    if (!bundle?.payload.token || !bundle.payload.cookie || !Number.isFinite(Date.parse(bundle.payload.expiry))) {
+      return createConnectorStatus("disconnected", { reasonCode: "WECHAT_CREDENTIAL_MISSING", statusFreshness: "ttl", canProbe: false });
     }
-    const account = credentials.mp_name ? { displayName: credentials.mp_name } : null;
-    if (expiryMs <= this.deps.now().getTime()) {
-      return createConnectorStatus("needs_reauth", {
-        reasonCode: "SESSION_EXPIRED",
-        account,
-        statusFreshness: "ttl",
-        canProbe: true,
-      });
+    const account = bundle.payload.account ? { displayName: bundle.payload.account } : null;
+    const issue = getWechatSessionIssue(bundle.revision);
+    if (issue) return createConnectorStatus("needs_reauth", { reasonCode: issue.reasonCode, account, lastCheckedAt: issue.lastCheckedAt, statusFreshness: "fresh", canProbe: true });
+    if (Date.parse(bundle.payload.expiry) <= this.deps.now().getTime()) {
+      return createConnectorStatus("needs_reauth", { reasonCode: "needs_reauth", account, statusFreshness: "ttl", canProbe: true });
     }
-    return createConnectorStatus("connected", {
-      account,
-      statusFreshness: "ttl",
-      canProbe: true,
-    });
+    return createConnectorStatus("connected", { account, statusFreshness: "ttl", canProbe: true });
   }
 }

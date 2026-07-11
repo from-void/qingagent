@@ -462,6 +462,8 @@ export {
   getAllCredentialEnv,
   listCredentialMeta,
   deleteCredential,
+  getConnectorCredentialBundle,
+  deleteConnectorCredentialBundle,
   redactSecret,
   PLATFORM_CREDENTIAL_SPECS,
   type CredentialInput,

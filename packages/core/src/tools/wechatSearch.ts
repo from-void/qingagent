@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { getCredentialsForPlatform } from "../credentials/credentialsRepo.js";
+import { markWechatSessionNeedsReauth, readWechatCredentialBundle } from "../connectors/wechatCredentials.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 // 路径B:用扫码登录拿到的 token+cookie,调微信公众平台后台内部接口搜号/列文。
@@ -26,6 +26,7 @@ interface AuthOk {
   ok: true;
   token: string;
   cookie: string;
+  revision: number;
 }
 interface AuthErr {
   ok: false;
@@ -35,16 +36,30 @@ interface AuthErr {
 
 /** 读登录态凭据;缺失或过期时返回可识别错误,交由 SKILL 引导重新扫码。 */
 async function requireWechatAuth(): Promise<AuthOk | AuthErr> {
-  const creds = await getCredentialsForPlatform(WECHAT_PLATFORM);
+  const bundle = await readWechatCredentialBundle().catch(() => null);
+  const creds = bundle?.payload;
   // 与 wechat_auth_status 判据对齐:token 与 expiry 都要有。缺 expiry=半授权(凭据非原子写、中途断),
   // 若放行会被当"永不过期"照用,和 status 说"未授权"矛盾——统一视为未授权。
-  if (!creds.token || !creds.expiry) {
+  if (!creds?.token || !creds.expiry) {
     return { ok: false, state: "NO_CREDENTIAL", error: "尚未扫码登录微信公众号后台" };
   }
   if (new Date(creds.expiry).getTime() <= Date.now()) {
-    return { ok: false, state: "EXPIRED", error: "微信登录态已过期(约3~4天一过期),需重新扫码" };
+    return { ok: false, state: "EXPIRED", error: "微信登录态本地最多保留约 80 小时，微信可能提前要求重新登录，需重新扫码" };
   }
-  return { ok: true, token: creds.token, cookie: creds.cookie ?? "" };
+  return { ok: true, token: creds.token, cookie: creds.cookie ?? "", revision: bundle!.revision };
+}
+
+function normalizeWechatBusinessError(error: unknown, revision: number): { state: string; error: string } {
+  if (error instanceof WechatCgiError) {
+    if (error.kind === "SESSION") {
+      markWechatSessionNeedsReauth(revision);
+      return { state: "needs_reauth", error: error.message };
+    }
+    if (error.kind === "RATE_LIMIT") return { state: "rate_limit", error: error.message };
+    if (error.kind === "ACCESS_DENIED") return { state: "ACCESS_DENIED", error: error.message };
+    return { state: "transient", error: error.message };
+  }
+  return { state: "transient", error: error instanceof Error ? error.message : String(error) };
 }
 
 // 串行化:并发调用排队,防 read-then-write 竞态(两并发都算出 wait≈0 同时发,限速形同虚设)。
@@ -219,11 +234,13 @@ export const wechatSearchMpTool = createTool({
   }),
   execute: async (input, context) => {
     const stop = startToolHeartbeat(context, { tool: "wechat_search_mp" });
+    let credentialRevision = 0;
     try {
       const auth = await requireWechatAuth();
       if (!auth.ok) {
         return { ok: false, state: auth.state, accounts: [], error: auth.error };
       }
+      credentialRevision = auth.revision;
       const data = await wechatCgiGet(
         "searchbiz",
         {
@@ -249,12 +266,12 @@ export const wechatSearchMpTool = createTool({
       }));
       return { ok: true, state: "READY", accounts, error: null };
     } catch (error) {
-      const state = error instanceof WechatCgiError ? error.kind : "OTHER";
+      const normalized = normalizeWechatBusinessError(error, credentialRevision);
       return {
         ok: false,
-        state,
+        state: normalized.state,
         accounts: [],
-        error: error instanceof Error ? error.message : String(error),
+        error: normalized.error,
       };
     } finally {
       stop();
@@ -328,11 +345,13 @@ export const wechatListArticlesTool = createTool({
   }),
   execute: async (input, context) => {
     const stop = startToolHeartbeat(context, { tool: "wechat_list_articles" });
+    let credentialRevision = 0;
     try {
       const auth = await requireWechatAuth();
       if (!auth.ok) {
         return { ok: false, state: auth.state, articles: [], error: auth.error };
       }
+      credentialRevision = auth.revision;
       const count = Math.min(input.count ?? 5, 20);
       const data = await wechatCgiGet(
         "appmsgpublish",
@@ -355,12 +374,12 @@ export const wechatListArticlesTool = createTool({
       const articles = parsePublishedArticles(data.publish_page).slice(0, count);
       return { ok: true, state: "READY", articles, error: null };
     } catch (error) {
-      const state = error instanceof WechatCgiError ? error.kind : "OTHER";
+      const normalized = normalizeWechatBusinessError(error, credentialRevision);
       return {
         ok: false,
-        state,
+        state: normalized.state,
         articles: [],
-        error: error instanceof Error ? error.message : String(error),
+        error: normalized.error,
       };
     } finally {
       stop();

@@ -11,6 +11,7 @@ import {
   saveConnectorCredentialBundle,
   saveCredentialRecordsBatch,
 } from "./credentialsRepo.js";
+import { readWechatCredentialBundle, WECHAT_LEGACY_CREDENTIAL_KEYS } from "../connectors/wechatCredentials.js";
 
 let db: TempDocumentsDb;
 
@@ -46,6 +47,27 @@ async function seedWechatLegacy(): Promise<void> {
 const legacyKeys = ["cookie", "expiry", "mp_name", "token"] as const;
 
 describe("connector credential bundle", () => {
+  it("微信 read-through 覆盖有旧无新/仅新/有新有旧，且 legacy 兼容窗口保留", async () => {
+    await seedWechatLegacy();
+    const migrated = await readWechatCredentialBundle();
+    expect(migrated).toMatchObject({ revision: 1, payload: { strategy: "qr-session", version: 1, account: "旧账号", cookie: "old-cookie", token: "old-token" } });
+    const legacyCount = await getDocumentsClient().execute({ sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = 'wechat'", args: [] });
+    expect(Number(legacyCount.rows[0]?.n)).toBe(4);
+
+    const newest = await saveConnectorCredentialBundle("wechat-mp", { strategy: "qr-session", version: 1, account: "新账号", cookie: "new", token: "new-token", expiry: "2099-01-01T00:00:00.000Z" });
+    await expect(readWechatCredentialBundle()).resolves.toEqual(newest);
+  });
+
+  it("微信 legacy 缺单 key 不生成 bundle，迁移可在补齐后重入", async () => {
+    await saveCredentialRecordsBatch([
+      { platform: "wechat", key: "cookie", value: "c" },
+      { platform: "wechat", key: "expiry", value: "2099-01-01T00:00:00.000Z" },
+      { platform: "wechat", key: "mp_name", value: "账号" },
+    ]);
+    await expect(readWechatCredentialBundle()).resolves.toBeNull();
+    await saveCredentialRecordsBatch([{ platform: "wechat", key: "token", value: "t" }]);
+    await expect(readWechatCredentialBundle()).resolves.toMatchObject({ revision: 1, payload: { token: "t" } });
+  });
   it("bundle 单行版本化写入，CAS 成功递增且冲突为 409", async () => {
     const first = await saveConnectorCredentialBundle(
       "github",
@@ -176,16 +198,37 @@ describe("connector credential bundle", () => {
   });
 
   it("disconnect 删除携带 revision CAS，迟到删除不得抹掉并发重连", async () => {
-    const first = await saveConnectorCredentialBundle("github", { token: "old" });
-    const reconnected = await saveConnectorCredentialBundle("github", { token: "new" });
+    await seedWechatLegacy();
+    const first = await saveConnectorCredentialBundle("wechat-mp", { token: "old" });
+    const reconnected = await saveConnectorCredentialBundle("wechat-mp", { token: "new" });
     await expect(
-      deleteConnectorCredentialBundle("github", { expectedRevision: first.revision }),
+      deleteConnectorCredentialBundle("wechat-mp", { expectedRevision: first.revision, legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS } }),
     ).rejects.toMatchObject({
       code: "CONNECTOR_CREDENTIAL_CAS_MISMATCH",
       actualRevision: reconnected.revision,
     });
-    await expect(getConnectorCredentialBundle("github")).resolves.toEqual(reconnected);
-    await deleteConnectorCredentialBundle("github", { expectedRevision: reconnected.revision });
-    await expect(getConnectorCredentialBundle("github")).resolves.toBeNull();
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toEqual(reconnected);
+    await expect(getDocumentsClient().execute({ sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = 'wechat'", args: [] })).resolves.toMatchObject({ rows: [expect.objectContaining({ n: 4 })] });
+    await deleteConnectorCredentialBundle("wechat-mp", { expectedRevision: reconnected.revision, legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS } });
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
+    const legacy = await getDocumentsClient().execute({ sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = 'wechat'", args: [] });
+    expect(Number(legacy.rows[0]?.n)).toBe(0);
+  });
+
+  it("无 bundle 的 disconnect 也以 expectedRevision=null 原子清 legacy，授权 write guard 可拦截迟到写", async () => {
+    await seedWechatLegacy();
+    await deleteConnectorCredentialBundle("wechat-mp", {
+      expectedRevision: null,
+      legacy: { platform: "wechat", keys: WECHAT_LEGACY_CREDENTIAL_KEYS },
+    });
+    const legacy = await getDocumentsClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM sandbox_credentials WHERE platform = 'wechat'",
+      args: [],
+    });
+    expect(Number(legacy.rows[0]?.n)).toBe(0);
+    await expect(saveConnectorCredentialBundle("wechat-mp", { token: "late" }, {
+      writeGuard: () => false,
+    })).rejects.toMatchObject({ code: "CONNECTOR_CREDENTIAL_WRITE_CANCELLED", status: 409 });
+    await expect(getConnectorCredentialBundle("wechat-mp")).resolves.toBeNull();
   });
 });

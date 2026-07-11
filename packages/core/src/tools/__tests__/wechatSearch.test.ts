@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCredentialsForPlatform } from "../../credentials/credentialsRepo.js";
+import { markWechatSessionNeedsReauth, readWechatCredentialBundle } from "../../connectors/wechatCredentials.js";
 import { wechatListArticlesTool, wechatSearchMpTool } from "../wechatSearch.js";
 
-vi.mock("../../credentials/credentialsRepo.js", () => ({
-  getCredentialsForPlatform: vi.fn(),
+vi.mock("../../connectors/wechatCredentials.js", () => ({
+  readWechatCredentialBundle: vi.fn(),
+  markWechatSessionNeedsReauth: vi.fn(),
 }));
 
 const opts = { toolCallId: "wechat-search-test", messages: [] } as never;
@@ -14,8 +15,8 @@ function reply(status: number, body: unknown): FetchReply {
   return { status, body: typeof body === "string" ? body : JSON.stringify(body) };
 }
 
-function validCreds(): Record<string, string> {
-  return { token: "TK", cookie: "slave_sid=x", expiry: new Date(Date.now() + 3600_000).toISOString() };
+function validCreds(patch: Record<string, string> = {}) {
+  return { version: 1 as const, connectorId: "wechat-mp", revision: 3, payload: { strategy: "qr-session" as const, version: 1 as const, account: "", token: "TK", cookie: "slave_sid=x", expiry: new Date(Date.now() + 3600_000).toISOString(), ...patch } };
 }
 
 function mockFetchJson(obj: unknown): void {
@@ -41,24 +42,20 @@ describe("wechatSearch 路径B", () => {
   });
 
   it("无凭据 → NO_CREDENTIAL,不发请求", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({});
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(null);
     const result = await search("阮一峰");
     expect(result.ok).toBe(false);
     expect(result.state).toBe("NO_CREDENTIAL");
   });
 
   it("凭据过期 → EXPIRED", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({
-      token: "TK",
-      cookie: "c",
-      expiry: new Date(Date.now() - 1000).toISOString(),
-    });
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds({ expiry: new Date(Date.now() - 1000).toISOString() }));
     const result = await search("x");
     expect(result.state).toBe("EXPIRED");
   });
 
   it("半授权(有 token 无 expiry) → 视为未授权,与 status 判据一致", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue({ token: "TK", cookie: "c" });
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(null);
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await search("x");
@@ -68,7 +65,7 @@ describe("wechatSearch 路径B", () => {
   });
 
   it("搜号解析出候选公众号(nickname/fakeid)", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
     mockFetchJson({
       base_resp: { ret: 0 },
       list: [
@@ -91,15 +88,15 @@ describe("wechatSearch 路径B", () => {
   });
 
   it("频控 ret=200013 → RATE_LIMIT", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
     mockFetchJson({ base_resp: { ret: 200013, err_msg: "freq control" } });
     const result = await search("x");
     expect(result.ok).toBe(false);
-    expect(result.state).toBe("RATE_LIMIT");
+    expect(result.state).toBe("rate_limit");
   });
 
   it("列文解析多层嵌套 appmsgpublish", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
     const publishInfo = JSON.stringify({
       appmsgex: [
         {
@@ -121,18 +118,25 @@ describe("wechatSearch 路径B", () => {
   });
 
   it("会话失效 ret=-6 → SESSION(引导重扫)", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
     mockFetchJson({ base_resp: { ret: -6 } });
     const result = await list("x");
     expect(result.ok).toBe(false);
-    expect(result.state).toBe("SESSION");
+    expect(result.state).toBe("needs_reauth");
+    expect(markWechatSessionNeedsReauth).toHaveBeenCalledWith(3);
   });
 
   it("非 JSON 响应(被风控重定向) → TRANSIENT", async () => {
-    vi.mocked(getCredentialsForPlatform).mockResolvedValue(validCreds());
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ text: async () => "<html>验证</html>" }));
     const result = await search("x");
-    expect(result.state).toBe("TRANSIENT");
+    expect(result.state).toBe("transient");
+  });
+
+  it("搜索能力拒绝保留 ACCESS_DENIED 语义", async () => {
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue(validCreds());
+    mockFetchJson({ base_resp: { ret: 200007 } });
+    expect((await search("x")).state).toBe("ACCESS_DENIED");
   });
 });
 

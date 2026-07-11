@@ -43,6 +43,8 @@ export interface SaveConnectorBundleOptions {
   /** undefined=无条件新 revision；null=仅当不存在；number=仅当当前 revision 相等。 */
   expectedRevision?: number | null;
   scope?: string;
+  /** 在写事务取得串行锁后同步复核；用于 pending abort 代际栅栏。 */
+  writeGuard?: () => boolean;
 }
 
 export class ConnectorCredentialCasError extends Error {
@@ -187,6 +189,13 @@ export async function saveConnectorCredentialBundle<T>(
     ) {
       throw new ConnectorCredentialCasError(options.expectedRevision, actualRevision);
     }
+    if (options.writeGuard && !options.writeGuard()) {
+      throw Object.assign(new Error("连接器授权已取消"), {
+        name: "ConnectorCredentialWriteCancelledError",
+        code: "CONNECTOR_CREDENTIAL_WRITE_CANCELLED",
+        status: 409,
+      });
+    }
     const bundle: ConnectorCredentialBundle<T> = {
       version: 1,
       connectorId,
@@ -293,8 +302,9 @@ export async function readThroughMigrateConnectorBundle<T>(
 }
 
 export interface DeleteConnectorBundleOptions {
-  expectedRevision: number;
+  expectedRevision: number | null;
   scope?: string;
+  legacy?: { platform: string; keys: readonly string[] };
 }
 
 /** disconnect 删除也必须 CAS，避免迟到请求删掉并发重连写入的新 revision。 */
@@ -310,11 +320,21 @@ export async function deleteConnectorCredentialBundle(
     if (actualRevision !== options.expectedRevision) {
       throw new ConnectorCredentialCasError(options.expectedRevision, actualRevision);
     }
-    await client.execute({
-      sql: `DELETE FROM sandbox_credentials
-            WHERE scope = ? AND platform = ? AND cred_key = ?`,
-      args: [scope, connectorBundlePlatform(connectorId), CONNECTOR_BUNDLE_KEY],
-    });
+    if (actualRevision !== null) {
+      await client.execute({
+        sql: `DELETE FROM sandbox_credentials
+              WHERE scope = ? AND platform = ? AND cred_key = ?`,
+        args: [scope, connectorBundlePlatform(connectorId), CONNECTOR_BUNDLE_KEY],
+      });
+    }
+    if (options.legacy?.keys.length) {
+      const placeholders = options.legacy.keys.map(() => "?").join(", ");
+      await client.execute({
+        sql: `DELETE FROM sandbox_credentials
+              WHERE scope = ? AND platform = ? AND cred_key IN (${placeholders})`,
+        args: [scope, options.legacy.platform, ...options.legacy.keys],
+      });
+    }
     return commitTransaction(undefined);
   });
 }

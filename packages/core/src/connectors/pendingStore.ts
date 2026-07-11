@@ -126,6 +126,14 @@ export class PendingStore<T> {
     return this.toEntry(stored);
   }
 
+  current(connectorId: string, scope: string): PendingEntry<T> | null {
+    this.sweepExpired();
+    const pendingId = this.byBinding.get(this.bindingKey(connectorId, scope));
+    if (!pendingId) return null;
+    const stored = this.entries.get(pendingId);
+    return stored ? this.toEntry(stored) : null;
+  }
+
   complete(pendingId: string, connectorId: string, scope: string): PendingEntry<T> {
     const entry = this.get(pendingId, connectorId, scope);
     const stored = this.entries.get(pendingId)!;

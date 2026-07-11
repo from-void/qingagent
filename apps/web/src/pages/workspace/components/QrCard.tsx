@@ -13,7 +13,15 @@ import "./QrCard.css";
  * - note 是模型自产的轻量 markdown 说明(可含可点授权链接),取代写死的兜底链接。
  * - code(配对码)不是每个平台都有,没有则隐藏。
  */
-export function AuthCard({ data }: { data: QrCardBody }) {
+export interface AuthCardProps {
+  data: QrCardBody;
+  /** 设置页等非对话场景可自行重新发起；缺省保持旧帧发送 refreshQuery 的行为。 */
+  onRefresh?: () => void | Promise<void>;
+  /** 轮询出现任意终态后通知宿主刷新连接状态。 */
+  onStatusChange?: () => void;
+}
+
+export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">("polling");
   const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
@@ -23,10 +31,21 @@ export function AuthCard({ data }: { data: QrCardBody }) {
   );
   const [remain, setRemain] = useState(remainOf);
   const expired = remain <= 0;
+  const pollingRef = useRef(false);
+  const settledRef = useRef(false);
+
+  useEffect(() => {
+    setConnectorState("polling");
+    setConnectedAccount(data.success?.account ?? null);
+    pollingRef.current = false;
+    settledRef.current = false;
+  }, [data.pendingId, data.success?.account]);
 
   useVisibilityPausedInterval(
     async () => {
       if (!data.connectorId || !data.pendingId || connectorState !== "polling") return;
+      if (pollingRef.current) return;
+      pollingRef.current = true;
       try {
         const response = await fetch(`/api/v1/connectors/${encodeURIComponent(data.connectorId)}?pendingId=${encodeURIComponent(data.pendingId)}`, { credentials: "same-origin" });
         if (response.status === 410) { setConnectorState("interrupted"); return; }
@@ -35,10 +54,14 @@ export function AuthCard({ data }: { data: QrCardBody }) {
         if (payload.status?.state === "connected") {
           setConnectedAccount(payload.status.account?.displayName ?? null);
           setConnectorState("connected");
+          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
         } else if (payload.status?.reasonCode === "PENDING_LOST" || payload.status?.reasonCode === "PENDING_EXPIRED") {
           setConnectorState("interrupted");
+        } else if (payload.status?.state && payload.status.state !== "pending") {
+          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
         }
       } catch { /* 短暂网络失败保持原卡，下个节流周期再试。 */ }
+      finally { pollingRef.current = false; }
     },
     data.connectorId && data.pendingId && connectorState === "polling" ? 2000 : null,
     { runOnResume: true },
@@ -97,7 +120,12 @@ export function AuthCard({ data }: { data: QrCardBody }) {
     if (refreshSentRef.current) return;
     refreshSentRef.current = true;
     setRefreshSent(true);
-    chatInputBus.send(data.refreshQuery);
+    if (onRefresh) {
+      Promise.resolve(onRefresh()).catch(() => {
+        refreshSentRef.current = false;
+        setRefreshSent(false);
+      });
+    } else chatInputBus.send(data.refreshQuery);
   };
 
   const sendConfirmOnce = () => {

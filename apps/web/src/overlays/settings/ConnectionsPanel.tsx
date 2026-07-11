@@ -1,8 +1,61 @@
 import { useState } from "react";
-import type { ConnectorId, ConnectorInfo, ConnectorState } from "@qingagent/contract-ts";
+import type { ConnectorId, ConnectorInfo, ConnectorState, QrCardBody } from "@qingagent/contract-ts";
 import { useClientCapabilities } from "../../system";
 import { useToast } from "../../system/ToastProvider";
+import { AuthCard } from "../../pages/workspace/components/QrCard";
 import { useConnectors } from "./useConnectors";
+
+type GithubStartResult = { user_code: string; verification_uri: string; expiresAt: string; pendingId: string };
+type FeishuStartResult =
+  | { mode: "authorization"; verification_url: string; user_code: string; expiresAt: string; pendingId: string }
+  | { mode: "configuration"; configuration_url: string; expiresAt: string; pendingId: string };
+type WechatStartResult = { imageDataUri: string; expiresInSec: number; pendingId: string };
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value) throw new Error(`授权响应缺少 ${field}`);
+  return value;
+}
+
+function absoluteExpiry(value: unknown): number {
+  const expiresAt = Date.parse(requireString(value, "expiresAt"));
+  if (!Number.isFinite(expiresAt)) throw new Error("授权响应 expiresAt 非法");
+  return expiresAt;
+}
+
+export function mapConnectorStart(id: ConnectorId, value: unknown, now = Date.now()): QrCardBody {
+  if (id === "github") {
+    const result = value as Partial<GithubStartResult>;
+    return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
+      code: requireString(result.user_code, "user_code"), note: "在浏览器打开授权页面，输入上方代码并确认授权。", expiresAt: absoluteExpiry(result.expiresAt),
+      refreshQuery: "重新连接 GitHub", confirmQuery: null };
+  }
+  if (id === "feishu") {
+    const result = value as Partial<FeishuStartResult>;
+    if (result.mode !== "authorization" && result.mode !== "configuration") throw new Error("授权响应 mode 非法");
+    if (result.mode === "configuration") {
+      const url = requireString(result.configuration_url, "configuration_url");
+      return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "配置飞书应用", content: url,
+        code: null, note: `这是飞书应用配置步骤，请[点此打开创建向导](${url})并按指引完成配置。`, expiresAt: absoluteExpiry(result.expiresAt),
+        refreshQuery: "重新配置飞书应用", confirmQuery: null };
+    }
+    const authorization = result as Partial<Extract<FeishuStartResult, { mode: "authorization" }>>;
+    const url = requireString(authorization.verification_url, "verification_url");
+    return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码授权飞书", content: url,
+      code: requireString(authorization.user_code, "user_code"), note: `用飞书 App 扫码，或[点此在浏览器授权](${url})并输入配对码。`, expiresAt: absoluteExpiry(result.expiresAt),
+      refreshQuery: "重新授权飞书", confirmQuery: null };
+  }
+  const result = value as Partial<WechatStartResult>;
+  if (typeof result.expiresInSec !== "number" || !Number.isFinite(result.expiresInSec) || result.expiresInSec <= 0) throw new Error("授权响应 expiresInSec 非法");
+  return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码登录微信公众平台", content: "", imageDataUri: requireString(result.imageDataUri, "imageDataUri"),
+    code: null, note: "用你自己的微信扫码登录公众平台后台。登录态可能提前失效，届时可重新扫码。",
+    expiresAt: now + result.expiresInSec * 1000, refreshQuery: "重新登录微信公众号", confirmQuery: null };
+}
+
+function startLabel(connector: ConnectorInfo): string {
+  if (connector.id === "github") return connector.status.state === "needs_reauth" ? "重新授权" : "连 接";
+  if (connector.id === "feishu") return connector.status.state === "unconfigured" ? "创建应用" : connector.status.state === "needs_reauth" ? "重新扫码" : "扫码授权";
+  return connector.status.state === "needs_reauth" ? "重新扫码" : "扫码登录";
+}
 
 const STATUS_LABELS: Record<ConnectorState, string> = {
   unavailable: "此环境不可用",
@@ -116,11 +169,12 @@ export interface ConnectionsPanelProps {
 
 export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange }: ConnectionsPanelProps) {
   const capabilities = useClientCapabilities();
-  const { connectors, loading, error, probe, disconnect } = useConnectors();
+  const { connectors, loading, error, refresh, start, probe, disconnect } = useConnectors();
   const toast = useToast();
   // 未提供回调时把 selectedId 当作初始值，避免半受控调用导致返回按钮失效。
   const [localId, setLocalId] = useState<ConnectorId | null>(controlledId ?? null);
   const [busy, setBusy] = useState(false);
+  const [authCard, setAuthCard] = useState<{ connectorId: ConnectorId; data: QrCardBody } | null>(null);
   const selectedId = onSelectedIdChange ? controlledId ?? null : localId;
   const select = (id: ConnectorId | null) => {
     setLocalId(id);
@@ -144,7 +198,21 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         ? "到对话里说「连接 GitHub」发起授权。"
         : "到对话里说「登录公众号」发起授权。";
     const showGuide = ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
+    const canStart = (selected.id === "feishu"
+      ? ["unconfigured", "disconnected", "needs_reauth"]
+      : ["disconnected", "needs_reauth"]).includes(selected.status.state);
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
+    const selectedAuthCard = authCard?.connectorId === selected.id ? authCard.data : null;
+    const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
+    const initiate = async () => {
+      setBusy(true);
+      try {
+        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id)) });
+      } catch (cause) {
+        toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
+        throw cause;
+      } finally { setBusy(false); }
+    };
     return (
       <div className="cn-detail" data-wf="ConnectionDetail" data-connector-id={selected.id}>
         <div className="sk-subhead">
@@ -156,12 +224,21 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         <div className="cnd-hero">
           <ConnectorIcon connector={selected} />
           <span className="cnd-name">{selected.name}</span>
-          <Badge state={selected.status.state} connectorId={selected.id} />
+          <Badge state={visibleState} connectorId={selected.id} />
           {!selected.official && <span className="cn-unofficial">非官方接口 ⚠</span>}
         </div>
-        <p className="cnd-status">{detailStatus(selected)}</p>
+        <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态" : detailStatus(selected)}</p>
+        {selectedAuthCard ? (
+          <div className="cnd-authcard"><AuthCard data={selectedAuthCard} onRefresh={initiate} onStatusChange={() => {
+            void refresh().then(() => setAuthCard(null)).catch(() => undefined);
+          }} /></div>
+        ) : canStart ? (
+          <div className="cnd-action"><button type="button" className="sm-btn primary" disabled={busy} onClick={() => { void initiate().catch(() => undefined); }}>
+            {busy ? "发起中…" : startLabel(selected)}
+          </button></div>
+        ) : null}
         {showGuide ? (
-          <div className="cnd-guide">{guide}<br />设置页不直接发起授权；你可以在这里检查或断开现有连接。</div>
+          <div className="cnd-guide">{guide}<br />你也可以继续在对话中按需发起授权。</div>
         ) : null}
         {selected.id === "github" && selected.status.state === "connected" && !selected.status.scopes.includes("repo") && (
           <div className="cnd-guide">当前仅授权公开仓。需要读取私有仓时，系统会在对话中说明并请求增量 repo 授权；授权失败不会影响现有连接。</div>
@@ -210,7 +287,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
 
   return (
     <div className="settings-connections" data-wf="ConnectionsPanel">
-      <p className="sm-note" style={{ marginTop: 0 }}>管理青简以你的身份访问的外部服务。授权在对话里按需发生。</p>
+      <p className="sm-note" style={{ marginTop: 0 }}>管理青简以你的身份访问的外部服务。可在详情页主动连接，也可在对话里按需发起。</p>
       {loading && connectors.length === 0 && <p className="sm-empty">加载中…</p>}
       {error && <p className="sm-message">{error}</p>}
       <div className="cn-list">

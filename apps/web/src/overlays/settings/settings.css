@@ -716,6 +716,8 @@
 .cn-unavailable-title{margin-bottom:5px;font-family:var(--font-zh-serif);font-size:15px;font-weight:800;color:var(--qj-ink)}
 .cn-unavailable p{margin:0;color:var(--qj-header-sub)}
 .cnd-action{display:flex;align-items:center;gap:10px;margin:0 6px 16px 0}
+.cnd-authcard{margin:0 6px 16px 0}
+.cnd-authcard .qr-card{max-width:420px}
 .cnd-sec{margin:0 6px;padding:14px 0;border-top:1px solid var(--qj-switch-border)}
 .cnd-sec-title{margin-bottom:6px;font-size:10.5px;letter-spacing:.12em;color:var(--qj-cinnabar);font-weight:700}
 .cnd-sec-body{font-size:11.5px;line-height:1.7;color:var(--qj-switch-text)}

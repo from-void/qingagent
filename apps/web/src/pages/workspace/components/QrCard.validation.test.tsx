@@ -401,6 +401,21 @@ describe("QrCard — validation loop 3", () => {
       expect(refreshButton?.disabled).toBe(true);
       expect(refreshButton?.textContent).toContain("已请求刷新");
     });
+
+    it("uses onRefresh outside chat without sending refreshQuery", () => {
+      const sendSpy = vi.spyOn(chatInputBus, "send").mockImplementation(() => undefined);
+      const onRefresh = vi.fn();
+      const data: QrCardBody = {
+        title: "授权测试", content: "https://test.qr", expiresAt: Date.now() - 1_000,
+        code: null, refreshQuery: "refresh", confirmQuery: null, note: null,
+      };
+      render(<QrCard data={data} onRefresh={onRefresh} />);
+
+      act(() => { click(document.querySelector(".qr-card__refresh") as HTMLButtonElement); });
+
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("(f) QR action accessibility", () => {
@@ -457,6 +472,24 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={connectorCard()} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已连接为 @octocat");
+    });
+
+    it("轮询成功通知设置页刷新连接状态", async () => {
+      vi.useFakeTimers();
+      const onStatusChange = vi.fn();
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected" } }), { status: 200 })));
+      render(<QrCard data={connectorCard()} onStatusChange={onStatusChange} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(onStatusChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("飞书配置完成为 disconnected 终态时也通知设置页推进流程", async () => {
+      vi.useFakeTimers();
+      const onStatusChange = vi.fn();
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "disconnected", reasonCode: "LARK_AUTH_MISSING" } }), { status: 200 })));
+      render(<QrCard data={{ ...connectorCard(), connectorId: "feishu", code: null }} onStatusChange={onStatusChange} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(onStatusChange).toHaveBeenCalledTimes(1);
     });
 
     it("微信新帧轮询成功显示已登录公众号，过期/410 进入中断分支", async () => {

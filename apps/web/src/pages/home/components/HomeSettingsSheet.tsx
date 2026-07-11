@@ -3,6 +3,8 @@ import { ModelSettingsPanel } from "../../../overlays/settings/ModelSettingsPane
 import { FeedbackPanel } from "../../../overlays/settings/FeedbackPanel";
 import { ShortcutsPanel } from "../../../overlays/settings/ShortcutsPanel";
 import { SkillsPanel } from "../../../overlays/settings/SkillsPanel";
+import { ConnectionsPanel } from "../../../overlays/settings/ConnectionsPanel";
+import type { ConnectorId } from "@qingagent/contract-ts";
 import { AboutPanel } from "../../../overlays/settings/AboutPanel";
 import "../../../overlays/settings/settings.css";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
@@ -11,7 +13,7 @@ import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
 // tab:外观(明暗/字体/进场/动效) · 模型(看板) · 技能 · 搜索 · 快捷键。数据 tab 暂隐藏。
 
-export type SettingsSheetTab = "appearance" | "model" | "skills" | "diagnostics" | "shortcuts" | "about";
+export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "diagnostics" | "shortcuts" | "about";
 
 interface SheetOption<T extends string> {
   id: T;
@@ -42,6 +44,7 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   { id: "model", label: "模型" },
   // 「外观」整组已隐藏:产品只保留浅色宣纸,无深/浅模式与外观设置。
   { id: "skills", label: "技能" },
+  { id: "connections", label: "连接" },
   { id: "diagnostics", label: "反馈" },
   { id: "shortcuts", label: "快捷键" },
   { id: "about", label: "关于" },
@@ -67,6 +70,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
   onClose,
 }: HomeSettingsSheetProps<Mode, AnimId, Font>) {
   const [tab, setTab] = useState<SettingsSheetTab>(initialTab ?? "model");
+  const [selectedConnectorId, setSelectedConnectorId] = useState<ConnectorId | null>(null);
   const [inkReady, setInkReady] = useState(false);
   const [closing, setClosing] = useState(false);
   // 墨退场比内容晚 160ms 触发:内容先淡出,墨再回收,避免墨先退留残影
@@ -275,7 +279,16 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
               </div>
             )}
             {tab === "model" && <ModelSettingsPanel />}
-            {tab === "skills" && <SkillsPanel />}
+            {tab === "skills" && <SkillsPanel onOpenConnector={(id) => {
+              setSelectedConnectorId(id);
+              setTab("connections");
+            }} />}
+            {tab === "connections" && (
+              <ConnectionsPanel
+                selectedId={selectedConnectorId}
+                onSelectedIdChange={setSelectedConnectorId}
+              />
+            )}
             {tab === "diagnostics" && <FeedbackPanel />}
             {tab === "shortcuts" && <ShortcutsPanel />}
             {tab === "about" && <AboutPanel />}

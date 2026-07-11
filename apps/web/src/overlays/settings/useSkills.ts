@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ConnectorId } from "@qingagent/contract-ts";
 
 export const SKILLS_CHANGED_EVENT = "qingagent:skills-changed";
 
@@ -14,6 +15,7 @@ export interface SkillInfo {
   config?: string;
   tools: string[];
   enabled: boolean;
+  connectorId?: ConnectorId;
 }
 
 export interface SkillDetailInfo extends SkillInfo {

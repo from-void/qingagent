@@ -15,6 +15,7 @@ import { VisionPanel } from "./VisionPanel";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { normalizeSkillIconKey, SKILL_CARD_ICON_PATHS } from "../../system/skillIcons";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
+import type { ConnectorId } from "@qingagent/contract-ts";
 
 ensureSettingsDialogA11y();
 
@@ -79,7 +80,37 @@ function renderConfig(config: string | undefined): ReactNode {
   return null;
 }
 
-export function SkillsPanel() {
+const CONNECTOR_NAMES: Record<ConnectorId, string> = {
+  github: "GitHub",
+  feishu: "飞书",
+  "wechat-mp": "微信公众号",
+};
+
+function ConnectorDependency({
+  connectorId,
+  onOpen,
+}: {
+  connectorId: ConnectorId;
+  onOpen?: (id: ConnectorId) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="sk-dep"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen?.(connectorId);
+      }}
+      title={`前往「连接」查看 ${CONNECTOR_NAMES[connectorId]}`}
+    >
+      <span className="sk-dep-dot" aria-hidden="true" />
+      依赖连接：<span className="sk-dep-name">{CONNECTOR_NAMES[connectorId]}</span>
+      <span className="sk-dep-go" aria-hidden="true">›</span>
+    </button>
+  );
+}
+
+export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: ConnectorId) => void } = {}) {
   const confirm = useConfirm();
   const {
     skills,
@@ -309,6 +340,7 @@ export function SkillsPanel() {
             onToggle={(enabled) => void toggle(selectedSkill.name, enabled)}
             onSaveLabel={(label) => void saveLabel(selectedSkill.name, label)}
             onDelete={() => void confirmDelete(selectedSkill.name, selectedSkill.label, selectedSkill.source === "builtin")}
+            onOpenConnector={onOpenConnector}
           />
         ) : detailLoading ? (
           <p className="sm-empty">加载中…</p>
@@ -370,6 +402,7 @@ export function SkillsPanel() {
               </button>
             </div>
             <p className="sk-card-summary">{s.summary}</p>
+            {s.connectorId && <ConnectorDependency connectorId={s.connectorId} onOpen={onOpenConnector} />}
           </div>
         ))}
 
@@ -434,6 +467,7 @@ function SkillDetail({
   onToggle,
   onSaveLabel,
   onDelete,
+  onOpenConnector,
 }: {
   skill: SkillInfo;
   body: string;
@@ -444,6 +478,7 @@ function SkillDetail({
   onToggle: (enabled: boolean) => void;
   onSaveLabel: (label: string) => void;
   onDelete: () => void;
+  onOpenConnector?: (id: ConnectorId) => void;
 }) {
   const [labelDraft, setLabelDraft] = useState(skill.label);
   const configNode = renderConfig(skill.config);
@@ -486,6 +521,10 @@ function SkillDetail({
         <span className="k">引出工具</span>：
         {skill.tools.length > 0 ? skill.tools.map(toolLabel).join("、") : "无"}
       </p>
+
+      {skill.connectorId && (
+        <ConnectorDependency connectorId={skill.connectorId} onOpen={onOpenConnector} />
+      )}
 
       <form
         className="sk-label-form"

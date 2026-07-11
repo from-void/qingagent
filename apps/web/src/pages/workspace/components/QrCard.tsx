@@ -13,7 +13,7 @@ import "./QrCard.css";
  * - note 是模型自产的轻量 markdown 说明(可含可点授权链接),取代写死的兜底链接。
  * - code(配对码)不是每个平台都有,没有则隐藏。
  */
-export function QrCard({ data }: { data: QrCardBody }) {
+export function AuthCard({ data }: { data: QrCardBody }) {
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const remainOf = useCallback(
     () => Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000)),
@@ -86,7 +86,7 @@ export function QrCard({ data }: { data: QrCardBody }) {
   };
 
   return (
-    <div className="qr-card" data-wf="QrCard">
+    <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
       {data.title && <div className="qr-card__title">{data.title}</div>}
       <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
         {qrUrl ? (
@@ -133,6 +133,9 @@ export function QrCard({ data }: { data: QrCardBody }) {
     </div>
   );
 }
+
+/** 旧组件名兼容层：已有 import、快照和持久化 qrCard wire 均保持不变。 */
+export const QrCard = AuthCard;
 
 // 轻量渲染 note 的富文本:按行分段,inline 支持 markdown 链接 [文字](url) 与 **粗体**。
 // 模型自产的说明 + 可点授权链接合为一段,替代写死的"扫不了码点此打开"。

@@ -13,6 +13,45 @@ const STATUS_LABELS: Record<ConnectorState, string> = {
   needs_reauth: "需重新授权",
 };
 
+// 技能 id → 面板显示名(与 SKILL.md label 对齐;缺省回退 id)。
+const SKILL_LABELS: Record<string, string> = {
+  "github-materials": "GitHub 素材",
+  feishu: "连飞书",
+  "wechat-official-account": "抓公众号",
+};
+
+// 飞书 scope 前缀 → 能力域显示名;原始 scope 串是实现细节,面板按域聚合展示。
+const FEISHU_DOMAIN_LABELS: Record<string, string> = {
+  docs: "文档",
+  docx: "文档",
+  wiki: "知识库",
+  base: "多维表格",
+  bitable: "多维表格",
+  sheets: "电子表格",
+  calendar: "日历",
+  im: "消息",
+  drive: "云盘",
+  mail: "邮件",
+  task: "任务",
+  approval: "审批",
+  contact: "通讯录",
+  minutes: "妙记",
+  attendance: "考勤",
+  vc: "视频会议",
+  auth: "基础身份",
+  offline_access: "离线访问",
+};
+
+function displayScopes(id: ConnectorId, scopes: readonly string[]): string[] {
+  if (id !== "feishu") return [...scopes];
+  const domains = new Set<string>();
+  for (const scope of scopes) {
+    const prefix = scope.split(":")[0] ?? scope;
+    domains.add(FEISHU_DOMAIN_LABELS[prefix] ?? prefix);
+  }
+  return [...domains];
+}
+
 const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> = {
   github: {
     unavailable: "当前环境无法使用 GitHub 连接",
@@ -142,12 +181,12 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         )}
         <section className="cnd-sec">
           <div className="cnd-sec-title">被谁使用</div>
-          <div className="cnd-sec-body">{selected.usedBySkills.length > 0 ? selected.usedBySkills.join("、") : "暂无技能依赖"}</div>
+          <div className="cnd-sec-body">{selected.usedBySkills.length > 0 ? selected.usedBySkills.map((skill) => `技能「${SKILL_LABELS[skill] ?? skill}」`).join("、") : "暂无技能依赖"}</div>
         </section>
         {selected.status.scopes.length > 0 && (
           <section className="cnd-sec">
             <div className="cnd-sec-title">已授权能力域</div>
-            <div className="cnd-sec-body cn-scopes">{selected.status.scopes.map((scope) => <span key={scope} className="ss-badge">{scope}</span>)}</div>
+            <div className="cnd-sec-body cn-scopes" title={selected.status.scopes.join(" ")}>{displayScopes(selected.id, selected.status.scopes).map((scope) => <span key={scope} className="ss-badge">{scope}</span>)}</div>
           </section>
         )}
         {!selected.official && selected.riskNote && <div className="cnd-warnbox">{selected.riskNote}</div>}

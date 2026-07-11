@@ -2078,22 +2078,23 @@
   /* edge dots — small circles between col/row borders */
   #view-workspace .tbl-dot{
     width:16px;height:16px;border-radius:50%;
-    border:none;background:transparent;
+    box-sizing:border-box;border:1px solid transparent;background:transparent;color:var(--mark);
     cursor:pointer;z-index:100020;
     display:flex;align-items:center;justify-content:center;
     transform:translate(-50%,-50%);
     padding:0;position:relative;pointer-events:auto;
+    transition:width .12s,height .12s,background .12s,border-color .12s,color .12s;
   }
   #view-workspace .tbl-dot::before{
     content:"";width:5px;height:5px;border-radius:50%;
-    background:rgba(168,130,63,.5);transition:opacity .12s;
+    background:color-mix(in srgb,var(--mark) 50%,transparent);transition:opacity .12s;
   }
   #view-workspace .tbl-dot .tbl-dot-mark{
-    display:none;font-size:13px;font-weight:700;line-height:1;color:#fff;
+    display:none;position:relative;z-index:1;overflow:visible;pointer-events:none;
   }
   #view-workspace .tbl-dot:hover::before{display:none}
   #view-workspace .tbl-dot:hover{
-    background:rgba(168,130,63,.85);width:18px;height:18px;
+    width:18px;height:18px;background:var(--bg-paper-deep);border-color:var(--mark);color:var(--mark);
   }
   #view-workspace .tbl-dot:hover .tbl-dot-mark{display:block}
 
@@ -2101,13 +2102,13 @@
   #view-workspace .tbl-dot-col:hover::after{
     content:"";position:absolute;top:50%;left:50%;
     width:2px;height:var(--tbl-guide,100px);
-    background:rgba(168,130,63,.30);transform:translateX(-50%);
+    background:color-mix(in srgb,var(--mark) 30%,transparent);transform:translateX(-50%);
     pointer-events:none;
   }
   #view-workspace .tbl-dot-row:hover::after{
     content:"";position:absolute;top:50%;left:50%;
     height:2px;width:var(--tbl-guide,200px);
-    background:rgba(168,130,63,.30);transform:translateY(-50%);
+    background:color-mix(in srgb,var(--mark) 30%,transparent);transform:translateY(-50%);
     pointer-events:none;
   }
 

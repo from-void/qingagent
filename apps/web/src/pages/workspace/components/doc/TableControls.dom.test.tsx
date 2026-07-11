@@ -7,6 +7,8 @@ import { pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { selectTableColumns, setTableCellSelectionFromDom, TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableControls } from "./TableControls";
+import { TABLE_INSERT_DOT_HOVER_SIZE } from "./tableChromeGeometry";
+import { BlockHandle } from "./BlockHandle";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -91,6 +93,22 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 
 function setRect(element: Element, value: DOMRect): void {
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue(value);
+}
+
+function inlineRect(element: HTMLElement): DOMRect {
+  return rect(
+    Number.parseFloat(element.style.left),
+    Number.parseFloat(element.style.top),
+    Number.parseFloat(element.style.width),
+    Number.parseFloat(element.style.height),
+  );
+}
+
+function inlineDotRect(dot: HTMLElement, viewportRect: DOMRect): DOMRect {
+  const radius = TABLE_INSERT_DOT_HOVER_SIZE / 2;
+  const centerX = viewportRect.left + Number.parseFloat(dot.style.left);
+  const centerY = viewportRect.top + Number.parseFloat(dot.style.top);
+  return rect(centerX - radius, centerY - radius, TABLE_INSERT_DOT_HOVER_SIZE, TABLE_INSERT_DOT_HOVER_SIZE);
 }
 
 function cell(text: string, id: string, attrs?: { colspan?: number; rowspan?: number }) {
@@ -315,6 +333,25 @@ describe("TableControls 真选区与 chrome", () => {
   });
 
   it("所有行列头和插入圆点均位于裁剪 viewport 内", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    await renderControls(editor);
+    const viewport = portal.querySelector<HTMLElement>(".tbl-chrome-viewport");
+    expect(viewport).not.toBeNull();
+    const viewportRect = inlineRect(viewport!);
+    for (const dot of portal.querySelectorAll<HTMLElement>(".tbl-dot")) {
+      const dotRect = inlineDotRect(dot, viewportRect);
+      expect(dot.querySelector("svg.tbl-dot-mark path")).not.toBeNull();
+      expect(dot.textContent).toBe("");
+      expect(dotRect.left).toBeGreaterThanOrEqual(viewportRect.left);
+      expect(dotRect.top).toBeGreaterThanOrEqual(viewportRect.top);
+      expect(dotRect.right).toBeLessThanOrEqual(viewportRect.right);
+      expect(dotRect.bottom).toBeLessThanOrEqual(viewportRect.bottom);
+    }
+    expect(portal.querySelector('[data-table-insert="column-before"]')?.getAttribute("title")).toBe("在最前插入列");
+    expect(portal.querySelector('[data-table-insert="row-before"]')?.getAttribute("title")).toBe("在最前插入行");
+  });
+
+  it("宽表右侧仍按 wrapper 裁剪", async () => {
     const { editor, portal, tables } = setupTable({ blockId: "table-1" });
     const tableElement = tables[0]!;
     setRect(tableElement, rect(100, 100, 400, 80));
@@ -325,13 +362,13 @@ describe("TableControls 真选区与 chrome", () => {
       });
     });
     await renderControls(editor);
-    const viewport = portal.querySelector(".tbl-chrome-viewport");
+    const viewport = portal.querySelector<HTMLElement>(".tbl-chrome-viewport");
     expect(viewport).not.toBeNull();
     for (const chrome of portal.querySelectorAll(".tbl-col-hdr,.tbl-row-hdr,.tbl-dot")) {
       expect(chrome.closest(".tbl-chrome-viewport")).toBe(viewport);
       expect((chrome as HTMLElement).style.position).toBe("absolute");
     }
-    const viewportWidth = Number.parseFloat((viewport as HTMLElement).style.width);
+    const viewportWidth = Number.parseFloat(viewport!.style.width);
     const lastColumnDot = [...portal.querySelectorAll<HTMLElement>(".tbl-dot-col")].at(-1)!;
     expect(Number.parseFloat(lastColumnDot.style.left)).toBeGreaterThan(viewportWidth);
   });
@@ -354,12 +391,19 @@ describe("TableControls 真选区与 chrome", () => {
       window.dispatchEvent(new Event("resize"));
       flushAnimationFrames();
     });
-    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("182px");
+    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("178px");
 
     setRect(wrapper, rect(290, 290, 260, 120));
+    setRect(tableElement, rect(300, 300, 200, 80));
+    [...tableElement.rows].forEach((row, rowIndex) => {
+      setRect(row, rect(300, 300 + rowIndex * 40, 200, 40));
+      [...row.cells].forEach((tableCell, colIndex) => {
+        setRect(tableCell, rect(300 + colIndex * 100, 300 + rowIndex * 40, 100, 40));
+      });
+    });
     resizeObservers[0]?.flush();
     await act(async () => flushAnimationFrames());
-    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("282px");
+    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("278px");
   });
 
   it("wrapper 横滚会重测；离开表格立即解除旧 wrapper 与 observer", async () => {
@@ -373,11 +417,18 @@ describe("TableControls 真选区与 chrome", () => {
     expect(observer.observed.has(tableElement)).toBe(true);
 
     setRect(wrapper, rect(390, 90, 220, 100));
+    setRect(tableElement, rect(400, 100, 200, 80));
+    [...tableElement.rows].forEach((row, rowIndex) => {
+      setRect(row, rect(400, 100 + rowIndex * 40, 200, 40));
+      [...row.cells].forEach((tableCell, colIndex) => {
+        setRect(tableCell, rect(400 + colIndex * 100, 100 + rowIndex * 40, 100, 40));
+      });
+    });
     await act(async () => {
       wrapper.dispatchEvent(new Event("scroll"));
       flushAnimationFrames();
     });
-    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("382px");
+    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("378px");
 
     const tailText = editor.view.dom.querySelector('[data-block-id="tail"]')?.firstChild;
     if (!tailText) throw new Error("tail text not found");

@@ -2589,17 +2589,13 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   box-sizing: border-box;
   max-width: min(280px, calc(100vw - 28px));
   padding: 7px 10px 8px;
-  border: 1px solid rgba(184, 169, 140, 0.26);
+  border: 1px solid var(--line-2);
   border-radius:0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0)),
-    rgba(31, 27, 21, 0.9);
-  color: rgba(246, 239, 221, 0.92);
+  background: var(--bg-paper-deep);
+  color: var(--ink-1);
   box-shadow:
     0 12px 30px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   font-family: var(--font-zh-serif);
   font-size: 12px;
   line-height: 1.45;
@@ -2625,7 +2621,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
   left: var(--workspace-tooltip-arrow-left, 16px);
   width: 12px;
   height: 6px;
-  background: rgba(31, 27, 21, 0.9);
+  background: var(--bg-paper-deep);
   transform: translateX(-50%);
 }
 #view-workspace .workspace-tooltip[data-placement="top"]::after {

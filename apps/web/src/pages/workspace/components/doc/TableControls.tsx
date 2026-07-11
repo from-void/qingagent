@@ -30,12 +30,17 @@ import {
 } from "../../data/toolbarUnlock";
 import { floatingAnchorFromElement, useToolbarLinkEditor } from "./ToolbarLinkEditor";
 import { applyTableAxisDrop, inspectTableAxisDrop, type TableDragAxis } from "../../data/tableAxisDrag";
+import {
+  resolveTableChromeViewport,
+  TABLE_COLUMN_HEADER_SIZE,
+  TABLE_INSERT_DOT_GAP,
+  TABLE_ROW_HEADER_SIZE,
+} from "./tableChromeGeometry";
 
 /* ───────────── Table controls (Feishu-style) ───────────── */
 
-const COL_HDR = 8;
-const ROW_HDR = 8;
-const DOT_EXT = 8;
+const COL_HDR = TABLE_COLUMN_HEADER_SIZE;
+const ROW_HDR = TABLE_ROW_HEADER_SIZE;
 
 interface ColInfo { left: number; width: number; right: number }
 interface RowInfo { top: number; height: number; bottom: number }
@@ -61,6 +66,14 @@ interface AxisDragPreview {
 
 const AXIS_REORDER_HOLD_MS = 180;
 const AXIS_DRAG_THRESHOLD_PX = 4;
+
+function TableInsertMark() {
+  return (
+    <svg className="tbl-dot-mark" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+      <path d="M5 1.5v7M1.5 5h7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
+    </svg>
+  );
+}
 
 function inRange(i: number, r: Range2 | null): boolean {
   return r !== null && i >= Math.min(r[0], r[1]) && i <= Math.max(r[0], r[1]);
@@ -425,13 +438,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const hasSel = hasAxisSelection || hasCellSelection || singleCellTextSelection;
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
 
-  const chromeTop = COL_HDR + DOT_EXT;
-  const viewport = {
-    top: wrapperRect.top - chromeTop,
-    left: wrapperRect.left - ROW_HDR,
-    width: wrapperRect.width + ROW_HDR,
-    height: wrapperRect.height + chromeTop,
-  };
+  const viewport = resolveTableChromeViewport(rect, wrapperRect);
 
   const controls = (
     <>
@@ -477,26 +484,26 @@ export function TableControls({ editor, onAiModify, onToast }: {
             title="在最前插入列"
             style={{
               position: "absolute",
-              top: rect.top - COL_HDR - 5 - viewport.top,
+              top: rect.top - COL_HDR - TABLE_INSERT_DOT_GAP - viewport.top,
               left: cols[0].left - viewport.left,
-              "--tbl-guide": `${rect.height + COL_HDR + 5}px`,
+              "--tbl-guide": `${rect.height + COL_HDR + TABLE_INSERT_DOT_GAP}px`,
             } as React.CSSProperties}
             onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "column", 0)}
             onMouseDown={prevent}
           >
-            <span className="tbl-dot-mark">│</span>
+            <TableInsertMark />
           </button>
         )}
         {cols.map((col, i) => (
           <button key={`cd${i}`} className="tbl-dot tbl-dot-col" title="插入列"
             style={{
               position: "absolute",
-              top: rect.top - COL_HDR - 5 - viewport.top,
+              top: rect.top - COL_HDR - TABLE_INSERT_DOT_GAP - viewport.top,
               left: col.right - viewport.left,
-              "--tbl-guide": `${rect.height + COL_HDR + 5}px`,
+              "--tbl-guide": `${rect.height + COL_HDR + TABLE_INSERT_DOT_GAP}px`,
             } as React.CSSProperties}
             onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "column", i + 1)} onMouseDown={prevent}>
-            <span className="tbl-dot-mark">│</span>
+            <TableInsertMark />
           </button>
         ))}
 
@@ -508,13 +515,13 @@ export function TableControls({ editor, onAiModify, onToast }: {
             style={{
               position: "absolute",
               top: rows[0].top - viewport.top,
-              left: rect.left - ROW_HDR - 5 - viewport.left,
-              "--tbl-guide": `${rect.width + ROW_HDR + 5}px`,
+              left: rect.left - ROW_HDR - TABLE_INSERT_DOT_GAP - viewport.left,
+              "--tbl-guide": `${rect.width + ROW_HDR + TABLE_INSERT_DOT_GAP}px`,
             } as React.CSSProperties}
             onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "row", 0)}
             onMouseDown={prevent}
           >
-            <span className="tbl-dot-mark">─</span>
+            <TableInsertMark />
           </button>
         )}
         {rows.map((row, i) => (
@@ -522,11 +529,11 @@ export function TableControls({ editor, onAiModify, onToast }: {
             style={{
               position: "absolute",
               top: row.bottom - viewport.top,
-              left: rect.left - ROW_HDR - 5 - viewport.left,
-              "--tbl-guide": `${rect.width + ROW_HDR + 5}px`,
+              left: rect.left - ROW_HDR - TABLE_INSERT_DOT_GAP - viewport.left,
+              "--tbl-guide": `${rect.width + ROW_HDR + TABLE_INSERT_DOT_GAP}px`,
             } as React.CSSProperties}
             onClick={() => insertTableAxisAtBoundary(editor, info.blockId, "row", i + 1)} onMouseDown={prevent}>
-            <span className="tbl-dot-mark">─</span>
+            <TableInsertMark />
           </button>
         ))}
       </div>

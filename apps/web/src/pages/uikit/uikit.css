@@ -542,7 +542,10 @@
 #view-workspace.uk-tbl-demo .tbl-dot {
   position: absolute;
   transform: none;
-  background: rgba(168, 130, 63, 0.85);
+  box-sizing: border-box;
+  border: 1px solid var(--mark);
+  background: var(--bg-paper-deep);
+  color: var(--mark);
   width: 18px;
   height: 18px;
 }

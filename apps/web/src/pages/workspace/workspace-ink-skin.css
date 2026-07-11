@@ -1396,11 +1396,33 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   border: 1px solid var(--mark);
   background: rgba(181, 154, 99, 0.18);
   color: var(--ink-1);
+  font-family: var(--font-zh-serif);
 }
 #view-workspace .aus2-bubble::after {
-  border-right: 1px solid var(--mark);
-  border-bottom: 1px solid var(--mark);
-  background: inherit;
+  border-top-color: rgba(181, 154, 99, 0.18);
+}
+#view-workspace .bigplan-panel .aus2-input::-webkit-slider-thumb {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--mark);
+  background: var(--bg-paper-deep);
+  box-shadow: 0 0 0 2px rgba(156, 133, 82, 0.12);
+}
+#view-workspace .bigplan-panel .aus2-input:active::-webkit-slider-thumb {
+  background: var(--mark);
+}
+#view-workspace .bigplan-panel .aus2-input::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--mark);
+  background: var(--bg-paper-deep);
+  box-shadow: 0 0 0 2px rgba(156, 133, 82, 0.12);
+}
+#view-workspace .bigplan-panel .aus2-bubble {
+  background: var(--bg-paper-deep);
+}
+#view-workspace .bigplan-panel .aus2-bubble::after {
+  border-top-color: var(--bg-paper-deep);
 }
 #view-workspace .aus2-scale span {
   color: var(--ink-4);

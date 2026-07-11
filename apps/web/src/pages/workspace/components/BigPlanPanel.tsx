@@ -254,7 +254,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
   const setSingle = (qid: string, value: string) =>
     setAnswers((prev: AskUserAnswers) => ({
       ...prev,
-      [qid]: { chosen: [value], freeText: prev[qid]?.freeText ?? null },
+      [qid]: { ...prev[qid], chosen: [value], freeText: null },
     }));
   const toggleMulti = (qid: string, value: string) =>
     setAnswers((prev: AskUserAnswers) => {
@@ -268,10 +268,18 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       };
     });
   const setOtherText = (qid: string, value: string) =>
-    setAnswers((prev: AskUserAnswers) => ({
-      ...prev,
-      [qid]: { ...prev[qid], chosen: prev[qid]?.chosen ?? [], freeText: value },
-    }));
+    setAnswers((prev: AskUserAnswers) => {
+      const question = allQuestions.find((item) => item.id === qid);
+      const activatesSingleCustom = question?.kind.kind === "single" && value.trim().length > 0;
+      return {
+        ...prev,
+        [qid]: {
+          ...prev[qid],
+          chosen: activatesSingleCustom ? [] : prev[qid]?.chosen ?? [],
+          freeText: value,
+        },
+      };
+    });
   const setNumeric = (qid: string, value: number) =>
     setAnswers((prev: AskUserAnswers) => ({
       ...prev,

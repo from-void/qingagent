@@ -129,7 +129,8 @@ export function AskUserOverlay({
       if (isNewSpec) return {};
       const next: Record<string, boolean> = {};
       for (const question of spec.questions) {
-        if (previous[question.id]) next[question.id] = true;
+        const active = previous[question.id];
+        if (active !== undefined) next[question.id] = active;
       }
       return next;
     });

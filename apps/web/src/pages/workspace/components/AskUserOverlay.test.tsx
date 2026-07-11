@@ -224,8 +224,15 @@ describe("AskUserOverlay", () => {
     expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
   });
 
-  it("同一 spec 流式追加题目时保留已答状态", async () => {
-    await renderOverlay(focusSpec);
+  it("切回选项后同一 spec 流式追加题目仍保留 XOR 与已答状态", async () => {
+    const onSubmit = vi.fn();
+    await renderOverlay(focusSpec, onSubmit);
+    const other = host!.querySelector<HTMLInputElement>(".au-other")!;
+    await act(async () => {
+      setNativeInputValue(other, "仅作草稿保留的自定义方向");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
     await click(host!.querySelector<HTMLButtonElement>(".auq-tab")!);
 
@@ -243,11 +250,17 @@ describe("AskUserOverlay", () => {
         },
       ],
     };
-    await rerenderOverlay(appended);
+    await rerenderOverlay(appended, onSubmit);
 
     expect(host?.querySelector<HTMLInputElement>('input[type="radio"]')?.checked).toBe(true);
+    expect(host?.querySelector<HTMLInputElement>(".au-other")?.dataset.active).toBe("false");
     expect(host?.querySelector('.auq-tab[data-answered="true"]')).not.toBeNull();
     expect(host?.querySelectorAll(".auq-tab")).toHaveLength(2);
+    await click(findSubmitButton());
+    expect(onSubmit).toHaveBeenCalledWith({
+      "q-1": { chosen: ["warm"], freeText: null },
+      "q-appended": { chosen: [], freeText: null },
+    });
   });
 
   it("提交进度仅统计选择题，必答完成前禁用", async () => {
@@ -310,13 +323,13 @@ async function renderOverlay(spec: AskUserSpec, onSubmit = vi.fn()): Promise<voi
   );
 }
 
-async function rerenderOverlay(spec: AskUserSpec): Promise<void> {
+async function rerenderOverlay(spec: AskUserSpec, onSubmit = vi.fn()): Promise<void> {
   await act(async () => {
     root?.render(
       <AskUserOverlay
         spec={spec}
         onClose={() => undefined}
-        onSubmit={() => undefined}
+        onSubmit={onSubmit}
         onAbort={() => undefined}
       />,
     );

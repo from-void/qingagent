@@ -13,6 +13,7 @@ let editors: Editor[] = [];
 let rafQueue = new Map<number, FrameRequestCallback>();
 let rafSequence = 0;
 let resizeObservers: ResizeObserverStub[] = [];
+let previousResizeObserver: typeof ResizeObserver | undefined;
 
 class ResizeObserverStub {
   readonly observed = new Set<Element>();
@@ -42,7 +43,12 @@ beforeEach(() => {
   rafQueue = new Map();
   rafSequence = 0;
   resizeObservers = [];
-  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  previousResizeObserver = globalThis.ResizeObserver;
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    writable: true,
+    value: ResizeObserverStub,
+  });
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
     const id = ++rafSequence;
     rafQueue.set(id, callback);
@@ -60,7 +66,15 @@ afterEach(() => {
   editors = [];
   document.body.innerHTML = "";
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
+  if (previousResizeObserver) {
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: previousResizeObserver,
+    });
+  } else {
+    Reflect.deleteProperty(globalThis, "ResizeObserver");
+  }
 });
 
 function flushAnimationFrames(): void {

@@ -5,5 +5,6 @@ export default defineConfig({
     include: ["src/**/*.dom.test.{ts,tsx}"],
     exclude: ["src/**/*.spec.{ts,tsx}"],
     environment: "jsdom",
+    setupFiles: ["./src/test/vitest.dom.setup.ts"],
   },
 });

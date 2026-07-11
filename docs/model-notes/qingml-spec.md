@@ -48,11 +48,15 @@
 - 块内空白 HTML 折叠归一;pre/math/mermaid 内文除实体还原外不折叠(保代码/公式格式)。
 
 ## 5. 表达力边界（AiBlock 装不下的不许表达；C0 实测 0 违规,保持硬约束）
-- table 单元格 `<td>/<th>` = 行内 only;callout = 行内 only;blockquote/pennote = 行内 only。
-  内部若出现块级 → 降级为行内文本 + warning。
+- **table 单元格 `<td>/<th>` = 块级容器**(2026-07-11 表格改造 B2 起):内部直接放
+  `<p>/<ul>/<ol>/<tasks>/<callout>` 等现有块;纯行内/裸文本 `<td>文字</td>` 兼容归一为单
+  paragraph;空 cell 归一为空 paragraph。cell 属性:`bg`(主题色)、`colspan`/`rowspan`
+  (正整数,B5 起全链路支持);colwidth 不进 QingML(系统 carry-over 保留,模型勿表达)。
+- callout = 行内 only;blockquote/pennote = 行内 only。内部若出现块级 → 降级为行内文本 + warning。
 - **行内 only 块里出现多个 `<p>`**(如 `<blockquote><p>a</p><p>b</p></blockquote>`,HTML 语料常见形态):
   各 `<p>` 内文合并进该块的 runs,段间以换行(`\n`)分隔;此为**无害归一,不算降级不 warning**。
-- 允许块级子结构的仅:list item(children)、taskList item(children)、column(blocks)。其余块不嵌块。
+- 允许块级子结构的:list item(children)、taskList item(children)、column(blocks)、
+  **table cell(blocks)**。其余块不嵌块。
 
 ## 6. 容错与降级（Fable 评审:区分无害容错 vs 有害降级——后者升级为坏块重试,别静默产坏文档）
 > 失败模式从 JSON 的"响亮"(parse error→重试)变成 QingML 的"静默"(fail-open→剥壳降级)是唯一系统性

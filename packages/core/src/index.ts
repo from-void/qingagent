@@ -126,6 +126,7 @@ export type {
 
 // Types
 export type { Material } from "./types/material.js";
+export * from "./connectors/index.js";
 export {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,

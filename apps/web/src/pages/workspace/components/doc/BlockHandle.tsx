@@ -20,7 +20,7 @@ import { TableSizePicker, type TableSize } from "./TableSizePicker";
 import {
   computeBlockMenuPlacement,
   computeCollapsedCarets,
-  firstLineCenterOffset,
+  blockHandleGeometry,
   glyphForBlock,
   glyphForListItem,
   HandleTypeIcon,
@@ -162,15 +162,15 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       try {
         const blockDom = editor.view.nodeDOM(block.pos);
         if (!(blockDom instanceof HTMLElement)) return null;
-        const rect = blockDom.getBoundingClientRect();
+        const geometry = blockHandleGeometry(blockDom, block.node.type.name);
         const isEmpty = block.node.type.name !== "table" && (
           blockDom.textContent?.trim() === "" ||
           (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR")
         );
         return {
           kind: "block",
-          top: rect.top + firstLineCenterOffset(blockDom),
-          left: rect.left,
+          top: geometry.top,
+          left: geometry.left,
           blockPos: block.pos,
           insertPos,
           isEmpty,
@@ -944,6 +944,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     <div
       ref={wrapRef}
       className="block-handle-wrap"
+      data-node-type={handle.nodeType}
       style={{
         position: "fixed",
         top: handle.top,

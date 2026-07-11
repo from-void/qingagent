@@ -111,6 +111,15 @@ function inlineDotRect(dot: HTMLElement, viewportRect: DOMRect): DOMRect {
   return rect(centerX - radius, centerY - radius, TABLE_INSERT_DOT_HOVER_SIZE, TABLE_INSERT_DOT_HOVER_SIZE);
 }
 
+function inlineChromeRect(chrome: HTMLElement, viewportRect: DOMRect): DOMRect {
+  return rect(
+    viewportRect.left + Number.parseFloat(chrome.style.left),
+    viewportRect.top + Number.parseFloat(chrome.style.top),
+    Number.parseFloat(chrome.style.width),
+    Number.parseFloat(chrome.style.height),
+  );
+}
+
 function cell(text: string, id: string, attrs?: { colspan?: number; rowspan?: number }) {
   return {
     type: "tableCell" as const,
@@ -208,6 +217,21 @@ async function renderControls(editor: Editor, onAiModify = vi.fn(async () => tru
     root!.render(<TableControls editor={editor} onAiModify={onAiModify} onToast={onToast} />);
   });
   return { onAiModify, onToast };
+}
+
+async function renderControlsWithBlockHandle(editor: Editor) {
+  await act(async () => {
+    root!.render(
+      <>
+        <TableControls editor={editor} onAiModify={async () => true} />
+        <BlockHandle editor={editor} />
+      </>,
+    );
+  });
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
 async function mouseDown(element: Element | null): Promise<void> {
@@ -349,6 +373,55 @@ describe("TableControls 真选区与 chrome", () => {
     }
     expect(portal.querySelector('[data-table-insert="column-before"]')?.getAttribute("title")).toBe("在最前插入列");
     expect(portal.querySelector('[data-table-insert="row-before"]')?.getAttribute("title")).toBe("在最前插入行");
+  });
+
+  it("表格块手柄避开首位行列圆点与头条", async () => {
+    const { editor, portal, tables } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    const wrapper = tableElement.closest(".tableWrapper") ?? tableElement;
+    // 真实 table 没有水平 margin，wrapper 与 table 左缘重合；该几何比通用 fixture 更严格。
+    setRect(wrapper, rect(100, 90, 220, 100));
+    editor.commands.setTextSelection(4);
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 4, inside: 0 });
+    await renderControlsWithBlockHandle(editor);
+    await act(async () => {
+      editor.view.dom.querySelector("td")?.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true,
+        clientX: 110,
+        clientY: 110,
+      }));
+    });
+
+    const viewport = portal.querySelector<HTMLElement>(".tbl-chrome-viewport");
+    const handleWrap = portal.querySelector<HTMLElement>('.block-handle-wrap[data-node-type="table"]');
+    expect(viewport).not.toBeNull();
+    expect(handleWrap).not.toBeNull();
+    const viewportRect = inlineRect(viewport!);
+
+    // block-handle-btn.is-chip 的稳定外框为 34×18，wrap 右侧另留 3px 正文间隙；
+    // 按生产 CSS 的 translate(-100%,-50%) 还原按钮真实视口矩形。
+    const handleWidth = 34;
+    const handleHeight = 18;
+    const handleRightGap = 3;
+    const handleAnchorLeft = Number.parseFloat(handleWrap!.style.left);
+    const handleAnchorTop = Number.parseFloat(handleWrap!.style.top);
+    const handleRect = rect(
+      handleAnchorLeft - handleRightGap - handleWidth,
+      handleAnchorTop - handleHeight / 2,
+      handleWidth,
+      handleHeight,
+    );
+    const firstColumnDot = portal.querySelector<HTMLElement>('[data-table-insert="column-before"]');
+    const firstRowDot = portal.querySelector<HTMLElement>('[data-table-insert="row-before"]');
+    const firstColumnHeader = portal.querySelector<HTMLElement>(".tbl-col-hdr");
+    const firstRowHeader = portal.querySelector<HTMLElement>(".tbl-row-hdr");
+    const chromeRects = [
+      inlineDotRect(firstColumnDot!, viewportRect),
+      inlineDotRect(firstRowDot!, viewportRect),
+      inlineChromeRect(firstColumnHeader!, viewportRect),
+      inlineChromeRect(firstRowHeader!, viewportRect),
+    ];
+    for (const chromeRect of chromeRects) expect(rectsOverlap(handleRect, chromeRect)).toBe(false);
   });
 
   it("宽表右侧仍按 wrapper 裁剪", async () => {

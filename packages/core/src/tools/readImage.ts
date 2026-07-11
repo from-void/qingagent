@@ -187,7 +187,7 @@ export const readImageTool = createTool({
   execute: async (input, context) => {
     const requestContext = context?.requestContext as RequestContext | undefined;
     try {
-      const model = await getVisionModel(requestContext);
+      const model = await getVisionModel(requestContext, { callSite: "readImage" });
       if (!model) {
         return {
           ok: false,

@@ -8,7 +8,6 @@ import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
 import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
 import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
 import { repairModelJson } from "../llm/repairToolCallJson.js";
-import { recordDeepseekUsageFromResult } from "../llm/usageAccounting.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 // ---------------------------------------------------------------------------
@@ -591,10 +590,11 @@ ${input.topic}
       // 收紧到 2 次,避免畸形时 3 次全量重新生成把"生成问卷"拖到像卡死。
       const MAX_GEN_ATTEMPTS = 2;
       let questions: ParsedQuestion[] = [];
+      const questionModel = getDeepseekModel(requestContext, "flash", { callSite: "askUser" });
       for (let attempt = 1; attempt <= MAX_GEN_ATTEMPTS; attempt++) {
         // Stream question generation — push progress via writer
         const result = streamText({
-          model: getDeepseekModel(requestContext),
+          model: questionModel,
           ...resolveModelParams(requestContext),
           prompt: genPrompt,
         });
@@ -613,8 +613,6 @@ ${input.topic}
             }
           }
         }
-        await recordDeepseekUsageFromResult(requestContext, "askUser", result.usage, result.providerMetadata);
-
         let parsed: unknown = null;
         try {
           // 先过协议无关 JSON 修复(补数组元素间漏逗号/修字符串内裸引号)再 parse:GLM 偶发

@@ -84,6 +84,7 @@ export type {
   ModelParamOverrides,
   ResolvedDeepseekAuth,
   ResolvedVisionConfig,
+  UsageTrackedModelOptions,
 } from "./llm/modelConfig.js";
 export {
   DEFAULT_DEEPSEEK_PRICING_CNY_PER_MILLION,

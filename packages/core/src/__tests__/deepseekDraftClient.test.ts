@@ -148,7 +148,7 @@ describe("deepseekDraftClient", () => {
       input_tokens: 90,
       output_tokens: 18,
       cache_hit_tokens: 50,
-      cache_miss_tokens: 40,
+      cache_miss_tokens: 90,
       cache_creation_tokens: 12,
     });
   });

@@ -295,7 +295,8 @@ function anthropicUsage(value: AnthropicUsage | undefined): DeepseekDraftUsage |
     inputTokens,
     outputTokens: count(value.output_tokens),
     cacheHitTokens,
-    cacheMissTokens: Math.max(0, inputTokens - cacheHitTokens),
+    // Anthropic 的 input_tokens 是未缓存输入；cache read/creation 是并列字段，不能相减。
+    cacheMissTokens: inputTokens,
     cacheCreationTokens: count(value.cache_creation_input_tokens),
   };
 }

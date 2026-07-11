@@ -18,7 +18,7 @@
 
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import type { LanguageModelV1 } from "ai";
+import { wrapLanguageModel, type LanguageModelV1 } from "ai";
 import type { RequestContext } from "@mastra/core/request-context";
 import { validateFetchUrl } from "../browser/extractor.js";
 export {
@@ -28,6 +28,7 @@ export {
   sanitizeBaseUrl,
 } from "./modelBaseUrl.js";
 import { MODEL_OVERRIDES_CONTEXT_KEY, resolveBaseUrl, sanitizeBaseUrl } from "./modelBaseUrl.js";
+import { createUsageMiddleware } from "./usageMiddleware.js";
 
 // env 层默认协议:QINGAGENT_MODEL_PROTOCOL=anthropic|openai(GLM Coding 走 anthropic)。
 // 调用时读取(而非模块加载常量),便于 dotenv 时序与测试;非法值忽略 -> undefined。
@@ -51,7 +52,14 @@ export const DEEPSEEK_CONTEXT_WINDOWS: Record<string, number> = {
   [DEEPSEEK_MODEL_IDS.pro]: 1_000_000,
 };
 
-export type ApiKeyOrigin = "visitor" | "global-db" | "env" | "none";
+export type ApiKeyOrigin = "visitor" | "global-db" | "env" | "vision" | "none";
+
+export interface UsageTrackedModelOptions {
+  /** 调用点可选以兼容仓外消费者；缺省仍留痕到 unknown。 */
+  callSite?: string;
+  /** 赛马 lane；同一包装模型内的 provider 请求 attempt 自动从 1 连续递增。 */
+  lane?: number | null;
+}
 
 /** 随 RequestContext 传入的本请求模型覆盖(由 server 在入口解析好)。 */
 export interface ModelOverrides {
@@ -215,27 +223,57 @@ export function anthropicBaseUrl(baseUrl: string): string {
 }
 
 /** 工具内层 streamText 用:按本请求协议 + key + baseURL 构建 provider(openai / anthropic)。 */
-export function createDeepseekProvider(requestContext?: RequestContext): (modelId: string) => LanguageModelV1 {
+export function createDeepseekProvider(
+  requestContext?: RequestContext,
+  options: UsageTrackedModelOptions = {},
+): (modelId: string) => LanguageModelV1 {
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const baseUrl = resolveBaseUrl(requestContext);
+  const wrapModel = (model: LanguageModelV1, modelId: string) => wrapLanguageModel({
+    model,
+    middleware: createUsageMiddleware({
+      requestContext,
+      callSite: options.callSite ?? "unknown",
+      modelId,
+      keyOrigin: resolveDeepseekAuth(requestContext).origin,
+      lane: options.lane,
+    }),
+  });
   if (resolveProtocol(requestContext) === "anthropic") {
     const provider = createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey });
-    return (modelId) => provider(modelId);
+    return (modelId) => wrapModel(provider(modelId), modelId);
   }
   const provider = createOpenAI({ baseURL: baseUrl, apiKey });
-  return (modelId) => provider(modelId);
+  return (modelId) => wrapModel(provider(modelId), modelId);
 }
 
 /** 工具内层取模型实例的捷径;默认出口受当前模型档位影响。 */
-export function getDeepseekModel(requestContext?: RequestContext, tier: DeepseekTier = "flash") {
-  return createDeepseekProvider(requestContext)(resolveModelId(requestContext, tier));
+export function getDeepseekModel(
+  requestContext?: RequestContext,
+  tier: DeepseekTier = "flash",
+  options: UsageTrackedModelOptions = {},
+) {
+  return createDeepseekProvider(requestContext, options)(resolveModelId(requestContext, tier));
 }
 
-export async function getVisionModel(requestContext?: RequestContext): Promise<LanguageModelV1 | null> {
+export async function getVisionModel(
+  requestContext?: RequestContext,
+  options: UsageTrackedModelOptions = {},
+): Promise<LanguageModelV1 | null> {
   const config = await resolveVisionConfig(requestContext);
   if (!config) return null;
+  const wrapModel = (model: LanguageModelV1) => wrapLanguageModel({
+    model,
+    middleware: createUsageMiddleware({
+      requestContext,
+      callSite: options.callSite ?? "unknown",
+      modelId: config.model,
+      keyOrigin: "vision",
+      lane: options.lane,
+    }),
+  });
   if (config.protocol === "anthropic") {
-    return createAnthropic({ baseURL: anthropicBaseUrl(config.baseUrl), apiKey: config.apiKey })(config.model);
+    return wrapModel(createAnthropic({ baseURL: anthropicBaseUrl(config.baseUrl), apiKey: config.apiKey })(config.model));
   }
-  return createOpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey })(config.model);
+  return wrapModel(createOpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey })(config.model));
 }

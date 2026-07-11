@@ -46,6 +46,29 @@ describe("usage cache tokens 采集(R2 修复回归)", () => {
     });
   });
 
+  it("Anthropic/GLM camelCase 缓存读取与创建分别归一化，不把 creation 并进 miss", () => {
+    const merged = {
+      inputTokens: 9000,
+      outputTokens: 80,
+      providerMetadata: {
+        anthropic: {
+          cacheReadInputTokens: 7000,
+          cacheCreationInputTokens: 1500,
+        },
+      },
+    };
+    expect(normalizeLlmUsageCounts(merged)).toMatchObject({
+      promptCacheHitTokens: 7000,
+      promptCacheCreationTokens: 1500,
+    });
+    expect(normalizeLlmUsageCounts(merged)?.promptCacheMissTokens).toBeUndefined();
+    expect(normalizeLlmUsage(merged)).toMatchObject({
+      promptCacheHitTokens: 7000,
+      promptCacheCreationTokens: 1500,
+    });
+    expect(normalizeLlmUsage(merged)?.promptCacheMissTokens).toBeUndefined();
+  });
+
   it("无缓存字段时不臆造(hit/miss 缺省)", () => {
     const counts = normalizeLlmUsageCounts({ inputTokens: 100, outputTokens: 10 });
     expect(counts?.promptCacheHitTokens).toBeUndefined();

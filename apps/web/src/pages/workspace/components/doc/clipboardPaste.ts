@@ -1,4 +1,5 @@
 import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
+import { CellSelection } from "@tiptap/pm/tables";
 import type { EditorView } from "@tiptap/pm/view";
 import { markdownToPm, pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 
@@ -11,6 +12,7 @@ export function writeSelectionToClipboard(
 ): boolean {
   try {
     const { selection, doc: stateDoc } = view.state;
+    if (selection instanceof CellSelection) return false;
     if (selection.empty || !event.clipboardData) return false;
     if (isCut && !view.editable) return false;
     // doc.cut 保持块结构完整(跨节点选区自动补全包裹层)。
@@ -103,6 +105,7 @@ export function handleQingagentPaste(
   onToast?: (message: string) => void,
   onImageFiles?: (files: File[]) => void,
 ): boolean {
+  if (view.state.selection instanceof CellSelection) return false;
   // 图片:有上传处理器就走上传链路插 image 节点;没有(老调用/测试)则保持旧提示行为。
   const imageFiles = collectPasteImageFiles(event.clipboardData);
   if (imageFiles.length > 0) {

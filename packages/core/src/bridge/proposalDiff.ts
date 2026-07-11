@@ -39,6 +39,15 @@ type MarkGroup = {
 
 type InlineTextBlock = PmBlockNode & { content?: PmInlineNode[] };
 
+// ── 锚点清理门槛(core 唯一来源,web 一律不得再调)──────────────────────
+// 连续公共段(dmp EQUAL)满足「grapheme 数 ≥ ANCHOR_MIN_GRAPHEMES 且不全是标点/空白」
+// = 真锚点,保留成拆点;否则(单字 / 纯标点 / 纯空白)并入两侧改动区合成覆盖。
+// 见 briefs/260710-review-diff-granularity-analysis.md §4 P1(★裁决:拆干净)。
+const ANCHOR_MIN_GRAPHEMES = 2;
+// 标点 + 空白 = 不承载语义的"平凡字符"。用 Unicode 属性覆盖中英文标点(。，、！？；：
+// 及 ,.!?;: 等)与全部空白;命中不到非平凡字符的公共段不算真锚点。
+const TRIVIAL_ANCHOR_CHAR = /[\p{P}\s]/u;
+
 const TEXT_BLOCK_TYPES = new Set<PmBlockNode["type"]>(["paragraph", "heading", "penNote"]);
 // 与 packages/pm-schema/src/types.ts 的 PmBlockNode 顶层块联合保持一致。
 const BLOCK_NODE_TYPES = new Set<PmNode["type"]>([
@@ -393,8 +402,12 @@ function appendMatchedBlockHunks(input: {
   }
 
   const dmp = new DiffMatchPatch();
-  const diffs = dmp.diff_main(baseText, draftText);
-  dmp.diff_cleanupSemantic(diffs);
+  // 弃用 diff_cleanupSemantic:它两头都坏——既把真锚点吞进改动区(晚风案:公共"晚风"
+  // 被并入删除,造出假"新增晚风",正文绿字与卡片说法自相矛盾),又对中文短公共串清不
+  // 干净、留下 EQUAL 碎点,害得下方在每段 EQUAL 硬切成"删 1~2 字"的碎渣 hunk。
+  // 改用自定义锚点清理:真锚点(≥2 字非全标点)保留成 EQUAL 拆点,单字/纯标点公共段
+  // 拆成同文 del+ins 并入两侧,促成"相邻增删=覆盖"。产出严格三态:纯增/纯删/覆盖。
+  const diffs = cleanupAnchorDiffs(dmp.diff_main(baseText, draftText));
 
   let baseOffset = 0;
   let draftOffset = 0;
@@ -920,6 +933,38 @@ function graphemeBoundaries(text: string): number[] {
     boundaries.push(offset);
   }
   return boundaries;
+}
+
+/**
+ * 真锚点判定:grapheme 数 ≥ ANCHOR_MIN_GRAPHEMES 且含至少一个非标点非空白字符。
+ * 单字母(英文 a/I)、单字、纯标点、纯空白公共段都不算真锚点——一律并入两侧改动区。
+ */
+function isTextAnchor(text: string): boolean {
+  if (text.length === 0) return false;
+  if (graphemeBoundaries(text).length - 1 < ANCHOR_MIN_GRAPHEMES) return false;
+  for (const ch of text) {
+    if (!TRIVIAL_ANCHOR_CHAR.test(ch)) return true;
+  }
+  return false;
+}
+
+/**
+ * 自定义锚点清理(替代 diff_cleanupSemantic):遍历 dmp diff,
+ * 非真锚点的 EQUAL 段拆成同文 [DELETE][INSERT] 并入两侧改动区(合成覆盖),
+ * 真锚点 EQUAL 段原样保留成拆点。产出交给下方按 EQUAL 硬切,自然得严格三态。
+ * diff_main 内部已 cleanupMerge,EQUAL 段是极大公共串,锚点判定直接落在其上即可。
+ */
+function cleanupAnchorDiffs(diffs: [number, string][]): [number, string][] {
+  const out: [number, string][] = [];
+  for (const [op, text] of diffs) {
+    if (op === DiffMatchPatch.DIFF_EQUAL && !isTextAnchor(text)) {
+      out.push([DiffMatchPatch.DIFF_DELETE, text]);
+      out.push([DiffMatchPatch.DIFF_INSERT, text]);
+    } else {
+      out.push([op, text]);
+    }
+  }
+  return out;
 }
 
 function flattenInlineUnits(content: readonly PmInlineNode[] | undefined): FlatTextUnit[] {

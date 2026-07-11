@@ -16,7 +16,6 @@ export interface ReviewUiState {
   hasVisibleReviewPatches: boolean;
   effectiveReview: boolean;
   showPatchNav: boolean;
-  showForceUnlock: boolean;
   livePatchCount: number | null;
   showPatches: boolean;
   canReplayReviewReveal: boolean;
@@ -36,7 +35,6 @@ export function deriveReviewUiState({
     content.kind === "pendingReview" &&
     hasVisibleReviewPatches &&
     overlay === null;
-  const showForceUnlock = hasPendingReview && !hasVisibleReviewPatches && overlay === null;
 
   return {
     hasPatchCalls,
@@ -44,7 +42,6 @@ export function deriveReviewUiState({
     hasVisibleReviewPatches,
     effectiveReview,
     showPatchNav: effectiveReview && !patchRevealing,
-    showForceUnlock,
     livePatchCount: hasPendingReview && overlay === null ? presentationCount : null,
     showPatches: effectiveReview,
     canReplayReviewReveal: effectiveReview,

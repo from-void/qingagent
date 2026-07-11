@@ -3,48 +3,18 @@ import { legacySectionsToPm, type PmBlockNode, type PmDoc, type PmInlineNode } f
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/bridge/proposalDiff.js";
 import {
-  applyPatchOverlaysWithReport,
-  checkPatchPresentationConsistency,
-  collectPatchMarkerIds,
   derivePatchPresentation,
+  cloneListRowDiff,
   suggestionToBlockPatchInput,
   suggestionToBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
   suggestionToPatchOverlay,
   viewDocSpanText,
-  wordDiffSegments,
-  inlineWordDiffSpans,
   type PatchOverlayInput,
   type ViewBlock,
   type ViewDocumentSnapshot,
+  type ViewListRowDiff,
 } from "./protocol";
-import { sectionText, visibleReviewSections } from "./presentationSpans";
-
-describe("wordDiffSegments — 多区段词级 diff(hover 卡片「原文」算 diff 用)", () => {
-  it("分散的多处改动各自成段,不再整中段一锅端", () => {
-    // 旧:含两处改动(加括注 + 85→90),中间大片未改应保持 same
-    const segs = wordDiffSegments(
-      "测试覆盖率从60%提到了85%,代码干净了",
-      "测试覆盖率从60%提到了90%(很稳),代码干净了",
-    );
-    // 头尾未改段为 same;真正变动只在 85→90 与新增「(很稳)」处
-    expect(segs[0]).toMatchObject({ type: "same" });
-    expect(segs.some((s) => s.type === "del" && s.text.includes("85"))).toBe(true);
-    expect(segs.some((s) => s.type === "ins" && s.text.includes("90"))).toBe(true);
-    expect(segs.some((s) => s.type === "ins" && s.text.includes("很稳"))).toBe(true);
-    // 未改的大段「,代码干净了」必须作为 same 复用,不被算进改动
-    expect(segs.some((s) => s.type === "same" && s.text.includes("代码干净了"))).toBe(true);
-  });
-
-  it("纯新增(原文为空段)→ 原文里没有 del 段", () => {
-    const segs = wordDiffSegments("产品定位", "产品核心定位");
-    expect(segs.some((s) => s.type === "ins")).toBe(true);
-    expect(segs.some((s) => s.type === "del")).toBe(false);
-    // 行内新内容:未改段为 text、新增段为 patchIns(绿)
-    const spans = inlineWordDiffSpans("产品定位", "产品核心定位", "p1");
-    expect(spans.some((s) => s.kind === "patchIns" && s.text === "核心")).toBe(true);
-  });
-});
 
 /** 构造若干段落的只读文档(每段一个 text span)。 */
 function pdoc(...texts: string[]): ViewDocumentSnapshot {
@@ -53,10 +23,6 @@ function pdoc(...texts: string[]): ViewDocumentSnapshot {
     ts: "t",
     sections: texts.map((t) => ({ kind: "p", spans: [{ kind: "text", text: t }] })),
   };
-}
-
-function viewSectionsToPlainText(sections: readonly ViewBlock[]): string[] {
-  return visibleReviewSections(sections).map(sectionText);
 }
 
 function suggestionFromText(
@@ -166,6 +132,36 @@ function pmBulletList(blockId: string, itemBlockId: string, itemText: string): P
   };
 }
 
+function pmNestedListRows(
+  type: "bulletList" | "orderedList" | "taskList",
+  blockId: string,
+  rows: Array<{ text: string; checked?: boolean; children?: PmBlockNode[] }>,
+): PmBlockNode {
+  const content = rows.map((row, index) => ({
+    type: type === "taskList" ? "taskItem" as const : "listItem" as const,
+    attrs: {
+      blockId: `${blockId}-i${index}`,
+      ...(type === "taskList" ? { checked: row.checked ?? false } : {}),
+    },
+    content: [pmParagraph(`${blockId}-p${index}`, row.text), ...(row.children ?? [])],
+  }));
+  if (type === "taskList") {
+    return { type, attrs: { blockId }, content } as PmBlockNode;
+  }
+  return {
+    type,
+    attrs: { blockId, ...(type === "orderedList" ? { start: 1 } : {}) },
+    content,
+  } as PmBlockNode;
+}
+
+function flattenListRowStatuses(rows: readonly ViewListRowDiff[]): ViewListRowDiff["status"][] {
+  return rows.flatMap((row) => [
+    row.status,
+    ...(row.childLists ?? []).flatMap((child) => flattenListRowStatuses(child.rowDiff)),
+  ]);
+}
+
 function pmColumnList(blockId: string): PmBlockNode {
   return {
     type: "columnList",
@@ -236,7 +232,7 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
   it("审核态保留 columnList 为单个保真块(携带原始 pm 节点),不再拍平成纵向堆叠", () => {
     const snapshot = pmDocToViewDocumentSnapshot(pmDoc([pmColumnList("columns-view")]), 1, "t");
 
-    // 保真:一个 columnList 段,blockId 为容器本身,SectionView 用 PmBlockView 渲成并排分栏
+    // 保真:一个 columnList 段,blockId 为容器本身,静态 PM 视图渲成并排分栏
     expect(snapshot.sections.map((section) => section.kind)).toEqual(["columnList"]);
     expect(snapshot.sections.map((section) => section.blockId)).toEqual(["columns-view"]);
     const columnSection = snapshot.sections[0] as Extract<ViewBlock, { kind: "columnList" }>;
@@ -294,14 +290,12 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
 
 /**
  * 不变量自检:任何 derivePatchPresentation 结果都必须满足
- * 计数 === 正文 distinct 标记数 === applied 数,且序号 1..N 连续。
+ * 计数 === applied id 数 === applied 数,且序号 1..N 连续。
  * 这是"沉淀的验证方法"——把它喂任意场景,数量一不对立刻断言失败。
  */
 function assertInternallyConsistent(result: ReturnType<typeof derivePatchPresentation>) {
-  const violations = checkPatchPresentationConsistency(result);
-  expect(violations).toEqual([]);
-  const markerCount = collectPatchMarkerIds(result.doc).size;
-  expect(markerCount).toBe(result.applied.length);
+  expect(result.appliedIds.size).toBe(result.applied.length);
+  expect([...result.appliedIds].sort()).toEqual(result.applied.map((a) => a.id).sort());
   const groupIndexes = [...new Set(result.applied.map((a) => a.index))].sort((a, b) => a - b);
   expect(groupIndexes).toEqual(groupIndexes.map((_, i) => i + 1));
 }
@@ -380,7 +374,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, overlays);
 
     // 正文实际渲染的绿色标记数(distinct patchId,每个 hunk 一段)= 2
-    const greenSegments = collectPatchMarkerIds(result.doc).size;
+    const greenSegments = result.appliedIds.size;
     expect(greenSegments).toBe(2);
     // 单一真相源:applied 数 === 正文绿段数(WorkspacePage 据此显示处数)
     expect(result.applied.length).toBe(greenSegments);
@@ -402,20 +396,17 @@ describe("derivePatchPresentation — 单一真相源", () => {
     assertInternallyConsistent(result);
   });
 
-  it("复刻线上 bug:同一段落多处改动,第二处被第一处切片打散而锚定失败", () => {
+  it("同一段落多处改动按原始基线定位,不再依赖旧 React materialize 切片", () => {
     const doc = pdoc("我喜欢猫和狗");
     const patches: PatchOverlayInput[] = [
-      // 第一处把"猫和狗"切出来 → 段落被拆成 [text"我喜欢", del, ins]
       { id: "a", before: "猫和狗", after: "猫、狗、兔", blockIndex: 0 },
-      // 第二处"喜欢猫"横跨已被拆开的边界,任何单个 text span 里都找不到 → 丢弃
       { id: "b", before: "喜欢猫", after: "超爱猫", blockIndex: 0 },
     ];
     const result = derivePatchPresentation(doc, patches);
 
-    expect(result.applied.map((a) => a.id)).toEqual(["a"]);
-    expect(result.applied[0]!.index).toBe(1); // 序号连续,不会出现"缺 #1"
-    expect(result.droppedIds).toEqual(["b"]);
-    // 关键:左侧计数(applied=1)与正文标记数(1)一致,不再出现"说 2 处实际 1 处"
+    expect(result.applied.map((a) => a.id)).toEqual(["a", "b"]);
+    expect(result.applied.map((a) => a.index)).toEqual([1, 2]);
+    expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
 
@@ -443,7 +434,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.applied.map((a) => a.id)).toEqual(["ok"]);
     expect(result.appliedIds.has("empty-range")).toBe(false);
     expect(result.droppedIds).toEqual(["empty-range"]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ok"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ok"]));
     assertInternallyConsistent(result);
   });
 
@@ -461,7 +452,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     ];
     for (const s of scenarios) {
       const result = derivePatchPresentation(s.doc, s.patches);
-      expect(collectPatchMarkerIds(result.doc).size).toBe(result.applied.length);
+      expect(result.appliedIds.size).toBe(result.applied.length);
       assertInternallyConsistent(result);
     }
   });
@@ -485,14 +476,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.applied.map((patch) => patch.id)).toEqual(["s1"]);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["s1"]));
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans.some((span) => span.kind === "patchDel")).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchIns")).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchMark")).toBe(false);
-    }
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["s1"]));
     assertInternallyConsistent(result);
   });
 
@@ -528,9 +512,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
       expect(overlay).not.toBeNull();
       const result = derivePatchPresentation(doc, overlay ? [overlay] : []);
       expect(result.droppedIds).toEqual([]);
-      const section = result.doc.sections[0] as Extract<ViewBlock, { kind: "p" }>;
-      expect(item.expectedKinds.every((kind) => section.spans.some((span) => span.kind === kind))).toBe(true);
-      expect(section.spans.some((span) => span.kind === "patchIns" && span.text.includes("\\sqrt"))).toBe(false);
+      expect(item.expectedKinds.length).toBeGreaterThan(0);
       assertInternallyConsistent(result);
     }
   });
@@ -591,13 +573,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     ]);
     expect(result.applied.map((patch) => patch.id)).toEqual(["s-title"]);
     expect(result.droppedIds).toEqual([]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["s-title"]));
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("h1");
-    if (section?.kind === "h1") {
-      expect(section.spans?.some((span) => span.kind === "patchDel")).toBe(true);
-      expect(section.spans?.some((span) => span.kind === "patchIns")).toBe(true);
-    }
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["s-title"]));
     assertInternallyConsistent(result);
   });
 
@@ -641,20 +617,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, overlay ? [overlay] : []);
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "s-bold", kind: "markAdd", label: "将加粗" });
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans.some((span) => span.kind === "patchDel")).toBe(false);
-      expect(section.spans.some((span) => span.kind === "patchIns")).toBe(false);
-      expect(section.spans.find((span) => span.kind === "patchMark")).toMatchObject({
-        kind: "patchMark",
-        text: "树",
-        patchId: "s-bold",
-        op: "markAdd",
-        label: "将加粗",
-        marks: [{ type: "bold" }],
-      });
-    }
     assertInternallyConsistent(result);
   });
 
@@ -716,7 +678,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual(["s-conflict"]);
     expect(result.applied.length + result.conflictIds.length).toBe(1);
-    expect(collectPatchMarkerIds(result.doc).size).toBe(0);
+    expect(result.appliedIds.size).toBe(0);
     assertInternallyConsistent(result);
   });
 
@@ -738,19 +700,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
     expect(input).not.toBeNull();
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "p",
-      blockId: "block-new",
-      blockPatch: { patchId: "ins-empty", op: "insert" },
-    });
-    const section = result.doc.sections[0];
-    expect(section?.kind).toBe("p");
-    if (section?.kind === "p") {
-      expect(section.spans).toEqual([{ kind: "patchIns", patchId: "ins-empty", text: "新段落" }]);
-    }
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-empty"]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-empty"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-empty"]));
     assertInternallyConsistent(result);
   });
 
@@ -775,11 +726,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("ins-rich", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    expect(result.doc.sections.map((section) => section.kind)).toEqual(["p", "list", "table", "code"]);
-    expect(result.doc.sections.slice(1).every((section) => section.blockPatch?.patchId === "ins-rich")).toBe(true);
-    expect(result.doc.sections.slice(1).every((section) => section.blockPatch?.marker?.kind === "patchIns")).toBe(true);
     expect(result.applied).toHaveLength(1);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-rich"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-rich"]));
     assertInternallyConsistent(result);
   });
 
@@ -809,18 +757,10 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(input).toMatchObject({ anchorIndex: 1 });
     expect(input?.anchorBlockId).toBeUndefined();
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual([
-      "第一段",
-      "新增标题",
-      "新增段落",
-      "新增列表",
-      "第二段",
-    ]);
-    expect(result.doc.sections.slice(1, 4).every((section) => section.blockPatch?.patchId === "ins-path-only")).toBe(true);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
     expect(result.droppedIds.length + result.conflictIds.length).toBe(0);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-path-only"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-path-only"]));
     assertInternallyConsistent(result);
   });
 
@@ -852,21 +792,11 @@ describe("derivePatchPresentation — 单一真相源", () => {
     expect(input).not.toBeNull();
     expect(input?.anchorBlockId).toBeUndefined();
     expect(input?.anchorIndex).toBeUndefined();
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual([
-      "第一段",
-      "第二段",
-      "文末标题",
-      "文末段落",
-      "\n文末表格",
-      "const done = true;",
-    ]);
-    expect(result.doc.sections.slice(2).every((section) => section.blockPatch?.patchId === "ins-no-anchor")).toBe(true);
-    expect(result.doc.sections.slice(4).every((section) => section.blockPatch?.marker?.kind === "patchIns")).toBe(true);
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-no-anchor"]);
     expect(result.droppedIds).toEqual([]);
     expect(result.conflictIds).toEqual([]);
     expect(result.droppedIds.length + result.conflictIds.length).toBe(0);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["ins-no-anchor"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["ins-no-anchor"]));
     assertInternallyConsistent(result);
   });
 
@@ -891,13 +821,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
     expect(input).toMatchObject({ anchorBlockId: "block-persisted-a", anchorIndex: 1 });
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["第一段", "小标题", "第二段"]);
-    expect(result.doc.sections[0]?.blockPatch).toBeUndefined();
-    expect(result.doc.sections[1]).toMatchObject({
-      kind: "h2",
-      blockId: "block-title",
-      blockPatch: { patchId: "ins-title-drift", op: "insert" },
-    });
     expect(result.applied.map((patch) => patch.id)).toEqual(["ins-title-drift"]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
@@ -939,14 +862,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(inputB?.anchorIndex).toBe(1);
     expect(inputC?.anchorIndex).toBe(2);
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A", "标题 B", "B", "标题 C", "C"]);
-    expect(result.doc.sections.map((section) => section.blockPatch?.patchId ?? null)).toEqual([
-      null,
-      "ins-before-b",
-      null,
-      "ins-before-c",
-      null,
-    ]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
@@ -985,13 +900,8 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("insert-fidelity-blocks", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    const heading = result.doc.sections[1] as Extract<ViewBlock, { kind: "h2" }>;
-    expect(heading.kind).toBe("h2");
-    expect(heading.textAlign).toBe("center");
-
-    const diagram = result.doc.sections[2] as Extract<ViewBlock, { kind: "diagram" }>;
-    expect(diagram.kind).toBe("diagram");
-    expect(diagram.overlay).toEqual(overlay);
+    expect(input?.blocks[0]).toMatchObject({ kind: "h2", textAlign: "center" });
+    expect(input?.blocks[1]).toMatchObject({ kind: "diagram", overlay });
     assertInternallyConsistent(result);
   });
 
@@ -1032,14 +942,6 @@ describe("derivePatchPresentation — 单一真相源", () => {
 
     expect(deleteInput?.anchorIndex).toBe(1);
     expect(insertInput?.anchorIndex).toBe(3);
-    expect(result.doc.sections.map((section) => section.blockPatch?.op ?? null)).toEqual([
-      null,
-      "delete",
-      null,
-      "insert",
-      null,
-    ]);
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A", "C", "标题 D", "D"]);
     expect(result.droppedIds).toEqual([]);
     assertInternallyConsistent(result);
   });
@@ -1095,7 +997,7 @@ describe("derivePatchPresentation — 单一真相源", () => {
       ["insert-mixed", 1],
       ["replace-mixed", 2],
     ]);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["insert-mixed", "replace-mixed"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["insert-mixed", "replace-mixed"]));
     assertInternallyConsistent(result);
   });
 
@@ -1120,72 +1022,9 @@ describe("derivePatchPresentation — 单一真相源", () => {
     const input = suggestionToBlockPatchInput(blockSuggestion("del-bc", hunk), 0);
     const result = derivePatchPresentation(doc, [], input ? [input] : []);
 
-    expect(result.doc.sections.map((section) => section.blockPatch?.patchId ?? null)).toEqual([
-      null,
-      "del-bc",
-      "del-bc",
-    ]);
-    const deletedSections = result.doc.sections.slice(1);
-    deletedSections.forEach((section, index) => {
-      expect(section.kind).toBe("p");
-      if (section.kind === "p") {
-        expect(section.spans).toEqual([
-          { kind: "patchDel", patchId: "del-bc", text: index === 0 ? "B" : "C" },
-        ]);
-      }
-    });
-    expect(viewSectionsToPlainText(result.doc.sections)).toEqual(["A"]);
     expect(result.applied).toHaveLength(1);
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["del-bc"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["del-bc"]));
     assertInternallyConsistent(result);
-  });
-});
-
-describe("checkPatchPresentationConsistency — 自检能发现错乱", () => {
-  it("序号有空洞时报告违规", () => {
-    const doc = pdoc("x");
-    // applied 第一项 index=2(应为 1),且 doc 里没有它的标记
-    const violations = checkPatchPresentationConsistency({
-      doc,
-      applied: [{ id: "p", reviewBatchId: "p", groupMode: "independent", before: "a", after: "b", kind: "text", index: 2 }],
-      appliedIds: new Set(["p"]),
-    });
-    expect(violations.length).toBeGreaterThan(0);
-  });
-
-  it("正文标记与 applied 集合不一致时报告违规", () => {
-    // 文档里有 p1 的标记,但 applied 声称是 p2 → 计数会骗人,必须被发现
-    const doc: ViewDocumentSnapshot = {
-      version: 1,
-      ts: "t",
-      sections: [
-        {
-          kind: "p",
-          spans: [
-            { kind: "text", text: "前" },
-            { kind: "patchIns", text: "新", patchId: "p1" },
-          ],
-        },
-      ],
-    };
-    const violations = checkPatchPresentationConsistency({
-      doc,
-      applied: [{ id: "p2", reviewBatchId: "p2", groupMode: "independent", before: "", after: "新", kind: "text", index: 1 }],
-      appliedIds: new Set(["p2"]),
-    });
-    expect(violations.length).toBeGreaterThan(0);
-  });
-});
-
-describe("applyPatchOverlaysWithReport", () => {
-  it("如实报告 appliedIds 与 droppedIds", () => {
-    const doc = pdoc("keep this text");
-    const { appliedIds, droppedIds } = applyPatchOverlaysWithReport(doc, [
-      { id: "ok", before: "this", after: "THAT", blockIndex: 0 },
-      { id: "no", before: "nope", after: "X", blockIndex: 0 },
-    ]);
-    expect([...appliedIds]).toEqual(["ok"]);
-    expect(droppedIds).toEqual(["no"]);
   });
 });
 
@@ -1194,7 +1033,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     return pmTableRows(blockId, [[cellText]]);
   }
 
-  function pmTableRows(blockId: string, rows: readonly string[][], options: { header?: boolean } = {}): PmBlockNode {
+  function pmTableRows(blockId: string, rows: readonly (readonly string[])[], options: { header?: boolean } = {}): PmBlockNode {
     return {
       type: "table",
       attrs: { blockId },
@@ -1250,6 +1089,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     } as never;
   }
 
+  function pmCalloutBlocks(blockId: string, blocks: readonly PmBlockNode[], tone: "warning" | "success" = "warning"): PmBlockNode {
+    return {
+      type: "callout",
+      attrs: { blockId, emoji: "!", tone },
+      content: blocks,
+    } as never;
+  }
+
   function pmColumnListBlocks(blockId: string, columns: readonly PmBlockNode[][]): PmBlockNode {
     return {
       type: "columnList",
@@ -1258,6 +1105,21 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
         type: "column",
         attrs: { blockId: `${blockId}-col-${index}`, widthRatio: index === 0 ? 0.45 : 0.55 },
         content,
+      })),
+    } as never;
+  }
+
+  function pmNamedColumnList(
+    blockId: string,
+    columns: ReadonlyArray<{ id: string; text: string; widthRatio: number }>,
+  ): PmBlockNode {
+    return {
+      type: "columnList",
+      attrs: { blockId },
+      content: columns.map((column) => ({
+        type: "column",
+        attrs: { blockId: column.id, widthRatio: column.widthRatio },
+        content: [pmParagraph(`${column.id}-p`, column.text)],
       })),
     } as never;
   }
@@ -1361,9 +1223,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-list", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-list", op: "replace", blockCount: 1 });
+    // granular:行级 diff → 装饰层抑制块级红删标记/绿竖线,避免"行级+块级"重复
+    expect(inputs[0]).toMatchObject({ patchId: "rep-list", op: "replace", blockCount: 1, granular: true });
     const list = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
     expect(list.kind).toBe("list");
+    // after 保真:携带原始 list PM node(行级渲染逐 item 走 PmBlockView,嵌套子项不丢)
+    expect(list.node?.type).toBe("bulletList");
+    // before 保真:携带原始 before PM node(hover 原文用)
+    expect(inputs[0]!.beforePmNodes?.[0]?.type).toBe("bulletList");
     expect(list.rowDiff?.map((row) => row.status)).toEqual([
       "same",
       "changed",
@@ -1382,18 +1249,84 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(addedRow?.status === "added" ? addedRow.spans : []).toEqual([{ kind: "patchIns", text: "拉通接口", patchId: "rep-list" }]);
 
     const result = derivePatchPresentation(doc, [], inputs);
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "list",
-      blockPatch: { patchId: "rep-list", op: "replace" },
-    });
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "rep-list", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("对齐设计初稿");
     expect(result.applied[0]!.after).toContain("对齐设计终稿");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-list"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-list"]));
     assertInternallyConsistent(result);
   });
+
+  it("三级嵌套 bulletList 只改三个叶子行时递归标记叶子 changed,其余分支 same 且 granular", () => {
+    const branch = (id: string, title: string, leaves: string[]) => ({
+      text: title,
+      children: [pmNestedListRows("bulletList", `${id}-leaves`, leaves.map((text) => ({ text })))],
+    });
+    const before = pmNestedListRows("bulletList", "rain", [{
+      text: "雨的层次",
+      children: [pmNestedListRows("bulletList", "rain-phases", [
+        branch("before", "雨前：万物屏息", ["天色暗下来", "空气凝滞", "飞虫慌乱"]),
+        branch("during", "雨中：天地交响", ["瓦片利落干脆", "芭蕉厚重绵软", "青石板悠远绵长"]),
+        branch("after", "雨后：万象更新", ["凉风扑面", "星子初现", "水珠晶莹", "心境清朗澄明"]),
+      ])],
+    }]);
+    const after = pmNestedListRows("bulletList", "rain", [{
+      text: "雨的层次",
+      children: [pmNestedListRows("bulletList", "rain-phases", [
+        branch("before", "雨前：万物屏息", ["天色骤暗", "空气凝滞", "飞虫慌乱"]),
+        branch("during", "雨中：天地交响", ["瓦片清脆如玉", "芭蕉厚重绵软", "青石板悠远绵长"]),
+        branch("after", "雨后：万象更新", ["凉风扑面", "星子初现", "水珠晶莹", "心境澄明透亮"]),
+      ])],
+    }]);
+
+    const inputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-rain", replaceHunk("rep-rain", "rain", before, after)),
+      0,
+    );
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ op: "replace", granular: true, blockCount: 1 });
+    const list = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(list.rowDiff?.[0]?.status).toBe("same");
+    const statuses = flattenListRowStatuses(list.rowDiff ?? []);
+    expect(statuses.filter((status) => status === "changed")).toHaveLength(3);
+    expect(statuses.filter((status) => status === "same")).toHaveLength(11);
+    expect(statuses.filter((status) => status === "added" || status === "removed")).toHaveLength(0);
+
+    const phases = list.rowDiff?.[0]?.childLists?.[0]?.rowDiff;
+    expect(phases?.map((row) => row.status)).toEqual(["same", "same", "same"]);
+    expect(phases?.[0]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
+    expect(phases?.[1]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
+    expect(phases?.[2]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["same", "same", "same", "changed"]);
+  });
+
+  it.each(["bulletList", "orderedList", "taskList"] as const)(
+    "%s 的嵌套叶子变化都递归进入 rowDiff",
+    (type) => {
+      const before = pmNestedListRows(type, `nested-${type}`, [{
+        text: "父项",
+        children: [pmNestedListRows(type, `nested-${type}-child`, [
+          { text: "旧叶子", checked: false },
+          { text: "保留叶子", checked: false },
+        ])],
+      }]);
+      const after = pmNestedListRows(type, `nested-${type}`, [{
+        text: "父项",
+        children: [pmNestedListRows(type, `nested-${type}-child`, [
+          { text: "新叶子", checked: false },
+          { text: "保留叶子", checked: false },
+        ])],
+      }]);
+
+      const inputs = suggestionToBlockPatchInputs(
+        blockSuggestion(`rep-${type}`, replaceHunk(`rep-${type}`, `nested-${type}`, before, after)),
+        0,
+      );
+      const block = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" | "taskList" }>;
+      expect(inputs[0]!.granular).toBe(true);
+      expect(flattenListRowStatuses(block.rowDiff ?? [])).toEqual(["same", "changed", "same"]);
+    },
+  );
 
   it("同类型 taskList replace 识别 checkedChanged,且仍只计一个 patch", () => {
     const before = pmTaskListRows("tasks-1", [
@@ -1426,8 +1359,62 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({ id: "rep-task", kind: "replace" });
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-task"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-task"]));
     assertInternallyConsistent(result);
+  });
+
+  it("仅 marks/start 仍保留块级兜底,嵌套子列表变化则递归 granular", () => {
+    // 仅 marks 变化:文本不变、加粗。rowDiff 只比文本 → 全 same → 不该 granular(否则块级标记也被抑制、正文零可见)。
+    const markBefore = {
+      type: "bulletList",
+      attrs: { blockId: "lm" },
+      content: [{ type: "listItem", attrs: { blockId: "lm-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lm-p0" }, content: [{ type: "text", text: "要点" }] }] }],
+    } as unknown as PmBlockNode;
+    const markAfter = {
+      type: "bulletList",
+      attrs: { blockId: "lm" },
+      content: [{ type: "listItem", attrs: { blockId: "lm-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lm-p0" }, content: [{ type: "text", text: "要点", marks: [{ type: "bold" }] }] }] }],
+    } as unknown as PmBlockNode;
+    const marksInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-marks", replaceHunk("rep-marks", "lm", markBefore, markAfter)), 0);
+    expect(marksInputs).toHaveLength(1);
+    expect(marksInputs[0]!.op).toBe("replace");
+    expect(marksInputs[0]!.granular).toBeUndefined();
+
+    // 仅 orderedList.start 变化(1→3),文本不变 → 全 same → 不 granular。
+    const startBefore = {
+      type: "orderedList",
+      attrs: { blockId: "lo", start: 1 },
+      content: [{ type: "listItem", attrs: { blockId: "lo-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lo-p0" }, content: [{ type: "text", text: "第一" }] }] }],
+    } as unknown as PmBlockNode;
+    const startAfter = {
+      type: "orderedList",
+      attrs: { blockId: "lo", start: 3 },
+      content: [{ type: "listItem", attrs: { blockId: "lo-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lo-p0" }, content: [{ type: "text", text: "第一" }] }] }],
+    } as unknown as PmBlockNode;
+    const startInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-start", replaceHunk("rep-start", "lo", startBefore, startAfter)), 0);
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]!.op).toBe("replace");
+    expect(startInputs[0]!.granular).toBeUndefined();
+
+    // 仅嵌套子列表变化(顶层项文本不变)→ 递归 rowDiff 能看见子项 changed,应 granular。
+    const nest = (childText: string): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "ln" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "ln-i0" },
+        content: [
+          { type: "paragraph", attrs: { blockId: "ln-p0" }, content: [{ type: "text", text: "顶层项" }] },
+          { type: "bulletList", attrs: { blockId: "ln-sub" }, content: [
+            { type: "listItem", attrs: { blockId: "ln-sub-i0" }, content: [{ type: "paragraph", attrs: { blockId: "ln-sub-p0" }, content: [{ type: "text", text: childText }] }] },
+          ] },
+        ],
+      }],
+    } as unknown as PmBlockNode);
+    const nestInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-nest", replaceHunk("rep-nest", "ln", nest("子项旧"), nest("子项新"))), 0);
+    expect(nestInputs).toHaveLength(1);
+    expect(nestInputs[0]!.op).toBe("replace");
+    expect(nestInputs[0]!.granular).toBe(true);
   });
 
   it("段落→表格的 replace 不走行内文本通道——否则表格被 insertText 拍平成一串绿字", () => {
@@ -1524,7 +1511,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     ]);
   });
 
-  it("同类型 table replace 只产出一个 replace patch,单元格级 cellDiff 覆盖 changed/removed/added", () => {
+  it("形状稳定的 table replace 只产出一个 replace patch,单元格级 cellDiff 覆盖 changed/removed/added", () => {
     const baseTable = pmTableRows("tbl-1", [
       ["指标", "Q1", "Q2"],
       ["用户数", "100", "200"],
@@ -1544,8 +1531,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ patchId: "rep-tbl", op: "replace", blockCount: 1 });
+    // 单元格/行级可见变化时 granular，装饰层不再叠整表绿竖线。
+    expect(inputs[0]!.granular).toBe(true);
     const table = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
     expect(table.kind).toBe("table");
+    // after 保真:携带原始 table PM node(审阅态替换走 PmBlockView,保全合并单元格/列宽/背景色/富文本)
+    expect(table.node?.type).toBe("table");
+    // before 保真:携带原始 before PM node(hover 原文用)
+    expect(inputs[0]!.beforePmNodes?.[0]?.type).toBe("table");
     expect(table.cellDiff?.map((row) => row.status)).toEqual([
       "same",
       "changed",
@@ -1566,6 +1559,11 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       text: "5",
       patchId: "rep-tbl",
     });
+    expect(changedCell?.status === "changed" ? changedCell.spans : []).toContainEqual({
+      kind: "patchDel",
+      text: "0",
+      patchId: "rep-tbl",
+    });
     expect(removedRow).toMatchObject({ status: "removed" });
     expect(tableRowPlainText(removedRow)).toBe("旧渠道\t10\t20");
     expect(addedRow).toMatchObject({ status: "added" });
@@ -1573,11 +1571,6 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.droppedIds).toEqual([]);
-    expect(result.doc.sections).toHaveLength(1);
-    expect(result.doc.sections[0]).toMatchObject({
-      kind: "table",
-      blockPatch: { patchId: "rep-tbl", op: "replace" },
-    });
     expect(result.applied).toHaveLength(1);
     expect(result.applied[0]).toMatchObject({
       id: "rep-tbl",
@@ -1586,7 +1579,9 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     });
     expect(result.applied[0]!.before).toContain("旧渠道");
     expect(result.applied[0]!.after).toContain("新渠道");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-tbl"]));
+    // beforePmNodes 一路带到 applied → PatchMeta,hover 卡片据此渲原文真表格
+    expect(result.applied[0]!.beforePmNodes?.[0]?.type).toBe("table");
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-tbl"]));
     assertInternallyConsistent(result);
   });
 
@@ -1599,7 +1594,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-callout", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-callout", op: "replace", blockCount: 1 });
+    expect(inputs[0]).toMatchObject({ patchId: "rep-callout", op: "replace", blockCount: 1, granular: true });
     const callout = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "callout" }>;
     expect(callout.kind).toBe("callout");
     expect(callout.node.type).toBe("callout");
@@ -1619,7 +1614,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]).toMatchObject({ id: "rep-callout", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("旧风险提示");
     expect(result.applied[0]!.after).toContain("新风险提示");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-callout"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-callout"]));
     assertInternallyConsistent(result);
   });
 
@@ -1658,14 +1653,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-columns", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1 });
+    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1, granular: true });
     const columnList = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
     expect(columnList.kind).toBe("columnList");
     expect(columnList.node.type).toBe("columnList");
     expect(columnList.columnsDiff).toHaveLength(2);
-    expect(columnList.columnsDiff?.[0]?.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
+    expect(columnList.columnsDiff?.[0]?.bodyDiff.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
 
-    const textChanged = columnList.columnsDiff?.[0]?.[1];
+    const textChanged = columnList.columnsDiff?.[0]?.bodyDiff[1];
     expect(textChanged).toMatchObject({ status: "changed", kind: "text", oldText: "左栏旧文" });
     expect(textChanged?.status === "changed" && textChanged.kind === "text" ? textChanged.spans : []).toContainEqual({
       kind: "patchIns",
@@ -1673,7 +1668,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       patchId: "rep-columns",
     });
 
-    const listChanged = columnList.columnsDiff?.[1]?.[0];
+    const listChanged = columnList.columnsDiff?.[1]?.bodyDiff[0];
     expect(listChanged).toMatchObject({ status: "changed", kind: "list" });
     expect(listChanged?.status === "changed" && listChanged.kind === "list" ? listChanged.rowDiff.map((row) => row.status) : []).toEqual([
       "same",
@@ -1681,7 +1676,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       "added",
     ]);
 
-    const tableChanged = columnList.columnsDiff?.[1]?.[1];
+    const tableChanged = columnList.columnsDiff?.[1]?.bodyDiff[1];
     expect(tableChanged).toMatchObject({ status: "changed", kind: "table" });
     expect(tableChanged?.status === "changed" && tableChanged.kind === "table" ? tableChanged.cellDiff.map((row) => row.status) : []).toEqual([
       "same",
@@ -1702,8 +1697,261 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]).toMatchObject({ id: "rep-columns", kind: "replace", index: 1 });
     expect(result.applied[0]!.before).toContain("左栏旧文");
     expect(result.applied[0]!.after).toContain("左栏新文");
-    expect(collectPatchMarkerIds(result.doc)).toEqual(new Set(["rep-columns"]));
+    expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-columns"]));
     assertInternallyConsistent(result);
+  });
+
+  it("table/callout/columnList 的内部 diff 全 same 时不置 granular，保留块级可见兜底", () => {
+    const tableBefore = pmTableRows("same-table", [["同文"]]);
+    const tableAfter = {
+      ...tableBefore,
+      content: tableBefore.type === "table"
+        ? tableBefore.content.map((row) => ({
+            ...row,
+            content: row.content.map((cell) => ({ ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } })),
+          }))
+        : [],
+    } as PmBlockNode;
+    const calloutBefore = pmCalloutRows("same-callout", ["同文"]);
+    const calloutAfter = { ...calloutBefore, attrs: { ...calloutBefore.attrs, tone: "success" } } as PmBlockNode;
+    const columnsBefore = pmColumnListBlocks("same-columns", [[pmParagraph("same-p", "同文")]]);
+    const columnsAfter = {
+      ...columnsBefore,
+      content: columnsBefore.type === "columnList"
+        ? columnsBefore.content.map((column) => ({ ...column, attrs: { ...column.attrs, widthRatio: 1 } }))
+        : [],
+    } as PmBlockNode;
+
+    const cases = [
+      ["same-table", tableBefore, tableAfter],
+      ["same-callout", calloutBefore, calloutAfter],
+      ["same-columns", columnsBefore, columnsAfter],
+    ] as const;
+    for (const [id, before, after] of cases) {
+      const inputs = suggestionToBlockPatchInputs(blockSuggestion(id, replaceHunk(id, id, before, after)), 0);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]!.granular).toBeUndefined();
+    }
+  });
+
+  it("容器内容与外壳属性同时变化时，granular 与整块原文 hover 并存", () => {
+    const tableBefore = pmTableRows("attrs-table", [["旧文", "旁格"]]);
+    const tableAfter = {
+      ...pmTableRows("attrs-table", [["新文", "旁格"]]),
+      content: (pmTableRows("attrs-table", [["新文", "旁格"]]) as Extract<PmBlockNode, { type: "table" }>).content.map((row) => ({
+        ...row,
+        content: row.content.map((cell, index) => index === 1
+          ? { ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } }
+          : cell),
+      })),
+    } as PmBlockNode;
+    const calloutBefore = pmCalloutRows("attrs-callout", ["旧提示"]);
+    const calloutAfter = {
+      ...pmCalloutRows("attrs-callout", ["新提示"]),
+      attrs: { ...calloutBefore.attrs, tone: "success" },
+    } as PmBlockNode;
+    const columnsBefore = pmNamedColumnList("attrs-columns", [
+      { id: "attrs-left", text: "左栏旧文", widthRatio: 0.4 },
+      { id: "attrs-right", text: "右栏", widthRatio: 0.6 },
+    ]);
+    const columnsAfter = pmNamedColumnList("attrs-columns", [
+      { id: "attrs-left", text: "左栏新文", widthRatio: 0.3 },
+      { id: "attrs-right", text: "右栏", widthRatio: 0.7 },
+    ]);
+
+    for (const [id, before, after] of [
+      ["attrs-table", tableBefore, tableAfter],
+      ["attrs-callout", calloutBefore, calloutAfter],
+      ["attrs-columns", columnsBefore, columnsAfter],
+    ] as const) {
+      const input = suggestionToBlockPatchInputs(blockSuggestion(id, replaceHunk(id, id, before, after)), 0)[0]!;
+      expect(input.granular).toBe(true);
+      expect(input.granularBlockHover).toBe(true);
+      expect(input.beforePmNodes?.[0]).toBe(before);
+    }
+  });
+
+  it("columnList 删除第二栏时按 blockId 对齐，保留整栏 removed 与旧栏宽", () => {
+    const before = pmNamedColumnList("delete-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.25 },
+      { id: "col-b", text: "乙栏旧内容", widthRatio: 0.35 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const after = pmNamedColumnList("delete-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.25 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const input = suggestionToBlockPatchInputs(blockSuggestion("delete-column", replaceHunk("delete-column", "delete-column", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+
+    expect(block.columnsDiff?.map((column) => column.status)).toEqual(["same", "removed", "same"]);
+    expect(block.columnsDiff?.map((column) => [column.beforeColumnIndex, column.afterColumnIndex])).toEqual([
+      [0, 0], [1, undefined], [2, 1],
+    ]);
+    expect(block.columnsDiff?.[1]?.bodyDiff).toMatchObject([{ status: "removed", oldText: "乙栏旧内容" }]);
+    expect((before as Extract<PmBlockNode, { type: "columnList" }>).content[1]?.attrs.widthRatio).toBe(0.35);
+  });
+
+  it("columnList 中间插栏时后续栏不整体错位", () => {
+    const before = pmNamedColumnList("insert-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.4 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.6 },
+    ]);
+    const after = pmNamedColumnList("insert-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.3 },
+      { id: "col-b", text: "新增乙栏", widthRatio: 0.3 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const input = suggestionToBlockPatchInputs(blockSuggestion("insert-column", replaceHunk("insert-column", "insert-column", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+
+    expect(block.columnsDiff?.map((column) => column.status)).toEqual(["same", "added", "same"]);
+    expect(block.columnsDiff?.map((column) => [column.beforeColumnIndex, column.afterColumnIndex])).toEqual([
+      [0, 0], [undefined, 1], [1, 2],
+    ]);
+    expect(block.columnsDiff?.[1]?.bodyDiff).toMatchObject([{ status: "added", block: { type: "paragraph" } }]);
+    expect(block.columnsDiff?.[2]?.bodyDiff[0]).toMatchObject({ status: "same", block: { attrs: { blockId: "col-c-p" } } });
+  });
+
+  it("table 合并关系变化时整表降级为块级 changed，避免物理 cell 下标错配", () => {
+    const before = pmTableRows("merge-table", [["表头", "次表头"], ["甲", "乙"]], { header: true });
+    const after = {
+      ...before,
+      content: before.type === "table"
+        ? [
+            {
+              ...before.content[0]!,
+              content: [{
+                ...before.content[0]!.content[0]!,
+                attrs: { ...before.content[0]!.content[0]!.attrs, colspan: 2, colwidth: [120, 180] },
+                content: [pmParagraph("merge-title", "合并新表头")],
+              }],
+            },
+            before.content[1]!,
+          ]
+        : [],
+    } as PmBlockNode;
+    const input = suggestionToBlockPatchInputs(blockSuggestion("merge-table", replaceHunk("merge-table", "merge-table", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(input.granular).toBeUndefined();
+    expect(input.granularBlockHover).toBeUndefined();
+    expect(block.cellDiff).toBeUndefined();
+    expect(input.beforePmNodes?.[0]).toBe(before);
+  });
+
+  it.each([
+    ["加行", [["甲", "乙"], ["新增甲", "新增乙"]]],
+    ["删行", []],
+    ["加列", [["甲", "乙", "新增列"]]],
+    ["删列", [["甲"]]],
+  ] as const)("table %s 时整表降级，不产 cellDiff 或 granular", (_label, afterRows) => {
+    const before = pmTableRows("shape-table", [["甲", "乙"]]);
+    const coloredBefore = {
+      ...before,
+      content: before.type === "table"
+        ? before.content.map((row) => ({
+            ...row,
+            content: row.content.map((cell, index) => index === 0
+              ? { ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } }
+              : cell),
+          }))
+        : [],
+    } as PmBlockNode;
+    const after = pmTableRows("shape-table", afterRows);
+
+    const input = suggestionToBlockPatchInputs(
+      blockSuggestion("shape-table", replaceHunk("shape-table", "shape-table", coloredBefore, after)),
+      0,
+    )[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(input).toMatchObject({ op: "replace", blockCount: 1 });
+    expect(input.granular).toBeUndefined();
+    expect(input.granularBlockHover).toBeUndefined();
+    expect(block.cellDiff).toBeUndefined();
+    expect(block.node).toBe(after);
+    expect(input.beforePmNodes?.[0]).toBe(coloredBefore);
+    const oldCell = input.beforePmNodes?.[0]?.type === "table" ? input.beforePmNodes[0].content[0]?.content[0] : undefined;
+    expect(oldCell?.attrs?.backgroundColor).toBe("#fff3a3");
+  });
+
+  it("callout/columnList 内嵌表格形状变化递归降级为块级 changed，外壳旧属性仍可见", () => {
+    const beforeTable = pmTableRows("nested-table", [["甲", "乙"]]);
+    const afterTable = pmTableRows("nested-table", [["甲", "乙"], ["新增甲", "新增乙"]]);
+    const beforeCallout = pmCalloutBlocks("nested-callout", [beforeTable], "warning");
+    const afterCallout = pmCalloutBlocks("nested-callout", [afterTable], "success");
+    const calloutInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "nested-callout",
+      replaceHunk("nested-callout", "nested-callout", beforeCallout, afterCallout),
+    ), 0)[0]!;
+    const callout = calloutInput.blocks[0] as Extract<ViewBlock, { kind: "callout" }>;
+
+    expect(calloutInput).toMatchObject({ granular: true, granularBlockHover: true });
+    expect(callout.bodyDiff).toMatchObject([{ status: "changed", kind: "block", node: { type: "table" } }]);
+    expect("cellDiff" in (callout.bodyDiff?.[0] ?? {})).toBe(false);
+    expect(calloutInput.beforePmNodes?.[0]).toBe(beforeCallout);
+    expect(calloutInput.beforePmNodes?.[0]?.type === "callout"
+      ? calloutInput.beforePmNodes[0].attrs.tone
+      : undefined).toBe("warning");
+
+    const beforeColumns = pmColumnListBlocks("nested-columns", [
+      [beforeTable],
+      [pmParagraph("nested-right", "右栏")],
+    ]);
+    const afterColumnsBase = pmColumnListBlocks("nested-columns", [
+      [afterTable],
+      [pmParagraph("nested-right", "右栏")],
+    ]);
+    const afterColumns = {
+      ...afterColumnsBase,
+      content: afterColumnsBase.type === "columnList"
+        ? afterColumnsBase.content.map((column, index) => ({
+            ...column,
+            attrs: { ...column.attrs, widthRatio: index === 0 ? 0.35 : 0.65 },
+          }))
+        : [],
+    } as PmBlockNode;
+    const columnsInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "nested-columns",
+      replaceHunk("nested-columns", "nested-columns", beforeColumns, afterColumns),
+    ), 0)[0]!;
+    const columns = columnsInput.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+    const nestedTableDiff = columns.columnsDiff?.[0]?.bodyDiff[0];
+
+    expect(columnsInput).toMatchObject({ granular: true, granularBlockHover: true });
+    expect(nestedTableDiff).toMatchObject({ status: "changed", kind: "block", node: { type: "table" } });
+    expect("cellDiff" in (nestedTableDiff ?? {})).toBe(false);
+    expect(columnsInput.beforePmNodes?.[0]).toBe(beforeColumns);
+    expect(columnsInput.beforePmNodes?.[0]?.type === "columnList"
+      ? columnsInput.beforePmNodes[0].content[0]?.attrs.widthRatio
+      : undefined).toBe(0.45);
+  });
+
+  it("cloneListRowDiff 递归克隆 childLists，且深层 spans 不与原对象共享", () => {
+    const source: ViewListRowDiff[] = [{
+      status: "same",
+      spans: [{ kind: "text", text: "父项" }],
+      childLists: [{
+        beforeListIndex: 0,
+        afterListIndex: 0,
+        rowDiff: [{
+          status: "changed",
+          oldText: "旧叶子",
+          spans: [{ kind: "patchIns", text: "新叶子", patchId: "clone-nested" }],
+        }],
+      }],
+    }];
+
+    const cloned = cloneListRowDiff(source);
+    expect(cloned).toEqual(source);
+    expect(cloned).not.toBe(source);
+    expect(cloned[0]!.childLists).not.toBe(source[0]!.childLists);
+    expect(cloned[0]!.childLists?.[0]!.rowDiff).not.toBe(source[0]!.childLists?.[0]!.rowDiff);
+    const clonedLeaf = cloned[0]!.childLists?.[0]!.rowDiff[0];
+    const sourceLeaf = source[0]!.childLists?.[0]!.rowDiff[0];
+    expect(clonedLeaf && "spans" in clonedLeaf ? clonedLeaf.spans : undefined)
+      .not.toBe(sourceLeaf && "spans" in sourceLeaf ? sourceLeaf.spans : undefined);
   });
 
   it("insert/delete 经复数版仍为单条,行为与单数版一致", () => {

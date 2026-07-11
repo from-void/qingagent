@@ -183,12 +183,20 @@ describe("rebaseRemainingPendingDraft", () => {
     const base = doc([paragraph("block-a", "df eeffba  efdefe b ")]);
     const draft = doc([paragraph("block-a", "df eeffbbac ed befee ebff ")]);
     const records = recordsFromDiff(base, draft, 1);
+    // 锚点清理后:2 字公共段("ef")保留成拆点,首处覆盖拆成两笔。
     expect(records.map((record) => [record.before, record.after])).toEqual([
-      ["a  efd", "bac ed b"],
+      ["a ", "bac"],
+      ["fd", "d b"],
       ["", "e"],
       ["b", "ebff"],
     ]);
-    const committed = applyDiffHunks(base, [records[0]!.diffHunk!, records[2]!.diffHunk!]).doc;
+    // 按内容取纯插入记录,先提交其余处,再 rebase 落这一处。
+    const insert = records.find((record) => record.before === "" && record.after === "e");
+    if (!insert) throw new Error("fixture missing pure insert record");
+    const committed = applyDiffHunks(
+      base,
+      records.filter((record) => record !== insert).map((record) => record.diffHunk!),
+    ).doc;
 
     const result = await rebaseRemainingPendingDraft({
       docId: "doc-inline-repeat-rebase",
@@ -197,7 +205,7 @@ describe("rebaseRemainingPendingDraft", () => {
       oldDraftDoc: draft,
       committedDoc: committed,
       committedVersion: 2,
-      remainingRecords: [records[1]!],
+      remainingRecords: [insert],
       persist: false,
     });
 

@@ -43,6 +43,7 @@ import {
 import { DiagramCM } from "./DiagramView";
 import { ImageCM, ReadonlyImageFigure, normalizeImageAlign } from "./ImageView";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
+import { mountBlockPatchView } from "./doc/blockPatchView";
 import { chatInputBus } from "../../../system";
 import {
   advanceNativeConcurrentState,
@@ -62,6 +63,11 @@ import {
   setNativePresentationDecorations,
   type NativeEditorOperationRuntime,
 } from "../data/nativePresentationPm";
+import {
+  buildPatchDecorations,
+  clearPatchDecorations,
+  setPatchDecorations,
+} from "../data/patchDecorations";
 import { sectionText } from "../data/presentationSpans";
 import {
   classifyIncomingDoc,
@@ -74,8 +80,11 @@ import type {
   ViewDocumentSnapshot,
   ViewListRowDiff,
   ViewTableRowDiff,
+  AppliedPatch,
+  BlockPatchInput,
+  DocSuggestion,
+  PatchOverlayInput,
 } from "../data/protocol";
-import { wordDiffSegments } from "../data/protocol";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { MathEditPopover, type MathEditTarget } from "./MathEditPopover";
 import { DocColophon } from "./DocColophon";
@@ -119,8 +128,8 @@ export { pickFile } from "./doc/pickFile";
 import { hasMissingPresentationBlockId, viewDocToPm, viewSectionsToHtml } from "./doc/viewDocHtml";
 import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
+import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
-import { SectionView } from "./doc/SectionView";
 import { TableControls } from "./doc/TableControls";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
@@ -139,6 +148,8 @@ export interface PatchMeta {
   kind?: "text" | "markAdd" | "markRemove" | "insert" | "delete" | "replace";
   marks?: PmMark[];
   label?: string;
+  /** 原始 before PM node:hover 卡片"原文"据此用 PmBlockView 渲成真内容(表格/图表/公式/嵌套列表全保真)。 */
+  beforePmNodes?: readonly PmBlockNode[];
   changes?: PatchMetaChange[];
   index: number;
 }
@@ -169,6 +180,10 @@ export interface DocumentSnapshotViewProps {
   patchMeta?: Map<string, PatchMeta>;
   /** Currently navigated-to patch for highlight. */
   activePatchId?: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -196,6 +211,10 @@ export const DocumentSnapshotView = forwardRef<
     onPatchVerdict,
     patchMeta,
     activePatchId,
+    reviewSuggestions,
+    reviewOverlayInputs,
+    reviewBlockPatches,
+    reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -256,8 +275,20 @@ export const DocumentSnapshotView = forwardRef<
         doc={doc}
         interactiveEditable={tiptapInteractiveEditable}
         docId={docId}
-        editable={editable && !presentationRun}
         forceExpandCollapse={showPatches || !editable || Boolean(presentationRun)}
+        showPatches={showPatches}
+        acceptedPatches={acceptedPatches}
+        rejectedPatches={rejectedPatches}
+        revealedPatchIds={revealedPatchIds}
+        revealCursors={revealCursors}
+        typedByPatch={typedByPatch}
+        onPatchVerdict={onPatchVerdict}
+        patchMeta={patchMeta}
+        activePatchId={activePatchId}
+        reviewSuggestions={reviewSuggestions}
+        reviewOverlayInputs={reviewOverlayInputs}
+        reviewBlockPatches={reviewBlockPatches}
+        reviewAppliedPatches={reviewAppliedPatches}
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
@@ -281,23 +312,7 @@ export const DocumentSnapshotView = forwardRef<
         data-version={doc.version}
         spellCheck={false}
       >
-        {doc.pmDoc && !showPatches
-          ? doc.pmDoc.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)
-          : doc.sections.map((section, i) => (
-              <SectionView
-                key={`v${doc.version}-s${i}`}
-                section={section}
-                showPatches={showPatches}
-                acceptedPatches={acceptedPatches}
-                rejectedPatches={rejectedPatches}
-                revealedPatchIds={revealedPatchIds}
-                revealCursors={revealCursors}
-                typedByPatch={typedByPatch}
-                onPatchVerdict={onPatchVerdict}
-                patchMeta={patchMeta}
-                activePatchId={activePatchId}
-              />
-            ))}
+        {doc.pmDoc?.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)}
       </article>
       {/* 审阅态(静态补丁路径,editable=false)也把落款这块奶白纸提前占好位:
           内容(署名文字/印章)以占位态隐藏、不跑入场动画,只把高度预留出来。
@@ -320,8 +335,20 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   doc: ViewDocumentSnapshot;
   interactiveEditable: boolean;
   docId: string | null;
-  editable: boolean;
   forceExpandCollapse: boolean;
+  showPatches: boolean;
+  acceptedPatches: ReadonlySet<string>;
+  rejectedPatches: ReadonlySet<string>;
+  revealedPatchIds?: ReadonlySet<string> | null;
+  revealCursors?: ReadonlyMap<string, number> | null;
+  typedByPatch?: ReadonlyMap<string, number> | null;
+  onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
+  patchMeta?: Map<string, PatchMeta>;
+  activePatchId?: string | null;
+  reviewSuggestions?: readonly DocSuggestion[];
+  reviewOverlayInputs?: readonly PatchOverlayInput[];
+  reviewBlockPatches?: readonly BlockPatchInput[];
+  reviewAppliedPatches?: readonly AppliedPatch[];
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -334,8 +361,20 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     doc,
     interactiveEditable,
     docId,
-    editable,
     forceExpandCollapse,
+    showPatches,
+    acceptedPatches,
+    rejectedPatches,
+    revealedPatchIds,
+    revealCursors,
+    typedByPatch,
+    onPatchVerdict,
+    patchMeta,
+    activePatchId,
+    reviewSuggestions,
+    reviewOverlayInputs,
+    reviewBlockPatches,
+    reviewAppliedPatches,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -524,6 +563,22 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       return () => onEditorReady(null);
     }
   }, [editor, onEditorReady]);
+
+  useReviewPatchDecorations({
+    editor,
+    enabled: showPatches && !presentationRun,
+    doc,
+    suggestions: reviewSuggestions,
+    overlayInputs: reviewOverlayInputs,
+    blockPatches: reviewBlockPatches,
+    applied: reviewAppliedPatches,
+    acceptedPatches,
+    rejectedPatches,
+    activePatchId,
+    revealedPatchIds,
+    typedByPatch,
+    revealCursors,
+  });
 
   // 公式点击 → 弹 LaTeX 编辑浮层(只在可编辑态响应)
   const [mathEdit, setMathEdit] = useState<MathEditTarget | null>(null);
@@ -924,10 +979,17 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
         <EditorContent editor={editor} />
         {!presentationRun ? <DocColophon doc={doc} /> : null}
       </div>
-      {editable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
-      {editable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
-      {editable && editor ? <TableControls editor={editor} /> : null}
-      {editable && mathEdit ? (
+      {showPatches && !presentationRun ? (
+        <PatchHoverLayer
+          editor={editor}
+          patchMeta={patchMeta}
+          onPatchVerdict={onPatchVerdict}
+        />
+      ) : null}
+      {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
+      {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
+      {interactiveEditable && editor ? <TableControls editor={editor} /> : null}
+      {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}
           onSave={saveMathEdit}
@@ -939,6 +1001,170 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     </div>
   );
 });
+
+function useReviewPatchDecorations({
+  editor,
+  enabled,
+  doc,
+  suggestions,
+  overlayInputs,
+  blockPatches,
+  applied,
+  acceptedPatches,
+  rejectedPatches,
+  activePatchId,
+  revealedPatchIds,
+  typedByPatch,
+  revealCursors,
+}: {
+  editor: Editor | null;
+  enabled: boolean;
+  doc: ViewDocumentSnapshot;
+  suggestions?: readonly DocSuggestion[];
+  overlayInputs?: readonly PatchOverlayInput[];
+  blockPatches?: readonly BlockPatchInput[];
+  applied?: readonly AppliedPatch[];
+  acceptedPatches: ReadonlySet<string>;
+  rejectedPatches: ReadonlySet<string>;
+  activePatchId?: string | null;
+  revealedPatchIds?: ReadonlySet<string> | null;
+  typedByPatch?: ReadonlyMap<string, number> | null;
+  revealCursors?: ReadonlyMap<string, number> | null;
+}) {
+  const suggestionsKey = useMemo(
+    () => (suggestions ?? []).map((s) => [
+      s.id,
+      s.status,
+      s.anchor.pmFrom,
+      s.anchor.pmTo,
+      s.preview.deleteText,
+      s.preview.insertText,
+    ].join(":")).join("|"),
+    [suggestions],
+  );
+  const appliedKey = useMemo(
+    () => (applied ?? []).map((patch) => [
+      patch.id,
+      patch.index,
+      patch.kind,
+      patch.before,
+      patch.after,
+    ].join(":")).join("|"),
+    [applied],
+  );
+  const overlayInputsKey = useMemo(
+    () => (overlayInputs ?? []).map((input) => [
+      input.id,
+      input.blockIndex,
+      input.range?.start ?? "",
+      input.range?.end ?? "",
+      input.before,
+      input.after,
+    ].join(":")).join("|"),
+    [overlayInputs],
+  );
+  const blockPatchesKey = useMemo(
+    () => (blockPatches ?? []).map((input) => [
+      input.patchId,
+      input.op,
+      input.anchorBlockId ?? "",
+      input.anchorIndex ?? "",
+      input.gravity ?? "",
+      input.blocks.length,
+      input.blockCount ?? "",
+    ].join(":")).join("|"),
+    [blockPatches],
+  );
+  const acceptedKey = useMemo(() => setKey(acceptedPatches), [acceptedPatches]);
+  const rejectedKey = useMemo(() => setKey(rejectedPatches), [rejectedPatches]);
+  const revealedPatchIdsKey = useMemo(
+    () => (revealedPatchIds ? setKey(revealedPatchIds) : ""),
+    [revealedPatchIds],
+  );
+  const typedByPatchKey = useMemo(
+    () => (typedByPatch ? mapKey(typedByPatch) : ""),
+    [typedByPatch],
+  );
+  const revealCursorsKey = useMemo(
+    () => (revealCursors ? mapKey(revealCursors) : ""),
+    [revealCursors],
+  );
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    if (!enabled || !doc.pmDoc) {
+      clearPatchDecorations(editor);
+      return;
+    }
+    const { decorations, dropped } = buildPatchDecorations({
+      suggestions: suggestions ?? [],
+      overlayInputs: overlayInputs ?? [],
+      blockPatches: blockPatches ?? [],
+      applied: applied ?? [],
+      baselineDoc: doc.pmDoc,
+      acceptedIds: acceptedPatches,
+      rejectedIds: rejectedPatches,
+      activePatchId,
+      revealedPatchIds,
+      typedByPatch,
+      revealCursors,
+      mountBlockView: mountBlockPatchView,
+    });
+    if (dropped.length > 0) {
+      console.warn(
+        `[patch] ${dropped.length} 处改动 decoration 锚点越界、未上屏:`,
+        dropped,
+      );
+    }
+    setPatchDecorations(editor, decorations);
+    // 不在每次依赖变化时 clear:先 clear→empty 再 set 会让 ProseMirror 销毁全部 widget DOM
+    // (经历空集),切换 activePatchId 时满屏红球/绿块重挂闪烁。直接用新 decorations 替换旧集合,
+    // ProseMirror 按 widget key 复用未变项,只重建 current 真正变化的一两处。
+    // 卸载/换 editor 的清理见下方独立 effect。
+  }, [
+    editor,
+    enabled,
+    doc.pmDoc,
+    doc.version,
+    suggestions,
+    suggestionsKey,
+    overlayInputs,
+    overlayInputsKey,
+    blockPatches,
+    blockPatchesKey,
+    applied,
+    appliedKey,
+    acceptedPatches,
+    acceptedKey,
+    rejectedPatches,
+    rejectedKey,
+    activePatchId,
+    revealedPatchIds,
+    revealedPatchIdsKey,
+    typedByPatch,
+    typedByPatchKey,
+    revealCursors,
+    revealCursorsKey,
+  ]);
+
+  // 卸载或更换 editor 时才彻底清理 patch decorations;更新期间不清,避免全量重挂闪烁(见上)。
+  useEffect(() => {
+    return () => {
+      if (editor && !editor.isDestroyed) clearPatchDecorations(editor);
+    };
+  }, [editor]);
+}
+
+function setKey(values: ReadonlySet<string>): string {
+  return Array.from(values).sort().join(",");
+}
+
+function mapKey(values: ReadonlyMap<string, number>): string {
+  return Array.from(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join(",");
+}
 
 function canResolveNativePresentationCoordinates(
   editor: Editor,

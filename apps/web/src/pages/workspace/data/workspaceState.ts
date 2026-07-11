@@ -361,6 +361,15 @@ function workspaceReducerMut(
         return;
       }
       if ("conflict" in action.data) {
+        // 审阅提交会推进文档版本；此前编辑态已发出的防抖保存可能稍后才返回 conflict。
+        // 若 pendingReview 已经观测到 actual 版本，这只是迟到回执，不能再弹“重载”。
+        // actual 高于本地 version 仍是真外部并发，保留原提示。
+        if (
+          draft.docState.kind === "pendingReview" &&
+          action.data.conflict.actualDocumentSnapshot <= draft.version
+        ) {
+          return;
+        }
         draft.streamError = {
           kind: "docWriteConflict",
           reason: "文档已被更新，请重载后继续编辑。",

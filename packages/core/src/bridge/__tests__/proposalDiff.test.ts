@@ -297,14 +297,19 @@ describe("proposalDiff shadow engine", () => {
     const base = doc([paragraph("block-a", "df eeffba  efdefe b ")]);
     const draft = doc([paragraph("block-a-draft", "df eeffbbac ed befee ebff ")]);
     const hunks = buildDraftDiff(base, draft, { baseVersion: 7 });
+    // 锚点清理后:2 字公共段("ef")保留成拆点,原"a  efd→bac ed b"拆成两处覆盖。
     expect(hunks.map((hunk) => [hunk.beforeText, hunk.afterText])).toEqual([
-      ["a  efd", "bac ed b"],
+      ["a ", "bac"],
+      ["fd", "d b"],
       ["", "e"],
       ["b", "ebff"],
     ]);
 
-    const committed = applyDiffHunks(base, [hunks[0]!, hunks[2]!]).doc;
-    const applied = applyDiffHunkToDoc(committed, hunks[1]!, {
+    // 按内容取纯插入 hunk(不再靠固定下标),先提交其余处再 rebase 落这一处。
+    const insert = hunks.find((hunk) => hunk.beforeText === "" && hunk.afterText === "e");
+    if (!insert) throw new Error("fixture missing pure insert hunk");
+    const committed = applyDiffHunks(base, hunks.filter((hunk) => hunk !== insert)).doc;
+    const applied = applyDiffHunkToDoc(committed, insert, {
       oldBaseDoc: base,
       anchorByBlockId: true,
     });
@@ -555,5 +560,93 @@ describe("p06/p09 回归:同型同文块的属性差异必须产出 hunk", () =>
     const b = doc([{ type: "heading", attrs: { level: 2, blockId: "h" }, content: [text("题")] } as PmBlockNode]);
 
     expect(buildDraftDiff(a, b, { baseVersion: 1 })).toHaveLength(0);
+  });
+});
+
+describe("拆干净:锚点清理(★裁决 260710)", () => {
+  const graphemeCount = (s: string): number => Array.from(s).length;
+  const nonTrivialCount = (s: string): number =>
+    Array.from(s).filter((c) => !/[\p{P}\s]/u.test(c)).length;
+  // 假新增 = replace 的 ins 是 del 的子串重现,且 ins 本身是≥2 字的真锚点(晚风案 [del AXB][ins X])。
+  const isFakeInsert = (before: string, after: string): boolean =>
+    after !== "" && before !== "" && before.includes(after) &&
+    graphemeCount(after) >= 2 && nonTrivialCount(after) >= 1;
+
+  it("晚风案(hunk#1):公共'晚风'保留成锚点,产两笔纯删除、零 insert", () => {
+    const base = doc([paragraph("block-521244", "蝉声渐渐稀落,最后只剩下零星的几声,像是告别。晚风终于")]);
+    const draft = doc([paragraph("block-521244", "晚风")]);
+    const hunks = buildDraftDiff(base, draft);
+
+    // 全是纯删除:任何 hunk 的 afterText 都为空 —— 零 insert
+    expect(hunks.every((hunk) => (hunk.afterText ?? "") === "")).toBe(true);
+    // "晚风"是真锚点:既不被删、也不被假新增(不出现在任何 hunk 的增删文本里)
+    expect(
+      hunks.every((hunk) => !(hunk.beforeText ?? "").includes("晚风") && !(hunk.afterText ?? "").includes("晚风")),
+    ).toBe(true);
+    // 两笔删除恰好覆盖锚点前后两段
+    expect(hunks.map((hunk) => hunk.beforeText).sort()).toEqual(
+      ["终于", "蝉声渐渐稀落,最后只剩下零星的几声,像是告别。"].sort(),
+    );
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("苹果玩具例:'我爱吃苹果→苹果很好吃' = 删'我爱吃' + 增'很好吃','苹果'存活", () => {
+    const base = doc([paragraph("blk-apple", "我爱吃苹果")]);
+    const draft = doc([paragraph("blk-apple", "苹果很好吃")]);
+    const hunks = buildDraftDiff(base, draft);
+
+    expect(hunks.map((hunk) => [hunk.beforeText, hunk.afterText])).toEqual([
+      ["我爱吃", ""],
+      ["", "很好吃"],
+    ]);
+    expect(
+      hunks.every((hunk) => !(hunk.beforeText ?? "").includes("苹果") && !(hunk.afterText ?? "").includes("苹果")),
+    ).toBe(true);
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("长段重写(晚风案同型):锚点天边/绚烂/晚风存活,处数收敛,无碎渣无假新增", () => {
+    const base = doc([
+      paragraph(
+        "blk-dusk",
+        "傍晚,蝉声渐渐稀落,最后只剩下零星的几声,像是告别。晚风终于带来一丝凉意,我站起身的走到窗前。远处的天边,晚霞正烧得绚烂。这一天的蝉声,就这样结束了。",
+      ),
+    ]);
+    const draft = doc([
+      paragraph(
+        "blk-dusk",
+        "傍晚,晚风带来凉意,我走到窗前。天边烧起绚烂的晚霞。我静静看天色一点点暗下去。",
+      ),
+    ]);
+    const hunks = buildDraftDiff(base, draft);
+
+    // 处数如实变多但收敛(★裁决:约 7~8 处),不再是字符级碎渣满地
+    expect(hunks.length).toBeLessThanOrEqual(8);
+    // 真锚点全部存活:既不被删、也不被假新增
+    for (const anchor of ["天边", "绚烂", "晚风"]) {
+      expect(
+        hunks.every((hunk) => !(hunk.beforeText ?? "").includes(anchor) && !(hunk.afterText ?? "").includes(anchor)),
+      ).toBe(true);
+    }
+    // 无假新增:没有 [del AXB][ins X] 结构
+    expect(hunks.some((hunk) => isFakeInsert(hunk.beforeText ?? "", hunk.afterText ?? ""))).toBe(false);
+    // 无纯标点/空白的孤立删除碎渣(表 §1 #3/#6"删,"那种无意义碎片)。
+    // 注:锚点包夹的短实词删除(删"一丝"/"终于")是★裁决认可的可独立采纳编辑,不算碎渣。
+    expect(
+      hunks.some((hunk) => (hunk.afterText ?? "") === "" && (hunk.beforeText ?? "") !== "" && nonTrivialCount(hunk.beforeText ?? "") === 0),
+    ).toBe(false);
+    // 严格三态:每处非纯增即纯删即覆盖(inline 文本 hunk 的 op 归一为 replace)
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
+  });
+
+  it("单字公共段'很'被吞进覆盖:不在其两侧切出增删交错(1 处覆盖,非 2 处)", () => {
+    const base = doc([paragraph("blk-1", "天很蓝")]);
+    const draft = doc([paragraph("blk-1", "地很绿")]);
+    const hunks = buildDraftDiff(base, draft);
+
+    // "很"<2 字非锚点 → 并入两侧,天/蓝与地/绿合成一处覆盖,而非绕开"很"切成两处
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]).toMatchObject({ op: "replace", beforeText: "天很蓝", afterText: "地很绿" });
+    expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 });

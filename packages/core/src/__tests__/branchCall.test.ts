@@ -229,6 +229,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(replayBody.max_tokens).toBe(4096);
     expect(replayBody.stream).toBe(true);
     expect(replayBody.stream_options).toEqual({ include_usage: true });
+    expect(replayBody.tool_choice).toBe(sourceBody.tool_choice);
     expect(result).toMatchObject({ finishReason: "stop" });
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "planDraft",
@@ -394,9 +395,38 @@ describe("BranchCall provider 快照与 raw 回放", () => {
 
     expect(result).toMatchObject({ ok: true, text: "甲乙" });
     expect(deltas).toEqual(["甲", "乙"]);
+    const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(body.tool_choice).toBe("none");
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       cacheHitTokens: 10,
       cacheMissTokens: 2,
+    }));
+  });
+
+  it("HTTP 200 SSE error 帧按脱敏 provider_error 入账", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-sse", "stream-error");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response(
+      'data: {"error":{"message":"rate limited Bearer sk-secret-value"}}\n\ndata: [DONE]\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+
+    await expect(branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+    })).resolves.toMatchObject({
+      reason: "provider_error",
+      error: "HTTP 200 SSE: rate limited Bearer ***",
+    });
+    expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "missing",
+      reason: "HTTP 200 SSE: rate limited Bearer ***",
     }));
   });
 
@@ -458,7 +488,9 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     beginSessionSnapshotTurn(requestContext);
     await triggerProviderFetch(requestContext, "main-prefix");
     const snapshot = getSessionSnapshot(requestContext)!;
-    fetchMock.mockResolvedValueOnce(Response.json({ error: { message: "upstream unavailable" } }, { status: 502 }));
+    fetchMock.mockResolvedValueOnce(Response.json({
+      error: { message: "upstream unavailable Authorization: Bearer sk-private-value" },
+    }, { status: 502 }));
 
     await expect(branchCall({
       sessionSnapshot: snapshot,
@@ -468,7 +500,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     })).resolves.toMatchObject({ reason: "provider_error", attempts: 1 });
     await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       usageState: "missing",
-      reason: "HTTP 502: upstream unavailable",
+      reason: "HTTP 502: upstream unavailable Authorization: Bearer ***",
       attempt: 1,
     })));
   });

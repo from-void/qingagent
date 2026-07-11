@@ -281,6 +281,7 @@ interface RawBranchResponse {
   toolCalled: boolean;
   usage: unknown;
   finishReason: string | null;
+  providerError: string | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -290,6 +291,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function extractRawChunk(payload: unknown, state: RawBranchResponse): void {
   const record = asRecord(payload);
   if (!record) return;
+  const error = asRecord(record.error);
+  if (typeof error?.message === "string") state.providerError = error.message;
   if (record.usage) state.usage = record.usage;
   const choice = Array.isArray(record.choices) ? asRecord(record.choices[0]) : null;
   if (!choice) return;
@@ -313,6 +316,7 @@ async function readRawBranchResponse(
     toolCalled: false,
     usage: null,
     finishReason: null,
+    providerError: null,
   };
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
@@ -449,7 +453,19 @@ async function providerErrorSummary(response: Response): Promise<string> {
   } catch {
     // 保留稳定兜底，错误观测本身不能遮蔽降级。
   }
-  return `HTTP ${response.status}: ${message}`.slice(0, 200);
+  return redactProviderError(`HTTP ${response.status}: ${message}`).slice(0, 200);
+}
+
+function streamErrorSummary(message: string): string {
+  return redactProviderError(`HTTP 200 SSE: ${message}`).slice(0, 200);
+}
+
+/** 错误体只需短摘要；在截断前清除常见授权头、key 字段和 sk-* 裸 key。 */
+function redactProviderError(value: string): string {
+  return value
+    .replace(/\b(Bearer|Basic)\s+[^\s"',;)}\]]+/gi, "$1 ***")
+    .replace(/\b(api[_-]?key|token|secret|password)\b(\s*[:=]\s*)["']?[^\s"',;)}\]]+/gi, "$1$2***")
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "sk-***");
 }
 
 async function recordBranchUsage(
@@ -538,6 +554,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       messages: [...normalizeReplayMessages(baseBody.messages), ...tail],
       stream: true,
       stream_options: { include_usage: true },
+      ...(input.streamTextDeltas ? { tool_choice: "none" } : {}),
       ...(typeof input.maxTokens === "number" ? { max_tokens: input.maxTokens } : {}),
       ...(input.thinking === undefined
         ? {}
@@ -572,9 +589,21 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
       const raw = await readRawBranchResponse(
         response,
-        input.streamTextDeltas ? input.onTextDelta : undefined,
+        input.streamTextDeltas && input.onTextDelta
+          ? async (delta, accumulated) => {
+              if (!ownsCurrentLease() || input.abortSignal?.aborted) {
+                throw new DOMException("stale branch stream", "AbortError");
+              }
+              await input.onTextDelta?.(delta, accumulated);
+            }
+          : undefined,
         input.onActivity,
       );
+      if (raw.providerError) {
+        const error = streamErrorSummary(raw.providerError);
+        void recordBranchUsage(input, raw.usage, attempt, error);
+        return { ok: false, reason: "provider_error", attempts: 1, toolCallRetries: 0, error };
+      }
       void recordBranchUsage(input, raw.usage, attempt, null);
       if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };

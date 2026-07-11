@@ -49,6 +49,7 @@ const BUILTIN_SKILL_ORDER = [
   "doc-calc",
   "materials",
   "feishu",
+  "wechat-official-account",
 ] as const;
 
 export const skillsRoutes = new Hono();

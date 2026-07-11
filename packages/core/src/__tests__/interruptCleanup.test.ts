@@ -484,3 +484,43 @@ describe("finalizeLingeringRunningToolCalls", () => {
     expect(firstToolStatus(state)).toBe("done");
   });
 });
+
+describe("流式参数占位的自然收尾", () => {
+  it("wechat_auth_start 只有 streaming-start 后 EOF 时，在 streamEnd 前下发 failed 终态", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const state = createSession("wechat-auth-streaming-placeholder-eof");
+
+    qingagentStreamMock().mockImplementationOnce(async () => {
+      async function* fullStream(): AsyncGenerator<unknown> {
+        yield {
+          type: "tool-call-input-streaming-start",
+          payload: { toolName: "wechat_auth_start", toolCallId: "wechat-auth-orphan" },
+        };
+      }
+      return {
+        runId: "run-wechat-auth-orphan",
+        fullStream: fullStream(),
+      } as unknown as Awaited<ReturnType<typeof qingagentAgent.stream>>;
+    });
+
+    const frames = await collectFrames(runAgentTurn(state, "帮我扫码登录微信后台"));
+    const terminalIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === "wechat-auth-orphan" &&
+        frame.data.spec.status.kind === "failed",
+    );
+    const streamEndIndex = frames.findIndex(
+      (frame) => frame.kind === "stream" && frame.data.kind === "end",
+    );
+
+    expect(terminalIndex).toBeGreaterThanOrEqual(0);
+    expect(streamEndIndex).toBeGreaterThan(terminalIndex);
+    expect(findToolCallSpec(state, "wechat-auth-orphan")).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: true, reason: "本轮未产出结果" },
+      },
+    });
+  });
+});

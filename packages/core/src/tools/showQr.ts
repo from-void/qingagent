@@ -24,7 +24,18 @@ export const showQrTool = createTool({
     "卡片会自动在过期后作废并给出刷新入口。" +
     "【位置】二维码卡片展示在**对话流中、你这条回复的下方**(不在右侧文档面板);向用户说明时务必说『下方/对话中』,**绝不能说『在右侧』**。",
   inputSchema: z.object({
-    content: z.string().min(1).describe("要编码进二维码的字符串,如 OAuth 验证 URL"),
+    content: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("要编码进二维码的字符串,如 OAuth 验证 URL(图片模式传 imageDataUri 时可省略)"),
+    imageDataUri: z
+      .string()
+      .optional()
+      .describe(
+        "直接展示的二维码图片(data:image/...;base64 URI)。用于码本身是一张图、无法用字符串编码的场景" +
+          "(如微信公众平台后台登录码);传了它就直接显示图片,不再编码 content。content 与 imageDataUri 至少给一个",
+      ),
     title: z.string().nullable().optional().describe("标题,如 扫码授权飞书"),
     code: z.string().nullable().optional().describe("配对码/用户码;不是每个平台都有,没有就不传"),
     note: z

@@ -53,9 +53,10 @@ function terminalizeInFlightToolCalls(
   return updates;
 }
 
-// 自然收尾时把残留在 running 的工具调用落终态(done),清掉"工具调用完、对话已回复,
+// 自然收尾时把残留在 running 的工具调用落终态,清掉"工具调用完、对话已回复,
 // 但 toolCall 仍转圈 loading"的残留(如 result 帧缺失 / 达 maxSteps 截断)。
-// active suspension owner 保留;其它无主 running 视为孤儿并落 done。
+// 只有流式参数起始帧、没有任何参数/结果的空占位，能确定本轮没有真正执行工具，必须落 failed；
+// 其它无主 running 保持原有 done 语义。active suspension owner 保留。
 // 中断改写另由 terminalizeInFlightToolCalls 置 failed。
 export function finalizeLingeringRunningToolCalls(
   state: SessionState,
@@ -72,7 +73,19 @@ export function finalizeLingeringRunningToolCalls(
       const shouldFinalize = part.data.status.kind === "running" && !isOwnedSuspensionToolCall;
       if (!shouldFinalize) continue;
 
-      const spec: ToolCallSpec = { ...part.data, status: { kind: "done" } };
+      const isUnexecutedStreamingPlaceholder =
+        part.data.result === null &&
+        part.data.body.kind === "generic" &&
+        part.data.body.data.argsJson === "";
+      const spec: ToolCallSpec = {
+        ...part.data,
+        status: isUnexecutedStreamingPlaceholder
+          ? { kind: "failed", data: { retriable: true, reason: "本轮未产出结果" } }
+          : { kind: "done" },
+        result: isUnexecutedStreamingPlaceholder
+          ? { kind: "genericText", data: "本轮未产出结果" }
+          : part.data.result,
+      };
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
     }

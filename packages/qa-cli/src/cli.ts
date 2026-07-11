@@ -104,10 +104,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     const sessionId = requireOption(args, "-s");
     const expectedDocVersion = Number(requireOption(args, "--expect-version"));
     const ops = await parseOps(args);
-    const data = await client.request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/proposals`, {
-      method: "POST",
-      body: JSON.stringify({ expectedDocVersion, ops }),
-    });
+    const data = await client.propose<unknown>(sessionId, { expectedDocVersion, ops });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "events") {
@@ -128,10 +125,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "chat" && command === "send") {
     const sessionId = requireOption(args, "-s");
     const text = chatText(args);
-    const data = await client.request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/chat`, {
-      method: "POST",
-      body: JSON.stringify({ text }),
-    });
+    const data = await client.chat<unknown>(sessionId, { text });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "chat" && command === "log") {

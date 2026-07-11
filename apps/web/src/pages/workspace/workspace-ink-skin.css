@@ -235,6 +235,23 @@
 #view-workspace .ws-left .wf-msg.agent {
   color: var(--ink-1);
 }
+/* 外部工具操作的独立信息条:表达来源,与审阅 chip 解耦。纯文本一行 + 来源 logo,无边框无底。
+   只把这条"来源"信息条推到右侧(像外部 agent 发来一条消息);下方审阅 chip 仍按常规左对齐。 */
+#view-workspace .ws-left .wf-external-op {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-left: auto;
+  margin-bottom: 6px;
+  font-family: var(--font-zh-serif);
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(236, 227, 208, 0.6);
+}
+#view-workspace .ws-left .wf-external-op svg {
+  flex: none;
+}
 #view-workspace .ws-left .chat-heading {
   color: #f0e9da;
 }
@@ -1800,20 +1817,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   justify-content: flex-end;
   gap: 8px;
   pointer-events: none;
-}
-#view-workspace .ws-external-badge {
-  pointer-events: none;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 10px;
-  border: 1px solid rgba(196, 154, 76, 0.34);
-  background: rgba(43, 34, 23, 0.82);
-  color: rgba(236, 227, 208, 0.86);
-  font-family: var(--font-zh-serif);
-  font-size: 13px;
-  line-height: 1;
-  white-space: nowrap;
 }
 #view-workspace .ws-doc-btn {
   pointer-events: auto;

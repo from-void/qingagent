@@ -19,6 +19,7 @@ export interface SubmitCommandInput {
   command: Command;
   clientTraceId?: string;
   origin?: CommandOrigin;
+  client?: string;
   modelOverrides?: ModelOverrides;
 }
 

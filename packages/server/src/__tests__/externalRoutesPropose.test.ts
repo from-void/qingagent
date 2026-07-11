@@ -117,6 +117,34 @@ describe("external proposals", () => {
     expect(session?.chatHistory.filter((message) => message.role.kind === "agent" && message.parts.length === 0)).toHaveLength(0);
   });
 
+  it("把调用方身份编入外部提案的 agent 消息 id", async () => {
+    const claudeSessionId = await createSession();
+    await propose(claudeSessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。" }],
+    });
+    await propose(claudeSessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "appendSection", markdown: "Claude 提案。" }],
+    }, { "X-QA-Client": "claudecode" });
+    const claudeSession = await getOrRestoreSession(claudeSessionId);
+    const claudeMessage = claudeSession?.chatHistory.find((message) => message.role.kind === "agent");
+    expect(claudeMessage?.id).toMatch(/^external-claudecode-[0-9a-f-]{36}$/);
+
+    const agentSessionId = await createSession();
+    await propose(agentSessionId, {
+      expectedDocVersion: 0,
+      ops: [{ kind: "fullDraft", markdown: "第一段。" }],
+    });
+    await propose(agentSessionId, {
+      expectedDocVersion: 1,
+      ops: [{ kind: "appendSection", markdown: "默认提案。" }],
+    });
+    const agentSession = await getOrRestoreSession(agentSessionId);
+    const agentMessage = agentSession?.chatHistory.find((message) => message.role.kind === "agent");
+    expect(agentMessage?.id).toMatch(/^external-agent-[0-9a-f-]{36}$/);
+  });
+
   it("insertAfterLine 把块间空行归到上一块", async () => {
     const sessionId = await createSession();
     await propose(sessionId, {
@@ -150,10 +178,10 @@ async function createSession(): Promise<string> {
   return body.sessionId;
 }
 
-async function propose(sessionId: string, body: unknown): Promise<Response> {
+async function propose(sessionId: string, body: unknown, headers: HeadersInit = {}): Promise<Response> {
   return app.request(`/api/v1/external/sessions/${sessionId}/proposals`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: { ...authHeaders(), ...headers },
     body: JSON.stringify(body),
   });
 }

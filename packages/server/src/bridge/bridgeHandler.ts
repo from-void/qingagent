@@ -560,6 +560,7 @@ export async function* handleCommand(
   clientTraceId?: string,
   origin: Origin = "manual",
   modelOverrides?: ModelOverrides,
+  client?: string,
 ): AsyncGenerator<BridgeFrame> {
   // 阶段4 — 在统一分发点归一化 clientTraceId 并记一条 command span（Layer ②）。
   // sessionId 在分发前已解析（含 patch/toolCall 反查），保证 command span 的
@@ -586,6 +587,7 @@ export async function* handleCommand(
       resolvedClientTraceId,
       origin,
       modelOverrides,
+      client,
     )) {
       failure ??= getFailureFromFrame(frame);
       yield frame;
@@ -647,6 +649,7 @@ async function* handleCommandInner(
   resolvedClientTraceId: string | undefined,
   origin: Origin,
   modelOverrides: ModelOverrides | undefined,
+  client: string | undefined,
 ): AsyncGenerator<BridgeFrame> {
   switch (command.kind) {
     case "startSession": {
@@ -1107,7 +1110,7 @@ async function* handleCommandInner(
       workingDoc = applied.doc;
       replaceDraftCandidateDoc(session, workingDoc);
 
-      const externalId = `external-${crypto.randomUUID()}`;
+      const externalId = `external-${client ?? "agent"}-${crypto.randomUUID()}`;
       const agentMessageId = externalId;
       const streamId = externalId;
       const runId = externalId;
@@ -2862,8 +2865,8 @@ export function findSessionByReviewBatchId(reviewBatchId: string): SessionState 
 }
 
 export const sessionManager = new SessionManager({
-  handleCommand: (command, clientTraceId, origin, modelOverrides) =>
-    handleCommand(command, clientTraceId, origin, modelOverrides),
+  handleCommand: (command, clientTraceId, origin, modelOverrides, client) =>
+    handleCommand(command, clientTraceId, origin, modelOverrides, client),
   abortSession: (sessionId) => {
     sessions.get(sessionId)?._abortController?.abort();
   },

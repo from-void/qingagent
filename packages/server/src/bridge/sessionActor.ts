@@ -9,6 +9,7 @@ export interface ActorCommand {
   command: Command;
   clientTraceId?: string;
   origin?: CommandOrigin;
+  client?: string;
   modelOverrides?: ModelOverrides;
 }
 
@@ -17,6 +18,7 @@ export type HandleCommandFn = (
   clientTraceId?: string,
   origin?: CommandOrigin,
   modelOverrides?: ModelOverrides,
+  client?: string,
 ) => AsyncGenerator<BridgeFrame>;
 
 export class SessionActorCommandError extends Error {
@@ -129,6 +131,7 @@ export class SessionActor {
           item.input.clientTraceId,
           item.input.origin ?? "manual",
           item.input.modelOverrides,
+          item.input.client,
         );
         for await (const frame of frames) {
           // dispose 后立即停泵(0702 review):manager 已 frameLog.evict,此处再 append

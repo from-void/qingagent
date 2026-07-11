@@ -19,6 +19,8 @@ import type { Material } from "@qingagent/core";
 
 export const externalRoutes = new Hono();
 
+type ExternalClient = "claudecode" | "codex" | "agent";
+
 type ExternalErrorCode =
   | "AUTH_FAILED"
   | "AGENT_BUSY"
@@ -214,6 +216,7 @@ externalRoutes.get("/sessions/:id/files/:materialId/text", async (c) => {
 externalRoutes.post("/sessions/:id/proposals", async (c) => {
   const startedAt = Date.now();
   const sessionId = c.req.param("id");
+  const client = parseExternalClient(c.req.header("x-qa-client"));
   const body = await c.req.json().catch(() => null);
   const parsed = commandSchema.safeParse({
     kind: "externalPropose",
@@ -230,11 +233,15 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
     externalLog("propose", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION", hunks: 0 });
     return externalError(c, 400, "VALIDATION", "提案不合法");
   }
-  const frames = await sessionManager.submit(sessionId, { command: parsed.data, origin: "external" });
+  const frames = await sessionManager.submit(sessionId, { command: parsed.data, origin: "external", client });
   const summary = proposalSummary(frames);
   externalLog("propose", { sessionId, ms: elapsed(startedAt), result: summary.logResult, hunks: summary.hunks });
   return proposalResponse(c, summary);
 });
+
+function parseExternalClient(value: string | undefined): ExternalClient {
+  return value === "claudecode" || value === "codex" ? value : "agent";
+}
 
 externalRoutes.post("/sessions/:id/chat", async (c) => {
   const startedAt = Date.now();
@@ -250,6 +257,8 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
     externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
   }
+  // 把调用方身份编进消息 id(与 proposals 同约定),前端据 external-<client>- 前缀展示"代你发送了一条消息"。
+  const client = parseExternalClient(c.req.header("x-qa-client"));
   const command: Command = {
     kind: "sendMessage",
     data: {
@@ -259,7 +268,7 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
       skills: [],
       chips: [],
       fileIds: [],
-      clientMessageId: `external-${crypto.randomUUID()}`,
+      clientMessageId: `external-${client}-${crypto.randomUUID()}`,
     },
   };
   void sessionManager.submit(sessionId, { command, origin: "external" }).catch(() => {

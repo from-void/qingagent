@@ -10,6 +10,7 @@ import {
   materializeDraftBlockIds,
   pmToLegacySections,
   pmToPlainText,
+  pmTableLogicalGrid,
   type PmBlockNode,
   type PmDoc,
   type PmTableCellNode,
@@ -267,11 +268,11 @@ function compareRowsAt(
   selection: { axis: "row" | "column"; startIndex: number; endIndex: number },
   tableRef: string,
 ): TableSelectionScopeResult {
-  const beforeRow = before.content[beforeRowIndex];
-  const afterRow = after.content[afterRowIndex];
-  const width = Math.max(beforeRow?.content.length ?? 0, afterRow?.content.length ?? 0);
+  const beforeRow = pmTableLogicalGrid(before)[beforeRowIndex];
+  const afterRow = pmTableLogicalGrid(after)[afterRowIndex];
+  const width = Math.max(beforeRow?.length ?? 0, afterRow?.length ?? 0);
   for (let columnIndex = 0; columnIndex < width; columnIndex += 1) {
-    if (tableCellFingerprint(beforeRow?.content[columnIndex]) !== tableCellFingerprint(afterRow?.content[columnIndex])) {
+    if (tableCellFingerprint(beforeRow?.[columnIndex]) !== tableCellFingerprint(afterRow?.[columnIndex])) {
       return scopeViolation({ ...selection, tableRef, rowIndex: beforeRowIndex, columnIndex });
     }
   }
@@ -312,23 +313,25 @@ export function validateTableSelectionScope(input: {
   if (!after || before.content.length !== after.content.length) {
     return scopeViolation({ ...selection, tableRef, rowIndex: Math.min(before.content.length, after?.content.length ?? 0), columnIndex: 0 });
   }
+  const beforeGrid = pmTableLogicalGrid(before);
+  const afterGrid = pmTableLogicalGrid(after);
   for (let rowIndex = 0; rowIndex < before.content.length; rowIndex += 1) {
-    const beforeRow = before.content[rowIndex]!;
-    const afterRow = after.content[rowIndex]!;
+    const beforeRow = beforeGrid[rowIndex]!;
+    const afterRow = afterGrid[rowIndex]!;
     const prefixCount = selection.startIndex;
-    const suffixCount = Math.max(0, beforeRow.content.length - selection.endIndex - 1);
-    if (afterRow.content.length < prefixCount + suffixCount) {
+    const suffixCount = Math.max(0, beforeRow.length - selection.endIndex - 1);
+    if (afterRow.length < prefixCount + suffixCount) {
       return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: prefixCount > 0 ? 0 : selection.endIndex + 1 });
     }
     for (let columnIndex = 0; columnIndex < prefixCount; columnIndex += 1) {
-      if (tableCellFingerprint(beforeRow.content[columnIndex]) !== tableCellFingerprint(afterRow.content[columnIndex])) {
+      if (tableCellFingerprint(beforeRow[columnIndex]) !== tableCellFingerprint(afterRow[columnIndex])) {
         return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex });
       }
     }
     for (let offset = 0; offset < suffixCount; offset += 1) {
       const beforeColumnIndex = selection.endIndex + 1 + offset;
-      const afterColumnIndex = afterRow.content.length - suffixCount + offset;
-      if (tableCellFingerprint(beforeRow.content[beforeColumnIndex]) !== tableCellFingerprint(afterRow.content[afterColumnIndex])) {
+      const afterColumnIndex = afterRow.length - suffixCount + offset;
+      if (tableCellFingerprint(beforeRow[beforeColumnIndex]) !== tableCellFingerprint(afterRow[afterColumnIndex])) {
         return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: beforeColumnIndex });
       }
     }

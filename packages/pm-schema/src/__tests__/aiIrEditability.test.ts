@@ -164,7 +164,7 @@ describe("analyzeAiIrEditability", () => {
     expect(result).toEqual({ replaceBlockAllowed: true, lossyReasons: [] });
   });
 
-  it("合并表仅在存在 colwidth 时临时拒绝 replaceBlock", () => {
+  it("合并表含 colwidth 仍允许 replaceBlock", () => {
     const merged = (colwidth?: number[]): PmBlockNode => ({
       type: "table",
       attrs: { blockId: "block-merged" },
@@ -179,8 +179,8 @@ describe("analyzeAiIrEditability", () => {
     });
 
     expect(analyzeAiIrEditability(merged([120, 160]))).toEqual({
-      replaceBlockAllowed: false,
-      lossyReasons: ["mergedTableColwidth"],
+      replaceBlockAllowed: true,
+      lossyReasons: [],
     });
     expect(analyzeAiIrEditability(merged())).toEqual({
       replaceBlockAllowed: true,

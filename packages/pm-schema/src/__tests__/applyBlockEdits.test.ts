@@ -5,7 +5,7 @@ import { isGeneratedAiBlockId, materializeDraftBlockIds } from "../ai-ir/draftBl
 import { getStablePmJson } from "../hash";
 import { pmToPlainText } from "../pmToPlainText";
 import { safeParsePmDoc } from "../validators";
-import type { PmBlockNode, PmDoc, PmNode } from "../types";
+import type { PmBlockNode, PmDoc, PmNode, PmTableCellNode } from "../types";
 import type { AiRun, AiTableCell } from "../ai-ir/aiIrSchema";
 
 function makeOriginal() {
@@ -556,12 +556,12 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
       },
     }]);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.error).toBe(true);
     expect(cellTypes(result.doc!.content[0], 0)).toEqual(["tableHeader"]);
   });
 });
 
-describe("applyBlockEdits 表格列宽 carry-over 与合并表门控", () => {
+describe("applyBlockEdits 表格列宽 carry-over", () => {
   function widthTableDoc(): { doc: PmDoc; ref: string } {
     const base = aiIrToPm({
       blocks: [{
@@ -641,7 +641,7 @@ describe("applyBlockEdits 表格列宽 carry-over 与合并表门控", () => {
     expect(widths(reordered.doc!)).toEqual([[[100], [200]], [[100], [200]]]);
   });
 
-  it("含 span+colwidth 拒绝；含 span 无 colwidth 放行并保留 span", () => {
+  it("含 span+colwidth 按逻辑列保留；含 span 无 colwidth 也放行", () => {
     const merged = aiIrToPm({
       blocks: [{ type: "table", rows: [{ cells: [{ ...tableCell([{ text: "合并" }]), colspan: 2 }] }] }],
     });
@@ -663,9 +663,11 @@ describe("applyBlockEdits 表格列宽 carry-over 与合并表门控", () => {
       rows: [{ cells: [{ ...tableCell([{ text: "新内容" }]), colspan: 2 }] }],
     };
 
-    const rejected = applyBlockEdits(withWidth, [{ action: "replaceBlock", ref, block: replacement }]);
-    expect(rejected.ok).toBe(false);
-    expect(rejected.error).toContain("合并单元格表格的列宽");
+    const withWidthResult = applyBlockEdits(withWidth, [{ action: "replaceBlock", ref, block: replacement }]);
+    expect(withWidthResult.ok).toBe(true);
+    const widthTable = withWidthResult.doc!.content[0];
+    expect(widthTable?.type === "table" ? widthTable.content[0]!.content[0]!.attrs?.colwidth : null)
+      .toEqual([100, 200]);
 
     const allowed = applyBlockEdits(merged, [{ action: "replaceBlock", ref, block: replacement }]);
     expect(allowed.ok).toBe(true);
@@ -852,8 +854,8 @@ describe("applyBlockEdits 表格行列增量 op", () => {
     };
     const mergedBefore = getStablePmJson(mergedDoc);
     const merged = applyBlockEdits(mergedDoc, [{ action: "insertTableColumn", ref: "merged-table", at: "end" }]);
-    expect(merged.ok).toBe(false);
-    expect(merged.error).toContain("含合并单元格");
+    expect(merged.ok).toBe(true);
+    expect(merged.doc?.content[0]?.type === "table" ? merged.doc.content[0].content[0]?.content.length : 0).toBe(2);
     expect(getStablePmJson(mergedDoc)).toBe(mergedBefore);
 
     const oneColumn = aiIrToPm({
@@ -863,6 +865,85 @@ describe("applyBlockEdits 表格行列增量 op", () => {
     const lastColumn = applyBlockEdits(oneColumn, [{ action: "deleteTableColumn", ref: oneColumnRef, columnIndex: 0 }]);
     expect(lastColumn.ok).toBe(false);
     expect(lastColumn.error).toContain("至少需要保留一列");
+  });
+});
+
+describe("applyBlockEdits span 相交原生事务矩阵", () => {
+  const p = (id: string, text: string) => ({
+    type: "paragraph" as const,
+    attrs: { blockId: id },
+    content: [{ type: "text" as const, text }],
+  });
+  const c = (id: string, text: string, attrs?: PmTableCellNode["attrs"], header = false): PmTableCellNode => ({
+    type: header ? "tableHeader" : "tableCell",
+    ...(attrs ? { attrs } : {}),
+    content: [p(id, text)],
+  });
+  const rowSpanDoc = (): PmDoc => ({
+    type: "doc", attrs: { schemaVersion: 1 }, content: [{
+      type: "table", attrs: { blockId: "span-row" }, content: [
+        { type: "tableRow", content: [c("h1", "H1", undefined, true), c("h2", "H2", undefined, true)] },
+        { type: "tableRow", content: [c("a", "A", { rowspan: 2, colwidth: [100] }), c("b1", "B1")] },
+        { type: "tableRow", content: [c("b2", "B2")] },
+        { type: "tableRow", content: [c("c1", "C1"), c("c2", "C2")] },
+      ],
+    }],
+  });
+  const colSpanDoc = (): PmDoc => ({
+    type: "doc", attrs: { schemaVersion: 1 }, content: [{
+      type: "table", attrs: { blockId: "span-col" }, content: [
+        { type: "tableRow", content: [c("h", "H", { colspan: 2, colwidth: [100, 140] }, true), c("h3", "H3", undefined, true)] },
+        { type: "tableRow", content: [c("a1", "A1"), c("a2", "A2"), c("a3", "A3")] },
+      ],
+    }],
+  });
+  const resultTable = (result: ReturnType<typeof applyBlockEdits>) => {
+    expect(result.ok).toBe(true);
+    const table = result.doc!.content[0];
+    if (!table || table.type !== "table") throw new Error("missing table");
+    for (const row of table.content) for (const cell of row.content) {
+      const colspan = cell.attrs?.colspan ?? 1;
+      if (Array.isArray(cell.attrs?.colwidth)) expect(cell.attrs.colwidth).toHaveLength(colspan);
+    }
+    return table;
+  };
+
+  it("插行穿过 rowspan 内部扩 span；起点前/尾部后新增普通行", () => {
+    const internal = resultTable(applyBlockEdits(rowSpanDoc(), [{ action: "insertTableRow", ref: "span-row", at: "before", rowIndex: 2 }]));
+    expect(internal.content[1]!.content[0]!.attrs).toMatchObject({ rowspan: 3, colwidth: [100] });
+    expect(internal.content[0]!.content.every((cell) => cell.type === "tableHeader")).toBe(true);
+    const before = resultTable(applyBlockEdits(rowSpanDoc(), [{ action: "insertTableRow", ref: "span-row", at: "before", rowIndex: 1 }]));
+    expect(before.content[2]!.content[0]!.attrs?.rowspan).toBe(2);
+    const after = resultTable(applyBlockEdits(rowSpanDoc(), [{ action: "insertTableRow", ref: "span-row", at: "after", rowIndex: 2 }]));
+    expect(after.content[1]!.content[0]!.attrs?.rowspan).toBe(2);
+  });
+
+  it("删 rowspan 起点时内容下移；删内部行时 span 缩短并恢复默认 attrs", () => {
+    const start = resultTable(applyBlockEdits(rowSpanDoc(), [{ action: "deleteTableRow", ref: "span-row", rowIndex: 1 }]));
+    expect(start.content[1]!.content[0]!.content[0]!.attrs.blockId).toBe("a");
+    expect(start.content[1]!.content[0]!.attrs?.rowspan).toBeUndefined();
+    const internal = resultTable(applyBlockEdits(rowSpanDoc(), [{ action: "deleteTableRow", ref: "span-row", rowIndex: 2 }]));
+    expect(internal.content[1]!.content[0]!.attrs?.rowspan).toBeUndefined();
+    expect(internal.content[1]!.content[0]!.attrs?.colwidth).toEqual([100]);
+  });
+
+  it("插列穿过 colspan 内部扩 span；边界插入普通列且表头类型不变", () => {
+    const internal = resultTable(applyBlockEdits(colSpanDoc(), [{ action: "insertTableColumn", ref: "span-col", at: "after", columnIndex: 0 }]));
+    expect(internal.content[0]!.content[0]!.attrs).toEqual({ colspan: 3, colwidth: [100, 100, 140] });
+    expect(internal.content[0]!.content[0]!.type).toBe("tableHeader");
+    const before = resultTable(applyBlockEdits(colSpanDoc(), [{ action: "insertTableColumn", ref: "span-col", at: "before", columnIndex: 0 }]));
+    expect(before.content[0]!.content[1]!.attrs?.colspan).toBe(2);
+    const after = resultTable(applyBlockEdits(colSpanDoc(), [{ action: "insertTableColumn", ref: "span-col", at: "after", columnIndex: 1 }]));
+    expect(after.content[0]!.content[0]!.attrs?.colspan).toBe(2);
+  });
+
+  it("删 colspan 起点/内部都缩短 span，并同步 colwidth", () => {
+    const start = resultTable(applyBlockEdits(colSpanDoc(), [{ action: "deleteTableColumn", ref: "span-col", columnIndex: 0 }]));
+    expect(start.content[0]!.content[0]!.attrs?.colspan).toBeUndefined();
+    expect(start.content[0]!.content[0]!.attrs?.colwidth).toEqual([140]);
+    const internal = resultTable(applyBlockEdits(colSpanDoc(), [{ action: "deleteTableColumn", ref: "span-col", columnIndex: 1 }]));
+    expect(internal.content[0]!.content[0]!.attrs?.colspan).toBeUndefined();
+    expect(internal.content[0]!.content[0]!.attrs?.colwidth).toEqual([100]);
   });
 });
 

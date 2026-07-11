@@ -388,11 +388,13 @@ describe("QingML draft tools", () => {
       }],
     }]));
     const mergedTools = createSessionScopedTools(mergedState);
-    const rejected = await mergedTools.editDraft.execute!({
+    const mergedResult = await mergedTools.editDraft.execute!({
       ops: [{ action: "replaceBlock", ref: "block-merged", block: "<table><tr><td colspan=\"2\"><p>新</p></td></tr></table>" }],
     }, ctx) as any;
-    expect(rejected.ok).toBe(false);
-    expect(rejected.error).toContain("mergedTableColwidth");
+    expect(mergedResult.ok).toBe(true);
+    const mergedCandidate = mergedState.docDraftCandidateDoc?.content[0];
+    expect(mergedCandidate?.type === "table" ? mergedCandidate.content[0]?.content[0]?.attrs?.colwidth : null)
+      .toEqual([120, 180]);
   });
 
   it("editDraft ok:true 但实际 0 diff 时返回 changed:false/hunkCount:0", async () => {

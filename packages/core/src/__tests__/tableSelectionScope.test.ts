@@ -98,6 +98,34 @@ describe("table selection post-edit scope validator", () => {
     })).toMatchObject({ ok: false, rowIndex: 0, columnIndex: 1 });
   });
 
+  it("含 colspan/rowspan 时按逻辑格比较，跨格占位与起点视为同一 cell", () => {
+    const before = clonePmDoc(tableDoc()).content[0] as PmTableNode;
+    before.content = [
+      { type: "tableRow", content: [
+        { ...before.content[0]!.content[0]!, attrs: { colspan: 2, rowspan: 2 } },
+        before.content[0]!.content[1]!,
+      ] },
+      { type: "tableRow", content: [before.content[1]!.content[1]!] },
+    ];
+    const selected = clonePmDoc({ type: "doc", attrs: { schemaVersion: 1 }, content: [before] }).content[0] as PmTableNode;
+    selected.content[0]!.content[0]!.attrs = { ...selected.content[0]!.content[0]!.attrs, backgroundColor: "amber" };
+    expect(validateTableSelectionScope({
+      before,
+      after: selected,
+      tableRef: "table-1",
+      selection: { axis: "column", startIndex: 0, endIndex: 1 },
+    })).toEqual({ ok: true });
+
+    const outside = clonePmDoc({ type: "doc", attrs: { schemaVersion: 1 }, content: [before] }).content[0] as PmTableNode;
+    outside.content[0]!.content[1]!.attrs = { backgroundColor: "amber" };
+    expect(validateTableSelectionScope({
+      before,
+      after: outside,
+      tableRef: "table-1",
+      selection: { axis: "column", startIndex: 0, endIndex: 1 },
+    })).toMatchObject({ ok: false, rowIndex: 0, columnIndex: 2 });
+  });
+
   it("服务端拒绝表外块变化与编辑前目标表缺失", () => {
     const state = bindTableSelection("row", 0, 0);
     const before = tableDoc();

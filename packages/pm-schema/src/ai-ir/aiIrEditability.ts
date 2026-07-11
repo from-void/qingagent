@@ -4,7 +4,6 @@ export type AiIrLossyReason =
   | "nestedList"
   | "multiBlockListItem"
   | "complexListItemBlock"
-  | "mergedTableColwidth"
   | "multiBlockBlockquote"
   | "complexBlockquoteChild"
   | "columnLayout";
@@ -59,13 +58,6 @@ function visitBlock(block: PmBlockNode, reasons: Set<AiIrLossyReason>): void {
   }
 
   if (block.type === "table") {
-    const hasSpan = block.content.some((row) => row.content.some((cell) =>
-      (cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1,
-    ));
-    const hasColwidth = block.content.some((row) => row.content.some((cell) =>
-      Array.isArray(cell.attrs?.colwidth) && cell.attrs.colwidth.length > 0,
-    ));
-    if (hasSpan && hasColwidth) reasons.add("mergedTableColwidth");
     for (const row of block.content) {
       for (const cell of row.content) {
         for (const child of cell.content) {

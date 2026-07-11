@@ -1648,7 +1648,7 @@
     display:contents!important;background:transparent!important;box-shadow:none!important;
     padding:0!important;width:auto!important;max-width:none!important;min-height:0!important;margin:0!important;
   }
-  #view-workspace .table-header-overlay__table{
+  #view-workspace .wf-doc.table-header-overlay-content > .table-header-overlay__table{
     margin:0;border-collapse:collapse;background:var(--bg-canvas);color:var(--ink-1);
     font-family:var(--font-zh-serif);
   }

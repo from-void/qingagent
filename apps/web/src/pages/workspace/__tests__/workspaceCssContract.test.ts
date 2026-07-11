@@ -105,6 +105,7 @@ describe("workspaceCssContract", () => {
     expect(headerOverlay).toContain('className="table-header-overlay-viewport"');
     expect(headerOverlay).not.toContain('className="wf-doc table-header-overlay-viewport"');
     expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content\{\s*display:contents!important;[\s\S]*padding:0!important;width:auto!important;max-width:none!important;min-height:0!important/);
+    expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content > \.table-header-overlay__table\{\s*margin:0;/);
   });
 
   it("keeps round-1 editor CSS fixes present", () => {

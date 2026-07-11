@@ -131,6 +131,7 @@ import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
 import { TableControls } from "./doc/TableControls";
+import { TableHeaderOverlay } from "./doc/TableHeaderOverlay";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
@@ -1009,6 +1010,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       {interactiveEditable && editor && onAiModify ? (
         <TableControls editor={editor} onAiModify={onAiModify} onToast={onToast} />
       ) : null}
+      {interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null}
       {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}

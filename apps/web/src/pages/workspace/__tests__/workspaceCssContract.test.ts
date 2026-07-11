@@ -82,6 +82,24 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).not.toContain(".tbl-cell-sel");
   });
 
+  it("标题列只在每行首格为 th 时 sticky，标题行 overlay 只过编辑门", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const snapshotView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/DocumentSnapshotView.tsx"),
+      "utf8",
+    );
+    const staticView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/PmStaticView.tsx"),
+      "utf8",
+    );
+
+    expect(workspaceCss).toContain(".tableWrapper:not(:has(> table > tbody > tr > td:first-child))");
+    expect(workspaceCss).toContain(".pm-table-scroll:not(:has(> table > tbody > tr > td:first-child))");
+    expect(workspaceCss).toMatch(/th:first-child\{\s*position:sticky;left:0;z-index:4;background:var\(--bg-canvas\)/);
+    expect(staticView).toContain('className="pm-table-scroll"');
+    expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
+  });
+
   it("keeps round-1 editor CSS fixes present", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     const componentCss = readFileSync(path.join(repoRoot, "packages/ui-kit/src/components.css"), "utf8");

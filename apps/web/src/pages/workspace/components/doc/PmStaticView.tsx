@@ -1,4 +1,4 @@
-import React, { useMemo, type MouseEventHandler, type ReactNode, type Ref } from "react";
+import React, { useMemo, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
@@ -168,6 +168,8 @@ export function PmTableCellView({
   onMouseLeave,
   reviewTargetId,
   reviewTargetIndex,
+  onClick,
+  cellStyle,
 }: {
   cell: PmTableCellNode;
   className?: string;
@@ -177,6 +179,8 @@ export function PmTableCellView({
   onMouseLeave?: MouseEventHandler<HTMLTableCellElement>;
   reviewTargetId?: string;
   reviewTargetIndex?: number;
+  onClick?: MouseEventHandler<HTMLTableCellElement>;
+  cellStyle?: CSSProperties;
 }) {
   const Tag = cell.type === "tableHeader" ? "th" : "td";
   const attrs = cell.attrs as { backgroundColor?: string | null; colspan?: number; rowspan?: number; colwidth?: number[] | null } | undefined;
@@ -195,9 +199,10 @@ export function PmTableCellView({
       data-review-target-index={reviewTargetIndex}
       colSpan={typeof colspan === "number" && colspan > 1 ? colspan : undefined}
       rowSpan={typeof rowspan === "number" && rowspan > 1 ? rowspan : undefined}
-      style={width && width > 0 ? { width } : undefined}
+      style={{ ...(width && width > 0 ? { width } : {}), ...cellStyle }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onClick={onClick}
     >
       {children ?? cell.content.map((child, i) => <PmBlockView key={i} node={child} />)}
     </Tag>

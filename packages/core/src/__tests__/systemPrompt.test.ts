@@ -11,7 +11,20 @@ describe("system prompt S3", () => {
     // 所以 prompt 以 AIIR_SYSTEM_PROMPT 开头,而非逐字节相等。
     expect(prompt.startsWith(AIIR_SYSTEM_PROMPT)).toBe(true);
     for (const keyword of [
-      "askUser",
+      "planDraft",
+      "askUserQuestion",
+      "写作方向建模绝不用它",
+      "推荐项 label 必须以「（推荐）」结尾",
+      "preview 不超过 800 字",
+      "Mermaid 代码块",
+      "askUserQuestion **不与 wechat_auth_status 同一步并发**",
+      '"value":"login-owned"',
+      '"value":"login-register"',
+      '"value":"fallback-websearch"',
+      "我有公众号，直接扫码登录（推荐）",
+      "我没有，先去 mp.weixin.qq.com 免费注册再扫码",
+      "先用联网搜索（效果较差，只有零散公开网页）",
+      "确认选哪个公众号/哪篇文章改为聊天内简短确认",
       "readDraft",
       "editDraft",
       "readDiff",
@@ -98,6 +111,8 @@ describe("system prompt S3", () => {
     ]) {
       expect(prompt).toContain(keyword);
     }
+    expect(prompt).not.toMatch(/\baskUser\b/);
+    expect(prompt).not.toContain("quickClarification");
   });
 
   it("QingML prompt 不泄漏旧编辑协议词", () => {

@@ -537,38 +537,14 @@ function stripLarkGlobalFlags(args: string[]): string[] {
   return positional;
 }
 
-function hasNonBlockingLarkAuthFlag(flags: string[]): boolean {
-  for (let i = 0; i < flags.length; i += 1) {
-    const flag = flags[i]!;
-    if (flag === "--no-wait") {
-      return true;
-    }
-    if (flag.startsWith("--device-code=")) {
-      if (flag.slice("--device-code=".length).trim().length > 0) {
-        return true;
-      }
-      continue;
-    }
-    if (flag === "--device-code") {
-      const value = flags[i + 1];
-      if (typeof value === "string" && value.trim().length > 0 && !value.startsWith("-")) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 // lark-cli 是受信产品级 CLI(裸命令名由上游强制、装在只读的 SANDBOX_BIN_DIR、版本由我们锁),
 // 能力受用户 OAuth 授权范围限定。产品定位是"用户授权后 AI 代操作其飞书",所以默认放开读写——
 // 安全由:① OAuth 授权范围;② 系统提示防注入红线;③ 命令卡可见 + 上游路径/元字符拦截。
-// 但两类必须在 gate 层硬挡(skill 文字约束不住、实测会挂死整轮 R-feishu):
+// 授权编排只允许 connector service 的固定 argv runner 执行；模型命令 gate 封死全部授权入口。
 //  - update/upgrade:触发 npm 自更新,网络阻塞/版本漂移,版本由产品锁定,不许 agent 跑。
-//  - 阻塞式 auth login:不带 --no-wait/--device-code 的 auth login 会轮询等授权、挂死本轮;
-//    必须走非阻塞 device flow(--no-wait 发起 / --device-code 收尾)。
-//  - auth qrcode:会在终端输出 ASCII 码,绕过对话里的 show_qr 卡片协议,用户常看不到/扫不了。
-//  - config init:会阻塞到用户浏览器完成创建。前台跑会挂死本轮 → deny;只允许**后台**
-//    (execute_command background:true)运行,由 get_process_output 读早期输出取创建链接。
+//  - auth login/logout/qrcode 与 config init:一律 deny(不分前后台)。授权与应用配置的
+//    唯一入口是 feishu_auth_start → connector service 的固定 argv runner;模型侧封死,
+//    防止绕过连接器拼接授权命令(device_code 只在 service 内部,不得进入对话链路)。
 function evaluateLarkCli(args: string[], options: CommandPolicyOptions): PolicyDecision {
   // cobra 持久全局 flag 可在子命令前或中间出现;先剥掉已知全局 flag,再判断真实子命令序列。
   const cleanArgs = stripLarkGlobalFlags(args);
@@ -576,30 +552,13 @@ function evaluateLarkCli(args: string[], options: CommandPolicyOptions): PolicyD
   if (sub === "update" || sub === "upgrade") {
     return { action: "deny", reason: "不允许 agent 触发 lark-cli 自更新(版本由产品锁定)" };
   }
-  if (sub === "auth" && (cleanArgs[1] ?? "").toLowerCase() === "qrcode") {
+  const action = (cleanArgs[1] ?? "").toLowerCase();
+  if ((sub === "auth" && (action === "login" || action === "logout" || action === "qrcode")) ||
+      (sub === "config" && action === "init")) {
     return {
       action: "deny",
-      reason: "不要运行 lark-cli auth qrcode 输出终端二维码;请用 auth login --no-wait --json 取 verification_url 后调用 show_qr 工具渲染二维码卡",
+      reason: "授权请走 feishu_auth_start；飞书应用配置、登录、登出和二维码授权由连接器安全处理",
     };
-  }
-  if (sub === "config" && (cleanArgs[1] ?? "").toLowerCase() === "init") {
-    // config init 会阻塞到浏览器完成创建。仅放行后台执行;前台 deny(挂死本轮)。
-    if (!options.background) {
-      return {
-        action: "deny",
-        reason: "lark-cli config init 会阻塞到用户完成浏览器创建;请用 execute_command 的 background:true 后台运行,再用 get_process_output 读输出取创建链接",
-      };
-    }
-  }
-  if (sub === "auth" && (cleanArgs[1] ?? "").toLowerCase() === "login") {
-    const flags = cleanArgs.slice(2);
-    const nonBlocking = hasNonBlockingLarkAuthFlag(flags);
-    if (!nonBlocking) {
-      return {
-        action: "deny",
-        reason: "阻塞式 auth login 会挂死本轮;请用 device flow:auth login --no-wait --json 发起、auth login --device-code <码> 收尾",
-      };
-    }
   }
   const fileArgDecision = validateLarkCliLocalPathArgs(args, options.workspaceCwd ?? SANDBOX_SESSIONS_BASE);
   if (fileArgDecision) return fileArgDecision;

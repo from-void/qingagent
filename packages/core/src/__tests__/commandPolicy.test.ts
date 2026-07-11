@@ -50,7 +50,7 @@ describe("commandPolicy P0 gate", () => {
   it("放行白名单 env 前缀(LARK_CLI_NO_PROXY)+ 受信命令,挡 NO_PROXY 覆盖/PATH 劫持/外泄代理/脏值", () => {
     // 坏代理下 agent 自救:剥掉无害 env 前缀后按 lark-cli 判 → allow
     expect(decision("LARK_CLI_NO_PROXY=1 lark-cli auth status").action).toBe("allow");
-    expect(decision("LARK_CLI_NO_PROXY=1 lark-cli auth login --no-wait --json --domain all").action).toBe("allow");
+    expect(decision("LARK_CLI_NO_PROXY=1 lark-cli auth login --no-wait --json --domain docs").action).toBe("deny");
     // NO_PROXY/no_proxy 会覆盖 buildSandboxEnv 注入的飞书直连保护,命令级覆盖一律 deny。
     expect(decision("NO_PROXY= lark-cli auth status").action).toBe("deny");
     expect(decision("NO_PROXY=example.com lark-cli auth login --no-wait --json").action).toBe("deny");
@@ -303,10 +303,6 @@ describe("commandPolicy P0 gate", () => {
       "lark-cli skills read lark-doc",
       "lark-cli docs +get +delete --doc x",
       // device flow 授权(非阻塞)放行
-      "lark-cli auth login --no-wait --json --domain all",
-      "lark-cli --profile sandbox auth login --no-wait --json",
-      "lark-cli auth login --device-code abc123",
-      "lark-cli auth logout",
     ];
     for (const command of allowed) {
       expect(decision(command), command).toMatchObject({ action: "allow" });
@@ -447,20 +443,19 @@ describe("commandPolicy P0 gate", () => {
     const qrDecision = decision("lark-cli auth qrcode https://example.test/x --ascii");
     expect(qrDecision.action).toBe("deny");
     if (qrDecision.action !== "deny") throw new Error("expected auth qrcode to be denied");
-    expect(qrDecision.reason).toContain("show_qr");
+    expect(qrDecision.reason).toContain("feishu_auth_start");
     const configDecision = decision("lark-cli config init --new");
     expect(configDecision.action).toBe("deny");
     if (configDecision.action !== "deny") throw new Error("expected config init to be denied");
-    expect(configDecision.reason).toContain("background");
-    // 非阻塞 device flow 仍放行(对照)
-    expect(decision("lark-cli auth login --no-wait --json").action).toBe("allow");
-    expect(decision("lark-cli auth login --device-code xyz").action).toBe("allow");
+    expect(configDecision.reason).toContain("feishu_auth_start");
+    // 非阻塞 device flow 同样由 connector 独占
+    expect(decision("lark-cli auth login --no-wait --json").action).toBe("deny");
+    expect(decision("lark-cli auth login --device-code xyz").action).toBe("deny");
   });
 
-  it("后台执行(background:true)放行 config init,但不放行其它硬挡命令", () => {
-    // config init 后台运行不挂死本轮 → 放行,供 onboarding 两步法(execute_command background + get_process_output)。
-    expect(decisionBg("lark-cli config init --new --brand feishu --lang zh").action).toBe("allow");
-    expect(decisionBg("lark-cli --profile sandbox config init --new").action).toBe("allow");
+  it("后台执行(background:true)也不开放 connector 授权后门", () => {
+    expect(decisionBg("lark-cli config init --new --brand feishu --lang zh").action).toBe("deny");
+    expect(decisionBg("lark-cli --profile sandbox config init --new").action).toBe("deny");
     // background 不是放行一切:update/auth qrcode/阻塞式 auth login 仍 deny。
     expect(decisionBg("lark-cli update").action).toBe("deny");
     expect(decisionBg("lark-cli auth qrcode").action).toBe("deny");
@@ -473,9 +468,9 @@ describe("commandPolicy P0 gate", () => {
     expect(decision("lark-cli auth login --device-code --json").action).toBe("deny");
     expect(decision("lark-cli auth LOGIN").action).toBe("deny");
 
-    expect(decision("lark-cli auth login --device-code abc123").action).toBe("allow");
-    expect(decision("lark-cli auth login --device-code=abc123").action).toBe("allow");
-    expect(decision("lark-cli auth login --no-wait --json").action).toBe("allow");
+    expect(decision("lark-cli auth login --device-code abc123").action).toBe("deny");
+    expect(decision("lark-cli auth login --device-code=abc123").action).toBe("deny");
+    expect(decision("lark-cli auth login --no-wait --json").action).toBe("deny");
   });
 
   it("R3 回归:lark-cli 子命令大小写敏感性修复(AUTH/qrcode/QRCODE)", () => {
@@ -488,7 +483,7 @@ describe("commandPolicy P0 gate", () => {
     expect(decision("lark-cli UPDATE").action).toBe("deny");
     expect(decision("lark-cli UPGRADE").action).toBe("deny");
     // 无害变体仍允许
-    expect(decision("lark-cli auth login --no-wait --json").action).toBe("allow");
+    expect(decision("lark-cli auth login --no-wait --json").action).toBe("deny");
   });
 
   it("deny/confirm 消息可直接返回给模型", () => {

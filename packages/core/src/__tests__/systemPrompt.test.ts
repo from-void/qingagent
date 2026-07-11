@@ -195,6 +195,14 @@ describe("system prompt S3", () => {
     expect(buildSystemPrompt()).toBe(buildSystemPrompt());
   });
 
+  it("飞书 prompt 只保留 connector trigger，不再携带旧三态授权状态机", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("未配置或未授权时按意图选择最小域并调用 feishu_auth_start");
+    expect(prompt).not.toContain("飞书配置/授权三态");
+    expect(prompt).not.toContain("lark-cli auth login --device-code <code>");
+    expect(prompt).not.toContain("execute_command 带 background:true 跑 \"lark-cli config init");
+  });
+
   it("agent instructions 连续两次逐字节稳定,不随 requestContext 翻转", async () => {
     const first = await qingagentAgent.getInstructions({
       requestContext: new RequestContext([["aiIrDraftToolsEnabled", false]]),

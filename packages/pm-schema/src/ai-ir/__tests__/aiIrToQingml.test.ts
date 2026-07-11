@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AiBlock, AiListItem, AiTableCell, AiTaskListItem } from "../aiIrSchema";
+import type { AiBlock, AiListItem, AiRun, AiTableCell, AiTaskListItem } from "../aiIrSchema";
 import {
   aiBlockToQingml,
   aiBlocksToQingml,
@@ -7,6 +7,13 @@ import {
   aiTableRowToQingml,
 } from "../aiIrToQingml";
 import { qingmlParse, qingmlParseFragment } from "../qingmlParse";
+
+function tableCell(
+  runs: AiRun[],
+  attrs: Omit<AiTableCell, "blocks"> = {},
+): AiTableCell {
+  return { blocks: [{ type: "paragraph", runs }], ...attrs };
+}
 
 describe("aiIrToQingml", () => {
   it("序列化所有 AiBlock 类型后可由 qingmlParse 等价读回", () => {
@@ -71,14 +78,22 @@ describe("aiIrToQingml", () => {
           {
             header: true,
             cells: [
-              { header: true, runs: [{ text: "列A" }], backgroundColor: "rose" },
-              { header: true, runs: [{ text: "列B" }] },
+              tableCell([{ text: "列A" }], { header: true, backgroundColor: "rose" }),
+              tableCell([{ text: "列B" }], { header: true }),
             ],
           },
           {
             cells: [
-              { runs: [{ text: "a1" }], backgroundColor: "sand" },
-              { runs: [{ text: "b1" }] },
+              {
+                blocks: [
+                  { type: "paragraph", runs: [{ text: "a1" }] },
+                  { type: "bulletList", items: [{ runs: [{ text: "补充" }] }] },
+                ],
+                backgroundColor: "sand",
+                colspan: 2,
+                rowspan: 3,
+              },
+              tableCell([{ text: "b1" }]),
             ],
           },
         ],
@@ -131,6 +146,8 @@ describe("aiIrToQingml", () => {
     expect(qingml).toContain("<br/>");
     expect(qingml).toContain("value &lt; 10 &amp;&amp; ready");
     expect(qingml).toContain("A[\"x &lt; y\"]");
+    expect(qingml).toContain('<td colspan="2" rowspan="3" bg="sand"><p>a1</p><ul><li>补充</li></ul></td>');
+    expect(qingml).toContain("<th><p>列B</p></th>");
     const parsed = qingmlParse(qingml);
 
     expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
@@ -145,8 +162,8 @@ describe("aiIrToQingml", () => {
     };
     const task: AiTaskListItem = { checked: true, runs: [{ text: "任务项" }] };
     const cells: AiTableCell[] = [
-      { header: true, runs: [{ text: "列A" }], backgroundColor: "rose" },
-      { runs: [{ text: "a1" }] },
+      tableCell([{ text: "列A" }], { header: true, backgroundColor: "rose" }),
+      tableCell([{ text: "a1" }]),
     ];
 
     expect(qingmlParseFragment(aiBlockToQingml(block), "replaceBlock")).toMatchObject({

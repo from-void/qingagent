@@ -92,7 +92,11 @@ export function aiTableRowToQingml(cells: readonly AiTableCell[]): string {
     cells
       .map((cell) => {
         const name = cell.header ? "th" : "td";
-        return tag(name, runsToInline(cell.runs), { bg: cell.backgroundColor });
+        return tag(name, aiBlocksToQingml(cell.blocks), {
+          colspan: cell.colspan,
+          rowspan: cell.rowspan,
+          bg: cell.backgroundColor,
+        });
       })
       .join(""),
   );

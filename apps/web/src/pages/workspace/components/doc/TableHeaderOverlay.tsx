@@ -83,10 +83,6 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
       }
       const candidates = findHeaderTableCandidates(editor);
       syncMeasuredTargets(candidates);
-      if (editor.isActive("table")) {
-        setOverlay(null);
-        return;
-      }
 
       const wsRect = ws.getBoundingClientRect();
       let next: TableHeaderOverlayState | null = null;
@@ -96,7 +92,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
         const tableRect = candidate.element.getBoundingClientRect();
         const headerRect = headerRow.getBoundingClientRect();
         const wrapperRect = candidate.wrapper.getBoundingClientRect();
-        const bodyStillVisible = tableRect.bottom > wsRect.top + headerRect.height && tableRect.top < wsRect.bottom;
+        const bodyStillVisible = tableRect.bottom > wsRect.top && tableRect.top < wsRect.bottom;
         if (headerRect.bottom > wsRect.top || !bodyStillVisible) continue;
         const left = Math.max(wrapperRect.left, wsRect.left);
         const right = Math.min(wrapperRect.right, wsRect.right);

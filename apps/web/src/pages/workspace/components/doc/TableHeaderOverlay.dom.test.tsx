@@ -80,7 +80,7 @@ describe("TableHeaderOverlay", () => {
     });
     expect(editor?.isActive("table")).toBe(true);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
-    expect(setup.portal.querySelector(".table-header-overlay-viewport")).toBeNull();
+    expect(setup.portal.querySelector(".table-header-overlay-viewport")).not.toBeNull();
   });
 
   it("横滚与列宽变化按 rAF 同步真表 left、总宽和各 cell 宽", async () => {
@@ -101,6 +101,28 @@ describe("TableHeaderOverlay", () => {
     expect(overlayCells[1]?.style.width).toBe("110px");
   });
 
+  it("表尾仍有表体可见时保持固定，表滚完或回滚到表头可见时消失", async () => {
+    const setup = setupEditor(true);
+    await renderOverlay(setup.overlayHost);
+    expect(setup.portal.querySelector(".table-header-overlay-viewport")).not.toBeNull();
+
+    setup.tableRect.mockReturnValue(rect(100, -180, 240, 200));
+    setup.ws.dispatchEvent(new Event("scroll"));
+    await act(async () => flushAnimationFrames());
+    expect(setup.portal.querySelector(".table-header-overlay-viewport")).not.toBeNull();
+
+    setup.tableRect.mockReturnValue(rect(100, -200, 240, 200));
+    setup.ws.dispatchEvent(new Event("scroll"));
+    await act(async () => flushAnimationFrames());
+    expect(setup.portal.querySelector(".table-header-overlay-viewport")).toBeNull();
+
+    setup.tableRect.mockReturnValue(rect(100, 10, 240, 200));
+    setup.headerRect.mockReturnValue(rect(100, 10, 240, 30));
+    setup.ws.dispatchEvent(new Event("scroll"));
+    await act(async () => flushAnimationFrames());
+    expect(setup.portal.querySelector(".table-header-overlay-viewport")).toBeNull();
+  });
+
   it("复用正文语义样式但隔离整页纸面盒模型，并保留单元格底色与文字标记", async () => {
     const setup = setupEditor(true, false, true);
     await renderOverlay(setup.overlayHost);
@@ -116,7 +138,7 @@ describe("TableHeaderOverlay", () => {
     expect(overlay?.querySelector("span")?.getAttribute("data-text-color")).toBe("red");
   });
 
-  it("无完整标题行、光标在表内或只读态均不渲染", async () => {
+  it("无完整标题行或只读态均不渲染，光标在表内仍然固定", async () => {
     const noHeader = setupEditor(false);
     await renderOverlay(noHeader.overlayHost);
     expect(noHeader.portal.querySelector(".table-header-overlay-viewport")).toBeNull();
@@ -128,7 +150,7 @@ describe("TableHeaderOverlay", () => {
 
     const inTable = setupEditor(true, true);
     await renderOverlay(inTable.overlayHost);
-    expect(inTable.portal.querySelector(".table-header-overlay-viewport")).toBeNull();
+    expect(inTable.portal.querySelector(".table-header-overlay-viewport")).not.toBeNull();
     act(() => root?.unmount());
     root = null;
     inTable.editor.setEditable(false);
@@ -198,10 +220,10 @@ function setupEditor(withHeaderRow: boolean, selectionInTable = false, decorated
   vi.spyOn(ws, "getBoundingClientRect").mockReturnValue(rect(0, 0, 500, 300));
   vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue(rect(100, -40, 240, 200));
   const tableRect = vi.spyOn(table, "getBoundingClientRect").mockReturnValue(rect(100, -40, 240, 200));
-  vi.spyOn(headerRow, "getBoundingClientRect").mockReturnValue(rect(100, -40, 240, 30));
+  const headerRect = vi.spyOn(headerRow, "getBoundingClientRect").mockReturnValue(rect(100, -40, 240, 30));
   const cellRects = trueCells.map((tableCell, index) =>
     vi.spyOn(tableCell, "getBoundingClientRect").mockReturnValue(rect(100 + index * 120, -40, 120, 30)));
-  return { editor: instance, portal, ws, overlayHost, table, wrapper, trueCells, tableRect, cellRects };
+  return { editor: instance, portal, ws, overlayHost, table, wrapper, trueCells, tableRect, headerRect, cellRects };
 }
 
 async function renderOverlay(host: HTMLElement) {

@@ -112,10 +112,13 @@ describe("workspaceCssContract", () => {
 
     expect(workspaceCss).toContain(".tableWrapper:not(:has(> table > tbody > tr > td:first-child))");
     expect(workspaceCss).toContain(".pm-table-scroll:not(:has(> table > tbody > tr > td:first-child))");
+    expect(workspaceCss).toContain(".pm-table-scroll > table{overflow:visible}");
     expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:600/);
     expect(workspaceCss).toMatch(/th:first-child\{\s*position:sticky;left:0;z-index:4;\s*box-shadow/);
-    expect(workspaceCss).not.toMatch(/th:first-child\{[^}]*background:/);
+    expect(workspaceCss).toContain("th:first-child:not([data-bg-color])");
+    expect(workspaceCss).toMatch(/th:first-child:not\(\[data-bg-color\]\)\{\s*background:var\(--bg-canvas\)/);
     expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*background:var\(--bg-subtle\);[\s\S]*font-weight:600/);
+    expect(workspaceCss).not.toContain(".table-header-overlay__table th > p{margin:0}");
     expect(staticView).toContain('className="pm-table-scroll"');
     expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
     expect(headerOverlay).toContain('className="table-header-overlay-viewport"');

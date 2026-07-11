@@ -1,0 +1,55 @@
+[
+  {
+    "id": "msg-v1-qr",
+    "role": { "kind": "agent" },
+    "ts": "2026-07-11T12:00:00.000Z",
+    "chips": null,
+    "parts": [
+      {
+        "kind": "toolCall",
+        "data": {
+          "id": "tool-v1-confirm",
+          "name": "show_qr",
+          "render": { "kind": "chatInline" },
+          "status": { "kind": "done" },
+          "body": {
+            "kind": "qrCard",
+            "data": {
+              "content": "https://example.test/v1-confirm",
+              "title": "旧版授权卡",
+              "code": "ABCD-1234",
+              "note": "旧帧确认路径",
+              "expiresAt": 4102444800000,
+              "refreshQuery": "请刷新旧授权卡",
+              "confirmQuery": "我已完成旧版授权",
+              "confirmLabel": "我已完成"
+            }
+          },
+          "result": null
+        }
+      },
+      {
+        "kind": "toolCall",
+        "data": {
+          "id": "tool-v1-refresh",
+          "name": "show_qr",
+          "render": { "kind": "chatInline" },
+          "status": { "kind": "done" },
+          "body": {
+            "kind": "qrCard",
+            "data": {
+              "content": "https://example.test/v1-refresh",
+              "title": "旧版过期卡",
+              "code": null,
+              "note": null,
+              "expiresAt": 1,
+              "refreshQuery": "请刷新旧授权卡",
+              "confirmQuery": null
+            }
+          },
+          "result": null
+        }
+      }
+    ]
+  }
+]

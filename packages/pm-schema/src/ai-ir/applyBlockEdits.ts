@@ -23,8 +23,6 @@ export type ListItemDraft = {
 
 export type TableCellDraft = {
   blocks?: unknown[];
-  /** 仅兼容旧会话/缓存，入口会一次性归一为单 paragraph blocks。 */
-  runs?: unknown[];
   header?: boolean;
   backgroundColor?: string;
   colspan?: number;
@@ -1002,6 +1000,7 @@ function normalizeTableCellDraft(rawCell: unknown, opIndex: number): TableCellDr
       throw new OpError(opIndex, `table cell.${name} 必须是大于等于 1 的整数`);
     }
   }
+  // 存量会话可能仍携带 runs；只在边界读取一次，归一后的公开类型与内部数据均只保留 blocks。
   const legacyBlocks = Array.isArray(cell.runs)
     ? [{ type: "paragraph", runs: cell.runs }]
     : [];

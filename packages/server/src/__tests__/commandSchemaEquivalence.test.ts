@@ -153,6 +153,41 @@ describe("D6 命令校验等价回归矩阵", () => {
 });
 
 describe("D6 未知字段消毒(strip)", () => {
+  it("sendMessage parse 后保留 tableSelection，避免旧 schema 静默剥离", () => {
+    const parsed = commandSchema.parse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "修改",
+        mentions: [],
+        skills: [],
+        chips: [{
+          kind: { kind: "selection" },
+          resourceRef: { id: "table-1", domain: { kind: "docSpan" } },
+          prefix: null,
+          label: "A | B",
+          suffix: "表格·第1行",
+          tableSelection: {
+            axis: "row",
+            startIndex: 0,
+            endIndex: 1,
+            signature: "fnv1a-deadbeef",
+          },
+        }],
+        fileIds: [],
+      },
+    });
+    expect(parsed.kind).toBe("sendMessage");
+    if (parsed.kind === "sendMessage") {
+      expect(parsed.data.chips[0]?.tableSelection).toEqual({
+        axis: "row",
+        startIndex: 0,
+        endIndex: 1,
+        signature: "fnv1a-deadbeef",
+      });
+    }
+  });
+
   it("合法 command 携带未知字段仍受理,且未知字段被 strip 不下传", () => {
     const body = {
       kind: "sendMessage",

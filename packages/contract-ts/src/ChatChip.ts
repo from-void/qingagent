@@ -1,5 +1,6 @@
 import type { ChatChipKind } from "./ChatChipKind";
 import type { ResourceRef } from "./ResourceRef";
+import type { TableSelection } from "./TableSelection";
 
 export type ChatChip = {
 	kind: ChatChipKind,
@@ -22,6 +23,8 @@ export type ChatChip = {
 	to?: number,
 	/** Stable block refs covered by a selection chip, e.g. multiple listItem/taskItem refs. */
 	selectionRefs?: string[],
+	/** 表格行/列选区；仅 selection chip 可携带。 */
+	tableSelection?: TableSelection,
 	/**
 	 * 长文本折叠卡片(kind=text)承载的完整原文，仅用于前端气泡里把卡片展开还原。
 	 * 发送时长文本已展开进 SendMessage.text 进入模型上下文，本字段后端不消费。

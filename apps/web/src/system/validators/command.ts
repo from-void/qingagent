@@ -43,6 +43,24 @@ function checkRefAny(field: string, ref: ResourceRef): void {
 }
 
 function checkChip(c: ChatChip): void {
+  if (c.tableSelection !== undefined) {
+    if (c.kind.kind !== "selection") {
+      fail(`ChatChip.tableSelection is only allowed for selection chips`);
+    }
+    const { axis, startIndex, endIndex } = c.tableSelection;
+    if (axis !== "row" && axis !== "column") {
+      fail(`ChatChip.tableSelection.axis must be row|column`);
+    }
+    if (!Number.isInteger(startIndex) || startIndex < 0) {
+      fail(`ChatChip.tableSelection.startIndex must be a non-negative integer`);
+    }
+    if (!Number.isInteger(endIndex) || endIndex < 0) {
+      fail(`ChatChip.tableSelection.endIndex must be a non-negative integer`);
+    }
+    if (startIndex > endIndex) {
+      fail(`ChatChip.tableSelection startIndex must be <= endIndex`);
+    }
+  }
   switch (c.kind.kind) {
     case "selection":
       if (!c.resourceRef) fail(`ChatChip kind=selection: resourceRef MUST be Some`);

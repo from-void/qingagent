@@ -72,6 +72,7 @@ export * from "./StartSession";
 export * from "./StreamFrame";
 export * from "./SubAgent";
 export * from "./SubAgentStatus";
+export * from "./TableSelection";
 export * from "./ThinkingPart";
 export * from "./TodoItem";
 export * from "./ToolCallBody";

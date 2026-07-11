@@ -145,6 +145,8 @@ describe("OM sidecar 接线形状", () => {
 
     const om = mockState.omInstances[0]!;
     const sidecarContext = om.observe.mock.calls[0][0].requestContext as RequestContext;
+    const frozenSnapshot = sidecarContext.get("omBranchSnapshot") as { bodyText?: string } | null;
+    expect(frozenSnapshot?.bodyText).toContain("主链锚点");
     const modelFactory = om.config.model as (input: { requestContext?: RequestContext }) => any;
     const observerModel = modelFactory({ requestContext: sidecarContext });
     fetchMock.mockResolvedValueOnce(Response.json({
@@ -169,6 +171,13 @@ describe("OM sidecar 接线形状", () => {
     const replayBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(replayBody.messages.at(-1).content).toContain("长期观察提炼任务");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // 后续 turn 即使领取新 lease，已排队 OM context 仍只携带 A 轮快照，不会按 sessionId 换成 B 轮。
+    beginSessionSnapshotTurn(new RequestContext([
+      ["sessionId", "om-wire-branch"],
+      ["streamId", "stream-next"],
+    ] as never));
+    expect(sidecarContext.get("omBranchSnapshot")).toBe(frozenSnapshot);
   });
 
   it("用 thread scope sidecar 持久化 MastraDBMessage，并以对象参数触发 buffer", async () => {

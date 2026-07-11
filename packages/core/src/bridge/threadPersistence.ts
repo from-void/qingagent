@@ -160,6 +160,7 @@ export interface QingagentThreadMetadata {
     observations: string;
     removedMessageIds: string[];
   } | null;
+  branchTitleGenerated?: boolean;
   askUserCompleted: boolean;
   askUserAsked?: boolean;
   directionChangeAskedSinceLastWrite?: boolean;
@@ -580,6 +581,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
     toolCallId: state.toolCallId,
     previousDocState: state.previousDocState,
     ...serializeOmMetadata(state),
+    ...(state.branchTitleGenerated === true ? { branchTitleGenerated: true } : {}),
     askUserCompleted: state._askUserCompleted ?? false,
     askUserAsked: state._askUserAsked ?? false,
     directionChangeAskedSinceLastWrite: state._directionChangeAskedSinceLastWrite ?? false,
@@ -1610,6 +1612,7 @@ export async function loadSessionFromThread(
           ),
         }
       : null,
+    branchTitleGenerated: meta.branchTitleGenerated === true,
     title: meta.title ?? thread.title ?? "",
     docState: meta.docState,
     messages,

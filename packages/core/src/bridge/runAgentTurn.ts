@@ -522,6 +522,7 @@ export async function* runAgentTurn(
       ["userText", userText],
       ["sessionId", state.sessionId],
       ["streamId", streamId],
+      ["abortSignal", abortController.signal],
       ["clientTraceId", state.clientTraceId ?? null],
       ["origin", state.origin ?? "manual"],
       ["docVersion", state.docVersion],

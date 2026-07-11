@@ -34,7 +34,8 @@ const memory = new Memory({
   options: {
     lastMessages: 40,
     semanticRecall: false,
-    generateTitle: true,
+    // 标题改在首稿成功落地后由 BranchCall 生成；关闭首条消息暗渠。
+    generateTitle: false,
   },
 });
 

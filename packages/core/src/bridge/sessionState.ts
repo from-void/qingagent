@@ -109,6 +109,8 @@ export interface SessionState {
     observations: string;
     removedMessageIds: string[];
   } | null;
+  /** 首次成功落稿后的 BranchCall 标题已经结算；重写不再重复起题。 */
+  branchTitleGenerated?: boolean;
   title: string;
   docState: DocState;
   messages: CoreMessage[];
@@ -281,6 +283,7 @@ export function createSession(
     omCompressionActive: false,
     omCompressionEpoch: 0,
     omCompressionSnapshot: null,
+    branchTitleGenerated: false,
     title: "",
     docState: { kind: "empty" },
     messages: [],

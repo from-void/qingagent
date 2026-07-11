@@ -19,7 +19,7 @@ import type {
   RepairableLanguageModel,
   RepairingModelRouterLanguageModel,
 } from "../llm/repairingModel.js";
-import type { BranchMessage } from "../llm/modelConfig.js";
+import type { BranchMessage, SessionSnapshot } from "../llm/modelConfig.js";
 import {
   anthropicBaseUrl,
   advanceSessionSnapshotEpoch,
@@ -66,6 +66,7 @@ const OBSERVER_MODEL_CACHE_LIMIT = 16;
 const OM_STORAGE_THREAD_PREFIX = "om-sidecar";
 const OM_STORAGE_RESOURCE_SUFFIX = "om-sidecar";
 const OM_BRANCH_CALL_SITE_KEY = "omBranchCallSite";
+const OM_BRANCH_SNAPSHOT_KEY = "omBranchSnapshot";
 let omSidecarPromise: Promise<ObservationalMemory | null> | null = null;
 const omSidecarQueues = new Map<string, Promise<void>>();
 const tokenCounter = new TokenCounter();
@@ -128,6 +129,7 @@ interface OmSidecarTurnSnapshot {
   messages: CoreMessage[];
   chatHistory: ChatMessage[];
   cursor: OmSidecarCursor | null;
+  branchSnapshot: SessionSnapshot | null;
   currentTurn: {
     turnIndex: number;
     startMessageIndex: number;
@@ -861,6 +863,8 @@ function createOmSidecarSnapshot(
     messages: [...state.messages],
     chatHistory: [...state.chatHistory],
     cursor: state.omSidecarCursor ? { ...state.omSidecarCursor } : null,
+    // 冻结调度当时的主链快照；队列延迟后不得按 sessionId 借用下一轮 body。
+    branchSnapshot: getSessionSnapshot(state.sessionId),
     currentTurn: turnIndex != null && startMessageIndex != null
       ? { turnIndex, startMessageIndex }
       : null,
@@ -879,6 +883,7 @@ function createOmRequestContextSnapshot(
     ["origin", requestContext.get("origin") ?? "manual"],
     ["streamId", requestContext.get("streamId") ?? null],
     ["clientTraceId", requestContext.get("clientTraceId") ?? null],
+    [OM_BRANCH_SNAPSHOT_KEY, snapshot.branchSnapshot],
   ];
   const modelOverrides = cloneJsonLikeValue(
     requestContext.get(MODEL_OVERRIDES_CONTEXT_KEY),
@@ -901,6 +906,7 @@ function withOmCallSite(
     ["origin", requestContext.get("origin")],
     ["streamId", requestContext.get("streamId")],
     ["clientTraceId", requestContext.get("clientTraceId")],
+    [OM_BRANCH_SNAPSHOT_KEY, requestContext.get(OM_BRANCH_SNAPSHOT_KEY)],
     [OM_BRANCH_CALL_SITE_KEY, callSite],
   ];
   const modelOverrides = requestContext.get(MODEL_OVERRIDES_CONTEXT_KEY);
@@ -1102,8 +1108,7 @@ function getObserverFlashModelFor(
     modelId: resolveModelId(requestContext, "flash"),
     keyOrigin: resolveDeepseekAuth(requestContext).origin,
   });
-  const sessionId = requestContext?.get("sessionId");
-  const snapshot = typeof sessionId === "string" ? getSessionSnapshot(sessionId) : null;
+  const snapshot = requestContext?.get(OM_BRANCH_SNAPSHOT_KEY) as SessionSnapshot | null | undefined;
   if (!snapshot) return fallback;
   return createOmBranchModel(fallback, requestContext, snapshot, callSite);
 }

@@ -434,9 +434,9 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     if (!ownsCurrentLease()) {
       return { ok: false, reason: "stale_snapshot", attempts: retry, toolCallRetries: retry };
     }
-    const attempt = input.attempt == null
+    const attempt = input.requestContext
       ? nextUsageAttempt(input.requestContext, input.callSite, input.lane)
-      : input.attempt + retry;
+      : (input.attempt ?? 1) + retry;
     const body = {
       ...baseBody,
       messages: [...baseBody.messages, ...tail],

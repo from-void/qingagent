@@ -353,6 +353,7 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.omCompressionActive).toBe(original.omCompressionActive);
   expect(restored?.omCompressionEpoch).toBe(original.omCompressionEpoch);
   expect(restored?.omCompressionSnapshot).toEqual(original.omCompressionSnapshot);
+  expect(restored?.branchTitleGenerated).toBe(original.branchTitleGenerated);
   expect(restored?.title).toBe(original.title);
   expect(restored?.docState).toEqual(original.docState);
   expect(restored?.messages).toEqual(original.messages);
@@ -1005,6 +1006,7 @@ describe("thread persistence", () => {
       observations: "- 冷恢复稳定观察块",
       removedMessageIds: ["session-full-1-1", "session-full-1-2"],
     };
+    state.branchTitleGenerated = true;
     state._askUserCompleted = true;
     state._directionChangeAskedSinceLastWrite = true;
     state.chatHistory = [chatMessage("chat-1")];
@@ -1263,6 +1265,7 @@ describe("thread persistence", () => {
     expect(persisted).not.toHaveProperty("omCompressionActive");
     expect(persisted).not.toHaveProperty("omCompressionEpoch");
     expect(persisted).not.toHaveProperty("omCompressionSnapshot");
+    expect(persisted).not.toHaveProperty("branchTitleGenerated");
   });
 
   it("restores old material metadata without parseState as ready", async () => {

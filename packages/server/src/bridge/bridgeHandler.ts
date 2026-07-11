@@ -2195,6 +2195,7 @@ async function* handleResume(
       [QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY, omContextForResume.tailObservationPrompt],
       ["sessionId", session.sessionId],
       ["streamId", streamId],
+      ["abortSignal", abortController.signal],
       ["runId", runId],
       ["clientTraceId", session.clientTraceId ?? null],
       ["origin", session.origin ?? "manual"],

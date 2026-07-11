@@ -65,12 +65,15 @@ describe("模型传输静态守护", () => {
   it("modelConfig 内 raw endpoint 仅由 branchCall 使用且每条网络终态都接入记账", () => {
     const source = readFileSync(resolve(repoRoot, "packages/core/src/llm/modelConfig.ts"), "utf8");
     const branchStart = source.indexOf("export async function branchCall");
+    const branchEnd = source.indexOf("\nfunction envModelProtocol", branchStart);
     const rawFetch = "globalThis.fetch(input.sessionSnapshot.endpoint";
     const rawFetchIndex = source.indexOf(rawFetch);
     expect(branchStart).toBeGreaterThanOrEqual(0);
+    expect(branchEnd).toBeGreaterThan(branchStart);
     expect(rawFetchIndex).toBeGreaterThan(branchStart);
+    expect(rawFetchIndex).toBeLessThan(branchEnd);
     expect(source.match(/globalThis\.fetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
-    const branchSource = source.slice(branchStart);
+    const branchSource = source.slice(branchStart, branchEnd);
     expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(3);
     expect(branchSource).toContain("provider_http_");
     expect(branchSource).toContain("provider_request_aborted");

@@ -91,6 +91,8 @@ export const AIIR_SYSTEM_PROMPT = `你是 Qingagent，一位专业的中文写�
 
 ### 字符转义（最高优先级）
 
+所有 QingML 正文文本中的裸 < 和 & 都必须写成 &lt; 和 &amp;，包括普通段落、标题、列表、表格与提示框；不要让正文比较符号或公司名中的 & 被误解析成标签/实体。
+
 <pre>、<math-block>、<mermaid> 内绝不出现裸 < 和 &，必须写成 &lt; 和 &amp;；例如 <pre lang="cpp">#include &lt;stdio.h&gt;\nif (a &lt; b &amp;&amp; ok) run();</pre>。
 
 ## 展示公式硬规则

@@ -124,6 +124,15 @@ describe("generateDoc QingML helpers", () => {
     }
   });
 
+  it("普通正文比较符与 & 经实体转义后可逆解析", () => {
+    const parsed = parseAiDocumentFromQingml("<p>1 &lt; 2 &amp; 甲乙</p>", "转义");
+    expect(parsed.document.blocks[0]).toEqual({
+      type: "paragraph",
+      runs: [{ text: "1 < 2 & 甲乙" }],
+    });
+    expect(AIIR_SYSTEM_PROMPT).toContain("普通段落、标题、列表、表格与提示框");
+  });
+
   // 回归 search-ref-not-citation-block:首稿生成 prompt 必须含『检索来源引用』范本,
   // 把 webSearch 来源 URL 落为可点击链接,不能只写纯文本来源名。
   it("主 system 含检索来源引用范本", () => {

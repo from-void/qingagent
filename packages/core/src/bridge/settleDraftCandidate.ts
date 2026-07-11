@@ -38,6 +38,7 @@ import {
   recordStateChangeSpan,
 } from "./agentSpans.js";
 import { deriveTitleFromSections } from "./title.js";
+import { generateTitleAfterFirstDraft } from "./titleGeneration.js";
 import {
   getPmContentHash,
   legacySectionsToPm,
@@ -358,7 +359,22 @@ export async function* settleDraftCandidate(opts: {
       };
     }
 
-    const nextTitle = deriveTitleFromSections(state.legacySections);
+    const isFirstSuccessfulDraft = previousDocVersion === 0;
+    const nextTitle = isFirstSuccessfulDraft
+      ? await generateTitleAfterFirstDraft(state, requestContext)
+      : deriveTitleFromSections(state.legacySections);
+    const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
+    if (abortSignal?.aborted) {
+      recordSettleResultSpan(state, {
+        branch: "wholeDocument",
+        hunkCount: 0,
+        docWritten: true,
+        finalVersion: state.docVersion,
+        sourceStreamId: streamId,
+        runId,
+      });
+      return { hunkCount: 0, docWritten: true };
+    }
     if (nextTitle) {
       state.title = nextTitle;
       yield {

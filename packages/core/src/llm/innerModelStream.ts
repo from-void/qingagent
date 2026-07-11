@@ -85,7 +85,9 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
     model: getDeepseekModel(input.requestContext, input.tier ?? "flash", {
       callSite: input.callSite,
       lane: input.lane,
-      attempt: input.attempt == null ? undefined : input.attempt + branchAttempts,
+      attempt: input.requestContext || input.attempt == null
+        ? undefined
+        : input.attempt + branchAttempts,
       thinking: input.thinking,
     }),
     ...(input.messages

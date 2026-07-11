@@ -113,13 +113,20 @@ function findToolCallSpec(
 }
 
 describe("LLM stream error chunk → 如实报错(可重试)", () => {
+  const originalOmSidecar = process.env.QINGAGENT_OM_SIDECAR;
+
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    // 本文件验证 Mastra memory 的回合级重试去重；OM 默认开启时主链不走 memory，
+    // 因此显式关闭 sidecar，保留该路径的定向覆盖。
+    process.env.QINGAGENT_OM_SIDECAR = "0";
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    if (originalOmSidecar === undefined) delete process.env.QINGAGENT_OM_SIDECAR;
+    else process.env.QINGAGENT_OM_SIDECAR = originalOmSidecar;
   });
 
   // 全量测试并发跑时本用例偶发超 5s(R4-B 验收抖动),放宽到 15s。

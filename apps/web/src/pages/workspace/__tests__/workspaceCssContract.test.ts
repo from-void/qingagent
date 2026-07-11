@@ -82,6 +82,19 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).not.toContain(".tbl-cell-sel");
   });
 
+  it("列宽拖拽命中区与细金线视觉分离", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const handleRule = cssRule(workspaceCss, "#view-workspace .wf-doc .column-resize-handle");
+    const lineRule = cssRule(workspaceCss, "#view-workspace .wf-doc .column-resize-handle::before");
+
+    expect(handleRule).toContain("width:8px");
+    expect(handleRule).toContain("background:transparent");
+    expect(handleRule).toContain("pointer-events:none");
+    expect(lineRule).toContain("width:1px");
+    expect(lineRule).toContain("var(--mark)");
+    expect(workspaceCss).toMatch(/\.column-resize-dragging \.column-resize-handle::before\{\s*background:var\(--mark\)/);
+  });
+
   it("标题列只在每行首格为 th 时 sticky，标题行 overlay 只过编辑门", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     const snapshotView = readFileSync(

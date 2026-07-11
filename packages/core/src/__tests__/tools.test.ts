@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
-import { planDraftTool } from "../tools/planDraft.js";
+import { planDraftTool, resolvePlanDraftSuspendPurpose } from "../tools/planDraft.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: extract the Zod schema from the Mastra tool and validate.
@@ -54,6 +54,12 @@ function validateToolOutput(
 // ---------------------------------------------------------------------------
 
 describe("planDraft tool schema", () => {
+  it("工具 id 与状态驱动的 suspend purpose 对齐新语义", () => {
+    expect(planDraftTool.id).toBe("planDraft");
+    expect(resolvePlanDraftSuspendPurpose(false)).toBe("initialBrief");
+    expect(resolvePlanDraftSuspendPurpose(true)).toBe("directionChange");
+  });
+
   it("validates a correct planDraft input without purpose", () => {
     const input = {
       id: "direction-gathering",

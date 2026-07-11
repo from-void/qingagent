@@ -119,6 +119,12 @@ const askUserOutputSchema = z.union([
   questionnaireRejectedResultSchema,
 ]);
 
+export function resolvePlanDraftSuspendPurpose(
+  directionReset: boolean,
+): "initialBrief" | "directionChange" {
+  return directionReset ? "directionChange" : "initialBrief";
+}
+
 // ---------------------------------------------------------------------------
 // Partial JSON parser for streaming questions
 // ---------------------------------------------------------------------------
@@ -603,7 +609,7 @@ ${input.topic}
           break;
         }
         console.warn(
-          `[askUser] 第 ${attempt}/${MAX_GEN_ATTEMPTS} 次出题畸形(非数组或条目缺合法 kind/label)，` +
+          `[planDraft] 第 ${attempt}/${MAX_GEN_ATTEMPTS} 次出题畸形(非数组或条目缺合法 kind/label)，` +
             (attempt < MAX_GEN_ATTEMPTS ? "重试" : "已达上限，走兜底补全"),
         );
       }
@@ -612,7 +618,7 @@ ${input.topic}
       // Suspend with complete questionnaire
       return await suspend({
         id: input.id,
-        purpose: directionReset ? "directionChange" : "initialBrief",
+        purpose: resolvePlanDraftSuspendPurpose(directionReset),
         source: null,
         rationale: input.rationale ?? null,
         questions: questions.map((q, idx) => {

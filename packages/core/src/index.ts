@@ -26,6 +26,8 @@ export {
   adaptAskUserQuestionInput,
   askUserQuestionInputSchema,
   askUserQuestionTool,
+  // 仅供老会话快照 resume 注入；老会话数据迁移或过期后删除。
+  askUserTool,
   planDraftTool,
   buildQuestionnaireRejectedResult,
   questionnaireRejectedResultSchema,

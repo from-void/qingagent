@@ -172,6 +172,7 @@ import {
 import { planRevealTypewriter, revealNewPartLen } from "./data/revealTypewriter";
 import {
   buildReviewTableRevealPlan,
+  reconcileFinalizedReviewTablePatchIds,
   reviewTableTypedCounts,
   type ReviewTableTypedByPatch,
 } from "./data/tableTypewriter";
@@ -1174,6 +1175,7 @@ export function WorkspacePage() {
   const [typedByPatch, setTypedByPatch] = useState<ReadonlyMap<string, number> | null>(null);
   const [tableTypedByPatch, setTableTypedByPatch] = useState<ReviewTableTypedByPatch | null>(null);
   const finalizedTablePatchIdsRef = useRef<Set<string>>(new Set());
+  const tableRevealReplayNonceRef = useRef(revealReplayNonce);
   const finalizeReviewTablePatch = useCallback((patchId: string) => {
     finalizedTablePatchIdsRef.current.add(patchId);
     setTableTypedByPatch((current) => {
@@ -1437,7 +1439,9 @@ export function WorkspacePage() {
   const tableBlockPatchIds = useMemo(
     () => new Set(
       blockPatchInputs
-        .filter((input) => input.blocks.some((block) => block.kind === "table"))
+        .filter((input) =>
+          input.op !== "delete" && input.blocks.some((block) => block.kind === "table"),
+        )
         .map((input) => input.patchId),
     ),
     [blockPatchInputs],
@@ -1448,6 +1452,17 @@ export function WorkspacePage() {
       return plan ? [plan] : [];
     }),
     [blockPatchInputs],
+  );
+  const tableBlockPatchIdsKey = useMemo(
+    () => Array.from(tableBlockPatchIds).sort().join(","),
+    [tableBlockPatchIds],
+  );
+  const tableRevealPlansKey = useMemo(
+    () => tableRevealPlans
+      .map((plan) => `${plan.patchId}:${plan.cells.map((cell) => `${cell.key}=${cell.graphemeCount}`).join("|")}`)
+      .sort()
+      .join(","),
+    [tableRevealPlans],
   );
   // 在 effect 内读最新 patchMeta 算每处目标字数,但不让 meta 引用进 effect 依赖
   // (meta 与 appliedIdsKey 同源,key 变时 meta 也新)。
@@ -1464,7 +1479,13 @@ export function WorkspacePage() {
       return;
     }
     const ids = appliedIdsKey.split(",");
-    finalizedTablePatchIdsRef.current.clear();
+    const replayChanged = tableRevealReplayNonceRef.current !== revealReplayNonce;
+    finalizedTablePatchIdsRef.current = reconcileFinalizedReviewTablePatchIds(
+      finalizedTablePatchIdsRef.current,
+      ids,
+      replayChanged,
+    );
+    tableRevealReplayNonceRef.current = revealReplayNonce;
     if (reducedMotion) {
       setRevealedPatchIds(new Set(ids));
       setTypedByPatch(null); // 降级:不逐字,全显示
@@ -1480,7 +1501,10 @@ export function WorkspacePage() {
     const meta = patchMetaRef.current;
     const tablePlanByPatchId = new Map(tableRevealPlans.map((plan) => [plan.patchId, plan]));
     const targetOf = (id: string): number => {
-      if (tableBlockPatchIds.has(id)) return tablePlanByPatchId.get(id)?.totalGraphemes ?? 0;
+      if (tableBlockPatchIds.has(id)) {
+        if (finalizedTablePatchIdsRef.current.has(id)) return 0;
+        return tablePlanByPatchId.get(id)?.totalGraphemes ?? 0;
+      }
       const m = meta.get(id);
       return m ? revealNewPartLen(m.before, m.after) : 0;
     };
@@ -1549,8 +1573,8 @@ export function WorkspacePage() {
     cfgStepDelayMs,
     cfgCharsPerTick,
     cfgTailHoldMs,
-    tableBlockPatchIds,
-    tableRevealPlans,
+    tableBlockPatchIdsKey,
+    tableRevealPlansKey,
     revealReplayNonce,
   ]);
 

@@ -257,6 +257,19 @@ describe("native PM presentation animation", () => {
     expect(timing.totalDurationMs).toBe(timing.stepDelayMs * 4);
   });
 
+  it("fallback 大表不参与 timing，也不放大同文普通段落 chunk", () => {
+    const paragraphInstructions = buildNativeDiffInstructions({ finalSections: [p("普通段落")] });
+    const mixedInstructions = buildNativeDiffInstructions({
+      finalSections: [
+        { kind: "table", head: [], rows: [["字".repeat(1501)]] },
+        p("普通段落"),
+      ],
+    });
+    expect(planNativeTiming(mixedInstructions, 1_000)).toEqual(
+      planNativeTiming(paragraphInstructions, 1_000),
+    );
+  });
+
   it("保持拟人光标主题色单一色源，防止旧色数组复活", () => {
     const run: NativePresentationRun = {
       id: 2,

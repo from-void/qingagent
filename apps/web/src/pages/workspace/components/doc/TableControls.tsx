@@ -313,6 +313,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
       pendingTarget = null;
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
       setAxisDrag(null);
       if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
     };
@@ -340,6 +342,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
     dragCleanupRef.current = cleanup;
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+    window.addEventListener("blur", cleanup);
+    window.addEventListener("pointercancel", cleanup);
   }, [editor, info, onToast, selCols, selRows]);
 
   const onColDown = useCallback((idx: number, e: React.MouseEvent) => {

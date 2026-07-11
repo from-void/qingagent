@@ -474,6 +474,41 @@ describe("TableControls 行列拖拽排序", () => {
     expect(onToast).toHaveBeenCalledWith("合并单元格跨越移动边界，无法排序");
     expect(editor.state.doc.firstChild?.toJSON()).toEqual(before);
   });
+
+  it("窗口失焦会取消 hold timer 与进行中的拖影，不遗留落位", async () => {
+    vi.useFakeTimers();
+    try {
+      const { editor, portal } = setupTable({ blockId: "table-1" });
+      const before = editor.state.doc.firstChild?.toJSON();
+      await renderControls(editor);
+      const rowHeader = portal.querySelectorAll(".tbl-row-hdr")[0]!;
+
+      await act(async () => {
+        rowHeader.dispatchEvent(new MouseEvent("mousedown", { clientX: 95, clientY: 120, bubbles: true }));
+        window.dispatchEvent(new Event("blur"));
+        vi.advanceTimersByTime(200);
+      });
+      expect(portal.querySelector(".tbl-axis-drag-ghost")).toBeNull();
+
+      await act(async () => {
+        rowHeader.dispatchEvent(new MouseEvent("mousedown", {
+          clientX: 95,
+          clientY: 120,
+          altKey: true,
+          bubbles: true,
+        }));
+      });
+      expect(portal.querySelector(".tbl-axis-drag-ghost")).not.toBeNull();
+      await act(async () => {
+        window.dispatchEvent(new Event("pointercancel"));
+        document.dispatchEvent(new MouseEvent("mouseup", { clientX: 150, clientY: 180, bubbles: true }));
+      });
+      expect(portal.querySelector(".tbl-axis-drag-ghost")).toBeNull();
+      expect(editor.state.doc.firstChild?.toJSON()).toEqual(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("TableControls AI 修改", () => {

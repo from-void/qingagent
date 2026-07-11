@@ -787,7 +787,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     let cancelled = false;
     let completed = false;
     const instructions = buildNativeDiffInstructions(presentationRun);
-    const timing = planNativeTiming(instructions);
+    const timing = planNativeTiming(instructions, undefined, presentationRun.finalDoc);
     let scheduler = createNativeConcurrentState({
       run: presentationRun,
       instructions,

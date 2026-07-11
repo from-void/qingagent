@@ -47,10 +47,18 @@ export function tableTypewriterFallbackReason(
           return "span";
         }
         if (cell.content.length !== 1) return "multi-block-cell";
-        const blockType = cell.content[0]?.type;
+        const textBlock = cell.content[0];
+        const blockType = textBlock?.type;
         if (!blockType || !["paragraph", "heading", "codeBlock", "penNote"].includes(blockType)) {
           return "non-text-cell";
         }
+        // inlineMath 等原子节点的 PM 长度与 ViewBlock 文本投影不同，逐字插入会先
+        // 写出源码、终态再跳回 atom；统一视为复杂表整块出现。
+        if (
+          !("content" in textBlock)
+          || !Array.isArray(textBlock.content)
+          || textBlock.content.some((inline) => inline.type !== "text")
+        ) return "non-text-cell";
       }
     }
   }
@@ -91,6 +99,8 @@ export function reviewTableCellKey(
 export function buildReviewTableRevealPlan(
   input: BlockPatchInput,
 ): ReviewTableRevealPlan | null {
+  // 纯删除没有新增 widget，不能占用 reveal 调度时长；replace 只揭示 after 半。
+  if (input.op !== "insert" && input.op !== "replace") return null;
   const cells: ReviewTableRevealCell[] = [];
   input.blocks.forEach((block, blockIndex) => {
     if (block.kind !== "table") return;
@@ -119,4 +129,15 @@ export function reviewTableTypedCounts(
     totalTyped,
   );
   return new Map(plan.cells.map((cell, index) => [cell.key, distributed[index] ?? 0]));
+}
+
+/** 接受/拒绝后的表格保持终态；仅 patch 离场或用户显式重播时清理。 */
+export function reconcileFinalizedReviewTablePatchIds(
+  finalized: ReadonlySet<string>,
+  activePatchIds: readonly string[],
+  replay: boolean,
+): Set<string> {
+  if (replay) return new Set();
+  const active = new Set(activePatchIds);
+  return new Set(Array.from(finalized).filter((patchId) => active.has(patchId)));
 }

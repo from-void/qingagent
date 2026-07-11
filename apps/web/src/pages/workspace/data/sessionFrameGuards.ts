@@ -20,7 +20,7 @@ const PRESENTATION_RUN_WATCHDOG_MAX_MS = 65_000;
 
 export function presentationRunWatchdogMs(run: NativePresentationRun): number {
   try {
-    const timing = planNativeTiming(buildNativeDiffInstructions(run));
+    const timing = planNativeTiming(buildNativeDiffInstructions(run), undefined, run.finalDoc);
     return Math.min(
       PRESENTATION_RUN_WATCHDOG_MAX_MS,
       Math.max(

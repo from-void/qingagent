@@ -356,6 +356,7 @@ export function buildNativeDiffInstructions(
 export function planNativeTiming(
   instructions: readonly NativeDiffInstruction[],
   maxDurationMs?: number,
+  finalDoc?: PmDoc,
 ): NativeTimingPlan {
   const config = getNativePresentationConfig();
   const timingConfig = sanitizeNativePresentationConfig({
@@ -370,6 +371,11 @@ export function planNativeTiming(
     }
     if (instruction.kind === "insertSection") {
       if (instruction.section.kind === "table") {
+        // seed 已保留 fallback 表的终态，且不会创建 task；不能让不存在的动画
+        // 挤占预算并放大全文普通段落的 chunkSize。
+        if (!shouldTypewriteTable(instruction.section, finalDoc?.content[instruction.blockIndex])) {
+          return sum;
+        }
         return sum + tableCellEntries(instruction.section).reduce(
           (cellSum, cell) => cellSum + presentationSpans.splitGraphemes(cell.text).length,
           0,

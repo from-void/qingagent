@@ -26,7 +26,6 @@ export const CONNECTOR_REGISTRY = [
       "github_list_repos",
       "github_repo_tree",
       "github_read_file",
-      "github_search_code",
     ],
     usedBySkills: ["github-materials"],
   },

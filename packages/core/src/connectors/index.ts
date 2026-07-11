@@ -8,3 +8,6 @@ export * from "./larkStatusParser.js";
 export * from "./feishuConnector.js";
 export * from "./wechatConnector.js";
 export * from "./githubConnector.js";
+export * from "./github/githubClient.js";
+export * from "./github/githubAuth.js";
+export * from "./github/githubErrors.js";

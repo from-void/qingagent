@@ -27,7 +27,7 @@ export class ConnectorService {
     return Promise.all(listConnectorDefinitions().map((definition) => this.info(definition.id)));
   }
 
-  async info(id: ConnectorId): Promise<ConnectorInfoDto> {
+  async info(id: ConnectorId, pendingId?: string): Promise<ConnectorInfoDto> {
     const definition = listConnectorDefinitions().find((item) => item.id === id)!;
     return {
       id,
@@ -36,8 +36,14 @@ export class ConnectorService {
       official: definition.official,
       riskNote: definition.riskNote ?? null,
       usedBySkills: [...definition.usedBySkills],
-      status: await this.adapters[id].status(),
+      status: await this.adapters[id].status(pendingId),
     };
+  }
+
+  async start(id: ConnectorId, input?: unknown): Promise<unknown> {
+    const adapter = this.adapters[id];
+    if (!adapter.start) throw Object.assign(new Error("该连接器不支持发起授权"), { code: "CONNECTOR_START_UNSUPPORTED", status: 409 });
+    return adapter.start(input);
   }
 
   async probe(id: ConnectorId): Promise<ConnectorInfoDto> {

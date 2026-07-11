@@ -21,7 +21,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { wrapLanguageModel, type LanguageModelV1 } from "ai";
 import type { RequestContext } from "@mastra/core/request-context";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { validateFetchUrl } from "../browser/extractor.js";
 import { recordUsageEvent } from "../db/usageRepo.js";
 export {
@@ -37,6 +37,7 @@ import { nextUsageAttempt } from "./usageAttempt.js";
 
 const BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY = "branchSnapshotGeneration";
 const BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY = "branchSnapshotEpoch";
+const BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY = "branchSnapshotLease";
 const MAX_SESSION_SNAPSHOTS = 256;
 const SESSION_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -48,6 +49,7 @@ export interface SessionSnapshot {
   readonly sessionId: string;
   readonly streamId: string | null;
   readonly generation: number;
+  readonly leaseId: string;
   readonly ordinal: number;
   readonly epoch: number;
   readonly capturedAt: string;
@@ -59,6 +61,7 @@ export interface SessionSnapshot {
 
 interface SnapshotRegistryEntry {
   activeGeneration: number;
+  leaseId: string;
   nextOrdinal: number;
   epoch: number;
   touchedAt: number;
@@ -87,6 +90,8 @@ export function beginSessionSnapshotTurn(requestContext?: RequestContext): numbe
   const generation = (current?.activeGeneration ?? 0) + 1;
   const entry: SnapshotRegistryEntry = {
     activeGeneration: generation,
+    // 随机 lease 避免 clear/TTL 后 generation 从 1 重启形成 ABA。
+    leaseId: randomUUID(),
     nextOrdinal: 0,
     epoch: current?.epoch ?? 0,
     touchedAt: Date.now(),
@@ -96,6 +101,7 @@ export function beginSessionSnapshotTurn(requestContext?: RequestContext): numbe
   sessionSnapshots.set(sessionId, entry);
   requestContext?.set(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY, generation);
   requestContext?.set(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY, entry.epoch);
+  requestContext?.set(BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY, entry.leaseId);
   return generation;
 }
 
@@ -111,11 +117,19 @@ export function getSessionSnapshot(
     return null;
   }
   const snapshot = entry.snapshot;
+  // 新主轮已领取代际、但新的 provider fetch 尚未到达时，旧快照不能冒充当前轮。
+  // 字符串调用方（如 askMore）也受 lease 约束，避免并发新轮开始后回放过期前缀。
+  if (snapshot && (
+    entry.activeGeneration !== snapshot.generation ||
+    entry.epoch !== snapshot.epoch
+  )) return null;
   if (typeof source !== "string" && source && snapshot) {
     const generation = source.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
     const epoch = source.get(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY);
+    const leaseId = source.get(BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY);
     if (typeof generation === "number" && snapshot.generation !== generation) return null;
     if (typeof epoch === "number" && snapshot.epoch !== epoch) return null;
+    if (typeof leaseId === "string" && snapshot.leaseId !== leaseId) return null;
   }
   entry.touchedAt = Date.now();
   sessionSnapshots.delete(sessionId);
@@ -152,7 +166,11 @@ function captureSessionSnapshot(
 ): void {
   const sessionId = requestContext?.get("sessionId");
   const generation = requestContext?.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
-  if (typeof sessionId !== "string" || !sessionId || typeof generation !== "number") return;
+  const leaseId = requestContext?.get(BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY);
+  if (
+    typeof sessionId !== "string" || !sessionId ||
+    typeof generation !== "number" || typeof leaseId !== "string"
+  ) return;
   if (typeof init?.body !== "string") return;
   let body: Record<string, unknown>;
   try {
@@ -162,7 +180,7 @@ function captureSessionSnapshot(
   }
   if (!Array.isArray(body.messages)) return;
   const entry = sessionSnapshots.get(sessionId);
-  if (!entry || entry.activeGeneration !== generation) return;
+  if (!entry || entry.activeGeneration !== generation || entry.leaseId !== leaseId) return;
   const endpoint = String(url);
   const ordinal = entry.nextOrdinal + 1;
   entry.nextOrdinal = ordinal;
@@ -173,6 +191,7 @@ function captureSessionSnapshot(
       ? requestContext.get("streamId") as string
       : null,
     generation,
+    leaseId,
     ordinal,
     epoch: entry.epoch,
     capturedAt: new Date().toISOString(),
@@ -205,7 +224,8 @@ export function createSnapshottingQingagentModel(
     baseURL: resolveBaseUrl(requestContext),
     apiKey,
     fetch: createBranchSnapshotFetch(requestContext, apiKey),
-    supportsStructuredOutputs: true,
+    // deepseek-v4-flash 拒绝 json_schema；schema 请求降为 json_object + 项目侧解析。
+    supportsStructuredOutputs: false,
   });
   return provider.chatModel(resolveModelId(requestContext, "flash"));
 }
@@ -219,6 +239,11 @@ export interface BranchCallInput {
   attempt?: number;
   abortSignal?: AbortSignal;
   onTextDelta?: (delta: string, accumulated: string) => void | Promise<void>;
+  /** 兼容调用方意图；为保证 tool/lease 验真，文本会在完整响应确认后统一提交。 */
+  streamTextDeltas?: boolean;
+  thinking?: boolean;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 export type BranchCallResult =
@@ -226,6 +251,7 @@ export type BranchCallResult =
       ok: true;
       text: string;
       assistantMessage: BranchMessage;
+      finishReason: string | null;
       attempts: number;
       toolCallRetries: number;
     }
@@ -242,6 +268,7 @@ interface RawBranchResponse {
   reasoning: string;
   toolCalled: boolean;
   usage: unknown;
+  finishReason: string | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -254,6 +281,7 @@ function extractRawChunk(payload: unknown, state: RawBranchResponse): void {
   if (record.usage) state.usage = record.usage;
   const choice = Array.isArray(record.choices) ? asRecord(record.choices[0]) : null;
   if (!choice) return;
+  if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
   if (choice.finish_reason === "tool_calls") state.toolCalled = true;
   const delta = asRecord(choice.delta) ?? asRecord(choice.message);
   if (!delta) return;
@@ -266,7 +294,13 @@ async function readRawBranchResponse(
   response: Response,
   onTextDelta?: BranchCallInput["onTextDelta"],
 ): Promise<RawBranchResponse> {
-  const state: RawBranchResponse = { text: "", reasoning: "", toolCalled: false, usage: null };
+  const state: RawBranchResponse = {
+    text: "",
+    reasoning: "",
+    toolCalled: false,
+    usage: null,
+    finishReason: null,
+  };
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
     extractRawChunk(await response.json(), state);
@@ -343,10 +377,22 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
   const { apiKey } = resolveDeepseekAuth(input.requestContext);
   const contextGeneration = input.requestContext?.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
   const contextEpoch = input.requestContext?.get(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY);
+  const contextLeaseId = input.requestContext?.get(BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY);
   if (
     (typeof contextGeneration === "number" && contextGeneration !== input.sessionSnapshot.generation) ||
-    (typeof contextEpoch === "number" && contextEpoch !== input.sessionSnapshot.epoch)
+    (typeof contextEpoch === "number" && contextEpoch !== input.sessionSnapshot.epoch) ||
+    (typeof contextLeaseId === "string" && contextLeaseId !== input.sessionSnapshot.leaseId)
   ) {
+    return { ok: false, reason: "stale_snapshot", attempts: 0, toolCallRetries: 0 };
+  }
+  const ownsCurrentLease = () => {
+    const entry = sessionSnapshots.get(input.sessionSnapshot.sessionId);
+    return entry?.snapshot === input.sessionSnapshot &&
+      entry.activeGeneration === input.sessionSnapshot.generation &&
+      entry.epoch === input.sessionSnapshot.epoch &&
+      entry.leaseId === input.sessionSnapshot.leaseId;
+  };
+  if (!ownsCurrentLease()) {
     return { ok: false, reason: "stale_snapshot", attempts: 0, toolCallRetries: 0 };
   }
   let baseBody: Record<string, unknown>;
@@ -369,13 +415,25 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     ? [{ role: "user", content: input.steeringTail } satisfies BranchMessage]
     : input.steeringTail;
   for (let retry = 0; retry < 2; retry += 1) {
+    // 两次 raw 请求之间也可能开始新主轮；迟到分支不能继续消费旧前缀。
+    if (!ownsCurrentLease()) {
+      return { ok: false, reason: "stale_snapshot", attempts: retry, toolCallRetries: retry };
+    }
     const attempt = input.attempt == null
       ? nextUsageAttempt(input.requestContext, input.callSite, input.lane)
       : input.attempt + retry;
     const body = {
       ...baseBody,
       messages: [...baseBody.messages, ...tail],
+      ...(typeof input.maxTokens === "number" ? { max_tokens: input.maxTokens } : {}),
+      ...(input.thinking === undefined
+        ? {}
+        : { thinking: { type: input.thinking ? "enabled" : "disabled" } }),
+      ...(!input.thinking && typeof input.temperature === "number"
+        ? { temperature: input.temperature }
+        : {}),
     };
+    if (input.thinking) delete body.temperature;
     try {
       const response = await globalThis.fetch(input.sessionSnapshot.endpoint, {
         method: "POST",
@@ -397,11 +455,12 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           error: `HTTP ${response.status}`,
         };
       }
-      const bufferedDeltas: Array<{ delta: string; accumulated: string }> = [];
-      const raw = await readRawBranchResponse(response, (delta, accumulated) => {
-        bufferedDeltas.push({ delta, accumulated });
-      });
+      // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
+      const raw = await readRawBranchResponse(response);
       void recordBranchUsage(input, raw.usage, attempt, null);
+      if (!ownsCurrentLease()) {
+        return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
+      }
       if (raw.toolCalled) {
         if (retry === 0) continue;
         return { ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 };
@@ -414,9 +473,10 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           toolCallRetries: retry,
         };
       }
-      for (const item of bufferedDeltas) {
-        await input.onTextDelta?.(item.delta, item.accumulated);
+      if (!ownsCurrentLease()) {
+        return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
+      await input.onTextDelta?.(raw.text, raw.text);
       return {
         ok: true,
         text: raw.text,
@@ -425,6 +485,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           content: raw.text,
           ...(raw.reasoning ? { reasoning_content: raw.reasoning } : {}),
         },
+        finishReason: raw.finishReason,
         attempts: retry + 1,
         toolCallRetries: retry,
       };

@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { aiIrToPm, qingmlParse, type AiDocument } from "@qingagent/pm-schema";
 import {
   AiDocumentParseError,
-  buildQingmlPrompt,
+  buildQingmlSteeringTail,
   buildQingmlRetryUserPrompt,
   compileAiDocumentWithBlockRetry,
   materialContextFrom,
   parseAiDocumentFromQingml,
 } from "../tools/generateDoc.js";
+import { AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 import type { Material } from "../types/material.js";
 
 const validImage = "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/figure.png";
@@ -125,8 +126,8 @@ describe("generateDoc QingML helpers", () => {
 
   // 回归 search-ref-not-citation-block:首稿生成 prompt 必须含『检索来源引用』范本,
   // 把 webSearch 来源 URL 落为可点击链接,不能只写纯文本来源名。
-  it("buildQingmlPrompt 含检索来源引用范本", () => {
-    const prompt = buildQingmlPrompt("");
+  it("主 system 含检索来源引用范本", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
     expect(prompt).toContain("检索来源引用");
     expect(prompt).toContain("可点击 <a href");
     expect(prompt).toContain("真实URL");
@@ -175,6 +176,16 @@ describe("generateDoc QingML helpers", () => {
     const ctx = materialContextFrom(materials);
 
     expect(ctx).toBe("素材: 照片.png\n【图像识别摘要】图中是一张活动签到表。\n图片素材正文占位");
+  });
+
+  it("writeDraft 尾巴只带素材、任务与输出扭转，不复制 QingML 总规", () => {
+    const tail = buildQingmlSteeringTail("素材: 报告\n正文", "标题: 测试");
+    expect(tail).toContain("不要调用任何工具");
+    expect(tail).toContain("素材: 报告");
+    expect(tail).toContain("标题: 测试");
+    expect(tail).toContain("主 system 的 QingML 生成总规");
+    expect(tail).not.toContain("允许的块级标签与基础形状");
+    expect(tail.length).toBeLessThan(500);
   });
 
   it("含 blockquote/list/hr 的文档:legacySections 通过 output 校验(真 bug 回归)", async () => {
@@ -237,8 +248,8 @@ describe("generateDoc QingML helpers", () => {
     expect(countNestedListItems(doc as unknown as NodeLike)).toBeGreaterThan(1);
   });
 
-  it("buildQingmlPrompt 富格式提示词契约:高级块说明与示例可解析", () => {
-    const prompt = buildQingmlPrompt("");
+  it("主 system 富格式提示词契约:高级块说明与示例可解析", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
     const alignMathBlockExample = [
       "<math-block>\\begin{align}",
       "\\nabla \\cdot \\mathbf{E} &amp;= \\frac{\\rho}{\\varepsilon_0} \\\\",

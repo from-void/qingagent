@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(process.cwd(), "../..");
 const scanRoots = ["packages/core/src", "packages/server/src"];
-const allowlist = new Set([
-  // BranchCall 的 raw 回放器必须与 provider 自定义 fetch 同住这一文件；禁止扩散第二个推理出口。
+const branchReplayAllowlist = new Set([
   "packages/core/src/llm/modelConfig.ts",
+]);
+const specializedTransportAllowlist = new Set([
   "packages/core/src/search/deepseekWebSearch.ts",
 ]);
+const allowlist = new Set([...branchReplayAllowlist, ...specializedTransportAllowlist]);
 
 export function findRawModelTransport(source: string): string[] {
   if (!/\bfetch\s*\(/.test(source)) return [];
@@ -49,9 +51,30 @@ function sourceFiles(root: string): string[] {
 
 describe("模型传输静态守护", () => {
   it("BranchCall 裸回放只有 modelConfig 一个豁免点", () => {
-    expect([...allowlist].filter((path) => path.includes("modelConfig"))).toEqual([
+    expect([...branchReplayAllowlist]).toEqual([
       "packages/core/src/llm/modelConfig.ts",
     ]);
+    expect([...specializedTransportAllowlist]).toEqual([
+      "packages/core/src/search/deepseekWebSearch.ts",
+    ]);
+    expect([...allowlist].sort()).toEqual([
+      "packages/core/src/llm/modelConfig.ts",
+      "packages/core/src/search/deepseekWebSearch.ts",
+    ]);
+  });
+  it("modelConfig 内 raw endpoint 仅由 branchCall 使用且每条网络终态都接入记账", () => {
+    const source = readFileSync(resolve(repoRoot, "packages/core/src/llm/modelConfig.ts"), "utf8");
+    const branchStart = source.indexOf("export async function branchCall");
+    const rawFetch = "globalThis.fetch(input.sessionSnapshot.endpoint";
+    const rawFetchIndex = source.indexOf(rawFetch);
+    expect(branchStart).toBeGreaterThanOrEqual(0);
+    expect(rawFetchIndex).toBeGreaterThan(branchStart);
+    expect(source.match(/globalThis\.fetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
+    const branchSource = source.slice(branchStart);
+    expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(3);
+    expect(branchSource).toContain("provider_http_");
+    expect(branchSource).toContain("provider_request_aborted");
+    expect(branchSource).toContain("provider_request_error");
   });
   it("构造的裸 DeepSeek fetch 与 endpoint 拼接都会被拦", () => {
     expect(findRawModelTransport(`

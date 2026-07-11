@@ -135,6 +135,15 @@ export function extractSvg(raw: string): string {
   return text;
 }
 
+export function buildGenerateSvgBranchTail(systemPrompt: string, userPrompt: string): string {
+  return [
+    "不要调用任何工具。现在进入 generateSvg 旁支生成模式。",
+    systemPrompt,
+    userPrompt,
+    "只输出一个完整 SVG 元素，不要解释或 Markdown fence。",
+  ].join("\n\n");
+}
+
 export const generateSvgTool = createTool({
   id: "generateSvg",
   description: "【触发限制：仅当用户在本轮或对话中明确要求配图/插图/SVG/矢量图/示意图时才调用；" +
@@ -352,6 +361,7 @@ export const generateSvgTool = createTool({
             attempt,
             system: sys,
             prompt: userPrompt,
+            branchSteeringTail: buildGenerateSvgBranchTail(sys, userPrompt),
             thinking: false,
             temperature: temperature ?? 0.4,
             abortSignal: linked.controller.signal,

@@ -1,6 +1,13 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { streamText, type CoreMessage } from "ai";
-import { getDeepseekModel, resolveProtocol, type DeepseekTier } from "./modelConfig.js";
+import {
+  branchCall,
+  getDeepseekModel,
+  getSessionSnapshot,
+  resolveProtocol,
+  type BranchMessage,
+  type DeepseekTier,
+} from "./modelConfig.js";
 
 export interface InnerModelStreamCall {
   requestContext?: RequestContext;
@@ -18,6 +25,8 @@ export interface InnerModelStreamCall {
   maxTokens?: number;
   onContentStart?: (elapsedMs: number) => void;
   onContentDelta?: (delta: string, raw: string) => void;
+  /** 有主链快照时优先借道；失败则原样回退下面的 streamText 请求。 */
+  branchSteeringTail?: string | BranchMessage[];
 }
 
 export interface InnerModelStreamResult {
@@ -29,12 +38,46 @@ export interface InnerModelStreamResult {
 /** AI SDK 流式适配层：只做文本累积/进度回调，传输、协议、重试、usage 均交给框架与模型工厂。 */
 export async function streamInnerModel(input: InnerModelStreamCall): Promise<InnerModelStreamResult> {
   const startedAt = Date.now();
+  const snapshot = input.branchSteeringTail ? getSessionSnapshot(input.requestContext) : null;
+  let branchAttempts = 0;
+  if (snapshot && input.branchSteeringTail) {
+    let contentStartMs: number | null = null;
+    const branched = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: input.branchSteeringTail,
+      callSite: input.callSite,
+      requestContext: input.requestContext,
+      lane: input.lane,
+      attempt: input.attempt,
+      abortSignal: input.abortSignal,
+      streamTextDeltas: true,
+      thinking: input.thinking,
+      temperature: input.temperature,
+      maxTokens: input.maxTokens,
+      onTextDelta: (delta, raw) => {
+        if (contentStartMs === null) {
+          contentStartMs = Date.now() - startedAt;
+          input.onContentStart?.(contentStartMs);
+        }
+        input.onContentDelta?.(delta, raw);
+      },
+    });
+    branchAttempts = branched.attempts;
+    if (branched.ok) {
+      return { raw: branched.text, contentStartMs, finishReason: branched.finishReason };
+    }
+    if (input.abortSignal?.aborted) {
+      throw input.abortSignal.reason instanceof Error
+        ? input.abortSignal.reason
+        : new DOMException("Inner model branch aborted", "AbortError");
+    }
+  }
   const protocol = resolveProtocol(input.requestContext);
   const result = streamText({
     model: getDeepseekModel(input.requestContext, input.tier ?? "flash", {
       callSite: input.callSite,
       lane: input.lane,
-      attempt: input.attempt,
+      attempt: input.attempt == null ? undefined : input.attempt + branchAttempts,
       thinking: input.thinking,
     }),
     ...(input.messages

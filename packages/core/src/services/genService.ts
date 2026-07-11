@@ -80,12 +80,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeQuestion(raw: unknown): GeneratedQuestion | null {
-  if (!isRecord(raw) || typeof raw.id !== "string" || !raw.id.trim()) return null;
+function normalizeQuestion(raw: unknown, index = 0): GeneratedQuestion | null {
+  if (!isRecord(raw)) return null;
   if (typeof raw.label !== "string" || !raw.label.trim()) return null;
   const rawKind = isRecord(raw.kind) ? raw.kind.kind : raw.kind;
-  if (!new Set(["single", "multi", "text", "slider"]).has(String(rawKind))) return null;
-  const kind = rawKind as GeneratedQuestion["kind"];
+  const kind = new Set(["single", "multi", "text", "slider"]).has(String(rawKind))
+    ? rawKind as GeneratedQuestion["kind"]
+    : Array.isArray(raw.options) && raw.options.length > 0 ? "single" : "text";
   const options = Array.isArray(raw.options)
     ? raw.options.flatMap((option) => {
         if (!isRecord(option) || typeof option.value !== "string" || typeof option.label !== "string") {
@@ -104,7 +105,7 @@ function normalizeQuestion(raw: unknown): GeneratedQuestion | null {
       })
     : [];
   return {
-    id: raw.id,
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id : `q${index + 1}`,
     label: raw.label,
     kind,
     options,
@@ -122,7 +123,7 @@ export function parseGeneratedQuestions(raw: string): GeneratedQuestion[] | null
   try {
     const parsed = JSON.parse(repaired.ok ? repaired.json : extracted);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    const questions = parsed.map(normalizeQuestion);
+    const questions = parsed.map((question, index) => normalizeQuestion(question, index));
     return questions.every((question): question is GeneratedQuestion => question !== null)
       ? questions
       : null;
@@ -163,7 +164,7 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
     depth -= 1;
     if (depth !== 0 || objectStart < 0) continue;
     try {
-      const normalized = normalizeQuestion(JSON.parse(raw.slice(objectStart, index + 1)));
+      const normalized = normalizeQuestion(JSON.parse(raw.slice(objectStart, index + 1)), questions.length);
       if (normalized) questions.push(normalized);
     } catch {
       // 半截或畸形对象等待最终解析/重试处理。
@@ -192,6 +193,26 @@ function currentQuestionSummary(input: GenerateQuestionsInput): string {
       : "未回答";
     return `- ${question.label} → ${answerText}`;
   }).join("\n");
+}
+
+function fallbackConversationSummary(input: GenerateQuestionsInput): string {
+  if (input.conversationSummary?.trim()) return input.conversationSummary.trim();
+  const messages = input.requestContext?.get("messages");
+  if (!Array.isArray(messages)) return "（无可用主对话摘要）";
+  return messages
+    .filter((message): message is Record<string, unknown> => isRecord(message) &&
+      (message.role === "user" || message.role === "assistant"))
+    .slice(-10)
+    .map((message) => {
+      const content = typeof message.content === "string"
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content.flatMap((part) => isRecord(part) && typeof part.text === "string" ? [part.text] : []).join(" ")
+          : "";
+      return `${message.role === "user" ? "用户" : "助手"}: ${content.slice(0, 500)}`;
+    })
+    .filter((line) => !line.endsWith(": "))
+    .join("\n") || "（无可用主对话摘要）";
 }
 
 function initialPrompt(input: GenerateQuestionsInput): string {
@@ -226,9 +247,12 @@ ${input.conversationSummary ?? ""}
 
 function fallbackPrompt(input: GenerateQuestionsInput): string {
   if (input.mode === "initial") {
-    return initialPrompt(input)
+    return `${initialPrompt(input)
       .replace(/^不要调用任何工具。/, "")
-      .replace("根据主对话以及下面的写作方向", "根据以下写作方向");
+      .replace("根据主对话以及下面的写作方向", "根据下面的主对话摘要和写作方向")}
+
+主对话摘要：
+${fallbackConversationSummary(input)}`;
   }
   // 保持旧 askMore 的 nested kind 表示，解析器同时兼容 flat/nested。
   return `你是一位写作需求分析专家。根据以下对话上下文和已有的问卷问题及回答，生成 1-3 个补充问题，帮助更好地理解用户的写作需求。
@@ -259,6 +283,7 @@ async function runBranch(
     }
   }
   const progressState = { signature: "" };
+  let lastPartial: GeneratedQuestion[] = [];
   const result = await branchCall({
     sessionSnapshot: snapshot,
     steeringTail,
@@ -266,14 +291,16 @@ async function runBranch(
     requestContext: input.requestContext,
     abortSignal: input.abortSignal,
     onTextDelta: async (_delta, accumulated) => {
-      await emitQuestionProgress(input, parsePartialGeneratedQuestions(accumulated), progressState);
+      const partial = parsePartialGeneratedQuestions(accumulated);
+      if (partial.length > 0) lastPartial = partial;
+      await emitQuestionProgress(input, partial, progressState);
     },
   });
   if (!result.ok) {
     return { questions: null, failure: result.reason, toolCallRetries: result.toolCallRetries };
   }
-  const questions = parseGeneratedQuestions(result.text);
-  if (!questions) {
+  const questions = parseGeneratedQuestions(result.text) ?? lastPartial;
+  if (questions.length === 0) {
     return { questions: null, failure: "invalid_questions", toolCallRetries: result.toolCallRetries };
   }
   const branchMessages = [...steeringTail, result.assistantMessage];
@@ -303,7 +330,9 @@ async function runFallback(input: GenerateQuestionsInput): Promise<GeneratedQues
     let raw = "";
     for await (const delta of result.textStream) {
       raw += delta;
-      await emitQuestionProgress(input, parsePartialGeneratedQuestions(raw), progressState);
+      const partial = parsePartialGeneratedQuestions(raw);
+      if (partial.length > 0) last = partial;
+      await emitQuestionProgress(input, partial, progressState);
     }
     const parsed = parseGeneratedQuestions(raw);
     if (parsed) {

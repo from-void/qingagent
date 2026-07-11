@@ -35,6 +35,7 @@ interface InnerModelCall {
   abortSignal?: AbortSignal;
   onContentStart?: () => void;
   onContentDelta?: (delta: string, raw: string) => void;
+  branchSteeringTail?: string;
 }
 
 function qingmlText(text: string): string {
@@ -174,13 +175,16 @@ describe("writeDraft intent 调度", () => {
       role: "system",
       content: expect.stringContaining("输出 QingML"),
     });
-    expect(String((firstCall.messages?.[0] as { content?: unknown } | undefined)?.content)).not.toContain(
-      "永远不要在聊天中输出内部结构化文档",
+    expect(String((firstCall.messages?.[0] as { content?: unknown } | undefined)?.content)).toContain(
+      "writeDraft QingML 生成总规",
     );
     expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain(
       "首字符必须是 <",
     );
     expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain("标题: t");
+    expect(firstCall.branchSteeringTail).toContain("不要调用任何工具");
+    expect(firstCall.branchSteeringTail).toContain("标题: t");
+    expect(firstCall.branchSteeringTail).not.toContain("允许的块级标签与基础形状");
   });
 
   it("Anthropic 协议也保留 V4 messages 上下文", async () => {

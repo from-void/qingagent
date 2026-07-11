@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hasVisibleSvgContent, sanitizeSvg } from "../browser/svgSanitize.js";
+import { buildGenerateSvgBranchTail } from "../tools/generateSvg.js";
 
 const size = { width: 800, height: 450 };
 
@@ -14,5 +15,13 @@ describe("generateSvg SVG content validation", () => {
     expect(hasVisibleSvgContent(empty)).toBe(false);
     expect(hasVisibleSvgContent(scriptOnly)).toBe(false);
     expect(hasVisibleSvgContent(visible)).toBe(true);
+  });
+
+  it("BranchCall 尾巴保留 SVG 专有安全规则与任务，并明确抑制工具", () => {
+    const tail = buildGenerateSvgBranchTail("严禁 script 与外链", "插图内容：缓存树");
+    expect(tail).toContain("不要调用任何工具");
+    expect(tail).toContain("严禁 script 与外链");
+    expect(tail).toContain("插图内容：缓存树");
+    expect(tail).toContain("只输出一个完整 SVG 元素");
   });
 });

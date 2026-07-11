@@ -96,8 +96,13 @@ async function primeSnapshot(sessionId: string, topic: string) {
   return { context, snapshot };
 }
 
-function validQuestions(questions: Awaited<ReturnType<typeof generateQuestions>>["questions"]): boolean {
-  if (questions.length < 1 || questions.length > 4) return false;
+function validQuestions(
+  questions: Awaited<ReturnType<typeof generateQuestions>>["questions"],
+  mode: "initial" | "additional",
+): boolean {
+  const min = mode === "initial" ? 2 : 1;
+  const max = mode === "initial" ? 4 : 3;
+  if (questions.length < min || questions.length > max) return false;
   const ids = new Set<string>();
   for (const question of questions) {
     if (!question.id || ids.has(question.id) || !question.label.trim()) return false;
@@ -106,6 +111,7 @@ function validQuestions(questions: Awaited<ReturnType<typeof generateQuestions>>
     if ((question.kind === "single" || question.kind === "multi") && question.options.length === 0) return false;
     if ((question.kind === "text" || question.kind === "slider") && question.options.length !== 0) return false;
   }
+  if (mode === "initial" && !questions.some((question) => question.kind === "text")) return false;
   return true;
 }
 
@@ -158,8 +164,8 @@ for (let index = 0; index < topics.length; index += 1) {
     topic,
     initial,
     additional,
-    initialValid: validQuestions(initial.questions),
-    additionalValid: validQuestions(additional.questions),
+    initialValid: validQuestions(initial.questions, "initial"),
+    additionalValid: validQuestions(additional.questions, "additional"),
   });
 
   const old = await generateQuestions({
@@ -168,7 +174,7 @@ for (let index = 0; index < topics.length; index += 1) {
     rationale: "在落稿前确认受众、侧重点、篇幅与补充要求",
     topic,
   });
-  qualityRuns.push({ mode: "old", topic, result: old, valid: validQuestions(old.questions) });
+  qualityRuns.push({ mode: "old", topic, result: old, valid: validQuestions(old.questions, "initial") });
 }
 
 await new Promise((resolveWait) => setTimeout(resolveWait, 1000));

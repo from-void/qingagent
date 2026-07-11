@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RequestContext } from "@mastra/core/request-context";
 
 const mocks = vi.hoisted(() => ({
   branchCall: vi.fn(),
@@ -22,6 +23,7 @@ const snapshot = {
   sessionId: "gen-session",
   streamId: "stream-main",
   generation: 3,
+  leaseId: "lease-gen-service",
   ordinal: 2,
   epoch: 0,
   capturedAt: "2026-07-11T00:00:00.000Z",
@@ -139,6 +141,30 @@ describe("GenService", () => {
     })]);
   });
 
+  it("缺 id/kind 的真实脏问题可按序补齐，不让终态问卷清空", () => {
+    expect(parseGeneratedQuestions(`[
+      {"label":"偏向哪种语气？","options":[{"value":"warm","label":"温暖"}]},
+      {"label":"还有什么补充？","options":[]}
+    ]`)).toEqual([
+      expect.objectContaining({ id: "q1", kind: "single" }),
+      expect.objectContaining({ id: "q2", kind: "text" }),
+    ]);
+  });
+
+  it("fallback 最终 JSON 截断时保留已流出的完整问题", async () => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    mocks.streamText.mockReturnValue({
+      textStream: textStream('[{"label":"已完成问题","options":[]},{"label":"半截"'),
+    });
+
+    const result = await generateQuestions({ mode: "initial", rationale: "r", topic: "t" });
+
+    expect(result.questions).toEqual([
+      expect.objectContaining({ id: "q1", label: "已完成问题", kind: "text" }),
+    ]);
+    expect(mocks.streamText).toHaveBeenCalledTimes(2);
+  });
+
   it("fallback 恢复按完整问题递增的进度，并保留原 prompt 语义约束", async () => {
     mocks.getSessionSnapshot.mockReturnValue(null);
     mocks.streamText.mockReturnValue({
@@ -153,6 +179,9 @@ describe("GenService", () => {
       mode: "initial",
       rationale: "r",
       topic: "t",
+      requestContext: new RequestContext([
+        ["messages", [{ role: "user", content: "已说明给企业管理层阅读" }]],
+      ] as never) as RequestContext,
       onProgress: (questions) => { progress.push(questions.length); },
     });
 
@@ -161,8 +190,8 @@ describe("GenService", () => {
     const prompt = mocks.streamText.mock.calls[0]?.[0].prompt as string;
     expect(prompt).toContain("最大值滑到头必须用 aboveLabel");
     expect(prompt).toContain("不得出现 run_js、readDraft");
-    expect(prompt).toContain("根据以下写作方向");
-    expect(prompt).not.toContain("根据主对话");
+    expect(prompt).toContain("根据下面的主对话摘要和写作方向");
+    expect(prompt).toContain("已说明给企业管理层阅读");
   });
 
   it("预取消时不发 branch 或 fallback 请求", async () => {

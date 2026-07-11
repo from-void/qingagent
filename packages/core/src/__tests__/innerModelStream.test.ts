@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const streamTextMock = vi.hoisted(() => vi.fn());
 const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({ modelId: "mock" })));
 const resolveProtocolMock = vi.hoisted(() => vi.fn(() => "openai"));
+const branchCallMock = vi.hoisted(() => vi.fn());
+const getSessionSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("ai", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", () => ({
+  branchCall: branchCallMock,
   getDeepseekModel: getDeepseekModelMock,
+  getSessionSnapshot: getSessionSnapshotMock,
   resolveProtocol: resolveProtocolMock,
 }));
 
@@ -22,6 +26,9 @@ describe("streamInnerModel", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
     getDeepseekModelMock.mockClear();
+    branchCallMock.mockReset();
+    getSessionSnapshotMock.mockReset();
+    getSessionSnapshotMock.mockReturnValue(null);
     resolveProtocolMock.mockReturnValue("openai");
   });
 
@@ -70,6 +77,72 @@ describe("streamInnerModel", () => {
       thinking: false,
       temperature: 0.4,
     })).rejects.toBe(error);
+  });
+
+  it("有快照时借道并透传 lane/采样/流式回调，不再发独立 streamText", async () => {
+    const snapshot = { sessionId: "s" };
+    getSessionSnapshotMock.mockReturnValue(snapshot);
+    branchCallMock.mockImplementationOnce(async (input: { onTextDelta?: (delta: string, raw: string) => void }) => {
+      input.onTextDelta?.("甲", "甲");
+      input.onTextDelta?.("乙", "甲乙");
+      return { ok: true, text: "甲乙", finishReason: "stop", attempts: 1, toolCallRetries: 0 };
+    });
+    const deltas: string[] = [];
+
+    const result = await streamInnerModel({
+      callSite: "writeDraft",
+      lane: 2,
+      attempt: 4,
+      messages: [{ role: "user", content: "fallback" }],
+      branchSteeringTail: "不要调用工具，输出 QingML",
+      thinking: false,
+      temperature: 0.4,
+      maxTokens: 4096,
+      onContentDelta: (_delta, raw) => deltas.push(raw),
+    });
+
+    expect(result).toMatchObject({ raw: "甲乙", finishReason: "stop" });
+    expect(deltas).toEqual(["甲", "甲乙"]);
+    expect(branchCallMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionSnapshot: snapshot,
+      callSite: "writeDraft",
+      lane: 2,
+      attempt: 4,
+      thinking: false,
+      temperature: 0.4,
+      maxTokens: 4096,
+      streamTextDeltas: true,
+    }));
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("BranchCall 单次失败时完整降级原 streamText 路径", async () => {
+    getSessionSnapshotMock.mockReturnValue({ sessionId: "s" });
+    branchCallMock.mockResolvedValueOnce({
+      ok: false,
+      reason: "tool_call",
+      attempts: 2,
+      toolCallRetries: 1,
+    });
+    streamTextMock.mockReturnValue({ fullStream: fullStream([
+      { type: "text-delta", textDelta: "降级成功" },
+      { type: "finish", finishReason: "stop" },
+    ]) });
+
+    const result = await streamInnerModel({
+      callSite: "generateSvg",
+      attempt: 4,
+      prompt: "画图",
+      branchSteeringTail: "只输出 SVG",
+      thinking: false,
+      temperature: 0.4,
+    });
+
+    expect(result.raw).toBe("降级成功");
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(getDeepseekModelMock).toHaveBeenCalledWith(undefined, "flash", expect.objectContaining({
+      attempt: 6,
+    }));
   });
 
   it("Anthropic thinking 使用原生 providerOptions 且不传 temperature", async () => {

@@ -141,6 +141,16 @@ export function clearSessionSnapshot(sessionId: string): void {
   sessionSnapshots.delete(sessionId);
 }
 
+/** OM 压缩边界推进 epoch；旧 body 不改写，但不再作为未来主轮的默认分支前缀。 */
+export function advanceSessionSnapshotEpoch(sessionId: string): number {
+  const entry = sessionSnapshots.get(sessionId);
+  if (!entry) return 0;
+  entry.epoch += 1;
+  entry.snapshot = null;
+  entry.touchedAt = Date.now();
+  return entry.epoch;
+}
+
 function authFingerprint(apiKey: string, endpoint: string, modelId: unknown): string {
   return createHash("sha256")
     .update(`${apiKey}\0${endpoint}\0${String(modelId ?? "")}`)
@@ -239,6 +249,8 @@ export interface BranchCallInput {
   attempt?: number;
   abortSignal?: AbortSignal;
   onTextDelta?: (delta: string, accumulated: string) => void | Promise<void>;
+  /** 原始响应每次有网络活动即触发；不代表文本已通过 tool/lease 验真。 */
+  onActivity?: () => void | Promise<void>;
   /** 兼容调用方意图；为保证 tool/lease 验真，文本会在完整响应确认后统一提交。 */
   streamTextDeltas?: boolean;
   thinking?: boolean;
@@ -293,6 +305,7 @@ function extractRawChunk(payload: unknown, state: RawBranchResponse): void {
 async function readRawBranchResponse(
   response: Response,
   onTextDelta?: BranchCallInput["onTextDelta"],
+  onActivity?: BranchCallInput["onActivity"],
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
@@ -303,6 +316,7 @@ async function readRawBranchResponse(
   };
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
+    await onActivity?.();
     extractRawChunk(await response.json(), state);
     if (state.text && onTextDelta) await onTextDelta(state.text, state.text);
     return state;
@@ -326,6 +340,7 @@ async function readRawBranchResponse(
   };
   for (;;) {
     const { done, value } = await reader.read();
+    if (!done || value) await onActivity?.();
     buffer += decoder.decode(value, { stream: !done });
     let boundary = buffer.search(/\r?\n\r?\n/);
     while (boundary >= 0) {
@@ -456,7 +471,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         };
       }
       // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
-      const raw = await readRawBranchResponse(response);
+      const raw = await readRawBranchResponse(response, undefined, input.onActivity);
       void recordBranchUsage(input, raw.usage, attempt, null);
       if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
@@ -477,6 +492,9 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
       await input.onTextDelta?.(raw.text, raw.text);
+      if (!ownsCurrentLease() || input.abortSignal?.aborted) {
+        return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
+      }
       return {
         ok: true,
         text: raw.text,

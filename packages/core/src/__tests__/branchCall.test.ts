@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
 vi.mock("../db/usageRepo.js", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
 
 import {
+  advanceSessionSnapshotEpoch,
   beginSessionSnapshotTurn,
   branchCall,
   clearSessionSnapshot,
@@ -62,7 +63,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     vi.unstubAllGlobals();
     if (originalApiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalApiKey;
-    for (const id of ["snapshot-basic", "snapshot-race", "snapshot-schema", "snapshot-lease", "snapshot-aba", "branch-success", "branch-tool", "branch-sse", "branch-ledger", "branch-abort", "branch-inflight", "branch-http-error"]) {
+    for (const id of ["snapshot-basic", "snapshot-race", "snapshot-schema", "snapshot-lease", "snapshot-aba", "branch-success", "branch-tool", "branch-sse", "branch-ledger", "branch-abort", "branch-inflight", "branch-callback-race", "branch-http-error", "branch-parse-error"]) {
       clearSessionSnapshot(id);
     }
   });
@@ -136,6 +137,17 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext: oldContext,
     })).resolves.toMatchObject({ reason: "stale_snapshot", attempts: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("OM 压缩边界推进 epoch 后未来主干不再取得旧快照", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => emptySse()));
+    const requestContext = context("snapshot-lease", "stream-epoch");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "epoch-zero");
+    expect(getSessionSnapshot(requestContext)?.epoch).toBe(0);
+
+    expect(advanceSessionSnapshotEpoch("snapshot-lease")).toBe(1);
+    expect(getSessionSnapshot("snapshot-lease")).toBeNull();
   });
 
   it("clear 后复用同一 sessionId，旧 context 的迟到 fetch 不形成 ABA 覆盖", async () => {
@@ -250,6 +262,38 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(deltas).toEqual([]);
   });
 
+  it("文本回调挂起期间切换 generation，回调返回后结果仍判 stale", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-callback-race", "stream-old");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(jsonResponse(
+      { role: "assistant", content: "旧轮结果" },
+      { prompt_tokens: 10, completion_tokens: 2 },
+    ));
+    let releaseCallback!: () => void;
+    const callbackEntered = new Promise<void>((resolve) => { releaseCallback = resolve; });
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    const pending = branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "writeDraft",
+      requestContext,
+      onTextDelta: async () => {
+        releaseCallback();
+        await blocked;
+      },
+    });
+    await callbackEntered;
+    beginSessionSnapshotTurn(context("branch-callback-race", "stream-new"));
+    unblock();
+
+    await expect(pending).resolves.toMatchObject({ reason: "stale_snapshot", attempts: 1 });
+  });
+
   it("遇到 tool_call 弃用并只重试一次，两次 usage 均入账", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
@@ -301,17 +345,20 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       },
     }), { headers: { "content-type": "text/event-stream" } }));
     const deltas: string[] = [];
+    let activities = 0;
 
     const result = await branchCall({
       sessionSnapshot: snapshot,
       steeringTail: "不要调用任何工具。",
       callSite: "planDraft",
       requestContext,
+      onActivity: () => { activities += 1; },
       onTextDelta: (delta) => { deltas.push(delta); },
     });
 
     expect(result).toMatchObject({ ok: true, text: "甲乙" });
     expect(deltas).toEqual(["甲乙"]);
+    expect(activities).toBeGreaterThanOrEqual(3);
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       usageState: "missing",
       reason: "provider_usage_missing",
@@ -363,6 +410,29 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       usageState: "missing",
       reason: "provider_http_502",
       attempt: 1,
+    })));
+  });
+
+  it("raw 流解析错误写入一笔 missing usage", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-parse-error", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response("data: {broken-json}\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    }));
+
+    await expect(branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+    })).resolves.toMatchObject({ reason: "provider_error", attempts: 1 });
+    await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "missing",
+      reason: "provider_request_error",
     })));
   });
 

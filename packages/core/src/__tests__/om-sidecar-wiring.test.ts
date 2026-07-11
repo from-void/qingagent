@@ -97,6 +97,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     if (originalSidecar === undefined) delete process.env.QINGAGENT_OM_SIDECAR;
     else process.env.QINGAGENT_OM_SIDECAR = originalSidecar;
     if (originalCompress === undefined) delete process.env.QINGAGENT_OM_COMPRESS;
@@ -105,13 +106,80 @@ describe("OM sidecar 接线形状", () => {
     else process.env.QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS = originalThreshold;
   });
 
+  it("OM model 在主链快照可用时通过 BranchCall 生成并按 omObserve 记调用", async () => {
+    const {
+      beginSessionSnapshotTurn,
+      createSnapshottingQingagentModel,
+    } = await import("../llm/modelConfig.js");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("data: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const modelOverrides = {
+      visitorApiKey: "visitor-key",
+      baseUrl: "https://example.test/v1",
+      modelIds: { flash: "deepseek-v4-flash" },
+      protocol: "openai",
+    };
+    const mainContext = new RequestContext([
+      ["sessionId", "om-wire-branch"],
+      ["streamId", "stream-main"],
+      ["modelOverrides", modelOverrides],
+    ] as never) as RequestContext;
+    beginSessionSnapshotTurn(mainContext);
+    const mainModel = createSnapshottingQingagentModel(mainContext);
+    const primed = await mainModel.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "主链锚点" }] }],
+      tools: [],
+      toolChoice: { type: "auto" },
+    } as never);
+    await primed.stream.pipeTo(new WritableStream());
+
+    mockState.setStatus({ shouldObserve: true, shouldBuffer: false });
+    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const state = createSession("om-wire-branch");
+    state.threadId = state.sessionId;
+    state.messages.push({ role: "user", content: "需要观察的事实" });
+    await runOmSidecarAfterTurn(state, mainContext);
+
+    const om = mockState.omInstances[0]!;
+    const sidecarContext = om.observe.mock.calls[0][0].requestContext as RequestContext;
+    const modelFactory = om.config.model as (input: { requestContext?: RequestContext }) => any;
+    const observerModel = modelFactory({ requestContext: sidecarContext });
+    fetchMock.mockResolvedValueOnce(Response.json({
+      id: "om-branch",
+      model: "deepseek-v4-flash",
+      choices: [{ message: { role: "assistant", content: "- 用户需要严谨表达" }, finish_reason: "stop" }],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 8,
+        prompt_cache_hit_tokens: 95,
+        prompt_cache_miss_tokens: 5,
+      },
+    }));
+    const generated = await observerModel.doGenerate({
+      prompt: [
+        { role: "system", content: "提炼长期观察" },
+        { role: "user", content: [{ type: "text", text: "请提炼" }] },
+      ],
+    });
+
+    expect(generated.content).toEqual([{ type: "text", text: "- 用户需要严谨表达" }]);
+    const replayBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(replayBody.messages.at(-1).content).toContain("长期观察提炼任务");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("用 thread scope sidecar 持久化 MastraDBMessage，并以对象参数触发 buffer", async () => {
     const { getOmObservations, runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
     const state = createSession("om-wire-buffer");
     state.threadId = state.sessionId;
     state.messages.push({ role: "user", content: "第一轮" });
 
-    await runOmSidecarAfterTurn(state);
+    await runOmSidecarAfterTurn(state, new RequestContext([
+      ["sessionId", state.sessionId],
+    ] as never));
 
     const om = mockState.omInstances[0]!;
     expect(om.config).toMatchObject({
@@ -183,7 +251,9 @@ describe("OM sidecar 接线形状", () => {
     state.threadId = state.sessionId;
     state.messages.push({ role: "user", content: "第一轮" });
 
-    await runOmSidecarAfterTurn(state);
+    await runOmSidecarAfterTurn(state, new RequestContext([
+      ["sessionId", state.sessionId],
+    ] as never));
 
     const om = mockState.omInstances[0]!;
     expect(om.observe).toHaveBeenCalledWith(expect.objectContaining({
@@ -193,6 +263,7 @@ describe("OM sidecar 接线形状", () => {
         expect.objectContaining({ id: "om-wire-observe-1-1" }),
       ]),
     }));
+    expect(om.observe.mock.calls[0][0].requestContext.get("omBranchCallSite")).toBe("omObserve");
     expect(om.buffer).not.toHaveBeenCalled();
     expect(om.reflect).not.toHaveBeenCalled();
   });
@@ -251,15 +322,18 @@ describe("OM sidecar 接线形状", () => {
     state.omObservedMessageIds = ["legacy-observed"];
     state.messages.push({ role: "user", content: "第一轮" });
 
-    await runOmSidecarAfterTurn(state);
+    await runOmSidecarAfterTurn(state, new RequestContext([
+      ["sessionId", state.sessionId],
+    ] as never));
 
     const om = mockState.omInstances[0]!;
     expect(om.reflect).toHaveBeenCalledWith(
       "om-sidecar:om-wire-reflect",
       "qingagent-user:om-sidecar",
       undefined,
-      undefined,
+      expect.any(RequestContext),
     );
+    expect(om.reflect.mock.calls[0][3].get("omBranchCallSite")).toBe("omReflect");
     expect(state.omObservedMessageIds).toEqual([
       "legacy-observed",
       "om-wire-reflect-1-1",

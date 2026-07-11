@@ -11,7 +11,7 @@ const matrix: Array<{ file: string; callSites: string[] }> = [
   { file: "packages/core/src/tools/readImage.ts", callSites: ["readImage"] },
   { file: "packages/core/src/llm/visionTest.ts", callSites: ["visionTest"] },
   { file: "packages/core/src/search/deepseekWebSearch.ts", callSites: ["webSearch"] },
-  { file: "packages/core/src/bridge/omSidecar.ts", callSites: ["omSidecar"] },
+  { file: "packages/core/src/bridge/omSidecar.ts", callSites: ["omObserve", "omReflect"] },
   {
     file: "packages/core/src/agents/processors.ts",
     callSites: ["guardPii", "guardPromptInjection", "guardModeration"],

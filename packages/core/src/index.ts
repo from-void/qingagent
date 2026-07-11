@@ -79,6 +79,7 @@ export {
   resolveModelTier,
   createDeepseekProvider,
   beginSessionSnapshotTurn,
+  advanceSessionSnapshotEpoch,
   clearSessionSnapshot,
   getDeepseekModel,
   sanitizeBaseUrl,

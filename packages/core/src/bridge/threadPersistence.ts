@@ -154,6 +154,12 @@ export interface QingagentThreadMetadata {
   omObservedMessageIds?: string[];
   /** Single-way latch for compressed OM model projection. */
   omCompressionActive?: boolean;
+  omCompressionEpoch?: number;
+  omCompressionSnapshot?: {
+    epoch: number;
+    observations: string;
+    removedMessageIds: string[];
+  } | null;
   askUserCompleted: boolean;
   askUserAsked?: boolean;
   directionChangeAskedSinceLastWrite?: boolean;
@@ -353,13 +359,22 @@ function serializeOmMetadata(state: SessionState): Partial<QingagentThreadMetada
   const hasOmState = state.turnCounter > 0 ||
     state.omSidecarCursor != null ||
     observedMessageIds.length > 0 ||
-    state.omCompressionActive === true;
+    state.omCompressionActive === true ||
+    (state.omCompressionEpoch ?? 0) > 0;
   if (!hasOmState) return {};
   return {
     turnCounter: state.turnCounter,
     omSidecarCursor: state.omSidecarCursor ?? null,
     omObservedMessageIds: observedMessageIds,
     omCompressionActive: state.omCompressionActive === true,
+    omCompressionEpoch: state.omCompressionEpoch ?? 0,
+    omCompressionSnapshot: state.omCompressionSnapshot
+      ? {
+          epoch: state.omCompressionSnapshot.epoch,
+          observations: state.omCompressionSnapshot.observations,
+          removedMessageIds: [...state.omCompressionSnapshot.removedMessageIds],
+        }
+      : null,
   };
 }
 
@@ -1580,6 +1595,21 @@ export async function loadSessionFromThread(
     omSidecarCursor: deserializeOmSidecarCursor(meta.omSidecarCursor),
     omObservedMessageIds: deserializeOmObservedMessageIds(meta.omObservedMessageIds),
     omCompressionActive: meta.omCompressionActive === true,
+    omCompressionEpoch: Number.isInteger(meta.omCompressionEpoch) && meta.omCompressionEpoch! >= 0
+      ? meta.omCompressionEpoch!
+      : 0,
+    omCompressionSnapshot: meta.omCompressionSnapshot &&
+        Number.isInteger(meta.omCompressionSnapshot.epoch) &&
+        typeof meta.omCompressionSnapshot.observations === "string" &&
+        Array.isArray(meta.omCompressionSnapshot.removedMessageIds)
+      ? {
+          epoch: meta.omCompressionSnapshot.epoch,
+          observations: meta.omCompressionSnapshot.observations,
+          removedMessageIds: meta.omCompressionSnapshot.removedMessageIds.filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ),
+        }
+      : null,
     title: meta.title ?? thread.title ?? "",
     docState: meta.docState,
     messages,

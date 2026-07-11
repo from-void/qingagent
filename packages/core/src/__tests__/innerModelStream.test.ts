@@ -82,9 +82,13 @@ describe("streamInnerModel", () => {
   it("有快照时借道并透传 lane/采样/流式回调，不再发独立 streamText", async () => {
     const snapshot = { sessionId: "s" };
     getSessionSnapshotMock.mockReturnValue(snapshot);
-    branchCallMock.mockImplementationOnce(async (input: { onTextDelta?: (delta: string, raw: string) => void }) => {
-      input.onTextDelta?.("甲", "甲");
-      input.onTextDelta?.("乙", "甲乙");
+    branchCallMock.mockImplementationOnce(async (input: {
+      onActivity?: () => void;
+      onTextDelta?: (delta: string, raw: string) => void;
+    }) => {
+      input.onActivity?.();
+      input.onActivity?.();
+      input.onTextDelta?.("甲乙", "甲乙");
       return { ok: true, text: "甲乙", finishReason: "stop", attempts: 1, toolCallRetries: 0 };
     });
     const deltas: string[] = [];
@@ -102,7 +106,7 @@ describe("streamInnerModel", () => {
     });
 
     expect(result).toMatchObject({ raw: "甲乙", finishReason: "stop" });
-    expect(deltas).toEqual(["甲", "甲乙"]);
+    expect(deltas).toEqual(["甲乙"]);
     expect(branchCallMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionSnapshot: snapshot,
       callSite: "writeDraft",

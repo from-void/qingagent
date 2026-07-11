@@ -133,6 +133,13 @@ describe("generateDoc QingML helpers", () => {
     expect(prompt).toContain("真实URL");
   });
 
+  it("主 system 含目录 anchor 与 href 对应的可执行范本", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    expect(prompt).toContain('<h2 anchor="market">市场分析</h2>');
+    expect(prompt).toContain('<a href="#market">市场分析</a>');
+    expect(prompt).toContain("禁止只写纯文本目录");
+  });
+
   // 回归 search-ref-not-citation-block(数据链路):抓取类素材的来源 URL 必须进生成 material
   // context,否则模型看不到 url 无法挂链接。上传类(sourceUrl=null)不加 URL 标注。
   it("materialContextFrom 把抓取素材的来源URL喂进生成上下文", () => {

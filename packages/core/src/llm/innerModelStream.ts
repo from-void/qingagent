@@ -54,6 +54,14 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       thinking: input.thinking,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
+      onActivity: () => {
+        if (contentStartMs === null) {
+          contentStartMs = Date.now() - startedAt;
+          input.onContentStart?.(contentStartMs);
+        } else {
+          input.onContentStart?.(contentStartMs);
+        }
+      },
       onTextDelta: (delta, raw) => {
         if (contentStartMs === null) {
           contentStartMs = Date.now() - startedAt;

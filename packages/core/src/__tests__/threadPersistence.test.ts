@@ -351,6 +351,8 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.omSidecarCursor).toEqual(original.omSidecarCursor);
   expect(restored?.omObservedMessageIds).toEqual(original.omObservedMessageIds);
   expect(restored?.omCompressionActive).toBe(original.omCompressionActive);
+  expect(restored?.omCompressionEpoch).toBe(original.omCompressionEpoch);
+  expect(restored?.omCompressionSnapshot).toEqual(original.omCompressionSnapshot);
   expect(restored?.title).toBe(original.title);
   expect(restored?.docState).toEqual(original.docState);
   expect(restored?.messages).toEqual(original.messages);
@@ -997,6 +999,12 @@ describe("thread persistence", () => {
     state.omSidecarCursor = { turnIndex: 6, seqInTurn: 2 };
     state.omObservedMessageIds = ["session-full-1-1", "session-full-1-2"];
     state.omCompressionActive = true;
+    state.omCompressionEpoch = 2;
+    state.omCompressionSnapshot = {
+      epoch: 2,
+      observations: "- 冷恢复稳定观察块",
+      removedMessageIds: ["session-full-1-1", "session-full-1-2"],
+    };
     state._askUserCompleted = true;
     state._directionChangeAskedSinceLastWrite = true;
     state.chatHistory = [chatMessage("chat-1")];
@@ -1253,6 +1261,8 @@ describe("thread persistence", () => {
     expect(persisted).not.toHaveProperty("omSidecarCursor");
     expect(persisted).not.toHaveProperty("omObservedMessageIds");
     expect(persisted).not.toHaveProperty("omCompressionActive");
+    expect(persisted).not.toHaveProperty("omCompressionEpoch");
+    expect(persisted).not.toHaveProperty("omCompressionSnapshot");
   });
 
   it("restores old material metadata without parseState as ready", async () => {

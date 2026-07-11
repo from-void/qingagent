@@ -101,6 +101,14 @@ export interface SessionState {
   omObservedMessageIds?: string[];
   /** Single-way latch: once true, model input uses the compressed OM projection. */
   omCompressionActive?: boolean;
+  /** Monotonic compression epoch, advanced only at a turn boundary. */
+  omCompressionEpoch?: number;
+  /** Frozen head replacement for byte-stable projection within an epoch. */
+  omCompressionSnapshot?: {
+    epoch: number;
+    observations: string;
+    removedMessageIds: string[];
+  } | null;
   title: string;
   docState: DocState;
   messages: CoreMessage[];
@@ -271,6 +279,8 @@ export function createSession(
     omSidecarCursor: null,
     omObservedMessageIds: [],
     omCompressionActive: false,
+    omCompressionEpoch: 0,
+    omCompressionSnapshot: null,
     title: "",
     docState: { kind: "empty" },
     messages: [],

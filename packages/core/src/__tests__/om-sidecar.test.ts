@@ -401,6 +401,12 @@ describe("OM sidecar 稳定映射与投影", () => {
     expect(context.compressed).toBe(true);
     expect(context.messagesForModel).toBe(state.messages);
     expect(context.tailObservationPrompt).toBeNull();
+    expect(state.omCompressionSnapshot).toEqual({
+      epoch: 1,
+      observations: "",
+      removedMessageIds: [],
+    });
+    expect(state.omCompressionEpoch).toBe(1);
 
     const projection = buildOmCompressedProjection({
       sessionId: "s",
@@ -461,7 +467,9 @@ describe("OM sidecar 稳定映射与投影", () => {
     expect(content).not.toContain("- 旧观察");
   });
 
-  it("两个 OM flag 默认关闭时不注入长期观察，模型输入仍使用原 state.messages 引用", async () => {
+  it("两个 OM flag 显式关闭时不注入长期观察，模型输入仍使用原 state.messages 引用", async () => {
+    process.env.QINGAGENT_OM_SIDECAR = "0";
+    process.env.QINGAGENT_OM_COMPRESS = "0";
     const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
     const state = createSession("om-flags-off");
 
@@ -544,7 +552,9 @@ describe("OM sidecar 稳定映射与投影", () => {
     expect(state.turnCounter).toBe(1);
   });
 
-  it("20 轮历史前缀在 OM 关闭时逐字节不变", async () => {
+  it("20 轮历史前缀在 OM 显式关闭时逐字节不变", async () => {
+    process.env.QINGAGENT_OM_SIDECAR = "0";
+    process.env.QINGAGENT_OM_COMPRESS = "0";
     const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
     const state = createSession("om-prefix-stable");
     state.messages.push(...turnMessages(20));
@@ -554,5 +564,38 @@ describe("OM sidecar 稳定映射与投影", () => {
 
     expect(JSON.stringify(state.messages.slice(0, 40))).toBe(prefixBefore);
     expect(state.turnCounter).toBe(0);
+  });
+
+  it("OM 与压缩缺省开启，默认阈值固定为 500k", async () => {
+    const {
+      isOmCompressionEnabled,
+      isOmSidecarEnabled,
+      omCompressionThresholdTokens,
+    } = await import("../bridge/omSidecar.js");
+    expect(isOmSidecarEnabled({})).toBe(true);
+    expect(isOmCompressionEnabled({})).toBe(true);
+    expect(omCompressionThresholdTokens({})).toBe(500_000);
+  });
+
+  it("同一压缩 epoch 的头部观察块字节稳定，后续消息只追加不重算", async () => {
+    const state = createSession("om-frozen-epoch");
+    state.messages.push(...turnMessages(3));
+    state.turnCounter = 3;
+    state.omCompressionActive = true;
+    state.omCompressionEpoch = 1;
+    state.omCompressionSnapshot = {
+      epoch: 1,
+      observations: "- 冻结观察块",
+      removedMessageIds: [makeOmMessageId(state.sessionId, 1, 1), makeOmMessageId(state.sessionId, 1, 2)],
+    };
+    const first = await prepareOmContextForTurn(state);
+    const firstHead = JSON.stringify(first.messagesForModel.slice(0, 2));
+    state.messages.push({ role: "user", content: "第四轮" });
+    state.turnCounter = 4;
+    const second = await prepareOmContextForTurn(state);
+
+    expect(JSON.stringify(second.messagesForModel.slice(0, 2))).toBe(firstHead);
+    expect(allText(second.messagesForModel)).toContain("第四轮");
+    expect(state.omCompressionEpoch).toBe(1);
   });
 });

@@ -5,6 +5,56 @@ import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
+  it("含 span 表走 HTML，保真 bg/colwidth/多块 cell 并可往返", () => {
+    const source: PmDoc = {
+      type: "doc", attrs: { schemaVersion: 1 }, content: [{
+        type: "table", attrs: { blockId: "span-table" }, content: [
+          { type: "tableRow", content: [{
+            type: "tableHeader",
+            attrs: { colspan: 2, rowspan: 2, colwidth: [120, 180], backgroundColor: "rose" },
+            content: [
+              paragraph("span-p", "结论"),
+              { type: "bulletList", attrs: { blockId: "span-list" }, content: [{
+                type: "listItem", attrs: { blockId: "span-li" }, content: [paragraph("span-li-p", "依据")],
+              }] },
+            ],
+          }, headerCell("h3", "旁列")] },
+          { type: "tableRow", content: [dataCell("b3", "下列")] },
+        ],
+      }],
+    };
+    const markdown = pmToMarkdown(source);
+    expect(markdown).toContain('<th colspan="2" rowspan="2" colwidth="120,180" data-bg-color="rose"');
+    expect(markdown).toContain("<ul><li><p>依据</p></li></ul>");
+    const roundTrip = markdownToPm(markdown);
+    expect(safeParsePmDoc(roundTrip).success).toBe(true);
+    const table = roundTrip.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    expect(table.content[0]!.content[0]!.attrs).toMatchObject({
+      colspan: 2, rowspan: 2, colwidth: [120, 180], backgroundColor: "rose",
+    });
+    expect(table.content[0]!.content[0]!.content.map((block) => block.type)).toEqual(["paragraph", "bulletList"]);
+  });
+
+  it.each([
+    '<table><tr><td><script>alert(1)</script><p>安全</p></td></tr></table>',
+    '<table><tr><td><a href="javascript:alert(1)" onclick="alert(2)">文字</a></td></tr></table>',
+  ])("HTML table 危险标签/属性剥除且不进入 PM: %s", (html) => {
+    const parsed = markdownToPm(html);
+    expect(JSON.stringify(parsed)).not.toMatch(/script|javascript:|onclick|alert\(/);
+    expect(safeParsePmDoc(parsed).success).toBe(true);
+  });
+
+  it.each([
+    "<table><tr><td><p>截断</td></tr></table>",
+    `<table>${"<tbody>".repeat(40)}<tr><td><p>过深</p></td></tr>${"</tbody>".repeat(40)}</table>`,
+    '<table><tr><td colspan="2" colwidth="100"><p>错宽</p></td></tr></table>',
+  ])("HTML table 畸形/超深输入整段降级纯文本: %s", (html) => {
+    const parsed = markdownToPm(html);
+    expect(parsed.content).toHaveLength(1);
+    expect(parsed.content[0]?.type).toBe("paragraph");
+    expect(parsed.content[0]?.type === "paragraph" ? parsed.content[0].content?.[0]?.type : null).toBe("text");
+  });
   it("round-trips the restricted markdown block set through PM", () => {
     const markdown = [
       "# 标题",

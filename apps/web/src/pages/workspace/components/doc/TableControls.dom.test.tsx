@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { CellSelection } from "@tiptap/pm/tables";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { selectTableColumns, TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableControls } from "./TableControls";
@@ -200,6 +200,36 @@ async function mouseDown(element: Element | null): Promise<void> {
 }
 
 describe("TableControls 真选区与 chrome", () => {
+  it("HTML 粘贴合并表后可显示逻辑列头、删列、AI 回填并正确导出 md", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    const tail = editor.view.dom.querySelector('[data-block-id="tail"]')?.firstChild;
+    if (!tail) throw new Error("tail not found");
+    editor.commands.setTextSelection(editor.view.posAtDOM(tail, 0));
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: {
+      files: [],
+      getData: (type: string) => type === "text/html"
+        ? '<table><tr><th colspan="2">合并头</th><th>右</th></tr><tr><td rowspan="2">跨行</td><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>'
+        : "",
+      setData: () => undefined,
+    } });
+    editor.view.dom.dispatchEvent(event);
+    const pasted = editor.view.dom.querySelectorAll("table")[1];
+    expect(pasted).toBeTruthy();
+    const text = pasted?.querySelector("td")?.firstChild;
+    if (!text) throw new Error("pasted cell not found");
+    editor.commands.setTextSelection(editor.view.posAtDOM(text, 0));
+    const { onAiModify } = await renderControls(editor);
+    expect(portal.querySelectorAll(".tbl-col-hdr")).toHaveLength(3);
+    await mouseDown(portal.querySelectorAll(".tbl-col-hdr")[2] ?? null);
+    const ai = portal.querySelector<HTMLButtonElement>('.tbl-sel-toolbar [title="发送到对话"]');
+    expect(ai?.disabled).toBe(false);
+    await act(async () => { ai?.click(); });
+    expect(onAiModify).toHaveBeenCalled();
+    await act(async () => { portal.querySelector<HTMLButtonElement>('.tbl-sel-toolbar [title="删除列"]')?.click(); });
+    expect(pmToMarkdown(editor.getJSON() as unknown as PmDoc)).toContain("<table>");
+    expect(pmToMarkdown(editor.getJSON() as unknown as PmDoc)).toContain('rowspan="2"');
+  });
   it("行列头按下后 editor selection 是正确的 CellSelection", async () => {
     const { editor, portal } = setupTable({ blockId: "table-1" });
     await renderControls(editor);

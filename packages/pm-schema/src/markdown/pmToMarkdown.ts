@@ -1,5 +1,6 @@
 import { pmToPlainText } from "../pmToPlainText";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "../types";
+import { pmTableToHtml } from "../clipboard/pmToClipboardHtml";
 
 export function pmToMarkdown(doc: PmDoc): string {
   return doc.content.map(blockToMarkdown).filter(Boolean).join("\n\n");
@@ -178,6 +179,10 @@ function tableCellToMarkdown(cell: { content: readonly PmBlockNode[] }): string 
 }
 
 function tableToMarkdown(node: Extract<PmBlockNode, { type: "table" }>): string {
+  const hasSpan = node.content.some((row) => row.content.some((cell) =>
+    (cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1,
+  ));
+  if (hasSpan) return pmTableToHtml(node);
   const rows = node.content.map((row) =>
     row.content.map((cell) =>
       tableCellToMarkdown(cell)

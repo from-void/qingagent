@@ -10,6 +10,11 @@ interface BlockIdOccurrence {
   blockId: string;
 }
 
+interface MissingBlockId {
+  pos: number;
+  node: PmNode;
+}
+
 export const dedupeBlockIdsPluginKey = new PluginKey("qingagentDedupeBlockIds");
 
 export const DedupeBlockIds = Extension.create({
@@ -28,11 +33,17 @@ export const DedupeBlockIds = Extension.create({
           }
 
           const occurrences = collectBlockIdOccurrences(newState.doc);
+          const missing = collectMissingBlockIds(newState.doc);
           const duplicates = findDuplicateBlockIds(occurrences);
-          if (duplicates.length === 0) return null;
+          if (duplicates.length === 0 && missing.length === 0) return null;
 
           const reserved = new Set(occurrences.map((occurrence) => occurrence.blockId));
           const tr = newState.tr;
+          for (const item of missing) {
+            const nextBlockId = allocateUniqueBlockId("block-pasted", reserved);
+            reserved.add(nextBlockId);
+            tr.setNodeMarkup(item.pos, undefined, { ...item.node.attrs, blockId: nextBlockId }, item.node.marks);
+          }
           for (const duplicate of duplicates) {
             const nextBlockId = allocateUniqueBlockId(duplicate.blockId, reserved);
             reserved.add(nextBlockId);
@@ -64,6 +75,18 @@ function collectBlockIdOccurrences(doc: PmNode): BlockIdOccurrence[] {
     return true;
   });
   return occurrences;
+}
+
+function collectMissingBlockIds(doc: PmNode): MissingBlockId[] {
+  const missing: MissingBlockId[] = [];
+  doc.descendants((node, pos) => {
+    if (Object.prototype.hasOwnProperty.call(node.attrs, "blockId") &&
+      (typeof node.attrs.blockId !== "string" || node.attrs.blockId.length === 0)) {
+      missing.push({ pos, node });
+    }
+    return true;
+  });
+  return missing;
 }
 
 function findDuplicateBlockIds(occurrences: readonly BlockIdOccurrence[]): BlockIdOccurrence[] {

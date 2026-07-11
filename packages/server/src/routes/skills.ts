@@ -49,6 +49,7 @@ const BUILTIN_SKILL_ORDER = [
   "image-reading",
   "doc-calc",
   "materials",
+  "github-materials",
   "feishu",
   "wechat-official-account",
 ] as const;

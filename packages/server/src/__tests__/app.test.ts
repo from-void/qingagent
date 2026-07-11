@@ -294,13 +294,14 @@ describe("GET /api/v1/skills", () => {
       tools: ["readDocument", "searchDocuments"],
     });
     expect(byName.has("dingtalk-docs")).toBe(false);
-    expect(json.skills.map((skill) => skill.name).slice(0, 7)).toEqual([
+    expect(json.skills.map((skill) => skill.name).slice(0, 8)).toEqual([
       "browser-ops",
       "web-search",
       "image-gen",
       "image-reading",
       "doc-calc",
       "materials",
+      "github-materials",
       "feishu",
     ]);
   });

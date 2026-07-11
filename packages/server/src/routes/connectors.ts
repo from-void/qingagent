@@ -14,7 +14,7 @@ import {
 } from "../lib/connectorRuntimeGate";
 
 export interface ConnectorsRoutesOptions {
-  service?: Pick<ConnectorService, "list" | "info" | "probe" | "disconnect">;
+  service?: Pick<ConnectorService, "list" | "info" | "probe" | "disconnect"> & Partial<Pick<ConnectorService, "start">>;
   runtimeAccess?: () => ConnectorRuntimeAccess;
 }
 
@@ -62,15 +62,27 @@ export function createConnectorsRoutes(options: ConnectorsRoutesOptions = {}): H
   });
 
   routes.get("/connectors/:id", async (c) => {
-    const id = c.req.param("id");
-    if (!isConnectorId(id)) return c.json({ error: "CONNECTOR_NOT_FOUND" }, 404);
-    const access = runtimeAccess();
-    if (!access.capability.mutationEnabled) {
-      const connector = unavailableInfo(access.capability.reasonCode ?? "CONNECTORS_DISABLED")
-        .find((item) => item.id === id)!;
-      return c.json(connector);
-    }
-    return c.json(await service.info(id));
+    try {
+      const id = c.req.param("id");
+      if (!isConnectorId(id)) return c.json({ error: "CONNECTOR_NOT_FOUND" }, 404);
+      const access = runtimeAccess();
+      if (!access.capability.mutationEnabled) {
+        const connector = unavailableInfo(access.capability.reasonCode ?? "CONNECTORS_DISABLED").find((item) => item.id === id)!;
+        return c.json(connector);
+      }
+      return c.json(await service.info(id, c.req.query("pendingId")));
+    } catch (error) { return errorResponse(c, error); }
+  });
+
+  routes.post("/connectors/:id/start", async (c) => {
+    try {
+      runtimeAccess().assertMutationAllowed();
+      const id = c.req.param("id");
+      if (!isConnectorId(id)) return c.json({ error: "CONNECTOR_NOT_FOUND" }, 404);
+      const body = await c.req.json().catch(() => ({}));
+      if (!service.start) return c.json({ error: "CONNECTOR_START_UNSUPPORTED" }, 409);
+      return c.json(await service.start(id, body));
+    } catch (error) { return errorResponse(c, error); }
   });
 
   routes.post("/connectors/:id/probe", async (c) => {

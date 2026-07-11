@@ -28,6 +28,7 @@ function setup(input: { gateOn: boolean; publicDeployment: boolean; authOn: bool
   const service = {
     list: vi.fn(async () => [connector]),
     info: vi.fn(async () => connector),
+    start: vi.fn(async () => ({ user_code: "ABCD-EFGH", verification_uri: "https://example.test/device", expiresAt: "2026-07-11T12:00:00.000Z", pendingId: "pending-safe-id" })),
     probe: vi.fn(async () => connector),
     disconnect: vi.fn(async () => ({
       ...connector,
@@ -83,11 +84,14 @@ describe("/api/v1/connectors 安全矩阵", () => {
               method: "DELETE",
               headers: requestHeaders,
             });
+            const start = await app.request("/api/v1/connectors/github/start", { method: "POST", headers: { ...requestHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ scope: "public_repo" }) });
             const allowed = origin !== "evil" && gateOn && !publicDeployment;
             expect(probe.status).toBe(allowed ? 200 : 403);
             expect(disconnect.status).toBe(allowed ? 200 : 403);
+            expect(start.status).toBe(allowed ? 200 : 403);
             expect(service.probe).toHaveBeenCalledTimes(allowed ? 1 : 0);
             expect(service.disconnect).toHaveBeenCalledTimes(allowed ? 1 : 0);
+            expect(service.start).toHaveBeenCalledTimes(allowed ? 1 : 0);
           });
         }
       }
@@ -99,6 +103,16 @@ describe("/api/v1/connectors 安全矩阵", () => {
     const response = await app.request("/api/v1/connectors/wechat-mp/probe", { method: "POST" });
     expect(response.status).toBe(401);
     expect(service.probe).not.toHaveBeenCalled();
+  });
+
+  it("start 公开 DTO 不含 device_code/token", async () => {
+    const { app } = setup({ authOn: false, gateOn: true, publicDeployment: false });
+    const response = await app.request("/api/v1/connectors/github/start", { method: "POST", headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" }, body: JSON.stringify({ scope: "public_repo" }) });
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(raw).not.toContain("device_code");
+    expect(raw).not.toContain("access_token");
+    expect(JSON.parse(raw)).toMatchObject({ user_code: "ABCD-EFGH", pendingId: "pending-safe-id" });
   });
 
   it("gate 关闭时 list/detail 只回 unavailable，adapter 零调用", async () => {

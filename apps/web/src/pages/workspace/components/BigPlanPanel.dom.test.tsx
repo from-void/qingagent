@@ -59,6 +59,91 @@ describe("BigPlanPanel", () => {
 
     expect(isBigPlanQuestionnaireReady(pending)).toBe(false);
   });
+
+  it("自由输入聚焦和输入后仍保留选项且可以切回选项", async () => {
+    const spec = answerableSpec();
+    const onSubmit = vi.fn();
+    await render(
+      <BigPlanPanel
+        toolCallId="test-free-text"
+        spec={spec}
+        isStreaming={false}
+        onSubmit={onSubmit}
+        sessionId="s1"
+        stream={null}
+        onToast={vi.fn()}
+      />,
+    );
+    const other = host!.querySelector<HTMLInputElement>(".bp-other")!;
+
+    await act(async () => {
+      other.focus();
+      setNativeInputValue(other, "补充说明");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(host?.querySelectorAll(".bp-opt")).toHaveLength(2);
+    await click(optionButton("长文"));
+    expect(optionButton("长文").getAttribute("aria-pressed")).toBe("true");
+    expect(host?.querySelector<HTMLInputElement>(".bp-other")?.value).toBe("");
+    await click(buttonByText("确认方向"));
+    expect(onSubmit).toHaveBeenCalledWith("ask-ready", {
+      "q-genre": { chosen: ["longform"], freeText: null },
+    });
+  });
+
+  it("单选已选后输入自由文本会清空 chosen", async () => {
+    const spec = answerableSpec();
+    const onSubmit = vi.fn();
+    await render(
+      <BigPlanPanel
+        toolCallId="test-single-custom"
+        spec={spec}
+        isStreaming={false}
+        onSubmit={onSubmit}
+        sessionId="s1"
+        stream={null}
+        onToast={vi.fn()}
+      />,
+    );
+    await click(optionButton("长文"));
+    const other = host!.querySelector<HTMLInputElement>(".bp-other")!;
+    await act(async () => {
+      setNativeInputValue(other, "改用自定义方向");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(optionButton("长文").getAttribute("aria-pressed")).toBe("false");
+    await click(buttonByText("确认方向"));
+    expect(onSubmit).toHaveBeenCalledWith("ask-ready", {
+      "q-genre": { chosen: [], freeText: "改用自定义方向" },
+    });
+  });
+
+  it("source 缺失时按 planDraft purpose 显示方向标题", async () => {
+    const spec = {
+      ...answerableSpec(),
+      source: null,
+      purpose: { kind: "directionChange" as const },
+    };
+    await render(
+      <BigPlanPanel
+        toolCallId="test-title"
+        spec={spec}
+        isStreaming={false}
+        onSubmit={vi.fn()}
+        sessionId="s1"
+        stream={null}
+        onToast={vi.fn()}
+      />,
+    );
+
+    expect(host?.querySelector(".bp-head h2")?.textContent).toBe("调整方向");
+  });
 });
 
 function answerableSpec(): AskUserSpec {
@@ -108,4 +193,9 @@ function buttonByText(text: string): HTMLButtonElement {
   );
   if (!button) throw new Error(`button not found: ${text}`);
   return button;
+}
+
+function setNativeInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
 }

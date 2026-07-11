@@ -254,7 +254,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
   const setSingle = (qid: string, value: string) =>
     setAnswers((prev: AskUserAnswers) => ({
       ...prev,
-      [qid]: { chosen: [value], freeText: prev[qid]?.freeText ?? null },
+      [qid]: { ...prev[qid], chosen: [value], freeText: null },
     }));
   const toggleMulti = (qid: string, value: string) =>
     setAnswers((prev: AskUserAnswers) => {
@@ -268,16 +268,26 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       };
     });
   const setOtherText = (qid: string, value: string) =>
-    setAnswers((prev: AskUserAnswers) => ({
-      ...prev,
-      [qid]: { ...prev[qid], chosen: prev[qid]?.chosen ?? [], freeText: value },
-    }));
+    setAnswers((prev: AskUserAnswers) => {
+      const question = allQuestions.find((item) => item.id === qid);
+      const activatesSingleCustom = question?.kind.kind === "single" && value.trim().length > 0;
+      return {
+        ...prev,
+        [qid]: {
+          ...prev[qid],
+          chosen: activatesSingleCustom ? [] : prev[qid]?.chosen ?? [],
+          freeText: value,
+        },
+      };
+    });
   const setNumeric = (qid: string, value: number) =>
     setAnswers((prev: AskUserAnswers) => ({
       ...prev,
       [qid]: { chosen: prev[qid]?.chosen ?? [], freeText: prev[qid]?.freeText ?? null, numericValue: value },
     }));
   const isLoading = isStreaming && total === 0;
+  const panelTitle = spec.source?.trim()
+    || (spec.purpose ? askUserPurposeLabel(spec.purpose.kind) : "确认方向");
 
   return (
     <div
@@ -286,7 +296,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
     >
       {!isLoading && (
         <div className="bp-head">
-          <h2>{spec.source ?? "动笔之前,先聊几句"}</h2>
+          <h2>{panelTitle}</h2>
           <div className="sub">{rationaleText}</div>
         </div>
       )}
@@ -393,9 +403,6 @@ const QuestionRow = memo(function QuestionRow({
   onOtherText,
   onNumeric,
 }: QuestionRowProps) {
-  const [otherFocused, setOtherFocused] = useState(false);
-  const hideOptions = otherFocused || (answer.freeText ?? "").trim().length > 0;
-
   return (
     <div className="bp-q bp-q-enter" data-wf={`BigPlanQ-${question.id}`}>
       <div className="bp-q-head">
@@ -431,28 +438,24 @@ const QuestionRow = memo(function QuestionRow({
         />
       ) : (
         <>
-          {!hideOptions && (
-            <div className="bp-opts">
-              {(question.options ?? []).map((opt) => (
-                <OptChip
-                  key={`${question.id}:${opt.value}`}
-                  qid={question.id}
-                  option={opt}
-                  multi={question.kind.kind === "multi"}
-                  selectedValues={answer.chosen}
-                  onSingle={onSingle}
-                  onMulti={onMulti}
-                />
-              ))}
-            </div>
-          )}
+          <div className="bp-opts">
+            {(question.options ?? []).map((opt) => (
+              <OptChip
+                key={`${question.id}:${opt.value}`}
+                qid={question.id}
+                option={opt}
+                multi={question.kind.kind === "multi"}
+                selectedValues={answer.chosen}
+                onSingle={onSingle}
+                onMulti={onMulti}
+              />
+            ))}
+          </div>
           <input
             className="bp-other"
             type="text"
             placeholder="补充说明…"
             value={answer.freeText ?? ""}
-            onFocus={() => setOtherFocused(true)}
-            onBlur={() => setOtherFocused(false)}
             onChange={(e) => onOtherText(question.id, e.target.value)}
           />
         </>

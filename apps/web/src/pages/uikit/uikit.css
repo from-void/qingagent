@@ -743,6 +743,12 @@
   overflow: visible !important;
   height: auto;
 }
+#view-workspace .ws-left.uk-sp-scope.uk-ask-overlay-stage {
+  position: relative;
+  height: 560px;
+  overflow: hidden !important;
+  background: rgba(8, 11, 15, 0.72);
+}
 .uk-sp-wrap {
   max-width: 560px;
   margin: 0 auto;

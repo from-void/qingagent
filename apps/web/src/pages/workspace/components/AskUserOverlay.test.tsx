@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +29,10 @@ const focusSpec: AskUserSpec = {
       id: "q-1",
       label: "选择方向",
       kind: { kind: "single" },
-      options: [{ value: "warm", label: "温和", description: null, preview: null }],
+      options: [
+        { value: "warm", label: "温和", description: null, preview: null },
+        { value: "sharp", label: "锐利", description: null, preview: null },
+      ],
       placeholder: null,
     },
   ],
@@ -39,10 +43,11 @@ const mixedSpec: AskUserSpec = {
   mode: { kind: "overlay" },
   purpose: null,
   source: null,
-  rationale: null,
+  rationale: "只统计选择题为必答。",
   questions: [
     {
       id: "q-single",
+      header: "方向",
       label: "选一个方向",
       kind: { kind: "single" },
       options: [{ value: "a", label: "方向 A", description: null, preview: null }],
@@ -50,6 +55,7 @@ const mixedSpec: AskUserSpec = {
     },
     {
       id: "q-slider",
+      header: "篇幅",
       label: "篇幅多少",
       kind: { kind: "slider" },
       options: [],
@@ -65,6 +71,7 @@ const mixedSpec: AskUserSpec = {
     },
     {
       id: "q-text",
+      header: "补充",
       label: "补充说明",
       kind: { kind: "text" },
       options: [],
@@ -73,8 +80,42 @@ const mixedSpec: AskUserSpec = {
   ],
 };
 
+const navigationSpec: AskUserSpec = {
+  id: "ask-navigation",
+  mode: { kind: "overlay" },
+  purpose: null,
+  source: null,
+  rationale: null,
+  questions: [
+    {
+      id: "q-style",
+      header: "文风",
+      label: "选择文风",
+      kind: { kind: "single" },
+      options: [{ value: "plain", label: "平实", description: null, preview: null }],
+      placeholder: null,
+    },
+    {
+      id: "q-points",
+      label: "选择要点",
+      kind: { kind: "multi" },
+      options: [{ value: "data", label: "数据", description: null, preview: null }],
+      placeholder: null,
+    },
+    {
+      id: "q-note",
+      header: "补充",
+      label: "还有什么",
+      kind: { kind: "text" },
+      options: [],
+      placeholder: "补充说明",
+    },
+  ],
+};
+
 describe("AskUserOverlay", () => {
   afterEach(() => {
+    vi.useRealTimers();
     if (root) {
       act(() => root?.unmount());
       root = null;
@@ -83,130 +124,217 @@ describe("AskUserOverlay", () => {
     host = null;
   });
 
-  it("renders a loading placeholder instead of an empty overlay for empty questions", async () => {
+  it("空问题时显示 loading，保留手动输入且禁用提交", async () => {
     const onSubmit = vi.fn();
-    await render(
-      <AskUserOverlay
-        spec={emptySpec}
-        onClose={() => undefined}
-        onSubmit={onSubmit}
-        onAbort={() => undefined}
-      />,
-    );
+    await renderOverlay(emptySpec, onSubmit);
 
-    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
     expect(host?.querySelector('[data-wf="AskUserLoading"]')).not.toBeNull();
-    expect(host?.textContent ?? "").toContain("正在准备问题");
-    expect(host?.textContent ?? "").toContain("手动输入");
-    expect(findSubmitButton()?.disabled).toBe(true);
+    expect(host?.textContent).toContain("正在准备问题");
+    expect(host?.textContent).toContain("手动输入");
+    expect(findSubmitButton().disabled).toBe(true);
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("opens focus inside the overlay and restores focus on unmount", async () => {
+  it("打开后聚焦浮层内部，卸载时恢复原焦点", async () => {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.textContent = "打开问卷";
     document.body.appendChild(trigger);
     trigger.focus();
 
-    await render(
-      <AskUserOverlay
-        spec={focusSpec}
-        onClose={() => undefined}
-        onSubmit={() => undefined}
-        onAbort={() => undefined}
-      />,
-    );
-
-    const closeButton = host?.querySelector<HTMLButtonElement>(".au-x");
-    expect(document.activeElement).toBe(closeButton);
+    await renderOverlay(focusSpec);
+    expect(document.activeElement).toBe(host?.querySelector(".au-x"));
 
     act(() => {
       root?.unmount();
       root = null;
     });
-
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
   });
 
-  it("blocks empty submit and submits after a meaningful required answer", async () => {
+  it("自由输入时选项始终在 DOM；单选自定义与选项提交语义 XOR", async () => {
     const onSubmit = vi.fn();
-    await render(
+    await renderOverlay(focusSpec, onSubmit);
+    const other = host!.querySelector<HTMLInputElement>(".au-other")!;
+
+    await act(async () => {
+      other.focus();
+      setNativeInputValue(other, "我自己的方向");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host?.querySelectorAll('input[type="radio"]')).toHaveLength(2);
+    expect(other.dataset.active).toBe("true");
+    expect(host?.textContent).toContain("以自定义内容作答");
+
+    await click(host!.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]!);
+    expect(host?.querySelector<HTMLInputElement>(".au-other")?.value).toBe("我自己的方向");
+    expect(host?.querySelector<HTMLInputElement>(".au-other")?.dataset.active).toBe("false");
+
+    await click(findSubmitButton());
+    expect(onSubmit).toHaveBeenCalledWith({
+      "q-1": { chosen: ["sharp"], freeText: null },
+    });
+  });
+
+  it("一题一屏；chips 可点击跳题并支持方向键导航", async () => {
+    await renderOverlay(navigationSpec);
+
+    expect(host?.querySelectorAll('[role="tabpanel"]')).toHaveLength(1);
+    expect(host?.textContent).toContain("选择文风");
+    expect(host?.querySelectorAll(".auq-tab")).toHaveLength(3);
+    expect(host?.querySelectorAll(".auq-tab")[1]?.textContent).toBe("02");
+
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[2]!);
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
+
+    const currentTab = host!.querySelector<HTMLButtonElement>('.auq-tab[data-current="true"]')!;
+    await act(async () => {
+      currentTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择要点");
+    expect(document.activeElement).toBe(host?.querySelectorAll(".auq-tab")[1]);
+  });
+
+  it("单选后 350ms 自动前进到下一道未答题", async () => {
+    vi.useFakeTimers();
+    await renderOverlay(navigationSpec);
+
+    await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择文风");
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("选择要点");
+    expect(host?.querySelector('.auq-tab[data-answered="true"]')?.textContent).toContain("文风");
+  });
+
+  it("自动前进等待期间手动跳题后不再抢回当前题", async () => {
+    vi.useFakeTimers();
+    await renderOverlay(navigationSpec);
+
+    await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[2]!);
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+
+    expect(host?.querySelector('[role="tabpanel"]')?.textContent).toContain("还有什么");
+  });
+
+  it("切回选项后同一 spec 流式追加题目仍保留 XOR 与已答状态", async () => {
+    const onSubmit = vi.fn();
+    await renderOverlay(focusSpec, onSubmit);
+    const other = host!.querySelector<HTMLInputElement>(".au-other")!;
+    await act(async () => {
+      setNativeInputValue(other, "仅作草稿保留的自定义方向");
+      other.dispatchEvent(new Event("input", { bubbles: true }));
+      other.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
+    await click(host!.querySelector<HTMLButtonElement>(".auq-tab")!);
+
+    const appended: AskUserSpec = {
+      ...focusSpec,
+      questions: [
+        ...focusSpec.questions,
+        {
+          id: "q-appended",
+          header: "补充",
+          label: "新追加的问题",
+          kind: { kind: "text" },
+          options: [],
+          placeholder: null,
+        },
+      ],
+    };
+    await rerenderOverlay(appended, onSubmit);
+
+    expect(host?.querySelector<HTMLInputElement>('input[type="radio"]')?.checked).toBe(true);
+    expect(host?.querySelector<HTMLInputElement>(".au-other")?.dataset.active).toBe("false");
+    expect(host?.querySelector('.auq-tab[data-answered="true"]')).not.toBeNull();
+    expect(host?.querySelectorAll(".auq-tab")).toHaveLength(2);
+    await click(findSubmitButton());
+    expect(onSubmit).toHaveBeenCalledWith({
+      "q-1": { chosen: ["warm"], freeText: null },
+      "q-appended": { chosen: [], freeText: null },
+    });
+  });
+
+  it("提交进度仅统计选择题，必答完成前禁用", async () => {
+    await renderOverlay(mixedSpec);
+
+    expect(host?.querySelector(".au-progress")?.textContent).toContain("0 / 1");
+    expect(findSubmitButton().disabled).toBe(true);
+    await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
+    expect(host?.querySelector(".au-progress")?.textContent).toContain("1 / 1");
+    expect(findSubmitButton().disabled).toBe(false);
+  });
+
+  it("preview 由 hover 与选中项切换，并启用左栏内宽版", async () => {
+    const spec: AskUserSpec = {
+      ...focusSpec,
+      id: "ask-preview",
+      questions: [{
+        ...focusSpec.questions[0]!,
+        header: "文风",
+        options: [
+          { value: "warm", label: "温和", description: "柔和表达", preview: "## 温和样张" },
+          { value: "sharp", label: "锐利", description: "直接表达", preview: "## 锐利样张" },
+        ],
+      }],
+    };
+    await renderOverlay(spec);
+
+    expect(host?.querySelector(".askuser-overlay")?.getAttribute("data-wide")).toBe("true");
+    expect(host?.querySelector(".auq-preview")?.textContent).toContain("温和样张");
+    const secondCard = host!.querySelectorAll<HTMLElement>(".auq-card")[1]!;
+    await act(async () => {
+      secondCard.querySelector<HTMLInputElement>("input")!.focus();
+    });
+    expect(host?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
+    await click(secondCard.querySelector("input")!);
+    expect(host?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
+  });
+
+  it("滑块触顶显示 aboveLabel", async () => {
+    await renderOverlay(mixedSpec);
+    await click(host!.querySelectorAll<HTMLButtonElement>(".auq-tab")[1]!);
+    const slider = host!.querySelector<HTMLInputElement>(".aus2-input")!;
+    await act(async () => {
+      setNativeInputValue(slider, "1200");
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host?.querySelector(".aus2-bubble")?.textContent).toBe("1200 字以上");
+  });
+});
+
+async function renderOverlay(spec: AskUserSpec, onSubmit = vi.fn()): Promise<void> {
+  await render(
+    <AskUserOverlay
+      spec={spec}
+      onClose={() => undefined}
+      onSubmit={onSubmit}
+      onAbort={() => undefined}
+    />,
+  );
+}
+
+async function rerenderOverlay(spec: AskUserSpec, onSubmit = vi.fn()): Promise<void> {
+  await act(async () => {
+    root?.render(
       <AskUserOverlay
-        spec={focusSpec}
+        spec={spec}
         onClose={() => undefined}
         onSubmit={onSubmit}
         onAbort={() => undefined}
       />,
     );
-
-    const submitButton = findSubmitButton();
-    expect(submitButton?.disabled).toBe(true);
-
-    await act(async () => {
-      submitButton?.click();
-    });
-    expect(onSubmit).not.toHaveBeenCalled();
-
-    const radio = host?.querySelector<HTMLInputElement>('input[type="radio"]');
-    await act(async () => {
-      radio?.click();
-    });
-
-    const readySubmitButton = findSubmitButton();
-    expect(readySubmitButton?.disabled).toBe(false);
-    await act(async () => {
-      readySubmitButton?.click();
-    });
-
-    expect(onSubmit).toHaveBeenCalledWith({
-      "q-1": { chosen: ["warm"], freeText: null },
-    });
   });
-
-  it("renders question numbers and one fallback input for choice and slider questions", async () => {
-    await render(
-      <AskUserOverlay
-        spec={mixedSpec}
-        onClose={() => undefined}
-        onSubmit={() => undefined}
-        onAbort={() => undefined}
-      />,
-    );
-
-    expect(host?.textContent ?? "").toContain("有问题待确认");
-    expect(Array.from(host?.querySelectorAll(".au-q-num") ?? []).map((el) => el.textContent)).toEqual([
-      "01",
-      "02",
-      "03",
-    ]);
-    expect(host?.querySelectorAll(".au-other")).toHaveLength(2);
-    expect(host?.querySelectorAll(".au-text")).toHaveLength(1);
-  });
-
-  it("shows the slider aboveLabel when dragged to max", async () => {
-    await render(
-      <AskUserOverlay
-        spec={mixedSpec}
-        onClose={() => undefined}
-        onSubmit={() => undefined}
-        onAbort={() => undefined}
-      />,
-    );
-
-    const slider = host?.querySelector<HTMLInputElement>(".au-slider-input");
-    expect(slider).not.toBeNull();
-
-    await act(async () => {
-      setNativeInputValue(slider!, "1200");
-      slider!.dispatchEvent(new Event("input", { bubbles: true }));
-      slider!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    expect(host?.querySelector(".au-slider-value")?.textContent).toBe("1200 字以上");
-  });
-});
+}
 
 async function render(element: ReactNode): Promise<void> {
   host = document.createElement("div");
@@ -217,10 +345,18 @@ async function render(element: ReactNode): Promise<void> {
   });
 }
 
-function findSubmitButton(): HTMLButtonElement | undefined {
-  return Array.from(host?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-    (button) => button.textContent?.includes("提交"),
+async function click(element: HTMLElement): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function findSubmitButton(): HTMLButtonElement {
+  const button = Array.from(host?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+    (item) => item.textContent?.trim() === "提交",
   );
+  if (!button) throw new Error("提交按钮不存在");
+  return button;
 }
 
 function setNativeInputValue(input: HTMLInputElement, value: string): void {

@@ -803,27 +803,19 @@
     #view-workspace .lf-spin{animation:none}
   }
 
-  /* AskUser overlay · 中途反问内联替代输入区 */
+  /* AskUserQuestion overlay:一题一屏，预览分栏始终约束在 ws-left 内。 */
   #view-workspace .askuser-overlay{
-    position:absolute;left:12px;right:12px;bottom:12px;
-    --au-body-scroll-bg:var(--bg-canvas);
-    --au-scroll-shadow:rgba(0,0,0,.18);
-    background:var(--bg-canvas);
-    border:1px solid var(--line-2);border-radius:0;
-    box-shadow:var(--shadow-3);
-    display:flex;flex-direction:column;
-    z-index:50;
-    contain:layout paint;
+    position:absolute;left:12px;right:auto;bottom:12px;
+    width:min(420px,calc(100% - 24px));max-width:calc(100% - 24px);
+    --au-body-scroll-bg:var(--bg-canvas);--au-scroll-shadow:rgba(0,0,0,.18);
+    background:var(--bg-canvas);border:1px solid var(--line-2);border-radius:0;
+    box-shadow:var(--shadow-3);display:flex;flex-direction:column;z-index:50;
+    contain:layout paint;container-type:inline-size;
   }
-  @keyframes au-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  #view-workspace .askuser-overlay[data-wide="true"]{width:calc(100% - 24px)}
   #view-workspace .ws-input-wrap > .wf-input,
-  #view-workspace .ws-input-wrap > .askuser-overlay{
-    transition: opacity .18s ease, transform .18s ease;
-  }
-  #view-workspace .au-head{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:12px 15px 6px;
-  }
+  #view-workspace .ws-input-wrap > .askuser-overlay{transition:opacity .18s ease,transform .18s ease,width .18s ease}
+  #view-workspace .au-head{display:flex;align-items:center;justify-content:space-between;padding:12px 15px 6px}
   #view-workspace .au-title{font-size:13px;color:var(--ink-1);font-weight:600;display:flex;align-items:center;gap:9px}
   #view-workspace .au-dot{
     width:7px;height:7px;border-radius:50%;background:var(--mark);
@@ -831,19 +823,29 @@
   }
   @keyframes au-pulse{0%,100%{opacity:1}50%{opacity:.5}}
   #view-workspace .au-x{
-    width:22px;height:22px;border:none;background:transparent;cursor:pointer;
-    color:var(--ink-3);font-size:18px;line-height:1;border-radius:var(--r-sm);
+    width:22px;height:22px;border:0;border-radius:0;background:transparent;cursor:pointer;
+    color:var(--ink-3);font-size:18px;line-height:1;
   }
   #view-workspace .au-x:hover{background:var(--bg-hover);color:var(--ink-1)}
-  /* 通体磨砂:au-body 不要独立底色,透明继承外壳玻璃。滚动内阴影改由 au-edge 叠层(不依赖底色)。 */
+  #view-workspace .au-x:focus-visible{outline:1px solid var(--mark);outline-offset:2px}
+  #view-workspace .auq-tabs{
+    display:flex;gap:6px;padding:6px 15px 9px;overflow-x:auto;scrollbar-width:none;
+  }
+  #view-workspace .auq-tabs::-webkit-scrollbar{display:none}
+  #view-workspace .auq-tab{
+    flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:4px 9px;
+    border:1px solid var(--line-1);border-radius:0;background:transparent;color:var(--ink-3);
+    font:11px/1.4 var(--font-zh-serif);cursor:pointer;white-space:nowrap;
+  }
+  #view-workspace .auq-tab-index{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em}
+  #view-workspace .auq-tab[data-answered="true"]::after{content:"\2713";font-size:9px}
+  #view-workspace .auq-tab:focus-visible{outline:1px solid var(--mark);outline-offset:2px}
   #view-workspace .au-body-scroll{position:relative;min-height:0;display:flex;flex-direction:column}
   #view-workspace .au-body{
-    padding:6px 15px 4px;display:flex;flex-direction:column;gap:18px;
-    max-height:430px;overflow-y:auto;overflow-x:hidden;
-    background:transparent;
+    padding:8px 15px 5px;display:flex;flex-direction:column;gap:14px;
+    max-height:430px;overflow-y:auto;overflow-x:hidden;background:transparent;
     scrollbar-width:thin;scrollbar-color:transparent transparent;
   }
-  /* 上下滚动内阴影:渐变叠层,pointer-events:none;到顶/到底由 data-show 切显隐 */
   #view-workspace .au-edge{
     position:absolute;left:0;right:0;height:18px;pointer-events:none;z-index:3;
     opacity:0;transition:opacity .2s ease;
@@ -851,7 +853,6 @@
   #view-workspace .au-edge[data-show="true"]{opacity:1}
   #view-workspace .au-edge-top{top:0;background:linear-gradient(rgba(0,0,0,.22),transparent)}
   #view-workspace .au-edge-bottom{bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.22))}
-  /* 出题中骨架 loading:shimmer 流动,题号 01 真实显示,真问题出来 01 正好接上 */
   #view-workspace .au-skeleton{display:flex;flex-direction:column;gap:18px}
   #view-workspace .au-sk-line,
   #view-workspace .au-sk-chip{
@@ -860,7 +861,7 @@
   }
   #view-workspace .au-sk-sub{height:11px;width:64%}
   #view-workspace .au-sk-label{height:13px;flex:1;max-width:210px;display:inline-block}
-  #view-workspace .au-sk-chip{height:30px;width:66px;border-radius:0}
+  #view-workspace .au-sk-chip{height:30px;width:66px}
   @keyframes au-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
   #view-workspace .au-body:hover,
   #view-workspace .au-body:focus-within{scrollbar-color:var(--line-2) transparent}
@@ -869,71 +870,120 @@
   #view-workspace .au-body:hover::-webkit-scrollbar-thumb,
   #view-workspace .au-body:focus-within::-webkit-scrollbar-thumb{background-color:var(--line-2)}
   #view-workspace .au-body::-webkit-scrollbar-track{background:transparent}
-  #view-workspace .au-rationale{
-    color:var(--ink-3);font-size:12.5px;line-height:1.65;
-  }
-  #view-workspace .au-q-item{display:flex;flex-direction:column;gap:9px}
-  #view-workspace .au-q{
-    font-size:12.5px;color:var(--ink-1);font-weight:500;line-height:1.5;
-  }
+  #view-workspace .au-rationale{color:var(--ink-3);font-size:11.5px;line-height:1.6}
+  #view-workspace .au-q-item{display:flex;flex-direction:column;gap:10px;animation:auq-question-in .16s ease}
+  @keyframes auq-question-in{from{opacity:.3;transform:translateX(4px)}to{opacity:1;transform:translateX(0)}}
+  #view-workspace .au-q{font-size:13px;color:var(--ink-1);font-weight:500;line-height:1.55}
   #view-workspace .au-q-num{
-    font-family:var(--font-mono);font-size:11px;color:var(--ink-4);
-    letter-spacing:.08em;margin-right:8px;
+    font-family:var(--font-mono);font-size:11px;color:var(--ink-4);letter-spacing:.08em;margin-right:8px;
   }
   #view-workspace .au-q .hint{color:var(--ink-4);font-size:11px;font-weight:400;margin-left:5px}
+  #view-workspace .auq-split{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:12px;align-items:start}
+  #view-workspace .auq-option-column{min-width:0}
+  #view-workspace .auq-options{display:flex;flex-direction:column;gap:7px}
   #view-workspace .au-opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  #view-workspace .au-opts .wf-chip{
-    cursor:pointer;user-select:none;margin:0;position:relative;
-    border-radius:0;border:1px solid var(--line-1);background:transparent;color:var(--ink-2);
-    padding:7px 13px;transition:background .14s ease,color .14s ease,border-color .14s ease;
+  #view-workspace .au-opts .wf-chip,
+  #view-workspace .auq-card{
+    cursor:pointer;user-select:none;margin:0;position:relative;border-radius:0;
+    border:1px solid var(--line-1);background:transparent;color:var(--ink-2);
+    transition:background .14s ease,color .14s ease,border-color .14s ease;
   }
-  #view-workspace .au-opts .wf-chip:hover{
-    border-color:var(--mark);background:var(--mark-soft);color:var(--ink-1);
-  }
-  #view-workspace .au-opts .wf-chip input{
-    position:absolute;opacity:0;width:0;height:0;margin:0;
-  }
-  #view-workspace .au-opts .wf-chip:has(input:checked){
-    background:var(--mark-soft);border-color:var(--mark);color:var(--ink-1);font-weight:600;
-  }
-  #view-workspace .au-opts .wf-chip:has(input:checked)::before{
+  #view-workspace .au-opts .wf-chip{display:inline-flex;align-items:center;padding:7px 13px}
+  #view-workspace .auq-card{display:flex;flex-direction:column;padding:8px 10px}
+  #view-workspace .au-opts .wf-chip input,
+  #view-workspace .auq-card input{position:absolute;opacity:0;width:0;height:0;margin:0}
+  #view-workspace .au-opts .wf-chip:has(input:focus-visible),
+  #view-workspace .auq-card:has(input:focus-visible){outline:1px solid var(--mark);outline-offset:2px}
+  #view-workspace .auq-option-title{font-size:12.5px;font-weight:500}
+  #view-workspace .auq-option-description{font-size:11px;line-height:1.55;margin-top:3px}
+  #view-workspace .au-opts .wf-chip[data-checked="true"]::before,
+  #view-workspace .auq-card[data-checked="true"] .auq-option-title::before{
     content:"\2713";font-size:10px;margin-right:5px;color:var(--mark);
   }
+  #view-workspace .auq-preview{
+    min-width:0;max-height:270px;overflow-y:auto;padding:11px 13px;border:1px solid var(--line-1);
+    scrollbar-width:thin;
+  }
+  #view-workspace .auq-preview-tag{
+    display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:10px;letter-spacing:.12em;
+  }
+  #view-workspace .auq-preview-tag::before{content:"";width:5px;height:5px;background:var(--mark)}
+  #view-workspace .auq-preview-doc.wf-doc{padding:0;min-height:0;font-size:12px;line-height:1.75}
+  #view-workspace .auq-preview-doc.wf-doc h1,
+  #view-workspace .auq-preview-doc.wf-doc h2,
+  #view-workspace .auq-preview-doc.wf-doc h3,
+  #view-workspace .auq-preview-doc.wf-doc h4,
+  #view-workspace .auq-preview-doc.wf-doc h5,
+  #view-workspace .auq-preview-doc.wf-doc h6{margin:0 0 7px;font-size:13.5px;line-height:1.45}
+  #view-workspace .auq-preview-doc.wf-doc p{margin:0 0 7px}
+  #view-workspace .auq-preview-doc.wf-doc blockquote{margin:7px 0;padding-left:10px;border-left:2px solid var(--mark)}
+  #view-workspace .auq-preview-doc.wf-doc ul,
+  #view-workspace .auq-preview-doc.wf-doc ol{margin:6px 0;padding-left:18px}
+  #view-workspace .auq-preview-doc .pm-diagram{margin:4px 0}
+  #view-workspace .auq-preview-fallback{
+    margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 var(--font-mono);
+  }
+  #view-workspace .auq-preview-empty{min-height:100px;display:flex;align-items:center;justify-content:center;font-size:11.5px;text-align:center}
+  #view-workspace .auq-other-wrap{display:flex;flex-direction:column;gap:4px}
   #view-workspace .au-text,
   #view-workspace .au-other{
-    width:100%;font-size:12.5px;padding:8px 11px;
-    border:1px solid var(--line-2);border-radius:0;
+    width:100%;font-size:12.5px;padding:8px 11px;border:1px solid var(--line-2);border-radius:0;
     outline:none;background:var(--bg-subtle);color:var(--ink-1);font-family:var(--font-zh-serif);
   }
   #view-workspace .au-text:focus,
   #view-workspace .au-other:focus{border-color:var(--mark)}
   #view-workspace .au-text::placeholder,
   #view-workspace .au-other::placeholder{color:var(--ink-4)}
-  /* F4 问卷滑块:刻度 range + 右侧实时值;AskUserOverlay 与 BigPlanPanel 共用 */
-  .au-slider{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:4px 8px;overflow-x:hidden}
-  .au-slider-input{flex:1 1 220px;min-width:0;width:100%;accent-color:var(--mark, #4a6);cursor:pointer}
-  .au-slider-input:focus-visible{outline:2px solid var(--mark, #4a6);outline-offset:3px;border-radius:0}
-  .au-slider-value{
-    flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;
-    padding:3px 10px;border-radius:0;font-size:12.5px;color:var(--ink-1);
-    border:1px solid var(--line-2);background:var(--bg-2, rgba(0,0,0,.03));
+  #view-workspace .auq-other-state{min-height:14px;padding-left:2px;font-size:10.5px}
+  /* F4 问卷滑块:自绘轨道 + 菱形拇指 + 跟随值气泡；overlay/fullpage 共用 */
+  #view-workspace .aus2{padding:18px 8px 2px;position:relative;min-width:0}
+  #view-workspace .aus2-track-wrap{position:relative;height:34px;display:flex;align-items:center}
+  #view-workspace .aus2-track,
+  #view-workspace .aus2-fill{
+    position:absolute;left:0;top:50%;transform:translateY(-50%);height:3px;pointer-events:none;
   }
-  .au-slider-scale{
-    flex-basis:100%;display:flex;justify-content:space-between;
-    font-size:10.5px;color:var(--ink-4);padding:0 2px;
+  #view-workspace .aus2-track{right:0}
+  #view-workspace .aus2-input{
+    -webkit-appearance:none;appearance:none;width:100%;height:34px;background:transparent;
+    cursor:pointer;position:relative;z-index:2;margin:0;
   }
-  #view-workspace .askuser-overlay .au-slider{padding:2px 8px}
-  #view-workspace .askuser-overlay .au-slider-input{flex:1 1 200px;min-width:0}
-  #view-workspace .askuser-overlay .au-slider-value{
-    min-width:80px;padding:4px 10px;border-radius:0;
+  #view-workspace .aus2-input::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:0;
+    transform:rotate(45deg);cursor:grab;
   }
+  #view-workspace .aus2-input:active::-webkit-slider-thumb{cursor:grabbing}
+  #view-workspace .aus2-input::-moz-range-thumb{
+    width:14px;height:14px;border-radius:0;transform:rotate(45deg);cursor:grab;
+  }
+  #view-workspace .aus2-input:focus-visible{outline:2px solid var(--mark);outline-offset:4px}
+  #view-workspace .aus2-bubble{
+    position:absolute;top:-14px;transform:translateX(-50%);padding:1px 8px;
+    font-size:11px;white-space:nowrap;pointer-events:none;transition:left .06s linear;
+  }
+  #view-workspace .aus2-bubble::after{
+    content:"";position:absolute;left:50%;bottom:-4px;transform:translateX(-50%) rotate(45deg);
+    width:6px;height:6px;
+  }
+  #view-workspace .aus2-scale{display:flex;justify-content:space-between;margin-top:8px;padding:0 1px}
+  #view-workspace .aus2-scale span{font-size:10px;position:relative;padding-top:7px}
+  #view-workspace .aus2-scale span::before{
+    content:"";position:absolute;top:0;left:50%;width:1px;height:4px;
+  }
+  #view-workspace .askuser-overlay .aus2 + .au-other{margin-top:12px}
   #view-workspace .au-foot{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:10px 15px 13px;
+    display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 15px 13px;
   }
-  #view-workspace .au-actions{display:flex;gap:8px;margin-left:auto}
+  #view-workspace .au-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+  #view-workspace .au-progress{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;white-space:nowrap}
   #view-workspace .askuser-overlay .wf-btn{
     padding:6px 15px;font-size:12px;border-radius:0;white-space:nowrap;
+  }
+  @container (max-width:520px){
+    #view-workspace .auq-split{grid-template-columns:1fr}
+    #view-workspace .auq-preview{max-height:210px}
+    #view-workspace .au-foot{align-items:flex-end}
+    #view-workspace .au-actions{gap:5px;flex-wrap:wrap;justify-content:flex-end}
+    #view-workspace .askuser-overlay .wf-btn{padding:6px 10px}
   }
   /* ============ B1 · 输入底部 文件/技能 pill + 浮层 ============ */
   #view-workspace .ws-pill{font-size:11.5px;padding:4px 9px;line-height:1}

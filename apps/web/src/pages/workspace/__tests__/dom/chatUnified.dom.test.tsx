@@ -323,6 +323,22 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("确认方向");
     expect(host.textContent).not.toContain("工具调用");
   });
+
+  it("共用 askUser body 时仍按工具名区分 planDraft 与 askUserQuestion 标题", () => {
+    const questionnaire = (name: "planDraft" | "askUserQuestion") => ({
+      id: name,
+      name,
+      status: { kind: "running" },
+      body: { kind: "askUser", data: { mode: { kind: "overlay" }, questions: [], source: null } },
+      result: null,
+    }) as unknown as ToolCallSpec;
+
+    renderBar(questionnaire("planDraft"));
+    expect(host.textContent).toContain("确认方向");
+    renderBar(questionnaire("askUserQuestion"));
+    expect(host.textContent).toContain("有问题待确认");
+    expect(host.textContent).not.toContain("确认方向");
+  });
 });
 
 describe("USvg", () => {

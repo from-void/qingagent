@@ -18,6 +18,7 @@ import { BrowserViewPart } from "../workspace/components/BrowserViewPart";
 import { DiagramRenderer } from "../workspace/components/diagram/DiagramRenderer";
 // —— 本页真实引用的生产组件(mock props 驱动,零重写)——
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
+import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
 import { PatchNav } from "../workspace/components/PatchNav";
 import { WholeDocReviewNav } from "../workspace/components/WholeDocReviewNav";
 import { LinkedFilesPanel } from "../workspace/components/LinkedFilesPanel";
@@ -32,6 +33,7 @@ import {
   ST,
   askA,
   askQ,
+  askUserQuestionOverlaySpec,
   bigPlanSpec,
   cmdDone,
   diagramFlowchart,
@@ -1441,7 +1443,7 @@ export function UIKitPage() {
         <Section idx="14" zh="开场问卷 BigPlanPanel" en="AskUser questionnaire" id="bigplan">
           <p className="uk-cap uk-lead">
             AskUser 的 <b>fullpage 形态</b>:右栏渲染生产 <code>BigPlanPanel</code>,提交 AskUserAnswers。
-            覆盖四种题型——滑块(<code>au-slider / au-slider-input</code>)、单选、多选(带说明 <code>bp-opt.has-desc</code>)、
+            覆盖四种题型——共享滑块(<code>aus2 / aus2-input</code>)、单选、多选(带说明 <code>bp-opt.has-desc</code>)、
             文字(<code>bp-ta</code>);底部悬浮操作条复用 <code>ws-float-bar</code>(与审批条同款)。
             这是 census 最大的一处缺口,此处以真组件 + mock spec 补全。
           </p>
@@ -1459,6 +1461,23 @@ export function UIKitPage() {
                   onToast={() => {}}
                 />
               </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section idx="14.1" zh="通用提问 AskUserOverlay" en="Question overlay · preview" id="askuser-overlay">
+          <p className="uk-cap uk-lead">
+            <code>askUserQuestion</code> 的生产 overlay：一题一屏、header chips、已答进度、自由输入 XOR、
+            说明卡与受限 markdown / Mermaid 样张分栏。点击「要点 / 篇幅」可走查无 preview 全宽态和共享滑块。
+          </p>
+          <div id="view-workspace" className="uk-sp-view" style={{ height: 560, overflow: "hidden" }}>
+            <div className="ws-left uk-sp-scope uk-ask-overlay-stage">
+              <AskUserOverlay
+                spec={askUserQuestionOverlaySpec}
+                onClose={() => {}}
+                onSubmit={() => {}}
+                onAbort={() => {}}
+              />
             </div>
           </div>
         </Section>

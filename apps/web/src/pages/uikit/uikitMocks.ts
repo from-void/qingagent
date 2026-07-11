@@ -251,6 +251,67 @@ export const bigPlanSpec: AskUserSpec = {
   questions: bigPlanQuestions,
 };
 
+// askUserQuestion overlay 真组件：首题覆盖 header chips、说明卡与 markdown/mermaid preview；
+// 后续题覆盖无 preview 胶囊、多选补充输入和共享 aus2 滑块，可在展厅直接点题签走查。
+export const askUserQuestionOverlaySpec: AskUserSpec = {
+  id: "ask-user-question-uikit",
+  mode: { kind: "overlay" },
+  purpose: null,
+  source: null,
+  rationale: "选择最接近的方向；样张会随悬停或选中项切换。",
+  questions: [
+    {
+      id: "auq-style",
+      header: "文风",
+      label: "你希望文章偏向哪种风格？",
+      kind: { kind: "single" },
+      options: [
+        {
+          value: "popular",
+          label: "通俗科普",
+          description: "用生活化语言解释技术原理，面向大众读者",
+          preview: "## AI 正在学会「读心」？\n其实背后没有魔法，它只是更善于理解上下文。\n\n> 把复杂的事讲简单，是这种文风的骨架。",
+        },
+        {
+          value: "structure",
+          label: "结构示意",
+          description: "用流程图预览文章的论证推进关系",
+          preview: "```mermaid\nflowchart LR\n  A[现象] --> B[分析]\n  B --> C[结论]\n```",
+        },
+      ],
+      placeholder: null,
+    },
+    {
+      id: "auq-points",
+      header: "要点",
+      label: "内容里还想强化哪些元素？",
+      kind: { kind: "multi" },
+      options: [
+        { value: "data", label: "数据图表", description: null, preview: null },
+        { value: "case", label: "案例故事", description: null, preview: null },
+        { value: "action", label: "行动清单", description: null, preview: null },
+      ],
+      placeholder: null,
+    },
+    {
+      id: "auq-length",
+      header: "篇幅",
+      label: "目标篇幅",
+      kind: { kind: "slider" },
+      options: [],
+      placeholder: null,
+      slider: {
+        min: 300,
+        max: 2000,
+        step: 100,
+        unit: "字",
+        marks: [300, 800, 1400, 2000],
+        aboveLabel: "2000 字以上",
+      },
+    },
+  ],
+};
+
 // 轮级折叠的过程 parts(一段真实工作流)
 export const processParts: MessagePart[] = [
   { kind: "thinking", data: { id: nid("th"), steps: ["先读素材，再确认方向，然后写。"] } },

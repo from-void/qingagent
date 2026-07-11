@@ -73,7 +73,9 @@ export const TOOL_LABELS: Record<string, string> = {
   run_js: "运行代码", run_python: "运行代码", readImage: "识别图片",
   // tool-call-input-streaming-start 占位期 generic body 只能靠真实工具名取显示名。
   writeDraft: "生成草稿", generateSvg: "生成配图", larkConfigInit: "配置飞书",
-  show_qr: "生成二维码", askUser: "确认方向",
+  show_qr: "生成二维码",
+  // askUser 仅为老会话持久化兼容保留，待老会话数据迁移或过期后删除。
+  askUser: "确认方向", planDraft: "确认方向", askUserQuestion: "有问题待确认",
   // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body,不加映射会裸显"工具调用"。
   wechat_auth_status: "检查微信授权状态", wechat_auth_start: "生成二维码",
   wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
@@ -93,6 +95,9 @@ function reportAnonTool(name: string, spec: ToolCallSpec): void {
 }
 
 function bodyKindLabel(spec: ToolCallSpec): string {
+  // questionnaire 共用 body.kind="askUser"，必须先按真实工具名分派，避免通用提问误显「确认方向」。
+  if (spec.name === "askUserQuestion") return "有问题待确认";
+  if (spec.name === "planDraft" || spec.name === "askUser") return "确认方向";
   // 旧契约残留 body.kind(0-emit)兜底,避免裸 name
   switch (spec.body.kind) {
     case "spawnSubAgent": return `子任务 · ${spec.body.data.name}`;
@@ -102,7 +107,7 @@ function bodyKindLabel(spec: ToolCallSpec): string {
     case "browserOpen": return "打开浏览器";
     case "browserAct": return "浏览器操作";
     case "qrCard": return "生成二维码"; // 简单条;真正的二维码后置到最终回复后(产出物后置)
-    case "askUser": return "确认方向"; // overlay 态走一行,fullpage 在上游已拦
+    case "askUser": return "确认方向"; // 未识别工具名的老快照兜底；通道 discriminator 不改名
     default:
       if (TOOL_LABELS[spec.name]) return TOOL_LABELS[spec.name]!;
       // 兜底:任何未显式映射的 Mastra 沙箱工具,也不暴露英文名/"工具调用·<pid>"。

@@ -83,6 +83,7 @@ export const TOOL_LABELS: Record<string, string> = {
   github_read_file: "读取 GitHub 文件",
   github_search_code: "搜索 GitHub 代码",
   github_auth_start: "连接 GitHub",
+  feishu_auth_start: "连接飞书",
 };
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。

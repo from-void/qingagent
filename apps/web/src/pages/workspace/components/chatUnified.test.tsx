@@ -42,6 +42,8 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       genericTool("generateSvg"),
       genericTool("show_qr"),
       genericTool("askUser"),
+      genericTool("planDraft"),
+      genericTool("askUserQuestion"),
     ]);
 
     const text = host?.textContent ?? "";
@@ -49,6 +51,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(text).toContain("生成配图");
     expect(text).toContain("生成二维码");
     expect(text).toContain("确认方向");
+    expect(text).toContain("有问题待确认");
     expect(text).not.toContain("工具调用");
   });
 });

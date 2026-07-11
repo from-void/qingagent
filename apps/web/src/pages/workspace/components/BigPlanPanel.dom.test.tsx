@@ -87,6 +87,27 @@ describe("BigPlanPanel", () => {
     await click(optionButton("长文"));
     expect(optionButton("长文").getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("source 缺失时按 planDraft purpose 显示方向标题", async () => {
+    const spec = {
+      ...answerableSpec(),
+      source: null,
+      purpose: { kind: "directionChange" as const },
+    };
+    await render(
+      <BigPlanPanel
+        toolCallId="test-title"
+        spec={spec}
+        isStreaming={false}
+        onSubmit={vi.fn()}
+        sessionId="s1"
+        stream={null}
+        onToast={vi.fn()}
+      />,
+    );
+
+    expect(host?.querySelector(".bp-head h2")?.textContent).toBe("调整方向");
+  });
 });
 
 function answerableSpec(): AskUserSpec {

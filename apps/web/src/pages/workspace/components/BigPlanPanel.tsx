@@ -278,6 +278,8 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       [qid]: { chosen: prev[qid]?.chosen ?? [], freeText: prev[qid]?.freeText ?? null, numericValue: value },
     }));
   const isLoading = isStreaming && total === 0;
+  const panelTitle = spec.source?.trim()
+    || (spec.purpose ? askUserPurposeLabel(spec.purpose.kind) : "确认方向");
 
   return (
     <div
@@ -286,7 +288,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
     >
       {!isLoading && (
         <div className="bp-head">
-          <h2>{spec.source ?? "动笔之前,先聊几句"}</h2>
+          <h2>{panelTitle}</h2>
           <div className="sub">{rationaleText}</div>
         </div>
       )}

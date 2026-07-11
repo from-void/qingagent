@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // writeDraft 赛马:固定一轮 4 路并发生成,字数只参与 best-of 选优;
 // 4 路全废直接返回 ok:false,由 agent 重新调用 writeDraft 做工具维度重试。
-// mock 内层 DeepSeek 裸 fetch helper:各路按调用顺序吐不同长度的稿。
+// mock 内层 DeepSeek AI SDK 流式适配层:各路按调用顺序吐不同长度的稿。
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -12,12 +12,12 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => null,
 }));
 
-const callDeepseekDraftMock = vi.fn();
-vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
+const streamInnerModelMock = vi.fn();
+vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    callDeepseekDraft: (...args: unknown[]) => callDeepseekDraftMock(...args),
+    streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args),
   };
 });
 
@@ -27,11 +27,11 @@ function qingmlParagraph(text: string): string {
 
 function mockGenerateReturning(...payloads: string[]) {
   for (const p of payloads) {
-    callDeepseekDraftMock.mockImplementationOnce(async () => ({ raw: p, contentStartMs: 0, finishReason: "stop" }));
+    streamInnerModelMock.mockImplementationOnce(async () => ({ raw: p, contentStartMs: 0, finishReason: "stop" }));
   }
 }
 
-type DeepseekCall = {
+type InnerModelCall = {
   abortSignal?: AbortSignal;
   onContentStart?: () => void;
   onContentDelta?: (delta: string, raw: string) => void;
@@ -39,7 +39,7 @@ type DeepseekCall = {
 
 function mockGenerateReturningDelayed(...payloads: Array<{ raw: string; delayMs: number; streamRaw?: boolean }>) {
   for (const payload of payloads) {
-    callDeepseekDraftMock.mockImplementationOnce((input: DeepseekCall) =>
+    streamInnerModelMock.mockImplementationOnce((input: InnerModelCall) =>
       new Promise((resolve, reject) => {
         if (payload.streamRaw) {
           input.onContentStart?.();
@@ -101,7 +101,7 @@ function progressEvents(writes: Array<Record<string, unknown>>) {
 
 describe("writeDraft 赛马式字数控制", () => {
   beforeEach(() => {
-    callDeepseekDraftMock.mockReset();
+    streamInnerModelMock.mockReset();
     delete process.env.QINGAGENT_RACE_LANES;
     delete process.env.QINGAGENT_RACE_ROUNDS;
   });
@@ -126,7 +126,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.wordCount).toBe(95);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     const { pmToPlainText } = await import("@qingagent/pm-schema");
     expect(pmToPlainText(state.docDraftCandidateDoc!).startsWith("b")).toBe(true);
   }, 10_000);
@@ -145,7 +145,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.ok).toBe(true);
     expect(out.wordCount).toBe(100);
     expect(out.lengthStatus).toBe("accepted_first_pass");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   }, 10_000);
 
   it("min bound 首轮全合格:count>=min 即接受,不启动第二轮", async () => {
@@ -163,7 +163,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.wordCount).toBeGreaterThanOrEqual(100);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
   it("一轮 4 路中有命中:不加赛,标 accepted_first_pass", async () => {
@@ -181,7 +181,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.firstVisibleCharCount).toBe(100);
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
   it("一轮 4 路全脱靶:不再加赛,如实吐出全场最近者并标硬上限失败", async () => {
@@ -196,7 +196,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     expect(out.wordCount).toBe(150); // best-of:未达标但最逼近
     expect(out.lengthStatus).toBe("above_hard_max");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
   it("不带字数:也固定一轮 4 路,取首个可用候选", async () => {
@@ -213,7 +213,7 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.ok).toBe(true);
     expect(out.lengthStatus).toBe("not_requested");
     expect(out.revisionCount).toBeUndefined();
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
   it("赛马路数锁死 4:env 不再改变 lane 数", async () => {
@@ -230,7 +230,7 @@ describe("writeDraft 赛马式字数控制", () => {
     const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
 
     expect(out.wordCount).toBe(95);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
   it("赛马全路解析失败:不串行兜底,快速返回 ok:false、发 failed 进度帧并提示重调 writeDraft", async () => {
@@ -246,7 +246,7 @@ describe("writeDraft 赛马式字数控制", () => {
 
     expect(out.ok).toBe(false);
     expect((out as { error?: string }).error).toContain("重新调用 writeDraft");
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
     expect(progressEvents(writes).at(-1)).toMatchObject({ phase: "failed" });
   });
 
@@ -274,8 +274,8 @@ describe("writeDraft 赛马式字数控制", () => {
 
   it("流式展示初选只认首个正文 lane,不被先注册的空 lane 锁住", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock
-      .mockImplementationOnce((input: DeepseekCall) =>
+    streamInnerModelMock
+      .mockImplementationOnce((input: InnerModelCall) =>
         new Promise((resolve, reject) => {
           const raw = qingmlParagraph("a".repeat(100));
           const timer = setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 80);
@@ -288,7 +288,7 @@ describe("writeDraft 赛马式字数控制", () => {
           input.abortSignal?.addEventListener("abort", onAbort, { once: true });
         }),
       )
-      .mockImplementationOnce((input: DeepseekCall) =>
+      .mockImplementationOnce((input: InnerModelCall) =>
         new Promise((resolve) => {
           const raw = qingmlParagraph("b".repeat(90));
           input.onContentStart?.();
@@ -296,7 +296,7 @@ describe("writeDraft 赛马式字数控制", () => {
           setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 20);
         }),
       )
-      .mockImplementationOnce((input: DeepseekCall) =>
+      .mockImplementationOnce((input: InnerModelCall) =>
         new Promise((resolve) => {
           const raw = qingmlParagraph("c".repeat(80));
           input.onContentStart?.();
@@ -304,7 +304,7 @@ describe("writeDraft 赛马式字数控制", () => {
           setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 40);
         }),
       )
-      .mockImplementationOnce((input: DeepseekCall) =>
+      .mockImplementationOnce((input: InnerModelCall) =>
         new Promise((resolve) => {
           const raw = qingmlParagraph("d".repeat(70));
           input.onContentStart?.();
@@ -326,20 +326,20 @@ describe("writeDraft 赛马式字数控制", () => {
 
   it("展示 lane 死亡后切到存活 lane 中当前字数最多者", async () => {
     const { tool } = await makeTool();
-    callDeepseekDraftMock
-      .mockImplementationOnce((input: DeepseekCall) => {
+    streamInnerModelMock
+      .mockImplementationOnce((input: InnerModelCall) => {
         const raw = qingmlParagraph("a".repeat(40));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
         return new Promise((_resolve, reject) => setTimeout(() => reject(new Error("stream broke")), 20));
       })
-      .mockImplementationOnce((input: DeepseekCall) => {
+      .mockImplementationOnce((input: InnerModelCall) => {
         const raw = qingmlParagraph("b".repeat(80));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
         return new Promise((resolve) => setTimeout(() => resolve({ raw, contentStartMs: 0, finishReason: "stop" }), 80));
       })
-      .mockImplementationOnce((input: DeepseekCall) => {
+      .mockImplementationOnce((input: InnerModelCall) => {
         const raw = qingmlParagraph("c".repeat(100));
         return new Promise((resolve) => setTimeout(() => {
           input.onContentStart?.();
@@ -347,7 +347,7 @@ describe("writeDraft 赛马式字数控制", () => {
           resolve({ raw, contentStartMs: 0, finishReason: "stop" });
         }, 120));
       })
-      .mockImplementationOnce((input: DeepseekCall) => {
+      .mockImplementationOnce((input: InnerModelCall) => {
         const raw = qingmlParagraph("d".repeat(60));
         input.onContentStart?.();
         input.onContentDelta?.(raw, raw);
@@ -369,7 +369,7 @@ describe("writeDraft 赛马式字数控制", () => {
   it("正文 delta 进度按 200ms 或新增 24 字节流", async () => {
     vi.useFakeTimers();
     const { tool } = await makeTool();
-    callDeepseekDraftMock.mockImplementation((input: DeepseekCall) =>
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) =>
       new Promise((resolve) => {
         input.onContentStart?.();
         const raw10 = qingmlParagraph("a".repeat(10));

@@ -13,6 +13,7 @@ export interface UsageMiddlewareOptions {
   modelId: string;
   keyOrigin: ApiKeyOrigin;
   lane?: number | null;
+  attempt?: number;
 }
 
 function hasUsageCounts(counts: ReturnType<typeof normalizeLlmUsageCounts>): boolean {
@@ -31,7 +32,7 @@ function missingReason(error: unknown, abortSignal?: AbortSignal): string {
  * middleware 位于 AI SDK 重试层内，因此一次重试会自然形成另一条真实请求事件。
  */
 export function createUsageMiddleware(options: UsageMiddlewareOptions): LanguageModelV1Middleware {
-  let requestAttempt = 0;
+  let requestAttempt = (options.attempt ?? 1) - 1;
   const baseEvent = {
     sessionId: (options.requestContext?.get("sessionId") as string | undefined) ?? "unknown",
     runId: (options.requestContext?.get("runId") as string | null | undefined) ?? null,
@@ -89,10 +90,10 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       const attempt = ++requestAttempt;
       try {
         const result = await doGenerate();
-        await recordSafely(result.usage, result.providerMetadata, null, attempt);
+        void recordSafely(result.usage, result.providerMetadata, null, attempt);
         return result;
       } catch (error) {
-        await recordSafely(null, null, missingReason(error, params.abortSignal), attempt);
+        void recordSafely(null, null, missingReason(error, params.abortSignal), attempt);
         throw error;
       }
     },
@@ -102,19 +103,26 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       try {
         result = await doStream();
       } catch (error) {
-        await recordSafely(null, null, missingReason(error, params.abortSignal), attempt);
+        void recordSafely(null, null, missingReason(error, params.abortSignal), attempt);
         throw error;
       }
 
-      const reader = result.stream.getReader();
+      let reader: ReadableStreamDefaultReader<ModelStreamPart>;
+      try {
+        reader = result.stream.getReader();
+      } catch (error) {
+        void recordSafely(null, null, missingReason(error, params.abortSignal), attempt);
+        throw error;
+      }
       let recorded = false;
       let sawErrorPart = false;
       let abortHandler: (() => void) | null = null;
-      const recordOnce = async (usage: unknown, providerMetadata: unknown, reason: string | null) => {
+      const recordOnce = (usage: unknown, providerMetadata: unknown, reason: string | null) => {
         if (recorded) return;
         recorded = true;
         if (abortHandler) params.abortSignal?.removeEventListener("abort", abortHandler);
-        await recordSafely(usage, providerMetadata, reason, attempt);
+        // 账本是旁路：不得用 DB 锁等待阻塞 finish/error 向消费者交付。
+        void recordSafely(usage, providerMetadata, reason, attempt);
       };
       abortHandler = () => { void recordOnce(null, null, "provider_request_aborted"); };
       if (params.abortSignal?.aborted) abortHandler();
@@ -125,7 +133,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
           try {
             const { done, value } = await reader.read();
             if (done) {
-              await recordOnce(
+              recordOnce(
                 null,
                 null,
                 sawErrorPart ? "provider_stream_error_part" : "provider_stream_without_finish",
@@ -135,16 +143,16 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
             }
             if (value.type === "error") sawErrorPart = true;
             if (value.type === "finish") {
-              await recordOnce(value.usage, value.providerMetadata, null);
+              recordOnce(value.usage, value.providerMetadata, null);
             }
             controller.enqueue(value);
           } catch (error) {
-            await recordOnce(null, null, missingReason(error, params.abortSignal));
+            recordOnce(null, null, missingReason(error, params.abortSignal));
             controller.error(error);
           }
         },
         async cancel(reason) {
-          await recordOnce(
+          recordOnce(
             null,
             null,
             params.abortSignal?.aborted ? "provider_request_aborted" : "provider_stream_cancelled",

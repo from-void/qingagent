@@ -188,4 +188,22 @@ describe("usage middleware", () => {
       attempt: 1,
     }));
   });
+
+  it("doStream 已发请求但返回已锁流时留 missing", async () => {
+    const stream = new ReadableStream();
+    stream.getReader();
+    await expect(middleware().wrapStream!({
+      doGenerate: vi.fn(),
+      doStream: async () => ({
+        stream,
+        rawCall: { rawPrompt: null, rawSettings: {} },
+      }),
+      params: {},
+      model: {},
+    } as never)).rejects.toThrow(/locked/i);
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      usageState: "missing",
+      reason: "provider_request_error",
+    }));
+  });
 });

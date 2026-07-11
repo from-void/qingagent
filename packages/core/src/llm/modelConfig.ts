@@ -59,6 +59,10 @@ export interface UsageTrackedModelOptions {
   callSite?: string;
   /** 赛马 lane；同一包装模型内的 provider 请求 attempt 自动从 1 连续递增。 */
   lane?: number | null;
+  /** 调用层已知的串行请求序号；省略时由同一包装模型自动递增。 */
+  attempt?: number;
+  /** DeepSeek OpenAI 兼容协议的 thinking 请求体开关；仅内层写稿链使用。 */
+  thinking?: boolean;
 }
 
 /** 随 RequestContext 传入的本请求模型覆盖(由 server 在入口解析好)。 */
@@ -229,6 +233,19 @@ export function createDeepseekProvider(
 ): (modelId: string) => LanguageModelV1 {
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const baseUrl = resolveBaseUrl(requestContext);
+  const requestFetch = options.thinking === undefined
+    ? undefined
+    : async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (typeof init?.body !== "string") return globalThis.fetch(url, init);
+        try {
+          const body = JSON.parse(init.body) as Record<string, unknown>;
+          body.thinking = { type: options.thinking ? "enabled" : "disabled" };
+          if (options.thinking) delete body.temperature;
+          return globalThis.fetch(url, { ...init, body: JSON.stringify(body) });
+        } catch {
+          return globalThis.fetch(url, init);
+        }
+      };
   const wrapModel = (model: LanguageModelV1, modelId: string) => wrapLanguageModel({
     model,
     middleware: createUsageMiddleware({
@@ -237,13 +254,21 @@ export function createDeepseekProvider(
       modelId,
       keyOrigin: resolveDeepseekAuth(requestContext).origin,
       lane: options.lane,
+      attempt: options.attempt,
     }),
   });
   if (resolveProtocol(requestContext) === "anthropic") {
     const provider = createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey });
     return (modelId) => wrapModel(provider(modelId), modelId);
   }
-  const provider = createOpenAI({ baseURL: baseUrl, apiKey });
+  // strict 才会在流式请求中发送 stream_options.include_usage；compatible 默认不发，
+  // DeepSeek/OpenAI 兼容网关会因此吞掉最终 usage。
+  const provider = createOpenAI({
+    baseURL: baseUrl,
+    apiKey,
+    compatibility: "strict",
+    ...(requestFetch ? { fetch: requestFetch } : {}),
+  });
   return (modelId) => wrapModel(provider(modelId), modelId);
 }
 
@@ -270,10 +295,15 @@ export async function getVisionModel(
       modelId: config.model,
       keyOrigin: "vision",
       lane: options.lane,
+      attempt: options.attempt,
     }),
   });
   if (config.protocol === "anthropic") {
     return wrapModel(createAnthropic({ baseURL: anthropicBaseUrl(config.baseUrl), apiKey: config.apiKey })(config.model));
   }
-  return wrapModel(createOpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey })(config.model));
+  return wrapModel(createOpenAI({
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey,
+    compatibility: "strict",
+  })(config.model));
 }

@@ -27,17 +27,13 @@ import {
   type LengthSpec,
 } from "../utils/lengthSpec.js";
 import { aiIrStreamPreviewFromMarkup, tailExcerpt, headExcerpt } from "../utils/aiIrStreamPreview.js";
-import { callDeepseekDraft, deepseekDraftClientInternals } from "./deepseekDraftClient.js";
 import {
-  resolveBaseUrl,
-  resolveDeepseekAuth,
   resolveModelId,
   resolveModelTier,
-  resolveProtocol,
   type DeepseekTier,
 } from "../llm/modelConfig.js";
+import { streamInnerModel } from "../llm/innerModelStream.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
-import { recordUsageEvent } from "../db/usageRepo.js";
 
 export const writeDraftInputSchema = z.object({
   title: z.string().describe("文档标题"),
@@ -530,38 +526,16 @@ export function createWriteDraftTool(opts: {
         try {
           laneState(laneKey);
           await emitDisplayProgress(false, params.roundIdx > 0 ? "revising" : "writing");
-          const protocol = resolveProtocol(context?.requestContext);
-          const baseUrl = resolveBaseUrl(context?.requestContext);
-          const auth = resolveDeepseekAuth(context?.requestContext);
-          const result = await callDeepseekDraft({
-            system,
-            user: params.prompt,
+          const result = await streamInnerModel({
+            requestContext: context?.requestContext,
+            callSite: "writeDraft",
+            lane: laneKey,
+            tier: "flash",
             messages: draftMessages,
             thinking: params.thinking,
             temperature: params.temperature,
-            stream: true,
-            baseUrl,
-            model: activeModelId,
-            apiKey: auth.apiKey || undefined,
-            protocol,
             abortSignal: params.abortSignal,
             maxRetries: 2,
-            onAttemptComplete: (attempt) => recordUsageEvent({
-              sessionId: opts.state.sessionId,
-              runId: (context?.requestContext?.get("runId") as string | null | undefined) ?? opts.state.runId,
-              callSite: "writeDraft",
-              modelId: activeModelId,
-              keyOrigin: auth.origin,
-              inputTokens: attempt.inputTokens,
-              outputTokens: attempt.outputTokens,
-              cacheHitTokens: attempt.cacheHitTokens,
-              cacheMissTokens: attempt.cacheMissTokens,
-              cacheCreationTokens: attempt.cacheCreationTokens,
-              usageState: attempt.usageState,
-              reason: attempt.reason,
-              lane: laneKey,
-              attempt: attempt.attempt,
-            }),
             onContentStart: params.onContentStart,
             onContentDelta: (_delta, currentRaw) => {
               raw = currentRaw;
@@ -818,5 +792,4 @@ export const writeDraftInternals = {
   reasonBudgetMultiplier,
   runConfigForIntent,
   failureKindFromError,
-  deepseekDraftClientInternals,
 };

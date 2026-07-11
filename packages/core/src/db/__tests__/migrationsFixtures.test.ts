@@ -266,6 +266,33 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-cur'")).toBe(1);
   });
 
+  it("v2 旧 usage 行升级 0003 后 tokens 原值不变且观测列使用安全默认值", async () => {
+    const client = getDocumentsClient();
+    await runMigrations(MIGRATIONS.slice(0, 2));
+    await client.execute(
+      `INSERT INTO llm_usage_events
+       (id, session_id, run_id, call_site, model_id, key_origin, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, created_at)
+       VALUES ('usage-old', 'session-old', 'run-old', 'agent', 'deepseek-old', 'env', 123, 45, 100, 23, '2026-01-01T00:00:00.000Z')`,
+    );
+    __resetMigrationsForTest();
+
+    const r = await runMigrations();
+    expect(r.appliedIds).toEqual([3]);
+    const row = (await client.execute("SELECT * FROM llm_usage_events WHERE id = 'usage-old'"))
+      .rows[0] as Record<string, unknown>;
+    expect(row).toMatchObject({
+      input_tokens: 123,
+      output_tokens: 45,
+      cache_hit_tokens: 100,
+      cache_miss_tokens: 23,
+      usage_state: "recorded",
+    });
+    expect(row.reason).toBeNull();
+    expect(row.lane).toBeNull();
+    expect(row.attempt).toBeNull();
+    expect(row.cache_creation_tokens).toBeNull();
+  });
+
   it("v-migrated:已有账本且 baseline 已记账 → 重跑无操作,schema/探针稳定", async () => {
     const client = getDocumentsClient();
 

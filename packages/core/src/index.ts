@@ -42,7 +42,7 @@ export type { RunJsInput, RunJsResult } from "./tools/index.js";
 export { runPythonTool, getPyodideTools } from "./tools/index.js";
 export type { RunPythonInput, RunPythonResult } from "./tools/index.js";
 export { streamMoreQuestions } from "./tools/index.js";
-export { redactSensitiveText } from "./tools/deepseekDraftClient.js";
+export { redactSensitiveText } from "./bridge/redaction.js";
 export { extractJsonArray } from "./utils/extractJsonArray.js";
 export {
   guardBeforeProviderCall,

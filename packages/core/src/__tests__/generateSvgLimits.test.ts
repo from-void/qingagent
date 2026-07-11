@@ -6,13 +6,13 @@ import {
   generateSvgTool,
 } from "../tools/generateSvg.js";
 
-const callDeepseekDraftMock = vi.hoisted(() => vi.fn());
+const streamInnerModelMock = vi.hoisted(() => vi.fn());
 const mkdirMock = vi.hoisted(() => vi.fn());
 const writeFileMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../tools/deepseekDraftClient.js")>();
-  return { ...actual, callDeepseekDraft: (...args: unknown[]) => callDeepseekDraftMock(...args) };
+vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../llm/innerModelStream.js")>();
+  return { ...actual, streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args) };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -55,7 +55,7 @@ function progressWriter() {
 describe("generateSvg direct DeepSeek path", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    callDeepseekDraftMock.mockReset();
+    streamInnerModelMock.mockReset();
     mkdirMock.mockReset();
     writeFileMock.mockReset();
   });
@@ -64,9 +64,9 @@ describe("generateSvg direct DeepSeek path", () => {
     vi.useRealTimers();
   });
 
-  it("通过 callDeepseekDraft 关闭 thinking,禁用工具层重试,并保持 16k maxTokens", async () => {
+  it("通过 streamText 适配层关闭 thinking,禁用工具层重试,并保持 16k maxTokens", async () => {
     const { writes, context } = progressWriter();
-    callDeepseekDraftMock.mockImplementationOnce(async (input) => {
+    streamInnerModelMock.mockImplementationOnce(async (input) => {
       input.onContentStart?.(3);
       input.onContentDelta?.(
         `<svg><rect width="10" height="10" fill="#ff0000"/></svg>`,
@@ -81,10 +81,12 @@ describe("generateSvg direct DeepSeek path", () => {
     const result = await executeGenerateSvg("红色方块", context as never);
 
     expect(result.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(1);
-    expect(callDeepseekDraftMock.mock.calls[0]![0]).toMatchObject({
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(1);
+    expect(streamInnerModelMock.mock.calls[0]![0]).toMatchObject({
       thinking: false,
-      stream: true,
+      callSite: "generateSvg",
+      lane: null,
+      attempt: 1,
       maxRetries: 0,
       maxTokens: GENERATE_SVG_MAX_OUTPUT_TOKENS,
     });
@@ -95,8 +97,31 @@ describe("generateSvg direct DeepSeek path", () => {
     );
   });
 
+  it("版式质量重试保持同一调用且 attempt 连续递增", async () => {
+    streamInnerModelMock
+      .mockResolvedValueOnce({
+        raw: `<svg><text x="1" y="1">${"很长".repeat(200)}</text></svg>`,
+        contentStartMs: 0,
+      })
+      .mockResolvedValueOnce({
+        raw: `<svg><rect width="10" height="10" fill="#00ff00"/></svg>`,
+        contentStartMs: 0,
+      });
+
+    await executeGenerateSvg("需要重试的图");
+
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(2);
+    expect(streamInnerModelMock.mock.calls.map(([input]) => ({
+      lane: input.lane,
+      attempt: input.attempt,
+    }))).toEqual([
+      { lane: null, attempt: 1 },
+      { lane: null, attempt: 2 },
+    ]);
+  });
+
   it("把调用方 maxOutputTokens 上限夹到 generateSvg 的 16k,不砍默认输出预算", async () => {
-    callDeepseekDraftMock.mockResolvedValueOnce({
+    streamInnerModelMock.mockResolvedValueOnce({
       raw: `<svg><rect width="10" height="10" fill="#00ff00"/></svg>`,
       contentStartMs: 0,
     });
@@ -108,12 +133,12 @@ describe("generateSvg direct DeepSeek path", () => {
 
     await executeGenerateSvg("绿色方块", { requestContext } as never);
 
-    expect(callDeepseekDraftMock.mock.calls[0]![0].maxTokens).toBe(GENERATE_SVG_MAX_OUTPUT_TOKENS);
+    expect(streamInnerModelMock.mock.calls[0]![0].maxTokens).toBe(GENERATE_SVG_MAX_OUTPUT_TOKENS);
   });
 
   it("长时间无输出(空闲超时)后返回中文失败文案,不暴露裸 abort 错误", async () => {
     vi.useFakeTimers();
-    callDeepseekDraftMock.mockImplementationOnce((input) =>
+    streamInnerModelMock.mockImplementationOnce((input) =>
       new Promise((_resolve, reject) => {
         input.abortSignal?.addEventListener("abort", () => {
           reject(input.abortSignal.reason ?? new DOMException("This operation was aborted", "AbortError"));
@@ -134,7 +159,7 @@ describe("generateSvg direct DeepSeek path", () => {
 
   it("持续吐字时空闲看门狗被重置,不会在 idle 阈值处误杀正在画的大图", async () => {
     vi.useFakeTimers();
-    callDeepseekDraftMock.mockImplementationOnce(async (input) => {
+    streamInnerModelMock.mockImplementationOnce(async (input) => {
       // 每隔 idle 阈值的一半吐一段,累计远超 idle 阈值仍不应被掐。
       for (let i = 0; i < 4; i++) {
         await vi.advanceTimersByTimeAsync(SVG_IDLE_TIMEOUT_MS / 2);
@@ -156,7 +181,7 @@ describe("generateSvg direct DeepSeek path", () => {
   });
 
   it("抽取 markdown fence 内 SVG 并消毒脚本和事件属性", async () => {
-    callDeepseekDraftMock.mockResolvedValueOnce({
+    streamInnerModelMock.mockResolvedValueOnce({
       raw: [
         "前导说明",
         "```svg",
@@ -177,7 +202,7 @@ describe("generateSvg direct DeepSeek path", () => {
   });
 
   it("空 SVG 或消毒后无可见内容时失败,不写文件", async () => {
-    callDeepseekDraftMock.mockResolvedValueOnce({
+    streamInnerModelMock.mockResolvedValueOnce({
       raw: `<svg><script>alert(1)</script></svg>`,
       contentStartMs: 0,
     });
@@ -197,15 +222,15 @@ describe("generateSvg direct DeepSeek path", () => {
     const cleanSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
       <text x="80" y="80" font-size="20" fill="#2b2b2b">干净版本</text>
     </svg>`;
-    callDeepseekDraftMock
+    streamInnerModelMock
       .mockResolvedValueOnce({ raw: overflowSvg, contentStartMs: 0 })
       .mockResolvedValueOnce({ raw: cleanSvg, contentStartMs: 0 });
 
     const result = await executeGenerateSvg("生成对比插图");
 
     expect(result.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(2);
-    expect(callDeepseekDraftMock.mock.calls[1]![0].user).toContain("上一版存在以下版式问题");
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(2);
+    expect(streamInnerModelMock.mock.calls[1]![0].prompt).toContain("上一版存在以下版式问题");
     expect(result.svg).toContain("干净版本");
     expect(result.svg).not.toContain("一二三四五六七八九十");
     expect(result.lintIssues).toEqual([]);
@@ -213,7 +238,7 @@ describe("generateSvg direct DeepSeek path", () => {
   });
 
   it("首版无版式问题时不重试", async () => {
-    callDeepseekDraftMock.mockResolvedValueOnce({
+    streamInnerModelMock.mockResolvedValueOnce({
       raw: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">
         <text x="80" y="80" font-size="20" fill="#2b2b2b">干净版本</text>
       </svg>`,
@@ -223,12 +248,12 @@ describe("generateSvg direct DeepSeek path", () => {
     const result = await executeGenerateSvg("生成简洁图标");
 
     expect(result.ok).toBe(true);
-    expect(callDeepseekDraftMock).toHaveBeenCalledTimes(1);
+    expect(streamInnerModelMock).toHaveBeenCalledTimes(1);
     expect(result.lintIssues).toEqual([]);
   });
 
   it("流式输出超过原始字节上限时中止并失败", async () => {
-    callDeepseekDraftMock.mockImplementationOnce(async (input) => {
+    streamInnerModelMock.mockImplementationOnce(async (input) => {
       input.onContentDelta?.("a".repeat(GENERATE_SVG_RAW_MAX_BYTES + 1), "");
       return { raw: "", contentStartMs: 0 };
     });

@@ -988,17 +988,32 @@ function buildNestedListDiff(
       if (op.kind === "add") added.push(op.b!);
       i += 1;
     }
-    for (const left of removed) {
-      out.push({
-        beforeListIndex: left.index,
-        rowDiff: buildListRowDiff(listRowsFromPmBlock(left.node), [], patchId),
-      });
-    }
-    for (const right of added) {
-      out.push({
-        afterListIndex: right.index,
-        rowDiff: buildListRowDiff([], listRowsFromPmBlock(right.node), patchId),
-      });
+    let removeIndex = 0;
+    let addIndex = 0;
+    while (removeIndex < removed.length || addIndex < added.length) {
+      const left = removed[removeIndex];
+      const right = added[addIndex];
+      if (left && right) {
+        out.push({
+          beforeListIndex: left.index,
+          afterListIndex: right.index,
+          rowDiff: buildListRowDiff(listRowsFromPmBlock(left.node), listRowsFromPmBlock(right.node), patchId),
+        });
+        removeIndex += 1;
+        addIndex += 1;
+      } else if (left) {
+        out.push({
+          beforeListIndex: left.index,
+          rowDiff: buildListRowDiff(listRowsFromPmBlock(left.node), [], patchId),
+        });
+        removeIndex += 1;
+      } else if (right) {
+        out.push({
+          afterListIndex: right.index,
+          rowDiff: buildListRowDiff([], listRowsFromPmBlock(right.node), patchId),
+        });
+        addIndex += 1;
+      }
     }
   }
   return out;
@@ -1010,27 +1025,6 @@ function childListDiffForRows(
   patchId: string,
 ): ViewNestedListDiff[] | undefined {
   return buildNestedListDiff(before?.childLists ?? [], after?.childLists ?? [], patchId);
-}
-
-function listRowTextSimilarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (!a || !b) return 0;
-  const left = Array.from(a);
-  const right = Array.from(b);
-  const dp: number[][] = Array.from({ length: left.length + 1 }, () => Array(right.length + 1).fill(0));
-  for (let i = left.length - 1; i >= 0; i -= 1) {
-    for (let j = right.length - 1; j >= 0; j -= 1) {
-      dp[i]![j] = left[i] === right[j]
-        ? dp[i + 1]![j + 1]! + 1
-        : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-  return dp[0]![0]! / Math.max(left.length, right.length);
-}
-
-function shouldPairListRowsAsChanged(before: ListRowData, after: ListRowData): boolean {
-  if (before.text === after.text) return true;
-  return listRowTextSimilarity(before.text, after.text) >= 0.5;
 }
 
 function changedListRow(before: ListRowData, after: ListRowData, patchId: string): ViewListRowDiff {
@@ -1094,7 +1088,8 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
     while (removeIndex < removed.length || addIndex < added.length) {
       const before = removed[removeIndex];
       const after = added[addIndex];
-      if (before && after && shouldPairListRowsAsChanged(before, after)) {
+      // 同一 LCS gap 中按逻辑位置一一配对：这是 replace，不以文本相似度决定是否拆成删+增。
+      if (before && after) {
         out.push(changedListRow(before, after, patchId));
         removeIndex += 1;
         addIndex += 1;
@@ -1161,17 +1156,6 @@ function withListRowDiff(block: ViewBlock, rowDiff: ViewListRowDiff[], afterNode
   if (block.kind === "list") return { ...block, rowDiff, ...(afterNode ? { node: afterNode } : {}) };
   if (block.kind === "taskList") return { ...block, rowDiff };
   return block;
-}
-
-function tableRowTextSimilarity(a: string, b: string): number {
-  return listRowTextSimilarity(a, b);
-}
-
-function shouldPairTableRowsAsChanged(before: TableRowData, after: TableRowData): boolean {
-  if (before.text === after.text) return true;
-  const sameColumnCount = before.cells.length === after.cells.length;
-  const sameCellCount = before.cells.filter((cell, index) => cell.text === after.cells[index]?.text).length;
-  return (sameColumnCount && sameCellCount > 0) || tableRowTextSimilarity(before.text, after.text) >= 0.5;
 }
 
 function sameTableCell(cell: TableCellData): ViewTableCellDiff {
@@ -1242,7 +1226,8 @@ function buildTableCellDiff(
     while (removeIndex < removed.length || addIndex < added.length) {
       const before = removed[removeIndex];
       const after = added[addIndex];
-      if (before && after && shouldPairTableRowsAsChanged(before, after)) {
+      // 稳定表形下，同一 gap 的同行 remove+add 必为 replace；纯删/纯增因另一侧为空不会误配。
+      if (before && after) {
         out.push(changedTableRow(before, after, patchId));
         removeIndex += 1;
         addIndex += 1;
@@ -1341,20 +1326,6 @@ function buildTableCellReplace(
   };
 }
 
-function containerBlockTextSimilarity(beforeNode: PmBlockNode, afterNode: PmBlockNode): number {
-  return listRowTextSimilarity(pmBlockText(beforeNode), pmBlockText(afterNode));
-}
-
-function shouldPairContainerBlocksAsChanged(beforeNode: PmBlockNode, afterNode: PmBlockNode): boolean {
-  if (isTextDiffPmBlock(beforeNode) && isTextDiffPmBlock(afterNode) && beforeNode.type === afterNode.type) {
-    return containerBlockTextSimilarity(beforeNode, afterNode) >= 0.5;
-  }
-  if (isListPmBlock(beforeNode) && isListPmBlock(afterNode) && beforeNode.type === afterNode.type) {
-    return true;
-  }
-  return isTablePmBlock(beforeNode) && isTablePmBlock(afterNode);
-}
-
 function changedContainerBlock(
   beforeNode: PmBlockNode,
   afterNode: PmBlockNode,
@@ -1401,7 +1372,12 @@ function changedContainerBlock(
       ),
     };
   }
-  return null;
+  // 类型变化或无法安全做局部 diff 时仍是同位置 replace：只显示新块，旧块由 hover 承载。
+  return {
+    status: "changed",
+    kind: "block",
+    node: afterNode,
+  };
 }
 
 function buildBlockSeqDiff(
@@ -1434,7 +1410,7 @@ function buildBlockSeqDiff(
     while (removeIndex < removed.length || addIndex < added.length) {
       const beforeNode = removed[removeIndex];
       const afterNode = added[addIndex];
-      if (beforeNode && afterNode && shouldPairContainerBlocksAsChanged(beforeNode, afterNode)) {
+      if (beforeNode && afterNode) {
         const changed = changedContainerBlock(beforeNode, afterNode, patchId);
         if (changed) {
           out.push(changed);
@@ -1476,10 +1452,6 @@ function sameColumnIdentity(beforeColumn: ColumnPmBlock, afterColumn: ColumnPmBl
   const afterId = afterColumn.attrs.blockId;
   if (beforeId && afterId) return beforeId === afterId;
   return columnText(beforeColumn) === columnText(afterColumn);
-}
-
-function columnSimilarity(beforeColumn: ColumnPmBlock, afterColumn: ColumnPmBlock): number {
-  return listRowTextSimilarity(columnText(beforeColumn), columnText(afterColumn));
 }
 
 function makeColumnDiff(
@@ -1538,7 +1510,7 @@ function buildColumnsDiff(
     while (removeIndex < removed.length || addIndex < added.length) {
       const beforeColumn = removed[removeIndex];
       const afterColumn = added[addIndex];
-      if (beforeColumn && afterColumn && columnSimilarity(beforeColumn, afterColumn) >= 0.4) {
+      if (beforeColumn && afterColumn) {
         out.push(makeColumnDiff("changed", beforeColumn, afterColumn, beforeIndex.get(beforeColumn), afterIndex.get(afterColumn), patchId));
         removeIndex += 1;
         addIndex += 1;
@@ -2268,9 +2240,134 @@ export interface ReviewPatchGroup {
   index: number;
 }
 
+export type ReviewTargetKind = "added" | "removed" | "changed" | "patch";
+
+/** 正文中可逐个计数、导航和高亮的最小审阅单元。裁决仍由 patchId 回到整条 suggestion。 */
+export interface ReviewTarget {
+  id: string;
+  patchId: string;
+  index: number;
+  kind: ReviewTargetKind;
+  /** granular React 树内的稳定定位路径；普通行内/块级 patch 不携带。 */
+  path?: string;
+}
+
+export function granularReviewTargetId(patchId: string, path: string): string {
+  return `${patchId}::${path}`;
+}
+
+type ReviewTargetPath = { path: string; kind: ReviewTargetKind };
+
+function collectListReviewTargetPaths(
+  rows: readonly ViewListRowDiff[],
+  prefix: string,
+  out: ReviewTargetPath[],
+): void {
+  rows.forEach((row, rowIndex) => {
+    const rowPath = `${prefix}/row:${rowIndex}`;
+    if (row.status !== "same") out.push({ path: rowPath, kind: row.status });
+    row.childLists?.forEach((nested, nestedIndex) => {
+      collectListReviewTargetPaths(nested.rowDiff, `${rowPath}/nested:${nestedIndex}`, out);
+    });
+  });
+}
+
+function collectTableReviewTargetPaths(
+  rows: readonly ViewTableRowDiff[],
+  prefix: string,
+  out: ReviewTargetPath[],
+): void {
+  rows.forEach((row, rowIndex) => {
+    const rowPath = `${prefix}/row:${rowIndex}`;
+    if (row.status === "added" || row.status === "removed") {
+      out.push({ path: rowPath, kind: row.status });
+      return;
+    }
+    row.cells.forEach((cell, cellIndex) => {
+      if (cell.status === "changed") out.push({ path: `${rowPath}/cell:${cellIndex}`, kind: "changed" });
+    });
+  });
+}
+
+function collectBlockSeqReviewTargetPaths(
+  entries: readonly ViewBlockSeqDiff[number][],
+  prefix: string,
+  out: ReviewTargetPath[],
+): void {
+  entries.forEach((entry, entryIndex) => {
+    const entryPath = `${prefix}/entry:${entryIndex}`;
+    if (entry.status === "same") return;
+    if (entry.status === "added" || entry.status === "removed") {
+      out.push({ path: entryPath, kind: entry.status });
+      return;
+    }
+    if (entry.kind === "list") {
+      collectListReviewTargetPaths(entry.rowDiff, `${entryPath}/list`, out);
+      return;
+    }
+    if (entry.kind === "table") {
+      collectTableReviewTargetPaths(entry.cellDiff, `${entryPath}/table`, out);
+      return;
+    }
+    out.push({ path: entryPath, kind: "changed" });
+  });
+}
+
+function collectBlockReviewTargetPaths(block: ViewBlock, prefix: string, out: ReviewTargetPath[]): void {
+  if ((block.kind === "list" || block.kind === "taskList") && block.rowDiff) {
+    collectListReviewTargetPaths(block.rowDiff, `${prefix}/list`, out);
+    return;
+  }
+  if (block.kind === "table" && block.cellDiff) {
+    collectTableReviewTargetPaths(block.cellDiff, `${prefix}/table`, out);
+    return;
+  }
+  if (block.kind === "callout" && block.bodyDiff) {
+    collectBlockSeqReviewTargetPaths(block.bodyDiff, `${prefix}/body`, out);
+    return;
+  }
+  if (block.kind === "columnList" && block.columnsDiff) {
+    block.columnsDiff.forEach((column, columnIndex) => {
+      collectBlockSeqReviewTargetPaths(column.bodyDiff, `${prefix}/column:${columnIndex}/body`, out);
+    });
+  }
+}
+
+/** applied 与 granular diff 同源地产生正文最小改动清单。 */
+export function deriveReviewTargets(
+  applied: readonly AppliedPatch[],
+  blockPatches: readonly BlockPatchInput[],
+): ReviewTarget[] {
+  const targets: ReviewTarget[] = [];
+  for (const patch of applied) {
+    const paths: ReviewTargetPath[] = [];
+    blockPatches.forEach((input, inputIndex) => {
+      if (input.patchId !== patch.id || input.op !== "replace" || input.granular !== true) return;
+      input.blocks.forEach((block, blockIndex) => {
+        collectBlockReviewTargetPaths(block, `input:${inputIndex}/block:${blockIndex}`, paths);
+      });
+    });
+    if (paths.length === 0) {
+      targets.push({ id: patch.id, patchId: patch.id, index: targets.length + 1, kind: "patch" });
+      continue;
+    }
+    for (const target of paths) {
+      targets.push({
+        id: granularReviewTargetId(patch.id, target.path),
+        patchId: patch.id,
+        index: targets.length + 1,
+        kind: target.kind,
+        path: target.path,
+      });
+    }
+  }
+  return targets;
+}
+
 /**
  * 审批态 patch 呈现的**单一真相源**:对 baseline 文档定位 patch,产出
  * - `applied`:真正可定位的 patch(含连续序号),计数 / 序号 / decoration 元数据都从这里派生;
+ * - `reviewTargets`:正文实际行/格/块级标记(含连续序号),供计数、导航与当前态高亮;
  * - `droppedIds`:锚点失败被丢弃的 patch(完整性缺口,需被发现)。
  *
  * 这样"左侧已修改 N 处 / decoration 标记 / 悬浮序号"三者同源,天然一致,不会再出现
@@ -2282,6 +2379,7 @@ export function derivePatchPresentation(
   blockPatches: ReadonlyArray<BlockPatchInput> = [],
 ): {
   applied: AppliedPatch[];
+  reviewTargets: ReviewTarget[];
   groups: ReviewPatchGroup[];
   appliedGroupIds: Set<string>;
   appliedIds: Set<string>;
@@ -2418,8 +2516,10 @@ export function derivePatchPresentation(
       index,
     }),
   );
+  const reviewTargets = deriveReviewTargets(applied, blockPatches);
   return {
     applied,
+    reviewTargets,
     groups,
     appliedGroupIds: new Set(groups.map((group) => group.reviewBatchId)),
     appliedIds: allAppliedIds,

@@ -7,7 +7,7 @@ import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
-import { pmDocToViewDocumentSnapshot, type AppliedPatch, type BlockPatchInput, type ViewBlock } from "../../data/protocol";
+import { deriveReviewTargets, pmDocToViewDocumentSnapshot, type AppliedPatch, type BlockPatchInput, type ViewBlock } from "../../data/protocol";
 
 vi.mock("mermaid", () => ({
   default: {
@@ -283,7 +283,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(inserted?.textContent ?? "").not.toMatch(/\[[ x]\]/);
   });
 
-  it("待办清单替换走行级 diff:新增行绿条/删除行划除/保留行常规(而非整块替换)", async () => {
+  it("待办清单 removed 正文不显旧文，只留标记且 hover 出原文", async () => {
     const baselineDoc = paragraphDoc("正文");
     // 行级渲染:每个保留/新增/改动行都用原始 after PM item 走 PmBlockView(嵌套子项保真);
     // node.content 的 item 顺序对应 rowDiff 里非 removed 行的顺序。
@@ -312,11 +312,19 @@ describe("审阅态 PM patch decorations", () => {
       text: "",
       rowDiff: [
         { status: "same", spans: [{ kind: "text", text: "保留项" }], checked: false },
-        { status: "added", spans: [{ kind: "text", text: "新增项" }], checked: false },
-        { status: "changed", oldText: "改前项", spans: [{ kind: "text", text: "改后项" }], checked: false },
+        // added 行走字符级(整行 patchIns 绿),marks 由 span 携带保真
+        { status: "added", spans: [{ kind: "patchIns", text: "新增项", marks: [{ type: "bold" }], patchId: "block-tl-rep" }], checked: false },
+        { status: "changed", oldText: "改前项", spans: [{ kind: "patchIns", text: "改后项", patchId: "block-tl-rep" }], checked: false },
         { status: "removed", oldText: "删除项", checked: true },
       ],
     } as unknown as ViewBlock;
+
+    const reviewApplied = appliedPatch("block-tl-rep", 7, "replace", "删除项", "新增项");
+    const reviewBlockPatch = blockPatch("block-tl-rep", "replace", {
+      anchorBlockId: "p-1", blocks: [taskListDiffBlock], replaceBeforeBlocks: [taskListDiffBlock], granular: true,
+    });
+    const reviewTargets = deriveReviewTargets([reviewApplied], [reviewBlockPatch]);
+    expect(reviewTargets).toHaveLength(3);
 
     act(() => {
       root.render(
@@ -327,8 +335,10 @@ describe("审阅态 PM patch decorations", () => {
           showPatches
           acceptedPatches={new Set()}
           rejectedPatches={new Set()}
-          reviewBlockPatches={[blockPatch("block-tl-rep", "replace", { anchorBlockId: "p-1", blocks: [taskListDiffBlock], replaceBeforeBlocks: [taskListDiffBlock], granular: true })]}
-          reviewAppliedPatches={[appliedPatch("block-tl-rep", 7, "replace", "删除项", "新增项")]}
+          reviewBlockPatches={[reviewBlockPatch]}
+          reviewAppliedPatches={[reviewApplied]}
+          reviewTargets={reviewTargets}
+          activeReviewTargetId={reviewTargets[1]!.id}
           patchMeta={new Map([
             ["block-tl-rep", { before: "删除项", after: "新增项", kind: "replace", index: 7 }],
           ])}
@@ -346,13 +356,30 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector('.wf-blockmark-del[data-patch-id="block-tl-rep"]')).toBeNull();
     // 行级:真 taskList 里逐行标注,而不是把整个新块当一坨插入
     expect(inserted?.querySelector(".pm-task-list")).not.toBeNull();
+    const targetAnchors = inserted?.querySelectorAll("[data-review-target-id]");
+    expect(targetAnchors).toHaveLength(3);
+    expect(Array.from(targetAnchors ?? []).map((anchor) => anchor.getAttribute("data-review-target-index"))).toEqual(["1", "2", "3"]);
+    expect(inserted?.querySelectorAll("[data-review-target-id].is-current")).toHaveLength(1);
+    expect(inserted?.querySelector("[data-review-target-id].is-current")?.getAttribute("data-review-target-id")).toBe(reviewTargets[1]!.id);
     const added = inserted?.querySelector(".wf-list-row--added");
     expect(added?.textContent).toContain("新增项");
     // 新增项的加粗 mark 保真(走 PmBlockView,非拍平)
     expect(added?.querySelector("strong")?.textContent).toBe("新增项");
+    act(() => added!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null })));
+    await flush();
+    expect(host.querySelectorAll(".patch-hover-popup")).toHaveLength(1);
+    expect(host.querySelector(".patch-row-popup .patch-popup-label")?.textContent).toBe("本处");
+    expect(host.querySelector(".patch-row-popup")?.textContent).toContain("新增项");
+    act(() => added!.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: null })));
+    await new Promise((resolve) => setTimeout(resolve, 180));
     const removed = inserted?.querySelector(".wf-list-row--removed");
-    expect(removed?.textContent).toContain("删除项");
-    expect(removed?.querySelector(".wf-row-del")).not.toBeNull();
+    expect(removed?.textContent).not.toContain("删除项");
+    expect(removed?.querySelector(".wf-row-del")).toBeNull();
+    expect(removed?.querySelector(".wf-review-delete-marker")).not.toBeNull();
+    act(() => removed!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null })));
+    await flush();
+    expect(host.querySelectorAll(".patch-hover-popup")).toHaveLength(1);
+    expect(host.querySelector(".patch-row-popup")?.textContent).toContain("删除项");
     // 改动行:显示新内容(改后项),整项走 PmBlockView;不再假造行内删除片段
     const changed = inserted?.querySelector(".wf-list-row--changed");
     expect(changed?.textContent).toContain("改后项");
@@ -515,7 +542,15 @@ describe("审阅态 PM patch decorations", () => {
                 {
                   status: "changed",
                   oldText: "天色暗下来 x^2",
-                  spans: [{ kind: "patchIns", text: "天色骤暗", patchId: "rain-rep" }],
+                  // 真实字符级 diff:保留"天色"(bold)、删"暗下来"、增"骤暗"(bold)、" "与公式不变;
+                  // 与 after 段落(bold"天色骤暗"+" "+inlineMath)逐单元对齐,字符级保真 marks/公式。
+                  spans: [
+                    { kind: "text", text: "天色", marks: [{ type: "bold" }] },
+                    { kind: "patchDel", text: "暗下来", patchId: "rain-rep" },
+                    { kind: "patchIns", text: "骤暗", marks: [{ type: "bold" }], patchId: "rain-rep" },
+                    { kind: "text", text: " " },
+                    { kind: "math", latex: "x^2" },
+                  ],
                 },
                 { status: "same", spans: [{ kind: "text", text: "空气凝滞" }] },
               ],
@@ -553,8 +588,9 @@ describe("审阅态 PM patch decorations", () => {
     expect(inserted?.querySelectorAll(".wf-list-row--changed")).toHaveLength(1);
     expect(inserted?.querySelectorAll(".wf-list-row--same")).toHaveLength(3);
     const changed = inserted?.querySelector(".wf-list-row--changed") as HTMLElement | null;
+    // 正文字符级:保留"天色"+新增"骤暗",加粗 mark 拆到各 span 上仍保真(拼接=天色骤暗),公式保真
     expect(changed?.textContent).toContain("天色骤暗");
-    expect(changed?.querySelector("strong")?.textContent).toBe("天色骤暗");
+    expect(Array.from(changed?.querySelectorAll("strong") ?? []).map((s) => s.textContent).join("")).toBe("天色骤暗");
     expect(changed?.querySelector(".tiptap-mathematics-render")).not.toBeNull();
 
     act(() => {
@@ -563,11 +599,13 @@ describe("审阅态 PM patch decorations", () => {
     await flush();
 
     const popup = host.querySelector(".patch-row-popup");
-    expect(popup?.textContent).toContain("天色暗下来");
+    // hover 只弹字符级改动片段(旧→新),不再弹整行原文:含被换掉的"暗下来"与新"骤暗",不含未改的"天色"/上层列表文本
+    expect(popup?.textContent).toContain("暗下来");
+    expect(popup?.textContent).toContain("骤暗");
+    expect(popup?.querySelector(".patch-frag")).not.toBeNull();
     expect(popup?.textContent).not.toContain("雨的层次");
     expect(popup?.textContent).not.toContain("雨前：万物屏息");
     expect(popup?.textContent).not.toContain("空气凝滞");
-    expect(popup?.querySelector(".tiptap-mathematics-render")).not.toBeNull();
   });
 
   it("granular 有序列表 changed 行 hover 原文不渲成圆点/错误序号——只渲内容(codex 回归)", async () => {
@@ -593,7 +631,10 @@ describe("审阅态 PM patch decorations", () => {
         ],
       },
       rowDiff: [
-        { status: "changed", oldText: "旧条目", spans: [{ kind: "patchIns", text: "新条目", patchId: "ol-rep" }] },
+        { status: "changed", oldText: "旧条目", spans: [
+          { kind: "patchDel", text: "旧条目", patchId: "ol-rep" },
+          { kind: "patchIns", text: "新条目", patchId: "ol-rep" },
+        ] },
       ],
     } as unknown as ViewBlock;
 
@@ -632,9 +673,10 @@ describe("审阅态 PM patch decorations", () => {
 
     const rowPopup = host.querySelector(".patch-row-popup");
     expect(rowPopup).not.toBeNull();
+    // hover 弹字符级改动片段(旧→新):含旧"旧条目"与新"新条目",纯内容不渲成 <ul>/<ol>(避免圆点/错误序号)
     expect(rowPopup?.textContent).toContain("旧条目");
-    // 原文用 .wf-row-orig 纯内容,不渲成 <ul>/<ol> 列表(避免圆点/错误序号)
-    expect(rowPopup?.querySelector(".wf-row-orig")).not.toBeNull();
+    expect(rowPopup?.textContent).toContain("新条目");
+    expect(rowPopup?.querySelector(".patch-frag")).not.toBeNull();
     expect(rowPopup?.querySelector("ul")).toBeNull();
     expect(rowPopup?.querySelector("ol")).toBeNull();
   });
@@ -744,6 +786,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(sameCell?.querySelector("strong")?.textContent).toBe("保留格");
     const changedCell = inserted?.querySelector(".wf-table-cell--changed") as HTMLElement | null;
     expect(changedCell?.querySelectorAll("p")).toHaveLength(2);
+    // 表格格子回退整块 after node 渲染(复杂例外):不出行内 diff,旧文进 hover
     expect(changedCell?.querySelector(".wf-row-del")).toBeNull();
     expect(changedCell?.querySelector(".wf-row-ins")).toBeNull();
     expect(changedCell?.textContent).toContain("新值");
@@ -1008,7 +1051,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(inserted?.querySelector(".pm-callout-body > p strong")?.textContent).toBe("保留提示");
     expect(inserted?.querySelectorAll(".wf-container-block--changed")).toHaveLength(1);
     const changed = inserted?.querySelector(".wf-container-block--changed") as HTMLElement | null;
-    expect(changed?.querySelector(".wf-row-del")?.textContent).toBe("旧");
+    expect(changed?.querySelector(".wf-row-del")).toBeNull();
     expect(changed?.querySelector(".wf-row-ins")?.textContent).toBe("新");
     act(() => inserted!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null })));
     await flush();
@@ -1155,10 +1198,16 @@ describe("审阅态 PM patch decorations", () => {
 
     const columns = host.querySelectorAll('[data-patch-id="columns-delete-rep"] .pm-column');
     expect(columns).toHaveLength(3);
-    expect(Array.from(columns).map((column) => column.textContent)).toEqual(["甲栏", "乙栏旧内容", "丙栏"]);
+    expect(Array.from(columns).map((column) => column.textContent)).toEqual(["甲栏", "", "丙栏"]);
     expect(columns[1]?.getAttribute("data-column-status")).toBe("removed");
     expect((columns[1] as HTMLElement | undefined)?.style.flexBasis).toBe("35%");
-    expect(columns[1]?.querySelector(".wf-container-block--removed")).not.toBeNull();
+    const removed = columns[1]?.querySelector(".wf-container-block--removed") as HTMLElement | null;
+    expect(removed).not.toBeNull();
+    expect(removed?.querySelector(".wf-review-delete-marker")).not.toBeNull();
+    act(() => removed!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null })));
+    await flush();
+    expect(host.querySelectorAll(".patch-hover-popup")).toHaveLength(1);
+    expect(host.querySelector(".patch-row-popup")?.textContent).toContain("乙栏旧内容");
   });
 
   it("hover 卡片原文用原始 before PM node 渲真 <table>(合并单元格/富文本保真,非散排 markdown)", async () => {

@@ -166,6 +166,8 @@ export function PmTableCellView({
   children,
   onMouseEnter,
   onMouseLeave,
+  reviewTargetId,
+  reviewTargetIndex,
 }: {
   cell: PmTableCellNode;
   className?: string;
@@ -173,6 +175,8 @@ export function PmTableCellView({
   children?: ReactNode;
   onMouseEnter?: MouseEventHandler<HTMLTableCellElement>;
   onMouseLeave?: MouseEventHandler<HTMLTableCellElement>;
+  reviewTargetId?: string;
+  reviewTargetIndex?: number;
 }) {
   const Tag = cell.type === "tableHeader" ? "th" : "td";
   const attrs = cell.attrs as { backgroundColor?: string | null; colspan?: number; rowspan?: number; colwidth?: number[] | null } | undefined;
@@ -187,6 +191,8 @@ export function PmTableCellView({
       ref={cellRef}
       className={className}
       data-bg-color={attrs?.backgroundColor ?? undefined}
+      data-review-target-id={reviewTargetId}
+      data-review-target-index={reviewTargetIndex}
       colSpan={typeof colspan === "number" && colspan > 1 ? colspan : undefined}
       rowSpan={typeof rowspan === "number" && rowspan > 1 ? rowspan : undefined}
       style={width && width > 0 ? { width } : undefined}

@@ -159,6 +159,7 @@ import {
   subscribeRevealPresentationConfig,
 } from "./data/revealPresentationConfig";
 import { deriveReviewUiState } from "./data/reviewUiState";
+import { stepReviewTargetId } from "./data/reviewNavigation";
 import {
   classifyDocSaveError,
   TRANSIENT_DOC_SAVE_TOAST,
@@ -985,18 +986,17 @@ export function WorkspacePage() {
         : null,
     [state.doc, overlayInputs, blockPatchInputs],
   );
-  // 修改处数按「正文实际渲染的绿色 diff 段数」算 = 真正落地的 patch 数(applied)。
-  // 一个 editDraft 若产出多段不连续的 diff(如替换文本里多了几处空格 →
-  // buildDraftDiff 切成多个 hunk),正文里有几段绿,就显示几处。
-  // 注:同一 patchId 的 delete+insert 对(块级替换)在 applied 里已按 patchId 去重为 1 条,
-  // 红+绿对照只算 1 处,不会被重复计数。
-  const presentationCount = patchPresentation?.applied.length ?? 0;
-  const visibleReviewPatchIds = useMemo(
-    () =>
-      (patchPresentation?.applied ?? [])
-        .map((patch) => patch.id)
-        .filter((id): id is string => Boolean(id) && pendingReviewPatchIdSet.has(id)),
+  // 修改处数与正文最小标记严格同源：普通 patch 一项，granular 容器按实际 changed/added/removed
+  // 行、格或内部块逐项计数；裁决仍回到 target.patchId 对应的整条 suggestion。
+  const presentationCount = patchPresentation?.reviewTargets.length ?? 0;
+  const visibleReviewTargets = useMemo(
+    () => (patchPresentation?.reviewTargets ?? [])
+      .filter((target) => pendingReviewPatchIdSet.has(target.patchId)),
     [patchPresentation, pendingReviewPatchIdSet],
+  );
+  const visibleReviewTargetIds = useMemo(
+    () => visibleReviewTargets.map((target) => target.id),
+    [visibleReviewTargets],
   );
   const patchMeta = useMemo(() => {
     return buildPatchMeta(patchPresentation?.applied ?? []);
@@ -1043,8 +1043,8 @@ export function WorkspacePage() {
     () => allReviewPatches.map((p) => p.id).slice().sort().join(","),
     [allReviewPatches],
   );
-  const [activePatchId, setActivePatchId] = useState<string | null>(null);
-  const previousVisibleReviewPatchIdsRef = useRef<string[]>([]);
+  const [activeReviewTargetId, setActiveReviewTargetId] = useState<string | null>(null);
+  const previousVisibleReviewTargetIdsRef = useRef<string[]>([]);
   const autoCommitReviewKeyRef = useRef<string | null>(null);
 
   // 改动B:审批入口"标记逐处入场"——review 态进入时，patch 标记按时序逐个点亮，
@@ -1164,7 +1164,7 @@ export function WorkspacePage() {
   const [patchRevealing, setPatchRevealing] = useState(false);
   const hasPatchCalls = allReviewPatches.length > 0;
   // 顶部审批条显示"剩余待处理"处数；正文 diff 仍由 presentationCount 保持全量事实口径。
-  const visiblePatchCount = visibleReviewPatchIds.length;
+  const visiblePatchCount = visibleReviewTargetIds.length;
   const reviewUiState = deriveReviewUiState({
     content: dim.content,
     overlay: dim.overlay,
@@ -1250,7 +1250,7 @@ export function WorkspacePage() {
   const autoScrolledReviewKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (effectivePatchRevealing) return; // 等揭示动画收尾
-    const ids = visibleReviewPatchIds;
+    const ids = visibleReviewTargetIds;
     if (!inlinePatchReview || ids.length === 0) {
       autoScrolledReviewKeyRef.current = null;
       return;
@@ -1259,27 +1259,27 @@ export function WorkspacePage() {
     if (autoScrolledReviewKeyRef.current === key) return;
     autoScrolledReviewKeyRef.current = key;
     const firstId = ids[0]!;
-    setActivePatchId(firstId);
+    setActiveReviewTargetId(firstId);
     requestAnimationFrame(() => {
-      const el = document.querySelector(patchIdSelector(firstId));
+      const el = document.querySelector(reviewTargetSelector(firstId));
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-  }, [effectivePatchRevealing, visibleReviewPatchIds, inlinePatchReview]);
+  }, [effectivePatchRevealing, visibleReviewTargetIds, inlinePatchReview]);
 
   useEffect(() => {
-    const previousIds = previousVisibleReviewPatchIdsRef.current;
-    previousVisibleReviewPatchIdsRef.current = visibleReviewPatchIds;
-    if (!inlinePatchReview || visibleReviewPatchIds.length === 0) {
-      if (activePatchId !== null) setActivePatchId(null);
+    const previousIds = previousVisibleReviewTargetIdsRef.current;
+    previousVisibleReviewTargetIdsRef.current = visibleReviewTargetIds;
+    if (!inlinePatchReview || visibleReviewTargetIds.length === 0) {
+      if (activeReviewTargetId !== null) setActiveReviewTargetId(null);
       return;
     }
-    if (activePatchId && visibleReviewPatchIds.includes(activePatchId)) return;
-    const previousIndex = activePatchId ? previousIds.indexOf(activePatchId) : -1;
+    if (activeReviewTargetId && visibleReviewTargetIds.includes(activeReviewTargetId)) return;
+    const previousIndex = activeReviewTargetId ? previousIds.indexOf(activeReviewTargetId) : -1;
     const nextPatchId = previousIndex >= 0
-      ? visibleReviewPatchIds[Math.min(previousIndex, visibleReviewPatchIds.length - 1)]
-      : visibleReviewPatchIds[0];
-    setActivePatchId(nextPatchId ?? null);
-  }, [activePatchId, inlinePatchReview, visibleReviewPatchIds]);
+      ? visibleReviewTargetIds[Math.min(previousIndex, visibleReviewTargetIds.length - 1)]
+      : visibleReviewTargetIds[0];
+    setActiveReviewTargetId(nextPatchId ?? null);
+  }, [activeReviewTargetId, inlinePatchReview, visibleReviewTargetIds]);
 
   // 输入框是否已「交接」给右侧条而隐藏 —— 由下面 effect 实测条真在 DOM 才置真,
   // 避免"信号说有条但条没渲染"时把输入框误藏成凭空消失。
@@ -2943,7 +2943,7 @@ export function WorkspacePage() {
     const reviewOutcome = buildReviewOutcome(currentPatches, { rejectUndecided: true });
 
     dispatch({ kind: "forceUnlockReview" });
-    setActivePatchId(null);
+    setActiveReviewTargetId(null);
     showToast(
       acceptReviewBatchIds.length > 0
         ? `已保留已采纳的 ${reviewOutcome.acceptedCount} 处 · 撤销其余修改`
@@ -3019,28 +3019,24 @@ export function WorkspacePage() {
   }, [showToast]);
 
   const handleJumpNext = useCallback(() => {
-    const allPatchIds = visibleReviewPatchIds;
+    const allPatchIds = visibleReviewTargetIds;
     if (allPatchIds.length === 0) return;
-    const curIdx = activePatchId ? allPatchIds.indexOf(activePatchId) : -1;
-    const nextIdx = curIdx < allPatchIds.length - 1 ? curIdx + 1 : 0;
-    const nextId = allPatchIds[nextIdx];
+    const nextId = stepReviewTargetId(allPatchIds, activeReviewTargetId, "next");
     if (!nextId) return;
-    setActivePatchId(nextId);
-    const el = document.querySelector(patchIdSelector(nextId));
+    setActiveReviewTargetId(nextId);
+    const el = document.querySelector(reviewTargetSelector(nextId));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [visibleReviewPatchIds, activePatchId]);
+  }, [visibleReviewTargetIds, activeReviewTargetId]);
 
   const handleJumpPrev = useCallback(() => {
-    const allPatchIds = visibleReviewPatchIds;
+    const allPatchIds = visibleReviewTargetIds;
     if (allPatchIds.length === 0) return;
-    const curIdx = activePatchId ? allPatchIds.indexOf(activePatchId) : allPatchIds.length;
-    const prevIdx = curIdx > 0 ? curIdx - 1 : allPatchIds.length - 1;
-    const prevId = allPatchIds[prevIdx];
+    const prevId = stepReviewTargetId(allPatchIds, activeReviewTargetId, "previous");
     if (!prevId) return;
-    setActivePatchId(prevId);
-    const el = document.querySelector(patchIdSelector(prevId));
+    setActiveReviewTargetId(prevId);
+    const el = document.querySelector(reviewTargetSelector(prevId));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [visibleReviewPatchIds, activePatchId]);
+  }, [visibleReviewTargetIds, activeReviewTargetId]);
 
   const handlePatchVerdict = useCallback(
     (patchId: string, verdict: "accepted" | "rejected") => {
@@ -3383,11 +3379,12 @@ export function WorkspacePage() {
     (p) => p.status.kind === "accepted" || p.status.kind === "rejected",
   ).length;
   const remainingPatches = pendingReviewPatches.length;
-  const currentPatchId =
-    activePatchId && visibleReviewPatchIds.includes(activePatchId)
-      ? activePatchId
-      : visibleReviewPatchIds[0] ?? null;
-  const activePatchIndex = currentPatchId ? visibleReviewPatchIds.indexOf(currentPatchId) : -1;
+  const currentReviewTarget = visibleReviewTargets.find((target) => target.id === activeReviewTargetId)
+    ?? visibleReviewTargets[0]
+    ?? null;
+  const currentPatchId = currentReviewTarget?.patchId ?? null;
+  const currentReviewTargetId = currentReviewTarget?.id ?? null;
+  const activePatchIndex = currentReviewTargetId ? visibleReviewTargetIds.indexOf(currentReviewTargetId) : -1;
   const autoCommitReviewKey = useMemo(
     () =>
       allReviewPatches
@@ -3578,6 +3575,8 @@ export function WorkspacePage() {
             reviewOverlayInputs={overlayInputs}
             reviewBlockPatches={blockPatchInputs}
             reviewAppliedPatches={patchPresentation?.applied ?? []}
+            reviewTargets={patchPresentation?.reviewTargets ?? []}
+            activeReviewTargetId={currentReviewTargetId}
             revealedPatchIds={revealedPatchIds}
             revealCursors={revealCursors}
             typedByPatch={typedByPatch}
@@ -3736,4 +3735,11 @@ function patchIdSelector(patchId: string): string {
     ? CSS.escape
     : (value: string) => value.replace(/["\\]/g, "\\$&");
   return `[data-patch-id="${escape(patchId)}"]:not(.wf-patch-del)`;
+}
+
+function reviewTargetSelector(targetId: string): string {
+  const escape = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape
+    : (value: string) => value.replace(/["\\]/g, "\\$&");
+  return `[data-review-target-id="${escape(targetId)}"],${patchIdSelector(targetId)}`;
 }

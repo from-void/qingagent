@@ -107,6 +107,7 @@ import {
   commandCardStatusFromCard,
   generateSvgProgressFromResult,
   generateSvgToolCallSpec,
+  githubAuthCardToolCallSpec,
   latestGenerateSvgProgress,
   normalizeGenerateSvgProgress,
   qrCardToolCallSpec,
@@ -1817,6 +1818,15 @@ export async function* processAgentStream(
           if (matId) extractedTexts.set(matId, entry);
           extractionEventsThisTurn.push(entry);
         }
+      } else if (toolName === "github_auth_start" && isRecord(toolResult)) {
+        const pendingId = typeof toolResult.pendingId === "string" ? toolResult.pendingId : "";
+        const userCode = typeof toolResult.user_code === "string" ? toolResult.user_code : "";
+        const verificationUri = typeof toolResult.verification_uri === "string" ? toolResult.verification_uri : "";
+        const expiresAt = typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "";
+        const spec = githubAuthCardToolCallSpec(toolCallId, { pendingId, userCode, verificationUri, expiresAt });
+        yield toolCallUpdated(agentMessageId, toolCallId, spec);
+        updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+        outcome.producedVisibleFrame = true;
       } else if (DRAFT_MUTATION_TOOL_NAMES.has(toolName)) {
         const result = toolResult as Record<string, unknown> | null;
         const ok = result && typeof result === "object" && result.ok === true;
@@ -2063,6 +2073,17 @@ export async function* processAgentStream(
           const t = toolResult.text as string;
           const entry = { text: t, sourceUrl: null, fileId: binding.fileId };
           if (fn) extractedTexts.set(fn, entry);
+          extractionEventsThisTurn.push(entry);
+        }
+      }
+      if (toolName === "github_read_file" && typeof toolResult.text === "string") {
+        const t = toolResult.text as string;
+        if (t.trim() && !isExtractionFailureText(t)) {
+          const sourceUrl = typeof toolResult.sourceUrl === "string" ? toolResult.sourceUrl : null;
+          const entry = { text: t, sourceUrl, fileId: null };
+          if (typeof toolResult.materialId === "string") extractedTexts.set(toolResult.materialId, entry);
+          if (typeof toolResult.title === "string") extractedTexts.set(toolResult.title, entry);
+          if (sourceUrl) extractedTexts.set(sourceUrl, entry);
           extractionEventsThisTurn.push(entry);
         }
       }

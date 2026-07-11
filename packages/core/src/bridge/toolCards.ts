@@ -337,6 +337,36 @@ export function qrCardToolCallSpec(
   };
 }
 
+/** 可信 connector bridge 专用：pendingId/device flow 元数据绝不经过模型参数。 */
+export function githubAuthCardToolCallSpec(
+  toolCallId: string,
+  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: string },
+): ToolCallSpec {
+  const expiresAt = Date.parse(input.expiresAt);
+  return {
+    id: toolCallId,
+    name: "github_auth_start",
+    render: { kind: "chatInline" },
+    status: { kind: "done" },
+    body: {
+      kind: "qrCard",
+      data: {
+        content: input.verificationUri,
+        imageDataUri: null,
+        title: "连接 GitHub",
+        code: input.userCode,
+        note: "复制用户码并在 GitHub 完成授权。",
+        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 15 * 60_000,
+        refreshQuery: "GitHub 授权已中断，请重新发起连接",
+        confirmQuery: null,
+        connectorId: "github",
+        pendingId: input.pendingId,
+      },
+    },
+    result: null,
+  };
+}
+
 /**
  * wechat_auth_start 授权卡:工具**直接**产出二维码卡片,base64 图片不经过模型
  * (微信登录码是 7KB+ base64,若让模型当 show_qr 参数复述会卡死/出错)。

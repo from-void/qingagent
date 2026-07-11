@@ -130,6 +130,7 @@ export * from "./connectors/index.js";
 export {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
+  githubAuthCardToolCallSpec,
 } from "./bridge/toolCards.js";
 export type {
   AskUserPurposeKind,

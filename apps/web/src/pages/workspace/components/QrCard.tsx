@@ -14,6 +14,8 @@ import "./QrCard.css";
  * - code(配对码)不是每个平台都有,没有则隐藏。
  */
 export function AuthCard({ data }: { data: QrCardBody }) {
+  const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">("polling");
+  const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const remainOf = useCallback(
     () => Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000)),
@@ -21,6 +23,26 @@ export function AuthCard({ data }: { data: QrCardBody }) {
   );
   const [remain, setRemain] = useState(remainOf);
   const expired = remain <= 0;
+
+  useVisibilityPausedInterval(
+    async () => {
+      if (!data.connectorId || !data.pendingId || connectorState !== "polling") return;
+      try {
+        const response = await fetch(`/api/v1/connectors/${encodeURIComponent(data.connectorId)}?pendingId=${encodeURIComponent(data.pendingId)}`, { credentials: "same-origin" });
+        if (response.status === 410) { setConnectorState("interrupted"); return; }
+        if (!response.ok) return;
+        const payload = await response.json() as { status?: { state?: string; account?: { displayName?: string } | null; reasonCode?: string | null } };
+        if (payload.status?.state === "connected") {
+          setConnectedAccount(payload.status.account?.displayName ?? null);
+          setConnectorState("connected");
+        } else if (payload.status?.reasonCode === "PENDING_LOST" || payload.status?.reasonCode === "PENDING_EXPIRED") {
+          setConnectorState("interrupted");
+        }
+      } catch { /* 短暂网络失败保持原卡，下个节流周期再试。 */ }
+    },
+    data.connectorId && data.pendingId && connectorState === "polling" ? 2000 : null,
+    { runOnResume: true },
+  );
 
   // 图片模式(imageDataUri 非空):码本身就是一张图(如微信公众平台后台登录码),直接显示;
   // 否则编码模式:把 content 字符串(自产 URL,安全)编码成二维码图。
@@ -87,6 +109,11 @@ export function AuthCard({ data }: { data: QrCardBody }) {
 
   return (
     <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
+      {connectorState === "connected" ? (
+        <div className="qr-card__success">✓ 已连接为 {connectedAccount ?? "GitHub 账号"}</div>
+      ) : connectorState === "interrupted" ? (
+        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
+      ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
       <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
         {qrUrl ? (
@@ -111,6 +138,13 @@ export function AuthCard({ data }: { data: QrCardBody }) {
       {data.code && (
         <div className="qr-card__usercode">
           配对码 <b>{data.code}</b>
+          {data.connectorId === "github" && (
+            <button type="button" className="qr-card__confirm" onClick={() => {
+              void navigator.clipboard?.writeText(data.code ?? "");
+              const href = sanitizeToolbarLinkHref(data.content);
+              if (href) window.open(href, "_blank", "noopener,noreferrer");
+            }}>复制代码并打开</button>
+          )}
         </div>
       )}
       <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
@@ -130,6 +164,7 @@ export function AuthCard({ data }: { data: QrCardBody }) {
           {confirmSent ? "已发送确认" : data.confirmLabel ?? "我已完成授权"}
         </button>
       )}
+      </>}
     </div>
   );
 }

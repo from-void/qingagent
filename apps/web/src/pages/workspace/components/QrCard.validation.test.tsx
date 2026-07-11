@@ -443,4 +443,33 @@ describe("QrCard — validation loop 3", () => {
       expect(confirmButton?.getAttribute("aria-label")).toBe("确认已完成授权");
     });
   });
+
+  describe("(g) trusted connector polling", () => {
+    const connectorCard = (): QrCardBody => ({
+      title: "连接 GitHub", content: "https://example.test/device", imageDataUri: null,
+      expiresAt: Date.now() + 60_000, code: "ABCD-EFGH", note: null,
+      refreshQuery: "重新连接", confirmQuery: null, connectorId: "github", pendingId: "pending-safe-id",
+    });
+
+    it("新帧轮询成功后原地显示账号", async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "@octocat" } } }), { status: 200 })));
+      render(<QrCard data={connectorCard()} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已连接为 @octocat");
+    });
+
+    it("410 原地显示重新发起，旧帧不轮询", async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "PENDING_LOST" }), { status: 410 }));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<QrCard data={connectorCard()} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(document.body.textContent).toContain("授权已中断，重新发起");
+      act(() => { root?.unmount(); root = null; }); host?.remove(); host = null;
+      render(<QrCard data={{ ...connectorCard(), connectorId: undefined, pendingId: undefined }} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

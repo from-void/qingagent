@@ -1426,6 +1426,8 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 #view-workspace .bigplan-panel .aus2-bubble {
   background: var(--bg-paper-deep);
+  /* 纸底上不能继承暗皮肤浅墨(--ink-1),否则浅字浅底隐形;取纸面点缀金同源深色 */
+  color: #6b5836;
 }
 #view-workspace .bigplan-panel .aus2-bubble::after {
   border-top-color: var(--bg-paper-deep);

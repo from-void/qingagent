@@ -59,7 +59,7 @@ export function evaluateAskUserTriggerDecision(
       textExcerpt,
       reason: ok
         ? `命中问卷: tools=[${actualToolNames.join(",")}] text="${textExcerpt}"`
-        : `应单独调用 askUser,实际 tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`,
+        : `应单独调用 planDraft,实际 tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`,
     };
   }
 
@@ -75,7 +75,7 @@ export function evaluateAskUserTriggerDecision(
     textExcerpt,
     reason: ok
       ? `命中不问: tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`
-      : `不应 askUser${fixture.requireWriteDraft ? "且应调用 writeDraft" : "且不应调用 writeDraft"},实际 tools=[${
+      : `不应调用 planDraft${fixture.requireWriteDraft ? "且应调用 writeDraft" : "且不应调用 writeDraft"},实际 tools=[${
           actualToolNames.join(",") || "none"
         }] text="${textExcerpt}"`,
   };
@@ -83,7 +83,7 @@ export function evaluateAskUserTriggerDecision(
 
 export const askUserTriggerScorer = createScorer({
   id: "askuser-trigger-decision",
-  description: "live runEvals 轨:确定性验证首轮写作方向问卷 askUser 触发裁决。",
+  description: "live runEvals 轨:确定性验证首轮写作方向工具 planDraft 触发裁决。",
   type: "agent",
 })
   .generateScore(({ run }) => {

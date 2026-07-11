@@ -290,6 +290,7 @@ async function runBranch(
     callSite: input.mode === "initial" ? "planDraft" : "askMore",
     requestContext: input.requestContext,
     abortSignal: input.abortSignal,
+    streamTextDeltas: true,
     onTextDelta: async (_delta, accumulated) => {
       const partial = parsePartialGeneratedQuestions(accumulated);
       if (partial.length > 0) lastPartial = partial;
@@ -389,6 +390,7 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
       };
     }
   }
+  console.warn(`[genService] fallback engaged reason=${branchFailure ?? "unknown"} snapshot=${!!snapshot}`);
   const fallbackQuestions = await runFallback(input);
   if (snapshot) rememberFallbackQuestions(snapshot, input, fallbackQuestions);
   return {

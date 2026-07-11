@@ -74,8 +74,9 @@ describe("模型传输静态守护", () => {
     expect(rawFetchIndex).toBeLessThan(branchEnd);
     expect(source.match(/globalThis\.fetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
     const branchSource = source.slice(branchStart, branchEnd);
-    expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(3);
-    expect(branchSource).toContain("provider_http_");
+    expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(4);
+    expect(branchSource).toContain("providerErrorSummary(response)");
+    expect(branchSource).toContain("recordBranchUsage(input, null, attempt, error)");
     expect(branchSource).toContain("provider_request_aborted");
     expect(branchSource).toContain("provider_request_error");
   });

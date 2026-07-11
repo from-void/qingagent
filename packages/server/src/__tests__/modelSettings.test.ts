@@ -44,6 +44,7 @@ const mockCore = vi.hoisted(() => {
       return url;
     }),
     testVisionConnection: vi.fn(async () => undefined),
+    testTextModelConnection: vi.fn(async () => undefined),
   };
 });
 
@@ -229,6 +230,29 @@ describe("modelSettingsRoutes", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", {
       headers: { Authorization: "Bearer sk-public" },
       signal: expect.any(AbortSignal) as AbortSignal,
+    });
+  });
+
+  it("test-custom anthropic 走 core 计费工厂的最小 messages 连通测试", async () => {
+    const app = await loadApp();
+    const res = await app.request("/api/v1/settings/model/test-custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://glm.example.com/v1",
+        apiKey: "glm-key",
+        protocol: "anthropic",
+        model: "glm-4.6",
+      }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true });
+    expect(mockCore.testTextModelConnection).toHaveBeenCalledWith({
+      apiKey: "glm-key",
+      baseUrl: "https://glm.example.com/v1",
+      model: "glm-4.6",
+      protocol: "anthropic",
+      timeoutMs: 12_000,
     });
   });
 

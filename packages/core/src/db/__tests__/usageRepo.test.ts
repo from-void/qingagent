@@ -42,40 +42,72 @@ describe("usageRepo", () => {
       inputTokens: 10,
       outputTokens: 5,
     });
+    await recordUsageEvent({
+      sessionId: "session-a",
+      callSite: "agent",
+      modelId: "deepseek-v4-flash",
+      keyOrigin: "visitor",
+      usageState: "missing",
+      reason: "provider_request_aborted",
+    });
 
     const today = new Date().toISOString().slice(0, 10);
-    expect(await aggregateUsageByDay(1)).toEqual([
+    const rows = (bucket: string) => [
       {
-        bucket: today,
+        bucket,
+        callSite: "agent",
         modelId: "deepseek-v4-flash",
-        inputTokens: 110,
-        outputTokens: 55,
+        inputTokens: 100,
+        outputTokens: 50,
         cacheHitTokens: 30,
         cacheMissTokens: 70,
+        cacheCreationTokens: 0,
+        cacheHitRate: 0.3,
         calls: 2,
+        recordedCalls: 1,
+        missingCalls: 1,
+        coverageRate: 0.5,
       },
-    ]);
-    expect(await aggregateUsageBySession()).toEqual([
       {
-        bucket: "session-a",
+        bucket,
+        callSite: "askUser",
         modelId: "deepseek-v4-flash",
-        inputTokens: 110,
-        outputTokens: 55,
-        cacheHitTokens: 30,
-        cacheMissTokens: 70,
-        calls: 2,
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheHitTokens: 0,
+        cacheMissTokens: 0,
+        cacheCreationTokens: 0,
+        cacheHitRate: null,
+        calls: 1,
+        recordedCalls: 1,
+        missingCalls: 0,
+        coverageRate: 1,
       },
-    ]);
+    ];
+    expect(await aggregateUsageByDay(1)).toEqual(rows(today));
+    expect(await aggregateUsageBySession()).toEqual(rows("session-a"));
+    expect(await aggregateUsageTotal()).toEqual(rows("total"));
+  });
+
+  it("Anthropic 只有 cache read/creation、miss 未知时命中率保持 null", async () => {
+    await recordUsageEvent({
+      sessionId: "session-glm",
+      callSite: "askUser",
+      modelId: "glm-4.6",
+      keyOrigin: "visitor",
+      inputTokens: 100,
+      outputTokens: 8,
+      cacheHitTokens: 80,
+      cacheCreationTokens: 20,
+    });
     expect(await aggregateUsageTotal()).toEqual([
-      {
-        bucket: "total",
-        modelId: "deepseek-v4-flash",
-        inputTokens: 110,
-        outputTokens: 55,
-        cacheHitTokens: 30,
-        cacheMissTokens: 70,
-        calls: 2,
-      },
+      expect.objectContaining({
+        modelId: "glm-4.6",
+        cacheHitTokens: 80,
+        cacheMissTokens: 0,
+        cacheCreationTokens: 20,
+        cacheHitRate: null,
+      }),
     ]);
   });
 });

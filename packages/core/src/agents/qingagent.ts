@@ -44,6 +44,7 @@ import { isQingagentToolSearchEnabled } from "./toolSearch.js";
 // (工具内层走 ai v4 streamText 仍用 v1 版,见 modelConfig.createDeepseekProvider)
 import { createAnthropic as createAnthropicV5 } from "@ai-sdk/anthropic-v5";
 import type { RequestContext } from "@mastra/core/request-context";
+import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
 // F1 两层 key:模型实例按"实际生效的 apiKey"缓存——env 兜底请求共用一个实例(等价
 // 旧单例,保留 prompt-cache 等收益),访客自带 key 的请求各自命中自己的缓存项。
 // 上限防滥用:访客 key 任意多,缓存只留最近 16 个。
@@ -81,10 +82,11 @@ function getRepairingModelFor(
       evict();
       modelCache.set(anthKey, m);
     }
-    return wrapModelWithTodoAwareness(
+    const contextualModel = wrapModelWithTodoAwareness(
       wrapModelWithOmObservations(m, omObservationsSource),
       todoAwarenessSource,
     );
+    return maybeTrackNonBridgeModel(contextualModel, requestContext);
   }
 
   const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
@@ -96,10 +98,23 @@ function getRepairingModelFor(
     evict();
     modelCache.set(cacheKey, model);
   }
-  return wrapModelWithTodoAwareness(
+  const contextualModel = wrapModelWithTodoAwareness(
     wrapModelWithOmObservations(model, omObservationsSource),
     todoAwarenessSource,
   );
+  return maybeTrackNonBridgeModel(contextualModel, requestContext);
+}
+
+/** 正常主链仍由 processAgentStream 按 step 记账；live eval 不经过 bridge，显式接请求级包装。 */
+function maybeTrackNonBridgeModel<T extends object>(model: T, requestContext?: RequestContext): T {
+  const callSite = requestContext?.get("usageCallSite");
+  if (typeof callSite !== "string" || !callSite) return model;
+  return wrapModernModelUsage(model, {
+    requestContext,
+    callSite,
+    modelId: resolveModelId(requestContext, "flash"),
+    keyOrigin: resolveDeepseekAuth(requestContext).origin,
+  });
 }
 
 const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;

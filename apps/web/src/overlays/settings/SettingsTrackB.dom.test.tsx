@@ -173,6 +173,15 @@ describe("Settings Track B", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.includes("date="))).toBe(false);
   });
 
+  it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByText("总计"));
+    await flush();
+    expect(getTable().textContent).toContain("未知");
+    expect(getTable().textContent).toContain("100% · 1/1");
+  });
+
   it("设置弹层初始焦点落关闭按钮,Tab 循环留在弹层内,关闭后恢复触发焦点", async () => {
     resetSettingsDialogA11yForTest();
     const trigger = document.createElement("button");
@@ -413,7 +422,7 @@ function makeFetchMock() {
       return json({
         rows: [
           usageRow("total", "deepseek-v4-flash", 3000, 900, 0.003),
-          usageRow("total", "deepseek-v4-pro", 2000, 800, 0.002),
+          usageRow("total", "deepseek-v4-pro", 2000, 800, 0.002, false),
         ],
       });
     }
@@ -425,15 +434,28 @@ function makeFetchMock() {
   });
 }
 
-function usageRow(bucket: string, modelId: string, inputTokens: number, outputTokens: number, costCny: number) {
+function usageRow(
+  bucket: string,
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  costCny: number,
+  cacheKnown = true,
+) {
   return {
     bucket,
+    callSite: "agent",
     modelId,
     inputTokens,
     outputTokens,
-    cacheHitTokens: Math.floor(inputTokens / 2),
-    cacheMissTokens: Math.ceil(inputTokens / 2),
+    cacheHitTokens: cacheKnown ? Math.floor(inputTokens / 2) : 0,
+    cacheMissTokens: cacheKnown ? Math.ceil(inputTokens / 2) : 0,
+    cacheCreationTokens: 0,
+    cacheHitRate: cacheKnown ? 0.5 : null,
     calls: 1,
+    recordedCalls: 1,
+    missingCalls: 0,
+    coverageRate: 1,
     costCny,
   };
 }

@@ -3,6 +3,7 @@ import type { LanguageModelV1, LanguageModelV1Middleware } from "ai";
 import { recordUsageEvent } from "../db/usageRepo.js";
 import type { ApiKeyOrigin } from "./modelConfig.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
+import { nextUsageAttempt } from "./usageAttempt.js";
 
 type ModelStreamResult = Awaited<ReturnType<LanguageModelV1["doStream"]>>;
 type ModelStreamPart = ModelStreamResult["stream"] extends ReadableStream<infer Part> ? Part : never;
@@ -32,7 +33,6 @@ function missingReason(error: unknown, abortSignal?: AbortSignal): string {
  * middleware 位于 AI SDK 重试层内，因此一次重试会自然形成另一条真实请求事件。
  */
 export function createUsageMiddleware(options: UsageMiddlewareOptions): LanguageModelV1Middleware {
-  let requestAttempt = (options.attempt ?? 1) - 1;
   const baseEvent = {
     sessionId: (options.requestContext?.get("sessionId") as string | undefined) ?? "unknown",
     runId: (options.requestContext?.get("runId") as string | null | undefined) ?? null,
@@ -87,7 +87,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
   return {
     middlewareVersion: "v1",
     wrapGenerate: async ({ doGenerate, params }) => {
-      const attempt = ++requestAttempt;
+      const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
       try {
         const result = await doGenerate();
         void recordSafely(result.usage, result.providerMetadata, null, attempt);
@@ -98,7 +98,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
       }
     },
     wrapStream: async ({ doStream, params }) => {
-      const attempt = ++requestAttempt;
+      const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
       let result: ModelStreamResult;
       try {
         result = await doStream();

@@ -9,7 +9,10 @@ import {
   getPrimarySearchConfig,
 } from "../search/managedSearch.js";
 import { DEEPSEEK_MODEL_IDS, resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
-import { fetchDeepseekSearchLinks } from "../search/deepseekWebSearch.js";
+import {
+  fetchDeepseekSearchLinks,
+  type DeepseekSearchUsageContext,
+} from "../search/deepseekWebSearch.js";
 import type { SearchResult } from "../search/provider.js";
 import { getCachedSearch, setCachedSearch } from "../search/searchCache.js";
 import { isSubstantiveContent } from "../browser/contentQuality.js";
@@ -162,6 +165,7 @@ async function searchLinks(
   limit: number,
   requestDeepseekKey: string,
   deepseekModel?: string,
+  usageContext?: DeepseekSearchUsageContext,
 ): Promise<SearchResult[]> {
   const t0 = Date.now();
   const done = (results: SearchResult[], src: SearchLinksSource) => {
@@ -193,6 +197,9 @@ async function searchLinks(
   //(实测 2.3-3.9s 全相关)。改从 requestContext 取本请求 key 后,凡配了 DeepSeek 聊天 key 者
   // web_search 即自动走 DeepSeek。
   const deepseekKey = primaryConfig.apiKey || requestDeepseekKey || "";
+  const effectiveUsageContext = usageContext
+    ? { ...usageContext, keyOrigin: primaryConfig.apiKey ? "global-db" as const : usageContext.keyOrigin }
+    : undefined;
   const useDeepseek = primaryConfig.enabled && !!deepseekKey;
   const cacheKey = buildSearchCacheKey(query, keywords, limit, useDeepseek, deepseekModel);
   const cached = getCachedSearch(cacheKey);
@@ -220,8 +227,8 @@ async function searchLinks(
   // DeepSeek 只取来源链接(流式读到搜索结果即掐断,不等综述,典型 ~2s),质量优先。
   const deepseekPromise = (
     deepseekModel && deepseekModel !== DEEPSEEK_MODEL_IDS.flash
-      ? fetchDeepseekSearchLinks(query, deepseekKey, limit, deepseekModel)
-      : fetchDeepseekSearchLinks(query, deepseekKey, limit)
+      ? fetchDeepseekSearchLinks(query, deepseekKey, limit, deepseekModel, effectiveUsageContext)
+      : fetchDeepseekSearchLinks(query, deepseekKey, limit, DEEPSEEK_MODEL_IDS.flash, effectiveUsageContext)
   ).catch((e) => {
     // eslint-disable-next-line no-console
     console.warn(`[webSearch] DeepSeek 链接失败: ${String(e).slice(0, 80)}`);
@@ -245,7 +252,11 @@ export async function searchLinksForEval(
   requestDeepseekKey: string,
   deepseekModel?: string,
 ): Promise<SearchResult[]> {
-  return searchLinks(query, keywords, limit, requestDeepseekKey, deepseekModel);
+  return searchLinks(query, keywords, limit, requestDeepseekKey, deepseekModel, {
+    sessionId: "web-search-eval",
+    runId: null,
+    keyOrigin: "env",
+  });
 }
 
 async function mapWithConcurrency<T, U>(
@@ -401,9 +412,22 @@ export const webSearchTool = createTool({
       }
 
       // 本请求 agent 用的 DeepSeek key(桌面端=visitor 层 header,只能从 requestContext 取)。
-      const requestDeepseekKey = resolveDeepseekAuth(context?.requestContext).apiKey;
+      const requestAuth = resolveDeepseekAuth(context?.requestContext);
+      const requestDeepseekKey = requestAuth.apiKey;
       const deepseekModel = resolveModelId(context?.requestContext, "flash");
-      const results = (await searchLinks(query, keywords, limit, requestDeepseekKey, deepseekModel)).slice(0, limit);
+      const results = (await searchLinks(
+        query,
+        keywords,
+        limit,
+        requestDeepseekKey,
+        deepseekModel,
+        {
+          sessionId: (context?.requestContext?.get("sessionId") as string | undefined) ?? "unknown",
+          runId: (context?.requestContext?.get("runId") as string | null | undefined) ?? null,
+          keyOrigin: requestAuth.origin,
+          requestContext: context?.requestContext,
+        },
+      )).slice(0, limit);
       progressItems.push(
         ...results.map((result) => ({
           url: result.url,

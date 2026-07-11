@@ -39,12 +39,18 @@ interface UsageRow {
   bucket: string;
   /** 会话视图:bucket(sessionId)对应的文档标题,由服务端注入。 */
   label?: string;
+  callSite: string;
   modelId: string;
   inputTokens: number;
   outputTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number | null;
   calls: number;
+  recordedCalls: number;
+  missingCalls: number;
+  coverageRate: number;
   costCny?: number;
 }
 
@@ -996,6 +1002,18 @@ export function ModelSettingsPanel() {
                       )}
                       <th>
                         <span className="md-th-label">
+                          调用点
+                          <HelpMark label="调用点" text="产生这笔模型请求的功能入口；missing 请求也计入该组调用数和覆盖率。" />
+                        </span>
+                      </th>
+                      <th>
+                        <span className="md-th-label">
+                          请求覆盖
+                          <HelpMark label="请求覆盖" text="有 usage 的请求数 / 全部真实请求数；缺失请求仍计入分母。" />
+                        </span>
+                      </th>
+                      <th>
+                        <span className="md-th-label">
                           输入
                           <HelpMark label="输入 token" text="该范围内发送给模型的输入 token 总量。" />
                         </span>
@@ -1023,10 +1041,9 @@ export function ModelSettingsPanel() {
                   <tbody>
                     {visibleUsage.map((row, i) => {
                       // 缓存命中率 = 缓存命中 token / 输入 token(DeepSeek 输入分命中+未命中)。
-                      const hitRate =
-                        row.inputTokens > 0
-                          ? Math.round((row.cacheHitTokens / row.inputTokens) * 100)
-                          : 0;
+                      const hitRate = row.cacheHitRate == null
+                        ? null
+                        : Math.round(row.cacheHitRate * 100);
                       return (
                         <tr key={i}>
                           <td className={usageView === "session" ? "md-cell-title" : "font-mono"}>
@@ -1039,9 +1056,16 @@ export function ModelSettingsPanel() {
                           {usageView === "total" && (
                             <td>{row.modelId.includes("pro") ? "V4 PRO" : "V4 Flash"}</td>
                           )}
+                          <td className="font-mono">{row.callSite}</td>
+                          <td
+                            className="font-mono"
+                            title={`共 ${row.calls} 次，usage 缺失 ${row.missingCalls} 次`}
+                          >
+                            {`${Math.round(row.coverageRate * 100)}% · ${row.recordedCalls}/${row.calls}`}
+                          </td>
                           <td className="font-mono">{formatTokens(row.inputTokens)}</td>
                           <td className="font-mono">{formatTokens(row.outputTokens)}</td>
-                          <td className="font-mono">{hitRate}%</td>
+                          <td className="font-mono">{hitRate === null ? "未知" : `${hitRate}%`}</td>
                           <td className="font-mono">{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</td>
                         </tr>
                       );

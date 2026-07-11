@@ -76,6 +76,8 @@ export {
   VISION_TEST_TIMEOUT_MS,
   testVisionConnection,
 } from "./llm/visionTest.js";
+export { testTextModelConnection } from "./llm/textConnectionTest.js";
+export type { TextConnectionTestInput } from "./llm/textConnectionTest.js";
 export type {
   ApiKeyOrigin,
   DeepseekTier,

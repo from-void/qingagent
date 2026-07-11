@@ -100,18 +100,18 @@ dataAdminRoutes.get("/data/usage/export", async (c) => {
   const client = getDocumentsClient();
   let result: Awaited<ReturnType<typeof client.execute>> | null = null;
   try {
-    result = await client.execute("SELECT created_at, session_id, run_id, call_site, model_id, key_origin, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens, usage_state, reason, lane, attempt FROM llm_usage_events ORDER BY created_at");
+    result = await client.execute("SELECT created_at, session_id, run_id, call_site, model_id, key_origin, input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens, cache_accounting_state, usage_state, reason, lane, attempt FROM llm_usage_events ORDER BY created_at");
   } catch (err) {
     if (!isMissingUsageTableError(err)) throw err;
   }
-  const header = "created_at,session_id,run_id,call_site,model_id,key_origin,input_tokens,output_tokens,cache_hit_tokens,cache_miss_tokens,cache_creation_tokens,usage_state,reason,lane,attempt";
+  const header = "created_at,session_id,run_id,call_site,model_id,key_origin,input_tokens,output_tokens,cache_hit_tokens,cache_miss_tokens,cache_creation_tokens,cache_accounting_state,usage_state,reason,lane,attempt";
   const lines = (result?.rows ?? []).map((r) => {
     const row = r as unknown as Record<string, unknown>;
     // CSV 注入防护:统一包引号、转义内部引号,并中和电子表格公式前缀。
     return [
       row.created_at, row.session_id, row.run_id, row.call_site, row.model_id, row.key_origin,
       row.input_tokens, row.output_tokens, row.cache_hit_tokens, row.cache_miss_tokens,
-      row.cache_creation_tokens, row.usage_state, row.reason, row.lane, row.attempt,
+      row.cache_creation_tokens, row.cache_accounting_state, row.usage_state, row.reason, row.lane, row.attempt,
     ].map(csvCell).join(",");
   });
   return c.body([header, ...lines].join("\n"), 200, {

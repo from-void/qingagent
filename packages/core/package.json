@@ -8,7 +8,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "pm:model-smoke": "tsx scripts/pm-model-smoke.ts"
+    "pm:model-smoke": "tsx scripts/pm-model-smoke.ts",
+    "usage:balance": "tsx scripts/observe-deepseek-balance.ts",
+    "usage:verify-inner": "tsx scripts/verify-inner-usage-ledger.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2",

@@ -35,21 +35,18 @@ export type AiRunMark = z.infer<typeof aiRunMarkSchema>;
 export type AiRun = z.infer<typeof aiRunSchema>;
 export type AiTextAlign = z.infer<typeof aiTextAlignSchema>;
 
-export const aiTableCellSchema = z.object({
-  runs: z.array(aiRunSchema),
-  header: z.boolean().optional(),
-  // 单元格背景色(主题色名,如 "rose")。修 cell-bg-color-lost-after-ai-followup:
-  // AI 编辑走 AI-IR 往返时此前不带 cell 背景色→AI 改表后丢色。
-  backgroundColor: z.string().optional(),
-});
+export type AiTableCell = {
+  blocks: AiBlock[];
+  header?: boolean;
+  backgroundColor?: string;
+  colspan?: number;
+  rowspan?: number;
+};
 
-export const aiTableRowSchema = z.object({
-  cells: z.array(aiTableCellSchema).min(1),
-  header: z.boolean().optional(),
-});
-
-export type AiTableCell = z.infer<typeof aiTableCellSchema>;
-export type AiTableRow = z.infer<typeof aiTableRowSchema>;
+export type AiTableRow = {
+  cells: AiTableCell[];
+  header?: boolean;
+};
 
 export type AiListItem = {
   runs: AiRun[];
@@ -97,6 +94,25 @@ export type AiBlock =
   | { type: "columnList"; columns: AiColumn[] }
   | { type: "blockMath"; latex: string }
   | { type: "diagram"; lang: string; source: string; svg?: string | null };
+
+export const aiTableCellSchema: z.ZodType<AiTableCell> = z.lazy(() =>
+  z.object({
+    blocks: z.array(aiBlockSchema),
+    header: z.boolean().optional(),
+    // 单元格背景色(主题色名,如 "rose")。修 cell-bg-color-lost-after-ai-followup:
+    // AI 编辑走 AI-IR 往返时此前不带 cell 背景色→AI 改表后丢色。
+    backgroundColor: z.string().optional(),
+    colspan: z.number().int().min(1).optional(),
+    rowspan: z.number().int().min(1).optional(),
+  }),
+);
+
+export const aiTableRowSchema: z.ZodType<AiTableRow> = z.lazy(() =>
+  z.object({
+    cells: z.array(aiTableCellSchema).min(1),
+    header: z.boolean().optional(),
+  }),
+);
 
 export const aiListItemSchema: z.ZodType<AiListItem> = z.lazy(() =>
   z.object({

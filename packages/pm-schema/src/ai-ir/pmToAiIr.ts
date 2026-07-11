@@ -121,14 +121,18 @@ function withAlign<T extends Extract<AiBlock, { type: "paragraph" | "heading" }>
 
 function cellToAi(cell: PmTableCellNode) {
   const bg = cell.attrs?.backgroundColor;
+  const colspan = cell.attrs?.colspan ?? 1;
+  const rowspan = cell.attrs?.rowspan ?? 1;
   return {
-    runs: blocksToRuns(cell.content),
+    blocks: cell.content.map(blockToAi),
     ...(cell.type === "tableHeader" ? { header: true } : {}),
     ...(bg ? { backgroundColor: bg } : {}),
+    ...(colspan > 1 ? { colspan } : {}),
+    ...(rowspan > 1 ? { rowspan } : {}),
   };
 }
 
-// 抽取一组块(blockquote/listItem/单元格的 content)的行内 runs,保留 marks。
+// 抽取一组块(blockquote/listItem/callout 的 content)的行内 runs,保留 marks。
 // 单段(最常见)即等价 inlineToRuns,与 aiIrToPm 反向构造对齐;多块之间插入换行 run 保留断行
 // (AI-IR 的 blockquote/list item 是扁平 runs,多块结构会塌缩,但 marks 不丢——见设计 §5)。
 function blocksToRuns(blocks: readonly PmBlockNode[]): AiRun[] {

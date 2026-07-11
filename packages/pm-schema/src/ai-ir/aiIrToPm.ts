@@ -15,6 +15,15 @@ import {
   type AiTaskListItem,
 } from "./aiIrSchema";
 
+/**
+ * 表格 cell 后代 blockId 规范：
+ * - 单段 paragraph 沿用 `${tableId}-rN-cN-p`（N 为 1-based，仅 ID 命名如此）；
+ * - 多块 cell 的第 k 个直接子块为 `${tableId}-rN-cN-bK`；
+ * - 嵌套后代继续由既有 blockToPm/materialize 体系派生，并以最终 table ref 为命名空间；
+ * - anchored replace 把顶层临时 `ai-block-*` 转成稳定 ref 时，applyBlockEdits 必须同步
+ *   深度重写后代前缀并 materialize 其余临时 ID，不能只浅改 table.attrs.blockId。
+ */
+
 export interface AiIrBlockError {
   index: number;
   message: string;
@@ -184,8 +193,18 @@ function repairAiIrBlockShorthand(block: unknown, options: { skipPseudoNestedLis
         cells: r.cells.map((cell) => {
           if (!cell || typeof cell !== "object" || Array.isArray(cell)) return cell;
           const c = cell as Record<string, unknown>;
-          if (!Array.isArray(c.runs)) return cell;
-          return { ...c, runs: c.runs.map(repairAiIrRunShorthand) };
+          const normalized: Record<string, unknown> = { ...c };
+          if (Array.isArray(c.blocks)) {
+            normalized.blocks = c.blocks.map((child) => repairAiIrBlockShorthand(child));
+          } else if (Array.isArray(c.runs)) {
+            // 旧 AI-IR/会话缓存的一次性入口归一:cell.runs → 单 paragraph blocks。
+            normalized.blocks = [{
+              type: "paragraph",
+              runs: c.runs.map(repairAiIrRunShorthand),
+            }];
+          }
+          delete normalized.runs;
+          return normalized;
         }),
       };
     });
@@ -723,18 +742,48 @@ function cellToPm(
   const cellBlockId = `${opts.blockId}-r${opts.rowIndex + 1}-c${opts.cellIndex + 1}`;
   // cell 背景色往返:仅当是合法主题色才写 attrs,非法值不写(交由 PM 校验,不污染)。
   const bg = cell.backgroundColor;
-  const cellAttrs = bg && isAllowedThemeColor(bg) ? { backgroundColor: bg as PmThemeColor } : undefined;
+  const cellAttrs = {
+    ...(bg && isAllowedThemeColor(bg) ? { backgroundColor: bg as PmThemeColor } : {}),
+    ...(cell.colspan !== undefined ? { colspan: cell.colspan } : {}),
+    ...(cell.rowspan !== undefined ? { rowspan: cell.rowspan } : {}),
+  };
+  const sourceBlocks = cell.blocks.length > 0
+    ? cell.blocks
+    : [{ type: "paragraph" as const, runs: [] }];
+  const singleParagraph = sourceBlocks.length === 1 && sourceBlocks[0]?.type === "paragraph";
+  const content = sourceBlocks.map((block, blockIndex) => {
+    const compiled = blockToPm(block, `${opts.blockId}-r${opts.rowIndex + 1}-c${opts.cellIndex + 1}-b${blockIndex + 1}`);
+    const directBlockId = singleParagraph
+      ? `${cellBlockId}-p`
+      : `${cellBlockId}-b${blockIndex + 1}`;
+    return rebaseBlockIdPrefix(compiled, compiled.attrs.blockId, directBlockId);
+  });
   return {
     type: opts.header ? "tableHeader" as const : "tableCell" as const,
-    ...(cellAttrs ? { attrs: cellAttrs } : {}),
-    content: [
-      {
-        type: "paragraph" as const,
-        attrs: { blockId: `${cellBlockId}-p` },
-        content: runsToInline(cell.runs),
-      },
-    ],
+    ...(Object.keys(cellAttrs).length > 0 ? { attrs: cellAttrs } : {}),
+    content,
   };
+}
+
+function rebaseBlockIdPrefix<T extends PmBlockNode>(node: T, oldPrefix: string, newPrefix: string): T {
+  const rewrite = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const blockId = attrs?.blockId;
+    const nextAttrs = typeof blockId === "string" && blockId.startsWith(oldPrefix)
+      ? { ...attrs, blockId: `${newPrefix}${blockId.slice(oldPrefix.length)}` }
+      : attrs;
+    return {
+      ...record,
+      ...(nextAttrs ? { attrs: nextAttrs } : {}),
+      ...(Array.isArray(record.content) ? { content: record.content.map(rewrite) } : {}),
+    };
+  };
+  return rewrite(node) as T;
 }
 
 function runsToInline(runs: readonly AiRun[]): PmInlineNode[] {

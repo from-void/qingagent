@@ -828,6 +828,13 @@ function roundTripFailure(doc: PmDoc): string | null {
 
   const firstParsed = safeParsePmDoc(first);
   if (!firstParsed.success) return `第一轮 AI-IR 物化产物未过 PM validator:${firstParsed.error.message}`;
+  // 先比 AI-IR 可表达结构，避免“首轮已经把 table cell 多块拍平，第二轮只是稳定地错下去”。
+  // colwidth 不在 AI-IR 内，由 replaceBlock carry-over 另测；因此以 pmToAiIr 两侧等价为准。
+  const sourceIr = getStablePmJson(pmToAiIr(doc));
+  const firstIr = getStablePmJson(pmToAiIr(first));
+  if (sourceIr !== firstIr) {
+    return `第一轮 AI-IR 结构不等价:${firstDiff(sourceIr, firstIr)}`;
+  }
 
   let second: PmDoc;
   try {

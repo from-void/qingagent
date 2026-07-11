@@ -30,7 +30,7 @@ describe("draftBlockIds", () => {
       { type: "heading", level: 1, runs: [{ text: "标题" }] },
       { type: "paragraph", runs: [{ text: "正文" }] },
       { type: "bulletList", items: [[{ text: "列表" }]] },
-      { type: "table", rows: [{ cells: [{ runs: [{ text: "单元格" }] }] }] },
+      { type: "table", rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "单元格" }] }] }] }] },
     ]);
     expect(doc.content.every((node) => isGeneratedAiBlockId(node.attrs.blockId))).toBe(true);
 

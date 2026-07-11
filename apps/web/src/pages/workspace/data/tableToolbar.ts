@@ -1,6 +1,6 @@
 import { Extension, type Editor } from "@tiptap/core";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, setCellAttr, TableMap } from "@tiptap/pm/tables";
 
 export interface TableAxisSelection {
@@ -49,10 +49,32 @@ export const TableAxisSelectionExtension = Extension.create({
   },
 });
 
-export type TableToolbarFormatCommand = "bold" | "italic" | "underline" | "strike" | "textColor" | "cellBackground";
+export type TableToolbarFormatCommand =
+  | "bold"
+  | "italic"
+  | "underline"
+  | "strike"
+  | "code"
+  | "textColor"
+  | "highlight"
+  | "cellBackground"
+  | "alignLeft"
+  | "alignCenter"
+  | "alignRight";
 
 export function isTableToolbarFormatCommand(cmd: string): cmd is TableToolbarFormatCommand {
-  return cmd === "bold" || cmd === "italic" || cmd === "underline" || cmd === "strike" || cmd === "textColor" || cmd === "cellBackground";
+  return [
+    "bold", "italic", "underline", "strike", "code", "textColor", "highlight",
+    "cellBackground", "alignLeft", "alignCenter", "alignRight",
+  ].includes(cmd);
+}
+
+export function isSingleTableCellTextSelection(editor: Pick<Editor, "state">): boolean {
+  const selection = editor.state.selection;
+  if (!(selection instanceof TextSelection) || selection.empty) return false;
+  const fromCell = findTableCellAncestor(selection.$from);
+  const toCell = findTableCellAncestor(selection.$to);
+  return Boolean(fromCell && toCell && fromCell.node === toCell.node && fromCell.pos === toCell.pos);
 }
 
 export function setTableCellSelectionFromDom(
@@ -146,9 +168,14 @@ export function applyTableToolbarFormat(editor: Editor, cmd: TableToolbarFormatC
       return chain.toggleUnderline().run();
     case "strike":
       return chain.toggleStrike().run();
+    case "code":
+      return chain.toggleCode().run();
     case "textColor":
       if (!value || value === "transparent") return chain.unsetMark("textColor").run();
       return chain.setMark("textColor", { color: value }).run();
+    case "highlight":
+      if (!value || value === "transparent") return chain.unsetHighlight().run();
+      return chain.toggleHighlight({ color: value }).run();
     case "cellBackground": {
       editor.commands.focus();
       return setCellAttr("backgroundColor", value && value !== "transparent" ? value : null)(
@@ -156,7 +183,23 @@ export function applyTableToolbarFormat(editor: Editor, cmd: TableToolbarFormatC
         editor.view.dispatch,
       );
     }
+    case "alignLeft":
+      return chain.setTextAlign("left").run();
+    case "alignCenter":
+      return chain.setTextAlign("center").run();
+    case "alignRight":
+      return chain.setTextAlign("right").run();
   }
+}
+
+function findTableCellAncestor($pos: ResolvedPos): { node: ProseMirrorNode; pos: number } | null {
+  for (let depth = $pos.depth; depth >= 0; depth -= 1) {
+    const node = $pos.node(depth);
+    if (node.type.name === "tableCell" || node.type.name === "tableHeader") {
+      return { node, pos: $pos.before(depth) };
+    }
+  }
+  return null;
 }
 
 function resolveTableCellPos(editor: Editor, cell: HTMLTableCellElement): number | null {

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { CellSelection } from "@tiptap/pm/tables";
 import {
   applyTableToolbarFormat,
+  isSingleTableCellTextSelection,
   readTableAxisSelection,
   selectTableColumns,
   selectTableRows,
@@ -104,6 +105,16 @@ function allCellBackgrounds(editor: Editor): Array<string | null | undefined> {
   const table = doc.content[0];
   if (table?.type !== "table") return [];
   return table.content.flatMap((row) => row.content.map((tableCell) => tableCell.attrs?.backgroundColor));
+}
+
+function allCellAlignments(editor: Editor): Array<string | null | undefined> {
+  const doc = normalizePmDoc(editor.getJSON());
+  const table = doc.content[0];
+  if (table?.type !== "table") return [];
+  return table.content.flatMap((row) => row.content.map((tableCell) => {
+    const paragraph = tableCell.content[0];
+    return paragraph?.type === "paragraph" ? paragraph.attrs.textAlign : undefined;
+  }));
 }
 
 function rowCellTexts(editor: Editor, rowIndex: number): string[] {
@@ -268,6 +279,63 @@ describe("tableToolbar PM-010", () => {
       expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
       expect(applyTableToolbarFormat(editor, "cellBackground", "rose")).toBe(true);
       expect(allCellBackgrounds(editor)).toEqual(["rose", "rose", "rose", "rose"]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("新增 code/highlight 命令作用于整个 CellSelection", () => {
+    for (const [command, mark, value] of [
+      ["code", "code", undefined],
+      ["highlight", "highlight", "yellow"],
+    ] as const) {
+      const editor = createTableEditor();
+      try {
+        const cells = editor.view.dom.querySelectorAll("td");
+        expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+        expect(applyTableToolbarFormat(editor, command, value)).toBe(true);
+        expect(allCellMarks(editor).every((marks) => marks.some((item) => {
+          if (item.type !== mark) return false;
+          return item.type !== "highlight" || item.attrs.color === "yellow";
+        }))).toBe(true);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });
+
+  it("原生 setTextAlign 在 CellSelection 下覆盖全部 cell 段落", () => {
+    for (const [command, align] of [
+      ["alignLeft", "left"],
+      ["alignCenter", "center"],
+      ["alignRight", "right"],
+    ] as const) {
+      const editor = createTableEditor();
+      try {
+        const cells = editor.view.dom.querySelectorAll("td");
+        expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+        expect(applyTableToolbarFormat(editor, command)).toBe(true);
+        expect(allCellAlignments(editor)).toEqual([align, align, align, align]);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });
+
+  it("链接只允许单 cell 的非空 TextSelection，矩形 CellSelection 禁用", () => {
+    const editor = createTableEditor();
+    try {
+      let firstTextPos = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === "a1") firstTextPos = pos;
+        return true;
+      });
+      editor.commands.setTextSelection({ from: firstTextPos, to: firstTextPos + 2 });
+      expect(isSingleTableCellTextSelection(editor)).toBe(true);
+
+      const cells = editor.view.dom.querySelectorAll("td");
+      expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+      expect(isSingleTableCellTextSelection(editor)).toBe(false);
     } finally {
       editor.destroy();
     }

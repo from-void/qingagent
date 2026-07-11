@@ -389,6 +389,49 @@ describe("TableControls AI 修改", () => {
     expect(onToast).toHaveBeenCalledWith("无法定位表格,请重新选择");
     expect(editor.state.selection).not.toBeInstanceOf(CellSelection);
   });
+
+  it("单 cell 文本选区显示 A6 工具栏并复用链接浮层写入 mark", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    let textPos = 0;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === "A1") textPos = pos;
+      return true;
+    });
+    editor.commands.setTextSelection({ from: textPos, to: textPos + 2 });
+    await renderControls(editor);
+
+    const toolbar = portal.querySelector<HTMLElement>(".tbl-sel-toolbar");
+    expect(toolbar).not.toBeNull();
+    for (const title of ["行内代码", "背景高亮", "左对齐", "居中", "右对齐", "链接"]) {
+      expect(toolbar?.querySelector(`[title="${title}"]`)).not.toBeNull();
+    }
+    const linkButton = toolbar?.querySelector<HTMLButtonElement>('[title="链接"]');
+    expect(linkButton?.disabled).toBe(false);
+    await act(async () => linkButton?.click());
+    const input = portal.querySelector<HTMLInputElement>(".link-hover-card .lhc-input");
+    expect(input).not.toBeNull();
+    await act(async () => {
+      setInputValue(input!, "https://example.com/table");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(JSON.stringify(editor.getJSON())).toContain('"href":"https://example.com/table"');
+  });
+
+  it("矩形 CellSelection 的链接按钮禁用，新格式按钮仍可用", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    expect(selectTableColumns(editor, "table-1", 0, 1)).toBe(true);
+    await renderControls(editor);
+
+    const toolbar = portal.querySelector<HTMLElement>(".tbl-sel-toolbar");
+    expect(toolbar?.querySelector<HTMLButtonElement>('[title="链接"]')?.disabled).toBe(true);
+    expect(toolbar?.querySelector<HTMLButtonElement>('[title="行内代码"]')?.disabled).toBe(false);
+    expect(toolbar?.querySelector<HTMLButtonElement>('[title="背景高亮"]')?.disabled).toBe(false);
+    await act(async () => toolbar?.querySelector<HTMLButtonElement>('[title="背景高亮"]')?.click());
+    expect(portal.querySelector('.tbl-color-group.open [role="menu"]')).not.toBeNull();
+  });
 });
 
 describe("TableControls 大表拖选基准", () => {
@@ -448,3 +491,8 @@ describe("TableControls 大表拖选基准", () => {
     expect(performance.now() - startedAt).toBeLessThan(5_000);
   }, 10_000);
 });
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+}

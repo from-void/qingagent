@@ -8,7 +8,6 @@ import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { CheckIcon } from "./icons";
 import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
-  resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
   shouldFlipDropdownUp,
   type FloatingAnchorRect,
@@ -22,21 +21,14 @@ import {
   normalizeToolbarHighlightColor,
   normalizeToolbarTextColor,
   resolveToolbarUnlockConfig,
-  sanitizeToolbarLinkHref,
 } from "../data/toolbarUnlock";
+import { useToolbarLinkEditor } from "./doc/ToolbarLinkEditor";
 
 interface ToolbarPos {
   top: number;
   left: number;
   /** 浮条落在选区上方还是下方——下方时 caret 翻向朝上。 */
   placement: "above" | "below";
-}
-
-interface LinkEditBubble {
-  top: number;
-  left: number;
-  from: number;
-  to: number;
 }
 
 export interface DocToolbarProps {
@@ -349,11 +341,8 @@ export function DocToolbar({
   if (pos) lastPosRef.current = pos;
   const [openDd, setOpenDd] = useState<string | null>(null);
   const [flipUp, setFlipUp] = useState(false);
-  const [linkBubble, setLinkBubble] = useState<LinkEditBubble | null>(null);
-  const [linkDraft, setLinkDraft] = useState("");
   const [tablePicker, setTablePicker] = useState<{ anchor: HTMLElement; autoFocus: boolean } | null>(null);
-  const linkBubbleRef = useRef<HTMLDivElement>(null);
-  const linkInputRef = useRef<HTMLInputElement>(null);
+  const { openLinkEditor, closeLinkEditor, linkEditor } = useToolbarLinkEditor({ editor, onToast, ignoreRef: barRef });
   const toolbarUnlock = resolveToolbarUnlockConfig();
   const editorEditable = editor ? editor.isEditable : true;
 
@@ -458,16 +447,16 @@ export function DocToolbar({
     setPos(null);
     setBlockSel(null);
     setOpenDd(null);
-    setLinkBubble(null);
+    closeLinkEditor();
     setTablePicker(null);
     savedSelRef.current = null;
-  }, [editorEditable]);
+  }, [closeLinkEditor, editorEditable]);
 
   useEffect(() => {
     if (!active) {
       setPos(null);
       setOpenDd(null);
-      setLinkBubble(null);
+      closeLinkEditor();
       setTablePicker(null);
       savedSelRef.current = null;
       return;
@@ -531,7 +520,7 @@ export function DocToolbar({
       container?.removeEventListener("scroll", schedulePositionToolbar);
       window.removeEventListener("resize", schedulePositionToolbar);
     };
-  }, [active, editor, positionToolbar, containerSelector]);
+  }, [active, closeLinkEditor, editor, positionToolbar, containerSelector]);
 
   useLayoutEffect(() => {
     if (!openDd) {
@@ -590,31 +579,6 @@ export function DocToolbar({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [openDd]);
-
-  useEffect(() => {
-    if (!linkBubble) return;
-    linkInputRef.current?.focus();
-    linkInputRef.current?.select();
-  }, [linkBubble]);
-
-  useEffect(() => {
-    if (!linkBubble) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (linkBubbleRef.current?.contains(target)) return;
-      if (barRef.current?.contains(target)) return;
-      setLinkBubble(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLinkBubble(null);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [linkBubble]);
 
   const swallowMouseDown = useCallback((e: React.MouseEvent) => {
     markToolbarPointerDown();
@@ -762,16 +726,8 @@ export function DocToolbar({
           }
           break;
         case "createLink": {
-          const current = editor.getAttributes("link").href;
-          const { from, to } = editor.state.selection;
           const anchor = selectionAnchorRect(editor, pos ?? lastPosRef.current);
-          const bubblePos = resolveAnchoredBubblePosition(
-            anchor,
-            { width: 320, height: 42 },
-            { width: window.innerWidth, height: window.innerHeight },
-          );
-          setLinkDraft(typeof current === "string" ? current : "https://");
-          setLinkBubble({ ...bubblePos, from, to });
+          openLinkEditor(anchor);
           setOpenDd(null);
           return;
         }
@@ -779,34 +735,8 @@ export function DocToolbar({
       setOpenDd(null);
       positionToolbar();
     },
-    [editor, onToast, pos, positionToolbar, toolbarUnlock],
+    [editor, onToast, openLinkEditor, pos, positionToolbar, toolbarUnlock],
   );
-
-  const applyLinkBubble = useCallback(() => {
-    if (!editor || !linkBubble) return;
-    if (!editor.isEditable) return;
-    const draft = linkDraft.trim();
-    const chain = editor
-      .chain()
-      .focus()
-      .setTextSelection({ from: linkBubble.from, to: linkBubble.to })
-      .extendMarkRange("link");
-
-    if (!draft) {
-      chain.unsetLink().run();
-      setLinkBubble(null);
-      return;
-    }
-
-    const href = sanitizeToolbarLinkHref(draft);
-    if (!href) {
-      onToast?.("链接只支持 http(s)、/ 开头或 # 开头");
-      return;
-    }
-
-    chain.setLink({ href }).run();
-    setLinkBubble(null);
-  }, [editor, linkBubble, linkDraft, onToast]);
 
   const handleInsertImage = useCallback(() => {
     if (!editor) return;
@@ -1161,41 +1091,7 @@ export function DocToolbar({
       </>
       )}
     </div>
-    {linkBubble && (
-      <div
-        ref={linkBubbleRef}
-        className="link-hover-card"
-        style={{ position: "fixed", top: linkBubble.top, left: linkBubble.left, zIndex: 99999 }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="lhc-edit">
-          <input
-            ref={linkInputRef}
-            className="lhc-input"
-            value={linkDraft}
-            placeholder="输入链接地址"
-            onChange={(e) => setLinkDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                applyLinkBubble();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setLinkBubble(null);
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="lhc-btn primary"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={applyLinkBubble}
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    )}
+    {linkEditor}
     {tablePicker ? (
       <TableSizePicker
         anchor={tablePicker.anchor}

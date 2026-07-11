@@ -7,6 +7,7 @@ import type { AiModifyTarget } from "../../data/aiModifyTarget";
 import { createTableAiModifyTarget, tableHasSpanInDom } from "../../data/tableSelection";
 import {
   applyTableToolbarFormat,
+  isSingleTableCellTextSelection,
   isTableToolbarFormatCommand,
   readTableAxisSelection,
   selectTableColumns,
@@ -23,6 +24,7 @@ import {
   TOOLBAR_THEME_COLORS,
   type ToolbarThemeColorKey,
 } from "../../data/toolbarUnlock";
+import { floatingAnchorFromElement, useToolbarLinkEditor } from "./ToolbarLinkEditor";
 
 /* ───────────── Table controls (Feishu-style) ───────────── */
 
@@ -60,9 +62,20 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const [info, setInfo] = useState<TblInfo | null>(null);
   const [selCols, setSelCols] = useState<Range2 | null>(null);
   const [selRows, setSelRows] = useState<Range2 | null>(null);
-  const [openTableColor, setOpenTableColor] = useState<"text" | "cell" | null>(null);
+  const [openTableColor, setOpenTableColor] = useState<"text" | "highlight" | "cell" | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const toolbarUnlock = resolveToolbarUnlockConfig();
+  const singleCellTextSelection = isSingleTableCellTextSelection(editor);
+  const { openLinkEditor, closeLinkEditor, linkEditor } = useToolbarLinkEditor({
+    editor,
+    onToast,
+    ignoreRef: toolbarRef,
+  });
+
+  useEffect(() => {
+    if (!singleCellTextSelection) closeLinkEditor();
+  }, [closeLinkEditor, singleCellTextSelection]);
 
   /* ── measure ── */
   useEffect(() => {
@@ -269,10 +282,14 @@ export function TableControls({ editor, onAiModify, onToast }: {
       normalizedValue = val === "transparent" ? "transparent" : normalizeToolbarHighlightColor(val);
       if (!normalizedValue) return;
     }
-    if (!selCols && !selRows) return;
+    if (cmd === "highlight") {
+      normalizedValue = val === "transparent" ? "transparent" : normalizeToolbarHighlightColor(val);
+      if (!normalizedValue) return;
+    }
+    if (!selCols && !selRows && !singleCellTextSelection) return;
     applyTableToolbarFormat(editor, cmd, normalizedValue);
     setOpenTableColor(null);
-  }, [editor, info, selCols, selRows, toolbarUnlock]);
+  }, [editor, info, selCols, selRows, singleCellTextSelection, toolbarUnlock]);
 
   const doDelete = useCallback(() => {
     if (!editor.isEditable || !info || info.hasSpan) return;
@@ -318,7 +335,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
 
   if (!editor.isEditable || !info) return null;
   const { rect, wrapperRect, cols, rows } = info;
-  const hasSel = selCols !== null || selRows !== null;
+  const hasAxisSelection = selCols !== null || selRows !== null;
+  const hasSel = hasAxisSelection || singleCellTextSelection;
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
 
   if (info.hasSpan) {
@@ -450,20 +468,37 @@ export function TableControls({ editor, onAiModify, onToast }: {
         } else if (selRows) {
           cX = rect.left + rect.width / 2;
         }
+        let toolbarAnchor = { top: rect.top - COL_HDR, bottom: rect.bottom, left: cX, width: 0 };
+        if (singleCellTextSelection) {
+          try {
+            const from = editor.view.coordsAtPos(editor.state.selection.from);
+            const to = editor.view.coordsAtPos(editor.state.selection.to);
+            const left = Math.min(from.left, to.left);
+            toolbarAnchor = {
+              top: Math.min(from.top, to.top),
+              bottom: Math.max(from.bottom, to.bottom),
+              left,
+              width: Math.max(1, Math.max(from.right, to.right) - left),
+            };
+          } catch {
+            // DOM 选区刚替换时沿用表格几何。
+          }
+        }
         const toolbarPos = resolveCenteredFloatingPosition(
-          { top: rect.top - COL_HDR, bottom: rect.bottom, left: cX, width: 0 },
-          { width: 360, height: 40 },
+          toolbarAnchor,
+          { width: toolbarRef.current?.offsetWidth || 620, height: 40 },
           { width: window.innerWidth, height: window.innerHeight },
           { gap: 8 },
         );
         return (
-        <div className={`doc-toolbar on tbl-sel-toolbar${toolbarPos.placement === "below" ? " is-below" : ""}`} onMouseDown={prevent}
+        <div ref={toolbarRef} className={`doc-toolbar on tbl-sel-toolbar${toolbarPos.placement === "below" ? " is-below" : ""}`} onMouseDown={prevent}
           style={{ position: "fixed", top: toolbarPos.top,
             left: toolbarPos.left, transform: "translateX(-50%)" }}>
           <button className="dt-btn" title="加粗" disabled={!toolbarUnlock.table} onClick={() => fmtSel("bold")}><b>B</b></button>
           <button className="dt-btn" title="斜体" disabled={!toolbarUnlock.table} onClick={() => fmtSel("italic")}><i>I</i></button>
           <button className="dt-btn" title="下划线" disabled={!toolbarUnlock.table} onClick={() => fmtSel("underline")}><u>U</u></button>
           <button className="dt-btn" title="删除线" disabled={!toolbarUnlock.table} onClick={() => fmtSel("strike")}><s>S</s></button>
+          <button className="dt-btn" title="行内代码" disabled={!toolbarUnlock.table} onClick={() => fmtSel("code")}><code>&lt;/&gt;</code></button>
           <div className={`dt-group dt-dropdown tbl-color-group${openTableColor === "text" ? " open" : ""}`}>
             <button
               className="dt-btn"
@@ -476,6 +511,21 @@ export function TableControls({ editor, onAiModify, onToast }: {
             {openTableColor === "text" && (
               <div className="dt-menu dt-menu-colors dt-menu-table-colors" role="menu">
                 <TableColorGrid kind="text" onPick={(color) => fmtSel("textColor", color)} />
+              </div>
+            )}
+          </div>
+          <div className={`dt-group dt-dropdown tbl-color-group${openTableColor === "highlight" ? " open" : ""}`}>
+            <button
+              className="dt-btn"
+              title="背景高亮"
+              disabled={!toolbarUnlock.table}
+              onClick={() => setOpenTableColor((value) => (value === "highlight" ? null : "highlight"))}
+            >
+              <span className="dt-lbl dt-hi-lbl">H<span className="dt-hi-bar" /></span>
+            </button>
+            {openTableColor === "highlight" && (
+              <div className="dt-menu dt-menu-colors dt-menu-table-colors" role="menu">
+                <TableColorGrid kind="highlight" onPick={(color) => fmtSel("highlight", color)} />
               </div>
             )}
           </div>
@@ -497,20 +547,44 @@ export function TableControls({ editor, onAiModify, onToast }: {
             )}
           </div>
           <div className="dt-divider" />
+          <button className="dt-btn" title="左对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignLeft")}>≡←</button>
+          <button className="dt-btn" title="居中" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignCenter")}>≡</button>
+          <button className="dt-btn" title="右对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignRight")}>→≡</button>
+          <button
+            className="dt-btn"
+            title="链接"
+            disabled={!toolbarUnlock.table || !singleCellTextSelection}
+            onClick={(event) => {
+              setOpenTableColor(null);
+              openLinkEditor(floatingAnchorFromElement(event.currentTarget));
+            }}
+          >
+            <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M6.5 5.2l1.2-1.2c1.3-1.3 3.4-1.3 4.7 0s1.3 3.4 0 4.7l-1.5 1.5c-1.2 1.2-3.1 1.3-4.4.3" />
+              <path d="M9.5 10.8l-1.2 1.2c-1.3 1.3-3.4 1.3-4.7 0s-1.3-3.4 0-4.7l1.5-1.5c1.2-1.2 3.1-1.3 4.4-.3M6.2 9.8l3.6-3.6" />
+            </svg>
+          </button>
+          <div className="dt-divider" />
           <button
             className="dt-btn dt-ai"
             title="发送到对话"
+            disabled={!hasAxisSelection}
             onClick={() => { void doAiModify(); }}
           >
             <span className="dt-ai-ico">✨</span><span>修改选中文字</span>
           </button>
-          <div className="dt-divider" />
-          <button className="dt-btn" title={selCols ? "删除列" : "删除行"} onClick={doDelete} style={{color:"var(--mark)"}}>
-            {selCols ? "删除列" : "删除行"}
-          </button>
+          {hasAxisSelection ? (
+            <>
+              <div className="dt-divider" />
+              <button className="dt-btn" title={selCols ? "删除列" : "删除行"} onClick={doDelete} style={{color:"var(--mark)"}}>
+                {selCols ? "删除列" : "删除行"}
+              </button>
+            </>
+          ) : null}
         </div>
         );
       })()}
+      {linkEditor}
     </>
   );
 
@@ -521,12 +595,12 @@ function TableColorGrid({
   kind,
   onPick,
 }: {
-  kind: "text" | "cell";
+  kind: "text" | "highlight" | "cell";
   onPick: (color: ToolbarThemeColorKey | "transparent") => void;
 }) {
   return (
     <div className="dt-color-menu dt-color-menu-compact">
-      <div className="dt-color-label">{kind === "text" ? "文字颜色" : "单元格底色"}</div>
+      <div className="dt-color-label">{kind === "text" ? "文字颜色" : kind === "highlight" ? "背景高亮" : "单元格底色"}</div>
       <div className="dt-swatch-grid">
         {TOOLBAR_THEME_COLORS.map((color) => (
           <button
@@ -534,7 +608,7 @@ function TableColorGrid({
             type="button"
             role="menuitem"
             className={`dt-swatch${kind === "text" ? " dt-swatch-text" : ""}`}
-            title={`${kind === "text" ? "文字颜色" : "单元格底色"}：${color.label}`}
+            title={`${kind === "text" ? "文字颜色" : kind === "highlight" ? "背景高亮" : "单元格底色"}：${color.label}`}
             onClick={() => onPick(color.key)}
           >
             <span
@@ -550,7 +624,7 @@ function TableColorGrid({
           type="button"
           role="menuitem"
           className="dt-swatch dt-swatch-clear"
-          title={kind === "text" ? "清除文字颜色" : "清除单元格底色"}
+          title={kind === "text" ? "清除文字颜色" : kind === "highlight" ? "清除背景高亮" : "清除单元格底色"}
           onClick={() => onPick("transparent")}
         >
           <span className="dt-color-none" />

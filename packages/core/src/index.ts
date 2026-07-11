@@ -42,7 +42,7 @@ export type { RunJsInput, RunJsResult } from "./tools/index.js";
 export { runPythonTool, getPyodideTools } from "./tools/index.js";
 export type { RunPythonInput, RunPythonResult } from "./tools/index.js";
 export { streamMoreQuestions } from "./tools/index.js";
-export { redactSensitiveText } from "./tools/deepseekDraftClient.js";
+export { redactSensitiveText } from "./bridge/redaction.js";
 export { extractJsonArray } from "./utils/extractJsonArray.js";
 export {
   guardBeforeProviderCall,
@@ -76,6 +76,8 @@ export {
   VISION_TEST_TIMEOUT_MS,
   testVisionConnection,
 } from "./llm/visionTest.js";
+export { testTextModelConnection } from "./llm/textConnectionTest.js";
+export type { TextConnectionTestInput } from "./llm/textConnectionTest.js";
 export type {
   ApiKeyOrigin,
   DeepseekTier,
@@ -84,6 +86,7 @@ export type {
   ModelParamOverrides,
   ResolvedDeepseekAuth,
   ResolvedVisionConfig,
+  UsageTrackedModelOptions,
 } from "./llm/modelConfig.js";
 export {
   DEFAULT_DEEPSEEK_PRICING_CNY_PER_MILLION,

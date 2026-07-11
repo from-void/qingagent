@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import {
   DEEPSEEK_MODEL_IDS,
@@ -7,6 +7,7 @@ import {
   resolveModelParams,
   resolveProtocol,
   resolveVisionConfig,
+  getDeepseekModel,
 } from "../llm/modelConfig.js";
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
@@ -18,6 +19,7 @@ function requestContext(entries: Array<[string, unknown]> = []): RequestContext 
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (originalDeepseekApiKey === undefined) {
     delete process.env.DEEPSEEK_API_KEY;
   } else {
@@ -164,5 +166,36 @@ describe("modelConfig", () => {
     ]);
 
     await expect(resolveVisionConfig(rc)).rejects.toThrow(/Blocked private/);
+  });
+
+  it("OpenAI 工厂把 thinking 开关写入请求体，enabled 时移除 temperature", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }));
+    const options = {
+      mode: { type: "regular" },
+      inputFormat: "prompt",
+      prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      temperature: 0.7,
+    } as never;
+
+    await getDeepseekModel(requestContext(), "flash", { thinking: false }).doStream(options);
+    await getDeepseekModel(requestContext(), "flash", { thinking: true }).doStream(options);
+
+    expect(bodies[0]).toMatchObject({
+      thinking: { type: "disabled" },
+      temperature: 0.7,
+      stream_options: { include_usage: true },
+    });
+    expect(bodies[1]).toMatchObject({
+      thinking: { type: "enabled" },
+      stream_options: { include_usage: true },
+    });
+    expect(bodies[1]).not.toHaveProperty("temperature");
   });
 });

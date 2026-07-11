@@ -147,7 +147,13 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
         text: goodText,
       },
     ]);
-    expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith("今日 新闻", "cfg-key", 4);
+    expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith(
+      "今日 新闻",
+      "cfg-key",
+      4,
+      "deepseek-v4-flash",
+      expect.objectContaining({ keyOrigin: "global-db" }),
+    );
     // 多源始终并发起跑(兜底),即便最终没用到它;传统源使用 keywords。
     expect(mockSearchDeps.getManagedSearchProvider).toHaveBeenCalled();
     expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("今日 新闻 2026", 4);
@@ -171,6 +177,8 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       "英格兰 刚果金 世界杯",
       "sk-visitor-desktop",
       8,
+      "deepseek-v4-flash",
+      expect.objectContaining({ keyOrigin: "visitor" }),
     );
     expect(result.items[0]?.url).toBe(deepseekResult.url);
   });
@@ -190,6 +198,7 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       "sk-visitor-pro",
       8,
       "deepseek-v4-pro",
+      expect.objectContaining({ keyOrigin: "visitor" }),
     );
   });
 
@@ -219,7 +228,13 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
 
     await executeWebSearch({ query: "priority" });
 
-    expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith("priority", "cfg-key", 8);
+    expect(mockSearchDeps.fetchDeepseekSearchLinks).toHaveBeenCalledWith(
+      "priority",
+      "cfg-key",
+      8,
+      "deepseek-v4-flash",
+      expect.objectContaining({ keyOrigin: "global-db" }),
+    );
   });
 
   it("DeepSeek 返回空 → 用并发已就绪的多源", async () => {

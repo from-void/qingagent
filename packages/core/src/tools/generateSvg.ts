@@ -7,13 +7,9 @@ import { join } from "node:path";
 import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "../browser/svgSanitize.js";
 import { lintSvg, type SvgLintIssue } from "../browser/svgQualityLint.js";
 import {
-  resolveBaseUrl,
-  resolveDeepseekAuth,
-  resolveModelId,
   resolveModelParams,
-  resolveProtocol,
 } from "../llm/modelConfig.js";
-import { callDeepseekDraft } from "./deepseekDraftClient.js";
+import { streamInnerModel } from "../llm/innerModelStream.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { uploadsBaseDir } from "../workspace/uploadsDir.js";
 import { SVG_TEMPLATES } from "../svgTemplates/index.js";
@@ -323,12 +319,13 @@ export const generateSvgTool = createTool({
         maxOutputTokens ?? GENERATE_SVG_MAX_OUTPUT_TOKENS,
         GENERATE_SVG_MAX_OUTPUT_TOKENS,
       );
-      const auth = resolveDeepseekAuth(requestContext);
+      let modelAttempt = 0;
 
       const runDraftAttempt = async (
         userPrompt: string,
         streamingMessage = "正在生成 SVG 结构",
       ): Promise<{ raw: string }> => {
+        const attempt = ++modelAttempt;
         const linked = createLinkedAbortController(context?.abortSignal);
         rawBytes = 0;
         // 空闲看门狗:每收到一段输出就重置;只有连续 idle 超时(真卡死、没在吐字)才掐。
@@ -348,16 +345,15 @@ export const generateSvgTool = createTool({
         }, SVG_HARD_TIMEOUT_MS);
         armIdleTimer();
         try {
-          const result = await callDeepseekDraft({
+          const result = await streamInnerModel({
+            requestContext,
+            callSite: "generateSvg",
+            lane: null,
+            attempt,
             system: sys,
-            user: userPrompt,
+            prompt: userPrompt,
             thinking: false,
             temperature: temperature ?? 0.4,
-            stream: true,
-            baseUrl: resolveBaseUrl(requestContext),
-            model: resolveModelId(requestContext, "flash"),
-            apiKey: auth.apiKey || undefined,
-            protocol: resolveProtocol(requestContext),
             abortSignal: linked.controller.signal,
             maxRetries: 0,
             maxTokens,

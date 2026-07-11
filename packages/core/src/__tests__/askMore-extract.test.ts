@@ -8,6 +8,7 @@ vi.mock("@ai-sdk/openai", () => ({
 }));
 
 vi.mock("ai", () => ({
+  wrapLanguageModel: vi.fn(({ model }) => model),
   streamText: vi.fn(() => ({
     textStream: (async function* () {
       yield cannedText;

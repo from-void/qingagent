@@ -27,15 +27,12 @@ import {
   type LengthSpec,
 } from "../utils/lengthSpec.js";
 import { aiIrStreamPreviewFromMarkup, tailExcerpt, headExcerpt } from "../utils/aiIrStreamPreview.js";
-import { callDeepseekDraft, deepseekDraftClientInternals } from "./deepseekDraftClient.js";
 import {
-  resolveBaseUrl,
-  resolveDeepseekAuth,
   resolveModelId,
   resolveModelTier,
-  resolveProtocol,
   type DeepseekTier,
 } from "../llm/modelConfig.js";
+import { streamInnerModel } from "../llm/innerModelStream.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 export const writeDraftInputSchema = z.object({
@@ -529,19 +526,14 @@ export function createWriteDraftTool(opts: {
         try {
           laneState(laneKey);
           await emitDisplayProgress(false, params.roundIdx > 0 ? "revising" : "writing");
-          const protocol = resolveProtocol(context?.requestContext);
-          const baseUrl = resolveBaseUrl(context?.requestContext);
-          const result = await callDeepseekDraft({
-            system,
-            user: params.prompt,
+          const result = await streamInnerModel({
+            requestContext: context?.requestContext,
+            callSite: "writeDraft",
+            lane: laneKey,
+            tier: "flash",
             messages: draftMessages,
             thinking: params.thinking,
             temperature: params.temperature,
-            stream: true,
-            baseUrl,
-            model: activeModelId,
-            apiKey: resolveDeepseekAuth(context?.requestContext).apiKey || undefined,
-            protocol,
             abortSignal: params.abortSignal,
             maxRetries: 2,
             onContentStart: params.onContentStart,
@@ -800,5 +792,4 @@ export const writeDraftInternals = {
   reasonBudgetMultiplier,
   runConfigForIntent,
   failureKindFromError,
-  deepseekDraftClientInternals,
 };

@@ -8,6 +8,7 @@ import {
   sanitizeModelId,
   setAppSetting,
   testVisionConnection,
+  testTextModelConnection,
   validateFetchUrl,
   VISION_TEST_TIMEOUT_MS,
   type ModelProtocol,
@@ -364,23 +365,17 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
     if (isAnthropic) {
-      // anthropic 无 /models 列表端点,发一条最小 messages 验证连通 + key(baseUrl 已含 /vN)
-      const ares = await fetch(`${baseUrl}/messages`, {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ model, max_tokens: 4, messages: [{ role: "user", content: "hi" }] }),
-        signal: controller.signal,
-      });
-      if (ares.status === 401 || ares.status === 403) return c.json({ ok: false, keyInvalid: true });
-      if (!ares.ok) {
-        const txt = await ares.text().catch(() => "");
-        return c.json({ ok: false, error: `接口返回 HTTP ${ares.status}${txt ? ` · ${txt.slice(0, 120)}` : ""}` });
+      // anthropic 无 /models；通过 core 模型工厂发最小请求，顺带统一 usage/missing 账本。
+      try {
+        await testTextModelConnection({ apiKey, baseUrl, model, protocol: "anthropic", timeoutMs: 12_000 });
+        return c.json({ ok: true, normalizedBaseUrl: baseUrl });
+      } catch (error) {
+        const status = typeof error === "object" && error && "statusCode" in error
+          ? Number((error as { statusCode?: unknown }).statusCode)
+          : 0;
+        if (status === 401 || status === 403) return c.json({ ok: false, keyInvalid: true });
+        throw error;
       }
-      return c.json({ ok: true, normalizedBaseUrl: baseUrl });
     }
     // openai 兼容:归一化后已是 host/vN;再兜底探一个去版本段的根(少数 provider 把 /models 放在根)。
     // 关键:401/403 不立刻判 keyInvalid,先试完所有候选——只有全候选都失败且出现过认证错误才报 key 问题。

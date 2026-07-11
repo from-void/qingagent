@@ -4,13 +4,13 @@ import { lintSvg } from "../browser/svgQualityLint.js";
 import { SVG_TEMPLATES } from "../svgTemplates/index.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
 
-const callDeepseekDraftMock = vi.hoisted(() => vi.fn());
+const streamInnerModelMock = vi.hoisted(() => vi.fn());
 const mkdirMock = vi.hoisted(() => vi.fn());
 const writeFileMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../tools/deepseekDraftClient.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../tools/deepseekDraftClient.js")>();
-  return { ...actual, callDeepseekDraft: (...args: unknown[]) => callDeepseekDraftMock(...args) };
+vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../llm/innerModelStream.js")>();
+  return { ...actual, streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args) };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -47,7 +47,7 @@ function zodText(id: keyof typeof SVG_TEMPLATES, params: Record<string, unknown>
 
 describe("svgTemplates", () => {
   beforeEach(() => {
-    callDeepseekDraftMock.mockReset();
+    streamInnerModelMock.mockReset();
     mkdirMock.mockReset();
     writeFileMock.mockReset();
   });
@@ -148,7 +148,7 @@ describe("svgTemplates", () => {
     expect(result.ok).toBe(true);
     expect(result.src).toMatch(/^\/api\/v1\/files\/.+\/illustration\.svg$/);
     expect(result.lintIssues).toEqual([]);
-    expect(callDeepseekDraftMock).not.toHaveBeenCalled();
+    expect(streamInnerModelMock).not.toHaveBeenCalled();
     expect(mkdirMock).toHaveBeenCalledTimes(1);
     expect(writeFileMock).toHaveBeenCalledTimes(1);
   });

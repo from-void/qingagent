@@ -135,6 +135,25 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(readTableBlockMenuState(table())).toEqual({ hasHeaderRow: true, hasHeaderColumn: true });
   });
 
+  it("开关标题行列保留数据格类型与自定义底色", () => {
+    editor = createEditor(undefined, coloredTable());
+    const table = () => editor!.state.doc.nodeAt(0)!;
+    const dataCell = () => table().child(1).child(1);
+
+    expect(dataCell().type.name).toBe("tableCell");
+    expect(dataCell().attrs.backgroundColor).toBe("green");
+    expect(toggleTableHeader(editor, 0, "row")).toBe(true);
+    expect(toggleTableHeader(editor, 0, "column")).toBe(true);
+    expect(dataCell().type.name).toBe("tableCell");
+    expect(dataCell().attrs.backgroundColor).toBe("green");
+    expect(table().child(1).child(0).attrs.backgroundColor).toBe("amber");
+
+    expect(toggleTableHeader(editor, 0, "column")).toBe(true);
+    expect(toggleTableHeader(editor, 0, "row")).toBe(true);
+    expect(dataCell().type.name).toBe("tableCell");
+    expect(dataCell().attrs.backgroundColor).toBe("green");
+  });
+
   it("均分列宽为 span cell 写入与 colspan 等长的 colwidth，并通过 PM 校验", () => {
     editor = createEditor(undefined, spanTable());
     expect(setEvenTableColumnWidths(editor, 0, 603)).toBe(true);
@@ -190,6 +209,18 @@ function basicTable() {
     content: [
       { type: "tableRow", content: [cell("a"), cell("b")] },
       { type: "tableRow", content: [cell("c"), cell("d")] },
+    ],
+  };
+}
+
+function coloredTable() {
+  return {
+    type: "table",
+    attrs: { blockId: "table-colored" },
+    content: [
+      { type: "tableRow", content: [cell("a"), cell("b"), cell("c")] },
+      { type: "tableRow", content: [cell("d", { backgroundColor: "amber" }), cell("e", { backgroundColor: "green" }), cell("f")] },
+      { type: "tableRow", content: [cell("g"), cell("h"), cell("i")] },
     ],
   };
 }

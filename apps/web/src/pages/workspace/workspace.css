@@ -1631,12 +1631,12 @@
     font-size:13px;line-height:1.6;
   }
   #view-workspace .wf-doc th{
-    background:rgba(168,130,63,.16);font-weight:600;font-size:12.5px;color:var(--ink-2);
+    background:var(--bg-subtle);font-weight:600;font-size:12.5px;color:var(--ink-2);
   }
   /* 标题列只在每一行首 cell 都是 th 时启用；编辑态 tableWrapper 与静态 pm-table-scroll 共用。 */
   #view-workspace .wf-doc .tableWrapper:not(:has(> table > tbody > tr > td:first-child)) > table > tbody > tr > th:first-child,
   #view-workspace .wf-doc .pm-table-scroll:not(:has(> table > tbody > tr > td:first-child)) > table > tbody > tr > th:first-child{
-    position:sticky;left:0;z-index:4;background:var(--bg-canvas);
+    position:sticky;left:0;z-index:4;
     box-shadow:1px 0 0 var(--line-2);
   }
   #view-workspace .table-header-overlay-viewport{
@@ -1654,7 +1654,7 @@
   }
   #view-workspace .table-header-overlay__table th{
     box-sizing:border-box;border:1px solid var(--line-2);padding:8px 12px;
-    min-width:80px;vertical-align:top;text-align:left;background:var(--bg-canvas);
+    min-width:80px;vertical-align:top;text-align:left;background:var(--bg-subtle);
     font-size:12.5px;line-height:1.6;font-weight:600;color:var(--ink-2);cursor:pointer;
   }
   #view-workspace .table-header-overlay__table th:hover{background:var(--bg-hover)}

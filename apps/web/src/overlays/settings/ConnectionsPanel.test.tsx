@@ -37,6 +37,10 @@ function connector(state: ConnectorState): ConnectorInfo {
   };
 }
 
+function github(state: ConnectorState, reasonCode: string | null = null): ConnectorInfo {
+  return { ...connector(state), id: "github", name: "GitHub", icon: "github", usedBySkills: ["github-materials"], status: { ...connector(state).status, reasonCode, scopes: state === "connected" ? ["public_repo"] : [] } } as ConnectorInfo;
+}
+
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -86,5 +90,18 @@ describe("ConnectionsPanel", () => {
     expect(host.querySelector('[data-wf="ConnectionsUnavailable"]')).toBeTruthy();
     expect(host.textContent).toContain("此环境不可用");
     expect(host.textContent).not.toContain("飞书");
+  });
+
+  it("GitHub 已上线并提示私有仓增量授权与账号切换确认", () => {
+    h.connectors = [github("connected")];
+    act(() => root.render(<ConnectionsPanel selectedId="github" />));
+    expect(host.textContent).toContain("当前仅授权公开仓");
+    expect(host.textContent).toContain("增量 repo 授权");
+    expect(host.textContent).not.toContain("即将上线");
+
+    h.connectors = [github("connected", "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED")];
+    act(() => root.render(<ConnectionsPanel selectedId="github" />));
+    expect(host.textContent).toContain("授权账号发生变化");
+    expect(host.textContent).toContain("请先断开");
   });
 });

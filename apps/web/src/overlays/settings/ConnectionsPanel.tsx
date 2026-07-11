@@ -15,8 +15,12 @@ const STATUS_LABELS: Record<ConnectorState, string> = {
 
 const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> = {
   github: {
-    unavailable: "GitHub 连接即将上线",
-    unconfigured: "GitHub 连接即将上线",
+    unavailable: "当前环境无法使用 GitHub 连接",
+    unconfigured: "尚未配置 GitHub OAuth App",
+    disconnected: "连接后可搜索和读取账号可见仓库",
+    pending: "请在对话里的授权卡完成 GitHub 验证",
+    connected: "已可读取授权范围内的 GitHub 仓库",
+    needs_reauth: "GitHub 授权已失效，请重新连接",
   },
   feishu: {
     unavailable: "当前环境无法使用飞书连接",
@@ -46,8 +50,8 @@ function ConnectorIcon({ connector }: { connector: ConnectorInfo }) {
 
 function Badge({ state, connectorId }: { state: ConnectorState; connectorId: ConnectorId }) {
   return (
-    <span className={`ss-badge cn-badge cn-badge--${connectorId === "github" ? "unavailable" : state}`}>
-      {connectorId === "github" ? "即将上线" : STATUS_LABELS[state]}
+    <span className={`ss-badge cn-badge cn-badge--${state}`}>
+      {STATUS_LABELS[state]}
     </span>
   );
 }
@@ -56,6 +60,12 @@ function detailStatus(connector: ConnectorInfo): string {
   const base = STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
   if (connector.id === "wechat-mp" && connector.status.lastCheckedAt) {
     return `${base}。最近检查：${new Date(connector.status.lastCheckedAt).toLocaleString("zh-CN")}`;
+  }
+  if (connector.id === "github" && connector.status.reasonCode === "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED") {
+    return "检测到授权账号发生变化。为避免误切账号，当前连接未被替换；请先断开，再明确连接新账号。";
+  }
+  if (connector.id === "github" && connector.status.reasonCode === "INSUFFICIENT_SCOPE") {
+    return "当前授权范围不足。读取私有仓需要在对话中明确同意增量授权 repo；失败不会破坏已有公开仓连接。";
   }
   return base;
 }
@@ -91,9 +101,11 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   if (selectedId && selected) {
     const guide = selected.id === "feishu"
       ? "到对话里说「连飞书」发起授权。"
-      : "到对话里说「登录公众号」发起授权。";
-    const showGuide = selected.id !== "github" && ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
-    const canDisconnect = selected.id !== "github" && ["connected", "needs_reauth"].includes(selected.status.state);
+      : selected.id === "github"
+        ? "到对话里说「连接 GitHub」发起授权。"
+        : "到对话里说「登录公众号」发起授权。";
+    const showGuide = ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
+    const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
     return (
       <div className="cn-detail" data-wf="ConnectionDetail" data-connector-id={selected.id}>
         <div className="sk-subhead">
@@ -109,12 +121,13 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           {!selected.official && <span className="cn-unofficial">非官方接口 ⚠</span>}
         </div>
         <p className="cnd-status">{detailStatus(selected)}</p>
-        {selected.id === "github" ? (
-          <div className="cnd-guide">即将上线。M2a 将接入 GitHub OAuth App 授权。</div>
-        ) : showGuide ? (
+        {showGuide ? (
           <div className="cnd-guide">{guide}<br />设置页不直接发起授权；你可以在这里检查或断开现有连接。</div>
         ) : null}
-        {selected.status.canProbe && selected.id !== "github" && (
+        {selected.id === "github" && selected.status.state === "connected" && !selected.status.scopes.includes("repo") && (
+          <div className="cnd-guide">当前仅授权公开仓。需要读取私有仓时，系统会在对话中说明并请求增量 repo 授权；授权失败不会影响现有连接。</div>
+        )}
+        {selected.status.canProbe && (
           <div className="cnd-action">
             <button type="button" className="sm-btn" disabled={busy} onClick={async () => {
               setBusy(true);

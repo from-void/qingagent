@@ -81,6 +81,7 @@ export const TOOL_LABELS: Record<string, string> = {
   wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
   github_list_repos: "列出 GitHub 仓库", github_repo_tree: "读取 GitHub 文件树",
   github_read_file: "读取 GitHub 文件",
+  github_search_code: "搜索 GitHub 代码",
   github_auth_start: "连接 GitHub",
 };
 
@@ -251,6 +252,11 @@ function pickOutputSummary(result: ToolCallResult | null, toolName?: string): st
     case "webSearch": {
       const n = cnt("items");
       return n != null ? `${n} 条` : null;
+    }
+    case "github_search_code": {
+      if (bool("selected") === true) return "已选片段";
+      const n = num("count") ?? cnt("hits");
+      return n != null ? `命中 ${n} 条` : null;
     }
     case "searchDocuments": {
       const n = cnt("results");

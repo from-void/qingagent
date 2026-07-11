@@ -279,6 +279,29 @@ describe("ChatInput", () => {
     expect(handle.insertChip({ kind: "sel", label: "已卸载" })).toBe(false);
   });
 
+  it("removeChipAt 仅移除指定的过期表格 chip", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    act(() => {
+      ref.current?.insertChip({ kind: "attach", label: "资料.pdf" });
+      ref.current?.insertChip({
+        kind: "sel",
+        label: "A1",
+        blockId: "table-1",
+        tableSelection: { axis: "row", startIndex: 0, endIndex: 0, signature: "fnv1a-deadbeef" },
+      });
+      ref.current?.removeChipAt(1);
+    });
+    expect(ref.current?.snapshot().chips).toEqual([expect.objectContaining({ kind: "attach", label: "资料.pdf" })]);
+  });
+
   it("文件菜单连接本地文件夹：首次显示引导框，勾选后下次跳过", async () => {
     const onAttachFolder = vi.fn(async () => undefined);
     await render(

@@ -79,6 +79,8 @@ export interface ChatInputSnapshot {
 export interface ChatInputHandle {
   /** Insert a chip at the current caret. */
   insertChip: (spec: ChatChipSpec) => boolean;
+  /** 按 snapshot 中的 chip 顺序移除一个 chip。 */
+  removeChipAt: (index: number) => void;
   /** Insert plain text at the current caret. */
   insertText: (text: string) => void;
   /** Clear the editor. */
@@ -399,6 +401,23 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         setAttachedFiles([]);
         setSkillMenuOpen(false);
         setFileMenuOpen(false);
+        reportChange();
+      },
+      removeChipAt(index) {
+        const edit = editRef.current;
+        if (!edit || !Number.isInteger(index) || index < 0) return;
+        const chip = edit.querySelectorAll<HTMLElement>(".chat-chip")[index];
+        if (!chip) return;
+        const next = chip.nextSibling;
+        if (
+          next?.nodeType === Node.TEXT_NODE &&
+          (next.textContent === " " || next.textContent === " ")
+        ) {
+          next.remove();
+        }
+        const prev = chip.previousSibling;
+        if (prev?.nodeName === "BR") prev.remove();
+        chip.remove();
         reportChange();
       },
       restore(snapshot) {

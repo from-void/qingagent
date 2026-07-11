@@ -56,9 +56,10 @@ export function createTableAiModifyTarget(input: {
   rows: readonly (readonly string[])[];
   axis: TableSelection["axis"];
   range: TableSelectionRange;
+  signatureCellTexts?: readonly string[];
 }): AiModifyTarget {
   const normalized = normalizeTableSelection(input.axis, input.range);
-  const cellTexts = collectTableSelectionCellTexts(input.rows, normalized);
+  const cellTexts = input.signatureCellTexts ?? collectTableSelectionCellTexts(input.rows, normalized);
   const tableSelection: TableSelection = {
     ...normalized,
     signature: tableSelectionTextSignature(cellTexts),

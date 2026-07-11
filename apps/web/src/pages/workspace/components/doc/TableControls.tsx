@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
+import { pmTableSelectionCellTexts, type PmDoc } from "@qingagent/pm-schema";
 import type { AiModifyTarget } from "../../data/aiModifyTarget";
 import { createTableAiModifyTarget, tableAiModifyDisabledReason } from "../../data/tableSelection";
 import {
@@ -213,12 +214,24 @@ export function TableControls({ editor, onAiModify, onToast }: {
     const rows = Array.from(info.el.rows).map((row) =>
       Array.from(row.cells).map((cell) => cell.textContent?.trim() ?? ""),
     );
-    const target = selCols
-      ? createTableAiModifyTarget({ blockId, rows, axis: "column", range: selCols })
-      : selRows
-        ? createTableAiModifyTarget({ blockId, rows, axis: "row", range: selRows })
-        : null;
-    if (!target) return;
+    const axis: "row" | "column" | null = selCols ? "column" : selRows ? "row" : null;
+    const range = selCols ?? selRows;
+    if (!axis || !range) return;
+    const normalized = {
+      axis,
+      startIndex: Math.min(range[0], range[1]),
+      endIndex: Math.max(range[0], range[1]),
+    };
+    const signatureCellTexts = pmTableSelectionCellTexts(
+      editor.getJSON() as unknown as PmDoc,
+      blockId,
+      normalized,
+    );
+    if (!signatureCellTexts) {
+      onToast?.("无法读取表格选区,请重新选择");
+      return;
+    }
+    const target = createTableAiModifyTarget({ blockId, rows, axis, range, signatureCellTexts });
     if (await onAiModify(target)) {
       setSelCols(null);
       setSelRows(null);

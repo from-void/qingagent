@@ -4,6 +4,7 @@ export * from "./spec";
 export * from "./validators";
 export * from "./hash";
 export * from "./pmToPlainText";
+export * from "./tableSelection";
 export * from "./charCount";
 export * from "./clipboard/pmToClipboardHtml";
 export * from "./legacy/legacySectionsToPm";

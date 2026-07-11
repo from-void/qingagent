@@ -222,6 +222,7 @@ import {
   type PendingDocSaveWaiter,
 } from "./data/pendingDocSave";
 import { runAiModifyTarget, type AiModifyTarget } from "./data/aiModifyTarget";
+import { staleTableSelectionChipIndices } from "./data/tableSelectionFreshness";
 export {
   PendingDocSaveError,
   docSaveFailureToastMessage,
@@ -598,6 +599,7 @@ export function WorkspacePage() {
     ) {
       return;
     }
+
     const waiters = docSaveDrainWaitersRef.current.splice(0);
     for (const waiter of waiters) waiter.resolve();
   }, []);
@@ -2667,6 +2669,22 @@ export function WorkspacePage() {
       return;
     }
 
+    const hasTableSelectionChip = snap.chips.some((chip) => chip.tableSelection !== undefined);
+    if (hasTableSelectionChip) {
+      const currentDoc = (tiptapEditor?.getJSON() as unknown as PmDoc | undefined) ??
+        stateRef.current.doc?.pmDoc;
+      const staleIndices = currentDoc
+        ? staleTableSelectionChipIndices(snap, currentDoc)
+        : snap.chips.flatMap((chip, index) => chip.tableSelection ? [index] : []);
+      if (staleIndices.length > 0) {
+        [...staleIndices].sort((a, b) => b - a).forEach((index) => {
+          chatInputRef.current?.removeChipAt(index);
+        });
+        showToast("表格已变化,请重新选择");
+        return;
+      }
+    }
+
     const keepMessageCount = stateRef.current.messages.length;
 
     // Optimistic UI: add user message bubble to chat.
@@ -2763,7 +2781,7 @@ export function WorkspacePage() {
         error: e,
       });
     });
-  }, [askUserInputDisabled, dim, ensureSessionId, flushPendingDocSave, markMaterialParsing, showToast]);
+  }, [askUserInputDisabled, dim, ensureSessionId, flushPendingDocSave, markMaterialParsing, showToast, tiptapEditor]);
   // 让 chatInputBus.send 的订阅者拿到最新 handleSubmitChat(每渲染同步)。
   handleSubmitChatRef.current = handleSubmitChat;
 

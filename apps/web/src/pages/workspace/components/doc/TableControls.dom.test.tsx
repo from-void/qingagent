@@ -47,6 +47,24 @@ function setupTable(options: { blockId?: string; merged?: boolean } = {}) {
     on: vi.fn(),
     off: vi.fn(),
     chain: vi.fn(() => chain),
+    getJSON: vi.fn(() => ({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: options.blockId ?? "" },
+        content: [
+          { type: "tableRow", content: ["A1", "B1"].map((text, index) => ({
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: `p-1-${index}` }, content: [{ type: "text", text }] }],
+          })) },
+          { type: "tableRow", content: ["A2", "B2"].map((text, index) => ({
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: `p-2-${index}` }, content: [{ type: "text", text }] }],
+          })) },
+        ],
+      }],
+    })),
   } as unknown as Editor;
   root = createRoot(host);
   return { editor, portal };

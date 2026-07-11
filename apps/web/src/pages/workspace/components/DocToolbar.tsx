@@ -1,6 +1,7 @@
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
@@ -41,14 +42,7 @@ export interface DocToolbarProps {
   active: boolean;
   editor: Editor | null;
   containerSelector: string;
-  onAiModify: (
-    text: string,
-    location: string,
-    from?: number,
-    to?: number,
-    blockId?: string,
-    selectionRefs?: string[],
-  ) => void;
+  onAiModify: (target: AiModifyTarget) => Promise<boolean>;
   onToast?: (message: string) => void;
 }
 
@@ -840,7 +834,17 @@ export function DocToolbar({
     // 原子块:把整个块(图表/图片/公式等)作为引用推进输入框,让用户跟 AI 说"改这个图表"。
     const block = resolveSelectedBlockNode(editor);
     if (block) {
-      onAiModify(block.label, block.type, block.from, block.to, block.blockId);
+      if (!block.blockId) {
+        onToast?.("暂时无法定位选区,请重新选择");
+        return;
+      }
+      void onAiModify({
+        label: block.label,
+        suffix: "批注",
+        blockId: block.blockId,
+        from: block.from,
+        to: block.to,
+      });
       setPos(null);
       setBlockSel(null);
       setOpenDd(null);
@@ -863,14 +867,20 @@ export function DocToolbar({
       return;
     }
 
-    onAiModify(
-      target.text,
-      target.location,
-      target.from,
-      target.to,
-      target.selectionRefs?.[0] ?? (target.from !== undefined ? resolveItemBlockIdAtPos(editor, target.from) : undefined),
-      target.selectionRefs,
-    );
+    const blockId = target.selectionRefs?.[0] ??
+      (target.from !== undefined ? resolveItemBlockIdAtPos(editor, target.from) : undefined);
+    if (!blockId) {
+      onToast?.("暂时无法定位选区,请重新选择");
+      return;
+    }
+    void onAiModify({
+      label: target.text,
+      suffix: "批注",
+      blockId,
+      from: target.from,
+      to: target.to,
+      selectionRefs: target.selectionRefs,
+    });
     savedSelRef.current = null;
     editor.commands.blur();
     setPos(null);

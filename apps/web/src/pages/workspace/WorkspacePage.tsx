@@ -221,6 +221,7 @@ import {
   runAfterPendingDocSave,
   type PendingDocSaveWaiter,
 } from "./data/pendingDocSave";
+import { runAiModifyTarget, type AiModifyTarget } from "./data/aiModifyTarget";
 export {
   PendingDocSaveError,
   docSaveFailureToastMessage,
@@ -911,6 +912,8 @@ export function WorkspacePage() {
       ),
     [dim, askUserInputDisabled, viewingHistory, hasAskUserCard],
   );
+  const chatInputBlockReasonRef = useRef(chatInputBlockReason);
+  chatInputBlockReasonRef.current = chatInputBlockReason;
   const chatInputPlaceholder =
     chatInputBlockReason?.placeholder ?? DEFAULT_CHAT_INPUT_PLACEHOLDER;
   const chatInputEditorDisabled = chatInputBlockReason !== null;
@@ -2867,64 +2870,19 @@ export function WorkspacePage() {
   }, [showToast]);
 
   const handleAiModify = useCallback(
-    async (
-      text: string,
-      _location: string,
-      from?: number,
-      to?: number,
-      blockId?: string,
-      selectionRefs?: string[],
-    ) => {
-      const handle = chatInputRef.current;
-      if (!handle) return;
-      // 输入框被门控(问卷未答/有未提交候选/看历史版本)时,insertChip 会静默 no-op
-      // (ChatInput.insertChip 首行 `if (!edit || disabled) return`)——用户点 ✨AI修改
-      // 毫无反应。这里前置同一门控判据,给出与输入框一致的明确 toast 而非静默吞。
-      if (chatInputBlockReason) {
-        showToast(chatInputBlockReason.toast);
-        return;
-      }
-      const hasSelectionRefs = Boolean(selectionRefs && selectionRefs.length > 0);
-      if (
-        from !== undefined &&
-        to !== undefined &&
-        tiptapEditor &&
-        !hasSelectionRefs &&
-        !isEditorRangeWithinSingleTextBlock(tiptapEditor, from, to) &&
-        // 原子块(图表/图片/公式等)整块引用放行——用户要把这个块丢给 AI 改
-        !isEditorRangeSingleAtomBlock(tiptapEditor, from, to)
-      ) {
-        showToast("暂不支持跨段落修改,请在同一段内选择");
-        return;
-      }
-      try {
-        await runAfterPendingDocSave({
-          flushPendingDocSave,
-          onFlushFailure: (error) => {
-            showToast(docSaveFailureToastMessage(error));
-          },
-          run: async () => {
-            const raw = text.replace(/^"|"$/g, "");
-            handle.insertChip({
-              kind: "sel",
-              label: raw,
-              suffix: "批注",
-              from,
-              to,
-              blockId,
-              selectionRefs,
-            });
-            // Focus + caret placement is handled inside insertChip via
-            // requestAnimationFrame so it survives the React re-renders
-            // triggered by showToast / DocToolbar state updates below.
-            showToast("选段已加入输入框");
-          },
-        });
-      } catch {
-        return;
-      }
-    },
-    [chatInputBlockReason, flushPendingDocSave, showToast, tiptapEditor],
+    async (target: AiModifyTarget): Promise<boolean> => runAiModifyTarget({
+      target,
+      getBlockReason: () => chatInputBlockReasonRef.current,
+      isTextRangeAllowed: (from, to) => !tiptapEditor ||
+        isEditorRangeWithinSingleTextBlock(tiptapEditor, from, to) ||
+        // 原子块(图表/图片/公式等)整块引用放行。
+        isEditorRangeSingleAtomBlock(tiptapEditor, from, to),
+      flushPendingDocSave,
+      insertChip: (spec) => chatInputRef.current?.insertChip(spec) ?? false,
+      onToast: showToast,
+      onSaveFailure: (error) => showToast(docSaveFailureToastMessage(error)),
+    }),
+    [flushPendingDocSave, showToast, tiptapEditor],
   );
 
   const handleRejectAll = useCallback(() => {
@@ -3588,6 +3546,7 @@ export function WorkspacePage() {
             presentationRun={effectivePresentationRun}
             presentationReducedMotion={reducedMotion}
             onToast={showToast}
+            onAiModify={handleAiModify}
             onSubmitPlan={handleSubmitPlan}
             onJumpPrev={handleJumpPrev}
             onJumpNext={handleJumpNext}

@@ -15,6 +15,7 @@ import { clientPerformanceNow } from "../data/sessionFrameGuards";
 import { logClientEvent } from "../data/clientLog";
 import type { DocDimensions } from "../data/docDimensions";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
 import type {
   AppliedPatch,
   AskUserAnswers,
@@ -81,6 +82,7 @@ interface RightPaneProps {
   presentationRun: NativePresentationRun | null;
   presentationReducedMotion: boolean;
   onToast: (msg: string) => void;
+  onAiModify: (target: AiModifyTarget) => Promise<boolean>;
   onSubmitPlan: (toolCallId: string, answers: AskUserAnswers) => void;
   onJumpPrev: () => void;
   onJumpNext: () => void;
@@ -164,6 +166,7 @@ export function RightPane({
   presentationRun,
   presentationReducedMotion,
   onToast,
+  onAiModify,
   onSubmitPlan,
   onJumpPrev,
   onJumpNext,
@@ -442,6 +445,7 @@ export function RightPane({
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
+        onAiModify={onAiModify}
         presentationRun={presentationRun}
         presentationReducedMotion={presentationReducedMotion}
         onPresentationFinish={onPresentationFinish}

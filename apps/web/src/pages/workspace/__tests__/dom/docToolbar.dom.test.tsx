@@ -41,7 +41,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -74,7 +74,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -103,7 +103,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -146,7 +146,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -174,7 +174,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -197,7 +197,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={fakeEditor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
         onToast={onToast}
       />,
     );
@@ -222,7 +222,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -253,7 +253,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -279,7 +279,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 

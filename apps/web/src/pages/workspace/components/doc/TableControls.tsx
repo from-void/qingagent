@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
+import type { AiModifyTarget } from "../../data/aiModifyTarget";
 import { chatInputBus } from "../../../../system";
 import {
   applyTableToolbarFormat,
@@ -37,7 +38,10 @@ export function resolveWorkspaceFloatingPortalTarget(doc: Document = document): 
   return doc.querySelector<HTMLElement>("#view-workspace") ?? doc.body;
 }
 
-export function TableControls({ editor }: { editor: Editor }) {
+export function TableControls({ editor, onAiModify: _onAiModify }: {
+  editor: Editor;
+  onAiModify: (target: AiModifyTarget) => Promise<boolean>;
+}) {
   const [info, setInfo] = useState<TblInfo | null>(null);
   const [selCols, setSelCols] = useState<Range2 | null>(null);
   const [selRows, setSelRows] = useState<Range2 | null>(null);

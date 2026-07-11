@@ -131,6 +131,7 @@ import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
 import { TableControls } from "./doc/TableControls";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
 export type PatchMetaChange =
@@ -189,6 +190,7 @@ export interface DocumentSnapshotViewProps {
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
+  onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
   presentationReducedMotion?: boolean;
   onPresentationFinish?: () => void;
@@ -222,6 +224,7 @@ export const DocumentSnapshotView = forwardRef<
     onEditorReady,
     onEditorChange,
     onToast,
+    onAiModify,
     presentationRun,
     presentationReducedMotion = false,
     onPresentationFinish,
@@ -298,6 +301,7 @@ export const DocumentSnapshotView = forwardRef<
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
+        onAiModify={onAiModify}
         presentationRun={presentationRun}
         presentationReducedMotion={presentationReducedMotion}
         onPresentationFinish={onPresentationFinish}
@@ -360,6 +364,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
+  onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
   presentationReducedMotion: boolean;
   onPresentationFinish?: () => void;
@@ -388,6 +393,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     onEditorReady,
     onEditorChange,
     onToast,
+    onAiModify,
     presentationRun,
     presentationReducedMotion,
     onPresentationFinish,
@@ -1000,7 +1006,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       ) : null}
       {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
       {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
-      {interactiveEditable && editor ? <TableControls editor={editor} /> : null}
+      {interactiveEditable && editor && onAiModify ? <TableControls editor={editor} onAiModify={onAiModify} /> : null}
       {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}

@@ -631,6 +631,7 @@ function rightPaneProps(overrides: Record<string, unknown> = {}) {
     presentationRun: null,
     presentationReducedMotion: true,
     onToast: vi.fn(),
+    onAiModify: vi.fn(async () => true),
     onSubmitPlan: vi.fn(),
     onJumpPrev: vi.fn(),
     onJumpNext: vi.fn(),

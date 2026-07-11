@@ -152,7 +152,7 @@ describe("probeWechatSearchbiz", () => {
       "capability_denied",
     ],
     ["登录态失效", reply(200, { base_resp: { ret: -6 } }), "reauth"],
-    ["HTTP 429", reply(429, { base_resp: { ret: 0 } }), "transient"],
+    ["HTTP 429", reply(429, { base_resp: { ret: 0 } }), "rate_limit"],
     ["未知业务 ret", reply(200, { base_resp: { ret: 123456 } }), "unknown"],
   ] as const)("将%s归类为 %s", async (_label, fetchReply, expectedKind) => {
     const fetchMock = vi.fn().mockResolvedValue({

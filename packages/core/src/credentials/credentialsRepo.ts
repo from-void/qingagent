@@ -143,6 +143,25 @@ export async function saveCredentialRecordsBatch(
   });
 }
 
+/** 同一事务删除一组 legacy key；连接器 disconnect 不得留下半套 session。 */
+export async function deleteCredentialRecordsBatch(
+  platform: string,
+  keys: readonly string[],
+  scope = DEFAULT_SCOPE,
+): Promise<void> {
+  if (keys.length === 0) return;
+  await ensureMigrated();
+  const placeholders = keys.map(() => "?").join(", ");
+  await withTransaction(async (client) => {
+    await client.execute({
+      sql: `DELETE FROM sandbox_credentials
+            WHERE scope = ? AND platform = ? AND cred_key IN (${placeholders})`,
+      args: [scope, platform, ...keys],
+    });
+    return commitTransaction(undefined);
+  });
+}
+
 export async function getConnectorCredentialBundle<T = unknown>(
   connectorId: string,
   scope = DEFAULT_SCOPE,

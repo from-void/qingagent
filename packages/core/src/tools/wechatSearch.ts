@@ -150,7 +150,7 @@ export type WechatAuthProbeResult =
   | { ok: true }
   | {
       ok: false;
-      kind: "capability_denied" | "reauth" | "transient" | "unknown";
+      kind: "capability_denied" | "reauth" | "rate_limit" | "transient" | "unknown";
       message: string;
     };
 
@@ -183,8 +183,10 @@ export async function probeWechatSearchbiz(
           ? "capability_denied"
           : error.kind === "SESSION"
             ? "reauth"
-            : error.kind === "RATE_LIMIT" || error.kind === "TRANSIENT"
-              ? "transient"
+            : error.kind === "RATE_LIMIT"
+              ? "rate_limit"
+              : error.kind === "TRANSIENT"
+                ? "transient"
               : "unknown";
       return { ok: false, kind, message: error.message };
     }

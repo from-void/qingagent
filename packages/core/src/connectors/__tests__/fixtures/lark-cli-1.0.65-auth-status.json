@@ -1,0 +1,24 @@
+{
+  "appId": "cli_****************",
+  "brand": "feishu",
+  "defaultAs": "auto",
+  "identities": {
+    "bot": {
+      "status": "ready",
+      "available": true,
+      "message": "Bot identity: ready"
+    },
+    "user": {
+      "status": "needs_refresh",
+      "available": true,
+      "message": "User identity: needs refresh",
+      "openId": "ou_[REDACTED]",
+      "userName": "示例用户",
+      "tokenStatus": "needs_refresh",
+      "scope": "docs:document.content:read calendar:calendar.event:read offline_access",
+      "expiresAt": "2099-07-11T21:31:52+08:00",
+      "refreshExpiresAt": "2099-07-18T19:31:52+08:00"
+    }
+  },
+  "identity": "user"
+}

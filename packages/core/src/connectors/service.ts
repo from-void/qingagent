@@ -74,6 +74,7 @@ export function createConnectorStatus(
     lastCheckedAt: patch.lastCheckedAt ?? null,
     statusFreshness: patch.statusFreshness ?? "unknown",
     canProbe: patch.canProbe ?? false,
+    ...(patch.cliVersion !== undefined ? { cliVersion: patch.cliVersion } : {}),
   };
 }
 
@@ -102,6 +103,7 @@ export function transitionConnectorStatus(
       account: patch.account === undefined ? current.account : patch.account,
       scopes: patch.scopes === undefined ? current.scopes : patch.scopes,
       canProbe: patch.canProbe === undefined ? current.canProbe : patch.canProbe,
+      cliVersion: patch.cliVersion === undefined ? current.cliVersion : patch.cliVersion,
     }),
     idempotent: false,
   };

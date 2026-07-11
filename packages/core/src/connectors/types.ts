@@ -31,7 +31,7 @@ export type ConnectorState =
   | "connected"
   | "needs_reauth";
 
-export type ConnectorStatusFreshness = "fresh" | "stale" | "unknown";
+export type ConnectorStatusFreshness = "fresh" | "stale" | "unknown" | "ttl";
 
 export interface ConnectorAccount {
   id?: string;
@@ -46,6 +46,7 @@ export interface ConnectorStatusDto {
   lastCheckedAt: string | null;
   statusFreshness: ConnectorStatusFreshness;
   canProbe: boolean;
+  cliVersion?: string | null;
 }
 
 export type ConnectorTransitionKind = "transition" | "idempotent" | "illegal";
@@ -61,4 +62,12 @@ export interface ConnectorStatusPatch {
   lastCheckedAt?: string | null;
   statusFreshness?: ConnectorStatusFreshness;
   canProbe?: boolean;
+  cliVersion?: string | null;
+}
+
+export interface ConnectorAdapter {
+  status(): Promise<ConnectorStatusDto>;
+  start?(): Promise<unknown>;
+  probe?(): Promise<ConnectorStatusDto>;
+  disconnect(): Promise<ConnectorStatusDto>;
 }

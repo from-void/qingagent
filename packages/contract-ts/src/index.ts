@@ -17,6 +17,7 @@ export * from "./ChatMessage";
 export * from "./ChatRole";
 export * from "./Citation";
 export * from "./ClientCapabilities";
+export * from "./Connector";
 export * from "./CodePatch";
 export * from "./Command";
 export * from "./CommitPatches";

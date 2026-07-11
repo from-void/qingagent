@@ -1,0 +1,11 @@
+{
+  "appId": "cli_****************",
+  "appSecret": "[REDACTED]",
+  "brand": "feishu",
+  "lang": "",
+  "profile": "cli_****************",
+  "users": "示例用户 (ou_[REDACTED])",
+  "workspace": "local"
+}
+
+Config file path: /home/example/.lark-cli/config.json

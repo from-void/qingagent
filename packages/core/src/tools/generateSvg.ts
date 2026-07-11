@@ -17,6 +17,7 @@ import { callDeepseekDraft } from "./deepseekDraftClient.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { uploadsBaseDir } from "../workspace/uploadsDir.js";
 import { SVG_TEMPLATES } from "../svgTemplates/index.js";
+import { recordUsageEvent } from "../db/usageRepo.js";
 
 // 空闲看门狗:连续无任何输出超过该时长才判定卡死掐断——只要还在流式吐字就不断重置,
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。
@@ -324,11 +325,14 @@ export const generateSvgTool = createTool({
         GENERATE_SVG_MAX_OUTPUT_TOKENS,
       );
       const auth = resolveDeepseekAuth(requestContext);
+      let modelLane = 0;
 
       const runDraftAttempt = async (
         userPrompt: string,
         streamingMessage = "正在生成 SVG 结构",
       ): Promise<{ raw: string }> => {
+        const lane = modelLane;
+        modelLane += 1;
         const linked = createLinkedAbortController(context?.abortSignal);
         rawBytes = 0;
         // 空闲看门狗:每收到一段输出就重置;只有连续 idle 超时(真卡死、没在吐字)才掐。
@@ -361,6 +365,22 @@ export const generateSvgTool = createTool({
             abortSignal: linked.controller.signal,
             maxRetries: 0,
             maxTokens,
+            onAttemptComplete: (attempt) => recordUsageEvent({
+              sessionId: (requestContext?.get("sessionId") as string | undefined) ?? "unknown",
+              runId: (requestContext?.get("runId") as string | null | undefined) ?? null,
+              callSite: "generateSvg",
+              modelId: resolveModelId(requestContext, "flash"),
+              keyOrigin: auth.origin,
+              inputTokens: attempt.inputTokens,
+              outputTokens: attempt.outputTokens,
+              cacheHitTokens: attempt.cacheHitTokens,
+              cacheMissTokens: attempt.cacheMissTokens,
+              cacheCreationTokens: attempt.cacheCreationTokens,
+              usageState: attempt.usageState,
+              reason: attempt.reason,
+              lane,
+              attempt: attempt.attempt,
+            }),
             onContentStart: () => {
               armIdleTimer();
               void emitProgress("streaming", { message: streamingMessage, partialSvg: null }, true);

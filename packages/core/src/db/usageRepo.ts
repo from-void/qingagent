@@ -16,6 +16,14 @@ export interface UsageEventInput {
   outputTokens?: number;
   cacheHitTokens?: number;
   cacheMissTokens?: number;
+  cacheCreationTokens?: number;
+  /** recorded=provider 返回 usage；missing=真实请求发生但无法取得 usage。 */
+  usageState?: "recorded" | "missing";
+  reason?: string | null;
+  /** 并发赛马 lane；非赛马调用可为空。 */
+  lane?: number | null;
+  /** 同一 lane/call site 内的真实 provider 请求序号，从 1 开始。 */
+  attempt?: number | null;
 }
 
 function toCount(value: number | undefined): number {
@@ -23,10 +31,14 @@ function toCount(value: number | undefined): number {
 }
 
 /** 写一条 usage 事件;失败只 console.warn,绝不抛(主链优先)。
- *  R5 复验:input/output 全 0 的事件(失败调用/无 usage 的 step)直接跳过,
- *  避免污染账本与 F6 ctx pill(会显示 ctx ≈ 0)。 */
+ *  正常事件 input/output 全 0 时跳过；missing 事件即使全零也保留，以统计覆盖率。 */
 export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
-  if (toCount(input.inputTokens) === 0 && toCount(input.outputTokens) === 0) return;
+  const usageState = input.usageState ?? "recorded";
+  if (
+    usageState !== "missing" &&
+    toCount(input.inputTokens) === 0 &&
+    toCount(input.outputTokens) === 0
+  ) return;
   try {
     const client = getDocumentsClient();
     await ensureMigrated();
@@ -34,8 +46,9 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
       client.execute({
         sql: `INSERT INTO llm_usage_events
           (id, session_id, run_id, call_site, model_id, key_origin,
-           input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens,
+           cache_creation_tokens, usage_state, reason, lane, attempt, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           randomUUID(),
           input.sessionId,
@@ -47,6 +60,11 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
           toCount(input.outputTokens),
           toCount(input.cacheHitTokens),
           toCount(input.cacheMissTokens),
+          toCount(input.cacheCreationTokens),
+          usageState,
+          input.reason ?? null,
+          input.lane ?? null,
+          input.attempt ?? null,
           new Date().toISOString(),
         ],
       }),

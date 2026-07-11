@@ -21,12 +21,31 @@ export interface DeepseekDraftCall {
   apiKey?: string;
   /** API 协议:openai(默认,/chat/completions)或 anthropic(/v1/messages,智谱 GLM Coding 等)。 */
   protocol?: "openai" | "anthropic";
+  /** 每个真实 provider HTTP 请求完成后触发；包括重试、fallback、abort 与异常。 */
+  onAttemptComplete?: (attempt: DeepseekDraftAttempt) => void | Promise<void>;
+}
+
+export interface DeepseekDraftUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  cacheCreationTokens: number;
+}
+
+export interface DeepseekDraftAttempt extends DeepseekDraftUsage {
+  attempt: number;
+  usageState: "recorded" | "missing";
+  reason: string | null;
+  protocol: "openai" | "anthropic";
+  streaming: boolean;
 }
 
 export interface DeepseekDraftResult {
   raw: string;
   contentStartMs: number | null;
   finishReason: string | null;
+  usage?: DeepseekDraftUsage;
 }
 
 interface DeepseekChatChoice {
@@ -42,6 +61,13 @@ interface DeepseekChatChoice {
 
 interface DeepseekChatResponse {
   choices?: DeepseekChatChoice[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 class UpstreamHttpError extends Error {
@@ -99,6 +125,29 @@ function buildRequestBody(input: DeepseekDraftCall): Record<string, unknown> {
       ? { max_tokens: Math.max(1, Math.floor(input.maxTokens)) }
       : {}),
     stream: input.stream,
+    ...(input.stream ? { stream_options: { include_usage: true } } : {}),
+  };
+}
+
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : 0;
+}
+
+function openAiUsage(json: DeepseekChatResponse): DeepseekDraftUsage | undefined {
+  const usage = json.usage;
+  if (!usage) return undefined;
+  const inputTokens = count(usage.prompt_tokens);
+  const cacheHitTokens = count(
+    usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens,
+  );
+  return {
+    inputTokens,
+    outputTokens: count(usage.completion_tokens),
+    cacheHitTokens,
+    cacheMissTokens: count(usage.prompt_cache_miss_tokens ?? Math.max(0, inputTokens - cacheHitTokens)),
+    cacheCreationTokens: 0,
   };
 }
 
@@ -123,7 +172,12 @@ async function readNonStreaming(response: Response): Promise<DeepseekDraftResult
   const json = await response.json() as DeepseekChatResponse;
   const choice = json.choices?.[0];
   const raw = choice?.message?.content ?? "";
-  return { raw, contentStartMs: raw ? 0 : null, finishReason: choice?.finish_reason ?? null };
+  return {
+    raw,
+    contentStartMs: raw ? 0 : null,
+    finishReason: choice?.finish_reason ?? null,
+    usage: openAiUsage(json),
+  };
 }
 
 function resultFromChatJsonText(
@@ -140,7 +194,7 @@ function resultFromChatJsonText(
     input.onContentStart?.(contentStartMs);
     input.onContentDelta?.(raw, raw);
   }
-  return { raw, contentStartMs, finishReason: choice?.finish_reason ?? null };
+  return { raw, contentStartMs, finishReason: choice?.finish_reason ?? null, usage: openAiUsage(json) };
 }
 
 async function readStreaming(
@@ -158,6 +212,7 @@ async function readStreaming(
   let contentStartMs: number | null = null;
   let finishReason: string | null = null;
   let sawSseDataLine = false;
+  let usage: DeepseekDraftUsage | undefined;
 
   const handleData = (data: string) => {
     sawSseDataLine = true;
@@ -173,6 +228,7 @@ async function readStreaming(
       return;
     }
     const delta = json.choices?.[0]?.delta;
+    usage = openAiUsage(json) ?? usage;
     const choiceFinishReason = json.choices?.[0]?.finish_reason;
     if (typeof choiceFinishReason === "string") finishReason = choiceFinishReason;
     const content = delta?.content;
@@ -208,7 +264,7 @@ async function readStreaming(
     // lane 仍按流式调度,这里把完整响应补成一次 delta,避免四路全废。
     return resultFromChatJsonText(trimmed, input, startedAt);
   }
-  return { raw, contentStartMs, finishReason };
+  return { raw, contentStartMs, finishReason, usage };
 }
 
 // —— Anthropic 协议(智谱 GLM Coding 等):/v1/messages + x-api-key + content_block_delta SSE ——
@@ -221,6 +277,44 @@ function anthropicMessagesUrl(baseUrl?: string): string {
 interface AnthropicMessageResponse {
   content?: Array<{ type?: string; text?: string }>;
   stop_reason?: string | null;
+  usage?: AnthropicUsage;
+}
+
+interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+function anthropicUsage(value: AnthropicUsage | undefined): DeepseekDraftUsage | undefined {
+  if (!value) return undefined;
+  const inputTokens = count(value.input_tokens);
+  const cacheHitTokens = count(value.cache_read_input_tokens);
+  return {
+    inputTokens,
+    outputTokens: count(value.output_tokens),
+    cacheHitTokens,
+    cacheMissTokens: Math.max(0, inputTokens - cacheHitTokens),
+    cacheCreationTokens: count(value.cache_creation_input_tokens),
+  };
+}
+
+function mergeAnthropicUsage(
+  current: DeepseekDraftUsage | undefined,
+  next: AnthropicUsage | undefined,
+): DeepseekDraftUsage | undefined {
+  const normalized = anthropicUsage(next);
+  if (!normalized) return current;
+  return {
+    inputTokens: normalized.inputTokens || current?.inputTokens || 0,
+    outputTokens: normalized.outputTokens || current?.outputTokens || 0,
+    cacheHitTokens: normalized.cacheHitTokens || current?.cacheHitTokens || 0,
+    cacheMissTokens: normalized.inputTokens > 0
+      ? normalized.cacheMissTokens
+      : current?.cacheMissTokens ?? 0,
+    cacheCreationTokens: normalized.cacheCreationTokens || current?.cacheCreationTokens || 0,
+  };
 }
 
 function buildAnthropicMessages(input: DeepseekDraftCall): {
@@ -291,7 +385,12 @@ async function readAnthropicNonStreaming(response: Response): Promise<DeepseekDr
     .filter((b) => b.type === "text")
     .map((b) => b.text ?? "")
     .join("");
-  return { raw, contentStartMs: raw ? 0 : null, finishReason: json.stop_reason ?? null };
+  return {
+    raw,
+    contentStartMs: raw ? 0 : null,
+    finishReason: json.stop_reason ?? null,
+    usage: anthropicUsage(json.usage),
+  };
 }
 
 async function readAnthropicStreaming(
@@ -307,17 +406,28 @@ async function readAnthropicStreaming(
   let raw = "";
   let contentStartMs: number | null = null;
   let finishReason: string | null = null;
+  let usage: DeepseekDraftUsage | undefined;
 
   const handleData = (data: string) => {
     if (!data || data === "[DONE]") return;
-    let json: { type?: string; delta?: { type?: string; text?: string } };
+    let json: {
+      type?: string;
+      delta?: { type?: string; text?: string; stop_reason?: string | null };
+      message?: { usage?: AnthropicUsage };
+      usage?: AnthropicUsage;
+    };
     try {
       json = JSON.parse(data);
     } catch {
       return;
     }
-    if (json.type === "message_delta" && typeof (json as { delta?: { stop_reason?: string | null } }).delta?.stop_reason === "string") {
-      finishReason = (json as { delta?: { stop_reason?: string | null } }).delta!.stop_reason ?? null;
+    if (json.type === "message_start") {
+      usage = mergeAnthropicUsage(usage, json.message?.usage);
+      return;
+    }
+    if (json.type === "message_delta") {
+      usage = mergeAnthropicUsage(usage, json.usage);
+      if (typeof json.delta?.stop_reason === "string") finishReason = json.delta.stop_reason;
       return;
     }
     if (json.type !== "content_block_delta" || json.delta?.type !== "text_delta") return;
@@ -346,27 +456,88 @@ async function readAnthropicStreaming(
 
   const tail = buffer.trim();
   if (tail.startsWith("data:")) handleData(tail.slice(5).trim());
-  return { raw, contentStartMs, finishReason };
+  return { raw, contentStartMs, finishReason, usage };
+}
+
+function missingReason(error: unknown, aborted: boolean): string {
+  if (aborted || isAbortError(error)) return "aborted";
+  if (error instanceof UpstreamHttpError) return `http_${error.status}`;
+  return error instanceof Error ? error.name || "request_failed" : "request_failed";
 }
 
 export async function callDeepseekDraft(input: DeepseekDraftCall): Promise<DeepseekDraftResult> {
   const maxRetries = input.maxRetries ?? 2;
   const isAnthropic = input.protocol === "anthropic";
   let lastError: unknown;
+  let requestAttempt = 0;
+
+  const notifyAttempt = async (attempt: DeepseekDraftAttempt): Promise<void> => {
+    try {
+      await input.onAttemptComplete?.(attempt);
+    } catch (error) {
+      console.warn("[deepseekDraftClient] attempt 观测回调失败(不影响生成)", {
+        attempt: attempt.attempt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const runRequest = async (
+    protocol: "openai" | "anthropic",
+    streaming: boolean,
+    execute: () => Promise<DeepseekDraftResult>,
+  ): Promise<DeepseekDraftResult> => {
+    requestAttempt += 1;
+    try {
+      const result = await execute();
+      const usage = result.usage;
+      await notifyAttempt({
+        attempt: requestAttempt,
+        protocol,
+        streaming,
+        usageState: usage ? "recorded" : "missing",
+        reason: usage ? null : "provider_usage_unavailable",
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+        cacheHitTokens: usage?.cacheHitTokens ?? 0,
+        cacheMissTokens: usage?.cacheMissTokens ?? 0,
+        cacheCreationTokens: usage?.cacheCreationTokens ?? 0,
+      });
+      return result;
+    } catch (error) {
+      await notifyAttempt({
+        attempt: requestAttempt,
+        protocol,
+        streaming,
+        usageState: "missing",
+        reason: missingReason(error, Boolean(input.abortSignal?.aborted)),
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheHitTokens: 0,
+        cacheMissTokens: 0,
+        cacheCreationTokens: 0,
+      });
+      throw error;
+    }
+  };
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const startedAt = Date.now();
     try {
       if (isAnthropic) {
-        const response = await fetchAnthropic(input);
-        return input.stream
-          ? await readAnthropicStreaming(response, input, startedAt)
-          : await readAnthropicNonStreaming(response);
+        return await runRequest("anthropic", input.stream, async () => {
+          const response = await fetchAnthropic(input);
+          return input.stream
+            ? await readAnthropicStreaming(response, input, startedAt)
+            : await readAnthropicNonStreaming(response);
+        });
       }
-      const response = await fetchDeepseek(input);
-      return input.stream
-        ? await readStreaming(response, input, startedAt)
-        : await readNonStreaming(response);
+      return await runRequest("openai", input.stream, async () => {
+        const response = await fetchDeepseek(input);
+        return input.stream
+          ? await readStreaming(response, input, startedAt)
+          : await readNonStreaming(response);
+      });
     } catch (error) {
       if (isAbortError(error) || input.abortSignal?.aborted) throw error;
       if (
@@ -376,8 +547,10 @@ export async function callDeepseekDraft(input: DeepseekDraftCall): Promise<Deeps
         (error.status === 400 || error.status === 422)
       ) {
         try {
-          const response = await fetchDeepseek({ ...input, stream: false });
-          return resultFromChatJsonText(await response.text(), input, startedAt);
+          return await runRequest("openai", false, async () => {
+            const response = await fetchDeepseek({ ...input, stream: false });
+            return resultFromChatJsonText(await response.text(), input, startedAt);
+          });
         } catch (fallbackError) {
           lastError = fallbackError;
           if (attempt >= maxRetries) break;

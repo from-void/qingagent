@@ -1,7 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { callDeepseekDraft, deepseekDraftClientInternals } from "../tools/deepseekDraftClient.js";
+import {
+  callDeepseekDraft,
+  deepseekDraftClientInternals,
+  type DeepseekDraftAttempt,
+} from "../tools/deepseekDraftClient.js";
+import { recordUsageEvent } from "../db/usageRepo.js";
+import { getDocumentsClient } from "../db/documentsClient.js";
+import { __resetMigrationsForTest } from "../db/migrations.js";
+import {
+  prepareTempDocumentsDb,
+  type TempDocumentsDb,
+} from "../db/__tests__/dbTestUtils.js";
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
+let tempDb: TempDocumentsDb;
 
 function sseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -16,14 +28,42 @@ function sseResponse(chunks: string[]): Response {
 describe("deepseekDraftClient", () => {
   beforeEach(() => {
     process.env.DEEPSEEK_API_KEY = "test-key";
+    __resetMigrationsForTest();
+    tempDb = prepareTempDocumentsDb("deepseek-draft-usage-");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    __resetMigrationsForTest();
+    tempDb.cleanup();
     if (originalDeepseekApiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalDeepseekApiKey;
   });
+
+  const recordAttempt = (attempt: DeepseekDraftAttempt) => recordUsageEvent({
+    sessionId: "session-usage",
+    runId: "run-usage",
+    callSite: "writeDraft",
+    modelId: "test-model",
+    keyOrigin: "env",
+    inputTokens: attempt.inputTokens,
+    outputTokens: attempt.outputTokens,
+    cacheHitTokens: attempt.cacheHitTokens,
+    cacheMissTokens: attempt.cacheMissTokens,
+    cacheCreationTokens: attempt.cacheCreationTokens,
+    usageState: attempt.usageState,
+    reason: attempt.reason,
+    lane: 2,
+    attempt: attempt.attempt,
+  });
+
+  async function usageRows(): Promise<Array<Record<string, unknown>>> {
+    const result = await getDocumentsClient().execute(
+      "SELECT * FROM llm_usage_events ORDER BY attempt",
+    );
+    return result.rows as unknown as Array<Record<string, unknown>>;
+  }
 
   it("OpenAI 请求体优先复用完整 messages", () => {
     const messages = [
@@ -49,6 +89,143 @@ describe("deepseekDraftClient", () => {
       stream: false,
     });
     expect(body).not.toHaveProperty("response_format");
+  });
+
+  it("OpenAI 正常末帧 usage 按 lane/attempt 入账", async () => {
+    const fetchMock = vi.fn(async () => sseResponse([
+      'data: {"choices":[{"delta":{"content":"正文"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_cache_hit_tokens":60,"prompt_cache_miss_tokens":40}}\n\n',
+      "data: [DONE]\n\n",
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callDeepseekDraft({
+      system: "sys",
+      user: "user",
+      thinking: false,
+      temperature: 0.4,
+      stream: true,
+      maxRetries: 0,
+      onAttemptComplete: recordAttempt,
+    });
+
+    const rows = await usageRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      usage_state: "recorded",
+      lane: 2,
+      attempt: 1,
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_hit_tokens: 60,
+      cache_miss_tokens: 40,
+    });
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const body = JSON.parse(String(calls[0]![1].body));
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("Anthropic message_start/message_delta 合并 usage 并分列 creation cache", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([
+      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":90,"cache_read_input_tokens":50,"cache_creation_input_tokens":12}}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"GLM 正文"}}\n\n',
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":18}}\n\n',
+    ])));
+
+    await callDeepseekDraft({
+      system: "sys",
+      user: "user",
+      thinking: false,
+      temperature: 0.4,
+      stream: true,
+      protocol: "anthropic",
+      maxRetries: 0,
+      onAttemptComplete: recordAttempt,
+    });
+
+    expect((await usageRows())[0]).toMatchObject({
+      usage_state: "recorded",
+      input_tokens: 90,
+      output_tokens: 18,
+      cache_hit_tokens: 50,
+      cache_miss_tokens: 40,
+      cache_creation_tokens: 12,
+    });
+  });
+
+  it("代理吞掉 usage 时保留全零 missing 事件", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([
+      'data: {"choices":[{"delta":{"content":"正文"},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ])));
+
+    await callDeepseekDraft({
+      system: "sys", user: "user", thinking: false, temperature: 0.4,
+      stream: true, maxRetries: 0, onAttemptComplete: recordAttempt,
+    });
+
+    expect((await usageRows())[0]).toMatchObject({
+      usage_state: "missing",
+      reason: "provider_usage_unavailable",
+      input_tokens: 0,
+      output_tokens: 0,
+      attempt: 1,
+    });
+  });
+
+  it("abort 的真实请求入账 missing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("aborted", "AbortError");
+    }));
+
+    await expect(callDeepseekDraft({
+      system: "sys", user: "user", thinking: false, temperature: 0.4,
+      stream: true, maxRetries: 2, onAttemptComplete: recordAttempt,
+    })).rejects.toMatchObject({ name: "AbortError" });
+
+    expect((await usageRows())[0]).toMatchObject({
+      usage_state: "missing",
+      reason: "aborted",
+      attempt: 1,
+    });
+  });
+
+  it("非流式 fallback 的两次真实请求分别入账", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "fallback" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 30, completion_tokens: 8 },
+      }), { status: 200 })));
+
+    await callDeepseekDraft({
+      system: "sys", user: "user", thinking: false, temperature: 0.4,
+      stream: true, maxRetries: 0, onAttemptComplete: recordAttempt,
+    });
+
+    expect(await usageRows()).toMatchObject([
+      { usage_state: "missing", reason: "http_400", attempt: 1 },
+      { usage_state: "recorded", input_tokens: 30, output_tokens: 8, attempt: 2 },
+    ]);
+  });
+
+  it("重试的失败与成功请求都入账且 attempt 连续", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("", { status: 500 }))
+      .mockResolvedValueOnce(sseResponse([
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":22,"completion_tokens":4}}\n\n',
+      ])));
+
+    await callDeepseekDraft({
+      system: "sys", user: "user", thinking: false, temperature: 0.4,
+      stream: true, maxRetries: 1, onAttemptComplete: recordAttempt,
+    });
+
+    expect(await usageRows()).toMatchObject([
+      { usage_state: "missing", reason: "http_500", attempt: 1 },
+      { usage_state: "recorded", input_tokens: 22, output_tokens: 4, attempt: 2 },
+    ]);
   });
 
   it("Anthropic 请求体保留 V4 messages 上下文", () => {

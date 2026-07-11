@@ -119,7 +119,7 @@ describe("migration 0002 orphan cleanup", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([2]);
+    expect(result.appliedIds).toEqual([2, 3]);
     expect(await familyCount(client, "orphan-doc", "missing-thread")).toBe(0);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
   });

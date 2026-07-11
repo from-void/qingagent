@@ -37,6 +37,7 @@ import {
   type DeepseekTier,
 } from "../llm/modelConfig.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { recordUsageEvent } from "../db/usageRepo.js";
 
 export const writeDraftInputSchema = z.object({
   title: z.string().describe("文档标题"),
@@ -531,6 +532,7 @@ export function createWriteDraftTool(opts: {
           await emitDisplayProgress(false, params.roundIdx > 0 ? "revising" : "writing");
           const protocol = resolveProtocol(context?.requestContext);
           const baseUrl = resolveBaseUrl(context?.requestContext);
+          const auth = resolveDeepseekAuth(context?.requestContext);
           const result = await callDeepseekDraft({
             system,
             user: params.prompt,
@@ -540,10 +542,26 @@ export function createWriteDraftTool(opts: {
             stream: true,
             baseUrl,
             model: activeModelId,
-            apiKey: resolveDeepseekAuth(context?.requestContext).apiKey || undefined,
+            apiKey: auth.apiKey || undefined,
             protocol,
             abortSignal: params.abortSignal,
             maxRetries: 2,
+            onAttemptComplete: (attempt) => recordUsageEvent({
+              sessionId: opts.state.sessionId,
+              runId: (context?.requestContext?.get("runId") as string | null | undefined) ?? opts.state.runId,
+              callSite: "writeDraft",
+              modelId: activeModelId,
+              keyOrigin: auth.origin,
+              inputTokens: attempt.inputTokens,
+              outputTokens: attempt.outputTokens,
+              cacheHitTokens: attempt.cacheHitTokens,
+              cacheMissTokens: attempt.cacheMissTokens,
+              cacheCreationTokens: attempt.cacheCreationTokens,
+              usageState: attempt.usageState,
+              reason: attempt.reason,
+              lane: laneKey,
+              attempt: attempt.attempt,
+            }),
             onContentStart: params.onContentStart,
             onContentDelta: (_delta, currentRaw) => {
               raw = currentRaw;

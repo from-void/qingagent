@@ -251,7 +251,7 @@ export interface BranchCallInput {
   onTextDelta?: (delta: string, accumulated: string) => void | Promise<void>;
   /** 原始响应每次有网络活动即触发；不代表文本已通过 tool/lease 验真。 */
   onActivity?: () => void | Promise<void>;
-  /** 兼容调用方意图；为保证 tool/lease 验真，文本会在完整响应确认后统一提交。 */
+  /** 实时派发已解析的文本 delta；仅适合允许展示可撤销局部结果的 UI 消费方。 */
   streamTextDeltas?: boolean;
   thinking?: boolean;
   temperature?: number;
@@ -356,6 +356,102 @@ async function readRawBranchResponse(
   return state;
 }
 
+function jsonArguments(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "{}";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "{}";
+  }
+}
+
+/**
+ * 捕获体来自不同 AI SDK/provider serializer 版本，历史 tool-call 字段可能使用
+ * args/input/toolCallId 等内部表示。回放前统一成 OpenAI wire shape，并丢弃孤儿调用/结果。
+ */
+export function normalizeReplayMessages(messages: unknown[]): BranchMessage[] {
+  const normalized: BranchMessage[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const source = asRecord(messages[index]);
+    if (!source || typeof source.role !== "string") continue;
+    if (source.role !== "assistant" || !Array.isArray(source.tool_calls)) {
+      if (source.role !== "tool") normalized.push({ ...source } as BranchMessage);
+      continue;
+    }
+    const followingTools: Array<Record<string, unknown>> = [];
+    let cursor = index + 1;
+    while (cursor < messages.length) {
+      const tool = asRecord(messages[cursor]);
+      if (tool?.role !== "tool") break;
+      followingTools.push(tool);
+      cursor += 1;
+    }
+    const toolsById = new Map<string, Record<string, unknown>>();
+    for (const tool of followingTools) {
+      const id = typeof tool.tool_call_id === "string"
+        ? tool.tool_call_id
+        : typeof tool.toolCallId === "string" ? tool.toolCallId : null;
+      if (id) toolsById.set(id, tool);
+    }
+    const pairedCalls: Record<string, unknown>[] = [];
+    const pairedIds = new Set<string>();
+    for (const rawCall of source.tool_calls) {
+      const call = asRecord(rawCall);
+      const fn = asRecord(call?.function);
+      const id = typeof call?.id === "string"
+        ? call.id
+        : typeof call?.toolCallId === "string" ? call.toolCallId : null;
+      const name = typeof fn?.name === "string"
+        ? fn.name
+        : typeof call?.toolName === "string" ? call.toolName : null;
+      if (!id || !name || !toolsById.has(id)) continue;
+      pairedIds.add(id);
+      pairedCalls.push({
+        id,
+        type: "function",
+        function: {
+          name,
+          arguments: jsonArguments(fn?.arguments ?? call?.arguments ?? call?.args ?? call?.input),
+        },
+      });
+    }
+    const assistant = { ...source };
+    if (pairedCalls.length > 0) assistant.tool_calls = pairedCalls;
+    else delete assistant.tool_calls;
+    if (assistant.content !== "" || pairedCalls.length > 0) {
+      normalized.push(assistant as BranchMessage);
+    }
+    for (const tool of followingTools) {
+      const id = typeof tool.tool_call_id === "string"
+        ? tool.tool_call_id
+        : typeof tool.toolCallId === "string" ? tool.toolCallId : null;
+      if (!id || !pairedIds.has(id)) continue;
+      normalized.push({
+        ...tool,
+        role: "tool",
+        tool_call_id: id,
+        content: typeof tool.content === "string" ? tool.content : jsonArguments(tool.content),
+      } as BranchMessage);
+    }
+    index = cursor - 1;
+  }
+  return normalized;
+}
+
+async function providerErrorSummary(response: Response): Promise<string> {
+  let message = "request rejected";
+  try {
+    const text = await response.text();
+    const payload = JSON.parse(text) as { error?: { message?: unknown } };
+    if (typeof payload.error?.message === "string") message = payload.error.message;
+    else if (text.trim()) message = text.trim();
+  } catch {
+    // 保留稳定兜底，错误观测本身不能遮蔽降级。
+  }
+  return `HTTP ${response.status}: ${message}`.slice(0, 200);
+}
+
 async function recordBranchUsage(
   input: BranchCallInput,
   usage: unknown,
@@ -386,7 +482,7 @@ async function recordBranchUsage(
 }
 
 /**
- * 原始 body 回放器。保留主链 tools/tool_choice，只 append 尾部；检测到 tool_call 时弃用并重试一次。
+ * 原始 body 回放器。保留主链 tools/tool_choice，规范化历史 tool 消息后 append 尾部。
  */
 export async function branchCall(input: BranchCallInput): Promise<BranchCallResult> {
   const { apiKey } = resolveDeepseekAuth(input.requestContext);
@@ -429,7 +525,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
   const tail = typeof input.steeringTail === "string"
     ? [{ role: "user", content: input.steeringTail } satisfies BranchMessage]
     : input.steeringTail;
-  for (let retry = 0; retry < 2; retry += 1) {
+  for (let retry = 0; retry < 1; retry += 1) {
     // 两次 raw 请求之间也可能开始新主轮；迟到分支不能继续消费旧前缀。
     if (!ownsCurrentLease()) {
       return { ok: false, reason: "stale_snapshot", attempts: retry, toolCallRetries: retry };
@@ -439,7 +535,9 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       : (input.attempt ?? 1) + retry;
     const body = {
       ...baseBody,
-      messages: [...baseBody.messages, ...tail],
+      messages: [...normalizeReplayMessages(baseBody.messages), ...tail],
+      stream: true,
+      stream_options: { include_usage: true },
       ...(typeof input.maxTokens === "number" ? { max_tokens: input.maxTokens } : {}),
       ...(input.thinking === undefined
         ? {}
@@ -461,24 +559,28 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         signal: input.abortSignal,
       });
       if (!response.ok) {
-        void recordBranchUsage(input, null, attempt, `provider_http_${response.status}`);
+        const error = await providerErrorSummary(response);
+        void recordBranchUsage(input, null, attempt, error);
         return {
           ok: false,
           reason: "provider_error",
           attempts: retry + 1,
           toolCallRetries: retry,
-          error: `HTTP ${response.status}`,
+          error,
         };
       }
       // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
-      const raw = await readRawBranchResponse(response, undefined, input.onActivity);
+      const raw = await readRawBranchResponse(
+        response,
+        input.streamTextDeltas ? input.onTextDelta : undefined,
+        input.onActivity,
+      );
       void recordBranchUsage(input, raw.usage, attempt, null);
       if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
       if (raw.toolCalled) {
-        if (retry === 0) continue;
-        return { ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 };
+        return { ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 };
       }
       if (!raw.text) {
         return {
@@ -491,7 +593,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
-      await input.onTextDelta?.(raw.text, raw.text);
+      if (!input.streamTextDeltas) await input.onTextDelta?.(raw.text, raw.text);
       if (!ownsCurrentLease() || input.abortSignal?.aborted) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
@@ -521,7 +623,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       };
     }
   }
-  return { ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 };
+  return { ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 };
 }
 
 // env 层默认协议:QINGAGENT_MODEL_PROTOCOL=anthropic|openai(GLM Coding 走 anthropic)。

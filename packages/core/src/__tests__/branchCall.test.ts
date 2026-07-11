@@ -11,6 +11,7 @@ import {
   clearSessionSnapshot,
   createSnapshottingQingagentModel,
   getSessionSnapshot,
+  normalizeReplayMessages,
 } from "../llm/modelConfig.js";
 
 const originalApiKey = process.env.DEEPSEEK_API_KEY;
@@ -226,6 +227,8 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(replayBody.thinking).toEqual({ type: "disabled" });
     expect(replayBody.temperature).toBe(0.35);
     expect(replayBody.max_tokens).toBe(4096);
+    expect(replayBody.stream).toBe(true);
+    expect(replayBody.stream_options).toEqual({ include_usage: true });
     expect(result).toMatchObject({ finishReason: "stop" });
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "planDraft",
@@ -294,7 +297,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     await expect(pending).resolves.toMatchObject({ reason: "stale_snapshot", attempts: 1 });
   });
 
-  it("遇到 tool_call 弃用并只重试一次，两次 usage 均入账", async () => {
+  it("遇到 tool_call 立即失败，不原样重试阻塞降级", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-tool", "stream-main");
@@ -309,7 +312,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       },
       { prompt_tokens: 20, completion_tokens: 2, prompt_cache_hit_tokens: 16, prompt_cache_miss_tokens: 4 },
     );
-    fetchMock.mockResolvedValueOnce(toolResponse()).mockResolvedValueOnce(toolResponse());
+    fetchMock.mockResolvedValueOnce(toolResponse());
 
     const result = await branchCall({
       sessionSnapshot: snapshot,
@@ -318,10 +321,9 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext,
     });
 
-    expect(result).toEqual({ ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(mocks.recordUsageEvent).toHaveBeenCalledTimes(2);
-    expect(mocks.recordUsageEvent.mock.calls.map((call) => call[0].attempt)).toEqual([1, 2]);
+    expect(result).toEqual({ ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.recordUsageEvent).toHaveBeenCalledTimes(1);
   });
 
   it("可解析跨 chunk SSE，并在无 usage 时写 missing 事件", async () => {
@@ -365,6 +367,64 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     }));
   });
 
+  it("流式消费逐帧派发文本并解析 SSE 末帧 usage", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-sse", "stream-progress");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"甲"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"content":"乙"},"finish_reason":"stop"}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":2,"prompt_cache_hit_tokens":10,"prompt_cache_miss_tokens":2}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
+    const deltas: string[] = [];
+
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+      streamTextDeltas: true,
+      onTextDelta: (delta) => { deltas.push(delta); },
+    });
+
+    expect(result).toMatchObject({ ok: true, text: "甲乙" });
+    expect(deltas).toEqual(["甲", "乙"]);
+    expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      cacheHitTokens: 10,
+      cacheMissTokens: 2,
+    }));
+  });
+
+  it("规范化 webSearch 历史 tool 消息，补 arguments 并丢弃孤儿结果", () => {
+    expect(normalizeReplayMessages([
+      { role: "user", content: "搜索" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "call-web", type: "function", function: { name: "webSearch" } }],
+      },
+      { role: "tool", tool_call_id: "call-web", content: "{\"ok\":true}" },
+      { role: "tool", tool_call_id: "orphan", content: "bad" },
+    ])).toEqual([
+      { role: "user", content: "搜索" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{
+          id: "call-web",
+          type: "function",
+          function: { name: "webSearch", arguments: "{}" },
+        }],
+      },
+      { role: "tool", tool_call_id: "call-web", content: "{\"ok\":true}" },
+    ]);
+  });
+
   it("账本慢写不会阻塞分支结果交付", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
@@ -398,7 +458,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     beginSessionSnapshotTurn(requestContext);
     await triggerProviderFetch(requestContext, "main-prefix");
     const snapshot = getSessionSnapshot(requestContext)!;
-    fetchMock.mockResolvedValueOnce(new Response("bad gateway", { status: 502 }));
+    fetchMock.mockResolvedValueOnce(Response.json({ error: { message: "upstream unavailable" } }, { status: 502 }));
 
     await expect(branchCall({
       sessionSnapshot: snapshot,
@@ -408,7 +468,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     })).resolves.toMatchObject({ reason: "provider_error", attempts: 1 });
     await vi.waitFor(() => expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       usageState: "missing",
-      reason: "provider_http_502",
+      reason: "HTTP 502: upstream unavailable",
       attempt: 1,
     })));
   });

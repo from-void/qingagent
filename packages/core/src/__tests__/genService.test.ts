@@ -109,12 +109,12 @@ describe("GenService", () => {
     expect(mocks.branchCall.mock.calls.map((call) => call[0].callSite)).toEqual(["planDraft", "askMore"]);
   });
 
-  it("tool_call 两次抑制失败后按该次调用降级原独立模型路径", async () => {
+  it("tool_call 单次失败后立即降级原独立模型路径", async () => {
     mocks.branchCall.mockResolvedValue({
       ok: false,
       reason: "tool_call",
-      attempts: 2,
-      toolCallRetries: 1,
+      attempts: 1,
+      toolCallRetries: 0,
     });
     mocks.streamText.mockReturnValue({
       textStream: textStream('[{"id":"q-note","label":"还有什么要求？","kind":"text","options":[]}]'),
@@ -125,10 +125,11 @@ describe("GenService", () => {
     expect(result).toMatchObject({
       transport: "fallback",
       branchFailure: "tool_call",
-      toolCallRetries: 1,
+      toolCallRetries: 0,
     });
     expect(result.questions).toHaveLength(1);
     expect(mocks.streamText).toHaveBeenCalledTimes(1);
+    expect(mocks.branchCall).toHaveBeenCalledTimes(1);
   });
 
   it("真实脏输出支持 fence、尾随散文与 nested kind", () => {

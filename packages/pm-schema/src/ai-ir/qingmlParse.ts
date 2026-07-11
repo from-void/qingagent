@@ -422,7 +422,21 @@ function warnIfTruncatedTableStructure(element: DomElement, ctx: ParseContext): 
 function hasExplicitClosingTag(element: DomElement, source: string): boolean {
   if (typeof element.startIndex !== "number" || typeof element.endIndex !== "number") return true;
   const slice = source.slice(element.startIndex, element.endIndex + 1);
-  return new RegExp(`</\\s*${escapeRegExp(element.name)}\\s*>`, "i").test(slice);
+  const tagPattern = new RegExp(`<\\s*(/?)\\s*${escapeRegExp(element.name)}\\b[^>]*>`, "gi");
+  let depth = 0;
+  let sawOpeningTag = false;
+  for (const match of slice.matchAll(tagPattern)) {
+    const token = match[0];
+    if (match[1] === "/") {
+      depth -= 1;
+    } else if (!/\/\s*>$/.test(token)) {
+      sawOpeningTag = true;
+      depth += 1;
+    }
+    if (depth < 0) return false;
+  }
+  // 同名标签可嵌套；必须整段配平，不能让内层 </table> 冒充外层闭合。
+  return sawOpeningTag && depth === 0;
 }
 
 function parseColumns(element: DomElement, ctx: ParseContext): AiColumn[] {

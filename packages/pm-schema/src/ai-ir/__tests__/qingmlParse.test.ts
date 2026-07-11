@@ -117,6 +117,13 @@ describe("qingmlParse", () => {
       kind: "truncated-table-structure",
       severity: "bad-block",
     }));
+
+    const nestedSameTag = qingmlParse("<table><tr><td><table><tr><td>x</td></tr></table>");
+    expect(nestedSameTag.warnings).toContainEqual(expect.objectContaining({
+      kind: "truncated-table-structure",
+      severity: "bad-block",
+      detail: expect.stringContaining("<table>"),
+    }));
   });
 
   it("解析 columns + callout", () => {

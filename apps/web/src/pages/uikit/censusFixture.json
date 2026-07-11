@@ -3,12 +3,12 @@
   "generatedAt": "2026-07-04T07:58:44.890Z",
   "summary": {
     "runtimeStates": 42,
-    "runtimeAppClasses": 460,
+    "runtimeAppClasses": 453,
     "runtimeThirdPartyClasses": 40,
-    "live_reachable": 400,
+    "live_reachable": 396,
     "liveButStaticNotReachable": 24,
     "undefinedInCss": 36,
-    "deadCandidates": 191,
+    "deadCandidates": 188,
     "devOnly_notSeen": 120,
     "suspectedUnderSampled": 618
   },
@@ -3217,15 +3217,6 @@
       "backgroundColor": "rgba(0, 0, 0, 0)",
       "borderColor": "rgb(179, 167, 145)"
     },
-    "patch-popup-info": {
-      "family": "patch-popup",
-      "staticVerdict": "dead",
-      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(138, 127, 110)",
-      "backgroundColor": "rgba(0, 0, 0, 0)",
-      "borderColor": "rgb(138, 127, 110)"
-    },
     "patch-popup-actions": {
       "family": "patch-popup",
       "staticVerdict": "dead",
@@ -3631,42 +3622,6 @@
       "backgroundColor": "rgba(0, 0, 0, 0)",
       "borderColor": "rgba(120, 90, 50, 0.14)"
     },
-    "au-slider": {
-      "family": "au",
-      "staticVerdict": "reachable",
-      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(47, 42, 34)",
-      "backgroundColor": "rgba(0, 0, 0, 0)",
-      "borderColor": "rgb(47, 42, 34)"
-    },
-    "au-slider-input": {
-      "family": "au",
-      "staticVerdict": "reachable",
-      "fontFamily": "Arial",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(157, 150, 142)",
-      "backgroundColor": "rgb(255, 255, 255)",
-      "borderColor": "rgb(157, 150, 142)"
-    },
-    "au-slider-value": {
-      "family": "au",
-      "staticVerdict": "reachable",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
-      "borderRadius": "6px 6px 6px 6px",
-      "color": "rgb(47, 42, 34)",
-      "backgroundColor": "rgba(0, 0, 0, 0.03)",
-      "borderColor": "rgba(120, 90, 50, 0.26)"
-    },
-    "au-slider-scale": {
-      "family": "au",
-      "staticVerdict": "reachable",
-      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"SF Mono\", \"Cascadia Code\", Menlo, Consolas, monospace",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(179, 167, 145)",
-      "backgroundColor": "rgba(0, 0, 0, 0)",
-      "borderColor": "rgb(179, 167, 145)"
-    },
     "bp-ta": {
       "family": "bp",
       "staticVerdict": "reachable",
@@ -3919,15 +3874,6 @@
       "backgroundColor": "rgba(0, 0, 0, 0)",
       "borderColor": "rgb(179, 167, 145)"
     },
-    "patch-popup-orig": {
-      "family": "patch-popup",
-      "staticVerdict": "dead",
-      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(47, 42, 34)",
-      "backgroundColor": "rgba(0, 0, 0, 0)",
-      "borderColor": "rgb(47, 42, 34)"
-    },
     "patch-popup-del-seg": {
       "family": "patch-popup",
       "staticVerdict": "test-only",
@@ -3936,15 +3882,6 @@
       "color": "rgb(168, 65, 58)",
       "backgroundColor": "rgba(0, 0, 0, 0)",
       "borderColor": "rgb(168, 65, 58)"
-    },
-    "patch-popup-ctx": {
-      "family": "patch-popup",
-      "staticVerdict": "dead",
-      "fontFamily": "\"Noto Serif SC\", \"Songti SC\", STSong, serif",
-      "borderRadius": "0px 0px 0px 0px",
-      "color": "rgb(179, 167, 145)",
-      "backgroundColor": "rgba(0, 0, 0, 0)",
-      "borderColor": "rgb(179, 167, 145)"
     },
     "doc-empty": {
       "family": "doc",

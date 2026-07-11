@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-07-05T08:58:37.799Z",
+  "generatedAt": "2026-07-11T09:19:04.056Z",
   "forward": {
-    "total": 460,
-    "attributed": 268,
-    "exempt": 192,
+    "total": 453,
+    "attributed": 264,
+    "exempt": 189,
     "missing": 0,
     "rows": [
       {
@@ -24,34 +24,13 @@
       {
         "cls": "ai-cursor",
         "family": "ai",
-        "status": "exempt",
-        "reason": "编辑器 AI 光标 / 协作光标层,运行时装饰,当前无多人协作场景"
+        "status": "attributed"
       },
       {
         "cls": "arrowclosed",
         "family": "arrowclosed",
         "status": "exempt",
         "reason": "第三方库(React Flow/xyflow · TipTap)运行时生成类,非本设计系统控件"
-      },
-      {
-        "cls": "au-slider",
-        "family": "au",
-        "status": "attributed"
-      },
-      {
-        "cls": "au-slider-input",
-        "family": "au",
-        "status": "attributed"
-      },
-      {
-        "cls": "au-slider-scale",
-        "family": "au",
-        "status": "attributed"
-      },
-      {
-        "cls": "au-slider-value",
-        "family": "au",
-        "status": "attributed"
       },
       {
         "cls": "bigplan-panel",
@@ -747,8 +726,7 @@
       {
         "cls": "insert",
         "family": "insert",
-        "status": "exempt",
-        "reason": "富文本行内标记(em/insert)/主题-滚动条状态碎片,依附编辑器与运行时,无独立控件视觉"
+        "status": "attributed"
       },
       {
         "cls": "is-active",
@@ -1059,8 +1037,7 @@
       {
         "cls": "native-presentation-cursor",
         "family": "native",
-        "status": "exempt",
-        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
+        "status": "attributed"
       },
       {
         "cls": "native-presentation-shell",
@@ -1122,17 +1099,7 @@
         "status": "attributed"
       },
       {
-        "cls": "patch-popup-ctx",
-        "family": "patch-popup",
-        "status": "attributed"
-      },
-      {
         "cls": "patch-popup-del-seg",
-        "family": "patch-popup",
-        "status": "attributed"
-      },
-      {
-        "cls": "patch-popup-info",
         "family": "patch-popup",
         "status": "attributed"
       },
@@ -1143,11 +1110,6 @@
       },
       {
         "cls": "patch-popup-num",
-        "family": "patch-popup",
-        "status": "attributed"
-      },
-      {
-        "cls": "patch-popup-orig",
         "family": "patch-popup",
         "status": "attributed"
       },
@@ -2501,13 +2463,13 @@
     ]
   },
   "reverse": {
-    "scannedTokens": 480,
+    "scannedTokens": 478,
     "categories": {
-      "census": 183,
-      "scaffold": 93,
+      "census": 175,
+      "scaffold": 94,
       "pageCss": 33,
       "dig": 43,
-      "conditionalLive": 101,
+      "conditionalLive": 106,
       "dormant": 0,
       "editorPm": 16,
       "modifier": 11,
@@ -2533,6 +2495,26 @@
       {
         "cls": "patch-del-cursor",
         "evidence": "DocumentSnapshotView.tsx:3936"
+      },
+      {
+        "cls": "wf-patch-replace-wrap",
+        "evidence": "SectionView.tsx:261/366 · SpanView.tsx:212/254(审核替换态)"
+      },
+      {
+        "cls": "patch-popup-title",
+        "evidence": "doc/patchHover.tsx:276/296"
+      },
+      {
+        "cls": "patch-popup-original",
+        "evidence": "doc/patchHover.tsx:264/269"
+      },
+      {
+        "cls": "patch-popup-label",
+        "evidence": "doc/patchHover.tsx:265/270"
+      },
+      {
+        "cls": "patch-popup-original-text",
+        "evidence": "doc/patchHover.tsx:13/266/271"
       },
       {
         "cls": "wf-floaty",

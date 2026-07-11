@@ -54,7 +54,13 @@ const RENDERED_COMPONENT_FILES = [
   "pages/workspace/components/MermaidPreview.tsx",
   // AskUser 开场问卷
   "pages/workspace/components/BigPlanPanel.tsx",
+  "pages/workspace/components/AskUserOverlay.tsx",
+  "pages/workspace/components/AskUserPreview.tsx",
   "pages/workspace/components/SliderQuestionInput.tsx",
+  // 审核 diff 样张真实渲染链；此前漏扫导致现役 patch-popup 被双向校验误报。
+  "pages/workspace/components/doc/patchHover.tsx",
+  "pages/workspace/components/doc/SectionView.tsx",
+  "pages/workspace/components/doc/SpanView.tsx",
   // 审批条 / 整篇审条 / 泼墨气泡 / 已关联文件 / 技能菜单 / 长文本 chip
   "pages/workspace/components/PatchNav.tsx",
   "pages/workspace/components/WholeDocReviewNav.tsx",
@@ -283,6 +289,11 @@ const CONDITIONAL_LIVE = {
   "wf-sel": "DocumentSnapshotView.tsx:3736/5090(选区态 span)",
   "wf-patch-del-marker": "DocumentSnapshotView.tsx:3923",
   "patch-del-cursor": "DocumentSnapshotView.tsx:3936",
+  "wf-patch-replace-wrap": "SectionView.tsx:261/366 · SpanView.tsx:212/254(审核替换态)",
+  "patch-popup-title": "doc/patchHover.tsx:276/296",
+  "patch-popup-original": "doc/patchHover.tsx:264/269",
+  "patch-popup-label": "doc/patchHover.tsx:265/270",
+  "patch-popup-original-text": "doc/patchHover.tsx:13/266/271",
   // 已连接文件夹 hover 卡(hover 才现)
   "wf-floaty": "FolderSourceControl.tsx:424(ws-folder-popover 外壳;A2-2 待随文件入口融合退役)",
   "ws-folder-popover": "FolderSourceControl.tsx:424",

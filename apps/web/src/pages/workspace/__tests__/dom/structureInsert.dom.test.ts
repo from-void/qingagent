@@ -5,6 +5,7 @@ import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createDefaultColumnListNode,
+  createDefaultTableNode,
   insertStructureNodeAfterBlock,
 } from "../../components/DocumentSnapshotView";
 
@@ -35,6 +36,17 @@ describe("block handle structural insert", () => {
     expect(content.map((node) => node.type).slice(0, 2)).toEqual(["heading", "columnList"]);
     const columns = content[1];
     expect(columns?.type === "columnList" ? columns.content : []).toHaveLength(2);
+  });
+
+  it("默认表格按指定尺寸生成且默认无标题行", () => {
+    editor = createHeadingEditor();
+    expect(insertStructureNodeAfterBlock(editor, 0, createDefaultTableNode(2, 4))).toBe(true);
+    const table = normalizePmDoc(editor.getJSON()).content[1];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content).toHaveLength(2);
+    expect(table.content.every((row) => row.content.length === 4)).toBe(true);
+    expect(table.content.flatMap((row) => row.content).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
   });
 });
 

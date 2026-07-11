@@ -55,6 +55,34 @@ describe("DocToolbar round-1 regressions", () => {
     expect(host?.textContent).toContain("分隔线");
   });
 
+  it("工具栏尺寸浮层按所选行列插入无标题行表格", async () => {
+    editor = createTextEditor("正文");
+    vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
+      .mockImplementation(() => undefined);
+    editor.commands.setTextSelection(3);
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => getButtonByText("插入表格").click());
+    const sizeCell = document.querySelector<HTMLButtonElement>('[data-row="2"][data-col="4"]');
+    expect(sizeCell).not.toBeNull();
+    await act(async () => sizeCell?.click());
+
+    const table = normalizePmDoc(editor.getJSON()).content.find((node) => node.type === "table");
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content).toHaveLength(2);
+    expect(table.content.every((row) => row.content.length === 4)).toBe(true);
+    expect(table.content.flatMap((row) => row.content).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
+  });
+
   it("工具栏 title 用稳定 command 映射拼快捷键", () => {
     expect(toolbarTitle("加粗", "bold")).toMatch(/加粗 \((?:⌘|Ctrl)\+B\)/);
     expect(toolbarTitle("插入", "insert")).toBe("插入");
@@ -207,6 +235,9 @@ describe("DocToolbar round-1 regressions", () => {
     });
     await act(async () => {
       getButtonByText("插入表格").click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-row="3"][data-col="3"]')?.click();
     });
 
     expect(onToast).toHaveBeenCalledWith("无法执行：插入表格");

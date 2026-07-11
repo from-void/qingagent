@@ -16,6 +16,7 @@ import {
 import { writeBlockClipboardPayload } from "./blockClipboard";
 import { readTableBlockMenuState, setEvenTableColumnWidths, toggleTableHeader } from "./blockHandleTable";
 import { BlockHandleIcon } from "./BlockHandleIcons";
+import { TableSizePicker, type TableSize } from "./TableSizePicker";
 import {
   computeBlockMenuPlacement,
   computeCollapsedCarets,
@@ -39,6 +40,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [activeSubmenu, setActiveSubmenu] = useState<SubmenuKey | null>(null);
   const [submenuPlacement, setSubmenuPlacement] = useState<Partial<Record<SubmenuKey, { side: "left" | "right"; top: number; left: number }>>>({});
+  const [tablePicker, setTablePicker] = useState<{ anchor: HTMLElement; autoFocus: boolean } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const alignPanelRef = useRef<HTMLDivElement>(null);
@@ -67,6 +69,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuFlipUp(false);
     setActiveSubmenu(null);
     setSubmenuPlacement({});
+    setTablePicker(null);
   }, []);
 
   const refreshFloatingHandle = useCallback(
@@ -81,6 +84,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setMenuFlipUp(placement.flipUp);
     setActiveSubmenu(null);
     setSubmenuPlacement({});
+    setTablePicker(null);
     return true;
   }, []);
 
@@ -398,7 +402,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       const insideSubmenuPanel =
         (alignPanelRef.current?.contains(target) ?? false) ||
         (insertPanelRef.current?.contains(target) ?? false);
-      if (!insideHandle && !insideMenu && !insideSubmenuPanel) {
+      const insideTablePicker = target instanceof Element && Boolean(target.closest(".table-size-picker"));
+      if (!insideHandle && !insideMenu && !insideSubmenuPanel && !insideTablePicker) {
         setMenuOpen(false);
         setHandle(null);
         resetMenuPlacement();
@@ -425,6 +430,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       setMenuPos(null);
       setActiveSubmenu(null);
       setSubmenuPlacement({});
+      setTablePicker(null);
       return;
     }
     const menu = menuRef.current;
@@ -443,6 +449,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     clearSubmenuCloseTimer();
     submenuCloseTimer.current = setTimeout(() => {
       setActiveSubmenu(null);
+      setTablePicker(null);
     }, 90);
   }, [clearSubmenuCloseTimer]);
 
@@ -470,6 +477,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
   const keepSubmenuOpen = useCallback(() => {
     clearSubmenuCloseTimer();
+  }, [clearSubmenuCloseTimer]);
+
+  const openTablePicker = useCallback((anchor: HTMLElement, autoFocus: boolean) => {
+    clearSubmenuCloseTimer();
+    setTablePicker({ anchor, autoFocus });
   }, [clearSubmenuCloseTimer]);
 
   const closeSubmenuOnBlur = useCallback((e: React.FocusEvent<HTMLElement>, key: SubmenuKey) => {
@@ -543,9 +555,6 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         case "horizontalRule":
           insertStructureBlockAfter(h, { type: "horizontalRule" }, "插入分隔线");
           return;
-        case "table":
-          insertStructureBlockAfter(h, createDefaultTableNode(), "插入表格");
-          return;
         case "columnList":
           insertStructureBlockAfter(h, createDefaultColumnListNode(), "插入分栏");
           return;
@@ -576,6 +585,15 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     },
     [editor, handle, insertStructureBlockAfter, runHandleCommand, seedInsertChain],
   );
+
+  const insertTableBlock = useCallback((size: TableSize) => {
+    if (!handle || handle.kind !== "block" || !editor.isEditable) return;
+    const h = handle;
+    setTablePicker(null);
+    setMenuOpen(false);
+    setHandle(null);
+    insertStructureBlockAfter(h, createDefaultTableNode(size.rows, size.cols, false), "插入表格");
+  }, [editor, handle, insertStructureBlockAfter]);
 
   // 转换当前块的格式(turn-into,对齐飞书:点徽标把 H1 换成正文/其他)。原地转换,不新建块。
   const convertBlock = useCallback(
@@ -860,9 +878,22 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
           插入图表
         </button>
-        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
+        <button
+          type="button"
+          role="menuitem"
+          className="block-handle-item bh-submenu-trigger"
+          aria-haspopup="dialog"
+          aria-expanded={Boolean(tablePicker)}
+          onMouseEnter={(event) => openTablePicker(event.currentTarget, false)}
+          onFocus={(event) => openTablePicker(event.currentTarget, false)}
+          onClick={(event) => {
+            event.preventDefault();
+            openTablePicker(event.currentTarget, true);
+          }}
+        >
           <span className="bh-icon"><BlockHandleIcon name="table" /></span>
           插入表格
+          <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
         </button>
         <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
           <span className="bh-icon"><BlockHandleIcon name="columns" /></span>
@@ -1163,6 +1194,17 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       {menuOpen && handle.kind === "block" && submenuPortalTarget
         ? createPortal(submenuPanels, submenuPortalTarget)
         : null}
+      {menuOpen && tablePicker ? (
+        <TableSizePicker
+          anchor={tablePicker.anchor}
+          autoFocus={tablePicker.autoFocus}
+          portalTarget={submenuPortalTarget ?? undefined}
+          onSelect={insertTableBlock}
+          onClose={() => setTablePicker(null)}
+          onPointerEnter={keepSubmenuOpen}
+          onPointerLeave={scheduleSubmenuClose}
+        />
+      ) : null}
         </>
       )}
     </>

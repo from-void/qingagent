@@ -6,6 +6,7 @@ import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { CheckIcon } from "./icons";
+import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
   resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
@@ -350,6 +351,7 @@ export function DocToolbar({
   const [flipUp, setFlipUp] = useState(false);
   const [linkBubble, setLinkBubble] = useState<LinkEditBubble | null>(null);
   const [linkDraft, setLinkDraft] = useState("");
+  const [tablePicker, setTablePicker] = useState<{ anchor: HTMLElement; autoFocus: boolean } | null>(null);
   const linkBubbleRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const toolbarUnlock = resolveToolbarUnlockConfig();
@@ -457,6 +459,7 @@ export function DocToolbar({
     setBlockSel(null);
     setOpenDd(null);
     setLinkBubble(null);
+    setTablePicker(null);
     savedSelRef.current = null;
   }, [editorEditable]);
 
@@ -465,11 +468,15 @@ export function DocToolbar({
       setPos(null);
       setOpenDd(null);
       setLinkBubble(null);
+      setTablePicker(null);
       savedSelRef.current = null;
       return;
     }
     const onSel = () => {
-      if (toolbarPointerDownRef.current || document.activeElement?.closest?.(".doc-toolbar")) return;
+      if (
+        toolbarPointerDownRef.current ||
+        document.activeElement?.closest?.(".doc-toolbar, .table-size-picker")
+      ) return;
       setOpenDd(null);
       positionToolbar();
 
@@ -544,6 +551,10 @@ export function DocToolbar({
     window.requestAnimationFrame(() => {
       menuEl.querySelector<HTMLElement>('.dt-mi[role="menuitem"]:not(.disabled)')?.focus();
     });
+  }, [openDd]);
+
+  useEffect(() => {
+    if (openDd !== "insert") setTablePicker(null);
   }, [openDd]);
 
   useEffect(() => {
@@ -700,7 +711,7 @@ export function DocToolbar({
           break;
         }
         case "insertTable":
-          run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+          run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: false }).run());
           break;
         case "insertColumns": {
           // 在当前顶层块之后插入,不能用 insertContent(会替换选区:全选时清空正文,e2e V1-c1)。
@@ -892,6 +903,18 @@ export function DocToolbar({
   const toggleDd = useCallback((id: string) => {
     setOpenDd((prev) => (prev === id ? null : id));
   }, []);
+
+  const insertTableAtSize = useCallback((size: TableSize) => {
+    if (!editor || !editor.isEditable || !toolbarUnlock.blocks) return;
+    reportToolbarCommandResult(
+      editor.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: false }).run(),
+      "插入表格",
+      onToast,
+    );
+    setTablePicker(null);
+    setOpenDd(null);
+    positionToolbar();
+  }, [editor, onToast, positionToolbar, toolbarUnlock.blocks]);
 
   const activeOrderedListStyle = editor?.isActive("orderedList")
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"
@@ -1114,7 +1137,10 @@ export function DocToolbar({
           <MenuItem onPick={() => runCommand("insertInlineMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="inlineMath" />行内公式</MenuItem>
           <MenuItem onPick={() => runCommand("insertBlockMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="blockMath" />公式块</MenuItem>
           <MenuItem onPick={() => runCommand("insertDiagram")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="diagram" />插入图表</MenuItem>
-          <MenuItem onPick={() => runCommand("insertTable")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="table" />插入表格</MenuItem>
+          <MenuItem
+            onPreview={(anchor, autoFocus) => setTablePicker({ anchor, autoFocus })}
+            disabled={!editorEditable || !toolbarUnlock.blocks}
+          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer">›</span></MenuItem>
           <MenuItem onPick={() => runCommand("insertColumns")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="columns" />插入分栏</MenuItem>
           <MenuItem onPick={() => runCommand("codeBlock")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="code" />代码块</MenuItem>
           <MenuItem onPick={() => runCommand("horizontalRule")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="divider" />分隔线</MenuItem>
@@ -1170,6 +1196,14 @@ export function DocToolbar({
         </div>
       </div>
     )}
+    {tablePicker ? (
+      <TableSizePicker
+        anchor={tablePicker.anchor}
+        autoFocus={tablePicker.autoFocus}
+        onSelect={insertTableAtSize}
+        onClose={() => setTablePicker(null)}
+      />
+    ) : null}
     </>
   );
 }
@@ -1260,10 +1294,12 @@ function MenuItem({
   onPick,
   className,
   disabled = false,
+  onPreview,
   children,
 }: {
   k?: React.ReactNode;
-  onPick: () => void;
+  onPick?: () => void;
+  onPreview?: (anchor: HTMLElement, autoFocus: boolean) => void;
   className?: string;
   disabled?: boolean;
   children: React.ReactNode;
@@ -1273,14 +1309,25 @@ function MenuItem({
       role="menuitem"
       tabIndex={0}
       aria-disabled={disabled}
+      aria-haspopup={onPreview ? "dialog" : undefined}
       className={["dt-mi", disabled ? "disabled" : null, className].filter(Boolean).join(" ")}
-      onClick={() => {
-        if (!disabled) onPick();
+      onMouseEnter={(event) => {
+        if (!disabled) onPreview?.(event.currentTarget, false);
+      }}
+      onFocus={(event) => {
+        if (!disabled) onPreview?.(event.currentTarget, false);
+      }}
+      onClick={(event) => {
+        if (disabled) return;
+        if (onPreview) onPreview(event.currentTarget, true);
+        else onPick?.();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          if (!disabled) onPick();
+          if (disabled) return;
+          if (onPreview) onPreview(e.currentTarget, true);
+          else onPick?.();
         }
       }}
     >

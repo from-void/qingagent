@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
+  resolveSideFloatingPosition,
   shouldFlipDropdownUp,
 } from "./floatingPosition";
 
@@ -46,5 +47,18 @@ describe("floatingPosition", () => {
   it("detects dropdowns that must flip upward", () => {
     expect(shouldFlipDropdownUp(180, 120, 260)).toBe(true);
     expect(shouldFlipDropdownUp(80, 120, 260)).toBe(false);
+  });
+
+  it("侧向二级浮层优先放右侧，越界时翻到左侧并钳制纵向位置", () => {
+    expect(resolveSideFloatingPosition(
+      { top: 20, bottom: 50, left: 20, width: 100 },
+      { width: 200, height: 160 },
+      { width: 600, height: 400 },
+    )).toEqual({ top: 20, left: 126, placement: "right" });
+    expect(resolveSideFloatingPosition(
+      { top: 360, bottom: 390, left: 420, width: 100 },
+      { width: 200, height: 160 },
+      { width: 600, height: 400 },
+    )).toEqual({ top: 232, left: 214, placement: "left" });
   });
 });

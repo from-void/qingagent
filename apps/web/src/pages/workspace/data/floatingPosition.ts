@@ -22,6 +22,12 @@ export interface FloatingPosition {
   placement: "above" | "below";
 }
 
+export interface SideFloatingPosition {
+  top: number;
+  left: number;
+  placement: "left" | "right";
+}
+
 function clamp(value: number, min: number, max: number): number {
   if (max < min) return (min + max) / 2;
   return Math.min(Math.max(value, min), max);
@@ -79,6 +85,29 @@ export function resolveAnchoredBubblePosition(
 
   const left = clamp(anchor.left, margin, viewport.width - width - margin);
   return { top, left, placement };
+}
+
+export function resolveSideFloatingPosition(
+  anchor: FloatingAnchorRect,
+  size: FloatingSize,
+  viewport: FloatingViewport,
+  options: { margin?: number; gap?: number } = {},
+): SideFloatingPosition {
+  const margin = options.margin ?? 8;
+  const gap = options.gap ?? 6;
+  const width = Math.max(1, size.width);
+  const height = Math.max(1, size.height);
+  const right = anchor.left + anchor.width + gap;
+  const fitsRight = right + width + margin <= viewport.width;
+  const leftCandidate = anchor.left - width - gap;
+  const placement = fitsRight || leftCandidate < margin ? "right" : "left";
+  const left = placement === "right" ? right : leftCandidate;
+  const top = clamp(anchor.top, margin, viewport.height - height - margin);
+  return {
+    top: Math.round(top),
+    left: Math.round(clamp(left, margin, viewport.width - width - margin)),
+    placement,
+  };
 }
 
 export function shouldFlipDropdownUp(

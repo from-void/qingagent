@@ -55,6 +55,42 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(menu?.textContent).not.toContain("转换为");
   });
 
+  it("块菜单尺寸浮层在当前表格下方插入指定大小的无标题行表格", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(editorElement, basicTable());
+    editor.commands.setTextSelection(4);
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} />));
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/", ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+
+    const addBelow = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("在下方添加"));
+    await act(async () => addBelow?.focus());
+    const insertTable = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("插入表格"));
+    expect(insertTable).not.toBeUndefined();
+    await act(async () => insertTable?.click());
+    await act(async () => {
+      workspace.querySelector<HTMLButtonElement>('[data-row="2"][data-col="3"]')?.click();
+    });
+
+    const doc = editor.getJSON() as { content?: Array<{ type?: string; content?: Array<{ content?: Array<{ type?: string }> }> }> };
+    const inserted = doc.content?.[1];
+    expect(inserted?.type).toBe("table");
+    expect(inserted?.content).toHaveLength(2);
+    expect(inserted?.content?.every((row) => row.content?.length === 3)).toBe(true);
+    expect(inserted?.content?.flatMap((row) => row.content ?? []).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
+  });
+
   it("标题行列状态按真实 cell 类型读取，并由 Tiptap 命令写回", () => {
     editor = createEditor(undefined, basicTable());
     const table = () => editor!.state.doc.nodeAt(0)!;

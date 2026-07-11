@@ -36,7 +36,7 @@ describe("round1 editor source contract", () => {
       'insertBlock("inlineMath")',
       'insertBlock("blockMath")',
       'insertBlock("diagram")',
-      'insertBlock("table")',
+      "openTablePicker",
       'insertBlock("codeBlock")',
       'insertBlock("horizontalRule")',
       'convertBlock("taskList")',
@@ -49,7 +49,7 @@ describe("round1 editor source contract", () => {
       'runCommand("insertInlineMath")',
       'runCommand("insertBlockMath")',
       'runCommand("insertDiagram")',
-      'runCommand("insertTable")',
+      "insertTableAtSize",
       'runCommand("codeBlock")',
       'runCommand("horizontalRule")',
     ]) {

@@ -42,6 +42,7 @@ import {
   currentPmDoc,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
+  validateCurrentTableSelectionScopes,
 } from "./draftScratch.js";
 import {
   collectReadableDraftRefs,
@@ -901,6 +902,19 @@ export function createSessionScopedTools(
       const parsedDoc = safeParsePmDoc(workingDoc);
       if (!parsedDoc.success) {
         return { ok: false, applied: [], error: parsedDoc.error.message };
+      }
+      const scopeValidation = validateCurrentTableSelectionScopes(state, candidateDoc, workingDoc);
+      if (!scopeValidation.ok) {
+        const failedOpIndex = input.ops.findIndex((op) =>
+          ("ref" in op && op.ref === scopeValidation.tableRef) ||
+          ("withinRef" in op && op.withinRef === scopeValidation.tableRef),
+        );
+        return {
+          ok: false,
+          applied: [],
+          error: scopeValidation.error,
+          ...(failedOpIndex >= 0 ? { failedOpIndex } : {}),
+        };
       }
       const candidate = replaceDraftCandidateDoc(state, workingDoc);
       context?.requestContext?.set("legacySections", candidate);

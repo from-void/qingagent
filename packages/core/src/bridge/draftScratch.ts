@@ -3,6 +3,7 @@ import type {
   LegacySection,
 } from "@qingagent/contract-ts";
 import {
+  findPmTableByBlockId,
   getPmContentHash,
   legacySectionsToPm,
   materializeDraftBlockIds,
@@ -10,6 +11,8 @@ import {
   pmToPlainText,
   type PmBlockNode,
   type PmDoc,
+  type PmTableCellNode,
+  type PmTableNode,
 } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
@@ -172,6 +175,145 @@ export function warnIfSelectionDiffEscapesSelectedBlocks(input: {
     selectedBlockIds: [...selectedBlockIds],
     escapedHunks: escaped,
   });
+}
+
+export interface TableSelectionScopeViolation {
+  ok: false;
+  tableRef: string;
+  rowIndex: number;
+  columnIndex: number;
+  error: string;
+}
+
+export type TableSelectionScopeResult = { ok: true } | TableSelectionScopeViolation;
+
+function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null {
+  if (!cell) return null;
+  const attrs = cell.attrs;
+  return JSON.stringify({
+    text: pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: cell.content }).trim(),
+    attrs: {
+      colspan: attrs?.colspan ?? null,
+      rowspan: attrs?.rowspan ?? null,
+      colwidth: attrs?.colwidth ?? null,
+      backgroundColor: attrs?.backgroundColor ?? null,
+    },
+  });
+}
+
+function scopeViolation(input: {
+  tableRef: string;
+  axis: "row" | "column";
+  startIndex: number;
+  endIndex: number;
+  rowIndex: number;
+  columnIndex: number;
+}): TableSelectionScopeViolation {
+  const axisLabel = input.axis === "row" ? "行" : "列";
+  return {
+    ok: false,
+    tableRef: input.tableRef,
+    rowIndex: input.rowIndex,
+    columnIndex: input.columnIndex,
+    error:
+      `表格选区越界:未选中的 0-based 位置 row=${input.rowIndex}, column=${input.columnIndex} 发生变化;` +
+      `本轮仅允许修改表 ref="${input.tableRef}" 的第 ${input.startIndex}..${input.endIndex} ${axisLabel},` +
+      `请先 readDraft 核对后缩小 editDraft 操作范围重试。`,
+  };
+}
+
+function compareRowsAt(
+  before: PmTableNode,
+  after: PmTableNode,
+  beforeRowIndex: number,
+  afterRowIndex: number,
+  selection: { axis: "row" | "column"; startIndex: number; endIndex: number },
+  tableRef: string,
+): TableSelectionScopeResult {
+  const beforeRow = before.content[beforeRowIndex];
+  const afterRow = after.content[afterRowIndex];
+  const width = Math.max(beforeRow?.content.length ?? 0, afterRow?.content.length ?? 0);
+  for (let columnIndex = 0; columnIndex < width; columnIndex += 1) {
+    if (tableCellFingerprint(beforeRow?.content[columnIndex]) !== tableCellFingerprint(afterRow?.content[columnIndex])) {
+      return scopeViolation({ ...selection, tableRef, rowIndex: beforeRowIndex, columnIndex });
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * 比较表格编辑前后未选范围。选中轴允许增删，因此前缀按起点对齐、后缀按表尾对齐；
+ * 未选单元格只比较纯文本和 cell attrs，不做任何结构修补或内容猜测。
+ */
+export function validateTableSelectionScope(input: {
+  before: PmTableNode;
+  after: PmTableNode | null;
+  tableRef: string;
+  selection: { axis: "row" | "column"; startIndex: number; endIndex: number };
+}): TableSelectionScopeResult {
+  const { before, after, tableRef, selection } = input;
+  if (selection.axis === "row") {
+    const prefixCount = selection.startIndex;
+    const suffixCount = Math.max(0, before.content.length - selection.endIndex - 1);
+    if (!after || after.content.length < prefixCount + suffixCount) {
+      const rowIndex = prefixCount > 0 ? 0 : selection.endIndex + 1;
+      return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: 0 });
+    }
+    for (let rowIndex = 0; rowIndex < prefixCount; rowIndex += 1) {
+      const result = compareRowsAt(before, after, rowIndex, rowIndex, selection, tableRef);
+      if (!result.ok) return result;
+    }
+    for (let offset = 0; offset < suffixCount; offset += 1) {
+      const beforeRowIndex = selection.endIndex + 1 + offset;
+      const afterRowIndex = after.content.length - suffixCount + offset;
+      const result = compareRowsAt(before, after, beforeRowIndex, afterRowIndex, selection, tableRef);
+      if (!result.ok) return result;
+    }
+    return { ok: true };
+  }
+
+  if (!after || before.content.length !== after.content.length) {
+    return scopeViolation({ ...selection, tableRef, rowIndex: Math.min(before.content.length, after?.content.length ?? 0), columnIndex: 0 });
+  }
+  for (let rowIndex = 0; rowIndex < before.content.length; rowIndex += 1) {
+    const beforeRow = before.content[rowIndex]!;
+    const afterRow = after.content[rowIndex]!;
+    const prefixCount = selection.startIndex;
+    const suffixCount = Math.max(0, beforeRow.content.length - selection.endIndex - 1);
+    if (afterRow.content.length < prefixCount + suffixCount) {
+      return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: prefixCount > 0 ? 0 : selection.endIndex + 1 });
+    }
+    for (let columnIndex = 0; columnIndex < prefixCount; columnIndex += 1) {
+      if (tableCellFingerprint(beforeRow.content[columnIndex]) !== tableCellFingerprint(afterRow.content[columnIndex])) {
+        return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex });
+      }
+    }
+    for (let offset = 0; offset < suffixCount; offset += 1) {
+      const beforeColumnIndex = selection.endIndex + 1 + offset;
+      const afterColumnIndex = afterRow.content.length - suffixCount + offset;
+      if (tableCellFingerprint(beforeRow.content[beforeColumnIndex]) !== tableCellFingerprint(afterRow.content[afterColumnIndex])) {
+        return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: beforeColumnIndex });
+      }
+    }
+  }
+  return { ok: true };
+}
+
+export function validateCurrentTableSelectionScopes(
+  state: SessionState,
+  beforeDoc: PmDoc,
+  afterDoc: PmDoc,
+): TableSelectionScopeResult {
+  for (const chip of state._currentChips ?? []) {
+    if (chip.kind.kind !== "selection" || !chip.tableSelection || !chip.resourceRef?.id) continue;
+    const tableRef = chip.resourceRef.id;
+    const before = findPmTableByBlockId(beforeDoc, tableRef);
+    if (!before) continue;
+    const after = findPmTableByBlockId(afterDoc, tableRef);
+    const result = validateTableSelectionScope({ before, after, tableRef, selection: chip.tableSelection });
+    if (!result.ok) return result;
+  }
+  return { ok: true };
 }
 
 export function docHasBlockType(doc: PmDoc, type: PmBlockNode["type"]): boolean {

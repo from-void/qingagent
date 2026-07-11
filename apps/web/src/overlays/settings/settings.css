@@ -692,9 +692,9 @@
 .cn-icon{
   flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
   border:1px solid var(--qj-cinnabar);border-radius:0;background:var(--qj-switch-active-bg);
-  color:var(--qj-ink);font-family:var(--font-zh-serif);font-size:12px;font-weight:800;
+  color:var(--qj-ink);
 }
-.cn-icon--github{font-family:var(--font-mono);font-size:10px}
+.cn-icon svg{width:20px;height:20px}
 .cn-titleblock{display:flex;flex:1 1 auto;min-width:0;flex-direction:column;gap:5px}
 .cn-titleline{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
 .cn-name{font-family:var(--font-zh-serif);font-size:13.5px;font-weight:800;color:var(--qj-ink)}

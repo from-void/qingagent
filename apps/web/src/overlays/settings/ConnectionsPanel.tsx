@@ -147,10 +147,33 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
   },
 };
 
+// 品牌图标:与拍板稿一致的单色线稿(同 viewBox/笔画宽度,风格统一);
+// currentColor 跟随 .cn-icon 配色,不引入品牌原色。
+const ICON_PATHS: Record<ConnectorId, JSX.Element> = {
+  github: (
+    <path d="M10 2.6a7.4 7.4 0 0 0-2.34 14.42c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.34-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.76 1.13.76.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.07 7.07 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.44.51.36A7.4 7.4 0 0 0 10 2.6Z" />
+  ),
+  feishu: (
+    <>
+      <path d="M3 7.5c3.2.4 5.8 1.5 7.8 3.4 2 1.9 3 3.9 3.2 6.1" />
+      <path d="M6.5 4c2.7 1 4.9 2.5 6.6 4.6a15 15 0 0 1 2.9 6" />
+      <path d="M13.5 3.5c1.6.5 2.9 1.4 3.5 2.6-1.1.5-2.5.7-4 .5" />
+    </>
+  ),
+  "wechat-mp": (
+    <>
+      <path d="M8.2 12.4c-.7 0-1.4-.1-2-.3l-2.1 1.1.6-1.9A4.5 4.5 0 0 1 2.6 7.8c0-2.6 2.5-4.7 5.6-4.7 2.8 0 5.1 1.7 5.5 3.9" />
+      <path d="M11.5 16.2c.6.2 1.2.3 1.8.3l1.9 1-.5-1.7c1.2-.8 2-2 2-3.3 0-2.2-2.1-4-4.7-4s-4.7 1.8-4.7 4 2.1 4 4.7 4Z" />
+    </>
+  ),
+};
+
 function ConnectorIcon({ connector }: { connector: ConnectorInfo }) {
   return (
     <span className={`cn-icon cn-icon--${connector.icon}`} aria-hidden="true">
-      {connector.id === "github" ? "GH" : connector.id === "feishu" ? "飞" : "微"}
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        {ICON_PATHS[connector.id]}
+      </svg>
     </span>
   );
 }

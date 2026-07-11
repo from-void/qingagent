@@ -95,7 +95,9 @@ export function markdownToPm(markdown: string): PmDoc {
     }
 
     if (isPipeTableHeader(lines, i)) {
-      const head = splitPipeTableRow(line);
+      const parsedHead = splitPipeTableRow(line);
+      // 空表头行是 pmToMarkdown 为“无标题行表格”写出的 GFM 占位，不应反向造出标题行。
+      const head = parsedHead.every((cell) => cell.trim() === "") ? [] : parsedHead;
       const rows: string[][] = [];
       let cursor = i + 2;
       while (cursor < lines.length && isPipeTableRow(lines[cursor] ?? "")) {
@@ -239,11 +241,11 @@ function markdownTaskItemToLegacy(item: ParsedMarkdownListItem): LegacyTaskItem 
 function withParsedMarkdownInlines(doc: PmDoc): PmDoc {
   return {
     ...doc,
-    content: doc.content.map(parseBlockMarkdownInlines),
+    content: doc.content.map((node) => parseBlockMarkdownInlines(node)),
   };
 }
 
-function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
+function parseBlockMarkdownInlines(node: PmBlockNode, inTableCell = false): PmBlockNode {
   const mathBlock = maybeConvertMathParagraph(node);
   if (mathBlock.type === "blockMath") return mathBlock;
 
@@ -253,17 +255,17 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
     case "penNote":
       return {
         ...node,
-        content: parseInlineNodes(node.content),
+        content: parseInlineNodes(node.content, inTableCell),
       };
     case "blockquote":
-      return { ...node, content: node.content.map(parseBlockMarkdownInlines) };
+      return { ...node, content: node.content.map((child) => parseBlockMarkdownInlines(child)) };
     case "bulletList":
     case "orderedList":
       return {
         ...node,
         content: node.content.map((item) => ({
           ...item,
-          content: item.content.map(parseBlockMarkdownInlines),
+          content: item.content.map((child) => parseBlockMarkdownInlines(child)),
         })),
       };
     case "taskList":
@@ -271,7 +273,7 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
         ...node,
         content: node.content.map((item) => ({
           ...item,
-          content: item.content.map(parseBlockMarkdownInlines) as typeof item.content,
+          content: item.content.map((child) => parseBlockMarkdownInlines(child)) as typeof item.content,
         })),
       };
     case "table":
@@ -281,12 +283,12 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
           ...row,
           content: row.content.map((cell) => ({
             ...cell,
-            content: cell.content.map(parseBlockMarkdownInlines),
+            content: cell.content.map((block) => parseBlockMarkdownInlines(block, true)),
           })),
         })),
       };
     case "callout":
-      return { ...node, content: node.content.map(parseBlockMarkdownInlines) as typeof node.content };
+      return { ...node, content: node.content.map((child) => parseBlockMarkdownInlines(child)) as typeof node.content };
     case "blockMath":
       return node;
     default:
@@ -307,7 +309,10 @@ function maybeConvertMathParagraph(node: PmBlockNode): PmBlockNode {
   };
 }
 
-function parseInlineNodes(content: readonly PmInlineNode[] | undefined): PmInlineNode[] | undefined {
+function parseInlineNodes(
+  content: readonly PmInlineNode[] | undefined,
+  parseTableBreaks = false,
+): PmInlineNode[] | undefined {
   if (!content?.length) return content ? [] : undefined;
   const out: PmInlineNode[] = [];
   for (const node of content) {
@@ -315,7 +320,15 @@ function parseInlineNodes(content: readonly PmInlineNode[] | undefined): PmInlin
       out.push(node);
       continue;
     }
-    out.push(...parseInlineMarkdown(node.text));
+    if (!parseTableBreaks) {
+      out.push(...parseInlineMarkdown(node.text));
+      continue;
+    }
+    const parts = node.text.split(/<br\s*\/?>/gi);
+    parts.forEach((part, index) => {
+      if (index > 0) out.push({ type: "hardBreak" });
+      out.push(...parseInlineMarkdown(part));
+    });
   }
   return out;
 }

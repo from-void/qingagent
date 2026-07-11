@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { markdownToPm } from "../markdown/markdownToPm";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
+import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
@@ -82,6 +83,77 @@ describe("pmMarkdownRoundTrip", () => {
     const md = pmToMarkdown(pm);
     expect(md).toContain("**粗体**");
     expect(md).toContain("[链接](https://example.com)");
+  });
+
+  it("无标题行表格用空 GFM 表头占位，往返不提升首行数据", () => {
+    const source = tableDoc([
+      [dataCell("a1", "甲"), dataCell("a2", "乙")],
+      [dataCell("b1", "丙"), dataCell("b2", "丁")],
+    ]);
+
+    const markdown = pmToMarkdown(source);
+    expect(markdown).toBe([
+      "|  |  |",
+      "| --- | --- |",
+      "| 甲 | 乙 |",
+      "| 丙 | 丁 |",
+    ].join("\n"));
+    const reparsed = markdownToPm(markdown);
+    const table = reparsed.content[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content).toHaveLength(2);
+    expect(table.content.flatMap((row) => row.content).every((cell) => cell.type === "tableCell")).toBe(true);
+    expect(pmToMarkdown(reparsed)).toBe(markdown);
+  });
+
+  it("表格 cell 内的 <br> 与 <br/> 往返为 hardBreak，普通段落不受影响", () => {
+    const markdown = [
+      "| A | B |",
+      "| --- | --- |",
+      "| 甲<br>乙 | 丙<br/>丁 |",
+      "",
+      "普通<br>段落",
+    ].join("\n");
+    const pm = markdownToPm(markdown);
+    const table = pm.content[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    const bodyCells = table.content[1]?.content ?? [];
+    for (const cell of bodyCells) {
+      const paragraph = cell.content[0];
+      expect(paragraph?.type).toBe("paragraph");
+      expect(paragraph?.type === "paragraph" ? paragraph.content : []).toEqual(expect.arrayContaining([{ type: "hardBreak" }]));
+    }
+    expect(pm.content[1]).toMatchObject({
+      type: "paragraph",
+      content: [{ type: "text", text: "普通<br>段落" }],
+    });
+    expect(pmToMarkdown(pm)).toContain("| 甲<br>乙 | 丙<br>丁 |");
+  });
+
+  it("多块 table cell 导出继续用 <br> 连接且可回读为换行", () => {
+    const source = tableDoc([
+      [headerCell("h1", "标题"), headerCell("h2", "旁列")],
+      [{
+        type: "tableCell",
+        content: [
+          paragraph("p-1", "第一块"),
+          paragraph("p-2", "第二块"),
+        ],
+      }, dataCell("p-side", "内容")],
+    ]);
+    const markdown = pmToMarkdown(source);
+    expect(markdown).toContain("| 第一块<br>第二块 |");
+    const reparsed = markdownToPm(markdown);
+    const table = reparsed.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    const paragraphNode = table.content[1]?.content[0]?.content[0];
+    expect(paragraphNode?.type === "paragraph" ? paragraphNode.content : []).toEqual([
+      { type: "text", text: "第一块" },
+      { type: "hardBreak" },
+      { type: "text", text: "第二块" },
+    ]);
   });
 
   it("不会把普通管道文本误判成表格", () => {
@@ -244,3 +316,31 @@ describe("pmMarkdownRoundTrip", () => {
     }
   });
 });
+
+function tableDoc(rows: PmTableCellNode[][]): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "table",
+      attrs: { blockId: "table-c6" },
+      content: rows.map((content) => ({ type: "tableRow", content })),
+    }],
+  };
+}
+
+function paragraph(blockId: string, text: string) {
+  return {
+    type: "paragraph" as const,
+    attrs: { blockId },
+    content: [{ type: "text" as const, text }],
+  };
+}
+
+function dataCell(blockId: string, text: string) {
+  return { type: "tableCell" as const, content: [paragraph(blockId, text)] };
+}
+
+function headerCell(blockId: string, text: string) {
+  return { type: "tableHeader" as const, content: [paragraph(blockId, text)] };
+}

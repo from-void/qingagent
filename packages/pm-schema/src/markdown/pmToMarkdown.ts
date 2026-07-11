@@ -187,8 +187,16 @@ function tableToMarkdown(node: Extract<PmBlockNode, { type: "table" }>): string 
     ),
   );
   if (rows.length === 0) return "";
-  const header = rows[0] ?? [];
-  const body = rows.slice(1);
+  const firstRow = node.content[0];
+  const hasHeaderRow = Boolean(
+    firstRow &&
+    firstRow.content.length > 0 &&
+    firstRow.content.every((cell) => cell.type === "tableHeader"),
+  );
+  const header = hasHeaderRow
+    ? rows[0] ?? []
+    : Array.from({ length: rows[0]?.length ?? 0 }, () => "");
+  const body = hasHeaderRow ? rows.slice(1) : rows;
   const separator = header.map(() => "---");
   return [header, separator, ...body]
     .map((row) => `| ${row.join(" | ")} |`)

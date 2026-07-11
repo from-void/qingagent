@@ -79,23 +79,31 @@ export function TableControls({ editor, onAiModify, onToast }: {
       setSelRows(null);
       setOpenTableColor(null);
     };
+    const clearMeasuredTargets = () => {
+      scrollWrapper?.removeEventListener("scroll", scheduleMeasure);
+      scrollWrapper = null;
+      for (const element of observedElements) resizeObserver?.unobserve(element);
+      observedElements.clear();
+    };
+    const hideControls = () => {
+      clearMeasuredTargets();
+      setInfo(null);
+      resetSelectionProjection();
+    };
     const measure = () => {
       if (!editor.isEditable) {
-        setInfo(null);
-        resetSelectionProjection();
+        hideControls();
         return;
       }
       if (!editor.isActive("table")) {
-        setInfo(null);
-        resetSelectionProjection();
+        hideControls();
         return;
       }
       const a = editor.view.domAtPos(editor.state.selection.anchor);
       const n = a.node instanceof HTMLElement ? a.node : a.node.parentElement;
       const table = n?.closest("table") as HTMLTableElement | null;
       if (!table) {
-        setInfo(null);
-        resetSelectionProjection();
+        hideControls();
         return;
       }
       const wrapper = table.closest<HTMLElement>(".tableWrapper") ?? table;
@@ -153,8 +161,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
       editor.off("selectionUpdate", measure);
       editor.off("update", scheduleMeasure);
       ws?.removeEventListener("scroll", scheduleMeasure);
-      scrollWrapper?.removeEventListener("scroll", scheduleMeasure);
       window.removeEventListener("resize", scheduleMeasure);
+      clearMeasuredTargets();
       resizeObserver?.disconnect();
     };
   }, [editor]);

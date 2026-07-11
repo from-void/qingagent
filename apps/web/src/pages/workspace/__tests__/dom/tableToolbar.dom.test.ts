@@ -9,6 +9,7 @@ import {
   selectTableColumns,
   selectTableRows,
   setTableCellSelectionFromDom,
+  TableAxisSelectionExtension,
   type TableToolbarFormatCommand,
 } from "../../data/tableToolbar";
 import { handleQingagentPaste, writeSelectionToClipboard } from "../../components/doc/clipboardPaste";
@@ -16,7 +17,7 @@ import { resolveWorkspaceFloatingPortalTarget } from "../../components/DocumentS
 
 function createTableEditor() {
   return new Editor({
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
     content: {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -48,7 +49,7 @@ function createTableEditor() {
 
 function createTwoTableEditor() {
   return new Editor({
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
     content: {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -140,13 +141,13 @@ describe("tableToolbar PM-010", () => {
     }
   });
 
-  it("单行整表选区仍能仅从 CellSelection 锚头方向反推出 row 轴", () => {
+  it("1×1 整表选区从 PM plugin state 反推出 row 轴", () => {
     const editor = new Editor({
-      extensions: createQingagentExtensions(),
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
       content: {
         type: "doc",
         attrs: { schemaVersion: 1 },
-        content: [table("table-1", [["a", "b"]])],
+        content: [table("table-1", [["a"]])],
       } satisfies PmDoc,
     });
     try {
@@ -156,6 +157,9 @@ describe("tableToolbar PM-010", () => {
         startIndex: 0,
         endIndex: 0,
       });
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(false);
+      expect(selectTableColumns(editor, "table-1", 0, 0)).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")?.axis).toBe("column");
     } finally {
       editor.destroy();
     }

@@ -5,8 +5,10 @@ import { CellSelection } from "@tiptap/pm/tables";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { selectTableColumns } from "../../data/tableToolbar";
+import { selectTableColumns, TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableControls } from "./TableControls";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
 let editors: Editor[] = [];
@@ -144,10 +146,15 @@ function setupTable(options: {
   const content = [
     table(firstId, "A", options.merged),
     ...(options.secondTable ? [table("table-2", "B")] : []),
+    {
+      type: "paragraph" as const,
+      attrs: { blockId: "tail" },
+      content: [{ type: "text" as const, text: "尾段" }],
+    },
   ];
   const editor = new Editor({
     element: editorHost,
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
     editable: options.editable ?? true,
     content: {
       type: "doc",
@@ -256,7 +263,15 @@ describe("TableControls 真选区与 chrome", () => {
   });
 
   it("所有行列头和插入圆点均位于裁剪 viewport 内", async () => {
-    const { editor, portal } = setupTable({ blockId: "table-1" });
+    const { editor, portal, tables } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    setRect(tableElement, rect(100, 100, 400, 80));
+    [...tableElement.rows].forEach((row, rowIndex) => {
+      setRect(row, rect(100, 100 + rowIndex * 40, 400, 40));
+      [...row.cells].forEach((tableCell, colIndex) => {
+        setRect(tableCell, rect(100 + colIndex * 200, 100 + rowIndex * 40, 200, 40));
+      });
+    });
     await renderControls(editor);
     const viewport = portal.querySelector(".tbl-chrome-viewport");
     expect(viewport).not.toBeNull();
@@ -264,6 +279,9 @@ describe("TableControls 真选区与 chrome", () => {
       expect(chrome.closest(".tbl-chrome-viewport")).toBe(viewport);
       expect((chrome as HTMLElement).style.position).toBe("absolute");
     }
+    const viewportWidth = Number.parseFloat((viewport as HTMLElement).style.width);
+    const lastColumnDot = [...portal.querySelectorAll<HTMLElement>(".tbl-dot-col")].at(-1)!;
+    expect(Number.parseFloat(lastColumnDot.style.left)).toBeGreaterThan(viewportWidth);
   });
 
   it("window resize 与 ResizeObserver 都会按新 rect 重新测量", async () => {
@@ -290,6 +308,51 @@ describe("TableControls 真选区与 chrome", () => {
     resizeObservers[0]?.flush();
     await act(async () => flushAnimationFrames());
     expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("282px");
+  });
+
+  it("wrapper 横滚会重测；离开表格立即解除旧 wrapper 与 observer", async () => {
+    const { editor, portal, tables } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    const wrapper = tableElement.closest(".tableWrapper") ?? tableElement;
+    const removeSpy = vi.spyOn(wrapper, "removeEventListener");
+    await renderControls(editor);
+    const observer = resizeObservers[0]!;
+    expect(observer.observed.has(wrapper)).toBe(true);
+    expect(observer.observed.has(tableElement)).toBe(true);
+
+    setRect(wrapper, rect(390, 90, 220, 100));
+    await act(async () => {
+      wrapper.dispatchEvent(new Event("scroll"));
+      flushAnimationFrames();
+    });
+    expect((portal.querySelector(".tbl-chrome-viewport") as HTMLElement).style.left).toBe("382px");
+
+    const tailText = editor.view.dom.querySelector('[data-block-id="tail"]')?.firstChild;
+    if (!tailText) throw new Error("tail text not found");
+    await act(async () => {
+      editor.commands.setTextSelection(editor.view.posAtDOM(tailText, 0));
+    });
+    expect(portal.querySelector(".tbl-chrome-viewport")).toBeNull();
+    expect(observer.observed.has(wrapper)).toBe(false);
+    expect(observer.observed.has(tableElement)).toBe(false);
+    expect(removeSpy).toHaveBeenCalledWith("scroll", expect.any(Function));
+  });
+
+  it("组件卸载会清理 wrapper scroll、ResizeObserver 与待执行 rAF", async () => {
+    const { editor, tables } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    const wrapper = tableElement.closest(".tableWrapper") ?? tableElement;
+    const removeSpy = vi.spyOn(wrapper, "removeEventListener");
+    await renderControls(editor);
+    const observer = resizeObservers[0]!;
+    window.dispatchEvent(new Event("resize"));
+    expect(rafQueue.size).toBeGreaterThan(0);
+
+    act(() => root?.unmount());
+    root = null;
+    expect(removeSpy).toHaveBeenCalledWith("scroll", expect.any(Function));
+    expect(observer.observed.size).toBe(0);
+    expect(rafQueue.size).toBe(0);
   });
 });
 
@@ -347,7 +410,7 @@ describe("TableControls 大表拖选基准", () => {
     }));
     const editor = new Editor({
       element: editorHost,
-      extensions: createQingagentExtensions(),
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
       content: {
         type: "doc",
         attrs: { schemaVersion: 1 },
@@ -380,7 +443,7 @@ describe("TableControls 大表拖选基准", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
 
-    expect(dispatchSpy.mock.calls.length).toBeLessThanOrEqual(20);
+    expect(dispatchSpy).toHaveBeenCalledTimes(2);
     expect(selectTableColumns(editor, "table-large", 0, 19)).toBe(false);
     expect(performance.now() - startedAt).toBeLessThan(5_000);
   }, 10_000);

@@ -1,5 +1,6 @@
-import type { Editor } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { CellSelection, setCellAttr, TableMap } from "@tiptap/pm/tables";
 
 export interface TableAxisSelection {
@@ -7,6 +8,46 @@ export interface TableAxisSelection {
   startIndex: number;
   endIndex: number;
 }
+
+interface TableAxisSelectionState {
+  axis: TableAxisSelection["axis"];
+  anchor: number;
+  head: number;
+}
+
+export const tableAxisSelectionKey = new PluginKey<TableAxisSelectionState | null>(
+  "qingagentTableAxisSelection",
+);
+
+/** 1×1 整表的 CellSelection 无几何方向，用事务 meta 在 editor state 内保留来源轴。 */
+export const TableAxisSelectionExtension = Extension.create({
+  name: "qingagentTableAxisSelection",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<TableAxisSelectionState | null>({
+        key: tableAxisSelectionKey,
+        state: {
+          init: () => null,
+          apply: (tr, previous) => {
+            const axis = tr.getMeta(tableAxisSelectionKey) as TableAxisSelection["axis"] | undefined;
+            if (axis) {
+              return tr.selection instanceof CellSelection
+                ? { axis, anchor: tr.selection.anchor, head: tr.selection.head }
+                : null;
+            }
+            if (!(tr.selection instanceof CellSelection) || !previous) return null;
+            const anchor = tr.mapping.map(previous.anchor);
+            const head = tr.mapping.map(previous.head);
+            return tr.selection.anchor === anchor && tr.selection.head === head
+              ? { ...previous, anchor, head }
+              : null;
+          },
+        },
+      }),
+    ];
+  },
+});
 
 export type TableToolbarFormatCommand = "bold" | "italic" | "underline" | "strike" | "textColor" | "cellBackground";
 
@@ -63,9 +104,15 @@ export function readTableAxisSelection(
   const headRect = map.findCell(selection.$headCell.pos - tableStart);
   const isColSelection = selection.isColSelection();
   const isRowSelection = selection.isRowSelection();
-  // 整表选区同时满足两个谓词；构造时用锚头方向编码来源轴，仍由 selection 本身判定。
+  // 整表选区同时满足两个谓词；1×1 从 editor plugin state 取来源轴，其余保留方向兜底。
+  const axisState = tableAxisSelectionKey.getState(editor.state);
+  const hintedAxis = axisState &&
+    axisState.anchor === selection.anchor &&
+    axisState.head === selection.head
+    ? axisState.axis
+    : null;
   const axis = isColSelection && isRowSelection
-    ? (selection.$anchorCell.pos > selection.$headCell.pos ? "row" : "column")
+    ? (hintedAxis ?? (selection.$anchorCell.pos > selection.$headCell.pos ? "row" : "column"))
     : isColSelection
       ? "column"
       : isRowSelection
@@ -175,8 +222,13 @@ function selectTableAxis(
   const selection = axis === "column"
     ? CellSelection.colSelection($anchor, $head)
     : CellSelection.rowSelection($anchor, $head);
-  if (editor.state.selection.eq(selection)) return false;
-  editor.view.dispatch(editor.state.tr.setSelection(selection));
+  const currentAxis = tableAxisSelectionKey.getState(editor.state)?.axis;
+  if (editor.state.selection.eq(selection) && currentAxis === axis) return false;
+  editor.view.dispatch(
+    editor.state.tr
+      .setSelection(selection)
+      .setMeta(tableAxisSelectionKey, axis),
+  );
   return true;
 }
 

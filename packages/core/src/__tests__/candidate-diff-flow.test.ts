@@ -552,7 +552,10 @@ describe("candidate-diff backend flow", () => {
       action: "insertTableRow",
       ref: "table-a",
       at: "end",
-      cells: [{ runs: [{ text: "a2，新增。" }] }, { runs: [{ text: "b2" }] }],
+      cells: [
+        { blocks: [{ type: "paragraph", runs: [{ text: "a2，新增。" }] }] },
+        { blocks: [{ type: "paragraph", runs: [{ text: "b2" }] }] },
+      ],
     }] as const;
     const applied = applyBlockEdits(baseDoc, ops);
     expect(applied.ok).toBe(true);
@@ -631,7 +634,10 @@ describe("candidate-diff backend flow", () => {
       action: "insertTableColumn",
       ref: "table-a",
       at: "end",
-      cells: [{ runs: [{ text: "列C" }] }, { runs: [{ text: "c1" }] }],
+      cells: [
+        { blocks: [{ type: "paragraph", runs: [{ text: "列C" }] }] },
+        { blocks: [{ type: "paragraph", runs: [{ text: "c1" }] }] },
+      ],
     }] as const;
     const applied = applyBlockEdits(baseDoc, ops);
     expect(applied.ok).toBe(true);

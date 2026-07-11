@@ -116,6 +116,11 @@ describe("C3 QingML 富格式文档管线", () => {
     expect(prompt).toContain("绝不把这类公式写成普通 <p> 段落文本");
     expect(prompt).toContain("多级列表必须用 <li> 内嵌子 <ul>/<ol>");
     expect(prompt).toContain("分栏必须用 <columns>");
+    expect(prompt).toContain('<td><p>结论</p><ul><li>依据</li></ul></td>');
+    expect(prompt).toContain("td/th 内可放 p/ul/ol/tasks/callout");
+    expect(prompt).toContain("bg、colspan、rowspan 在改写已有表格时照抄");
+    expect(prompt).toContain("列宽由系统自动保留");
+    expect(prompt).not.toContain("表格单元格、callout、blockquote 内只放文字与行内标记");
     expect(prompt).not.toContain("items+depth");
     expect(prompt).not.toContain("必须用扁平");
 

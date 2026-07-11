@@ -101,6 +101,18 @@ describe("TableHeaderOverlay", () => {
     expect(overlayCells[1]?.style.width).toBe("110px");
   });
 
+  it("复用正文语义样式作用域，并保留单元格底色与文字标记", async () => {
+    const setup = setupEditor(true, false, true);
+    await renderOverlay(setup.overlayHost);
+
+    const overlay = setup.portal.querySelector<HTMLElement>(".table-header-overlay-viewport");
+    expect(overlay).not.toBeNull();
+    expect(overlay?.classList.contains("wf-doc")).toBe(true);
+    expect(overlay?.querySelector("th")?.getAttribute("data-bg-color")).toBe("rose");
+    expect(overlay?.querySelector("mark")?.getAttribute("data-color")).toBe("yellow");
+    expect(overlay?.querySelector("span")?.getAttribute("data-text-color")).toBe("red");
+  });
+
   it("无完整标题行、光标在表内或只读态均不渲染", async () => {
     const noHeader = setupEditor(false);
     await renderOverlay(noHeader.overlayHost);
@@ -137,7 +149,7 @@ describe("TableHeaderOverlay", () => {
   });
 });
 
-function setupEditor(withHeaderRow: boolean, selectionInTable = false) {
+function setupEditor(withHeaderRow: boolean, selectionInTable = false, decoratedHeader = false) {
   const portal = document.createElement("div");
   portal.id = "view-workspace";
   const ws = document.createElement("div");
@@ -158,7 +170,7 @@ function setupEditor(withHeaderRow: boolean, selectionInTable = false) {
           type: "table",
           attrs: { blockId: "sticky-table" },
           content: [
-            { type: "tableRow", content: [cell("h1", "甲", withHeaderRow), cell("h2", "乙", withHeaderRow)] },
+            { type: "tableRow", content: [cell("h1", "甲", withHeaderRow, decoratedHeader), cell("h2", "乙", withHeaderRow)] },
             { type: "tableRow", content: [cell("d1", "一", false), cell("d2", "二", false)] },
           ],
         },
@@ -204,13 +216,23 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return DOMRect.fromRect({ x: left, y: top, width, height });
 }
 
-function cell(blockId: string, text: string, header: boolean) {
+function cell(blockId: string, text: string, header: boolean, decorated = false) {
   return {
     type: header ? "tableHeader" as const : "tableCell" as const,
+    ...(decorated ? { attrs: { backgroundColor: "rose" as const } } : {}),
     content: [{
       type: "paragraph" as const,
       attrs: { blockId },
-      content: [{ type: "text" as const, text }],
+      content: [{
+        type: "text" as const,
+        text,
+        ...(decorated ? {
+          marks: [
+            { type: "textColor" as const, attrs: { color: "red" as const } },
+            { type: "highlight" as const, attrs: { color: "yellow" as const } },
+          ],
+        } : {}),
+      }],
     }],
   };
 }

@@ -1149,9 +1149,22 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
                 <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
                 插入图表
               </button>
-              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("table")}>
+              <button
+                type="button"
+                role="menuitem"
+                className="block-handle-item bh-submenu-trigger"
+                aria-haspopup="dialog"
+                aria-expanded={Boolean(tablePicker)}
+                onMouseEnter={(event) => openTablePicker(event.currentTarget, false)}
+                onFocus={(event) => openTablePicker(event.currentTarget, false)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openTablePicker(event.currentTarget, true);
+                }}
+              >
                 <span className="bh-icon"><BlockHandleIcon name="table" /></span>
                 插入表格
+                <span className="block-handle-submenu-caret" aria-hidden="true">›</span>
               </button>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("columnList")}>
                 <span className="bh-icon"><BlockHandleIcon name="columns" /></span>

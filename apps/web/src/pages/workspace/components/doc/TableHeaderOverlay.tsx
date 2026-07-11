@@ -161,7 +161,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
   if (!firstRow) return null;
   const content = (
     <div
-      className="table-header-overlay-viewport"
+      className="wf-doc table-header-overlay-viewport"
       data-table-pos={overlay.tablePos}
       style={{
         position: "fixed",

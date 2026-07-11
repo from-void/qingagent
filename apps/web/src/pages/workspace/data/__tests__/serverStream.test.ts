@@ -516,9 +516,13 @@ describe("ServerStream", () => {
     const stream = new ServerStream();
     const progress = vi.fn();
 
-    const result = await stream.askMore("s-1", [], {}, progress);
+    const result = await stream.askMore("s-1", "plan-1", [], {}, progress);
 
     expect(result).toEqual([question]);
+    expect(JSON.parse(String(vi.mocked(globalThis.fetch).mock.calls[0]?.[1]?.body))).toMatchObject({
+      sessionId: "s-1",
+      toolCallId: "plan-1",
+    });
     expect(progress).toHaveBeenCalledTimes(1);
     expect(progress).toHaveBeenCalledWith([question]);
   });
@@ -530,7 +534,7 @@ describe("ServerStream", () => {
     const stream = new ServerStream();
     const progress = vi.fn();
 
-    const result = await stream.askMore("s-1", [], {}, progress);
+    const result = await stream.askMore("s-1", "plan-1", [], {}, progress);
 
     expect(result).toEqual([]);
     expect(progress).not.toHaveBeenCalled();

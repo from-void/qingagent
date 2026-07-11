@@ -181,9 +181,11 @@ describe("workspaceCssContract", () => {
     expect(inkSkinCss).toMatch(
       /#view-workspace \.askuser-overlay \.au-body:hover::-webkit-scrollbar-thumb,\s*#view-workspace \.askuser-overlay \.au-body:focus-within::-webkit-scrollbar-thumb \{[^}]*background-color:\s*rgba\(184, 169, 140, 0\.3\)/s,
     );
-    expect(workspaceCss).toContain(".au-slider{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:4px 8px;overflow-x:hidden}");
-    expect(workspaceCss).toContain(".au-slider-input{flex:1 1 220px;min-width:0;width:100%");
-    expect(workspaceCss).toContain("flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;");
+    expect(workspaceCss).toContain("#view-workspace .aus2-track-wrap{position:relative;height:34px;display:flex;align-items:center}");
+    expect(workspaceCss).toContain("#view-workspace .aus2-input{");
+    expect(workspaceCss).toContain("-webkit-appearance:none;appearance:none;width:100%;height:34px;background:transparent;");
+    expect(workspaceCss).toContain("#view-workspace .aus2-bubble{");
+    expect(inkSkinCss).toContain("#view-workspace .aus2-scale span[data-hit=\"true\"]");
   });
 
   it("keeps material text preview as auto-height paper scrolled by ws-right", () => {

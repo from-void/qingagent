@@ -32,6 +32,7 @@ import { getPyodideTools } from "../tools/runPython.js";
 import { mastra } from "../mastra.js";
 import { createUpdateWorkingMemoryTool } from "./workingMemory.js";
 import type { SessionState, SuspensionToolName } from "./sessionState.js";
+import { isQuestionnaireTool } from "./questionnaireTools.js";
 import { isRecord } from "./redaction.js";
 import { fillLocalSvgImageDimensions } from "./imageDimensionFallback.js";
 import { buildDraftDiff } from "./proposalDiff.js";
@@ -154,7 +155,7 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {
-  if (toolName === "askUser") return "askUser";
+  if (isQuestionnaireTool(toolName)) return toolName;
   return null;
 }
 

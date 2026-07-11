@@ -14,6 +14,7 @@ import { guardContext, withPrefixCacheGuardContext } from "../llm/prefixCacheGua
 import { resolveModelParams, resolveProtocol } from "../llm/modelConfig.js";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
+import { isDirectionReset } from "./questionnaireTools.js";
 import {
   activeSuspensionOwnedBy,
   clearSuspension,
@@ -300,13 +301,13 @@ export async function* runAgentTurn(
   // 历史上 writeDraft 截断拍平对话上下文时会丢时效信息；现在保留完整 messages,这里仍恒开。
   fullUserText = `${currentDateTimeContext()}${fullUserText}`;
 
-  // 当轮提醒只做状态提示,裁决标准统一留在 system prompt 的「askUser 触发裁决」。
+  // 当轮提醒只做状态提示,裁决标准统一留在 system prompt 的「问卷工具触发裁决」。
   // 不在这里重复写默认/例外规则,避免与唯一裁决段再次分叉。
   if (state._askUserCompleted !== true) {
     if (state.legacySections.length === 0) {
       fullUserText +=
-        `\n\n[系统·写作流程提醒]右侧文档当前为空。请严格按 system prompt 中「askUser 触发裁决」判断本轮是问卷、直接写还是正常对话。` +
-        `"联网查/查一下/先搜一下/搜索"等搜索指令不是跳过问卷的信号:若本轮最终是新文档写作任务,先搜索拿到必要信息后,仍按「askUser 触发裁决」决定是否单独调用 askUser。`;
+        `\n\n[系统·写作流程提醒]右侧文档当前为空。请严格按 system prompt 中「问卷工具触发裁决」判断本轮是问卷、直接写还是正常对话。` +
+        `"联网查/查一下/先搜一下/搜索"等搜索指令不是跳过问卷的信号:若本轮最终是新文档写作任务,先搜索拿到必要信息后,仍按「问卷工具触发裁决」决定是否单独调用 planDraft。`;
     } else {
       fullUserText +=
         `\n\n[系统·写作流程提醒]右侧文档已有内容。请**结合现有正文**判断这条消息的意图:` +
@@ -526,6 +527,7 @@ export async function* runAgentTurn(
       ["modelOverrides", state.modelOverrides],
       // 已完成过问卷 → askUser 默认抑制;directionChange 只有在上次完成后出现过有效写入才豁免。
       ["askUserAlreadyCompleted", state._askUserCompleted === true],
+      ["isDirectionReset", isDirectionReset(state)],
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
     turnRequestContext = requestContext;

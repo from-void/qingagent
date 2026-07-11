@@ -1,6 +1,7 @@
 import { createScorer } from "@mastra/core/evals";
 import type { CoreMessage } from "ai";
 import { buildAskUserAnswerUserMessage } from "../bridge/askUserAnswerMessage.js";
+import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 
 export interface AskUserAnswerWordingInput {
   toolCallId: string;
@@ -22,7 +23,7 @@ export function buildAskUserResumeMessages(input: AskUserAnswerWordingInput): Co
     answers: input.answers,
   });
   if (!answerMessage || typeof answerMessage.content !== "string") {
-    throw new Error(`askUser answer message is empty for ${input.toolCallId}`);
+    throw new Error(`planDraft answer message is empty for ${input.toolCallId}`);
   }
   return [
     { role: "user", content: input.request },
@@ -40,7 +41,7 @@ export function evaluateAskUserNoReask(input: AskUserAnswerWordingInput, output:
   const messages = buildAskUserResumeMessages(input);
   const answerMessage = messages.at(-1);
   const answerContent = typeof answerMessage?.content === "string" ? answerMessage.content : "";
-  const askedAgain = output.toolNames.includes("askUser");
+  const askedAgain = output.toolNames.some(isPlanDraftTool);
   const formTalk = FORM_TALK.test(output.text);
   const answerMessageOk =
     answerContent.includes(`[askUserAnswers:${input.toolCallId}]`) &&
@@ -55,11 +56,11 @@ export function evaluateAskUserNoReask(input: AskUserAnswerWordingInput, output:
 
 export const askUserNoReaskScorer = createScorer<AskUserAnswerWordingInput, AskUserActionOutput>({
   id: "askuser-no-reask",
-  description: "验证问卷答案 user message 不诱导模型重新 askUser 或输出表单话术。",
+  description: "验证写作方向答案 user message 不诱导模型重新 planDraft 或输出表单话术。",
 })
   .generateScore(({ run }) => evaluateAskUserNoReask(run.input!, run.output).ok ? 1 : 0)
   .generateReason(({ run, score }) => {
-    if (score === 1) return "未重新 askUser,且无表单话术";
+    if (score === 1) return "未重新 planDraft,且无表单话术";
     const result = evaluateAskUserNoReask(run.input!, run.output);
     return `askedAgain=${result.askedAgain} formTalk=${result.formTalk} answerMessageOk=${result.answerMessageOk}`;
   });
@@ -104,7 +105,7 @@ export function extractAgentOutput(output: unknown): AskUserActionOutput {
 
 export const askUserLiveNoReaskScorer = createScorer({
   id: "askuser-live-no-reask",
-  description: "live runEvals 轨:从真实 Agent 输出中验证不重新 askUser/不说表单话术。",
+  description: "live runEvals 轨:从真实 Agent 输出中验证不重新 planDraft/不说表单话术。",
   type: "agent",
 })
   .generateScore(({ run }) => {
@@ -114,7 +115,7 @@ export const askUserLiveNoReaskScorer = createScorer({
   })
   .generateReason(({ run, score }) => {
     const output = extractAgentOutput(run.output);
-    if (score === 1) return "真实 Agent 未重新 askUser";
+    if (score === 1) return "真实 Agent 未重新 planDraft";
     return `tools=[${output.toolNames.join(",")}] text=${output.text.slice(0, 120)}`;
   });
 

@@ -6,6 +6,7 @@ import type {
 import type { SessionState } from "./sessionState.js";
 import { getActiveSuspensionOwner, hasActiveSuspension } from "./sessionState.js";
 import { hasApplicableSuggestion, hasCanonicalDoc } from "./docFacts.js";
+import { isQuestionnaireTool } from "./questionnaireTools.js";
 
 export type ContentState = ContentDocState["kind"];
 export type ActiveOverlay = "askUser" | "imageProgress" | null;
@@ -61,8 +62,10 @@ export function deriveActiveOverlay(state: SessionState): ActiveOverlay {
   // 问卷选项边生成边展示需要它,与 imageProgress 按 running 派生一致。
   // 不含 pending(无活跃挂起的 pending=孤儿)→ 不引回 Bug B。
   if (
-    owner?.toolName === "askUser" ||
-    hasToolCallWithStatus(state, "askUser", ["running"])
+    (owner && isQuestionnaireTool(owner.toolName)) ||
+    iterToolCalls(state).some(
+      (spec) => isQuestionnaireTool(spec.name) && spec.status.kind === "running",
+    )
   ) {
     return "askUser";
   }

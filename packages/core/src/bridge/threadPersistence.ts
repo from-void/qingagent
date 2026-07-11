@@ -58,6 +58,10 @@ import {
   registerSessionFolderSources,
   unregisterSessionFolderSources,
 } from "../folderSources/runtime.js";
+import {
+  isQuestionnaireTool,
+  normalizeQuestionnaireSpecForRestore,
+} from "./questionnaireTools.js";
 
 const logger = mastra.getLogger();
 export const QINGAGENT_RESOURCE_ID = "qingagent-user";
@@ -404,7 +408,10 @@ function isRestorableMessagePart(value: unknown): value is MessagePart {
     return isNonEmptyString(spec.id) &&
       isNonEmptyString(spec.name) &&
       isRecord(spec.status) &&
-      typeof spec.status.kind === "string";
+      typeof spec.status.kind === "string" &&
+      isRecord(spec.body) &&
+      typeof spec.body.kind === "string" &&
+      isRecord(spec.body.data);
   }
   // 其余合法 part 种类（code / citation / image / patchSummary）只要结构上是
   // 带 string kind + record data 的对象就保留——只在这里对 text/thinking/toolCall 做
@@ -420,7 +427,11 @@ function deserializeChatHistory(value: unknown): ChatMessage[] {
       continue;
     }
     if (!Array.isArray(item.parts)) continue;
-    const parts = item.parts.filter(isRestorableMessagePart);
+    const parts = item.parts
+      .filter(isRestorableMessagePart)
+      .map((part) => part.kind === "toolCall"
+        ? { kind: "toolCall" as const, data: normalizeQuestionnaireSpecForRestore(part.data) }
+        : part);
     if (parts.length === 0) continue;
     messages.push({
       ...(item as unknown as ChatMessage),
@@ -434,11 +445,12 @@ interface RestoreToolCallFacts {
   hasOpenAskUserToolCall: boolean;
   openAskUserToolCallId: string | null;
   openAskUserToolCallIds: string[];
+  openAskUserToolNamesById: Map<string, SuspensionOwner["toolName"]>;
 }
 
 function isOpenAskUserToolCall(spec: ToolCallSpec): boolean {
   return (
-    spec.name === "askUser" &&
+    isQuestionnaireTool(spec.name) &&
     (spec.status.kind === "pending" || spec.status.kind === "running")
   );
 }
@@ -447,6 +459,7 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
   let hasOpenAskUserToolCall = false;
   let openAskUserToolCallId: string | null = null;
   const openAskUserToolCallIds: string[] = [];
+  const openAskUserToolNamesById = new Map<string, SuspensionOwner["toolName"]>();
 
   for (const message of messages) {
     for (const part of message.parts) {
@@ -455,6 +468,7 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
         hasOpenAskUserToolCall = true;
         openAskUserToolCallId ??= part.data.id;
         openAskUserToolCallIds.push(part.data.id);
+        openAskUserToolNamesById.set(part.data.id, part.data.name as SuspensionOwner["toolName"]);
       }
     }
   }
@@ -463,6 +477,7 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
     hasOpenAskUserToolCall,
     openAskUserToolCallId,
     openAskUserToolCallIds,
+    openAskUserToolNamesById,
   };
 }
 
@@ -1540,7 +1555,7 @@ export async function loadSessionFromThread(
           streamId: `restored:${meta.runId}`,
           runId: meta.runId!,
           toolCallId: restorableAskUserToolCallId!,
-          toolName: "askUser",
+          toolName: toolCallFacts.openAskUserToolNamesById.get(restorableAskUserToolCallId!) ?? "askUser",
         }
       : null;
 

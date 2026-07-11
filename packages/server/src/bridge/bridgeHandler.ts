@@ -103,6 +103,11 @@ import {
   type ModelOverrides,
   resolveModelParams,
   qingagentAgent,
+  askUserTool,
+  isDirectionReset,
+  isPlanDraftTool,
+  isQuestionnaireTool,
+  normalizeQuestionnaireSpecForRestore,
   parseFileBuffer,
   resolveFileIds,
   findMaterialByFileId,
@@ -1818,7 +1823,7 @@ function canAbortRunningAskUser(session: SessionState, toolCallId: string): bool
       if (
         part.kind === "toolCall" &&
         part.data.id === toolCallId &&
-        part.data.name === "askUser" &&
+        isQuestionnaireTool(part.data.name) &&
         (part.data.status.kind === "pending" || part.data.status.kind === "running")
       ) {
         return true;
@@ -1841,7 +1846,7 @@ function liveRestoreStatus(
   }
 
   if (
-    spec.name === "askUser" &&
+    isQuestionnaireTool(spec.name) &&
     (spec.status.kind === "pending" || spec.status.kind === "running")
   ) {
     return {
@@ -1926,7 +1931,7 @@ function isSnapshotNotFoundError(error: unknown): boolean {
 }
 
 function isAskUserQuestionSpec(spec: ToolCallSpec): boolean {
-  return spec.name === "askUser" && spec.body?.kind === "askUser";
+  return isQuestionnaireTool(spec.name) && spec.body?.kind === "askUser";
 }
 
 function findAskUserToolCallSpec(
@@ -1941,7 +1946,9 @@ function findAskUserToolCallSpec(
         part.data.id === toolCallId &&
         isAskUserQuestionSpec(part.data)
       ) {
-        return part.data;
+        const normalized = normalizeQuestionnaireSpecForRestore(part.data);
+        part.data = normalized;
+        return normalized;
       }
     }
   }
@@ -1957,11 +1964,13 @@ function applySubmittedAskUserToolCallId(
   if (!submittedSpec) {
     return;
   }
+  if (!isQuestionnaireTool(submittedSpec.name)) return;
   session.toolCallId = submittedToolCallId;
-  if (session._suspensionOwner?.toolName === "askUser") {
+  if (session._suspensionOwner && isQuestionnaireTool(session._suspensionOwner.toolName)) {
     session._suspensionOwner = {
       ...session._suspensionOwner,
       toolCallId: submittedToolCallId,
+      toolName: submittedSpec.name,
     };
   }
 }
@@ -2133,17 +2142,15 @@ async function* handleResume(
     const MAX_RESUME_RETRIES = 5;
     const RETRY_DELAY_MS = 500;
     let result: Awaited<ReturnType<typeof qingagentAgent.resumeStream>>;
-    // resume 本身即"用户已答完一轮问卷"的信号 → 无条件标记已问过一轮:既让 askUser
-    // 重复 initialBrief 走抑制(askUser 工具读 askUserAlreadyCompleted),又让渲染形态走浮层
-    // 而非 fullpage(processAgentStream 读 state._askUserCompleted),防止第二次问卷占据右侧编辑器。
-    session._askUserCompleted = true;
     const resumeAnswers = normalizeAskUserAnswers(resumeData);
-    if (
-      Object.keys(resumeAnswers).length > 0 &&
-      askUserSpecForResume?.body.kind === "askUser" &&
-      askUserSpecForResume.body.data.purpose?.kind === "directionChange"
-    ) {
-      session._directionChangeAskedSinceLastWrite = true;
+    const hasResumeAnswers = Object.keys(resumeAnswers).length > 0;
+    const resumeToolName = askUserSpecForResume?.name ?? session._suspensionOwner?.toolName;
+    const resumeWasDirectionReset = isDirectionReset(session);
+    if (hasResumeAnswers && isPlanDraftTool(resumeToolName)) {
+      session._askUserCompleted = true;
+      if (resumeWasDirectionReset) {
+        session._directionChangeAskedSinceLastWrite = true;
+      }
     }
     let answerContextMessageAdded = false;
     if (
@@ -2189,7 +2196,8 @@ async function* handleResume(
       ["legacySections", session.legacySections],
       ["patchValidationResults", session.patchValidationResults],
       ["modelOverrides", session.modelOverrides],
-      ["askUserAlreadyCompleted", true],
+      ["askUserAlreadyCompleted", session._askUserCompleted === true],
+      ["isDirectionReset", resumeWasDirectionReset],
       ["directionChangeAskedSinceLastWrite", session._directionChangeAskedSinceLastWrite === true],
     ]);
     resumeRequestContext = requestContext;
@@ -2244,6 +2252,10 @@ async function* handleResume(
                   ...(sessionTools.updateWorkingMemory ? { updateWorkingMemory: sessionTools.updateWorkingMemory } : {}),
                 },
                 capabilityTools,
+                // askUser 仅为老会话快照恢复注入；老会话数据迁移或过期后删除。
+                ...(askUserSpecForResume?.name === "askUser"
+                  ? { legacyQuestionnaire: { askUser: askUserTool } }
+                  : {}),
               },
               // Keep resumed-run spans on the same session trace as the initial
               // turn and carry the raw ids in span metadata for cross-layer joins.
@@ -2546,6 +2558,16 @@ export function* emitRestoreFrames(
 ): Generator<BridgeFrame> {
   const readOnly = options.readOnly === true;
   if (!readOnly) {
+    for (const message of session.chatHistory) {
+      for (let index = 0; index < message.parts.length; index += 1) {
+        const part = message.parts[index];
+        if (part?.kind !== "toolCall") continue;
+        message.parts[index] = {
+          kind: "toolCall",
+          data: normalizeQuestionnaireSpecForRestore(part.data),
+        };
+      }
+    }
     const rebuiltVisibleAnswerCards = appendMissingVisibleAskUserAnswerMessagesFromChatHistory(session);
     if (rebuiltVisibleAnswerCards > 0) {
       schedulePersist(session, "restore:askUser_visible_answer_cards").catch((err) => {
@@ -2618,9 +2640,13 @@ export function* emitRestoreFrames(
       // 活跃轮次可能继续 push parts + 涨计数,若拷贝晚于基线读取,快照内容会多于基线,
       // 增量被重复应用(正文重复);反之则内容缺失。原子捕获后两个方向都不会错位。
       const appendSeq = session.seqCounters.get(msg.id) ?? 0;
+      const restoredMessage = structuredClone(msg);
+      restoredMessage.parts = restoredMessage.parts.map((part) => part.kind === "toolCall"
+        ? { kind: "toolCall", data: normalizeQuestionnaireSpecForRestore(part.data) }
+        : part);
       yield {
         kind: "chatMessageAdded",
-        data: { message: structuredClone(msg), appendSeq },
+        data: { message: restoredMessage, appendSeq },
       };
 
       // For toolCall parts with a terminal status, also emit toolCallUpdated
@@ -2632,7 +2658,7 @@ export function* emitRestoreFrames(
             data: {
               messageId: msg.id,
               toolCallId: part.data.id,
-              spec: structuredClone(part.data),
+              spec: structuredClone(normalizeQuestionnaireSpecForRestore(part.data)),
             },
           };
         }

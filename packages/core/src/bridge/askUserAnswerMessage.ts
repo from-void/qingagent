@@ -7,6 +7,7 @@ import type {
   ToolCallSpec,
 } from "@qingagent/contract-ts";
 import type { SessionState } from "./sessionState.js";
+import { isPlanDraftTool, isQuestionnaireTool } from "./questionnaireTools.js";
 
 export type AskUserAnswerRecord = Record<string, AskUserAnswer>;
 
@@ -63,7 +64,7 @@ export function findAskUserToolCallSpecInChatHistory(
       if (
         part.kind === "toolCall" &&
         part.data.id === toolCallId &&
-        part.data.name === "askUser" &&
+        isQuestionnaireTool(part.data.name) &&
         part.data.body?.kind === "askUser"
       ) {
         return part.data;
@@ -88,9 +89,10 @@ export function buildAskUserAnswerUserMessage(input: {
       : Object.keys(answers).sort();
   const questionById = new Map(questions.map((question) => [question.id, question]));
   const emitted = new Set<string>();
+  const isPlanDraft = input.spec == null || isPlanDraftTool(input.spec.name);
   const lines: string[] = [
     askUserAnswerMarker(input.toolCallId),
-    "我已提交写作方向问卷,回答如下:",
+    isPlanDraft ? "我已提交写作方向问卷,回答如下:" : "我已提交问卷,回答如下:",
   ];
 
   const appendLine = (questionId: string) => {
@@ -178,7 +180,7 @@ export function appendMissingAskUserAnswerMessagesFromChatHistory(
     for (const part of message.parts) {
       if (part.kind !== "toolCall") continue;
       const spec = part.data;
-      if (spec.name !== "askUser" || spec.result?.kind !== "askUserAnswers") continue;
+      if (!isQuestionnaireTool(spec.name) || spec.result?.kind !== "askUserAnswers") continue;
       if (appendAskUserAnswerMessageIfMissing(state, spec.id, spec.result.data, spec)) {
         appended++;
       }
@@ -246,7 +248,7 @@ export function buildAskUserAnswerCardItems(
  * 一行状态、没有汇总卡,仍保留可见卡以承载答案展示与刷新复原。
  */
 function isFullpageAskUserSpec(spec: ToolCallSpec | null | undefined): boolean {
-  return spec?.body.kind === "askUser" && spec.body.data.mode.kind === "fullpage";
+  return spec?.body.kind === "askUser" && spec.body.data.mode?.kind === "fullpage";
 }
 
 export function buildVisibleAskUserAnswerMessage(
@@ -268,7 +270,9 @@ export function buildVisibleAskUserAnswerMessage(
         kind: "askUserAnswerCard",
         data: {
           toolCallId,
-          title: "已提交写作方向问卷",
+          title: spec == null || isPlanDraftTool(spec.name)
+            ? "已提交写作方向问卷"
+            : "已提交问卷",
           items,
         },
       },
@@ -285,7 +289,7 @@ export function appendMissingVisibleAskUserAnswerMessagesFromChatHistory(
     for (const part of message.parts) {
       if (part.kind !== "toolCall") continue;
       const spec = part.data;
-      if (spec.name !== "askUser" || spec.result?.kind !== "askUserAnswers") continue;
+      if (!isQuestionnaireTool(spec.name) || spec.result?.kind !== "askUserAnswers") continue;
       if (hasVisibleAskUserAnswerMessage(state, spec.id)) continue;
       const visible = buildVisibleAskUserAnswerMessage(spec.id, spec.result.data, spec);
       if (!visible) continue;

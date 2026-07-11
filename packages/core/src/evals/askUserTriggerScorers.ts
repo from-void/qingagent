@@ -42,7 +42,9 @@ export function evaluateAskUserTriggerDecision(
   output: AskUserActionOutput,
 ): AskUserTriggerEvaluation {
   const actualToolNames = uniqueToolNames(output);
-  const asked = actualToolNames.includes("askUser");
+  // live 触发评测只覆盖新会话；legacy askUser 兼容由问卷谓词/恢复链测试单独保证。
+  const asked = actualToolNames.includes("planDraft");
+  const calledLegacyAskUser = actualToolNames.includes("askUser");
   const wroteDraft = actualToolNames.includes("writeDraft");
   const askUserWasAlone = asked && actualToolNames.length === 1;
   const textExcerpt = firstTextExcerpt(output.text);
@@ -58,11 +60,11 @@ export function evaluateAskUserTriggerDecision(
       textExcerpt,
       reason: ok
         ? `命中问卷: tools=[${actualToolNames.join(",")}] text="${textExcerpt}"`
-        : `应单独调用 askUser,实际 tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`,
+        : `应单独调用 planDraft,实际 tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`,
     };
   }
 
-  const noAskOk = !asked;
+  const noAskOk = !asked && !calledLegacyAskUser;
   const writeOk = fixture.requireWriteDraft === true ? wroteDraft : !wroteDraft;
   const ok = noAskOk && writeOk;
   return {
@@ -74,7 +76,7 @@ export function evaluateAskUserTriggerDecision(
     textExcerpt,
     reason: ok
       ? `命中不问: tools=[${actualToolNames.join(",") || "none"}] text="${textExcerpt}"`
-      : `不应 askUser${fixture.requireWriteDraft ? "且应调用 writeDraft" : "且不应调用 writeDraft"},实际 tools=[${
+      : `不应调用 planDraft${fixture.requireWriteDraft ? "且应调用 writeDraft" : "且不应调用 writeDraft"},实际 tools=[${
           actualToolNames.join(",") || "none"
         }] text="${textExcerpt}"`,
   };
@@ -82,7 +84,7 @@ export function evaluateAskUserTriggerDecision(
 
 export const askUserTriggerScorer = createScorer({
   id: "askuser-trigger-decision",
-  description: "live runEvals 轨:确定性验证首轮写作方向问卷 askUser 触发裁决。",
+  description: "live runEvals 轨:确定性验证首轮写作方向工具 planDraft 触发裁决。",
   type: "agent",
 })
   .generateScore(({ run }) => {

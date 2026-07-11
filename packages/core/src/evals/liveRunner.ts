@@ -14,6 +14,7 @@ import {
 } from "./askUserScorers.js";
 import { askUserTriggerFixtures, type AskUserTriggerFixture } from "./askUserTriggerFixtures.js";
 import { askUserTriggerScorer, evaluateAskUserTriggerDecision } from "./askUserTriggerScorers.js";
+import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 import { askUserAnswerWordingFixtures } from "./fixtures.js";
 
 export type LiveScorerArtifact = {
@@ -157,7 +158,7 @@ export async function runLiveScorers(): Promise<LiveScorerArtifact> {
   const writeDraftEvalTool = createWriteDraftEvalTool();
 
   const data = askUserAnswerWordingFixtures.slice(0, 2).map((fixture) => {
-    if (!fixture.input) throw new Error(`missing askUser fixture input: ${fixture.id}`);
+    if (!fixture.input) throw new Error(`missing planDraft fixture input: ${fixture.id}`);
     return {
       input: buildAskUserResumeMessages(fixture.input),
       groundTruth: fixture.input,
@@ -319,7 +320,7 @@ function selectAskUserTriggerFixtures(fixtureIds?: string[]): AskUserTriggerFixt
   const byId = new Map(askUserTriggerFixtures.map((fixture) => [fixture.id, fixture]));
   return fixtureIds.map((id) => {
     const fixture = byId.get(id);
-    if (!fixture) throw new Error(`unknown askUser trigger fixture id: ${id}`);
+    if (!fixture) throw new Error(`unknown planDraft trigger fixture id: ${id}`);
     return fixture;
   });
 }
@@ -438,7 +439,7 @@ export async function runAskUserTriggerEvals(
       },
       hooks: {
         beforeToolCall: ({ toolName, input }: { toolName: string; input: unknown }) => {
-          if (toolName === "askUser") {
+          if (isPlanDraftTool(toolName)) {
             return {
               proceed: false,
               output: {

@@ -27,9 +27,23 @@ vi.mock("../agents/qingagent.js", () => ({
 
 type StreamChunk =
   | {
+      type: "tool-call-input-streaming-start";
+      payload: {
+        toolName: "askUser" | "planDraft" | "askUserQuestion";
+        toolCallId: string;
+      };
+    }
+  | {
+      type: "tool-output";
+      payload: {
+        toolCallId: string;
+        output: { type: "askuser-progress"; questions: ReturnType<typeof oneQuestion> };
+      };
+    }
+  | {
       type: "tool-call-suspended";
       payload: {
-        toolName: "askUser";
+        toolName: "askUser" | "planDraft" | "askUserQuestion";
         toolCallId: string;
         suspendPayload: {
           id: string;
@@ -49,12 +63,12 @@ type StreamChunk =
     }
   | {
       type: "tool-call";
-      payload: { toolName: "askUser"; toolCallId: string; args: Record<string, never> };
+      payload: { toolName: "askUser" | "planDraft" | "askUserQuestion"; toolCallId: string; args: Record<string, never> };
     }
   | {
       type: "tool-result";
       payload: {
-        toolName: "askUser";
+        toolName: "askUser" | "planDraft" | "askUserQuestion";
         toolCallId: string;
         args: Record<string, never>;
         result: Record<string, unknown>;
@@ -90,11 +104,15 @@ function oneRenderedQuestion(): AskUserQuestion[] {
   ];
 }
 
-function askUserSuspend(toolCallId: string, withQuestion = false): StreamChunk {
+function askUserSuspend(
+  toolCallId: string,
+  withQuestion = false,
+  toolName: "askUser" | "planDraft" | "askUserQuestion" = "askUser",
+): StreamChunk {
   return {
     type: "tool-call-suspended",
     payload: {
-      toolName: "askUser",
+      toolName,
       toolCallId,
       suspendPayload: {
         id: `ask-${toolCallId}`,
@@ -163,11 +181,10 @@ function suppressedAskUserResult(toolCallId: string): StreamChunk {
   };
 }
 
-// 二轮 quickClarification 的 tool-call(args 带 purpose),验证它豁免硬闸、仍发 UI 帧
-function quickClarificationToolCall(toolCallId: string): StreamChunk {
+function askUserQuestionToolCall(toolCallId: string): StreamChunk {
   return {
     type: "tool-call",
-    payload: { toolName: "askUser", toolCallId, args: { purpose: "quickClarification" } },
+    payload: { toolName: "askUserQuestion", toolCallId, args: {} },
   } as unknown as StreamChunk;
 }
 
@@ -199,7 +216,7 @@ function countAppendedToolCalls(frames: BridgeFrame[], toolCallId: string): numb
       f.kind === "chatMessageAppended" &&
       f.data?.part?.kind === "toolCall" &&
       f.data.part.data?.id === toolCallId &&
-      f.data.part.data?.name === "askUser"
+      ["askUser", "planDraft", "askUserQuestion"].includes(f.data.part.data?.name)
     ) {
       n += 1;
     }
@@ -366,12 +383,185 @@ describe("processAgentStream resume re-suspend handling", () => {
     expect(state.toolCallId).toBe("tc1");
   });
 
+  it.each([
+    ["askUser", "fullpage"],
+    ["planDraft", "fullpage"],
+    ["askUserQuestion", "overlay"],
+  ] as const)("%s 挂起进入共享通道并固定为 %s", async (toolName, expectedMode) => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession(`questionnaire-${toolName}`);
+    const toolCall = {
+      type: "tool-call" as const,
+      payload: { toolName, toolCallId: `${toolName}-tc`, args: {} },
+    } as StreamChunk;
+
+    await collectFrames(processAgentStream(
+      streamOf(toolCall, askUserSuspend(`${toolName}-tc`, true, toolName)),
+      {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: `stream-${toolName}`,
+        runId: `run-${toolName}`,
+      },
+    ));
+
+    expect(state._suspensionOwner?.toolName).toBe(toolName);
+    const spec = state.chatHistory.flatMap((message) => message.parts)
+      .find((part) => part.kind === "toolCall" && part.data.id === `${toolName}-tc`);
+    expect(spec?.kind).toBe("toolCall");
+    if (spec?.kind === "toolCall" && spec.data.body.kind === "askUser") {
+      expect(spec.data.name).toBe(toolName);
+      expect(spec.data.body.data.mode.kind).toBe(expectedMode);
+    }
+  });
+
+  it("非问卷 suspend 会清零共享连续计数且不建立 owner", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("non-questionnaire-suspend");
+    state._askUserSuspendCount = 2;
+    await collectFrames(processAgentStream(streamOf({
+      type: "tool-call-suspended",
+      payload: {
+        toolName: "customApproval",
+        toolCallId: "other-tc",
+        suspendPayload: {},
+        args: {},
+      },
+    } as unknown as StreamChunk), {
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-other",
+      runId: "run-other",
+    }));
+    expect(state._askUserSuspendCount).toBe(0);
+    expect(state._suspensionOwner).toBeNull();
+  });
+
+  it("看门狗额度由 askUserQuestion 与 planDraft 合计共享", async () => {
+    const { clearSuspension, createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("mixed-questionnaire-count");
+    state._askUserSuspendCount = 1;
+    await collectFrames(processAgentStream(streamOf(
+      askUserQuestionToolCall("direct-count"),
+      askUserSuspend("direct-count", true, "askUserQuestion"),
+    ), {
+      state,
+      agentMessageId: "agent-direct",
+      streamId: "stream-direct-count",
+      runId: "run-direct-count",
+    }));
+    expect(state._askUserSuspendCount).toBe(2);
+    clearSuspension(state);
+
+    const frames = await collectFrames(processAgentStream(streamOf(
+      {
+        type: "tool-call",
+        payload: { toolName: "planDraft", toolCallId: "plan-count", args: {} },
+      } as StreamChunk,
+      askUserSuspend("plan-count", true, "planDraft"),
+    ), {
+      state,
+      agentMessageId: "agent-plan",
+      streamId: "stream-plan-count",
+      runId: "run-plan-count",
+    }));
+    expect(state._askUserSuspendCount).toBe(0);
+    expect(frames.some((frame) =>
+      frame.kind === "stream" && frame.data.kind === "draftingFailed"
+    )).toBe(true);
+  });
+
+  it("0 题 rejected 终态化失败卡并清掉 overlay，不进入通用问卷结果分支", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("direct-rejected");
+    const frames = await collectFrames(processAgentStream(streamOf(
+      askUserQuestionToolCall("direct-rejected-tc"),
+      {
+        type: "tool-result",
+        payload: {
+          toolName: "askUserQuestion",
+          toolCallId: "direct-rejected-tc",
+          args: {},
+          result: {
+            rejected: true,
+            reason: "没有可展示的有效问题",
+            retryInstruction: "请重试",
+          },
+        },
+      } as StreamChunk,
+    ), {
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-rejected",
+      runId: "run-rejected",
+    }));
+
+    const failedUpdates = frames.filter((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === "direct-rejected-tc" &&
+      frame.data.spec.status.kind === "failed",
+    );
+    expect(failedUpdates).toHaveLength(1);
+    expect(state._askUserCompleted).not.toBe(true);
+    expect(state._suspensionOwner).toBeNull();
+    expect(frames.at(-1)).not.toMatchObject({
+      kind: "docStateChanged",
+      data: { activeOverlay: "askUser" },
+    });
+  });
+
+  it("planDraft 占位、progress、suspend 三阶段保持工具名与 fullpage 一致", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("plan-three-stages");
+    const frames = await collectFrames(processAgentStream(streamOf(
+      {
+        type: "tool-call-input-streaming-start",
+        payload: { toolName: "planDraft", toolCallId: "plan-three" },
+      },
+      {
+        type: "tool-call",
+        payload: { toolName: "planDraft", toolCallId: "plan-three", args: {} },
+      },
+      {
+        type: "tool-output",
+        payload: {
+          toolCallId: "plan-three",
+          output: { type: "askuser-progress", questions: oneQuestion() },
+        },
+      },
+      askUserSuspend("plan-three", true, "planDraft"),
+    ), {
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-plan-three",
+      runId: "run-plan-three",
+    }));
+
+    const specs = frames.flatMap((frame) => {
+      if (frame.kind === "chatMessageAppended" && frame.data.part.kind === "toolCall") {
+        return [frame.data.part.data];
+      }
+      if (frame.kind === "toolCallUpdated" && frame.data.toolCallId === "plan-three") {
+        return [frame.data.spec];
+      }
+      return [];
+    }).filter((spec) => spec.id === "plan-three");
+    expect(specs.length).toBeGreaterThanOrEqual(4);
+    expect(specs.every((spec) => spec.name === "planDraft")).toBe(true);
+    expect(specs.every((spec) =>
+      spec.body.kind === "askUser" && spec.body.data.mode.kind === "fullpage"
+    )).toBe(true);
+  });
+
   it("writes the final askUser questions into chatHistory before yielding the visible update", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("askuser-final-spec-before-yield");
 
     const gen = processAgentStream(
-      streamOf(quickClarificationToolCall("tc-qc"), askUserSuspend("tc-qc", true)),
+      streamOf(
+        askUserQuestionToolCall("tc-qc"),
+        askUserSuspend("tc-qc", true, "askUserQuestion"),
+      ),
       {
         state,
         agentMessageId: "agent-msg",
@@ -413,6 +603,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("suppressed-second-askuser");
     state._askUserCompleted = true;
+    state._directionChangeAskedSinceLastWrite = true;
     const requestContext = new RequestContext([
       ["askUserAlreadyCompleted", true],
     ]);
@@ -456,7 +647,7 @@ describe("processAgentStream resume re-suspend handling", () => {
     ).toBe(false);
   });
 
-  it("二轮 quickClarification 豁免硬闸,仍发出 UI 帧(对比 initialBrief 被抑制)", async () => {
+  it("askUserQuestion 豁免写作方向硬闸,仍发出 overlay UI 帧", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("quickclar-second-round");
     // 模拟"首轮问卷已答完"的硬闸状态
@@ -468,8 +659,8 @@ describe("processAgentStream resume re-suspend handling", () => {
     const frames = await collectFrames(
       processAgentStream(
         streamOf(
-          quickClarificationToolCall("tc-qc"),
-          askUserSuspend("tc-qc", true),
+          askUserQuestionToolCall("tc-qc"),
+          askUserSuspend("tc-qc", true, "askUserQuestion"),
         ),
         {
           state,

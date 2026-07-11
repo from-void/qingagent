@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSliderSpec } from "../tools/askUser.js";
+import { normalizeSliderSpec } from "../tools/planDraft.js";
 
 // F4 滑块范围 sanitize:LLM 输出不可信,枚举真实脏形态(AGENTS「脏路径」硬规则)。
 describe("normalizeSliderSpec", () => {

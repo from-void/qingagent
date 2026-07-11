@@ -26,7 +26,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "明确写作意图·信息少",
     message: "帮我写篇文章",
     expectedDecision: "ask",
-    reason: "首轮明确要生成文章,即使信息少也应先问卷确认方向。",
+    reason: "首轮明确要生成文章,即使信息少也应先调用 planDraft 确认方向。",
   },
   {
     id: "low-info-report",
@@ -54,7 +54,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "明确写作意图·信息少",
     message: "帮我起草个演讲稿",
     expectedDecision: "ask",
-    reason: "演讲稿是落稿任务,首轮应先问卷确认场景。",
+    reason: "演讲稿是落稿任务,首轮应先调用 planDraft 确认场景。",
   },
   {
     id: "low-info-xhs",
@@ -75,7 +75,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "明确写作意图·信息全",
     message: "写一篇新能源车出海分析,2000字,给老板看,结构按背景-机会-风险-建议来",
     expectedDecision: "ask",
-    reason: "主题、篇幅、受众、结构齐全时仍需简短问卷拍板未定点。",
+    reason: "主题、篇幅、受众、结构齐全时仍需用 planDraft 拍板未定点。",
   },
   {
     id: "full-info-resume",
@@ -89,7 +89,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "明确写作意图·信息全",
     message: "写一份新品发布新闻稿,800字,面向科技媒体,标题别太夸张,三段式",
     expectedDecision: "ask",
-    reason: "新闻稿写作意图明确,首轮默认先问卷。",
+    reason: "新闻稿写作意图明确,首轮默认先调用 planDraft。",
   },
   {
     id: "full-info-email",
@@ -124,7 +124,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "问句/委婉形式写作请求",
     message: "能不能给我起草一份申请书呀",
     expectedDecision: "ask",
-    reason: "申请书是落稿文档,应触发问卷。",
+    reason: "申请书是落稿文档,应触发 planDraft。",
   },
   {
     id: "question-promo-copy",
@@ -146,7 +146,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     message: "帮我写辞职信,直接写别问",
     expectedDecision: "noAsk",
     requireWriteDraft: true,
-    reason: "用户明确要求别问,应跳过问卷并直接写稿。",
+    reason: "用户明确要求别问,应跳过 planDraft 并直接写稿。",
   },
   {
     id: "direct-now",
@@ -170,7 +170,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     message: "写个请假条,跳过问卷",
     expectedDecision: "noAsk",
     requireWriteDraft: true,
-    reason: "跳过问卷是明确不问信号。",
+    reason: "跳过问卷是明确跳过 planDraft 的信号。",
   },
   {
     id: "direct-no-more-questions",
@@ -192,7 +192,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "打招呼/身份提问",
     message: "在吗",
     expectedDecision: "noAsk",
-    reason: "寒暄不应触发问卷。",
+    reason: "寒暄不应触发 planDraft。",
   },
   {
     id: "identity-who-are-you",
@@ -213,7 +213,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "打招呼/身份提问",
     message: "这个工具怎么用啊",
     expectedDecision: "noAsk",
-    reason: "使用咨询不应打开写作方向问卷。",
+    reason: "使用咨询不应调用 planDraft。",
   },
   {
     id: "qa-li-bai",
@@ -234,7 +234,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "知识问答/闲聊",
     message: "今天心情不好,陪我聊聊",
     expectedDecision: "noAsk",
-    reason: "闲聊陪伴不应触发问卷。",
+    reason: "闲聊陪伴不应触发 planDraft。",
   },
   {
     id: "qa-concept",
@@ -262,7 +262,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "点评/解释类",
     message: "帮我看看这封邮件语气是不是太硬",
     expectedDecision: "noAsk",
-    reason: "评价语气属于对话建议,不应触发问卷。",
+    reason: "评价语气属于对话建议,不应触发 planDraft。",
   },
   {
     id: "explain-sentence",
@@ -283,14 +283,14 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "潜在产出未定落稿",
     message: "帮我想个口号",
     expectedDecision: "noAsk",
-    reason: "短产出但未说明写入文档,应先对话问清而不是问卷。",
+    reason: "短产出但未说明写入文档,不应误触发写作方向工具 planDraft。",
   },
   {
     id: "latent-name",
     category: "潜在产出未定落稿",
     message: "给这个项目取个名字",
     expectedDecision: "noAsk",
-    reason: "命名脑暴未定是否落稿,不触发写作方向问卷。",
+    reason: "命名脑暴未定是否落稿,不触发写作方向工具 planDraft。",
   },
   {
     id: "latent-title",
@@ -304,7 +304,7 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     category: "潜在产出未定落稿",
     message: "帮我 brainstorm 十个活动主题",
     expectedDecision: "noAsk",
-    reason: "创意列表未定落稿,应对话澄清或直接给建议,不走问卷。",
+    reason: "创意列表未定落稿,应直接给建议,不调用写作方向工具 planDraft。",
   },
   {
     id: "boundary-character",
@@ -314,11 +314,11 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     reason: "“写”指汉字写法,不是文档写作。",
   },
   {
-    id: "boundary-code",
+    id: "wechat-publish-own-style-route",
     category: "边界难例",
-    message: "你会写代码吗",
+    message: "帮我写一篇发到我公众号的文章，参考我以前的风格",
     expectedDecision: "noAsk",
-    reason: "能力提问不是要求生成文档。",
+    reason: "明确要发布到自己的公众号并参考旧文，授权未 READY 时应先单独调用 askUserQuestion 发送公众号路由卡，而不是 planDraft。",
   },
   {
     id: "boundary-poem",

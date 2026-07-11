@@ -8,7 +8,46 @@ import { validateAskUserSpec, AskUserSpecValidationError } from "../askUserSpec"
 import { validateCommand, CommandValidationError } from "../command";
 import { validateBridgeFrame, BridgeFrameValidationError } from "../wireFrame";
 
+function validAskUserSpec(): AskUserSpec {
+  return {
+    id: "a",
+    mode: { kind: "overlay" },
+    purpose: null,
+    source: null,
+    rationale: null,
+    questions: [{
+      id: "q",
+      header: null,
+      label: "Q",
+      kind: { kind: "single" },
+      options: [
+        { value: "a", label: "A", description: null, preview: null },
+        { value: "b", label: "B", description: null, preview: null },
+      ],
+      placeholder: null,
+    }],
+  };
+}
+
 describe("validateAskUserSpec", () => {
+  it("rejects a question header longer than 12 Unicode code points", () => {
+    const spec = validAskUserSpec();
+    spec.questions[0]!.header = "🙂".repeat(13);
+    expect(() => validateAskUserSpec(spec)).toThrow(AskUserSpecValidationError);
+  });
+
+  it("accepts a 12-code-point question header", () => {
+    const spec = validAskUserSpec();
+    spec.questions[0]!.header = "🙂".repeat(12);
+    expect(() => validateAskUserSpec(spec)).not.toThrow();
+  });
+
+  it("rejects a non-string question header without throwing a native TypeError", () => {
+    const spec = validAskUserSpec();
+    (spec.questions[0] as unknown as { header: unknown }).header = 12;
+    expect(() => validateAskUserSpec(spec)).toThrow(AskUserSpecValidationError);
+  });
+
   it("rejects 9 questions", () => {
     const q = {
       id: "q",

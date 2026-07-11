@@ -15,6 +15,7 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import type { Material } from "../types/material.js";
 import type { ModelOverrides } from "../llm/modelConfig.js";
 import type { QingagentToolSearchProcessor } from "../agents/toolSearch.js";
+import { isQuestionnaireTool } from "./questionnaireTools.js";
 
 export interface PatchValidationResult {
   ok: boolean;
@@ -74,7 +75,7 @@ export interface SuggestionRecord {
   diffHunk?: DiffHunk;
 }
 
-export type SuspensionToolName = "askUser";
+export type SuspensionToolName = "askUser" | "planDraft" | "askUserQuestion";
 
 export interface SuspensionOwner {
   streamId: string;
@@ -517,7 +518,7 @@ export function terminalizeAskUserToolCall(
       if (
         part.kind !== "toolCall" ||
         part.data.id !== toolCallId ||
-        part.data.name !== "askUser"
+        !isQuestionnaireTool(part.data.name)
       ) {
         continue;
       }

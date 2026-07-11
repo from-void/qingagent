@@ -1,7 +1,7 @@
 {
   "file": "apps/web/src/pages/workspace/workspace.css",
-  "sha256": "a12710d1366eacc94854a17f999b08745feedda879faae44098ac1c9c27f545e",
-  "lineCount": 3180,
+  "sha256": "6f1b7ac4600510677ded49038627424a0f1f8c899c3de9336efa15ab64a7606f",
+  "lineCount": 3230,
   "selectors": [
     ".wf-doc",
     ".dt-btn",
@@ -17,13 +17,6 @@
     ".wf-patch-ins-wrap",
     ".wf-patch-replace-wrap",
     ".wf-blockmark",
-    ".wf-list-row--added",
-    ".wf-table-row--added",
-    ".wf-table-cell--changed",
-    ".wf-container-block--changed",
-    ".wf-row-ins",
-    ".wf-row-del",
-    ".wf-patch-del",
     ".patch-del-cursor",
     ".wf-patch-del-marker",
     ".patch-hover-popup",

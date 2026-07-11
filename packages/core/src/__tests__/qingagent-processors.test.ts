@@ -42,7 +42,8 @@ describe("qingagent processors", () => {
     expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
-      "askUser",
+      "planDraft",
+      "askUserQuestion",
       "parseFile",
       "storeMaterial",
       "fetchArticle",
@@ -54,7 +55,12 @@ describe("qingagent processors", () => {
     process.env[QINGAGENT_TOOL_SEARCH_ENV] = "1";
 
     expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
-    expect(Object.keys(buildQingagentStaticTools())).toEqual(["askUser", "storeMaterial"]);
+    expect(Object.keys(buildQingagentStaticTools())).toEqual([
+      "planDraft",
+      "askUserQuestion",
+      "storeMaterial",
+    ]);
+    expect(Object.keys(buildQingagentStaticTools())).not.toContain("askUser");
 
     const toolSearch = createQingagentToolSearchProcessor({});
     const requestContext = new RequestContext([

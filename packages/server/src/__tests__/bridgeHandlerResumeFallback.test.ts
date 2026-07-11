@@ -116,10 +116,13 @@ function transientErrorChunk(message: string): unknown {
   };
 }
 
-function askUserToolCall(id: string): ToolCallSpec {
+function askUserToolCall(
+  id: string,
+  name: "askUser" | "planDraft" | "askUserQuestion" = "askUser",
+): ToolCallSpec {
   return {
     id,
-    name: "askUser",
+    name,
     render: { kind: "rightForm" },
     status: { kind: "running", data: { progressPct: null, etaSec: null } },
     body: {
@@ -193,6 +196,7 @@ function seedSuspendedAskUserSession(
   session: NonNullable<ReturnType<typeof import("../bridge/bridgeHandler").getSession>>,
   runId: string,
   streamId = `restored:${runId}`,
+  toolName: "askUser" | "planDraft" | "askUserQuestion" = "askUser",
 ): void {
   session.docState = { kind: "empty" };
   session.chatHistory = [
@@ -207,7 +211,7 @@ function seedSuspendedAskUserSession(
       id: "msg-ask",
       role: { kind: "agent" },
       ts: "2026-01-01T00:00:00.000Z",
-      parts: [{ kind: "toolCall", data: askUserToolCall("ask-1") }],
+      parts: [{ kind: "toolCall", data: askUserToolCall("ask-1", toolName) }],
       chips: null,
     },
   ];
@@ -217,7 +221,7 @@ function seedSuspendedAskUserSession(
     streamId,
     runId,
     toolCallId: "ask-1",
-    toolName: "askUser",
+    toolName,
   };
 }
 
@@ -311,6 +315,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
         maxSteps: AGENT_MAX_STEPS,
         modelSettings: { maxRetries: 4 },
       });
+      expect(resumeOptions?.toolsets?.legacyQuestionnaire?.askUser).toBeTruthy();
       expect(session.runId).toBeNull();
       expect(session.toolCallId).toBeNull();
       expect(session._suspensionOwner).toBeNull();
@@ -692,6 +697,34 @@ describe("handleResume askUser fresh-turn fallback", () => {
       turnIndex: null,
       turnStartMessageIndex: null,
     });
+  });
+
+  it("askUserQuestion resume 不写 _askUserCompleted 且不注入 legacy askUser", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(
+      session,
+      "run-direct-resume",
+      "restored:run-direct-resume",
+      "askUserQuestion",
+    );
+    mockState.resumeStream.mockImplementation(async (_resumeData: unknown, options: any) => {
+      expect(options?.toolsets?.legacyQuestionnaire).toBeUndefined();
+      return {
+        runId: "run-direct-resumed",
+        fullStream: streamOf({ type: "finish", payload: {} }),
+      };
+    });
+
+    await collectFrames(bridge.handleCommand({
+      kind: "resumeAskUser",
+      data: {
+        sessionId: session.sessionId,
+        answers: { "q-one": { chosen: [], freeText: "直接回答" } },
+      },
+    }));
+
+    expect(session._askUserCompleted).not.toBe(true);
   });
 
   it("resumeStream 续跑保留 updateWorkingMemory 会话工具", async () => {

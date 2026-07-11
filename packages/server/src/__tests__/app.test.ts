@@ -381,7 +381,10 @@ describe("上游错误脱敏", () => {
 
 describe("POST /api/v1/ask-more 请求体契约", () => {
   async function expectAskMoreBodyAccepted(body: unknown) {
-    const res = await request("POST", "/api/v1/ask-more", body);
+    const res = await request("POST", "/api/v1/ask-more", {
+      toolCallId: "plan-draft-contract",
+      ...(body as Record<string, unknown>),
+    });
     expect(res.status).not.toBe(400);
     expect(res.status).toBe(404);
     await expect(res.json()).resolves.toEqual({ error: "Session not found" });

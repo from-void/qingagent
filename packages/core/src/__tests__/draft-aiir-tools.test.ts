@@ -89,9 +89,10 @@ describe("QingML draft tools", () => {
   it("agent 只暴露常驻基础工具,草稿工具由 sessionScoped toolset 注入", async () => {
     const tools = await qingagentAgent.listTools();
     expect(Object.keys(tools).sort()).toEqual([
-      "askUser",
+      "askUserQuestion",
       "fetchArticle",
       "parseFile",
+      "planDraft",
       "storeMaterial",
     ]);
   });

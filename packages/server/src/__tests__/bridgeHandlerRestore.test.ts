@@ -69,9 +69,9 @@ function toolCall(
   return {
     id,
     name,
-    render: { kind: name === "askUser" ? "rightForm" : "chatInline" },
+    render: { kind: ["askUser", "planDraft", "askUserQuestion"].includes(name) ? "rightForm" : "chatInline" },
     status,
-    body: name === "askUser"
+    body: ["askUser", "planDraft", "askUserQuestion"].includes(name)
       ? {
           kind: "askUser",
           data: {
@@ -173,6 +173,50 @@ describe("handleCommand existing-session restore", () => {
     // 出问卷的锁由 overlay=askUser 经 deriveEditorState 聚合为 locked,不进 content。
     // modern wire stays content-only; overlay comes from the askUser toolCall.
     expect(session.docState).toEqual({ kind: "empty" });
+  });
+
+  it("恢复三种问卷工具的缺失/空/非法 mode 时统一降级 fullpage", async () => {
+    const dirtyModes: Array<{ label: string; value: unknown }> = [
+      { label: "missing", value: undefined },
+      { label: "null", value: null },
+      { label: "empty", value: {} },
+      { label: "invalid", value: { kind: "invalid" } },
+    ];
+    for (const name of ["askUser", "planDraft", "askUserQuestion"]) {
+      for (const dirtyMode of dirtyModes) {
+        const bridge = await loadBridge();
+        const session = await createCachedSession(bridge);
+        const spec = toolCall(name, { kind: "done" }, `${name}-dirty-mode-${dirtyMode.label}`);
+        if (spec.body.kind !== "askUser") throw new Error("expect questionnaire body");
+        if (dirtyMode.value === undefined) {
+          delete (spec.body.data as unknown as { mode?: unknown }).mode;
+        } else {
+          (spec.body.data as unknown as { mode?: unknown }).mode = dirtyMode.value;
+        }
+        session.chatHistory = [{
+          id: "msg-dirty-mode",
+          role: { kind: "agent" },
+          ts: "2026-07-11T00:00:00.000Z",
+          parts: [{ kind: "toolCall", data: spec }],
+          chips: null,
+        }];
+
+        const frames = [...bridge.emitRestoreFrames(session)];
+        const restored = frames.find((frame) =>
+          frame.kind === "toolCallUpdated" && frame.data.toolCallId === spec.id
+        );
+        expect(restored).toMatchObject({
+          kind: "toolCallUpdated",
+          data: {
+            spec: {
+              name,
+              render: { kind: "rightForm" },
+              body: { kind: "askUser", data: { mode: { kind: "fullpage" } } },
+            },
+          },
+        });
+      }
+    }
   });
 
   // overlay 内联反问(写作中途澄清):没有 fullpage 汇总卡,可见答卷卡是答案唯一展示位,

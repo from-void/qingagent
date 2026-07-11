@@ -390,6 +390,7 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
       };
     }
   }
+  console.warn(`[genService] fallback engaged reason=${branchFailure ?? "unknown"} snapshot=${!!snapshot}`);
   const fallbackQuestions = await runFallback(input);
   if (snapshot) rememberFallbackQuestions(snapshot, input, fallbackQuestions);
   return {

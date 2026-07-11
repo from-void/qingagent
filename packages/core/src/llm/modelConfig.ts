@@ -554,7 +554,9 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       messages: [...normalizeReplayMessages(baseBody.messages), ...tail],
       stream: true,
       stream_options: { include_usage: true },
-      ...(input.streamTextDeltas ? { tool_choice: "none" } : {}),
+      // 定稿纪律(260712 spike):禁止 tool_choice:"none"——它会把 tools 块从渲染中移除,
+      // 其后全部 messages 前缀错位 miss;工具抑制靠尾部指令(实测10/10),偶发 tool_call
+      // 由 toolCalled 分支降级兜底。
       ...(typeof input.maxTokens === "number" ? { max_tokens: input.maxTokens } : {}),
       ...(input.thinking === undefined
         ? {}
@@ -564,6 +566,14 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         : {}),
     };
     if (input.thinking) delete body.temperature;
+    // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。
+    const t0 = Date.now();
+    let tFirstDelta = 0;
+    console.log(
+      `[branchCall] site=${input.callSite} start snapshot(gen=${input.sessionSnapshot.generation}` +
+      ` epoch=${input.sessionSnapshot.epoch} age=${Date.now() - Date.parse(input.sessionSnapshot.capturedAt)}ms)` +
+      ` msgs=${(baseBody.messages as unknown[]).length}+${tail.length}tail stream=${!!input.streamTextDeltas}`,
+    );
     try {
       const response = await globalThis.fetch(input.sessionSnapshot.endpoint, {
         method: "POST",
@@ -577,6 +587,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       });
       if (!response.ok) {
         const error = await providerErrorSummary(response);
+        console.warn(`[branchCall] site=${input.callSite} provider-reject status=${response.status} latency=${Date.now() - t0}ms err=${error.slice(0, 120)}`);
         void recordBranchUsage(input, null, attempt, error);
         return {
           ok: false,
@@ -594,6 +605,10 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
               if (!ownsCurrentLease() || input.abortSignal?.aborted) {
                 throw new DOMException("stale branch stream", "AbortError");
               }
+              if (!tFirstDelta) {
+                tFirstDelta = Date.now();
+                console.log(`[branchCall] site=${input.callSite} first-delta ttft=${tFirstDelta - t0}ms`);
+              }
               await input.onTextDelta?.(delta, accumulated);
             }
           : undefined,
@@ -605,10 +620,20 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         return { ok: false, reason: "provider_error", attempts: 1, toolCallRetries: 0, error };
       }
       void recordBranchUsage(input, raw.usage, attempt, null);
+      {
+        const u = asRecord(raw.usage);
+        console.log(
+          `[branchCall] site=${input.callSite} done latency=${Date.now() - t0}ms` +
+          `${tFirstDelta ? ` ttft=${tFirstDelta - t0}ms` : ""}` +
+          ` hit/miss=${u?.prompt_cache_hit_tokens ?? "?"}/${u?.prompt_cache_miss_tokens ?? "?"}` +
+          ` finish=${raw.finishReason ?? "?"} toolCalled=${raw.toolCalled}`,
+        );
+      }
       if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
       if (raw.toolCalled) {
+        console.warn(`[branchCall] site=${input.callSite} tool_call-leak → fallback`);
         return { ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 };
       }
       if (!raw.text) {

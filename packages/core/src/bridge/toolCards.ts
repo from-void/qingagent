@@ -417,6 +417,8 @@ export function wechatAuthQrToolCallSpec(
         refreshQuery: "微信登录二维码过期了,请帮我重新生成",
         confirmQuery: "我已扫完码,请继续",
         confirmLabel: "我已扫码完成",
+        connectorId: result?.connectorId === "wechat-mp" ? "wechat-mp" : undefined,
+        pendingId: typeof result?.pendingId === "string" ? result.pendingId : undefined,
       },
     },
     result: null,

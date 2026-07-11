@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   PLATFORM_CREDENTIAL_SPECS,
   deleteCredential,
+  getConnectorService,
   invalidateSessionWorkspace,
   listCredentialMeta,
   saveCredentialRecord,
@@ -65,6 +66,9 @@ credentialsRoutes.post("/credentials", async (c) => {
   if (!KNOWN_PLATFORMS.has(platform)) {
     return c.json({ error: `未知平台：${platform}` }, 400);
   }
+  if (platform.startsWith("connector:")) {
+    return c.json({ error: "连接器凭据只能通过授权流程写入" }, 405);
+  }
   const allowedKeys = PLATFORM_KEYS.get(platform)!;
   const saved: string[] = [];
   for (const [key, value] of Object.entries(values)) {
@@ -87,7 +91,11 @@ credentialsRoutes.delete("/credentials/:platform", async (c) => {
     return c.json({ error: `未知平台：${platform}` }, 400);
   }
   const key = c.req.query("key");
-  await deleteCredential(platform, key || undefined);
+  if (platform === "connector:wechat-mp") {
+    await getConnectorService().disconnect("wechat-mp");
+  } else {
+    await deleteCredential(platform, key || undefined);
+  }
   invalidateSessionWorkspace();
   return c.json({ ok: true });
 });

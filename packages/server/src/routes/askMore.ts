@@ -225,6 +225,7 @@ askMoreRoutes.post("/ask-more", async (c) => {
         currentQuestions: currentQuestions ?? [],
         currentAnswers: currentAnswers ?? {},
         requestContext,
+        abortSignal: c.req.raw.signal,
       })) {
         lastQuestions = partial;
         await stream.writeSSE({

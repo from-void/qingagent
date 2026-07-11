@@ -1,10 +1,8 @@
 import { createTool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "ai";
 import { z } from "zod";
 import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
-import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
-import { repairModelJson } from "../llm/repairToolCallJson.js";
+import { generateQuestions } from "../services/genService.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
 import { questionnaireRejectedResultSchema } from "./askUserQuestionAdapter.js";
@@ -528,92 +526,24 @@ export const planDraftTool = createTool({
       // 通道,与 askuser-progress 不冲突,只负责静默期持续重置看门狗。
       const stopHeartbeat = startToolHeartbeat(context, { tool: "planDraft" });
       try {
-      const genPrompt = `你是一位写作需求分析专家。根据以下写作方向，生成 2-4 个问卷问题帮助确认用户的写作需求。
-
-写作方向和已知信息：
-${input.rationale}
-
-具体主题：
-${input.topic}
-
-直接输出纯 JSON 数组，不要有任何其他内容。格式：
-[{"id":"q-theme","label":"问题文本","kind":"single","options":[{"value":"v1","label":"选项1","description":"描述"}],"placeholder":""},{"id":"q-length","label":"目标字数","kind":"slider","options":[],"slider":{"min":200,"max":3000,"step":100,"unit":"字","aboveLabel":"3000字以上"}},{"id":"q-note","label":"补充问题","kind":"text","options":[],"placeholder":"提示文字"}]
-
-要求：
-1. 每个问题的 id 必须唯一，格式为 "q-{简短英文主题}"
-2. kind 只能是 "single"、"multi"、"text" 或 "slider"
-3. 选择题选项不超过 4 个
-4. 文本题/滑块题 options 必须为空数组
-5. slider 只用于连续量（字数、篇幅、段落数等）：必须带 slider 字段，范围要合理（字数最小不低于 50，最大值滑到头表示"X 以上"）
-6. 使用中文
-7. 如果用户已提供了某些信息，不要重复问
-8. 至少包含一个 text 类型的开放式问题
-9. 问题与选项的 label/description 一律用自然中文，不要出现英文工具或函数标识符（如 run_js、readDraft 等代码名），要提及某能力请用中文说法（如"运行脚本""读取草稿"）
-10. 最外层必须是"问题"数组，不要直接输出"选项"数组（每个问题对象必须含 id、kind、label 字段）`;
-
-      // 模型无关的"畸形→重试":出题模型(deepseek / 智谱 GLM 等)偶发把结构搞错(如把选项数组
-      // 当顶层吐出、缺 id/kind)。每次生成后判可用性,畸形则重试(最多 3 次尝试);仍畸形再交给
-      // 下方 map 兜底补全,既不崩也尽量拿到正确结构。实测 GLM 单次 ~90% 正确,重试后≈99.9%。
-      const isUsableQuestions = (qs: unknown): qs is ParsedQuestion[] =>
-        Array.isArray(qs) &&
-        qs.length > 0 &&
-        qs.every(
-          (q) =>
-            !!q &&
-            typeof (q as { kind?: unknown }).kind === "string" &&
-            askUserQuestionKinds.has((q as { kind: string }).kind) &&
-            isNonEmptyString((q as { label?: unknown }).label),
-        );
-
-      // 已先用 repairModelJson 当场修复偶发畸形,重试只是不可修复(如截断)时的极少兜底;
-      // 收紧到 2 次,避免畸形时 3 次全量重新生成把"生成问卷"拖到像卡死。
-      const MAX_GEN_ATTEMPTS = 2;
-      let questions: ParsedQuestion[] = [];
-      const questionModel = getDeepseekModel(requestContext, "flash", { callSite: "planDraft" });
-      for (let attempt = 1; attempt <= MAX_GEN_ATTEMPTS; attempt++) {
-        // Stream question generation — push progress via writer
-        const result = streamText({
-          model: questionModel,
-          ...resolveModelParams(requestContext),
-          prompt: genPrompt,
-        });
-        let accumulated = "";
-        let lastSignature = "";
-        for await (const delta of result.textStream) {
-          accumulated += delta;
-          const partialQuestions = tryParsePartialQuestions(accumulated);
-          if (partialQuestions.length === 0) continue;
-          const totalOpts = partialQuestions.reduce((s, q) => s + q.options.length, 0);
-          const sig = `${partialQuestions.length}:${totalOpts}`;
-          if (sig !== lastSignature) {
-            lastSignature = sig;
-            if (context?.writer) {
-              await context.writer.write({ type: "askuser-progress", questions: partialQuestions });
-            }
+      const generated = await generateQuestions({
+        mode: "initial",
+        requestContext,
+        abortSignal: context?.abortSignal,
+        rationale: input.rationale,
+        topic: input.topic,
+        onProgress: async (questions) => {
+          if (context?.writer) {
+            await context.writer.write({ type: "askuser-progress", questions });
           }
-        }
-        let parsed: unknown = null;
-        try {
-          // 先过协议无关 JSON 修复(补数组元素间漏逗号/修字符串内裸引号)再 parse:GLM 偶发
-          // 畸形当场修好,不必走下面慢速的重新生成重试(就是"生成问卷卡住"的根)。与 writeDraft
-          // 正文同一套修复(洞2)。修复失败则回退原串,交由下方重试/兜底。
-          const extracted = extractQuestionsJson(accumulated);
-          const repaired = repairModelJson(extracted);
-          parsed = JSON.parse(repaired.ok ? repaired.json : extracted);
-        } catch {
-          parsed = null;
-        }
-        if (Array.isArray(parsed)) questions = parsed as ParsedQuestion[]; // 留作兜底(即便畸形)
-        if (isUsableQuestions(parsed)) {
-          questions = parsed;
-          break;
-        }
-        console.warn(
-          `[planDraft] 第 ${attempt}/${MAX_GEN_ATTEMPTS} 次出题畸形(非数组或条目缺合法 kind/label)，` +
-            (attempt < MAX_GEN_ATTEMPTS ? "重试" : "已达上限，走兜底补全"),
-        );
-      }
-      console.log("[planDraft] generated", questions.length, "questions");
+        },
+      });
+      const questions = generated.questions;
+      console.log("[planDraft] generated", questions.length, "questions", {
+        transport: generated.transport,
+        branchFailure: generated.branchFailure,
+        toolCallRetries: generated.toolCallRetries,
+      });
 
       // Suspend with complete questionnaire
       return await suspend({

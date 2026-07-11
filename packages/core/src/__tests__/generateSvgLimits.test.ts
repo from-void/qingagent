@@ -64,7 +64,7 @@ describe("generateSvg direct DeepSeek path", () => {
     vi.useRealTimers();
   });
 
-  it("通过 streamText 适配层关闭 thinking,禁用工具层重试,并保持 16k maxTokens", async () => {
+  it("通过统一适配层优先借道、关闭 thinking、禁用工具层重试并保持 16k maxTokens", async () => {
     const { writes, context } = progressWriter();
     streamInnerModelMock.mockImplementationOnce(async (input) => {
       input.onContentStart?.(3);
@@ -89,6 +89,7 @@ describe("generateSvg direct DeepSeek path", () => {
       attempt: 1,
       maxRetries: 0,
       maxTokens: GENERATE_SVG_MAX_OUTPUT_TOKENS,
+      branchSteeringTail: expect.stringContaining("不要调用任何工具"),
     });
     expect(writeFileMock).toHaveBeenCalledTimes(1);
     expect(writes.some((w) => w.type === "generatesvg-progress")).toBe(true);

@@ -10,7 +10,6 @@ import {
 } from "@qingagent/pm-schema";
 import { AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 import {
-  buildQingmlPrompt,
   compileAiDocumentWithBlockRetry,
   parseAiDocumentFromQingml,
 } from "../tools/generateDoc.js";
@@ -105,8 +104,8 @@ describe("C3 QingML 富格式文档管线", () => {
     }
   });
 
-  it("buildQingmlPrompt 富格式提示词契约:高级块说明与示例可解析", () => {
-    const prompt = buildQingmlPrompt("");
+  it("主 system 富格式提示词契约:高级块说明与示例可解析", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
 
     expect(prompt).toContain("任务清单 <tasks>");
     expect(prompt).toContain("提示框 <callout");
@@ -124,7 +123,7 @@ describe("C3 QingML 富格式文档管线", () => {
     expectQingmlExample(prompt, "<callout emoji=\"💡\" tone=\"info\">提示内容</callout>");
     expectQingmlExample(prompt, "<math-block>E=mc^2</math-block>");
     expectQingmlExample(prompt, alignMathBlockExample);
-    expectQingmlExample(prompt, "<columns><column ratio=\"0.5\">块级内容</column><column ratio=\"0.5\">块级内容</column></columns>");
+    expectQingmlExample(prompt, "<columns><column ratio=\"0.5\"><p>左栏</p></column><column ratio=\"0.5\"><p>右栏</p></column></columns>");
   });
 
   it("system.ts 编辑提示词契约:高级块类型章节存在且示例合法", () => {

@@ -11,12 +11,13 @@ import type { SessionState } from "../bridge/sessionState.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {
-  buildQingmlPrompt,
+  buildQingmlSteeringTail,
   compileAiDocumentWithBlockRetry,
   isLengthTruncatedFinishReason,
   materialContextFrom,
   parseAiDocumentFromQingml,
 } from "./generateDoc.js";
+import { AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 import {
   countByUnit,
   countVisibleChars,
@@ -330,11 +331,11 @@ export function createWriteDraftTool(opts: {
       const messages = context?.requestContext?.get("messages");
       const selectedMaterials = pickMaterials(materials, input.basedOnMaterialIds);
       const materialContext = materialContextFrom(selectedMaterials);
-      const system = buildQingmlPrompt(materialContext);
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
-      const draftMessages = buildDraftMessages(messages, userPrompt, system);
+      const steeringTail = buildQingmlSteeringTail(materialContext, userPrompt);
+      const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
       const runConfig = runConfigForIntent(input.intent ?? "express");
       const nestedListUserIntent = [
         context?.requestContext?.get("userText"),
@@ -516,7 +517,7 @@ export function createWriteDraftTool(opts: {
           toolName: "writeDraft",
           toolCallId: context?.agent?.toolCallId ?? null,
           modelName: activeModelId,
-          system,
+          system: AIIR_SYSTEM_PROMPT,
           user: params.prompt,
           attempt: laneKey + 1,
           maxAttempts: raceLanes * raceRounds,
@@ -532,6 +533,7 @@ export function createWriteDraftTool(opts: {
             lane: laneKey,
             tier: "flash",
             messages: draftMessages,
+            branchSteeringTail: buildQingmlSteeringTail(materialContext, params.prompt),
             thinking: params.thinking,
             temperature: params.temperature,
             abortSignal: params.abortSignal,

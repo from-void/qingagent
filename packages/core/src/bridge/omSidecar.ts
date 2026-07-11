@@ -19,8 +19,12 @@ import type {
   RepairableLanguageModel,
   RepairingModelRouterLanguageModel,
 } from "../llm/repairingModel.js";
+import type { BranchMessage, SessionSnapshot } from "../llm/modelConfig.js";
 import {
   anthropicBaseUrl,
+  advanceSessionSnapshotEpoch,
+  branchCall,
+  getSessionSnapshot,
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
   resolveDeepseekAuth,
@@ -48,7 +52,7 @@ export const OM_SIDECAR_ENV = "QINGAGENT_OM_SIDECAR";
 export const OM_COMPRESS_ENV = "QINGAGENT_OM_COMPRESS";
 export const OM_COMPRESS_THRESHOLD_ENV = "QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS";
 export const OM_COMPRESS_RECENT_TURNS_ENV = "QINGAGENT_OM_COMPRESS_RECENT_TURNS";
-export const OM_DEFAULT_COMPRESS_THRESHOLD_TOKENS = 160_000;
+export const OM_DEFAULT_COMPRESS_THRESHOLD_TOKENS = 500_000;
 export const OM_DEFAULT_RECENT_TURNS = 12;
 
 type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropicV5>>;
@@ -61,6 +65,8 @@ const observerModelCache = new Map<
 const OBSERVER_MODEL_CACHE_LIMIT = 16;
 const OM_STORAGE_THREAD_PREFIX = "om-sidecar";
 const OM_STORAGE_RESOURCE_SUFFIX = "om-sidecar";
+const OM_BRANCH_CALL_SITE_KEY = "omBranchCallSite";
+const OM_BRANCH_SNAPSHOT_KEY = "omBranchSnapshot";
 let omSidecarPromise: Promise<ObservationalMemory | null> | null = null;
 const omSidecarQueues = new Map<string, Promise<void>>();
 const tokenCounter = new TokenCounter();
@@ -123,6 +129,7 @@ interface OmSidecarTurnSnapshot {
   messages: CoreMessage[];
   chatHistory: ChatMessage[];
   cursor: OmSidecarCursor | null;
+  branchSnapshot: SessionSnapshot | null;
   currentTurn: {
     turnIndex: number;
     startMessageIndex: number;
@@ -132,13 +139,13 @@ interface OmSidecarTurnSnapshot {
 export function isOmSidecarEnabled(
   env: Pick<NodeJS.ProcessEnv, string> = process.env,
 ): boolean {
-  return isTruthyFlag(env[OM_SIDECAR_ENV]);
+  return isEnabledByDefault(env[OM_SIDECAR_ENV]);
 }
 
 export function isOmCompressionEnabled(
   env: Pick<NodeJS.ProcessEnv, string> = process.env,
 ): boolean {
-  return isTruthyFlag(env[OM_COMPRESS_ENV]);
+  return isEnabledByDefault(env[OM_COMPRESS_ENV]);
 }
 
 export function omCompressionThresholdTokens(
@@ -447,41 +454,51 @@ export async function prepareOmContextForTurn(
   projection.projectedTokenEstimate = projection.fullTokenEstimate;
 
   if (isOmCompressionEnabled()) {
-    projection = buildOmCompressedProjection({
-      sessionId: state.sessionId,
-      messages: state.messages,
-      chatHistory: state.chatHistory,
-      observations,
-      observedMessageIds,
-      compressionAlreadyActive: state.omCompressionActive === true,
-      latestTurnIndex: state.turnCounter,
-      thresholdTokens: omCompressionThresholdTokens(),
-      recentTurns: omCompressionRecentTurns(),
-    });
-    if (projection.compressed && state.omCompressionActive !== true) {
-      if (options.allowCompressionActivation === false) {
-        projection = {
+    projection = state.omCompressionActive === true && state.omCompressionSnapshot
+      ? buildFrozenOmProjection(state, state.omCompressionSnapshot)
+      : buildOmCompressedProjection({
+          sessionId: state.sessionId,
           messages: state.messages,
-          compressed: false,
-          fullTokenEstimate: projection.fullTokenEstimate,
-          projectedTokenEstimate: projection.fullTokenEstimate,
-          removedMessageIds: [],
-        };
-      } else {
-        state.omCompressionActive = true;
-        recordOmSidecarSpan(state, "om_projection_switch", {
-          modelId: resolveModelId(requestContext, "flash"),
-          fullTokenEstimate: projection.fullTokenEstimate,
-          projectedTokenEstimate: projection.projectedTokenEstimate,
-          removedMessageCount: projection.removedMessageIds.length,
+          chatHistory: state.chatHistory,
+          observations,
+          observedMessageIds,
+          compressionAlreadyActive: state.omCompressionActive === true,
+          latestTurnIndex: state.turnCounter,
+          thresholdTokens: omCompressionThresholdTokens(),
+          recentTurns: omCompressionRecentTurns(),
         });
-        void schedulePersist(state, "om_projection:compression_latch").catch((error) =>
-          logger.warn("[omSidecar] failed to persist compression latch", {
-            sessionId: state.sessionId,
-            error: stringifyError(error),
-          }),
-        );
-      }
+    const firstActivation = projection.compressed && state.omCompressionActive !== true;
+    if (firstActivation && options.allowCompressionActivation === false) {
+      projection = {
+        messages: state.messages,
+        compressed: false,
+        fullTokenEstimate: projection.fullTokenEstimate,
+        projectedTokenEstimate: projection.fullTokenEstimate,
+        removedMessageIds: [],
+      };
+    } else if (projection.compressed && !state.omCompressionSnapshot) {
+      // 兼容旧 metadata 只有 active=true 的会话：在本次 turn 边界一次性冻结，不再逐轮重算头部。
+      state.omCompressionActive = true;
+      const epoch = (state.omCompressionEpoch ?? 0) + 1;
+      state.omCompressionEpoch = epoch;
+      state.omCompressionSnapshot = {
+        epoch,
+        observations: observations ?? "",
+        removedMessageIds: [...projection.removedMessageIds],
+      };
+      advanceSessionSnapshotEpoch(state.sessionId);
+      recordOmSidecarSpan(state, "om_projection_switch", {
+        modelId: resolveModelId(requestContext, "flash"),
+        fullTokenEstimate: projection.fullTokenEstimate,
+        projectedTokenEstimate: projection.projectedTokenEstimate,
+        removedMessageCount: projection.removedMessageIds.length,
+      });
+      void schedulePersist(state, "om_projection:compression_latch").catch((error) =>
+        logger.warn("[omSidecar] failed to persist compression latch", {
+          sessionId: state.sessionId,
+          error: stringifyError(error),
+        }),
+      );
     }
   }
 
@@ -495,6 +512,32 @@ export async function prepareOmContextForTurn(
     projectedTokenEstimate: projection.projectedTokenEstimate,
     removedMessageIds: projection.removedMessageIds,
     observations,
+  };
+}
+
+function buildFrozenOmProjection(
+  state: SessionState,
+  snapshot: NonNullable<SessionState["omCompressionSnapshot"]>,
+): OmProjectionResult {
+  const fullTokenEstimate = countCoreMessageTokens(state.sessionId, state.messages);
+  const removedIds = new Set(snapshot.removedMessageIds);
+  const assignments = buildOmMessageAssignments({
+    sessionId: state.sessionId,
+    messages: state.messages,
+    chatHistory: state.chatHistory,
+    latestTurnIndex: state.turnCounter,
+  });
+  const byIndex = new Map(assignments.map((assignment) => [assignment.messageIndex, assignment.id]));
+  const kept = state.messages.filter((_message, index) => !removedIds.has(byIndex.get(index) ?? ""));
+  const messages = snapshot.observations
+    ? insertObservationProjectionMessage(kept, snapshot.observations)
+    : kept;
+  return {
+    messages,
+    compressed: true,
+    fullTokenEstimate,
+    projectedTokenEstimate: countCoreMessageTokens(state.sessionId, messages),
+    removedMessageIds: [...snapshot.removedMessageIds],
   };
 }
 
@@ -710,7 +753,7 @@ async function runOmSidecarSnapshotAfterTurn(
       threadId: storageThreadId,
       resourceId: storageResourceId,
       messages: stableContextMessages,
-      requestContext,
+      requestContext: withOmCallSite(requestContext, "omObserve"),
     });
     await commitObservedIdsFromRecord(observeResult.record, commitObservedIds);
     return;
@@ -723,7 +766,7 @@ async function runOmSidecarSnapshotAfterTurn(
       messages: stableContextMessages,
       pendingTokens: status.pendingTokens,
       record: status.record,
-      requestContext,
+      requestContext: withOmCallSite(requestContext, "omObserve"),
     });
   }
 
@@ -732,7 +775,7 @@ async function runOmSidecarSnapshotAfterTurn(
       storageThreadId,
       storageResourceId,
       undefined,
-      requestContext,
+      withOmCallSite(requestContext, "omReflect"),
     );
   }
 }
@@ -820,6 +863,8 @@ function createOmSidecarSnapshot(
     messages: [...state.messages],
     chatHistory: [...state.chatHistory],
     cursor: state.omSidecarCursor ? { ...state.omSidecarCursor } : null,
+    // 冻结调度当时的主链快照；队列延迟后不得按 sessionId 借用下一轮 body。
+    branchSnapshot: getSessionSnapshot(state.sessionId),
     currentTurn: turnIndex != null && startMessageIndex != null
       ? { turnIndex, startMessageIndex }
       : null,
@@ -838,6 +883,7 @@ function createOmRequestContextSnapshot(
     ["origin", requestContext.get("origin") ?? "manual"],
     ["streamId", requestContext.get("streamId") ?? null],
     ["clientTraceId", requestContext.get("clientTraceId") ?? null],
+    [OM_BRANCH_SNAPSHOT_KEY, snapshot.branchSnapshot],
   ];
   const modelOverrides = cloneJsonLikeValue(
     requestContext.get(MODEL_OVERRIDES_CONTEXT_KEY),
@@ -845,6 +891,26 @@ function createOmRequestContextSnapshot(
   if (modelOverrides !== undefined) {
     entries.push([MODEL_OVERRIDES_CONTEXT_KEY, modelOverrides]);
   }
+  return new RequestContext(entries);
+}
+
+function withOmCallSite(
+  requestContext: RequestContext | undefined,
+  callSite: "omObserve" | "omReflect",
+): RequestContext | undefined {
+  if (!requestContext) return undefined;
+  const entries: Array<[string, unknown]> = [
+    [MASTRA_THREAD_ID_KEY, requestContext.get(MASTRA_THREAD_ID_KEY)],
+    [MASTRA_RESOURCE_ID_KEY, requestContext.get(MASTRA_RESOURCE_ID_KEY)],
+    ["sessionId", requestContext.get("sessionId")],
+    ["origin", requestContext.get("origin")],
+    ["streamId", requestContext.get("streamId")],
+    ["clientTraceId", requestContext.get("clientTraceId")],
+    [OM_BRANCH_SNAPSHOT_KEY, requestContext.get(OM_BRANCH_SNAPSHOT_KEY)],
+    [OM_BRANCH_CALL_SITE_KEY, callSite],
+  ];
+  const modelOverrides = requestContext.get(MODEL_OVERRIDES_CONTEXT_KEY);
+  if (modelOverrides !== undefined) entries.push([MODEL_OVERRIDES_CONTEXT_KEY, modelOverrides]);
   return new RequestContext(entries);
 }
 
@@ -997,6 +1063,9 @@ function getObserverFlashModelFor(
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const effectiveKey = apiKey || qingagentModelConfig.apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
+  const callSite = requestContext?.get(OM_BRANCH_CALL_SITE_KEY) === "omReflect"
+    ? "omReflect"
+    : "omObserve";
   const evict = () => {
     if (observerModelCache.size >= OBSERVER_MODEL_CACHE_LIMIT) {
       const oldest = observerModelCache.keys().next().value;
@@ -1019,7 +1088,7 @@ function getObserverFlashModelFor(
     }
     return wrapModernModelUsage(model, {
       requestContext,
-      callSite: "omSidecar",
+      callSite,
       modelId: anthModel,
       keyOrigin: resolveDeepseekAuth(requestContext).origin,
     });
@@ -1033,11 +1102,102 @@ function getObserverFlashModelFor(
     evict();
     observerModelCache.set(cacheKey, model);
   }
-  return wrapModernModelUsage(model, {
+  const fallback = wrapModernModelUsage(model, {
     requestContext,
-    callSite: "omSidecar",
+    callSite,
     modelId: resolveModelId(requestContext, "flash"),
     keyOrigin: resolveDeepseekAuth(requestContext).origin,
+  });
+  const snapshot = requestContext?.get(OM_BRANCH_SNAPSHOT_KEY) as SessionSnapshot | null | undefined;
+  if (!snapshot) return fallback;
+  return createOmBranchModel(fallback, requestContext, snapshot, callSite);
+}
+
+function createOmBranchModel<T extends RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel>(
+  fallback: T,
+  requestContext: RequestContext | undefined,
+  snapshot: NonNullable<ReturnType<typeof getSessionSnapshot>>,
+  callSite: "omObserve" | "omReflect",
+): T {
+  const runBranch = async (options: Record<string, unknown>) => {
+    const prompt = omPromptToBranchMessages(options.prompt);
+    const steeringTail: BranchMessage[] = [
+      ...prompt,
+      {
+        role: "user",
+        content: callSite === "omReflect"
+          ? "不要调用任何工具。直接完成上述长期观察反思任务，只输出任务要求的结果。"
+          : "不要调用任何工具。直接完成上述长期观察提炼任务，只输出任务要求的结果。",
+      },
+    ];
+    return await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail,
+      callSite,
+      requestContext,
+      abortSignal: options.abortSignal as AbortSignal | undefined,
+      maxTokens: typeof options.maxOutputTokens === "number" ? options.maxOutputTokens : undefined,
+      thinking: false,
+    });
+  };
+  return new Proxy(fallback, {
+    get(target, property, receiver) {
+      if (property === "doGenerate") {
+        return async (options: Record<string, unknown>) => {
+          const result = await runBranch(options);
+          if (!result.ok) return await target.doGenerate(options as never);
+          return {
+            content: [{ type: "text", text: result.text }],
+            finishReason: result.finishReason ?? "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            warnings: [],
+          };
+        };
+      }
+      if (property === "doStream") {
+        return async (options: Record<string, unknown>) => {
+          const result = await runBranch(options);
+          if (!result.ok) return await target.doStream(options as never);
+          return {
+            stream: new ReadableStream({
+              start(controller) {
+                controller.enqueue({ type: "stream-start", warnings: [] });
+                controller.enqueue({ type: "text-start", id: "om-branch-text" });
+                controller.enqueue({ type: "text-delta", id: "om-branch-text", delta: result.text });
+                controller.enqueue({ type: "text-end", id: "om-branch-text" });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: result.finishReason ?? "stop",
+                  usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                });
+                controller.close();
+              },
+            }),
+          };
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+function omPromptToBranchMessages(prompt: unknown): BranchMessage[] {
+  if (!Array.isArray(prompt)) return [];
+  return prompt.flatMap((message) => {
+    if (!message || typeof message !== "object") return [];
+    const record = message as Record<string, unknown>;
+    const role = record.role;
+    if (role !== "system" && role !== "user" && role !== "assistant") return [];
+    const content = typeof record.content === "string"
+      ? record.content
+      : Array.isArray(record.content)
+        ? record.content.flatMap((part) => {
+            if (!part || typeof part !== "object") return [];
+            const text = (part as Record<string, unknown>).text;
+            return typeof text === "string" ? [text] : [];
+          }).join("\n")
+        : "";
+    return content ? [{ role, content } satisfies BranchMessage] : [];
   });
 }
 
@@ -1190,13 +1350,13 @@ function recordOmSidecarSpan(
   }
 }
 
-function isTruthyFlag(value: string | undefined): boolean {
-  if (!value) return false;
+function isEnabledByDefault(value: string | undefined): boolean {
+  if (value == null || !value.trim()) return true;
   const normalized = value.trim().toLowerCase();
-  return normalized === "1" ||
-    normalized === "true" ||
-    normalized === "yes" ||
-    normalized === "on";
+  return normalized !== "0" &&
+    normalized !== "false" &&
+    normalized !== "no" &&
+    normalized !== "off";
 }
 
 function stringifyError(error: unknown): string {

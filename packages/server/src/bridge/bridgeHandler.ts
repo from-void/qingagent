@@ -102,6 +102,9 @@ import {
   type Material,
   type ModelOverrides,
   resolveModelParams,
+  beginSessionSnapshotTurn,
+  clearSessionSnapshot,
+  clearQuestionBranch,
   qingagentAgent,
   askUserTool,
   isDirectionReset,
@@ -2191,6 +2194,11 @@ async function* handleResume(
       [QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY, frozenWorkingMemorySnapshot],
       [QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY, omContextForResume.tailObservationPrompt],
       ["sessionId", session.sessionId],
+      ["streamId", streamId],
+      ["abortSignal", abortController.signal],
+      ["runId", runId],
+      ["clientTraceId", session.clientTraceId ?? null],
+      ["origin", session.origin ?? "manual"],
       ["docVersion", session.docVersion],
       ["doc", session.doc],
       ["legacySections", session.legacySections],
@@ -2201,6 +2209,7 @@ async function* handleResume(
       ["directionChangeAskedSinceLastWrite", session._directionChangeAskedSinceLastWrite === true],
     ]);
     resumeRequestContext = requestContext;
+    beginSessionSnapshotTurn(requestContext);
     // e2e-loop-0704 R13:resume 时模型只看得到 raw 答案(chosen 里是 "v2" 这类选项
     // value),题面/选项文案只发给过前端 → 模型读不懂答卷,收到答案后 5s 内再弹一份
     // 同类问卷。把题面/选中项 label 回填进 resumeData,模型在它实际走的上下文
@@ -2878,6 +2887,8 @@ export function forgetSession(sessionId: string): boolean {
   unregisterSessionFolderSources(sessionId);
   unregisterBrowserFolderSession(sessionId);
   invalidateSessionWorkspace(sessionId);
+  clearSessionSnapshot(sessionId);
+  clearQuestionBranch(sessionId);
   return deleted;
 }
 

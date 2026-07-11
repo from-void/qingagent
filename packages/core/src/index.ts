@@ -78,6 +78,9 @@ export {
   resolveModelParams,
   resolveModelTier,
   createDeepseekProvider,
+  beginSessionSnapshotTurn,
+  advanceSessionSnapshotEpoch,
+  clearSessionSnapshot,
   getDeepseekModel,
   sanitizeBaseUrl,
   sanitizeModelId,
@@ -85,6 +88,7 @@ export {
   getVisionModel,
   anthropicBaseUrl,
 } from "./llm/modelConfig.js";
+export { clearQuestionBranch } from "./services/genService.js";
 export { installNetProbe } from "./llm/netProbe.js";
 export { warmUpModelEndpoint } from "./llm/modelWarmup.js";
 export {

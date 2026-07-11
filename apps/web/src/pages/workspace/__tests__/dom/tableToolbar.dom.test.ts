@@ -140,6 +140,27 @@ describe("tableToolbar PM-010", () => {
     }
   });
 
+  it("单行整表选区仍能仅从 CellSelection 锚头方向反推出 row 轴", () => {
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [table("table-1", [["a", "b"]])],
+      } satisfies PmDoc,
+    });
+    try {
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")).toEqual({
+        axis: "row",
+        startIndex: 0,
+        endIndex: 0,
+      });
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("两张表选列时 selectedCell 装饰只落到目标表", () => {
     const editor = createTwoTableEditor();
     try {

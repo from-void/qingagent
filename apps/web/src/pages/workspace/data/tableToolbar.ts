@@ -166,7 +166,7 @@ function selectTableAxis(
   const tableStart = located.pos + 1;
   const anchorOffset = axis === "column"
     ? map.positionAt(0, low, located.table)
-    : map.positionAt(high, 0, located.table);
+    : map.positionAt(high, map.width - 1, located.table);
   const headOffset = axis === "column"
     ? map.positionAt(0, high, located.table)
     : map.positionAt(low, 0, located.table);

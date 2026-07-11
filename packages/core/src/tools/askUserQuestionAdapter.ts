@@ -9,7 +9,7 @@ const MAX_PREVIEW_CODE_POINTS = 800;
 
 export const askUserQuestionInputSchema = z.object({
   id: z.string().describe("本次提问的唯一标识"),
-  rationale: z.string().describe("向用户提问的原因，仅供运行时记录"),
+  rationale: z.string().describe("直接展示给用户的问卷副标题，使用面向用户的自然口吻"),
   questions: z
     .union([z.array(z.unknown()), z.string()])
     .describe(

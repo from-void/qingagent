@@ -1,7 +1,6 @@
 import { createScorer } from "@mastra/core/evals";
 import { extractAgentOutput, type AskUserActionOutput } from "./askUserScorers.js";
 import type { AskUserTriggerFixture } from "./askUserTriggerFixtures.js";
-import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 
 export interface AskUserTriggerEvaluation {
   score: 0 | 1;
@@ -43,7 +42,9 @@ export function evaluateAskUserTriggerDecision(
   output: AskUserActionOutput,
 ): AskUserTriggerEvaluation {
   const actualToolNames = uniqueToolNames(output);
-  const asked = actualToolNames.some(isPlanDraftTool);
+  // live 触发评测只覆盖新会话；legacy askUser 兼容由问卷谓词/恢复链测试单独保证。
+  const asked = actualToolNames.includes("planDraft");
+  const calledLegacyAskUser = actualToolNames.includes("askUser");
   const wroteDraft = actualToolNames.includes("writeDraft");
   const askUserWasAlone = asked && actualToolNames.length === 1;
   const textExcerpt = firstTextExcerpt(output.text);
@@ -63,7 +64,7 @@ export function evaluateAskUserTriggerDecision(
     };
   }
 
-  const noAskOk = !asked;
+  const noAskOk = !asked && !calledLegacyAskUser;
   const writeOk = fixture.requireWriteDraft === true ? wroteDraft : !wroteDraft;
   const ok = noAskOk && writeOk;
   return {

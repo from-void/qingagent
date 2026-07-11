@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import { qingagentAgent } from "../agents/qingagent.js";
-import { buildSystemPrompt, AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
+import {
+  buildSystemPrompt,
+  AIIR_SYSTEM_PROMPT,
+  WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL,
+} from "../prompts/system.js";
+import { adaptAskUserQuestionInput } from "../tools/askUserQuestionAdapter.js";
+
+const EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL = `{"id":"wechat-search-route","rationale":"先选一种查找方式，我再继续帮你找这篇公众号文章。","questions":[{"header":"查找方式","question":"你想用哪种方式查找公众号文章？","multiSelect":false,"options":[{"value":"login-owned","label":"我有公众号，直接扫码登录（推荐）","description":"借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"login-register","label":"我没有，先去 mp.weixin.qq.com 免费注册再扫码","description":"注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"fallback-websearch","label":"先用联网搜索（效果较差，只有零散公开网页）","description":"不登录公众号后台，改用公开网页检索，结果可能不完整。"}]}]}`;
 
 describe("system prompt S3", () => {
   it("返回单一 QingML prompt,包含新工具契约", () => {
@@ -133,6 +140,46 @@ describe("system prompt S3", () => {
     ]) {
       expect(prompt).not.toContain(forbidden);
     }
+  });
+
+  it("公众号路由范本整段逐字稳定，adapter 保留完整题目与选项顺序", () => {
+    expect(WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL)
+      .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+    expect(buildSystemPrompt()).toContain(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+
+    const input = JSON.parse(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+    expect(adaptAskUserQuestionInput(input)).toEqual({
+      id: "wechat-search-route",
+      rationale: "先选一种查找方式，我再继续帮你找这篇公众号文章。",
+      inputQuestionCount: 1,
+      questions: [{
+        id: "q1",
+        header: "查找方式",
+        label: "你想用哪种方式查找公众号文章？",
+        kind: { kind: "single" },
+        placeholder: null,
+        options: [
+          {
+            value: "login-owned",
+            label: "我有公众号，直接扫码登录（推荐）",
+            description: "借用公众号后台自带的搜索能力，你的公众号只是登录入口。",
+            preview: null,
+          },
+          {
+            value: "login-register",
+            label: "我没有，先去 mp.weixin.qq.com 免费注册再扫码",
+            description: "注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。",
+            preview: null,
+          },
+          {
+            value: "fallback-websearch",
+            label: "先用联网搜索（效果较差，只有零散公开网页）",
+            description: "不登录公众号后台，改用公开网页检索，结果可能不完整。",
+            preview: null,
+          },
+        ],
+      }],
+    });
   });
 
   it("连续两次构建 QingML prompt 逐字节稳定", () => {

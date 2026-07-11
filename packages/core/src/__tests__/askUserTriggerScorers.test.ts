@@ -25,12 +25,18 @@ describe("planDraft trigger fixtures", () => {
     }).score).toBe(0);
   });
 
-  it("legacy askUser 仍按老会话方向问卷计分", () => {
+  it("新会话误调 legacy askUser 不得在触发评测中假绿", () => {
     const fixture = askUserTriggerFixtures.find((item) => item.expectedDecision === "ask")!;
 
     expect(evaluateAskUserTriggerDecision(fixture, {
       toolNames: ["askUser"],
       text: "",
-    }).score).toBe(1);
+    }).score).toBe(0);
+
+    const noAskFixture = askUserTriggerFixtures.find((item) => item.expectedDecision === "noAsk")!;
+    expect(evaluateAskUserTriggerDecision(noAskFixture, {
+      toolNames: ["askUser"],
+      text: "",
+    }).score).toBe(0);
   });
 });

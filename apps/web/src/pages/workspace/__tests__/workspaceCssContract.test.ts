@@ -72,6 +72,16 @@ describe("workspaceCssContract", () => {
     expect(snapshotView).toContain('tbl-color-group${openTableColor === "cell" ? " open" : ""}');
   });
 
+  it("keeps table CellSelection overlay, clipped chrome and PM resize cursor styles", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    expect(workspaceCss).toMatch(/\.selectedCell::after\{[\s\S]*background:color-mix\(in srgb,var\(--mark\) 18%,transparent\)/);
+    expect(workspaceCss).toMatch(/\.tbl-chrome-viewport\{\s*overflow:clip;pointer-events:none/);
+    expect(workspaceCss).toContain("#view-workspace .wf-doc .column-resize-handle");
+    expect(workspaceCss).toContain("#view-workspace .wf-doc.resize-cursor");
+    expect(workspaceCss).not.toContain(".tbl-cell-sel");
+  });
+
   it("keeps round-1 editor CSS fixes present", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     const componentCss = readFileSync(path.join(repoRoot, "packages/ui-kit/src/components.css"), "utf8");

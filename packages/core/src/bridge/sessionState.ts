@@ -107,6 +107,8 @@ export interface SessionState {
   doc?: PmDoc;
   legacySections: LegacySection[];
   docVersion: number;
+  /** 仅成功创建新文档版本时推进；首页按此字段排序。 */
+  lastContentEditedAt: string | null;
   streamId: string | null;
   runId: string | null;
   toolCallId: string | null;
@@ -255,7 +257,10 @@ export interface PersistAuditSnapshot {
 }
 
 /** Create a fresh session with initial state. */
-export function createSession(sessionId: string): SessionState {
+export function createSession(
+  sessionId: string,
+  createdAt = new Date().toISOString(),
+): SessionState {
   return {
     sessionId,
     docId: sessionId,
@@ -271,6 +276,7 @@ export function createSession(sessionId: string): SessionState {
     doc: undefined,
     legacySections: [],
     docVersion: 0,
+    lastContentEditedAt: createdAt,
     streamId: null,
     runId: null,
     toolCallId: null,

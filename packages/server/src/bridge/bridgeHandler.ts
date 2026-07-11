@@ -51,7 +51,9 @@ import {
   persistSessionMetadata,
   schedulePersist,
   deriveDocStateFacts,
+  advanceLastContentEditedAt,
   commitDocumentOp,
+  getDocumentVersionCommittedAt,
   documentRepo,
   deriveTitleFromSections,
   deriveActiveOverlay,
@@ -665,10 +667,15 @@ async function* handleCommandInner(
           // Session already active — just re-emit restore frames
           bindClientTraceId(cached, resolvedClientTraceId, origin, modelOverrides);
           // 重连前对齐 DB 权威版本,修复"内存陈旧 docVersion 导致刷新后必现文档冲突"。
-          await reconcileCachedSessionDocFromDb(cached);
+          const cachedReconciledFromDb = await reconcileCachedSessionDocFromDb(cached);
           const wmSnapshot = await ensureWorkingMemorySnapshotWithStatus(cached);
-          if (wmSnapshot.loadedNow && wmSnapshot.persistable) {
-            await schedulePersist(cached, "restore:working_memory_snapshot");
+          if (cachedReconciledFromDb || (wmSnapshot.loadedNow && wmSnapshot.persistable)) {
+            await schedulePersist(
+              cached,
+              cachedReconciledFromDb
+                ? "restore:cached_documents_metadata_reconcile"
+                : "restore:working_memory_snapshot",
+            );
           }
           yield* emitExistingSessionRestore(cached);
           return;
@@ -696,7 +703,8 @@ async function* handleCommandInner(
       if (sessions.has(sessionId)) {
         throw new Error(`Session already exists: ${sessionId}`);
       }
-      const session = createSession(sessionId);
+      const createdAt = new Date().toISOString();
+      const session = createSession(sessionId, createdAt);
       session.threadId = sessionId;
       // 阶段4a：新会话入口拿不到 sessionId（刚生成），这里按真实 sessionId 重新
       // 归一化 clientTraceId（兜底将用本会话的 traceId），再绑定。
@@ -706,6 +714,7 @@ async function* handleCommandInner(
 
       // Persist thread to storage (fire-and-forget — don't block SSE)
       const threadCreatePromise = createSessionThread(sessionId, undefined, {
+        createdAt,
         workingMemorySnapshot: session._workingMemorySnapshot ?? null,
         workingMemorySnapshotLoaded: wmSnapshot.persistable,
       });
@@ -915,6 +924,7 @@ async function* handleCommandInner(
         return;
       }
 
+      const previousDocVersion = session.docVersion;
       const result = await commitDocumentOp({
         docId: session.docId ?? session.sessionId,
         threadId: session.threadId ?? session.sessionId,
@@ -965,6 +975,7 @@ async function* handleCommandInner(
         return;
       }
 
+      advanceLastContentEditedAt(session, result, previousDocVersion);
       const legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
       // 单调防回退:并发/乱序写入下不让 session.docVersion 退到更低版本——否则重连会重放陈旧版本、
       // 客户端发过期 expectedDocumentSnapshot 触发必现文档冲突(配合重连时的 DB reconcile 兜底)。
@@ -1045,6 +1056,7 @@ async function* handleCommandInner(
           return;
         }
         const submittedDoc = normalizePmDoc(markdownToPm(fullDraftOp.markdown));
+        const previousDocVersion = session.docVersion;
         const result = await commitDocumentOp({
           docId: session.docId ?? session.sessionId,
           threadId: session.threadId ?? session.sessionId,
@@ -1079,6 +1091,7 @@ async function* handleCommandInner(
           yield docWriteReason(clientMutationId, result.status === "not_found" ? "not_found" : "validation_error");
           return;
         }
+        advanceLastContentEditedAt(session, result, previousDocVersion);
         session.doc = result.doc;
         session.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
         session.docVersion = result.docVersion;
@@ -2464,13 +2477,22 @@ async function* handleResume(
  * `documents.doc_version` 由 commitDocumentOp 与正文原子写入,是唯一权威。这里以它为准向上对齐
  * (只在 DB 更高时覆盖,绝不把内存的更新内容往回退)。失败不阻断 restore。
  */
-async function reconcileCachedSessionDocFromDb(session: SessionState): Promise<void> {
+async function reconcileCachedSessionDocFromDb(session: SessionState): Promise<boolean> {
   try {
     const docRow = await documentRepo.load(session.docId);
     if (docRow && docRow.docVersion > session.docVersion) {
       session.docVersion = docRow.docVersion;
       session.doc = docRow.pmDoc;
       session.legacySections = docRow.legacySections as unknown as LegacySection[];
+      try {
+        const committedAt = await getDocumentVersionCommittedAt(session.docId, docRow.docVersion);
+        const committedAtMs = committedAt ? Date.parse(committedAt) : Number.NaN;
+        if (Number.isFinite(committedAtMs)) {
+          session.lastContentEditedAt = new Date(committedAtMs).toISOString();
+        }
+      } catch {
+        // 正文已 DB-win 时仍需返回 true 并持久化；时间查询失败不能吞掉该信号。
+      }
       // DB-win 说明正文已前进到内存 session 版本之后:此前基于旧版本锚点的 review/draft 态全部失效。
       // 必须清掉,否则 restore 会同时发 documentSnapshotWritten(新版) 与 docDiffReady(旧 base),
       // 前端拿旧锚点套新正文(冷恢复 threadPersistence 有此校验/清理,热恢复此前缺失 → 冷热不一致)。
@@ -2506,10 +2528,12 @@ async function reconcileCachedSessionDocFromDb(session: SessionState): Promise<v
           }
         }
       }
+      return true;
     }
   } catch {
     // DB 读失败不阻断重连:保留内存态,restore 照常进行。
   }
+  return false;
 }
 
 /**

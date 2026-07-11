@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
+import { getDocumentsClient } from "@qingagent/core";
 import { getOrRestoreSession, sessionManager } from "../bridge/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 
@@ -38,6 +39,12 @@ describe("external proposals", () => {
     const fullDraftBody = await fullDraft.json() as { status: string; docVersion: number; seq: number };
     expect(fullDraftBody).toMatchObject({ status: "committed", docVersion: 1 });
     expect(fullDraftBody.seq).toBeGreaterThan(0);
+    const committedSession = await getOrRestoreSession(sessionId);
+    const op = await getDocumentsClient().execute({
+      sql: "SELECT created_at FROM document_ops WHERE doc_id = ? AND to_version = ?",
+      args: [sessionId, 1],
+    });
+    expect(committedSession?.lastContentEditedAt).toBe(String(op.rows[0]?.created_at));
 
     const conflict = await propose(sessionId, {
       expectedDocVersion: 0,

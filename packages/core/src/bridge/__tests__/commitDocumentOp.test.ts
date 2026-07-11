@@ -22,6 +22,7 @@ import {
   type TempDocumentsDb,
 } from "../../db/__tests__/dbTestUtils.js";
 import {
+  advanceLastContentEditedAt,
   commitDocumentOp,
   type CommitDocumentOpInput,
 } from "../commitDocumentOp.js";
@@ -288,6 +289,8 @@ describe("commitDocumentOp", () => {
       status: "committed",
       docVersion: 2,
       doc: pmDocFromText("after commit"),
+      createdNewVersion: true,
+      committedAt: "2026-01-02T00:00:00.000Z",
     });
     if (result.status === "committed") {
       fakeSession.doc = result.doc;
@@ -368,6 +371,8 @@ describe("commitDocumentOp", () => {
       docVersion: 3,
       versionId: first.versionId,
       doc: pmDocFromText("second edit"),
+      createdNewVersion: true,
+      committedAt: "2026-01-02T00:00:30.000Z",
     });
     const versions = await listVersions("doc-coalesce");
     expect(versions).toHaveLength(1);
@@ -536,7 +541,14 @@ describe("commitDocumentOp", () => {
       status: "committed",
       docVersion: 3,
       doc: pmDocFromText("second edit"),
+      createdNewVersion: false,
+      committedAt: "2026-01-02T00:00:00.000Z",
     });
+    if (replay.status === "committed") {
+      const staleState = { lastContentEditedAt: "2025-12-31T00:00:00.000Z" };
+      expect(advanceLastContentEditedAt(staleState, replay, 1)).toBe(false);
+      expect(staleState.lastContentEditedAt).toBe("2025-12-31T00:00:00.000Z");
+    }
     await expect(listVersions("doc-coalesce-replay")).resolves.toHaveLength(1);
   });
 
@@ -658,7 +670,10 @@ describe("commitDocumentOp", () => {
 
   it("short-circuits repeated clientMutationId and opId without bumping", async () => {
     await seedDocument();
-    const first = await commitDocumentOp(commitInput({ opId: "op-explicit" }));
+    const first = await commitDocumentOp(
+      commitInput({ opId: "op-explicit" }),
+      { now: () => "2026-01-03T04:05:06.000Z" },
+    );
     expect(first.status).toBe("committed");
 
     const byClientMutationId = await commitDocumentOp(
@@ -670,6 +685,8 @@ describe("commitDocumentOp", () => {
     expect(byClientMutationId).toMatchObject({
       status: "committed",
       docVersion: 2,
+      createdNewVersion: false,
+      committedAt: "2026-01-03T04:05:06.000Z",
     });
 
     const byOpId = await commitDocumentOp(
@@ -681,6 +698,8 @@ describe("commitDocumentOp", () => {
     expect(byOpId).toMatchObject({
       status: "committed",
       docVersion: 2,
+      createdNewVersion: false,
+      committedAt: "2026-01-03T04:05:06.000Z",
     });
 
     const loaded = await documentRepo.load("doc-commit");
@@ -703,7 +722,12 @@ describe("commitDocumentOp", () => {
     const first = await commitDocumentOp(noKeyInput);
     const second = await commitDocumentOp(noKeyInput);
     expect(first).toMatchObject({ status: "committed", docVersion: 2 });
-    expect(second).toMatchObject({ status: "committed", docVersion: 2 });
+    expect(first).toMatchObject({ createdNewVersion: true });
+    expect(second).toMatchObject({
+      status: "committed",
+      docVersion: 2,
+      createdNewVersion: false,
+    });
     const versions = await listVersions("doc-derived");
     expect(versions).toHaveLength(1);
     const rawOps = await getDocumentsClient().execute({
@@ -831,6 +855,8 @@ describe("commitDocumentOp", () => {
       versionId: committed.versionId,
       contentHash: committed.contentHash,
       docVersion: committed.docVersion,
+      createdNewVersion: false,
+      committedAt: committed.committedAt,
     });
   });
 

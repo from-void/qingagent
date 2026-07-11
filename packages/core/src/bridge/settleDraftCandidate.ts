@@ -4,7 +4,7 @@ import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { upsertDocumentSuggestion } from "../db/documentSuggestionsRepo.js";
 import { buildDocumentSnapshot } from "./docGenerator.js";
-import { commitDocumentOp } from "./commitDocumentOp.js";
+import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import type { SessionState, SuggestionRecord } from "./sessionState.js";
@@ -272,6 +272,7 @@ export async function* settleDraftCandidate(opts: {
 
   if (wholeDocument) {
     const nextVersionDoc = state.docDraftCandidateDoc ?? legacySectionsToPm(candidate as never);
+    const previousDocVersion = state.docVersion;
     const result = await commitDocumentOp({
       docId: state.docId,
       threadId: state.threadId ?? state.sessionId,
@@ -328,6 +329,7 @@ export async function* settleDraftCandidate(opts: {
       return { hunkCount: 0, docWritten: false };
     }
 
+    advanceLastContentEditedAt(state, result, previousDocVersion);
     state.doc = result.doc;
     state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
     state.docVersion = result.docVersion;

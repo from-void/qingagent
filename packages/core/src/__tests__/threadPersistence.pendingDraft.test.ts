@@ -14,6 +14,7 @@ import { createSession } from "../bridge/sessionState.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { documentRepo } from "../db/documentRepo.js";
 import { getDocumentsClient } from "../db/documentsClient.js";
+import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
 import { listVersions } from "../db/documentVersionRepo.js";
 import {
   documentInput,
@@ -27,8 +28,21 @@ const { memory, threads } = vi.hoisted(() => {
     getThreadById: vi.fn(async ({ threadId }: { threadId: string }) => threads.get(threadId) ?? null),
     recall: vi.fn(async () => ({ messages: [] })),
     listThreads: vi.fn(async () => ({ threads: [], total: 0, hasMore: false })),
-    updateThread: vi.fn(),
-    saveThread: vi.fn(),
+    updateThread: vi.fn(async ({ id, title, metadata }: {
+      id: string;
+      title: string;
+      metadata: Record<string, unknown>;
+    }) => {
+      const existing = threads.get(id);
+      if (!existing) throw new Error("thread not found");
+      const next = { ...existing, title, metadata, updatedAt: new Date() };
+      threads.set(id, next);
+      return next;
+    }),
+    saveThread: vi.fn(async ({ thread }: { thread: Record<string, unknown> }) => {
+      threads.set(String(thread.id), thread);
+      return thread;
+    }),
   };
   return { memory, threads };
 });
@@ -284,6 +298,8 @@ describe("pending draft rehydrate", () => {
     expect(first.kind).toBe("restored");
     expect(firstState.docVersion).toBe(1);
     expect(docText(firstState.doc)).toBe("首稿候选正文");
+    expect(firstState.lastContentEditedAt)
+      .toBe((await findOpByDocumentVersion(sessionId, 1))?.createdAt);
     await expect(documentDraftRepo.load(sessionId)).resolves.toBeNull();
     await expect(listVersions(sessionId)).resolves.toHaveLength(1);
 
@@ -296,19 +312,86 @@ describe("pending draft rehydrate", () => {
       sourceStreamId: "stream-first",
       sourceToolCallId: "wd-first",
     });
-    const secondState = createSession(sessionId);
+    const secondState = createSession(sessionId, "2020-01-01T00:00:00.000Z");
 
     const second = await rehydratePendingDraft(secondState);
 
     expect(second.kind).toBe("restored");
     expect(secondState.docVersion).toBe(1);
     expect(docText(secondState.doc)).toBe("首稿候选正文");
+    expect(secondState.lastContentEditedAt).toBe("2020-01-01T00:00:00.000Z");
     await expect(listVersions(sessionId)).resolves.toHaveLength(1);
     const ops = await getDocumentsClient().execute({
       sql: "SELECT COUNT(*) AS c FROM document_ops WHERE op_id = ?",
       args: [`generation:${sessionId}:stream-first`],
     });
     expect(Number(ops.rows[0]?.c ?? 0)).toBe(1);
+  });
+
+  it("冷恢复首稿提交在 await 返回前落盘内容时间，第二次进程级冷开保持幂等", async () => {
+    const sessionId = "rehy-first-candidate-cold-persist";
+    const draft = doc([paragraph("block-first", "冷恢复首稿")]);
+    const frozenThreadTime = "2025-01-02T03:04:05.000Z";
+    threads.set(sessionId, {
+      id: sessionId,
+      title: "冷恢复",
+      resourceId: "qingagent-user",
+      createdAt: new Date(frozenThreadTime),
+      updatedAt: new Date(frozenThreadTime),
+      metadata: {
+        docId: sessionId,
+        docState: { kind: "empty" },
+        docVersion: 0,
+        lastContentEditedAt: frozenThreadTime,
+        lastSyncedDocumentSnapshot: 0,
+        legacySections: [],
+        materials: [],
+        title: "冷恢复",
+        runId: null,
+        toolCallId: null,
+        askUserCompleted: false,
+        lastPersistedAt: frozenThreadTime,
+      },
+    });
+    await documentDraftRepo.saveCandidate({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 0,
+      baseHash: getPmContentHash(doc([])),
+      draftPmDoc: draft,
+      sourceStreamId: "stream-cold",
+      sourceToolCallId: "wd-cold",
+    });
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+
+    const first = await loadSessionFromThread(sessionId);
+    const opTime = (await findOpByDocumentVersion(sessionId, 1))?.createdAt;
+    const persistedAfterAwait = threads.get(sessionId)?.metadata as {
+      docVersion?: number;
+      lastContentEditedAt?: string;
+    };
+    expect(first?.docVersion).toBe(1);
+    expect(first?.lastContentEditedAt).toBe(opTime);
+    expect(persistedAfterAwait).toMatchObject({
+      docVersion: 1,
+      lastContentEditedAt: opTime,
+    });
+
+    await documentDraftRepo.saveCandidate({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 0,
+      baseHash: getPmContentHash(doc([])),
+      draftPmDoc: draft,
+      sourceStreamId: "stream-cold",
+      sourceToolCallId: "wd-cold",
+    });
+    memory.updateThread.mockClear();
+    const second = await loadSessionFromThread(sessionId);
+    expect(second?.docVersion).toBe(1);
+    expect(second?.lastContentEditedAt).toBe(opTime);
+    expect(memory.updateThread).not.toHaveBeenCalled();
+    await expect(listVersions(sessionId)).resolves.toHaveLength(1);
   });
 
   it("draft_candidate 首稿缺 source_stream_id 时标 conflict,不拼 undefined opId", async () => {

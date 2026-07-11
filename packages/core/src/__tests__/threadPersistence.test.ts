@@ -56,7 +56,7 @@ const { memory, threads, spans, observability, logger } = vi.hoisted(() => {
       }: {
         filter: { resourceId: string };
         page: number;
-        perPage: number;
+        perPage: number | false;
       }) => {
         const all = Array.from(threads.values())
           .filter((thread) => thread.resourceId === filter.resourceId)
@@ -64,6 +64,13 @@ const { memory, threads, spans, observability, logger } = vi.hoisted(() => {
             (a, b) =>
               (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime(),
           );
+        if (perPage === false) {
+          return {
+            threads: all,
+            total: all.length,
+            hasMore: false,
+          };
+        }
         const start = page * perPage;
         return {
           threads: all.slice(start, start + perPage),
@@ -244,6 +251,7 @@ function metadata(overrides: Partial<QingagentThreadMetadata> = {}): QingagentTh
     docId: "doc-1",
     docState: { kind: "editing" },
     docVersion: 1,
+    lastContentEditedAt: "2026-01-01T00:00:00.000Z",
     lastSyncedDocumentSnapshot: 1,
     legacySections: [textSection("正文")],
     materials: [],
@@ -348,6 +356,7 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.messages).toEqual(original.messages);
   expect(restored?.legacySections).toEqual(original.legacySections);
   expect(restored?.docVersion).toBe(original.docVersion);
+  expect(restored?.lastContentEditedAt).toBe(original.lastContentEditedAt);
   expect(restored?.suggestions).toEqual(original.suggestions);
   expect(restored?.patchVerdicts).toEqual(original.patchVerdicts);
   expect(restored?.materials).toEqual(original.materials);
@@ -411,6 +420,121 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(sessionId);
 
     expect(restored?.docId).toBe(sessionId);
+  });
+
+  it("旧 metadata 懒回填冻结的 thread.updatedAt，await 返回即落盘且二次冷开幂等", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "legacy-content-time-backfill";
+    const oldMeta = metadata({ docId: sessionId });
+    delete oldMeta.lastContentEditedAt;
+    const thread = storedThread(sessionId, oldMeta);
+    thread.updatedAt = new Date("2025-05-06T07:08:09.000Z");
+    threads.set(sessionId, thread);
+    vi.spyOn(documentRepo, "load").mockResolvedValue(null);
+
+    const first = await loadSessionFromThread(sessionId);
+
+    expect(first?.lastContentEditedAt).toBe("2025-05-06T07:08:09.000Z");
+    const persistedAfterAwait = threads.get(sessionId)?.metadata as QingagentThreadMetadata;
+    expect(persistedAfterAwait.lastContentEditedAt).toBe("2025-05-06T07:08:09.000Z");
+    expect((threads.get(sessionId)?.updatedAt as Date).toISOString())
+      .toBe("2026-01-01T00:00:00.000Z");
+
+    memory.updateThread.mockClear();
+    const second = await loadSessionFromThread(sessionId);
+    expect(second?.lastContentEditedAt).toBe("2025-05-06T07:08:09.000Z");
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("metadata 内容时间有效且版本未前进时，恢复不再读取被打开推进的 thread.updatedAt", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "valid-content-time-no-backfill";
+    const thread = storedThread(sessionId, metadata({
+      docId: sessionId,
+      lastContentEditedAt: "2024-01-02T03:04:05.000Z",
+    }));
+    Object.defineProperty(thread, "updatedAt", {
+      get: () => {
+        throw new Error("有效 metadata 不应读取 thread.updatedAt");
+      },
+    });
+    threads.set(sessionId, thread);
+    vi.spyOn(documentRepo, "load").mockResolvedValue(null);
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(restored?.lastContentEditedAt).toBe("2024-01-02T03:04:05.000Z");
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("崩溃窗口按 doc_id + to_version 恢复真实 op 时间，并在返回前覆盖陈旧合法 metadata", async () => {
+    const { commitDocumentOp } = await import("../bridge/commitDocumentOp.js");
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "content-time-crash-window";
+    await saveDocumentRow({
+      docId: sessionId,
+      sessionId,
+      text: "version one",
+      docVersion: 1,
+    });
+    const committed = await commitDocumentOp({
+      docId: sessionId,
+      threadId: sessionId,
+      resourceId: "qingagent-user",
+      expectedDocumentSnapshot: 1,
+      opId: "crash-window-v2",
+      opKind: "replace_doc",
+      actorType: "user",
+      apply: () => ({ nextDoc: pmDoc("version two") }),
+    }, { now: () => "2026-04-05T06:07:08.901Z" });
+    expect(committed).toMatchObject({
+      status: "committed",
+      docVersion: 2,
+      committedAt: "2026-04-05T06:07:08.901Z",
+    });
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 1,
+      doc: pmDoc("version one"),
+      legacySections: [textSection("version one")],
+      lastContentEditedAt: "2020-01-01T00:00:00.000Z",
+    })));
+
+    const first = await loadSessionFromThread(sessionId);
+
+    expect(first?.docVersion).toBe(2);
+    expect(first?.lastContentEditedAt).toBe("2026-04-05T06:07:08.901Z");
+    const persisted = threads.get(sessionId)?.metadata as QingagentThreadMetadata;
+    expect(persisted.docVersion).toBe(2);
+    expect(persisted.lastContentEditedAt).toBe("2026-04-05T06:07:08.901Z");
+
+    memory.updateThread.mockClear();
+    const second = await loadSessionFromThread(sessionId);
+    expect(second?.lastContentEditedAt).toBe("2026-04-05T06:07:08.901Z");
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
+  it("崩溃窗口精确 op 时间缺失时仍持久化 documents DB-win", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const sessionId = "content-time-crash-window-missing-op";
+    await saveDocumentRow({
+      docId: sessionId,
+      sessionId,
+      text: "documents v2 without op",
+      docVersion: 2,
+    });
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 1,
+      lastContentEditedAt: "2020-01-01T00:00:00.000Z",
+    })));
+
+    const restored = await loadSessionFromThread(sessionId);
+
+    expect(restored?.docVersion).toBe(2);
+    expect(restored?.lastContentEditedAt).toBe("2020-01-01T00:00:00.000Z");
+    expect(memory.updateThread).toHaveBeenCalled();
+    expect((threads.get(sessionId)?.metadata as QingagentThreadMetadata).docVersion).toBe(2);
   });
 
   it("恢复时丢弃损坏的 folderSources metadata", async () => {
@@ -1532,6 +1656,21 @@ describe("thread persistence", () => {
     expect(meta?.docId).toBe("session-initial");
   });
 
+  it("新建 SessionState 与 thread 的内容时间严格同源", async () => {
+    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSessionThread } = await import("../bridge/threadPersistence.js");
+    const createdAt = "2026-02-03T04:05:06.789Z";
+    const state = createSession("session-shared-created-at", createdAt);
+
+    await createSessionThread("session-shared-created-at", "同源", { createdAt });
+
+    const thread = threads.get("session-shared-created-at");
+    const meta = thread?.metadata as QingagentThreadMetadata | undefined;
+    expect(state.lastContentEditedAt).toBe(createdAt);
+    expect(meta?.lastContentEditedAt).toBe(createdAt);
+    expect((thread?.createdAt as Date).toISOString()).toBe(createdAt);
+  });
+
   it("keeps persisted threadSummary populated for home listing", async () => {
     const { createSession } = await import("../bridge/sessionState.js");
     const { listSessionThreads, persistSessionMetadata } = await import(
@@ -1564,6 +1703,96 @@ describe("thread persistence", () => {
       status: "editing",
       materialCount: 1,
     });
+  });
+
+  it("首页查询全量排序后分页，≥51 条时不会漏掉 raw updatedAt 前 50 外的内容第一名", async () => {
+    const { listHomeSessionThreads } = await import("../bridge/threadPersistence.js");
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    const all = Array.from({ length: 60 }, (_, index) => ({
+      id: `bulk-${String(index).padStart(2, "0")}`,
+      title: `bulk-${index}`,
+      resourceId: "qingagent-user",
+      createdAt: new Date(base + index),
+      updatedAt: new Date(base + (60 - index) * 1_000),
+      metadata: {
+        lastContentEditedAt: index === 59
+          ? "2027-01-01T00:00:00.000Z"
+          : "2025-01-01T00:00:00.000Z",
+      },
+    }));
+    memory.listThreads
+      .mockResolvedValueOnce({ threads: all, total: all.length, hasMore: false })
+      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+
+    const result = await listHomeSessionThreads({ page: 0, perPage: 50 });
+
+    expect(memory.listThreads).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      page: 0,
+      perPage: false,
+    }));
+    expect(result.threads).toHaveLength(50);
+    expect(result.threads[0]?.id).toBe("bulk-59");
+    expect(result.total).toBe(60);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it("首页查询 current 优先去重，并用统一有效时间与稳定 tie-break", async () => {
+    const { listHomeSessionThreads } = await import("../bridge/threadPersistence.js");
+    const sharedCreatedAt = new Date("2026-01-01T00:00:00.000Z");
+    const currentDuplicate = {
+      id: "same-id",
+      title: "current",
+      resourceId: "qingagent-user",
+      createdAt: sharedCreatedAt,
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      metadata: { lastContentEditedAt: "not-a-date", source: "current" },
+    };
+    const legacyDuplicate = {
+      ...currentDuplicate,
+      title: "legacy",
+      resourceId: "user-default",
+      updatedAt: new Date("2028-01-01T00:00:00.000Z"),
+      metadata: { lastContentEditedAt: "2029-01-01T00:00:00.000Z", source: "legacy" },
+    };
+    const tieB = {
+      id: "b-id",
+      title: "b",
+      resourceId: "qingagent-user",
+      createdAt: new Date("invalid"),
+      updatedAt: new Date("invalid"),
+      metadata: { lastContentEditedAt: null },
+    };
+    const tieA = { ...tieB, id: "a-id", title: "a" };
+    const newerCreated = {
+      ...tieB,
+      id: "newer-created",
+      title: "newer",
+      createdAt: new Date("2026-03-01T00:00:00.000Z"),
+      metadata: { lastContentEditedAt: "1970-01-01T00:00:00.000Z" },
+    };
+    memory.listThreads
+      .mockResolvedValueOnce({
+        threads: [currentDuplicate, tieB, tieA, newerCreated],
+        total: 4,
+        hasMore: false,
+      })
+      .mockResolvedValueOnce({ threads: [legacyDuplicate], total: 1, hasMore: false });
+
+    const result = await listHomeSessionThreads({ page: 0, perPage: 10 });
+
+    expect(result.total).toBe(4);
+    expect(result.threads.filter((thread) => thread.id === "same-id")).toHaveLength(1);
+    expect(result.threads.find((thread) => thread.id === "same-id")?.title).toBe("current");
+    expect(result.threads.find((thread) => thread.id === "same-id")?.contentEditedAt)
+      .toBe("2026-02-01T00:00:00.000Z");
+    expect(result.threads.map((thread) => thread.id)).toEqual([
+      "same-id",
+      "newer-created",
+      "a-id",
+      "b-id",
+    ]);
+    expect(result.threads.every((thread) => Number.isFinite(Date.parse(thread.contentEditedAt))))
+      .toBe(true);
   });
 
   it("reads document body fields from the documents table by default", async () => {

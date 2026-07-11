@@ -14,10 +14,9 @@ import {
   CARD_WIDTH,
   CardRenderer,
   createDefaultRegistry,
-  createTemplateSelector,
 } from "chinese-masonry";
 import "chinese-masonry/style.css";
-import type { ArticleData, SelectorOptions, TemplateDefinition } from "chinese-masonry";
+import type { SelectorOptions } from "chinese-masonry";
 import type { HomeSession } from "../data/sessions";
 import { clearOpenSettingsFlag, readOpenSettingsFlag } from "../../../system/modelKeyGate";
 import {
@@ -31,7 +30,8 @@ import {
   type InkEl,
   type InkPlant,
 } from "./inkBrush";
-import { colorConfig, homeSessionToArticle, qingagentTemplateFilter } from "./masonryAdapters";
+import { colorConfig, qingagentTemplateFilter } from "./masonryAdapters";
+import { buildHomeCardEntries, type HomeCardEntry } from "./stableTemplateSelection";
 import {
   clearHomeArrive,
   computeWorkspaceDocRect,
@@ -196,18 +196,7 @@ interface QingjianScrollProps {
 }
 
 // 一张卡在序列中的渲染数据
-interface CardEntry {
-  kind: "new" | "real";
-  id: string;
-  article?: ArticleData;
-  template?: TemplateDefinition;
-  height: number;
-  date: string;
-  createdAt: number;
-  title: string;
-  brief: string;
-  category: string;
-}
+type CardEntry = HomeCardEntry;
 
 // 布局后每张卡的位置
 interface PlacedSlot {
@@ -1157,47 +1146,16 @@ export function QingjianScroll({
       allowFallback: true,
       templateFilter: qingagentTemplateFilter,
     };
-    const selector = createTemplateSelector(registry, selectorOptions);
     // 模板预览模式(URL 带 ?mock):暂时关掉打分/过滤算法,改为按注册表顺序轮流取"全部"模板,
     // 方便把所有模板挨个看一遍;只在 mock 预览下生效,不影响真实首页的选择逻辑。
     const reviewAll = /[?&]mock=/.test(window.location.href);
-    const allTemplates = reviewAll ? registry.getAll() : [];
-
-    // 最近编辑/创建在最左:按 recentEditedAt 降序(长卷左→右 = 新→旧)
-    const sorted = [...sessions].sort((a, b) => b.recentEditedAt - a.recentEditedAt);
-    let previousId: string | undefined;
-    const realEntries: CardEntry[] = sorted.map((session, index) => {
-      const article = homeSessionToArticle(session);
-      const template =
-        reviewAll && allTemplates.length > 0
-          ? allTemplates[index % allTemplates.length]!
-          : selector.select(article, previousId ? { excludeTemplateIds: [previousId] } : undefined);
-      previousId = template.id;
-      return {
-        kind: "real",
-        id: session.id,
-        article,
-        template,
-        height: template.height,
-        date: session.date,
-        createdAt: session.createdAt,
-        title: session.title,
-        brief: session.brief,
-        category: String(session.category ?? ""),
-      };
+    return buildHomeCardEntries({
+      sessions,
+      registry,
+      selectorOptions,
+      reviewAll,
+      newCardHeight: NEW_CARD_H,
     });
-
-    const newCard: CardEntry = {
-      kind: "new",
-      id: "__qj_new__",
-      height: NEW_CARD_H,
-      date: "",
-      createdAt: Date.now() / 1000,
-      title: "新建文档",
-      brief: "",
-      category: "",
-    };
-    return [newCard, ...realEntries];
   }, [sessions]);
 
   // —— 容器高度(用于布局);随容器尺寸更新 ——

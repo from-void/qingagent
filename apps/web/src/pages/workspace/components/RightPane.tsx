@@ -203,6 +203,7 @@ export function RightPane({
       fullpageAsk.status.kind === "running" && !isBigPlanQuestionnaireReady(askSpec);
     return (
       <BigPlanPanel
+        toolCallId={fullpageAsk.id}
         spec={askSpec}
         isStreaming={isQuestionnaireStreaming}
         isSubmitting={submittingAskUserId === fullpageAsk.id}

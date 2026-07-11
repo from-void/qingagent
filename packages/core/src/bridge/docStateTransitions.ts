@@ -2,6 +2,7 @@ import type { DocState, ToolCallSpec } from "@qingagent/contract-ts";
 import type { SessionState } from "./sessionState.js";
 import { getActiveSuspensionOwner, hasActiveSuspension } from "./sessionState.js";
 import { hasApplicableSuggestion, hasCanonicalDoc } from "./docFacts.js";
+import { isQuestionnaireTool } from "./questionnaireTools.js";
 
 export type DocStateTransitionReason =
   | "draft_candidate_committed"
@@ -72,23 +73,17 @@ function iterToolCalls(state: SessionState): ToolCallSpec[] {
   return specs;
 }
 
-function hasToolCallWithStatus(
-  state: SessionState,
-  name: string,
-  statuses: readonly ToolCallSpec["status"]["kind"][],
-): boolean {
-  return iterToolCalls(state).some(
-    (spec) => spec.name === name && statuses.includes(spec.status.kind),
-  );
-}
-
 export function deriveDocStateFacts(state: SessionState): DocStateFacts {
   const hasSuggestion = hasApplicableSuggestion(state);
   return {
     hasDoc: hasCanonicalDoc(state),
     hasReviewPatch: hasSuggestion,
     hasApplicableReviewPatch: hasSuggestion,
-    hasOpenAskUser: hasToolCallWithStatus(state, "askUser", ["pending", "running"]),
+    hasOpenAskUser: iterToolCalls(state).some(
+      (spec) =>
+        isQuestionnaireTool(spec.name) &&
+        (spec.status.kind === "pending" || spec.status.kind === "running"),
+    ),
     hasActiveSuspension: hasActiveSuspension(state),
   };
 }

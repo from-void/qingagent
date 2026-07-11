@@ -18,6 +18,7 @@ import {
   redactedSerializedText,
 } from "./redaction.js";
 import type { SessionState } from "./sessionState.js";
+import type { QuestionnaireToolName } from "./questionnaireTools.js";
 
 function commandPolicyBlockFromOutput(output: string): { title: string; icon: string; reason: string } | null {
   const trimmed = output.trimStart();
@@ -394,88 +395,63 @@ export function wechatAuthQrToolCallSpec(
 
 export const PURE_UI_TOOL_NAMES = new Set(["show_qr"]);
 
-/** 模型提问的语义意图（camelCase，与契约 AskUserPurpose / 工具 enum 一致）。 */
+/** legacy/UI 通道元数据；quickClarification 仅用于兼容老快照。 */
 export type AskUserPurposeKind = "initialBrief" | "quickClarification" | "directionChange";
-
-/**
- * 由代码决定 askUser 的渲染形态——模型不再选择展示方式，只给出 purpose。
- * 形态只由"阶段 + 语义"决定，与问题数量/类型无关：
- * - 已问过一轮 → 浮层，避免重复占用右侧文档区
- * - quickClarification → 浮层，局部澄清不切大表单
- * - 首个 initialBrief / directionChange → 大表单（开写前方向建模 / 推翻重设）
- * - 首轮空态兜底 → 大表单
- * 注意：调用点必须在 state._askUserCompleted 被置真之前取 askedBefore，否则"首轮"判断失效。
- */
-export function decideAskUserRenderMode(
-  purpose: AskUserPurposeKind | null | undefined,
-  docStateKind: string,
-  askedBefore: boolean,
-): "fullpage" | "overlay" {
-  if (askedBefore) return "overlay";
-  if (purpose === "quickClarification") return "overlay";
-  if (purpose === "initialBrief" || purpose === "directionChange") return "fullpage";
-  if (docStateKind === "empty") return "fullpage";
-  return "overlay";
-}
 
 export function askUserRenderModeFromSpec(
   spec: ToolCallSpec | null | undefined,
 ): "fullpage" | "overlay" | null {
   if (spec?.body.kind !== "askUser") return null;
-  const mode = spec.body.data.mode.kind;
+  const mode = spec.body.data.mode?.kind;
   return mode === "fullpage" || mode === "overlay" ? mode : null;
 }
 
-export function askUserPurposeFromSpec(
-  spec: ToolCallSpec | null | undefined,
-): AskUserPurposeKind | null {
-  if (spec?.body.kind !== "askUser") return null;
-  const purpose = spec.body.data.purpose?.kind;
-  return purpose === "initialBrief" || purpose === "quickClarification" || purpose === "directionChange"
-    ? purpose
-    : null;
+export interface BuildAskUserToolCallSpecInput {
+  toolCallId: string;
+  toolName: QuestionnaireToolName;
+  id?: string;
+  renderMode: "fullpage" | "overlay";
+  purpose?: AskUserPurposeKind | null;
+  source?: string | null;
+  rationale?: string | null;
+  questions: Array<{
+    id: string;
+    header?: string | null;
+    label: string;
+    kind: "single" | "multi" | "text" | "slider" | { kind: string };
+    options: Array<{
+      value: string;
+      label: string;
+      description: string | null;
+      preview: string | null;
+    }>;
+    placeholder: string | null;
+    /** F4 滑块配置(kind=slider 时存在),投影必须透传,否则前端 validator 拒收。 */
+    slider?: AskUserSliderSpec | null;
+  }>;
+  status?: ToolCallStatus;
 }
 
 export function buildAskUserToolCallSpec(
-  toolCallId: string,
-  args: {
-    id: string;
-    renderMode: "fullpage" | "overlay";
-    purpose: AskUserPurposeKind | null;
-    source: string | null;
-    rationale: string | null;
-    questions: Array<{
-      id: string;
-      label: string;
-      kind: "single" | "multi" | "text" | "slider" | { kind: string };
-      options: Array<{
-        value: string;
-        label: string;
-        description: string | null;
-        preview: string | null;
-      }>;
-      placeholder: string | null;
-      /** F4 滑块配置(kind=slider 时存在),投影必须透传,否则前端 validator 拒收。 */
-      slider?: AskUserSliderSpec | null;
-    }>;
-  },
-  status: ToolCallStatus = { kind: "pending" },
+  input: BuildAskUserToolCallSpecInput,
 ): ToolCallSpec {
+  const status = input.status ?? { kind: "pending" };
   return {
-    id: toolCallId,
-    name: "askUser",
-    render: { kind: "rightForm" },
+    id: input.toolCallId,
+    name: input.toolName,
+    render: { kind: input.renderMode === "fullpage" ? "rightForm" : "rightOverlay" },
     status,
     body: {
       kind: "askUser",
       data: {
-        id: args.id,
-        mode: { kind: args.renderMode },
-        purpose: args.purpose ? { kind: args.purpose } : null,
-        source: args.source === "null" ? null : (args.source ?? null),
-        rationale: args.rationale === "null" ? null : (args.rationale ?? null),
-        questions: args.questions.map((q) => ({
+        id: input.id ?? input.toolCallId,
+        mode: { kind: input.renderMode },
+        purpose: input.purpose ? { kind: input.purpose } : null,
+        source: input.source === "null" ? null : (input.source ?? null),
+        rationale: input.rationale === "null" ? null : (input.rationale ?? null),
+        questions: input.questions.map((q) => ({
           id: q.id,
+          header: q.header ?? null,
           label: q.label,
           kind: (typeof q.kind === "object" ? q.kind : { kind: q.kind }) as AskUserQuestionKind,
           options: q.options,

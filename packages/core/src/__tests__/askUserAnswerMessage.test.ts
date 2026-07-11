@@ -220,6 +220,38 @@ describe("askUser answer user message", () => {
     });
   });
 
+  it("askUserQuestion 答卷使用通用问卷文案，不伪装成写作方向", async () => {
+    const {
+      buildAskUserAnswerUserMessage,
+      buildVisibleAskUserAnswerMessage,
+    } = await import("../bridge/askUserAnswerMessage.js");
+    const base = askUserSpec("direct-answer-copy");
+    const directSpec: ToolCallSpec = {
+      ...base,
+      name: "askUserQuestion",
+      body: {
+        kind: "askUser",
+        data: { ...askUserData(base), mode: { kind: "overlay" } },
+      },
+    };
+    const answers = { "q-style": { chosen: ["guide"], freeText: null } };
+
+    expect(buildAskUserAnswerUserMessage({
+      toolCallId: directSpec.id,
+      spec: directSpec,
+      answers,
+    })?.content).toContain("我已提交问卷,回答如下:");
+    expect(buildAskUserAnswerUserMessage({
+      toolCallId: directSpec.id,
+      spec: directSpec,
+      answers,
+    })?.content).not.toContain("写作方向问卷");
+    expect(buildVisibleAskUserAnswerMessage(directSpec.id, answers, directSpec)?.parts[0]).toMatchObject({
+      kind: "askUserAnswerCard",
+      data: { title: "已提交问卷" },
+    });
+  });
+
   it("e2e-loop-0704 R13 回归:enrichAskUserResumeAnswersWithLabels 把题面/选中项 label 回填进 resume 答案", async () => {
     const { enrichAskUserResumeAnswersWithLabels } = await import("../bridge/askUserAnswerMessage.js");
     const enriched = enrichAskUserResumeAnswersWithLabels(ANSWERS, askUserSpec());
@@ -237,6 +269,13 @@ describe("askUser answer user message", () => {
       freeText: "避免营销腔",
       questionLabel: "语气",
       chosenLabels: ["温暖", "直接"],
+    });
+    const directSpec = { ...askUserSpec("direct-enrich"), name: "askUserQuestion" };
+    expect(enrichAskUserResumeAnswersWithLabels(ANSWERS, directSpec)["q-style"]).toEqual({
+      chosen: ["guide"],
+      freeText: null,
+      questionLabel: "文章类型",
+      chosenLabels: ["实用指南"],
     });
     // 纯文本题:无选项,只补题面 label,原字段原样保留。
     expect(enriched["q-extra"]).toEqual({
@@ -604,9 +643,8 @@ describe("askUser answer user message", () => {
     }
   });
 
-  it("askUser renderMode helper:空文档默认 fullpage,已有 spec mode 原样沿用", async () => {
-    const { askUserRenderModeFromSpec, decideAskUserRenderMode } = await import("../bridge/toolCards.js");
-    expect(decideAskUserRenderMode(null, "empty", false)).toBe("fullpage");
+  it("askUser renderMode helper 原样沿用 spec mode", async () => {
+    const { askUserRenderModeFromSpec } = await import("../bridge/toolCards.js");
     expect(askUserRenderModeFromSpec(askUserSpec("ask-mode-full"))).toBe("fullpage");
     const base = askUserSpec("ask-mode-overlay");
     const overlaySpec: ToolCallSpec = {

@@ -9,10 +9,13 @@ async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   return frames;
 }
 
-function askUserToolCall(id: string): ToolCallSpec {
+function askUserToolCall(
+  id: string,
+  name: "askUser" | "planDraft" | "askUserQuestion" = "askUser",
+): ToolCallSpec {
   return {
     id,
-    name: "askUser",
+    name,
     render: { kind: "rightForm" },
     status: { kind: "running", data: { progressPct: null, etaSec: null } },
     body: {
@@ -75,10 +78,12 @@ describe("R0 cancelAskUser bridge red tests", () => {
     vi.restoreAllMocks();
   });
 
-  it("OL-1b clears server suspension state and emits failed askUser/tool unlock frames", async () => {
+  it.each(["askUser", "planDraft", "askUserQuestion"] as const)(
+    "OL-1b clears %s suspension state and emits failed tool unlock frames",
+    async (toolName) => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);
-    const askUser = askUserToolCall("ask-1");
+    const askUser = askUserToolCall("ask-1", toolName);
     session.docState = { kind: "empty" };
     session.previousDocState = { kind: "empty" };
     session.chatHistory = [{
@@ -94,7 +99,7 @@ describe("R0 cancelAskUser bridge red tests", () => {
       streamId: "stream-ask",
       runId: "run-ask",
       toolCallId: "ask-1",
-      toolName: "askUser",
+      toolName,
     };
     session._lastEmittedWireKind = "empty";
 
@@ -128,7 +133,8 @@ describe("R0 cancelAskUser bridge red tests", () => {
       kind: "docStateChanged",
       data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
     });
-  });
+    },
+  );
 
   it("aborts active stream when cancelling running askUser before suspension", async () => {
     const bridge = await loadBridge();

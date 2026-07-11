@@ -16,6 +16,14 @@ export function validateAskUserSpec(spec: AskUserSpec): void {
     );
   }
   for (const q of spec.questions) {
+    if (q.header != null && typeof q.header !== "string") {
+      throw new AskUserSpecValidationError("askUser question header must be a string or null");
+    }
+    if (q.header != null && Array.from(q.header).length > 12) {
+      throw new AskUserSpecValidationError(
+        `askUser question header allows at most 12 Unicode code points, got ${Array.from(q.header).length}`,
+      );
+    }
     const optLen = q.options?.length ?? 0;
     if (optLen > 8) {
       throw new AskUserSpecValidationError(

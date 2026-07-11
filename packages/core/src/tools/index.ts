@@ -1,4 +1,17 @@
 export { askUserTool } from "./askUser.js";
+export { askUserQuestionTool } from "./askUserQuestion.js";
+export {
+  adaptAskUserQuestionInput,
+  askUserQuestionInputSchema,
+  buildQuestionnaireRejectedResult,
+  questionnaireRejectedResultSchema,
+} from "./askUserQuestionAdapter.js";
+export type {
+  AdaptedAskUserQuestionInput,
+  AdaptedAskUserQuestion,
+  AskUserQuestionInput,
+  QuestionnaireRejectedResult,
+} from "./askUserQuestionAdapter.js";
 export { parseFileTool, parseFileBuffer } from "./parseFile.js";
 export type {
   ParseFileBufferFailure,

@@ -22,6 +22,7 @@ import { SliderQuestionInput, defaultSliderValue, sliderValueLabel } from "./Sli
  */
 
 export interface BigPlanPanelProps {
+  toolCallId: string;
   spec: AskUserSpec;
   isStreaming: boolean;
   isSubmitting?: boolean;
@@ -85,7 +86,7 @@ function mergeQuestionsById(
   return Array.from(byId.values());
 }
 
-export function BigPlanPanel({ spec, isStreaming, isSubmitting = false, onSubmit, onAbort, sessionId, stream, onToast }: BigPlanPanelProps) {
+export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = false, onSubmit, onAbort, sessionId, stream, onToast }: BigPlanPanelProps) {
   const [answers, setAnswers] = useState<AskUserAnswers>({});
   const [askingMore, setAskingMore] = useState(false);
   const [extraQuestions, setExtraQuestions] = useState<AskUserQuestion[]>([]);
@@ -179,6 +180,7 @@ export function BigPlanPanel({ spec, isStreaming, isSubmitting = false, onSubmit
     stream
       .askMore(
         sessionId,
+        toolCallId,
         questionsForApi,
         answersForApi,
         (progressQuestions) => {
@@ -202,7 +204,7 @@ export function BigPlanPanel({ spec, isStreaming, isSubmitting = false, onSubmit
       .finally(() => {
         setAskingMore(false);
       });
-  }, [askMoreRound, sessionId, stream, allQuestions, answers, onToast, spec.questions, withSliderDefaults]);
+  }, [askMoreRound, sessionId, stream, toolCallId, allQuestions, answers, onToast, spec.questions, withSliderDefaults]);
 
   const rationaleText = spec.rationale ?? "";
 

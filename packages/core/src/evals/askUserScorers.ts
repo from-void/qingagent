@@ -1,6 +1,7 @@
 import { createScorer } from "@mastra/core/evals";
 import type { CoreMessage } from "ai";
 import { buildAskUserAnswerUserMessage } from "../bridge/askUserAnswerMessage.js";
+import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 
 export interface AskUserAnswerWordingInput {
   toolCallId: string;
@@ -40,7 +41,7 @@ export function evaluateAskUserNoReask(input: AskUserAnswerWordingInput, output:
   const messages = buildAskUserResumeMessages(input);
   const answerMessage = messages.at(-1);
   const answerContent = typeof answerMessage?.content === "string" ? answerMessage.content : "";
-  const askedAgain = output.toolNames.includes("askUser");
+  const askedAgain = output.toolNames.some(isPlanDraftTool);
   const formTalk = FORM_TALK.test(output.text);
   const answerMessageOk =
     answerContent.includes(`[askUserAnswers:${input.toolCallId}]`) &&

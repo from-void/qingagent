@@ -1449,6 +1449,7 @@ export function UIKitPage() {
             <div className="ws-left uk-sp-scope">
               <div style={{ maxWidth: 560, background: "var(--ws-right-bg, transparent)" }}>
                 <BigPlanPanel
+                  toolCallId="uikit-plan-draft"
                   spec={bigPlanSpec}
                   isStreaming={false}
                   onSubmit={() => {}}

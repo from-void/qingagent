@@ -13,9 +13,11 @@ marks: Array<number> | null,
 /** 滑到最右端的展示文案,如「2000 字以上」。 */
 aboveLabel: string | null, };
 
-export type AskUserQuestion = { id: string, label: string, kind: AskUserQuestionKind,
+export type AskUserQuestion = { id: string,
+/** 可选短标题，按 Unicode code point 计最多 12 个字符。 */
+header?: string | null, label: string, kind: AskUserQuestionKind,
 /**
- * MUST be empty for kind=Text/Slider. ≤4 entries (validator enforces).
+ * MUST be empty for kind=Text/Slider. ≤8 entries (channel validator enforces).
  */
 options: Array<AskUserOption>, placeholder: string | null,
 /** kind=slider 时必填,其余 kind 为 null/缺省。 */

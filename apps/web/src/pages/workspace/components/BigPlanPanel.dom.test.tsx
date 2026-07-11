@@ -31,6 +31,7 @@ describe("BigPlanPanel", () => {
     const onSubmit = vi.fn();
     await render(
       <BigPlanPanel
+        toolCallId="test-plan-draft"
         spec={spec}
         isStreaming={!isBigPlanQuestionnaireReady(spec)}
         onSubmit={onSubmit}

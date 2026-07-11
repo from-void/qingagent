@@ -3,6 +3,7 @@ import { Workspace, LocalFilesystem } from "@mastra/core/workspace";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { askUserTool } from "../tools/askUser.js";
+import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
@@ -278,14 +279,18 @@ export const qingagentAgent = new Agent({
 });
 
 export function buildQingagentStaticTools(): ToolsInput {
+  // 新轮只暴露语义化工具名；legacy askUser 仅在旧快照 resume 时按执行注入，
+  // 待老会话数据迁移或过期后连同兼容注入一起删除。
   if (isQingagentToolSearchEnabled()) {
     return {
-      askUser: askUserTool,
+      planDraft: askUserTool,
+      askUserQuestion: askUserQuestionTool,
       storeMaterial: storeMaterialTool,
     };
   }
   return {
-    askUser: askUserTool,
+    planDraft: askUserTool,
+    askUserQuestion: askUserQuestionTool,
     parseFile: parseFileTool,
     storeMaterial: storeMaterialTool,
     fetchArticle: fetchArticleTool,

@@ -22,7 +22,20 @@ export {
 } from "./skills/enabledStore.js";
 
 // Tools
-export { askUserTool } from "./tools/index.js";
+export {
+  adaptAskUserQuestionInput,
+  askUserQuestionInputSchema,
+  askUserQuestionTool,
+  askUserTool,
+  buildQuestionnaireRejectedResult,
+  questionnaireRejectedResultSchema,
+} from "./tools/index.js";
+export type {
+  AdaptedAskUserQuestionInput,
+  AdaptedAskUserQuestion,
+  AskUserQuestionInput,
+  QuestionnaireRejectedResult,
+} from "./tools/index.js";
 export { parseFileTool } from "./tools/index.js";
 export { parseFileBuffer } from "./tools/index.js";
 export type {
@@ -107,6 +120,27 @@ export type {
 
 // Types
 export type { Material } from "./types/material.js";
+export {
+  askUserRenderModeFromSpec,
+  buildAskUserToolCallSpec,
+} from "./bridge/toolCards.js";
+export type {
+  AskUserPurposeKind,
+  BuildAskUserToolCallSpecInput,
+} from "./bridge/toolCards.js";
+export {
+  isDirectionReset,
+  isPlanDraftTool,
+  isQuestionnaireTool,
+  normalizeQuestionnaireSpecForRestore,
+  QUESTIONNAIRE_TOOL_NAMES,
+  questionnaireRenderMode,
+} from "./bridge/questionnaireTools.js";
+export type {
+  PlanDraftToolName,
+  QuestionnaireToolName,
+  QuestionnaireRenderMode,
+} from "./bridge/questionnaireTools.js";
 
 // Export
 export { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "./export/index.js";

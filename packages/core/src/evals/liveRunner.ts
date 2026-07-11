@@ -14,6 +14,7 @@ import {
 } from "./askUserScorers.js";
 import { askUserTriggerFixtures, type AskUserTriggerFixture } from "./askUserTriggerFixtures.js";
 import { askUserTriggerScorer, evaluateAskUserTriggerDecision } from "./askUserTriggerScorers.js";
+import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 import { askUserAnswerWordingFixtures } from "./fixtures.js";
 
 export type LiveScorerArtifact = {
@@ -438,7 +439,7 @@ export async function runAskUserTriggerEvals(
       },
       hooks: {
         beforeToolCall: ({ toolName, input }: { toolName: string; input: unknown }) => {
-          if (toolName === "askUser") {
+          if (isPlanDraftTool(toolName)) {
             return {
               proceed: false,
               output: {

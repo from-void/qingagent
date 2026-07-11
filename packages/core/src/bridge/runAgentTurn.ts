@@ -14,6 +14,7 @@ import { guardContext, withPrefixCacheGuardContext } from "../llm/prefixCacheGua
 import { resolveModelParams, resolveProtocol } from "../llm/modelConfig.js";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
+import { isDirectionReset } from "./questionnaireTools.js";
 import {
   activeSuspensionOwnedBy,
   clearSuspension,
@@ -526,6 +527,7 @@ export async function* runAgentTurn(
       ["modelOverrides", state.modelOverrides],
       // 已完成过问卷 → askUser 默认抑制;directionChange 只有在上次完成后出现过有效写入才豁免。
       ["askUserAlreadyCompleted", state._askUserCompleted === true],
+      ["isDirectionReset", isDirectionReset(state)],
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
     turnRequestContext = requestContext;

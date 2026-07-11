@@ -8,6 +8,6 @@ export type AskUserSpec = { id: string, mode: AskUserMode,
  */
 purpose: AskUserPurpose | null, source: string | null, rationale: string | null,
 /**
- * ≤4 entries. Use [`AskUserSpec::try_new`] for validated construction.
+ * ≤8 entries，具体工具可以在 adapter 层进一步收紧。
  */
 questions: Array<AskUserQuestion>, };

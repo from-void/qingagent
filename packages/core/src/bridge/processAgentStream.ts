@@ -101,12 +101,10 @@ import {
 import {
   type AskUserPurposeKind,
   PURE_UI_TOOL_NAMES,
-  askUserPurposeFromSpec,
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
   commandCardFromResult,
   commandCardStatusFromCard,
-  decideAskUserRenderMode,
   generateSvgProgressFromResult,
   generateSvgToolCallSpec,
   latestGenerateSvgProgress,
@@ -118,6 +116,13 @@ import {
   scriptCardFromResult,
   writeDraftCardFromResult,
 } from "./toolCards.js";
+import {
+  isDirectionReset,
+  isPlanDraftTool,
+  isQuestionnaireTool,
+  questionnaireRenderMode,
+  type QuestionnaireToolName,
+} from "./questionnaireTools.js";
 import {
   clearDraftConfirmationState,
   currentDraftMutationStats,
@@ -287,6 +292,7 @@ export async function* processAgentStream(
   // 供占位/进度/最终三处 spec 复用，避免大表单→浮层的闪烁。
   let askUserRenderMode: "fullpage" | "overlay" = "fullpage";
   let askUserPurpose: AskUserPurposeKind | null = null;
+  let questionnaireToolName: QuestionnaireToolName | null = null;
   let generateSvgPreviousDocState: DocState | null = null;
   const toolIoSpans = new Map<string, Span<SpanType.TOOL_CALL> | null>();
   const streamingPlaceholders = new Set<string>();
@@ -676,18 +682,17 @@ export async function* processAgentStream(
         if (progressToolCallId !== null) {
           askUserProgressToolCallId = progressToolCallId;
         }
-        const partialSpec = buildAskUserToolCallSpec(
-          tcId,
-          {
-            id: "streaming",
-            renderMode: askUserRenderMode,
-            purpose: askUserPurpose,
-            source: null,
-            rationale: null,
-            questions: output.questions,
-          },
-          { kind: "running", data: { progressPct: null, etaSec: null } },
-        );
+        const partialSpec = buildAskUserToolCallSpec({
+          toolCallId: tcId,
+          toolName: questionnaireToolName ?? "planDraft",
+          id: "streaming",
+          renderMode: askUserRenderMode,
+          purpose: askUserPurpose,
+          source: null,
+          rationale: null,
+          questions: output.questions,
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+        });
 
         // First progress → create the toolCall entry via chatMessageAppended
         // so the frontend has something for toolCallUpdated to target
@@ -784,8 +789,10 @@ export async function* processAgentStream(
     // -----------------------------------------------------------------
     if (chunk.type === "tool-call-suspended") {
       outcome.sawToolCall = true;
-      if ((chunk.payload as { toolName?: unknown }).toolName !== "askUser") {
+      const suspendedToolName = (chunk.payload as { toolName?: unknown }).toolName;
+      if (!isQuestionnaireTool(suspendedToolName)) {
         outcome.sawSideEffectToolCall = true;
+        state._askUserSuspendCount = 0;
       }
       const payload = chunk.payload as {
         toolCallId: string;
@@ -853,7 +860,7 @@ export async function* processAgentStream(
         return outcome;
       }
 
-      if (payload.toolName === "askUser") {
+      if (isQuestionnaireTool(payload.toolName)) {
         state._askUserSuspendCount = (state._askUserSuspendCount ?? 0) + 1;
         if (state._askUserSuspendCount > MAX_CONSECUTIVE_ASKUSER_SUSPENDS) {
           const terminalized = terminalizeAskUserToolCall(
@@ -916,24 +923,24 @@ export async function* processAgentStream(
       toolIoSpans.delete(payload.toolCallId);
       state.previousDocState = state.docState;
 
-      if (payload.toolName === "askUser") {
+      if (isQuestionnaireTool(payload.toolName)) {
         // No seenAskUser guard here — the guard lives in the tool-call
         // handler to block a *second* askUser call.  The suspend event
         // always corresponds to the call that was already accepted, so
         // it must be processed unconditionally.
 
         // 先取"本轮之前是否弹过问卷"，再置真——否则"首轮 → 大表单"判断会失效。
-        const askedBefore = state._askUserAsked === true;
         // 弹出问卷即标记 asked(仅渲染形态用);completed 留到用户**真正提交答案**
         // (tool-result with answers)时才置 → 中途放弃不会永久抑制后续 askUser。
-        state._askUserAsked = true;
+        if (isPlanDraftTool(payload.toolName)) state._askUserAsked = true;
         const suspendData = payload.suspendPayload as {
           id: string;
-          purpose: AskUserPurposeKind;
+          purpose?: AskUserPurposeKind;
           source: string | null;
           rationale: string | null;
           questions: Array<{
             id: string;
+            header?: string | null;
             label: string;
             kind: "single" | "multi" | "text" | "slider";
             options: Array<{
@@ -952,24 +959,19 @@ export async function* processAgentStream(
         const existingRenderMode = askUserRenderModeFromSpec(
           findAskUserToolCallSpecInChatHistory(state.chatHistory, payload.toolCallId),
         );
-        const renderMode =
-          existingRenderMode ??
-          decideAskUserRenderMode(
-            suspendData.purpose,
-            state.docState.kind,
-            askedBefore,
-          );
+        const renderMode = existingRenderMode ?? questionnaireRenderMode(payload.toolName);
         logger.info("askUser render decision", {
           sessionId: state.sessionId,
           purpose: suspendData.purpose,
           renderMode,
           reusedExistingMode: existingRenderMode !== null,
-          askedBefore,
           docState: state.docState.kind,
           questionCount: suspendData.questions.length,
         });
 
-        const spec = buildAskUserToolCallSpec(payload.toolCallId, {
+        const spec = buildAskUserToolCallSpec({
+          toolCallId: payload.toolCallId,
+          toolName: payload.toolName,
           ...suspendData,
           renderMode,
           purpose: suspendData.purpose,
@@ -1032,14 +1034,23 @@ export async function* processAgentStream(
       if (streamingPlaceholders.has(toolCallId)) {
         continue;
       }
-      const spec: ToolCallSpec = {
-        id: toolCallId,
-        name: toolName,
-        render: { kind: "chatInline" },
-        status: { kind: "running", data: { progressPct: null, etaSec: null } },
-        body: { kind: "generic", data: { argsJson: "" } },
-        result: null,
-      };
+      const spec: ToolCallSpec = isQuestionnaireTool(toolName)
+        ? buildAskUserToolCallSpec({
+            toolCallId,
+            toolName,
+            id: "streaming",
+            renderMode: questionnaireRenderMode(toolName),
+            questions: [],
+            status: { kind: "running", data: { progressPct: null, etaSec: null } },
+          })
+        : {
+            id: toolCallId,
+            name: toolName,
+            render: { kind: "chatInline" },
+            status: { kind: "running", data: { progressPct: null, etaSec: null } },
+            body: { kind: "generic", data: { argsJson: "" } },
+            result: null,
+          };
       const seq = nextSeq(state, agentMessageId);
       const tcPart: MessagePart = { kind: "toolCall", data: spec };
       ensureAgentChatHistoryMessage(state, agentMessageId);
@@ -1096,7 +1107,7 @@ export async function* processAgentStream(
       sawTextAfterLastTool = false;
       lastModelChunkAt = new Date().toISOString();
       outcome.sawToolCall = true;
-      if (toolName !== "askUser" && !PURE_UI_TOOL_NAMES.has(toolName)) {
+      if (!isQuestionnaireTool(toolName) && !PURE_UI_TOOL_NAMES.has(toolName)) {
         outcome.sawSideEffectToolCall = true;
       }
 
@@ -1156,20 +1167,21 @@ export async function* processAgentStream(
 
         // 切到生成态，让前端显示生成动效。
         yield* syncContentAndProjectDocState(state, "generate_doc_started");
-      } else if (toolName === "askUser") {
-        // 只压**重复的初稿方向问卷**(initialBrief):首稿前确认过方向就别再问同一份。
-        // directionChange(用户确实要推翻/大改已有稿方向,如"整篇改公文风")是合法二次方向确认,
-        // 但同一份 directionChange 已完成且期间没有任何有效写入时,不再豁免 completed 抑制;
-        // quickClarification(写作中途局部小澄清)也放行可多次。两者滥用靠
-        // MAX_CONSECUTIVE_ASKUSER_SUSPENDS 看门狗(写作产出跑完一轮在 processAgentStream
-        // 末尾重置 _askUserSuspendCount)兜住连续无产出的澄清。
+      } else if (isQuestionnaireTool(toolName)) {
+        // 写作方向族受一稿一轮闸；已有成稿后的方向重设可一次性放行。
+        // 通用提问不进该闸，但与方向问卷共享连续挂起看门狗额度。
+        const directionResetFromContext = requestContext?.get("isDirectionReset");
+        const directionReset = typeof directionResetFromContext === "boolean"
+          ? directionResetFromContext
+          : isDirectionReset(state);
         const directionChangeBypassCompleted =
-          toolArgs.purpose === "directionChange" &&
+          isPlanDraftTool(toolName) &&
+          directionReset &&
           state._directionChangeAskedSinceLastWrite !== true;
         const askUserAlreadyCompleted =
+          isPlanDraftTool(toolName) &&
           ((requestContext?.get("askUserAlreadyCompleted") as boolean | undefined) === true ||
             state._askUserCompleted === true) &&
-          toolArgs.purpose !== "quickClarification" &&
           !directionChangeBypassCompleted;
         if (askUserAlreadyCompleted) {
           logger.warn("askUser tool-call suppressed (already completed) - no UI frame", {
@@ -1178,15 +1190,15 @@ export async function* processAgentStream(
           });
           continue;
         }
-        // Skip duplicate askUser tool calls in the same stream
+        // 同一流只接受一次问卷调用。
         if (seenAskUser) {
           logger.warn("Duplicate askUser tool-call ignored", { toolCallId, streamId });
           continue;
         }
         seenAskUser = true;
+        questionnaireToolName = toolName;
 
-        // 由代码决定渲染形态：用 _askUserAsked(本轮之前是否弹过问卷)判断
-        // "首轮 ask → 大表单 / 已弹过 → 左侧浮层"；存入流内变量供进度/最终 spec 复用。
+        // 工具语义决定渲染形态；purpose 只作为 legacy/UI 元数据透传。
         {
           const rawPurpose = toolArgs.purpose;
           askUserPurpose =
@@ -1195,26 +1207,21 @@ export async function* processAgentStream(
             rawPurpose === "directionChange"
               ? rawPurpose
               : null;
-          askUserRenderMode = decideAskUserRenderMode(
-            askUserPurpose,
-            state.docState.kind,
-            state._askUserAsked === true,
-          );
+          askUserRenderMode = questionnaireRenderMode(toolName);
         }
 
         // 先写 running 占位，再投影，保证状态不变量能看到 askUser。
-        const earlySpec = buildAskUserToolCallSpec(
+        const earlySpec = buildAskUserToolCallSpec({
           toolCallId,
-          {
-            id: "streaming",
-            renderMode: askUserRenderMode,
-            purpose: askUserPurpose,
-            source: null,
-            rationale: null,
-            questions: [],
-          },
-          { kind: "running", data: { progressPct: null, etaSec: null } },
-        );
+          toolName,
+          id: "streaming",
+          renderMode: askUserRenderMode,
+          purpose: askUserPurpose,
+          source: null,
+          rationale: null,
+          questions: [],
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+        });
         yield* emitOrUpdateToolCall(earlySpec, alreadyPlaced);
         yield* syncContentAndProjectDocState(state, "ask_user_started");
         askUserProgressEmitted = true;
@@ -1450,7 +1457,7 @@ export async function* processAgentStream(
       sawAnyToolCall = true;
       sawTextAfterLastTool = false;
       if (!PURE_UI_TOOL_NAMES.has(toolName)) sawNonUiToolCall = true;
-      if (toolName !== "askUser" && !PURE_UI_TOOL_NAMES.has(toolName)) {
+      if (!isQuestionnaireTool(toolName) && !PURE_UI_TOOL_NAMES.has(toolName)) {
         outcome.sawSideEffectToolCall = true;
       }
       // wechat_auth_start 的 result 含 ~7–10KB base64 二维码图。原样写进喂模型的 transcript 会
@@ -1470,7 +1477,39 @@ export async function* processAgentStream(
       );
       toolIoSpans.delete(toolCallId);
 
-      if (toolName === "askUser") {
+      if (
+        isQuestionnaireTool(toolName) &&
+        toolResult &&
+        typeof toolResult === "object" &&
+        toolResult.rejected === true
+      ) {
+        const reason = typeof toolResult.reason === "string"
+          ? toolResult.reason
+          : "没有可展示的有效问题";
+        const terminalized = terminalizeAskUserToolCall(state, toolCallId, reason);
+        if (terminalized) {
+          yield toolCallUpdated(
+            terminalized.messageId,
+            terminalized.toolCallId,
+            terminalized.spec,
+          );
+        }
+        clearSuspension(state);
+        yield* transitionAndProjectDocState(
+          state,
+          normalizeTargetDocState(
+            state,
+            state.previousDocState ?? idleDocState(state),
+            "ask_user_abandoned",
+          ),
+          "ask_user_abandoned",
+          { mode: "normalize" },
+        );
+        outcome.producedVisibleFrame = true;
+        continue;
+      }
+
+      if (isQuestionnaireTool(toolName)) {
         // askUser tool-result arrives in the RESUME stream after user submits
         // the questionnaire.  The original toolCall part lives in a PREVIOUS
         // agent message (from the stream that suspended).  We must find that
@@ -1480,9 +1519,13 @@ export async function* processAgentStream(
         const hasAnswers = Object.keys(answersRecord).length > 0;
         // 用户**真正提交**了答案 → 此刻才置 completed,守卫据此抑制后续重复 askUser
         // (中途放弃没有 tool-result/answers,不会走到这里,故不会被永久抑制)。
-        if (hasAnswers) state._askUserCompleted = true;
+        const directionResetFromContext = requestContext?.get("isDirectionReset");
+        const wasDirectionReset = typeof directionResetFromContext === "boolean"
+          ? directionResetFromContext
+          : isDirectionReset(state);
+        if (hasAnswers && isPlanDraftTool(toolName)) state._askUserCompleted = true;
         const completedAskUserSpec = findAskUserToolCallSpecInChatHistory(state.chatHistory, toolCallId);
-        if (hasAnswers && askUserPurposeFromSpec(completedAskUserSpec) === "directionChange") {
+        if (hasAnswers && isPlanDraftTool(toolName) && wasDirectionReset) {
           state._directionChangeAskedSinceLastWrite = true;
           requestContext?.set("directionChangeAskedSinceLastWrite", true);
         }

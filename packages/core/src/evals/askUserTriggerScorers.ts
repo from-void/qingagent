@@ -1,6 +1,7 @@
 import { createScorer } from "@mastra/core/evals";
 import { extractAgentOutput, type AskUserActionOutput } from "./askUserScorers.js";
 import type { AskUserTriggerFixture } from "./askUserTriggerFixtures.js";
+import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
 
 export interface AskUserTriggerEvaluation {
   score: 0 | 1;
@@ -42,7 +43,7 @@ export function evaluateAskUserTriggerDecision(
   output: AskUserActionOutput,
 ): AskUserTriggerEvaluation {
   const actualToolNames = uniqueToolNames(output);
-  const asked = actualToolNames.includes("askUser");
+  const asked = actualToolNames.some(isPlanDraftTool);
   const wroteDraft = actualToolNames.includes("writeDraft");
   const askUserWasAlone = asked && actualToolNames.length === 1;
   const textExcerpt = firstTextExcerpt(output.text);

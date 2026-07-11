@@ -148,9 +148,9 @@ function toolCall(
   return {
     id,
     name,
-    render: { kind: name === "askUser" ? "rightForm" : "chatInline" },
+    render: { kind: ["askUser", "planDraft", "askUserQuestion"].includes(name) ? "rightForm" : "chatInline" },
     status,
-    body: name === "askUser"
+    body: ["askUser", "planDraft", "askUserQuestion"].includes(name)
       ? {
           kind: "askUser",
           data: {
@@ -710,6 +710,31 @@ describe("thread persistence", () => {
             role: { kind: "agent" },
             ts: "2026-01-01T00:00:00.000Z",
             parts: [{ kind: "toolCall", data: { id: "ask-1", name: "askUser" } }],
+            chips: null,
+          },
+          {
+            id: "bad-tool-body",
+            role: { kind: "agent" },
+            ts: "2026-01-01T00:00:00.000Z",
+            parts: [{
+              kind: "toolCall",
+              data: { id: "ask-2", name: "askUser", status: { kind: "running" } },
+            }],
+            chips: null,
+          },
+          {
+            id: "bad-tool-body-data",
+            role: { kind: "agent" },
+            ts: "2026-01-01T00:00:00.000Z",
+            parts: [{
+              kind: "toolCall",
+              data: {
+                id: "ask-3",
+                name: "askUserQuestion",
+                status: { kind: "running" },
+                body: { kind: "askUser" },
+              },
+            }],
             chips: null,
           },
         ],
@@ -1443,11 +1468,13 @@ describe("thread persistence", () => {
     expect((await loadSessionFromThread("review-no-doc"))?.docState).toEqual({ kind: "empty" });
   });
 
-  it("keeps restorable open askUser on cold restore with durable suspension owner", async () => {
+  it.each(["askUser", "planDraft", "askUserQuestion"] as const)(
+    "keeps restorable open %s on cold restore with durable suspension owner",
+    async (toolName) => {
     const { hasActiveSuspension } = await import("../bridge/sessionState.js");
     const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
     const askUser = toolCall(
-      "askUser",
+      toolName,
       { kind: "running", data: { progressPct: null, etaSec: null } },
       "ask-1",
     );
@@ -1469,7 +1496,7 @@ describe("thread persistence", () => {
       streamId: "restored:run-ask",
       runId: "run-ask",
       toolCallId: "ask-1",
-      toolName: "askUser",
+      toolName,
     });
     expect(restored ? hasActiveSuspension(restored) : false).toBe(true);
     expect(restoredTool?.kind).toBe("toolCall");
@@ -1478,6 +1505,42 @@ describe("thread persistence", () => {
         kind: "running",
         data: { progressPct: null, etaSec: null },
       });
+    }
+    },
+  );
+
+  it("冷恢复把三种问卷工具的缺失/空/非法 mode 统一降级 fullpage", async () => {
+    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const dirtyModes: Array<{ label: string; value: unknown }> = [
+      { label: "missing", value: undefined },
+      { label: "null", value: null },
+      { label: "empty", value: {} },
+      { label: "invalid", value: { kind: "invalid" } },
+    ];
+    for (const toolName of ["askUser", "planDraft", "askUserQuestion"] as const) {
+      for (const dirtyMode of dirtyModes) {
+        const sessionId = `cold-dirty-mode-${toolName}-${dirtyMode.label}`;
+        const spec = toolCall(toolName, { kind: "done" }, `${sessionId}-tool`);
+        if (spec.body.kind !== "askUser") throw new Error("expected questionnaire body");
+        if (dirtyMode.value === undefined) {
+          delete (spec.body.data as unknown as { mode?: unknown }).mode;
+        } else {
+          (spec.body.data as unknown as { mode?: unknown }).mode = dirtyMode.value;
+        }
+        threads.set(sessionId, storedThread(sessionId, metadata({
+          chatHistory: [toolMessage(spec)],
+        })));
+
+        const restored = await loadSessionFromThread(sessionId);
+        const part = restored?.chatHistory[0]?.parts[0];
+        expect(part?.kind).toBe("toolCall");
+        if (part?.kind !== "toolCall") continue;
+        expect(part.data.render).toEqual({ kind: "rightForm" });
+        expect(part.data.body).toMatchObject({
+          kind: "askUser",
+          data: { mode: { kind: "fullpage" } },
+        });
+      }
     }
   });
 

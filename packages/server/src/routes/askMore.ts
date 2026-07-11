@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { streamMoreQuestions, schedulePersist } from "@qingagent/core";
+import { isPlanDraftTool, streamMoreQuestions, schedulePersist } from "@qingagent/core";
 import type { AskUserQuestion } from "@qingagent/contract-ts";
 import { RequestContext } from "@mastra/core/request-context";
 import { getSession } from "../bridge/bridgeHandler";
@@ -14,6 +14,7 @@ export const askMoreRoutes = new Hono();
 /** ask-more 请求体:sessionId 必填;当前问卷/答案沿用前端形状(与旧内联类型一致)。 */
 const askMoreBodySchema = z.object({
   sessionId: z.string().min(1),
+  toolCallId: z.string().min(1),
   currentQuestions: z
     .array(
       z.object({
@@ -70,17 +71,59 @@ type AskMoreQuestion = {
  * 否则这些问题只存在于前端 BigPlanPanel 本地 state,提交后对话流里的折叠卡片(从
  * toolCall spec.questions 渲染)看不到这些问答 —— 即"提交到对话流里的卡片不生效"。
  */
-function appendAskMoreQuestions(
+export function hasOpenPlanDraftQuestionnaire(
   session: NonNullable<ReturnType<typeof getSession>>,
+): boolean {
+  return findOpenPlanDraftQuestionnaireId(session) !== null;
+}
+
+export function isOpenPlanDraftQuestionnaire(
+  session: NonNullable<ReturnType<typeof getSession>>,
+  toolCallId: string,
+): boolean {
+  return session.chatHistory.some((message) => message.parts.some((part) =>
+    part.kind === "toolCall" &&
+    part.data.id === toolCallId &&
+    isPlanDraftTool(part.data.name) &&
+    part.data.body.kind === "askUser" &&
+    (part.data.status.kind === "pending" || part.data.status.kind === "running"),
+  ));
+}
+
+export function findOpenPlanDraftQuestionnaireId(
+  session: NonNullable<ReturnType<typeof getSession>>,
+): string | null {
+  for (let mi = session.chatHistory.length - 1; mi >= 0; mi--) {
+    const message = session.chatHistory[mi]!;
+    for (let pi = message.parts.length - 1; pi >= 0; pi--) {
+      const part = message.parts[pi]!;
+      if (
+        part.kind === "toolCall" &&
+        isPlanDraftTool(part.data.name) &&
+        part.data.body.kind === "askUser" &&
+        (part.data.status.kind === "pending" || part.data.status.kind === "running")
+      ) {
+        return part.data.id;
+      }
+    }
+  }
+  return null;
+}
+
+export function appendAskMoreQuestions(
+  session: NonNullable<ReturnType<typeof getSession>>,
+  toolCallId: string,
   newQuestions: AskMoreQuestion[],
-): void {
-  if (newQuestions.length === 0) return;
+): boolean {
+  if (newQuestions.length === 0) return false;
   for (let mi = session.chatHistory.length - 1; mi >= 0; mi--) {
     const msg = session.chatHistory[mi]!;
     for (let pi = msg.parts.length - 1; pi >= 0; pi--) {
       const part = msg.parts[pi]!;
       if (part.kind !== "toolCall") continue;
       const spec = part.data;
+      if (spec.id !== toolCallId) continue;
+      if (!isPlanDraftTool(spec.name)) continue;
       if (spec.body.kind !== "askUser") continue;
       if (spec.status.kind !== "pending" && spec.status.kind !== "running") continue;
       const existing = new Set(spec.body.data.questions.map((q) => q.id));
@@ -98,7 +141,7 @@ function appendAskMoreQuestions(
           })),
           placeholder: q.placeholder ?? null,
         }));
-      if (mapped.length === 0) return;
+      if (mapped.length === 0) return false;
       msg.parts[pi] = {
         kind: "toolCall",
         data: {
@@ -110,9 +153,10 @@ function appendAskMoreQuestions(
         },
       };
       void schedulePersist(session, "askMore").catch(() => {});
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 /**
@@ -127,12 +171,16 @@ askMoreRoutes.post("/ask-more", async (c) => {
 
   const parsed = await parseBody(c, askMoreBodySchema);
   if (!parsed.ok) return parsed.response;
-  const { sessionId, currentQuestions, currentAnswers } = parsed.data;
+  const { sessionId, toolCallId, currentQuestions, currentAnswers } = parsed.data;
 
   const session = getSession(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
+  if (!isOpenPlanDraftQuestionnaire(session, toolCallId)) {
+    return c.json({ error: "当前问卷不支持追加问题" }, 409);
+  }
+  const targetToolCallId = toolCallId;
   const modelOverrides = await resolveRequestModelOverrides({
     visitorKey: c.req.header("x-deepseek-key"),
     baseUrl: c.req.header("x-model-base-url"),
@@ -185,7 +233,8 @@ askMoreRoutes.post("/ask-more", async (c) => {
         });
       }
       // 回写到 open askUser toolCall,确保提交后折叠卡片能展示这些追加问答。
-      appendAskMoreQuestions(session, lastQuestions as AskMoreQuestion[]);
+      // 只允许回写请求开始时捕获的同一张问卷；期间提交/取消后不污染新问卷。
+      appendAskMoreQuestions(session, targetToolCallId, lastQuestions as AskMoreQuestion[]);
       await stream.writeSSE({
         event: "done",
         data: JSON.stringify({ questions: lastQuestions }),

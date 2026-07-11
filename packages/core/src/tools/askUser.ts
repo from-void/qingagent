@@ -9,6 +9,7 @@ import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJso
 import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
 import { repairModelJson } from "../llm/repairToolCallJson.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { questionnaireRejectedResultSchema } from "./askUserQuestionAdapter.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -26,6 +27,13 @@ const askUserSliderSchema = z.object({
 
 const askUserQuestionSchema = z.object({
   id: z.string(),
+  header: z
+    .string()
+    .nullable()
+    .optional()
+    .refine((value) => value == null || Array.from(value).length <= 12, {
+      message: "header 最多 12 个 Unicode code point",
+    }),
   label: z.string(),
   kind: z.enum(["single", "multi", "text", "slider"]),
   options: z
@@ -95,7 +103,7 @@ export function normalizeSliderSpec(raw: unknown): {
 
 const suspendPayloadSchema = z.object({
   id: z.string(),
-  purpose: z.enum(["initialBrief", "quickClarification", "directionChange"]),
+  purpose: z.enum(["initialBrief", "quickClarification", "directionChange"]).optional(),
   source: z.string().nullable(),
   rationale: z.string().nullable(),
   questions: z.array(askUserQuestionSchema).max(8),
@@ -107,7 +115,11 @@ const suppressedResultSchema = z.object({
   reason: z.literal("askUserAlreadyCompleted"),
   instruction: z.string(),
 });
-const askUserOutputSchema = z.union([resumeDataSchema, suppressedResultSchema]);
+const askUserOutputSchema = z.union([
+  resumeDataSchema,
+  suppressedResultSchema,
+  questionnaireRejectedResultSchema,
+]);
 
 // ---------------------------------------------------------------------------
 // Partial JSON parser for streaming questions
@@ -505,6 +517,8 @@ export const askUserTool = createTool({
       (context?.requestContext?.get?.("directionChangeAskedSinceLastWrite") as
         | boolean
         | undefined) === true;
+    const directionReset =
+      (context?.requestContext?.get?.("isDirectionReset") as boolean | undefined) === true;
     // 硬闸只压**重复的初稿方向问卷**(initialBrief)最多一轮:首稿前确认过方向就别再问同一份。
     // directionChange(用户确实要推翻/大改已有稿方向,如"整篇改成公文风")是合法的二次方向确认;
     // 但 directionChange 已完成且期间没有有效写入时,不再豁免 alreadyAsked 抑制。
@@ -512,8 +526,7 @@ export const askUserTool = createTool({
     // MAX_CONSECUTIVE_ASKUSER_SUSPENDS 看门狗(连续无写作产出的澄清会被掐,写作跑完一轮自动重置)兜住。
     if (
       alreadyAsked &&
-      input.purpose !== "quickClarification" &&
-      (input.purpose !== "directionChange" || directionChangeAskedSinceLastWrite)
+      (!directionReset || directionChangeAskedSinceLastWrite)
     ) {
       console.log(
         "[askUser] suppressed 2nd-round askUser -> returning semantic instruction",

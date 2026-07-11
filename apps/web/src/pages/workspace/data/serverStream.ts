@@ -327,6 +327,7 @@ export class ServerStream {
    */
   async askMore(
     sessionId: string,
+    toolCallId: string,
     currentQuestions: Array<{
       id: string;
       label: string;
@@ -339,7 +340,7 @@ export class ServerStream {
     const response = await fetch("/api/v1/ask-more", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...visitorKeyHeaders() },
-      body: JSON.stringify({ sessionId, currentQuestions, currentAnswers }),
+      body: JSON.stringify({ sessionId, toolCallId, currentQuestions, currentAnswers }),
     });
 
     if (!response.ok) {

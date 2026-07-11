@@ -1002,7 +1002,11 @@ export function createSessionScopedTools(
     },
   });
 
-  const writeDraft = state
+  const hasTableSelectionScope = state?._currentChips?.some(
+    (chip) => chip.kind.kind === "selection" && chip.tableSelection !== undefined,
+  ) ?? false;
+  // 表格选区轮只能走带后置范围审计的 editDraft，整篇 writeDraft 会绕过物理行列边界。
+  const writeDraft = state && !hasTableSelectionScope
     ? createWriteDraftTool({ state, replaceDraftCandidateDoc })
     : null;
   const executeCommand = state

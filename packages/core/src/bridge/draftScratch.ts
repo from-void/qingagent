@@ -5,6 +5,7 @@ import type {
 import {
   findPmTableByBlockId,
   getPmContentHash,
+  getStablePmJson,
   legacySectionsToPm,
   materializeDraftBlockIds,
   pmToLegacySections,
@@ -192,6 +193,8 @@ function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null 
   const attrs = cell.attrs;
   return JSON.stringify({
     text: pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: cell.content }).trim(),
+    // 纯文本相同时仍需识别未选单元格里的 mark、链接及子块结构变化。
+    content: getStablePmJson(cell.content),
     attrs: {
       colspan: attrs?.colspan ?? null,
       rowspan: attrs?.rowspan ?? null,
@@ -199,6 +202,40 @@ function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null 
       backgroundColor: attrs?.backgroundColor ?? null,
     },
   });
+}
+
+function replaceReferencedTable(value: unknown, tableRef: string, replacement: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceReferencedTable(item, tableRef, replacement));
+  }
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const attrs = record.attrs;
+  if (
+    record.type === "table" &&
+    attrs &&
+    typeof attrs === "object" &&
+    (attrs as Record<string, unknown>).blockId === tableRef
+  ) {
+    return replacement;
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, replaceReferencedTable(item, tableRef, replacement)]),
+  );
+}
+
+function documentOutsideTableFingerprint(doc: PmDoc, tableRef: string): string {
+  return getStablePmJson(replaceReferencedTable(doc, tableRef, { type: "tableSelectionTarget" }));
+}
+
+function documentScopeViolation(tableRef: string, detail: string): TableSelectionScopeViolation {
+  return {
+    ok: false,
+    tableRef,
+    rowIndex: -1,
+    columnIndex: -1,
+    error: `表格选区越界:${detail};本轮仅允许修改表 ref="${tableRef}" 的选中范围，请先 readDraft 核对后重试。`,
+  };
 }
 
 function scopeViolation(input: {
@@ -308,7 +345,10 @@ export function validateCurrentTableSelectionScopes(
     if (chip.kind.kind !== "selection" || !chip.tableSelection || !chip.resourceRef?.id) continue;
     const tableRef = chip.resourceRef.id;
     const before = findPmTableByBlockId(beforeDoc, tableRef);
-    if (!before) continue;
+    if (!before) return documentScopeViolation(tableRef, "选区目标表在编辑前已不存在");
+    if (documentOutsideTableFingerprint(beforeDoc, tableRef) !== documentOutsideTableFingerprint(afterDoc, tableRef)) {
+      return documentScopeViolation(tableRef, "目标表外的文档内容发生变化");
+    }
     const after = findPmTableByBlockId(afterDoc, tableRef);
     const result = validateTableSelectionScope({ before, after, tableRef, selection: chip.tableSelection });
     if (!result.ok) return result;

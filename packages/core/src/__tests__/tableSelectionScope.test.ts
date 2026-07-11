@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pmTableSelectionCellTexts, pmToLegacySections, type PmDoc, type PmTableNode } from "@qingagent/pm-schema";
 import { createSession } from "../bridge/sessionState.js";
 import { createSessionScopedTools } from "../bridge/sessionTools.js";
-import { clonePmDoc, validateTableSelectionScope } from "../bridge/draftScratch.js";
+import { clonePmDoc, validateCurrentTableSelectionScopes, validateTableSelectionScope } from "../bridge/draftScratch.js";
 
 const ctx = {} as any;
 
@@ -82,6 +82,49 @@ describe("table selection post-edit scope validator", () => {
     })).toEqual({ ok: true });
   });
 
+  it("拒绝未选单元格 mark 变化", () => {
+    const before = tableDoc().content[0] as PmTableNode;
+    const after = clonePmDoc(tableDoc()).content[0] as PmTableNode;
+    const text = (after.content[0]!.content[1]!.content[0] as any).content[0] as {
+      marks?: Array<{ type: string }>;
+    };
+    text.marks = [{ type: "bold" }];
+
+    expect(validateTableSelectionScope({
+      before,
+      after,
+      tableRef: "table-1",
+      selection: { axis: "column", startIndex: 0, endIndex: 0 },
+    })).toMatchObject({ ok: false, rowIndex: 0, columnIndex: 1 });
+  });
+
+  it("服务端拒绝表外块变化与编辑前目标表缺失", () => {
+    const state = bindTableSelection("row", 0, 0);
+    const before = tableDoc();
+    const after = clonePmDoc(before);
+    after.content.push({
+      type: "paragraph",
+      attrs: { blockId: "outside" },
+      content: [{ type: "text", text: "越界" }],
+    });
+    expect(validateCurrentTableSelectionScopes(state, before, after)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("目标表外"),
+    });
+
+    const missing = clonePmDoc(before);
+    missing.content = [];
+    expect(validateCurrentTableSelectionScopes(state, missing, missing)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("编辑前已不存在"),
+    });
+  });
+
+  it("表格选区轮不注入可绕过审计的 writeDraft", () => {
+    const tools = createSessionScopedTools(bindTableSelection("row", 0, 0));
+    expect("writeDraft" in tools).toBe(false);
+  });
+
   it("editDraft 拒绝选中行外文本变化并保持候选未改", async () => {
     const state = bindTableSelection("row", 0, 0);
     const { editDraft } = createSessionScopedTools(state);
@@ -113,5 +156,25 @@ describe("table selection post-edit scope validator", () => {
       startIndex: 0,
       endIndex: 0,
     })).toEqual(["A1", "范围内"]);
+  });
+
+  it("editDraft 拒绝表外段落变化并保持候选未改", async () => {
+    const state = bindTableSelection("row", 0, 0);
+    state.doc!.content.push({
+      type: "paragraph",
+      attrs: { blockId: "outside" },
+      content: [{ type: "text", text: "原文" }],
+    });
+    state.legacySections = pmToLegacySections(state.doc!) as any;
+    const { editDraft } = createSessionScopedTools(state);
+    const result = await editDraft.execute!({
+      ops: [{ action: "replaceText", withinRef: "outside", find: "原文", replace: "越界" }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("目标表外");
+    expect(state.docDraftCandidateDoc?.content[1]).toMatchObject({
+      content: [{ text: "原文" }],
+    });
   });
 });

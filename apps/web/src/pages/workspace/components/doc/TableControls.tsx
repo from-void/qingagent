@@ -29,6 +29,7 @@ import {
   type ToolbarThemeColorKey,
 } from "../../data/toolbarUnlock";
 import { floatingAnchorFromElement, useToolbarLinkEditor } from "./ToolbarLinkEditor";
+import { applyTableAxisDrop, inspectTableAxisDrop, type TableDragAxis } from "../../data/tableAxisDrag";
 
 /* ───────────── Table controls (Feishu-style) ───────────── */
 
@@ -49,6 +50,18 @@ interface TblInfo {
 }
 type Range2 = [number, number];
 
+interface AxisDragPreview {
+  axis: TableDragAxis;
+  sourceStart: number;
+  sourceEnd: number;
+  dropBoundary: number;
+  allowed: boolean;
+  clone: boolean;
+}
+
+const AXIS_REORDER_HOLD_MS = 180;
+const AXIS_DRAG_THRESHOLD_PX = 4;
+
 function inRange(i: number, r: Range2 | null): boolean {
   return r !== null && i >= Math.min(r[0], r[1]) && i <= Math.max(r[0], r[1]);
 }
@@ -66,6 +79,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const [selCols, setSelCols] = useState<Range2 | null>(null);
   const [selRows, setSelRows] = useState<Range2 | null>(null);
   const [openTableColor, setOpenTableColor] = useState<"text" | "highlight" | "cell" | null>(null);
+  const [axisDrag, setAxisDrag] = useState<AxisDragPreview | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const toolbarUnlock = resolveToolbarUnlockConfig();
@@ -183,7 +197,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
 
   /* ── helpers ── */
   const prevent = useCallback((e: React.MouseEvent) => e.preventDefault(), []);
-  /* ── header mousedown → 真 CellSelection；mousemove 每帧最多 dispatch 一次 ── */
+  /* ── header mousedown：快拖保留 B3 范围拖选；长按或 Alt 拖进入 A7 排序/克隆。 ── */
   const startHeaderDrag = useCallback((axis: "col" | "row", idx: number, e: React.MouseEvent) => {
     e.preventDefault();
     if (!editor.isEditable || !info) return;
@@ -192,10 +206,38 @@ export function TableControls({ editor, onAiModify, onToast }: {
       return;
     }
     dragCleanupRef.current?.();
+    const dragAxis: TableDragAxis = axis === "col" ? "column" : "row";
+    const selectedRange = axis === "col" ? selCols : selRows;
+    const sourceRange = selectedRange && inRange(idx, selectedRange)
+      ? [Math.min(...selectedRange), Math.max(...selectedRange)] as Range2
+      : [idx, idx] as Range2;
     const start = idx;
+    const startX = e.clientX;
+    const startY = e.clientY;
     let lastTarget = idx;
     let pendingTarget: number | null = null;
     let rafId: number | null = null;
+    let mode: "pending" | "select" | "reorder" = e.altKey ? "reorder" : "pending";
+    let latestDropBoundary = sourceRange[0];
+    let latestAllowed = true;
+    let latestNoOp = true;
+    let latestClone = e.altKey;
+    const beginReorder = (clone: boolean) => {
+      mode = "reorder";
+      latestClone = clone;
+      setAxisDrag({
+        axis: dragAxis,
+        sourceStart: sourceRange[0],
+        sourceEnd: sourceRange[1],
+        dropBoundary: latestDropBoundary,
+        allowed: true,
+        clone,
+      });
+    };
+    const holdTimer = e.altKey
+      ? null
+      : window.setTimeout(() => beginReorder(false), AXIS_REORDER_HOLD_MS);
+    if (mode === "reorder") beginReorder(true);
     const dispatchTarget = (target: number) => {
       if (target === lastTarget) return;
       lastTarget = target;
@@ -215,6 +257,37 @@ export function TableControls({ editor, onAiModify, onToast }: {
       dispatchTarget(target);
     };
     const onMove = (me: MouseEvent) => {
+      const distance = Math.hypot(me.clientX - startX, me.clientY - startY);
+      if (mode === "pending" && distance >= AXIS_DRAG_THRESHOLD_PX) {
+        if (holdTimer !== null) window.clearTimeout(holdTimer);
+        mode = "select";
+      }
+      if (mode === "reorder") {
+        latestClone = me.altKey;
+        const geometry = axis === "col" ? info.cols : info.rows;
+        const point = axis === "col" ? me.clientX : me.clientY;
+        const boundary = nearestAxisBoundary(geometry, point, axis);
+        const inspected = inspectTableAxisDrop(editor, {
+          blockId: info.blockId,
+          axis: dragAxis,
+          sourceStart: sourceRange[0],
+          sourceEnd: sourceRange[1],
+          dropBoundary: boundary,
+        });
+        latestDropBoundary = boundary;
+        latestAllowed = inspected.allowed;
+        latestNoOp = inspected.noOp;
+        setAxisDrag({
+          axis: dragAxis,
+          sourceStart: sourceRange[0],
+          sourceEnd: sourceRange[1],
+          dropBoundary: boundary,
+          allowed: inspected.allowed,
+          clone: latestClone,
+        });
+        return;
+      }
+      if (mode !== "select") return;
       const geometry = axis === "col" ? info.cols : info.rows;
       const point = axis === "col" ? me.clientX : me.clientY;
       const target = geometry.findIndex((item) =>
@@ -234,21 +307,40 @@ export function TableControls({ editor, onAiModify, onToast }: {
       });
     };
     const cleanup = () => {
+      if (holdTimer !== null) window.clearTimeout(holdTimer);
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       rafId = null;
       pendingTarget = null;
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      setAxisDrag(null);
       if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
     };
-    const onUp = () => {
+    const onUp = (event: MouseEvent) => {
+      if (mode === "reorder") {
+        latestClone = event.altKey || latestClone;
+        if (!latestAllowed) {
+          onToast?.("合并单元格跨越移动边界，无法排序");
+        } else if (!latestNoOp) {
+          applyTableAxisDrop(editor, {
+            blockId: info.blockId,
+            axis: dragAxis,
+            sourceStart: sourceRange[0],
+            sourceEnd: sourceRange[1],
+            dropBoundary: latestDropBoundary,
+            clone: latestClone,
+          });
+        }
+        cleanup();
+        return;
+      }
       flushPending();
       cleanup();
     };
     dragCleanupRef.current = cleanup;
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }, [editor, info, onToast]);
+  }, [editor, info, onToast, selCols, selRows]);
 
   const onColDown = useCallback((idx: number, e: React.MouseEvent) => {
     startHeaderDrag("col", idx, e);
@@ -369,6 +461,10 @@ export function TableControls({ editor, onAiModify, onToast }: {
             }}
             onMouseDown={(e) => onRowDown(i, e)} />
         ))}
+
+        {axisDrag ? (
+          <TableAxisDragPreview preview={axisDrag} info={info} viewport={viewport} />
+        ) : null}
 
         {cols[0] && (
           <button
@@ -575,6 +671,93 @@ export function TableControls({ editor, onAiModify, onToast }: {
   );
 
   return createPortal(controls, portalTarget);
+}
+
+function TableAxisDragPreview({
+  preview,
+  info,
+  viewport,
+}: {
+  preview: AxisDragPreview;
+  info: TblInfo;
+  viewport: { top: number; left: number; width: number; height: number };
+}) {
+  const sourceStart = preview.sourceStart;
+  const sourceEnd = preview.sourceEnd;
+  const isColumn = preview.axis === "column";
+  const first = isColumn ? info.cols[sourceStart] : info.rows[sourceStart];
+  const last = isColumn ? info.cols[sourceEnd] : info.rows[sourceEnd];
+  if (!first || !last) return null;
+  const ghostStyle = isColumn
+    ? {
+        left: (first as ColInfo).left - viewport.left,
+        top: info.rect.top - viewport.top,
+        width: (last as ColInfo).right - (first as ColInfo).left,
+        height: info.rect.height,
+      }
+    : {
+        left: info.rect.left - viewport.left,
+        top: (first as RowInfo).top - viewport.top,
+        width: info.rect.width,
+        height: (last as RowInfo).bottom - (first as RowInfo).top,
+      };
+  const boundary = isColumn
+    ? preview.dropBoundary === 0
+      ? info.cols[0]?.left ?? info.rect.left
+      : info.cols[preview.dropBoundary - 1]?.right ?? info.rect.right
+    : preview.dropBoundary === 0
+      ? info.rows[0]?.top ?? info.rect.top
+      : info.rows[preview.dropBoundary - 1]?.bottom ?? info.rect.bottom;
+  const lineStyle = isColumn
+    ? {
+        left: boundary - viewport.left,
+        top: info.rect.top - viewport.top,
+        height: info.rect.height,
+      }
+    : {
+        left: info.rect.left - viewport.left,
+        top: boundary - viewport.top,
+        width: info.rect.width,
+      };
+  return (
+    <>
+      <div
+        className="tbl-axis-drag-ghost"
+        data-axis={preview.axis}
+        data-clone={preview.clone ? "true" : "false"}
+        style={{ position: "absolute", ...ghostStyle }}
+      />
+      <div
+        className={`tbl-axis-drop-line${preview.allowed ? "" : " is-forbidden"}`}
+        data-axis={preview.axis}
+        data-drop-boundary={preview.dropBoundary}
+        data-drop-allowed={preview.allowed ? "true" : "false"}
+        style={{ position: "absolute", ...lineStyle }}
+      />
+    </>
+  );
+}
+
+function nearestAxisBoundary(
+  geometry: readonly (ColInfo | RowInfo)[],
+  point: number,
+  axis: "col" | "row",
+): number {
+  if (geometry.length === 0) return 0;
+  const boundaries = [
+    axis === "col" ? (geometry[0] as ColInfo).left : (geometry[0] as RowInfo).top,
+    ...geometry.map((item) => axis === "col" ? (item as ColInfo).right : (item as RowInfo).bottom),
+  ];
+  let nearest = 0;
+  let distance = Number.POSITIVE_INFINITY;
+  boundaries.forEach((boundary, index) => {
+    const nextDistance = Math.abs(point - boundary);
+    if (nextDistance < distance) {
+      nearest = index;
+      distance = nextDistance;
+    }
+  });
+  return nearest;
 }
 
 function TableColorGrid({

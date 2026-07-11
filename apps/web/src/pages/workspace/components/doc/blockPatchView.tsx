@@ -3,8 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import type { ReviewTarget, ViewBlock } from "../../data/protocol";
-import { PmBlockView } from "./PmStaticView";
+import { PmBlockView, PmTypewriterTableView } from "./PmStaticView";
 import { ReviewBlockView } from "./reviewBlockDiff";
+import type { ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 
 // 审阅态块级补丁的渲染:与基座正文完全相同的 PmBlockView(React),让图表(DiagramRenderer)、
 // 公式(KaTeX)、callout/columnList/taskList 等运行时节点所见即所得,而不是 raw innerHTML 退化。
@@ -21,6 +22,7 @@ export function mountBlockPatchView(
   reviewTargets: readonly ReviewTarget[] = [],
   activeTargetId?: string | null,
   inputIndex = 0,
+  tableTypedCounts?: ReviewTableCellTypedCounts,
 ): Root {
   const root = createRoot(container);
   if (pmNodes && pmNodes.length > 0) {
@@ -34,7 +36,11 @@ export function mountBlockPatchView(
       createElement(
         "div",
         { className: "pm-static-view" },
-        pmDoc.content.map((node: PmBlockNode, i: number) => createElement(PmBlockView, { node, key: i })),
+        pmDoc.content.map((node: PmBlockNode, i: number) =>
+          node.type === "table" && tableTypedCounts
+            ? createElement(PmTypewriterTableView, { node, blockIndex: i, typedCounts: tableTypedCounts, key: i })
+            : createElement(PmBlockView, { node, key: i }),
+        ),
       ),
     );
     return root;

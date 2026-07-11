@@ -16,6 +16,7 @@ import { logClientEvent } from "../data/clientLog";
 import type { DocDimensions } from "../data/docDimensions";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
+import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import type {
   AppliedPatch,
   AskUserAnswers,
@@ -76,6 +77,7 @@ interface RightPaneProps {
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
   typedByPatch: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   patchRevealing: boolean;
   sessionId: string | null;
   stream: ServerStream | null;
@@ -160,6 +162,7 @@ export function RightPane({
   revealedPatchIds,
   revealCursors,
   typedByPatch,
+  tableTypedByPatch = null,
   patchRevealing,
   sessionId,
   stream,
@@ -433,6 +436,7 @@ export function RightPane({
         revealedPatchIds={revealedPatchIds}
         revealCursors={revealCursors}
         typedByPatch={typedByPatch}
+        tableTypedByPatch={tableTypedByPatch}
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}

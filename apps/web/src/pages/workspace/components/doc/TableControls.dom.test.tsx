@@ -408,6 +408,74 @@ describe("TableControls 真选区与 chrome", () => {
   });
 });
 
+describe("TableControls 行列拖拽排序", () => {
+  it("长按行头显示拖影/落点线并单事务移动到末尾", async () => {
+    vi.useFakeTimers();
+    try {
+      const { editor, portal } = setupTable({ blockId: "table-1" });
+      await renderControls(editor);
+      const rowHeader = portal.querySelectorAll(".tbl-row-hdr")[0]!;
+      await act(async () => {
+        rowHeader.dispatchEvent(new MouseEvent("mousedown", { clientX: 95, clientY: 120, bubbles: true }));
+        vi.advanceTimersByTime(181);
+      });
+      expect(portal.querySelector('.tbl-axis-drag-ghost[data-axis="row"]')).not.toBeNull();
+      await act(async () => {
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: 150, clientY: 180, bubbles: true }));
+      });
+      expect(portal.querySelector('.tbl-axis-drop-line[data-drop-boundary="2"]')).not.toBeNull();
+      await act(async () => {
+        document.dispatchEvent(new MouseEvent("mouseup", { clientX: 150, clientY: 180, bubbles: true }));
+      });
+      const tableNode = editor.state.doc.firstChild!;
+      expect(tableNode.child(0).textContent).toBe("A3A4");
+      expect(tableNode.child(1).textContent).toBe("A1A2");
+      expect(portal.querySelector(".tbl-axis-drag-ghost")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Alt 拖列头落位为克隆，全部后代 blockId 保持唯一", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1" });
+    await renderControls(editor);
+    const colHeader = portal.querySelectorAll(".tbl-col-hdr")[0]!;
+    await act(async () => {
+      colHeader.dispatchEvent(new MouseEvent("mousedown", { clientX: 150, clientY: 95, altKey: true, bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+    });
+    expect(portal.querySelector('.tbl-axis-drag-ghost[data-clone="true"]')).not.toBeNull();
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+    });
+    expect(editor.state.doc.firstChild?.firstChild?.childCount).toBe(3);
+    const ids: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (typeof node.attrs.blockId === "string") ids.push(node.attrs.blockId);
+      return true;
+    });
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("跨合并区 fail-closed：指示线禁止且松手 toast，不改表", async () => {
+    const { editor, portal } = setupTable({ blockId: "table-1", merged: true });
+    const before = editor.state.doc.firstChild?.toJSON();
+    const onToast = vi.fn();
+    await renderControls(editor, vi.fn(async () => true), onToast);
+    const colHeader = portal.querySelectorAll(".tbl-col-hdr")[0]!;
+    await act(async () => {
+      colHeader.dispatchEvent(new MouseEvent("mousedown", { clientX: 150, clientY: 95, altKey: true, bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+    });
+    expect(portal.querySelector('.tbl-axis-drop-line[data-drop-allowed="false"]')).not.toBeNull();
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { clientX: 300, clientY: 120, altKey: true, bubbles: true }));
+    });
+    expect(onToast).toHaveBeenCalledWith("合并单元格跨越移动边界，无法排序");
+    expect(editor.state.doc.firstChild?.toJSON()).toEqual(before);
+  });
+});
+
 describe("TableControls AI 修改", () => {
   it("回调 false 保留真选区，只有 true 才清除", async () => {
     const { editor, portal } = setupTable({ blockId: "table-1" });

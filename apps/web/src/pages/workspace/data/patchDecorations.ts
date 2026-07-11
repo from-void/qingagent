@@ -11,6 +11,7 @@ import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ReviewTarget, Vi
 import type { PmBlockNode, PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
 import type { Root } from "react-dom/client";
 import { TOOLBAR_HIGHLIGHT_COLORS, TOOLBAR_TEXT_COLORS } from "./toolbarUnlock";
+import type { ReviewTableCellTypedCounts, ReviewTableTypedByPatch } from "./tableTypewriter";
 
 /** 审阅态块级新增补丁的 React 渲染注入(由 dom 环境的 DocumentSnapshotView 提供;
  *  node 单元测试不注入时 renderBlockInsertDOM 走 innerHTML 降级,零 React/katex 依赖)。 */
@@ -24,6 +25,7 @@ export type MountBlockView = (
   reviewTargets?: readonly ReviewTarget[],
   activeTargetId?: string | null,
   inputIndex?: number,
+  tableTypedCounts?: ReviewTableCellTypedCounts,
 ) => Root;
 
 type PatchDecorationMeta =
@@ -65,6 +67,7 @@ export type BuildPatchDecorationsArgs = {
   typedByPatch?: ReadonlyMap<string, number> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
   mountBlockView?: MountBlockView;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
 };
 
 export const patchDecorationKey = new PluginKey<DecorationSet>(
@@ -347,6 +350,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         ? ` is-granular${input.granularBlockHover ? " has-block-original-hover" : ""}`
         : "";
       const activeTargetKey = granular ? args.activeReviewTargetId ?? "" : currentClass;
+      const tableTypedKey = reviewTableCellTypedCountsKey(args.tableTypedByPatch?.get(input.patchId));
       decorations.push(
         Decoration.widget(
           input.op === "insert" ? range.boundary : range.to,
@@ -359,10 +363,11 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             args.reviewTargets?.filter((target) => target.patchId === input.patchId),
             args.activeReviewTargetId,
             inputIndex,
+            args.tableTypedByPatch?.get(input.patchId),
           ),
           {
             ...spec,
-            key: `bins-${input.patchId}-${index}-${activeTargetKey}${granularClass}-${statusClass}`,
+            key: `bins-${input.patchId}-${index}-${activeTargetKey}${granularClass}-${statusClass}-${tableTypedKey}`,
             side: 1,
             ignoreSelection: true,
             destroy: unmountBlockView,
@@ -373,6 +378,14 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
   }
 
   return { decorations, dropped };
+}
+
+function reviewTableCellTypedCountsKey(values: ReviewTableCellTypedCounts | undefined): string {
+  if (!values) return "final";
+  return Array.from(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join(",");
 }
 
 export function renderInsertDOM(
@@ -434,6 +447,7 @@ function renderBlockInsertDOM(
   reviewTargets?: readonly ReviewTarget[],
   activeTargetId?: string | null,
   inputIndex = 0,
+  tableTypedCounts?: ReviewTableCellTypedCounts,
 ): HTMLElement {
   const outer = document.createElement("div");
   outer.className = `wf-blockmark insert${currentClass}${statusClass}`;
@@ -456,6 +470,7 @@ function renderBlockInsertDOM(
       reviewTargets,
       activeTargetId,
       inputIndex,
+      tableTypedCounts,
     );
   } else {
     // 降级(node 单元测试等无 React 注入时):静态 HTML,图表/公式退化但结构完整。

@@ -110,6 +110,94 @@ describe("审阅态 PM patch decorations", () => {
     expect(inserted?.querySelector(".wf-patch-ins p")?.textContent).toBe("新增段落");
   });
 
+  it("新增表格 widget 按 cell reveal 逐字并在完成时恢复终态", async () => {
+    const baselineDoc = paragraphDoc("正文");
+    const tableNode = simpleTableNode([["甲😀", "乙"], ["丙", "丁"]]);
+    const tableBlock = {
+      kind: "table",
+      head: [],
+      rows: [["甲😀", "乙"], ["丙", "丁"]],
+    } as ViewBlock;
+    const input = blockPatch("table-reveal", "insert", {
+      gravity: "after",
+      blocks: [tableBlock],
+      pmNodes: [tableNode],
+    });
+    const applied = appliedPatch("table-reveal", 2, "insert", "", "甲😀乙丙丁");
+    const render = (tableTypedByPatch: ReadonlyMap<string, ReadonlyMap<string, number>> | null) => {
+      act(() => root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)} editable interactiveEditable={false} showPatches
+          acceptedPatches={new Set()} rejectedPatches={new Set()}
+          reviewBlockPatches={[input]} reviewAppliedPatches={[applied]}
+          tableTypedByPatch={tableTypedByPatch}
+        />,
+      ));
+    };
+
+    render(new Map([["table-reveal", new Map([
+      ["0:0:0", 1], ["0:0:1", 0], ["0:1:0", 0], ["0:1:1", 0],
+    ])]]));
+    await flush();
+    expect(Array.from(host.querySelectorAll("[data-review-table-reveal] td"), (cell) => cell.textContent)).toEqual([
+      "甲", "", "", "",
+    ]);
+    expect(host.querySelector(".review-table-reveal-cursor")?.closest("td")?.textContent).toContain("甲");
+
+    render(new Map([["table-reveal", new Map([
+      ["0:0:0", 2], ["0:0:1", 1], ["0:1:0", 0], ["0:1:1", 0],
+    ])]]));
+    await flush();
+    expect(Array.from(host.querySelectorAll("[data-review-table-reveal] td"), (cell) => cell.textContent)).toEqual([
+      "甲😀", "乙", "", "",
+    ]);
+    expect(host.querySelector(".review-table-reveal-cursor")?.closest("td")?.textContent).toBe("");
+
+    render(null);
+    await flush();
+    expect(Array.from(host.querySelectorAll("td"), (cell) => cell.textContent)).toEqual([
+      "甲😀", "乙", "丙", "丁",
+    ]);
+    expect(host.querySelector(".review-table-reveal-cursor")).toBeNull();
+  });
+
+  it("表格 reveal 被接受/拒绝或 reduced-motion 跳过时立即进入对应终态", async () => {
+    const baselineDoc = paragraphDoc("正文");
+    const tableNode = simpleTableNode([["终态"]]);
+    const input = blockPatch("table-skip", "insert", {
+      gravity: "after",
+      blocks: [{ kind: "table", head: [], rows: [["终态"]] }],
+      pmNodes: [tableNode],
+    });
+    const common = {
+      doc: pmDocToViewDocumentSnapshot(baselineDoc, 1),
+      editable: true,
+      interactiveEditable: false,
+      showPatches: true,
+      reviewBlockPatches: [input],
+      reviewAppliedPatches: [appliedPatch("table-skip", 3, "insert", "", "终态")],
+    } as const;
+
+    // reduced-motion/跳过不传逐字 map，widget 首帧就是完整终态。
+    act(() => root.render(
+      <DocumentSnapshotView {...common} acceptedPatches={new Set()} rejectedPatches={new Set()} tableTypedByPatch={null} />,
+    ));
+    await flush();
+    expect(host.querySelector("td")?.textContent).toBe("终态");
+
+    act(() => root.render(
+      <DocumentSnapshotView {...common} acceptedPatches={new Set(["table-skip"])} rejectedPatches={new Set()} tableTypedByPatch={null} />,
+    ));
+    await flush();
+    expect(host.querySelector("td")?.textContent).toBe("终态");
+
+    act(() => root.render(
+      <DocumentSnapshotView {...common} acceptedPatches={new Set()} rejectedPatches={new Set(["table-skip"])} tableTypedByPatch={null} />,
+    ));
+    await flush();
+    expect(host.querySelector('[data-patch-id="table-skip"].wf-blockmark.insert')).toBeNull();
+  });
+
   it("只读 PM 上屏块级删除 decoration 时标记基线整块并保留原文", async () => {
     const baselineDoc = twoParagraphDoc();
     const applied = appliedPatch("block-del", 3, "delete", "第二段", "");
@@ -1290,6 +1378,25 @@ function twoParagraphDoc(): PmDoc {
       },
     ],
   } as PmDoc;
+}
+
+function simpleTableNode(rows: string[][]): import("@qingagent/pm-schema").PmBlockNode {
+  return {
+    type: "table",
+    attrs: { blockId: "table-review" },
+    content: rows.map((row, rowIndex) => ({
+      type: "tableRow",
+      content: row.map((text, cellIndex) => ({
+        type: "tableCell",
+        attrs: { colspan: 1, rowspan: 1, colwidth: null, backgroundColor: null },
+        content: [{
+          type: "paragraph",
+          attrs: { blockId: `table-review-r${rowIndex}-c${cellIndex}-p` },
+          content: text ? [{ type: "text", text }] : [],
+        }],
+      })),
+    })),
+  } as import("@qingagent/pm-schema").PmBlockNode;
 }
 
 function docSuggestion(

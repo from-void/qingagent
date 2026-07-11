@@ -170,6 +170,11 @@ import {
   type UploadedAsset,
 } from "./data/useMaterialParseTracker";
 import { planRevealTypewriter, revealNewPartLen } from "./data/revealTypewriter";
+import {
+  buildReviewTableRevealPlan,
+  reviewTableTypedCounts,
+  type ReviewTableTypedByPatch,
+} from "./data/tableTypewriter";
 import { validateCommand } from "../../system/validators";
 import { resources, useResourceList } from "../../system/resources";
 import type { ChatChipSpec } from "./components/ChatInput";
@@ -1167,6 +1172,17 @@ export function WorkspacePage() {
   //   打 data-hc-lane 锚点(供拟人鼠标 HumanCursorOverlay 定位);Agent·N 名字已迁移到鼠标承载,光标不带文字。
   // - patchRevealing:整个打字过程布尔(隐藏顶部审批条 / 左侧 loading / 右栏发光)。
   const [typedByPatch, setTypedByPatch] = useState<ReadonlyMap<string, number> | null>(null);
+  const [tableTypedByPatch, setTableTypedByPatch] = useState<ReviewTableTypedByPatch | null>(null);
+  const finalizedTablePatchIdsRef = useRef<Set<string>>(new Set());
+  const finalizeReviewTablePatch = useCallback((patchId: string) => {
+    finalizedTablePatchIdsRef.current.add(patchId);
+    setTableTypedByPatch((current) => {
+      if (!current?.has(patchId)) return current;
+      const next = new Map(current);
+      next.delete(patchId);
+      return next.size > 0 ? next : null;
+    });
+  }, []);
   const [revealCursors, setRevealCursors] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [patchRevealing, setPatchRevealing] = useState(false);
   const hasPatchCalls = allReviewPatches.length > 0;
@@ -1418,6 +1434,21 @@ export function WorkspacePage() {
     () => (patchPresentation?.applied ?? []).map((a) => a.id).join(","),
     [patchPresentation],
   );
+  const tableBlockPatchIds = useMemo(
+    () => new Set(
+      blockPatchInputs
+        .filter((input) => input.blocks.some((block) => block.kind === "table"))
+        .map((input) => input.patchId),
+    ),
+    [blockPatchInputs],
+  );
+  const tableRevealPlans = useMemo(
+    () => blockPatchInputs.flatMap((input) => {
+      const plan = buildReviewTableRevealPlan(input);
+      return plan ? [plan] : [];
+    }),
+    [blockPatchInputs],
+  );
   // 在 effect 内读最新 patchMeta 算每处目标字数,但不让 meta 引用进 effect 依赖
   // (meta 与 appliedIdsKey 同源,key 变时 meta 也新)。
   const patchMetaRef = useRef(patchMeta);
@@ -1427,14 +1458,18 @@ export function WorkspacePage() {
       setRevealedPatchIds(null);
       setTypedByPatch(null);
       setRevealCursors(new Map());
+      setTableTypedByPatch(null);
+      finalizedTablePatchIdsRef.current.clear();
       setPatchRevealing(false);
       return;
     }
     const ids = appliedIdsKey.split(",");
+    finalizedTablePatchIdsRef.current.clear();
     if (reducedMotion) {
       setRevealedPatchIds(new Set(ids));
       setTypedByPatch(null); // 降级:不逐字,全显示
       setRevealCursors(new Map());
+      setTableTypedByPatch(null);
       setPatchRevealing(false);
       return;
     }
@@ -1443,7 +1478,9 @@ export function WorkspacePage() {
 
     // 每处新增文案的目标字数(纯删除/无新增处为 0,不占打字头、瞬时入场)。
     const meta = patchMetaRef.current;
+    const tablePlanByPatchId = new Map(tableRevealPlans.map((plan) => [plan.patchId, plan]));
     const targetOf = (id: string): number => {
+      if (tableBlockPatchIds.has(id)) return tablePlanByPatchId.get(id)?.totalGraphemes ?? 0;
       const m = meta.get(id);
       return m ? revealNewPartLen(m.before, m.after) : 0;
     };
@@ -1451,8 +1488,21 @@ export function WorkspacePage() {
     const frames = planRevealTypewriter(ids, targetOf, cfgConcurrency, cfgCharsPerTick);
 
     const applyFrame = (f: (typeof frames)[number]) => {
+      const typedFrame = new Map(f.typed);
       setRevealedPatchIds(new Set(f.revealed));
-      setTypedByPatch(new Map(f.typed));
+      // inline 文本与表格各走自己的表示，禁止把整表总字数塞进 typedByPatch。
+      setTypedByPatch(new Map(
+        Array.from(f.typed).filter(([patchId]) => !tableBlockPatchIds.has(patchId)),
+      ));
+      const nextTableTyped = new Map<string, ReadonlyMap<string, number>>();
+      for (const plan of tableRevealPlans) {
+        if (!f.revealed.includes(plan.patchId) || finalizedTablePatchIdsRef.current.has(plan.patchId)) continue;
+        nextTableTyped.set(
+          plan.patchId,
+          reviewTableTypedCounts(plan, typedFrame.get(plan.patchId) ?? 0),
+        );
+      }
+      setTableTypedByPatch(nextTableTyped.size > 0 ? nextTableTyped : null);
       setRevealCursors(new Map(f.cursors.map((c) => [c.id, c.lane])));
     };
 
@@ -1462,6 +1512,7 @@ export function WorkspacePage() {
       // 末批光标停留片刻收尾,再升起审批条(此时帧已无光标)
       endTimer = setTimeout(() => {
         setRevealCursors(new Map());
+        setTableTypedByPatch(null);
         setPatchRevealing(false);
       }, tailHoldMs);
     };
@@ -1498,6 +1549,8 @@ export function WorkspacePage() {
     cfgStepDelayMs,
     cfgCharsPerTick,
     cfgTailHoldMs,
+    tableBlockPatchIds,
+    tableRevealPlans,
     revealReplayNonce,
   ]);
 
@@ -2920,6 +2973,7 @@ export function WorkspacePage() {
       buildReviewGroupRejectSelection(currentPatches);
     const reviewOutcome = buildReviewOutcome(currentPatches, { rejectUndecided: true });
 
+    setTableTypedByPatch(null);
     dispatch({ kind: "forceUnlockReview" });
     setActiveReviewTargetId(null);
     showToast(
@@ -2969,6 +3023,7 @@ export function WorkspacePage() {
       showToast("正在查看历史版本，先返回当前版本");
       return;
     }
+    setTableTypedByPatch(null);
     const currentPatches = selectPatches(stateRef.current);
     const stream = streamRef.current;
     const currentSessionId = stateRef.current.sessionId;
@@ -3022,6 +3077,7 @@ export function WorkspacePage() {
         showToast("正在查看历史版本，先返回当前版本");
         return;
       }
+      finalizeReviewTablePatch(patchId);
       const command = buildPatchVerdictCommand(selectPatches(stateRef.current), patchId, verdict);
       try {
         validateCommand(command);
@@ -3039,7 +3095,7 @@ export function WorkspacePage() {
         });
       showToast(verdict === "accepted" ? "已保留这处改动" : "已取消这处改动");
     },
-    [showToast],
+    [finalizeReviewTablePatch, showToast],
   );
 
   const handleCommit = useCallback(() => {
@@ -3558,6 +3614,7 @@ export function WorkspacePage() {
             revealedPatchIds={revealedPatchIds}
             revealCursors={revealCursors}
             typedByPatch={typedByPatch}
+            tableTypedByPatch={tableTypedByPatch}
             patchRevealing={effectivePatchRevealing}
             sessionId={state.sessionId}
             stream={streamRef.current}

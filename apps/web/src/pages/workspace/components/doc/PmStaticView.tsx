@@ -1,7 +1,9 @@
 import React, { useMemo, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode, PmTableNode } from "@qingagent/pm-schema";
+import { splitGraphemes } from "../../data/presentationSpans";
+import { reviewTableCellKey, type ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 import { ReadonlyImageFigure } from "../ImageView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
 
@@ -140,6 +142,61 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
   }
 }
 
+export function PmTypewriterTableView({
+  node,
+  blockIndex,
+  typedCounts,
+}: {
+  node: PmTableNode;
+  blockIndex: number;
+  typedCounts: ReviewTableCellTypedCounts;
+}) {
+  let activeCellKey: string | null = null;
+  node.content.forEach((row, rowIndex) => {
+    row.content.forEach((cell, cellIndex) => {
+      if (activeCellKey) return;
+      const key = reviewTableCellKey(blockIndex, rowIndex, cellIndex);
+      const target = inlineGraphemeLength(pmTextBlockInlineContent(cell.content[0]));
+      if ((typedCounts.get(key) ?? target) < target) activeCellKey = key;
+    });
+  });
+  return (
+    <div className="pm-table-scroll">
+      <table data-review-table-reveal="true">
+        <tbody>
+          {node.content.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.content.map((cell, cellIndex) => {
+                const key = reviewTableCellKey(blockIndex, rowIndex, cellIndex);
+                const block = cell.content[0];
+                const inlineContent = pmTextBlockInlineContent(block);
+                const target = inlineGraphemeLength(inlineContent);
+                const typed = typedCounts.get(key) ?? target;
+                const revealedBlock = block
+                  ? withTruncatedPmInlineContent(block, inlineContent, typed)
+                  : null;
+                return (
+                  <PmTableCellView key={cellIndex} cell={cell}>
+                    <div className="review-table-reveal-cell" data-review-cell-key={key}>
+                      {revealedBlock ? <PmBlockView node={revealedBlock} /> : null}
+                      {activeCellKey === key ? (
+                        <span
+                          className="ai-cursor native-presentation-cursor review-table-reveal-cursor"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                    </div>
+                  </PmTableCellView>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function MathView({ latex, display }: { latex: string; display?: boolean }) {
   const html = useMemo(() => {
     try {
@@ -213,6 +270,64 @@ function PmInlineView({ node }: { node: PmInlineNode }) {
   if (node.type === "hardBreak") return <br />;
   if (node.type === "inlineMath") return <MathView latex={node.attrs.latex} />;
   return <>{applyMarks(node.text, node.marks ?? [])}</>;
+}
+
+function inlineGraphemeLength(content: readonly PmInlineNode[]): number {
+  return content.reduce(
+    (sum, node) => sum + (node.type === "text" ? splitGraphemes(node.text).length : 1),
+    0,
+  );
+}
+
+function pmTextBlockInlineContent(block: PmBlockNode | undefined): readonly PmInlineNode[] {
+  if (!block) return [];
+  switch (block.type) {
+    case "paragraph":
+    case "heading":
+    case "codeBlock":
+    case "penNote":
+      return block.content ?? [];
+    default:
+      return [];
+  }
+}
+
+function withTruncatedPmInlineContent(
+  block: PmBlockNode,
+  content: readonly PmInlineNode[],
+  graphemeCount: number,
+): PmBlockNode {
+  const truncated = truncatePmInlineNodes(content, graphemeCount);
+  switch (block.type) {
+    case "paragraph":
+    case "heading":
+    case "codeBlock":
+    case "penNote":
+      return { ...block, content: truncated } as PmBlockNode;
+    default:
+      return block;
+  }
+}
+
+function truncatePmInlineNodes(
+  content: readonly PmInlineNode[],
+  graphemeCount: number,
+): PmInlineNode[] {
+  let remaining = Math.max(0, Math.floor(graphemeCount));
+  const result: PmInlineNode[] = [];
+  for (const node of content) {
+    if (remaining <= 0) break;
+    if (node.type !== "text") {
+      result.push(node);
+      remaining -= 1;
+      continue;
+    }
+    const graphemes = splitGraphemes(node.text);
+    const take = Math.min(remaining, graphemes.length);
+    if (take > 0) result.push({ ...node, text: graphemes.slice(0, take).join("") });
+    remaining -= take;
+  }
+  return result;
 }
 
 export function textAlignStyle(align: string | null | undefined): React.CSSProperties | undefined {

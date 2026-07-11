@@ -59,7 +59,7 @@ import {
 import {
   applyNativeConcurrentFrame,
   NativePresentationDecorations,
-  resolveTextBlockRange,
+  resolveNativeTargetRange,
   setNativePresentationDecorations,
   type NativeEditorOperationRuntime,
 } from "../data/nativePresentationPm";
@@ -69,6 +69,7 @@ import {
   setPatchDecorations,
 } from "../data/patchDecorations";
 import { sectionText } from "../data/presentationSpans";
+import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import {
   classifyIncomingDoc,
   pushPendingSelfDocKey,
@@ -177,6 +178,7 @@ export interface DocumentSnapshotViewProps {
   revealCursors?: ReadonlyMap<string, number> | null;
   /** 改动B 逐字打字:每处新增文案已"打"出的字符数;null/undefined = 不截断(全显示)。 */
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
   /** Maps patchId to before/after text and sequence number. */
   patchMeta?: Map<string, PatchMeta>;
@@ -213,6 +215,7 @@ export const DocumentSnapshotView = forwardRef<
     revealedPatchIds,
     revealCursors,
     typedByPatch,
+    tableTypedByPatch,
     onPatchVerdict,
     patchMeta,
     activePatchId,
@@ -290,6 +293,7 @@ export const DocumentSnapshotView = forwardRef<
         revealedPatchIds={revealedPatchIds}
         revealCursors={revealCursors}
         typedByPatch={typedByPatch}
+        tableTypedByPatch={tableTypedByPatch}
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
@@ -353,6 +357,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   revealedPatchIds?: ReadonlySet<string> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
   patchMeta?: Map<string, PatchMeta>;
   activePatchId?: string | null;
@@ -382,6 +387,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     revealedPatchIds,
     revealCursors,
     typedByPatch,
+    tableTypedByPatch,
     onPatchVerdict,
     patchMeta,
     activePatchId,
@@ -596,6 +602,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     activeReviewTargetId,
     revealedPatchIds,
     typedByPatch,
+    tableTypedByPatch,
     revealCursors,
   });
 
@@ -1039,6 +1046,7 @@ function useReviewPatchDecorations({
   activeReviewTargetId,
   revealedPatchIds,
   typedByPatch,
+  tableTypedByPatch,
   revealCursors,
 }: {
   editor: Editor | null;
@@ -1055,6 +1063,7 @@ function useReviewPatchDecorations({
   activeReviewTargetId?: string | null;
   revealedPatchIds?: ReadonlySet<string> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   revealCursors?: ReadonlyMap<string, number> | null;
 }) {
   const suggestionsKey = useMemo(
@@ -1115,6 +1124,10 @@ function useReviewPatchDecorations({
     () => (revealCursors ? mapKey(revealCursors) : ""),
     [revealCursors],
   );
+  const tableTypedByPatchKey = useMemo(
+    () => nestedMapKey(tableTypedByPatch),
+    [tableTypedByPatch],
+  );
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -1136,6 +1149,7 @@ function useReviewPatchDecorations({
       revealedPatchIds,
       typedByPatch,
       revealCursors,
+      tableTypedByPatch,
       mountBlockView: mountBlockPatchView,
     });
     if (dropped.length > 0) {
@@ -1175,6 +1189,8 @@ function useReviewPatchDecorations({
     typedByPatchKey,
     revealCursors,
     revealCursorsKey,
+    tableTypedByPatch,
+    tableTypedByPatchKey,
   ]);
 
   // 卸载或更换 editor 时才彻底清理 patch decorations;更新期间不清,避免全量重挂闪烁(见上)。
@@ -1196,24 +1212,33 @@ function mapKey(values: ReadonlyMap<string, number>): string {
     .join(",");
 }
 
-function canResolveNativePresentationCoordinates(
+function nestedMapKey(values: ReviewTableTypedByPatch | null | undefined): string {
+  if (!values) return "";
+  return Array.from(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([patchId, cells]) => `${patchId}[${mapKey(cells)}]`)
+    .join("|");
+}
+
+export function canResolveNativePresentationCoordinates(
   editor: Editor,
   state: ReturnType<typeof createNativeConcurrentState>,
 ): boolean {
   if (state.tasks.length === 0) return false;
   try {
-    for (const task of state.tasks.slice(0, 8)) {
-      const operation = task.operations[0];
-      if (!operation) continue;
-      const at =
-        operation.kind === "deleteText"
-          ? operation.from
-          : operation.kind === "insertText" || operation.kind === "cursor" || operation.kind === "redDot"
-            ? operation.at
-            : 0;
-      const range = resolveTextBlockRange(editor, operation.blockIndex, at, at);
-      if (!range) return false;
-      editor.view.coordsAtPos(range.from);
+    for (const task of state.tasks) {
+      for (const operation of task.operations) {
+        const at = operation.kind === "deleteText" ? operation.from : operation.at;
+        const range = resolveNativeTargetRange(
+          editor,
+          operation.blockIndex,
+          operation.target,
+          at,
+          at,
+        );
+        if (!range) return false;
+        editor.view.coordsAtPos(range.from);
+      }
     }
     return true;
   } catch {

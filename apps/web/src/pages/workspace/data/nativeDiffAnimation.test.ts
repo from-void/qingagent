@@ -6,6 +6,7 @@ import {
   buildNativePresentationSeedSections,
   cloneNativePresentationRun,
   createNativeConcurrentState,
+  planNativeTiming,
   type NativePresentationRun,
 } from "./nativeDiffAnimation";
 import { laneColor } from "./humanCursorLanes";
@@ -105,7 +106,7 @@ describe("native PM presentation animation", () => {
     expect(buildNativePresentationSeedSections({ finalSections }).map(sectionText)).toEqual([
       "",
       "",
-      "A\nB",
+      "\n",
     ]);
   });
 
@@ -215,6 +216,45 @@ describe("native PM presentation animation", () => {
     expect(state.tasks.map((task) => task.phase)).toEqual(["skeleton", "content"]);
     const next = advanceNativeConcurrentState(state, 1);
     expect(next.steps.length).toBeGreaterThan(0);
+  });
+
+  it("表格按 cell 建一个 content task，且 operation 不跟随全局 chunkSize 放大", () => {
+    const finalSections: ViewBlock[] = [{ kind: "table", head: ["AB"], rows: [["😀C", "D"]] }];
+    const run: NativePresentationRun = {
+      id: 9,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    const state = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: 18,
+      chunkSize: 20,
+      maxDurationMs: 1000,
+      startJitter: false,
+    });
+    expect(state.tasks).toHaveLength(1);
+    expect(state.tasks[0]?.operations).toHaveLength(3);
+    expect(state.tasks[0]?.operations.map((operation) => operation.target)).toEqual([
+      { kind: "tableCell", rowIndex: 0, cellIndex: 0, textBlockIndex: 0 },
+      { kind: "tableCell", rowIndex: 1, cellIndex: 0, textBlockIndex: 0 },
+      { kind: "tableCell", rowIndex: 1, cellIndex: 1, textBlockIndex: 0 },
+    ]);
+    const next = advanceNativeConcurrentState(state, 18);
+    expect(next.steps[0]).toMatchObject({ kind: "insertText", text: "A", chunkFrom: 0, chunkTo: 1 });
+  });
+
+  it("表格时长只累计 cell grapheme，不把 tab/newline 当字符", () => {
+    const instructions = buildNativeDiffInstructions({
+      finalSections: [{ kind: "table", head: ["A", "B"], rows: [["😀", " "]] }],
+    });
+    const timing = planNativeTiming(instructions, 60_000);
+    expect(timing.totalDurationMs).toBe(timing.stepDelayMs * 4);
   });
 
   it("保持拟人光标主题色单一色源，防止旧色数组复活", () => {

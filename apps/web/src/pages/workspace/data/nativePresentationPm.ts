@@ -3,12 +3,12 @@ import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import type { NativeConcurrentStep } from "./nativeDiffAnimation";
+import type { NativeConcurrentStep, NativePresentationTarget } from "./nativeDiffAnimation";
 import { laneFromAgentLabel, laneName } from "./humanCursorLanes";
 import { splitGraphemes } from "./presentationSpans";
 
 export interface NativeEditorOperationRuntime {
-  offsets: Map<number, number>;
+  offsets: Map<string, number>;
   operationOffsets: Map<string, number>;
   // 本帧新插入字符的范围,用于挂"字符入场"淡入动画(丝滑打字,每帧清空)。
   charEnters: { from: number; to: number }[];
@@ -129,8 +129,8 @@ export function applyNativeConcurrentStep(
   runtime: NativeEditorOperationRuntime,
 ): NativeCursorMarker | null {
   if (step.kind === "cursor") {
-    const at = step.at + (runtime.offsets.get(step.blockIndex) ?? 0);
-    const range = resolveTextBlockRange(editor, step.blockIndex, at, at);
+    const at = step.at + (runtime.offsets.get(nativePresentationTargetKey(step)) ?? 0);
+    const range = resolveNativeTargetRange(editor, step.blockIndex, step.target, at, at);
     if (!range) throw new Error("native presentation cursor range unavailable");
     editor.commands.setTextSelection(range.from);
     return {
@@ -142,8 +142,8 @@ export function applyNativeConcurrentStep(
   }
 
   if (step.kind === "redDot") {
-    const at = step.at + (runtime.offsets.get(step.blockIndex) ?? 0);
-    const range = resolveTextBlockRange(editor, step.blockIndex, at, at);
+    const at = step.at + (runtime.offsets.get(nativePresentationTargetKey(step)) ?? 0);
+    const range = resolveNativeTargetRange(editor, step.blockIndex, step.target, at, at);
     if (!range) throw new Error("native presentation red dot range unavailable");
     return {
       pos: range.from,
@@ -156,9 +156,10 @@ export function applyNativeConcurrentStep(
 
   const baseOffset = nativeEditorOperationBaseOffset(step, runtime);
   if (step.kind === "deleteText") {
-    const range = resolveTextBlockRange(
+    const range = resolveNativeTargetRange(
       editor,
       step.blockIndex,
+      step.target,
       step.chunkFrom + baseOffset,
       step.chunkTo + baseOffset,
     );
@@ -166,7 +167,7 @@ export function applyNativeConcurrentStep(
     editor.commands.setTextSelection(range.to);
     editor.commands.deleteRange({ from: range.from, to: range.to });
     if (step.operationComplete) {
-      runtime.offsets.set(step.blockIndex, baseOffset - step.operationLength);
+      runtime.offsets.set(nativePresentationTargetKey(step), baseOffset - step.operationLength);
       runtime.operationOffsets.delete(step.operationKey);
     }
     return {
@@ -177,9 +178,10 @@ export function applyNativeConcurrentStep(
     };
   }
 
-  const range = resolveTextBlockRange(
+  const range = resolveNativeTargetRange(
     editor,
     step.blockIndex,
+    step.target,
     step.at + step.chunkFrom + baseOffset,
     step.at + step.chunkFrom + baseOffset,
   );
@@ -188,7 +190,7 @@ export function applyNativeConcurrentStep(
   editor.commands.insertContentAt(range.from, step.text);
   runtime.charEnters.push({ from: range.from, to: range.from + step.text.length });
   if (step.operationComplete) {
-    runtime.offsets.set(step.blockIndex, baseOffset + step.operationLength);
+    runtime.offsets.set(nativePresentationTargetKey(step), baseOffset + step.operationLength);
     runtime.operationOffsets.delete(step.operationKey);
   }
   return {
@@ -292,6 +294,66 @@ export function resolveTextBlockRange(
   );
 }
 
+export function resolveNativeTargetRange(
+  editor: Editor,
+  blockIndex: number,
+  target: NativePresentationTarget | undefined,
+  fromGrapheme: number,
+  toGrapheme: number,
+): NativeTextBlockRange | null {
+  return resolveNativeTargetRangeInDoc(
+    editor.state.doc,
+    blockIndex,
+    target,
+    fromGrapheme,
+    toGrapheme,
+  );
+}
+
+export function resolveNativeTargetRangeInDoc(
+  doc: ProseMirrorNode,
+  blockIndex: number,
+  target: NativePresentationTarget | undefined,
+  fromGrapheme: number,
+  toGrapheme: number,
+  graphemeCache?: GraphemeFrameCache,
+): NativeTextBlockRange | null {
+  if (!target) {
+    return resolveTextBlockRangeInDoc(
+      doc,
+      blockIndex,
+      fromGrapheme,
+      toGrapheme,
+      graphemeCache,
+    );
+  }
+
+  const table = doc.childCount > blockIndex ? doc.child(blockIndex) : null;
+  if (!table || table.type.spec.tableRole !== "table" || target.kind !== "tableCell") return null;
+  if (target.rowIndex < 0 || target.rowIndex >= table.childCount) return null;
+  const row = table.child(target.rowIndex);
+  if (target.cellIndex < 0 || target.cellIndex >= row.childCount) return null;
+  const cell = row.child(target.cellIndex);
+  const textBlocks: Array<{ node: ProseMirrorNode; index: number }> = [];
+  cell.forEach((node, _offset, index) => {
+    if (node.isTextblock) textBlocks.push({ node, index });
+  });
+  const textBlock = textBlocks[target.textBlockIndex];
+  if (!textBlock) return null;
+
+  const tableOffset = childOffsetAt(doc, blockIndex);
+  const rowOffset = childOffsetAt(table, target.rowIndex);
+  const cellOffset = childOffsetAt(row, target.cellIndex);
+  const textBlockOffset = childOffsetAt(cell, textBlock.index);
+  const targetStart = tableOffset + 1 + rowOffset + 1 + cellOffset + 1 + textBlockOffset + 1;
+  const targetText = textBlock.node.textContent;
+  const fromOffset = graphemeIndexToCodeUnitOffset(targetText, fromGrapheme, graphemeCache);
+  const toOffset = graphemeIndexToCodeUnitOffset(targetText, toGrapheme, graphemeCache);
+  const from = clamp(targetStart + fromOffset, targetStart, targetStart + targetText.length);
+  const to = clamp(targetStart + toOffset, from, targetStart + targetText.length);
+  return { from, to, text: targetText };
+}
+
 export function resolveTextBlockRangeInDoc(
   doc: ProseMirrorNode,
   blockIndex: number,
@@ -336,10 +398,11 @@ function applyNativeConcurrentStepInChain(
   graphemeCache: GraphemeFrameCache,
 ): NativeCursorMarker | null {
   if (step.kind === "cursor") {
-    const at = step.at + (runtime.offsets.get(step.blockIndex) ?? 0);
-    const range = resolveTextBlockRangeInDoc(
+    const at = step.at + (runtime.offsets.get(nativePresentationTargetKey(step)) ?? 0);
+    const range = resolveNativeTargetRangeInDoc(
       doc,
       step.blockIndex,
+      step.target,
       at,
       at,
       graphemeCache,
@@ -355,10 +418,11 @@ function applyNativeConcurrentStepInChain(
   }
 
   if (step.kind === "redDot") {
-    const at = step.at + (runtime.offsets.get(step.blockIndex) ?? 0);
-    const range = resolveTextBlockRangeInDoc(
+    const at = step.at + (runtime.offsets.get(nativePresentationTargetKey(step)) ?? 0);
+    const range = resolveNativeTargetRangeInDoc(
       doc,
       step.blockIndex,
+      step.target,
       at,
       at,
       graphemeCache,
@@ -375,9 +439,10 @@ function applyNativeConcurrentStepInChain(
 
   const baseOffset = nativeEditorOperationBaseOffset(step, runtime);
   if (step.kind === "deleteText") {
-    const range = resolveTextBlockRangeInDoc(
+    const range = resolveNativeTargetRangeInDoc(
       doc,
       step.blockIndex,
+      step.target,
       step.chunkFrom + baseOffset,
       step.chunkTo + baseOffset,
       graphemeCache,
@@ -386,7 +451,7 @@ function applyNativeConcurrentStepInChain(
     commands.setTextSelection(range.to);
     commands.deleteRange({ from: range.from, to: range.to });
     if (step.operationComplete) {
-      runtime.offsets.set(step.blockIndex, baseOffset - step.operationLength);
+      runtime.offsets.set(nativePresentationTargetKey(step), baseOffset - step.operationLength);
       runtime.operationOffsets.delete(step.operationKey);
     }
     return {
@@ -397,9 +462,10 @@ function applyNativeConcurrentStepInChain(
     };
   }
 
-  const range = resolveTextBlockRangeInDoc(
+  const range = resolveNativeTargetRangeInDoc(
     doc,
     step.blockIndex,
+    step.target,
     step.at + step.chunkFrom + baseOffset,
     step.at + step.chunkFrom + baseOffset,
     graphemeCache,
@@ -409,7 +475,7 @@ function applyNativeConcurrentStepInChain(
   commands.insertContentAt(range.from, step.text);
   runtime.charEnters.push({ from: range.from, to: range.from + step.text.length });
   if (step.operationComplete) {
-    runtime.offsets.set(step.blockIndex, baseOffset + step.operationLength);
+    runtime.offsets.set(nativePresentationTargetKey(step), baseOffset + step.operationLength);
     runtime.operationOffsets.delete(step.operationKey);
   }
   return {
@@ -426,8 +492,25 @@ function nativeEditorOperationBaseOffset(
 ): number {
   const existing = runtime.operationOffsets.get(step.operationKey);
   if (existing != null) return existing;
-  const offset = runtime.offsets.get(step.blockIndex) ?? 0;
+  const offset = runtime.offsets.get(nativePresentationTargetKey(step)) ?? 0;
   runtime.operationOffsets.set(step.operationKey, offset);
+  return offset;
+}
+
+export function nativePresentationTargetKey(
+  step: Pick<NativeConcurrentStep, "blockIndex" | "target">,
+): string {
+  const target = step.target;
+  return target?.kind === "tableCell"
+    ? `table:${step.blockIndex}:${target.rowIndex}:${target.cellIndex}:${target.textBlockIndex}`
+    : `block:${step.blockIndex}`;
+}
+
+function childOffsetAt(node: ProseMirrorNode, index: number): number {
+  let offset = 0;
+  for (let current = 0; current < index; current += 1) {
+    offset += node.child(current).nodeSize;
+  }
   return offset;
 }
 

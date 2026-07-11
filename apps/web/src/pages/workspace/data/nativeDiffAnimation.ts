@@ -10,9 +10,17 @@ import {
 } from "./presentationRuntimeConfig";
 import { laneColor } from "./humanCursorLanes";
 import * as presentationSpans from "./presentationSpans";
-import { sectionText, visibleReviewSections } from "./presentationSpans";
+import { sectionText, tableCellEntries, visibleReviewSections } from "./presentationSpans";
+import { shouldTypewriteTable } from "./tableTypewriter";
 
 export type NativePresentationMode = "diff" | "whole";
+
+export type NativePresentationTarget = {
+  kind: "tableCell";
+  rowIndex: number;
+  cellIndex: number;
+  textBlockIndex: number;
+};
 
 export interface NativePresentationRun {
   id: number;
@@ -34,6 +42,7 @@ export type NativeDiffInstruction =
       blockIndex: number;
       at: number;
       tone: "blue" | "red";
+      target?: NativePresentationTarget;
       label: string;
     }
   | {
@@ -46,6 +55,7 @@ export type NativeDiffInstruction =
       from: number;
       to: number;
       text: string;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "insertText";
@@ -55,6 +65,7 @@ export type NativeDiffInstruction =
       blockIndex: number;
       at: number;
       text: string;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "redDot";
@@ -167,6 +178,7 @@ export type NativeConcurrentOperation =
       blockIndex: number;
       at: number;
       tone: "blue" | "red";
+      target?: NativePresentationTarget;
     }
   | {
       kind: "deleteText";
@@ -177,6 +189,7 @@ export type NativeConcurrentOperation =
       from: number;
       to: number;
       text: string;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "insertText";
@@ -185,6 +198,7 @@ export type NativeConcurrentOperation =
       blockIndex: number;
       at: number;
       text: string;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "redDot";
@@ -192,6 +206,7 @@ export type NativeConcurrentOperation =
       pmAt?: number;
       blockIndex: number;
       at: number;
+      target?: NativePresentationTarget;
     };
 
 const nativeOperationGraphemeCache = new WeakMap<NativeConcurrentOperation, string[]>();
@@ -262,6 +277,7 @@ export type NativeConcurrentStep =
       tone: "blue" | "red";
       operationLength: 0;
       operationComplete: true;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "deleteText";
@@ -280,6 +296,7 @@ export type NativeConcurrentStep =
       chunkTo: number;
       operationLength: number;
       operationComplete: boolean;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "insertText";
@@ -299,6 +316,7 @@ export type NativeConcurrentStep =
       text: string;
       operationLength: number;
       operationComplete: boolean;
+      target?: NativePresentationTarget;
     }
   | {
       kind: "redDot";
@@ -315,6 +333,7 @@ export type NativeConcurrentStep =
       at: number;
       operationLength: 0;
       operationComplete: true;
+      target?: NativePresentationTarget;
     };
 
 export interface NativeConcurrentAdvanceResult {
@@ -350,6 +369,12 @@ export function planNativeTiming(
       return sum + Math.max(1, presentationSpans.splitGraphemes(instruction.text).length);
     }
     if (instruction.kind === "insertSection") {
+      if (instruction.section.kind === "table") {
+        return sum + tableCellEntries(instruction.section).reduce(
+          (cellSum, cell) => cellSum + presentationSpans.splitGraphemes(cell.text).length,
+          0,
+        );
+      }
       return sum + Math.max(1, presentationSpans.splitGraphemes(sectionText(instruction.section)).length);
     }
     return sum + 1;
@@ -394,9 +419,9 @@ export function shouldForwardEditorUpdate({
 }
 
 export function buildNativePresentationSeedSections(
-  run: Pick<NativePresentationRun, "finalSections">,
+  run: Pick<NativePresentationRun, "finalSections" | "finalDoc">,
 ): ViewBlock[] {
-  return visibleReviewSections(run.finalSections).map((section) => {
+  return visibleReviewSections(run.finalSections).map((section, blockIndex) => {
     switch (section.kind) {
       case "h1":
         return { kind: "h1", text: "" };
@@ -404,6 +429,19 @@ export function buildNativePresentationSeedSections(
         return { kind: "h2", text: "", anchor: section.anchor };
       case "p":
         return { kind: "p", spans: [{ kind: "text", text: "" }] };
+      case "table":
+        if (!shouldTypewriteTable(section, run.finalDoc?.content[blockIndex])) {
+          return cloneViewSection(section);
+        }
+        return {
+          ...cloneViewSection(section),
+          head: section.head.map(() => ""),
+          rows: section.rows.map((row) => row.map(() => "")),
+          ...(section.headSpans ? { headSpans: section.headSpans.map(() => []) } : {}),
+          ...(section.rowSpans
+            ? { rowSpans: section.rowSpans.map((row) => row.map(() => [])) }
+            : {}),
+        };
       default:
         return cloneViewSection(section);
     }
@@ -565,6 +603,32 @@ function buildWholeDocumentConcurrentTasks(
         blockIndex,
         operations: [{ kind: "insertText", blockIndex, at: 0, text, ...pmMeta }],
       });
+      return;
+    }
+
+    if (section.kind === "table" && shouldTypewriteTable(section, finalDoc?.content[blockIndex])) {
+      const operations: NativeConcurrentOperation[] = tableCellEntries(section)
+        .filter((entry) => entry.text.length > 0)
+        .map((entry) => ({
+          kind: "insertText",
+          blockIndex,
+          at: 0,
+          text: entry.text,
+          target: {
+            kind: "tableCell",
+            rowIndex: entry.rowIndex,
+            cellIndex: entry.cellIndex,
+            textBlockIndex: 0,
+          },
+        }));
+      if (operations.length > 0) {
+        tasks.push({
+          id: `content-${blockIndex}`,
+          phase: "content",
+          blockIndex,
+          operations,
+        });
+      }
     }
   });
 
@@ -688,6 +752,7 @@ function advanceNativeAgents(
       operationKey,
       ...(operation.blockId ? { blockId: operation.blockId } : {}),
       blockIndex: operation.blockIndex,
+      ...(operation.target ? { target: operation.target } : {}),
     };
 
     if (operation.kind === "cursor") {
@@ -718,7 +783,9 @@ function advanceNativeAgents(
     if (operation.kind === "insertText") {
       const graphemes = nativeOperationGraphemes(operation);
       const chunkFrom = agent.charIndex;
-      const chunkTo = Math.min(graphemes.length, chunkFrom + state.chunkSize);
+      // cell 必须保持 grapheme 逐字，不能跟随全文 chunkSize 自动放大。
+      const operationChunkSize = operation.target?.kind === "tableCell" ? 1 : state.chunkSize;
+      const chunkTo = Math.min(graphemes.length, chunkFrom + operationChunkSize);
       const text = graphemes.slice(chunkFrom, chunkTo).join("");
       const operationComplete = chunkTo >= graphemes.length;
       lastBatchSize = Math.max(lastBatchSize, Math.max(1, chunkTo - chunkFrom));

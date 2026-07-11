@@ -2058,6 +2058,23 @@
   #view-workspace .tbl-row-hdr:hover{background:rgba(168,130,63,.25)}
   #view-workspace .tbl-row-hdr.active{background:rgba(168,130,63,.55)}
 
+  #view-workspace .tbl-axis-drag-ghost{
+    z-index:100025;pointer-events:none;background:rgba(168,130,63,.18);
+    border:1px solid rgba(168,130,63,.48);opacity:.68;
+  }
+  #view-workspace .tbl-axis-drag-ghost[data-clone="true"]{
+    box-shadow:4px 4px 0 rgba(168,130,63,.14);
+  }
+  #view-workspace .tbl-axis-drop-line{
+    z-index:100030;pointer-events:none;background:var(--mark);
+    box-shadow:0 0 8px rgba(168,130,63,.32);
+  }
+  #view-workspace .tbl-axis-drop-line[data-axis="column"]{width:2px;transform:translateX(-1px)}
+  #view-workspace .tbl-axis-drop-line[data-axis="row"]{height:2px;transform:translateY(-1px)}
+  #view-workspace .tbl-axis-drop-line.is-forbidden{
+    background:rgba(176,74,52,.85);box-shadow:none;
+  }
+
   /* edge dots — small circles between col/row borders */
   #view-workspace .tbl-dot{
     width:16px;height:16px;border-radius:50%;
@@ -2731,6 +2748,11 @@
      宽表在卡片内横向滚动、不被裁切;收紧首尾外边距贴合紧凑卡片。 */
   /* 静态 PM 表格横滚容器(正文块级补丁 / hover 原文共用):宽表在此滚动,不撑破布局。 */
   #view-workspace .pm-table-scroll{ overflow-x:auto; max-width:100%; }
+  #view-workspace .review-table-reveal-cell{
+    display:flex;align-items:baseline;min-height:1.6em;
+  }
+  #view-workspace .review-table-reveal-cell > p{margin:0;min-width:0}
+  #view-workspace .review-table-reveal-cursor{flex:0 0 auto;pointer-events:none}
   #view-workspace .pm-hover-original{ overflow-x:auto; }
   #view-workspace .pm-hover-original > :first-child{ margin-top:0; }
   #view-workspace .pm-hover-original > :last-child{ margin-bottom:0; }

@@ -23,6 +23,21 @@ export function visibleReviewSections(sections: readonly ViewBlock[]): ViewBlock
   return sections.filter((section) => section.blockPatch?.op !== "delete");
 }
 
+export interface TableCellEntry {
+  rowIndex: number;
+  cellIndex: number;
+  text: string;
+}
+
+/** 表头在前、正文在后，坐标始终是 PM table 的物理 child index。 */
+export function tableCellEntries(section: ViewBlock): TableCellEntry[] {
+  if (section.kind !== "table") return [];
+  const rows = section.head.length > 0 ? [section.head, ...section.rows] : section.rows;
+  return rows.flatMap((row, rowIndex) =>
+    row.map((text, cellIndex) => ({ rowIndex, cellIndex, text })),
+  );
+}
+
 export function sectionText(section: ViewBlock): string {
   if (section.blockPatch?.op === "delete") return "";
   switch (section.kind) {

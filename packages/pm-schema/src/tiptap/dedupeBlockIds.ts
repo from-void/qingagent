@@ -1,8 +1,9 @@
 import { Extension } from "@tiptap/core";
 import type { Node as PmNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
+import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
 
 const DEDUPE_META = "qingagentDedupeBlockIds";
+export const APPLYING_REMOTE_META = "qingagentApplyingRemote";
 
 interface BlockIdOccurrence {
   pos: number;
@@ -24,47 +25,62 @@ export const DedupeBlockIds = Extension.create({
     return [
       new Plugin({
         key: dedupeBlockIdsPluginKey,
-        appendTransaction(transactions, oldState, newState) {
+        appendTransaction(transactions, _oldState, newState) {
           const docChanged = transactions.some((tr) => tr.docChanged);
           if (!docChanged) return null;
           if (transactions.some((tr) => tr.getMeta(DEDUPE_META))) return null;
-          if (transactions.some((tr) => shouldSkipDedupeTransaction(tr, oldState.doc.content.size))) {
+          if (transactions.some(shouldSkipDedupeTransaction)) {
             return null;
           }
 
-          const occurrences = collectBlockIdOccurrences(newState.doc);
           const pasteRanges = collectPasteInsertedRanges(transactions);
           const missing = pasteRanges.length > 0 ? collectMissingBlockIds(newState.doc, pasteRanges) : [];
-          const duplicates = findDuplicateBlockIds(occurrences);
-          if (duplicates.length === 0 && missing.length === 0) return null;
-
-          const reserved = new Set(occurrences.map((occurrence) => occurrence.blockId));
-          const tr = newState.tr;
-          for (const item of missing) {
-            const nextBlockId = allocateUniqueBlockId("block-pasted", reserved);
-            reserved.add(nextBlockId);
-            tr.setNodeMarkup(item.pos, undefined, { ...item.node.attrs, blockId: nextBlockId }, item.node.marks);
-          }
-          for (const duplicate of duplicates) {
-            const nextBlockId = allocateUniqueBlockId(duplicate.blockId, reserved);
-            reserved.add(nextBlockId);
-            tr.setNodeMarkup(
-              duplicate.pos,
-              undefined,
-              { ...duplicate.node.attrs, blockId: nextBlockId },
-              duplicate.node.marks,
-            );
-          }
-
-          if (!tr.docChanged) return null;
-          tr.setMeta(DEDUPE_META, true);
-          tr.setMeta("addToHistory", false);
-          return tr;
+          return buildDedupeBlockIdsTransaction(newState, missing);
         },
       }),
     ];
   },
 });
+
+/**
+ * 对已落入编辑器的存量文档执行同一套确定性 blockId 修复。
+ * 文档序首个 id 保留，后续重复项按既有 `~N` 规则改写；调用方负责决定载入/审阅时机。
+ */
+export function createDedupeBlockIdsTransaction(state: EditorState): Transaction | null {
+  return buildDedupeBlockIdsTransaction(state, []);
+}
+
+function buildDedupeBlockIdsTransaction(
+  state: EditorState,
+  missing: readonly MissingBlockId[],
+): Transaction | null {
+  const occurrences = collectBlockIdOccurrences(state.doc);
+  const duplicates = findDuplicateBlockIds(occurrences);
+  if (duplicates.length === 0 && missing.length === 0) return null;
+
+  const reserved = new Set(occurrences.map((occurrence) => occurrence.blockId));
+  const tr = state.tr;
+  for (const item of missing) {
+    const nextBlockId = allocateUniqueBlockId("block-pasted", reserved);
+    reserved.add(nextBlockId);
+    tr.setNodeMarkup(item.pos, undefined, { ...item.node.attrs, blockId: nextBlockId }, item.node.marks);
+  }
+  for (const duplicate of duplicates) {
+    const nextBlockId = allocateUniqueBlockId(duplicate.blockId, reserved);
+    reserved.add(nextBlockId);
+    tr.setNodeMarkup(
+      duplicate.pos,
+      undefined,
+      { ...duplicate.node.attrs, blockId: nextBlockId },
+      duplicate.node.marks,
+    );
+  }
+
+  if (!tr.docChanged) return null;
+  tr.setMeta(DEDUPE_META, true);
+  tr.setMeta("addToHistory", false);
+  return tr;
+}
 
 function collectBlockIdOccurrences(doc: PmNode): BlockIdOccurrence[] {
   const occurrences: BlockIdOccurrence[] = [];
@@ -127,20 +143,7 @@ function allocateUniqueBlockId(baseId: string, reserved: ReadonlySet<string>): s
   return candidate;
 }
 
-function shouldSkipDedupeTransaction(tr: Transaction, oldDocContentSize: number): boolean {
+function shouldSkipDedupeTransaction(tr: Transaction): boolean {
   if (!tr.docChanged) return false;
-  if (tr.getMeta("isApplyingRemote") || tr.getMeta("qingagentApplyingRemote")) return true;
-  return transactionReplacesWholeDoc(tr, oldDocContentSize);
-}
-
-function transactionReplacesWholeDoc(tr: Transaction, oldDocContentSize: number): boolean {
-  return tr.steps.some((step) => {
-    let replacesWholeDoc = false;
-    step.getMap().forEach((oldStart, oldEnd, newStart) => {
-      if (oldStart === 0 && oldEnd === oldDocContentSize && newStart === 0) {
-        replacesWholeDoc = true;
-      }
-    });
-    return replacesWholeDoc;
-  });
+  return Boolean(tr.getMeta("isApplyingRemote") || tr.getMeta(APPLYING_REMOTE_META));
 }

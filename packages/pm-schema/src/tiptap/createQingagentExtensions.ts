@@ -14,6 +14,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { PM_CALLOUT_TONES, PM_IMAGE_ALIGN_VALUES, PM_ORDERED_LIST_STYLES, PM_SCHEMA_NODE_NAMES } from "../spec";
 import { isAllowedImageSrc, isAllowedLinkHref, isAllowedThemeColor } from "../validators";
 import { DedupeBlockIds } from "./dedupeBlockIds";
+export { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction } from "./dedupeBlockIds";
 
 export function getQingagentTiptapNodeNames(): readonly string[] {
   return PM_SCHEMA_NODE_NAMES;

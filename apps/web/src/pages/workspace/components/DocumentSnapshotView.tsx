@@ -17,7 +17,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import { APPLYING_REMOTE_META, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
@@ -745,7 +745,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             pendingSelfDocKeysRef.current = [];
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
-            editor.commands.setContent(incoming);
+            setRemoteEditorContent(editor, incoming);
             lastVersionRef.current = scheduledVersion;
             if (hadFocus) {
               const size = editor.state.doc.content.size;
@@ -847,7 +847,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (!editor || editor.isDestroyed) return;
       beginApplyingRemote();
       try {
-        editor.commands.setContent(content);
+        setRemoteEditorContent(editor, content);
         lastVersionRef.current = doc.version;
       } finally {
         finishApplyingRemoteSoon();
@@ -973,7 +973,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (!hasMissingPresentationBlockId(editor.getJSON())) return;
       beginApplyingRemote();
       try {
-        editor.commands.setContent(targetDoc);
+        setRemoteEditorContent(editor, targetDoc);
         lastVersionRef.current = targetVersion;
       } finally {
         finishApplyingRemoteSoon();
@@ -1030,6 +1030,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     </div>
   );
 });
+
+function setRemoteEditorContent(editor: Editor, content: string | PmDoc): void {
+  editor.chain().setMeta(APPLYING_REMOTE_META, true).setContent(content).run();
+}
 
 function useReviewPatchDecorations({
   editor,

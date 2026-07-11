@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve(process.cwd(), "../..");
 const matrix: Array<{ file: string; callSites: string[] }> = [
   { file: "packages/core/src/bridge/processAgentStream.ts", callSites: ["agent"] },
-  { file: "packages/core/src/tools/askUser.ts", callSites: ["askUser"] },
+  { file: "packages/core/src/tools/planDraft.ts", callSites: ["planDraft"] },
   { file: "packages/core/src/tools/askMore.ts", callSites: ["askMore"] },
   { file: "packages/core/src/tools/writeDraft.ts", callSites: ["writeDraft"] },
   { file: "packages/core/src/tools/generateSvg.ts", callSites: ["generateSvg"] },

@@ -136,42 +136,164 @@ export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[]
   const start = raw.indexOf("[");
   if (start < 0) return [];
   const questions: GeneratedQuestion[] = [];
-  let objectStart = -1;
+  const content = raw.slice(start + 1);
+  let position = 0;
+  while (position < content.length) {
+    while (position < content.length && /[\s,]/.test(content[position]!)) position += 1;
+    if (position >= content.length || content[position] === "]") break;
+    // 只沿最外层问题数组顺序解析，避免从前导脏数组或 options 子对象误造/漏造题目。
+    if (content[position] !== "{") break;
+    const objectEnd = findMatchingBrace(content, position);
+    if (objectEnd < 0) {
+      const partial = normalizePartialQuestion(content.slice(position), questions.length);
+      if (partial) questions.push(partial);
+      break;
+    }
+    try {
+      const normalized = normalizeQuestion(
+        JSON.parse(content.slice(position, objectEnd + 1)),
+        questions.length,
+      );
+      if (normalized) questions.push(normalized);
+    } catch {
+      // 已闭合但畸形的问题不影响此前成功解析的题目。
+    }
+    position = objectEnd + 1;
+  }
+  return questions;
+}
+
+function decodeJsonStringContent(content: string): string | null {
+  try {
+    const parsed = JSON.parse(`"${content}"`);
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractTopLevelStringField(
+  partial: string,
+  field: string,
+  options: { allowEmpty?: boolean } = {},
+): string | null {
+  const key = `"${field}"`;
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let index = start + 1; index < raw.length; index += 1) {
-    const char = raw[index]!;
+  for (let index = 0; index < partial.length; index += 1) {
+    const char = partial[index]!;
+    if (!inString && depth === 1 && partial.startsWith(key, index)) {
+      let cursor = index + key.length;
+      while (cursor < partial.length && /\s/.test(partial[cursor]!)) cursor += 1;
+      if (partial[cursor] !== ":") continue;
+      cursor += 1;
+      while (cursor < partial.length && /\s/.test(partial[cursor]!)) cursor += 1;
+      if (partial[cursor] !== '"') return null;
+      cursor += 1;
+      let value = "";
+      let valueEscaped = false;
+      for (; cursor < partial.length; cursor += 1) {
+        const valueChar = partial[cursor]!;
+        if (valueEscaped) {
+          value += `\\${valueChar}`;
+          valueEscaped = false;
+        } else if (valueChar === "\\") {
+          valueEscaped = true;
+        } else if (valueChar === '"') {
+          const decoded = decodeJsonStringContent(value);
+          return decoded !== null && (options.allowEmpty || decoded.length > 0) ? decoded : null;
+        } else {
+          value += valueChar;
+        }
+      }
+      return null;
+    }
     if (escaped) {
       escaped = false;
       continue;
     }
-    if (char === "\\") {
-      if (inString) escaped = true;
+    if (char === "\\" && inString) {
+      escaped = true;
       continue;
     }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
+    if (char === '"') inString = !inString;
     if (inString) continue;
-    if (char === "{") {
-      if (depth === 0) objectStart = index;
-      depth += 1;
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+  }
+  return null;
+}
+
+function findMatchingBrace(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (escaped) {
+      escaped = false;
       continue;
     }
-    if (char !== "}" || depth === 0) continue;
-    depth -= 1;
-    if (depth !== 0 || objectStart < 0) continue;
-    try {
-      const normalized = normalizeQuestion(JSON.parse(raw.slice(objectStart, index + 1)), questions.length);
-      if (normalized) questions.push(normalized);
-    } catch {
-      // 半截或畸形对象等待最终解析/重试处理。
+    if (char === "\\" && inString) {
+      escaped = true;
+      continue;
     }
-    objectStart = -1;
+    if (char === '"') inString = !inString;
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}" && --depth === 0) return index;
   }
-  return questions;
+  return -1;
+}
+
+function normalizePartialQuestion(partial: string, index: number): GeneratedQuestion | null {
+  const label = extractTopLevelStringField(partial, "label");
+  if (label === null) return null;
+  const rawKind = extractTopLevelStringField(partial, "kind");
+  if (rawKind !== "single" && rawKind !== "multi" && rawKind !== "text") return null;
+  const id = extractTopLevelStringField(partial, "id") ?? `q${index + 1}`;
+  const options: GeneratedQuestion["options"] = [];
+  const optionsField = partial.indexOf('"options"');
+  if (optionsField >= 0) {
+    const arrayStart = partial.indexOf("[", optionsField);
+    if (arrayStart >= 0) {
+      const optionContent = partial.slice(arrayStart + 1);
+      let position = 0;
+      while (position < optionContent.length) {
+        while (position < optionContent.length && /[\s,]/.test(optionContent[position]!)) position += 1;
+        if (position >= optionContent.length || optionContent[position] === "]") break;
+        if (optionContent[position] !== "{") break;
+        const optionEnd = findMatchingBrace(optionContent, position);
+        if (optionEnd < 0) break;
+        try {
+          const parsed = JSON.parse(optionContent.slice(position, optionEnd + 1));
+          if (isRecord(parsed) && typeof parsed.value === "string" && typeof parsed.label === "string") {
+            options.push({
+              value: parsed.value,
+              label: parsed.label,
+              ...(typeof parsed.description === "string" || parsed.description === null
+                ? { description: parsed.description }
+                : {}),
+              ...(typeof parsed.preview === "string" || parsed.preview === null
+                ? { preview: parsed.preview }
+                : {}),
+            });
+          }
+        } catch {
+          // 畸形 option 只跳过自身，保留题干和此前已完成选项。
+        }
+        position = optionEnd + 1;
+      }
+    }
+  }
+  return {
+    id,
+    label,
+    kind: rawKind,
+    options,
+    placeholder: extractTopLevelStringField(partial, "placeholder", { allowEmpty: true }) ?? "",
+  };
 }
 
 async function emitQuestionProgress(

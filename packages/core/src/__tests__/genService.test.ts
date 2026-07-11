@@ -17,7 +17,12 @@ vi.mock("../llm/modelConfig.js", () => ({
 }));
 vi.mock("ai", () => ({ streamText: mocks.streamText }));
 
-import { clearQuestionBranch, generateQuestions, parseGeneratedQuestions } from "../services/genService.js";
+import {
+  clearQuestionBranch,
+  generateQuestions,
+  parseGeneratedQuestions,
+  parsePartialGeneratedQuestions,
+} from "../services/genService.js";
 
 const snapshot = {
   sessionId: "gen-session",
@@ -193,6 +198,73 @@ describe("GenService", () => {
     expect(prompt).toContain("不得出现 run_js、readDraft");
     expect(prompt).toContain("根据下面的主对话摘要和写作方向");
     expect(prompt).toContain("已说明给企业管理层阅读");
+  });
+
+  it("branch 按题干、逐选项、题完成及下一题顺序发帧，首题和编号不丢", async () => {
+    const chunks = [
+      '[{"label":"第一题？","kind":"single",',
+      '"options":[{"value":"a","label":"甲"}',
+      ',{"value":"b","label":"乙"}]',
+      ',"placeholder":"请选择"}',
+      ',{"label":"第二题？","kind":"text","options":[]',
+      ',"placeholder":"请补充"}]',
+    ];
+    mocks.branchCall.mockImplementation(async (input) => {
+      let accumulated = "";
+      for (const chunk of chunks) {
+        accumulated += chunk;
+        await input.onTextDelta?.(chunk, accumulated);
+      }
+      return {
+        ok: true,
+        text: accumulated,
+        assistantMessage: { role: "assistant", content: accumulated },
+        attempts: 1,
+        toolCallRetries: 0,
+      };
+    });
+    const frames: Array<Array<{ id: string; options: number; placeholder?: string | null }>> = [];
+
+    const result = await generateQuestions({
+      mode: "initial",
+      rationale: "r",
+      topic: "t",
+      onProgress: (questions) => {
+        frames.push(questions.map((question) => ({
+          id: question.id,
+          options: question.options.length,
+          placeholder: question.placeholder,
+        })));
+      },
+    });
+
+    expect(frames).toEqual([
+      [{ id: "q1", options: 0, placeholder: "" }],
+      [{ id: "q1", options: 1, placeholder: "" }],
+      [{ id: "q1", options: 2, placeholder: "" }],
+      [{ id: "q1", options: 2, placeholder: "请选择" }],
+      [
+        { id: "q1", options: 2, placeholder: "请选择" },
+        { id: "q2", options: 0, placeholder: "" },
+      ],
+      [
+        { id: "q1", options: 2, placeholder: "请选择" },
+        { id: "q2", options: 0, placeholder: "请补充" },
+      ],
+    ]);
+    expect(result.questions.map((question) => question.id)).toEqual(["q1", "q2"]);
+  });
+
+  it("畸形或截断的后续 JSON 不吞首题、题干和已完成选项", () => {
+    const partial = parsePartialGeneratedQuestions(
+      '[{"label":"第一题？","kind":"single","options":[{"value":"a","label":"含 } 和 \\\" 引号"}]},' +
+      '{"label":"第二题？","kind":"multi","options":[{"value":"b","label":"已完成"},{"value":"c","label":"截断',
+    );
+
+    expect(partial).toEqual([
+      expect.objectContaining({ id: "q1", label: "第一题？", options: [expect.objectContaining({ value: "a" })] }),
+      expect.objectContaining({ id: "q2", label: "第二题？", options: [expect.objectContaining({ value: "b" })] }),
+    ]);
   });
 
   it("预取消时不发 branch 或 fallback 请求", async () => {

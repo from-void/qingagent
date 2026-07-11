@@ -52,10 +52,7 @@ export function mapConnectorStart(id: ConnectorId, value: unknown, now = Date.no
 }
 
 function startLabel(connector: ConnectorInfo): string {
-  if (connector.id === "github") {
-    if (connector.status.state === "connected") return "升级私有仓授权";
-    return connector.status.state === "needs_reauth" ? "重新授权" : "连 接";
-  }
+  if (connector.id === "github") return connector.status.state === "needs_reauth" ? "重新授权" : "连 接";
   if (connector.id === "feishu") return connector.status.state === "unconfigured" ? "创建应用" : connector.status.state === "needs_reauth" ? "重新扫码" : "扫码授权";
   return connector.status.state === "needs_reauth" ? "重新扫码" : "扫码登录";
 }
@@ -112,9 +109,8 @@ const FEISHU_DOMAIN_LABELS: Record<string, string> = {
   translation: "翻译",
 };
 
+// 仅飞书展示授权范围(域多才有信息量);GitHub/微信对用户就是「授权/没授权」二元,不摆 scope。
 function displayScopes(id: ConnectorId, scopes: readonly string[]): string[] {
-  // GitHub 的 scope 是粗粒度 OAuth 串,直接翻译成人话。
-  if (id === "github") return scopes.includes("repo") ? ["公开与私有仓库"] : ["公开仓库"];
   if (id !== "feishu") return [...scopes];
   const domains = new Set<string>();
   for (const scope of scopes) {
@@ -189,16 +185,10 @@ function detailStatus(connector: ConnectorInfo): string | null {
     return "检测到授权账号发生变化。为避免误切账号，当前连接未被替换；请先断开，再明确连接新账号。";
   }
   if (connector.id === "github" && connector.status.reasonCode === "INSUFFICIENT_SCOPE") {
-    return "当前授权范围不足。升级私有仓授权失败不会破坏已有公开仓连接，可重新发起。";
+    return "当前授权范围不足，重新授权即可扩展；失败不会影响现有连接。";
   }
-  const line = connectedLine(connector);
-  if (line) {
-    if (connector.id === "wechat-mp" && connector.status.lastCheckedAt) {
-      return `${line}。最近检查：${new Date(connector.status.lastCheckedAt).toLocaleString("zh-CN")}`;
-    }
-    return line;
-  }
-  if (["disconnected", "unconfigured"].includes(connector.status.state)) return null;
+  // 已连接的账号句放在页面底部断开区,这里不重复;未连接/未配置由徽标表达,同样不占一行。
+  if (["connected", "disconnected", "unconfigured"].includes(connector.status.state)) return null;
   return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
 }
 
@@ -238,24 +228,18 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         ? "也可以在对话里说「连接 GitHub」发起。"
         : "也可以在对话里说「登录公众号」发起。";
     const showGuide = ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
-    // GitHub 已连接但只有公开仓授权:提供一键升级到 repo(含私有仓)。
-    const needsRepoUpgrade = selected.id === "github"
-      && selected.status.state === "connected"
-      && !selected.status.scopes.includes("repo");
     const canStart = (selected.id === "feishu"
       ? ["unconfigured", "disconnected", "needs_reauth"]
-      : ["disconnected", "needs_reauth"]).includes(selected.status.state) || needsRepoUpgrade;
+      : ["disconnected", "needs_reauth"]).includes(selected.status.state);
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
     const selectedAuthCard = authCard?.connectorId === selected.id ? authCard.data : null;
     const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
     const initiate = async () => {
       setBusy(true);
       try {
-        // GitHub 默认请求 repo(含私有仓):用户点「连接」的预期就是能读自己的全部仓库。
+        // GitHub 一律请求 repo(含私有仓):对用户就是「授权/没授权」,不区分公私仓档位。
         const body = selected.id === "github" ? { scope: "repo" } : {};
-        const mapped = mapConnectorStart(selected.id, await start(selected.id, body));
-        // 升级场景的卡标题按语境改写,避免「连接 GitHub」误导为重新建连。
-        setAuthCard({ connectorId: selected.id, data: needsRepoUpgrade ? { ...mapped, title: "升级 GitHub 授权" } : mapped });
+        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id, body)) });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
         throw cause;
@@ -302,12 +286,10 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
             )}
           </div>
         ) : null}
-        {!selectedAuthCard && (showGuide || needsRepoUpgrade) && (
-          <p className="cnd-note">
-            {needsRepoUpgrade ? "当前仅授权公开仓，升级会重走一次 GitHub 授权；失败不影响现有连接。" : guide}
-          </p>
+        {!selectedAuthCard && showGuide && (
+          <p className="cnd-note">{guide}</p>
         )}
-        {selected.status.scopes.length > 0 && (
+        {selected.id === "feishu" && selected.status.scopes.length > 0 && (
           <section className="cnd-sec">
             <div className="cnd-sec-title">已授权范围</div>
             <div className="cnd-sec-body cn-scopes" title={selected.status.scopes.join(" ")}>{displayScopes(selected.id, selected.status.scopes).map((scope) => <span key={scope} className="ss-badge">{scope}</span>)}</div>
@@ -315,7 +297,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         )}
         {canDisconnect && (
           <div className="cnd-foot">
-            <span>只清除本机凭据；如需彻底撤销，请到服务方后台操作。</span>
+            <span>{connectedLine(selected) ? `${connectedLine(selected)}。` : ""}断开只清除本机凭据；如需彻底撤销，请到服务方后台操作。</span>
             <button type="button" className="sk-btn-danger" disabled={busy} onClick={async () => {
               setBusy(true);
               try {

@@ -161,13 +161,12 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).not.toContain("飞书");
   });
 
-  it("GitHub 已上线并提示私有仓升级与账号切换确认", () => {
+  it("GitHub 已连接态账号句在底部断开区,不摆 scope 档位", () => {
     h.connectors = [github("connected")];
     act(() => root.render(<ConnectionsPanel selectedId="github" />));
-    expect(host.textContent).toContain("当前仅授权公开仓");
-    expect(host.textContent).toContain("升级私有仓授权");
     expect(host.textContent).toContain("已连接为 @octo");
-    expect(host.textContent).toContain("公开仓库");
+    expect(host.textContent).not.toContain("升级私有仓授权");
+    expect(host.textContent).not.toContain("已授权范围");
     expect(host.textContent).not.toContain("public_repo");
     expect(host.textContent).not.toContain("即将上线");
 

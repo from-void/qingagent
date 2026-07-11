@@ -184,6 +184,8 @@ export interface DocumentSnapshotViewProps {
   reviewOverlayInputs?: readonly PatchOverlayInput[];
   reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
+  reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
+  activeReviewTargetId?: string | null;
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -215,6 +217,8 @@ export const DocumentSnapshotView = forwardRef<
     reviewOverlayInputs,
     reviewBlockPatches,
     reviewAppliedPatches,
+    reviewTargets,
+    activeReviewTargetId,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -289,6 +293,8 @@ export const DocumentSnapshotView = forwardRef<
         reviewOverlayInputs={reviewOverlayInputs}
         reviewBlockPatches={reviewBlockPatches}
         reviewAppliedPatches={reviewAppliedPatches}
+        reviewTargets={reviewTargets}
+        activeReviewTargetId={activeReviewTargetId}
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
@@ -349,6 +355,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   reviewOverlayInputs?: readonly PatchOverlayInput[];
   reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
+  reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
+  activeReviewTargetId?: string | null;
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
@@ -375,6 +383,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     reviewOverlayInputs,
     reviewBlockPatches,
     reviewAppliedPatches,
+    reviewTargets,
+    activeReviewTargetId,
     onEditorReady,
     onEditorChange,
     onToast,
@@ -572,9 +582,11 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     overlayInputs: reviewOverlayInputs,
     blockPatches: reviewBlockPatches,
     applied: reviewAppliedPatches,
+    reviewTargets,
     acceptedPatches,
     rejectedPatches,
     activePatchId,
+    activeReviewTargetId,
     revealedPatchIds,
     typedByPatch,
     revealCursors,
@@ -1010,9 +1022,11 @@ function useReviewPatchDecorations({
   overlayInputs,
   blockPatches,
   applied,
+  reviewTargets,
   acceptedPatches,
   rejectedPatches,
   activePatchId,
+  activeReviewTargetId,
   revealedPatchIds,
   typedByPatch,
   revealCursors,
@@ -1024,9 +1038,11 @@ function useReviewPatchDecorations({
   overlayInputs?: readonly PatchOverlayInput[];
   blockPatches?: readonly BlockPatchInput[];
   applied?: readonly AppliedPatch[];
+  reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
   activePatchId?: string | null;
+  activeReviewTargetId?: string | null;
   revealedPatchIds?: ReadonlySet<string> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
@@ -1105,6 +1121,8 @@ function useReviewPatchDecorations({
       acceptedIds: acceptedPatches,
       rejectedIds: rejectedPatches,
       activePatchId,
+      activeReviewTargetId,
+      reviewTargets,
       revealedPatchIds,
       typedByPatch,
       revealCursors,
@@ -1139,6 +1157,8 @@ function useReviewPatchDecorations({
     rejectedPatches,
     rejectedKey,
     activePatchId,
+    activeReviewTargetId,
+    reviewTargets,
     revealedPatchIds,
     revealedPatchIdsKey,
     typedByPatch,

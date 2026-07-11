@@ -290,7 +290,7 @@ describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
 
 /**
  * 不变量自检:任何 derivePatchPresentation 结果都必须满足
- * 计数 === applied id 数 === applied 数,且序号 1..N 连续。
+ * patch 守恒且 patch / 行级 target 序号分别连续。
  * 这是"沉淀的验证方法"——把它喂任意场景,数量一不对立刻断言失败。
  */
 function assertInternallyConsistent(result: ReturnType<typeof derivePatchPresentation>) {
@@ -298,6 +298,10 @@ function assertInternallyConsistent(result: ReturnType<typeof derivePatchPresent
   expect([...result.appliedIds].sort()).toEqual(result.applied.map((a) => a.id).sort());
   const groupIndexes = [...new Set(result.applied.map((a) => a.index))].sort((a, b) => a - b);
   expect(groupIndexes).toEqual(groupIndexes.map((_, i) => i + 1));
+  expect(result.reviewTargets.map((target) => target.index)).toEqual(
+    result.reviewTargets.map((_, index) => index + 1),
+  );
+  expect(result.reviewTargets.every((target) => result.appliedIds.has(target.patchId))).toBe(true);
 }
 
 describe("derivePatchPresentation — 单一真相源", () => {
@@ -1214,7 +1218,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect((itemSpans[1] as { marks?: unknown }).marks).toBeUndefined();
   });
 
-  it("同类型 bulletList replace 只产出一个 replace patch,行级 rowDiff 覆盖 same/changed/removed/added", () => {
+  it("同类型 bulletList replace 的同位置 remove+add 无视相似度配成 changed", () => {
     const before = pmBulletListRows("list-1", ["梳理需求", "对齐设计初稿", "评审纪要", "归档旧需求"]);
     const after = pmBulletListRows("list-1", ["梳理需求", "对齐设计终稿", "评审纪要", "拉通接口"]);
     const doc = pmDocToViewDocumentSnapshot(pmDoc([before]), 1, "t");
@@ -1235,18 +1239,16 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       "same",
       "changed",
       "same",
-      "removed",
-      "added",
+      "changed",
     ]);
     const sameRow = list.rowDiff?.[0];
     const changedRow = list.rowDiff?.[1];
-    const addedRow = list.rowDiff?.[4];
     expect(sameRow).toMatchObject({ status: "same" });
     expect(sameRow?.status === "same" ? sameRow.spans.some((span) => span.kind === "patchIns") : true).toBe(false);
     expect(changedRow).toMatchObject({ status: "changed", oldText: "对齐设计初稿" });
     expect(changedRow?.status === "changed" ? changedRow.spans : []).toContainEqual({ kind: "patchIns", text: "终", patchId: "rep-list" });
-    expect(list.rowDiff?.[3]).toMatchObject({ status: "removed", oldText: "归档旧需求" });
-    expect(addedRow?.status === "added" ? addedRow.spans : []).toEqual([{ kind: "patchIns", text: "拉通接口", patchId: "rep-list" }]);
+    expect(list.rowDiff?.[3]).toMatchObject({ status: "changed", oldText: "归档旧需求" });
+    expect(list.rowDiff?.[3]?.status === "changed" ? list.rowDiff[3].spans : []).toContainEqual({ kind: "patchIns", text: "拉通接口", patchId: "rep-list" });
 
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.applied).toHaveLength(1);
@@ -1254,7 +1256,31 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]!.before).toContain("对齐设计初稿");
     expect(result.applied[0]!.after).toContain("对齐设计终稿");
     expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-list"]));
+    expect(result.reviewTargets).toHaveLength(2);
     assertInternallyConsistent(result);
+  });
+
+  it("列表纯删与纯增保持孤立状态，不被误配成 replace", () => {
+    const before = pmBulletListRows("list-pure", ["保留", "只删除"]);
+    const afterDelete = pmBulletListRows("list-pure", ["保留"]);
+    const deleteInputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-pure-delete", replaceHunk("rep-pure-delete", "list-pure", before, afterDelete)),
+      0,
+    );
+    const deleteBlock = deleteInputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(deleteBlock.rowDiff?.map((row) => row.status)).toEqual(["same", "removed"]);
+    expect(deleteBlock.rowDiff?.[1]).toMatchObject({ status: "removed", oldText: "只删除" });
+
+    const afterAdd = pmBulletListRows("list-pure", ["保留", "只新增"]);
+    const addInputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-pure-add", replaceHunk("rep-pure-add", "list-pure", afterDelete, afterAdd)),
+      0,
+    );
+    const addBlock = addInputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(addBlock.rowDiff?.map((row) => row.status)).toEqual(["same", "added"]);
+    expect(addBlock.rowDiff?.[1]?.status === "added" ? addBlock.rowDiff[1].spans : []).toEqual([
+      { kind: "patchIns", text: "只新增", patchId: "rep-pure-add" },
+    ]);
   });
 
   it("三级嵌套 bulletList 只改三个叶子行时递归标记叶子 changed,其余分支 same 且 granular", () => {
@@ -1298,6 +1324,12 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(phases?.[0]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
     expect(phases?.[1]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
     expect(phases?.[2]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["same", "same", "same", "changed"]);
+
+    const doc = pmDocToViewDocumentSnapshot(pmDoc([before]), 1, "t");
+    const result = derivePatchPresentation(doc, [], inputs);
+    expect(result.reviewTargets).toHaveLength(3);
+    expect(result.reviewTargets.map((target) => target.index)).toEqual([1, 2, 3]);
+    expect(result.reviewTargets.every((target) => target.kind === "changed")).toBe(true);
   });
 
   it.each(["bulletList", "orderedList", "taskList"] as const)(
@@ -1598,7 +1630,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const callout = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "callout" }>;
     expect(callout.kind).toBe("callout");
     expect(callout.node.type).toBe("callout");
-    expect(callout.bodyDiff?.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
+    expect(callout.bodyDiff?.map((entry) => entry.status)).toEqual(["same", "changed", "changed"]);
     const changed = callout.bodyDiff?.[1];
     expect(changed).toMatchObject({ status: "changed", kind: "text", oldText: "旧风险提示" });
     expect(changed?.status === "changed" && changed.kind === "text" ? changed.spans : []).toContainEqual({
@@ -1606,8 +1638,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       text: "新",
       patchId: "rep-callout",
     });
-    expect(callout.bodyDiff?.[2]).toMatchObject({ status: "removed", oldText: "归档旧块" });
-    expect(callout.bodyDiff?.[3]).toMatchObject({ status: "added", block: { type: "paragraph" } });
+    expect(callout.bodyDiff?.[2]).toMatchObject({ status: "changed", kind: "text", oldText: "归档旧块" });
 
     const result = derivePatchPresentation(doc, [], inputs);
     expect(result.applied).toHaveLength(1);
@@ -1658,7 +1689,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(columnList.kind).toBe("columnList");
     expect(columnList.node.type).toBe("columnList");
     expect(columnList.columnsDiff).toHaveLength(2);
-    expect(columnList.columnsDiff?.[0]?.bodyDiff.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
+    expect(columnList.columnsDiff?.[0]?.bodyDiff.map((entry) => entry.status)).toEqual(["same", "changed", "changed"]);
 
     const textChanged = columnList.columnsDiff?.[0]?.bodyDiff[1];
     expect(textChanged).toMatchObject({ status: "changed", kind: "text", oldText: "左栏旧文" });

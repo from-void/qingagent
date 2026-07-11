@@ -70,6 +70,8 @@ interface RightPaneProps {
   reviewOverlayInputs?: readonly PatchOverlayInput[];
   reviewBlockPatches?: readonly BlockPatchInput[];
   reviewAppliedPatches?: readonly AppliedPatch[];
+  reviewTargets?: readonly import("../data/protocol").ReviewTarget[];
+  activeReviewTargetId?: string | null;
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
   typedByPatch: ReadonlyMap<string, number> | null;
@@ -151,6 +153,8 @@ export function RightPane({
   reviewOverlayInputs = [],
   reviewBlockPatches = [],
   reviewAppliedPatches = [],
+  reviewTargets = [],
+  activeReviewTargetId,
   revealedPatchIds,
   revealCursors,
   typedByPatch,
@@ -433,6 +437,8 @@ export function RightPane({
         reviewOverlayInputs={reviewOverlayInputs}
         reviewBlockPatches={reviewBlockPatches}
         reviewAppliedPatches={reviewAppliedPatches}
+        reviewTargets={reviewTargets}
+        activeReviewTargetId={activeReviewTargetId}
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}

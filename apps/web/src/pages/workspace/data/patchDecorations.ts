@@ -7,7 +7,7 @@ import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
 import { createNativeCursorWidget } from "./nativePresentationPm";
 import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";
-import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ViewBlock } from "./protocol";
+import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ReviewTarget, ViewBlock } from "./protocol";
 import type { PmBlockNode, PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
 import type { Root } from "react-dom/client";
 import { TOOLBAR_HIGHLIGHT_COLORS, TOOLBAR_TEXT_COLORS } from "./toolbarUnlock";
@@ -21,6 +21,9 @@ export type MountBlockView = (
   beforePmNodes?: readonly PmBlockNode[],
   patchIndex?: number,
   suppressLocalPopup?: boolean,
+  reviewTargets?: readonly ReviewTarget[],
+  activeTargetId?: string | null,
+  inputIndex?: number,
 ) => Root;
 
 type PatchDecorationMeta =
@@ -56,6 +59,8 @@ export type BuildPatchDecorationsArgs = {
   acceptedIds?: ReadonlySet<string> | readonly string[];
   rejectedIds?: ReadonlySet<string> | readonly string[];
   activePatchId?: string | null;
+  activeReviewTargetId?: string | null;
+  reviewTargets?: readonly ReviewTarget[];
   revealedPatchIds?: ReadonlySet<string> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
@@ -275,13 +280,13 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       .map((p) => p.patchId),
   );
 
-  for (const input of args.blockPatches ?? []) {
+  for (const [inputIndex, input] of (args.blockPatches ?? []).entries()) {
     if (rejectedIds.has(input.patchId)) continue;
     if (!isPatchRevealed(input.patchId, args.revealedPatchIds)) continue;
     const applied = appliedById.get(input.patchId);
     const index = applied?.index ?? input.order ?? 0;
     const status = acceptedIds.has(input.patchId) ? "accepted" : "reviewing";
-    const currentClass = args.activePatchId === input.patchId ? " is-current" : "";
+    const currentClass = (args.activeReviewTargetId ?? args.activePatchId) === input.patchId ? " is-current" : "";
     const statusClass = status === "accepted" ? " is-accepted" : "";
     const spec = patchSpec(input.patchId, index, status, input.op);
     const range = resolveBlockPatchRange(input, blockRanges);
@@ -341,13 +346,23 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       const granularClass = granular
         ? ` is-granular${input.granularBlockHover ? " has-block-original-hover" : ""}`
         : "";
+      const activeTargetKey = granular ? args.activeReviewTargetId ?? "" : currentClass;
       decorations.push(
         Decoration.widget(
           input.op === "insert" ? range.boundary : range.to,
-          () => renderBlockInsertDOM(input, index, currentClass + granularClass, statusClass, args.mountBlockView),
+          () => renderBlockInsertDOM(
+            input,
+            index,
+            currentClass + granularClass,
+            statusClass,
+            args.mountBlockView,
+            args.reviewTargets?.filter((target) => target.patchId === input.patchId),
+            args.activeReviewTargetId,
+            inputIndex,
+          ),
           {
             ...spec,
-            key: `bins-${input.patchId}-${index}-${currentClass}${granularClass}-${statusClass}`,
+            key: `bins-${input.patchId}-${index}-${activeTargetKey}${granularClass}-${statusClass}`,
             side: 1,
             ignoreSelection: true,
             destroy: unmountBlockView,
@@ -416,6 +431,9 @@ function renderBlockInsertDOM(
   currentClass: string,
   statusClass: string,
   mountBlockView?: MountBlockView,
+  reviewTargets?: readonly ReviewTarget[],
+  activeTargetId?: string | null,
+  inputIndex = 0,
 ): HTMLElement {
   const outer = document.createElement("div");
   outer.className = `wf-blockmark insert${currentClass}${statusClass}`;
@@ -435,6 +453,9 @@ function renderBlockInsertDOM(
       input.beforePmNodes,
       index,
       input.granularBlockHover === true,
+      reviewTargets,
+      activeTargetId,
+      inputIndex,
     );
   } else {
     // 降级(node 单元测试等无 React 注入时):静态 HTML,图表/公式退化但结构完整。

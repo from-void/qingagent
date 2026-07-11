@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
-import type { ViewBlock } from "../../data/protocol";
+import type { ReviewTarget, ViewBlock } from "../../data/protocol";
 import { PmBlockView } from "./PmStaticView";
 import { ReviewBlockView } from "./reviewBlockDiff";
 
@@ -18,6 +18,9 @@ export function mountBlockPatchView(
   beforePmNodes?: readonly PmBlockNode[],
   patchIndex?: number,
   suppressLocalPopup = false,
+  reviewTargets: readonly ReviewTarget[] = [],
+  activeTargetId?: string | null,
+  inputIndex = 0,
 ): Root {
   const root = createRoot(container);
   if (pmNodes && pmNodes.length > 0) {
@@ -47,6 +50,9 @@ export function mountBlockPatchView(
         block,
         key: i,
         beforeNode,
+        targetPrefix: `input:${inputIndex}/block:${i}`,
+        reviewTargets,
+        activeTargetId,
         patchIndex,
         suppressLocalPopup,
       })),

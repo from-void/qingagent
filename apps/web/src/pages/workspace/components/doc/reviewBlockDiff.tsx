@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { legacySectionsToPm, upgradeMermaidCodeBlocksToDiagram } from "@qingagent/pm-schema";
-import type { PmBlockNode, PmDoc, PmTableCellNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDoc, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
 import type {
   ViewBlock,
   ViewBlockSeqDiff,
@@ -9,6 +9,7 @@ import type {
   ViewDocSpan,
   ViewListRowDiff,
   ViewNestedListDiff,
+  ReviewTarget,
   ViewTableCellDiff,
   ViewTableRowDiff,
 } from "../../data/protocol";
@@ -18,10 +19,15 @@ import { viewSectionToLegacy } from "./viewDocHtml";
 
 const ROW_POPUP_HIDE_DELAY_MS = 160;
 const ReviewLocalPopupSuppressedContext = createContext(false);
+const ReviewTargetContext = createContext<{
+  byPath: ReadonlyMap<string, ReviewTarget>;
+  activeTargetId?: string | null;
+  fallbackIndex?: number;
+}>({ byPath: new Map() });
 
 // 审阅态"行级 diff"渲染:列表/待办清单不再整块替换(旧块划除 + 新块整显),而是逐行标注 ——
-// 新增/改动行左侧绿条、删除行划除。每个保留/新增/改动行**都用原始 after PM item 走 PmBlockView**
-// 渲染,保全嵌套子项 / marks / 行内公式(不经 legacy 拍平);只在行外套状态类。删除行用 oldText。
+// 新增/改动行左侧绿条、删除行只留紧凑标记。每个保留/新增/改动行**都用原始 after PM item 走 PmBlockView**
+// 渲染,保全嵌套子项 / marks / 行内公式(不经 legacy 拍平);只在行外套状态类。删除原文仅进 hover。
 // 非 diff 块回退 PmBlockView。hover 原文用原始 before PM node 直接 PmBlockView(全保真)。
 
 /** ViewDocSpan[] → React:纯文本走 applyMarks,行内 patch 段包 wf-row-ins/del 高亮。
@@ -36,16 +42,29 @@ function ReviewSpans({ spans }: { spans: readonly ViewDocSpan[] }) {
   );
 }
 
+// 行内 spans 用 "\n" 承载 hardBreak(见 protocol.pmInlineSpans);字符级渲染需把它还原成 <br>,
+// 否则换行会塌成空格、丢保真。无 "\n" 时与 applyMarks 等价。
+function applyMarksWithBreaks(text: string, marks: PmMark[]): React.ReactNode {
+  if (!text.includes("\n")) return applyMarks(text, marks);
+  const parts = text.split("\n");
+  return parts.map((part, i) => (
+    <React.Fragment key={i}>
+      {i > 0 ? <br /> : null}
+      {applyMarks(part, marks)}
+    </React.Fragment>
+  ));
+}
+
 function ReviewSpan({ span }: { span: ViewDocSpan }) {
   switch (span.kind) {
     case "text":
-      return <>{applyMarks(span.text, span.marks ?? [])}</>;
+      return <>{applyMarksWithBreaks(span.text, span.marks ?? [])}</>;
     case "math":
       return <MathView latex={span.latex} />;
     case "patchIns":
-      return <span className="wf-row-ins">{applyMarks(span.text, span.marks ?? [])}</span>;
+      return <span className="wf-row-ins">{applyMarksWithBreaks(span.text, span.marks ?? [])}</span>;
     case "patchDel":
-      return <span className="wf-row-del">{applyMarks(span.text, span.marks ?? [])}</span>;
+      return null;
     case "patchInsMath":
       return (
         <span className="wf-row-ins">
@@ -53,13 +72,9 @@ function ReviewSpan({ span }: { span: ViewDocSpan }) {
         </span>
       );
     case "patchDelMath":
-      return (
-        <span className="wf-row-del">
-          <MathView latex={span.latex} />
-        </span>
-      );
+      return null;
     case "patchMark":
-      return <>{applyMarks(span.text, span.marks)}</>;
+      return <>{applyMarksWithBreaks(span.text, span.marks)}</>;
     case "selectable":
       return <>{span.text}</>;
     default:
@@ -99,7 +114,29 @@ function directListItemChildren(item: ListItemLike | undefined): PmBlockNode[] {
 }
 
 /** granular 局部改动共用的 hover：锚点可以是 li / td / div，弹层只承载该局部的旧内容。 */
-function useReviewOriginalPopup<T extends HTMLElement>(original: React.ReactNode, patchIndex?: number) {
+type ReviewPopupKind = "added" | "removed" | "changed";
+
+function useReviewTarget(path: string) {
+  const scope = useContext(ReviewTargetContext);
+  const target = scope.byPath.get(path);
+  return {
+    target,
+    targetIndex: target?.index ?? scope.fallbackIndex,
+    targetClass: target && scope.activeTargetId === target.id ? " is-current" : "",
+    targetAttrs: target ? {
+      "data-review-target-id": target.id,
+      "data-review-target-index": target.index,
+    } : {},
+  };
+}
+
+function shouldShowLocalPopup(event: React.MouseEvent<HTMLElement>): boolean {
+  if (!(event.target instanceof Element)) return true;
+  const closestTarget = event.target.closest("[data-review-target-id]");
+  return !closestTarget || closestTarget === event.currentTarget;
+}
+
+function useReviewOriginalPopup<T extends HTMLElement>(content: React.ReactNode, targetIndex: number | undefined, kind: ReviewPopupKind) {
   const suppressed = useContext(ReviewLocalPopupSuppressedContext);
   const [visible, setVisible] = useState(false);
   const anchorRef = useRef<T>(null);
@@ -147,11 +184,16 @@ function useReviewOriginalPopup<T extends HTMLElement>(original: React.ReactNode
           onMouseEnter={show}
           onMouseLeave={scheduleHide}
         >
-          <span className="patch-popup-title">{patchIndex !== undefined ? `#${patchIndex} · 替换` : "替换"}</span>
-          <div className="patch-popup-original">
-            <span className="patch-popup-label">原文</span>
-            <div className="patch-popup-original-text">{original}</div>
-          </div>
+          <span className="patch-popup-title">{targetIndex !== undefined ? `#${targetIndex} · ${kind === "added" ? "新增" : kind === "removed" ? "删除" : "替换"}` : kind === "added" ? "新增" : kind === "removed" ? "删除" : "替换"}</span>
+          {kind === "changed" ? (
+            // 替换:hover 只显字符级改动片段(旧→新),不再弹整行原文(块级)
+            <div className="patch-popup-original">{content}</div>
+          ) : (
+            <div className="patch-popup-original">
+              <span className="patch-popup-label">{kind === "added" ? "本处" : "原文"}</span>
+              <div className="patch-popup-original-text">{content}</div>
+            </div>
+          )}
         </div>,
         portalTarget,
       )
@@ -166,24 +208,26 @@ function RowChangedLi({
   isTask,
   checked,
   original,
-  patchIndex,
+  targetPath,
   children,
 }: {
   isTask: boolean;
   checked: boolean;
   original: React.ReactNode;
-  patchIndex?: number;
+  targetPath: string;
   children: React.ReactNode;
 }) {
-  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLLIElement>(original, patchIndex);
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLLIElement>(original, targetIndex, "changed");
 
   return (
     <li
       ref={anchorRef}
-      className="wf-list-row wf-list-row--changed"
+      className={`wf-list-row wf-list-row--changed wf-diff-inline${targetClass}`}
+      {...targetAttrs}
       data-type={isTask ? "taskItem" : undefined}
       data-checked={isTask ? checked : undefined}
-      onMouseEnter={show}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
       onMouseLeave={scheduleHide}
     >
       {isTask ? (
@@ -194,6 +238,49 @@ function RowChangedLi({
       ) : (
         children
       )}
+      {popup}
+    </li>
+  );
+}
+
+function ReviewStateLi({
+  status,
+  isTask,
+  checked,
+  popupContent,
+  targetPath,
+  children,
+}: {
+  status: "added" | "removed";
+  isTask: boolean;
+  checked: boolean;
+  popupContent: React.ReactNode;
+  targetPath: string;
+  children: React.ReactNode;
+}) {
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLLIElement>(popupContent, targetIndex, status);
+  return (
+    <li
+      ref={anchorRef}
+      className={`wf-list-row wf-list-row--${status}${status === "added" ? " wf-diff-inline" : ""}${targetClass}`}
+      {...targetAttrs}
+      data-type={isTask ? "taskItem" : undefined}
+      data-checked={isTask && status === "added" ? checked : undefined}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
+      onMouseLeave={scheduleHide}
+    >
+      {status === "removed" ? (
+        <>
+          <span className="wf-review-delete-marker" aria-label="已删除内容，悬停查看原文" />
+          {children}
+        </>
+      ) : isTask ? (
+        <>
+          <input type="checkbox" checked={checked} disabled readOnly />
+          <div>{children}</div>
+        </>
+      ) : children}
       {popup}
     </li>
   );
@@ -223,16 +310,54 @@ function renderRowOriginal(beforeItem: ListItemLike | undefined, oldText: string
   return <div className="wf-row-orig">{content}</div>;
 }
 
+/** changed 的 hover 不再弹整行原文(块级),而是从 diff spans 提取「旧片段 → 新片段」逐处显示
+ *  (如 沉思 → 回味)。同一处连续的 patchDel/patchIns 配成一对;遇到未改文本即断开为下一处。
+ *  纯增(只有 ins)显示 → 新;纯删(只有 del)显示 旧 →。无任何 patch 段时返回 null(交由兜底)。 */
+function renderChangeFragments(spans: readonly ViewDocSpan[] | undefined): React.ReactNode | null {
+  if (!spans || spans.length === 0) return null;
+  const pairs: Array<{ del: React.ReactNode[]; ins: React.ReactNode[] }> = [];
+  let del: React.ReactNode[] = [];
+  let ins: React.ReactNode[] = [];
+  const flush = () => {
+    if (del.length || ins.length) pairs.push({ del, ins });
+    del = [];
+    ins = [];
+  };
+  for (const span of spans) {
+    switch (span.kind) {
+      case "patchDel": del.push(span.text); break;
+      case "patchDelMath": del.push(<MathView latex={span.latex} />); break;
+      case "patchIns": ins.push(span.text); break;
+      case "patchInsMath": ins.push(<MathView latex={span.latex} />); break;
+      default: flush(); break; // same/text/math 等未改内容:断开当前改动处
+    }
+  }
+  flush();
+  if (pairs.length === 0) return null;
+  const seq = (nodes: React.ReactNode[]) => nodes.map((n, j) => <React.Fragment key={j}>{n}</React.Fragment>);
+  return (
+    <div className="patch-frag-list">
+      {pairs.map((p, i) => (
+        <div key={i} className="patch-frag">
+          {p.del.length ? <span className="patch-frag-old">{seq(p.del)}</span> : null}
+          {p.del.length && p.ins.length ? <span className="patch-frag-arrow">→</span> : null}
+          {p.ins.length ? <span className="patch-frag-new">{seq(p.ins)}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReviewNestedLists({
   diffs,
   beforeItem,
   afterItem,
-  patchIndex,
+  targetPrefix,
 }: {
   diffs: readonly ViewNestedListDiff[] | undefined;
   beforeItem: ListItemLike | undefined;
   afterItem: ListItemLike | undefined;
-  patchIndex?: number;
+  targetPrefix: string;
 }) {
   const beforeLists = nestedListChildren(beforeItem);
   const afterLists = nestedListChildren(afterItem);
@@ -249,7 +374,7 @@ function ReviewNestedLists({
           rowDiff={diff.rowDiff}
           beforeNode={diff.beforeListIndex === undefined ? undefined : beforeLists[diff.beforeListIndex]}
           afterNode={diff.afterListIndex === undefined ? undefined : afterLists[diff.afterListIndex]}
-          patchIndex={patchIndex}
+          targetPrefix={`${targetPrefix}/nested:${index}`}
         />
       ))}
     </>
@@ -261,13 +386,13 @@ function ReviewListLevel({
   rowDiff,
   beforeNode,
   afterNode,
-  patchIndex,
+  targetPrefix,
   fallback,
 }: {
   rowDiff: readonly ViewListRowDiff[];
   beforeNode?: PmBlockNode;
   afterNode?: PmBlockNode;
-  patchIndex?: number;
+  targetPrefix: string;
   fallback?: { isTask: boolean; ordered: boolean; start?: number };
 }) {
   const listNode = isListNode(afterNode) ? afterNode : isListNode(beforeNode) ? beforeNode : undefined;
@@ -278,32 +403,57 @@ function ReviewListLevel({
   let afterCursor = 0;
 
   const items = rowDiff.map((row, i) => {
+    const targetPath = `${targetPrefix}/row:${i}`;
     const beforeItem = row.status === "added" ? undefined : beforeItems[beforeCursor++];
     const afterItem = row.status === "removed" ? undefined : afterItems[afterCursor++];
     const cls = `wf-list-row wf-list-row--${row.status}`;
     const directContent = directListItemChildren(afterItem);
+    // changed/added 行走字符级 inline diff(与普通段落一致):用 after 段落结构 + row.spans
+    // (changed=inlineSpanDiffSpans 只标改动字;added=全 patchIns 整行绿),而不是整行新文本 + 块级底色。
+    // 复杂/非文本叶子在 ReviewPmBlockWithSpans 里回退 PmBlockView。
     const body = row.status === "removed"
-      ? <s className="wf-row-del">{row.oldText}</s>
-      : directContent.length > 0
-        ? directContent.map((child, j) => <PmBlockView key={child.attrs.blockId ?? j} node={child} />)
-        : <ReviewSpans spans={row.spans} />;
+      ? null
+      : (row.status === "changed" || row.status === "added") && directContent.length > 0
+        ? <ReviewPmBlocksWithSpans nodes={directContent} spans={row.spans} />
+        : directContent.length > 0
+          ? directContent.map((child, j) => <PmBlockView key={child.attrs.blockId ?? j} node={child} />)
+          : <ReviewSpans spans={row.spans} />;
     const nested = (
       <ReviewNestedLists
         diffs={row.childLists}
         beforeItem={beforeItem}
         afterItem={afterItem}
-        patchIndex={patchIndex}
+        targetPrefix={targetPath}
       />
     );
     const checked = afterItem?.attrs?.checked ?? row.checked ?? false;
 
     if (row.status === "changed") {
-      const beforeContent = renderRowOriginal(beforeItem, row.oldText, isTask);
+      // hover 只弹字符级改动片段(旧→新);无字符级 patch(如仅勾选变更)时兜底整行原文
+      const beforeContent = renderChangeFragments(row.spans) ?? renderRowOriginal(beforeItem, row.oldText, isTask);
       return (
-        <RowChangedLi key={i} isTask={isTask} checked={checked} original={beforeContent} patchIndex={patchIndex}>
+        <RowChangedLi key={i} isTask={isTask} checked={checked} original={beforeContent} targetPath={targetPath}>
           {body}
           {nested}
         </RowChangedLi>
+      );
+    }
+    if (row.status === "added" || row.status === "removed") {
+      const popupContent = row.status === "removed"
+        ? renderRowOriginal(beforeItem, row.oldText, isTask)
+        : renderRowOriginal(afterItem, "", isTask);
+      return (
+        <ReviewStateLi
+          key={i}
+          status={row.status}
+          isTask={isTask}
+          checked={checked}
+          popupContent={popupContent}
+          targetPath={targetPath}
+        >
+          {body}
+          {nested}
+        </ReviewStateLi>
       );
     }
     if (isTask) {
@@ -333,14 +483,14 @@ function ReviewListLevel({
 }
 
 /** 列表/待办清单的递归行级 diff。原始 PM 行保全 marks/公式，嵌套列表按 childLists 下钻。 */
-function ReviewListDiff({ block, beforeNode, patchIndex }: { block: ListDiffBlock; beforeNode?: PmBlockNode; patchIndex?: number }) {
+function ReviewListDiff({ block, beforeNode, targetPrefix }: { block: ListDiffBlock; beforeNode?: PmBlockNode; targetPrefix: string }) {
   const afterNode = (block as { node?: PmBlockNode }).node;
   return (
     <ReviewListLevel
       rowDiff={block.rowDiff}
       beforeNode={beforeNode}
       afterNode={afterNode}
-      patchIndex={patchIndex}
+      targetPrefix={`${targetPrefix}/list`}
       fallback={{
         isTask: block.kind === "taskList",
         ordered: block.kind === "list" && block.ordered,
@@ -494,28 +644,76 @@ function ChangedTableCell({
   cell,
   beforeCell,
   diff,
-  patchIndex,
+  targetPath,
 }: {
   cell: PmTableCellNode;
   beforeCell?: PmTableCellNode;
   diff: Extract<ViewTableCellDiff, { status: "changed" }>;
-  patchIndex?: number;
+  targetPath: string;
 }) {
   const original = beforeCell
     ? <div className="wf-row-orig">{beforeCell.content.map((child, index) => <PmBlockView key={child.attrs.blockId ?? index} node={child} />)}</div>
     : <div className="wf-row-orig">{diff.oldText}</div>;
-  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLTableCellElement>(original, patchIndex);
+  const { target, targetClass, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLTableCellElement>(original, targetIndex, "changed");
   return (
     <PmTableCellView
       cell={cell}
-      className="wf-table-cell wf-table-cell--changed"
+      className={`wf-table-cell wf-table-cell--changed${targetClass}`}
       cellRef={anchorRef}
-      onMouseEnter={show}
+      reviewTargetId={target?.id}
+      reviewTargetIndex={target?.index}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
       onMouseLeave={scheduleHide}
     >
+      {/* 表格格子可能是多段/含 hardBreak/公式的复杂结构,保留整块 after node 渲染(不强上字符级),
+          与"复杂块回退整块"一致;旧值进 hover。 */}
       {cell.content.map((child, index) => <PmBlockView key={child.attrs.blockId ?? index} node={child} />)}
       {popup}
     </PmTableCellView>
+  );
+}
+
+function renderTableRowPopup(row: TableNode["content"][number] | undefined): React.ReactNode {
+  if (!row) return null;
+  return (
+    <div className="pm-table-scroll wf-row-orig">
+      <table><tbody><tr>{row.content.map((cell, index) => <PmTableCellView key={index} cell={cell} className="wf-table-cell" />)}</tr></tbody></table>
+    </div>
+  );
+}
+
+function ReviewTableStateRow({
+  status,
+  row,
+  targetPath,
+}: {
+  status: "added" | "removed";
+  row: TableNode["content"][number];
+  targetPath: string;
+}) {
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLTableRowElement>(renderTableRowPopup(row), targetIndex, status);
+  return (
+    <tr
+      ref={anchorRef}
+      className={`wf-table-row wf-table-row--${status}${targetClass}`}
+      {...targetAttrs}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
+      onMouseLeave={scheduleHide}
+    >
+      {status === "removed" ? (
+        <td className="wf-table-cell wf-table-delete-cell" colSpan={Math.max(1, row.content.length)}>
+          <span className="wf-review-delete-marker" aria-label="已删除表格行，悬停查看原文" />
+          {popup}
+        </td>
+      ) : (
+        <>
+          {row.content.map((cell, index) => <PmTableCellView key={index} cell={cell} className="wf-table-cell" />)}
+          {popup}
+        </>
+      )}
+    </tr>
   );
 }
 
@@ -524,12 +722,12 @@ function ReviewTableDiff({
   node,
   beforeNode,
   cellDiff,
-  patchIndex,
+  targetPrefix,
 }: {
   node: TableNode;
   beforeNode?: PmBlockNode;
   cellDiff: readonly ViewTableRowDiff[];
-  patchIndex?: number;
+  targetPrefix: string;
 }) {
   const beforeRows = isTableNode(beforeNode) ? beforeNode.content : [];
   const afterRows = node.content;
@@ -540,6 +738,10 @@ function ReviewTableDiff({
     const afterRow = rowDiff.status === "removed" ? undefined : afterRows[afterCursor++];
     const row = afterRow ?? beforeRow;
     if (!row) return null;
+    const rowPath = `${targetPrefix}/row:${rowIndex}`;
+    if (rowDiff.status === "added" || rowDiff.status === "removed") {
+      return <ReviewTableStateRow key={rowIndex} status={rowDiff.status} row={row} targetPath={rowPath} />;
+    }
     const rowClass = `wf-table-row wf-table-row--${rowDiff.status}`;
     return (
       <tr key={rowIndex} className={rowClass}>
@@ -556,7 +758,7 @@ function ReviewTableDiff({
                 cell={cell}
                 beforeCell={beforeCell}
                 diff={diff}
-                patchIndex={patchIndex}
+                targetPath={`${rowPath}/cell:${cellIndex}`}
               />
             );
           }
@@ -573,21 +775,25 @@ function ChangedContainerTextBlock({
   beforeNode,
   spans,
   oldText,
-  patchIndex,
+  targetPath,
 }: {
   node: PmBlockNode;
   beforeNode?: PmBlockNode;
   spans: readonly ViewDocSpan[];
   oldText: string;
-  patchIndex?: number;
+  targetPath: string;
 }) {
-  const original = beforeNode ? <PmBlockView node={beforeNode} /> : <div className="wf-row-orig">{oldText}</div>;
-  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLDivElement>(original, patchIndex);
+  // hover 只弹字符级改动片段(旧→新);无字符级 patch 时兜底整块原文
+  const original = renderChangeFragments(spans)
+    ?? (beforeNode ? <PmBlockView node={beforeNode} /> : <div className="wf-row-orig">{oldText}</div>);
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLDivElement>(original, targetIndex, "changed");
   return (
     <div
       ref={anchorRef}
-      className="wf-container-block wf-container-block--changed"
-      onMouseEnter={show}
+      className={`wf-container-block wf-container-block--changed wf-diff-inline${targetClass}`}
+      {...targetAttrs}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
       onMouseLeave={scheduleHide}
     >
       <ReviewPmBlockWithSpans node={node} spans={spans} />
@@ -599,22 +805,52 @@ function ChangedContainerTextBlock({
 function ChangedContainerBlock({
   node,
   beforeNode,
-  patchIndex,
+  targetPath,
 }: {
   node: PmBlockNode;
   beforeNode?: PmBlockNode;
-  patchIndex?: number;
+  targetPath: string;
 }) {
   const original = beforeNode ? <PmBlockView node={beforeNode} /> : null;
-  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLDivElement>(original, patchIndex);
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLDivElement>(original, targetIndex, "changed");
   return (
     <div
       ref={anchorRef}
-      className="wf-container-block wf-container-block--changed"
-      onMouseEnter={show}
+      className={`wf-container-block wf-container-block--changed${targetClass}`}
+      {...targetAttrs}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
       onMouseLeave={scheduleHide}
     >
       <PmBlockView node={node} />
+      {popup}
+    </div>
+  );
+}
+
+function ReviewContainerStateBlock({
+  status,
+  node,
+  targetPath,
+}: {
+  status: "added" | "removed";
+  node: PmBlockNode;
+  targetPath: string;
+}) {
+  const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
+  const popupContent = status === "added" ? <PmBlockView node={node} /> : <PmBlockView node={node} />;
+  const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLDivElement>(popupContent, targetIndex, status);
+  return (
+    <div
+      ref={anchorRef}
+      className={`wf-container-block wf-container-block--${status}${targetClass}`}
+      {...targetAttrs}
+      onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
+      onMouseLeave={scheduleHide}
+    >
+      {status === "removed"
+        ? <span className="wf-review-delete-marker" aria-label="已删除内容，悬停查看原文" />
+        : <PmBlockView node={node} />}
       {popup}
     </div>
   );
@@ -624,30 +860,28 @@ function ReviewBlockSeqDiffView({
   diff,
   beforeNodes,
   afterNodes,
-  patchIndex,
+  targetPrefix,
 }: {
   diff: readonly ViewBlockSeqDiff[number][];
   beforeNodes: readonly PmBlockNode[];
   afterNodes: readonly PmBlockNode[];
-  patchIndex?: number;
+  targetPrefix: string;
 }) {
   let beforeCursor = 0;
   let afterCursor = 0;
   return (
     <>
       {diff.map((entry, index) => {
+        const entryPath = `${targetPrefix}/entry:${index}`;
         const beforeBlock = entry.status === "added" ? undefined : beforeNodes[beforeCursor++];
         const afterBlock = entry.status === "removed" ? undefined : afterNodes[afterCursor++];
         if (entry.status === "same") return <PmBlockView key={index} node={afterBlock ?? entry.block} />;
         if (entry.status === "added") {
-          return <div key={index} className="wf-container-block wf-container-block--added"><PmBlockView node={afterBlock ?? entry.block} /></div>;
+          return <ReviewContainerStateBlock key={index} status="added" node={afterBlock ?? entry.block} targetPath={entryPath} />;
         }
         if (entry.status === "removed") {
-          return (
-            <div key={index} className="wf-container-block wf-container-block--removed">
-              {beforeBlock ? <PmBlockView node={beforeBlock} /> : <s className="wf-row-del">{entry.oldText}</s>}
-            </div>
-          );
+          const removedNode = beforeBlock ?? { type: "paragraph", attrs: {}, content: [{ type: "text", text: entry.oldText }] } as PmBlockNode;
+          return <ReviewContainerStateBlock key={index} status="removed" node={removedNode} targetPath={entryPath} />;
         }
         if (entry.kind === "text") {
           return (
@@ -657,7 +891,7 @@ function ReviewBlockSeqDiffView({
               beforeNode={beforeBlock}
               spans={entry.spans}
               oldText={entry.oldText}
-              patchIndex={patchIndex}
+              targetPath={entryPath}
             />
           );
         }
@@ -668,7 +902,7 @@ function ReviewBlockSeqDiffView({
               rowDiff={entry.rowDiff}
               beforeNode={beforeBlock}
               afterNode={afterBlock ?? entry.node}
-              patchIndex={patchIndex}
+              targetPrefix={`${entryPath}/list`}
             />
           );
         }
@@ -678,7 +912,7 @@ function ReviewBlockSeqDiffView({
               key={index}
               node={afterBlock ?? entry.node}
               beforeNode={beforeBlock}
-              patchIndex={patchIndex}
+              targetPath={entryPath}
             />
           );
         }
@@ -688,7 +922,7 @@ function ReviewBlockSeqDiffView({
             node={(afterBlock ?? entry.node) as TableNode}
             beforeNode={beforeBlock}
             cellDiff={entry.cellDiff}
-            patchIndex={patchIndex}
+            targetPrefix={`${entryPath}/table`}
           />
         );
       })}
@@ -696,20 +930,20 @@ function ReviewBlockSeqDiffView({
   );
 }
 
-function ReviewCalloutDiff({ block, beforeNode, patchIndex }: { block: Extract<ViewBlock, { kind: "callout" }>; beforeNode?: PmBlockNode; patchIndex?: number }) {
+function ReviewCalloutDiff({ block, beforeNode, targetPrefix }: { block: Extract<ViewBlock, { kind: "callout" }>; beforeNode?: PmBlockNode; targetPrefix: string }) {
   const node = block.node as CalloutNode;
   const beforeContent = isCalloutNode(beforeNode) ? beforeNode.content : [];
   return (
     <div className={`pm-callout pm-callout--${node.attrs.tone ?? "info"}`} data-pm-node="callout">
       <span className="pm-callout-emoji">{node.attrs.emoji ?? "💡"}</span>
       <div className="pm-callout-body">
-        <ReviewBlockSeqDiffView diff={block.bodyDiff ?? []} beforeNodes={beforeContent} afterNodes={node.content} patchIndex={patchIndex} />
+        <ReviewBlockSeqDiffView diff={block.bodyDiff ?? []} beforeNodes={beforeContent} afterNodes={node.content} targetPrefix={`${targetPrefix}/body`} />
       </div>
     </div>
   );
 }
 
-function ReviewColumnListDiff({ block, beforeNode, patchIndex }: { block: Extract<ViewBlock, { kind: "columnList" }>; beforeNode?: PmBlockNode; patchIndex?: number }) {
+function ReviewColumnListDiff({ block, beforeNode, targetPrefix }: { block: Extract<ViewBlock, { kind: "columnList" }>; beforeNode?: PmBlockNode; targetPrefix: string }) {
   const node = block.node as ColumnListNode;
   const beforeColumns = isColumnListNode(beforeNode) ? beforeNode.content : [];
   const columnsDiff: readonly ViewColumnDiff[] = block.columnsDiff ?? node.content.map((_, afterColumnIndex): ViewColumnDiff => ({
@@ -753,7 +987,7 @@ function ReviewColumnListDiff({ block, beforeNode, patchIndex }: { block: Extrac
               diff={columnDiff.bodyDiff}
               beforeNodes={beforeNodes}
               afterNodes={afterNodes}
-              patchIndex={patchIndex}
+              targetPrefix={`${targetPrefix}/column:${displayIndex}/body`}
             />
           </div>
         );
@@ -787,18 +1021,18 @@ function viewBlockToPmNodes(block: ViewBlock): PmBlockNode[] {
 
 /** 单个 ViewBlock 的审阅渲染:列表 / 表格 / callout / columnList 消费各自 granular diff，
  *  beforeNode 用于把 changed 行、格、块的 hover 限定为对应旧节点。 */
-function ReviewBlockViewContent({ block, beforeNode, patchIndex }: { block: ViewBlock; beforeNode?: PmBlockNode; patchIndex?: number }) {
+function ReviewBlockViewContent({ block, beforeNode, targetPrefix }: { block: ViewBlock; beforeNode?: PmBlockNode; targetPrefix: string }) {
   if ((block.kind === "list" || block.kind === "taskList") && block.rowDiff && block.rowDiff.length > 0) {
-    return <ReviewListDiff block={block as ListDiffBlock} beforeNode={beforeNode} patchIndex={patchIndex} />;
+    return <ReviewListDiff block={block as ListDiffBlock} beforeNode={beforeNode} targetPrefix={targetPrefix} />;
   }
   if (block.kind === "table" && block.cellDiff && block.cellDiff.length > 0 && isTableNode(block.node)) {
-    return <ReviewTableDiff node={block.node} beforeNode={beforeNode} cellDiff={block.cellDiff} patchIndex={patchIndex} />;
+    return <ReviewTableDiff node={block.node} beforeNode={beforeNode} cellDiff={block.cellDiff} targetPrefix={`${targetPrefix}/table`} />;
   }
   if (block.kind === "callout" && block.bodyDiff && block.bodyDiff.length > 0) {
-    return <ReviewCalloutDiff block={block} beforeNode={beforeNode} patchIndex={patchIndex} />;
+    return <ReviewCalloutDiff block={block} beforeNode={beforeNode} targetPrefix={targetPrefix} />;
   }
   if (block.kind === "columnList" && block.columnsDiff && block.columnsDiff.length > 0) {
-    return <ReviewColumnListDiff block={block} beforeNode={beforeNode} patchIndex={patchIndex} />;
+    return <ReviewColumnListDiff block={block} beforeNode={beforeNode} targetPrefix={targetPrefix} />;
   }
   const nodes = viewBlockToPmNodes(block);
   return (
@@ -813,18 +1047,30 @@ function ReviewBlockViewContent({ block, beforeNode, patchIndex }: { block: View
 export function ReviewBlockView({
   block,
   beforeNode,
+  targetPrefix,
+  reviewTargets = [],
+  activeTargetId,
   patchIndex,
   suppressLocalPopup = false,
 }: {
   block: ViewBlock;
   beforeNode?: PmBlockNode;
+  targetPrefix: string;
+  reviewTargets?: readonly ReviewTarget[];
+  activeTargetId?: string | null;
   patchIndex?: number;
   suppressLocalPopup?: boolean;
 }) {
   return (
-    <ReviewLocalPopupSuppressedContext.Provider value={suppressLocalPopup}>
-      <ReviewBlockViewContent block={block} beforeNode={beforeNode} patchIndex={patchIndex} />
-    </ReviewLocalPopupSuppressedContext.Provider>
+    <ReviewTargetContext.Provider value={{
+      byPath: new Map(reviewTargets.flatMap((target) => target.path ? [[target.path, target] as const] : [])),
+      activeTargetId,
+      fallbackIndex: patchIndex,
+    }}>
+      <ReviewLocalPopupSuppressedContext.Provider value={suppressLocalPopup}>
+        <ReviewBlockViewContent block={block} beforeNode={beforeNode} targetPrefix={targetPrefix} />
+      </ReviewLocalPopupSuppressedContext.Provider>
+    </ReviewTargetContext.Provider>
   );
 }
 

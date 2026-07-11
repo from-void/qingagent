@@ -2504,26 +2504,41 @@
     line-height:1;
     vertical-align:1px;
   }
-  /* 审阅态行级 diff:列表/待办清单逐行标注,取代整块替换 —— 新增/改动行左侧绿条+淡绿底,
-     删除行整行划除并淡出,改动行内的增/删片段各自绿底/红划线。用 inset box-shadow 画左条,
-     不占位不推挤布局。 */
-  /* 所有行统一左内距:增/改行的绿条落在此 gutter,不推挤内容——各行 checkbox/文字左对齐一致。 */
+  /* 审阅态行级 diff:列表/待办清单逐行标注,取代整块替换 —— 新增/改动行用与行内新增
+     (.wf-row-ins)一致的"半高绿高亮"(下半截绿),不再画整块绿底或左侧条;
+     删除行正文消失，仅留可 hover 的紧凑删除标记。 */
+  /* 所有行统一左内距,各行 checkbox/文字左对齐一致。 */
   #view-workspace .wf-list-row{
     padding-left:8px;
   }
-  #view-workspace .wf-list-row--added,
-  #view-workspace .wf-list-row--changed{
+  /* 块级「左绿条 + 极淡底」只留给**无法字符级**的整块替换/新增(.wf-diff-inline 之外);
+     能走字符级的行/块(加了 .wf-diff-inline)不再叠这层块级底色——改动字的行内绿(.wf-row-ins)
+     就是唯一标记,块级+字符级是一件事,不重复出。半高绿渐变永不用于块级背景。 */
+  #view-workspace .wf-list-row--added:not(.wf-diff-inline),
+  #view-workspace .wf-list-row--changed:not(.wf-diff-inline){
     box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
     background:rgba(74, 180, 100, 0.06);
   }
-  #view-workspace .wf-list-row--removed{
-    opacity:0.6;
+  /* 行级删除:被删那行整行清掉——不出列表圆点、且**零布局占位**(height:0 + margin:0),
+     上下两行仍按正常行距贴合、绝不因删除而撑开;红横线 + 左端红点用绝对定位骑在行间缝隙上,
+     命中区(delete-marker span)也绝对定位、不占布局。hover 这条缝线才弹出被删原文。
+     选择器必须带 .wf-doc 提权,否则 margin 被 `.wf-doc li{margin:2px}` 压过、删除位仍多 2px。 */
+  #view-workspace .wf-doc .wf-list-row--removed{
+    list-style:none;
     position:relative;
+    height:0;
+    margin:0;
+    padding:0;
+    cursor:default;
   }
-  /* 行级删除标记:横贯本行的红线 + 左端红圆点(对应行内删除竖光标+球的行级横版)。
-     本行改用整行红线示删,取消行内文字自身的 line-through,避免双重划线。 */
-  #view-workspace .wf-list-row--removed .wf-row-del{
-    text-decoration:none;
+  /* 命中区收窄到 8px 且不越过缝隙太多,避免抢上一行(尤其相邻 changed 行)的 hover。 */
+  #view-workspace .wf-list-row--removed > .wf-review-delete-marker{
+    position:absolute;
+    left:0;
+    right:0;
+    top:0;
+    height:8px;
+    transform:translateY(-50%);
   }
   #view-workspace .wf-list-row--removed::before{
     content:"";
@@ -2556,17 +2571,51 @@
   #view-workspace .wf-row-ins{
     background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.25) 50%);
   }
+  #view-workspace [data-review-target-id]{ cursor:default; }
+  #view-workspace .wf-review-delete-marker{
+    position:relative;
+    display:block;
+    width:100%;
+    min-width:18px;
+    height:10px;
+  }
+  #view-workspace .wf-review-delete-marker::before{
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    top:50%;
+    height:2px;
+    background:rgba(220, 80, 70, 0.5);
+    transform:translateY(-50%);
+  }
+  #view-workspace .wf-review-delete-marker::after{
+    content:"";
+    position:absolute;
+    left:-1px;
+    top:50%;
+    width:5px;
+    height:5px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.6);
+    transform:translateY(-50%);
+  }
+  #view-workspace .wf-list-row--removed > .wf-review-delete-marker::before,
+  #view-workspace .wf-list-row--removed > .wf-review-delete-marker::after{
+    display:none;
+  }
   /* 审阅态容器局部 diff：表格只标真实变化的行/格，callout/分栏只标变化的内部块。 */
   #view-workspace .wf-table-row--added > .wf-table-cell{
     box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
     background:rgba(74, 180, 100, 0.06);
   }
   #view-workspace .wf-table-row--removed{
-    opacity:0.6;
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.7);
+    position:relative;
   }
-  #view-workspace .wf-table-cell--changed{
+  #view-workspace .wf-table-delete-cell{
+    padding:2px 8px;
+  }
+  #view-workspace .wf-table-cell--changed:not(.wf-diff-inline){
     box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
     background:rgba(74, 180, 100, 0.06);
   }
@@ -2574,15 +2623,15 @@
     position:relative;
     padding-left:8px;
   }
-  #view-workspace .wf-container-block--added,
-  #view-workspace .wf-container-block--changed{
+  #view-workspace .wf-container-block--added:not(.wf-diff-inline),
+  #view-workspace .wf-container-block--changed:not(.wf-diff-inline){
     box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
     background:rgba(74, 180, 100, 0.06);
   }
   #view-workspace .wf-container-block--removed{
-    opacity:0.6;
-    text-decoration:line-through;
-    text-decoration-color:rgba(220, 80, 70, 0.7);
+    min-height:10px;
+    padding-top:2px;
+    padding-bottom:2px;
   }
   /* 栏级增删必须覆盖整栏边界，不能只给栏内首个块着色，否则空栏/多块栏会丢失“整栏”语义。 */
   #view-workspace .wf-column--added{
@@ -2590,8 +2639,7 @@
     background:rgba(74, 180, 100, 0.06);
   }
   #view-workspace .wf-column--removed{
-    box-shadow:inset 3px 0 0 rgba(220, 80, 70, 0.55);
-    background:rgba(220, 80, 70, 0.04);
+    min-width:18px;
   }
   /* hover 卡片"原文":自带紧凑表格样式(不借 .wf-doc,避免吃整篇纸张 padding/min-height/阴影污染)。
      宽表在卡片内横向滚动、不被裁切;收紧首尾外边距贴合紧凑卡片。 */
@@ -2655,6 +2703,14 @@
   #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"]{
     animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
   }
+  #view-workspace .wf-list-row--added.is-current,
+  #view-workspace .wf-list-row--changed.is-current,
+  #view-workspace .wf-table-row--added.is-current,
+  #view-workspace .wf-table-cell--changed.is-current,
+  #view-workspace .wf-container-block--added.is-current,
+  #view-workspace .wf-container-block--changed.is-current{
+    animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
+  }
   #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"] .wf-patch-ins{
@@ -2667,6 +2723,14 @@
   #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line,
   #view-workspace .wf-blockmark-del.is-current[data-patch-state="delete"] .wf-blockmark-del-line::after,
   #view-workspace .row-del.is-current[data-patch-state="delete"] .row-del-line{
+    animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
+  }
+  #view-workspace .wf-list-row--removed.is-current::before,
+  #view-workspace .wf-list-row--removed.is-current::after,
+  #view-workspace .wf-table-row--removed.is-current .wf-review-delete-marker::before,
+  #view-workspace .wf-table-row--removed.is-current .wf-review-delete-marker::after,
+  #view-workspace .wf-container-block--removed.is-current .wf-review-delete-marker::before,
+  #view-workspace .wf-container-block--removed.is-current .wf-review-delete-marker::after{
     animation:wf-patch-current-flash-red .72s ease-in-out 0s 2;
   }
   @media (prefers-reduced-motion:reduce){
@@ -2851,6 +2915,29 @@
   #view-workspace .patch-popup-original-text{
     color:var(--ink-2);
     overflow-wrap:anywhere;
+  }
+  /* 替换 hover:字符级改动片段「旧 → 新」,逐处一行;旧字灰淡、新字绿,不再弹整行原文。 */
+  #view-workspace .patch-frag-list{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+  #view-workspace .patch-frag{
+    display:flex;
+    align-items:baseline;
+    gap:6px;
+    overflow-wrap:anywhere;
+  }
+  #view-workspace .patch-frag-old{
+    color:var(--ink-3);
+  }
+  #view-workspace .patch-frag-arrow{
+    color:var(--ink-4);
+    flex:none;
+  }
+  #view-workspace .patch-frag-new{
+    color:#3f7a4e;
+    font-weight:600;
   }
   #view-workspace .patch-popup-note{
     color:var(--ink-3);

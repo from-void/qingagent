@@ -314,11 +314,11 @@ export const askUserTriggerFixtures: AskUserTriggerFixture[] = [
     reason: "“写”指汉字写法,不是文档写作。",
   },
   {
-    id: "boundary-code",
+    id: "wechat-publish-own-style-route",
     category: "边界难例",
-    message: "你会写代码吗",
+    message: "帮我写一篇发到我公众号的文章，参考我以前的风格",
     expectedDecision: "noAsk",
-    reason: "能力提问不是要求生成文档。",
+    reason: "明确要发布到自己的公众号并参考旧文，授权未 READY 时应先单独调用 askUserQuestion 发送公众号路由卡，而不是 planDraft。",
   },
   {
     id: "boundary-poem",

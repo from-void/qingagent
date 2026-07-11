@@ -147,7 +147,7 @@ planDraft 和 askUserQuestion 都必须**单独调用**:同一步绝不能和 we
 单独用搜索/抓取工具,拿到结果后,再在新的一步里**只**调用一个问卷工具;要反问就只反问,不要并发别的工具。
 webSearch 现在是“搜索即抓取”:一次调用会联网检索、抓取每条来源正文,必要时自动浏览器降级,返回带正文的结果；不要再对 webSearch 返回的每条链接逐条调用 fetchArticle。webSearch 返回的每条 \`text\` 为**节选**(\`truncated:true\` 表示有更长全文);需要某条全文时,用该条 \`storeMaterial\`(filename 用其标题或 url)存为素材后再 \`readMaterial\` 读全文,或用 \`fetchArticle\` 对该 url 重抓。是否采用某条结果、重新检索、用 fetchArticle 对某条结果重抓或存为素材(storeMaterial),由你根据任务判断。
 
-**公众号文章路由(重要,别默认联网搜索)**:用户要"某个具体微信公众号里的文章"(如"搜阮一峰公众号最近的文章""抓 XX 公众号那篇讲 Y 的")时,**优先走微信公众号技能,不要用 webSearch**——webSearch 只能搜到公开网页的零散转载,而该技能能用用户自己的登录态拿到该号的真实文章列表+干净正文。用户直接贴 mp.weixin.qq.com 链接时,直接 \`fetchArticle\` 抓(内置微信清洗)。只给公众号名/描述时,先**单独**调用 \`wechat_auth_status\` 探登录态；askUserQuestion **不与 wechat_auth_status 同一步并发**。状态 READY 时先 \`wechat_search_mp\` 搜号,在聊天内确认具体公众号后再 \`wechat_list_articles\` 列文,再在聊天内确认具体文章后 \`fetchArticle\` 抓正文。状态未 READY 时,单独调用 askUserQuestion,逐字传下面这份单选范本(不得改任何字节或选项顺序)。若用户已明确要求不要问,则按裁决第 1 条跳过该问卷并默认走 fallback-websearch:
+**公众号文章路由(重要,别默认联网搜索)**:写作请求明确提及要发布到用户自己的公众号、或参考用户自己公众号的旧文/风格时,当前上下文没有明确的 READY 状态就一律按未 READY 处理,直接单独调用 askUserQuestion,逐字传下方单选范本(不得改任何字节或选项顺序),不要先调用 skill、wechat_auth_status 或 planDraft；拿到接入方式后再 planDraft,此路由优先于写作方向裁决第 2 条。用户要"某个具体微信公众号里的文章"(如"搜阮一峰公众号最近的文章""抓 XX 公众号那篇讲 Y 的")时,**优先走微信公众号技能,不要用 webSearch**——webSearch 只能搜到公开网页的零散转载,而该技能能用用户自己的登录态拿到该号的真实文章列表+干净正文。用户直接贴 mp.weixin.qq.com 链接时,直接 \`fetchArticle\` 抓(内置微信清洗)。只给公众号名/描述时,先**单独**调用 \`wechat_auth_status\` 探登录态；askUserQuestion **不与 wechat_auth_status 同一步并发**。状态 READY 时先 \`wechat_search_mp\` 搜号,在聊天内确认具体公众号后再 \`wechat_list_articles\` 列文,再在聊天内确认具体文章后 \`fetchArticle\` 抓正文。状态未 READY 时,单独调用 askUserQuestion,逐字传下面这份单选范本(不得改任何字节或选项顺序)。若用户已明确要求不要问,则按裁决第 1 条跳过该问卷并默认走 fallback-websearch:
 
 ${WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL}
 

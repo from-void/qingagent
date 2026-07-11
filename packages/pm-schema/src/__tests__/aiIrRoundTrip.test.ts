@@ -231,6 +231,21 @@ describe("aiIrRoundTrip", () => {
                 content: [{ type: "paragraph", attrs: { blockId: "cell-callout-p" }, content: [{ type: "text", text: "提示" }] }],
               },
             ],
+          }, {
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-1" }, content: [{ type: "text", text: "侧栏一" }] }],
+          }],
+        }, {
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-2" }, content: [{ type: "text", text: "侧栏二" }] }],
+          }],
+        }, {
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-3" }, content: [{ type: "text", text: "侧栏三" }] }],
           }],
         }],
       }],
@@ -277,6 +292,41 @@ describe("aiIrRoundTrip", () => {
     expect(table?.type === "table" ? table.content[0]?.content[0]?.content : null).toMatchObject([
       { type: "paragraph", content: [] },
     ]);
+  });
+
+  it("span 必须展开为完整矩形网格，拒绝缺格与越过末行", () => {
+    const paragraphCell = (text: string, attrs: { colspan?: number; rowspan?: number } = {}) => ({
+      blocks: [{ type: "paragraph" as const, runs: [{ text }] }],
+      ...attrs,
+    });
+    const valid = compileAiDocumentToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [paragraphCell("A", { rowspan: 2 }), paragraphCell("B")] },
+          { cells: [paragraphCell("C")] },
+        ],
+      }],
+    });
+    expect(valid.ok).toBe(true);
+
+    const missing = compileAiDocumentToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [paragraphCell("A", { colspan: 2 })] },
+          { cells: [paragraphCell("B")] },
+        ],
+      }],
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.blockErrors[0]?.message).toContain("span 网格不完整");
+
+    const overrun = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [paragraphCell("A", { rowspan: 2 })] }] }],
+    });
+    expect(overrun.ok).toBe(false);
+    expect(overrun.blockErrors[0]?.message).toContain("rowspan 超出最后一行");
   });
 
   it("列表项 / 引用块的行内 marks 往返不丢(对抗不变量 #3,修 pmToAiIr 拍平洞)", () => {

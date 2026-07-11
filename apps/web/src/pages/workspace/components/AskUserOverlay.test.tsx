@@ -195,7 +195,7 @@ describe("AskUserOverlay", () => {
       />,
     );
 
-    const slider = host?.querySelector<HTMLInputElement>(".au-slider-input");
+    const slider = host?.querySelector<HTMLInputElement>(".aus2-input");
     expect(slider).not.toBeNull();
 
     await act(async () => {
@@ -204,7 +204,7 @@ describe("AskUserOverlay", () => {
       slider!.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    expect(host?.querySelector(".au-slider-value")?.textContent).toBe("1200 字以上");
+    expect(host?.querySelector(".aus2-bubble")?.textContent).toBe("1200 字以上");
   });
 });
 

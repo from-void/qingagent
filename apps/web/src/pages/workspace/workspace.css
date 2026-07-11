@@ -909,24 +909,41 @@
   #view-workspace .au-other:focus{border-color:var(--mark)}
   #view-workspace .au-text::placeholder,
   #view-workspace .au-other::placeholder{color:var(--ink-4)}
-  /* F4 问卷滑块:刻度 range + 右侧实时值;AskUserOverlay 与 BigPlanPanel 共用 */
-  .au-slider{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:4px 8px;overflow-x:hidden}
-  .au-slider-input{flex:1 1 220px;min-width:0;width:100%;accent-color:var(--mark, #4a6);cursor:pointer}
-  .au-slider-input:focus-visible{outline:2px solid var(--mark, #4a6);outline-offset:3px;border-radius:0}
-  .au-slider-value{
-    flex:0 0 auto;min-width:86px;max-width:100%;text-align:center;white-space:nowrap;
-    padding:3px 10px;border-radius:0;font-size:12.5px;color:var(--ink-1);
-    border:1px solid var(--line-2);background:var(--bg-2, rgba(0,0,0,.03));
+  /* F4 问卷滑块:自绘轨道 + 菱形拇指 + 跟随值气泡；overlay/fullpage 共用 */
+  #view-workspace .aus2{padding:18px 8px 2px;position:relative;min-width:0}
+  #view-workspace .aus2-track-wrap{position:relative;height:34px;display:flex;align-items:center}
+  #view-workspace .aus2-track,
+  #view-workspace .aus2-fill{
+    position:absolute;left:0;top:50%;transform:translateY(-50%);height:3px;pointer-events:none;
   }
-  .au-slider-scale{
-    flex-basis:100%;display:flex;justify-content:space-between;
-    font-size:10.5px;color:var(--ink-4);padding:0 2px;
+  #view-workspace .aus2-track{right:0}
+  #view-workspace .aus2-input{
+    -webkit-appearance:none;appearance:none;width:100%;height:34px;background:transparent;
+    cursor:pointer;position:relative;z-index:2;margin:0;
   }
-  #view-workspace .askuser-overlay .au-slider{padding:2px 8px}
-  #view-workspace .askuser-overlay .au-slider-input{flex:1 1 200px;min-width:0}
-  #view-workspace .askuser-overlay .au-slider-value{
-    min-width:80px;padding:4px 10px;border-radius:0;
+  #view-workspace .aus2-input::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:0;
+    transform:rotate(45deg);cursor:grab;
   }
+  #view-workspace .aus2-input:active::-webkit-slider-thumb{cursor:grabbing}
+  #view-workspace .aus2-input::-moz-range-thumb{
+    width:14px;height:14px;border-radius:0;transform:rotate(45deg);cursor:grab;
+  }
+  #view-workspace .aus2-input:focus-visible{outline:2px solid var(--mark);outline-offset:4px}
+  #view-workspace .aus2-bubble{
+    position:absolute;top:-14px;transform:translateX(-50%);padding:1px 8px;
+    font-size:11px;white-space:nowrap;pointer-events:none;transition:left .06s linear;
+  }
+  #view-workspace .aus2-bubble::after{
+    content:"";position:absolute;left:50%;bottom:-4px;transform:translateX(-50%) rotate(45deg);
+    width:6px;height:6px;
+  }
+  #view-workspace .aus2-scale{display:flex;justify-content:space-between;margin-top:8px;padding:0 1px}
+  #view-workspace .aus2-scale span{font-size:10px;position:relative;padding-top:7px}
+  #view-workspace .aus2-scale span::before{
+    content:"";position:absolute;top:0;left:50%;width:1px;height:4px;
+  }
+  #view-workspace .askuser-overlay .aus2 + .au-other{margin-top:12px}
   #view-workspace .au-foot{
     display:flex;align-items:center;justify-content:space-between;
     padding:10px 15px 13px;

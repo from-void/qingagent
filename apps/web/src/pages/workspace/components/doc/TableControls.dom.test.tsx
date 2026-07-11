@@ -229,15 +229,15 @@ describe("TableControls 真选区与 chrome", () => {
     expect([...document.head.querySelectorAll("style")].some((style) => style.textContent?.includes("nth-child"))).toBe(false);
   });
 
-  it("含 span 的表不渲染任何行列 chrome，只显示延期提示", async () => {
+  it("含 span 的表按逻辑列渲染行列 chrome，并允许原生整列选区", async () => {
     const { editor, portal } = setupTable({ blockId: "table-1", merged: true });
     await renderControls(editor);
 
-    expect(portal.querySelector(".tbl-span-hint")?.textContent).toContain("含合并单元格的表格暂不支持行列操作");
-    expect(portal.querySelector(".tbl-col-hdr")).toBeNull();
-    expect(portal.querySelector(".tbl-row-hdr")).toBeNull();
-    expect(portal.querySelector(".tbl-dot")).toBeNull();
-    expect(portal.querySelector(".tbl-sel-toolbar")).toBeNull();
+    expect(portal.querySelectorAll(".tbl-col-hdr")).toHaveLength(2);
+    expect(portal.querySelectorAll(".tbl-row-hdr")).toHaveLength(2);
+    expect(portal.querySelector(".tbl-span-hint")).toBeNull();
+    await mouseDown(portal.querySelectorAll(".tbl-col-hdr")[1] ?? null);
+    expect((editor.state.selection as CellSelection).isColSelection()).toBe(true);
   });
 
   it("只读态不渲染表格 chrome", async () => {

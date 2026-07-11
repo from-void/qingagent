@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { CellSelection } from "@tiptap/pm/tables";
 import {
   applyTableToolbarFormat,
+  applyTableToolbarStructure,
+  canApplyTableToolbarStructure,
   isSingleTableCellTextSelection,
   readTableAxisSelection,
   selectTableColumns,
@@ -127,6 +129,23 @@ function rowCellTexts(editor: Editor, rowIndex: number): string[] {
 }
 
 describe("tableToolbar PM-010", () => {
+  it("merge/split 仅在原生命令满足选区前置条件时可用", () => {
+    const editor = createTableEditor();
+    try {
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(false);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(false);
+      const cells = editor.view.dom.querySelectorAll("td");
+      expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[1] as HTMLTableCellElement)).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(true);
+      expect(applyTableToolbarStructure(editor, "mergeCells")).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(false);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(true);
+      expect(applyTableToolbarStructure(editor, "splitCell")).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
   it("按 TableMap 建立整行/整列 CellSelection，并可从真实选区反推范围", () => {
     const editor = createTableEditor();
     try {

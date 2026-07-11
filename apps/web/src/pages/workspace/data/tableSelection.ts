@@ -81,5 +81,6 @@ export function tableHasSpanInDom(table: HTMLTableElement): boolean {
 export const tableHasMergedCells = tableHasSpanInDom;
 
 export function tableAiModifyDisabledReason(table: HTMLTableElement): string | null {
-  return tableHasSpanInDom(table) ? "含合并单元格的表格暂不支持" : null;
+  void table;
+  return null;
 }

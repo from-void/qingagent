@@ -62,6 +62,16 @@ export type TableToolbarFormatCommand =
   | "alignCenter"
   | "alignRight";
 
+export type TableToolbarStructureCommand = "mergeCells" | "splitCell";
+
+export function canApplyTableToolbarStructure(editor: Editor, cmd: TableToolbarStructureCommand): boolean {
+  return editor.can().chain().focus()[cmd]().run();
+}
+
+export function applyTableToolbarStructure(editor: Editor, cmd: TableToolbarStructureCommand): boolean {
+  return editor.chain().focus()[cmd]().run();
+}
+
 export function isTableToolbarFormatCommand(cmd: string): cmd is TableToolbarFormatCommand {
   return [
     "bold", "italic", "underline", "strike", "code", "textColor", "highlight",

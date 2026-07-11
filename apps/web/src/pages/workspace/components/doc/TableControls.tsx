@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
-import { pmTableSelectionCellTexts, type PmDoc } from "@qingagent/pm-schema";
+import { findPmTableByBlockId, pmTableSelectionCellTexts, pmTableTextRows, type PmDoc } from "@qingagent/pm-schema";
+import { TableMap } from "@tiptap/pm/tables";
 import type { AiModifyTarget } from "../../data/aiModifyTarget";
-import { createTableAiModifyTarget, tableHasSpanInDom } from "../../data/tableSelection";
+import { createTableAiModifyTarget } from "../../data/tableSelection";
 import {
   applyTableToolbarFormat,
+  applyTableToolbarStructure,
+  canApplyTableToolbarStructure,
   isSingleTableCellTextSelection,
   isTableToolbarFormatCommand,
   readTableAxisSelection,
@@ -42,7 +45,6 @@ interface TblInfo {
   el: HTMLTableElement;
   wrapper: HTMLElement;
   blockId: string;
-  hasSpan: boolean;
 }
 type Range2 = [number, number];
 
@@ -127,10 +129,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
       }
       const rect = table.getBoundingClientRect();
       const wrapperRect = wrapper.getBoundingClientRect();
-      const fr = table.querySelector("tr");
-      const cols: ColInfo[] = fr
-        ? Array.from(fr.cells).map((c) => { const r = c.getBoundingClientRect(); return { left: r.left, width: r.width, right: r.right }; })
-        : [];
+      const cols = measureLogicalColumns(editor, blockIdFromTable(editor, table));
       const rows: RowInfo[] = Array.from(table.rows).map((r) => { const b = r.getBoundingClientRect(); return { top: b.top, height: b.height, bottom: b.bottom }; });
       const blockId = resolveSelectedTableBlockId(editor);
       if (blockId && table.dataset.blockId !== blockId) table.dataset.blockId = blockId;
@@ -145,7 +144,6 @@ export function TableControls({ editor, onAiModify, onToast }: {
         el: table,
         wrapper,
         blockId,
-        hasSpan: tableHasSpanInDom(table),
       });
       const nextObserved = new Set<Element>([wrapper, table]);
       if (ws) nextObserved.add(ws);
@@ -196,7 +194,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   /* ── header mousedown → 真 CellSelection；mousemove 每帧最多 dispatch 一次 ── */
   const startHeaderDrag = useCallback((axis: "col" | "row", idx: number, e: React.MouseEvent) => {
     e.preventDefault();
-    if (!editor.isEditable || !info || info.hasSpan) return;
+    if (!editor.isEditable || !info) return;
     if (!info.blockId) {
       onToast?.("无法定位表格,请重新选择");
       return;
@@ -271,7 +269,6 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const fmtSel = useCallback((cmd: string, val?: string | null) => {
     if (!editor.isEditable) return;
     if (!info) return;
-    if (info.hasSpan) return;
     if (!isTableToolbarFormatCommand(cmd) || !isTableToolbarCommandEnabled(cmd, toolbarUnlock)) return;
     let normalizedValue = val;
     if (cmd === "textColor") {
@@ -292,7 +289,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   }, [editor, info, selCols, selRows, singleCellTextSelection, toolbarUnlock]);
 
   const doDelete = useCallback(() => {
-    if (!editor.isEditable || !info || info.hasSpan) return;
+    if (!editor.isEditable || !info) return;
     if (selCols) editor.chain().focus().deleteColumn().run();
     else if (selRows) editor.chain().focus().deleteRow().run();
     setOpenTableColor(null);
@@ -306,9 +303,9 @@ export function TableControls({ editor, onAiModify, onToast }: {
       onToast?.("无法定位表格,请重新选择");
       return;
     }
-    const rows = Array.from(info.el.rows).map((row) =>
-      Array.from(row.cells).map((cell) => cell.textContent?.trim() ?? ""),
-    );
+    const json = editor.getJSON() as unknown as PmDoc;
+    const pmTable = findPmTableByBlockId(json, blockId);
+    const rows = pmTable ? pmTableTextRows(pmTable) : [];
     const axis: "row" | "column" | null = selCols ? "column" : selRows ? "row" : null;
     const range = selCols ?? selRows;
     if (!axis || !range) return;
@@ -338,23 +335,6 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const hasAxisSelection = selCols !== null || selRows !== null;
   const hasSel = hasAxisSelection || singleCellTextSelection;
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
-
-  if (info.hasSpan) {
-    return createPortal(
-      <div
-        className="tbl-span-hint"
-        role="status"
-        style={{
-          position: "fixed",
-          top: Math.max(8, wrapperRect.top - 28),
-          left: Math.max(8, wrapperRect.left),
-        }}
-      >
-        含合并单元格的表格暂不支持行列操作
-      </div>,
-      portalTarget,
-    );
-  }
 
   const chromeTop = COL_HDR + DOT_EXT;
   const viewport = {
@@ -547,6 +527,19 @@ export function TableControls({ editor, onAiModify, onToast }: {
             )}
           </div>
           <div className="dt-divider" />
+          <button
+            className="dt-btn"
+            title="合并单元格"
+            disabled={!canApplyTableToolbarStructure(editor, "mergeCells")}
+            onClick={() => applyTableToolbarStructure(editor, "mergeCells")}
+          >合并单元格</button>
+          <button
+            className="dt-btn"
+            title="拆分单元格"
+            disabled={!canApplyTableToolbarStructure(editor, "splitCell")}
+            onClick={() => applyTableToolbarStructure(editor, "splitCell")}
+          >拆分单元格</button>
+          <div className="dt-divider" />
           <button className="dt-btn" title="左对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignLeft")}>≡←</button>
           <button className="dt-btn" title="居中" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignCenter")}>≡</button>
           <button className="dt-btn" title="右对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignRight")}>→≡</button>
@@ -643,6 +636,49 @@ function resolveSelectedTableBlockId(editor: Editor): string {
     }
   }
   return "";
+}
+
+function blockIdFromTable(editor: Editor, table: HTMLTableElement): string {
+  return table.dataset.blockId || resolveSelectedTableBlockId(editor);
+}
+
+/** 按 TableMap 第一逻辑行定位 cell；colspan 内部边界优先按 colwidth 比例，否则均分。 */
+export function measureLogicalColumns(editor: Editor, blockId: string): ColInfo[] {
+  if (!blockId) return [];
+  let tableNode: ReturnType<typeof editor.state.doc.nodeAt> | null = null;
+  let tablePos = -1;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.spec.tableRole === "table" && node.attrs.blockId === blockId) {
+      tableNode = node;
+      tablePos = pos;
+      return false;
+    }
+    return true;
+  });
+  if (!tableNode || tablePos < 0) return [];
+  const map = TableMap.get(tableNode);
+  const tableStart = tablePos + 1;
+  return Array.from({ length: map.width }, (_, columnIndex) => {
+    const offset = map.map[columnIndex]!;
+    const cell = tableNode!.nodeAt(offset);
+    const dom = editor.view.nodeDOM(tableStart + offset) as HTMLTableCellElement | null;
+    if (!cell || !dom) return { left: 0, width: 0, right: 0 };
+    const cellRect = dom.getBoundingClientRect();
+    const cellRectInMap = map.findCell(offset);
+    const widths = Array.isArray(cell.attrs.colwidth) && cell.attrs.colwidth.length === cellRectInMap.right - cellRectInMap.left
+      ? cell.attrs.colwidth.map((value: unknown) => typeof value === "number" && value > 0 ? value : 0)
+      : null;
+    const total = widths?.reduce((sum: number, value: number) => sum + value, 0) || 0;
+    const ratios = widths && total > 0 ? widths.map((value: number) => value / total) : null;
+    const relative = columnIndex - cellRectInMap.left;
+    const before = ratios
+      ? ratios.slice(0, relative).reduce((sum: number, value: number) => sum + value, 0)
+      : relative / (cellRectInMap.right - cellRectInMap.left);
+    const share = ratios?.[relative] ?? 1 / (cellRectInMap.right - cellRectInMap.left);
+    const left = cellRect.left + cellRect.width * before;
+    const width = cellRect.width * share;
+    return { left, width, right: left + width };
+  });
 }
 
 /* ───────────── ViewDocumentSnapshot → PM / HTML ───────────── */

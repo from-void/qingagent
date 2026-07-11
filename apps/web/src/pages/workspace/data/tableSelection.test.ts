@@ -58,6 +58,6 @@ describe("tableSelection", () => {
     table.rows[0]!.cells[0]!.colSpan = 1;
     table.rows[0]!.cells[1]!.rowSpan = 2;
     expect(tableHasMergedCells(table)).toBe(true);
-    expect(tableAiModifyDisabledReason(table)).toBe("含合并单元格的表格暂不支持");
+    expect(tableAiModifyDisabledReason(table)).toBeNull();
   });
 });

@@ -741,12 +741,13 @@ export function createSessionScopedTools(
       try {
         candidateDoc = ensureDraftCandidateDoc(state);
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // 只把已知可由刷新自愈的重复标识转成模型可行动结果；其余初始化异常维持原抛错语义。
+        if (!/重复 blockId/.test(message)) throw error;
         return {
           ok: false,
           applied: [],
-          error: addDuplicateBlockIdRecoveryGuidance(
-            error instanceof Error ? error.message : String(error),
-          ),
+          error: addDuplicateBlockIdRecoveryGuidance(message),
         };
       }
       const candidateBlocksBefore = candidateDoc.content.length;

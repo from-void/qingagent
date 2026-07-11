@@ -1,6 +1,7 @@
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
+import { CellSelection } from "@tiptap/pm/tables";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
@@ -337,6 +338,9 @@ export function DocToolbar({
   const barRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<ToolbarPos | null>(null);
   const [blockSel, setBlockSel] = useState<SelectedBlockNode | null>(null);
+  const [cellSelectionSuppressed, setCellSelectionSuppressed] = useState(
+    () => Boolean(editor && editor.state.selection instanceof CellSelection),
+  );
   const lastPosRef = useRef<ToolbarPos | null>(null);
   if (pos) lastPosRef.current = pos;
   const [openDd, setOpenDd] = useState<string | null>(null);
@@ -379,8 +383,32 @@ export function DocToolbar({
     [],
   );
 
+  useEffect(() => {
+    const syncCellSelectionSuppression = () => {
+      setCellSelectionSuppressed(Boolean(
+        active && editor && editor.state.selection instanceof CellSelection,
+      ));
+    };
+    syncCellSelectionSuppression();
+    if (!active || !editor) return undefined;
+    editor.on("selectionUpdate", syncCellSelectionSuppression);
+    return () => {
+      editor.off("selectionUpdate", syncCellSelectionSuppression);
+    };
+  }, [active, editor]);
+
   const positionToolbar = useCallback(() => {
     if (!active || !editor || !editor.isEditable) {
+      setCellSelectionSuppressed(false);
+      setPos(null);
+      setBlockSel(null);
+      return;
+    }
+    // 表格 CellSelection 自带专用选区工具栏；正文 DocToolbar 只为格内普通 TextSelection 保留。
+    // 抑制仅作用于浮层渲染，selectionchange 下方的 savedSelRef 快照仍照常执行。
+    const suppressForCellSelection = editor.state.selection instanceof CellSelection;
+    setCellSelectionSuppressed(suppressForCellSelection);
+    if (suppressForCellSelection) {
       setPos(null);
       setBlockSel(null);
       return;
@@ -850,7 +878,11 @@ export function DocToolbar({
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"
     : null;
 
-  if (!active) return null;
+  if (
+    !active ||
+    cellSelectionSuppressed ||
+    Boolean(editor && editor.state.selection instanceof CellSelection)
+  ) return null;
 
   return (
     <>

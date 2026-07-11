@@ -1370,6 +1370,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc blockquote {
   color: var(--ink-3);
 }
+#view-workspace .askuser-overlay .auq-preview-fallback {
+  color: var(--ink-3);
+}
 #view-workspace .aus2-track {
   background: var(--line-1);
 }

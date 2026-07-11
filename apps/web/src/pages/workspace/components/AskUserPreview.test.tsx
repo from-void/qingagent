@@ -58,6 +58,13 @@ describe("AskUserPreview", () => {
     expect(host?.textContent).toContain("<script>alert(2)</script>");
   });
 
+  it("parser 拒绝非法资源时安全降级为转义源码", async () => {
+    await render("![外链图片](https://example.com/unsafe.png)");
+
+    expect(host?.querySelector("img")).toBeNull();
+    expect(host?.querySelector(".auq-preview-fallback")?.textContent).toContain("https://example.com/unsafe.png");
+  });
+
   it("Mermaid 失败时降级显示源码", async () => {
     const source = "flowchart TD\nA-->";
     await render(`\`\`\`mermaid\n${source}\n\`\`\``);

@@ -53,14 +53,24 @@ export function filterAskUserPreviewNodes(nodes: readonly PmBlockNode[]): Previe
 }
 
 export function AskUserPreview({ markdown }: { markdown: string }) {
-  const nodes = useMemo(() => {
+  const parsed = useMemo(() => {
     const safeMarkdown = truncateAskUserPreview(markdown);
-    return filterAskUserPreviewNodes(markdownToPm(safeMarkdown).content);
+    try {
+      return {
+        nodes: filterAskUserPreviewNodes(markdownToPm(safeMarkdown).content),
+        fallback: null,
+      };
+    } catch {
+      // parser 自带 PM 校验，非法图片 URL 等会在白名单过滤前抛错；降级源码并交给 React 转义。
+      return { nodes: [], fallback: safeMarkdown };
+    }
   }, [markdown]);
 
   return (
     <div className="auq-preview-doc wf-doc" data-wf="AskUserPreview">
-      {nodes.map((node, index) =>
+      {parsed.fallback !== null ? (
+        <pre className="auq-preview-fallback">{parsed.fallback}</pre>
+      ) : parsed.nodes.map((node, index) =>
         node.type === "diagram" ? (
           <div className="pm-diagram" data-pm-node="diagram" key={node.attrs.blockId ?? index}>
             <MermaidPreview

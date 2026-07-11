@@ -17,10 +17,13 @@
 // 仍以更高优先级覆盖它(env 只是该机/该 worktree 的默认底座)。
 
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { wrapLanguageModel, type LanguageModelV1 } from "ai";
 import type { RequestContext } from "@mastra/core/request-context";
+import { createHash } from "node:crypto";
 import { validateFetchUrl } from "../browser/extractor.js";
+import { recordUsageEvent } from "../db/usageRepo.js";
 export {
   DEEPSEEK_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,
@@ -29,6 +32,418 @@ export {
 } from "./modelBaseUrl.js";
 import { MODEL_OVERRIDES_CONTEXT_KEY, resolveBaseUrl, sanitizeBaseUrl } from "./modelBaseUrl.js";
 import { createUsageMiddleware } from "./usageMiddleware.js";
+import { normalizeLlmUsageCounts } from "./usageAccounting.js";
+import { nextUsageAttempt } from "./usageAttempt.js";
+
+const BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY = "branchSnapshotGeneration";
+const BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY = "branchSnapshotEpoch";
+const MAX_SESSION_SNAPSHOTS = 256;
+const SESSION_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
+
+export type BranchMessage = Record<string, unknown> & {
+  role: "system" | "user" | "assistant" | "tool";
+};
+
+export interface SessionSnapshot {
+  readonly sessionId: string;
+  readonly streamId: string | null;
+  readonly generation: number;
+  readonly ordinal: number;
+  readonly epoch: number;
+  readonly capturedAt: string;
+  readonly endpoint: string;
+  readonly bodyText: string;
+  readonly safeHeaders: Readonly<Record<string, string>>;
+  readonly authFingerprint: string;
+}
+
+interface SnapshotRegistryEntry {
+  activeGeneration: number;
+  nextOrdinal: number;
+  epoch: number;
+  touchedAt: number;
+  snapshot: SessionSnapshot | null;
+}
+
+const sessionSnapshots = new Map<string, SnapshotRegistryEntry>();
+
+function pruneSessionSnapshots(now = Date.now()): void {
+  for (const [sessionId, entry] of sessionSnapshots) {
+    if (now - entry.touchedAt > SESSION_SNAPSHOT_TTL_MS) sessionSnapshots.delete(sessionId);
+  }
+  while (sessionSnapshots.size > MAX_SESSION_SNAPSHOTS) {
+    const oldest = sessionSnapshots.keys().next().value as string | undefined;
+    if (!oldest) break;
+    sessionSnapshots.delete(oldest);
+  }
+}
+
+/** 每个主链 turn 先领取单调 generation；旧 turn 的迟到 fetch 不得覆盖新快照。 */
+export function beginSessionSnapshotTurn(requestContext?: RequestContext): number | null {
+  const sessionId = requestContext?.get("sessionId");
+  if (typeof sessionId !== "string" || !sessionId) return null;
+  pruneSessionSnapshots();
+  const current = sessionSnapshots.get(sessionId);
+  const generation = (current?.activeGeneration ?? 0) + 1;
+  const entry: SnapshotRegistryEntry = {
+    activeGeneration: generation,
+    nextOrdinal: 0,
+    epoch: current?.epoch ?? 0,
+    touchedAt: Date.now(),
+    snapshot: current?.snapshot ?? null,
+  };
+  sessionSnapshots.delete(sessionId);
+  sessionSnapshots.set(sessionId, entry);
+  requestContext?.set(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY, generation);
+  requestContext?.set(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY, entry.epoch);
+  return generation;
+}
+
+export function getSessionSnapshot(
+  source?: RequestContext | string | null,
+): SessionSnapshot | null {
+  const sessionId = typeof source === "string" ? source : source?.get("sessionId");
+  if (typeof sessionId !== "string" || !sessionId) return null;
+  const entry = sessionSnapshots.get(sessionId);
+  if (!entry) return null;
+  if (Date.now() - entry.touchedAt > SESSION_SNAPSHOT_TTL_MS) {
+    sessionSnapshots.delete(sessionId);
+    return null;
+  }
+  const snapshot = entry.snapshot;
+  if (typeof source !== "string" && source && snapshot) {
+    const generation = source.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
+    const epoch = source.get(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY);
+    if (typeof generation === "number" && snapshot.generation !== generation) return null;
+    if (typeof epoch === "number" && snapshot.epoch !== epoch) return null;
+  }
+  entry.touchedAt = Date.now();
+  sessionSnapshots.delete(sessionId);
+  sessionSnapshots.set(sessionId, entry);
+  return snapshot;
+}
+
+export function clearSessionSnapshot(sessionId: string): void {
+  sessionSnapshots.delete(sessionId);
+}
+
+function authFingerprint(apiKey: string, endpoint: string, modelId: unknown): string {
+  return createHash("sha256")
+    .update(`${apiKey}\0${endpoint}\0${String(modelId ?? "")}`)
+    .digest("hex");
+}
+
+function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!headers) return out;
+  const normalized = new Headers(headers);
+  normalized.forEach((value, key) => {
+    if (key === "authorization" || key === "x-api-key") return;
+    out[key] = value;
+  });
+  return out;
+}
+
+function captureSessionSnapshot(
+  requestContext: RequestContext | undefined,
+  apiKey: string,
+  url: RequestInfo | URL,
+  init?: RequestInit,
+): void {
+  const sessionId = requestContext?.get("sessionId");
+  const generation = requestContext?.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
+  if (typeof sessionId !== "string" || !sessionId || typeof generation !== "number") return;
+  if (typeof init?.body !== "string") return;
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(init.body) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (!Array.isArray(body.messages)) return;
+  const entry = sessionSnapshots.get(sessionId);
+  if (!entry || entry.activeGeneration !== generation) return;
+  const endpoint = String(url);
+  const ordinal = entry.nextOrdinal + 1;
+  entry.nextOrdinal = ordinal;
+  entry.touchedAt = Date.now();
+  entry.snapshot = Object.freeze({
+    sessionId,
+    streamId: typeof requestContext?.get("streamId") === "string"
+      ? requestContext.get("streamId") as string
+      : null,
+    generation,
+    ordinal,
+    epoch: entry.epoch,
+    capturedAt: new Date().toISOString(),
+    endpoint,
+    bodyText: init.body,
+    safeHeaders: Object.freeze(headersToRecord(init.headers)),
+    authFingerprint: authFingerprint(apiKey, endpoint, body.model),
+  });
+}
+
+function createBranchSnapshotFetch(
+  requestContext: RequestContext | undefined,
+  apiKey: string,
+): typeof fetch {
+  return async (url, init) => {
+    captureSessionSnapshot(requestContext, apiKey, url, init);
+    return globalThis.fetch(url, init);
+  };
+}
+
+/** 主 Agent 的 v2 provider：与 Mastra 1.49 内部使用同版 serializer，只注入快照 fetch。 */
+export function createSnapshottingQingagentModel(
+  requestContext?: RequestContext,
+) {
+  const { apiKey } = resolveDeepseekAuth(requestContext);
+  // 不强加 includeUsage：实测主链原始 body 没有 stream_options，DeepSeek 仍会在尾帧返回 usage；
+  // 这里改变 body 会破坏已经验证过的 provider wire 前缀一致性。
+  const provider = createOpenAICompatible({
+    name: "deepseek",
+    baseURL: resolveBaseUrl(requestContext),
+    apiKey,
+    fetch: createBranchSnapshotFetch(requestContext, apiKey),
+    supportsStructuredOutputs: true,
+  });
+  return provider.chatModel(resolveModelId(requestContext, "flash"));
+}
+
+export interface BranchCallInput {
+  sessionSnapshot: SessionSnapshot;
+  steeringTail: string | BranchMessage[];
+  callSite: string;
+  requestContext?: RequestContext;
+  lane?: number | null;
+  attempt?: number;
+  abortSignal?: AbortSignal;
+  onTextDelta?: (delta: string, accumulated: string) => void | Promise<void>;
+}
+
+export type BranchCallResult =
+  | {
+      ok: true;
+      text: string;
+      assistantMessage: BranchMessage;
+      attempts: number;
+      toolCallRetries: number;
+    }
+  | {
+      ok: false;
+      reason: "stale_snapshot" | "tool_call" | "provider_error" | "invalid_response";
+      attempts: number;
+      toolCallRetries: number;
+      error?: string;
+    };
+
+interface RawBranchResponse {
+  text: string;
+  reasoning: string;
+  toolCalled: boolean;
+  usage: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function extractRawChunk(payload: unknown, state: RawBranchResponse): void {
+  const record = asRecord(payload);
+  if (!record) return;
+  if (record.usage) state.usage = record.usage;
+  const choice = Array.isArray(record.choices) ? asRecord(record.choices[0]) : null;
+  if (!choice) return;
+  if (choice.finish_reason === "tool_calls") state.toolCalled = true;
+  const delta = asRecord(choice.delta) ?? asRecord(choice.message);
+  if (!delta) return;
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) state.toolCalled = true;
+  if (typeof delta.content === "string") state.text += delta.content;
+  if (typeof delta.reasoning_content === "string") state.reasoning += delta.reasoning_content;
+}
+
+async function readRawBranchResponse(
+  response: Response,
+  onTextDelta?: BranchCallInput["onTextDelta"],
+): Promise<RawBranchResponse> {
+  const state: RawBranchResponse = { text: "", reasoning: "", toolCalled: false, usage: null };
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    extractRawChunk(await response.json(), state);
+    if (state.text && onTextDelta) await onTextDelta(state.text, state.text);
+    return state;
+  }
+  if (!response.body) throw new Error("provider_stream_missing_body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const consumeEvent = async (event: string) => {
+    const data = event
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") return;
+    const before = state.text.length;
+    extractRawChunk(JSON.parse(data), state);
+    const delta = state.text.slice(before);
+    if (delta && onTextDelta) await onTextDelta(delta, state.text);
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let boundary = buffer.search(/\r?\n\r?\n/);
+    while (boundary >= 0) {
+      const event = buffer.slice(0, boundary);
+      const match = buffer.slice(boundary).match(/^(?:\r?\n){2}/);
+      buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
+      await consumeEvent(event);
+      boundary = buffer.search(/\r?\n\r?\n/);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) await consumeEvent(buffer);
+  return state;
+}
+
+async function recordBranchUsage(
+  input: BranchCallInput,
+  usage: unknown,
+  attempt: number,
+  reason: string | null,
+): Promise<void> {
+  const normalized = normalizeLlmUsageCounts(usage);
+  const hasUsage = !!normalized && Object.values(normalized).some((value) => typeof value === "number");
+  const { origin } = resolveDeepseekAuth(input.requestContext);
+  await recordUsageEvent({
+    sessionId: input.sessionSnapshot.sessionId,
+    runId: (input.requestContext?.get("runId") as string | null | undefined) ?? null,
+    callSite: input.callSite,
+    modelId: resolveModelId(input.requestContext, "flash"),
+    keyOrigin: origin,
+    lane: input.lane ?? null,
+    attempt,
+    ...(reason || !hasUsage
+      ? { usageState: "missing" as const, reason: reason ?? "provider_usage_missing" }
+      : {
+          inputTokens: normalized?.inputTokens,
+          outputTokens: normalized?.outputTokens,
+          cacheHitTokens: normalized?.promptCacheHitTokens,
+          cacheMissTokens: normalized?.promptCacheMissTokens,
+          cacheCreationTokens: normalized?.promptCacheCreationTokens,
+        }),
+  });
+}
+
+/**
+ * 原始 body 回放器。保留主链 tools/tool_choice，只 append 尾部；检测到 tool_call 时弃用并重试一次。
+ */
+export async function branchCall(input: BranchCallInput): Promise<BranchCallResult> {
+  const { apiKey } = resolveDeepseekAuth(input.requestContext);
+  const contextGeneration = input.requestContext?.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
+  const contextEpoch = input.requestContext?.get(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY);
+  if (
+    (typeof contextGeneration === "number" && contextGeneration !== input.sessionSnapshot.generation) ||
+    (typeof contextEpoch === "number" && contextEpoch !== input.sessionSnapshot.epoch)
+  ) {
+    return { ok: false, reason: "stale_snapshot", attempts: 0, toolCallRetries: 0 };
+  }
+  let baseBody: Record<string, unknown>;
+  try {
+    baseBody = JSON.parse(input.sessionSnapshot.bodyText) as Record<string, unknown>;
+  } catch {
+    return { ok: false, reason: "stale_snapshot", attempts: 0, toolCallRetries: 0 };
+  }
+  if (
+    !Array.isArray(baseBody.messages) ||
+    resolveProtocol(input.requestContext) !== "openai" ||
+    baseBody.model !== resolveModelId(input.requestContext, "flash") ||
+    !input.sessionSnapshot.endpoint.startsWith(resolveBaseUrl(input.requestContext).replace(/\/+$/, "")) ||
+    input.sessionSnapshot.authFingerprint !==
+      authFingerprint(apiKey, input.sessionSnapshot.endpoint, baseBody.model)
+  ) {
+    return { ok: false, reason: "stale_snapshot", attempts: 0, toolCallRetries: 0 };
+  }
+  const tail = typeof input.steeringTail === "string"
+    ? [{ role: "user", content: input.steeringTail } satisfies BranchMessage]
+    : input.steeringTail;
+  for (let retry = 0; retry < 2; retry += 1) {
+    const attempt = input.attempt == null
+      ? nextUsageAttempt(input.requestContext, input.callSite, input.lane)
+      : input.attempt + retry;
+    const body = {
+      ...baseBody,
+      messages: [...baseBody.messages, ...tail],
+    };
+    try {
+      const response = await globalThis.fetch(input.sessionSnapshot.endpoint, {
+        method: "POST",
+        headers: {
+          ...input.sessionSnapshot.safeHeaders,
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: input.abortSignal,
+      });
+      if (!response.ok) {
+        void recordBranchUsage(input, null, attempt, `provider_http_${response.status}`);
+        return {
+          ok: false,
+          reason: "provider_error",
+          attempts: retry + 1,
+          toolCallRetries: retry,
+          error: `HTTP ${response.status}`,
+        };
+      }
+      const bufferedDeltas: Array<{ delta: string; accumulated: string }> = [];
+      const raw = await readRawBranchResponse(response, (delta, accumulated) => {
+        bufferedDeltas.push({ delta, accumulated });
+      });
+      void recordBranchUsage(input, raw.usage, attempt, null);
+      if (raw.toolCalled) {
+        if (retry === 0) continue;
+        return { ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 };
+      }
+      if (!raw.text) {
+        return {
+          ok: false,
+          reason: "invalid_response",
+          attempts: retry + 1,
+          toolCallRetries: retry,
+        };
+      }
+      for (const item of bufferedDeltas) {
+        await input.onTextDelta?.(item.delta, item.accumulated);
+      }
+      return {
+        ok: true,
+        text: raw.text,
+        assistantMessage: {
+          role: "assistant",
+          content: raw.text,
+          ...(raw.reasoning ? { reasoning_content: raw.reasoning } : {}),
+        },
+        attempts: retry + 1,
+        toolCallRetries: retry,
+      };
+    } catch (error) {
+      const reason = input.abortSignal?.aborted || (error instanceof Error && error.name === "AbortError")
+        ? "provider_request_aborted"
+        : "provider_request_error";
+      void recordBranchUsage(input, null, attempt, reason);
+      return {
+        ok: false,
+        reason: "provider_error",
+        attempts: retry + 1,
+        toolCallRetries: retry,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return { ok: false, reason: "tool_call", attempts: 2, toolCallRetries: 1 };
+}
 
 // env 层默认协议:QINGAGENT_MODEL_PROTOCOL=anthropic|openai(GLM Coding 走 anthropic)。
 // 调用时读取(而非模块加载常量),便于 dotenv 时序与测试;非法值忽略 -> undefined。

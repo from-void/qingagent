@@ -11,7 +11,11 @@ import { buildChipOnlyGuidance, composeInlineChipText } from "./chipOnlyNote.js"
 import { createSkillChipInstructionLoader } from "./skillChipInstructionLoader.js";
 import { getQingagentSkills, qingagentAgent } from "../agents/qingagent.js";
 import { guardContext, withPrefixCacheGuardContext } from "../llm/prefixCacheGuard.js";
-import { resolveModelParams, resolveProtocol } from "../llm/modelConfig.js";
+import {
+  beginSessionSnapshotTurn,
+  resolveModelParams,
+  resolveProtocol,
+} from "../llm/modelConfig.js";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
 import { isDirectionReset } from "./questionnaireTools.js";
@@ -531,6 +535,7 @@ export async function* runAgentTurn(
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
     turnRequestContext = requestContext;
+    beginSessionSnapshotTurn(requestContext);
     let toolSearchPreloadedToolNames: string[] = [];
     if (capabilityToolSearch) {
       const toolSearchProcessor = ensureSessionToolSearchProcessor(state, capabilityToolSearch);

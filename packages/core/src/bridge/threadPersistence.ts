@@ -62,6 +62,8 @@ import {
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
 } from "./questionnaireTools.js";
+import { clearSessionSnapshot } from "../llm/modelConfig.js";
+import { clearQuestionBranch } from "../services/genService.js";
 
 const logger = mastra.getLogger();
 export const QINGAGENT_RESOURCE_ID = "qingagent-user";
@@ -1819,6 +1821,8 @@ export async function listHomeSessionThreads(opts: {
  * Delete a session thread and all its messages.
  */
 export async function deleteSessionThread(sessionId: string): Promise<void> {
+  clearSessionSnapshot(sessionId);
+  clearQuestionBranch(sessionId);
   unregisterSessionFolderSources(sessionId);
   // 先清沙箱工作目录(模型写的中间文件/产物),再删 thread。清理失败不阻断删除。
   try {

@@ -14,11 +14,10 @@ import { getSessionWorkspace } from "../workspace/sessionWorkspace.js";
 import { getSessionFolderSources } from "../folderSources/runtime.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import {
-  createRepairingQingagentModel,
   wrapToolCallRepairingModel,
   qingagentModelConfig,
 } from "../llm/repairingModel.js";
-import type { RepairableLanguageModel, RepairingModelRouterLanguageModel } from "../llm/repairingModel.js";
+import type { RepairableLanguageModel } from "../llm/repairingModel.js";
 import {
   todoAwarenessSourceFromRequestContext,
   wrapModelWithTodoAwareness,
@@ -29,9 +28,9 @@ import {
 } from "../llm/omObservationsPrompt.js";
 import {
   anthropicBaseUrl,
+  createSnapshottingQingagentModel,
   resolveBaseUrl,
   resolveDeepseekAuth,
-  resolveDeepseekRouterModelId,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
@@ -51,12 +50,10 @@ import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
 // 上限防滥用:访客 key 任意多,缓存只留最近 16 个。
 type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropicV5>>;
 type RepairingAgentAnthropicModel = AgentAnthropicModel & RepairableLanguageModel;
-const modelCache = new Map<string, RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel>();
+const modelCache = new Map<string, RepairingAgentAnthropicModel>();
 const MODEL_CACHE_LIMIT = 16;
 
-function getRepairingModelFor(
-  requestContext?: RequestContext,
-): RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel {
+function getRepairingModelFor(requestContext?: RequestContext) {
   const todoAwarenessSource = todoAwarenessSourceFromRequestContext(requestContext);
   const omObservationsSource = omObservationsSourceFromRequestContext(requestContext);
   const { apiKey } = resolveDeepseekAuth(requestContext);
@@ -90,15 +87,12 @@ function getRepairingModelFor(
     return maybeTrackNonBridgeModel(contextualModel, requestContext);
   }
 
-  const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
-  // 缓存键含 baseURL + modelId + key:不同中转/别名/key 各自命中独立实例
-  const cacheKey = `${baseUrl}|${modelId}|${effectiveKey}`;
-  let model = modelCache.get(cacheKey);
-  if (!model) {
-    model = createRepairingQingagentModel({ id: modelId, url: baseUrl, apiKey: effectiveKey });
-    evict();
-    modelCache.set(cacheKey, model);
-  }
+  // OpenAI 兼容主链按 requestContext 建轻量 provider，fetch 闭包才能只把本 turn 的最终
+  // provider body 写入该会话快照；底层 HTTP/DeepSeek prompt cache 不依赖 JS model 实例复用。
+  const model = wrapToolCallRepairingModel(
+    createSnapshottingQingagentModel(requestContext),
+    { guardProviderCall: true },
+  );
   const contextualModel = wrapModelWithTodoAwareness(
     wrapModelWithOmObservations(model, omObservationsSource),
     todoAwarenessSource,

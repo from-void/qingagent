@@ -1,7 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "ai";
-import { extractJsonArray } from "../utils/extractJsonArray.js";
-import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
+import { generateQuestions } from "../services/genService.js";
 
 /**
  * Shape of a single generated question — matches the contract
@@ -260,73 +258,59 @@ export async function* streamMoreQuestions(context: {
   }>;
   currentAnswers: Record<string, { chosen?: string[]; freeText?: string }>;
   requestContext?: RequestContext;
+  abortSignal?: AbortSignal;
 }): AsyncGenerator<AskMoreQuestion[]> {
-  const existingQSummary = context.currentQuestions
-    .map((q) => {
-      const ans = context.currentAnswers[q.id];
-      const ansText = ans
-        ? [
-            ...(ans.chosen ?? []),
-            ...(ans.freeText ? [ans.freeText] : []),
-          ].join(", ") || "未回答"
-        : "未回答";
-      return `- ${q.label} → ${ansText}`;
-    })
-    .join("\n");
-
-  const result = streamText({
-    model: getDeepseekModel(context.requestContext, "flash", { callSite: "askMore" }),
-    ...resolveModelParams(context.requestContext),
-    prompt: `你是一位写作需求分析专家。根据以下对话上下文和已有的问卷问题及回答，生成 1-3 个补充问题，帮助更好地理解用户的写作需求。
-
-对话摘要：
-${context.conversationSummary}
-
-已有问题及回答：
-${existingQSummary}
-
-直接输出纯 JSON 数组，不要有任何其他内容。格式：
-[{"id":"q-extra-tone","label":"问题文本","kind":{"kind":"single"},"options":[{"value":"v1","label":"选项1","description":"描述"}],"placeholder":""},{"id":"q-extra-note","label":"补充问题","kind":{"kind":"text"},"options":[],"placeholder":"提示文字"}]
-
-要求：
-1. 问题应覆盖尚未涉及的方面
-2. 不要重复已有问题
-3. id 格式为 "q-extra-{简短英文主题}"
-4. kind 必须是 {"kind":"single"}、{"kind":"multi"} 或 {"kind":"text"}
-5. 选择题选项不超过 4 个
-6. 文本题 options 为空数组
-7. 使用中文`,
+  const mapQuestions = (
+    questions: Awaited<ReturnType<typeof generateQuestions>>["questions"],
+  ): AskMoreQuestion[] => questions
+    .filter((question) => question.kind !== "slider")
+    .map((question) => ({
+      id: question.id,
+      label: question.label,
+      kind: { kind: question.kind as "single" | "multi" | "text" },
+      options: question.options,
+      placeholder: question.placeholder ?? "",
+    }));
+  const pending: AskMoreQuestion[][] = [];
+  let finalQuestions: AskMoreQuestion[] = [];
+  let done = false;
+  let failure: unknown;
+  let wake: (() => void) | null = null;
+  const notify = () => {
+    const resolveWake = wake;
+    wake = null;
+    resolveWake?.();
+  };
+  void generateQuestions({
+    mode: "additional",
+    requestContext: context.requestContext,
+    abortSignal: context.abortSignal,
+    conversationSummary: context.conversationSummary,
+    currentQuestions: context.currentQuestions,
+    currentAnswers: context.currentAnswers,
+    onProgress: (questions) => {
+      pending.push(mapQuestions(questions));
+      notify();
+    },
+  }).then((result) => {
+    finalQuestions = mapQuestions(result.questions);
+  }).catch((error) => {
+    failure = error;
+  }).finally(() => {
+    done = true;
+    notify();
   });
 
-  let accumulated = "";
-  let lastSig = "";
-  let lastPartial: AskMoreQuestion[] = [];
-
-  for await (const delta of result.textStream) {
-    accumulated += delta;
-
-    const partial = tryParsePartialAskMoreQuestions(accumulated);
-    if (partial.length === 0) continue;
-
-    const totalOpts = partial.reduce((s, q) => s + q.options.length, 0);
-    const sig = `${partial.length}:${totalOpts}`;
-    if (sig !== lastSig) {
-      lastSig = sig;
-      lastPartial = partial;
-      yield partial;
+  let lastSignature = "";
+  while (!done || pending.length > 0) {
+    const next = pending.shift();
+    if (next) {
+      lastSignature = JSON.stringify(next);
+      yield next;
+      continue;
     }
+    await new Promise<void>((resolveWait) => { wake = resolveWait; });
   }
-  // Final yield with complete result
-  const jsonStr = extractJsonArray(accumulated);
-  if (jsonStr === null) {
-    yield lastPartial.length > 0 ? lastPartial : [];
-    return;
-  }
-
-  try {
-    const final: AskMoreQuestion[] = JSON.parse(jsonStr);
-    yield final;
-  } catch {
-    yield lastPartial.length > 0 ? lastPartial : [];
-  }
+  if (failure) throw failure;
+  if (JSON.stringify(finalQuestions) !== lastSignature) yield finalQuestions;
 }

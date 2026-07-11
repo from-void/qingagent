@@ -1,0 +1,181 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  branchCall: vi.fn(),
+  getSessionSnapshot: vi.fn(),
+  getDeepseekModel: vi.fn(() => ({ modelId: "fallback" })),
+  resolveModelParams: vi.fn(() => ({})),
+  streamText: vi.fn(),
+}));
+
+vi.mock("../llm/modelConfig.js", () => ({
+  branchCall: mocks.branchCall,
+  getSessionSnapshot: mocks.getSessionSnapshot,
+  getDeepseekModel: mocks.getDeepseekModel,
+  resolveModelParams: mocks.resolveModelParams,
+}));
+vi.mock("ai", () => ({ streamText: mocks.streamText }));
+
+import { clearQuestionBranch, generateQuestions, parseGeneratedQuestions } from "../services/genService.js";
+
+const snapshot = {
+  sessionId: "gen-session",
+  streamId: "stream-main",
+  generation: 3,
+  ordinal: 2,
+  epoch: 0,
+  capturedAt: "2026-07-11T00:00:00.000Z",
+  endpoint: "https://example.test/chat/completions",
+  bodyText: "{}",
+  safeHeaders: {},
+  authFingerprint: "test",
+};
+
+function textStream(text: string): AsyncIterable<string> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield text;
+    },
+  };
+}
+
+function chunkStream(chunks: string[]): AsyncIterable<string> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield chunk;
+    },
+  };
+}
+
+describe("GenService", () => {
+  beforeEach(() => {
+    clearQuestionBranch(snapshot.sessionId);
+    mocks.branchCall.mockReset();
+    mocks.getSessionSnapshot.mockReset().mockReturnValue(snapshot);
+    mocks.streamText.mockReset();
+  });
+
+  it("askMore 在同一快照上只 append 初次 user/assistant 与新增 user，不重构前缀", async () => {
+    mocks.branchCall
+      .mockResolvedValueOnce({
+        ok: true,
+        text: '[{"id":"q-tone","label":"语气？","kind":"single","options":[{"value":"warm","label":"温暖"}]}]',
+        assistantMessage: {
+          role: "assistant",
+          content: '[{"id":"q-tone","label":"语气？","kind":"single","options":[{"value":"warm","label":"温暖"}]}]',
+        },
+        attempts: 1,
+        toolCallRetries: 0,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: '[{"id":"q-extra-scene","label":"使用场景？","kind":"text","options":[]}]',
+        assistantMessage: {
+          role: "assistant",
+          content: '[{"id":"q-extra-scene","label":"使用场景？","kind":"text","options":[]}]',
+        },
+        attempts: 1,
+        toolCallRetries: 0,
+      });
+
+    const first = await generateQuestions({
+      mode: "initial",
+      rationale: "确认方向",
+      topic: "手表市场",
+    });
+    const additional = await generateQuestions({
+      mode: "additional",
+      currentQuestions: first.questions.map((question) => ({
+        ...question,
+        kind: { kind: question.kind },
+      })),
+      currentAnswers: { "q-tone": { chosen: ["warm"] } },
+    });
+
+    expect(first.transport).toBe("branch");
+    expect(additional.transport).toBe("branch");
+    const firstTail = mocks.branchCall.mock.calls[0]?.[0].steeringTail;
+    const secondTail = mocks.branchCall.mock.calls[1]?.[0].steeringTail;
+    expect(firstTail).toHaveLength(1);
+    expect(secondTail).toHaveLength(3);
+    expect(secondTail[0]).toEqual(firstTail[0]);
+    expect(secondTail[1]).toEqual(expect.objectContaining({ role: "assistant" }));
+    expect(secondTail[2]).toEqual(expect.objectContaining({
+      role: "user",
+      content: expect.stringContaining("再生成 1-3 个补充问题"),
+    }));
+    expect(mocks.branchCall.mock.calls.map((call) => call[0].callSite)).toEqual(["planDraft", "askMore"]);
+  });
+
+  it("tool_call 两次抑制失败后按该次调用降级原独立模型路径", async () => {
+    mocks.branchCall.mockResolvedValue({
+      ok: false,
+      reason: "tool_call",
+      attempts: 2,
+      toolCallRetries: 1,
+    });
+    mocks.streamText.mockReturnValue({
+      textStream: textStream('[{"id":"q-note","label":"还有什么要求？","kind":"text","options":[]}]'),
+    });
+
+    const result = await generateQuestions({ mode: "initial", rationale: "r", topic: "t" });
+
+    expect(result).toMatchObject({
+      transport: "fallback",
+      branchFailure: "tool_call",
+      toolCallRetries: 1,
+    });
+    expect(result.questions).toHaveLength(1);
+    expect(mocks.streamText).toHaveBeenCalledTimes(1);
+  });
+
+  it("真实脏输出支持 fence、尾随散文与 nested kind", () => {
+    expect(parseGeneratedQuestions(`前导话\n\`\`\`json
+[{"id":"q-extra-note","label":"补充？","kind":{"kind":"text"},"options":[],"placeholder":"可含 ] 字符"}]
+\`\`\`\n以上。`)).toEqual([expect.objectContaining({
+      id: "q-extra-note",
+      kind: "text",
+      placeholder: "可含 ] 字符",
+    })]);
+  });
+
+  it("fallback 恢复按完整问题递增的进度，并保留原 prompt 语义约束", async () => {
+    mocks.getSessionSnapshot.mockReturnValue(null);
+    mocks.streamText.mockReturnValue({
+      textStream: chunkStream([
+        '[{"id":"q-one","label":"侧重点？","kind":"single","options":[{"value":"a","label":"A"}]}',
+        ',{"id":"q-two","label":"补充？","kind":"text","options":[]}]',
+      ]),
+    });
+    const progress: number[] = [];
+
+    const result = await generateQuestions({
+      mode: "initial",
+      rationale: "r",
+      topic: "t",
+      onProgress: (questions) => { progress.push(questions.length); },
+    });
+
+    expect(result.questions).toHaveLength(2);
+    expect(progress).toEqual([1, 2]);
+    const prompt = mocks.streamText.mock.calls[0]?.[0].prompt as string;
+    expect(prompt).toContain("最大值滑到头必须用 aboveLabel");
+    expect(prompt).toContain("不得出现 run_js、readDraft");
+    expect(prompt).toContain("根据以下写作方向");
+    expect(prompt).not.toContain("根据主对话");
+  });
+
+  it("预取消时不发 branch 或 fallback 请求", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(generateQuestions({
+      mode: "initial",
+      rationale: "r",
+      topic: "t",
+      abortSignal: controller.signal,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.branchCall).not.toHaveBeenCalled();
+    expect(mocks.streamText).not.toHaveBeenCalled();
+  });
+});

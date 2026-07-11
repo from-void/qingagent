@@ -159,17 +159,22 @@ function repairToolCallModelResult<T>(result: T): T {
   return result;
 }
 
-export function wrapToolCallRepairingModel<T extends RepairableLanguageModel>(inner: T): T {
+export function wrapToolCallRepairingModel<T extends RepairableLanguageModel>(
+  inner: T,
+  options: { guardProviderCall?: boolean } = {},
+): T {
   return new Proxy(inner, {
     get(target, prop) {
       if (prop === "doGenerate") {
         return async (...args: any[]) => {
+          if (options.guardProviderCall) guardBeforeProviderCall(args[0]);
           const result = await withModelRetry(() => Promise.resolve(target.doGenerate(...args)));
           return repairToolCallModelResult(result);
         };
       }
       if (prop === "doStream") {
         return async (...args: any[]) => {
+          if (options.guardProviderCall) guardBeforeProviderCall(args[0]);
           const result = await withModelRetry(() => Promise.resolve(target.doStream(...args)));
           return repairToolCallModelResult(result);
         };

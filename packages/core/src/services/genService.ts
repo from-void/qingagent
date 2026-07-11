@@ -1,0 +1,371 @@
+import type { RequestContext } from "@mastra/core/request-context";
+import { streamText } from "ai";
+import { extractJsonArray } from "../utils/extractJsonArray.js";
+import {
+  branchCall,
+  getDeepseekModel,
+  getSessionSnapshot,
+  resolveModelParams,
+  type BranchMessage,
+  type SessionSnapshot,
+} from "../llm/modelConfig.js";
+import { repairModelJson } from "../llm/repairToolCallJson.js";
+
+export interface GeneratedQuestion {
+  id: string;
+  label: string;
+  kind: "single" | "multi" | "text" | "slider";
+  options: Array<{
+    value: string;
+    label: string;
+    description?: string | null;
+    preview?: string | null;
+  }>;
+  placeholder?: string | null;
+  slider?: unknown;
+}
+
+export interface GenerateQuestionsInput {
+  mode: "initial" | "additional";
+  requestContext?: RequestContext;
+  rationale?: string;
+  topic?: string;
+  conversationSummary?: string;
+  currentQuestions?: Array<{
+    id: string;
+    label: string;
+    kind: { kind: string } | string;
+    options: Array<{ value: string; label: string }>;
+  }>;
+  currentAnswers?: Record<string, { chosen?: string[]; freeText?: string | null }>;
+  abortSignal?: AbortSignal;
+  onProgress?: (questions: GeneratedQuestion[]) => void | Promise<void>;
+}
+
+export interface GenerateQuestionsResult {
+  questions: GeneratedQuestion[];
+  transport: "branch" | "fallback";
+  branchFailure: string | null;
+  toolCallRetries: number;
+}
+
+interface QuestionBranchHistory {
+  generation: number;
+  epoch: number;
+  messages: BranchMessage[];
+  touchedAt: number;
+}
+
+const questionBranches = new Map<string, QuestionBranchHistory>();
+const QUESTION_BRANCH_TTL_MS = 30 * 60 * 1000;
+const MAX_QUESTION_BRANCHES = 256;
+
+function pruneQuestionBranches(): void {
+  const now = Date.now();
+  for (const [sessionId, history] of questionBranches) {
+    if (now - history.touchedAt > QUESTION_BRANCH_TTL_MS) questionBranches.delete(sessionId);
+  }
+  while (questionBranches.size > MAX_QUESTION_BRANCHES) {
+    const oldest = questionBranches.keys().next().value as string | undefined;
+    if (!oldest) break;
+    questionBranches.delete(oldest);
+  }
+}
+
+export function clearQuestionBranch(sessionId: string): void {
+  questionBranches.delete(sessionId);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeQuestion(raw: unknown): GeneratedQuestion | null {
+  if (!isRecord(raw) || typeof raw.id !== "string" || !raw.id.trim()) return null;
+  if (typeof raw.label !== "string" || !raw.label.trim()) return null;
+  const rawKind = isRecord(raw.kind) ? raw.kind.kind : raw.kind;
+  if (!new Set(["single", "multi", "text", "slider"]).has(String(rawKind))) return null;
+  const kind = rawKind as GeneratedQuestion["kind"];
+  const options = Array.isArray(raw.options)
+    ? raw.options.flatMap((option) => {
+        if (!isRecord(option) || typeof option.value !== "string" || typeof option.label !== "string") {
+          return [];
+        }
+        return [{
+          value: option.value,
+          label: option.label,
+          ...(typeof option.description === "string" || option.description === null
+            ? { description: option.description }
+            : {}),
+          ...(typeof option.preview === "string" || option.preview === null
+            ? { preview: option.preview }
+            : {}),
+        }];
+      })
+    : [];
+  return {
+    id: raw.id,
+    label: raw.label,
+    kind,
+    options,
+    ...(typeof raw.placeholder === "string" || raw.placeholder === null
+      ? { placeholder: raw.placeholder }
+      : {}),
+    ...(kind === "slider" && "slider" in raw ? { slider: raw.slider } : {}),
+  };
+}
+
+export function parseGeneratedQuestions(raw: string): GeneratedQuestion[] | null {
+  const extracted = extractJsonArray(raw);
+  if (!extracted) return null;
+  const repaired = repairModelJson(extracted);
+  try {
+    const parsed = JSON.parse(repaired.ok ? repaired.json : extracted);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const questions = parsed.map(normalizeQuestion);
+    return questions.every((question): question is GeneratedQuestion => question !== null)
+      ? questions
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parsePartialGeneratedQuestions(raw: string): GeneratedQuestion[] {
+  const start = raw.indexOf("[");
+  if (start < 0) return [];
+  const questions: GeneratedQuestion[] = [];
+  let objectStart = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start + 1; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      if (inString) escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") {
+      if (depth === 0) objectStart = index;
+      depth += 1;
+      continue;
+    }
+    if (char !== "}" || depth === 0) continue;
+    depth -= 1;
+    if (depth !== 0 || objectStart < 0) continue;
+    try {
+      const normalized = normalizeQuestion(JSON.parse(raw.slice(objectStart, index + 1)));
+      if (normalized) questions.push(normalized);
+    } catch {
+      // 半截或畸形对象等待最终解析/重试处理。
+    }
+    objectStart = -1;
+  }
+  return questions;
+}
+
+async function emitQuestionProgress(
+  input: GenerateQuestionsInput,
+  questions: GeneratedQuestion[],
+  state: { signature: string },
+): Promise<void> {
+  const signature = JSON.stringify(questions);
+  if (!questions.length || signature === state.signature) return;
+  state.signature = signature;
+  await input.onProgress?.(questions);
+}
+
+function currentQuestionSummary(input: GenerateQuestionsInput): string {
+  return (input.currentQuestions ?? []).map((question) => {
+    const answer = input.currentAnswers?.[question.id];
+    const answerText = answer
+      ? [...(answer.chosen ?? []), ...(answer.freeText ? [answer.freeText] : [])].join(", ") || "未回答"
+      : "未回答";
+    return `- ${question.label} → ${answerText}`;
+  }).join("\n");
+}
+
+function initialPrompt(input: GenerateQuestionsInput): string {
+  return `不要调用任何工具。你是一位写作需求分析专家。根据主对话以及下面的写作方向，直接生成 2-4 个问卷问题，帮助确认用户的写作需求。
+
+写作方向和已知信息：
+${input.rationale ?? ""}
+
+具体主题：
+${input.topic ?? ""}
+
+只输出纯 JSON 数组，不要解释。格式：
+[{"id":"q-theme","label":"问题文本","kind":"single","options":[{"value":"v1","label":"选项1","description":"描述"}],"placeholder":""},{"id":"q-length","label":"目标字数","kind":"slider","options":[],"slider":{"min":200,"max":3000,"step":100,"unit":"字","aboveLabel":"3000字以上"}},{"id":"q-note","label":"补充问题","kind":"text","options":[],"placeholder":"提示文字"}]
+
+要求：id 唯一且为 q-{简短英文主题}；kind 只能是 single/multi/text/slider；选择题不超过 4 个选项；文本题/滑块题 options 为空；slider 仅用于连续量，范围必须合理，字数最小不低于 50，最大值滑到头必须用 aboveLabel 表达“X以上”；使用自然中文；不重复询问主对话中已提供的信息；至少一个 text 开放题；问题与选项不得出现 run_js、readDraft 等英文工具或函数标识符，需要提及能力时改用“运行脚本”“读取草稿”等中文；最外层必须是问题数组。`;
+}
+
+function additionalPrompt(input: GenerateQuestionsInput): string {
+  return `不要调用任何工具。沿用你刚才已经生成的问题，再生成 1-3 个补充问题，避开所有已有问题和已确认信息。只输出新增问题的纯 JSON 数组，不要解释。
+
+当前问卷及回答：
+${currentQuestionSummary(input)}
+
+补充对话摘要：
+${input.conversationSummary ?? ""}
+
+格式：
+[{"id":"q-extra-tone","label":"问题文本","kind":"single","options":[{"value":"v1","label":"选项1","description":"描述"}],"placeholder":""},{"id":"q-extra-note","label":"补充问题","kind":"text","options":[],"placeholder":"提示文字"}]
+
+要求：id 使用 q-extra-{简短英文主题}；kind 只能是 single/multi/text；选择题不超过 4 个选项；文本题 options 为空；使用自然中文；不得重复已有问题。`;
+}
+
+function fallbackPrompt(input: GenerateQuestionsInput): string {
+  if (input.mode === "initial") {
+    return initialPrompt(input)
+      .replace(/^不要调用任何工具。/, "")
+      .replace("根据主对话以及下面的写作方向", "根据以下写作方向");
+  }
+  // 保持旧 askMore 的 nested kind 表示，解析器同时兼容 flat/nested。
+  return `你是一位写作需求分析专家。根据以下对话上下文和已有的问卷问题及回答，生成 1-3 个补充问题，帮助更好地理解用户的写作需求。
+
+对话摘要：
+${input.conversationSummary ?? ""}
+
+已有问题及回答：
+${currentQuestionSummary(input)}
+
+直接输出纯 JSON 数组，不要有任何其他内容。格式：
+[{"id":"q-extra-tone","label":"问题文本","kind":{"kind":"single"},"options":[{"value":"v1","label":"选项1","description":"描述"}],"placeholder":""},{"id":"q-extra-note","label":"补充问题","kind":{"kind":"text"},"options":[],"placeholder":"提示文字"}]
+
+要求：问题应覆盖尚未涉及的方面且不重复已有问题；id 为 q-extra-{简短英文主题}；kind 只能是 single/multi/text；选择题不超过 4 个选项；文本题 options 为空数组；使用中文。`;
+}
+
+async function runBranch(
+  input: GenerateQuestionsInput,
+  snapshot: SessionSnapshot,
+): Promise<{ questions: GeneratedQuestion[] | null; failure: string | null; toolCallRetries: number }> {
+  pruneQuestionBranches();
+  const prompt = input.mode === "initial" ? initialPrompt(input) : additionalPrompt(input);
+  let steeringTail: BranchMessage[] = [{ role: "user", content: prompt }];
+  if (input.mode === "additional") {
+    const history = questionBranches.get(snapshot.sessionId);
+    if (history && history.generation === snapshot.generation && history.epoch === snapshot.epoch) {
+      steeringTail = [...history.messages, { role: "user", content: prompt }];
+    }
+  }
+  const progressState = { signature: "" };
+  const result = await branchCall({
+    sessionSnapshot: snapshot,
+    steeringTail,
+    callSite: input.mode === "initial" ? "planDraft" : "askMore",
+    requestContext: input.requestContext,
+    abortSignal: input.abortSignal,
+    onTextDelta: async (_delta, accumulated) => {
+      await emitQuestionProgress(input, parsePartialGeneratedQuestions(accumulated), progressState);
+    },
+  });
+  if (!result.ok) {
+    return { questions: null, failure: result.reason, toolCallRetries: result.toolCallRetries };
+  }
+  const questions = parseGeneratedQuestions(result.text);
+  if (!questions) {
+    return { questions: null, failure: "invalid_questions", toolCallRetries: result.toolCallRetries };
+  }
+  const branchMessages = [...steeringTail, result.assistantMessage];
+  questionBranches.delete(snapshot.sessionId);
+  questionBranches.set(snapshot.sessionId, {
+    generation: snapshot.generation,
+    epoch: snapshot.epoch,
+    messages: branchMessages,
+    touchedAt: Date.now(),
+  });
+  await emitQuestionProgress(input, questions, progressState);
+  return { questions, failure: null, toolCallRetries: result.toolCallRetries };
+}
+
+async function runFallback(input: GenerateQuestionsInput): Promise<GeneratedQuestion[]> {
+  let last: GeneratedQuestion[] = [];
+  const progressState = { signature: "" };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = streamText({
+      model: getDeepseekModel(input.requestContext, "flash", {
+        callSite: input.mode === "initial" ? "planDraft" : "askMore",
+      }),
+      ...resolveModelParams(input.requestContext),
+      abortSignal: input.abortSignal,
+      prompt: fallbackPrompt(input),
+    });
+    let raw = "";
+    for await (const delta of result.textStream) {
+      raw += delta;
+      await emitQuestionProgress(input, parsePartialGeneratedQuestions(raw), progressState);
+    }
+    const parsed = parseGeneratedQuestions(raw);
+    if (parsed) {
+      last = parsed;
+      await emitQuestionProgress(input, parsed, progressState);
+      break;
+    }
+  }
+  return last;
+}
+
+function rememberFallbackQuestions(
+  snapshot: SessionSnapshot,
+  input: GenerateQuestionsInput,
+  questions: GeneratedQuestion[],
+): void {
+  if (questions.length === 0) return;
+  const prompt = input.mode === "initial" ? initialPrompt(input) : additionalPrompt(input);
+  const previous = input.mode === "additional" ? questionBranches.get(snapshot.sessionId) : null;
+  const prefix = previous && previous.generation === snapshot.generation && previous.epoch === snapshot.epoch
+    ? previous.messages
+    : [];
+  const messages: BranchMessage[] = [
+    ...prefix,
+    { role: "user", content: prompt },
+    { role: "assistant", content: JSON.stringify(questions) },
+  ];
+  questionBranches.delete(snapshot.sessionId);
+  questionBranches.set(snapshot.sessionId, {
+    generation: snapshot.generation,
+    epoch: snapshot.epoch,
+    messages,
+    touchedAt: Date.now(),
+  });
+}
+
+/** 通用出题入口：优先借道主链快照，任何单次分支失败都完整降级到原独立模型路径。 */
+export async function generateQuestions(input: GenerateQuestionsInput): Promise<GenerateQuestionsResult> {
+  if (input.abortSignal?.aborted) throw new DOMException("Question generation aborted", "AbortError");
+  const snapshot = getSessionSnapshot(input.requestContext);
+  let branchFailure: string | null = snapshot ? null : "snapshot_unavailable";
+  let toolCallRetries = 0;
+  if (snapshot) {
+    const branched = await runBranch(input, snapshot);
+    if (input.abortSignal?.aborted) throw new DOMException("Question generation aborted", "AbortError");
+    branchFailure = branched.failure;
+    toolCallRetries = branched.toolCallRetries;
+    if (branched.questions) {
+      return {
+        questions: branched.questions,
+        transport: "branch",
+        branchFailure: null,
+        toolCallRetries,
+      };
+    }
+  }
+  const fallbackQuestions = await runFallback(input);
+  if (snapshot) rememberFallbackQuestions(snapshot, input, fallbackQuestions);
+  return {
+    questions: fallbackQuestions,
+    transport: "fallback",
+    branchFailure,
+    toolCallRetries,
+  };
+}

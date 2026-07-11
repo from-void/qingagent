@@ -55,7 +55,7 @@ describe("D8 deterministic scorers", () => {
             action: "insertBlock",
             position: "after",
             ref: "para-compare",
-            blocks: "<table><tr><th><p>维度</p></th><th>V2.6</th><th>V2.7</th></tr></table>",
+            blocks: "<table><tr><th colspan=\"0\"><p>维度</p></th><th><p>V2.6</p></th><th><p>V2.7</p></th></tr></table>",
           },
         ],
       }),

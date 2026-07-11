@@ -67,6 +67,29 @@ describe("draftBlockIds", () => {
     expect(allIds.every((id) => !isGeneratedAiBlockId(id))).toBe(true);
   });
 
+  it("表格 cell 深嵌套列表的独立临时前缀也会递归转正且保持唯一", () => {
+    const cell = {
+      blocks: [{
+        type: "bulletList",
+        items: [{
+          runs: [{ text: "父项" }],
+          children: [{ type: "bulletList", items: [{ runs: [{ text: "子项" }] }] }],
+        }],
+      }],
+    };
+    const source = compileDoc([
+      { type: "table", rows: [{ cells: [cell, cell] }] },
+      { type: "table", rows: [{ cells: [cell, cell] }] },
+    ]);
+
+    const materialized = materializeDraftBlockIds(source, { namespace: "test.table.deep" });
+    const allIds = collectBlockIds(materialized);
+
+    expect(allIds.every((id) => !isGeneratedAiBlockId(id))).toBe(true);
+    expect(new Set(allIds).size).toBe(allIds.length);
+    expect(getStablePmJson(materializeDraftBlockIds(materialized))).toBe(getStablePmJson(materialized));
+  });
+
   it("连续相同空段分配会基于 existingIds 和 occurrence 稳定去重", () => {
     const first = compileDoc([{ type: "paragraph", runs: [] }]).content[0]!;
     const base = allocateMaterializedBlockIds([first], { namespace: "test.alloc" });

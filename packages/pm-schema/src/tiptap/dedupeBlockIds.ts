@@ -33,7 +33,8 @@ export const DedupeBlockIds = Extension.create({
           }
 
           const occurrences = collectBlockIdOccurrences(newState.doc);
-          const missing = collectMissingBlockIds(newState.doc);
+          const pasteRanges = collectPasteInsertedRanges(transactions);
+          const missing = pasteRanges.length > 0 ? collectMissingBlockIds(newState.doc, pasteRanges) : [];
           const duplicates = findDuplicateBlockIds(occurrences);
           if (duplicates.length === 0 && missing.length === 0) return null;
 
@@ -77,16 +78,30 @@ function collectBlockIdOccurrences(doc: PmNode): BlockIdOccurrence[] {
   return occurrences;
 }
 
-function collectMissingBlockIds(doc: PmNode): MissingBlockId[] {
+function collectMissingBlockIds(doc: PmNode, ranges: readonly { from: number; to: number }[]): MissingBlockId[] {
   const missing: MissingBlockId[] = [];
   doc.descendants((node, pos) => {
-    if (Object.prototype.hasOwnProperty.call(node.attrs, "blockId") &&
+    if (ranges.some((range) => pos >= range.from && pos < range.to) &&
+      Object.prototype.hasOwnProperty.call(node.attrs, "blockId") &&
       (typeof node.attrs.blockId !== "string" || node.attrs.blockId.length === 0)) {
       missing.push({ pos, node });
     }
     return true;
   });
   return missing;
+}
+
+function collectPasteInsertedRanges(transactions: readonly Transaction[]): Array<{ from: number; to: number }> {
+  const ranges: Array<{ from: number; to: number }> = [];
+  for (const tr of transactions) {
+    if (tr.getMeta("uiEvent") !== "paste") continue;
+    for (const step of tr.steps) {
+      step.getMap().forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+        if (newEnd > newStart) ranges.push({ from: newStart, to: newEnd });
+      });
+    }
+  }
+  return ranges;
 }
 
 function findDuplicateBlockIds(occurrences: readonly BlockIdOccurrence[]): BlockIdOccurrence[] {

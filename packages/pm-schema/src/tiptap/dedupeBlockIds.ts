@@ -30,12 +30,13 @@ export const DedupeBlockIds = Extension.create({
           // 审阅/揭示等只读态的 PM position 与 blockId 都是锚点；只读初始化事务不改正文，
           // 回到可编辑态后由前端先做一次存量自愈，此插件继续承接后续本地事务。
           if (!editor.isEditable) return null;
-          const docChanged = transactions.some((tr) => tr.docChanged);
-          if (!docChanged) return null;
-          if (transactions.some((tr) => tr.getMeta(DEDUPE_META))) return null;
-          if (transactions.some(shouldSkipDedupeTransaction)) {
-            return null;
-          }
+          // appendTransaction 一轮可能同时收到 remote/自身追加事务与其后插件产生的本地事务。
+          // 不能用“任一需跳过”否决整批；只要批次中存在尚未归一的本地 doc change 就必须扫描。
+          const hasLocalDocChange = transactions.some((tr) =>
+            tr.docChanged &&
+            !tr.getMeta(DEDUPE_META) &&
+            !shouldSkipDedupeTransaction(tr));
+          if (!hasLocalDocChange) return null;
 
           const pasteRanges = collectPasteInsertedRanges(transactions);
           const missing = pasteRanges.length > 0 ? collectMissingBlockIds(newState.doc, pasteRanges) : [];

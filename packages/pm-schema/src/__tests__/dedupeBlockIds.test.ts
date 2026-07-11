@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { Editor, type JSONContent } from "@tiptap/core";
+import { Editor, Extension, type AnyExtension, type JSONContent } from "@tiptap/core";
+import { Plugin } from "@tiptap/pm/state";
 import { CellSelection, TableMap, handlePaste } from "@tiptap/pm/tables";
 import { describe, expect, it } from "vitest";
 import { applyBlockEdits } from "../ai-ir/applyBlockEdits";
@@ -15,12 +16,15 @@ type BlockIdDoc = {
   text?: string;
 };
 
-function createEditor(content: JSONContent = doc([paragraph("anchor", "起点")])): Editor {
+function createEditor(
+  content: JSONContent = doc([paragraph("anchor", "起点")]),
+  extraExtensions: AnyExtension[] = [],
+): Editor {
   const element = document.createElement("div");
   document.body.appendChild(element);
   return new Editor({
     element,
-    extensions: createQingagentExtensions(),
+    extensions: [...extraExtensions, ...createQingagentExtensions()],
     content,
   });
 }
@@ -155,7 +159,65 @@ function pasteSelectedCells(editor: Editor, targetTableIndex: number, targetRect
   expect(handlePaste(editor.view, {} as ClipboardEvent, slice)).toBe(true);
 }
 
+function pasteSelectedCellsThroughDom(editor: Editor, targetTableIndex: number, targetRect: {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}) {
+  const serialized = editor.view.serializeForClipboard(editor.state.selection.content());
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(serialized.dom);
+  selectTableRect(editor, targetTableIndex, targetRect);
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      files: [],
+      getData: (type: string) => type === "text/html" ? wrapper.innerHTML : serialized.text,
+      setData: () => undefined,
+    },
+  });
+  editor.view.dom.dispatchEvent(event);
+}
+
+const AppendLocalDuplicateAfterRemote = Extension.create({
+  name: "appendLocalDuplicateAfterRemote",
+  priority: 1_000,
+
+  addProseMirrorPlugins() {
+    let appended = false;
+    return [
+      new Plugin({
+        appendTransaction(transactions, _oldState, newState) {
+          if (appended || !transactions.some((tr) => tr.getMeta(APPLYING_REMOTE_META))) return null;
+          appended = true;
+          const duplicate = newState.schema.nodeFromJSON(paragraph("remote", "同批本地追加"));
+          return newState.tr.insert(newState.doc.content.size, duplicate);
+        },
+      }),
+    ];
+  },
+});
+
 describe("DedupeBlockIds", () => {
+  it("真实 EditorView paste 事件复制整行后，全文档唯一且 AI 编辑可用", () => {
+    const editor = createEditor(doc([
+      table("table-1", [["a1", "a2"], ["b1", "b2"], ["c1", "c2"]]),
+      paragraph("tail", "尾段"),
+    ]));
+    try {
+      selectTableRect(editor, 0, { left: 0, top: 0, right: 2, bottom: 1 });
+      pasteSelectedCellsThroughDom(editor, 0, { left: 0, top: 2, right: 2, bottom: 3 });
+
+      const ids = collectBlockIds(editor.getJSON() as BlockIdDoc);
+      expect(ids).toContain("table-1-a1~1");
+      expect(new Set(ids).size).toBe(ids.length);
+      assertBlockEditsUsable(editor, "table-1");
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
   it("PM 原生整行复制粘贴后，重写后出现的 cell 后代 blockId", () => {
     const editor = createEditor(doc([
       table("table-1", [["a1", "a2"], ["b1", "b2"], ["c1", "c2"]]),
@@ -317,6 +379,23 @@ describe("DedupeBlockIds", () => {
         .run();
 
       expect(collectBlockIds(editor.getJSON() as BlockIdDoc)).toEqual(["remote", "remote"]);
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
+  it("同一 append 批次含 remote 与其后本地写入时，只跳 remote 且仍归一本地结果", () => {
+    const editor = createEditor(
+      doc([paragraph("p-1", "原文")]),
+      [AppendLocalDuplicateAfterRemote],
+    );
+    try {
+      editor.chain()
+        .setMeta(APPLYING_REMOTE_META, true)
+        .setContent(doc([paragraph("remote", "远端正文")]))
+        .run();
+
+      expect(collectBlockIds(editor.getJSON() as BlockIdDoc)).toEqual(["remote", "remote~1"]);
     } finally {
       destroyEditor(editor);
     }

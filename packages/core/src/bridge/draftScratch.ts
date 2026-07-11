@@ -192,21 +192,28 @@ export type TableSelectionScopeResult = { ok: true } | TableSelectionScopeViolat
 /**
  * cell 内的块 id 会在整表 replaceBlock 时由 aiIrToPm 重新派生，不代表内容变化。
  * diagram.svg 是客户端渲染缓存，aiIrToPm 也会归零；除此之外的 attrs、marks、文本与结构都保留。
+ * attrs 里值为 null/undefined 的键与"键不存在"等价(PM attrs 的 null 即默认态):真实编辑器
+ * 节点常带显式 textAlign:null 等默认键,aiIrToPm 重建节点则缺省不写——键集差异不是内容变化,
+ * 不归一会造成"未选行逐字保留的整表替换"被假阳性拒绝(2026-07-12 浏览器验收实录)。
  */
 function stripBlockIdsDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripBlockIdsDeep);
   if (!value || typeof value !== "object") return value;
 
   const record = value as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => {
+  return Object.fromEntries(Object.entries(record).flatMap(([key, item]) => {
     if (key !== "attrs" || !item || typeof item !== "object" || Array.isArray(item)) {
-      return [key, stripBlockIdsDeep(item)];
+      return [[key, stripBlockIdsDeep(item)] as const];
     }
-    return [key, Object.fromEntries(
-      Object.entries(item)
-        .filter(([attrName]) => attrName !== "blockId" && !(record.type === "diagram" && attrName === "svg"))
-        .map(([attrName, attrValue]) => [attrName, stripBlockIdsDeep(attrValue)]),
-    )];
+    const normalized = Object.entries(item)
+      .filter(([attrName, attrValue]) =>
+        attrName !== "blockId" &&
+        !(record.type === "diagram" && attrName === "svg") &&
+        attrValue !== null &&
+        attrValue !== undefined)
+      .map(([attrName, attrValue]) => [attrName, stripBlockIdsDeep(attrValue)] as const);
+    // attrs 归一后为空时整个键丢弃,与"节点无 attrs"等价。
+    return normalized.length > 0 ? [[key, Object.fromEntries(normalized)] as const] : [];
   }));
 }
 
@@ -219,8 +226,9 @@ function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null 
     // 纯文本相同时仍需识别未选单元格里的 mark、链接及子块结构变化。
     content: getStablePmJson(stripBlockIdsDeep(cell.content)),
     attrs: {
-      colspan: attrs?.colspan ?? null,
-      rowspan: attrs?.rowspan ?? null,
+      // 显式默认值与缺省键等价:colspan/rowspan 缺省即 1,colwidth/backgroundColor 缺省即 null。
+      colspan: attrs?.colspan ?? 1,
+      rowspan: attrs?.rowspan ?? 1,
       colwidth: attrs?.colwidth ?? null,
       backgroundColor: attrs?.backgroundColor ?? null,
     },

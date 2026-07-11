@@ -22,9 +22,13 @@ export type ListItemDraft = {
 };
 
 export type TableCellDraft = {
+  blocks?: unknown[];
+  /** 仅兼容旧会话/缓存，入口会一次性归一为单 paragraph blocks。 */
   runs?: unknown[];
   header?: boolean;
   backgroundColor?: string;
+  colspan?: number;
+  rowspan?: number;
 };
 
 type ListBlockNode = Extract<PmBlockNode, { type: "bulletList" | "orderedList" | "taskList" }>;
@@ -113,9 +117,19 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
           if (idx === undefined) throw new OpError(opIndex, `块 ${op.ref} 不存在,请先 readDraft`);
           const compiled = compileBlocks([op.block], opIndex);
           if (compiled.length !== 1) throw new OpError(opIndex, "replaceBlock 期望单个块");
-          // 保留原 blockId,并在改表丢表头时用旧表结构信号确定性还原表头行。
-          const replacement = withBlockId(compiled[0]!, op.ref);
-          replaceAt.set(idx, carryOverDiagramOverlay(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)));
+          assertMergedTableColwidthReplaceSafe(nodes[idx]!, opIndex, op.ref);
+          // 保留原 blockId，并把临时 ai-block-* 后代深度 materialize 到最终 ref 命名空间；
+          // 否则 table 顶层转正后，cell 多块后代仍可能沿用临时前缀或与另一张相同表撞 id。
+          const replacement = materializeAnchoredReplacement(compiled[0]!, op.ref, {
+            existingIds: collectBlockIdsExcluding(nodes, idx),
+          });
+          replaceAt.set(
+            idx,
+            carryOverDiagramOverlay(
+              nodes[idx]!,
+              carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
+            ),
+          );
           applied.push(op.ref);
           break;
         }
@@ -213,6 +227,7 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
 
     const parsed = safeParsePmDoc(withTables.doc);
     if (!parsed.success) throw new Error(`结果未过 pmDocSchema: ${parsed.error.message}`);
+    assertUniqueBlockIds(withTables.doc);
 
     return { ok: true, doc: withTables.doc, applied, skippedDuplicateInserts };
   } catch (err) {
@@ -236,21 +251,56 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
   }
 }
 
-function withBlockId(node: PmBlockNode, blockId: string): PmBlockNode {
-  return { ...node, attrs: { ...node.attrs, blockId } } as PmBlockNode;
+function materializeAnchoredReplacement(
+  node: PmBlockNode,
+  blockId: string,
+  opts: { existingIds: ReadonlySet<string> },
+): PmBlockNode {
+  const rebased = rebaseBlockIdPrefixDeep(node, node.attrs.blockId, blockId);
+  const materialized = materializeGeneratedBlockIdsDeep(rebased, {
+    namespace: `editDraft.replaceBlock:${blockId}`,
+    existingIds: opts.existingIds,
+  }).node;
+  // anchored replace 的锚点 ref 必须原样保留；深度 materialize 只负责后代临时 ID。
+  return { ...materialized, attrs: { ...materialized.attrs, blockId } } as PmBlockNode;
 }
 
-// 取表格单元格纯文字(拼接其内段落的 text run),用于比对表头标签是否在编辑后仍保留。
+function rebaseBlockIdPrefixDeep<T extends PmNode>(node: T, oldPrefix: string, newPrefix: string): T {
+  const rewrite = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const currentId = attrs?.blockId;
+    const nextAttrs = typeof currentId === "string" && currentId.startsWith(oldPrefix)
+      ? { ...attrs, blockId: `${newPrefix}${currentId.slice(oldPrefix.length)}` }
+      : attrs;
+    return {
+      ...record,
+      ...(nextAttrs ? { attrs: nextAttrs } : {}),
+      ...(Array.isArray(record.content) ? { content: record.content.map(rewrite) } : {}),
+    };
+  };
+  return rewrite(node) as T;
+}
+
+// 取表格单元格递归纯文字，用于比对含列表/待办等多块表头标签是否仍保留。
 function tableCellText(cell: { content: PmBlockNode[] }): string {
-  let out = "";
-  for (const block of cell.content) {
-    const inline = (block as { content?: Array<{ type?: string; text?: string }> }).content;
-    if (!inline) continue;
-    for (const node of inline) {
-      if (node.type === "text" && typeof node.text === "string") out += node.text;
+  const text: string[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
     }
-  }
-  return out.trim();
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") text.push(record.text);
+    visit(record.content);
+  };
+  visit(cell.content);
+  return text.join("").trim();
 }
 
 // editDraft 改表(replaceBlock)时,模型常重生成整张表却丢掉表头行的 header 标记
@@ -292,6 +342,53 @@ function carryOverTableHeader(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlo
           }
         : row,
     ),
+  };
+}
+
+function tableHasSpan(table: PmTableNode): boolean {
+  return table.content.some((row) => row.content.some((cell) =>
+    (cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1,
+  ));
+}
+
+function tableHasColwidth(table: PmTableNode): boolean {
+  return table.content.some((row) => row.content.some((cell) =>
+    Array.isArray(cell.attrs?.colwidth) && cell.attrs.colwidth.length > 0,
+  ));
+}
+
+function assertMergedTableColwidthReplaceSafe(
+  oldNode: PmBlockNode,
+  opIndex: number,
+  ref: string,
+): void {
+  if (oldNode.type !== "table") return;
+  if (!tableHasSpan(oldNode) || !tableHasColwidth(oldNode)) return;
+  throw new OpError(
+    opIndex,
+    `表格 ${ref} 含合并单元格及列宽；为保护合并单元格表格的列宽，replaceBlock 暂不支持，第五批解禁`,
+  );
+}
+
+// AI-IR 不表达像素列宽。普通表 replaceBlock 时按物理行/列位置机械带回旧 colwidth：
+// 同列数完整保留；列数变化时保留可对应前缀，新增列写 null。若新 cell 自带宽度则尊重它。
+// 合并表需要逻辑网格映射，带宽度者已由上面的临时门控拒绝；无宽度者无需 carry-over。
+function carryOverTableColwidth(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlockNode {
+  if (oldNode.type !== "table" || newNode.type !== "table") return newNode;
+  if (tableHasSpan(oldNode)) return newNode;
+  return {
+    ...newNode,
+    content: newNode.content.map((row, rowIndex) => ({
+      ...row,
+      content: row.content.map((cell, cellIndex) => {
+        if (cell.attrs?.colwidth !== undefined) return cell;
+        const oldCell = oldNode.content[rowIndex]?.content[cellIndex];
+        const oldWidth = oldCell?.attrs?.colwidth;
+        const newHasSpan = (cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1;
+        const colwidth = !newHasSpan && Array.isArray(oldWidth) ? [...oldWidth] : null;
+        return { ...cell, attrs: { ...cell.attrs, colwidth } };
+      }),
+    })),
   };
 }
 
@@ -861,12 +958,15 @@ function compileTableCell(
   opts: { opIndex: number; header: boolean; existingIds: Set<string> },
 ): PmTableCellNode {
   const cell = normalizeTableCellDraft(rawCell, opts.opIndex);
+  if ((cell.colspan ?? 1) > 1 || (cell.rowspan ?? 1) > 1) {
+    throw new OpError(opts.opIndex, "表格增量行列 op 暂不支持插入 colspan/rowspan 合并单元格");
+  }
   const result = compileAiDocumentToPm({
     blocks: [{
       type: "table",
       rows: [{
         cells: [{
-          runs: cell.runs ?? [],
+          blocks: cell.blocks ?? [],
           header: opts.header || cell.header === true,
           ...(cell.backgroundColor ? { backgroundColor: cell.backgroundColor } : {}),
         }],
@@ -888,18 +988,29 @@ function compileTableCell(
 function normalizeTableCellDraft(rawCell: unknown, opIndex: number): TableCellDraft {
   if (rawCell === undefined) return {};
   if (!rawCell || typeof rawCell !== "object" || Array.isArray(rawCell)) {
-    throw new OpError(opIndex, "table cell 必须是对象,形如 {runs, header?, backgroundColor?}");
+    throw new OpError(opIndex, "table cell 必须是对象,形如 {blocks, header?, backgroundColor?}");
   }
   const cell = rawCell as Record<string, unknown>;
+  if ("blocks" in cell && !Array.isArray(cell.blocks)) throw new OpError(opIndex, "table cell.blocks 必须是 block 数组");
   if ("runs" in cell && !Array.isArray(cell.runs)) throw new OpError(opIndex, "table cell.runs 必须是数组");
   if ("header" in cell && typeof cell.header !== "boolean") throw new OpError(opIndex, "table cell.header 必须是 boolean");
   if ("backgroundColor" in cell && typeof cell.backgroundColor !== "string") {
     throw new OpError(opIndex, "table cell.backgroundColor 必须是字符串主题色名");
   }
+  for (const name of ["colspan", "rowspan"] as const) {
+    if (name in cell && (!Number.isInteger(cell[name]) || Number(cell[name]) < 1)) {
+      throw new OpError(opIndex, `table cell.${name} 必须是大于等于 1 的整数`);
+    }
+  }
+  const legacyBlocks = Array.isArray(cell.runs)
+    ? [{ type: "paragraph", runs: cell.runs }]
+    : [];
   return {
-    ...(Array.isArray(cell.runs) ? { runs: cell.runs } : {}),
+    blocks: Array.isArray(cell.blocks) ? cell.blocks : legacyBlocks,
     ...(typeof cell.header === "boolean" ? { header: cell.header } : {}),
     ...(typeof cell.backgroundColor === "string" ? { backgroundColor: cell.backgroundColor } : {}),
+    ...(typeof cell.colspan === "number" ? { colspan: cell.colspan } : {}),
+    ...(typeof cell.rowspan === "number" ? { rowspan: cell.rowspan } : {}),
   };
 }
 
@@ -993,6 +1104,36 @@ function collectBlockIds(value: unknown): Set<string> {
   };
   visit(value);
   return ids;
+}
+
+function collectBlockIdsExcluding(nodes: readonly PmBlockNode[], excludedIndex: number): Set<string> {
+  return collectBlockIds(nodes.filter((_, index) => index !== excludedIndex));
+}
+
+function assertUniqueBlockIds(value: unknown): void {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const blockId = attrs?.blockId;
+    if (typeof blockId === "string") {
+      if (seen.has(blockId)) duplicates.add(blockId);
+      seen.add(blockId);
+    }
+    visit(record.content);
+  };
+  visit(value);
+  if (duplicates.size > 0) {
+    throw new Error(`applyBlockEdits 结果出现重复 blockId: ${[...duplicates].join(", ")}`);
+  }
 }
 
 function stripBlockIds(value: unknown): unknown {

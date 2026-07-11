@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { applyBlockEdits } from "../ai-ir/applyBlockEdits";
 import { aiIrToPm } from "../ai-ir/aiIrToPm";
-import { isGeneratedAiBlockId } from "../ai-ir/draftBlockIds";
+import { isGeneratedAiBlockId, materializeDraftBlockIds } from "../ai-ir/draftBlockIds";
 import { getStablePmJson } from "../hash";
 import { pmToPlainText } from "../pmToPlainText";
 import { safeParsePmDoc } from "../validators";
 import type { PmBlockNode, PmDoc, PmNode } from "../types";
+import type { AiRun, AiTableCell } from "../ai-ir/aiIrSchema";
 
 function makeOriginal() {
   const doc = aiIrToPm({
@@ -31,6 +32,23 @@ function paragraph(blockId: string, value: string): Extract<PmBlockNode, { type:
 
 function doc(content: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
+}
+
+function allBlockIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(allBlockIds);
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+    ? record.attrs as Record<string, unknown>
+    : null;
+  return [
+    ...(typeof attrs?.blockId === "string" ? [attrs.blockId] : []),
+    ...allBlockIds(record.content),
+  ];
+}
+
+function tableCell(runs: AiRun[], attrs: Omit<AiTableCell, "blocks"> = {}): AiTableCell {
+  return { blocks: [{ type: "paragraph", runs }], ...attrs };
 }
 
 function bulletList(
@@ -416,8 +434,8 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
         {
           type: "table",
           rows: [
-            { cells: [{ runs: [{ text: "列A" }], header: true }, { runs: [{ text: "列B" }], header: true }] },
-            { cells: [{ runs: [{ text: "a1" }] }, { runs: [{ text: "b1" }] }] },
+            { cells: [tableCell([{ text: "列A" }], { header: true }), tableCell([{ text: "列B" }], { header: true })] },
+            { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }])] },
           ],
         },
       ],
@@ -439,8 +457,8 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
         block: {
           type: "table",
           rows: [
-            { cells: [{ runs: [{ text: "列A" }] }, { runs: [{ text: "列B" }] }, { runs: [{ text: "列C" }] }] },
-            { cells: [{ runs: [{ text: "a1" }] }, { runs: [{ text: "b1" }] }, { runs: [{ text: "c1" }] }] },
+            { cells: [tableCell([{ text: "列A" }]), tableCell([{ text: "列B" }]), tableCell([{ text: "列C" }])] },
+            { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }]), tableCell([{ text: "c1" }])] },
           ],
         },
       },
@@ -461,8 +479,8 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
         block: {
           type: "table",
           rows: [
-            { cells: [{ runs: [{ text: "X" }], header: true }] },
-            { cells: [{ runs: [{ text: "y" }] }] },
+            { cells: [tableCell([{ text: "X" }], { header: true })] },
+            { cells: [tableCell([{ text: "y" }])] },
           ],
         },
       },
@@ -482,8 +500,8 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
         block: {
           type: "table",
           rows: [
-            { cells: [{ runs: [{ text: "a1" }] }, { runs: [{ text: "b1" }] }] },
-            { cells: [{ runs: [{ text: "a2" }] }, { runs: [{ text: "b2" }] }] },
+            { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }])] },
+            { cells: [tableCell([{ text: "a2" }]), tableCell([{ text: "b2" }])] },
           ],
         },
       },
@@ -497,7 +515,7 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
       blocks: [
         {
           type: "table",
-          rows: [{ cells: [{ runs: [{ text: "a" }] }] }, { cells: [{ runs: [{ text: "b" }] }] }],
+          rows: [{ cells: [tableCell([{ text: "a" }])] }, { cells: [tableCell([{ text: "b" }])] }],
         },
       ],
     });
@@ -508,12 +526,151 @@ describe("applyBlockEdits 改表保留表头(table-header-lost-on-followup 回�
         ref,
         block: {
           type: "table",
-          rows: [{ cells: [{ runs: [{ text: "a2" }] }] }, { cells: [{ runs: [{ text: "b2" }] }] }],
+          rows: [{ cells: [tableCell([{ text: "a2" }])] }, { cells: [tableCell([{ text: "b2" }])] }],
         },
       },
     ]);
     const table = r.doc!.content[0] as unknown as { type: string; content: unknown[] };
     expect(cellTypes(table, 0)).toEqual(["tableCell"]);
+  });
+
+  it("多块表头用递归纯文本识别，模型漏 header 标记时仍可还原", () => {
+    const source = aiIrToPm({
+      blocks: [{
+        type: "table",
+        rows: [{
+          cells: [{
+            header: true,
+            blocks: [{ type: "bulletList", items: [{ runs: [{ text: "列A" }] }] }],
+          }],
+        }],
+      }],
+    });
+    const ref = source.content[0]!.attrs.blockId;
+    const result = applyBlockEdits(source, [{
+      action: "replaceBlock",
+      ref,
+      block: {
+        type: "table",
+        rows: [{ cells: [tableCell([{ text: "列A" }])] }],
+      },
+    }]);
+
+    expect(result.ok).toBe(true);
+    expect(cellTypes(result.doc!.content[0], 0)).toEqual(["tableHeader"]);
+  });
+});
+
+describe("applyBlockEdits 表格列宽 carry-over 与合并表门控", () => {
+  function widthTableDoc(): { doc: PmDoc; ref: string } {
+    const base = aiIrToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [tableCell([{ text: "A" }]), tableCell([{ text: "B" }])] },
+          { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }])] },
+        ],
+      }],
+    });
+    const table = base.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    const docWithWidths: PmDoc = {
+      ...base,
+      content: [{
+        ...table,
+        content: table.content.map((row) => ({
+          ...row,
+          content: row.content.map((cell, columnIndex) => ({
+            ...cell,
+            attrs: { ...cell.attrs, colwidth: [columnIndex === 0 ? 100 : 200] },
+          })),
+        })),
+      }],
+    };
+    return { doc: docWithWidths, ref: table.attrs.blockId };
+  }
+
+  function widths(doc: PmDoc): Array<Array<number[] | null | undefined>> {
+    const table = doc.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    return table.content.map((row) => row.content.map((cell) => cell.attrs?.colwidth));
+  }
+
+  it("改文字保留原宽；加列只对齐前缀且新增列为 null；重排按位置保留", () => {
+    const { doc: base, ref } = widthTableDoc();
+    const changed = applyBlockEdits(base, [{
+      action: "replaceBlock",
+      ref,
+      block: {
+        type: "table",
+        rows: [
+          { cells: [tableCell([{ text: "A2" }]), tableCell([{ text: "B2" }])] },
+          { cells: [tableCell([{ text: "a2" }]), tableCell([{ text: "b2" }])] },
+        ],
+      },
+    }]);
+    expect(changed.ok).toBe(true);
+    expect(widths(changed.doc!)).toEqual([[[100], [200]], [[100], [200]]]);
+
+    const added = applyBlockEdits(base, [{
+      action: "replaceBlock",
+      ref,
+      block: {
+        type: "table",
+        rows: [
+          { cells: [tableCell([{ text: "A" }]), tableCell([{ text: "B" }]), tableCell([{ text: "C" }])] },
+          { cells: [tableCell([{ text: "a1" }]), tableCell([{ text: "b1" }]), tableCell([{ text: "c1" }])] },
+        ],
+      },
+    }]);
+    expect(added.ok).toBe(true);
+    expect(widths(added.doc!)).toEqual([[[100], [200], null], [[100], [200], null]]);
+
+    const reordered = applyBlockEdits(base, [{
+      action: "replaceBlock",
+      ref,
+      block: {
+        type: "table",
+        rows: [
+          { cells: [tableCell([{ text: "B" }]), tableCell([{ text: "A" }])] },
+          { cells: [tableCell([{ text: "b1" }]), tableCell([{ text: "a1" }])] },
+        ],
+      },
+    }]);
+    expect(reordered.ok).toBe(true);
+    expect(widths(reordered.doc!)).toEqual([[[100], [200]], [[100], [200]]]);
+  });
+
+  it("含 span+colwidth 拒绝；含 span 无 colwidth 放行并保留 span", () => {
+    const merged = aiIrToPm({
+      blocks: [{ type: "table", rows: [{ cells: [{ ...tableCell([{ text: "合并" }]), colspan: 2 }] }] }],
+    });
+    const table = merged.content[0];
+    if (table?.type !== "table") throw new Error("missing table");
+    const ref = table.attrs.blockId;
+    const withWidth: PmDoc = {
+      ...merged,
+      content: [{
+        ...table,
+        content: [{
+          ...table.content[0]!,
+          content: [{ ...table.content[0]!.content[0]!, attrs: { colspan: 2, colwidth: [100, 200] } }],
+        }],
+      }],
+    };
+    const replacement = {
+      type: "table" as const,
+      rows: [{ cells: [{ ...tableCell([{ text: "新内容" }]), colspan: 2 }] }],
+    };
+
+    const rejected = applyBlockEdits(withWidth, [{ action: "replaceBlock", ref, block: replacement }]);
+    expect(rejected.ok).toBe(false);
+    expect(rejected.error).toContain("合并单元格表格的列宽");
+
+    const allowed = applyBlockEdits(merged, [{ action: "replaceBlock", ref, block: replacement }]);
+    expect(allowed.ok).toBe(true);
+    const allowedTable = allowed.doc!.content[0];
+    expect(allowedTable?.type === "table" ? allowedTable.content[0]!.content[0]!.attrs?.colspan : null).toBe(2);
   });
 });
 
@@ -526,14 +683,14 @@ describe("applyBlockEdits 表格行列增量 op", () => {
           rows: [
             {
               cells: [
-                { runs: [{ text: "字段，含全角。" }], header: true },
-                { runs: [{ text: "链接\"列\"", marks: [{ type: "link", href: "https://example.com" }] }], header: true },
+                tableCell([{ text: "字段，含全角。" }], { header: true }),
+                tableCell([{ text: "链接\"列\"", marks: [{ type: "link", href: "https://example.com" }] }], { header: true }),
               ],
             },
             {
               cells: [
-                { runs: [{ text: "数值，保持。" }] },
-                { runs: [{ text: "他说\"好\"，然后继续。" }] },
+                tableCell([{ text: "数值，保持。" }]),
+                tableCell([{ text: "他说\"好\"，然后继续。" }]),
               ],
             },
           ],
@@ -562,13 +719,13 @@ describe("applyBlockEdits 表格行列增量 op", () => {
         action: "insertTableRow",
         ref,
         at: "end",
-        cells: [{ runs: [{ text: "新增，A。" }] }, { runs: [{ text: "新增\"B\"" }] }],
+        cells: [tableCell([{ text: "新增，A。" }]), tableCell([{ text: "新增\"B\"" }])],
       },
       {
         action: "insertTableColumn",
         ref,
         at: "end",
-        cells: [{ runs: [{ text: "新增列，表头。" }] }, { runs: [{ text: "c1，保持。" }] }],
+        cells: [tableCell([{ text: "新增列，表头。" }]), tableCell([{ text: "c1，保持。" }])],
       },
     ]);
 
@@ -589,14 +746,35 @@ describe("applyBlockEdits 表格行列增量 op", () => {
     ]);
   });
 
+  it("insertTableRow 接受多块 cell，并为后代生成唯一 id", () => {
+    const { doc: base, ref } = richTableDoc();
+    const result = applyBlockEdits(base, [{
+      action: "insertTableRow",
+      ref,
+      at: "end",
+      cells: [{
+        blocks: [
+          { type: "paragraph", runs: [{ text: "首段" }] },
+          { type: "bulletList", items: [{ runs: [{ text: "列表" }] }] },
+        ],
+      }],
+    }]);
+
+    expect(result.ok).toBe(true);
+    const table = tableOf(result.doc!);
+    expect(table.content[2]!.content[0]!.content.map((block) => block.type)).toEqual(["paragraph", "bulletList"]);
+    const ids = allBlockIds(result.doc);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("同一次调用内表格 op 按声明顺序应用,后续索引基于当前表", () => {
     const d = aiIrToPm({
       blocks: [{
         type: "table",
         rows: [
-          { cells: [{ runs: [{ text: "H" }], header: true }] },
-          { cells: [{ runs: [{ text: "A" }] }] },
-          { cells: [{ runs: [{ text: "B" }] }] },
+          { cells: [tableCell([{ text: "H" }], { header: true })] },
+          { cells: [tableCell([{ text: "A" }])] },
+          { cells: [tableCell([{ text: "B" }])] },
         ],
       }],
     });
@@ -604,7 +782,7 @@ describe("applyBlockEdits 表格行列增量 op", () => {
 
     const r = applyBlockEdits(d, [
       { action: "deleteTableRow", ref, rowIndex: 1 },
-      { action: "insertTableRow", ref, at: "after", rowIndex: 1, cells: [{ runs: [{ text: "C" }] }] },
+      { action: "insertTableRow", ref, at: "after", rowIndex: 1, cells: [tableCell([{ text: "C" }])] },
     ]);
 
     expect(r.ok).toBe(true);
@@ -679,12 +857,81 @@ describe("applyBlockEdits 表格行列增量 op", () => {
     expect(getStablePmJson(mergedDoc)).toBe(mergedBefore);
 
     const oneColumn = aiIrToPm({
-      blocks: [{ type: "table", rows: [{ cells: [{ runs: [{ text: "H" }], header: true }] }] }],
+      blocks: [{ type: "table", rows: [{ cells: [tableCell([{ text: "H" }], { header: true })] }] }],
     });
     const oneColumnRef = oneColumn.content[0]!.attrs.blockId;
     const lastColumn = applyBlockEdits(oneColumn, [{ action: "deleteTableColumn", ref: oneColumnRef, columnIndex: 0 }]);
     expect(lastColumn.ok).toBe(false);
     expect(lastColumn.error).toContain("至少需要保留一列");
+  });
+});
+
+describe("applyBlockEdits 表格多块 blockId 规范与唯一性", () => {
+  const richCell = () => ({
+    blocks: [
+      { type: "paragraph" as const, runs: [{ text: "重复" }] },
+      { type: "bulletList" as const, items: [{ runs: [{ text: "重复" }] }] },
+    ],
+  });
+
+  it("两张相同表与重复 cell 内容生成的全 Doc blockId 唯一", () => {
+    const table = { type: "table" as const, rows: [{ cells: [richCell(), richCell()] }] };
+    const result = aiIrToPm({ blocks: [table, table] });
+    const ids = allBlockIds(result);
+
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("anchored replace 深度转正后沿用最终 table ref 命名空间且唯一", () => {
+    const base = materializeDraftBlockIds(aiIrToPm({
+      blocks: [{ type: "table", rows: [{ cells: [tableCell([{ text: "旧" }])] }] }],
+    }), { namespace: "test.table.anchor" });
+    const ref = base.content[0]!.attrs.blockId;
+    const result = applyBlockEdits(base, [{
+      action: "replaceBlock",
+      ref,
+      block: { type: "table", rows: [{ cells: [richCell(), richCell()] }] },
+    }]);
+
+    expect(result.ok).toBe(true);
+    expect(result.doc!.content[0]!.attrs.blockId).toBe(ref);
+    const ids = allBlockIds(result.doc);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(`${ref}-r1-c1-b1`);
+    expect(ids).toContain(`${ref}-r1-c1-b2`);
+    expect(ids.some((id) => id.startsWith("ai-block-"))).toBe(false);
+  });
+
+  it("行插入后再 replaceBlock 仍保持全 Doc 唯一", () => {
+    const base = materializeDraftBlockIds(aiIrToPm({
+      blocks: [{ type: "table", rows: [{ cells: [tableCell([{ text: "A" }])] }] }],
+    }), { namespace: "test.table.row-replace" });
+    const ref = base.content[0]!.attrs.blockId;
+    const inserted = applyBlockEdits(base, [{
+      action: "insertTableRow",
+      ref,
+      at: "end",
+      cells: [richCell()],
+    }]);
+    expect(inserted.ok).toBe(true);
+    const replaced = applyBlockEdits(inserted.doc!, [{
+      action: "replaceBlock",
+      ref,
+      block: { type: "table", rows: [{ cells: [richCell()] }, { cells: [richCell()] }] },
+    }]);
+
+    expect(replaced.ok).toBe(true);
+    const ids = allBlockIds(replaced.doc);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("返回前发现重复 blockId 时整批失败", () => {
+    const duplicate = doc([paragraph("same-id", "A"), paragraph("same-id", "B")]);
+    const result = applyBlockEdits(duplicate, []);
+
+    expect(result.ok).toBe(false);
+    expect(result.doc).toBeNull();
+    expect(result.error).toContain("重复 blockId");
   });
 });
 

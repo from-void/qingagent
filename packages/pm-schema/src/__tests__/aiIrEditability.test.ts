@@ -141,7 +141,7 @@ describe("analyzeAiIrEditability", () => {
     expect(analyzeAiIrEditability(columns)).toEqual({ replaceBlockAllowed: true, lossyReasons: [] });
   });
 
-  it("table cell 多块或复杂子块标 lossy", () => {
+  it("table cell 多块或复杂子块可无损编辑", () => {
     const table: PmBlockNode = {
       type: "table",
       attrs: { blockId: "block-table" },
@@ -161,8 +161,31 @@ describe("analyzeAiIrEditability", () => {
 
     const result = analyzeAiIrEditability(table);
 
-    expect(result.replaceBlockAllowed).toBe(false);
-    expect(result.lossyReasons).toEqual(expect.arrayContaining(["multiBlockTableCell", "complexTableCellBlock"]));
+    expect(result).toEqual({ replaceBlockAllowed: true, lossyReasons: [] });
+  });
+
+  it("合并表仅在存在 colwidth 时临时拒绝 replaceBlock", () => {
+    const merged = (colwidth?: number[]): PmBlockNode => ({
+      type: "table",
+      attrs: { blockId: "block-merged" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          attrs: { colspan: 2, ...(colwidth ? { colwidth } : {}) },
+          content: [paragraph("block-merged-p")],
+        }],
+      }],
+    });
+
+    expect(analyzeAiIrEditability(merged([120, 160]))).toEqual({
+      replaceBlockAllowed: false,
+      lossyReasons: ["mergedTableColwidth"],
+    });
+    expect(analyzeAiIrEditability(merged())).toEqual({
+      replaceBlockAllowed: true,
+      lossyReasons: [],
+    });
   });
 
   it("blockquote 多块或复杂子块标 lossy", () => {

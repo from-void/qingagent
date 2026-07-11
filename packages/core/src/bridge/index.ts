@@ -121,7 +121,9 @@ export type {
 } from "./docStateMachine.js";
 
 export {
+  advanceLastContentEditedAt,
   commitDocumentOp,
+  getDocumentVersionCommittedAt,
 } from "./commitDocumentOp.js";
 export type {
   CommitDocumentOpInput,
@@ -212,6 +214,7 @@ export {
   persistSessionMetadata,
   schedulePersist,
   loadSessionFromThread,
+  listHomeSessionThreads,
   listSessionThreads,
   deleteSessionThread,
   cleanRestoredText,
@@ -222,6 +225,7 @@ export {
 
 export type {
   QingagentThreadMetadata,
+  HomeSessionThread,
   MaterialRecord,
   SuggestionRecordJson,
 } from "./threadPersistence.js";

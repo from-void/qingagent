@@ -17,6 +17,7 @@ import {
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
 import { documentRepo } from "../db/documentRepo.js";
+import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
 import {
   documentInput,
   prepareTempDocumentsDb,
@@ -391,6 +392,8 @@ describe("commitReviewGroups", () => {
     expect(docText(diffFrame.data.editedDoc)).toBe("A 新\nB 新\nC 新");
     expect(diffFrame.data.editedDoc).toEqual(state.docDraftCandidateDoc);
     expect(docText(state.doc)).toBe("A 新\nB 旧\nC 旧");
+    expect(state.lastContentEditedAt)
+      .toBe((await findOpByDocumentVersion(state.docId, state.docVersion))?.createdAt);
     expect(state.suggestions.has(hunkA.hunkId)).toBe(false);
     expect(state.suggestions.has(hunkB.hunkId)).toBe(true);
     expect(state.suggestions.has(hunkC.hunkId)).toBe(true);
@@ -534,7 +537,8 @@ describe("commitReviewGroups", () => {
   });
 
   it("先接受一处再撤销全部时会把已接受 batch 也拒绝并回到旧文档", async () => {
-    const state = createSession("accept-then-reject-all");
+    const initialContentTime = "2025-01-01T00:00:00.000Z";
+    const state = createSession("accept-then-reject-all", initialContentTime);
     const base = doc([
       paragraph("block-a", "A 旧"),
       paragraph("block-b", "B 旧"),
@@ -560,6 +564,7 @@ describe("commitReviewGroups", () => {
     expect(state.suggestions.size).toBe(0);
     expect(state.patchVerdicts.size).toBe(0);
     expect(deriveContentState(state)).toEqual({ kind: "editing" });
+    expect(state.lastContentEditedAt).toBe(initialContentTime);
     const terminalStatuses = frames
       .filter((frame) => frame.kind === "toolCallUpdated")
       .map((frame) => frame.kind === "toolCallUpdated" ? frame.data.spec.status.kind : "");

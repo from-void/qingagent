@@ -423,6 +423,55 @@ describe("handleCommand existing-session restore", () => {
     expect(session.docVersion).toBe(8);
   });
 
+  it("cached 崩溃窗口恢复精确 op 时间，并 await 持久化 DB-win 信号", async () => {
+    const bridge = await loadBridge();
+    const core = await import("@qingagent/core");
+    const session = await createCachedSession(bridge);
+    const base = legacySectionsToPm([section("v7")] as never);
+    await core.documentRepo.save({
+      id: session.docId,
+      threadId: session.threadId ?? session.sessionId,
+      resourceId: session.resourceId,
+      title: "cached crash",
+      docState: "editing",
+      docVersion: 7,
+      lastSyncedVersion: 0,
+      pmDoc: base,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const latest = legacySectionsToPm([section("v8")] as never);
+    const commit = await core.commitDocumentOp({
+      docId: session.docId,
+      threadId: session.threadId ?? session.sessionId,
+      resourceId: session.resourceId,
+      expectedDocumentSnapshot: 7,
+      opId: `cached-crash-v8:${session.sessionId}`,
+      opKind: "replace_doc",
+      actorType: "user",
+      apply: () => ({ nextDoc: latest }),
+    }, { now: () => "2026-06-07T08:09:10.111Z" });
+    expect(commit).toMatchObject({ status: "committed", docVersion: 8 });
+    session.docVersion = 3;
+    session.doc = base;
+    session.legacySections = [section("v7")];
+    session.lastContentEditedAt = "2020-01-01T00:00:00.000Z";
+
+    await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+
+    expect(session.docVersion).toBe(8);
+    expect(session.lastContentEditedAt).toBe("2026-06-07T08:09:10.111Z");
+    expect(core.schedulePersist).toHaveBeenCalledWith(
+      session,
+      "restore:cached_documents_metadata_reconcile",
+    );
+  });
+
   // 回归(Round1 评测 A#2):cached 重连 DB-win 时,基于旧版本锚点的 review/draft 态必须清空,
   // 否则 restore 会同时发 documentSnapshotWritten(新版) 与 docDiffReady(旧 base),前端拿旧锚点套新正文。
   it("cached 重连 DB-win 时清空陈旧 review/draft 态,不再发 docDiffReady", async () => {

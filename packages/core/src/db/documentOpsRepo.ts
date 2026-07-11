@@ -137,3 +137,23 @@ export async function findOpByIdempotencyKey(
   const row = result.rows[0];
   return row ? mapOpRow(row) : null;
 }
+
+/**
+ * 精确读取某个文档版本对应的提交记录。
+ *
+ * 恢复崩溃窗口时不能按 created_at 猜“最近一笔”，因为同毫秒提交或异常时钟都
+ * 可能选错；doc_id + to_version 才是正文版本与 op 的稳定关联键。
+ */
+export async function findOpByDocumentVersion(
+  docId: string,
+  toVersion: number,
+  client?: Client,
+): Promise<DocumentOpRow | null> {
+  const c = await readyClient(client);
+  const result = await c.execute({
+    sql: "SELECT * FROM document_ops WHERE doc_id = ? AND to_version = ? LIMIT 1",
+    args: [docId, toVersion],
+  });
+  const row = result.rows[0];
+  return row ? mapOpRow(row) : null;
+}

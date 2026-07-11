@@ -12,7 +12,7 @@ import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "./sessionState.js";
 import { updateToolCallInChatHistory } from "./sessionState.js";
 import { buildDocumentSnapshot } from "./docGenerator.js";
-import { commitDocumentOp } from "./commitDocumentOp.js";
+import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { applySuggestionsToDoc } from "./pmPatch.js";
 import { applyDiffHunks } from "./proposalDiff.js";
 import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSuggestions.js";
@@ -462,6 +462,7 @@ export async function* commitPatches(
   // (commitDocumentOp 在带 opId 的提交路径里 apply 恰好执行一次,captured 值即最终结果。)
   let skippedHunks: DiffHunk[] = [];
   let result: Awaited<ReturnType<typeof commitDocumentOp>>;
+  const previousDocVersion = state.docVersion;
   try {
     result = await commitDocumentOp({
       docId: state.docId,
@@ -568,6 +569,7 @@ export async function* commitPatches(
     return;
   }
 
+  advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
   state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
   state.docVersion = result.docVersion;

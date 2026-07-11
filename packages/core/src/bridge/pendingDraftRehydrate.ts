@@ -7,7 +7,7 @@ import {
 } from "@qingagent/pm-schema";
 import { documentDraftRepo, type DocumentDraftRow } from "../db/documentDraftRepo.js";
 import { mastra } from "../mastra.js";
-import { commitDocumentOp } from "./commitDocumentOp.js";
+import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import { createSuggestionFromDiffHunk } from "./draftReviewSuggestions.js";
 import type { SessionState, SuggestionRecord } from "./sessionState.js";
@@ -91,6 +91,7 @@ async function rehydrateFirstDraftCandidate(
   }
 
   const draftDoc = materializeDraftBlockIds(row.draftPmDoc, { namespace: "draft.rehydrate.first" });
+  const previousDocVersion = state.docVersion;
   const result = await commitDocumentOp({
     docId: state.docId,
     threadId: state.threadId ?? state.sessionId,
@@ -122,6 +123,7 @@ async function rehydrateFirstDraftCandidate(
     return { kind: "conflict", frames: [conflictFrame(state.sessionId)] };
   }
 
+  advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
   state.legacySections = pmToLegacySections(result.doc) as never;
   state.docVersion = result.docVersion;

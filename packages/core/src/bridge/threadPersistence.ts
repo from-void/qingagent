@@ -32,6 +32,7 @@ import {
 } from "../db/documentVersionRepo.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { rehydratePendingDraft } from "./pendingDraftRehydrate.js";
+import { getDocumentVersionCommittedAt } from "./commitDocumentOp.js";
 import {
   coerceLegacyContentKind,
 } from "./docStateMachine.js";
@@ -63,6 +64,30 @@ export const QINGAGENT_RESOURCE_ID = "qingagent-user";
 const LEGACY_RESOURCE_ID = "user-default";
 const PRIMARY_METADATA_WRITE_MAX_ATTEMPTS = 5;
 const PRIMARY_METADATA_WRITE_INITIAL_BACKOFF_MS = 50;
+const CONTENT_TIME_EPOCH = "1970-01-01T00:00:00.000Z";
+
+/** 把任意日期输入收敛成可安全输出的 ISO 字符串；非法值返回 null。 */
+function parseValidTimestamp(value: unknown): string | null {
+  try {
+    const timestamp = value instanceof Date
+      ? value.getTime()
+      : typeof value === "string"
+        ? Date.parse(value)
+        : typeof value === "number"
+          ? value
+          : Number.NaN;
+    if (!Number.isFinite(timestamp)) return null;
+    return new Date(timestamp).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function frozenThreadUpdatedAt(thread: StorageThreadType): string {
+  return parseValidTimestamp(thread.updatedAt)
+    ?? parseValidTimestamp(thread.createdAt)
+    ?? CONTENT_TIME_EPOCH;
+}
 
 // ---------------------------------------------------------------------------
 // Metadata types
@@ -104,6 +129,8 @@ export interface QingagentThreadMetadata {
   docId?: string;
   docState: DocState;
   docVersion: number;
+  /** 仅文档 op 成功创建新版本时推进；首页排序不再依赖 thread.updatedAt。 */
+  lastContentEditedAt?: string | null;
   lastSyncedDocumentSnapshot: number;
   doc?: PmDoc;
   legacySections: LegacySection[];
@@ -510,6 +537,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
     docId: state.docId,
     docState: { kind: normalizePersistedDocStateKind(state) },
     docVersion: state.docVersion,
+    lastContentEditedAt: state.lastContentEditedAt,
     lastSyncedDocumentSnapshot: state.lastSyncedDocumentSnapshot,
     doc: state.doc,
     legacySections: state.legacySections,
@@ -779,15 +807,20 @@ async function hasMatchingRestoreDraft(input: {
 export async function createSessionThread(
   sessionId: string,
   title?: string,
-  initial?: Pick<QingagentThreadMetadata, "workingMemorySnapshot" | "workingMemorySnapshotLoaded">,
+  initial?: Pick<QingagentThreadMetadata, "workingMemorySnapshot" | "workingMemorySnapshotLoaded"> & {
+    createdAt?: string;
+  },
 ): Promise<void> {
   const memory = mastra.getMemory("default");
   if (!memory) return;
+
+  const createdAt = parseValidTimestamp(initial?.createdAt) ?? new Date().toISOString();
 
   const initialMeta: QingagentThreadMetadata = {
     docId: sessionId,
     docState: { kind: "empty" },
     docVersion: 0,
+    lastContentEditedAt: createdAt,
     lastSyncedDocumentSnapshot: 0,
     legacySections: [],
     materials: [],
@@ -800,7 +833,7 @@ export async function createSessionThread(
     directionChangeAskedSinceLastWrite: false,
     workingMemorySnapshot: initial?.workingMemorySnapshot ?? null,
     workingMemorySnapshotLoaded: initial?.workingMemorySnapshotLoaded === true,
-    lastPersistedAt: new Date().toISOString(),
+    lastPersistedAt: createdAt,
   };
 
   await memory.saveThread({
@@ -808,8 +841,8 @@ export async function createSessionThread(
       id: sessionId,
       title: title ?? "",
       resourceId: QINGAGENT_RESOURCE_ID,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt),
       metadata: initialMeta as unknown as Record<string, unknown>,
     },
   });
@@ -1280,6 +1313,15 @@ export async function loadSessionFromThread(
   let meta = (thread.metadata ?? {}) as unknown as QingagentThreadMetadata;
   const docId = meta.docId ?? sessionId;
   const metadataDocVersion = typeof meta.docVersion === "number" ? meta.docVersion : null;
+  const persistedContentEditedAt = parseValidTimestamp(meta.lastContentEditedAt);
+  const needsContentTimeBackfill = persistedContentEditedAt === null;
+  // 仅旧 metadata 需要在任何 restore 写回前冻结 thread.updatedAt；已有有效内容时间
+  // 的会话不再读取这个会被“打开/消息写”推进的字段。
+  const frozenUpdatedAt = persistedContentEditedAt ?? frozenThreadUpdatedAt(thread);
+  meta = {
+    ...meta,
+    lastContentEditedAt: persistedContentEditedAt ?? frozenUpdatedAt,
+  };
   let restoredFromDocuments = false;
   let needsRestoreReconcilePersist = false;
 
@@ -1299,6 +1341,26 @@ export async function loadSessionFromThread(
         metadataDocVersion !== null &&
         docRow.docVersion === metadataDocVersion &&
         documentsHash !== metadataHash;
+
+      // commitDocumentOp 与正文/op 原子落库，但 metadata 是后续写；进程在两者之间
+      // 崩溃时必须按精确版本恢复真实提交时间。查询失败不撤销 DB-win 的持久化信号。
+      if (docRow.docVersion > (metadataDocVersion ?? -1)) {
+        needsRestoreReconcilePersist = true;
+        try {
+          const committedAt = await getDocumentVersionCommittedAt(docId, docRow.docVersion);
+          const validCommittedAt = parseValidTimestamp(committedAt);
+          if (validCommittedAt) {
+            meta = { ...meta, lastContentEditedAt: validCommittedAt };
+          }
+        } catch (err) {
+          logger.warn("Failed to recover content edit time from exact document op", {
+            sessionId,
+            docId,
+            docVersion: docRow.docVersion,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       if (metadataWins) {
         needsRestoreReconcilePersist = true;
@@ -1507,6 +1569,8 @@ export async function loadSessionFromThread(
     doc,
     legacySections,
     docVersion: meta.docVersion ?? 0,
+    lastContentEditedAt:
+      parseValidTimestamp(meta.lastContentEditedAt) ?? frozenUpdatedAt,
     streamId: null,
     runId: restoredSuspensionOwner?.runId ?? null,
     toolCallId: restoredSuspensionOwner?.toolCallId ?? null,
@@ -1559,15 +1623,8 @@ export async function loadSessionFromThread(
 
   const rebuiltAnswerMessages = appendMissingAskUserAnswerMessagesFromChatHistory(state);
   const rebuiltVisibleAnswerCards = appendMissingVisibleAskUserAnswerMessagesFromChatHistory(state);
-  if (rebuiltAnswerMessages > 0 || rebuiltVisibleAnswerCards > 0) {
-    void schedulePersist(state, "restore:askUser_answer_messages").catch((err) => {
-      logger.error("Failed to persist rebuilt askUser answer messages", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
+  const docVersionBeforePendingRehydrate = state.docVersion;
+  const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
   try {
     await rehydratePendingDraft(state);
   } catch (err) {
@@ -1578,9 +1635,18 @@ export async function loadSessionFromThread(
     });
   }
 
-  if (needsRestoreReconcilePersist) {
-    void schedulePersist(state, "restore:documents_metadata_reconcile").catch((err) => {
-      logger.error("Failed to persist documents/metadata restore reconcile", {
+  const pendingRehydrateChangedCanonical =
+    state.docVersion !== docVersionBeforePendingRehydrate ||
+    state.lastContentEditedAt !== contentEditedAtBeforePendingRehydrate;
+  const rebuiltAskUserState = rebuiltAnswerMessages > 0 || rebuiltVisibleAnswerCards > 0;
+  if (
+    needsContentTimeBackfill ||
+    needsRestoreReconcilePersist ||
+    pendingRehydrateChangedCanonical ||
+    rebuiltAskUserState
+  ) {
+    await schedulePersist(state, "restore:unified_metadata_reconcile").catch((err) => {
+      logger.error("Failed to persist unified session restore reconcile", {
         sessionId,
         docId,
         error: err instanceof Error ? err.message : String(err),
@@ -1592,7 +1658,8 @@ export async function loadSessionFromThread(
 }
 
 /**
- * List all session threads for the home page.
+ * List session threads by Mastra's mutable updatedAt semantics.
+ * Used by usage/data-admin callers; homepage has a dedicated content-time query below.
  * Returns threads ordered by updatedAt DESC.
  */
 export async function listSessionThreads(opts: {
@@ -1634,6 +1701,102 @@ export async function listSessionThreads(opts: {
     threads,
     total: current.total + legacy.total,
     hasMore: current.hasMore || legacy.hasMore,
+  };
+}
+
+export type HomeSessionThread = StorageThreadType & {
+  /** 已按 metadata→updatedAt→createdAt→epoch 解析，可直接用于 API 输出。 */
+  contentEditedAt: string;
+  /** 已校验的创建时间，避免首页路由对 Invalid Date 调用 toISOString。 */
+  createdAtIso: string;
+};
+
+function parsedHomeThread(thread: StorageThreadType): HomeSessionThread & {
+  contentEditedAtMs: number;
+  createdAtMs: number;
+} {
+  const meta = (thread.metadata ?? {}) as unknown as Pick<
+    QingagentThreadMetadata,
+    "lastContentEditedAt"
+  >;
+  const contentEditedAt = parseValidTimestamp(meta.lastContentEditedAt)
+    ?? parseValidTimestamp(thread.updatedAt)
+    ?? parseValidTimestamp(thread.createdAt)
+    ?? CONTENT_TIME_EPOCH;
+  const createdAt = parseValidTimestamp(thread.createdAt) ?? CONTENT_TIME_EPOCH;
+  return {
+    ...thread,
+    contentEditedAt,
+    createdAtIso: createdAt,
+    contentEditedAtMs: Date.parse(contentEditedAt),
+    createdAtMs: Date.parse(createdAt),
+  };
+}
+
+/**
+ * 首页专用查询：全量拉 current/legacy、current 优先去重、按内容编辑时间排序后分页。
+ * listSessionThreads 保持原有 updatedAt 语义，避免影响 usage/data-admin。
+ */
+export async function listHomeSessionThreads(opts: {
+  page?: number;
+  perPage?: number;
+} = {}): Promise<{
+  threads: HomeSessionThread[];
+  total: number;
+  hasMore: boolean;
+}> {
+  const memory = mastra.getMemory("default");
+  if (!memory) return { threads: [], total: 0, hasMore: false };
+
+  const [current, legacy] = await Promise.all([
+    memory.listThreads({
+      filter: { resourceId: QINGAGENT_RESOURCE_ID },
+      orderBy: { field: "updatedAt", direction: "DESC" },
+      page: 0,
+      perPage: false,
+    }),
+    memory.listThreads({
+      filter: { resourceId: LEGACY_RESOURCE_ID },
+      orderBy: { field: "updatedAt", direction: "DESC" },
+      page: 0,
+      perPage: false,
+    }),
+  ]);
+
+  const threadsById = new Map<string, StorageThreadType>();
+  for (const thread of current.threads) {
+    threadsById.set(thread.id, thread);
+  }
+  for (const thread of legacy.threads) {
+    if (!threadsById.has(thread.id)) {
+      threadsById.set(thread.id, thread);
+    }
+  }
+
+  const sorted = Array.from(threadsById.values())
+    .map(parsedHomeThread)
+    .sort((a, b) => {
+      const contentOrder = b.contentEditedAtMs - a.contentEditedAtMs;
+      if (contentOrder !== 0) return contentOrder;
+      const createdOrder = b.createdAtMs - a.createdAtMs;
+      if (createdOrder !== 0) return createdOrder;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+  const page = Number.isSafeInteger(opts.page) && (opts.page ?? 0) >= 0
+    ? opts.page ?? 0
+    : 0;
+  const perPage = Number.isSafeInteger(opts.perPage) && (opts.perPage ?? 50) >= 0
+    ? opts.perPage ?? 50
+    : 50;
+  const start = page * perPage;
+  const end = start + perPage;
+  const threads = sorted.slice(start, end).map(({ contentEditedAtMs: _, createdAtMs: __, ...thread }) => thread);
+
+  return {
+    threads,
+    total: sorted.length,
+    hasMore: end < sorted.length,
   };
 }
 

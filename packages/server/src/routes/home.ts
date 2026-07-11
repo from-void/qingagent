@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { HomeFeed, SessionMeta, LegacySection } from "@qingagent/contract-ts";
-import { listSessionThreads, deleteSessionThread, pmToHomeArticleMeta } from "@qingagent/core";
+import { listHomeSessionThreads, deleteSessionThread, pmToHomeArticleMeta } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
 import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 import { sessionManager } from "../bridge/bridgeHandler";
@@ -9,7 +9,7 @@ import { requireTrustedOrigin } from "../lib/trustedOrigin";
 export const homeRoutes = new Hono();
 
 homeRoutes.get("/home", async (c) => {
-  const { threads } = await listSessionThreads({
+  const { threads } = await listHomeSessionThreads({
     page: 0,
     perPage: 50,
   });
@@ -25,8 +25,8 @@ homeRoutes.get("/home", async (c) => {
     return {
       id: t.id,
       title: articleMeta?.title || meta.title || t.title || "未命名草稿",
-      created_at: t.createdAt.toISOString(),
-      updated_at: t.updatedAt.toISOString(),
+      created_at: t.createdAtIso,
+      updated_at: t.contentEditedAt,
       summary,
       imageUrl: articleMeta?.imageUrl ?? null,
       status: { kind: "Active" as const },

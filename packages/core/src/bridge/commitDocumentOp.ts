@@ -17,11 +17,13 @@ import {
   withTransaction,
 } from "../db/documentsClient.js";
 import {
+  findOpByDocumentVersion,
   findOpByIdempotencyKey,
   insertOp,
   type DocumentOpKind,
   type DocumentOpRow,
 } from "../db/documentOpsRepo.js";
+import type { SessionState } from "./sessionState.js";
 import { ensureMigrated } from "../db/migrations.js";
 import {
   getLatestVersionRow,
@@ -81,6 +83,10 @@ export type CommitDocumentOpResult =
       contentHash: string;
       doc: PmDoc;
       versionId: string;
+      /** 本次调用是否成功插入新 op 并产生了新文档版本。 */
+      createdNewVersion: boolean;
+      /** 对应 document_ops.created_at；幂等回放返回既有 op 的原始时间。 */
+      committedAt: string;
       conflicts?: PatchConflict[];
     }
   | { status: "conflict"; currentVersion: number; currentHash: string }
@@ -216,6 +222,8 @@ async function committedResultFromOp(
       contentHash: version.contentHash,
       doc: version.snapshotPm,
       versionId: version.versionId,
+      createdNewVersion: false,
+      committedAt: op.createdAt,
     };
   }
 
@@ -229,6 +237,8 @@ async function committedResultFromOp(
       contentHash: latestVersion.contentHash,
       doc: latestVersion.snapshotPm,
       versionId: latestVersion.versionId,
+      createdNewVersion: false,
+      committedAt: op.createdAt,
     };
   }
 
@@ -244,9 +254,41 @@ async function committedResultFromOp(
         docVersion: current.docVersion,
         contentHash: current.contentHash,
       }),
+      createdNewVersion: false,
+      committedAt: op.createdAt,
     };
   }
   throw new Error(`document_ops points to missing document: ${op.opId}`);
+}
+
+/**
+ * 仅在本次事务真实创建新版本、且版本相对提交前内存状态向前时推进首页排序键。
+ * 调用方必须在 commitDocumentOp 前捕获 previousDocVersion，不能覆盖 state.docVersion
+ * 后再读取。
+ */
+export function advanceLastContentEditedAt(
+  state: Pick<SessionState, "lastContentEditedAt">,
+  result: CommitDocumentOpResult,
+  previousDocVersion: number,
+): boolean {
+  if (
+    result.status === "committed" &&
+    result.createdNewVersion &&
+    result.docVersion > previousDocVersion
+  ) {
+    state.lastContentEditedAt = result.committedAt;
+    return true;
+  }
+  return false;
+}
+
+/** 精确读取某个 docVersion 对应 op 的真实提交时间，供冷/热崩溃恢复共用。 */
+export async function getDocumentVersionCommittedAt(
+  docId: string,
+  docVersion: number,
+): Promise<string | null> {
+  const op = await findOpByDocumentVersion(docId, docVersion);
+  return op?.createdAt ?? null;
 }
 
 function validateNextDoc(nextDoc: PmDoc): {
@@ -519,6 +561,8 @@ export async function commitDocumentOp(
       contentHash,
       doc: nextDoc,
       versionId: committedVersionId,
+      createdNewVersion: true,
+      committedAt: createdAt,
       conflicts: applied.conflicts,
     } satisfies CommitDocumentOpResult);
   });

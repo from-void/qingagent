@@ -241,10 +241,11 @@ export async function* processAgentStream(
   // 现在只有本轮恰好一次提取时才允许"最近一次"兜底,多次提取时宁可空正文也绝不绑错。
   const extractedTexts = (state._extractedTexts ??= new Map<
     string,
-    { text: string; sourceUrl: string | null; fileId: string | null }
+    { text: string; sourceUrl: string | null; fileId: string | null; sourceKind?: "github" }
   >());
   const researchFullTexts = new Map<string, { text: string; materialId: string | null }>();
   const extractionEventsThisTurn: Array<{ text: string; sourceUrl: string | null; fileId: string | null }> = [];
+  // GitHub 正文/代码片段允许天然较短；网页抓取的“实质内容”长度门不适用于它们。
   // 已被某次 storeMaterial 消费的提取:每条提取只绑一次,避免多条素材绑到同一份正文(p08 串台),
   // 同时让多条抓取结果按顺序各自落库可见,而非多次提取时一律 fail-closed 拒绝。
   const consumedExtractions = new Set<{ text: string; sourceUrl: string | null; fileId: string | null }>();
@@ -2080,7 +2081,18 @@ export async function* processAgentStream(
         const t = toolResult.text as string;
         if (t.trim() && !isExtractionFailureText(t)) {
           const sourceUrl = typeof toolResult.sourceUrl === "string" ? toolResult.sourceUrl : null;
-          const entry = { text: t, sourceUrl, fileId: null };
+          const entry = { text: t, sourceUrl, fileId: null, sourceKind: "github" as const };
+          if (typeof toolResult.materialId === "string") extractedTexts.set(toolResult.materialId, entry);
+          if (typeof toolResult.title === "string") extractedTexts.set(toolResult.title, entry);
+          if (sourceUrl) extractedTexts.set(sourceUrl, entry);
+          extractionEventsThisTurn.push(entry);
+        }
+      }
+      if (toolName === "github_search_code" && toolResult.selected === true && typeof toolResult.text === "string") {
+        const t = toolResult.text as string;
+        if (t.trim() && !isExtractionFailureText(t)) {
+          const sourceUrl = typeof toolResult.sourceUrl === "string" ? toolResult.sourceUrl : null;
+          const entry = { text: t, sourceUrl, fileId: null, sourceKind: "github" as const };
           if (typeof toolResult.materialId === "string") extractedTexts.set(toolResult.materialId, entry);
           if (typeof toolResult.title === "string") extractedTexts.set(toolResult.title, entry);
           if (sourceUrl) extractedTexts.set(sourceUrl, entry);
@@ -2156,7 +2168,7 @@ export async function* processAgentStream(
         // 只有导航/分享控件拼出的空洞壳按解析失败处理,不落库(空洞壳通常已在缓存阶段
         // 被 isSubstantiveContent 拦掉、bound 为空,这里是兜底的二道防线)。
         // [Error]/[Unsupported] 占位前缀绝不能当正文存入素材库。
-        const hollowWebContent = !!bound?.sourceUrl && !isSubstantiveContent(fullText);
+        const hollowWebContent = !!bound?.sourceUrl && bound.sourceKind !== "github" && !isSubstantiveContent(fullText);
         const placeholderContent = isExtractionFailureText(fullText);
         if (fullText.trim().length === 0 || hollowWebContent || placeholderContent) {
           logger.warn(

@@ -814,4 +814,42 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
       },
     });
   });
+
+  it("GitHub 搜索片段只有明确选择后才进缓存并可落库，且不与 read_file 串台", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("github-fragment-selection");
+    const fullText = "完整文件正文".repeat(30);
+    const fragmentText = "用户明确选择的代码片段";
+
+    await drain(processAgentStream(streamOf(
+      toolCall("github_search_code", "search", { action: "search", owner: "o", repo: "r", query: "needle" }),
+      toolResult("github_search_code", "search", {}, { ok: true, count: 1, hits: [{ fragmentId: "ghfrag-a", fragment: fragmentText }], rateLimit: {} }),
+      toolCall("github_read_file", "read", { owner: "o", repo: "r", path: "full.ts" }),
+      toolResult("github_read_file", "read", {}, { materialId: "github-full", title: "r/full.ts", text: fullText, sourceUrl: "https://github.test/full", rateLimit: {} }),
+      toolCall("github_search_code", "select", { action: "select_fragment", owner: "o", repo: "r", query: "needle", fragmentId: "ghfrag-selected" }),
+      toolResult("github_search_code", "select", {}, { ok: true, selected: true, materialId: "ghfrag-selected", title: "r/a.ts#L7", text: fragmentText, sourceUrl: "https://github.test/fragment", rateLimit: {} }),
+      toolCall("storeMaterial", "store-fragment", { filename: "r/a.ts#L7", mimeType: "text/plain" }),
+      toolResult("storeMaterial", "store-fragment", {}, { materialId: "stored-fragment", stored: true }),
+      toolCall("storeMaterial", "store-full", { filename: "r/full.ts", mimeType: "text/plain" }),
+      toolResult("storeMaterial", "store-full", {}, { materialId: "stored-full", stored: true }),
+    ), { state, agentMessageId: "m", streamId: "s", runId: "r" }));
+
+    expect(state._extractedTexts?.has("ghfrag-a")).toBe(false);
+    expect(state.materials.get("stored-fragment")?.text).toBe(fragmentText);
+    expect(state.materials.get("stored-full")?.text).toBe(fullText);
+  });
+
+  it("GitHub 空选择片段不进缓存且拒绝 store", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("github-empty-fragment");
+    const frames = await collectFrames(processAgentStream(streamOf(
+      toolCall("github_search_code", "select", { action: "select_fragment", fragmentId: "ghfrag-empty" }),
+      toolResult("github_search_code", "select", {}, { ok: true, selected: true, materialId: "ghfrag-empty", title: "r/a.ts#L1", text: "   ", sourceUrl: "https://github.test/empty", rateLimit: {} }),
+      toolCall("storeMaterial", "store", { filename: "r/a.ts#L1", mimeType: "text/plain" }),
+      toolResult("storeMaterial", "store", {}, { materialId: "stored-empty", stored: true }),
+    ), { state, agentMessageId: "m", streamId: "s", runId: "r" }));
+    expect(state._extractedTexts?.has("ghfrag-empty")).toBe(false);
+    expect(state.materials.has("stored-empty")).toBe(false);
+    expect(storeMaterialFailureFor(frames, "store")).toBeTruthy();
+  });
 });

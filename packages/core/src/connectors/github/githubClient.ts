@@ -77,7 +77,7 @@ export class GithubClient {
     init.signal?.addEventListener("abort", forwardAbort, { once: true });
     try {
       const headers = new Headers(init.headers);
-      headers.set("Accept", "application/vnd.github+json");
+      if (!headers.has("Accept")) headers.set("Accept", "application/vnd.github+json");
       headers.set("X-GitHub-Api-Version", GITHUB_API_VERSION);
       headers.set("User-Agent", "QingAgent-Connector/1.0");
       if (this.options.token) headers.set("Authorization", `Bearer ${this.options.token}`);
@@ -113,5 +113,12 @@ export class GithubClient {
   contents(owner: string, repo: string, path: string, ref?: string, signal?: AbortSignal) {
     const suffix = ref ? `?ref=${encodeURIComponent(ref)}` : "";
     return this.request<Record<string, unknown>>(`/repos/${encodeGithubPathSegment(owner)}/${encodeGithubPathSegment(repo)}/contents/${encodeGithubFilePath(path)}${suffix}`, { signal });
+  }
+  searchCode(query: string, signal?: AbortSignal) {
+    const params = new URLSearchParams({ q: query, per_page: "30" });
+    return this.request<{ total_count?: number; incomplete_results?: boolean; items?: Array<Record<string, unknown>> }>(`/search/code?${params.toString()}`, {
+      signal,
+      headers: { Accept: "application/vnd.github.text-match+json, application/vnd.github+json" },
+    });
   }
 }

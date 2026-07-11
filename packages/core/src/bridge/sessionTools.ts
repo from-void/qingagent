@@ -30,6 +30,7 @@ import { wechatSearchMpTool, wechatListArticlesTool } from "../tools/wechatSearc
 import { githubListReposTool } from "../tools/githubListRepos.js";
 import { githubRepoTreeTool } from "../tools/githubRepoTree.js";
 import { githubReadFileTool } from "../tools/githubReadFile.js";
+import { githubSearchCodeTool } from "../tools/githubSearchCode.js";
 import { githubAuthStartTool } from "../tools/githubAuthStart.js";
 import { updateTodosTool } from "../tools/updateTodos.js";
 import { getPyodideTools } from "../tools/runPython.js";
@@ -138,6 +139,7 @@ const CAPABILITY_TOOLS = {
     github_list_repos: githubListReposTool,
     github_repo_tree: githubRepoTreeTool,
     github_read_file: githubReadFileTool,
+    github_search_code: githubSearchCodeTool,
   },
 } as const;
 
@@ -164,7 +166,7 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
     "wechat_list_articles",
     "fetchArticle",
   ],
-  "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file"],
+  "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {
@@ -230,6 +232,12 @@ export function missingGenericToolResultFields(
       break;
     case "github_read_file":
       requireString("materialId"); requireString("title"); requireString("text"); requireString("sourceUrl"); requireRecord("rateLimit");
+      break;
+    case "github_search_code":
+      requireBoolean("ok");
+      if (result.ok === false) { requireString("reasonCode"); requireString("message"); }
+      else if (result.selected === true) { requireBoolean("selected"); requireString("materialId"); requireString("title"); requireString("text"); requireString("sourceUrl"); requireRecord("rateLimit"); }
+      else { requireNumber("count"); requireArray("hits"); requireRecord("rateLimit"); }
       break;
     case "storeMaterial":
       requireString("materialId");

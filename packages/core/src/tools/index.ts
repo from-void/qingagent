@@ -35,6 +35,7 @@ export { wechatSearchMpTool, wechatListArticlesTool } from "./wechatSearch.js";
 export { githubListReposTool } from "./githubListRepos.js";
 export { githubRepoTreeTool } from "./githubRepoTree.js";
 export { githubReadFileTool } from "./githubReadFile.js";
+export { githubSearchCodeTool } from "./githubSearchCode.js";
 export { githubAuthStartTool } from "./githubAuthStart.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";

@@ -9,7 +9,7 @@ const MAX_PREVIEW_CODE_POINTS = 800;
 
 export const askUserQuestionInputSchema = z.object({
   id: z.string().describe("本次提问的唯一标识"),
-  rationale: z.string().describe("向用户提问的原因，仅供运行时记录"),
+  rationale: z.string().describe("直接展示给用户的问卷副标题，使用面向用户的自然口吻"),
   questions: z
     .union([z.array(z.unknown()), z.string()])
     .describe(
@@ -22,6 +22,7 @@ export type AskUserQuestionInput = z.infer<typeof askUserQuestionInputSchema>;
 export interface AdaptedAskUserQuestionInput {
   id: string;
   rationale: string;
+  inputQuestionCount: number;
   questions: AdaptedAskUserQuestion[];
 }
 
@@ -125,7 +126,8 @@ function normalizeQuestion(raw: unknown): Omit<AdaptedAskUserQuestion, "id"> | n
 export function adaptAskUserQuestionInput(
   input: AskUserQuestionInput,
 ): AdaptedAskUserQuestionInput {
-  const questions = parseQuestions(input.questions)
+  const parsedQuestions = parseQuestions(input.questions);
+  const questions = parsedQuestions
     .map(normalizeQuestion)
     .filter((question): question is NonNullable<typeof question> => question !== null)
     .slice(0, MAX_QUESTIONS)
@@ -134,6 +136,7 @@ export function adaptAskUserQuestionInput(
   return {
     id: input.id,
     rationale: input.rationale,
+    inputQuestionCount: parsedQuestions.length,
     questions,
   };
 }

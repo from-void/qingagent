@@ -1,4 +1,4 @@
-import { extractQuestionsJson } from "../tools/askUser.js";
+import { extractQuestionsJson } from "../tools/planDraft.js";
 import { describe, expect, it } from "vitest";
 
 const textQuestion = {
@@ -74,7 +74,7 @@ describe("extractQuestionsJson", () => {
 });
 
 // R4-A P0 回归:LLM 省略 options 字段时,流式 partial 完整对象必须补 [](否则前端白屏)。
-import { tryParsePartialQuestions } from "../tools/askUser.js";
+import { tryParsePartialQuestions } from "../tools/planDraft.js";
 
 describe("tryParsePartialQuestions options 规范化", () => {
   it("完整对象省略 options 字段时补空数组", () => {

@@ -1,14 +1,12 @@
 import { createTool } from "@mastra/core/tools";
-import { SpanType } from "@mastra/core/observability";
 import type { RequestContext } from "@mastra/core/request-context";
 import { streamText } from "ai";
 import { z } from "zod";
-import { getObservability } from "../mastra.js";
-import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
 import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
 import { getDeepseekModel, resolveModelParams } from "../llm/modelConfig.js";
 import { repairModelJson } from "../llm/repairToolCallJson.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
 import { questionnaireRejectedResultSchema } from "./askUserQuestionAdapter.js";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +118,12 @@ const askUserOutputSchema = z.union([
   suppressedResultSchema,
   questionnaireRejectedResultSchema,
 ]);
+
+export function resolvePlanDraftSuspendPurpose(
+  directionReset: boolean,
+): "initialBrief" | "directionChange" {
+  return directionReset ? "directionChange" : "initialBrief";
+}
 
 // ---------------------------------------------------------------------------
 // Partial JSON parser for streaming questions
@@ -270,36 +274,15 @@ function extractTopLevelStringField(
 function recordAskUserSuppressedSpan(
   context: { requestContext?: { get?: (key: string) => unknown } } | undefined,
 ): void {
-  const requestContext = context?.requestContext;
-  const sessionId = requestContext?.get?.("sessionId") as string | undefined;
-  if (!sessionId) return;
-  try {
-    const instance = getObservability()?.getDefaultInstance();
-    if (!instance) return;
-    const traceId = deriveSessionTraceId(sessionId);
-    const span = instance.startSpan({
-      type: SpanType.GENERIC,
-      name: "askuser_suppressed",
-      ...(traceId ? { traceId } : {}),
-      metadata: {
-        eventKind: "askuser_suppressed",
-        sessionId,
-        clientTraceId: (requestContext?.get?.("clientTraceId") as string | null | undefined) ?? null,
-        streamId: (requestContext?.get?.("streamId") as string | null | undefined) ?? null,
-        runId: (requestContext?.get?.("runId") as string | null | undefined) ?? null,
-        origin: (requestContext?.get?.("origin") as string | null | undefined) ?? "manual",
-        suppressed: true,
-        suppressReason: "askUserAlreadyCompleted",
-      },
-      input: { reason: "askUserAlreadyCompleted" },
-    });
-    span.end({ output: { ok: true, suppressed: true } });
-  } catch (err) {
-    console.warn("[askUser] record suppressed span failed (non-fatal)", {
-      sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  recordQuestionnaireEventSpan(context, {
+    eventKind: "askuser_suppressed",
+    metadata: {
+      suppressed: true,
+      suppressReason: "askUserAlreadyCompleted",
+    },
+    input: { reason: "askUserAlreadyCompleted" },
+    output: { ok: true, suppressed: true },
+  });
 }
 
 export function tryParsePartialQuestions(accumulated: string): ParsedQuestion[] {
@@ -468,31 +451,23 @@ function findMatchingBracket(text: string, start: number): number {
 // Tool
 // ---------------------------------------------------------------------------
 
-export const askUserTool = createTool({
-  id: "askUser",
+export const planDraftTool = createTool({
+  id: "planDraft",
   description:
-    "向用户弹出结构化问卷收集写作方向。本次写作方向尚未确认、且用户要开写新文档/空文档首稿/整篇重写时，默认必须先调用本工具(purpose=initialBrief)确认方向再写——" +
+    "为新文档、空文档首稿或整篇重写建立写作方向。本次写作方向尚未确认且用户要开始写作时，默认必须先调用本工具确认方向——" +
     "这里按本次写作任务判断，不按会话第一轮判断；用户先打招呼、后面第一次提出写作需求时仍要调用本工具。 " +
-    "即使用户已把主题、文体、篇幅、结构等信息给全；信息很少时也用本工具承接澄清，不要用普通聊天追问代替 askUser。 " +
+    "即使用户已把主题、文体、篇幅、结构等信息给全；信息很少时也用本工具承接写作方向建模，不要用普通聊天追问代替 planDraft。 " +
     "例如“帮我写篇文章”“写个报告吧”“帮我弄一份总结”“写诗”都必须先调用本工具。 " +
-    "仅当用户明确说“直接写/别问/不要问/现在就写”或消息与写作无关时才不调用；这类话只表示跳过 askUser，新文档直写才直接 writeDraft，已有文档局部编辑仍走 readDraft/editDraft。 " +
+    "仅当用户明确说“直接写/别问/不要问/现在就写”或消息与写作无关时才不调用；这类话只表示跳过 planDraft，新文档直写才直接 writeDraft，已有文档局部编辑仍走 readDraft/editDraft。 " +
     "写代码/SQL 查询等编程技术求助不算本工具场景；brainstorm、取名、想标题、想口号等短产出若未明确要写入右侧文档，也不要调用本工具。 " +
-    "如果 purpose=quickClarification 且 topic/rationale 提到用户拒绝了上一轮修改，必须把被拒内容理解为“模型提出但用户不接受的改动”，问题只能问用户不想应用的原因、哪里不满意、或更希望的方向；严禁把这个被拒改法当成用户主动想要的方案来追问目的。 " +
-    "提供 topic 字符串即可，具体问题由工具自动生成。必须单独调用本工具：同一步/同一响应里绝不能并发调用 webSearch、fetchArticle、writeDraft 等任何其它工具。 " +
-    "本工具会结束本轮并等待用户回答，并发工具调用会白跑且体验割裂。需要先搜集信息或读取材料时，先在前面的步骤单独完成，再在新的一步里只调用 askUser。",
+    "已有文档时，仅当用户要推翻、重设整篇写作方向才再次调用；写作中途的局部选择或其他通用确认改用 askUserQuestion。 " +
+    "提供 topic 和 rationale 即可，具体问题由工具自动生成。必须单独调用本工具：同一步/同一响应里绝不能并发调用 webSearch、fetchArticle、writeDraft 等任何其它工具。 " +
+    "本工具会结束本轮并等待用户回答，并发工具调用会白跑且体验割裂。需要先搜集信息或读取材料时，先在前面的步骤单独完成，再在新的一步里只调用 planDraft。",
   inputSchema: z.object({
-    id: z.string().describe("Unique identifier for this askUser interaction"),
-    purpose: z
-      .enum(["initialBrief", "quickClarification", "directionChange"])
-      .describe(
-        "提问的语义意图（不是展示方式，界面如何呈现由系统决定）：" +
-          "initialBrief=开写前收集整体方向；" +
-          "quickClarification=写作中途的局部小澄清；" +
-          "directionChange=已有文档但要推翻重设整体方向",
-      ),
+    id: z.string().describe("本次写作方向建模的唯一标识"),
     rationale: z
       .string()
-      .describe("Explanation of why these questions are being asked"),
+      .describe("面向用户解释为什么先确认这些写作方向，会作为问卷副标题展示"),
     topic: z
       .string()
       .describe("简要描述需要向用户确认的方向和已知信息，用于生成具体问题"),
@@ -507,7 +482,7 @@ export const askUserTool = createTool({
       return resumeData;
     }
 
-    // 硬闸:同一次文档创建里 askUser 最多一轮。若本轮之前已问过一轮，
+    // 硬闸:同一次文档创建里 planDraft 最多一轮。若本轮之前已问过一轮，
     // 不再发起问卷，并返回语义化结果，让模型继续调用写作工具而不是误解为空成功。
     const alreadyAsked =
       (context?.requestContext?.get?.("askUserAlreadyCompleted") as
@@ -522,14 +497,13 @@ export const askUserTool = createTool({
     // 硬闸只压**重复的初稿方向问卷**(initialBrief)最多一轮:首稿前确认过方向就别再问同一份。
     // directionChange(用户确实要推翻/大改已有稿方向,如"整篇改成公文风")是合法的二次方向确认;
     // 但 directionChange 已完成且期间没有有效写入时,不再豁免 alreadyAsked 抑制。
-    // quickClarification 是写作中途的局部小澄清,放行可多次。两者的滥用由
-    // MAX_CONSECUTIVE_ASKUSER_SUSPENDS 看门狗(连续无写作产出的澄清会被掐,写作跑完一轮自动重置)兜住。
+    // 通用澄清已迁给 askUserQuestion；本工具只处理初稿方向与已有成稿后的整体方向重设。
     if (
       alreadyAsked &&
       (!directionReset || directionChangeAskedSinceLastWrite)
     ) {
       console.log(
-        "[askUser] suppressed 2nd-round askUser -> returning semantic instruction",
+        "[planDraft] suppressed 2nd-round planDraft -> returning semantic instruction",
       );
       recordAskUserSuppressedSpan(context);
       return {
@@ -542,7 +516,7 @@ export const askUserTool = createTool({
 
     try {
       if (!suspend) {
-        console.error("[askUser] suspend function is undefined");
+        console.error("[planDraft] suspend function is undefined");
         return { error: "suspend not available" } as any;
       }
 
@@ -552,17 +526,9 @@ export const askUserTool = createTool({
       // 但"首 token 前的思考静默期"(推理模型出第一个 token 前可能静默很久)没有任何进度,
       // 仍可能被 agent 90s 空闲看门狗(withIdleTimeout)误杀;心跳走独立 tool-heartbeat
       // 通道,与 askuser-progress 不冲突,只负责静默期持续重置看门狗。
-      const stopHeartbeat = startToolHeartbeat(context, { tool: "askUser" });
+      const stopHeartbeat = startToolHeartbeat(context, { tool: "planDraft" });
       try {
-      const questionCountInstruction =
-        input.purpose === "quickClarification"
-          ? "生成 1-3 个轻量澄清问题，帮助确认用户需要拍板的局部分叉。"
-          : "生成 2-4 个问卷问题帮助确认用户的写作需求。";
-      const textQuestionInstruction =
-        input.purpose === "quickClarification"
-          ? "text 类型开放题是可选的：只有自由补充确实有价值时才加，不要为了格式硬塞。"
-          : "至少包含一个 text 类型的开放式问题。";
-      const genPrompt = `你是一位写作需求分析专家。根据以下写作方向，${questionCountInstruction}
+      const genPrompt = `你是一位写作需求分析专家。根据以下写作方向，生成 2-4 个问卷问题帮助确认用户的写作需求。
 
 写作方向和已知信息：
 ${input.rationale}
@@ -581,7 +547,7 @@ ${input.topic}
 5. slider 只用于连续量（字数、篇幅、段落数等）：必须带 slider 字段，范围要合理（字数最小不低于 50，最大值滑到头表示"X 以上"）
 6. 使用中文
 7. 如果用户已提供了某些信息，不要重复问
-8. ${textQuestionInstruction}
+8. 至少包含一个 text 类型的开放式问题
 9. 问题与选项的 label/description 一律用自然中文，不要出现英文工具或函数标识符（如 run_js、readDraft 等代码名），要提及某能力请用中文说法（如"运行脚本""读取草稿"）
 10. 最外层必须是"问题"数组，不要直接输出"选项"数组（每个问题对象必须含 id、kind、label 字段）`;
 
@@ -643,16 +609,16 @@ ${input.topic}
           break;
         }
         console.warn(
-          `[askUser] 第 ${attempt}/${MAX_GEN_ATTEMPTS} 次出题畸形(非数组或条目缺合法 kind/label)，` +
+          `[planDraft] 第 ${attempt}/${MAX_GEN_ATTEMPTS} 次出题畸形(非数组或条目缺合法 kind/label)，` +
             (attempt < MAX_GEN_ATTEMPTS ? "重试" : "已达上限，走兜底补全"),
         );
       }
-      console.log("[askUser] generated", questions.length, "questions");
+      console.log("[planDraft] generated", questions.length, "questions");
 
       // Suspend with complete questionnaire
       return await suspend({
         id: input.id,
-        purpose: input.purpose,
+        purpose: resolvePlanDraftSuspendPurpose(directionReset),
         source: null,
         rationale: input.rationale ?? null,
         questions: questions.map((q, idx) => {
@@ -681,7 +647,7 @@ ${input.topic}
         stopHeartbeat();
       }
     } catch (err) {
-      console.error("[askUser] execute failed:", err);
+      console.error("[planDraft] execute failed:", err);
       return { error: String(err) } as any;
     }
   },

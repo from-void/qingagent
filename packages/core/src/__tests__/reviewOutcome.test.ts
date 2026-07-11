@@ -50,8 +50,8 @@ describe("serializeReviewOutcome", () => {
     expect(text).not.toContain("你为什么想要将");
     expect(text).not.toContain("你为什么想改成");
     expect(text).not.toContain("主要目的是什么");
-    expect(text).not.toContain("优先调用 askUser");
-    expect(text).not.toMatch(/必须.*askUser/);
+    expect(text).not.toContain("优先调用 askUserQuestion");
+    expect(text).not.toMatch(/必须.*askUserQuestion/);
   });
 
   it("全部拒绝:用'全部'措辞且不出现采纳组,澄清也只问拒绝原因", () => {
@@ -71,7 +71,7 @@ describe("serializeReviewOutcome", () => {
     expect(text).not.toContain("主要目的是什么");
   });
 
-  it("全部采纳:不注入被拒修改语义或 quickClarification 引导", () => {
+  it("全部采纳:不注入被拒修改语义或 askUserQuestion 引导", () => {
     const text = serializeReviewOutcome(
       outcome({
         acceptedCount: 2,
@@ -88,23 +88,23 @@ describe("serializeReviewOutcome", () => {
     expect(text).not.toContain("【我拒绝的修改");
     expect(text).not.toContain("不是我想要的改法");
     expect(text).not.toContain("为什么不想应用这些改动");
-    expect(text).not.toContain("quickClarification");
+    expect(text).not.toContain("askUserQuestion");
     expect(text).toContain("我整体接受了");
   });
 
-  it("少量拒绝(<=3):askUser 只是可选澄清,不强制出问卷", () => {
+  it("少量拒绝(<=3):askUserQuestion 只是可选澄清,不强制出问卷", () => {
     const text = serializeReviewOutcome(
       outcome({ acceptedCount: 0, rejectedCount: 1, hunks: [hunk()] }),
     );
-    expect(text).toContain("askUser");
-    expect(text).toContain("quickClarification");
+    expect(text).toContain("askUserQuestion");
+    expect(text).not.toContain("quickClarification");
     expect(text).toContain("浮层");
-    expect(text).toContain("整页大问卷");
+    expect(text).toContain("planDraft 整页问卷");
     expect(text).toContain("自行判断是否需要继续澄清");
     expect(text).toContain("如果拒绝原因不言自明，简短确认/接受反馈即可");
-    expect(text).toContain("可选择调用 askUser");
+    expect(text).toContain("可选择调用 askUserQuestion");
     expect(text).toMatch(/哪里不满意|更希望的方向/);
-    expect(text).not.toContain("优先调用 askUser");
+    expect(text).not.toContain("优先调用 askUserQuestion");
     expect(text).not.toMatch(/必须.*问卷/);
   });
 
@@ -118,11 +118,11 @@ describe("serializeReviewOutcome", () => {
     );
     expect(text).toContain("被拒的地方较多");
     expect(text).toContain("别逐条追问");
-    expect(text).toContain("整页大问卷");
+    expect(text).toContain("planDraft 整页问卷");
     expect(text).toContain("先自行归纳反馈");
-    expect(text).toContain("可选择用 askUser");
+    expect(text).toContain("可用 askUserQuestion");
     expect(text).toContain("若拒绝意图已经清楚，直接接受反馈即可");
-    expect(text).not.toContain("优先调用 askUser");
+    expect(text).not.toContain("优先调用 askUserQuestion");
     expect(text).not.toMatch(/必须.*问卷/);
   });
 

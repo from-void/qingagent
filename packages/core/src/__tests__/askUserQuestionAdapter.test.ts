@@ -1,4 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { RequestContext } from "@mastra/core/request-context";
+import { describe, expect, it, vi } from "vitest";
+
+const observabilityMocks = vi.hoisted(() => ({
+  end: vi.fn(),
+  startSpan: vi.fn(),
+}));
+
+vi.mock("../mastra.js", () => ({
+  getObservability: () => ({
+    getDefaultInstance: () => ({
+      startSpan: observabilityMocks.startSpan.mockReturnValue({ end: observabilityMocks.end }),
+    }),
+  }),
+}));
 import {
   adaptAskUserQuestionInput,
   askUserQuestionInputSchema,
@@ -165,5 +179,58 @@ describe("askUserQuestionTool", () => {
         placeholder: null,
       }],
     });
+  });
+
+  it("JSON 打捞失败返回可重试 rejected error，不调用 suspend", async () => {
+    const suspend = vi.fn();
+    const result = await askUserQuestionTool.execute!(
+      { id: "broken", rationale: "确认分叉", questions: "not json" },
+      { agent: { suspend } } as never,
+    );
+
+    expect(result).toEqual(buildQuestionnaireRejectedResult());
+    expect(suspend).not.toHaveBeenCalled();
+  });
+
+  it("不受 planDraft 已完成闸抑制，并记录 direct span 与清洗差值", async () => {
+    observabilityMocks.startSpan.mockClear();
+    observabilityMocks.end.mockClear();
+    const suspend = vi.fn(async () => ({ q1: { chosen: ["甲"], freeText: null } }));
+    const requestContext = new RequestContext([
+      ["sessionId", "session-direct-1"],
+      ["clientTraceId", "client-1"],
+      ["streamId", "stream-1"],
+      ["runId", "run-1"],
+      ["origin", "web"],
+      ["askUserAlreadyCompleted", true],
+    ]);
+
+    await askUserQuestionTool.execute!(
+      {
+        id: "exempt",
+        rationale: "确认分叉",
+        questions: [
+          { question: "坏题", options: [option("唯一选项")] },
+          { question: "选一个", options: [option("甲"), option("乙")] },
+        ],
+      },
+      { agent: { suspend }, requestContext } as never,
+    );
+
+    expect(suspend).toHaveBeenCalledOnce();
+    expect(observabilityMocks.startSpan).toHaveBeenCalledWith(expect.objectContaining({
+      name: "askuserquestion_direct",
+      metadata: {
+        eventKind: "askuserquestion_direct",
+        sessionId: "session-direct-1",
+        clientTraceId: "client-1",
+        streamId: "stream-1",
+        runId: "run-1",
+        origin: "web",
+        inputQuestionCount: 2,
+        survivingQuestionCount: 1,
+        salvagedCount: 1,
+      },
+    }));
   });
 });

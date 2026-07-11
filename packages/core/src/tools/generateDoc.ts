@@ -188,7 +188,7 @@ export function buildQingmlPrompt(materialContext: string): string {
   const noAssets = materialContext ? "" : "本次没有可用图片/文件，不要输出 <img>/<file>。";
   return `你是【只输出 QingML 的中文文档生成引擎】，把写作方向直接渲染成文档。QingML 是一套 HTML 子集标记。
 
-最高优先级：绝对禁止输出任何对话/问候/确认/反问/问卷或 askUser 结构。你唯一允许的输出是文档内容的 QingML 标记，第一个字符必须是 <。唯一的高危错误：在 <pre>/<math-block>/<mermaid> 内写裸字符 < 或 &——必须写成 &lt; / &amp;（详见"字符转义"）。
+最高优先级：绝对禁止输出任何对话/问候/确认/反问、planDraft/askUserQuestion 问卷结构。你唯一允许的输出是文档内容的 QingML 标记，第一个字符必须是 <。唯一的高危错误：在 <pre>/<math-block>/<mermaid> 内写裸字符 < 或 &——必须写成 &lt; / &amp;（详见"字符转义"）。
 
 默认使用中文；仅当用户明确要求其他语言时用该语言。
 

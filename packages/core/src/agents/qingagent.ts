@@ -2,7 +2,7 @@ import { Agent, type ToolsInput } from "@mastra/core/agent";
 import { Workspace, LocalFilesystem } from "@mastra/core/workspace";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { askUserTool } from "../tools/askUser.js";
+import { planDraftTool } from "../tools/planDraft.js";
 import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
@@ -283,13 +283,13 @@ export function buildQingagentStaticTools(): ToolsInput {
   // 待老会话数据迁移或过期后连同兼容注入一起删除。
   if (isQingagentToolSearchEnabled()) {
     return {
-      planDraft: askUserTool,
+      planDraft: planDraftTool,
       askUserQuestion: askUserQuestionTool,
       storeMaterial: storeMaterialTool,
     };
   }
   return {
-    planDraft: askUserTool,
+    planDraft: planDraftTool,
     askUserQuestion: askUserQuestionTool,
     parseFile: parseFileTool,
     storeMaterial: storeMaterialTool,

@@ -1,4 +1,5 @@
-export { askUserTool } from "./askUser.js";
+// askUser 导出别名仅供 server 恢复老快照时按旧键执行；老会话数据迁移或过期后删除。
+export { planDraftTool, planDraftTool as askUserTool } from "./planDraft.js";
 export { askUserQuestionTool } from "./askUserQuestion.js";
 export {
   adaptAskUserQuestionInput,

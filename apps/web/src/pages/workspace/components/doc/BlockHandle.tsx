@@ -14,6 +14,7 @@ import {
   insertStructureNodeAfterBlock,
 } from "./structureNodes";
 import { writeBlockClipboardPayload } from "./blockClipboard";
+import { readTableBlockMenuState, setEvenTableColumnWidths, toggleTableHeader } from "./blockHandleTable";
 import { BlockHandleIcon } from "./BlockHandleIcons";
 import {
   computeBlockMenuPlacement,
@@ -158,9 +159,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         const blockDom = editor.view.nodeDOM(block.pos);
         if (!(blockDom instanceof HTMLElement)) return null;
         const rect = blockDom.getBoundingClientRect();
-        const isEmpty =
+        const isEmpty = block.node.type.name !== "table" && (
           blockDom.textContent?.trim() === "" ||
-          (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR");
+          (blockDom.childNodes.length === 1 && blockDom.firstChild?.nodeName === "BR")
+        );
         return {
           kind: "block",
           top: rect.top + firstLineCenterOffset(blockDom),
@@ -172,6 +174,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           glyph: isEmpty && block.node.type.name === "paragraph" ? "+" : glyphForBlock(block.node),
           blockEl: blockDom,
           blockId: typeof block.node.attrs.blockId === "string" ? block.node.attrs.blockId : null,
+          nodeType: block.node.type.name,
         };
       } catch {
         return null;
@@ -195,6 +198,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           blockEl: itemDom,
           blockId: item.blockId,
           itemType: item.itemType,
+          nodeType: item.itemType,
         };
       } catch {
         return null;
@@ -711,6 +715,21 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     [editor, handle, onToast],
   );
 
+  const tableMenuState = handle?.kind === "block" && handle.nodeType === "table"
+    ? readTableBlockMenuState(editor.state.doc.nodeAt(handle.blockPos))
+    : null;
+
+  const runTableMenuCommand = useCallback((command: "headerRow" | "headerColumn" | "evenColumns") => {
+    if (!handle || handle.kind !== "block" || handle.nodeType !== "table" || !editor.isEditable) return;
+    const ok = command === "headerRow"
+      ? toggleTableHeader(editor, handle.blockPos, "row")
+      : command === "headerColumn"
+        ? toggleTableHeader(editor, handle.blockPos, "column")
+        : setEvenTableColumnWidths(editor, handle.blockPos);
+    runHandleCommand(ok, command === "headerRow" ? "标题行" : command === "headerColumn" ? "标题列" : "均分列宽");
+    if (ok) setHandle((current) => current ? { ...current } : current);
+  }, [editor, handle, runHandleCommand]);
+
   // 拖拽排序:ProseMirror 原生 NodeSelection + view.dragging(move),drop 由 PM 处理、
   // dropcursor 出落点线。手柄是覆盖层元素,选区/插入位置都来自 hover 时存下的 handle,不依赖实时选区。
   const onDragStart = useCallback(
@@ -983,8 +1002,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     </div>
       {menuOpen && handle.kind === "block" && (
         <div ref={menuRef} className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`} role="menu" style={menuStyle}>
-          <div className="bh-section-label">转换为</div>
-          <div className="bh-grid">
+          {tableMenuState ? null : <div className="bh-section-label">转换为</div>}
+          {tableMenuState ? null : <div className="bh-grid">
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="一级标题" title="一级标题" onClick={() => convertBlock("heading", 1)}><BlockHandleIcon name="heading1" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="二级标题" title="二级标题" onClick={() => convertBlock("heading", 2)}><BlockHandleIcon name="heading2" /></button>
@@ -995,9 +1014,51 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="代码块" title="代码块" onClick={() => convertBlock("codeBlock")}><BlockHandleIcon name="code" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="待办清单" title="待办清单" onClick={() => convertBlock("taskList")}><BlockHandleIcon name="task" /></button>
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="高亮块" title="高亮块" onClick={() => convertBlock("callout")}><BlockHandleIcon name="callout" /></button>
-          </div>
-          <div className="bh-divider" />
-          {!handle.isEmpty ? (
+          </div>}
+          {tableMenuState ? null : <div className="bh-divider" />}
+          {tableMenuState ? (
+            <>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(true)}>
+                <span className="bh-icon"><BlockHandleIcon name="cut" /></span>
+                剪切
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => void writeBlockToClipboard(false)}>
+                <span className="bh-icon"><BlockHandleIcon name="copy" /></span>
+                复制
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item is-danger" onClick={deleteCurrentBlock}>
+                <span className="bh-icon"><BlockHandleIcon name="delete" /></span>
+                删除
+              </button>
+              <div className="bh-divider" />
+              <button type="button" role="menuitemcheckbox" aria-checked={tableMenuState.hasHeaderRow} className="block-handle-item" onClick={() => runTableMenuCommand("headerRow")}>
+                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderRow ? "✓" : ""}</span>
+                标题行
+              </button>
+              <button type="button" role="menuitemcheckbox" aria-checked={tableMenuState.hasHeaderColumn} className="block-handle-item" onClick={() => runTableMenuCommand("headerColumn")}>
+                <span className="bh-icon bh-menu-check">{tableMenuState.hasHeaderColumn ? "✓" : ""}</span>
+                标题列
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => runTableMenuCommand("evenColumns")}>
+                <span className="bh-icon"><BlockHandleIcon name="equalColumns" /></span>
+                均分列宽
+              </button>
+              <div className="bh-divider" />
+              <div
+                className={`bh-submenu${insertPlacement?.side === "left" ? " is-left" : ""}`}
+                onMouseEnter={(e) => placeSubmenu("insert", e.currentTarget)}
+                onMouseLeave={scheduleSubmenuClose}
+                onFocus={(e) => placeSubmenu("insert", e.currentTarget)}
+                onBlur={(e) => closeSubmenuOnBlur(e, "insert")}
+              >
+                <button type="button" role="menuitem" className="block-handle-item bh-submenu-trigger" aria-haspopup="menu" aria-expanded={activeSubmenu === "insert"} aria-controls="block-handle-insert-submenu" onClick={(e) => e.preventDefault()}>
+                  <span className="bh-icon"><BlockHandleIcon name="insert" /></span>
+                  在下方添加
+                  <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
+                </button>
+              </div>
+            </>
+          ) : !handle.isEmpty ? (
             <>
               <div
                 className={`bh-submenu${alignPlacement?.side === "left" ? " is-left" : ""}`}
@@ -1035,7 +1096,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               <div className="bh-divider" />
             </>
           ) : null}
-          {handle.isEmpty ? (
+          {!tableMenuState && handle.isEmpty ? (
             <div className="bh-inline-insert">
               <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
                 <span className="bh-icon"><BlockHandleIcon name="image" /></span>
@@ -1074,7 +1135,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
                 插入分隔线
               </button>
             </div>
-          ) : (
+          ) : !tableMenuState ? (
             <div
               className={`bh-submenu${insertPlacement?.side === "left" ? " is-left" : ""}`}
               onMouseEnter={(e) => placeSubmenu("insert", e.currentTarget)}
@@ -1096,7 +1157,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
                 <span className="bh-caret"><BlockHandleIcon name="chevron" /></span>
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       )}
       {menuOpen && handle.kind === "block" && submenuPortalTarget

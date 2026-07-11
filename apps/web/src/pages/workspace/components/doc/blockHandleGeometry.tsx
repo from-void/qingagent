@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import type { Editor } from "@tiptap/react";
 import { getCollapsedBlockIds } from "../BlockCollapse";
 import { findDraggableListItem, getListItemRowMetrics, type DraggableListItem } from "../ListItemDnD";
+import { BlockHandleIcon } from "./BlockHandleIcons";
 
 /* ───────────── 块级左侧手柄(对齐飞书):显示块类型 / 点击转换格式 / 拖拽排序 ───────────── */
 
@@ -16,6 +17,7 @@ export interface HandleState {
   blockEl: HTMLElement; // 块 DOM(拖拽预览 + 滚动跟随重定位)
   blockId?: string | null;
   itemType?: DraggableListItem["itemType"];
+  nodeType: string;
 }
 
 export interface BlockMenuPlacement {
@@ -112,6 +114,8 @@ export function glyphForBlock(node: { type: { name: string }; attrs?: Record<str
       return "{}";
     case "taskList":
       return "task";
+    case "table":
+      return "table";
     default:
       return "T";
   }
@@ -124,6 +128,7 @@ export function glyphForListItem(item: DraggableListItem): string {
 
 /** 托柄左侧"格式图标"(对齐飞书:无序列表用列表图标、待办用方框勾、其余用文字徽标如 H1/1./T)。 */
 export function HandleTypeIcon({ glyph }: { glyph: string }): JSX.Element {
+  if (glyph === "table") return <BlockHandleIcon name="table" />;
   if (glyph === "•") {
     return (
       <svg className="bh-type-svg" width="13" height="11" viewBox="0 0 13 11" aria-hidden="true" focusable="false">

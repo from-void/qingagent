@@ -40,7 +40,7 @@ function connector(state: ConnectorState): ConnectorInfo {
 }
 
 function github(state: ConnectorState, reasonCode: string | null = null): ConnectorInfo {
-  return { ...connector(state), id: "github", name: "GitHub", icon: "github", usedBySkills: ["github-materials"], status: { ...connector(state).status, reasonCode, scopes: state === "connected" ? ["public_repo"] : [] } } as ConnectorInfo;
+  return { ...connector(state), id: "github", name: "GitHub", icon: "github", usedBySkills: ["github-materials"], status: { ...connector(state).status, reasonCode, account: state === "connected" ? { id: "1", displayName: "@octo" } : null, scopes: state === "connected" ? ["public_repo"] : [] } } as ConnectorInfo;
 }
 
 beforeEach(() => {
@@ -74,7 +74,7 @@ describe("ConnectionsPanel", () => {
   it("未连接详情保留对话引导并可从设置页发起授权", () => {
     h.connectors = [connector("disconnected")];
     act(() => root.render(<ConnectionsPanel selectedId="feishu" />));
-    expect(host.textContent).toContain("到对话里说「连飞书」发起授权");
+    expect(host.textContent).toContain("在对话里说「连飞书」发起");
     expect(host.textContent).toContain("扫码授权");
     expect(host.textContent).not.toContain("设置页不直接发起授权");
   });
@@ -166,6 +166,9 @@ describe("ConnectionsPanel", () => {
     act(() => root.render(<ConnectionsPanel selectedId="github" />));
     expect(host.textContent).toContain("当前仅授权公开仓");
     expect(host.textContent).toContain("升级私有仓授权");
+    expect(host.textContent).toContain("已连接为 @octo");
+    expect(host.textContent).toContain("公开仓库");
+    expect(host.textContent).not.toContain("public_repo");
     expect(host.textContent).not.toContain("即将上线");
 
     h.connectors = [github("connected", "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED")];

@@ -69,11 +69,12 @@ const STATUS_LABELS: Record<ConnectorState, string> = {
   needs_reauth: "需重新授权",
 };
 
-// 技能 id → 面板显示名(与 SKILL.md label 对齐;缺省回退 id)。
-const SKILL_LABELS: Record<string, string> = {
-  "github-materials": "GitHub 素材",
-  feishu: "连飞书",
-  "wechat-official-account": "抓公众号",
+// 详情页开场白:一段话说清这个连接给青简带来什么、怎么用。
+// 技能依赖与非官方接口的风险都融在这段里,不再单列「被谁使用」/警示区块。
+const DESCRIPTIONS: Record<ConnectorId, string> = {
+  github: "GitHub 是全球最大的代码与文档托管平台。连接你的 GitHub 账号后，青简可以搜索并读取你名下和有权访问的仓库——代码、README、技术文档都能作为写作素材直接取用（由技能「GitHub 素材」调用）。公开仓库无需连接也能读取。",
+  feishu: "飞书是常用的协同办公平台。完成授权后，青简可以以你的身份读写飞书里的文档、多维表格、电子表格、日历等内容，写好的稿子可以直接发到飞书，也能从飞书取材（由技能「连飞书」调用）。",
+  "wechat-mp": "微信公众平台是公众号文章的后台。登录后，青简可以按公众号名称搜索文章、抓取正文全文做写作素材（由技能「抓公众号」调用）；只是贴单篇文章链接则无需登录。登录走微信网页版接口（非官方渠道），登录态最长保留约 80 小时，也可能被微信提前失效，重新扫码即可恢复。",
 };
 
 // 飞书 scope 前缀 → 能力域显示名;原始 scope 串是实现细节,面板按域聚合展示。
@@ -96,16 +97,31 @@ const FEISHU_DOMAIN_LABELS: Record<string, string> = {
   vc: "视频会议",
   auth: "基础身份",
   offline_access: "离线访问",
+  board: "画板",
+  okr: "OKR",
+  profile: "个人资料",
+  search: "搜索",
+  slides: "幻灯片",
+  space: "知识空间",
+  spark: "妙搭",
+  event: "事件订阅",
+  aily: "智能伙伴",
+  helpdesk: "服务台",
+  hire: "招聘",
+  report: "汇报",
+  translation: "翻译",
 };
 
 function displayScopes(id: ConnectorId, scopes: readonly string[]): string[] {
+  // GitHub 的 scope 是粗粒度 OAuth 串,直接翻译成人话。
+  if (id === "github") return scopes.includes("repo") ? ["公开与私有仓库"] : ["公开仓库"];
   if (id !== "feishu") return [...scopes];
   const domains = new Set<string>();
   for (const scope of scopes) {
     const prefix = scope.split(":")[0] ?? scope;
     domains.add(FEISHU_DOMAIN_LABELS[prefix] ?? prefix);
   }
-  return [...domains];
+  return [...domains].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
 }
 
 const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> = {
@@ -113,7 +129,7 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
     unavailable: "当前环境无法使用 GitHub 连接",
     unconfigured: "尚未配置 GitHub OAuth App",
     disconnected: "连接后可搜索和读取账号可见仓库",
-    pending: "请在对话里的授权卡完成 GitHub 验证",
+    pending: "授权验证进行中，请在发起处的授权卡完成",
     connected: "已可读取授权范围内的 GitHub 仓库",
     needs_reauth: "GitHub 授权已失效，请重新连接",
   },
@@ -121,7 +137,7 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
     unavailable: "当前环境无法使用飞书连接",
     unconfigured: "尚未配置飞书应用",
     disconnected: "应用已配置，授权后可代你操作飞书",
-    pending: "请在对话里的授权卡完成扫码",
+    pending: "扫码验证进行中，请在发起处的授权卡完成",
     connected: "飞书应用已配置并完成授权",
     needs_reauth: "授权已失效，重新扫码即可恢复",
   },
@@ -129,7 +145,7 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
     unavailable: "当前环境无法使用公众号连接",
     unconfigured: "尚未登录微信公众平台",
     disconnected: "贴文章链接无需登录；按公众号名搜索才需扫码",
-    pending: "请在对话里的授权卡完成扫码",
+    pending: "扫码验证进行中，请在发起处的授权卡完成",
     connected: "登录态在本地最多保留约 80 小时，微信可能提前要求重新登录",
     needs_reauth: "微信可能提前要求重新登录，重新扫码即可恢复",
   },
@@ -151,18 +167,39 @@ function Badge({ state, connectorId }: { state: ConnectorState; connectorId: Con
   );
 }
 
-function detailStatus(connector: ConnectorInfo): string {
-  const base = STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
-  if (connector.id === "wechat-mp" && connector.status.lastCheckedAt) {
-    return `${base}。最近检查：${new Date(connector.status.lastCheckedAt).toLocaleString("zh-CN")}`;
-  }
+// 已连接态首要信息是「以谁的身份」:优先展示账号名,没有账号时回退通用句。
+function connectedLine(connector: ConnectorInfo): string | null {
+  const name = connector.status.account?.displayName;
+  if (connector.status.state !== "connected" || !name) return null;
+  if (connector.id === "github") return `已连接为 ${name}`;
+  if (connector.id === "feishu") return `已授权给 ${name}`;
+  return `已登录「${name}」公众号`;
+}
+
+function listSubtitle(connector: ConnectorInfo): string {
+  const line = connectedLine(connector);
+  if (line) return line;
+  return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
+}
+
+// 详情页状态行:开场白已介绍用途,这里只讲「当前是什么状态」。
+// 未连接/未配置时返回 null(徽标已表达,不再重复一句废话)。
+function detailStatus(connector: ConnectorInfo): string | null {
   if (connector.id === "github" && connector.status.reasonCode === "ACCOUNT_CHANGE_CONFIRMATION_REQUIRED") {
     return "检测到授权账号发生变化。为避免误切账号，当前连接未被替换；请先断开，再明确连接新账号。";
   }
   if (connector.id === "github" && connector.status.reasonCode === "INSUFFICIENT_SCOPE") {
-    return "当前授权范围不足。读取私有仓需要在对话中明确同意增量授权 repo；失败不会破坏已有公开仓连接。";
+    return "当前授权范围不足。升级私有仓授权失败不会破坏已有公开仓连接，可重新发起。";
   }
-  return base;
+  const line = connectedLine(connector);
+  if (line) {
+    if (connector.id === "wechat-mp" && connector.status.lastCheckedAt) {
+      return `${line}。最近检查：${new Date(connector.status.lastCheckedAt).toLocaleString("zh-CN")}`;
+    }
+    return line;
+  }
+  if (["disconnected", "unconfigured"].includes(connector.status.state)) return null;
+  return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
 }
 
 export interface ConnectionsPanelProps {
@@ -196,10 +233,10 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   const selected = selectedId ? connectors.find((item) => item.id === selectedId) ?? null : null;
   if (selectedId && selected) {
     const guide = selected.id === "feishu"
-      ? "到对话里说「连飞书」发起授权。"
+      ? "也可以在对话里说「连飞书」发起。"
       : selected.id === "github"
-        ? "到对话里说「连接 GitHub」发起授权。"
-        : "到对话里说「登录公众号」发起授权。";
+        ? "也可以在对话里说「连接 GitHub」发起。"
+        : "也可以在对话里说「登录公众号」发起。";
     const showGuide = ["unconfigured", "disconnected", "needs_reauth"].includes(selected.status.state);
     // GitHub 已连接但只有公开仓授权:提供一键升级到 repo(含私有仓)。
     const needsRepoUpgrade = selected.id === "github"
@@ -216,7 +253,9 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       try {
         // GitHub 默认请求 repo(含私有仓):用户点「连接」的预期就是能读自己的全部仓库。
         const body = selected.id === "github" ? { scope: "repo" } : {};
-        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id, body)) });
+        const mapped = mapConnectorStart(selected.id, await start(selected.id, body));
+        // 升级场景的卡标题按语境改写,避免「连接 GitHub」误导为重新建连。
+        setAuthCard({ connectorId: selected.id, data: needsRepoUpgrade ? { ...mapped, title: "升级 GitHub 授权" } : mapped });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
         throw cause;
@@ -234,48 +273,46 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           <ConnectorIcon connector={selected} />
           <span className="cnd-name">{selected.name}</span>
           <Badge state={visibleState} connectorId={selected.id} />
-          {!selected.official && <span className="cn-unofficial">非官方接口 ⚠</span>}
         </div>
-        <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态" : detailStatus(selected)}</p>
+        <p className="cnd-desc">{DESCRIPTIONS[selected.id]}</p>
+        {(selectedAuthCard || detailStatus(selected)) && (
+          <p className="cnd-status">{selectedAuthCard ? "请在下方授权卡完成操作，页面会自动更新连接状态。" : detailStatus(selected)}</p>
+        )}
         {selectedAuthCard ? (
           <div className="cnd-authcard"><AuthCard data={selectedAuthCard} onRefresh={initiate} onStatusChange={() => {
             void refresh().then(() => setAuthCard(null)).catch(() => undefined);
           }} /></div>
-        ) : canStart ? (
-          <div className="cnd-action"><button type="button" className="sm-btn primary" disabled={busy} onClick={() => { void initiate().catch(() => undefined); }}>
-            {busy ? "发起中…" : startLabel(selected)}
-          </button></div>
-        ) : null}
-        {showGuide ? (
-          <div className="cnd-guide">{guide}<br />你也可以继续在对话中按需发起授权。</div>
-        ) : null}
-        {needsRepoUpgrade && !selectedAuthCard && (
-          <div className="cnd-guide">当前仅授权公开仓。点击上方按钮可升级到含私有仓的完整授权；升级失败不会影响现有连接。</div>
-        )}
-        {selected.status.canProbe && (
+        ) : (canStart || selected.status.canProbe) ? (
           <div className="cnd-action">
-            <button type="button" className="sm-btn" disabled={busy} onClick={async () => {
-              setBusy(true);
-              try {
-                await probe(selected.id);
-                toast.show({ message: "连接状态已更新", tone: "success" });
-              } catch (cause) {
-                toast.show({ message: cause instanceof Error ? cause.message : "检查失败", tone: "error" });
-              } finally { setBusy(false); }
-            }}>立即检查</button>
+            {canStart && (
+              <button type="button" className="sm-btn big primary" disabled={busy} onClick={() => { void initiate().catch(() => undefined); }}>
+                {busy ? "发起中…" : startLabel(selected)}
+              </button>
+            )}
+            {selected.status.canProbe && (
+              <button type="button" className="sm-btn" disabled={busy} onClick={async () => {
+                setBusy(true);
+                try {
+                  await probe(selected.id);
+                  toast.show({ message: "连接状态已更新", tone: "success" });
+                } catch (cause) {
+                  toast.show({ message: cause instanceof Error ? cause.message : "检查失败", tone: "error" });
+                } finally { setBusy(false); }
+              }}>立即检查</button>
+            )}
           </div>
+        ) : null}
+        {!selectedAuthCard && (showGuide || needsRepoUpgrade) && (
+          <p className="cnd-note">
+            {needsRepoUpgrade ? "当前仅授权公开仓，升级会重走一次 GitHub 授权；失败不影响现有连接。" : guide}
+          </p>
         )}
-        <section className="cnd-sec">
-          <div className="cnd-sec-title">被谁使用</div>
-          <div className="cnd-sec-body">{selected.usedBySkills.length > 0 ? selected.usedBySkills.map((skill) => `技能「${SKILL_LABELS[skill] ?? skill}」`).join("、") : "暂无技能依赖"}</div>
-        </section>
         {selected.status.scopes.length > 0 && (
           <section className="cnd-sec">
-            <div className="cnd-sec-title">已授权能力域</div>
+            <div className="cnd-sec-title">已授权范围</div>
             <div className="cnd-sec-body cn-scopes" title={selected.status.scopes.join(" ")}>{displayScopes(selected.id, selected.status.scopes).map((scope) => <span key={scope} className="ss-badge">{scope}</span>)}</div>
           </section>
         )}
-        {!selected.official && selected.riskNote && <div className="cnd-warnbox">{selected.riskNote}</div>}
         {canDisconnect && (
           <div className="cnd-foot">
             <span>只清除本机凭据；如需彻底撤销，请到服务方后台操作。</span>
@@ -307,9 +344,8 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
               <span className="cn-titleline">
                 <span className="cn-name">{connector.name}</span>
                 <Badge state={connector.status.state} connectorId={connector.id} />
-                {!connector.official && <span className="cn-unofficial">非官方接口 ⚠</span>}
               </span>
-              <span className="cn-sub">{STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state]}</span>
+              <span className="cn-sub">{listSubtitle(connector)}</span>
             </span>
             <span className="cn-caret" aria-hidden="true">›</span>
           </button>

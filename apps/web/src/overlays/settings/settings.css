@@ -435,7 +435,7 @@
   margin:0;font-size:12px;line-height:1.6;color:var(--qj-header-sub);
 }
 .settings-feedback .fb-actions{display:flex;justify-content:flex-start;gap:8px;flex-wrap:wrap}
-.settings-feedback .sm-btn.primary{
+.qj-sheet-body .sm-btn.primary{
   display:inline-flex;align-items:center;justify-content:center;
   /* 金底(--qj-cinnabar #c8a96a 在设置里是暖金)配深墨字:原用 --qj-paper(浅奶油)
      压浅金对比过低、字发白看不清。暖金 CTA 应配深墨,对比才够。 */
@@ -444,11 +444,13 @@
   border-color:var(--qj-cinnabar);
   text-decoration:none;
 }
-.settings-feedback .sm-btn.primary:hover:not(:disabled),
-.settings-feedback .sm-btn.primary:focus-visible{
+.qj-sheet-body .sm-btn.primary:hover:not(:disabled),
+.qj-sheet-body .sm-btn.primary:focus-visible{
   /* hover 用更亮的金(--qj-cinnabar-lite),字色仍深墨保持高对比 */
   color:#241c0c;background:var(--qj-cinnabar-lite);border-color:var(--qj-cinnabar-lite);
 }
+/* 连接详情主操作:更大的 CTA 尺寸 */
+.qj-sheet-body .sm-btn.big{height:34px;padding:0 26px;font-size:12.5px;letter-spacing:.12em}
 /* 文档勾选列表:列最近文档,逐篇选择要包含哪几篇 */
 .settings-feedback .fb-doclist{
   display:flex;flex-direction:column;
@@ -716,6 +718,9 @@
 .cn-unavailable-title{margin-bottom:5px;font-family:var(--font-zh-serif);font-size:15px;font-weight:800;color:var(--qj-ink)}
 .cn-unavailable p{margin:0;color:var(--qj-header-sub)}
 .cnd-action{display:flex;align-items:center;gap:10px;margin:0 6px 16px 0}
+/* 详情页开场白:正文语气,行距放松;说明行(cnd-note)是弱化小字,不带框。 */
+.cnd-desc{margin:0 6px 14px 0;font-size:12px;line-height:1.9;color:var(--qj-switch-text)}
+.cnd-note{margin:-6px 6px 16px 0;font-size:11px;line-height:1.7;color:var(--qj-header-sub)}
 .cnd-authcard{margin:0 6px 16px 0;
   /* qr-card 组件的 --ink/--line 系变量只在 workspace 皮肤作用域有定义;
      设置弹层(深底)里必须重映射到 --qj-* 令牌,否则配对码/倒计时等文字色为空(不可见)。 */

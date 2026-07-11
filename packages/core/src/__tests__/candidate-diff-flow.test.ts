@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
+import {
+  tableSelectionTextSignature,
+  type BridgeFrame,
+  type ChatChip,
+  type LegacySection,
+} from "@qingagent/contract-ts";
 import {
   applyBlockEdits,
   getPmContentHash,
   legacySectionsToPm,
   materializeDraftBlockIds,
   pmToLegacySections,
+  pmTableSelectionCellTexts,
   type PmBlockNode,
   type PmDoc,
   type PmInlineNode,
@@ -21,7 +27,7 @@ import {
   type TempDocumentsDb,
 } from "../db/__tests__/dbTestUtils.js";
 
-const { logger, memory, memoryEnabled, threads } = vi.hoisted(() => {
+const { agentStream, logger, memory, memoryEnabled, threads } = vi.hoisted(() => {
   const logger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -49,7 +55,7 @@ const { logger, memory, memoryEnabled, threads } = vi.hoisted(() => {
     getThreadById: vi.fn(async ({ threadId }: { threadId: string }) => threads.get(threadId) ?? null),
     recall: vi.fn(async () => ({ messages: [] })),
   };
-  return { logger, memory, memoryEnabled: { value: false }, threads };
+  return { agentStream: vi.fn(), logger, memory, memoryEnabled: { value: false }, threads };
 });
 
 vi.mock("../mastra.js", () => ({
@@ -66,7 +72,7 @@ vi.mock("../agents/qingagent.js", () => ({
     has: vi.fn(async () => false),
   })),
   qingagentAgent: {
-    stream: vi.fn(),
+    stream: agentStream,
     resumeStream: vi.fn(),
   },
 }));
@@ -603,6 +609,135 @@ describe("candidate-diff backend flow", () => {
       ["a2，新增。", "b2"],
     ]);
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+  });
+
+  it("生成→updateDoc 手动编辑→tableSelection editDraft→commit 保留用户正文并应用补丁", async () => {
+    const {
+      commitDocumentOp,
+      commitPatches,
+      createSession,
+      invalidateDraftStateAfterCanonicalWrite,
+      runAgentTurn,
+    } = await import("../bridge/index.js");
+    const state = createSession("candidate-table-user-truth");
+    const generatedDoc = pmDoc([{
+      type: "table",
+      attrs: { blockId: "table-a" },
+      content: [
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableHeader", content: [paragraph("table-a-h1", "列A")] },
+            { type: "tableHeader", content: [paragraph("table-a-h2", "列B")] },
+            { type: "tableHeader", content: [paragraph("table-a-h3", "列C")] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [paragraph("table-a-r1-c1", "a1")] },
+            { type: "tableCell", content: [paragraph("table-a-r1-c2", "b1")] },
+            { type: "tableCell", content: [paragraph("table-a-r1-c3", "c1")] },
+          ],
+        },
+      ],
+    } as PmBlockNode]);
+    state.doc = generatedDoc;
+    state.legacySections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: generatedDoc });
+
+    // 模拟历史残留候选；updateDoc 成功后必须同时失效内存与 document_drafts 基线。
+    state.docDraftBaseDoc = generatedDoc;
+    state.docDraftBaseVersion = 1;
+    state.docDraftCandidateDoc = generatedDoc;
+    await documentDraftRepo.saveCandidate({
+      docId: state.docId,
+      threadId: state.sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(generatedDoc),
+      draftPmDoc: generatedDoc,
+      sourceStreamId: "turn-1",
+      sourceToolCallId: "write-1",
+    });
+
+    const manualDoc = structuredClone(generatedDoc);
+    const manualTable = manualDoc.content[0];
+    if (manualTable?.type !== "table") throw new Error("fixture table missing");
+    const manualParagraph = manualTable.content[1]?.content[0]?.content[0];
+    if (manualParagraph?.type !== "paragraph") throw new Error("fixture paragraph missing");
+    const manualText = manualParagraph.content?.[0];
+    if (manualText?.type !== "text") throw new Error("fixture text missing");
+    manualText.text = "用户手改保留";
+    const manualCommit = await commitDocumentOp({
+      docId: state.docId,
+      threadId: state.sessionId,
+      resourceId: state.resourceId,
+      expectedDocumentSnapshot: 1,
+      clientMutationId: "manual-edit-1",
+      opKind: "replace_doc",
+      actorType: "user",
+      summary: "用户编辑保存",
+      apply: () => ({ nextDoc: manualDoc }),
+    });
+    if (manualCommit.status !== "committed") throw new Error(`manual update failed: ${manualCommit.status}`);
+    state.doc = manualCommit.doc;
+    state.legacySections = pmToLegacySections(manualCommit.doc) as unknown as LegacySection[];
+    state.docVersion = manualCommit.docVersion;
+    await invalidateDraftStateAfterCanonicalWrite(state);
+    expect(state.docDraftBaseDoc).toBeNull();
+    expect(state.docDraftCandidateDoc).toBeNull();
+    await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
+
+    const selection = { axis: "column" as const, startIndex: 1, endIndex: 1 };
+    const selectedTexts = pmTableSelectionCellTexts(state.doc, "table-a", selection);
+    if (!selectedTexts) throw new Error("fixture selection missing");
+    const chips = [{
+      kind: { kind: "selection" },
+      resourceRef: { id: "table-a", domain: { kind: "docSpan" } },
+      prefix: null,
+      label: selectedTexts.join("\n"),
+      suffix: "表格·第2列",
+      tableSelection: {
+        ...selection,
+        signature: tableSelectionTextSignature(selectedTexts),
+      },
+    } satisfies ChatChip];
+
+    const args = {
+      ops: [{ action: "replaceText" as const, find: "b1", replace: "AI 补丁", withinRef: "table-a" }],
+    };
+    agentStream.mockImplementationOnce(async (_messages: unknown, options: Record<string, unknown>) => {
+      const toolsets = options.toolsets as {
+        sessionScoped: {
+          editDraft: {
+            execute: (input: typeof args, context: Record<string, unknown>) => Promise<Record<string, unknown>>;
+          };
+        };
+      };
+      const editResult = await toolsets.sessionScoped.editDraft.execute(args, {});
+      expect(editResult.ok).toBe(true);
+      return {
+        fullStream: streamOf(
+          editDraftCall("ed-user-truth", args),
+          editDraftResult("ed-user-truth", args, editResult),
+        ),
+        toolCalls: Promise.resolve([]),
+      } as never;
+    });
+
+    const turnFrames = await collectFrames(
+      runAgentTurn(state, "修改选中的第二列", [], chips),
+    );
+    expect(agentStream).toHaveBeenCalledTimes(1);
+    expect(turnFrames.some((frame) => frame.kind === "docDiffReady")).toBe(true);
+    await collectFrames(commitPatches(state, [...state.suggestions.keys()]));
+
+    expect(tableTexts(state.doc)).toEqual([
+      ["列A", "列B", "列C"],
+      ["用户手改保留", "AI 补丁", "c1"],
+    ]);
   });
 
   it("editDraft table incremental candidate enters pendingReview and can be rejected", async () => {

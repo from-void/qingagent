@@ -400,14 +400,14 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     expect(content).not.toContain("选区可能已过期");
   });
 
-  it("表格签名失配时降级整表引用并提示谨慎缩小范围", async () => {
+  it("表格签名失配时在模型调用前 fail-closed，不允许旧基线继续生成", async () => {
     const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
     const state = createSession("sess-table-selection-stale");
     state.doc = makeDocWithDiagram();
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 
-    await collectFrames(runAgentTurn(state, "修改这一列", [], [{
+    const frames = await collectFrames(runAgentTurn(state, "修改这一列", [], [{
       kind: { kind: "selection" },
       resourceRef: { id: "tbl-ch11", domain: { kind: "docSpan" } },
       prefix: null,
@@ -421,10 +421,22 @@ describe("selection chip resolves referenced block by stable blockId", () => {
       },
     }]));
 
-    const content = state.messages.find((message) => message.role === "user")!.content as string;
-    expect(content).toContain("选区可能已过期");
-    expect(content).toContain("整表引用");
-    expect(content).toContain("务必先 readDraft 核对，谨慎缩小操作范围");
-    expect(content).not.toContain("仅对第 0 列操作");
+    expect(agentStreamCalls).toHaveLength(0);
+    expect(state.messages).toHaveLength(0);
+    expect(frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "stream",
+        data: expect.objectContaining({
+          kind: "draftingFailed",
+          data: expect.objectContaining({ retriable: false }),
+        }),
+      }),
+    ]));
+    const reason = frames.flatMap((frame) =>
+      frame.kind === "stream" && frame.data.kind === "draftingFailed"
+        ? [frame.data.data.reason]
+        : [],
+    ).join("");
+    expect(reason).toContain("文档正文与所选表格版本不一致");
   });
 });

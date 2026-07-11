@@ -25,6 +25,7 @@ export {
 
 export {
   clearDraftMutationScratch,
+  invalidateDraftStateAfterCanonicalWrite,
   clearInMemoryDraftDocs,
   clonePmDoc,
   currentPmDoc,

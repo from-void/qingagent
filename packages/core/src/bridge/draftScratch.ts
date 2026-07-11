@@ -84,6 +84,22 @@ export function clearDraftConfirmationState(state: SessionState): void {
   clearDraftMutationScratch(state);
 }
 
+/**
+ * canonical 正文被用户写入后，旧候选不再有资格作为下一轮基线。
+ * 内存先同步失效；持久化草稿清理失败时冷恢复仍会按 base hash 冲突关闭，不能阻断已成功的正文保存回执。
+ */
+export async function invalidateDraftStateAfterCanonicalWrite(state: SessionState): Promise<void> {
+  clearDraftConfirmationState(state);
+  clearSuggestionReviewState(state);
+  await documentDraftRepo.clear(state.docId).catch((error) => {
+    logger.warn("Failed to clear stale draft after canonical document write", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 export function ensureDraftCandidate(state: SessionState): LegacySection[] {
   if (!state.docDraftBaseSections) {
     state.docDraftBaseSections = cloneLegacySections(state.legacySections);

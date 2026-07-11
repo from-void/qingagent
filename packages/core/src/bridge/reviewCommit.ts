@@ -7,7 +7,7 @@ import type {
   PatchConflict,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "./sessionState.js";
 import { updateToolCallInChatHistory } from "./sessionState.js";
@@ -19,6 +19,7 @@ import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSugge
 import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
 import { updateDocumentSuggestionStatus } from "../db/documentSuggestionsRepo.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
+import { documentRepo } from "../db/documentRepo.js";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
@@ -39,6 +40,27 @@ import { deriveTitleFromSections } from "./title.js";
 import { schedulePersist } from "./threadPersistence.js";
 
 const logger = mastra.getLogger();
+
+async function canonicalSnapshotAfterReviewConflict(state: SessionState): Promise<BridgeFrame | null> {
+  const current = await documentRepo.load(state.docId).catch((error) => {
+    logger.error("Failed to reload canonical document after review conflict", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  if (!current?.pmDoc) return null;
+  state.doc = current.pmDoc;
+  state.legacySections = current.legacySections;
+  state.docVersion = current.docVersion;
+  return {
+    kind: "documentSnapshotWritten",
+    data: {
+      doc: buildDocumentSnapshot(state.legacySections, state.docVersion, state.doc),
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // updatePatchVerdict — accept or reject a single patch
@@ -489,6 +511,50 @@ export async function* commitPatches(
             anchorByBlockId: true,
           });
           skippedHunks = applyResult.skipped;
+          // 目标块被删除可沿既有“跳过该 hunk、提交其余项”语义结算；块仍在但内容/行内范围
+          // 对不上，说明用户正文已漂移，整批必须事务回滚，不能用空 steps 记一次假提交。
+          const changedTargets = applyResult.skippedDetails
+            .filter((detail) => !detail.reason.startsWith("missing target block"));
+          if (changedTargets.length > 0) {
+            return {
+              nextDoc: currentDoc,
+              conflicts: changedTargets.map(({ hunk }): PatchConflict => ({
+                kind: "target_text_changed",
+                message: "文档正文已变化，本次修改未写入。请刷新后重新生成审阅。",
+                suggestionId: hunk.hunkId,
+                blockId: hunk.anchor.blockId,
+                currentVersion: state.docVersion,
+              })),
+            };
+          }
+          // 所有目标都已被删除时不能把空 steps 当成一次成功提交，否则会制造空版本，
+          // 还会让审阅项看起来像已落盘。部分目标删除仍保留既有“提交存活项”语义。
+          if (applyResult.applied.length === 0 && acceptedDiffHunks.length > 0) {
+            return {
+              nextDoc: currentDoc,
+              conflicts: applyResult.skippedDetails.map(({ hunk }): PatchConflict => ({
+                kind: "block_removed",
+                message: "待修改内容已不存在，本次修改未写入。请刷新后重新生成审阅。",
+                suggestionId: hunk.hunkId,
+                blockId: hunk.anchor.blockId,
+                currentVersion: state.docVersion,
+              })),
+            };
+          }
+          // 损坏/历史 hunk 可能被标成 applied，却没有改变正文。提交层再做一次内容 hash
+          // 总兜底，禁止相同 nextDoc 写出空版本或“已提交”假状态。
+          if (getPmContentHash(applyResult.doc) === getPmContentHash(currentDoc)) {
+            return {
+              nextDoc: currentDoc,
+              conflicts: applyResult.applied.map((hunk): PatchConflict => ({
+                kind: "target_text_changed",
+                message: "本次修改没有产生有效正文变化，未写入。请刷新后重新生成审阅。",
+                suggestionId: hunk.hunkId,
+                blockId: hunk.anchor.blockId,
+                currentVersion: state.docVersion,
+              })),
+            };
+          }
           return {
             nextDoc: applyResult.doc,
             // steps 只为真正落上的 hunk 生成——被跳过的 hunk 不再写进 document_ops(修记假账)。
@@ -523,6 +589,10 @@ export async function* commitPatches(
   }
 
   if (result.status === "patch_conflict") {
+    // canonical 快照必须先于 failed/解锁帧发出；否则客户端先移除 review overlay 时，
+    // 会短暂露出内存里的旧 preview，形成一次可见的正文回退。
+    const canonicalFrame = await canonicalSnapshotAfterReviewConflict(state);
+    if (canonicalFrame) yield canonicalFrame;
     yield* settleUnappliedReviewRecords(
       state,
       records,
@@ -533,6 +603,8 @@ export async function* commitPatches(
     return;
   }
   if (result.status === "conflict") {
+    const canonicalFrame = await canonicalSnapshotAfterReviewConflict(state);
+    if (canonicalFrame) yield canonicalFrame;
     yield* settleUnappliedReviewRecords(
       state,
       records,

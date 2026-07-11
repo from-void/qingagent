@@ -49,6 +49,35 @@ describe("diagram diff 应用(BLOCK_NODE_TYPES 回归)", () => {
     expect(buildDraftDiff(doc([withSvg]), doc([noSvg]))).toEqual([]);
     expect(buildDraftDiff(doc([noSvg]), doc([withSvg]))).toEqual([]);
   });
+
+  it.each([
+    ["replace", doc([diagram("d1", "flowchart TD\n A-->B")]), doc([diagram("d1", "flowchart TD\n B-->C")])],
+    ["delete", doc([diagram("d1", "flowchart TD\n A-->B")]), doc([])],
+  ] as const)("%s hunk 缺少 before 前置条件时 fail-closed", (_op, base, draft) => {
+    const [hunk] = buildDraftDiff(base, draft);
+    if (!hunk) throw new Error("fixture missing hunk");
+    const { beforeBlock: _beforeBlock, ...withoutBeforeBlock } = hunk;
+    const damaged = { ...withoutBeforeBlock, before: null };
+
+    const result = applyDiffHunks(base, [damaged]);
+
+    expect(result.doc).toEqual(base);
+    expect(result.applied).toEqual([]);
+    expect(result.skippedDetails[0]?.reason).toContain("missing expected block");
+  });
+
+  it("insert hunk 缺少 after 块时 fail-closed，不把 no-op 记成 applied", () => {
+    const base = doc([para("p1", "第一段")]);
+    const [hunk] = buildDraftDiff(base, doc([para("p1", "第一段"), diagram("d1", "flowchart TD\n A-->B")]));
+    if (!hunk) throw new Error("fixture missing insert hunk");
+    const damaged = { ...hunk, after: null };
+
+    const result = applyDiffHunks(base, [damaged]);
+
+    expect(result.doc).toEqual(base);
+    expect(result.applied).toEqual([]);
+    expect(result.skippedDetails[0]?.reason).toContain("missing inserted blocks");
+  });
 });
 
 describe("isRenderableSvg 导出安全护栏", () => {

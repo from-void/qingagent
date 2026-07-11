@@ -63,6 +63,7 @@ import {
   emitProjectedDocState,
   settleDraftCandidate,
   clonePmDoc,
+  invalidateDraftStateAfterCanonicalWrite,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
   collectTopLevelTextBlocks,
@@ -991,6 +992,7 @@ async function* handleCommandInner(
         session.doc = result.doc;
         session.legacySections = legacySections;
         session.docVersion = result.docVersion;
+        await invalidateDraftStateAfterCanonicalWrite(session);
         session._directionChangeAskedSinceLastWrite = false;
         transitionDocState(session, deriveContentState(session), "user_doc_write", {
           mode: "normalize",

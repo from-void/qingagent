@@ -49,6 +49,7 @@ import {
   buildTableSelectionContext,
   buildSectionToLineMap,
   resolveSelectionChipBlocks,
+  validateTableSelectionFreshness,
 } from "./draftReadContext.js";
 import { syncContentAndProjectDocState } from "./docStateSync.js";
 import { emitProjectedDocState } from "./docStateMachine.js";
@@ -117,6 +118,19 @@ export async function* runAgentTurn(
 ): AsyncGenerator<BridgeFrame> {
   const turnStartedAt = Date.now();
   const streamId = newId();
+  const tableSelectionFreshness = validateTableSelectionFreshness(state, chips);
+  if (!tableSelectionFreshness.ok) {
+    logger.warn("Rejected stale table selection before agent turn", {
+      sessionId: state.sessionId,
+      streamId,
+      tableRef: tableSelectionFreshness.tableRef,
+      docVersion: state.docVersion,
+    });
+    yield streamStart(streamId);
+    yield draftingFailedFrame(streamId, tableSelectionFreshness.reason, false);
+    yield streamEnd(streamId, { kind: "error", data: tableSelectionFreshness.reason });
+    return;
+  }
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();

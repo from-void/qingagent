@@ -209,7 +209,7 @@ describe("show_qr 二维码卡帧协议", () => {
               toolName: "wechat_auth_start",
               toolCallId: "wa1",
               args: {},
-              result: { ok: true, imageDataUri: img, expiresInSec: 240 },
+              result: { ok: true, imageDataUri: img, expiresInSec: 240, connectorId: "wechat-mp", pendingId: "wechat-pending-safe", reused: false },
             },
           },
         ),
@@ -223,6 +223,8 @@ describe("show_qr 二维码卡帧协议", () => {
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
       expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
+      expect(final.body.data.connectorId).toBe("wechat-mp");
+      expect(final.body.data.pendingId).toBe("wechat-pending-safe");
     }
     // review #1:喂模型的 transcript 不含 ~7KB base64(卡片已渲染给用户,模型不需 base64),只含摘要。
     const transcript = state.messages

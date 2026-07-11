@@ -31,8 +31,8 @@ const STATE_COPY: Record<ConnectorId, Partial<Record<ConnectorState, string>>> =
     unconfigured: "尚未登录微信公众平台",
     disconnected: "贴文章链接无需登录；按公众号名搜索才需扫码",
     pending: "请在对话里的授权卡完成扫码",
-    connected: "登录态按本地 TTL 判读，不做后台轮询",
-    needs_reauth: "登录态已失效，重新扫码即可恢复",
+    connected: "登录态在本地最多保留约 80 小时，微信可能提前要求重新登录",
+    needs_reauth: "微信可能提前要求重新登录，重新扫码即可恢复",
   },
 };
 

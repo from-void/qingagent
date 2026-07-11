@@ -110,7 +110,9 @@ export function AuthCard({ data }: { data: QrCardBody }) {
   return (
     <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
       {connectorState === "connected" ? (
-        <div className="qr-card__success">✓ 已连接为 {connectedAccount ?? "GitHub 账号"}</div>
+        <div className="qr-card__success">{data.connectorId === "wechat-mp"
+          ? `✓ 已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
+          : `✓ 已连接为 ${connectedAccount ?? "GitHub 账号"}`}</div>
       ) : connectorState === "interrupted" ? (
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
       ) : <>

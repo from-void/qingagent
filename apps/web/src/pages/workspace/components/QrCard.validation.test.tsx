@@ -459,6 +459,15 @@ describe("QrCard — validation loop 3", () => {
       expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已连接为 @octocat");
     });
 
+    it("微信新帧轮询成功显示已登录公众号，过期/410 进入中断分支", async () => {
+      vi.useFakeTimers();
+      const wechat = { ...connectorCard(), connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null, confirmQuery: "confirm" };
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "测试号" } } }), { status: 200 })));
+      render(<QrCard data={wechat} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已登录 测试号 公众号");
+    });
+
     it("410 原地显示重新发起，旧帧不轮询", async () => {
       vi.useFakeTimers();
       const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "PENDING_LOST" }), { status: 410 }));

@@ -396,7 +396,8 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(result).toMatchObject({ ok: true, text: "甲乙" });
     expect(deltas).toEqual(["甲", "乙"]);
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(body.tool_choice).toBe("none");
+    // 定稿(260712 spike):回放保留快照原 tool_choice,禁止改写为 none(会把 tools 块挤出前缀)。
+    expect(body.tool_choice).toBe("auto");
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       cacheHitTokens: 10,
       cacheMissTokens: 2,

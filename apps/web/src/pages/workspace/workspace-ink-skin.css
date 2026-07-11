@@ -1387,6 +1387,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .aus2-input:active::-webkit-slider-thumb {
   background: var(--mark);
 }
+#view-workspace .aus2-input:active::-moz-range-thumb {
+  background: var(--mark);
+}
 #view-workspace .aus2-input::-moz-range-thumb {
   border: 2px solid var(--mark);
   background: #16212c;
@@ -1409,6 +1412,9 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   box-shadow: 0 0 0 2px rgba(156, 133, 82, 0.12);
 }
 #view-workspace .bigplan-panel .aus2-input:active::-webkit-slider-thumb {
+  background: var(--mark);
+}
+#view-workspace .bigplan-panel .aus2-input:active::-moz-range-thumb {
   background: var(--mark);
 }
 #view-workspace .bigplan-panel .aus2-input::-moz-range-thumb {

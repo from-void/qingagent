@@ -72,12 +72,14 @@ export function createTableAiModifyTarget(input: {
   };
 }
 
-export function tableHasMergedCells(table: HTMLTableElement): boolean {
+export function tableHasSpanInDom(table: HTMLTableElement): boolean {
   return Array.from(table.rows).some((row) =>
     Array.from(row.cells).some((cell) => cell.colSpan > 1 || cell.rowSpan > 1),
   );
 }
 
+export const tableHasMergedCells = tableHasSpanInDom;
+
 export function tableAiModifyDisabledReason(table: HTMLTableElement): string | null {
-  return tableHasMergedCells(table) ? "含合并单元格的表格暂不支持" : null;
+  return tableHasSpanInDom(table) ? "含合并单元格的表格暂不支持" : null;
 }

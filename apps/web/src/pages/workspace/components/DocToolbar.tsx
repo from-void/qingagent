@@ -515,12 +515,14 @@ export function DocToolbar({
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("keyup", onKeyUp);
     container?.addEventListener("scroll", schedulePositionToolbar, { passive: true });
+    window.addEventListener("resize", schedulePositionToolbar, { passive: true });
     return () => {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       document.removeEventListener("selectionchange", onSel);
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("keyup", onKeyUp);
       container?.removeEventListener("scroll", schedulePositionToolbar);
+      window.removeEventListener("resize", schedulePositionToolbar);
     };
   }, [active, editor, positionToolbar, containerSelector]);
 

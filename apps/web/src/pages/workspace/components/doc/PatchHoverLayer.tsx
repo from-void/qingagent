@@ -9,6 +9,7 @@ import {
   placePatchPopupByAnchorRect,
   renderOriginalDiff,
 } from "./patchHover";
+import { ReviewBlocksStatic } from "./reviewBlockDiff";
 
 const PATCH_POPUP_HIDE_DELAY_MS = 200;
 
@@ -46,7 +47,8 @@ export function PatchHoverLayer({
 }: PatchHoverLayerProps) {
   const [target, setTarget] = useState<HoverTarget | null>(null);
   const [style, setStyle] = useState<React.CSSProperties | undefined>(undefined);
-  const popupRef = useRef<HTMLSpanElement>(null);
+  // 用 div(块级容器):原文可能是表格/图表等块内容,<span> 套块是非法内容模型。
+  const popupRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearHideTimer = useCallback(() => {
@@ -76,6 +78,9 @@ export function PatchHoverLayer({
     const onMouseOver = (event: MouseEvent) => {
       const anchor = closestPatchTarget(event.target, root);
       if (!anchor) return;
+      // 常规 granular 块由改动行/格/块自管局部原文；若另有 tone/背景/栏宽等外壳属性变化，
+      // has-block-original-hover 统一由整块原文卡接管，块树内局部 popup 已在挂载时关闭。
+      if (anchor.classList.contains("is-granular") && !anchor.classList.contains("has-block-original-hover")) return;
       if (target?.anchor === anchor && containsEventTarget(anchor, event.relatedTarget)) return;
       showTarget(anchor);
     };
@@ -112,6 +117,7 @@ export function PatchHoverLayer({
   if (!target || typeof document === "undefined") return null;
 
   const meta = patchMeta?.get(target.patchId);
+  const hasBlockOriginal = Boolean(meta?.beforePmNodes && meta.beforePmNodes.length > 0);
   const isFormat = patchIsFormat(meta, target.anchor);
   const state = patchReviewState(
     meta,
@@ -127,7 +133,15 @@ export function PatchHoverLayer({
     <PatchStatePopup
       state={state}
       index={meta?.index}
-      original={renderOriginalDiff(meta?.before ?? "") ?? meta?.before ?? ""}
+      // 块级补丁携带原始 before PM node → 用 PmBlockView 渲成真内容(表格/图表/公式/嵌套列表所见即所得),
+      // 而非把 markdown 源码散排;纯文本补丁仍走行内文本呈现。originalIsBlock 让 popup 走块级布局
+      // (否则 <span> 里套 <div>/<table> 是非法 HTML 嵌套)。
+      original={
+        hasBlockOriginal
+          ? <ReviewBlocksStatic nodes={meta!.beforePmNodes!} />
+          : renderOriginalDiff(meta?.before ?? "") ?? meta?.before ?? ""
+      }
+      originalIsBlock={hasBlockOriginal}
       patchId={target.patchId}
       onPatchVerdict={onPatchVerdict}
     />
@@ -136,7 +150,7 @@ export function PatchHoverLayer({
   const portalTarget = document.getElementById("view-workspace") ?? document.body;
 
   return createPortal(
-    <span
+    <div
       ref={popupRef}
       className="patch-hover-popup is-visible"
       style={style}
@@ -145,7 +159,7 @@ export function PatchHoverLayer({
       onMouseLeave={scheduleHide}
     >
       {popup}
-    </span>,
+    </div>,
     portalTarget,
   );
 }

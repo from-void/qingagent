@@ -43,6 +43,7 @@ import {
 import { DiagramCM } from "./DiagramView";
 import { ImageCM, ReadonlyImageFigure, normalizeImageAlign } from "./ImageView";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
+import { mountBlockPatchView } from "./doc/blockPatchView";
 import { chatInputBus } from "../../../system";
 import {
   advanceNativeConcurrentState,
@@ -147,6 +148,8 @@ export interface PatchMeta {
   kind?: "text" | "markAdd" | "markRemove" | "insert" | "delete" | "replace";
   marks?: PmMark[];
   label?: string;
+  /** 原始 before PM node:hover 卡片"原文"据此用 PmBlockView 渲成真内容(表格/图表/公式/嵌套列表全保真)。 */
+  beforePmNodes?: readonly PmBlockNode[];
   changes?: PatchMetaChange[];
   index: number;
 }
@@ -1105,6 +1108,7 @@ function useReviewPatchDecorations({
       revealedPatchIds,
       typedByPatch,
       revealCursors,
+      mountBlockView: mountBlockPatchView,
     });
     if (dropped.length > 0) {
       console.warn(
@@ -1113,9 +1117,10 @@ function useReviewPatchDecorations({
       );
     }
     setPatchDecorations(editor, decorations);
-    return () => {
-      clearPatchDecorations(editor);
-    };
+    // 不在每次依赖变化时 clear:先 clear→empty 再 set 会让 ProseMirror 销毁全部 widget DOM
+    // (经历空集),切换 activePatchId 时满屏红球/绿块重挂闪烁。直接用新 decorations 替换旧集合,
+    // ProseMirror 按 widget key 复用未变项,只重建 current 真正变化的一两处。
+    // 卸载/换 editor 的清理见下方独立 effect。
   }, [
     editor,
     enabled,
@@ -1141,6 +1146,13 @@ function useReviewPatchDecorations({
     revealCursors,
     revealCursorsKey,
   ]);
+
+  // 卸载或更换 editor 时才彻底清理 patch decorations;更新期间不清,避免全量重挂闪烁(见上)。
+  useEffect(() => {
+    return () => {
+      if (editor && !editor.isDestroyed) clearPatchDecorations(editor);
+    };
+  }, [editor]);
 }
 
 function setKey(values: ReadonlySet<string>): string {

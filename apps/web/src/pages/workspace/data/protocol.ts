@@ -125,17 +125,26 @@ export type ViewDocSpan =
     }
   | { kind: "selectable"; text: string };
 
+type ViewListRowChildren = { childLists?: ViewNestedListDiff[] };
+
 export type ViewListRowDiff =
-  | { status: "same"; spans: ViewDocSpan[]; checked?: boolean }
+  | ({ status: "same"; spans: ViewDocSpan[]; checked?: boolean } & ViewListRowChildren)
   | {
       status: "changed";
       spans: ViewDocSpan[];
       oldText: string;
       checked?: boolean;
       checkedChanged?: boolean;
+      childLists?: ViewNestedListDiff[];
     }
-  | { status: "added"; spans: ViewDocSpan[]; checked?: boolean }
-  | { status: "removed"; oldText: string; checked?: boolean };
+  | ({ status: "added"; spans: ViewDocSpan[]; checked?: boolean } & ViewListRowChildren)
+  | ({ status: "removed"; oldText: string; checked?: boolean } & ViewListRowChildren);
+
+export type ViewNestedListDiff = {
+  beforeListIndex?: number;
+  afterListIndex?: number;
+  rowDiff: ViewListRowDiff[];
+};
 
 export type ViewTableCellDiff =
   | { status: "same"; spans: ViewDocSpan[] }
@@ -153,7 +162,15 @@ export type ViewBlockSeqDiff = Array<
   | { status: "changed"; kind: "text"; node: PmBlockNode; spans: ViewDocSpan[]; oldText: string }
   | { status: "changed"; kind: "list"; node: PmBlockNode; rowDiff: ViewListRowDiff[] }
   | { status: "changed"; kind: "table"; node: PmBlockNode; cellDiff: ViewTableRowDiff[] }
+  | { status: "changed"; kind: "block"; node: PmBlockNode }
 >;
+
+export type ViewColumnDiff = {
+  status: "same" | "added" | "removed" | "changed";
+  beforeColumnIndex?: number;
+  afterColumnIndex?: number;
+  bodyDiff: ViewBlockSeqDiff;
+};
 
 export interface ViewBlockPatch {
   patchId: string;
@@ -173,7 +190,7 @@ export type ViewBlock = ViewBlockMeta & (
   | { kind: "h3" | "h4" | "h5" | "h6"; text: string; spans?: ViewDocSpan[]; textAlign?: string }
   | { kind: "p"; spans: ViewDocSpan[]; textAlign?: string }
   | { kind: "quote"; text: string; spans?: ViewDocSpan[]; node?: PmBlockNode }
-  | { kind: "list"; ordered: boolean; items: string[]; itemSpans?: ViewDocSpan[][]; start?: number; rowDiff?: ViewListRowDiff[] }
+  | { kind: "list"; ordered: boolean; items: string[]; itemSpans?: ViewDocSpan[][]; start?: number; rowDiff?: ViewListRowDiff[]; node?: PmBlockNode }
   | { kind: "hr" }
   | {
       kind: "table";
@@ -182,6 +199,9 @@ export type ViewBlock = ViewBlockMeta & (
       headSpans?: ViewDocSpan[][];
       rowSpans?: ViewDocSpan[][][];
       cellDiff?: ViewTableRowDiff[];
+      // 原始 table PM node:审阅态替换直接用它走 PmBlockView(保全合并单元格/列宽/背景色/
+      // 单元格富文本/多块单元格),而非经 head/rows 文本 legacy 回转拍平。
+      node?: PmBlockNode;
     }
   | { kind: "code"; body: string; language?: string | null }
   | { kind: "diagram"; source: string; lang: string; svg: string | null; overlay?: PmDiagramOverlay | null }
@@ -193,7 +213,7 @@ export type ViewBlock = ViewBlockMeta & (
   // 只参与整块插入/删除(blockPatch)。`text` 仅作文本投影用(锚点回退/块级 patch 文本)。
   | { kind: "taskList"; node: PmBlockNode; text: string; rowDiff?: ViewListRowDiff[] }
   | { kind: "callout"; node: PmBlockNode; text: string; bodyDiff?: ViewBlockSeqDiff }
-  | { kind: "columnList"; node: PmBlockNode; text: string; columnsDiff?: ViewBlockSeqDiff[] }
+  | { kind: "columnList"; node: PmBlockNode; text: string; columnsDiff?: ViewColumnDiff[] }
   | { kind: "math"; node: PmBlockNode; latex: string }
 );
 
@@ -687,12 +707,14 @@ type ListPmBlock = Extract<PmBlockNode, { type: "bulletList" | "orderedList" | "
 type TablePmBlock = Extract<PmBlockNode, { type: "table" }>;
 type CalloutPmBlock = Extract<PmBlockNode, { type: "callout" }>;
 type ColumnListPmBlock = Extract<PmBlockNode, { type: "columnList" }>;
+type ColumnPmBlock = ColumnListPmBlock["content"][number];
 type TextDiffPmBlock = Extract<PmBlockNode, { type: "paragraph" | "heading" | "penNote" }>;
 
 type ListRowData = {
   text: string;
   spans: ViewDocSpan[];
   checked?: boolean;
+  childLists: ListPmBlock[];
 };
 
 type TableCellData = {
@@ -759,6 +781,7 @@ function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
         text: viewSpansText(spans),
         spans,
         checked: item.attrs.checked,
+        childLists: item.content.filter(isListPmBlock),
       };
     });
   }
@@ -767,6 +790,7 @@ function listRowsFromPmBlock(node: ListPmBlock): ListRowData[] {
     return {
       text: viewSpansText(spans),
       spans,
+      childLists: item.content.filter(isListPmBlock),
     };
   });
 }
@@ -785,6 +809,40 @@ function tableRowsFromPmBlock(node: TablePmBlock): TableRowData[] {
       cells,
     };
   });
+}
+
+function tableCellReviewAttrs(cell: PmTableCellNode): object {
+  return {
+    type: cell.type,
+    colspan: cell.attrs?.colspan ?? 1,
+    rowspan: cell.attrs?.rowspan ?? 1,
+    colwidth: cell.attrs?.colwidth ?? null,
+    backgroundColor: cell.attrs?.backgroundColor ?? null,
+  };
+}
+
+function tableCellAttrsChanged(beforeNode: TablePmBlock, afterNode: TablePmBlock): boolean {
+  if (beforeNode.content.length !== afterNode.content.length) return false;
+  return beforeNode.content.some((beforeRow, rowIndex) => {
+    const afterRow = afterNode.content[rowIndex];
+    if (!afterRow || beforeRow.content.length !== afterRow.content.length) return false;
+    return beforeRow.content.some((beforeCell, cellIndex) =>
+      JSON.stringify(tableCellReviewAttrs(beforeCell)) !== JSON.stringify(tableCellReviewAttrs(afterRow.content[cellIndex]!)),
+    );
+  });
+}
+
+/** 只有物理行列与合并结构都稳定时，物理 cell 下标才可用于格级 diff。 */
+function tableShapeIsStable(beforeNode: TablePmBlock, afterNode: TablePmBlock): boolean {
+  if (beforeNode.content.length !== afterNode.content.length) return false;
+  if (beforeNode.content.some((row, rowIndex) => row.content.length !== afterNode.content[rowIndex]?.content.length)) {
+    return false;
+  }
+  return beforeNode.content.every((row, rowIndex) => row.content.every((cell, cellIndex) => {
+    const afterCell = afterNode.content[rowIndex]!.content[cellIndex]!;
+    return (cell.attrs?.colspan ?? 1) === (afterCell.attrs?.colspan ?? 1)
+      && (cell.attrs?.rowspan ?? 1) === (afterCell.attrs?.rowspan ?? 1);
+  }));
 }
 
 function cloneSpans(spans: readonly ViewDocSpan[]): ViewDocSpan[] {
@@ -883,6 +941,7 @@ function inlineSpanDiffSpans(beforeSpans: readonly ViewDocSpan[], afterSpans: re
   const out: ViewDocSpan[] = [];
   for (const op of raw) {
     if (op.kind === "same" && op.b) pushInlineDiffUnit(out, op.b);
+    if (op.kind === "remove" && op.a) pushPatchInlineDiffUnit(out, op.a, "delete", patchId);
     if (op.kind === "add" && op.b) pushPatchInlineDiffUnit(out, op.b, "insert", patchId);
   }
   return out.length > 0 ? out : cloneSpans(afterSpans);
@@ -890,6 +949,67 @@ function inlineSpanDiffSpans(beforeSpans: readonly ViewDocSpan[], afterSpans: re
 
 function patchInsSpansForRow(row: ListRowData, patchId: string): ViewDocSpan[] {
   return patchSpans(row.spans, "insert", patchId);
+}
+
+function buildNestedListDiff(
+  beforeLists: readonly ListPmBlock[],
+  afterLists: readonly ListPmBlock[],
+  patchId: string,
+): ViewNestedListDiff[] | undefined {
+  if (beforeLists.length === 0 && afterLists.length === 0) return undefined;
+  const before = beforeLists.map((node, index) => ({ node, index }));
+  const after = afterLists.map((node, index) => ({ node, index }));
+  const raw = lcsDiff(before, after, (left, right) => left.node.type === right.node.type);
+  const out: ViewNestedListDiff[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const current = raw[i]!;
+    if (current.kind === "same") {
+      const left = current.a!;
+      const right = current.b!;
+      out.push({
+        beforeListIndex: left.index,
+        afterListIndex: right.index,
+        rowDiff: buildListRowDiff(
+          listRowsFromPmBlock(left.node),
+          listRowsFromPmBlock(right.node),
+          patchId,
+        ),
+      });
+      i += 1;
+      continue;
+    }
+
+    const removed: Array<{ node: ListPmBlock; index: number }> = [];
+    const added: Array<{ node: ListPmBlock; index: number }> = [];
+    while (i < raw.length && raw[i]!.kind !== "same") {
+      const op = raw[i]!;
+      if (op.kind === "remove") removed.push(op.a!);
+      if (op.kind === "add") added.push(op.b!);
+      i += 1;
+    }
+    for (const left of removed) {
+      out.push({
+        beforeListIndex: left.index,
+        rowDiff: buildListRowDiff(listRowsFromPmBlock(left.node), [], patchId),
+      });
+    }
+    for (const right of added) {
+      out.push({
+        afterListIndex: right.index,
+        rowDiff: buildListRowDiff([], listRowsFromPmBlock(right.node), patchId),
+      });
+    }
+  }
+  return out;
+}
+
+function childListDiffForRows(
+  before: ListRowData | undefined,
+  after: ListRowData | undefined,
+  patchId: string,
+): ViewNestedListDiff[] | undefined {
+  return buildNestedListDiff(before?.childLists ?? [], after?.childLists ?? [], patchId);
 }
 
 function listRowTextSimilarity(a: string, b: string): number {
@@ -921,12 +1041,14 @@ function changedListRow(before: ListRowData, after: ListRowData, patchId: string
   const spans = before.text === after.text
     ? cloneSpans(after.spans)
     : inlineSpanDiffSpans(before.spans, after.spans, patchId);
+  const childLists = childListDiffForRows(before, after, patchId);
   return {
     status: "changed",
     spans,
     oldText: before.text,
     ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
     ...(checkedChanged ? { checkedChanged } : {}),
+    ...(childLists ? { childLists } : {}),
   };
 }
 
@@ -946,10 +1068,12 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
       ) {
         out.push(changedListRow(before, after, patchId));
       } else {
+        const childLists = childListDiffForRows(before, after, patchId);
         out.push({
           status: "same",
           spans: cloneSpans(after.spans),
           ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
+          ...(childLists ? { childLists } : {}),
         });
       }
       i += 1;
@@ -977,19 +1101,23 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
         continue;
       }
       if (before) {
+        const childLists = childListDiffForRows(before, undefined, patchId);
         out.push({
           status: "removed",
           oldText: before.text,
           ...(typeof before.checked === "boolean" ? { checked: before.checked } : {}),
+          ...(childLists ? { childLists } : {}),
         });
         removeIndex += 1;
         continue;
       }
       if (after) {
+        const childLists = childListDiffForRows(undefined, after, patchId);
         out.push({
           status: "added",
           spans: patchInsSpansForRow(after, patchId),
           ...(typeof after.checked === "boolean" ? { checked: after.checked } : {}),
+          ...(childLists ? { childLists } : {}),
         });
         addIndex += 1;
       }
@@ -998,8 +1126,39 @@ function buildListRowDiff(beforeRows: readonly ListRowData[], afterRows: readonl
   return out;
 }
 
-function withListRowDiff(block: ViewBlock, rowDiff: ViewListRowDiff[]): ViewBlock {
-  if (block.kind === "list") return { ...block, rowDiff };
+function hasVisibleListRowDiff(rows: readonly ViewListRowDiff[]): boolean {
+  return rows.some((row) =>
+    row.status !== "same" ||
+    row.childLists?.some((child) => hasVisibleListRowDiff(child.rowDiff)) === true,
+  );
+}
+
+function hasVisibleTableCellDiff(rows: readonly ViewTableRowDiff[]): boolean {
+  return rows.some((row) =>
+    row.status !== "same" || row.cells.some((cell) => cell.status !== "same"),
+  );
+}
+
+function hasVisibleBlockSeqDiff(seqDiff: readonly ViewBlockSeqDiff[number][]): boolean {
+  return seqDiff.some((entry) => {
+    if (entry.status === "added" || entry.status === "removed") return true;
+    if (entry.status !== "changed") return false;
+    if (entry.kind === "block") return true;
+    if (entry.kind === "list") return hasVisibleListRowDiff(entry.rowDiff);
+    if (entry.kind === "table") return hasVisibleTableCellDiff(entry.cellDiff);
+    return entry.spans.some((span) =>
+      span.kind === "patchIns" ||
+      span.kind === "patchDel" ||
+      span.kind === "patchInsMath" ||
+      span.kind === "patchDelMath",
+    );
+  });
+}
+
+function withListRowDiff(block: ViewBlock, rowDiff: ViewListRowDiff[], afterNode?: PmBlockNode): ViewBlock {
+  // 携带原始 after PM node,行级渲染时逐个 list item 走 PmBlockView(保全嵌套子项/marks/公式),
+  // 只在行外套增/改/删状态类;taskList ViewBlock 本就带 node,list 变体此处补上。
+  if (block.kind === "list") return { ...block, rowDiff, ...(afterNode ? { node: afterNode } : {}) };
   if (block.kind === "taskList") return { ...block, rowDiff };
   return block;
 }
@@ -1109,8 +1268,9 @@ function buildTableCellDiff(
   return out;
 }
 
-function withTableCellDiff(block: ViewBlock, cellDiff: ViewTableRowDiff[]): ViewBlock {
-  if (block.kind === "table") return { ...block, cellDiff };
+function withTableCellDiff(block: ViewBlock, cellDiff: ViewTableRowDiff[], afterNode?: PmBlockNode): ViewBlock {
+  // 携带原始 after table node,审阅态替换直接走 PmBlockView 保全合并单元格/列宽/背景色/单元格富文本。
+  if (block.kind === "table") return { ...block, cellDiff, ...(afterNode ? { node: afterNode } : {}) };
   return block;
 }
 
@@ -1130,12 +1290,17 @@ function buildListRowReplace(
     listRowsFromPmBlock(afterNode),
     input.patchId,
   );
+  // granular 只在任意深度的行级 diff 真的标出了可见变化时才置。
+  // 若递归 rowDiff 全 same(变化只在 marks / orderedList.start 等当前行协议看不见的维度),
+  // 则保留块级标记,否则正文会变成"零可见标记"。
+  const rowLevelVisible = hasVisibleListRowDiff(rowDiff);
   return {
     ...input,
     op: "replace",
-    blocks: [withListRowDiff(afterBlock, rowDiff)],
+    blocks: [withListRowDiff(afterBlock, rowDiff, afterNode)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
+    ...(rowLevelVisible ? { granular: true } : {}),
   };
 }
 
@@ -1149,17 +1314,30 @@ function buildTableCellReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "table") return null;
+  if (!tableShapeIsStable(beforeNode, afterNode)) {
+    return {
+      ...input,
+      op: "replace",
+      // 整表降级仍携带原始 after node，保全新表的合并、列宽、背景与富文本。
+      blocks: [{ ...afterBlock, node: afterNode }],
+      replaceBeforeBlocks: [beforeBlock],
+      blockCount: 1,
+    };
+  }
   const cellDiff = buildTableCellDiff(
     tableRowsFromPmBlock(beforeNode),
     tableRowsFromPmBlock(afterNode),
     input.patchId,
   );
+  const cellLevelVisible = hasVisibleTableCellDiff(cellDiff);
   return {
     ...input,
     op: "replace",
-    blocks: [withTableCellDiff(afterBlock, cellDiff)],
+    blocks: [withTableCellDiff(afterBlock, cellDiff, afterNode)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
+    ...(cellLevelVisible ? { granular: true } : {}),
+    ...(cellLevelVisible && tableCellAttrsChanged(beforeNode, afterNode) ? { granularBlockHover: true } : {}),
   };
 }
 
@@ -1205,6 +1383,13 @@ function changedContainerBlock(
     };
   }
   if (isTablePmBlock(beforeNode) && isTablePmBlock(afterNode)) {
+    if (!tableShapeIsStable(beforeNode, afterNode)) {
+      return {
+        status: "changed",
+        kind: "block",
+        node: afterNode,
+      };
+    }
     return {
       status: "changed",
       kind: "table",
@@ -1277,9 +1462,107 @@ function withCalloutBodyDiff(block: ViewBlock, bodyDiff: ViewBlockSeqDiff): View
   return block;
 }
 
-function withColumnListColumnsDiff(block: ViewBlock, columnsDiff: ViewBlockSeqDiff[]): ViewBlock {
+function withColumnListColumnsDiff(block: ViewBlock, columnsDiff: ViewColumnDiff[]): ViewBlock {
   if (block.kind === "columnList") return { ...block, columnsDiff };
   return block;
+}
+
+function columnText(column: ColumnPmBlock): string {
+  return column.content.map(pmBlockText).join("\n");
+}
+
+function sameColumnIdentity(beforeColumn: ColumnPmBlock, afterColumn: ColumnPmBlock): boolean {
+  const beforeId = beforeColumn.attrs.blockId;
+  const afterId = afterColumn.attrs.blockId;
+  if (beforeId && afterId) return beforeId === afterId;
+  return columnText(beforeColumn) === columnText(afterColumn);
+}
+
+function columnSimilarity(beforeColumn: ColumnPmBlock, afterColumn: ColumnPmBlock): number {
+  return listRowTextSimilarity(columnText(beforeColumn), columnText(afterColumn));
+}
+
+function makeColumnDiff(
+  status: ViewColumnDiff["status"],
+  beforeColumn: ColumnPmBlock | undefined,
+  afterColumn: ColumnPmBlock | undefined,
+  beforeColumnIndex: number | undefined,
+  afterColumnIndex: number | undefined,
+  patchId: string,
+): ViewColumnDiff {
+  return {
+    status,
+    ...(beforeColumnIndex !== undefined ? { beforeColumnIndex } : {}),
+    ...(afterColumnIndex !== undefined ? { afterColumnIndex } : {}),
+    bodyDiff: buildBlockSeqDiff(beforeColumn?.content ?? [], afterColumn?.content ?? [], patchId),
+  };
+}
+
+/** 栏级 LCS：稳定 blockId 优先；无稳定 id 时用同文锚定，再在相邻未匹配区按内容相似度配 changed。 */
+function buildColumnsDiff(
+  beforeColumns: readonly ColumnPmBlock[],
+  afterColumns: readonly ColumnPmBlock[],
+  patchId: string,
+): ViewColumnDiff[] {
+  const beforeIndex = new Map(beforeColumns.map((column, index) => [column, index]));
+  const afterIndex = new Map(afterColumns.map((column, index) => [column, index]));
+  const raw = lcsDiff(beforeColumns, afterColumns, sameColumnIdentity);
+  const out: ViewColumnDiff[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const current = raw[i]!;
+    if (current.kind === "same") {
+      const beforeColumn = current.a!;
+      const afterColumn = current.b!;
+      const bodyDiff = buildBlockSeqDiff(beforeColumn.content, afterColumn.content, patchId);
+      out.push({
+        status: hasVisibleBlockSeqDiff(bodyDiff) ? "changed" : "same",
+        beforeColumnIndex: beforeIndex.get(beforeColumn)!,
+        afterColumnIndex: afterIndex.get(afterColumn)!,
+        bodyDiff,
+      });
+      i += 1;
+      continue;
+    }
+
+    const removed: ColumnPmBlock[] = [];
+    const added: ColumnPmBlock[] = [];
+    while (i < raw.length && raw[i]!.kind !== "same") {
+      const op = raw[i]!;
+      if (op.kind === "remove") removed.push(op.a!);
+      if (op.kind === "add") added.push(op.b!);
+      i += 1;
+    }
+    let removeIndex = 0;
+    let addIndex = 0;
+    while (removeIndex < removed.length || addIndex < added.length) {
+      const beforeColumn = removed[removeIndex];
+      const afterColumn = added[addIndex];
+      if (beforeColumn && afterColumn && columnSimilarity(beforeColumn, afterColumn) >= 0.4) {
+        out.push(makeColumnDiff("changed", beforeColumn, afterColumn, beforeIndex.get(beforeColumn), afterIndex.get(afterColumn), patchId));
+        removeIndex += 1;
+        addIndex += 1;
+      } else if (beforeColumn) {
+        out.push(makeColumnDiff("removed", beforeColumn, undefined, beforeIndex.get(beforeColumn), undefined, patchId));
+        removeIndex += 1;
+      } else if (afterColumn) {
+        out.push(makeColumnDiff("added", undefined, afterColumn, undefined, afterIndex.get(afterColumn), patchId));
+        addIndex += 1;
+      }
+    }
+  }
+  return out;
+}
+
+function columnWidthsChanged(
+  beforeNode: ColumnListPmBlock,
+  afterNode: ColumnListPmBlock,
+  columnsDiff: readonly ViewColumnDiff[],
+): boolean {
+  return columnsDiff.some((columnDiff) => {
+    if (columnDiff.beforeColumnIndex === undefined || columnDiff.afterColumnIndex === undefined) return false;
+    return beforeNode.content[columnDiff.beforeColumnIndex]?.attrs.widthRatio !== afterNode.content[columnDiff.afterColumnIndex]?.attrs.widthRatio;
+  });
 }
 
 function buildCalloutReplace(
@@ -1292,12 +1575,17 @@ function buildCalloutReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "callout") return null;
+  const bodyDiff = buildBlockSeqDiff(beforeNode.content, afterNode.content, input.patchId);
   return {
     ...input,
     op: "replace",
-    blocks: [withCalloutBodyDiff(afterBlock, buildBlockSeqDiff(beforeNode.content, afterNode.content, input.patchId))],
+    blocks: [withCalloutBodyDiff(afterBlock, bodyDiff)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
+    ...(hasVisibleBlockSeqDiff(bodyDiff) ? { granular: true } : {}),
+    ...(hasVisibleBlockSeqDiff(bodyDiff) && (
+      beforeNode.attrs.emoji !== afterNode.attrs.emoji || beforeNode.attrs.tone !== afterNode.attrs.tone
+    ) ? { granularBlockHover: true } : {}),
   };
 }
 
@@ -1311,21 +1599,18 @@ function buildColumnListReplace(
   const beforeBlock = beforeBlocks[0];
   const afterBlock = afterBlocks[0];
   if (!beforeBlock || !afterBlock || afterBlock.kind !== "columnList") return null;
-  const columnsDiff = afterNode.content.map((afterColumn, columnIndex) =>
-    buildBlockSeqDiff(beforeNode.content[columnIndex]?.content ?? [], afterColumn.content, input.patchId),
+  const columnsDiff = buildColumnsDiff(beforeNode.content, afterNode.content, input.patchId);
+  const columnLevelVisible = columnsDiff.some((columnDiff) =>
+    columnDiff.status !== "same" || hasVisibleBlockSeqDiff(columnDiff.bodyDiff),
   );
-  if (beforeNode.content.length > afterNode.content.length && columnsDiff.length > 0) {
-    const tailRemoved = beforeNode.content.slice(afterNode.content.length).flatMap((column) =>
-      column.content.map((block): ViewBlockSeqDiff[number] => ({ status: "removed", oldText: pmBlockText(block) })),
-    );
-    columnsDiff[columnsDiff.length - 1] = [...columnsDiff[columnsDiff.length - 1]!, ...tailRemoved];
-  }
   return {
     ...input,
     op: "replace",
     blocks: [withColumnListColumnsDiff(afterBlock, columnsDiff)],
     replaceBeforeBlocks: [beforeBlock],
     blockCount: 1,
+    ...(columnLevelVisible ? { granular: true } : {}),
+    ...(columnLevelVisible && columnWidthsChanged(beforeNode, afterNode, columnsDiff) ? { granularBlockHover: true } : {}),
   };
 }
 
@@ -1481,6 +1766,19 @@ export interface BlockPatchInput {
   blocks: ViewBlock[];
   replaceBeforeBlocks?: ViewBlock[];
   blockCount?: number;
+  /** 原始 PM node(insert/replace 的 hunk.after):审阅态块级新增/替换直接用它渲染,一律不经
+   *  ViewBlock→legacy 降级,保全所有格式(对齐/marks/嵌套列表/合并单元格/代码高亮/inlineMath 等)。 */
+  pmNodes?: readonly PmBlockNode[];
+  /** 原始 PM node(replace/delete 的 hunk.before):hover 卡片"原文"直接用它渲染,同样不降级,
+   *  保全表格合并单元格/嵌套列表子项/单元格富文本/图表 overlay 等(替代早前拍平的 before 文本)。 */
+  beforePmNodes?: readonly PmBlockNode[];
+  /** 该替换的正文已在块内部做**行级/单元格级 diff**(如列表/待办清单逐行标注)。为真时审阅装饰
+   *  抑制块级冗余标记——不画整块红删标记、不画整块绿竖线(否则"既有行级又有块级"重复),
+   *  仅保留隐藏原块 + 内部逐行 diff。 */
+  granular?: boolean;
+  /** granular 内容标注之外还存在容器/单元格属性变化，局部正文无法完整表达。改由整块原文 hover
+   *  统一接管并关闭块内局部 popup，让旧 tone、背景色、栏宽等外壳属性仍可审阅；常规 granular 不设置。 */
+  granularBlockHover?: boolean;
 }
 
 /** 行内文本通道能保真渲染的 PM 块类型(spans 模式);结构块都不在此列。 */
@@ -1584,6 +1882,8 @@ export function suggestionToBlockPatchInput(
     ...(hunk.anchor.blockId ? { anchorBlockId: hunk.anchor.blockId } : {}),
     ...(validBlockPathIndex(anchorIndex) ? { anchorIndex } : {}),
     ...(hunk.anchor.gravity ? { gravity: hunk.anchor.gravity } : {}),
+    ...(hunk.op === "insert" && Array.isArray(nodes) ? { pmNodes: nodes as readonly PmBlockNode[] } : {}),
+    ...(hunk.op === "delete" && Array.isArray(nodes) ? { beforePmNodes: nodes as readonly PmBlockNode[] } : {}),
     blocks,
     blockCount: blocks.length,
   };
@@ -1620,6 +1920,7 @@ export function suggestionToBlockPatchInputs(
     ...(order !== undefined ? { order } : {}),
     ...(hunk.anchor.blockId ? { anchorBlockId: hunk.anchor.blockId } : {}),
     ...(validBlockPathIndex(anchorIndex) ? { anchorIndex } : {}),
+    ...(Array.isArray(hunk.before) ? { beforePmNodes: hunk.before as readonly PmBlockNode[] } : {}),
   };
   const beforeListNode = singleListPmBlock(hunk.before);
   const afterListNode = singleListPmBlock(hunk.after);
@@ -1656,6 +1957,7 @@ export function suggestionToBlockPatchInputs(
       blocks: afterBlocks,
       replaceBeforeBlocks: beforeBlocks,
       blockCount: 1,
+      ...(Array.isArray(hunk.after) ? { pmNodes: hunk.after as readonly PmBlockNode[] } : {}),
     }];
   }
 
@@ -1676,6 +1978,7 @@ export function suggestionToBlockPatchInputs(
       gravity: "after",
       blocks: afterBlocks,
       blockCount: afterBlocks.length,
+      ...(Array.isArray(hunk.after) ? { pmNodes: hunk.after as readonly PmBlockNode[] } : {}),
     });
   }
   return inputs;
@@ -1751,6 +2054,7 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
         items: section.items.slice(),
         ...(section.itemSpans ? { itemSpans: section.itemSpans.map(cloneSpans) } : {}),
         ...(section.rowDiff ? { rowDiff: cloneListRowDiff(section.rowDiff) } : {}),
+        ...(section.node ? { node: section.node } : {}),
       };
     case "hr":
       return { ...meta, kind: "hr" };
@@ -1763,6 +2067,7 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
         ...(section.headSpans ? { headSpans: section.headSpans.map(cloneSpans) } : {}),
         ...(section.rowSpans ? { rowSpans: section.rowSpans.map((row) => row.map(cloneSpans)) } : {}),
         ...(section.cellDiff ? { cellDiff: cloneTableRowDiff(section.cellDiff) } : {}),
+        ...(section.node ? { node: section.node } : {}),
       };
     case "code":
       return { ...meta, kind: "code", body: section.body, language: section.language ?? null };
@@ -1813,7 +2118,7 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
         kind: "columnList",
         node: section.node,
         text: section.text,
-        ...(section.columnsDiff ? { columnsDiff: section.columnsDiff.map(cloneBlockSeqDiff) } : {}),
+        ...(section.columnsDiff ? { columnsDiff: section.columnsDiff.map(cloneColumnDiff) } : {}),
       };
     case "math":
       return { ...meta, kind: "math", node: section.node, latex: section.latex };
@@ -1829,7 +2134,18 @@ function cloneBlockPatch(blockPatch: ViewBlockPatch): ViewBlockPatch {
   };
 }
 
-function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowDiff[] {
+export function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowDiff[] {
+  const cloneChildLists = (row: ViewListRowDiff) => (
+    row.childLists
+      ? {
+          childLists: row.childLists.map((child) => ({
+            ...(child.beforeListIndex !== undefined ? { beforeListIndex: child.beforeListIndex } : {}),
+            ...(child.afterListIndex !== undefined ? { afterListIndex: child.afterListIndex } : {}),
+            rowDiff: cloneListRowDiff(child.rowDiff),
+          })),
+        }
+      : {}
+  );
   return rowDiff.map((row): ViewListRowDiff => {
     switch (row.status) {
       case "same":
@@ -1837,6 +2153,7 @@ function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowDiff[
           status: "same",
           spans: cloneSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
       case "changed":
         return {
@@ -1845,18 +2162,21 @@ function cloneListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowDiff[
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...(row.checkedChanged ? { checkedChanged: true } : {}),
+          ...cloneChildLists(row),
         };
       case "added":
         return {
           status: "added",
           spans: cloneSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
       case "removed":
         return {
           status: "removed",
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
     }
   });
@@ -1882,6 +2202,13 @@ function cloneBlockSeqDiff(seqDiff: readonly ViewBlockSeqDiff[number][]): ViewBl
       case "removed":
         return { status: "removed", oldText: entry.oldText };
       case "changed":
+        if (entry.kind === "block") {
+          return {
+            status: "changed",
+            kind: "block",
+            node: entry.node,
+          };
+        }
         if (entry.kind === "text") {
           return {
             status: "changed",
@@ -1909,6 +2236,15 @@ function cloneBlockSeqDiff(seqDiff: readonly ViewBlockSeqDiff[number][]): ViewBl
   });
 }
 
+function cloneColumnDiff(columnDiff: ViewColumnDiff): ViewColumnDiff {
+  return {
+    status: columnDiff.status,
+    ...(columnDiff.beforeColumnIndex !== undefined ? { beforeColumnIndex: columnDiff.beforeColumnIndex } : {}),
+    ...(columnDiff.afterColumnIndex !== undefined ? { afterColumnIndex: columnDiff.afterColumnIndex } : {}),
+    bodyDiff: cloneBlockSeqDiff(columnDiff.bodyDiff),
+  };
+}
+
 export interface AppliedPatch {
   id: string;
   reviewBatchId: string;
@@ -1918,6 +2254,9 @@ export interface AppliedPatch {
   kind: "text" | "markAdd" | "markRemove" | "insert" | "delete" | "replace";
   marks?: PmMark[];
   label?: string;
+  /** 原始 before PM node(块级补丁的替换/删除原文):hover 卡片据此用 PmBlockView 渲成真内容,
+   *  保全所有格式,而非把 markdown 源码散排。仅块级补丁携带,行内文本补丁为空。 */
+  beforePmNodes?: readonly PmBlockNode[];
   /** 连续序号,1 起,只对真正落地的 patch 编号(无空洞)。 */
   index: number;
 }
@@ -1972,6 +2311,7 @@ export function derivePatchPresentation(
     kind: AppliedPatch["kind"];
     marks?: PmMark[];
     label?: string;
+    beforePmNodes?: readonly PmBlockNode[];
   };
   const appliedCandidates: AppliedCandidate[] = [];
   let seq = 0;
@@ -1998,6 +2338,9 @@ export function derivePatchPresentation(
     if (!blockAppliedIds.has(input.patchId)) return;
     const text = blocksPlainText(input.blocks);
     const replaceBeforeText = input.op === "replace" ? blocksPlainText(input.replaceBeforeBlocks ?? []) : "";
+    // 原始 before PM node:replace/delete 携带 hunk.before;供 hover 卡片 PmBlockView 渲原文(全保真)。
+    const beforePmNodes: readonly PmBlockNode[] =
+      input.op === "replace" || input.op === "delete" ? input.beforePmNodes ?? [] : [];
     const existing = blockCandidatesByPatchId.get(input.patchId);
     if (existing) {
       existing.order = Math.min(existing.order, input.order ?? patches.length + fallbackOrder);
@@ -2011,6 +2354,9 @@ export function derivePatchPresentation(
       } else {
         existing.after = joinBlockPatchText(existing.after, text);
         existing.hasInsert = true;
+      }
+      if (beforePmNodes.length > 0) {
+        existing.beforePmNodes = [...(existing.beforePmNodes ?? []), ...beforePmNodes];
       }
       existing.kind = blockAppliedKind(existing.hasDelete, existing.hasInsert, existing.hasReplace);
       return;
@@ -2027,6 +2373,7 @@ export function derivePatchPresentation(
       before: hasDelete ? text : replaceBeforeText,
       after: hasInsert || hasReplace ? text : "",
       kind: blockAppliedKind(hasDelete, hasInsert, hasReplace),
+      ...(beforePmNodes.length > 0 ? { beforePmNodes } : {}),
       hasDelete,
       hasInsert,
       hasReplace,
@@ -2059,6 +2406,7 @@ export function derivePatchPresentation(
       kind: p.kind ?? "text",
       ...(p.marks ? { marks: p.marks } : {}),
       ...(p.label ? { label: p.label } : {}),
+      ...(p.beforePmNodes && p.beforePmNodes.length > 0 ? { beforePmNodes: p.beforePmNodes } : {}),
       index: applied.length + 1,
     });
   }

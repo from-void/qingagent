@@ -2454,6 +2454,91 @@
     line-height:1;
     vertical-align:1px;
   }
+  /* 审阅态行级 diff:列表/待办清单逐行标注,取代整块替换 —— 新增/改动行左侧绿条+淡绿底,
+     删除行整行划除并淡出,改动行内的增/删片段各自绿底/红划线。用 inset box-shadow 画左条,
+     不占位不推挤布局。 */
+  /* 所有行统一左内距:增/改行的绿条落在此 gutter,不推挤内容——各行 checkbox/文字左对齐一致。 */
+  #view-workspace .wf-list-row{
+    padding-left:8px;
+  }
+  #view-workspace .wf-list-row--added,
+  #view-workspace .wf-list-row--changed{
+    box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
+    background:rgba(74, 180, 100, 0.06);
+  }
+  #view-workspace .wf-list-row--removed{
+    opacity:0.6;
+  }
+  #view-workspace .wf-row-del{
+    color:var(--ink-3, #8a8f98);
+    text-decoration:line-through;
+    text-decoration-color:rgba(220, 80, 70, 0.7);
+  }
+  #view-workspace .wf-row-ins{
+    background:linear-gradient(to bottom, transparent 50%, rgba(74, 180, 100, 0.25) 50%);
+  }
+  /* 审阅态容器局部 diff：表格只标真实变化的行/格，callout/分栏只标变化的内部块。 */
+  #view-workspace .wf-table-row--added > .wf-table-cell{
+    box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
+    background:rgba(74, 180, 100, 0.06);
+  }
+  #view-workspace .wf-table-row--removed{
+    opacity:0.6;
+    text-decoration:line-through;
+    text-decoration-color:rgba(220, 80, 70, 0.7);
+  }
+  #view-workspace .wf-table-cell--changed{
+    box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
+    background:rgba(74, 180, 100, 0.06);
+  }
+  #view-workspace .wf-container-block{
+    position:relative;
+    padding-left:8px;
+  }
+  #view-workspace .wf-container-block--added,
+  #view-workspace .wf-container-block--changed{
+    box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
+    background:rgba(74, 180, 100, 0.06);
+  }
+  #view-workspace .wf-container-block--removed{
+    opacity:0.6;
+    text-decoration:line-through;
+    text-decoration-color:rgba(220, 80, 70, 0.7);
+  }
+  /* 栏级增删必须覆盖整栏边界，不能只给栏内首个块着色，否则空栏/多块栏会丢失“整栏”语义。 */
+  #view-workspace .wf-column--added{
+    box-shadow:inset 3px 0 0 rgba(74, 180, 100, 0.55);
+    background:rgba(74, 180, 100, 0.06);
+  }
+  #view-workspace .wf-column--removed{
+    box-shadow:inset 3px 0 0 rgba(220, 80, 70, 0.55);
+    background:rgba(220, 80, 70, 0.04);
+  }
+  /* hover 卡片"原文":自带紧凑表格样式(不借 .wf-doc,避免吃整篇纸张 padding/min-height/阴影污染)。
+     宽表在卡片内横向滚动、不被裁切;收紧首尾外边距贴合紧凑卡片。 */
+  /* 静态 PM 表格横滚容器(正文块级补丁 / hover 原文共用):宽表在此滚动,不撑破布局。 */
+  #view-workspace .pm-table-scroll{ overflow-x:auto; max-width:100%; }
+  #view-workspace .pm-hover-original{ overflow-x:auto; }
+  #view-workspace .pm-hover-original > :first-child{ margin-top:0; }
+  #view-workspace .pm-hover-original > :last-child{ margin-bottom:0; }
+  #view-workspace .pm-hover-original table{
+    border-collapse:collapse;
+    width:auto;
+    max-width:100%;
+    margin:4px 0;
+    border:1px solid var(--line-2);
+  }
+  #view-workspace .pm-hover-original th,
+  #view-workspace .pm-hover-original td{
+    border:1px solid var(--line-2);
+    padding:4px 8px;
+    text-align:left;
+    vertical-align:top;
+  }
+  /* 单元格内段落去掉 UA 外边距(对齐正文 .wf-doc td p{margin:0}),行高不虚胖。 */
+  #view-workspace .pm-hover-original th > p,
+  #view-workspace .pm-hover-original td > p,
+  #view-workspace .pm-hover-original li > p{ margin:0; }
   /* 流式正文打字头:末尾几个刚打出的字用横向渐变遮罩,光标处最透明→变老变实,做半透明渐变淡入。 */
   #view-workspace .wf-patch-ins-head{
     -webkit-mask-image:linear-gradient(90deg, #000 0%, #000 30%, transparent 100%);
@@ -2487,6 +2572,7 @@
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
   #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
   #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
+  #view-workspace .wf-blockmark.is-current[data-patch-state="replace"],
   #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"]{
     animation:wf-patch-current-flash-green .72s ease-in-out 0s 2;
   }
@@ -2509,6 +2595,7 @@
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
     #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
+    #view-workspace .wf-blockmark.is-current[data-patch-state="replace"],
     #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
@@ -2524,6 +2611,7 @@
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="replace"],
     #view-workspace .wf-blockmark.is-current[data-patch-state="insert"],
+    #view-workspace .wf-blockmark.is-current[data-patch-state="replace"],
     #view-workspace .wf-table-row-add-hover.is-current[data-patch-state="insert"],
     #view-workspace .wf-patch-ins-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
     #view-workspace .wf-patch-replace-wrap.is-current[data-patch-state="insert"] .wf-patch-ins,
@@ -2748,6 +2836,30 @@
   #view-workspace .wf-blockmark.insert::before{background:rgba(74, 180, 100, 0.72)}
   #view-workspace .wf-blockmark.delete::before{background:rgba(220, 80, 70, 0.72)}
   #view-workspace .wf-blockmark{cursor:pointer}
+  /* 块级删除/替换:被移除的旧块不留在正文(与行内删除同口径——折叠成红线 marker + hover 看原文),
+     只保留独立的 wf-blockmark-del 折叠标记 widget。否则替换会把整张旧表格也画在正文里。 */
+  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-blockmark.delete{
+    display:none;
+  }
+  /* 块级新增(整张表格/图表等):只保留左侧绿竖线,不叠 wf-patch-ins 的半截绿渐变——
+     那渐变是给行内文字做下划线的,套到整块上就成了突兀的"下半截绿色块"。 */
+  #view-workspace .wf-blockmark.insert .wf-patch-ins{
+    background:none;
+  }
+  /* 行级/单元格级 diff 的替换块(列表/待办清单逐行标注):去掉块级整条绿竖线 + 左内距,
+     只保留内部逐行标注,避免"既有行级又有块级"的重复标记。 */
+  #view-workspace .wf-blockmark.insert.is-granular{
+    padding-left:0;
+  }
+  #view-workspace .wf-blockmark.insert.is-granular::before{
+    display:none;
+  }
+  /* 审阅态图表允许交互(缩放按钮 / 平移看细节),不被 wf-doc 的 pointer-events:none 禁掉。
+     只放开外层 .pm-diagram 即可突破;内部交由 React Flow 自管(勿用 * 覆盖,否则会破坏
+     background/viewport/nodes/edge 各层各自的 pointer-events,导致平移与边命中失效)。 */
+  body[data-content="pendingReview"] #view-workspace .wf-doc .pm-diagram{
+    pointer-events:auto;
+  }
   /* 结构块删除:折叠成一道红色细线标记(不显示被删内容),hover 看被删内容。
      与行内删除"红光标 + hover"同口径——删除一律不把旧内容留在原位。 */
   #view-workspace .wf-blockmark-del{
@@ -2756,24 +2868,25 @@
     padding:5px 0;
     cursor:pointer;
   }
+  /* 与行内删除光标(.patch-del-cursor)同粗细同浓淡:竖条 2px、球 5px、alpha .55/.6,真正统一。 */
   #view-workspace .wf-blockmark-del-line{
     display:block;
     position:relative;
-    width:3px;
+    width:2px;
     height:18px;
     margin-left:2px;
     border-radius:999px;
-    background:rgba(220, 80, 70, 0.82);
+    background:rgba(220, 80, 70, 0.55);
   }
   #view-workspace .wf-blockmark-del-line::after{
     content:"";
     position:absolute;
     left:50%;
-    top:-5px;
-    width:7px;
-    height:7px;
+    top:-4px;
+    width:5px;
+    height:5px;
     border-radius:50%;
-    background:rgba(220, 80, 70, 0.88);
+    background:rgba(220, 80, 70, 0.6);
     transform:translateX(-50%);
   }
   /* 删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。 */
@@ -2796,18 +2909,18 @@
   #view-workspace .patch-del-cursor{
     display:inline-block;
     position:relative;
-    width:3px;height:1.05em;
+    width:2px;height:1.05em;
     vertical-align:text-bottom;
     margin:0 2px;
-    background:rgba(220, 80, 70, 0.82);
+    background:rgba(220, 80, 70, 0.55);
     border-radius:999px;
   }
   #view-workspace .patch-del-cursor::after{
     content:"";
-    position:absolute;left:50%;top:-5px;
-    width:7px;height:7px;
+    position:absolute;left:50%;top:-4px;
+    width:5px;height:5px;
     border-radius:50%;
-    background:rgba(220, 80, 70, 0.88);
+    background:rgba(220, 80, 70, 0.6);
     transform:translateX(-50%);
   }
 

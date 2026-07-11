@@ -191,14 +191,15 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
   });
 
-  it("把替换补丁构建为删除 inline 加红光标 widget 加新增 widget", () => {
+  it("把替换补丁构建为删除 inline 加新增 widget——替换处不叠加红删除光标球", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       suggestions: [suggestion("p-replace", 3, 5, "cd", "XY", "replace")],
       applied: [applied("p-replace", 3, "replace", "cd", "XY")],
     });
 
-    expect(decorations).toHaveLength(3);
+    // 替换 = 折叠原文 inline + 绿色新文本 widget,共 2 个 decoration;红球只归纯删除。
+    expect(decorations).toHaveLength(2);
     expect(decorations[0]?.from).toBe(3);
     expect(decorations[0]?.to).toBe(5);
     expect(className(decorations[0])).toContain("wf-patch-del");
@@ -209,16 +210,10 @@ describe("buildPatchDecorations", () => {
       "data-patch-id": "p-replace",
       patchKind: "replace",
     });
-    expect(widgetDom(decorations[1]).className).toContain("wf-patch-del-marker");
-    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
-    expect(decorations[2]?.from).toBe(3);
-    expect(decorations[2]?.to).toBe(3);
-    expect(spec(decorations[2])).toMatchObject({
-      "data-patch-id": "p-replace",
-      patchKind: "replace",
-    });
-    expect(widgetDom(decorations[2]).className).toContain("wf-patch-replace-wrap");
-    expect(widgetDom(decorations[2]).querySelector(".wf-patch-ins")).not.toBeNull();
+    expect(widgetDom(decorations[1]).className).toContain("wf-patch-replace-wrap");
+    expect(widgetDom(decorations[1]).querySelector(".wf-patch-ins")).not.toBeNull();
+    // 替换处无红删除光标球
+    expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).toBeNull();
   });
 
   it("把 markChange 构建为 wf-patch-mark inline decoration", () => {
@@ -237,6 +232,21 @@ describe("buildPatchDecorations", () => {
       "data-patch-index": 4,
       patchKind: "markAdd",
     });
+  });
+
+  it("markAdd 所见即所得:加粗补丁让被标记文字带 font-weight(不只标绿底)", () => {
+    const boldSuggestion = {
+      ...suggestion("p-bold", 2, 3, "强", "强", "addMark"),
+      diffHunk: { op: "markAdd", marks: [{ type: "bold" }] },
+    };
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      suggestions: [boldSuggestion as never],
+      applied: [applied("p-bold", 4, "markAdd", "强", "强")],
+    });
+    const mark = decorations.find((d) => className(d)?.includes("wf-patch-mark"));
+    expect(mark).toBeDefined();
+    expect(attrs(mark!).style).toContain("font-weight:700");
   });
 
   it("当前补丁追加 is-current class", () => {
@@ -299,7 +309,7 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).querySelector(".wf-blockmark-del-line")).not.toBeNull();
   });
 
-  it("把块级替换构建为删除旧块 node decoration 加新增块 widget", () => {
+  it("块级替换:隐藏旧块 node decoration + 新增块 widget,不出块级红删标记(替换走'新块+hover原文')", () => {
     const { decorations, dropped } = buildPatchDecorations({
       baselineDoc,
       blockPatches: [blockPatch("block-rep", "replace", { anchorBlockId: "p-1" })],
@@ -307,10 +317,40 @@ describe("buildPatchDecorations", () => {
     });
 
     expect(dropped).toEqual([]);
-    expect(decorations).toHaveLength(3);
+    // 替换只产出 2 个:隐藏旧块的 node decoration + 新块 widget(不再有第 3 个红删标记 widget)。
+    // 旧实现是 3 个(node + wf-blockmark-del 标记 + insert);现在标记只在纯删除时产出。
+    expect(decorations).toHaveLength(2);
     expect(className(decorations[0])).toContain("wf-blockmark delete");
-    expect(widgetDom(decorations[2]).className).toContain("wf-blockmark insert");
-    expect(widgetDom(decorations[2]).dataset.patchState).toBe("replace");
+    expect(widgetDom(decorations[1]).className).toContain("wf-blockmark insert");
+    expect(widgetDom(decorations[1]).dataset.patchState).toBe("replace");
+  });
+
+  it("多块替换拆成同 patchId 的 delete+insert 时,delete 半也不出块级红删标记(替换统一;codex 回归)", () => {
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [
+        blockPatch("multi-rep", "delete", { anchorBlockId: "p-1" }),
+        blockPatch("multi-rep", "insert", { anchorBlockId: "p-1", gravity: "after" }),
+      ],
+      applied: [applied("multi-rep", 5, "replace", "abcdef", "新增段落")],
+    });
+
+    // delete 半:仅隐藏旧块的 node decoration(无红删标记 widget);insert 半:新块 widget。
+    const isWidget = (d: unknown) => typeof (d as { type: { toDOM?: unknown } }).type.toDOM === "function";
+    const widgetClasses = decorations.filter(isWidget).map((d) => widgetDom(d).className);
+    expect(widgetClasses.some((c) => c.includes("wf-blockmark-del"))).toBe(false);
+    expect(widgetClasses.some((c) => c.includes("wf-blockmark insert"))).toBe(true);
+  });
+
+  it("孤立的块级纯删除(无同 id insert)仍出红删标记 widget", () => {
+    const { decorations } = buildPatchDecorations({
+      baselineDoc,
+      blockPatches: [blockPatch("pure-del", "delete", { anchorBlockId: "p-1" })],
+      applied: [applied("pure-del", 6, "delete", "abcdef", "")],
+    });
+    const isWidget = (d: unknown) => typeof (d as { type: { toDOM?: unknown } }).type.toDOM === "function";
+    const widgetClasses = decorations.filter(isWidget).map((d) => widgetDom(d).className);
+    expect(widgetClasses.some((c) => c.includes("wf-blockmark-del"))).toBe(true);
   });
 
   it("块级坏锚点进入 dropped 且不产出 decoration", () => {

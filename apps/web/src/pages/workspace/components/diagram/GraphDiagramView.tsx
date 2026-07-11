@@ -630,11 +630,16 @@ function GraphPreviewToolbar({
 function FitOnNodesInitialized({ maxZoom = 1 }: { maxZoom?: number }) {
   const initialized = useNodesInitialized();
   const { fitView } = useReactFlow();
+  // 容器尺寸(React Flow store 维护,内部 ResizeObserver):审阅态 decoration widget 初始以 0 尺寸
+  // 挂载,布局落地后才变 >0。以 width/height 为依赖在尺寸就绪后重新 fitView——否则 0 尺寸时 fit
+  // 一次就定死,图表被顶出视口渲染成空白(审阅态复现)。
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
   useEffect(() => {
-    if (!initialized) return;
+    if (!initialized || width === 0 || height === 0) return;
     const id = requestAnimationFrame(() => fitView({ padding: 0.15, maxZoom }));
     return () => cancelAnimationFrame(id);
-  }, [initialized, fitView, maxZoom]);
+  }, [initialized, fitView, maxZoom, width, height]);
   return null;
 }
 

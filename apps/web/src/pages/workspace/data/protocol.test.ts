@@ -4,6 +4,7 @@ import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/bridge/proposalDiff.js";
 import {
   derivePatchPresentation,
+  cloneListRowDiff,
   suggestionToBlockPatchInput,
   suggestionToBlockPatchInputs,
   pmDocToViewDocumentSnapshot,
@@ -12,6 +13,7 @@ import {
   type PatchOverlayInput,
   type ViewBlock,
   type ViewDocumentSnapshot,
+  type ViewListRowDiff,
 } from "./protocol";
 
 /** 构造若干段落的只读文档(每段一个 text span)。 */
@@ -128,6 +130,36 @@ function pmBulletList(blockId: string, itemBlockId: string, itemText: string): P
       content: [pmParagraph(`${itemBlockId}-p`, itemText)],
     }],
   };
+}
+
+function pmNestedListRows(
+  type: "bulletList" | "orderedList" | "taskList",
+  blockId: string,
+  rows: Array<{ text: string; checked?: boolean; children?: PmBlockNode[] }>,
+): PmBlockNode {
+  const content = rows.map((row, index) => ({
+    type: type === "taskList" ? "taskItem" as const : "listItem" as const,
+    attrs: {
+      blockId: `${blockId}-i${index}`,
+      ...(type === "taskList" ? { checked: row.checked ?? false } : {}),
+    },
+    content: [pmParagraph(`${blockId}-p${index}`, row.text), ...(row.children ?? [])],
+  }));
+  if (type === "taskList") {
+    return { type, attrs: { blockId }, content } as PmBlockNode;
+  }
+  return {
+    type,
+    attrs: { blockId, ...(type === "orderedList" ? { start: 1 } : {}) },
+    content,
+  } as PmBlockNode;
+}
+
+function flattenListRowStatuses(rows: readonly ViewListRowDiff[]): ViewListRowDiff["status"][] {
+  return rows.flatMap((row) => [
+    row.status,
+    ...(row.childLists ?? []).flatMap((child) => flattenListRowStatuses(child.rowDiff)),
+  ]);
 }
 
 function pmColumnList(blockId: string): PmBlockNode {
@@ -1001,7 +1033,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     return pmTableRows(blockId, [[cellText]]);
   }
 
-  function pmTableRows(blockId: string, rows: readonly string[][], options: { header?: boolean } = {}): PmBlockNode {
+  function pmTableRows(blockId: string, rows: readonly (readonly string[])[], options: { header?: boolean } = {}): PmBlockNode {
     return {
       type: "table",
       attrs: { blockId },
@@ -1057,6 +1089,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     } as never;
   }
 
+  function pmCalloutBlocks(blockId: string, blocks: readonly PmBlockNode[], tone: "warning" | "success" = "warning"): PmBlockNode {
+    return {
+      type: "callout",
+      attrs: { blockId, emoji: "!", tone },
+      content: blocks,
+    } as never;
+  }
+
   function pmColumnListBlocks(blockId: string, columns: readonly PmBlockNode[][]): PmBlockNode {
     return {
       type: "columnList",
@@ -1065,6 +1105,21 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
         type: "column",
         attrs: { blockId: `${blockId}-col-${index}`, widthRatio: index === 0 ? 0.45 : 0.55 },
         content,
+      })),
+    } as never;
+  }
+
+  function pmNamedColumnList(
+    blockId: string,
+    columns: ReadonlyArray<{ id: string; text: string; widthRatio: number }>,
+  ): PmBlockNode {
+    return {
+      type: "columnList",
+      attrs: { blockId },
+      content: columns.map((column) => ({
+        type: "column",
+        attrs: { blockId: column.id, widthRatio: column.widthRatio },
+        content: [pmParagraph(`${column.id}-p`, column.text)],
       })),
     } as never;
   }
@@ -1168,9 +1223,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-list", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-list", op: "replace", blockCount: 1 });
+    // granular:行级 diff → 装饰层抑制块级红删标记/绿竖线,避免"行级+块级"重复
+    expect(inputs[0]).toMatchObject({ patchId: "rep-list", op: "replace", blockCount: 1, granular: true });
     const list = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
     expect(list.kind).toBe("list");
+    // after 保真:携带原始 list PM node(行级渲染逐 item 走 PmBlockView,嵌套子项不丢)
+    expect(list.node?.type).toBe("bulletList");
+    // before 保真:携带原始 before PM node(hover 原文用)
+    expect(inputs[0]!.beforePmNodes?.[0]?.type).toBe("bulletList");
     expect(list.rowDiff?.map((row) => row.status)).toEqual([
       "same",
       "changed",
@@ -1196,6 +1256,77 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-list"]));
     assertInternallyConsistent(result);
   });
+
+  it("三级嵌套 bulletList 只改三个叶子行时递归标记叶子 changed,其余分支 same 且 granular", () => {
+    const branch = (id: string, title: string, leaves: string[]) => ({
+      text: title,
+      children: [pmNestedListRows("bulletList", `${id}-leaves`, leaves.map((text) => ({ text })))],
+    });
+    const before = pmNestedListRows("bulletList", "rain", [{
+      text: "雨的层次",
+      children: [pmNestedListRows("bulletList", "rain-phases", [
+        branch("before", "雨前：万物屏息", ["天色暗下来", "空气凝滞", "飞虫慌乱"]),
+        branch("during", "雨中：天地交响", ["瓦片利落干脆", "芭蕉厚重绵软", "青石板悠远绵长"]),
+        branch("after", "雨后：万象更新", ["凉风扑面", "星子初现", "水珠晶莹", "心境清朗澄明"]),
+      ])],
+    }]);
+    const after = pmNestedListRows("bulletList", "rain", [{
+      text: "雨的层次",
+      children: [pmNestedListRows("bulletList", "rain-phases", [
+        branch("before", "雨前：万物屏息", ["天色骤暗", "空气凝滞", "飞虫慌乱"]),
+        branch("during", "雨中：天地交响", ["瓦片清脆如玉", "芭蕉厚重绵软", "青石板悠远绵长"]),
+        branch("after", "雨后：万象更新", ["凉风扑面", "星子初现", "水珠晶莹", "心境澄明透亮"]),
+      ])],
+    }]);
+
+    const inputs = suggestionToBlockPatchInputs(
+      blockSuggestion("rep-rain", replaceHunk("rep-rain", "rain", before, after)),
+      0,
+    );
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ op: "replace", granular: true, blockCount: 1 });
+    const list = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" }>;
+    expect(list.rowDiff?.[0]?.status).toBe("same");
+    const statuses = flattenListRowStatuses(list.rowDiff ?? []);
+    expect(statuses.filter((status) => status === "changed")).toHaveLength(3);
+    expect(statuses.filter((status) => status === "same")).toHaveLength(11);
+    expect(statuses.filter((status) => status === "added" || status === "removed")).toHaveLength(0);
+
+    const phases = list.rowDiff?.[0]?.childLists?.[0]?.rowDiff;
+    expect(phases?.map((row) => row.status)).toEqual(["same", "same", "same"]);
+    expect(phases?.[0]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
+    expect(phases?.[1]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["changed", "same", "same"]);
+    expect(phases?.[2]?.childLists?.[0]?.rowDiff.map((row) => row.status)).toEqual(["same", "same", "same", "changed"]);
+  });
+
+  it.each(["bulletList", "orderedList", "taskList"] as const)(
+    "%s 的嵌套叶子变化都递归进入 rowDiff",
+    (type) => {
+      const before = pmNestedListRows(type, `nested-${type}`, [{
+        text: "父项",
+        children: [pmNestedListRows(type, `nested-${type}-child`, [
+          { text: "旧叶子", checked: false },
+          { text: "保留叶子", checked: false },
+        ])],
+      }]);
+      const after = pmNestedListRows(type, `nested-${type}`, [{
+        text: "父项",
+        children: [pmNestedListRows(type, `nested-${type}-child`, [
+          { text: "新叶子", checked: false },
+          { text: "保留叶子", checked: false },
+        ])],
+      }]);
+
+      const inputs = suggestionToBlockPatchInputs(
+        blockSuggestion(`rep-${type}`, replaceHunk(`rep-${type}`, `nested-${type}`, before, after)),
+        0,
+      );
+      const block = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "list" | "taskList" }>;
+      expect(inputs[0]!.granular).toBe(true);
+      expect(flattenListRowStatuses(block.rowDiff ?? [])).toEqual(["same", "changed", "same"]);
+    },
+  );
 
   it("同类型 taskList replace 识别 checkedChanged,且仍只计一个 patch", () => {
     const before = pmTaskListRows("tasks-1", [
@@ -1230,6 +1361,60 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]).toMatchObject({ id: "rep-task", kind: "replace" });
     expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-task"]));
     assertInternallyConsistent(result);
+  });
+
+  it("仅 marks/start 仍保留块级兜底,嵌套子列表变化则递归 granular", () => {
+    // 仅 marks 变化:文本不变、加粗。rowDiff 只比文本 → 全 same → 不该 granular(否则块级标记也被抑制、正文零可见)。
+    const markBefore = {
+      type: "bulletList",
+      attrs: { blockId: "lm" },
+      content: [{ type: "listItem", attrs: { blockId: "lm-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lm-p0" }, content: [{ type: "text", text: "要点" }] }] }],
+    } as unknown as PmBlockNode;
+    const markAfter = {
+      type: "bulletList",
+      attrs: { blockId: "lm" },
+      content: [{ type: "listItem", attrs: { blockId: "lm-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lm-p0" }, content: [{ type: "text", text: "要点", marks: [{ type: "bold" }] }] }] }],
+    } as unknown as PmBlockNode;
+    const marksInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-marks", replaceHunk("rep-marks", "lm", markBefore, markAfter)), 0);
+    expect(marksInputs).toHaveLength(1);
+    expect(marksInputs[0]!.op).toBe("replace");
+    expect(marksInputs[0]!.granular).toBeUndefined();
+
+    // 仅 orderedList.start 变化(1→3),文本不变 → 全 same → 不 granular。
+    const startBefore = {
+      type: "orderedList",
+      attrs: { blockId: "lo", start: 1 },
+      content: [{ type: "listItem", attrs: { blockId: "lo-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lo-p0" }, content: [{ type: "text", text: "第一" }] }] }],
+    } as unknown as PmBlockNode;
+    const startAfter = {
+      type: "orderedList",
+      attrs: { blockId: "lo", start: 3 },
+      content: [{ type: "listItem", attrs: { blockId: "lo-i0" }, content: [{ type: "paragraph", attrs: { blockId: "lo-p0" }, content: [{ type: "text", text: "第一" }] }] }],
+    } as unknown as PmBlockNode;
+    const startInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-start", replaceHunk("rep-start", "lo", startBefore, startAfter)), 0);
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0]!.op).toBe("replace");
+    expect(startInputs[0]!.granular).toBeUndefined();
+
+    // 仅嵌套子列表变化(顶层项文本不变)→ 递归 rowDiff 能看见子项 changed,应 granular。
+    const nest = (childText: string): PmBlockNode => ({
+      type: "bulletList",
+      attrs: { blockId: "ln" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "ln-i0" },
+        content: [
+          { type: "paragraph", attrs: { blockId: "ln-p0" }, content: [{ type: "text", text: "顶层项" }] },
+          { type: "bulletList", attrs: { blockId: "ln-sub" }, content: [
+            { type: "listItem", attrs: { blockId: "ln-sub-i0" }, content: [{ type: "paragraph", attrs: { blockId: "ln-sub-p0" }, content: [{ type: "text", text: childText }] }] },
+          ] },
+        ],
+      }],
+    } as unknown as PmBlockNode);
+    const nestInputs = suggestionToBlockPatchInputs(blockSuggestion("rep-nest", replaceHunk("rep-nest", "ln", nest("子项旧"), nest("子项新"))), 0);
+    expect(nestInputs).toHaveLength(1);
+    expect(nestInputs[0]!.op).toBe("replace");
+    expect(nestInputs[0]!.granular).toBe(true);
   });
 
   it("段落→表格的 replace 不走行内文本通道——否则表格被 insertText 拍平成一串绿字", () => {
@@ -1326,7 +1511,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     ]);
   });
 
-  it("同类型 table replace 只产出一个 replace patch,单元格级 cellDiff 覆盖 changed/removed/added", () => {
+  it("形状稳定的 table replace 只产出一个 replace patch,单元格级 cellDiff 覆盖 changed/removed/added", () => {
     const baseTable = pmTableRows("tbl-1", [
       ["指标", "Q1", "Q2"],
       ["用户数", "100", "200"],
@@ -1346,8 +1531,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
 
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ patchId: "rep-tbl", op: "replace", blockCount: 1 });
+    // 单元格/行级可见变化时 granular，装饰层不再叠整表绿竖线。
+    expect(inputs[0]!.granular).toBe(true);
     const table = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
     expect(table.kind).toBe("table");
+    // after 保真:携带原始 table PM node(审阅态替换走 PmBlockView,保全合并单元格/列宽/背景色/富文本)
+    expect(table.node?.type).toBe("table");
+    // before 保真:携带原始 before PM node(hover 原文用)
+    expect(inputs[0]!.beforePmNodes?.[0]?.type).toBe("table");
     expect(table.cellDiff?.map((row) => row.status)).toEqual([
       "same",
       "changed",
@@ -1368,6 +1559,11 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       text: "5",
       patchId: "rep-tbl",
     });
+    expect(changedCell?.status === "changed" ? changedCell.spans : []).toContainEqual({
+      kind: "patchDel",
+      text: "0",
+      patchId: "rep-tbl",
+    });
     expect(removedRow).toMatchObject({ status: "removed" });
     expect(tableRowPlainText(removedRow)).toBe("旧渠道\t10\t20");
     expect(addedRow).toMatchObject({ status: "added" });
@@ -1383,6 +1579,8 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     });
     expect(result.applied[0]!.before).toContain("旧渠道");
     expect(result.applied[0]!.after).toContain("新渠道");
+    // beforePmNodes 一路带到 applied → PatchMeta,hover 卡片据此渲原文真表格
+    expect(result.applied[0]!.beforePmNodes?.[0]?.type).toBe("table");
     expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-tbl"]));
     assertInternallyConsistent(result);
   });
@@ -1396,7 +1594,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-callout", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-callout", op: "replace", blockCount: 1 });
+    expect(inputs[0]).toMatchObject({ patchId: "rep-callout", op: "replace", blockCount: 1, granular: true });
     const callout = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "callout" }>;
     expect(callout.kind).toBe("callout");
     expect(callout.node.type).toBe("callout");
@@ -1455,14 +1653,14 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     const inputs = suggestionToBlockPatchInputs(blockSuggestion("rep-columns", hunk), 0);
 
     expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1 });
+    expect(inputs[0]).toMatchObject({ patchId: "rep-columns", op: "replace", blockCount: 1, granular: true });
     const columnList = inputs[0]!.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
     expect(columnList.kind).toBe("columnList");
     expect(columnList.node.type).toBe("columnList");
     expect(columnList.columnsDiff).toHaveLength(2);
-    expect(columnList.columnsDiff?.[0]?.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
+    expect(columnList.columnsDiff?.[0]?.bodyDiff.map((entry) => entry.status)).toEqual(["same", "changed", "removed", "added"]);
 
-    const textChanged = columnList.columnsDiff?.[0]?.[1];
+    const textChanged = columnList.columnsDiff?.[0]?.bodyDiff[1];
     expect(textChanged).toMatchObject({ status: "changed", kind: "text", oldText: "左栏旧文" });
     expect(textChanged?.status === "changed" && textChanged.kind === "text" ? textChanged.spans : []).toContainEqual({
       kind: "patchIns",
@@ -1470,7 +1668,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       patchId: "rep-columns",
     });
 
-    const listChanged = columnList.columnsDiff?.[1]?.[0];
+    const listChanged = columnList.columnsDiff?.[1]?.bodyDiff[0];
     expect(listChanged).toMatchObject({ status: "changed", kind: "list" });
     expect(listChanged?.status === "changed" && listChanged.kind === "list" ? listChanged.rowDiff.map((row) => row.status) : []).toEqual([
       "same",
@@ -1478,7 +1676,7 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
       "added",
     ]);
 
-    const tableChanged = columnList.columnsDiff?.[1]?.[1];
+    const tableChanged = columnList.columnsDiff?.[1]?.bodyDiff[1];
     expect(tableChanged).toMatchObject({ status: "changed", kind: "table" });
     expect(tableChanged?.status === "changed" && tableChanged.kind === "table" ? tableChanged.cellDiff.map((row) => row.status) : []).toEqual([
       "same",
@@ -1501,6 +1699,259 @@ describe("p03 回归:结构 replace hunk 的块级可视通道", () => {
     expect(result.applied[0]!.after).toContain("左栏新文");
     expect(new Set(result.applied.map((patch) => patch.id))).toEqual(new Set(["rep-columns"]));
     assertInternallyConsistent(result);
+  });
+
+  it("table/callout/columnList 的内部 diff 全 same 时不置 granular，保留块级可见兜底", () => {
+    const tableBefore = pmTableRows("same-table", [["同文"]]);
+    const tableAfter = {
+      ...tableBefore,
+      content: tableBefore.type === "table"
+        ? tableBefore.content.map((row) => ({
+            ...row,
+            content: row.content.map((cell) => ({ ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } })),
+          }))
+        : [],
+    } as PmBlockNode;
+    const calloutBefore = pmCalloutRows("same-callout", ["同文"]);
+    const calloutAfter = { ...calloutBefore, attrs: { ...calloutBefore.attrs, tone: "success" } } as PmBlockNode;
+    const columnsBefore = pmColumnListBlocks("same-columns", [[pmParagraph("same-p", "同文")]]);
+    const columnsAfter = {
+      ...columnsBefore,
+      content: columnsBefore.type === "columnList"
+        ? columnsBefore.content.map((column) => ({ ...column, attrs: { ...column.attrs, widthRatio: 1 } }))
+        : [],
+    } as PmBlockNode;
+
+    const cases = [
+      ["same-table", tableBefore, tableAfter],
+      ["same-callout", calloutBefore, calloutAfter],
+      ["same-columns", columnsBefore, columnsAfter],
+    ] as const;
+    for (const [id, before, after] of cases) {
+      const inputs = suggestionToBlockPatchInputs(blockSuggestion(id, replaceHunk(id, id, before, after)), 0);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]!.granular).toBeUndefined();
+    }
+  });
+
+  it("容器内容与外壳属性同时变化时，granular 与整块原文 hover 并存", () => {
+    const tableBefore = pmTableRows("attrs-table", [["旧文", "旁格"]]);
+    const tableAfter = {
+      ...pmTableRows("attrs-table", [["新文", "旁格"]]),
+      content: (pmTableRows("attrs-table", [["新文", "旁格"]]) as Extract<PmBlockNode, { type: "table" }>).content.map((row) => ({
+        ...row,
+        content: row.content.map((cell, index) => index === 1
+          ? { ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } }
+          : cell),
+      })),
+    } as PmBlockNode;
+    const calloutBefore = pmCalloutRows("attrs-callout", ["旧提示"]);
+    const calloutAfter = {
+      ...pmCalloutRows("attrs-callout", ["新提示"]),
+      attrs: { ...calloutBefore.attrs, tone: "success" },
+    } as PmBlockNode;
+    const columnsBefore = pmNamedColumnList("attrs-columns", [
+      { id: "attrs-left", text: "左栏旧文", widthRatio: 0.4 },
+      { id: "attrs-right", text: "右栏", widthRatio: 0.6 },
+    ]);
+    const columnsAfter = pmNamedColumnList("attrs-columns", [
+      { id: "attrs-left", text: "左栏新文", widthRatio: 0.3 },
+      { id: "attrs-right", text: "右栏", widthRatio: 0.7 },
+    ]);
+
+    for (const [id, before, after] of [
+      ["attrs-table", tableBefore, tableAfter],
+      ["attrs-callout", calloutBefore, calloutAfter],
+      ["attrs-columns", columnsBefore, columnsAfter],
+    ] as const) {
+      const input = suggestionToBlockPatchInputs(blockSuggestion(id, replaceHunk(id, id, before, after)), 0)[0]!;
+      expect(input.granular).toBe(true);
+      expect(input.granularBlockHover).toBe(true);
+      expect(input.beforePmNodes?.[0]).toBe(before);
+    }
+  });
+
+  it("columnList 删除第二栏时按 blockId 对齐，保留整栏 removed 与旧栏宽", () => {
+    const before = pmNamedColumnList("delete-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.25 },
+      { id: "col-b", text: "乙栏旧内容", widthRatio: 0.35 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const after = pmNamedColumnList("delete-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.25 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const input = suggestionToBlockPatchInputs(blockSuggestion("delete-column", replaceHunk("delete-column", "delete-column", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+
+    expect(block.columnsDiff?.map((column) => column.status)).toEqual(["same", "removed", "same"]);
+    expect(block.columnsDiff?.map((column) => [column.beforeColumnIndex, column.afterColumnIndex])).toEqual([
+      [0, 0], [1, undefined], [2, 1],
+    ]);
+    expect(block.columnsDiff?.[1]?.bodyDiff).toMatchObject([{ status: "removed", oldText: "乙栏旧内容" }]);
+    expect((before as Extract<PmBlockNode, { type: "columnList" }>).content[1]?.attrs.widthRatio).toBe(0.35);
+  });
+
+  it("columnList 中间插栏时后续栏不整体错位", () => {
+    const before = pmNamedColumnList("insert-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.4 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.6 },
+    ]);
+    const after = pmNamedColumnList("insert-column", [
+      { id: "col-a", text: "甲栏", widthRatio: 0.3 },
+      { id: "col-b", text: "新增乙栏", widthRatio: 0.3 },
+      { id: "col-c", text: "丙栏", widthRatio: 0.4 },
+    ]);
+    const input = suggestionToBlockPatchInputs(blockSuggestion("insert-column", replaceHunk("insert-column", "insert-column", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+
+    expect(block.columnsDiff?.map((column) => column.status)).toEqual(["same", "added", "same"]);
+    expect(block.columnsDiff?.map((column) => [column.beforeColumnIndex, column.afterColumnIndex])).toEqual([
+      [0, 0], [undefined, 1], [1, 2],
+    ]);
+    expect(block.columnsDiff?.[1]?.bodyDiff).toMatchObject([{ status: "added", block: { type: "paragraph" } }]);
+    expect(block.columnsDiff?.[2]?.bodyDiff[0]).toMatchObject({ status: "same", block: { attrs: { blockId: "col-c-p" } } });
+  });
+
+  it("table 合并关系变化时整表降级为块级 changed，避免物理 cell 下标错配", () => {
+    const before = pmTableRows("merge-table", [["表头", "次表头"], ["甲", "乙"]], { header: true });
+    const after = {
+      ...before,
+      content: before.type === "table"
+        ? [
+            {
+              ...before.content[0]!,
+              content: [{
+                ...before.content[0]!.content[0]!,
+                attrs: { ...before.content[0]!.content[0]!.attrs, colspan: 2, colwidth: [120, 180] },
+                content: [pmParagraph("merge-title", "合并新表头")],
+              }],
+            },
+            before.content[1]!,
+          ]
+        : [],
+    } as PmBlockNode;
+    const input = suggestionToBlockPatchInputs(blockSuggestion("merge-table", replaceHunk("merge-table", "merge-table", before, after)), 0)[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(input.granular).toBeUndefined();
+    expect(input.granularBlockHover).toBeUndefined();
+    expect(block.cellDiff).toBeUndefined();
+    expect(input.beforePmNodes?.[0]).toBe(before);
+  });
+
+  it.each([
+    ["加行", [["甲", "乙"], ["新增甲", "新增乙"]]],
+    ["删行", []],
+    ["加列", [["甲", "乙", "新增列"]]],
+    ["删列", [["甲"]]],
+  ] as const)("table %s 时整表降级，不产 cellDiff 或 granular", (_label, afterRows) => {
+    const before = pmTableRows("shape-table", [["甲", "乙"]]);
+    const coloredBefore = {
+      ...before,
+      content: before.type === "table"
+        ? before.content.map((row) => ({
+            ...row,
+            content: row.content.map((cell, index) => index === 0
+              ? { ...cell, attrs: { ...cell.attrs, backgroundColor: "#fff3a3" } }
+              : cell),
+          }))
+        : [],
+    } as PmBlockNode;
+    const after = pmTableRows("shape-table", afterRows);
+
+    const input = suggestionToBlockPatchInputs(
+      blockSuggestion("shape-table", replaceHunk("shape-table", "shape-table", coloredBefore, after)),
+      0,
+    )[0]!;
+    const block = input.blocks[0] as Extract<ViewBlock, { kind: "table" }>;
+
+    expect(input).toMatchObject({ op: "replace", blockCount: 1 });
+    expect(input.granular).toBeUndefined();
+    expect(input.granularBlockHover).toBeUndefined();
+    expect(block.cellDiff).toBeUndefined();
+    expect(block.node).toBe(after);
+    expect(input.beforePmNodes?.[0]).toBe(coloredBefore);
+    const oldCell = input.beforePmNodes?.[0]?.type === "table" ? input.beforePmNodes[0].content[0]?.content[0] : undefined;
+    expect(oldCell?.attrs?.backgroundColor).toBe("#fff3a3");
+  });
+
+  it("callout/columnList 内嵌表格形状变化递归降级为块级 changed，外壳旧属性仍可见", () => {
+    const beforeTable = pmTableRows("nested-table", [["甲", "乙"]]);
+    const afterTable = pmTableRows("nested-table", [["甲", "乙"], ["新增甲", "新增乙"]]);
+    const beforeCallout = pmCalloutBlocks("nested-callout", [beforeTable], "warning");
+    const afterCallout = pmCalloutBlocks("nested-callout", [afterTable], "success");
+    const calloutInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "nested-callout",
+      replaceHunk("nested-callout", "nested-callout", beforeCallout, afterCallout),
+    ), 0)[0]!;
+    const callout = calloutInput.blocks[0] as Extract<ViewBlock, { kind: "callout" }>;
+
+    expect(calloutInput).toMatchObject({ granular: true, granularBlockHover: true });
+    expect(callout.bodyDiff).toMatchObject([{ status: "changed", kind: "block", node: { type: "table" } }]);
+    expect("cellDiff" in (callout.bodyDiff?.[0] ?? {})).toBe(false);
+    expect(calloutInput.beforePmNodes?.[0]).toBe(beforeCallout);
+    expect(calloutInput.beforePmNodes?.[0]?.type === "callout"
+      ? calloutInput.beforePmNodes[0].attrs.tone
+      : undefined).toBe("warning");
+
+    const beforeColumns = pmColumnListBlocks("nested-columns", [
+      [beforeTable],
+      [pmParagraph("nested-right", "右栏")],
+    ]);
+    const afterColumnsBase = pmColumnListBlocks("nested-columns", [
+      [afterTable],
+      [pmParagraph("nested-right", "右栏")],
+    ]);
+    const afterColumns = {
+      ...afterColumnsBase,
+      content: afterColumnsBase.type === "columnList"
+        ? afterColumnsBase.content.map((column, index) => ({
+            ...column,
+            attrs: { ...column.attrs, widthRatio: index === 0 ? 0.35 : 0.65 },
+          }))
+        : [],
+    } as PmBlockNode;
+    const columnsInput = suggestionToBlockPatchInputs(blockSuggestion(
+      "nested-columns",
+      replaceHunk("nested-columns", "nested-columns", beforeColumns, afterColumns),
+    ), 0)[0]!;
+    const columns = columnsInput.blocks[0] as Extract<ViewBlock, { kind: "columnList" }>;
+    const nestedTableDiff = columns.columnsDiff?.[0]?.bodyDiff[0];
+
+    expect(columnsInput).toMatchObject({ granular: true, granularBlockHover: true });
+    expect(nestedTableDiff).toMatchObject({ status: "changed", kind: "block", node: { type: "table" } });
+    expect("cellDiff" in (nestedTableDiff ?? {})).toBe(false);
+    expect(columnsInput.beforePmNodes?.[0]).toBe(beforeColumns);
+    expect(columnsInput.beforePmNodes?.[0]?.type === "columnList"
+      ? columnsInput.beforePmNodes[0].content[0]?.attrs.widthRatio
+      : undefined).toBe(0.45);
+  });
+
+  it("cloneListRowDiff 递归克隆 childLists，且深层 spans 不与原对象共享", () => {
+    const source: ViewListRowDiff[] = [{
+      status: "same",
+      spans: [{ kind: "text", text: "父项" }],
+      childLists: [{
+        beforeListIndex: 0,
+        afterListIndex: 0,
+        rowDiff: [{
+          status: "changed",
+          oldText: "旧叶子",
+          spans: [{ kind: "patchIns", text: "新叶子", patchId: "clone-nested" }],
+        }],
+      }],
+    }];
+
+    const cloned = cloneListRowDiff(source);
+    expect(cloned).toEqual(source);
+    expect(cloned).not.toBe(source);
+    expect(cloned[0]!.childLists).not.toBe(source[0]!.childLists);
+    expect(cloned[0]!.childLists?.[0]!.rowDiff).not.toBe(source[0]!.childLists?.[0]!.rowDiff);
+    const clonedLeaf = cloned[0]!.childLists?.[0]!.rowDiff[0];
+    const sourceLeaf = source[0]!.childLists?.[0]!.rowDiff[0];
+    expect(clonedLeaf && "spans" in clonedLeaf ? clonedLeaf.spans : undefined)
+      .not.toBe(sourceLeaf && "spans" in sourceLeaf ? sourceLeaf.spans : undefined);
   });
 
   it("insert/delete 经复数版仍为单条,行为与单数版一致", () => {

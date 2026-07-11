@@ -7,8 +7,21 @@ import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
 import { createNativeCursorWidget } from "./nativePresentationPm";
 import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";
-import type { AppliedPatch, BlockPatchInput, PatchOverlayInput } from "./protocol";
-import type { PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
+import type { AppliedPatch, BlockPatchInput, PatchOverlayInput, ViewBlock } from "./protocol";
+import type { PmBlockNode, PmDoc, PmMark, PmNode } from "@qingagent/pm-schema";
+import type { Root } from "react-dom/client";
+import { TOOLBAR_HIGHLIGHT_COLORS, TOOLBAR_TEXT_COLORS } from "./toolbarUnlock";
+
+/** 审阅态块级新增补丁的 React 渲染注入(由 dom 环境的 DocumentSnapshotView 提供;
+ *  node 单元测试不注入时 renderBlockInsertDOM 走 innerHTML 降级,零 React/katex 依赖)。 */
+export type MountBlockView = (
+  container: HTMLElement,
+  blocks: readonly ViewBlock[],
+  pmNodes?: readonly PmBlockNode[],
+  beforePmNodes?: readonly PmBlockNode[],
+  patchIndex?: number,
+  suppressLocalPopup?: boolean,
+) => Root;
 
 type PatchDecorationMeta =
   | { kind: "set"; decorations: Decoration[] }
@@ -46,6 +59,7 @@ export type BuildPatchDecorationsArgs = {
   revealedPatchIds?: ReadonlySet<string> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
+  mountBlockView?: MountBlockView;
 };
 
 export const patchDecorationKey = new PluginKey<DecorationSet>(
@@ -156,7 +170,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             "data-patch-id": source.id,
             "data-patch-index": String(index),
             "data-patch-state": "format",
-            ...markDecorationStyle(kind, args.activePatchId === source.id),
+            ...markDecorationStyle(kind, args.activePatchId === source.id, source.marks),
           },
           spec,
         ),
@@ -182,17 +196,25 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           spec,
         ),
       );
-      decorations.push(
-        Decoration.widget(
-          from!,
-          () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
-          {
-            ...spec,
-            side: 1,
-            ignoreSelection: true,
-          },
-        ),
-      );
+      // 替换处已有绿色新文本块作为唯一改动标记,不再叠加红色删除光标球——
+      // 否则"删除标记 + 替换标记"两个视觉指向同一处(原文可在 hover 卡查看);
+      // 仅纯删除(无新增块)保留红球标示删除点。
+      if (kind === "delete") {
+        decorations.push(
+          Decoration.widget(
+            from!,
+            () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
+            {
+              ...spec,
+              // 稳定 key(含 current/accepted 状态):切换 activePatchId 时 ProseMirror 靠 key
+              // 复用未变 widget,只重建高亮状态真正变化的一两处,避免全量重挂导致满屏闪烁。
+              key: `pdel-${source.id}-${index}-${currentClass}-${statusClass}`,
+              side: 1,
+              ignoreSelection: true,
+            },
+          ),
+        );
+      }
     }
 
     if (kind === "insert" || kind === "replace") {
@@ -215,6 +237,9 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             },
             {
               ...spec,
+              // key 含已打字长度:流式打字时随字数增长自然重建更新,切换 activePatchId 时
+              // 字数不变则复用不重挂(只 current/accepted 变化的重建)。
+              key: `pins-${source.id}-${index}-${insertedText.length}-${currentClass}-${statusClass}`,
               side: 1,
               ignoreSelection: true,
             },
@@ -232,6 +257,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
             () => createNativeCursorWidget({ tone: "blue", label: `Agent·${lane}` }),
             {
               ...spec,
+              key: `pcur-${source.id}-${lane}`,
               side: 2,
               ignoreSelection: true,
             },
@@ -240,6 +266,14 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       }
     }
   }
+
+  // 同一 patchId 若另有 insert/replace 输入,则其 delete 输入是"替换的旧半"(多块 replace 会拆成
+   // delete+insert 两条),不画块级红删标记——替换一律"显新块 + hover 原文"。只有真正孤立的纯删除才画。
+  const patchIdsWithInsert = new Set(
+    (args.blockPatches ?? [])
+      .filter((p) => p.op === "insert" || p.op === "replace")
+      .map((p) => p.patchId),
+  );
 
   for (const input of args.blockPatches ?? []) {
     if (rejectedIds.has(input.patchId)) continue;
@@ -256,6 +290,10 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       continue;
     }
 
+    // granular diff 的替换(列表行/表格格与行/callout 和分栏内部块):正文已在容器内部标注增删,
+    // insert widget 加 is-granular 去掉整块绿竖线(否则"既有行级又有块级"重复)。
+    const granular = input.op === "replace" && input.granular === true;
+
     if (input.op === "delete" || input.op === "replace") {
       const count = Math.max(1, input.blockCount ?? input.replaceBeforeBlocks?.length ?? input.blocks.length);
       const toRange = blockRanges[range.index + count - 1];
@@ -263,6 +301,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         dropped.push(input.patchId);
         continue;
       }
+      // 隐藏被替换/删除的旧块(delete/replace 都隐藏原位;replace 的原文经 hover 卡看)。
       decorations.push(
         Decoration.node(
           range.from,
@@ -276,17 +315,22 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           spec,
         ),
       );
-      decorations.push(
-        Decoration.widget(
-          range.from,
-          () => renderBlockDeleteMarkerDOM(input.patchId, index, currentClass, statusClass),
-          {
-            ...spec,
-            side: -1,
-            ignoreSelection: true,
-          },
-        ),
-      );
+      // 块级红删标记(红竖线+球):**只在真正孤立的纯删除时画**。替换走"显示新块 + hover 看原文",
+      // 不再另出红删标记——含多块 replace 拆成的 delete 半(其 patchId 另有 insert)也不画,口径统一。
+      if (input.op === "delete" && !patchIdsWithInsert.has(input.patchId)) {
+        decorations.push(
+          Decoration.widget(
+            range.from,
+            () => renderBlockDeleteMarkerDOM(input.patchId, index, currentClass, statusClass),
+            {
+              ...spec,
+              key: `bdel-${input.patchId}-${index}-${currentClass}-${statusClass}`,
+              side: -1,
+              ignoreSelection: true,
+            },
+          ),
+        );
+      }
     }
 
     if (input.op === "insert" || input.op === "replace") {
@@ -294,14 +338,19 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         dropped.push(input.patchId);
         continue;
       }
+      const granularClass = granular
+        ? ` is-granular${input.granularBlockHover ? " has-block-original-hover" : ""}`
+        : "";
       decorations.push(
         Decoration.widget(
           input.op === "insert" ? range.boundary : range.to,
-          () => renderBlockInsertDOM(input, index, currentClass, statusClass),
+          () => renderBlockInsertDOM(input, index, currentClass + granularClass, statusClass, args.mountBlockView),
           {
             ...spec,
+            key: `bins-${input.patchId}-${index}-${currentClass}${granularClass}-${statusClass}`,
             side: 1,
             ignoreSelection: true,
+            destroy: unmountBlockView,
           },
         ),
       );
@@ -366,6 +415,7 @@ function renderBlockInsertDOM(
   index: number,
   currentClass: string,
   statusClass: string,
+  mountBlockView?: MountBlockView,
 ): HTMLElement {
   const outer = document.createElement("div");
   outer.className = `wf-blockmark insert${currentClass}${statusClass}`;
@@ -375,9 +425,28 @@ function renderBlockInsertDOM(
   outer.style.display = "block";
   const inner = document.createElement("div");
   inner.className = "wf-patch-ins";
-  inner.innerHTML = viewSectionsToHtml(input.blocks);
   outer.appendChild(inner);
+  if (mountBlockView) {
+    // 用与基座正文相同的 PmBlockView 渲染:图表/公式/callout 等运行时节点所见即所得。
+    (outer as unknown as { __pmRoot?: Root }).__pmRoot = mountBlockView(
+      inner,
+      input.blocks,
+      input.pmNodes,
+      input.beforePmNodes,
+      index,
+      input.granularBlockHover === true,
+    );
+  } else {
+    // 降级(node 单元测试等无 React 注入时):静态 HTML,图表/公式退化但结构完整。
+    inner.innerHTML = viewSectionsToHtml(input.blocks);
+  }
   return outer;
+}
+
+/** widget 卸载时 unmount React root。延后一拍避免在 ProseMirror update 同步栈里 unmount 的告警。 */
+function unmountBlockView(node: Node): void {
+  const root = (node as unknown as { __pmRoot?: Root }).__pmRoot;
+  if (root) queueMicrotask(() => root.unmount());
 }
 
 function sanitizePatchDecorations(
@@ -434,8 +503,11 @@ function canCreateDecorationSet(
 function collectSources(args: BuildPatchDecorationsArgs): PatchDecorationSource[] {
   const sources: PatchDecorationSource[] = [];
   const seen = new Set<string>();
+  // 已走块级 patch(表格/图表/列表等结构块)的 id:这些 suggestion 的 preview.insertText 是把整块
+  // 拍平成的纯文本,绝不能再当 inline 文本 source 渲染,否则会在结构块之外重复上屏一行绿字源码。
+  const blockPatchIds = new Set((args.blockPatches ?? []).map((input) => input.patchId));
   for (const suggestion of args.suggestions ?? []) {
-    if (seen.has(suggestion.id)) continue;
+    if (seen.has(suggestion.id) || blockPatchIds.has(suggestion.id)) continue;
     seen.add(suggestion.id);
     sources.push({
       id: suggestion.id,
@@ -450,7 +522,7 @@ function collectSources(args: BuildPatchDecorationsArgs): PatchDecorationSource[
 
   const blockRanges = lazyTopLevelTextRanges(args.baselineDoc);
   for (const overlay of args.overlayInputs ?? []) {
-    if (seen.has(overlay.id)) continue;
+    if (seen.has(overlay.id) || blockPatchIds.has(overlay.id)) continue;
     seen.add(overlay.id);
     const range = resolveOverlayPmRange(overlay, blockRanges);
     sources.push({
@@ -505,23 +577,42 @@ function patchSpec(
 function markDecorationStyle(
   kind: "markAdd" | "markRemove",
   isActive: boolean,
+  marks?: readonly PmMark[],
 ): { style: string } {
-  if (kind === "markAdd") {
-    return {
-      style: [
-        `background:linear-gradient(to bottom, transparent 46%, rgba(232, 145, 58, ${isActive ? "0.42" : "0.28"}) 46%)`,
-        "box-shadow:inset 0 -1px rgba(232, 145, 58, 0.34)",
-      ].join(";"),
-    };
+  const styles: string[] =
+    kind === "markAdd"
+      ? [
+          `background:linear-gradient(to bottom, transparent 46%, rgba(74, 180, 100, ${isActive ? "0.42" : "0.28"}) 46%)`,
+          "box-shadow:inset 0 -1px rgba(74, 180, 100, 0.34)",
+        ]
+      : [
+          "background:linear-gradient(to bottom, transparent 46%, rgba(87, 121, 155, 0.22) 46%)",
+          "box-shadow:inset 0 -1px rgba(87, 121, 155, 0.34)",
+          "text-decoration:line-through",
+          "text-decoration-color:rgba(87, 121, 155, 0.65)",
+        ];
+  // 所见即所得:markAdd 让被标记的字真实呈现「将获得的格式」(加粗/斜体/下划线/行内代码),
+  // 而不只是标个绿色底纹。markRemove 保留删除线不叠加格式。
+  if (kind === "markAdd" && marks) {
+    for (const mark of marks) {
+      if (mark.type === "bold") styles.push("font-weight:700");
+      else if (mark.type === "italic") styles.push("font-style:italic");
+      else if (mark.type === "underline") styles.push("text-decoration:underline");
+      else if (mark.type === "strike") styles.push("text-decoration:line-through");
+      else if (mark.type === "code") styles.push("font-family:var(--font-mono)");
+      else if (mark.type === "link") styles.push("text-decoration:underline");
+      // textColor/highlight 的 attrs.color 是主题 key(如 "yellow"),需经主题表解析成真 css 色,
+      // 直接用会失真(命中的只是 CSS 命名色)。命中表才加,未知 key 退回只留绿底纹。
+      else if (mark.type === "textColor") {
+        const c = TOOLBAR_TEXT_COLORS[mark.attrs.color as keyof typeof TOOLBAR_TEXT_COLORS];
+        if (c) styles.push(`color:${c}`);
+      } else if (mark.type === "highlight") {
+        const c = TOOLBAR_HIGHLIGHT_COLORS[mark.attrs.color as keyof typeof TOOLBAR_HIGHLIGHT_COLORS];
+        if (c) styles.push(`background-color:${c}`);
+      }
+    }
   }
-  return {
-    style: [
-      "background:linear-gradient(to bottom, transparent 46%, rgba(87, 121, 155, 0.22) 46%)",
-      "box-shadow:inset 0 -1px rgba(87, 121, 155, 0.34)",
-      "text-decoration:line-through",
-      "text-decoration-color:rgba(87, 121, 155, 0.65)",
-    ].join(";"),
-  };
+  return { style: styles.join(";") };
 }
 
 function validAnchor(

@@ -1,4 +1,4 @@
-import type { ViewBlock, ViewBlockSeqDiff, ViewDocSpan, ViewListRowDiff, ViewTableRowDiff } from "./protocol";
+import type { ViewBlock, ViewBlockSeqDiff, ViewColumnDiff, ViewDocSpan, ViewListRowDiff, ViewTableRowDiff } from "./protocol";
 
 export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
   return sections.map((section) => {
@@ -24,15 +24,9 @@ export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
           ordered: section.ordered,
           ...(section.start != null ? { start: section.start } : {}),
           items: section.items.slice(),
+          ...(section.node ? { node: section.node } : {}),
           ...(section.itemSpans ? { itemSpans: section.itemSpans.map((spans) => spans.map((span) => ({ ...span }))) } : {}),
-          ...(section.rowDiff
-            ? {
-                rowDiff: section.rowDiff.map((row) => ({
-                  ...row,
-                  ...("spans" in row ? { spans: row.spans.map((span) => ({ ...span })) } : {}),
-                })),
-              }
-            : {}),
+          ...(section.rowDiff ? { rowDiff: cloneViewListRowDiff(section.rowDiff) } : {}),
         };
       case "hr":
         return { ...meta, kind: "hr" };
@@ -42,6 +36,7 @@ export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
           kind: "table",
           head: section.head.slice(),
           rows: section.rows.map((row) => row.slice()),
+          ...(section.node ? { node: section.node } : {}),
           ...(section.headSpans ? { headSpans: section.headSpans.map((spans) => spans.map((span) => ({ ...span }))) } : {}),
           ...(section.rowSpans
             ? {
@@ -94,14 +89,7 @@ export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
           kind: "taskList",
           node: section.node,
           text: section.text,
-          ...(section.rowDiff
-            ? {
-                rowDiff: section.rowDiff.map((row) => ({
-                  ...row,
-                  ...("spans" in row ? { spans: row.spans.map((span) => ({ ...span })) } : {}),
-                })),
-              }
-            : {}),
+          ...(section.rowDiff ? { rowDiff: cloneViewListRowDiff(section.rowDiff) } : {}),
         };
       case "callout":
         return {
@@ -117,7 +105,7 @@ export function cloneViewSections(sections: readonly ViewBlock[]): ViewBlock[] {
           kind: "columnList",
           node: section.node,
           text: section.text,
-          ...(section.columnsDiff ? { columnsDiff: section.columnsDiff.map(cloneViewBlockSeqDiff) } : {}),
+          ...(section.columnsDiff ? { columnsDiff: section.columnsDiff.map(cloneViewColumnDiff) } : {}),
         };
       case "math":
         return { ...meta, kind: "math", node: section.node, latex: section.latex };
@@ -155,6 +143,17 @@ function cloneJson<T>(value: T): T {
 }
 
 function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowDiff[] {
+  const cloneChildLists = (row: ViewListRowDiff) => (
+    row.childLists
+      ? {
+          childLists: row.childLists.map((child) => ({
+            ...(child.beforeListIndex !== undefined ? { beforeListIndex: child.beforeListIndex } : {}),
+            ...(child.afterListIndex !== undefined ? { afterListIndex: child.afterListIndex } : {}),
+            rowDiff: cloneViewListRowDiff(child.rowDiff),
+          })),
+        }
+      : {}
+  );
   return rowDiff.map((row): ViewListRowDiff => {
     switch (row.status) {
       case "same":
@@ -162,6 +161,7 @@ function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowD
           status: "same",
           spans: cloneViewSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
       case "changed":
         return {
@@ -170,18 +170,21 @@ function cloneViewListRowDiff(rowDiff: readonly ViewListRowDiff[]): ViewListRowD
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
           ...(row.checkedChanged ? { checkedChanged: true } : {}),
+          ...cloneChildLists(row),
         };
       case "added":
         return {
           status: "added",
           spans: cloneViewSpans(row.spans),
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
       case "removed":
         return {
           status: "removed",
           oldText: row.oldText,
           ...(typeof row.checked === "boolean" ? { checked: row.checked } : {}),
+          ...cloneChildLists(row),
         };
     }
   });
@@ -208,6 +211,13 @@ function cloneViewBlockSeqDiff(seqDiff: readonly ViewBlockSeqDiff[number][]): Vi
       case "removed":
         return { status: "removed", oldText: entry.oldText };
       case "changed":
+        if (entry.kind === "block") {
+          return {
+            status: "changed",
+            kind: "block",
+            node: entry.node,
+          };
+        }
         if (entry.kind === "text") {
           return {
             status: "changed",
@@ -233,4 +243,13 @@ function cloneViewBlockSeqDiff(seqDiff: readonly ViewBlockSeqDiff[number][]): Vi
         };
     }
   });
+}
+
+function cloneViewColumnDiff(columnDiff: ViewColumnDiff): ViewColumnDiff {
+  return {
+    status: columnDiff.status,
+    ...(columnDiff.beforeColumnIndex !== undefined ? { beforeColumnIndex: columnDiff.beforeColumnIndex } : {}),
+    ...(columnDiff.afterColumnIndex !== undefined ? { afterColumnIndex: columnDiff.afterColumnIndex } : {}),
+    bodyDiff: cloneViewBlockSeqDiff(columnDiff.bodyDiff),
+  };
 }

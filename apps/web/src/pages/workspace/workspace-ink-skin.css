@@ -657,12 +657,14 @@
 #view-workspace .patch-nav .wdr-thumb {
   background: #b59a63 !important;
 }
-/* 整篇审条统一用产品衬线字体(与正文/品牌一致),比默认无衬线更稳重 */
-#view-workspace .patch-nav.wdr-nav,
-#view-workspace .patch-nav.wdr-nav .pn-label,
-#view-workspace .patch-nav.wdr-nav .pn-commit,
-#view-workspace .patch-nav.wdr-nav .pn-ghost,
-#view-workspace .patch-nav.wdr-nav .wdr-opt {
+/* 审阅条(逐处审 + 整篇审)统一用产品衬线字体(与正文/品牌一致),比默认无衬线更稳重。
+   <button> 默认不继承 font-family(UA 强制无衬线),故对导航/提交/放弃各钮显式指定。 */
+#view-workspace .patch-nav,
+#view-workspace .patch-nav .pn-label,
+#view-workspace .patch-nav .pn-jump,
+#view-workspace .patch-nav .pn-commit,
+#view-workspace .patch-nav .pn-ghost,
+#view-workspace .patch-nav .wdr-opt {
   font-family: var(--font-zh-serif);
   letter-spacing: 0.02em;
 }

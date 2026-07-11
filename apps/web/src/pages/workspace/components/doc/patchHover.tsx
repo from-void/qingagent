@@ -242,20 +242,24 @@ export function PatchStatePopup({
   state,
   index,
   original,
+  originalIsBlock,
   patchId,
   onPatchVerdict,
 }: {
   state: PatchReviewState;
   index?: number;
   original?: React.ReactNode;
+  /** original 是块级内容(如 ReviewBlocksStatic 渲的 <div>/表格),走块布局避免 <span> 套块的非法嵌套。 */
+  originalIsBlock?: boolean;
   patchId: string;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
 }) {
   const label = state === "replace" ? "替换" : state === "insert" ? "新增" : "删减";
   const blockOriginal =
-    React.isValidElement(original) &&
-    typeof original.type === "string" &&
-    (original.type === "div" || original.type === "table" || original.type === "figure");
+    originalIsBlock === true ||
+    (React.isValidElement(original) &&
+      typeof original.type === "string" &&
+      (original.type === "div" || original.type === "table" || original.type === "figure"));
   const originalNode = blockOriginal ? (
     <div className="patch-popup-original">
       <span className="patch-popup-label">原文</span>

@@ -36,7 +36,7 @@ function readNonEmptyBlockId(attrs: unknown): string | null {
   return typeof blockId === "string" && blockId.length > 0 ? blockId : null;
 }
 
-function viewSectionToLegacy(section: ViewBlock) {
+export function viewSectionToLegacy(section: ViewBlock) {
   switch (section.kind) {
     case "h1":
       return { kind: "h1", data: { text: section.spans?.map(spanToTextRaw).join("") ?? section.text } };

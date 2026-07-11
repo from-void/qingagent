@@ -323,6 +323,7 @@ export function buildPatchMeta(applied: readonly AppliedPatch[]): Map<string, Pa
       kind: patch.kind,
       ...(patch.marks ? { marks: patch.marks } : {}),
       ...(patch.label ? { label: patch.label } : {}),
+      ...(patch.beforePmNodes && patch.beforePmNodes.length > 0 ? { beforePmNodes: patch.beforePmNodes } : {}),
       changes: hasContent && hasMark && groupChanges.length > 1
         ? groupChanges
         : ownChange

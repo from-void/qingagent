@@ -35,6 +35,66 @@ afterEach(() => {
 });
 
 describe("审阅态 PM patch decorations", () => {
+  it("含重复 blockId 的存量文档在 pendingReview 延后自愈，锚点可渲染且退出审阅后修复", async () => {
+    const baselineDoc = reviewDocWithDuplicateDescendants();
+    const suggestion = docSuggestion("patch-duplicate-review", 2, 4, "bc", "XY");
+    const applied = appliedPatch("patch-duplicate-review", 1, "replace", "bc", "XY");
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    let editor: Editor | null = null;
+
+    const render = (pendingReview: boolean) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)}
+            docId="session-review-duplicate"
+            editable
+            interactiveEditable={!pendingReview}
+            deferBlockIdNormalization={pendingReview}
+            showPatches={pendingReview}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            reviewSuggestions={pendingReview ? [suggestion] : []}
+            reviewAppliedPatches={pendingReview ? [applied] : []}
+            patchMeta={pendingReview ? new Map([
+              ["patch-duplicate-review", { before: "bc", after: "XY", kind: "replace", index: 1 }],
+            ]) : new Map()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+
+    render(true);
+    await flush();
+
+    expect(editor).not.toBeNull();
+    expect(collectAllBlockIds(editor!.getJSON())).toEqual([
+      "p-1",
+      "quote-1",
+      "nested-dup",
+      "nested-dup",
+      "tail-review",
+    ]);
+    expect(onEditorChange).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-patch-id="patch-duplicate-review"]')).not.toBeNull();
+
+    render(false);
+    await flush();
+
+    expect(collectAllBlockIds(editor!.getJSON())).toEqual([
+      "p-1",
+      "quote-1",
+      "nested-dup",
+      "nested-dup~1",
+      "tail-review",
+    ]);
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+  });
+
   it("只读 PM 上屏补丁 decoration 时不改 editor.state.doc", async () => {
     const baselineDoc = paragraphDoc("abcdef");
     const suggestion = docSuggestion("patch-1", 2, 4, "bc", "XY");
@@ -1359,6 +1419,54 @@ function paragraphDoc(text: string): PmDoc {
       },
     ],
   } as PmDoc;
+}
+
+function reviewDocWithDuplicateDescendants(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "paragraph",
+        attrs: { blockId: "p-1" },
+        content: [{ type: "text", text: "abcdef" }],
+      },
+      {
+        type: "blockquote",
+        attrs: { blockId: "quote-1" },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "nested-dup" },
+            content: [{ type: "text", text: "第一段" }],
+          },
+          {
+            type: "paragraph",
+            attrs: { blockId: "nested-dup" },
+            content: [{ type: "text", text: "第二段" }],
+          },
+        ],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "tail-review" },
+        content: [{ type: "text", text: "尾段" }],
+      },
+    ],
+  } as PmDoc;
+}
+
+function collectAllBlockIds(doc: unknown): string[] {
+  const blockIds: string[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const record = node as { attrs?: { blockId?: unknown }; content?: unknown };
+    if (typeof record.attrs?.blockId === "string") blockIds.push(record.attrs.blockId);
+    if (!Array.isArray(record.content)) return;
+    for (const child of record.content) visit(child);
+  };
+  visit(doc);
+  return blockIds;
 }
 
 function twoParagraphDoc(): PmDoc {

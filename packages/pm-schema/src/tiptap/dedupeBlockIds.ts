@@ -22,10 +22,14 @@ export const DedupeBlockIds = Extension.create({
   name: "qingagentDedupeBlockIds",
 
   addProseMirrorPlugins() {
+    const editor = this.editor;
     return [
       new Plugin({
         key: dedupeBlockIdsPluginKey,
         appendTransaction(transactions, _oldState, newState) {
+          // 审阅/揭示等只读态的 PM position 与 blockId 都是锚点；只读初始化事务不改正文，
+          // 回到可编辑态后由前端先做一次存量自愈，此插件继续承接后续本地事务。
+          if (!editor.isEditable) return null;
           const docChanged = transactions.some((tr) => tr.docChanged);
           if (!docChanged) return null;
           if (transactions.some((tr) => tr.getMeta(DEDUPE_META))) return null;

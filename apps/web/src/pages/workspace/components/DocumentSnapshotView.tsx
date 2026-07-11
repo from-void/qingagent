@@ -17,7 +17,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { APPLYING_REMOTE_META, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
@@ -169,6 +169,8 @@ export interface DocumentSnapshotViewProps {
   editable: boolean;
   /** TipTap 已挂载时是否允许用户交互编辑；presentation 动画期间会强制只读。 */
   interactiveEditable?: boolean;
+  /** 审阅态锚点基于原文 PM 位置；退出审阅前延后存量 blockId 自愈，避免改写位置与锚点错位。 */
+  deferBlockIdNormalization?: boolean;
   showPatches: boolean;
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
@@ -209,6 +211,7 @@ export const DocumentSnapshotView = forwardRef<
     docId = null,
     editable,
     interactiveEditable,
+    deferBlockIdNormalization = false,
     showPatches,
     acceptedPatches,
     rejectedPatches,
@@ -285,6 +288,7 @@ export const DocumentSnapshotView = forwardRef<
         ref={tiptapRef}
         doc={doc}
         interactiveEditable={tiptapInteractiveEditable}
+        deferBlockIdNormalization={deferBlockIdNormalization}
         docId={docId}
         forceExpandCollapse={showPatches || !editable || Boolean(presentationRun)}
         showPatches={showPatches}
@@ -349,6 +353,7 @@ interface TipTapDocHandle {
 const TipTapDoc = forwardRef<TipTapDocHandle, {
   doc: ViewDocumentSnapshot;
   interactiveEditable: boolean;
+  deferBlockIdNormalization: boolean;
   docId: string | null;
   forceExpandCollapse: boolean;
   showPatches: boolean;
@@ -379,6 +384,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   {
     doc,
     interactiveEditable,
+    deferBlockIdNormalization,
     docId,
     forceExpandCollapse,
     showPatches,
@@ -685,8 +691,13 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   const latestPresentationDocVersionRef = useRef<number | null>(
     presentationRun?.docVersion ?? null,
   );
+  const deferBlockIdNormalizationRef = useRef(deferBlockIdNormalization);
+  const interactiveEditableRef = useRef(interactiveEditable);
+  const repairedBlockIdVersionRef = useRef<string | null>(null);
   latestDocVersionRef.current = doc.version;
   latestPresentationDocVersionRef.current = presentationRun?.docVersion ?? null;
+  deferBlockIdNormalizationRef.current = deferBlockIdNormalization;
+  interactiveEditableRef.current = interactiveEditable;
   useEffect(() => {
     if (
       editor &&
@@ -776,6 +787,68 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     finishApplyingRemoteSoon,
     onToast,
     presentationRun?.docVersion,
+  ]);
+
+  useEffect(() => {
+    if (
+      !editor ||
+      editor.isDestroyed ||
+      !onEditorChange ||
+      presentationRun ||
+      deferBlockIdNormalization ||
+      !interactiveEditable
+    ) {
+      return;
+    }
+    const targetVersion = doc.version;
+    const repairKey = `${docId ?? ""}:${targetVersion}`;
+    if (repairedBlockIdVersionRef.current === repairKey) return;
+
+    // 初次 content 与外部 setContent 都已在此 effect 之前排入 microtask；归一事务随后执行，
+    // 既能覆盖存量文档，也不会抢在远端正文装载前误扫旧 editor state。
+    scheduleMicrotask(() => {
+      if (!editor || editor.isDestroyed) return;
+      if (latestDocVersionRef.current !== targetVersion) return;
+      if (isPresentationApplyingRef.current) return;
+      // pendingReview 期间 blockId/PM position 是审阅 decoration 的锚点，绝不在原文上改写；
+      // 用户退出审阅回到 editing 后，同一版本会因 defer=false 重新进入本 effect 并完成自愈。
+      if (deferBlockIdNormalizationRef.current || !interactiveEditableRef.current) return;
+      if (repairedBlockIdVersionRef.current === repairKey) return;
+
+      const repair = createDedupeBlockIdsTransaction(editor.state);
+      repairedBlockIdVersionRef.current = repairKey;
+      if (!repair) return;
+
+      beginApplyingRemote();
+      try {
+        editor.view.dispatch(repair);
+        const repairedDoc = normalizePmDoc(editor.getJSON());
+        // update 监听被 isApplyingRemote 抑制；这里只显式保存一次修复结果，回声由既有
+        // pendingSelfDocKeys 识别，不会形成 setContent → dirty-save 循环。
+        pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
+          pendingSelfDocKeysRef.current,
+          JSON.stringify(repairedDoc),
+        );
+        void Promise.resolve(onEditorChange(repairedDoc)).catch((error: unknown) => {
+          repairedBlockIdVersionRef.current = null;
+          console.error("[doc] 存量 blockId 自愈保存失败", error);
+          onToast?.("文档标识修复未保存，请刷新后重试");
+        });
+      } finally {
+        finishApplyingRemoteSoon();
+      }
+    });
+  }, [
+    beginApplyingRemote,
+    deferBlockIdNormalization,
+    doc.version,
+    docId,
+    editor,
+    finishApplyingRemoteSoon,
+    interactiveEditable,
+    onEditorChange,
+    onToast,
+    presentationRun,
   ]);
 
   useEffect(() => {

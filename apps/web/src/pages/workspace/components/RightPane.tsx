@@ -381,6 +381,7 @@ export function RightPane({
             docId={sessionId}
             editable={true}
             interactiveEditable={false}
+            deferBlockIdNormalization
             showPatches={false}
             acceptedPatches={new Set<string>()}
             rejectedPatches={new Set<string>()}
@@ -430,6 +431,7 @@ export function RightPane({
         docId={sessionId}
         editable={mountEditableSurface}
         interactiveEditable={interactiveEditable}
+        deferBlockIdNormalization={dimensions.content.kind === "pendingReview"}
         showPatches={showPatches}
         acceptedPatches={patchesAccepted}
         rejectedPatches={patchesRejected}

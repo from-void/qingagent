@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { applyBlockEdits, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
@@ -158,6 +158,60 @@ function collectBlockIdsByType(doc: unknown, type: string): Array<string | null>
   return blockIds;
 }
 
+function collectAllBlockIds(doc: unknown): string[] {
+  const blockIds: string[] = [];
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const record = node as { attrs?: { blockId?: unknown }; content?: unknown };
+    if (typeof record.attrs?.blockId === "string") blockIds.push(record.attrs.blockId);
+    if (!Array.isArray(record.content)) return;
+    for (const child of record.content) visit(child);
+  };
+  visit(doc);
+  return blockIds;
+}
+
+function duplicateTableDoc(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "table",
+        attrs: { blockId: "table-dup" },
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                content: [{
+                  type: "paragraph",
+                  attrs: { blockId: "cell-dup" },
+                  content: [{ type: "text", text: "A" }],
+                }],
+              },
+              {
+                type: "tableCell",
+                content: [{
+                  type: "paragraph",
+                  attrs: { blockId: "cell-dup" },
+                  content: [{ type: "text", text: "B" }],
+                }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "tail" },
+        content: [{ type: "text", text: "尾段" }],
+      },
+    ],
+  } as PmDoc;
+}
+
 function nodeViewDoc(): PmDoc {
   return {
     type: "doc",
@@ -210,6 +264,54 @@ function nodeViewDoc(): PmDoc {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
+  it("载入含重复 blockId 的存量 PmDoc 后只自愈并保存一次，随后 AI 编辑可用", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const duplicateDoc = duplicateTableDoc();
+
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(duplicateDoc, 7)}
+          docId="session-duplicate-load"
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+        />,
+      );
+    });
+    await flush();
+
+    expect(editor).not.toBeNull();
+    const healed = normalizePmDoc(editor!.getJSON());
+    const ids = collectAllBlockIds(healed);
+    expect(ids).toEqual(["table-dup", "cell-dup", "cell-dup~1", "tail"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(collectAllBlockIds(onEditorChange.mock.calls[0]![0])).toEqual(ids);
+
+    const editable = applyBlockEdits(healed, [
+      {
+        action: "replaceBlock",
+        ref: "tail",
+        block: { type: "paragraph", runs: [{ text: "尾段已改" }] },
+      },
+      {
+        action: "insertTableRow",
+        ref: "table-dup",
+        at: "end",
+        cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "AI 新行" }] }] }],
+      },
+    ]);
+    expect(editable.ok, editable.error).toBe(true);
+  });
+
   it("播放 presentationRun 时即使用户不可编辑也挂载 TipTap,结束后可切回编辑态", async () => {
     let editor: Editor | null = null;
     const handleEditorReady = (readyEditor: Editor | null) => {

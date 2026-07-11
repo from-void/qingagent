@@ -102,7 +102,10 @@ export function createQingagentExtensions(options: {
     options.columnExtension ?? ColumnNode,
     // 公式:KaTeX 渲染;输入规则 $$latex$$(行内)/$$$latex$$$(块级)。
     QingagentBlockMath.configure({
-      katexOptions: { throwOnError: false },
+      // displayMode 必开:块级公式走 KaTeX 展示模式(居中大号),且 align/aligned/cases 等
+      // 环境只在 display mode 下合法;@tiptap/extension-mathematics 的块级 nodeView 不会替我们
+      // 注入 displayMode,漏了它块级公式就退化成行内模式,\begin{align} 直接解析报错(红字源码)。
+      katexOptions: { throwOnError: false, displayMode: true },
       ...(options.onMathClick
         ? {
             onClick: (node: PmModelNode, pos: number) =>

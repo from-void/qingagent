@@ -34,8 +34,10 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   getBezierPath,
+  useNodes,
   useNodesInitialized,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -623,17 +625,86 @@ function GraphPreviewToolbar({
 
 // 节点尺寸测量完成后再 fitView,避免 React Flow 在节点未测量(尺寸=0)时就 fit 导致
 // 缩到 maxZoom(2x) 把宽图顶出窄容器(gallery 窄列复现)。必须作为 ReactFlow 子组件以拿到上下文。
-// fitKey:节点布局(数量/包围盒)变化时(elk 异步布局落地后)重新 fit——否则首帧在
-// 布局未落地时 fit 一次就定死,导致预览只截到一部分需要手动放大(用户反馈)。maxZoom 限到 1,
-// 避免小图被放大到 2x 反而看不全;minZoom 交给 ReactFlow 的 0.1,高图自动缩到能整张展示。
-function FitOnNodesInitialized({ fitKey, maxZoom = 1 }: { fitKey?: string; maxZoom?: number }) {
+// 编辑态只需要这条通用的测量就绪路径；预览态的 ELK 异步布局另由 FitPreviewOnLayoutApplied 对齐
+// 外部 nodes 与 React Flow 内部 store 后再 fit。
+function FitOnNodesInitialized({ maxZoom = 1 }: { maxZoom?: number }) {
   const initialized = useNodesInitialized();
   const { fitView } = useReactFlow();
   useEffect(() => {
     if (!initialized) return;
     const id = requestAnimationFrame(() => fitView({ padding: 0.15, maxZoom }));
     return () => cancelAnimationFrame(id);
-  }, [initialized, fitView, fitKey, maxZoom]);
+  }, [initialized, fitView, maxZoom]);
+  return null;
+}
+
+type GraphNodePosition = Pick<Node, "id" | "position">;
+
+export function graphNodePositionKey(nodes: readonly GraphNodePosition[]): string {
+  return nodes
+    .map((node) => `${node.id}:${node.position.x}:${node.position.y}`)
+    .sort()
+    .join("|");
+}
+
+/**
+ * 把一组节点包围盒居中铺进给定画布,返回 setViewport 用的 {x,y,zoom}。
+ * zoom 封顶到 1(宽/高图缩小铺满,小图不放大);padding 为容器两侧留白比例。
+ * 纯几何,不依赖 React Flow 的 node.measured,故可绕开 fitView 的测量竞态。
+ */
+export function computePreviewFitViewport(
+  bounds: { x: number; y: number; width: number; height: number },
+  containerWidth: number,
+  containerHeight: number,
+  padding: number,
+): { x: number; y: number; zoom: number } | null {
+  if (bounds.width <= 0 || bounds.height <= 0 || containerWidth <= 0 || containerHeight <= 0) return null;
+  const usableW = containerWidth * (1 - padding * 2);
+  const usableH = containerHeight * (1 - padding * 2);
+  const zoom = Math.min(1, usableW / bounds.width, usableH / bounds.height);
+  const x = containerWidth / 2 - (bounds.x + bounds.width / 2) * zoom;
+  const y = containerHeight / 2 - (bounds.y + bounds.height / 2) * zoom;
+  return { x, y, zoom };
+}
+
+// React Flow 12 的 fitView 会排队，等内部 store 下一次 setNodes 时才取节点边界。
+// ELK 落地先更新本组件的受控 nodes，随后才由 React Flow 采纳；只监听外部 nodes 会在两者
+// 不一致时把重叠的首帧坐标拿去 fit。这里以内部 nodes 的同一坐标键作确认，确保 fit 的结算
+// 看到的正是 ELK 坐标；rAF 仅把调用放到浏览器完成本帧布局之后，不是时间兜底。
+const FIT_PREVIEW_PADDING = 0.15;
+
+function FitPreviewOnLayoutApplied({ expectedLayoutKey }: { expectedLayoutKey: string }) {
+  const appliedNodes = useNodes<GraphFlowNode>();
+  const appliedLayoutKey = useMemo(() => graphNodePositionKey(appliedNodes), [appliedNodes]);
+  // React Flow 内部测得的画布尺寸;两个 primitive 分开取,避免返回新对象引发无谓重渲染。
+  const containerWidth = useStore((state) => state.width);
+  const containerHeight = useStore((state) => state.height);
+  const rf = useReactFlow();
+  const { viewportInitialized } = rf;
+
+  useEffect(() => {
+    // 只需「布局已被 React Flow 内部 store 采纳(内外坐标键一致)」+「容器已量到尺寸」。
+    // 不能用 useNodesInitialized:ELK 更新坐标后 React Flow 会短暂把 node.measured 清空,
+    // 「坐标已铺开」与「已测量」两态从不同时为真,而 fitView 依赖 measured → 一直空转(实测 zoom 卡在 1)。
+    // 改用不依赖 measured 的 getNodesBounds(退到 node.width/height)+ 手算 setViewport,并把 zoom 封顶到 1
+    // (宽图缩小铺满、窄图不被放大),即可稳定把整张图居中铺进预览。
+    if (
+      expectedLayoutKey.length === 0 ||
+      expectedLayoutKey !== appliedLayoutKey ||
+      !viewportInitialized ||
+      containerWidth <= 0 ||
+      containerHeight <= 0
+    ) {
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      const bounds = rf.getNodesBounds(rf.getNodes());
+      const viewport = computePreviewFitViewport(bounds, containerWidth, containerHeight, FIT_PREVIEW_PADDING);
+      if (viewport) void rf.setViewport(viewport);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [appliedLayoutKey, expectedLayoutKey, rf, viewportInitialized, containerWidth, containerHeight]);
+
   return null;
 }
 
@@ -717,19 +788,9 @@ export function GraphDiagramView({
   const previewFit = useFitOnResize(true);
   const editorFit = useFitOnResize(inEdit, setEditCanvasFrame);
 
-  // 预览 fit 的触发键:节点数 + 包围盒尺寸。elk 异步布局落地后包围盒变化 → 重新 fit,保证整张图都展示。
-  const previewFitKey = useMemo(() => {
-    if (nodes.length === 0) return "0";
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const nd of nodes) {
-      const { x, y } = nd.position;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-    return `${nodes.length}:${Math.round(maxX - minX)}:${Math.round(maxY - minY)}`;
-  }, [nodes]);
+  // 预览 fit 的触发键同时描述每个节点坐标。ELK 落地后它会先变化；子组件会等 React Flow
+  // 内部 store 采纳完全相同的坐标后再调 fitView，不能仅靠节点数或包围盒相同来猜已同步。
+  const previewFitKey = useMemo(() => graphNodePositionKey(nodes), [nodes]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -1949,7 +2010,7 @@ export function GraphDiagramView({
           onEdgesChange={onEdgesChange}
           onPaneClick={clearSelection}
         >
-          <FitOnNodesInitialized fitKey={previewFitKey} />
+          <FitPreviewOnLayoutApplied expectedLayoutKey={previewFitKey} />
           <Background color="#d8c9a8" gap={18} />
           <GraphPreviewToolbar
             readOnly={readOnly}

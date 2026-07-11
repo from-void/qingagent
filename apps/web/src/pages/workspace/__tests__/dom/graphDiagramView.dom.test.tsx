@@ -352,6 +352,9 @@ describe("GraphDiagramView", () => {
     expect(container?.querySelector(".graph-diagram-edit-entry")).toBeNull();
     expect(container?.querySelector("select")).toBeNull();
     expect(container?.querySelector(".react-flow__attribution")).toBeNull();
+    // jsdom 不提供可靠的真实布局几何；这里只守住防空白的 flex 定高链契约。
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas \.react-flow\s*\{[^}]*flex:\s*1\s+1\s+auto;[^}]*min-height:\s*0;[^}]*width:\s*100%;/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview\s*\{[^}]*border:\s*0;/s);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__controls\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram:hover .graph-diagram-canvas--preview .react-flow__controls");

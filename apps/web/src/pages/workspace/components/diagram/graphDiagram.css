@@ -7,11 +7,23 @@
 
 .graph-diagram-canvas {
   position: relative;
+  /* 定高链从 .pm-diagram / .pm-diagram-view 一路都是 min-height 撑出来的 auto 高度,没有一层是定值 height,
+     故内层 .react-flow 用 height:100% 会解析成 0 → 节点被 overflow:hidden 裁掉、画布空白。
+     这里改用 flex 列容器,让 .react-flow 以 flex:1 填满画布当前高度(既覆盖只读 260px 场景,
+     也跟随编辑态用户拖拽出的动态高度),不再依赖不存在的定值高度链。 */
+  display: flex;
+  flex-direction: column;
   min-height: 260px;
   overflow: hidden;
   border: 1px solid rgba(176, 138, 62, 0.26);
   border-radius:0;
   background: #fbf7ee;
+}
+
+.graph-diagram-canvas .react-flow {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 
 .graph-diagram-canvas--preview {

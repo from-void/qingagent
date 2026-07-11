@@ -123,6 +123,45 @@ describe("pmMarkdownRoundTrip", () => {
     expect(pm.content[3]).toMatchObject({ type: "diagram", attrs: { lang: "mermaid" } });
   });
 
+  it("递归解析粗斜体内的 code、行内公式与嵌套 mark", () => {
+    const boldWithCode = markdownToPm("**a `b` c**");
+    const italicWithMath = markdownToPm("*x $y$ z*");
+    const nestedMarks = markdownToPm("**斜体*嵌套***");
+    const plainBold = markdownToPm("**bold**");
+
+    expect(safeParsePmDoc(boldWithCode).success).toBe(true);
+    expect(boldWithCode.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "a ", marks: [{ type: "bold" }] },
+        { type: "text", text: "b", marks: [{ type: "code" }] },
+        { type: "text", text: " c", marks: [{ type: "bold" }] },
+      ],
+    });
+
+    expect(safeParsePmDoc(italicWithMath).success).toBe(true);
+    expect(italicWithMath.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "x ", marks: [{ type: "italic" }] },
+        { type: "inlineMath", attrs: { latex: "y" } },
+        { type: "text", text: " z", marks: [{ type: "italic" }] },
+      ],
+    });
+
+    expect(nestedMarks.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "斜体", marks: [{ type: "bold" }] },
+        { type: "text", text: "嵌套", marks: [{ type: "italic" }, { type: "bold" }] },
+      ],
+    });
+    expect(plainBold.content[0]).toMatchObject({
+      type: "paragraph",
+      content: [{ type: "text", text: "bold", marks: [{ type: "bold" }] }],
+    });
+  });
+
   it("R4-013 解析 markdown task item 为 taskList/taskItem", () => {
     const pm = markdownToPm(["- [ ] 未完成", "- [x] 已完成", "- [X] 也完成"].join("\n"));
 

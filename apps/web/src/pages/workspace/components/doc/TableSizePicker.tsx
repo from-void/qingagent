@@ -95,6 +95,8 @@ export function TableSizePicker({
       onPointerMove={(event) => updateFromPointer(event.target)}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onMouseEnter={onPointerEnter}
+      onMouseLeave={onPointerLeave}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();

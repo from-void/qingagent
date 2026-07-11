@@ -484,6 +484,18 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setTablePicker({ anchor, autoFocus });
   }, [clearSubmenuCloseTimer]);
 
+  const closeTablePickerOnOtherMenuItem = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const menuItem = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('[role="menuitem"]')
+      : null;
+    if (
+      !menuItem ||
+      !event.currentTarget.contains(menuItem) ||
+      menuItem.hasAttribute("data-table-picker-trigger")
+    ) return;
+    setTablePicker(null);
+  }, []);
+
   const closeSubmenuOnBlur = useCallback((e: React.FocusEvent<HTMLElement>, key: SubmenuKey) => {
     const next = e.relatedTarget;
     if (next instanceof Node) {
@@ -855,6 +867,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         style={insertSubmenuStyle}
         onMouseEnter={keepSubmenuOpen}
         onMouseLeave={scheduleSubmenuClose}
+        onMouseOver={closeTablePickerOnOtherMenuItem}
         onFocus={keepSubmenuOpen}
         onBlur={(e) => closeSubmenuOnBlur(e, "insert")}
       >
@@ -882,6 +895,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           type="button"
           role="menuitem"
           className="block-handle-item bh-submenu-trigger"
+          data-table-picker-trigger=""
           aria-haspopup="dialog"
           aria-expanded={Boolean(tablePicker)}
           onMouseEnter={(event) => openTablePicker(event.currentTarget, false)}
@@ -1033,7 +1047,15 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       )}
     </div>
       {menuOpen && handle.kind === "block" && (
-        <div ref={menuRef} className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`} role="menu" style={menuStyle}>
+        <div
+          ref={menuRef}
+          className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`}
+          role="menu"
+          style={menuStyle}
+          onMouseEnter={keepSubmenuOpen}
+          onMouseLeave={scheduleSubmenuClose}
+          onMouseOver={closeTablePickerOnOtherMenuItem}
+        >
           {tableMenuState ? null : <div className="bh-section-label">转换为</div>}
           {tableMenuState ? null : <div className="bh-grid">
             <button type="button" role="menuitem" className="bh-grid-btn" aria-label="正文" title="正文" onClick={() => convertBlock("paragraph")}><BlockHandleIcon name="paragraph" /></button>
@@ -1154,6 +1176,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
                 type="button"
                 role="menuitem"
                 className="block-handle-item bh-submenu-trigger"
+                data-table-picker-trigger=""
                 aria-haspopup="dialog"
                 aria-expanded={Boolean(tablePicker)}
                 onMouseEnter={(event) => openTablePicker(event.currentTarget, false)}

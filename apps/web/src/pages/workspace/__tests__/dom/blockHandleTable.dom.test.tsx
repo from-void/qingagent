@@ -124,6 +124,69 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(inserted?.content?.flatMap((row) => row.content ?? []).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
   });
 
+  it("尺寸浮层可跨菜单间隙抵达，hover 同级其他项时立即收起", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(editorElement, paragraph("empty"));
+    editor.commands.setTextSelection(1);
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} />));
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/", ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+
+    const menu = workspace.querySelector<HTMLElement>(".block-handle-menu")!;
+    const insertTable = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("插入表格"))!;
+    const inlineMath = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("行内公式"))!;
+
+    await act(async () => {
+      insertTable.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    const picker = workspace.querySelector<HTMLElement>(".table-size-picker")!;
+    expect(picker).not.toBeNull();
+
+    await act(async () => {
+      menu.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: picker }));
+      picker.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: menu }));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    expect(workspace.querySelector(".table-size-picker")).not.toBeNull();
+
+    await act(async () => {
+      inlineMath.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: insertTable }));
+    });
+    expect(workspace.querySelector(".table-size-picker")).toBeNull();
+
+    await act(async () => {
+      insertTable.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(workspace.querySelector(".block-handle-menu")).toBeNull();
+    expect(workspace.querySelector(".table-size-picker")).toBeNull();
+
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/", ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+    const reopenedTable = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("插入表格"))!;
+    await act(async () => {
+      reopenedTable.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(workspace.querySelector(".block-handle-menu")).toBeNull();
+    expect(workspace.querySelector(".table-size-picker")).toBeNull();
+  });
+
   it("标题行列状态按真实 cell 类型读取，并由 Tiptap 命令写回", () => {
     editor = createEditor(undefined, basicTable());
     const table = () => editor!.state.doc.nodeAt(0)!;

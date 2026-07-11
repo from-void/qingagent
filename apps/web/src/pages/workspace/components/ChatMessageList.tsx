@@ -83,6 +83,15 @@ export function ChatMessageList({
     () => Object.fromEntries(skills.map((skill) => [skill.name, skill.label])),
     [skills],
   );
+  const visibleAskUserAnswerToolCallIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (part.kind === "askUserAnswerCard") ids.add(part.data.toolCallId);
+      }
+    }
+    return ids;
+  }, [messages]);
   // 轮级折叠标记:把消息分轮,判断每轮是否"已结清"(非进行中流 + 无运行中工具 + 无待审批 live patch),
   // 以及该消息是否本轮最后一条 agent 消息。只有"已结清且是本轮收尾"的消息才允许折叠过程。
   const turnFlags = useMemo(
@@ -116,6 +125,7 @@ export function ChatMessageList({
             wholeDocReviewKeys={hasPatchSummary ? wholeDocReviewKeys : undefined}
             debugMode={debugMode}
             skillLabels={skillLabels}
+            visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
           />
         );
       }),
@@ -130,6 +140,7 @@ export function ChatMessageList({
       streamActive,
       skillLabels,
       turnFlags,
+      visibleAskUserAnswerToolCallIds,
       wholeDocReview,
       wholeDocReviewKeys,
     ],
@@ -176,6 +187,7 @@ type MessageRowProps = {
   wholeDocReviewKeys?: ReadonlySet<string>;
   debugMode?: boolean;
   skillLabels?: SkillLabelMap;
+  visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
 };
 
 type VisibleMessageRole = "user" | "agent" | "system";
@@ -348,6 +360,7 @@ const MessageRow = memo(function MessageRow({
   wholeDocReviewKeys,
   debugMode = false,
   skillLabels,
+  visibleAskUserAnswerToolCallIds,
 }: MessageRowProps) {
   const role = message.role.kind;
   // 审阅 chip 不需要知道来源、其下游逻辑不受影响。判据 = 服务端约定的 external-* 消息 id。
@@ -448,7 +461,18 @@ const MessageRow = memo(function MessageRow({
   const visibleParts: { part: MessagePart; key: number }[] = [];
   message.parts.forEach((p, i) => {
     const vp = sanitizeVisibleMessagePart(p, "agent", { debugMode });
-    if (vp) visibleParts.push({ part: vp, key: i });
+    if (
+      vp &&
+      !(
+        vp.kind === "toolCall" &&
+        shouldSuppressOverlayAskUserToolCall(
+          vp.data,
+          visibleAskUserAnswerToolCallIds,
+        )
+      )
+    ) {
+      visibleParts.push({ part: vp, key: i });
+    }
   });
   const renderPart = (vp: { part: MessagePart; key: number }) => (
     <PartView
@@ -463,8 +487,19 @@ const MessageRow = memo(function MessageRow({
       wholeDocReview={wholeDocReview}
       wholeDocReviewKeys={wholeDocReviewKeys}
       skillLabels={skillLabels}
+      visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
     />
   );
+
+  // part 在渲染层全部被过滤时直接收掉整条消息，避免遗留空的 .wf-msg.agent 外壳。
+  // user 答卷卡走上方独立分支，不会被这里误伤。
+  if (
+    visibleParts.length === 0 &&
+    !thinkingTailActive &&
+    !(isExternalMessage && externalClient)
+  ) {
+    return null;
+  }
 
   // 产出物后置:某些工具的产出物(二维码等)很重要,不该被过程折叠收掉。统一做法 = 像
   // patchSummary(已修改N处)一样,把它放到**最终回复之后**展示;原位只留一条简单工具条
@@ -897,42 +932,28 @@ function UserPartView({ part }: { part: MessagePart }) {
 
 function AskUserAnswerCard({ data }: { data: AskUserAnswerCardPart }) {
   if (data.items.length === 0) return null;
+  // 与 fullpage「已提交答案」汇总卡(askuser-card)统一样式:打勾金头 + 问/答两列行。
+  // 加 --answers modifier:答案可换行,避免多选/长自由文本被 .askuser-card-a 的 nowrap 省略号吞掉。
   return (
-    <section className="askuser-answer-card" data-wf="AskUserAnswerCard" aria-label={data.title}>
-      <div className="askuser-answer-head">
-        <h2>{data.title}</h2>
+    <div className="askuser-card askuser-card--answers" data-wf="AskUserAnswerCard" aria-label={data.title}>
+      <div className="askuser-card-header">
+        <span className="askuser-card-check"><CheckIcon size={13} /></span>
+        <span>{data.title}</span>
       </div>
-      <div className="askuser-answer-list">
-        {data.items.map((item, index) => (
-          <div className="askuser-answer-item" key={`${item.questionId}-${index}`}>
-            <div className="askuser-answer-q">
-              <span className="askuser-answer-num" aria-hidden="true">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span className="askuser-answer-title">{item.questionLabel}</span>
+      <div className="askuser-card-body">
+        {data.items.map((item, index) => {
+          const answerText = item.answerText;
+          if (!answerText) return null;
+          return (
+            <div className="askuser-card-row" key={`${item.questionId}-${index}`}>
+              <span className="askuser-card-q">{item.questionLabel}</span>
+              <span className="askuser-card-a">{answerText}</span>
             </div>
-            <div className="askuser-answer-opts">
-              {answerCardChips(item).map((label, chipIndex) => (
-                <span className="askuser-answer-opt" key={`${item.questionId}-${chipIndex}`}>
-                  {label}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </section>
+    </div>
   );
-}
-
-function answerCardChips(item: AskUserAnswerCardPart["items"][number]): string[] {
-  const chips: string[] = [];
-  if (item.numericText) chips.push(item.numericText);
-  chips.push(...item.selectedOptionLabels);
-  if (item.freeText) {
-    chips.push(chips.length > 0 ? `补充：${item.freeText}` : item.freeText);
-  }
-  return chips.length > 0 ? chips : [item.answerText];
 }
 
 /**
@@ -1048,7 +1069,10 @@ type PartViewProps = {
   wholeDocReview?: boolean;
   wholeDocReviewKeys?: ReadonlySet<string>;
   skillLabels?: SkillLabelMap;
+  visibleAskUserAnswerToolCallIds?: ReadonlySet<string>;
 };
+
+const EMPTY_VISIBLE_ASK_USER_ANSWER_TOOL_CALL_IDS: ReadonlySet<string> = new Set();
 
 const PartView = memo(function PartView({
   part,
@@ -1061,6 +1085,7 @@ const PartView = memo(function PartView({
   wholeDocReview,
   wholeDocReviewKeys,
   skillLabels,
+  visibleAskUserAnswerToolCallIds = EMPTY_VISIBLE_ASK_USER_ANSWER_TOOL_CALL_IDS,
 }: PartViewProps) {
   const [open, setOpen] = useState(false);
   switch (part.kind) {
@@ -1074,7 +1099,13 @@ const PartView = memo(function PartView({
         </pre>
       );
     case "toolCall":
-      return <ToolCallRow spec={part.data} skillLabels={skillLabels} />;
+      return (
+        <ToolCallRow
+          spec={part.data}
+          skillLabels={skillLabels}
+          visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
+        />
+      );
     case "askUserAnswerCard":
       return <AskUserAnswerCard data={part.data} />;
     case "thinking": {
@@ -1315,7 +1346,28 @@ export function buildWholeDocReviewKey(
   return `${sessionId}\u001f${hunkKey}`;
 }
 
-function ToolCallRow({ spec, skillLabels }: { spec: ToolCallSpec; skillLabels?: SkillLabelMap }) {
+function shouldSuppressOverlayAskUserToolCall(
+  spec: ToolCallSpec,
+  visibleAskUserAnswerToolCallIds: ReadonlySet<string>,
+): boolean {
+  return (
+    spec.body.kind === "askUser" &&
+    spec.body.data.mode.kind === "overlay" &&
+    spec.status.kind === "done" &&
+    spec.result?.kind === "askUserAnswers" &&
+    visibleAskUserAnswerToolCallIds.has(spec.id)
+  );
+}
+
+function ToolCallRow({
+  spec,
+  skillLabels,
+  visibleAskUserAnswerToolCallIds,
+}: {
+  spec: ToolCallSpec;
+  skillLabels?: SkillLabelMap;
+  visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
+}) {
   const b = spec.body;
   const isRunning = spec.status.kind === "running";
   const isDone = spec.status.kind === "done";
@@ -1424,6 +1476,11 @@ function ToolCallRow({ spec, skillLabels }: { spec: ToolCallSpec; skillLabels?: 
     );
   }
   // —— 其余(检索/配图/识图/命令/通用工具行/askUser overlay)→ 统一组件 ——
+  // overlay askUser 提交后已有对应可见答卷卡时，不再重复显示「确认方向 · 已完成」。
+  // 门槛在卡确实存在；卡未到、空答案无卡、pending/running 都继续保留工具行。
+  if (shouldSuppressOverlayAskUserToolCall(spec, visibleAskUserAnswerToolCallIds)) {
+    return null;
+  }
   return <UnifiedToolCall spec={spec} skillLabels={skillLabels} />;
 }
 

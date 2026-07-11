@@ -53,30 +53,60 @@ describe("AskUserAnswerCard", () => {
 
     const card = chatHost?.querySelector<HTMLElement>('[data-wf="AskUserAnswerCard"]');
     expect(card).not.toBeNull();
+    expect(card?.classList.contains("askuser-card")).toBe(true);
+    expect(card?.classList.contains("askuser-card--answers")).toBe(true);
     expect(card?.classList.contains("bigplan-panel")).toBe(false);
     expect(card?.querySelector(".bp-head, .bp-body, .bp-q, .bp-opt")).toBeNull();
 
     const cardStyle = getComputedStyle(card!);
-    const heading = card!.querySelector<HTMLElement>(".askuser-answer-head h2");
-    const question = card!.querySelector<HTMLElement>(".askuser-answer-title");
-    expect(heading).not.toBeNull();
+    const header = card!.querySelector<HTMLElement>(".askuser-card-header");
+    const check = card!.querySelector<HTMLElement>(".askuser-card-check");
+    const row = card!.querySelector<HTMLElement>(".askuser-card-row");
+    const question = card!.querySelector<HTMLElement>(".askuser-card-q");
+    const answer = card!.querySelector<HTMLElement>(".askuser-card-a");
+    expect(header?.textContent).toContain("已提交写作方向问卷");
+    expect(check).not.toBeNull();
+    expect(row).not.toBeNull();
     expect(question).not.toBeNull();
+    expect(question?.textContent).toContain("希望怎么改？");
+    expect(answer?.textContent).toContain("更克制");
 
-    expect(cardStyle.maxWidth).toBe("430px");
     expect(cardStyle.backgroundColor).not.toBe("rgb(239, 231, 214)");
     expect(cardStyle.backgroundColor).not.toBe("rgba(239, 231, 214, 1)");
 
-    const headingFontSize = Number.parseFloat(getComputedStyle(heading!).fontSize);
-    expect(headingFontSize).toBeLessThanOrEqual(16);
-    expect(headingFontSize).toBeGreaterThanOrEqual(14);
-
-    const foreground = parseRgb(getComputedStyle(question!).color) ?? [236, 227, 208];
+    const foreground = parseRgb(getComputedStyle(answer!).color) ?? [236, 227, 208];
     const background = parseRgb(cardStyle.backgroundColor) ?? blend([255, 255, 255], [22, 33, 44], 0.04);
     expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });
+
+  it("多选和长自由文本答案完整可见且允许换行", async () => {
+    const longFreeText = "补充：希望语气保持冷静克制，同时保留全部事实依据和上下文细节，不要省略任何限定条件。";
+    const answerText = `更克制、保留细节；${longFreeText}`;
+    await renderAskUserAnswerCard({
+      answerText,
+      selectedOptionLabels: ["更克制", "保留细节"],
+      freeText: longFreeText,
+    });
+
+    const answer = chatHost?.querySelector<HTMLElement>(".askuser-card--answers .askuser-card-a");
+    expect(answer).not.toBeNull();
+    expect(answer?.textContent).toBe(answerText);
+    expect(answer?.textContent).toContain(longFreeText);
+    expect(getComputedStyle(answer!).whiteSpace).not.toBe("nowrap");
+  });
 });
 
-async function renderAskUserAnswerCard(): Promise<void> {
+async function renderAskUserAnswerCard(
+  answer: {
+    answerText: string;
+    selectedOptionLabels: string[];
+    freeText: string | null;
+  } = {
+    answerText: "更克制",
+    selectedOptionLabels: ["更克制"],
+    freeText: null,
+  },
+): Promise<void> {
   const messages: ChatMessage[] = [
     {
       id: "m-ask-answer",
@@ -92,9 +122,9 @@ async function renderAskUserAnswerCard(): Promise<void> {
               {
                 questionId: "q-tone",
                 questionLabel: "希望怎么改？",
-                answerText: "更克制",
-                selectedOptionLabels: ["更克制"],
-                freeText: null,
+                answerText: answer.answerText,
+                selectedOptionLabels: answer.selectedOptionLabels,
+                freeText: answer.freeText,
                 numericText: null,
               },
             ],

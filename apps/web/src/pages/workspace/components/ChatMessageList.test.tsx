@@ -54,6 +54,95 @@ function userMessage(id = "m-user"): ChatMessage {
   };
 }
 
+type AskUserAnswersData = Extract<
+  NonNullable<ToolCallSpec["result"]>,
+  { kind: "askUserAnswers" }
+>["data"];
+
+const answeredAskUserData: AskUserAnswersData = {
+  "q-tone": { chosen: ["restrained"], freeText: null, numericValue: null },
+};
+
+function askUserToolCall(
+  id: string,
+  status: ToolCallSpec["status"] = { kind: "done" },
+  mode: "overlay" | "fullpage" = "overlay",
+  answers: AskUserAnswersData = answeredAskUserData,
+): ToolCallSpec {
+  return {
+    id,
+    name: "askUser",
+    render: { kind: "rightForm" },
+    status,
+    body: {
+      kind: "askUser",
+      data: {
+        id: `ask-${id}`,
+        mode: { kind: mode },
+        purpose: null,
+        source: "确认方向",
+        rationale: null,
+        questions: [
+          {
+            id: "q-tone",
+            label: "希望怎么改？",
+            kind: { kind: "single" },
+            options: [
+              {
+                value: "restrained",
+                label: "更克制",
+                description: null,
+                preview: null,
+              },
+            ],
+            placeholder: null,
+            slider: null,
+          },
+        ],
+      },
+    },
+    result: { kind: "askUserAnswers", data: answers },
+  };
+}
+
+function agentToolMessage(spec: ToolCallSpec, id = `m-${spec.id}`): ChatMessage {
+  return {
+    id,
+    role: { kind: "agent" },
+    ts: "2026-01-01T00:00:00.000Z",
+    parts: [{ kind: "toolCall", data: spec }],
+    chips: null,
+  };
+}
+
+function askUserAnswerCardMessage(toolCallId: string, id = `answer-${toolCallId}`): ChatMessage {
+  return {
+    id,
+    role: { kind: "user" },
+    ts: "2026-01-01T00:00:01.000Z",
+    parts: [
+      {
+        kind: "askUserAnswerCard",
+        data: {
+          toolCallId,
+          title: "已提交写作方向问卷",
+          items: [
+            {
+              questionId: "q-tone",
+              questionLabel: "希望怎么改？",
+              answerText: "更克制",
+              selectedOptionLabels: ["更克制"],
+              freeText: null,
+              numericText: null,
+            },
+          ],
+        },
+      },
+    ],
+    chips: null,
+  };
+}
+
 describe("ChatMessageList", () => {
   afterEach(() => {
     restoreMatchMedia?.();
@@ -400,7 +489,7 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("采纳 1 处 · 拒绝 1 处");
   });
 
-  it("用户回流的问卷答案卡使用自有紧凑结构且不套用户气泡", async () => {
+  it("用户回流的问卷答案卡复用已提交答案结构且不套用户气泡", async () => {
     const messages: ChatMessage[] = [
       {
         id: "m-ask-answer",
@@ -432,13 +521,138 @@ describe("ChatMessageList", () => {
     await render(<ChatMessageList messages={messages} streamActive={false} />);
 
     const card = host?.querySelector<HTMLElement>('[data-wf="AskUserAnswerCard"]');
+    expect(card?.classList.contains("askuser-card")).toBe(true);
+    expect(card?.classList.contains("askuser-card--answers")).toBe(true);
     expect(card?.classList.contains("bigplan-panel")).toBe(false);
-    expect(card?.querySelector(".askuser-answer-head h2")?.textContent).toBe("已提交写作方向问卷");
-    expect(card?.querySelector(".askuser-answer-item")).not.toBeNull();
-    expect(card?.querySelector(".askuser-answer-opt")?.textContent).toContain("更克制");
+    expect(card?.querySelector(".askuser-card-header")?.textContent).toContain("已提交写作方向问卷");
+    expect(card?.querySelector(".askuser-card-row")).not.toBeNull();
+    expect(card?.querySelector(".askuser-card-a")?.textContent).toContain("更克制");
     expect(card?.querySelector(".bp-head, .bp-body, .bp-q, .bp-opt")).toBeNull();
     expect(card?.closest(".wf-msg.user")).toBeNull();
     expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
+  });
+
+  it("overlay askUser done 在对应答卷卡到达后同组件 rerender 收敛为单卡", async () => {
+    const toolCallId = "ask-overlay-rerender";
+    const toolMessage = agentToolMessage(askUserToolCall(toolCallId));
+
+    await render(
+      <ChatMessageList messages={[toolMessage]} streamActive={false} />,
+    );
+    expect(host?.querySelector(".u-bar")).not.toBeNull();
+    expect(host?.querySelector('[data-wf="AskUserAnswerCard"]')).toBeNull();
+
+    await act(async () => {
+      root?.render(
+        <ChatMessageList
+          messages={[toolMessage, askUserAnswerCardMessage(toolCallId)]}
+          streamActive={false}
+        />,
+      );
+    });
+
+    expect(host?.querySelector(".u-bar")).toBeNull();
+    expect(host?.querySelectorAll('[data-wf="AskUserAnswerCard"]').length).toBe(1);
+  });
+
+  it("只有异 toolCallId 的答卷卡时仍保留目标 overlay askUser 工具行", async () => {
+    await render(
+      <ChatMessageList
+        messages={[
+          agentToolMessage(askUserToolCall("ask-target")),
+          askUserAnswerCardMessage("ask-other"),
+        ]}
+        streamActive={false}
+      />,
+    );
+
+    expect(host?.querySelector(".u-bar")).not.toBeNull();
+    expect(host?.querySelectorAll('[data-wf="AskUserAnswerCard"]').length).toBe(1);
+  });
+
+  it.each([
+    ["空答案", {}],
+    ["全空白答案", { "q-tone": { chosen: [], freeText: "   ", numericValue: null } }],
+  ] satisfies Array<[string, AskUserAnswersData]>) (
+    "%s且无答卷卡时保留 overlay askUser 工具行",
+    async (_label, answers) => {
+      await render(
+        <ChatMessageList
+          messages={[agentToolMessage(askUserToolCall("ask-empty-answer", { kind: "done" }, "overlay", answers))]}
+          streamActive={false}
+        />,
+      );
+
+      expect(host?.querySelector(".u-bar")).not.toBeNull();
+      expect(host?.querySelector('[data-wf="AskUserAnswerCard"]')).toBeNull();
+    },
+  );
+
+  it.each([
+    ["pending", { kind: "pending" }],
+    ["running", { kind: "running", data: { progressPct: null, etaSec: null } }],
+  ] satisfies Array<[string, ToolCallSpec["status"]]>) (
+    "overlay askUser %s 即使其余抑制门槛成立也保留工具行",
+    async (_label, status) => {
+      const toolCallId = `ask-${_label}`;
+      await render(
+        <ChatMessageList
+          messages={[
+            agentToolMessage(askUserToolCall(toolCallId, status)),
+            askUserAnswerCardMessage(toolCallId),
+          ]}
+          streamActive={false}
+        />,
+      );
+
+      expect(host?.querySelector(".u-bar")).not.toBeNull();
+      expect(host?.querySelectorAll('[data-wf="AskUserAnswerCard"]').length).toBe(1);
+    },
+  );
+
+  it("fullpage done 汇总卡与普通 done 工具不受答卷卡 Set 影响", async () => {
+    const fullpageId = "ask-fullpage";
+    const ordinaryId = "ordinary-tool";
+    const ordinaryTool: ToolCallSpec = {
+      id: ordinaryId,
+      name: "webSearch",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: { kind: "generic", data: { argsJson: "{}" } },
+      result: null,
+    };
+
+    await render(
+      <ChatMessageList
+        messages={[
+          agentToolMessage(askUserToolCall(fullpageId, { kind: "done" }, "fullpage")),
+          agentToolMessage(ordinaryTool),
+          askUserAnswerCardMessage(fullpageId),
+          askUserAnswerCardMessage(ordinaryId),
+        ]}
+        streamActive={false}
+      />,
+    );
+
+    expect(host?.querySelector('[data-wf="ToolCall"].askuser-card')?.textContent).toContain("已提交答案");
+    expect(host?.querySelector(".u-bar")).not.toBeNull();
+  });
+
+  it("被抑制工具是唯一 part 时不残留空 ChatMsg-agent 外壳", async () => {
+    const toolCallId = "ask-no-empty-shell";
+    await render(
+      <ChatMessageList
+        messages={[
+          agentToolMessage(askUserToolCall(toolCallId)),
+          askUserAnswerCardMessage(toolCallId),
+        ]}
+        streamActive={false}
+      />,
+    );
+
+    expect(host?.querySelector('[data-wf="ChatMsg-agent"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="ChatMsg-user-card"]')).not.toBeNull();
+    expect(host?.querySelector('[data-wf="AskUserAnswerCard"]')).not.toBeNull();
   });
 
   it("当前 reveal 进行中时历史 patchSummary 不误显示 loading", async () => {

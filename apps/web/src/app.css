@@ -21,6 +21,14 @@
   scrollbar-width: thin;
   scrollbar-color: var(--line-2) transparent;
 }
+/* Chromium/Safari:凡支持 ::-webkit-scrollbar 子部件的引擎,把标准属性重置回 auto → 交回下方 webkit 规则
+   (8px 细条),!important 一并压过各容器自设的 scrollbar-width:thin。Firefox 不认该选择器 → 跳过 → 仍走上面 thin。 */
+@supports selector(::-webkit-scrollbar-thumb) {
+  * {
+    scrollbar-width: auto !important;
+    scrollbar-color: auto !important;
+  }
+}
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

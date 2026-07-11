@@ -230,6 +230,8 @@
   width: calc(100% + var(--ws-chat-scrollbar-outset));
   margin-right: calc(var(--ws-chat-scrollbar-outset) * -1);
   padding-right: calc(18px + var(--ws-chat-scrollbar-outset)) !important;
+  /* 确定性防抖:滚动条槽常驻,有无滚动条内容宽恒定(不再随滚动条出现而缩)。 */
+  scrollbar-gutter: stable;
 }
 /* 模型回复(agent)正文浅色;用户行下面单独做泼墨气泡(P1 后段) */
 #view-workspace .ws-left .wf-msg.agent {
@@ -2111,6 +2113,17 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: #b8a98c !important;
   display: inline-flex;
   align-items: center;
+}
+/* 答卷卡(用户回流答案):答案可能多选/长自由文本,放开换行,不走汇总卡的单行省略号。 */
+#view-workspace .askuser-card--answers .askuser-card-row {
+  align-items: flex-start;
+}
+#view-workspace .askuser-card--answers .askuser-card-a {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 /* —— bigplan 选项勾选标记:✓ 字符换成金色描线 SVG —— */
 #view-workspace .bigplan-panel .bp-opt.on::before,

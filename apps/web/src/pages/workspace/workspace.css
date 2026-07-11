@@ -2468,6 +2468,35 @@
   }
   #view-workspace .wf-list-row--removed{
     opacity:0.6;
+    position:relative;
+  }
+  /* 行级删除标记:横贯本行的红线 + 左端红圆点(对应行内删除竖光标+球的行级横版)。
+     本行改用整行红线示删,取消行内文字自身的 line-through,避免双重划线。 */
+  #view-workspace .wf-list-row--removed .wf-row-del{
+    text-decoration:none;
+  }
+  #view-workspace .wf-list-row--removed::before{
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    top:50%;
+    height:2px;
+    background:rgba(220, 80, 70, 0.5);
+    transform:translateY(-50%);
+    pointer-events:none;
+  }
+  #view-workspace .wf-list-row--removed::after{
+    content:"";
+    position:absolute;
+    left:-1px;
+    top:50%;
+    width:5px;
+    height:5px;
+    border-radius:50%;
+    background:rgba(220, 80, 70, 0.6);
+    transform:translateY(-50%);
+    pointer-events:none;
   }
   #view-workspace .wf-row-del{
     color:var(--ink-3, #8a8f98);

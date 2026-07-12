@@ -1,4 +1,4 @@
-import type { Migration } from "../migrations.js";
+import type { Migration } from "./types.js";
 import { migration0001Baseline } from "./0001_baseline.js";
 import { migration0002OrphanCleanup } from "./0002_orphan_cleanup.js";
 import { migration0003UsageRequestObservability } from "./0003_usage_request_observability.js";

@@ -9,21 +9,14 @@ import {
   withWriteRetry,
 } from "./documentsClient.js";
 import { MIGRATIONS } from "./migrations/index.js";
+import type { Migration } from "./migrations/types.js";
+export type { Migration } from "./migrations/types.js";
 
 // ── 版本化 DB 迁移 runner（自写 ~150 行，不引 umzug/drizzle）──
 // 语义:schema_migrations 账本 + id 严格连续 + 每条迁移 BEGIN IMMEDIATE 事务 +
 // 贴合既有 withWriteRetry/ensurePragmas/BUSY 语义。单例 Promise ensureMigrated()
 // 替代历史四个模块级 xxxReady 布尔（顺带修并发首调竞态）。
 // 保持轻量自管迁移,避免为当前规模引入额外 migration framework。
-
-export interface Migration {
-  /** 迁移号:1, 2, 3, ... 必须与注册表下标 +1 一致。 */
-  id: number;
-  /** 人读名,写入账本便于排障。 */
-  name: string;
-  /** 变更执行体:在 BEGIN IMMEDIATE 事务内运行,抛错即整体 ROLLBACK。 */
-  up: (client: Client) => Promise<void>;
-}
 
 export interface MigrationResult {
   /** 本次实际应用的迁移号(已按序);无未应用迁移时为空。 */

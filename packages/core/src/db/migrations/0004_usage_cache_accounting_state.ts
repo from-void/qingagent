@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import type { Migration } from "../migrations.js";
+import type { Migration } from "./types.js";
 
 async function up(client: Client): Promise<void> {
   // 旧账本的 0 miss 无法区分“真实 0”与“provider 未返回”，保守标 unknown，避免假 100%。

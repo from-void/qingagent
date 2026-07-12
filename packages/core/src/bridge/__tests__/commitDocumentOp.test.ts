@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getPmContentHash } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   findOpByIdempotencyKey,
 } from "../../db/documentOpsRepo.js";
@@ -327,7 +327,7 @@ describe("commitDocumentOp", () => {
     expect(frames).toEqual(["documentSnapshotWritten"]);
   });
 
-  it("coalesces user replace_doc versions inside the configured window", async () => {
+  it("persists undo A→B→A, redo, and undo-to-empty inside a coalesce window", async () => {
     await seedDocument("doc-coalesce", "before", 1);
 
     const first = await commitDocumentOp(
@@ -337,7 +337,7 @@ describe("commitDocumentOp", () => {
         clientMutationId: "client-coalesce-1",
         summary: "第一笔用户保存",
         coalesce: { windowMs: 60_000 },
-        apply: () => ({ nextDoc: pmDocFromText("first edit") }),
+        apply: () => ({ nextDoc: pmDocFromText("A") }),
       }),
       { now: () => "2026-01-02T00:00:00.000Z" },
     );
@@ -361,7 +361,7 @@ describe("commitDocumentOp", () => {
         clientMutationId: "client-coalesce-2",
         summary: "第二笔用户保存",
         coalesce: { windowMs: 60_000 },
-        apply: () => ({ nextDoc: pmDocFromText("second edit") }),
+        apply: () => ({ nextDoc: pmDocFromText("B") }),
       }),
       { now: () => "2026-01-02T00:00:30.000Z" },
     );
@@ -370,29 +370,115 @@ describe("commitDocumentOp", () => {
       status: "committed",
       docVersion: 3,
       versionId: first.versionId,
-      doc: pmDocFromText("second edit"),
+      doc: pmDocFromText("B"),
       createdNewVersion: true,
       committedAt: "2026-01-02T00:00:30.000Z",
     });
-    const versions = await listVersions("doc-coalesce");
-    expect(versions).toHaveLength(1);
-    expect(versions[0]).toMatchObject({
+
+    const undo = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce",
+        threadId: "thread-doc-coalesce",
+        expectedDocumentSnapshot: 3,
+        clientMutationId: "client-coalesce-undo",
+        summary: "撤销回 A",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("A") }),
+      }),
+      { now: () => "2026-01-02T00:00:40.000Z" },
+    );
+    expect(undo).toMatchObject({
+      status: "committed",
+      docVersion: 4,
+      doc: pmDocFromText("A"),
+      createdNewVersion: true,
+    });
+    await expect(documentRepo.load("doc-coalesce")).resolves.toMatchObject({
+      docVersion: 4,
+      pmDoc: pmDocFromText("A"),
+    });
+    const versionsAfterUndo = await listVersions("doc-coalesce");
+    expect(versionsAfterUndo).toHaveLength(1);
+    expect(versionsAfterUndo[0]).toMatchObject({
       versionId: first.versionId,
-      docVersion: 3,
-      contentHash: getPmContentHash(pmDocFromText("second edit")),
+      docVersion: 4,
+      contentHash: getPmContentHash(pmDocFromText("A")),
       parentVersion: 1,
       createdAt: "2026-01-02T00:00:00.000Z",
       summary: "第一笔用户保存",
     });
-    expect(versions[0]?.snapshotPm).toEqual(pmDocFromText("second edit"));
+    expect(versionsAfterUndo[0]?.snapshotPm).toEqual(pmDocFromText("A"));
     const rawOps = await getDocumentsClient().execute({
-      sql: "SELECT from_version, to_version FROM document_ops WHERE doc_id = ? ORDER BY to_version ASC",
+      sql: `SELECT op_id, client_mutation_id, from_version, to_version
+        FROM document_ops WHERE doc_id = ? ORDER BY to_version ASC`,
       args: ["doc-coalesce"],
     });
-    expect(rawOps.rows.map((row) => [row.from_version, row.to_version])).toEqual([
-      [1, 2],
-      [2, 3],
+    expect(rawOps.rows.map((row) => [row.client_mutation_id, row.from_version, row.to_version])).toEqual([
+      ["client-coalesce-1", 1, 2],
+      ["client-coalesce-2", 2, 3],
+      ["client-coalesce-undo", 3, 4],
     ]);
+    expect(new Set(rawOps.rows.map((row) => String(row.op_id))).size).toBe(3);
+
+    const redo = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce",
+        threadId: "thread-doc-coalesce",
+        expectedDocumentSnapshot: 4,
+        clientMutationId: "client-coalesce-redo",
+        summary: "重做回 B",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("B") }),
+      }),
+      { now: () => "2026-01-02T00:00:50.000Z" },
+    );
+    expect(redo).toMatchObject({
+      status: "committed",
+      docVersion: 5,
+      doc: pmDocFromText("B"),
+      createdNewVersion: true,
+    });
+    await expect(documentRepo.load("doc-coalesce")).resolves.toMatchObject({
+      docVersion: 5,
+      pmDoc: pmDocFromText("B"),
+    });
+
+    const emptyDoc: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [],
+    };
+    await documentRepo.save(documentInput("doc-coalesce-empty", {
+      threadId: "thread-doc-coalesce-empty",
+      docVersion: 1,
+      legacySections: [],
+      pmDoc: emptyDoc,
+    }));
+    await commitDocumentOp(commitInput({
+      docId: "doc-coalesce-empty",
+      threadId: "thread-doc-coalesce-empty",
+      clientMutationId: "client-empty-type",
+      coalesce: { windowMs: 60_000 },
+      apply: () => ({ nextDoc: pmDocFromText("临时输入") }),
+    }), { now: () => "2026-01-02T00:00:00.000Z" });
+    const undoToEmpty = await commitDocumentOp(commitInput({
+      docId: "doc-coalesce-empty",
+      threadId: "thread-doc-coalesce-empty",
+      expectedDocumentSnapshot: 2,
+      clientMutationId: "client-empty-undo",
+      coalesce: { windowMs: 60_000 },
+      apply: () => ({ nextDoc: emptyDoc }),
+    }), { now: () => "2026-01-02T00:00:10.000Z" });
+    expect(undoToEmpty).toMatchObject({
+      status: "committed",
+      docVersion: 3,
+      doc: emptyDoc,
+      createdNewVersion: true,
+    });
+    await expect(documentRepo.load("doc-coalesce-empty")).resolves.toMatchObject({
+      docVersion: 3,
+      pmDoc: emptyDoc,
+    });
   });
 
   it("inserts a new user version when the coalesce window has expired", async () => {
@@ -668,7 +754,7 @@ describe("commitDocumentOp", () => {
     });
   });
 
-  it("short-circuits repeated clientMutationId and opId without bumping", async () => {
+  it("prioritizes repeated clientMutationId while preserving opId-only replay", async () => {
     await seedDocument();
     const first = await commitDocumentOp(
       commitInput({ opId: "op-explicit" }),
@@ -689,22 +775,37 @@ describe("commitDocumentOp", () => {
       committedAt: "2026-01-03T04:05:06.000Z",
     });
 
-    const byOpId = await commitDocumentOp(
+    const mismatchedMutation = await commitDocumentOp(
       commitInput({
         opId: "op-explicit",
         clientMutationId: "client-other",
       }),
     );
-    expect(byOpId).toMatchObject({
-      status: "committed",
-      docVersion: 2,
-      createdNewVersion: false,
-      committedAt: "2026-01-03T04:05:06.000Z",
+    expect(mismatchedMutation).toMatchObject({
+      status: "conflict",
+      currentVersion: 2,
     });
 
     const loaded = await documentRepo.load("doc-commit");
     expect(loaded?.docVersion).toBe(2);
     expect(await listVersions("doc-commit")).toHaveLength(1);
+
+    await seedDocument("doc-op-only", "before", 1);
+    const opOnlyInput = commitInput({
+      docId: "doc-op-only",
+      threadId: "thread-doc-op-only",
+      opId: "op-only",
+      clientMutationId: undefined,
+    });
+    const opOnlyFirst = await commitDocumentOp(opOnlyInput);
+    const opOnlyReplay = await commitDocumentOp(opOnlyInput);
+    expect(opOnlyFirst).toMatchObject({ status: "committed", createdNewVersion: true });
+    expect(opOnlyReplay).toMatchObject({
+      status: "committed",
+      docVersion: 2,
+      createdNewVersion: false,
+    });
+    await expect(listVersions("doc-op-only")).resolves.toHaveLength(1);
   });
 
   it("derives a stable opId when runtime input has no idempotency key", async () => {

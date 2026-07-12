@@ -37,8 +37,8 @@ import { runExclusiveCommit } from "./docCommitQueue.js";
 
 /**
  * 幂等键：clientMutationId（用户编辑保存）与 opId（patch commit / 生成）至少传一个。
- * 若运行时通过 any 透传导致两者皆空，commitDocumentOp 会按
- * (docId, opKind, contentHash(apply 结果)) 派生稳定 opId，仍保证幂等。
+ * 调用方提供 clientMutationId 时由该 mutation 身份主导幂等判断；只有运行时通过 any
+ * 透传导致两者皆空时，才按 (docId, opKind, contentHash(apply 结果)) 派生兜底 opId。
  */
 export type CommitIdempotencyKey =
   | { clientMutationId: string; opId?: string }
@@ -154,6 +154,10 @@ function deriveOpId(input: {
   contentHash: string;
 }): string {
   return getDeterministicId("op", input);
+}
+
+function deriveClientMutationOpId(clientMutationId: string): string {
+  return getDeterministicId("op", { clientMutationId });
 }
 
 function defaultVersionId(input: {
@@ -421,11 +425,14 @@ export async function commitDocumentOp(
 
     const nextDoc = validation.doc;
     const contentHash = getPmContentHash(nextDoc);
-    const opId = providedOpId ?? deriveOpId({
-      docId: input.docId,
-      opKind: input.opKind,
-      contentHash,
-    });
+    const opId = providedOpId
+      ?? (providedClientMutationId
+        ? deriveClientMutationOpId(providedClientMutationId)
+        : deriveOpId({
+            docId: input.docId,
+            opKind: input.opKind,
+            contentHash,
+          }));
     const derivedExistingOp = await findOpByIdempotencyKey(
       { opId, clientMutationId: providedClientMutationId },
       client,

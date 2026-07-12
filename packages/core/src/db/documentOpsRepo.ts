@@ -120,19 +120,13 @@ export async function findOpByIdempotencyKey(
   if (!opId && !clientMutationId) return null;
 
   const c = await readyClient(client);
-  const clauses: string[] = [];
-  const args: string[] = [];
-  if (opId) {
-    clauses.push("op_id = ?");
-    args.push(opId);
-  }
-  if (clientMutationId) {
-    clauses.push("client_mutation_id = ?");
-    args.push(clientMutationId);
-  }
+  // 用户写入同时携带内部 opId 与 clientMutationId 时，mutation 身份才是幂等主键。
+  // 不能用 OR 让另一个 mutation 仅因内容哈希派生出的 opId 相同而命中旧提交。
+  const column = clientMutationId ? "client_mutation_id" : "op_id";
+  const value = clientMutationId ?? opId!;
   const result = await c.execute({
-    sql: `SELECT * FROM document_ops WHERE ${clauses.join(" OR ")} LIMIT 1`,
-    args,
+    sql: `SELECT * FROM document_ops WHERE ${column} = ? LIMIT 1`,
+    args: [value],
   });
   const row = result.rows[0];
   return row ? mapOpRow(row) : null;

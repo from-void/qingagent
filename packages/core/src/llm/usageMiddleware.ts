@@ -1,12 +1,12 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import type { LanguageModelV1, LanguageModelV1Middleware } from "ai";
+import type { LanguageModelMiddleware } from "ai-v5";
 import { recordUsageEvent } from "../db/usageRepo.js";
-import type { ApiKeyOrigin } from "./modelConfig.js";
+import type { ApiKeyOrigin } from "./modelTypes.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 
-type ModelStreamResult = Awaited<ReturnType<LanguageModelV1["doStream"]>>;
-type ModelStreamPart = ModelStreamResult["stream"] extends ReadableStream<infer Part> ? Part : never;
+type UsageMiddlewareStreamResult = Awaited<ReturnType<NonNullable<LanguageModelMiddleware["wrapStream"]>>>;
+type ModelStreamPart = UsageMiddlewareStreamResult["stream"] extends ReadableStream<infer Part> ? Part : never;
 
 export interface UsageMiddlewareOptions {
   requestContext?: RequestContext;
@@ -28,11 +28,64 @@ function missingReason(error: unknown, abortSignal?: AbortSignal): string {
   return "provider_request_error";
 }
 
+export interface UsageOutcomeOptions {
+  sessionId: string;
+  runId?: string | null;
+  callSite: string;
+  modelId: string;
+  keyOrigin: ApiKeyOrigin;
+  lane?: number | null;
+  attempt: number;
+  usage: unknown;
+  providerMetadata?: unknown;
+  reason?: string | null;
+}
+
+/** 将一次 provider 请求终态规范化并旁路写入账本。 */
+export async function recordUsageOutcome(options: UsageOutcomeOptions): Promise<void> {
+  const usageRecord = options.usage !== null && typeof options.usage === "object"
+    ? options.usage as Record<string, unknown>
+    : null;
+  const normalized = normalizeLlmUsageCounts(
+    usageRecord && options.providerMetadata
+      ? { ...usageRecord, providerMetadata: options.providerMetadata }
+      : options.usage,
+  );
+  if (options.reason || !hasUsageCounts(normalized)) {
+    await recordUsageEvent({
+      sessionId: options.sessionId,
+      runId: options.runId ?? null,
+      callSite: options.callSite,
+      modelId: options.modelId,
+      keyOrigin: options.keyOrigin,
+      lane: options.lane ?? null,
+      attempt: options.attempt,
+      usageState: "missing",
+      reason: options.reason ?? "provider_usage_missing",
+    });
+    return;
+  }
+  await recordUsageEvent({
+    sessionId: options.sessionId,
+    runId: options.runId ?? null,
+    callSite: options.callSite,
+    modelId: options.modelId,
+    keyOrigin: options.keyOrigin,
+    lane: options.lane ?? null,
+    attempt: options.attempt,
+    inputTokens: normalized?.inputTokens,
+    outputTokens: normalized?.outputTokens,
+    cacheHitTokens: normalized?.promptCacheHitTokens,
+    cacheMissTokens: normalized?.promptCacheMissTokens,
+    cacheCreationTokens: normalized?.promptCacheCreationTokens,
+  });
+}
+
 /**
- * 在 LanguageModelV1 的传输边界逐个 provider 请求入账。
+ * 在 LanguageModelV2 的传输边界逐个 provider 请求入账。
  * middleware 位于 AI SDK 重试层内，因此一次重试会自然形成另一条真实请求事件。
  */
-export function createUsageMiddleware(options: UsageMiddlewareOptions): LanguageModelV1Middleware {
+export function createUsageMiddleware(options: UsageMiddlewareOptions): LanguageModelMiddleware {
   const baseEvent = {
     sessionId: (options.requestContext?.get("sessionId") as string | undefined) ?? "unknown",
     runId: (options.requestContext?.get("runId") as string | null | undefined) ?? null,
@@ -49,31 +102,12 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     attempt: number,
   ): Promise<void> => {
     try {
-      const usageRecord = usage !== null && typeof usage === "object"
-        ? usage as Record<string, unknown>
-        : null;
-      const normalized = normalizeLlmUsageCounts(
-        usageRecord
-          ? { ...usageRecord, ...(providerMetadata ? { providerMetadata } : {}) }
-          : usage,
-      );
-      if (missing || !hasUsageCounts(normalized)) {
-        await recordUsageEvent({
-          ...baseEvent,
-          usageState: "missing",
-          reason: missing ?? "provider_usage_missing",
-          attempt,
-        });
-        return;
-      }
-      await recordUsageEvent({
+      await recordUsageOutcome({
         ...baseEvent,
-        inputTokens: normalized?.inputTokens,
-        outputTokens: normalized?.outputTokens,
-        cacheHitTokens: normalized?.promptCacheHitTokens,
-        cacheMissTokens: normalized?.promptCacheMissTokens,
-        cacheCreationTokens: normalized?.promptCacheCreationTokens,
         attempt,
+        usage,
+        providerMetadata,
+        reason: missing,
       });
     } catch (error) {
       // 账本始终是旁路；数据库/迁移故障不能改变模型请求结果。
@@ -85,7 +119,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
   };
 
   return {
-    middlewareVersion: "v1",
+    middlewareVersion: "v2",
     wrapGenerate: async ({ doGenerate, params }) => {
       const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
       try {
@@ -99,7 +133,7 @@ export function createUsageMiddleware(options: UsageMiddlewareOptions): Language
     },
     wrapStream: async ({ doStream, params }) => {
       const attempt = options.attempt ?? nextUsageAttempt(options.requestContext, options.callSite, options.lane);
-      let result: ModelStreamResult;
+      let result: UsageMiddlewareStreamResult;
       try {
         result = await doStream();
       } catch (error) {

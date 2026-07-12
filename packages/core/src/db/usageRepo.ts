@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
-import type { ApiKeyOrigin } from "../llm/modelConfig.js";
+import type { ApiKeyOrigin } from "../llm/modelTypes.js";
 
 export interface UsageEventInput {
   sessionId: string;

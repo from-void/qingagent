@@ -109,6 +109,7 @@ packages/server Hono HTTP 服务(:8080,libsql 持久化 + DuckDB 观测)
 packages/core   Mastra agent 大脑:工具/技能/浏览器/导出/记忆
 apps/desktop    Electron 壳(内嵌 server,数据落 userData)
 packages/contract-ts 手写前后端契约类型
+packages/ui-kit 设计 token 与基础样式的唯一来源(附少量已消费的原始组件,非组件库)
 ```
 
 一句话数据流:用户消息 → Hono SSE → Mastra agent(DeepSeek)→ AI-IR 草稿工具(askUser 问卷 → writeDraft / editDraft)→ 候选-diff(用户确认 → 乐观并发落版本)→ TipTap/ProseMirror 富文本渲染。生成由服务端自驱动,断连不停。

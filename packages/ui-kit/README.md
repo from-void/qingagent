@@ -1,58 +1,36 @@
-# @qingagent/ui-kit (v0)
+# @qingagent/ui-kit
 
-Presentation-only React components ported from the
-`qingagent-wireframe-demo/index.html` `wf-*` primitives. No internal state,
-no fetching — Stage A pages compose these and pass data via props.
+`@qingagent/ui-kit` 是青简设计 token 与基础样式的唯一来源，不是完整的 React 组件库。
 
-## How to consume
+## 包含内容
+
+- `tokens.css`：暖纸、金、墨色、字体等设计 token。
+- `base.css`：全局重置、页面基础规则与字体工具类。
+- `components.css`：应用直接复用的组件样式与 `wf-*` 类。
+- `Button`、`Chip`、`Modal`、`Input`：4 个已经被产品消费的原始 React 组件。
+
+直接导入包入口会按顺序注入全部样式，并可同时使用已有组件：
 
 ```tsx
-import "@qingagent/ui-kit";              // side-effect: injects tokens + components.css
+import "@qingagent/ui-kit";
 import { Button, Modal } from "@qingagent/ui-kit";
 ```
 
-For consumers that want to control CSS load order:
+需要自行控制加载顺序时，可分别使用 CSS 子路径：
 
 ```ts
-import "@qingagent/ui-kit/tokens.css";       // :root design tokens only
-import "@qingagent/ui-kit/base.css";         // global reset + body + font utility classes
-import "@qingagent/ui-kit/components.css";   // wf-* component rules
+import "@qingagent/ui-kit/tokens.css";
+import "@qingagent/ui-kit/base.css";
+import "@qingagent/ui-kit/components.css";
 ```
 
-## Exported React components
+## 边界
 
-The package now keeps only the React components that are still imported by
-the app shell or reserved as live primitives. The stylesheet remains broader
-because web code directly uses several `wf-*` classes.
+这个包不打算成长为组件全家桶。应用层的主要复用单元是“裸 HTML 元素 + CSS 类 + token”；不要为了形式上的“统一”把现有 471 处裸 `button`、58 处裸 `input` 机械迁成 React 组件。这类改造收益低、评审风险高，且在本仓库已经多次验证不可取。
 
-| Component | wf-* class | Variants / props |
-|---|---|---|
-| `Button`         | `wf-btn`         | `variant: default \| primary \| ghost`, `size: default \| small \| lg`, `square`, `icon` |
-| `Chip`           | `wf-chip`        | `variant: default \| solid \| dashed \| mono`, `dot`, `onRemove` |
-| `Modal`          | `wf-modal`       | `open`, `title`, `onClose` |
-| `Input`          | `wf-input`       | wrapper around `<textarea>`/`<input>` (consumer supplies) |
+只有同时满足以下条件的新组件才应进入 `ui-kit`：
 
-## CSS-only classes kept for direct web usage
+- 至少在 3 处真实的跨页面场景中复用；
+- 样式与交互已经稳定。
 
-`components.css` still defines `wf-doc`, `wf-msg`, `wf-region`,
-`wf-region-label`, `wf-floaty`, `wf-patch-ins`, and `wf-sel`. These classes
-are consumed directly by `apps/web`, so they are not represented by exported
-React components.
-
-Every exported component's root carries `data-wf="<ComponentName>"`.
-
-## Stage A scope
-
-- No animation polish beyond what wireframe `<style>` already specifies.
-- No keyboard a11y beyond minimal `tabIndex`/`role` on clickable spans.
-- Token CSS is wireframe-faithful; tweaks land in a future capsule with
-  visual-diff updates.
-
-## Adding a component
-
-1. New `<Name>.tsx` under `src/`. Presentation-only, no state.
-2. Root carries `data-wf="<Name>"`.
-3. Re-export from `src/index.ts` (component + types).
-4. CSS goes into `src/components.css` only — never CSS-in-JS or
-   per-component `.css` files (single import keeps Stage A simple).
-5. Add a row to the table above.
+不满足判据的组件留在使用处；共享视觉规则优先沉淀为现有 token 或 CSS 类。

@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 
+// resetModules 只重置 bridge 会话状态；真实 core 保持文件级单例，避免每个用例
+// 重跑整套模块初始化并重复注册进程 listeners。
+const actualCore = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
+
 const mockState = vi.hoisted(() => ({
   ...(() => {
     const events: Array<Record<string, unknown>> = [];
@@ -151,23 +155,22 @@ function askUserToolCall(
 async function loadBridge() {
   vi.resetModules();
 
-  vi.doMock("@qingagent/core", async () => {
-    const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
+  vi.doMock("@qingagent/core", () => {
     return {
-      ...actual,
+      ...actualCore,
       buildCapabilityTools: vi.fn(async () => ({})),
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: mockState.persistSessionMetadata,
       schedulePersist: mockState.persistSessionMetadata,
       loadSessionFromThread: mockState.loadSessionFromThread.mockImplementation(
-        actual.loadSessionFromThread,
+        actualCore.loadSessionFromThread,
       ),
       ensureWorkingMemorySnapshot: mockState.ensureWorkingMemorySnapshot,
       prepareOmContextForTurn: mockState.prepareOmContextForTurn,
       runAgentTurn: mockState.runAgentTurn,
       scheduleOmSidecarAfterTurn: mockState.scheduleOmSidecarAfterTurn,
       qingagentAgent: {
-        ...actual.qingagentAgent,
+        ...actualCore.qingagentAgent,
         resumeStream: mockState.resumeStream,
       },
     };

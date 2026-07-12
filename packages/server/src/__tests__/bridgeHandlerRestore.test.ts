@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LegacySection, DocState, ToolCallSpec, BridgeFrame, DocSuggestion } from "@qingagent/contract-ts";
 import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
+// resetModules 只用于重置 bridge 的进程内 session；真实 core 模块体积大且会注册
+// 进程监听器，重复 importActual 会把模块初始化时间计入每个用例并泄漏 listeners。
+const actualCore = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
+
 // 这些 restore 用例模拟「旧快照里 docState 是 legacy 8 态字符串」的存量数据,
 // 用来验证 restore 归一。R5e 后 session.docState 是 3 态 Content,故 legacy 种子需 cast。
 function legacyDocState(kind: string): DocState {
@@ -99,10 +103,9 @@ function toolCall(
 async function loadBridge() {
   vi.resetModules();
 
-  vi.doMock("@qingagent/core", async () => {
-    const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
+  vi.doMock("@qingagent/core", () => {
     return {
-      ...actual,
+      ...actualCore,
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: vi.fn(async () => undefined),
       schedulePersist: vi.fn(async () => undefined),

@@ -56,7 +56,7 @@ type InnerLanguageModel = Exclude<LanguageModel, string>;
 /** 主 Agent 的 v2 provider：与 Mastra 1.49 内部使用同版 serializer，只注入快照 fetch。 */
 export function createSnapshottingQingagentModel(
   requestContext?: RequestContext,
-) {
+): InnerLanguageModel {
   const { apiKey } = resolveDeepseekAuth(requestContext);
   // 不强加 includeUsage：实测主链原始 body 没有 stream_options，DeepSeek 仍会在尾帧返回 usage；
   // 这里改变 body 会破坏已经验证过的 provider wire 前缀一致性。
@@ -795,7 +795,7 @@ export function getDeepseekModel(
   requestContext?: RequestContext,
   tier: DeepseekTier = "flash",
   options: UsageTrackedModelOptions = {},
-) {
+): InnerLanguageModel {
   return createDeepseekProvider(requestContext, options)(resolveModelId(requestContext, tier));
 }
 

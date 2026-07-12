@@ -1,4 +1,5 @@
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import type { Extensions } from "@tiptap/core";
 import { CodeBlockCM } from "../CodeBlockView";
 import { CalloutCM } from "../CalloutView";
 import { ColumnCM, ColumnListCM } from "../ColumnView";
@@ -17,7 +18,7 @@ export const MATH_CLICK_EVENT = "qingagent:math-click";
 export function createWorkspaceTiptapExtensions(options: {
   docId: string | null;
   forceExpandCollapse: boolean;
-}) {
+}): Extensions {
   return [
   ...createQingagentExtensions({
 	    codeBlockExtension: CodeBlockCM,

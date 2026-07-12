@@ -1061,7 +1061,7 @@ function listItemDropScopeDecoration(meta: Extract<ListItemDndMeta, { kind: "set
   return Decoration.node(meta.scopeFrom, meta.scopeTo, { class: LIST_ITEM_DROP_SCOPE_CLASS });
 }
 
-function isListDomElement(el: Element | null): el is HTMLElement {
+function isListDomElement(el: Element | null): el is HTMLUListElement | HTMLOListElement {
   const tag = el?.tagName.toLowerCase();
   return tag === "ul" || tag === "ol";
 }

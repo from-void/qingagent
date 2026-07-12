@@ -1332,12 +1332,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: var(--ink-3);
   font-weight: 400;
 }
-#view-workspace .askuser-overlay .au-opts .wf-chip:has(input:checked)::before {
-  content: "\2713";
-  margin-right: 5px;
-  color: var(--mark);
-  font-size: 10px;
-}
 #view-workspace .askuser-overlay .au-text,
 #view-workspace .askuser-overlay .au-other {
   border: 1px solid var(--line-2);
@@ -2257,16 +2251,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   overflow-wrap: anywhere;
   text-align: right;
 }
-/* —— bigplan 选项勾选标记:✓ 字符换成金色描线 SVG —— */
-#view-workspace .bigplan-panel .bp-opt.on::before,
-#view-workspace .bigplan-panel .bp-opt.on.has-desc::after {
-  content: "" !important;
-  width: 11px;
-  height: 11px;
-  background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23b59a63'%20stroke-width='2.4'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.5%2012.8l4.6%204.7L19.5%206.6'/%3E%3C/svg%3E")
-    no-repeat center / contain;
-}
-
 /* —— 链接:行内金链 + 整行链接卡(demo .img-card 观感) —— */
 #view-workspace .chat-link {
   color: #b8a98c;

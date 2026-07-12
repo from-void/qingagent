@@ -19,6 +19,7 @@ import { DiagramRenderer } from "../workspace/components/diagram/DiagramRenderer
 // —— 本页真实引用的生产组件(mock props 驱动,零重写)——
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
 import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
+import { CheckIcon } from "../workspace/components/icons";
 import { PatchNav } from "../workspace/components/PatchNav";
 import { WholeDocReviewNav } from "../workspace/components/WholeDocReviewNav";
 import { LinkedFilesPanel } from "../workspace/components/LinkedFilesPanel";
@@ -1575,7 +1576,7 @@ export function UIKitPage() {
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">H2</span>二级标题</button>
                     <button className="dt-mi disabled" role="menuitem" type="button" disabled><span className="dt-mi-k">¶</span>正文</button>
                     <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">•</span>无序列表</button>
-                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k">☑</span>待办清单</button>
+                    <button className="dt-mi" role="menuitem" type="button"><span className="dt-mi-k"><CheckIcon size={12} /></span>待办清单</button>
                   </div>
                 </div>
                 <span className="dt-divider" />
@@ -1649,9 +1650,9 @@ export function UIKitPage() {
               <div className="block-handle-menu" role="menu">
                 <div className="bh-section-label">转换为</div>
                 <div className="bh-grid">
-                  {["正文", "H1", "H2", "H3", "•", "1.", "❝", "&lt;/&gt;", "☑", "💡"].map((g, i) => (
+                  {["正文", "H1", "H2", "H3", "•", "1.", "❝", "&lt;/&gt;", "task", "💡"].map((g, i) => (
                     <button key={i} className="bh-grid-btn" role="menuitem" type="button" aria-label={`转换 ${g}`}>
-                      <span dangerouslySetInnerHTML={{ __html: g }} />
+                      {g === "task" ? <CheckIcon size={12} /> : <span dangerouslySetInnerHTML={{ __html: g }} />}
                     </button>
                   ))}
                 </div>

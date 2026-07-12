@@ -10,6 +10,7 @@ import type {
 } from "../data/protocol";
 import { AskUserPreview } from "./AskUserPreview";
 import { SliderQuestionInput, defaultSliderValue } from "./SliderQuestionInput";
+import { CheckIcon } from "./icons";
 
 export interface AskUserOverlayProps {
   spec: AskUserSpec;
@@ -362,6 +363,7 @@ export function AskUserOverlay({
               >
                 <span className="auq-tab-index">{String(index + 1).padStart(2, "0")}</span>
                 {question.header?.trim() && <span>{question.header.trim()}</span>}
+                {answered && <span className="qa-check-icon"><CheckIcon size={10} /></span>}
               </button>
             );
           })}
@@ -518,12 +520,12 @@ function ChoiceQuestionFields({
   onMulti: (qid: string, value: string) => void;
   onOtherText: (qid: string, value: string) => void;
 }) {
-  const [hoveredValue, setHoveredValue] = useState<string | null>(null);
+  const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const hasPreview = question.options.some((option) => Boolean(option.preview?.trim()));
   const selectedPreview = question.options.find((option) =>
     answer.chosen.includes(option.value) && Boolean(option.preview?.trim()),
   );
-  const previewOption = question.options.find((option) => option.value === hoveredValue && option.preview?.trim())
+  const previewOption = question.options.find((option) => option.value === highlightedValue && option.preview?.trim())
     ?? selectedPreview
     ?? question.options.find((option) => Boolean(option.preview?.trim()));
   const hasDescriptions = question.options.some((option) => Boolean(option.description?.trim()));
@@ -533,7 +535,7 @@ function ChoiceQuestionFields({
   const options = (
     <div
       className={hasDescriptions ? "auq-options" : "au-opts"}
-      onMouseLeave={() => setHoveredValue(null)}
+      onMouseLeave={() => setHighlightedValue(null)}
     >
       {question.options.map((option) => (
         <OptionChip
@@ -543,7 +545,7 @@ function ChoiceQuestionFields({
           isMulti={question.kind.kind === "multi"}
           selectedValues={answer.chosen ?? []}
           previewFocused={previewOption?.value === option.value && hasPreview}
-          onPreviewFocus={setHoveredValue}
+          onPreviewFocus={setHighlightedValue}
           onSingle={onSingle}
           onMulti={onMulti}
         />
@@ -557,11 +559,16 @@ function ChoiceQuestionFields({
         <div className="auq-split">
           <div className="auq-option-column">{options}</div>
           <div className="auq-preview" aria-live="polite">
-            {previewOption?.preview ? (
-              <AskUserPreview markdown={previewOption.preview} />
-            ) : (
-              <div className="auq-preview-empty">悬停或选中一个选项查看预览</div>
-            )}
+            {question.options.filter((option) => option.preview?.trim()).map((option) => (
+              <div
+                key={option.value}
+                data-preview-key={option.value}
+                data-active={previewOption?.value === option.value ? "true" : "false"}
+                aria-hidden={previewOption?.value === option.value ? undefined : true}
+              >
+                <AskUserPreview markdown={option.preview!} />
+              </div>
+            ))}
           </div>
         </div>
       ) : options}
@@ -622,9 +629,23 @@ function OptionChip({
         checked={checked}
         onFocus={() => onPreviewFocus(option.preview?.trim() ? option.value : null)}
         onBlur={() => onPreviewFocus(null)}
+        tabIndex={previewFocused ? 0 : -1}
+        onKeyDown={(event) => {
+          if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) return;
+          event.preventDefault();
+          if (event.key === "Enter") {
+            event.currentTarget.click();
+            return;
+          }
+          const inputs = Array.from(event.currentTarget.closest(".auq-options, .au-opts")?.querySelectorAll<HTMLInputElement>('input[type="radio"], input[type="checkbox"]') ?? []);
+          const index = inputs.indexOf(event.currentTarget);
+          const delta = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1;
+          inputs[(index + delta + inputs.length) % inputs.length]?.focus();
+        }}
         onChange={() => isMulti ? onMulti(qid, option.value) : onSingle(qid, option.value)}
       />
       <span className="auq-option-title">{option.label}</span>
+      {checked && <span className="qa-check-icon auq-option-check"><CheckIcon size={11} /></span>}
       {hasDescription && <span className="auq-option-description">{option.description}</span>}
     </label>
   );

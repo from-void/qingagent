@@ -87,17 +87,17 @@ describe("AskUserPreview", () => {
     const trigger = host!.querySelector<HTMLElement>(".auq-preview-diagram")!;
     trigger.focus();
     await click(trigger);
-    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).not.toBeNull();
-    expect(document.activeElement).toBe(workspace.querySelector(".auq-lightbox-close"));
+    expect(document.body.querySelector('[data-wf="AskUserPreviewLightbox"]')).not.toBeNull();
+    expect(document.activeElement).toBe(document.body.querySelector(".media-zoom-btn--close"));
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
-    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
+    expect(document.body.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
 
     await click(host!.querySelector<HTMLElement>(".auq-preview-diagram")!);
-    await click(workspace.querySelector<HTMLElement>(".auq-lightbox")!);
-    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
+    await click(document.body.querySelector<HTMLElement>(".media-zoom-fullscreen")!);
+    expect(document.body.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
     workspace.remove();
   });
 

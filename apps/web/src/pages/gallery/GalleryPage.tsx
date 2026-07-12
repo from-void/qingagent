@@ -140,9 +140,9 @@ const TOOL_EXAMPLES: Record<string, { args: Record<string, unknown>; result?: un
 
 // 走通用灰行的工具清单(专用卡的工具不在此,它们已在 F-L 组).each: 现状 vs 改进 对比
 const INLINE_TOOLS: { name: string; param: string; dead?: string }[] = [
-  { name: "skill", param: "技能名 ✓" },
-  { name: "skill_search", param: "query ✓" },
-  { name: "readMaterial", param: "mode ✓" },
+  { name: "skill", param: "技能名（必填）" },
+  { name: "skill_search", param: "query（必填）" },
+  { name: "readMaterial", param: "mode（必填）" },
   { name: "parseFile", param: "仅标题", dead: "段读 a.filename 但入参 filePath→失效" },
   { name: "summarizeMaterial", param: "仅标题" },
   { name: "readDraft", param: "仅标题" },
@@ -155,7 +155,7 @@ const INLINE_TOOLS: { name: string; param: string; dead?: string }[] = [
   { name: "mastra_workspace_edit_file", param: "仅标题" },
   { name: "mastra_workspace_list_files", param: "仅标题" },
   { name: "mastra_workspace_grep", param: "仅标题" },
-  { name: "mastra_workspace_search", param: "query ✓" },
+  { name: "mastra_workspace_search", param: "query（必填）" },
   { name: "readDocument", param: "无·裸『工具调用』", dead: "未映射(后端在用)" },
   { name: "searchDocuments", param: "无·裸『工具调用』", dead: "未映射(后端在用)" },
 ];
@@ -413,8 +413,8 @@ function buildGroups(): Group[] {
         const copyMap: Record<string, string> = {
           pending: "· 读取文件 (灰点)",
           running: "⠿ 读取文件 (三点 loading)",
-          done: "✓ 读取文件 (灰勾) —— 现状不显示是哪个文件",
-          failed: "✓ 读取文件 —— ⚠失败=done 同形,前端不暴露失败",
+          done: "读取文件（完成）—— 现状不显示是哪个文件",
+          failed: "读取文件 —— ⚠失败=done 同形,前端不暴露失败",
         };
         return {
           state: k,
@@ -540,7 +540,7 @@ function buildGroups(): Group[] {
         {
           state: "done",
           code: 'status="done"',
-          copy: "✓ 识别图片",
+          copy: "识别图片（完成）",
           src: "CheckIcon size=12",
           render: <Cell messages={[toolMsg(tool("readImage", ST.done, { kind: "readImageCard", data: { prompt: "识别这张图", thumbnailSrc: null, excerpt: "一座波浪形屋顶的体育馆。" } }))]} />,
           improved: <div className="gx-sample u-scope"><div className="wf-msg agent"><URevampPart part={{ kind: "toolCall", data: tool("readImage", ST.done, { kind: "readImageCard", data: { prompt: "识别这张图", thumbnailSrc: null, excerpt: "一座波浪形屋顶的体育馆。" } }) }} /></div></div>,
@@ -605,7 +605,7 @@ function buildGroups(): Group[] {
         {
           state: "done (默认折叠)",
           code: 'status="done" +src',
-          copy: "✓ 生成配图 · 已生成 ▾ (折叠头，点开看图)",
+          copy: "生成配图 · 已生成 ▾ (折叠头，点开看图)",
           src: ".svg-head-btn",
           render: <Cell messages={[toolMsg(tool("generateSvg", ST.done, svgBody("done", { prompt: "杭州亚运会主场馆示意", src: TINY_SVG, width: 160, height: 90 })))]} />,
           improved: <div className="gx-sample u-scope"><div className="wf-msg agent"><URevampPart part={{ kind: "toolCall", data: tool("generateSvg", ST.done, svgBody("done", { prompt: "杭州亚运会主场馆示意", src: TINY_SVG, width: 160, height: 90 })) }} /></div></div>,
@@ -1277,7 +1277,7 @@ function pickQuick(e: MouseEvent<HTMLButtonElement>) {
   // 标「不用改」→ 立即清空该行改进列(不等刷新)
   if (label === "不用改") {
     const imp = e.currentTarget.closest("tr")?.querySelectorAll(".gx-render")[1];
-    if (imp) imp.innerHTML = '<span class="gx-settled">✓ 不用改（已确认）</span>';
+    if (imp) imp.innerHTML = '<span class="gx-settled">不用改（已确认）</span>';
   }
 }
 
@@ -1495,7 +1495,7 @@ function GroupBody({ group, indexFn }: { group: Group; indexFn: () => number }) 
                 : group.customNote
                   ? <span className="gx-custom-note">⌁ 用户定制 · {group.customNote}</span>
                   : settled
-                    ? <span className="gx-settled">✓ 不用改（已确认）</span>
+                    ? <span className="gx-settled">不用改（已确认）</span>
                     : (r.improved ?? <span className="gx-copy-empty">—</span>)}
             </td>
             <td className="gx-notecell">

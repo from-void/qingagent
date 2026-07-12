@@ -139,7 +139,7 @@ describe("pmToHomeArticleMeta", () => {
   });
 
   it("feeds imageUrl into masonry selector requiresImage and dynamic image scores", async () => {
-    const masonryBundlePath = "../../../chinese-masonry/dist/chinese-masonry.js";
+    const masonryBundlePath = "../../../../apps/web/src/system/chinese-masonry/index.ts";
     const { TemplateRegistry, createTemplateSelector } = await import(masonryBundlePath) as {
       TemplateRegistry: new () => { register: (template: unknown) => void };
       createTemplateSelector: (registry: unknown, options: { random: () => number }) => {

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run && vitest run --config vitest.dom.config.ts",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:dom": "vitest run --config vitest.dom.config.ts",
     "visual": "playwright test",
     "visual:update": "playwright test --update-snapshots"

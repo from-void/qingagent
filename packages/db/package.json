@@ -14,7 +14,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:perf": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

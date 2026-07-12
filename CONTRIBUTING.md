@@ -33,10 +33,24 @@ pnpm dev:desktop  # Electron 壳
 ```bash
 pnpm -r typecheck
 pnpm -r --if-present build
-pnpm -r --if-present test   # core/server 套件需串行:vitest --fileParallelism=false
+pnpm test                   # 默认 unit 层,保持 workspace 与文件并行
 ```
 
 apps/web 的测试分默认与 DOM 两套,`pnpm --filter @qingagent/web test` 已链式包含,两套都要绿。
+
+## 测试分层
+
+全仓测试按资源画像分为三层,文件名就是稳定的归类契约:
+
+| 层级 | 命令 | 文件命名 | 何时使用 |
+|---|---|---|---|
+| unit | `pnpm test` | 默认 `*.test.ts(x)` | 纯逻辑、mock I/O、普通 jsdom 交互;应快速、可并行、可重复 |
+| heavy | `pnpm test:heavy` | `*.heavy.test.ts(x)` | Pyodide、真实 Playwright/Chromium 渲染、PDF/图表栅格化、真实进程或 TCP、长链路集成烟测 |
+| perf | `pnpm test:perf` | `*.perf.test.ts(x)` | 大 DOM/大数据量或并发负载下,对真实墙钟、吞吐或调度次数设门槛的性能基准 |
+
+`pnpm test:heavy` 和 `pnpm test:perf` 会限制 workspace 并发,对应 Vitest 配置也关闭文件并行并使用更宽超时。提交前本地全量验收运行 `pnpm test:all`,它依次覆盖 unit、heavy、perf,不能用只跑默认层代替。
+
+只有测试会真实拉起重运行时或包含性能门时才归入 heavy/perf。模块名里出现 browser/PDF、使用 fake timer、mock 浏览器接口,或验证普通超时错误分支,仍属于 unit。新增 heavy/perf 文件时,同时确认所属包的 `vitest.heavy.config.ts` / `vitest.perf.config.ts` 和 package script 已覆盖该命名。apps/web 的 `pnpm visual` 是独立视觉快照套件,不属于上述旧全量回归命令。
 
 ## 分支与提交约定
 

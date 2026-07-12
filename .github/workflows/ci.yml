@@ -22,7 +22,8 @@ jobs:
           # gitleaks-action v2 用环境变量指定配置；根目录 .gitleaks.toml 也会被自动发现。
           GITLEAKS_CONFIG: .gitleaks.toml
 
-  build:
+  quality:
+    name: 类型、构建与架构守卫
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -55,6 +56,60 @@ jobs:
       - name: pnpm build
         run: pnpm -r --if-present build
 
+      - name: deterministic scorers
+        run: pnpm scorers
+
+  unit-tests:
+    name: Unit 测试（快速并行层）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          for i in 1 2 3; do
+            corepack prepare pnpm@9.15.0 --activate && break
+            echo "corepack prepare failed (attempt $i/3), retrying in 5s..."
+            sleep 5
+          done
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm test (unit, parallel)
+        run: pnpm test
+
+  heavy-perf-tests:
+    name: Heavy / Perf 测试（资源隔离层）
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          for i in 1 2 3; do
+            corepack prepare pnpm@9.15.0 --activate && break
+            echo "corepack prepare failed (attempt $i/3), retrying in 5s..."
+            sleep 5
+          done
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
       # PDF 导出已改为 headless Chromium 渲染 HTML(@qingagent/doc-render 的 toHtml + htmlToPdf)。
       # 需要:① 中文字体(导出排版用 Noto Sans/Serif CJK,family 名为 "Noto Sans CJK SC"/"Noto Serif CJK SC");
       #       ② Playwright 的 Chromium 二进制 + 系统依赖。没装 Chromium 时 PDF 烟测会自动 skip
@@ -72,17 +127,8 @@ jobs:
           echo "QINGAGENT_BROWSER_EXECUTABLE_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
           echo "browser pool -> $CHROMIUM_PATH"
 
-      # core 与 server 必须串行:并行时多个 test file 同时拉起浏览器池(导出 PDF/PNG 烟测)
-      # 会互相争抢致浏览器崩溃("browser has been closed"),且有 pyodide worker/mock 污染的假红。
-      # 见项目约定:这两个包一律 --fileParallelism=false。其余包正常并行。
-      - name: pnpm test (core, serial)
-        run: pnpm --filter @qingagent/core test -- --fileParallelism=false
+      - name: pnpm test:heavy (serial)
+        run: pnpm test:heavy
 
-      - name: pnpm test (server, serial)
-        run: pnpm --filter @qingagent/server test -- --fileParallelism=false
-
-      - name: pnpm test (rest)
-        run: pnpm -r --if-present --filter '!@qingagent/core' --filter '!@qingagent/server' test
-
-      - name: deterministic scorers
-        run: pnpm scorers
+      - name: pnpm test:perf (serial)
+        run: pnpm test:perf

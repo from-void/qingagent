@@ -1,12 +1,9 @@
 /**
- * Workspace view-side facade over the wire contract.
+ * Wire 类型手维护于 `@qingagent/contract-ts`。
  *
- * Stage A.5 hand-authored a kebab-case parallel protocol here. Group A
- * collapsed it: every wire shape now lives in `agent-contract` (Rust)
- * and is generated into `@qingagent/contract-ts`. This module re-exports
- * those wire types and adds only the view-layer rendering helpers
- * (DocSpan / LegacySection with patch overlays, DOC_EDITABLE policy,
- * WorkspaceFrame envelope including local UI actions).
+ * 本模块只提供 view 层 facade：re-export 契约类型，并补充渲染辅助类型
+ * （带 patch overlay 的 DocSpan / LegacySection、DOC_EDITABLE 策略，以及
+ * 包含本地 UI action 的 WorkspaceFrame envelope）。
  */
 
 export type {
@@ -71,9 +68,7 @@ import type {
 } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDiagramOverlay, PmDoc, PmInlineNode, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
 
-/** Map from `AskUserQuestion.id` to the user's answer. ts-rs doesn't
- * emit a type for the Rust `pub type AskUserAnswers = HashMap<...>`
- * alias, so we shadow it locally. */
+/** 从 `AskUserQuestion.id` 到用户答案的映射，仅供 workspace view 层使用。 */
 export type AskUserAnswers = Record<string, AskUserAnswer>;
 
 export type EditorState = "empty" | "editable" | "locked" | "pendingReview";

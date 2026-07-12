@@ -120,6 +120,8 @@ qingagent 是单用户自托管产品,不提供多租户或多用户隔离。信
 
 默认安全边界是本机回环:后端默认只监听 `127.0.0.1`,只允许本机访问;桌面端开箱即是这个形态。要让外部设备或公网访问,必须由部署者显式改配置并承担对应加固责任。
 
+`?auth=<token>` 仅是本机调试的逃生舱。应用自身日志会对它做 redact,但完整 URL 仍可能进入浏览器历史和反向代理访问日志;公网部署应禁用这种传递方式,改用 `Authorization: Bearer` header。
+
 部署边界:会话运行状态保存在单进程内存中,SSE 连接绑定该进程;系统按单实例、单进程设计,不支持多实例横向扩展。文档与版本历史则持久化在本机数据库中。
 
 不要把端口直接暴露到公网且不设置 `QINGAGENT_AUTH_TOKEN`。这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额;如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,还会扩大到在你的机器上执行命令的风险。不要这样做。

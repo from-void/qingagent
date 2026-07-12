@@ -8,60 +8,23 @@ import { discoverInstance } from "./discovery.js";
 import { NEXT_STEP, QaCliError } from "./errors.js";
 import { hasFlag, optionValue, optionValues, printJson } from "./output.js";
 import { installPointerSkill, writerSkillMarkdown, type SkillInstallTarget } from "./skill.js";
-
-type ExternalProposeOp =
-  | { kind: "fullDraft"; markdown: string }
-  | { kind: "strReplace"; old: string; new: string; nth?: number }
-  | { kind: "appendSection"; markdown: string }
-  | { kind: "insertAfterLine"; line: number; markdown: string };
-
-interface ChatLogResponse {
-  sessionId: string;
-  messages: Array<{ id: string; role: { kind: string }; ts: string; text: string }>;
-}
-
-interface FilesListResponse {
-  sessionId: string;
-  materials: Array<{
-    id: string;
-    filename: string;
-    mime: string;
-    summary: string;
-    wordCount: number;
-    byteLen: number | null;
-    parseState: string;
-    sourceUrl: string | null;
-    createdAt: string;
-  }>;
-  folderSources: Array<{
-    id: string;
-    displayName: string;
-    provider: string;
-    status: string;
-  }>;
-}
-
-interface FileTextResponse {
-  id: string;
-  filename: string;
-  mime: string;
-  text: string;
-  byteLen: number;
-  truncated: boolean;
-}
+import type {
+  ExternalChatLogResponse,
+  ExternalDocReadResponse,
+  ExternalEventsMeta,
+  ExternalFilesListResponse,
+  ExternalFileTextResponse,
+  ExternalProposalResponse,
+  ExternalProposeOp,
+  ExternalSessionCreateResponse,
+  ExternalSessionsListResponse,
+} from "./generated/externalApi.js";
 
 interface EventOptions {
   follow: boolean;
   after: string;
   timeoutMs: number | null;
   until: string | null;
-}
-
-interface EventsMeta {
-  epoch: number;
-  minSeq: number;
-  nextSeq: number;
-  gap: boolean;
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
@@ -80,31 +43,31 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   const client = await ApiClient.create();
   if (group === "sessions" && command === "list") {
-    const data = await client.request<unknown>("/sessions");
+    const data = await client.request<ExternalSessionsListResponse>("/sessions");
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "sessions" && command === "create") {
-    const data = await client.request<unknown>("/sessions", { method: "POST", body: JSON.stringify({}) });
+    const data = await client.request<ExternalSessionCreateResponse>("/sessions", { method: "POST", body: JSON.stringify({}) });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "read") {
     const sessionId = requireOption(args, "-s");
     const lines = hasFlag(args, "--lines") ? "?lines=1" : "";
-    const data = await client.request<{ markdown?: string; markdownWithLineNumbers?: string }>(`/sessions/${encodeURIComponent(sessionId)}/doc${lines}`);
+    const data = await client.request<ExternalDocReadResponse>(`/sessions/${encodeURIComponent(sessionId)}/doc${lines}`);
     if (hasFlag(args, "--json")) return printJson(data);
     process.stdout.write(`${data.markdownWithLineNumbers ?? data.markdown ?? ""}\n`);
     return;
   }
   if (group === "doc" && command === "state") {
     const sessionId = requireOption(args, "-s");
-    const data = await client.request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/doc`);
+    const data = await client.request<ExternalDocReadResponse>(`/sessions/${encodeURIComponent(sessionId)}/doc`);
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "propose") {
     const sessionId = requireOption(args, "-s");
     const expectedDocVersion = Number(requireOption(args, "--expect-version"));
     const ops = await parseOps(args);
-    const data = await client.propose<unknown>(sessionId, { expectedDocVersion, ops });
+    const data: ExternalProposalResponse = await client.propose(sessionId, { expectedDocVersion, ops });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "doc" && command === "events") {
@@ -125,14 +88,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (group === "chat" && command === "send") {
     const sessionId = requireOption(args, "-s");
     const text = chatText(args);
-    const data = await client.chat<unknown>(sessionId, { text });
+    const data = await client.chat(sessionId, { text });
     return output(data, hasFlag(args, "--json"));
   }
   if (group === "chat" && command === "log") {
     const sessionId = requireOption(args, "-s");
     const limit = optionValue(args, "--limit");
     const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
-    const data = await client.request<ChatLogResponse>(`/sessions/${encodeURIComponent(sessionId)}/chat${query}`);
+    const data = await client.request<ExternalChatLogResponse>(`/sessions/${encodeURIComponent(sessionId)}/chat${query}`);
     if (hasFlag(args, "--json")) return printJson(data);
     for (const message of data.messages) {
       process.stdout.write(`${roleLabel(message.role.kind)}  ${message.text}\n`);
@@ -145,7 +108,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   if (group === "files" && command === "list") {
     const sessionId = requireOption(args, "-s");
-    const data = await client.request<FilesListResponse>(`/sessions/${encodeURIComponent(sessionId)}/files`);
+    const data = await client.request<ExternalFilesListResponse>(`/sessions/${encodeURIComponent(sessionId)}/files`);
     if (hasFlag(args, "--json")) return printJson(data);
     printFilesList(data);
     return;
@@ -155,7 +118,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     const materialId = requireOption(args, "--material");
     const maxBytes = optionValue(args, "--max-bytes");
     const query = maxBytes ? `?maxBytes=${encodeURIComponent(maxBytes)}` : "";
-    const data = await client.request<FileTextResponse>(
+    const data = await client.request<ExternalFileTextResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(materialId)}/text${query}`,
     );
     if (hasFlag(args, "--json")) return printJson(data);
@@ -202,7 +165,7 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   let buffer = "";
   let received = 0;
   let reason: string | null = null;
-  let meta: EventsMeta | null = null;
+  let meta: ExternalEventsMeta | null = null;
   let maxSeq = parseAfterSeq(options.after);
   try {
     const res = await fetch(client.eventsUrl(sessionId, options.after), {
@@ -267,16 +230,16 @@ function parseSseEvent(chunk: string): { event: string; data: string } | null {
   return { event, data: data.join("\n") };
 }
 
-function parseEventsMeta(data: string): EventsMeta | null {
+function parseEventsMeta(data: string): ExternalEventsMeta | null {
   try {
-    const parsed = JSON.parse(data) as Partial<EventsMeta>;
+    const parsed = JSON.parse(data) as Partial<ExternalEventsMeta>;
     if (
       typeof parsed.epoch === "number" &&
       typeof parsed.minSeq === "number" &&
       typeof parsed.nextSeq === "number" &&
       typeof parsed.gap === "boolean"
     ) {
-      return parsed as EventsMeta;
+      return parsed as ExternalEventsMeta;
     }
   } catch {
     return null;
@@ -367,7 +330,7 @@ function roleLabel(role: string): string {
   return role;
 }
 
-function printFilesList(data: FilesListResponse): void {
+function printFilesList(data: ExternalFilesListResponse): void {
   process.stdout.write(`材料区 session=${data.sessionId}\n`);
   if (data.materials.length === 0) {
     process.stdout.write("材料: 无\n");

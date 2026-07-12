@@ -10,6 +10,9 @@
     "./schemas": "./src/schemas/index.ts"
   },
   "scripts": {
+    "build": "node scripts/generate-external-api-types.mjs",
+    "generate:external": "node scripts/generate-external-api-types.mjs",
+    "check:external": "node scripts/generate-external-api-types.mjs --check",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

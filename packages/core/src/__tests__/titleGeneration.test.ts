@@ -56,12 +56,17 @@ describe("首稿后 BranchCall 标题", () => {
   });
 
   it("快照不可用时降级文档 H1，正文落地不受影响", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.getSessionSnapshot.mockReturnValue(null);
     const state = draftedState("title-fallback");
 
     await expect(generateTitleAfterFirstDraft(state)).resolves.toBe("旧 H1 标题");
     expect(mocks.branchCall).not.toHaveBeenCalled();
     expect(state.branchTitleGenerated).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      "[sideChannel] site=generateTitle fallback engaged reason=snapshot_unavailable snapshot=false",
+    );
+    warn.mockRestore();
   });
 
   it("标题清洗去掉 Markdown、书名号与句号，并限制长度", () => {

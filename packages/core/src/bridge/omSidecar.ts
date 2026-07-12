@@ -1119,6 +1119,7 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
   snapshot: NonNullable<ReturnType<typeof getSessionSnapshot>>,
   callSite: "omObserve" | "omReflect",
 ): T {
+  // SIDECHANNEL_PHASE2_EXEMPT: OM 在模型 doGenerate/doStream 边界分段降级；一期只统一失败日志，避免改变代理语义。
   const runBranch = async (options: Record<string, unknown>) => {
     const prompt = omPromptToBranchMessages(options.prompt);
     const steeringTail: BranchMessage[] = [
@@ -1145,7 +1146,10 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
       if (property === "doGenerate") {
         return async (options: Record<string, unknown>) => {
           const result = await runBranch(options);
-          if (!result.ok) return await target.doGenerate(options as never);
+          if (!result.ok) {
+            console.warn(`[sideChannel] site=${callSite} fallback engaged reason=${result.reason} snapshot=true`);
+            return await target.doGenerate(options as never);
+          }
           return {
             content: [{ type: "text", text: result.text }],
             finishReason: result.finishReason ?? "stop",
@@ -1157,7 +1161,10 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
       if (property === "doStream") {
         return async (options: Record<string, unknown>) => {
           const result = await runBranch(options);
-          if (!result.ok) return await target.doStream(options as never);
+          if (!result.ok) {
+            console.warn(`[sideChannel] site=${callSite} fallback engaged reason=${result.reason} snapshot=true`);
+            return await target.doStream(options as never);
+          }
           return {
             stream: new ReadableStream({
               start(controller) {

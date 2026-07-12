@@ -60,4 +60,13 @@ export interface QrCardBody {
   /** 确认按钮的显示文案(可选,短,如「我已创建好」)。缺省/null 则用默认「我已完成授权」。
    *  与 confirmQuery 解耦:label 给用户看(要短、贴场景),query 是点击后发送给 agent 的话术(可更明确)。 */
   confirmLabel?: string | null;
+  /** 仅 connector bridge/service 可生成；show_qr 模型 schema 不含这些字段。 */
+  connectorId?: "github" | "feishu" | "wechat-mp";
+  /** 进程内 pending 的不可猜标识；M1b 仅预留兼容字段，不启动轮询。 */
+  pendingId?: string;
+  /** 可信 service 可回填的公开成功态；旧卡缺失时完全沿用 confirm/refresh 行为。 */
+  success?: {
+    account: string | null;
+    message: string;
+  };
 }

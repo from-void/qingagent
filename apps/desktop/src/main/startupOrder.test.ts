@@ -22,6 +22,19 @@ test("desktop main only touches @qingagent/core barrel after server startup", ()
   );
 });
 
+test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key provider", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const readyLine = source.indexOf("app.whenReady().then(async () => {");
+  const providerLine = source.indexOf("await configureDesktopCredentialKeyProvider(");
+  const createWindowLine = source.indexOf("await createWindow();", providerLine);
+
+  assert.ok(readyLine >= 0 && providerLine > readyLine, "safeStorage provider 必须在 app ready 后装配");
+  assert.ok(
+    createWindowLine > providerLine,
+    "key provider 必须早于 createWindow（startServer 在 createWindow 内执行）",
+  );
+});
+
 test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧行保真", async () => {
   const source = readFileSync(path.join(__dirname, "server.ts"), "utf8");
   assert.ok(

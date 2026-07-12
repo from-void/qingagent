@@ -3,10 +3,12 @@ export interface DesktopRuntimeEnv {
   QINGAGENT_RUNTIME?: string;
   QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES?: string;
   QINGAGENT_ALLOW_SKILL_MUTATION?: string;
+  QINGAGENT_CONNECTORS_ENABLED?: string;
 }
 
 export function configureDesktopRuntimeEnv(env: DesktopRuntimeEnv = process.env): void {
   env.QINGAGENT_RUNTIME = "desktop";
   env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
   env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
+  env.QINGAGENT_CONNECTORS_ENABLED ??= "1";
 }

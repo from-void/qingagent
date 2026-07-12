@@ -457,6 +457,30 @@ describe("validateBridgeFrame", () => {
     },
   );
 
+  it("qrCard 新 connector 字段全 optional，旧帧与合法新帧均通过", () => {
+    const legacy = qrFrame({ content: "https://example.com", expiresAt: FUTURE_EPOCH_MS, refreshQuery: "刷新" });
+    expect(() => validateBridgeFrame(legacy)).not.toThrow();
+    const modern = structuredClone(legacy);
+    if (modern.kind !== "toolCallUpdated" || modern.data.spec.body.kind !== "qrCard") throw new Error("bad fixture");
+    Object.assign(modern.data.spec.body.data, {
+      connectorId: "feishu",
+      pendingId: "pending_12345678",
+      success: { account: "示例用户", message: "已连接" },
+    });
+    expect(() => validateBridgeFrame(modern)).not.toThrow();
+  });
+
+  it.each([
+    { connectorId: "evil" }, { pendingId: "short" }, { pendingId: "x".repeat(129) },
+    { success: { account: null, message: "" } },
+    { success: { account: "x".repeat(129), message: "ok" } },
+  ])("拒绝 qrCard 非法 connector 元数据 %o", (extra) => {
+    const frame = qrFrame({ content: "https://example.com", expiresAt: FUTURE_EPOCH_MS, refreshQuery: "刷新" });
+    if (frame.kind !== "toolCallUpdated" || frame.data.spec.body.kind !== "qrCard") throw new Error("bad fixture");
+    Object.assign(frame.data.spec.body.data, extra);
+    expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
+  });
+
   it("rejects patch-only status on non-patch tool-call", () => {
     const frame: BridgeFrame = {
       kind: "toolCallUpdated",

@@ -168,7 +168,7 @@ export interface SessionState {
   _currentChips?: ChatChip[] | null;
   /** 素材正文引用缓存(会话级,跨轮存活):parseFile 按 filename 建键,抓取类按 url+title 建键。
    *  storeMaterial 落库时按键精确绑定正文,根治"单槽最近一次提取"被覆盖导致的多素材串台(p08)。 */
-  _extractedTexts?: Map<string, { text: string; sourceUrl: string | null; fileId: string | null }>;
+  _extractedTexts?: Map<string, { text: string; sourceUrl: string | null; fileId: string | null; sourceKind?: "github" }>;
   /** Maps section index to line number, built when doc snapshot is injected into messages. */
   _sectionToLine?: Map<number, number>;
   /** 用户**真正提交**过 askUser 问卷答案(tool-result 带 answers)才置真。守卫据此

@@ -250,7 +250,7 @@
 .qj-sheet-body .sk-subhead{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:0 6px 11px 0;border-bottom:1px solid var(--qj-tag-border)}
 .qj-sheet-body .sk-back{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 13px 0 9px;border-radius:0;cursor:pointer;border:1px solid var(--qj-switch-border);background:transparent;color:var(--qj-ink);font:inherit;font-size:12px;font-weight:700;font-family:var(--font-zh-serif)}
 .qj-sheet-body .sk-back:hover{background:var(--qj-switch-active-bg);border-color:var(--qj-cinnabar)}
-.qj-sheet-body .sk-back-arrow{font-size:17px;line-height:1;color:var(--qj-cinnabar)}
+.qj-sheet-body .sk-back-arrow{font-size:17px;line-height:1;color:var(--qj-cinnabar);transform:translateY(-1.5px)}
 .qj-sheet-body .sk-subtitle{font-family:var(--font-zh-serif);font-size:14px;font-weight:700;color:var(--qj-ink)}
 .qj-sheet-body .sk-detail-hero{display:flex;align-items:center;gap:11px;margin:0 6px 12px 0}
 .qj-sheet-body .sk-detail-hero .sk-card-icon{width:22px;height:22px}
@@ -435,7 +435,7 @@
   margin:0;font-size:12px;line-height:1.6;color:var(--qj-header-sub);
 }
 .settings-feedback .fb-actions{display:flex;justify-content:flex-start;gap:8px;flex-wrap:wrap}
-.settings-feedback .sm-btn.primary{
+.qj-sheet-body .sm-btn.primary{
   display:inline-flex;align-items:center;justify-content:center;
   /* 金底(--qj-cinnabar #c8a96a 在设置里是暖金)配深墨字:原用 --qj-paper(浅奶油)
      压浅金对比过低、字发白看不清。暖金 CTA 应配深墨,对比才够。 */
@@ -444,11 +444,13 @@
   border-color:var(--qj-cinnabar);
   text-decoration:none;
 }
-.settings-feedback .sm-btn.primary:hover:not(:disabled),
-.settings-feedback .sm-btn.primary:focus-visible{
+.qj-sheet-body .sm-btn.primary:hover:not(:disabled),
+.qj-sheet-body .sm-btn.primary:focus-visible{
   /* hover 用更亮的金(--qj-cinnabar-lite),字色仍深墨保持高对比 */
   color:#241c0c;background:var(--qj-cinnabar-lite);border-color:var(--qj-cinnabar-lite);
 }
+/* 连接详情主操作:更大的 CTA 尺寸 */
+.qj-sheet-body .sm-btn.big{height:34px;padding:0 26px;font-size:12.5px;letter-spacing:.12em}
 /* 文档勾选列表:列最近文档,逐篇选择要包含哪几篇 */
 .settings-feedback .fb-doclist{
   display:flex;flex-direction:column;
@@ -677,3 +679,79 @@
   font-family:var(--font-mono);font-size:10.5px;line-height:1.6;color:var(--qj-switch-text);
   white-space:pre-wrap;word-break:break-word;
 }
+
+/* —— 连接 tab：一级列表 → 二级详情；色板与技能页共用，不新增 token —— */
+.settings-connections,.cn-detail{padding:0 6px 8px 0}
+.cn-list{display:flex;flex-direction:column;border-top:1px solid var(--qj-switch-border)}
+.cn-row{
+  width:100%;display:flex;align-items:center;gap:12px;padding:14px 8px;
+  border:0;border-bottom:1px solid var(--qj-switch-border);border-radius:0;
+  background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;
+}
+.cn-row:hover,.cn-row:focus-visible{background:var(--qj-switch-active-bg);outline:none}
+.cn-icon{
+  flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+  border:1px solid var(--qj-cinnabar);border-radius:0;background:var(--qj-switch-active-bg);
+  color:var(--qj-ink);
+}
+.cn-icon svg{width:20px;height:20px}
+.cn-titleblock{display:flex;flex:1 1 auto;min-width:0;flex-direction:column;gap:5px}
+.cn-titleline{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
+.cn-name{font-family:var(--font-zh-serif);font-size:13.5px;font-weight:800;color:var(--qj-ink)}
+.cn-sub{font-size:11px;line-height:1.45;color:var(--qj-header-sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cn-caret{flex:0 0 auto;color:var(--qj-cinnabar);font-size:20px;line-height:1}
+.qj-sheet-body .ss-badge,.qj-sheet-body .cn-badge{
+  display:inline-flex;align-items:center;padding:1px 7px;border:1px solid var(--qj-switch-border);
+  border-radius:999px;font-size:9.5px;line-height:1.5;color:var(--qj-header-sub);white-space:nowrap;
+}
+/* 已连接用绿:连接感要一眼可辨(与技能卡「已启用」的绿点同族),不随金调。 */
+.qj-sheet-body .cn-badge--connected{border-color:rgba(94,184,125,.55);color:#7fd49b;background:rgba(94,184,125,.1)}
+.qj-sheet-body .cn-badge--connected::before{content:"";width:5px;height:5px;border-radius:999px;background:#5eb87d;margin-right:5px}
+.qj-sheet-body .cn-badge--pending{background:var(--qj-switch-active-bg);color:var(--qj-ink)}
+.qj-sheet-body .cn-badge--needs_reauth{border-color:var(--qj-seal-red-deep);color:var(--qj-cinnabar-lite)}
+.cn-unofficial{font-size:9.5px;color:var(--qj-header-sub)}
+.cnd-hero{display:flex;align-items:center;gap:10px;margin:4px 6px 12px 0}
+.cnd-name{font-family:var(--font-zh-serif);font-size:18px;font-weight:800;color:var(--qj-ink)}
+.cnd-status{margin:0 6px 14px 0;font-size:12.5px;line-height:1.75;color:var(--qj-switch-text)}
+.cnd-guide,.cnd-warnbox,.cn-unavailable{
+  margin:12px 6px 16px 0;padding:12px 14px;border:1px solid var(--qj-switch-border);
+  border-radius:0;background:rgba(236,227,208,.06);font-size:11.5px;line-height:1.75;color:var(--qj-switch-text);
+}
+.cn-unavailable-title{margin-bottom:5px;font-family:var(--font-zh-serif);font-size:15px;font-weight:800;color:var(--qj-ink)}
+.cn-unavailable p{margin:0;color:var(--qj-header-sub)}
+.cnd-action{display:flex;align-items:center;gap:10px;margin:0 6px 16px 0}
+/* 详情页开场白:正文语气,行距放松;说明行(cnd-note)是弱化小字,不带框。 */
+.cnd-desc{margin:0 6px 14px 0;font-size:12px;line-height:1.9;color:var(--qj-switch-text)}
+.cnd-note{margin:-6px 6px 16px 0;font-size:11px;line-height:1.7;color:var(--qj-header-sub)}
+.cnd-wait{align-self:center;font-size:11px;color:var(--qj-header-sub)}
+.cnd-authcard{margin:0 6px 16px 0;
+  /* qr-card 组件的 --ink/--line 系变量只在 workspace 皮肤作用域有定义;
+     设置弹层(深底)里必须重映射到 --qj-* 令牌,否则配对码/倒计时等文字色为空(不可见)。 */
+  --ink-1:var(--qj-ink);
+  --ink-2:var(--qj-switch-text);
+  --ink-3:var(--qj-header-sub);
+  --line-1:var(--qj-switch-border);
+  --mark:var(--qj-cinnabar);
+  --bg-panel:var(--qj-switch-bg);
+  --ink-on-dark:var(--qj-ink);
+  --ink-surface:rgba(11,15,18,.64);
+}
+.cnd-authcard .qr-card{max-width:420px}
+.cnd-sec{margin:0 6px;padding:14px 0;border-top:1px solid var(--qj-switch-border)}
+.cnd-sec-title{margin-bottom:6px;font-size:10.5px;letter-spacing:.12em;color:var(--qj-cinnabar);font-weight:700}
+.cnd-sec-body{font-size:11.5px;line-height:1.7;color:var(--qj-switch-text)}
+.cn-scopes{display:flex;gap:6px;flex-wrap:wrap}
+.cnd-warnbox{color:var(--qj-header-sub)}
+.cnd-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:16px 6px 0;padding-top:14px;border-top:1px solid var(--qj-switch-border);font-size:10.5px;color:var(--qj-header-sub)}
+.cnd-foot .sk-btn-danger{flex-shrink:0;white-space:nowrap}
+
+/* 技能卡/详情的连接依赖行 */
+.qj-sheet-body .sk-dep{
+  display:flex;align-items:center;gap:6px;width:100%;margin-top:8px;padding:7px 8px;
+  border:1px solid var(--qj-switch-border);border-radius:0;background:rgba(236,227,208,.045);
+  color:var(--qj-header-sub);font:inherit;font-size:10.5px;text-align:left;cursor:pointer;
+}
+.qj-sheet-body .sk-dep:hover,.qj-sheet-body .sk-dep:focus-visible{border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg);outline:none}
+.sk-dep-dot{width:6px;height:6px;border-radius:50%;background:var(--qj-cinnabar)}
+.sk-dep-name{color:var(--qj-switch-text)}
+.sk-dep-go{margin-left:auto;color:var(--qj-cinnabar);font-size:15px}

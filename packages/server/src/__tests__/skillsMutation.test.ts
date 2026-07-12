@@ -1,5 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 测试安装目录必须留在可写临时区，不能污染/依赖运行用户的 ~/.qingagent/skills。
+// hoisted 保证 paths.ts 首次求值前已注入。
+const TEST_SKILLS_DIR = vi.hoisted(() => {
+  const path = `/tmp/qingagent-skills-mutation-${process.pid}`;
+  process.env.QINGAGENT_USER_SKILLS_DIR = path;
+  return path;
+});
 import { parseSkillFrontmatter } from "../routes/skills";
+
+afterAll(async () => {
+  const { rm } = await import("node:fs/promises");
+  await rm(TEST_SKILLS_DIR, { recursive: true, force: true });
+  delete process.env.QINGAGENT_USER_SKILLS_DIR;
+});
 
 // 技能 mutation 开关:仅 QINGAGENT_ALLOW_SKILL_MUTATION 显式真值时放行安装/删除,启停始终放行。
 

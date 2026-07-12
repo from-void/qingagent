@@ -8,6 +8,8 @@ export {
   getAllCredentialEnv,
   listCredentialMeta,
   deleteCredential,
+  getConnectorCredentialBundle,
+  deleteConnectorCredentialBundle,
   type CredentialInput,
   type CredentialMeta,
 } from "./credentialsRepo.js";

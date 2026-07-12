@@ -114,6 +114,12 @@
   color: var(--ink-1);
 }
 
+.qr-card__scanned {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5eb87d;
+}
+
 .qr-card__expiry {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -180,4 +186,18 @@
 .qr-card__note strong {
   color: var(--ink-2);
   font-weight: 600;
+}
+
+/* GitHub 等「输码型」卡:无二维码,配对码即主体,大字显示。 */
+.qr-card__usercode.is-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 2px;
+}
+
+.qr-card__usercode.is-hero b {
+  font-size: 26px;
+  letter-spacing: 0.22em;
 }

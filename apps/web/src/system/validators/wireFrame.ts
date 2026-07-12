@@ -291,6 +291,27 @@ function checkToolBody(b: ToolCallBody): void {
       if (typeof b.data.refreshQuery !== "string" || !b.data.refreshQuery) {
         fail(`QrCard.refreshQuery must be non-empty`);
       }
+      if (b.data.connectorId !== undefined &&
+          b.data.connectorId !== "github" &&
+          b.data.connectorId !== "feishu" &&
+          b.data.connectorId !== "wechat-mp") {
+        fail(`QrCard.connectorId must be a known connector enum`);
+      }
+      if (b.data.pendingId !== undefined &&
+          (typeof b.data.pendingId !== "string" || b.data.pendingId.length < 8 || b.data.pendingId.length > 128)) {
+        fail(`QrCard.pendingId must be 8..128 characters`);
+      }
+      if (b.data.success !== undefined) {
+        const success = b.data.success;
+        if (!success || typeof success !== "object") fail(`QrCard.success must be an object`);
+        if (success.account !== null &&
+            (typeof success.account !== "string" || success.account.length > 128)) {
+          fail(`QrCard.success.account must be string|null and at most 128 characters`);
+        }
+        if (typeof success.message !== "string" || !success.message || success.message.length > 256) {
+          fail(`QrCard.success.message must be 1..256 characters`);
+        }
+      }
       return;
     case "readImageCard":
       if (typeof b.data.prompt !== "string") {

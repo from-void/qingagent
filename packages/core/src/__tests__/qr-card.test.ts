@@ -209,7 +209,7 @@ describe("show_qr 二维码卡帧协议", () => {
               toolName: "wechat_auth_start",
               toolCallId: "wa1",
               args: {},
-              result: { ok: true, imageDataUri: img, expiresInSec: 240 },
+              result: { ok: true, imageDataUri: img, expiresInSec: 240, connectorId: "wechat-mp", pendingId: "wechat-pending-safe", reused: false },
             },
           },
         ),
@@ -223,6 +223,8 @@ describe("show_qr 二维码卡帧协议", () => {
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
       expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
+      expect(final.body.data.connectorId).toBe("wechat-mp");
+      expect(final.body.data.pendingId).toBe("wechat-pending-safe");
     }
     // review #1:喂模型的 transcript 不含 ~7KB base64(卡片已渲染给用户,模型不需 base64),只含摘要。
     const transcript = state.messages
@@ -274,30 +276,20 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(final?.body.kind).toBe("qrCard");
   });
 
-  it("CLI 授权命令 + show_qr 混合回合结束等待用户时不发 draftingFailed", async () => {
+  it("feishu_auth_start 只用公开 DTO 出卡，device_code 不进入任何消息或 wire 帧", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("qr-cli-wait-user");
-    const command = "lark-cli auth login --no-wait --json --domain all";
-    const authStdout = JSON.stringify({
-      verification_url: "https://example.com/device?user_code=ABCD",
-      device_code: "device-code-123",
-      expires_in: 300,
-    });
-    const qrArgs = {
-      content: "https://example.com/device?user_code=ABCD",
-      title: "扫码授权飞书",
-      code: "ABCD",
-      note: "用飞书 App 扫码,或 [点此授权](https://example.com/device?user_code=ABCD)",
-      confirmQuery: "我已完成飞书扫码授权,请继续收尾",
+    const publicResult = {
+      mode: "authorization", connectorId: "feishu", pendingId: "feishu-pending-safe",
+      verification_url: "https://example.com/device?user_code=ABCD", user_code: "ABCD",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(), reused: false,
     };
 
     const frames = await collect(
       processAgentStream(
         streamOf(
-          commandCall("cmd-auth", command),
-          commandResult("cmd-auth", command, authStdout),
-          showQrCall("qr-cli", qrArgs),
-          showQrResult("qr-cli", qrArgs),
+          { type: "tool-call", payload: { toolName: "feishu_auth_start", toolCallId: "fa1", args: { domains: ["docs"] } } },
+          { type: "tool-result", payload: { toolName: "feishu_auth_start", toolCallId: "fa1", args: { domains: ["docs"] }, result: publicResult } },
         ),
         { state, agentMessageId: "m", streamId: "s", runId: "r" },
       ),
@@ -315,12 +307,16 @@ describe("show_qr 二维码卡帧协议", () => {
         .join("\n"),
     ).not.toContain("本轮做了多步工具调用");
 
-    const toolContext = state.messages
-      .map((message) => (typeof message.content === "string" ? message.content : ""))
-      .join("\n");
-    expect(toolContext).toContain("mastra_workspace_execute_command");
-    expect(toolContext).toContain("device_code");
-    expect(toolContext).toContain("device-code-123");
+    const persistedSurfaces = JSON.stringify({ frames, messages: state.messages, chatHistory: state.chatHistory });
+    expect(persistedSurfaces).not.toContain("device_code");
+    expect(persistedSurfaces).not.toContain("device-code-123");
+    expect(persistedSurfaces).toContain("feishu-pending-safe");
+    const final = toolSpecs(frames, "fa1").at(-1);
+    expect(final?.body.kind).toBe("qrCard");
+    if (final?.body.kind === "qrCard") {
+      expect(final.body.data.connectorId).toBe("feishu");
+      expect(final.body.data.pendingId).toBe("feishu-pending-safe");
+    }
   });
 
   it("show_qr 产出卡片后标记 producedVisibleFrame,瞬态错误不再被当零可见产出重试", async () => {

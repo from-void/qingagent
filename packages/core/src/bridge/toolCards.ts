@@ -337,6 +337,74 @@ export function qrCardToolCallSpec(
   };
 }
 
+/** 可信 connector bridge 专用：pendingId/device flow 元数据绝不经过模型参数。 */
+export function githubAuthCardToolCallSpec(
+  toolCallId: string,
+  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: string },
+): ToolCallSpec {
+  const expiresAt = Date.parse(input.expiresAt);
+  return {
+    id: toolCallId,
+    name: "github_auth_start",
+    render: { kind: "chatInline" },
+    status: { kind: "done" },
+    body: {
+      kind: "qrCard",
+      data: {
+        content: input.verificationUri,
+        imageDataUri: null,
+        title: "连接 GitHub",
+        code: input.userCode,
+        note: "复制用户码并在 GitHub 完成授权。",
+        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 15 * 60_000,
+        refreshQuery: "GitHub 授权已中断，请重新发起连接",
+        confirmQuery: null,
+        connectorId: "github",
+        pendingId: input.pendingId,
+      },
+    },
+    result: null,
+  };
+}
+
+export function feishuAuthCardToolCallSpec(
+  toolCallId: string,
+  input: {
+    mode: "authorization" | "configuration";
+    pendingId: string;
+    url: string;
+    userCode?: string;
+    expiresAt: string;
+  },
+): ToolCallSpec {
+  const expiresAt = Date.parse(input.expiresAt);
+  const configuration = input.mode === "configuration";
+  return {
+    id: toolCallId,
+    name: "feishu_auth_start",
+    render: { kind: "chatInline" },
+    status: { kind: "done" },
+    body: {
+      kind: "qrCard",
+      data: {
+        content: input.url,
+        imageDataUri: null,
+        title: configuration ? "创建你的飞书应用" : "扫码授权飞书",
+        code: input.userCode ?? null,
+        note: configuration
+          ? `用飞书扫码，或 [点此打开创建向导](${input.url})，完成后连接器会自动继续。`
+          : `用飞书 App 扫码，或 [点此在浏览器授权](${input.url})。`,
+        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60_000,
+        refreshQuery: configuration ? "创建应用的链接过期了，请重新发起" : "飞书授权二维码过期了，请重新生成",
+        confirmQuery: null,
+        connectorId: "feishu",
+        pendingId: input.pendingId,
+      },
+    },
+    result: null,
+  };
+}
+
 /**
  * wechat_auth_start 授权卡:工具**直接**产出二维码卡片,base64 图片不经过模型
  * (微信登录码是 7KB+ base64,若让模型当 show_qr 参数复述会卡死/出错)。
@@ -387,6 +455,8 @@ export function wechatAuthQrToolCallSpec(
         refreshQuery: "微信登录二维码过期了,请帮我重新生成",
         confirmQuery: "我已扫完码,请继续",
         confirmLabel: "我已扫码完成",
+        connectorId: result?.connectorId === "wechat-mp" ? "wechat-mp" : undefined,
+        pendingId: typeof result?.pendingId === "string" ? result.pendingId : undefined,
       },
     },
     result: null,

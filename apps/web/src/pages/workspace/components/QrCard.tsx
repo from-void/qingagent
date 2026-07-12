@@ -13,7 +13,19 @@ import "./QrCard.css";
  * - note 是模型自产的轻量 markdown 说明(可含可点授权链接),取代写死的兜底链接。
  * - code(配对码)不是每个平台都有,没有则隐藏。
  */
-export function QrCard({ data }: { data: QrCardBody }) {
+export interface AuthCardProps {
+  data: QrCardBody;
+  /** 设置页等非对话场景可自行重新发起；缺省保持旧帧发送 refreshQuery 的行为。 */
+  onRefresh?: () => void | Promise<void>;
+  /** 轮询出现任意终态后通知宿主刷新连接状态。 */
+  onStatusChange?: () => void;
+}
+
+export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
+  const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">("polling");
+  const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
+  // 微信扫码反馈:server 感知到手机扫到码后,pending 轮询带 reasonCode=WECHAT_SCANNED。
+  const [scanned, setScanned] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const remainOf = useCallback(
     () => Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000)),
@@ -21,6 +33,44 @@ export function QrCard({ data }: { data: QrCardBody }) {
   );
   const [remain, setRemain] = useState(remainOf);
   const expired = remain <= 0;
+  const pollingRef = useRef(false);
+  const settledRef = useRef(false);
+
+  useEffect(() => {
+    setConnectorState("polling");
+    setConnectedAccount(data.success?.account ?? null);
+    setScanned(false);
+    pollingRef.current = false;
+    settledRef.current = false;
+  }, [data.pendingId, data.success?.account]);
+
+  useVisibilityPausedInterval(
+    async () => {
+      if (!data.connectorId || !data.pendingId || connectorState !== "polling") return;
+      if (pollingRef.current) return;
+      pollingRef.current = true;
+      try {
+        const response = await fetch(`/api/v1/connectors/${encodeURIComponent(data.connectorId)}?pendingId=${encodeURIComponent(data.pendingId)}`, { credentials: "same-origin" });
+        if (response.status === 410) { setConnectorState("interrupted"); return; }
+        if (!response.ok) return;
+        const payload = await response.json() as { status?: { state?: string; account?: { displayName?: string } | null; reasonCode?: string | null } };
+        if (payload.status?.state === "connected") {
+          setConnectedAccount(payload.status.account?.displayName ?? null);
+          setConnectorState("connected");
+          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
+        } else if (payload.status?.reasonCode === "PENDING_LOST" || payload.status?.reasonCode === "PENDING_EXPIRED") {
+          setConnectorState("interrupted");
+        } else if (payload.status?.state === "pending" && payload.status.reasonCode === "WECHAT_SCANNED") {
+          setScanned(true);
+        } else if (payload.status?.state && payload.status.state !== "pending") {
+          if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
+        }
+      } catch { /* 短暂网络失败保持原卡，下个节流周期再试。 */ }
+      finally { pollingRef.current = false; }
+    },
+    data.connectorId && data.pendingId && connectorState === "polling" ? 2000 : null,
+    { runOnResume: true },
+  );
 
   // 图片模式(imageDataUri 非空):码本身就是一张图(如微信公众平台后台登录码),直接显示;
   // 否则编码模式:把 content 字符串(自产 URL,安全)编码成二维码图。
@@ -60,6 +110,9 @@ export function QrCard({ data }: { data: QrCardBody }) {
 
   const noteNodes = useMemo(() => renderQrNote(data.note), [data.note]);
   const confirmQuery = data.confirmQuery;
+  // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
+  // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
+  const codeFirst = data.connectorId === "github" && !data.imageDataUri;
 
   useEffect(() => {
     refreshSentRef.current = false;
@@ -75,7 +128,12 @@ export function QrCard({ data }: { data: QrCardBody }) {
     if (refreshSentRef.current) return;
     refreshSentRef.current = true;
     setRefreshSent(true);
-    chatInputBus.send(data.refreshQuery);
+    if (onRefresh) {
+      Promise.resolve(onRefresh()).catch(() => {
+        refreshSentRef.current = false;
+        setRefreshSent(false);
+      });
+    } else chatInputBus.send(data.refreshQuery);
   };
 
   const sendConfirmOnce = () => {
@@ -86,9 +144,18 @@ export function QrCard({ data }: { data: QrCardBody }) {
   };
 
   return (
-    <div className="qr-card" data-wf="QrCard">
+    <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
+      {connectorState === "connected" ? (
+        <div className="qr-card__success">{data.connectorId === "wechat-mp"
+          ? `✓ 已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
+          : data.connectorId === "feishu"
+            ? `✓ 已授权${connectedAccount ? `为 ${connectedAccount}` : "飞书"}`
+            : `✓ 已连接为 ${connectedAccount ?? "GitHub 账号"}`}</div>
+      ) : connectorState === "interrupted" ? (
+        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
+      ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
-      <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
+      {!codeFirst && <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
         {qrUrl ? (
           <img className="qr-card__img" src={qrUrl} alt={data.title ?? "二维码"} draggable={false} />
         ) : (
@@ -107,11 +174,26 @@ export function QrCard({ data }: { data: QrCardBody }) {
             <span>{refreshSent ? "已请求刷新" : "二维码已过期,点此刷新"}</span>
           </button>
         )}
-      </div>
-      {data.code && (
-        <div className="qr-card__usercode">
+      </div>}
+      {codeFirst && expired && (
+        <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>
+          {refreshSent ? "已请求重新发起" : "配对码已过期，重新发起"}
+        </button>
+      )}
+      {data.code && !(codeFirst && expired) && (
+        <div className={`qr-card__usercode${codeFirst ? " is-hero" : ""}`}>
           配对码 <b>{data.code}</b>
+          {data.connectorId === "github" && (
+            <button type="button" className="qr-card__confirm" onClick={() => {
+              void navigator.clipboard?.writeText(data.code ?? "");
+              const href = sanitizeToolbarLinkHref(data.content);
+              if (href) window.open(href, "_blank", "noopener,noreferrer");
+            }}>复制代码并打开</button>
+          )}
         </div>
+      )}
+      {scanned && !expired && (
+        <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
       )}
       <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
         {expired ? "已过期" : `${remain}s 后过期`}
@@ -130,9 +212,13 @@ export function QrCard({ data }: { data: QrCardBody }) {
           {confirmSent ? "已发送确认" : data.confirmLabel ?? "我已完成授权"}
         </button>
       )}
+      </>}
     </div>
   );
 }
+
+/** 旧组件名兼容层：已有 import、快照和持久化 qrCard wire 均保持不变。 */
+export const QrCard = AuthCard;
 
 // 轻量渲染 note 的富文本:按行分段,inline 支持 markdown 链接 [文字](url) 与 **粗体**。
 // 模型自产的说明 + 可点授权链接合为一段,替代写死的"扫不了码点此打开"。

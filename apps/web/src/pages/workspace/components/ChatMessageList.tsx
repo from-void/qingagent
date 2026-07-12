@@ -15,7 +15,7 @@ import { truncateLabel } from "../textUtils";
 import { countChars, longTextPreview, LongTextFullscreen } from "../../../system/longText";
 import { BrowserViewPart } from "./BrowserViewPart";
 import { DraftMiniCard } from "./DraftMiniCard";
-import { QrCard } from "./QrCard";
+import { AuthCard } from "./AuthCard";
 import { ReviewOutcomeCard } from "./ReviewOutcomeCard";
 import { UImageSummary, UnifiedToolCall, UProcessFold, type SkillLabelMap } from "./chatUnified";
 import {
@@ -512,7 +512,7 @@ const MessageRow = memo(function MessageRow({
     const b = vp.part.data.body;
     // 产出物统一用圆角矩形容器(产出物展示规范)
     if (b.kind === "qrCard") {
-      return <div key={`art-${vp.key}`} className="u-artifact"><QrCard data={b.data} /></div>;
+      return <div key={`art-${vp.key}`} className="u-artifact"><AuthCard data={b.data} /></div>;
     }
     return null;
   };

@@ -126,9 +126,12 @@ export type {
 
 // Types
 export type { Material } from "./types/material.js";
+export * from "./connectors/index.js";
 export {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
+  githubAuthCardToolCallSpec,
+  feishuAuthCardToolCallSpec,
 } from "./bridge/toolCards.js";
 export type {
   AskUserPurposeKind,
@@ -460,6 +463,8 @@ export {
   getAllCredentialEnv,
   listCredentialMeta,
   deleteCredential,
+  getConnectorCredentialBundle,
+  deleteConnectorCredentialBundle,
   redactSecret,
   PLATFORM_CREDENTIAL_SPECS,
   type CredentialInput,

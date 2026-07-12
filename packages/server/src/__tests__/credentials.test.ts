@@ -3,13 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 // 凭据路由:平台 key 校验 / CSRF Origin 守卫 / 不回传明文。
 // mock @qingagent/core 的凭据 API,只测路由逻辑。
 
-const mockCore = vi.hoisted(() => ({
+const mockCore = vi.hoisted(() => {
+  const disconnectConnector = vi.fn(async () => ({}));
+  return ({
   saved: [] as Array<{ platform: string; key: string; value: string }>,
   saveCredentialRecord: vi.fn(async (rec: { platform: string; key: string; value: string }) => {
     mockCore.saved.push(rec);
   }),
   listCredentialMeta: vi.fn(async () => []),
   deleteCredential: vi.fn(async () => {}),
+  disconnectConnector,
+  getConnectorService: vi.fn(() => ({ disconnect: disconnectConnector })),
   invalidateSessionWorkspace: vi.fn(),
   PLATFORM_CREDENTIAL_SPECS: [
     {
@@ -21,8 +25,13 @@ const mockCore = vi.hoisted(() => ({
         { key: "DINGTALK_APP_SECRET", label: "AppSecret", secret: true },
       ],
     },
+    {
+      platform: "connector:wechat-mp", label: "微信公众号", helpUrl: "https://mp.weixin.qq.com/",
+      fields: [{ key: "bundle", label: "扫码会话凭据", secret: true }],
+    },
   ],
-}));
+  });
+});
 
 vi.mock("@qingagent/core", () => mockCore);
 
@@ -43,12 +52,28 @@ describe("credentials 路由", () => {
     const res = await app.request("/api/v1/credentials");
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.specs).toHaveLength(1);
+    expect(body.specs).toHaveLength(2);
     expect(body.specs[0].platform).toBe("dingtalk");
     const secretField = body.specs[0].fields.find((field: { key: string }) => field.key === "DINGTALK_APP_SECRET");
     expect(secretField).toMatchObject({ configured: true });
     // 不回传实际凭据明文值(字段 label 含 "Secret" 是字段名,不算泄露)
     expect(JSON.stringify(body)).not.toContain("tok-secret-value");
+  });
+
+  it("微信 connector namespace 可见可删但不可通过表单写入，响应永不回显值", async () => {
+    mockCore.listCredentialMeta.mockResolvedValueOnce([{ platform: "connector:wechat-mp", key: "bundle", updatedAt: "t", status: "ok" }] as never);
+    const app = await loadApp();
+    const get = await app.request("/api/v1/credentials");
+    const body = await get.json();
+    const wechat = body.specs.find((spec: { platform: string }) => spec.platform === "connector:wechat-mp");
+    expect(wechat.fields[0]).toMatchObject({ key: "bundle", secret: true, configured: true });
+    expect(JSON.stringify(body)).not.toContain("secret-cookie");
+
+    const post = await app.request("/api/v1/credentials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: "connector:wechat-mp", values: { bundle: "secret-cookie" } }) });
+    expect(post.status).toBe(405);
+    const del = await app.request("/api/v1/credentials/connector%3Awechat-mp", { method: "DELETE" });
+    expect(del.status).toBe(200);
+    expect(mockCore.disconnectConnector).toHaveBeenCalledWith("wechat-mp");
   });
 
   it("POST 保存合法字段", async () => {

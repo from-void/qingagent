@@ -5,6 +5,7 @@ import {
   localFolderSourcesEnabled,
 } from "@qingagent/core";
 import { isSkillMutationAllowed } from "./skills";
+import { getConnectorRuntimeAccess } from "../lib/connectorRuntimeGate";
 
 export const capabilitiesRoutes = new Hono();
 
@@ -20,6 +21,7 @@ capabilitiesRoutes.get("/capabilities", (c) => {
     skills: {
       mutationEnabled: isSkillMutationAllowed(),
     },
+    connectors: getConnectorRuntimeAccess().capability,
   };
   return c.json(capabilities);
 });

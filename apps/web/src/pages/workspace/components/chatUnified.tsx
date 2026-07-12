@@ -79,6 +79,11 @@ export const TOOL_LABELS: Record<string, string> = {
   // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body,不加映射会裸显"工具调用"。
   wechat_auth_status: "检查微信授权状态", wechat_auth_start: "生成二维码",
   wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
+  github_list_repos: "列出 GitHub 仓库", github_repo_tree: "读取 GitHub 文件树",
+  github_read_file: "读取 GitHub 文件",
+  github_search_code: "搜索 GitHub 代码",
+  github_auth_start: "连接 GitHub",
+  feishu_auth_start: "连接飞书",
 };
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。
@@ -248,6 +253,11 @@ function pickOutputSummary(result: ToolCallResult | null, toolName?: string): st
     case "webSearch": {
       const n = cnt("items");
       return n != null ? `${n} 条` : null;
+    }
+    case "github_search_code": {
+      if (bool("selected") === true) return "已选片段";
+      const n = num("count") ?? cnt("hits");
+      return n != null ? `命中 ${n} 条` : null;
     }
     case "searchDocuments": {
       const n = cnt("results");

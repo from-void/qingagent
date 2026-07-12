@@ -12,6 +12,7 @@ import {
   getQingagentSkills,
   readDisabledSet,
   setEnabled,
+  listConnectorDefinitions,
 } from "@qingagent/core";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
@@ -48,11 +49,18 @@ const BUILTIN_SKILL_ORDER = [
   "image-reading",
   "doc-calc",
   "materials",
+  "github-materials",
   "feishu",
   "wechat-official-account",
 ] as const;
 
 export const skillsRoutes = new Hono();
+
+export function connectorIdForSkill(skillName: string): string | undefined {
+  return listConnectorDefinitions().find((connector) =>
+    connector.usedBySkills.includes(skillName),
+  )?.id;
+}
 
 // 技能"安装/删除/上传"= 把任意可执行代码写进服务器,是 RCE 面。
 // 安全默认:默认关闭,仅显式真值(1/true/yes/on)才放开;桌面主进程显式置 1。
@@ -88,6 +96,7 @@ skillsRoutes.get("/skills", async (c) => {
       config: skill.config,
       tools: skill.tools,
       enabled: skill.enabled,
+      connectorId: connectorIdForSkill(skill.name),
     })),
   });
 });
@@ -111,6 +120,7 @@ skillsRoutes.get("/skills/:name", async (c) => {
       config: skill.config,
       tools: skill.tools,
       enabled: skill.enabled,
+      connectorId: connectorIdForSkill(skill.name),
       body: stripSkillFrontmatter(skillMd),
     });
   } catch {

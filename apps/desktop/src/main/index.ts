@@ -1,10 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell } from "electron";
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
+import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
@@ -606,6 +607,15 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
 }
 
 app.whenReady().then(async () => {
+  // safeStorage 仅在 app ready 后可靠；同时必须早于 createWindow() 内 startServer()，保证
+  // server/core 业务模块首次读取凭据前 provider 已装配。Linux basic_text 不冒充 keychain。
+  const credentialKeyState = await configureDesktopCredentialKeyProvider({
+    safeStorage,
+    dataDir: process.env.QINGAGENT_DATA_DIR!,
+  });
+  if (credentialKeyState.reasonCode) {
+    console.warn("[credentials] key provider unavailable:", credentialKeyState.reasonCode);
+  }
   if (process.env.QINGAGENT_SANDBOX_RUNTIME_PROBE === "1") {
     const { runSandboxRuntimeProbe } = await import("./sandboxRuntimeProbe.js");
     const result = await runSandboxRuntimeProbe();

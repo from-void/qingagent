@@ -107,6 +107,8 @@ import {
   commandCardStatusFromCard,
   generateSvgProgressFromResult,
   generateSvgToolCallSpec,
+  feishuAuthCardToolCallSpec,
+  githubAuthCardToolCallSpec,
   latestGenerateSvgProgress,
   normalizeGenerateSvgProgress,
   qrCardToolCallSpec,
@@ -240,10 +242,11 @@ export async function* processAgentStream(
   // 现在只有本轮恰好一次提取时才允许"最近一次"兜底,多次提取时宁可空正文也绝不绑错。
   const extractedTexts = (state._extractedTexts ??= new Map<
     string,
-    { text: string; sourceUrl: string | null; fileId: string | null }
+    { text: string; sourceUrl: string | null; fileId: string | null; sourceKind?: "github" }
   >());
   const researchFullTexts = new Map<string, { text: string; materialId: string | null }>();
   const extractionEventsThisTurn: Array<{ text: string; sourceUrl: string | null; fileId: string | null }> = [];
+  // GitHub 正文/代码片段允许天然较短；网页抓取的“实质内容”长度门不适用于它们。
   // 已被某次 storeMaterial 消费的提取:每条提取只绑一次,避免多条素材绑到同一份正文(p08 串台),
   // 同时让多条抓取结果按顺序各自落库可见,而非多次提取时一律 fail-closed 拒绝。
   const consumedExtractions = new Set<{ text: string; sourceUrl: string | null; fileId: string | null }>();
@@ -1817,6 +1820,27 @@ export async function* processAgentStream(
           if (matId) extractedTexts.set(matId, entry);
           extractionEventsThisTurn.push(entry);
         }
+      } else if (toolName === "github_auth_start" && isRecord(toolResult)) {
+        const pendingId = typeof toolResult.pendingId === "string" ? toolResult.pendingId : "";
+        const userCode = typeof toolResult.user_code === "string" ? toolResult.user_code : "";
+        const verificationUri = typeof toolResult.verification_uri === "string" ? toolResult.verification_uri : "";
+        const expiresAt = typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "";
+        const spec = githubAuthCardToolCallSpec(toolCallId, { pendingId, userCode, verificationUri, expiresAt });
+        yield toolCallUpdated(agentMessageId, toolCallId, spec);
+        updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+        outcome.producedVisibleFrame = true;
+      } else if (toolName === "feishu_auth_start" && isRecord(toolResult)) {
+        const mode = toolResult.mode === "configuration" ? "configuration" : "authorization";
+        const pendingId = typeof toolResult.pendingId === "string" ? toolResult.pendingId : "";
+        const url = mode === "configuration"
+          ? (typeof toolResult.configuration_url === "string" ? toolResult.configuration_url : "")
+          : (typeof toolResult.verification_url === "string" ? toolResult.verification_url : "");
+        const userCode = typeof toolResult.user_code === "string" ? toolResult.user_code : undefined;
+        const expiresAt = typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "";
+        const spec = feishuAuthCardToolCallSpec(toolCallId, { mode, pendingId, url, userCode, expiresAt });
+        yield toolCallUpdated(agentMessageId, toolCallId, spec);
+        updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
+        outcome.producedVisibleFrame = true;
       } else if (DRAFT_MUTATION_TOOL_NAMES.has(toolName)) {
         const result = toolResult as Record<string, unknown> | null;
         const ok = result && typeof result === "object" && result.ok === true;
@@ -2066,6 +2090,28 @@ export async function* processAgentStream(
           extractionEventsThisTurn.push(entry);
         }
       }
+      if (toolName === "github_read_file" && typeof toolResult.text === "string") {
+        const t = toolResult.text as string;
+        if (t.trim() && !isExtractionFailureText(t)) {
+          const sourceUrl = typeof toolResult.sourceUrl === "string" ? toolResult.sourceUrl : null;
+          const entry = { text: t, sourceUrl, fileId: null, sourceKind: "github" as const };
+          if (typeof toolResult.materialId === "string") extractedTexts.set(toolResult.materialId, entry);
+          if (typeof toolResult.title === "string") extractedTexts.set(toolResult.title, entry);
+          if (sourceUrl) extractedTexts.set(sourceUrl, entry);
+          extractionEventsThisTurn.push(entry);
+        }
+      }
+      if (toolName === "github_search_code" && toolResult.selected === true && typeof toolResult.text === "string") {
+        const t = toolResult.text as string;
+        if (t.trim() && !isExtractionFailureText(t)) {
+          const sourceUrl = typeof toolResult.sourceUrl === "string" ? toolResult.sourceUrl : null;
+          const entry = { text: t, sourceUrl, fileId: null, sourceKind: "github" as const };
+          if (typeof toolResult.materialId === "string") extractedTexts.set(toolResult.materialId, entry);
+          if (typeof toolResult.title === "string") extractedTexts.set(toolResult.title, entry);
+          if (sourceUrl) extractedTexts.set(sourceUrl, entry);
+          extractionEventsThisTurn.push(entry);
+        }
+      }
       // 抓取类(fetchArticle)的正文也缓存,供 storeMaterial 引用。
       // 抓取结果没有天然 filename,按 url 和返回的 title 建键(模型存素材时常用标题当 filename)。
       // 抓取失败文本、以及"空洞壳"(只有标题+导航/分享控件、无实质正文,如动态渲染未出正文的页面)
@@ -2135,7 +2181,7 @@ export async function* processAgentStream(
         // 只有导航/分享控件拼出的空洞壳按解析失败处理,不落库(空洞壳通常已在缓存阶段
         // 被 isSubstantiveContent 拦掉、bound 为空,这里是兜底的二道防线)。
         // [Error]/[Unsupported] 占位前缀绝不能当正文存入素材库。
-        const hollowWebContent = !!bound?.sourceUrl && !isSubstantiveContent(fullText);
+        const hollowWebContent = !!bound?.sourceUrl && bound.sourceKind !== "github" && !isSubstantiveContent(fullText);
         const placeholderContent = isExtractionFailureText(fullText);
         if (fullText.trim().length === 0 || hollowWebContent || placeholderContent) {
           logger.warn(

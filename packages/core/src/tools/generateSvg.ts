@@ -367,6 +367,7 @@ export const generateSvgTool = createTool({
             abortSignal: linked.controller.signal,
             maxRetries: 0,
             maxTokens,
+            onActivity: armIdleTimer,
             onContentStart: () => {
               armIdleTimer();
               void emitProgress("streaming", { message: streamingMessage, partialSvg: null }, true);

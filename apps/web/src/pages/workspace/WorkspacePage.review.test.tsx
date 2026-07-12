@@ -1040,6 +1040,38 @@ describe("WorkspacePage review controls", () => {
     })).toBe(false);
   });
 
+  it("generation_finished 到 editing 投影之间不以短暂 locked 清除揭示", async () => {
+    const { shouldRetainPresentationRun } = await import("./WorkspacePage");
+    expect(shouldRetainPresentationRun({
+      reducedMotion: false,
+      runDocVersion: 2,
+      currentDocVersion: 2,
+      runSessionId: "s-1",
+      currentSessionId: "s-1",
+    })).toBe(true);
+    expect(shouldRetainPresentationRun({
+      reducedMotion: false,
+      runDocVersion: 2,
+      currentDocVersion: 3,
+      runSessionId: "s-1",
+      currentSessionId: "s-1",
+    })).toBe(false);
+    expect(shouldRetainPresentationRun({
+      reducedMotion: true,
+      runDocVersion: 2,
+      currentDocVersion: 2,
+      runSessionId: "s-1",
+      currentSessionId: "s-1",
+    })).toBe(false);
+    expect(shouldRetainPresentationRun({
+      reducedMotion: false,
+      runDocVersion: 2,
+      currentDocVersion: 2,
+      runSessionId: "s-old",
+      currentSessionId: "s-1",
+    })).toBe(false);
+  });
+
   it("F#1 保存 A 在途且 B 已排队时不把旧稿 A 回灌成 canonical", async () => {
     const { shouldDispatchManualDocSavedForWriteResult } = await import("./WorkspacePage");
     const mutationA = pmDoc([pmParagraph("block-a", "旧稿 A")]);

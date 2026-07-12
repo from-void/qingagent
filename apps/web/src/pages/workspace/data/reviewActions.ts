@@ -240,6 +240,20 @@ export function shouldSuppressPresentationRun(input: {
   return input.hasDocDiff || input.contentKind === "pendingReview";
 }
 
+export function shouldRetainPresentationRun(input: {
+  reducedMotion: boolean;
+  runDocVersion: number;
+  currentDocVersion: number | null;
+  runSessionId: string | null;
+  currentSessionId: string | null;
+}): boolean {
+  return (
+    !input.reducedMotion &&
+    input.runDocVersion === input.currentDocVersion &&
+    input.runSessionId === input.currentSessionId
+  );
+}
+
 export function shouldDispatchManualDocSavedForWriteResult(input: {
   isLatestOwnMutation: boolean;
   writeOk: boolean;

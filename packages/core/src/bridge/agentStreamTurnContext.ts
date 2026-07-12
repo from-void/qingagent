@@ -8,7 +8,10 @@ import type { Span } from "@mastra/core/observability";
 import { basename } from "node:path";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
-import { AGENT_IDLE_TIMEOUT_MS } from "./agentLimits.js";
+import {
+  AGENT_IDLE_TIMEOUT_MS,
+  AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
+} from "./agentLimits.js";
 import {
   resolveFileIds,
   type ResolvedUploadedFile,
@@ -35,6 +38,8 @@ export interface ProcessAgentStreamOptions {
   fileIds?: string[];
   requestContext?: RequestContext;
   idleTimeoutMs?: number;
+  /** 连续只有 tool-heartbeat、没有真实流事件时的硬收口窗口。 */
+  toolHeartbeatTimeoutMs?: number;
   abortController?: AbortController;
 }
 
@@ -67,6 +72,7 @@ export interface AgentStreamTurnContext {
   readonly restoreStreamIdOnExit: boolean;
   readonly streamStartTime: number;
   readonly timeoutMs: number;
+  readonly toolHeartbeatTimeoutMs: number;
 
   firstChunkLogged: boolean;
   accumulatedText: string;
@@ -171,6 +177,8 @@ export async function createAgentStreamTurnContext(
     restoreStreamIdOnExit,
     streamStartTime,
     timeoutMs: opts.idleTimeoutMs ?? AGENT_IDLE_TIMEOUT_MS,
+    toolHeartbeatTimeoutMs:
+      opts.toolHeartbeatTimeoutMs ?? AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
     firstChunkLogged: false,
     accumulatedText: "",
     reasoningId: null,

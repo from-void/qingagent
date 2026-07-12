@@ -1,4 +1,4 @@
-import type { BridgeFrame } from "@qingagent/contract-ts";
+import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../sessionState.js";
 
@@ -33,6 +33,63 @@ async function collectFramesAndReturn<TReturn>(
     if (next.done) return { frames, result: next.value };
     frames.push(next.value);
   }
+}
+
+type ToolCallUpdatedFrame = Extract<BridgeFrame, { kind: "toolCallUpdated" }>;
+
+function isToolCallPart(part: MessagePart): part is Extract<MessagePart, { kind: "toolCall" }> {
+  return part.kind === "toolCall";
+}
+
+function isToolCallUpdatedFrame(frame: BridgeFrame): frame is ToolCallUpdatedFrame {
+  return frame.kind === "toolCallUpdated";
+}
+
+function fetchArticleResult(index: number, overrides: Record<string, unknown> = {}) {
+  return {
+    title: `文章 ${index}`,
+    text: `第 ${index} 篇文章的完整正文，用于验证并行工具结果按各自 toolCallId 收口。`,
+    wordCount: 31,
+    images: [],
+    screenshotSrc: null,
+    ogImageUrl: null,
+    sourceUrl: `https://example.com/article-${index}`,
+    materialId: `mat-${index}`,
+    via: "static",
+    ...overrides,
+  };
+}
+
+function parallelFetchChunks(results: unknown[]) {
+  const toolCallIds = ["fetch-1", "fetch-2", "fetch-3"];
+  return [
+    { type: "step-start", payload: { request: { body: "{}" } } },
+    ...toolCallIds.map((toolCallId, index) => ({
+      type: "tool-call",
+      payload: {
+        toolName: "fetchArticle",
+        toolCallId,
+        args: { url: `https://example.com/article-${index + 1}` },
+      },
+    })),
+    ...toolCallIds.map((toolCallId, index) => ({
+      type: "tool-result",
+      payload: {
+        toolName: "fetchArticle",
+        toolCallId,
+        args: { url: `https://example.com/article-${index + 1}` },
+        result: results[index],
+      },
+    })),
+    { type: "text-delta", payload: { id: "text-1", text: "三个来源已处理。" } },
+    {
+      type: "step-finish",
+      payload: {
+        stepResult: { reason: "stop" },
+        output: { usage: { inputTokens: 100, outputTokens: 10 } },
+      },
+    },
+  ];
 }
 
 describe("processAgentStream 行为特征", () => {
@@ -253,5 +310,89 @@ describe("processAgentStream 行为特征", () => {
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
     });
+  });
+
+  it("同一步三个同名并行工具按 toolCallId 分别收口并正常结束", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-parallel-tools");
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf(
+          ...parallelFetchChunks([
+            fetchArticleResult(1),
+            fetchArticleResult(2),
+            fetchArticleResult(3),
+          ]),
+        ),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-parallel-tools",
+          runId: "run-parallel-tools",
+        },
+      ),
+    );
+
+    const toolParts = state.chatHistory
+      .flatMap((message) => message.parts)
+      .filter(isToolCallPart);
+    expect(toolParts).toHaveLength(3);
+    expect(toolParts.map((part) => part.data.id)).toEqual(["fetch-1", "fetch-2", "fetch-3"]);
+    expect(toolParts.map((part) => part.data.status.kind)).toEqual(["done", "done", "done"]);
+    expect(
+      frames
+        .filter(isToolCallUpdatedFrame)
+        .filter((frame) => frame.data.spec.status.kind !== "running")
+        .map((frame) => [frame.data.toolCallId, frame.data.spec.status.kind]),
+    ).toEqual([
+      ["fetch-1", "done"],
+      ["fetch-2", "done"],
+      ["fetch-3", "done"],
+    ]);
+    expect(state.messages.at(-1)).toEqual({ role: "assistant", content: "三个来源已处理。" });
+    expect(result).toMatchObject({
+      producedVisibleFrame: true,
+      sawToolCall: true,
+      sawSideEffectToolCall: true,
+      streamWasUserAborted: false,
+    });
+  });
+
+  it("三个同名并行工具中一个错误对象不会阻塞其余结果收口", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-parallel-tools-one-error");
+
+    const { result } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf(
+          ...parallelFetchChunks([
+            fetchArticleResult(1),
+            fetchArticleResult(2, { ok: false, text: "[Error] 站点拒绝访问", wordCount: 0 }),
+            fetchArticleResult(3),
+          ]),
+        ),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-parallel-tools-one-error",
+          runId: "run-parallel-tools-one-error",
+        },
+      ),
+    );
+
+    const terminalById = new Map(
+      state.chatHistory
+        .flatMap((message) => message.parts)
+        .filter(isToolCallPart)
+        .map((part) => [part.data.id, part.data.status.kind]),
+    );
+    expect(terminalById).toEqual(new Map([
+      ["fetch-1", "done"],
+      ["fetch-2", "failed"],
+      ["fetch-3", "done"],
+    ]));
+    expect(state.messages.at(-1)).toEqual({ role: "assistant", content: "三个来源已处理。" });
+    expect(result.streamWasUserAborted).toBe(false);
   });
 });

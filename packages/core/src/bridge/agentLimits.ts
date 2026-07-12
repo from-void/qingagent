@@ -14,6 +14,15 @@ export const AGENT_IDLE_TIMEOUT_MS = Math.max(
   Number(process.env.QINGAGENT_AGENT_IDLE_TIMEOUT_MS) || 90_000,
 );
 
+// 心跳只能证明工具 execute 仍有定时器在跑，不能证明工具取得了真实进展。
+// 若主流连续只有 tool-heartbeat、没有 result/error/progress 等真实事件，最终必须有界收口，
+// 否则卡死的工具会用心跳永久喂活上面的 idle watchdog。默认 5 分钟，显著高于常规工具
+// 的内部硬超时，又能在用户线上观察到的 9 分钟挂死之前释放整轮。
+export const AGENT_TOOL_HEARTBEAT_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.QINGAGENT_TOOL_HEARTBEAT_TIMEOUT_MS) || 5 * 60_000,
+);
+
 export const TURN_RETRY_LIMIT = 2;
 export const MAX_CONSECUTIVE_ASKUSER_SUSPENDS = 2;
 export const ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS = 5000;

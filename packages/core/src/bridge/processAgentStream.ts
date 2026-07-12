@@ -30,6 +30,10 @@ function safeTurnLogValue(value: string): string {
   return value.replace(/\s+/g, "_");
 }
 
+function isToolHeartbeatEvent(chunk: AgentStreamEvent): boolean {
+  return chunk.type === "tool-output" && chunk.payload.output?.type === "tool-heartbeat";
+}
+
 // ---------------------------------------------------------------------------
 // processAgentStream — shared stream processor for initial and resumed streams
 // ---------------------------------------------------------------------------
@@ -61,6 +65,10 @@ export async function* processAgentStream(
       fullStream as AsyncIterable<AgentStreamEvent>,
       context.timeoutMs,
       () => context.abortController.abort(IDLE_TIMEOUT_ABORT_REASON),
+      {
+        heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,
+        isHeartbeat: isToolHeartbeatEvent,
+      },
     );
     for await (const chunk of monitoredStream) {
       if (!context.firstChunkLogged) {

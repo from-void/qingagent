@@ -359,7 +359,12 @@ const tableCellSchema: LazyNode = z.lazy(() =>
   z.object({
     type: z.union([z.literal("tableCell"), z.literal("tableHeader")]),
     attrs: tableCellAttrsSchema,
-    content: z.array(blockNodeSchema).min(1),
+    content: z
+      .array(blockNodeSchema)
+      .min(1)
+      .refine((content) => content.every((block) => (block as { type?: unknown }).type !== "table"), {
+        message: "tableCell content must not contain table",
+      }),
   }),
 );
 

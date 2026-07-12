@@ -1,5 +1,6 @@
-import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
-import { CellSelection } from "@tiptap/pm/tables";
+import { DOMParser as ProseMirrorDOMParser, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { CellSelection, handlePaste as handleTablePaste } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { markdownToPm, pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 
@@ -104,6 +105,7 @@ export function handleQingagentPaste(
   event: ClipboardEvent,
   onToast?: (message: string) => void,
   onImageFiles?: (files: File[]) => void,
+  parsedSlice?: Slice,
 ): boolean {
   if (view.state.selection instanceof CellSelection) return false;
   // 图片:有上传处理器就走上传链路插 image 节点;没有(老调用/测试)则保持旧提示行为。
@@ -125,12 +127,70 @@ export function handleQingagentPaste(
   }
 
   const text = event.clipboardData?.getData("text/plain") ?? "";
+  const slice = !html && text ? parsePlainTextClipboard(text, view) : parsedSlice ?? null;
+  if (isTextSelectionInsideTableCell(view) && sliceContainsTable(slice)) {
+    if (handleTablePaste(view, event, slice!)) return true;
+    const flattened = parsePlainTextClipboard(flattenSliceForTableCell(slice!), view);
+    if (!flattened) return false;
+    event.preventDefault();
+    view.dispatch(view.state.tr.replaceSelection(flattened).scrollIntoView());
+    return true;
+  }
   if (!text || html) return false;
-  const slice = parsePlainTextClipboard(text, view);
   if (!slice) return false;
   event.preventDefault();
   view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
   return true;
+}
+
+function isTextSelectionInsideTableCell(view: EditorView): boolean {
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection)) return false;
+  const cellDepth = (pos: typeof selection.$from): number => {
+    for (let depth = pos.depth; depth > 0; depth -= 1) {
+      const name = pos.node(depth).type.name;
+      if (name === "tableCell" || name === "tableHeader") return depth;
+    }
+    return -1;
+  };
+  return cellDepth(selection.$from) >= 0 && cellDepth(selection.$to) >= 0;
+}
+
+function sliceContainsTable(slice: Slice | null): boolean {
+  if (!slice) return false;
+  let found = false;
+  slice.content.descendants((node) => {
+    if (node.type.spec.tableRole === "table") {
+      found = true;
+      return false;
+    }
+    return !found;
+  });
+  return found;
+}
+
+function flattenSliceForTableCell(slice: Slice): string {
+  const parts: string[] = [];
+  slice.content.forEach((node) => parts.push(flattenNodeForTableCell(node)));
+  return parts.filter(Boolean).join("\n");
+}
+
+function flattenNodeForTableCell(node: ProseMirrorNode): string {
+  if (node.type.spec.tableRole === "table") return tableText(node);
+  if (node.isText) return node.text ?? "";
+  const parts: string[] = [];
+  node.forEach((child) => parts.push(flattenNodeForTableCell(child)));
+  return parts.filter(Boolean).join(node.isTextblock ? "" : "\n");
+}
+
+function tableText(table: ProseMirrorNode): string {
+  const rows: string[] = [];
+  table.forEach((row) => {
+    const cells: string[] = [];
+    row.forEach((cell) => cells.push(cell.textContent));
+    rows.push(cells.join("\t"));
+  });
+  return rows.join("\n");
 }
 
 function looksLikeBlockMarkdown(text: string): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBlockSchema } from "../ai-ir/aiIrSchema";
+import { aiBlockSchema, aiTableCellSchema } from "../ai-ir/aiIrSchema";
 import { aiIrToPm, compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
 import { pmToAiIr } from "../ai-ir/pmToAiIr";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
@@ -31,6 +31,15 @@ function tableCell(
 }
 
 describe("aiIrRoundTrip", () => {
+  it("AI-IR table cell 不接受嵌套 table block", () => {
+    expect(aiTableCellSchema.safeParse({
+      blocks: [{
+        type: "table",
+        rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "nested" }] }] }] }],
+      }],
+    }).success).toBe(false);
+  });
+
   it("compiles AI-IR to valid PM and back without schemaVersion/blockId in the IR", () => {
     const ir: AiDocument = {
       title: "示例",

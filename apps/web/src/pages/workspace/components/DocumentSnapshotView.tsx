@@ -515,7 +515,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return true;
         },
       },
-      handlePaste: (view, event) => handleQingagentPaste(view, event, onToast, handlePasteImages),
+      handlePaste: (view, event, slice) => handleQingagentPaste(view, event, onToast, handlePasteImages, slice),
     },
   });
 

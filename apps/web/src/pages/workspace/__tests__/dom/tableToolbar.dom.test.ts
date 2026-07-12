@@ -1,8 +1,9 @@
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc, type PmMark } from "@qingagent/pm-schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CellSelection } from "@tiptap/pm/tables";
+import { Fragment, Slice } from "@tiptap/pm/model";
 import {
   applyTableToolbarFormat,
   applyTableToolbarStructure,
@@ -236,6 +237,50 @@ describe("tableToolbar PM-010", () => {
       expect(writeSelectionToClipboard(editor.view, event, false)).toBe(false);
       expect(writeSelectionToClipboard(editor.view, event, true)).toBe(false);
       expect(handleQingagentPaste(editor.view, event)).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("cell 内 TextSelection 粘贴表格走原生网格覆盖，不产生 table-in-table", () => {
+    const editor = createTableEditor();
+    try {
+      editor.commands.setTextSelection(4);
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["x1", "x2"], ["y1", "y2"]]));
+      const slice = new Slice(Fragment.from(pastedTable), 0, 0);
+      const preventDefault = vi.fn();
+      const event = {
+        clipboardData: {
+          files: [],
+          getData: (type: string) => type === "text/html" ? "<table><tr><td>x1</td><td>x2</td></tr></table>" : "x1\tx2\ny1\ty2",
+        },
+        preventDefault,
+      } as unknown as ClipboardEvent;
+
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(true);
+      const json = editor.getJSON();
+      expect(JSON.stringify(json).match(/\"type\":\"table\"/g)).toHaveLength(1);
+      expect(rowCellTexts(editor, 0)).toEqual(["x1", "x2"]);
+      expect(rowCellTexts(editor, 1)).toEqual(["y1", "y2"]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("正文 TextSelection 粘贴表格仍交给默认表格插入路径", () => {
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "body" } }] } satisfies PmDoc,
+    });
+    try {
+      editor.commands.setTextSelection(1);
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["x"]]));
+      const slice = new Slice(Fragment.from(pastedTable), 0, 0);
+      const event = {
+        clipboardData: { files: [], getData: (type: string) => type === "text/html" ? "<table><tr><td>x</td></tr></table>" : "x" },
+        preventDefault: vi.fn(),
+      } as unknown as ClipboardEvent;
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(false);
     } finally {
       editor.destroy();
     }

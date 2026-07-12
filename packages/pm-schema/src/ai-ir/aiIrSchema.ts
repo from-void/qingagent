@@ -97,7 +97,10 @@ export type AiBlock =
 
 export const aiTableCellSchema: z.ZodType<AiTableCell> = z.lazy(() =>
   z.object({
-    blocks: z.array(aiBlockSchema),
+    blocks: z.array(aiBlockSchema).refine(
+      (blocks) => blocks.every((block) => block.type !== "table"),
+      { message: "table cell blocks must not contain table" },
+    ),
     header: z.boolean().optional(),
     // 单元格背景色(主题色名,如 "rose")。修 cell-bg-color-lost-after-ai-followup:
     // AI 编辑走 AI-IR 往返时此前不带 cell 背景色→AI 改表后丢色。

@@ -51,6 +51,39 @@ describe("schemaSync", () => {
     expect(PM_SCHEMA_NODE_NAMES).toContain("fileAttachment");
     expect(PM_SCHEMA_NODE_NAMES).not.toContain("resourceRef");
   });
+
+  it("tableCell/tableHeader schema 均拒绝直接嵌套 table", async () => {
+    const nestedTableDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: "outer" },
+        content: [{
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [{
+              type: "table",
+              attrs: { blockId: "inner" },
+              content: [{
+                type: "tableRow",
+                content: [{ type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "inner-p" } }] }],
+              }],
+            }],
+          }],
+        }],
+      }],
+    };
+    expect(safeParsePmDoc(nestedTableDoc).success).toBe(false);
+
+    const { getSchema } = await import("@tiptap/core");
+    const { Node: PMNode } = await import("@tiptap/pm/model");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const schema = getSchema(createQingagentExtensions());
+    expect(schema.nodes.tableCell!.spec.content).not.toBe("block+");
+    expect(() => PMNode.fromJSON(schema, nestedTableDoc).check()).toThrow();
+  });
 });
 
 describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", () => {

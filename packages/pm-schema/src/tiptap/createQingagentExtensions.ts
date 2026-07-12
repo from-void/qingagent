@@ -184,7 +184,11 @@ const tableCellBackgroundAttribute = {
   },
 };
 
+const TABLE_CELL_CONTENT = "(paragraph|heading|blockquote|bulletList|orderedList|horizontalRule|codeBlock|image|diagram|fileAttachment|penNote|taskList|callout|columnList|blockMath)+";
+
 const TableCellWithBackground = TableCell.extend({
+  content: TABLE_CELL_CONTENT,
+
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -194,6 +198,8 @@ const TableCellWithBackground = TableCell.extend({
 });
 
 const TableHeaderWithBackground = TableHeader.extend({
+  content: TABLE_CELL_CONTENT,
+
   addAttributes() {
     return {
       ...this.parent?.(),

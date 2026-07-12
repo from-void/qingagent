@@ -1,4 +1,4 @@
-import { legacySectionsToPm, pmToClipboardHtml, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, legacySectionsToPm, pmToClipboardHtml, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import { normalizeImageAlign } from "../ImageView";
 import { viewDocSpanText } from "../../data/protocol";
 import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "../../data/protocol";
@@ -6,7 +6,7 @@ import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "../../data/pr
 export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
   // 装载侧安全网:把任何"伪装成代码块的 mermaid"升级回 diagram 块,绝不让图表渲染成死代码、丢可视化编辑入口
   // (用户报的「Mermaid 退回代码格式」)。命中 0 处时为结构等价克隆,不影响正常文档。
-  if (doc.pmDoc) return upgradeMermaidCodeBlocksToDiagram(doc.pmDoc);
+  if (doc.pmDoc) return flattenNestedTablesInCells(upgradeMermaidCodeBlocksToDiagram(doc.pmDoc));
   return legacySectionsToPm(doc.sections.map(viewSectionToLegacy) as never);
 }
 

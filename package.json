@@ -18,8 +18,8 @@
     "test:all": "pnpm test && pnpm test:heavy && pnpm test:perf",
     "typecheck": "pnpm -r --if-present typecheck",
     "depcruise": "dependency-cruise packages/*/src apps/*/src --config .dependency-cruiser.cjs",
-    "scorers": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-scorers.mts",
-    "scorers:live": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-live-scorers.mts",
+    "scorers": "tsx scripts/run-scorers.mts",
+    "scorers:live": "tsx scripts/run-live-scorers.mts",
     "pm:schema:check": "pnpm --filter @qingagent/pm-schema test -- schemaSync",
     "pm:roundtrip": "pnpm --filter @qingagent/pm-schema test -- pmMarkdownRoundTrip aiIrRoundTrip && pnpm --filter @qingagent/web test:dom -- pmRoundTrip",
     "pm:migrate:check": "pnpm --filter @qingagent/pm-schema test -- legacyMigration",
@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",
+    "tsx": "^4.19.4",
     "typescript": "5.9.3"
   },
   "pnpm": {

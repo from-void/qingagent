@@ -27,7 +27,7 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => null,
 }));
 
-vi.mock("../bridge/agentSpans.js", () => ({
+vi.mock("../agent-run/agentSpans.js", () => ({
   sessionIdToTraceId: (sessionId: string) => `trace-${sessionId}`,
 }));
 
@@ -99,22 +99,22 @@ describe("schedulePersist dirty-loop", () => {
     vi.clearAllMocks();
     memory.updateThread.mockReset();
     memory.saveThread.mockReset();
-    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
     __resetSessionPersistenceForTest();
   });
 
   afterEach(async () => {
-    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
     __resetSessionPersistenceForTest();
     tempDb.cleanup();
   });
 
   it("慢写期间再次 mutate 会补写 trailing-edge 快照且合并 N 次 schedule", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       drainSessionPersistence,
       schedulePersist,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const firstWrite = deferred();
     const writes: Array<Record<string, unknown>> = [];
     memory.updateThread.mockImplementation(
@@ -150,12 +150,12 @@ describe("schedulePersist dirty-loop", () => {
   });
 
   it("loop 收尾微任务里追加的 mutation 不会被 finally 清理窗口吞掉", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       __getSessionPersistenceStateForTest,
       drainSessionPersistence,
       schedulePersist,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const firstWrite = deferred();
     const writes: Array<Record<string, unknown>> = [];
     let queuedTailMutation = false;
@@ -193,11 +193,11 @@ describe("schedulePersist dirty-loop", () => {
   });
 
   it("初始 thread 创建完成前不执行 updateThread，完成后写入包含 folderSources 的最新快照", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       drainSessionPersistence,
       schedulePersist,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const initialCreate = deferred();
     const writes: Array<Record<string, unknown>> = [];
     memory.updateThread.mockImplementation(
@@ -224,8 +224,8 @@ describe("schedulePersist dirty-loop", () => {
   });
 
   it("updateThread 遇到 thread-not-found 时用当前 metadata saveThread 兜底", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
-    const { schedulePersist } = await import("../bridge/threadPersistence.js");
+    const { createSession } = await import("../session/sessionState.js");
+    const { schedulePersist } = await import("../session/threadPersistence.js");
     const state = createSession("schedule-thread-not-found-fallback");
     const source = folderSource(state.sessionId);
     state.folderSources.set(source.id, source);
@@ -250,11 +250,11 @@ describe("schedulePersist dirty-loop", () => {
   });
 
   it("非 busy 主写失败不重试，schedulePersist 保持 resolve 并记录 reason", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       __getSessionPersistenceStateForTest,
       schedulePersist,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     memory.updateThread.mockRejectedValue(new Error("primary write syntax error"));
 
     const state = createSession("schedule-nonbusy-primary-fail");

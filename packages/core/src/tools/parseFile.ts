@@ -3,7 +3,7 @@ import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
-import { resolveFileIds } from "../bridge/uploadFileResolver.js";
+import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
 

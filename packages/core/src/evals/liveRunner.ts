@@ -14,7 +14,7 @@ import {
 } from "./askUserScorers.js";
 import { askUserTriggerFixtures, type AskUserTriggerFixture } from "./askUserTriggerFixtures.js";
 import { askUserTriggerScorer, evaluateAskUserTriggerDecision } from "./askUserTriggerScorers.js";
-import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
+import { isPlanDraftTool } from "../agent-run/questionnaireTools.js";
 import { askUserAnswerWordingFixtures } from "./fixtures.js";
 
 export type LiveScorerArtifact = {

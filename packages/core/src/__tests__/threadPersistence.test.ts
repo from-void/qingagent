@@ -8,8 +8,8 @@ import type {
   FolderSourceRecord,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
-import type { SessionState } from "../bridge/sessionState.js";
-import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
+import type { SessionState } from "../session/sessionState.js";
+import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import { insertVersion, listVersions } from "@qingagent/db";
@@ -122,7 +122,7 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => observability,
 }));
 
-vi.mock("../bridge/agentSpans.js", () => ({
+vi.mock("../agent-run/agentSpans.js", () => ({
   sessionIdToTraceId: (sessionId: string) => `trace-${sessionId}`,
 }));
 
@@ -397,9 +397,9 @@ describe("thread persistence", () => {
   });
 
   it("persists and restores docId", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const { loadSessionFromThread, persistSessionMetadata } = await import(
-      "../bridge/threadPersistence.js"
+      "../session/threadPersistence.js"
     );
     const state = createSession("session-docid");
     state.docId = "doc-explicit";
@@ -414,7 +414,7 @@ describe("thread persistence", () => {
   });
 
   it("falls back to sessionId when restoring old metadata without docId", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-session";
     const oldMeta = metadata({ docId: undefined });
     delete oldMeta.docId;
@@ -426,7 +426,7 @@ describe("thread persistence", () => {
   });
 
   it("旧 metadata 懒回填冻结的 thread.updatedAt，await 返回即落盘且二次冷开幂等", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-content-time-backfill";
     const oldMeta = metadata({ docId: sessionId });
     delete oldMeta.lastContentEditedAt;
@@ -450,7 +450,7 @@ describe("thread persistence", () => {
   });
 
   it("metadata 内容时间有效且版本未前进时，恢复不再读取被打开推进的 thread.updatedAt", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "valid-content-time-no-backfill";
     const thread = storedThread(sessionId, metadata({
       docId: sessionId,
@@ -471,8 +471,8 @@ describe("thread persistence", () => {
   });
 
   it("崩溃窗口按 doc_id + to_version 恢复真实 op 时间，并在返回前覆盖陈旧合法 metadata", async () => {
-    const { commitDocumentOp } = await import("../bridge/commitDocumentOp.js");
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { commitDocumentOp } = await import("../doc-engine/commitDocumentOp.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "content-time-crash-window";
     await saveDocumentRow({
       docId: sessionId,
@@ -518,7 +518,7 @@ describe("thread persistence", () => {
   });
 
   it("崩溃窗口精确 op 时间缺失时仍持久化 documents DB-win", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "content-time-crash-window-missing-op";
     await saveDocumentRow({
       docId: sessionId,
@@ -541,7 +541,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复时丢弃损坏的 folderSources metadata", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const { folderSourcesToWire } = await import("../folderSources/runtime.js");
 
     const nonArraySession = "folder-sources-non-array";
@@ -588,7 +588,7 @@ describe("thread persistence", () => {
   it("冷恢复时把已删除的 desktop-local 目录标为 missing", async () => {
     process.env.QINGAGENT_RUNTIME = "desktop";
     process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {
       getSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
@@ -616,7 +616,7 @@ describe("thread persistence", () => {
   });
 
   it("Round9 回归:无 desktop-local flag 冷恢复时不注册为可读 connected", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {
       getSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
@@ -646,7 +646,7 @@ describe("thread persistence", () => {
   it("恢复时丢弃 sessionId 不匹配的 folderSource，且不注册到当前 session", async () => {
     process.env.QINGAGENT_RUNTIME = "desktop";
     process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {
       getSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
@@ -672,7 +672,7 @@ describe("thread persistence", () => {
   it("materials 非数组时降级为空，但合法 folderSources 仍能恢复", async () => {
     process.env.QINGAGENT_RUNTIME = "desktop";
     process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {
       getSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
@@ -699,7 +699,7 @@ describe("thread persistence", () => {
   it("chatHistory 非数组或坏元素时降级，不阻断 folderSources 恢复", async () => {
     process.env.QINGAGENT_RUNTIME = "desktop";
     process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const { __resetFolderSourceRuntimeForTest } = await import("../folderSources/runtime.js");
     const cases: Array<{ sessionId: string; chatHistory: unknown }> = [
       { sessionId: "restore-chat-history-non-array", chatHistory: "not-an-array" },
@@ -766,7 +766,7 @@ describe("thread persistence", () => {
   it("冷恢复保留所有合法 MessagePart 种类（code/citation/image/patchSummary 不被静默丢弃）", async () => {
     process.env.QINGAGENT_RUNTIME = "desktop";
     process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const { __resetFolderSourceRuntimeForTest } = await import("../folderSources/runtime.js");
     const sessionId = "restore-chat-history-all-part-kinds";
     const parts = [
@@ -798,7 +798,7 @@ describe("thread persistence", () => {
   });
 
   it("browser source 在后端能力关闭时冷恢复降级为非 connected，flag 开启时保持 connected", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {
       getSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
@@ -837,7 +837,7 @@ describe("thread persistence", () => {
       registerSessionFolderSources,
       __resetFolderSourceRuntimeForTest,
     } = await import("../folderSources/runtime.js");
-    const { deleteSessionThread } = await import("../bridge/threadPersistence.js");
+    const { deleteSessionThread } = await import("../session/threadPersistence.js");
     const sessionId = "delete-folder-source-registry";
     const now = "2026-01-01T00:00:00.000Z";
     threads.set(sessionId, storedThread(sessionId, metadata()));
@@ -869,7 +869,7 @@ describe("thread persistence", () => {
   });
 
   it("normalizes every incoming doc state to content 3-state restore facts", async () => {
-    const { normalizeRestoredDocStateKind } = await import("../bridge/docStateTransitions.js");
+    const { normalizeRestoredDocStateKind } = await import("../doc-engine/docStateTransitions.js");
     const kinds: IncomingDocState["kind"][] = [
       "init",
       "plan",
@@ -905,8 +905,8 @@ describe("thread persistence", () => {
   });
 
   it("summarizes documents with the legacy word-count semantics", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
-    const { summarizeDoc } = await import("../bridge/threadPersistence.js");
+    const { createSession } = await import("../session/sessionState.js");
+    const { summarizeDoc } = await import("../session/threadPersistence.js");
     const state = createSession("session-summary");
     state.docState = { kind: "editing" };
     state.legacySections = [
@@ -965,9 +965,9 @@ describe("thread persistence", () => {
   });
 
   it("round-trips full persisted SessionState fields except runtime-only owners", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const { loadSessionFromThread, persistSessionMetadata } = await import(
-      "../bridge/threadPersistence.js"
+      "../session/threadPersistence.js"
     );
     const state = createSession("session-full");
     const message: CoreMessage = { role: "user", content: "请写一段正文" };
@@ -1018,7 +1018,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景1: documents 无行时继续使用 metadata", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-only";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1038,7 +1038,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景2: documents 版本高于 metadata 时使用 documents 并触发 reconcile persist", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-documents-newer";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1062,7 +1062,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景2: metadata.doc 为空时视为 documents 胜出", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-empty-doc";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1085,7 +1085,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景3: metadata 版本高于 documents 时使用 metadata 并触发 reconcile persist", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-newer";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1112,7 +1112,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景4: 同版本同 hash 时使用 documents 且不触发 reconcile", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-same-hash";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1136,7 +1136,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景5: 同版本异 hash 时 documents 胜出并救援 metadata 快照", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-hash-conflict";
     const metadataDoc = pmDoc("metadata loser");
     threads.set(sessionId, storedThread(sessionId, metadata({
@@ -1193,7 +1193,7 @@ describe("thread persistence", () => {
   });
 
   it("恢复仲裁场景5救援幂等: 连续恢复两次只保留一条 rescue 版本", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-hash-conflict-idempotent";
     const metadataDoc = pmDoc("metadata loser twice");
     threads.set(sessionId, storedThread(sessionId, metadata({
@@ -1225,7 +1225,7 @@ describe("thread persistence", () => {
   });
 
   it("documents 读取失败时仍 fallback metadata", async () => {
-    const { loadSessionFromThread, drainSessionPersistence } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-documents-read-error-fallback";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: sessionId,
@@ -1250,8 +1250,8 @@ describe("thread persistence", () => {
   });
 
   it("does not persist OM metadata defaults when sidecar state is inactive", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
-    const { persistSessionMetadata } = await import("../bridge/threadPersistence.js");
+    const { createSession } = await import("../session/sessionState.js");
+    const { persistSessionMetadata } = await import("../session/threadPersistence.js");
     const state = createSession("session-om-defaults");
     state.threadId = state.sessionId;
 
@@ -1269,7 +1269,7 @@ describe("thread persistence", () => {
   });
 
   it("restores old material metadata without parseState as ready", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "material-parse-state-default";
     threads.set(sessionId, storedThread(sessionId, metadata({
       materials: [{
@@ -1291,7 +1291,7 @@ describe("thread persistence", () => {
   });
 
   it("restores material visionSummary and ignores invalid visionSummary", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "material-vision-summary";
     threads.set(sessionId, storedThread(sessionId, metadata({
       materials: [
@@ -1330,9 +1330,9 @@ describe("thread persistence", () => {
   });
 
   it("round-trips material parse error metadata", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const { loadSessionFromThread, persistSessionMetadata } = await import(
-      "../bridge/threadPersistence.js"
+      "../session/threadPersistence.js"
     );
     const state = createSession("material-parse-state-error");
     state.title = "解析失败素材";
@@ -1364,7 +1364,7 @@ describe("thread persistence", () => {
   });
 
   it("restore 优先 exact meta.messages，recall 脏文本不改模型上下文字节", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-exact-meta-messages";
     const exactMessages: CoreMessage[] = [
       { role: "user", content: "请写一篇文章" },
@@ -1397,7 +1397,7 @@ describe("thread persistence", () => {
   });
 
   it("restore 遇到空 meta.messages 时按旧会话走 recall 兜底", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-empty-meta-messages";
     memory.recall.mockResolvedValueOnce({
       messages: [
@@ -1430,7 +1430,7 @@ describe("thread persistence", () => {
   });
 
   it("normalizes legacy cold-restored docState from document presence", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const cases: Array<{
       id: string;
       kind: IncomingDocState["kind"];
@@ -1459,7 +1459,7 @@ describe("thread persistence", () => {
   });
 
   it("restores review only when persisted review has document and suggestions", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     threads.set("review-good", storedThread("review-good", metadata({
       docState: legacyDocState("review"),
       suggestions: [suggestionRecord()],
@@ -1484,8 +1484,8 @@ describe("thread persistence", () => {
   it.each(["askUser", "planDraft", "askUserQuestion"] as const)(
     "keeps restorable open %s on cold restore with durable suspension owner",
     async (toolName) => {
-    const { hasActiveSuspension } = await import("../bridge/sessionState.js");
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { hasActiveSuspension } = await import("../session/sessionState.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const askUser = toolCall(
       toolName,
       { kind: "running", data: { progressPct: null, etaSec: null } },
@@ -1523,7 +1523,7 @@ describe("thread persistence", () => {
   );
 
   it("冷恢复把三种问卷工具的缺失/空/非法 mode 统一降级 fullpage", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const dirtyModes: Array<{ label: string; value: unknown }> = [
       { label: "missing", value: undefined },
       { label: "null", value: null },
@@ -1558,7 +1558,7 @@ describe("thread persistence", () => {
   });
 
   it("terminalizes stale open askUser without persisted runId on cold restore", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const askUser = toolCall(
       "askUser",
       { kind: "running", data: { progressPct: null, etaSec: null } },
@@ -1584,8 +1584,8 @@ describe("thread persistence", () => {
   });
 
   it("cold restore uses submitted askUser toolCallId to recover stale persisted suspension id", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
-    const { hasActiveSuspension } = await import("../bridge/sessionState.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const { hasActiveSuspension } = await import("../session/sessionState.js");
     const askUser = toolCall(
       "askUser",
       { kind: "running", data: { progressPct: null, etaSec: null } },
@@ -1626,11 +1626,11 @@ describe("thread persistence", () => {
     const {
       buildAskUserAnswerUserMessage,
       visibleAskUserAnswerMessageId,
-    } = await import("../bridge/askUserAnswerMessage.js");
+    } = await import("../agent-run/askUserAnswerMessage.js");
     const {
       drainSessionPersistence,
       loadSessionFromThread,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const answers = {
       "q-one": { chosen: [], freeText: "答案A" },
     };
@@ -1688,9 +1688,9 @@ describe("thread persistence", () => {
 
   it("overlay 内联反问的 askUserAnswers 仍补建可见答卷卡(inline 无汇总卡,需保留)", async () => {
     const { visibleAskUserAnswerMessageId } = await import(
-      "../bridge/askUserAnswerMessage.js"
+      "../agent-run/askUserAnswerMessage.js"
     );
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const answers = {
       "q-one": { chosen: [], freeText: "内联答案" },
     };
@@ -1723,7 +1723,7 @@ describe("thread persistence", () => {
   });
 
   it("writes docId into initial thread metadata", async () => {
-    const { createSessionThread } = await import("../bridge/threadPersistence.js");
+    const { createSessionThread } = await import("../session/threadPersistence.js");
 
     await createSessionThread("session-initial", "初始线程");
 
@@ -1733,8 +1733,8 @@ describe("thread persistence", () => {
   });
 
   it("新建 SessionState 与 thread 的内容时间严格同源", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
-    const { createSessionThread } = await import("../bridge/threadPersistence.js");
+    const { createSession } = await import("../session/sessionState.js");
+    const { createSessionThread } = await import("../session/threadPersistence.js");
     const createdAt = "2026-02-03T04:05:06.789Z";
     const state = createSession("session-shared-created-at", createdAt);
 
@@ -1748,9 +1748,9 @@ describe("thread persistence", () => {
   });
 
   it("keeps persisted threadSummary populated for home listing", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const { listSessionThreads, persistSessionMetadata } = await import(
-      "../bridge/threadPersistence.js"
+      "../session/threadPersistence.js"
     );
     const state = createSession("session-home-summary");
     state.title = "首页摘要";
@@ -1782,7 +1782,7 @@ describe("thread persistence", () => {
   });
 
   it("首页查询全量排序后分页，≥51 条时不会漏掉 raw updatedAt 前 50 外的内容第一名", async () => {
-    const { listHomeSessionThreads } = await import("../bridge/threadPersistence.js");
+    const { listHomeSessionThreads } = await import("../session/threadPersistence.js");
     const base = Date.parse("2026-01-01T00:00:00.000Z");
     const all = Array.from({ length: 60 }, (_, index) => ({
       id: `bulk-${String(index).padStart(2, "0")}`,
@@ -1813,7 +1813,7 @@ describe("thread persistence", () => {
   });
 
   it("首页查询 current 优先去重，并用统一有效时间与稳定 tie-break", async () => {
-    const { listHomeSessionThreads } = await import("../bridge/threadPersistence.js");
+    const { listHomeSessionThreads } = await import("../session/threadPersistence.js");
     const sharedCreatedAt = new Date("2026-01-01T00:00:00.000Z");
     const currentDuplicate = {
       id: "same-id",
@@ -1872,7 +1872,7 @@ describe("thread persistence", () => {
   });
 
   it("reads document body fields from the documents table by default", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-table";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-table",
@@ -1903,7 +1903,7 @@ describe("thread persistence", () => {
   });
 
   it("falls back to metadata when the documents table misses", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-miss";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-miss",
@@ -1920,7 +1920,7 @@ describe("thread persistence", () => {
   });
 
   it("falls back to metadata when the documents table read throws", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-error";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-error",
@@ -1937,7 +1937,7 @@ describe("thread persistence", () => {
   });
 
   it("uses sessionId as legacy docId fallback for document table reads", async () => {
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-doc-table";
     const oldMeta = metadata({ docId: undefined, legacySections: [textSection("old meta")] });
     delete oldMeta.docId;
@@ -1968,7 +1968,7 @@ describe("thread persistence", () => {
     const {
       drainSessionPersistence,
       loadSessionFromThread,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const sessionId = "h1-documents-wins";
     const oldDoc = legacySectionsToPm([textSection("metadata old")] as never);
     const latestSections = [textSection("documents latest")];
@@ -2028,7 +2028,7 @@ describe("thread persistence", () => {
     const {
       drainSessionPersistence,
       loadSessionFromThread,
-    } = await import("../bridge/threadPersistence.js");
+    } = await import("../session/threadPersistence.js");
     const sessionId = "h1-preserve-matching-draft";
     const latestSections = [textSection("documents base")];
     const latestDoc = legacySectionsToPm(latestSections as never);

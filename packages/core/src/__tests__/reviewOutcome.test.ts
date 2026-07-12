@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewOutcome, ReviewOutcomeHunk } from "@qingagent/contract-ts";
-import { serializeReviewOutcome } from "../bridge/reviewOutcome";
+import { serializeReviewOutcome } from "../doc-engine/reviewOutcome";
 
 function hunk(over: Partial<ReviewOutcomeHunk> = {}): ReviewOutcomeHunk {
   return {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildStateChangeSpanInput,
   buildStateChangeSpanMetadata,
-} from "../bridge/agentSpans.js";
+} from "../agent-run/agentSpans.js";
 
 // 0603 — 会话状态机转换 span(enter_review 等)的 input 构造纯函数单测。
 describe("buildStateChangeSpanInput", () => {

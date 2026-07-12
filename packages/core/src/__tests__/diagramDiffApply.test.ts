@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { buildDraftDiff, applyDiffHunks } from "../bridge/proposalDiff.js";
+import { buildDraftDiff, applyDiffHunks } from "../doc-engine/proposalDiff.js";
 import { isRenderableSvg } from "@qingagent/doc-render";
 
 // 回归:diagram 此前不在 BLOCK_NODE_TYPES,导致 diff 接受 diagram 的 insert/replace

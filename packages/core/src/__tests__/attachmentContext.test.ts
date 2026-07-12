@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildAttachmentContext } from "../bridge/sessionTools.js";
+import { buildAttachmentContext } from "../session/sessionTools.js";
 
 // 回归(验收 Agent C 发现):上传附件指引原先对所有文件都说"用 parseFile",
 // 图片走 parseFile 会失败。现按 mimeType 分派:图片→readImage(传 fileId),文档→parseFile。

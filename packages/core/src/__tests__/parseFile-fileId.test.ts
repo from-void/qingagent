@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseFileTool } from "../tools/parseFile.js";
-import { UPLOADS_BASE } from "../bridge/uploadFileResolver.js";
+import { UPLOADS_BASE } from "../session/uploadFileResolver.js";
 
 // CC 脱敏:web 模式模型只拿到内部 fileId,parseFile 用安全 resolver 还原 ./uploads 下的真实路径。
 // 这里建临时上传目录夹具,验证 parseFile({ fileId }) 能读出内容、filename/mimeType 由 resolver 补齐。

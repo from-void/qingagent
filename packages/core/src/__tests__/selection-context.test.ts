@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
@@ -55,7 +55,7 @@ describe("selection chip edit context", () => {
   });
 
   it("blockId 缺失时用 chip label 作为 readDraft 模糊定位文本", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-selection-ctx");
     state.legacySections = [

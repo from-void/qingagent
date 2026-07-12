@@ -4,15 +4,15 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(process.cwd(), "../..");
 const matrix: Array<{ file: string; callSites: string[] }> = [
-  { file: "packages/core/src/bridge/processAgentStream.ts", callSites: ["agent"] },
+  { file: "packages/core/src/agent-run/processAgentStream.ts", callSites: ["agent"] },
   { file: "packages/core/src/services/genService.ts", callSites: ["planDraft", "askMore"] },
   { file: "packages/core/src/tools/writeDraft.ts", callSites: ["writeDraft"] },
   { file: "packages/core/src/tools/generateSvg.ts", callSites: ["generateSvg"] },
   { file: "packages/core/src/tools/readImage.ts", callSites: ["readImage"] },
   { file: "packages/core/src/llm/visionTest.ts", callSites: ["visionTest"] },
   { file: "packages/core/src/search/deepseekWebSearch.ts", callSites: ["webSearch"] },
-  { file: "packages/core/src/bridge/omSidecar.ts", callSites: ["omObserve", "omReflect"] },
-  { file: "packages/core/src/bridge/titleGeneration.ts", callSites: ["generateTitle"] },
+  { file: "packages/core/src/session/omSidecar.ts", callSites: ["omObserve", "omReflect"] },
+  { file: "packages/core/src/session/titleGeneration.ts", callSites: ["generateTitle"] },
   {
     file: "packages/core/src/agents/processors.ts",
     callSites: ["guardPii", "guardPromptInjection", "guardModeration"],

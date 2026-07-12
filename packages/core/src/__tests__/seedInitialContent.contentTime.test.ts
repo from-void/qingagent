@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
+import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 

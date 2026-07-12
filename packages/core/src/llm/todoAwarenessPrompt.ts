@@ -1,4 +1,4 @@
-import { TODO_AWARENESS_REQUEST_CONTEXT_KEY } from "../bridge/todoAwareness.js";
+import { TODO_AWARENESS_REQUEST_CONTEXT_KEY } from "../agent-run/todoAwareness.js";
 
 type RequestContextLike = {
   get?: (key: string) => unknown;

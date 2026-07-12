@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ describe.skipIf(!mastraAvailable)("resolveFileIds (via runAgentTurn)", () => {
   });
 
   it("resolves file metadata from disk when fileIds are provided", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-att-1");
     const fileIds = [FILE_ID_1];
@@ -124,7 +124,7 @@ describe.skipIf(!mastraAvailable)("resolveFileIds (via runAgentTurn)", () => {
   });
 
   it("resolves multiple file IDs", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-att-2");
     const fileIds = [FILE_ID_A, FILE_ID_B];
@@ -136,7 +136,7 @@ describe.skipIf(!mastraAvailable)("resolveFileIds (via runAgentTurn)", () => {
   });
 
   it("skips file resolution when fileIds array is empty", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-att-3");
 
@@ -157,7 +157,7 @@ describe.skipIf(!mastraAvailable)("buildAttachmentContext (via runAgentTurn user
   });
 
   it("prepends file context to user message when fileIds exist", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-ctx-1");
     const fileIds = [FILE_ID_2];
@@ -174,7 +174,7 @@ describe.skipIf(!mastraAvailable)("buildAttachmentContext (via runAgentTurn user
   });
 
   it("does not prepend context when no fileIds", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-ctx-2");
 
@@ -188,7 +188,7 @@ describe.skipIf(!mastraAvailable)("buildAttachmentContext (via runAgentTurn user
   });
 
   it("does not prepend context with default (no fileIds arg)", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-ctx-3");
 
@@ -211,7 +211,7 @@ describe.skipIf(!mastraAvailable)("runAgentTurn frame sequence with fileIds", ()
   });
 
   it("emits stream.start, chatMessageAdded, chatMessageAppended, stream.end", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-seq-1");
     const fileIds = [FILE_ID_CSV];

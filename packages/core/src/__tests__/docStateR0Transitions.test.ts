@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ContentDocState } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
-import { createSession, recordSuspension } from "../bridge/sessionState.js";
-import type { SessionState } from "../bridge/sessionState.js";
+import { createSession, recordSuspension } from "../session/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
-} from "../bridge/docStateMachine.js";
+} from "../doc-engine/docStateMachine.js";
 import {
   DocStateTransitionError,
   normalizeRestoredDocStateKind,
   transitionDocState,
-} from "../bridge/docStateTransitions.js";
+} from "../doc-engine/docStateTransitions.js";
 
 function seedDoc(state: SessionState): void {
   state.legacySections = [{ kind: "p", data: { text: "正文" } }];

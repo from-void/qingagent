@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isServerReanchorEnabled, isTruthyFlag } from "../bridge/draftFeatureFlags.js";
+import { isServerReanchorEnabled, isTruthyFlag } from "../doc-engine/draftFeatureFlags.js";
 
 describe("draft feature flag parsing helpers", () => {
   it.each(["1", "true", "yes", "on", " TRUE ", "On"])(

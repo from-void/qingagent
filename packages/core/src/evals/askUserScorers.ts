@@ -1,7 +1,7 @@
 import { createScorer } from "@mastra/core/evals";
 import type { CoreMessage } from "ai";
-import { buildAskUserAnswerUserMessage } from "../bridge/askUserAnswerMessage.js";
-import { isPlanDraftTool } from "../bridge/questionnaireTools.js";
+import { buildAskUserAnswerUserMessage } from "../agent-run/askUserAnswerMessage.js";
+import { isPlanDraftTool } from "../agent-run/questionnaireTools.js";
 
 export interface AskUserAnswerWordingInput {
   toolCallId: string;

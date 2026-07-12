@@ -15,7 +15,7 @@ import {
   updatePatchVerdict,
   type SessionState,
 } from "../bridge/index.js";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { documentRepo } from "@qingagent/db";
 import { findOpByDocumentVersion } from "@qingagent/db";
 import {

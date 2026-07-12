@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import { tableSelectionTextSignature, type BridgeFrame, type PmDoc } from "@qingagent/contract-ts";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
@@ -134,7 +134,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("引用第9章图表(原子块)精确命中该图表,而非漂移到第11章表格", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-blockid-ref");
     state.doc = makeDocWithDiagram();
@@ -177,7 +177,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("文本部分选区:精确锁定所在段落块,同时点名块内具体选中的子串", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const fullPara = "三月的阳光透过教学楼的玻璃窗,洒在走廊的地砖上。";
     const selected = "三月的阳光";
@@ -224,7 +224,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("列表行选区:递归命中 column 内 listItem ref,提示 replaceText withinRef 只改该行", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-list-item-in-column");
     state.doc = {
@@ -281,7 +281,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("多行列表选区:selectionRefs 按多 item ref 注入上下文", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-list-item-multi");
     state.doc = {
@@ -328,7 +328,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("命中不到 blockId(老链路/占位 id)时降级到文本模糊定位,不抛错", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 
     const state = createSession("sess-blockid-fallback");
     state.legacySections = [
@@ -371,7 +371,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("表格 selectionCtx 注入 0-based 范围与先 readDraft 约束", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("sess-table-selection");
     state.doc = makeDocWithDiagram();
     state.docVersion = 1;
@@ -401,7 +401,7 @@ describe("selection chip resolves referenced block by stable blockId", () => {
   });
 
   it("表格签名失配时在模型调用前 fail-closed，不允许旧基线继续生成", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("sess-table-selection-stale");
     state.doc = makeDocWithDiagram();
     state.docVersion = 1;

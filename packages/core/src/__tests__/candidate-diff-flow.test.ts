@@ -261,12 +261,12 @@ describe("candidate-diff backend flow", () => {
     vi.clearAllMocks();
     threads.clear();
     memoryEnabled.value = false;
-    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
     __resetSessionPersistenceForTest();
   });
 
   afterEach(async () => {
-    const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+    const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
     __resetSessionPersistenceForTest();
     tempDb.cleanup();
   });

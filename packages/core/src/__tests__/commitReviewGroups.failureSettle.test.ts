@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, DiffHunk, DocSuggestion, PatchConflict } from "@qingagent/contract-ts";
 import { pmToLegacySections, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
-import { commitDocumentOp, type CommitDocumentOpResult } from "../bridge/commitDocumentOp.js";
+import { commitDocumentOp, type CommitDocumentOpResult } from "../doc-engine/commitDocumentOp.js";
 import {
   commitReviewGroups,
   createSession,
@@ -9,10 +9,10 @@ import {
   type SessionState,
   type SuggestionRecord,
 } from "../bridge/index.js";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 
-vi.mock("../bridge/commitDocumentOp.js", () => ({
+vi.mock("../doc-engine/commitDocumentOp.js", () => ({
   commitDocumentOp: vi.fn(),
 }));
 

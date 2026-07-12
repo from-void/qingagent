@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { pmTableSelectionCellTexts, pmToLegacySections, type PmDoc, type PmTableNode } from "@qingagent/pm-schema";
-import { createSession } from "../bridge/sessionState.js";
-import { createSessionScopedTools } from "../bridge/sessionTools.js";
-import { clonePmDoc, validateCurrentTableSelectionScopes, validateTableSelectionScope } from "../bridge/draftScratch.js";
+import { createSession } from "../session/sessionState.js";
+import { createSessionScopedTools } from "../session/sessionTools.js";
+import { clonePmDoc, validateCurrentTableSelectionScopes, validateTableSelectionScope } from "../doc-engine/draftScratch.js";
 
 const ctx = {} as any;
 

@@ -7,7 +7,7 @@ import {
 } from "@qingagent/pm-schema";
 import { z } from "zod";
 import type { LegacySection } from "@qingagent/contract-ts";
-import type { SessionState } from "../bridge/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {

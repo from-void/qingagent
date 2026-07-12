@@ -35,7 +35,7 @@ describe("ToolSearch bridge", () => {
   });
 
   it("只把 UI/状态工具常驻,低频能力工具进入 ToolSearch 候选", async () => {
-    const { buildCapabilityToolSearchBridge } = await import("../bridge/sessionTools.js");
+    const { buildCapabilityToolSearchBridge } = await import("../session/sessionTools.js");
 
     const bridge = await buildCapabilityToolSearchBridge(["image-gen", "materials"]);
 
@@ -58,7 +58,7 @@ describe("ToolSearch bridge", () => {
   });
 
   it("doc-calc 点召预加载 run_js,停用 doc-calc 后 run_js 仍作为通用计算工具可搜索", async () => {
-    const { buildCapabilityToolSearchBridge } = await import("../bridge/sessionTools.js");
+    const { buildCapabilityToolSearchBridge } = await import("../session/sessionTools.js");
 
     const bridge = await buildCapabilityToolSearchBridge(["doc-calc"]);
     expect(Object.keys(bridge.searchableTools)).toContain("run_js");
@@ -71,11 +71,11 @@ describe("ToolSearch bridge", () => {
   });
 
   it("processor 按会话复用,selected skill 预加载写入 loaded state", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       buildCapabilityToolSearchBridge,
       ensureSessionToolSearchProcessor,
-    } = await import("../bridge/sessionTools.js");
+    } = await import("../session/sessionTools.js");
     const { preloadQingagentToolSearchTools } = await import("../agents/toolSearch.js");
     const state = createSession("tool-search-session");
     const bridge = await buildCapabilityToolSearchBridge(["image-gen"]);
@@ -126,11 +126,11 @@ describe("ToolSearch bridge", () => {
   });
 
   it("动态 search 结果记录后,下一轮会从会话 state 预加载已加载工具", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
+    const { createSession } = await import("../session/sessionState.js");
     const {
       buildCapabilityToolSearchBridge,
       ensureSessionToolSearchProcessor,
-    } = await import("../bridge/sessionTools.js");
+    } = await import("../session/sessionTools.js");
     const {
       extractLoadedToolNamesFromToolSearchResult,
       preloadQingagentToolSearchTools,

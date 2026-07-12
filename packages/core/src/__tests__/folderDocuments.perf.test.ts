@@ -24,7 +24,7 @@ import {
   resolveFolderSourcePath,
   searchDocumentsForSession,
 } from "../tools/folderDocuments.js";
-import { summarizeToolOutputForSpan } from "../bridge/toolIoSpans.js";
+import { summarizeToolOutputForSpan } from "../agent-run/toolIoSpans.js";
 import {
   __resetFolderSourceRuntimeForTest,
   markFolderSourceDetached,

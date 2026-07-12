@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   askUserRenderModeFromSpec,
   buildAskUserToolCallSpec,
-} from "../bridge/toolCards.js";
+} from "../agent-run/toolCards.js";
 
 const questions = [{
   id: "q1",

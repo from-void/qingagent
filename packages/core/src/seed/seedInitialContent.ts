@@ -27,7 +27,7 @@ import { documentRepo, projectPmDocToSections } from "@qingagent/db";
 import {
   QINGAGENT_RESOURCE_ID,
   type QingagentThreadMetadata,
-} from "../bridge/threadPersistence.js";
+} from "../session/threadPersistence.js";
 
 // —— PmDoc 块构造器 —— 每篇文档新建一个 builder,blockId 在篇内自增、确定性、唯一。
 function docBuilder(prefix: string) {

@@ -4,7 +4,7 @@ import {
   isDirectionReset,
   isPlanDraftTool,
   isQuestionnaireTool,
-} from "../bridge/questionnaireTools.js";
+} from "../agent-run/questionnaireTools.js";
 
 describe("questionnaire tool predicates", () => {
   it.each(["askUser", "planDraft", "askUserQuestion"])(

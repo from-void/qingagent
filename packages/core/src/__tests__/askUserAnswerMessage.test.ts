@@ -193,7 +193,7 @@ describe("askUser answer user message", () => {
   });
 
   it("按 spec 顺序构造确定性 user message", async () => {
-    const { buildAskUserAnswerUserMessage } = await import("../bridge/askUserAnswerMessage.js");
+    const { buildAskUserAnswerUserMessage } = await import("../agent-run/askUserAnswerMessage.js");
     const first = buildAskUserAnswerUserMessage({
       toolCallId: "ask-answers",
       spec: askUserSpec(),
@@ -224,7 +224,7 @@ describe("askUser answer user message", () => {
     const {
       buildAskUserAnswerUserMessage,
       buildVisibleAskUserAnswerMessage,
-    } = await import("../bridge/askUserAnswerMessage.js");
+    } = await import("../agent-run/askUserAnswerMessage.js");
     const base = askUserSpec("direct-answer-copy");
     const directSpec: ToolCallSpec = {
       ...base,
@@ -253,7 +253,7 @@ describe("askUser answer user message", () => {
   });
 
   it("e2e-loop-0704 R13 回归:enrichAskUserResumeAnswersWithLabels 把题面/选中项 label 回填进 resume 答案", async () => {
-    const { enrichAskUserResumeAnswersWithLabels } = await import("../bridge/askUserAnswerMessage.js");
+    const { enrichAskUserResumeAnswersWithLabels } = await import("../agent-run/askUserAnswerMessage.js");
     const enriched = enrichAskUserResumeAnswersWithLabels(ANSWERS, askUserSpec());
 
     // 选项 value("guide"/"warm")对模型不透明——必须回填题面 + 选中项 label,
@@ -309,7 +309,7 @@ describe("askUser answer user message", () => {
   });
 
   it("buildAskUserAnswerCardItems 统一处理未知题目、空答案、换行清洗、滑块边界和选项 label", async () => {
-    const { buildAskUserAnswerCardItems } = await import("../bridge/askUserAnswerMessage.js");
+    const { buildAskUserAnswerCardItems } = await import("../agent-run/askUserAnswerMessage.js");
     const base = askUserSpec("ask-card-items");
     const baseData = askUserData(base);
     const spec: ToolCallSpec = {
@@ -375,7 +375,7 @@ describe("askUser answer user message", () => {
 
   it("P2 回归:buildVisibleAskUserAnswerMessage fullpage 返回 null、overlay 仍出可见答卷卡", async () => {
     const { buildVisibleAskUserAnswerMessage } = await import(
-      "../bridge/askUserAnswerMessage.js"
+      "../agent-run/askUserAnswerMessage.js"
     );
     const answers = { "q-style": { chosen: ["guide"], freeText: null } };
 
@@ -410,7 +410,7 @@ describe("askUser answer user message", () => {
     const {
       buildVisibleAskUserAnswerMessage,
       findAskUserToolCallSpecInChatHistory,
-    } = await import("../bridge/askUserAnswerMessage.js");
+    } = await import("../agent-run/askUserAnswerMessage.js");
     const placeholder: ToolCallSpec = {
       id: "ask-inline-placeholder",
       name: "askUser",
@@ -644,7 +644,7 @@ describe("askUser answer user message", () => {
   });
 
   it("askUser renderMode helper 原样沿用 spec mode", async () => {
-    const { askUserRenderModeFromSpec } = await import("../bridge/toolCards.js");
+    const { askUserRenderModeFromSpec } = await import("../agent-run/toolCards.js");
     expect(askUserRenderModeFromSpec(askUserSpec("ask-mode-full"))).toBe("fullpage");
     const base = askUserSpec("ask-mode-overlay");
     const overlaySpec: ToolCallSpec = {

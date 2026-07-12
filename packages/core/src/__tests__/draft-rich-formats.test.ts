@@ -18,7 +18,7 @@ import {
   createSession,
   createSessionScopedTools,
 } from "../bridge/index.js";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 
 const ctx = {} as any;
 const INLINE_ATOM_PLACEHOLDER = "\uFFFC";

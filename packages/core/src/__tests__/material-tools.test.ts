@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
-import { createSessionScopedTools } from "../bridge/sessionTools.js";
+import { createSessionScopedTools } from "../session/sessionTools.js";
 import type { Material } from "../types/material.js";
 
 // ---------------------------------------------------------------------------

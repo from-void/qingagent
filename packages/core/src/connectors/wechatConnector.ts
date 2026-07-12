@@ -43,7 +43,8 @@ export class WechatConnector implements ConnectorAdapter {
     if (pendingId) {
       const pending = await wechatAuthService.status(pendingId);
       if (pending.state === "AUTHORIZING" || pending.state === "VERIFYING") {
-        return createConnectorStatus("pending", { reasonCode: null, statusFreshness: "fresh", canProbe: false });
+        // scanned → reasonCode 透传:前端授权卡据此显示「已扫到,请在手机上确认」。
+        return createConnectorStatus("pending", { reasonCode: pending.scanned ? "WECHAT_SCANNED" : null, statusFreshness: "fresh", canProbe: false });
       }
       if (pending.state === "CAPABILITY_DENIED" || pending.state === "TIMEOUT") {
         return createConnectorStatus("disconnected", {

@@ -514,6 +514,17 @@ describe("QrCard — validation loop 3", () => {
       expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已登录 测试号 公众号");
     });
 
+    it("微信 pending 带 WECHAT_SCANNED 时卡上显示已扫到提示", async () => {
+      vi.useFakeTimers();
+      const wechat = { ...connectorCard(), connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null };
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "pending", reasonCode: "WECHAT_SCANNED" } }), { status: 200 })));
+      render(<QrCard data={wechat} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(document.querySelector(".qr-card__scanned")?.textContent).toContain("已扫到二维码");
+      // 仍处 pending:不显示成功、不中断
+      expect(document.querySelector(".qr-card__success")).toBeNull();
+    });
+
     it("410 原地显示重新发起，旧帧不轮询", async () => {
       vi.useFakeTimers();
       const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "PENDING_LOST" }), { status: 410 }));

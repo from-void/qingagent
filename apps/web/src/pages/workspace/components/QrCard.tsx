@@ -24,6 +24,8 @@ export interface AuthCardProps {
 export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">("polling");
   const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
+  // 微信扫码反馈:server 感知到手机扫到码后,pending 轮询带 reasonCode=WECHAT_SCANNED。
+  const [scanned, setScanned] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const remainOf = useCallback(
     () => Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000)),
@@ -37,6 +39,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   useEffect(() => {
     setConnectorState("polling");
     setConnectedAccount(data.success?.account ?? null);
+    setScanned(false);
     pollingRef.current = false;
     settledRef.current = false;
   }, [data.pendingId, data.success?.account]);
@@ -57,6 +60,8 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
         } else if (payload.status?.reasonCode === "PENDING_LOST" || payload.status?.reasonCode === "PENDING_EXPIRED") {
           setConnectorState("interrupted");
+        } else if (payload.status?.state === "pending" && payload.status.reasonCode === "WECHAT_SCANNED") {
+          setScanned(true);
         } else if (payload.status?.state && payload.status.state !== "pending") {
           if (!settledRef.current) { settledRef.current = true; onStatusChange?.(); }
         }
@@ -186,6 +191,9 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
             }}>复制代码并打开</button>
           )}
         </div>
+      )}
+      {scanned && !expired && (
+        <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
       )}
       <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
         {expired ? "已过期" : `${remain}s 后过期`}

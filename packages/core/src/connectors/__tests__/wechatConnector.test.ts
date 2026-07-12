@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
 import type { WechatCredentialPayload } from "../wechatCredentials.js";
+
+vi.mock("../wechatAuthService.js", () => ({ wechatAuthService: { status: vi.fn(), disconnectPending: vi.fn(), start: vi.fn() } }));
+
+import { wechatAuthService } from "../wechatAuthService.js";
 import { WechatConnector } from "../wechatConnector.js";
 
 const now = () => new Date("2026-07-11T12:00:00.000Z");
@@ -33,6 +37,17 @@ describe("WechatConnector", () => {
   ])("probe 归一业务错误: %o", async (probeResult, expected) => {
     const connector = new WechatConnector({ readBundle: async () => bundle(), probeSearchbiz: async () => probeResult, now });
     await expect(connector.probe()).resolves.toMatchObject({ ...expected, lastCheckedAt: "2026-07-11T12:00:00.000Z" });
+  });
+
+  it("pending 轮询透传扫码信号:scanned → reasonCode=WECHAT_SCANNED", async () => {
+    const connector = new WechatConnector({ readBundle: async () => null, now });
+    const status = vi.mocked(wechatAuthService.status);
+    status.mockResolvedValueOnce({ ok: true, state: "AUTHORIZING", scanned: false, mpName: "", message: "正在等待扫码授权" });
+    await expect(connector.status("pid-1")).resolves.toMatchObject({ state: "pending", reasonCode: null });
+    status.mockResolvedValueOnce({ ok: true, state: "AUTHORIZING", scanned: true, mpName: "", message: "已扫到二维码,请在手机上确认登录" });
+    await expect(connector.status("pid-1")).resolves.toMatchObject({ state: "pending", reasonCode: "WECHAT_SCANNED" });
+    status.mockResolvedValueOnce({ ok: true, state: "VERIFYING", scanned: true, mpName: "", message: "核验中" });
+    await expect(connector.status("pid-1")).resolves.toMatchObject({ state: "pending", reasonCode: "WECHAT_SCANNED" });
   });
 
   it("disconnect 携当前 revision 删除 bundle（实现依赖内同时清 legacy）", async () => {

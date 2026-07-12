@@ -44,6 +44,8 @@ interface WechatPendingAuth {
   resolveImage: (value: string) => void;
   rejectImage: (error: unknown) => void;
   task: Promise<void>;
+  /** 登录页扫码区文本已变化(=手机扫到了码,等手机端确认)。给前端「已扫到」反馈用。 */
+  scanned: boolean;
 }
 
 export interface WechatAuthStartResult {
@@ -201,6 +203,7 @@ export class WechatAuthService {
           state: "authorizing", browser: null, imageDataUri: null, generatedAt: Date.now(),
           verification: null, failureMessage: null, imageReady, resolveImage, rejectImage,
           task: Promise.resolve(),
+          scanned: false,
         };
         pending.task = this.runAuth(pending, signal);
         return pending;
@@ -261,8 +264,28 @@ export class WechatAuthService {
             console.info(`[wechat-auth] qr screenshot done (${screenshot.length} bytes)`);
             pending.resolveImage(dataUri);
 
+            // 并行监听扫码信号:登录页扫码区文本一变(实测初始恒为「微信扫一扫,选择公众平台账号登录」,
+            // 扫到后微信页面切「请在手机上确认」态)即置 scanned,给前端「已扫到」反馈。
+            // 只是增强信号:任何失败(页面落地导航销毁上下文/测试桩没有这些方法)都不阻断授权主流程。
+            try {
+              const initialScanText = await page
+                .evaluate((sel) => document.querySelector(sel)?.parentElement?.textContent?.trim() ?? "", WECHAT_QR_SELECTOR)
+                .catch(() => "");
+              void page
+                .waitForFunction(
+                  ({ sel, initial }) => {
+                    const text = document.querySelector(sel)?.parentElement?.textContent?.trim() ?? "";
+                    return text !== initial;
+                  },
+                  { sel: WECHAT_QR_SELECTOR, initial: initialScanText },
+                  { timeout: WECHAT_AUTH_TIMEOUT_MS },
+                )
+                .then(() => { pending.scanned = true; })
+                .catch(() => {});
+            } catch { /* 扫码信号获取失败不影响授权 */ }
             // 等登录成功落地(任意带 token= 的 mp 页,不限 /cgi-bin/home)。落地只用于取凭据,成败看探针。
             await page.waitForURL(WECHAT_AUTH_LANDING_RE, { timeout: WECHAT_AUTH_TIMEOUT_MS });
+            pending.scanned = true;
             // waitForURL 返回代表用户已在手机端完成扫码落地。必须在首个 await 前同步改态，
             // 否则紧随「我已扫码完成」发起的 status 会误读为 authorizing。
             if (signal.aborted) return;
@@ -336,6 +359,8 @@ export class WechatAuthService {
         | "EXPIRED"
         | "CAPABILITY_DENIED"
         | "TIMEOUT";
+      /** 仅 AUTHORIZING/VERIFYING 有意义:手机已扫到二维码(等确认或核验中)。 */
+      scanned?: boolean;
       mpName: string;
       message: string;
     }> => {
@@ -346,12 +371,15 @@ export class WechatAuthService {
       else pending = pendingStore.current("wechat-mp", WECHAT_SCOPE)?.value ?? null;
       const st = pending?.state;
       if (st === "authorizing") {
-        return { ok: true, state: "AUTHORIZING", mpName, message: "正在等待扫码授权" };
+        return pending?.scanned
+          ? { ok: true, state: "AUTHORIZING", scanned: true, mpName, message: "已扫到二维码,请在手机上确认登录" }
+          : { ok: true, state: "AUTHORIZING", scanned: false, mpName, message: "正在等待扫码授权" };
       }
       if (st === "verifying") {
         return {
           ok: true,
           state: "VERIFYING",
+          scanned: true,
           mpName,
           message: "扫码已收到,正在核验该公众号是否可用,请稍候再检查",
         };

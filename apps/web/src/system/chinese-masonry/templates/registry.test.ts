@@ -5,7 +5,7 @@ import { TemplateRegistry } from './registry';
 describe('TemplateRegistry', () => {
   it('registers, queries and removes templates by id and category', () => {
     const registry = new TemplateRegistry();
-    const [template] = defaultTemplates;
+    const template = defaultTemplates[0]!;
 
     registry.register(template);
 
@@ -22,13 +22,13 @@ describe('TemplateRegistry', () => {
 
     registry.registerLazy('lazy-template', async () => {
       calls += 1;
-      return defaultTemplates[0];
+      return defaultTemplates[0]!;
     });
 
     const first = await registry.load('lazy-template');
     const second = await registry.load('lazy-template');
 
-    expect(first.id).toBe(defaultTemplates[0].id);
+    expect(first.id).toBe(defaultTemplates[0]!.id);
     expect(second).toEqual(first);
     expect(calls).toBe(1);
   });

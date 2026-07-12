@@ -19,7 +19,7 @@ product code and quality-gate scripts live here.
 | `packages/server` | Hono HTTP service (`:8080`) |
 | `apps/web` | Vite + React SPA (`:5173`, proxies `/api` → `:8080`) |
 | `apps/desktop` | Electron shell |
-| others | `contract-ts` (hand-maintained contracts) / `ui-kit` / `pm-schema` / `diagram-engine` / `qa-cli` / `chinese-masonry` (homepage gallery rendering) |
+| others | `contract-ts` (hand-maintained contracts) / `ui-kit` / `pm-schema` / `diagram-engine` / `qa-cli`; `chinese-masonry` is an internal web component under `apps/web/src/system/` |
 
 Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `README.md`.
 

@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, type ReactNode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CardRenderer } from './index';
 import type { ArticleData, TemplateDefinition } from '../../templates/types';
 
@@ -66,18 +67,43 @@ const template: TemplateDefinition = {
   },
 };
 
+let container: HTMLDivElement;
+let root: Root;
+
+function render(ui: ReactNode) {
+  act(() => root.render(ui));
+}
+
+function byTestId(id: string) {
+  const element = container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  expect(element).not.toBeNull();
+  return element!;
+}
+
+beforeEach(() => {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
+
 describe('CardRenderer', () => {
   it('renders dynamic images, lines and vertical text from a template', () => {
     render(<CardRenderer article={article} template={template} colorConfig={{ enabled: false }} />);
 
-    const image = screen.getByAltText('春江花月夜');
-    const title = screen.getByTestId('cm-text-title');
-    const line = screen.getByTestId('cm-line-line');
+    const image = container.querySelector<HTMLImageElement>('img[alt="春江花月夜"]');
+    const title = byTestId('cm-text-title');
+    const line = byTestId('cm-line-line');
 
-    expect(image).toHaveAttribute('src', article.imageUrl);
-    expect(image).toHaveStyle({ clipPath: 'polygon(0 0, 100% 0, 100% 80%, 0 100%)' });
-    expect(title).toHaveStyle({ writingMode: 'vertical-rl' });
-    expect(line).toHaveStyle({ width: '120px', height: '2px' });
+    expect(image?.getAttribute('src')).toBe(article.imageUrl);
+    expect(image?.style.clipPath).toBe('polygon(0 0, 100% 0, 100% 80%, 0 100%)');
+    expect(title.style.writingMode).toBe('vertical-rl');
+    expect(line.style.width).toBe('120px');
+    expect(line.style.height).toBe('2px');
   });
 
   it('expands the editable line hit area without changing the rendered line size', () => {
@@ -91,10 +117,11 @@ describe('CardRenderer', () => {
       />,
     );
 
-    const line = screen.getByTestId('cm-line-line');
-    expect(line).toHaveClass('cm-line-selected');
-    expect(line).toHaveStyle({ width: '120px', height: '2px' });
-    expect(line.querySelector('.cm-line-hit-area')).toBeInTheDocument();
+    const line = byTestId('cm-line-line');
+    expect(line.classList.contains('cm-line-selected')).toBe(true);
+    expect(line.style.width).toBe('120px');
+    expect(line.style.height).toBe('2px');
+    expect(line.querySelector('.cm-line-hit-area')).not.toBeNull();
   });
 
   it('applies ink color interaction below text and keeps text controlled by color', () => {
@@ -114,13 +141,12 @@ describe('CardRenderer', () => {
       />,
     );
 
-    expect(screen.getByTestId('cm-card')).not.toHaveStyle({ filter: 'grayscale(0.5) sepia(0.2)' });
-    expect(screen.getByTestId('cm-card-color-overlay')).toHaveStyle({
-      background: 'rgba(10, 20, 30, 0.3)',
-      zIndex: '15',
-    });
-    expect(screen.getByTestId('cm-text-title')).toHaveStyle({ color: '#123456', zIndex: '20' });
-    expect(screen.getByTestId('cm-line-line')).toHaveStyle({ background: '#234567' });
+    expect(byTestId('cm-card').style.filter).not.toBe('grayscale(0.5) sepia(0.2)');
+    expect(byTestId('cm-card-color-overlay').style.background).toBe('rgba(10, 20, 30, 0.3)');
+    expect(byTestId('cm-card-color-overlay').style.zIndex).toBe('15');
+    expect(byTestId('cm-text-title').style.color).toBe('rgb(18, 52, 86)');
+    expect(byTestId('cm-text-title').style.zIndex).toBe('20');
+    expect(byTestId('cm-line-line').style.background).toBe('rgb(35, 69, 103)');
   });
 
   it('truncates vertical text by max columns', () => {
@@ -153,7 +179,7 @@ describe('CardRenderer', () => {
       />,
     );
 
-    expect(screen.getByText(/…$/)).toBeInTheDocument();
+    expect(container.textContent).toMatch(/…$/);
   });
 
   it('lays out left-aligned vertical text from left to right', () => {
@@ -187,6 +213,6 @@ describe('CardRenderer', () => {
       />,
     );
 
-    expect(screen.getByTestId('cm-text-vertical-left-title')).toHaveStyle({ writingMode: 'vertical-lr' });
+    expect(byTestId('cm-text-vertical-left-title').style.writingMode).toBe('vertical-lr');
   });
 });

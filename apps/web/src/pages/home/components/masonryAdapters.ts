@@ -1,4 +1,4 @@
-import type { ArticleData, MasonryColorConfig, TemplateDefinition } from "@qingagent/chinese-masonry";
+import type { ArticleData, MasonryColorConfig, TemplateDefinition } from "../../../system/chinese-masonry";
 import type { HomeSession } from "../data/sessions";
 
 export function homeSessionToArticle(session: HomeSession): ArticleData {

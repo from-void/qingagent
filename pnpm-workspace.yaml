@@ -5,7 +5,6 @@
 packages:
   - "apps/web"
   - "apps/desktop"
-  - "packages/chinese-masonry"
   - "packages/contract-ts"
   - "packages/core"
   - "packages/diagram-engine"

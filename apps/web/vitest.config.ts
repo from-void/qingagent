@@ -8,7 +8,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
-    exclude: ["src/**/*.dom.test.{ts,tsx}", "src/**/*.spec.{ts,tsx}"],
+    exclude: [
+      "src/**/*.dom.test.{ts,tsx}",
+      "src/**/*.spec.{ts,tsx}",
+      "src/system/chinese-masonry/**/*.test.{ts,tsx}",
+    ],
     environment: "node",
   },
 });

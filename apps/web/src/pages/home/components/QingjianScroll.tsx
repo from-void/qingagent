@@ -14,9 +14,9 @@ import {
   CARD_WIDTH,
   CardRenderer,
   createDefaultRegistry,
-} from "@qingagent/chinese-masonry";
-import "@qingagent/chinese-masonry/style.css";
-import type { SelectorOptions } from "@qingagent/chinese-masonry";
+} from "../../../system/chinese-masonry";
+import "../../../system/chinese-masonry/style.css";
+import type { SelectorOptions } from "../../../system/chinese-masonry";
 import type { HomeSession } from "../data/sessions";
 import { clearOpenSettingsFlag, readOpenSettingsFlag } from "../../../system/modelKeyGate";
 import {

@@ -8,7 +8,7 @@ import { QingjianScroll } from "./QingjianScroll";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-vi.mock("@qingagent/chinese-masonry", () => ({
+vi.mock("../../../system/chinese-masonry", () => ({
   CARD_WIDTH: 320,
   CardRenderer: () => <div data-wf="MockCardRenderer" />,
   createDefaultRegistry: () => ({

@@ -67,9 +67,10 @@ describe("workspaceCssContract", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     // 解禁规则仍在(否则 .open 也没用)
     expect(workspaceCss).toContain("#view-workspace .dt-group.open .dt-menu{display:block}");
-    // 两个表格色板 dt-group 都按 openTableColor 条件加 .open
-    expect(snapshotView).toContain('tbl-color-group${openTableColor === "text" ? " open" : ""}');
-    expect(snapshotView).toContain('tbl-color-group${openTableColor === "cell" ? " open" : ""}');
+    // 表格色板与对齐下拉共用 openTableMenu，展开态都必须加 .open。
+    expect(snapshotView).toContain('tbl-color-group${openTableMenu === "text" ? " open" : ""}');
+    expect(snapshotView).toContain('tbl-color-group${openTableMenu === "cell" ? " open" : ""}');
+    expect(snapshotView).toContain('dt-dropdown${openTableMenu === "align" ? " open" : ""}');
   });
 
   it("keeps table CellSelection overlay, clipped chrome and PM resize cursor styles", () => {

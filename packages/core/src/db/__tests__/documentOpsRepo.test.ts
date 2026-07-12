@@ -52,6 +52,28 @@ describe("documentOpsRepo", () => {
     expect(await findOpByIdempotencyKey({})).toBeNull();
   });
 
+  it("prefers clientMutationId when both idempotency keys are provided", async () => {
+    await insertOp({
+      opId: "content-derived-op",
+      docId: "doc-ops",
+      opKind: "replace_doc",
+      clientMutationId: "client-original",
+      fromVersion: 1,
+      toVersion: 2,
+      actorType: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await expect(findOpByIdempotencyKey({
+      opId: "content-derived-op",
+      clientMutationId: "client-new",
+    })).resolves.toBeNull();
+    await expect(findOpByIdempotencyKey({
+      opId: "ignored-op",
+      clientMutationId: "client-original",
+    })).resolves.toMatchObject({ opId: "content-derived-op" });
+  });
+
   it("enforces unique opId and clientMutationId", async () => {
     await insertOp({
       opId: "op-unique",

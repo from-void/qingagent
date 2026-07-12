@@ -166,6 +166,35 @@ describe("rich formats HTTP bridge E2E", () => {
     });
   });
 
+  it("POST /api/v1/stream persists A→B→A undo with distinct mutation ids", async () => {
+    const sessionId = await seedRestoredSession("撤销持久化桥接", baseDoc("undo-base"));
+    const aDoc = doc([paragraph("undo-paragraph", [text("A")])]);
+    const bDoc = doc([paragraph("undo-paragraph", [text("B")])]);
+    const writes = [
+      { expectedDocumentSnapshot: 1, clientMutationId: `mutation-${randomUUID()}`, doc: aDoc },
+      { expectedDocumentSnapshot: 2, clientMutationId: `mutation-${randomUUID()}`, doc: bDoc },
+      { expectedDocumentSnapshot: 3, clientMutationId: `mutation-${randomUUID()}`, doc: aDoc },
+    ];
+
+    for (const [index, write] of writes.entries()) {
+      const { res, frames } = await postStream(updateDocCommand({ sessionId, ...write }));
+      expect(res.status).toBe(200);
+      expect(findDocWriteFrame(frames, write.clientMutationId).data).toEqual({
+        ok: true,
+        clientMutationId: write.clientMutationId,
+        docVersion: index + 2,
+      });
+    }
+
+    await expect(core.documentRepo.load(sessionId)).resolves.toMatchObject({
+      docVersion: 4,
+      pmDoc: aDoc,
+    });
+    const versions = await core.listVersions(sessionId);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({ docVersion: 4, snapshotPm: aDoc });
+  });
+
   it("GET /api/v1/export/:sessionId exports rich PM docs as DOCX and PDF binaries", async () => {
     const sessionId = await seedRestoredSession("富格式导出桥接", richPmDoc("export"));
 

@@ -53,6 +53,8 @@ export class GithubConnector implements ConnectorAdapter {
   private readonly auth: GithubDeviceAuth;
   private currentPendingId: string | null = null;
   private lastReasonCode: string | null = null;
+  // 最近一次真实核验时间(授权完成/probe 打真实 API 均算),status() 透出为 lastCheckedAt
+  private lastCheckedAt: string | null = null;
   private startFlight: Promise<GithubStartResult> | null = null;
   private generation = 0;
   private readonly terminalByPending = new Map<string, { status: ConnectorStatusDto; expiresAt: number }>();
@@ -91,6 +93,7 @@ export class GithubConnector implements ConnectorAdapter {
       reasonCode: this.lastReasonCode,
       account: bundle.payload.account,
       scopes: bundle.payload.grantedScopes,
+      lastCheckedAt: this.lastCheckedAt,
       statusFreshness: "fresh",
       canProbe: true,
     });
@@ -148,7 +151,8 @@ export class GithubConnector implements ConnectorAdapter {
         strategy: "oauth2-device", version: 1, grantedScopes, account, token: token.access_token,
       }, { expectedRevision: oldBundle?.revision ?? null });
       this.lastReasonCode = null;
-      this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });
+      this.lastCheckedAt = new Date().toISOString();
+      this.terminalByPending.set(pendingId, { status: createConnectorStatus("connected", { account, scopes: grantedScopes, lastCheckedAt: this.lastCheckedAt, statusFreshness: "fresh", canProbe: true }), expiresAt: Date.now() + 60_000 });
       this.pending.complete(pendingId, "github", this.pendingScope(targetScopes[0] as "public_repo" | "repo"));
     } catch (error) {
       if (!signal.aborted) {
@@ -172,9 +176,12 @@ export class GithubConnector implements ConnectorAdapter {
     try {
       await this.client(bundle.payload.token).user();
       this.lastReasonCode = null;
+      this.lastCheckedAt = new Date().toISOString();
     } catch (error) {
-      if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") this.lastReasonCode = "NEEDS_REAUTH";
-      else throw error;
+      if (error instanceof GithubConnectorError && error.code === "NEEDS_REAUTH") {
+        this.lastReasonCode = "NEEDS_REAUTH";
+        this.lastCheckedAt = new Date().toISOString();
+      } else throw error;
     }
     return this.status();
   }

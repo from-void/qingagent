@@ -49,6 +49,9 @@ jobs:
       - name: pnpm typecheck
         run: pnpm -r typecheck
 
+      - name: dependency architecture guard
+        run: pnpm depcruise
+
       - name: pnpm build
         run: pnpm -r --if-present build
 

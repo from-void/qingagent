@@ -14,6 +14,7 @@
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
+    "depcruise": "dependency-cruise packages/*/src apps/*/src --config .dependency-cruiser.cjs",
     "scorers": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-scorers.mts",
     "scorers:live": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs scripts/run-live-scorers.mts",
     "pm:schema:check": "pnpm --filter @qingagent/pm-schema test -- schemaSync",
@@ -29,6 +30,7 @@
     "export:matrix": "pnpm --filter @qingagent/core test -- export-format-matrix"
   },
   "devDependencies": {
+    "dependency-cruiser": "^18.0.0",
     "typescript": "5.4.5"
   },
   "pnpm": {

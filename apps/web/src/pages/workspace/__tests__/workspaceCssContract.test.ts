@@ -234,8 +234,8 @@ describe("workspaceCssContract", () => {
   });
 
   it("keeps inline askUser card wired to FLIP, scroll affordances, and safe slider layout", () => {
-    const workspacePage = readFileSync(
-      path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
+    const workspaceController = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/hooks/useWorkspacePageController.tsx"),
       "utf8",
     );
     const askUserOverlay = readFileSync(
@@ -248,7 +248,7 @@ describe("workspaceCssContract", () => {
       "utf8",
     );
 
-    expect(workspacePage).toContain('".ws-float-bar, .patch-nav, .askuser-overlay"');
+    expect(workspaceController).toContain('".ws-float-bar, .patch-nav, .askuser-overlay"');
     expect(inkSkinCss).toMatch(
       /#view-workspace \.ws-float-bar > \*,\s*#view-workspace \.patch-nav > \*,\s*#view-workspace \.askuser-overlay > \*/s,
     );
@@ -293,8 +293,8 @@ describe("workspaceCssContract", () => {
   });
 
   it("keeps edit lock as a body-level fixed portal instead of a ws-right flow child", () => {
-    const workspacePage = readFileSync(
-      path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
+    const workspaceOverlays = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/WorkspaceOverlays.tsx"),
       "utf8",
     );
     const inkSkinCss = readFileSync(
@@ -302,10 +302,10 @@ describe("workspaceCssContract", () => {
       "utf8",
     );
 
-    expect(workspacePage).toContain('import { createPortal } from "react-dom";');
-    expect(workspacePage).toContain('data-wf="WorkspaceEditLockHint"');
-    expect(workspacePage).toContain("createPortal(");
-    expect(workspacePage).not.toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
+    expect(workspaceOverlays).toContain('import { createPortal } from "react-dom";');
+    expect(workspaceOverlays).toContain('data-wf="WorkspaceEditLockHint"');
+    expect(workspaceOverlays).toContain("createPortal(");
+    expect(workspaceOverlays).not.toContain("ws-edit-lock 必须保持为 .ws-right 的最后一个流内子级");
 
     const lockRule = cssRule(inkSkinCss, "body > .ws-edit-lock");
     expect(lockRule).toContain("position: fixed");

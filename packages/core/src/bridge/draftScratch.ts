@@ -6,6 +6,7 @@ import {
   findPmTableByBlockId,
   getPmContentHash,
   getStablePmJson,
+  assertUniquePmBlockIds,
   legacySectionsToPm,
   materializeDraftBlockIds,
   pmToLegacySections,
@@ -42,7 +43,12 @@ export function hasNonEmptyCanonicalBase(state: SessionState, baseDoc: PmDoc): b
 
 export function ensureDraftCandidateDoc(state: SessionState): PmDoc {
   if (!state.docDraftBaseDoc) {
-    const baseDoc = materializeDraftBlockIds(currentPmDoc(state), { namespace: "draft.ensure" });
+    // canonical 基底的 blockId 是持久化身份，哪怕前缀仍是历史/合法的 `ai-block-*`
+    // 也绝不能只在候选侧 materialize。否则 diff 锚点会记录改名后的 id，而审核提交
+    // 从 documents 读取的基底仍保留原 id，最终把真实可应用修改误判为 block_removed。
+    // 新生成块的临时 id 仍由 replaceDraftCandidateDoc / applyBlockEdits 在候选侧物化。
+    const baseDoc = currentPmDoc(state);
+    assertUniquePmBlockIds(baseDoc);
     state.docDraftBaseDoc = clonePmDoc(baseDoc);
     state.docDraftBaseSections = cloneLegacySections(state.legacySections);
     state.docDraftBaseVersion = state.docVersion;

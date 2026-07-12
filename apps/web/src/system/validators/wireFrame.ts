@@ -703,6 +703,18 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       if (frame.data.toolCallId !== undefined && !frame.data.toolCallId) {
         fail("DocCommitted.toolCallId must be non-empty when present");
       }
+      if (
+        frame.data.appliedCount !== undefined &&
+        (!Number.isInteger(frame.data.appliedCount) || frame.data.appliedCount < 0)
+      ) {
+        fail("DocCommitted.appliedCount must be a non-negative integer when present");
+      }
+      if (
+        frame.data.conflictCount !== undefined &&
+        (!Number.isInteger(frame.data.conflictCount) || frame.data.conflictCount < 0)
+      ) {
+        fail("DocCommitted.conflictCount must be a non-negative integer when present");
+      }
       return;
     case "docDiffReady":
       if (!Number.isInteger(frame.data.baseVersion)) {

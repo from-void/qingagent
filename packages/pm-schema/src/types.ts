@@ -341,6 +341,8 @@ export type PmStep = {
   to?: number;
   slice?: unknown;
   structure?: boolean;
+  /** document_ops 审阅提交的幂等恢复元数据；ProseMirror 应用器会忽略未知字段。 */
+  suggestionId?: string;
 };
 
 export type PmPatchConflict = {

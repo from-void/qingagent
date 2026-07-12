@@ -91,7 +91,7 @@ describe("ConnectionsPanel", () => {
     act(() => { button.click(); });
     expect(host.textContent).toContain("发起中…");
     expect(button.disabled).toBe(true);
-    await act(async () => { resolve({ user_code: "ABCD-EFGH", verification_uri: "https://github.test/device", expiresAt: "2026-07-12T10:00:00.000Z", pendingId: "gh-1" }); });
+    await act(async () => { resolve({ user_code: "ABCD-EFGH", verification_uri: "https://github.test/device", expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), pendingId: "gh-1" }); });
     expect(h.start).toHaveBeenCalledWith("github", { scope: "repo" });
     expect(host.querySelector('[data-component="AuthCard"]')).toBeTruthy();
     expect(host.textContent).toContain("ABCD-EFGH");

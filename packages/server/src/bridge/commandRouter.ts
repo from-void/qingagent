@@ -1,0 +1,122 @@
+import type { BridgeFrame, Command } from "@qingagent/contract-ts";
+import { mastra, type ModelOverrides } from "./bridgeCore";
+import { registerBridgeCommandHandler } from "./commandRuntime";
+import {
+  getFailureFromFrame,
+  normalizeClientTraceId,
+  recordCommandSpan,
+  resolveCommandSessionId,
+  type Origin,
+} from "./commandTracing";
+import type { CommandExecutionContext } from "./commandTypes";
+import { getSession } from "./sessionRegistry";
+import { handleTurnCommand } from "./turnOrchestration";
+
+const _agent = mastra.getAgent("qingagent");
+void _agent;
+
+export async function* handleCommand(
+  command: Command,
+  clientTraceId?: string,
+  origin: Origin = "manual",
+  modelOverrides?: ModelOverrides,
+  client?: string,
+): AsyncGenerator<BridgeFrame> {
+  const cmdSessionId = resolveCommandSessionId(command);
+  const resolvedClientTraceId = normalizeClientTraceId(clientTraceId, cmdSessionId);
+  console.info(formatAcceptedTurnLog(cmdSessionId ?? "unknown", command.kind));
+  const existingSession = cmdSessionId ? getSession(cmdSessionId) : undefined;
+  if (existingSession) {
+    existingSession.origin = origin;
+    if (modelOverrides) existingSession.modelOverrides = modelOverrides;
+  }
+  const commandSpan = recordCommandSpan(command, cmdSessionId, resolvedClientTraceId, origin);
+  const context: CommandExecutionContext = {
+    clientTraceId,
+    resolvedClientTraceId,
+    origin,
+    modelOverrides,
+    client,
+  };
+
+  let failure: { reason: string; failureKind: string } | null = null;
+  let completed = false;
+  try {
+    for await (const frame of routeCommand(command, context)) {
+      failure ??= getFailureFromFrame(frame);
+      yield frame;
+    }
+    if (failure) {
+      commandSpan.endError(failure.reason, { failureKind: failure.failureKind });
+    } else {
+      commandSpan.endOk({ accepted: true });
+    }
+    completed = true;
+  } catch (err) {
+    commandSpan.endError(err, { failureKind: "throw" });
+    throw err;
+  } finally {
+    if (!completed) {
+      commandSpan.endError("stream aborted before command completed", {
+        failureKind: "streamAborted",
+      });
+    }
+  }
+}
+
+registerBridgeCommandHandler(handleCommand);
+
+async function* routeCommand(
+  command: Command,
+  context: CommandExecutionContext,
+): AsyncGenerator<BridgeFrame> {
+  switch (command.kind) {
+    case "startSession": {
+      const { handleSessionCommand } = await import("./sessionCommands");
+      yield* handleSessionCommand(command, context);
+      return;
+    }
+    case "sendMessage":
+    case "submitReviewOutcome":
+    case "resumeAskUser":
+    case "cancelAskUser":
+    case "cancelStream": {
+      yield* handleTurnCommand(command, context);
+      return;
+    }
+    case "updateDoc":
+    case "externalPropose": {
+      const { handleDocWriteCommand } = await import("./docWriteCommands");
+      yield* handleDocWriteCommand(command, context);
+      return;
+    }
+    case "updateMaterialSummary":
+    case "removeMaterial":
+    case "reparseMaterial": {
+      const { handleMaterialCommand } = await import("./materialCommands");
+      yield* handleMaterialCommand(command, context);
+      return;
+    }
+    case "attachFolder":
+    case "detachFolder": {
+      const { handleFolderSourceCommand } = await import("./folderSourceCommands");
+      yield* handleFolderSourceCommand(command, context);
+      return;
+    }
+    case "acceptPatch":
+    case "rejectPatch":
+    case "commitPatches": {
+      const { handleReviewCommand } = await import("./reviewCommands");
+      yield* handleReviewCommand(command, context);
+      return;
+    }
+  }
+}
+
+function formatAcceptedTurnLog(sessionId: string, commandKind: string): string {
+  return `[turn] evt=accepted session=${safeTurnLogValue(sessionId)} cmd=${safeTurnLogValue(commandKind)}`;
+}
+
+function safeTurnLogValue(value: string): string {
+  return value.replace(/\s+/g, "_");
+}

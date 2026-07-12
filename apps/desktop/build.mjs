@@ -8,7 +8,7 @@ import { isBundleLarkCliEnabled, stageLarkCli } from "./stageLarkCli.mjs";
 const sharedOptions = {
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node22",
   format: "esm",
   // electron and native Node modules must stay external.
   // npm packages are bundled (especially @qingagent/* workspace packages

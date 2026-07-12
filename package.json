@@ -31,11 +31,11 @@
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",
-    "typescript": "5.4.5"
+    "typescript": "5.9.3"
   },
   "pnpm": {
     "overrides": {
-      "@types/node": "20.16.5"
+      "@types/node": "22.20.1"
     }
   },
   "license": "MIT"

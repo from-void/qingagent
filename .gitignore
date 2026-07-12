@@ -59,8 +59,9 @@ packages/server/*.duckdb.wal
 .qingagent-browser-profile/
 **/.qingagent-browser-profile/
 
-# agent-browser / node runtime cache
+# agent-browser / node runtime cache & 走查/e2e 临时目录(如 .tmp-feishu-e2e)
 .tmp/
+.tmp-*/
 .playwright-cli/
 
 # Local scorer / pm-gate output

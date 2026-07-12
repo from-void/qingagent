@@ -44,20 +44,21 @@ describe("SkillsPanel 连接依赖", () => {
     vi.clearAllMocks();
   });
 
-  it("卡片与详情都有依赖行，点击切到对应连接详情", async () => {
+  it("依赖行只在详情页,点击切到对应连接详情", async () => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
     h.getSkillDetail.mockResolvedValue({ ...h.skill, body: "# 飞书" });
     act(() => root.render(<SkillsPanel onOpenConnector={h.open} />));
-    const dep = host.querySelector<HTMLButtonElement>(".sk-dep")!;
-    expect(dep.textContent).toContain("依赖连接：飞书");
-    act(() => dep.click());
-    expect(h.open).toHaveBeenCalledWith("feishu");
+    // 列表卡保持轻:不再渲染依赖行。
+    expect(host.querySelector(".sk-dep")).toBeNull();
 
     act(() => host.querySelector<HTMLElement>(".sk-card")!.click());
     await act(async () => { await Promise.resolve(); });
     expect(host.querySelector(".sk-detail-hero")).toBeTruthy();
-    expect(host.querySelector(".sk-dep")?.textContent).toContain("依赖连接：飞书");
+    const dep = host.querySelector<HTMLButtonElement>(".sk-dep")!;
+    expect(dep.textContent).toContain("依赖连接：飞书");
+    act(() => dep.click());
+    expect(h.open).toHaveBeenCalledWith("feishu");
   });
 });

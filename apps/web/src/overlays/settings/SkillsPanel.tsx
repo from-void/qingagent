@@ -402,7 +402,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
               </button>
             </div>
             <p className="sk-card-summary">{s.summary}</p>
-            {s.connectorId && <ConnectorDependency connectorId={s.connectorId} onOpen={onOpenConnector} />}
+            {/* 依赖连接行只在技能详情页展示,列表卡保持轻。 */}
           </div>
         ))}
 

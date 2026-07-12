@@ -1,6 +1,6 @@
 ---
 name: github-materials
-label: GitHub 素材
+label: GitHub 读取
 summary: 从 GitHub 仓库读取文件并存为创作素材
 icon: github
 description: 只读浏览 GitHub 仓库、文件树和点名文本文件，并将确认后的正文存入素材库。
@@ -17,7 +17,7 @@ metadata:
   platform: github
 ---
 
-# GitHub 素材
+# GitHub 读取
 
 1. 先探测 GitHub 连接状态。未连接时用自然语言说明，再调用 `github_auth_start` 发起可信授权卡；不要让模型索取、接触或复述 token/device_code。
 2. 已连接时列出账号可见仓库；匿名读取必须让用户提供 owner。遇到相近仓库名必须询问，禁止猜测。

@@ -293,6 +293,9 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
                 {busy ? "发起中…" : startLabel(selected)}
               </button>
             )}
+            {busy && selected.id === "wechat-mp" && (
+              <span className="cnd-wait">正在打开公众平台生成登录二维码，通常需要 5~15 秒…</span>
+            )}
             {selected.status.canProbe && (
               <button type="button" className="sm-btn" disabled={busy} onClick={async () => {
                 setBusy(true);

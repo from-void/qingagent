@@ -723,6 +723,7 @@
 /* 详情页开场白:正文语气,行距放松;说明行(cnd-note)是弱化小字,不带框。 */
 .cnd-desc{margin:0 6px 14px 0;font-size:12px;line-height:1.9;color:var(--qj-switch-text)}
 .cnd-note{margin:-6px 6px 16px 0;font-size:11px;line-height:1.7;color:var(--qj-header-sub)}
+.cnd-wait{align-self:center;font-size:11px;color:var(--qj-header-sub)}
 .cnd-authcard{margin:0 6px 16px 0;
   /* qr-card 组件的 --ink/--line 系变量只在 workspace 皮肤作用域有定义;
      设置弹层(深底)里必须重映射到 --qj-* 令牌,否则配对码/倒计时等文字色为空(不可见)。 */

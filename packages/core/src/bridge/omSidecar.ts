@@ -8,7 +8,7 @@ import {
 } from "@mastra/core/request-context";
 import type { ObservationalMemoryRecord } from "@mastra/core/storage";
 import { ObservationalMemory, TokenCounter } from "@mastra/memory/processors";
-import { createAnthropic as createAnthropicV5 } from "@ai-sdk/anthropic-v5";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import type { ChatMessage } from "@qingagent/contract-ts";
 import {
   createRepairingQingagentModel,
@@ -55,7 +55,7 @@ export const OM_COMPRESS_RECENT_TURNS_ENV = "QINGAGENT_OM_COMPRESS_RECENT_TURNS"
 export const OM_DEFAULT_COMPRESS_THRESHOLD_TOKENS = 500_000;
 export const OM_DEFAULT_RECENT_TURNS = 12;
 
-type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropicV5>>;
+type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropic>>;
 type RepairingAgentAnthropicModel = AgentAnthropicModel & RepairableLanguageModel;
 
 const observerModelCache = new Map<
@@ -1079,7 +1079,7 @@ function getObserverFlashModelFor(
     let model = observerModelCache.get(anthKey);
     if (!model) {
       model = wrapToolCallRepairingModel(
-        createAnthropicV5({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
+        createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
           anthModel,
         ) as RepairingAgentAnthropicModel,
       );

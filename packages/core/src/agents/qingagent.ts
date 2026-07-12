@@ -40,7 +40,7 @@ import {
 } from "./processors.js";
 import { isQingagentToolSearchEnabled } from "./toolSearch.js";
 // 主 Agent 与工具内层统一使用 AI SDK 5 的 v2 provider；Mastra 自身的 ai v4 peer
-// 由包管理器隔离，内层 streamText 从 ai-v5 alias 导入。
+// 由包管理器隔离，provider 统一从 canonical 包导入。
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { RequestContext } from "@mastra/core/request-context";
 import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
@@ -259,9 +259,7 @@ export const qingagentAgent = new Agent({
   id: "qingagent",
   name: "Qingagent Writing Assistant",
   description: "AI 写作助手，帮助用户创作中文文档",
-  // 惰性构建:repairingModel → writeDraft → AI-IR 编译共享设施 → mastra → 本文件 构成
-  // 模块环;顶层立即调用在"测试直接 import repairingModel"时会循环回到这里、
-  // 函数尚未定义而炸(repairToolCallJson.test 收集失败)。推迟到首次取模型时再建。
+  // 惰性构建:按请求解析模型配置，避免模块加载期固化凭据与请求上下文。
   // F1:按 requestContext 解析两层 key(visitor > global-db > env),实例按 key 缓存。
   model: ({ requestContext }) => getRepairingModelFor(requestContext),
   inputProcessors: buildQingagentInputProcessors,

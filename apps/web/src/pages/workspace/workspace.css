@@ -1632,8 +1632,9 @@
     min-width:80px;vertical-align:top;position:relative;
     font-size:13px;line-height:1.6;
   }
-  #view-workspace .wf-doc table > :first-child > tr:first-child > th,
-  #view-workspace .wf-doc table > :first-child > tr:first-child > td{
+  /* TipTap 表格首子元素是 colgroup,:first-child 会落空;按 thead/tbody 首个取首行补上边框。 */
+  #view-workspace .wf-doc table > :is(thead,tbody):first-of-type > tr:first-child > th,
+  #view-workspace .wf-doc table > :is(thead,tbody):first-of-type > tr:first-child > td{
     border-top:1px solid var(--line-2);
   }
   /* TableMap / 静态渲染写入逻辑列号；overlay 等无标记克隆退回首个 DOM 格。 */
@@ -2804,8 +2805,9 @@
     text-align:left;
     vertical-align:top;
   }
-  #view-workspace .pm-hover-original table > :first-child > tr:first-child > th,
-  #view-workspace .pm-hover-original table > :first-child > tr:first-child > td{
+  /* 同 .wf-doc:colgroup 抢占 :first-child,按 thead/tbody 首个取首行补上边框。 */
+  #view-workspace .pm-hover-original table > :is(thead,tbody):first-of-type > tr:first-child > th,
+  #view-workspace .pm-hover-original table > :is(thead,tbody):first-of-type > tr:first-child > td{
     border-top:1px solid var(--line-2);
   }
   #view-workspace .pm-hover-original table > :is(thead,tbody,tfoot) > tr > [data-table-logical-col="0"],

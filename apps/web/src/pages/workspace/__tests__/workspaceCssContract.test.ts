@@ -122,7 +122,8 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toMatch(/\.table-header-overlay-content > \.table-header-overlay__table\{[\s\S]*border-collapse:separate;border-spacing:0/);
     expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*border-right:1px solid var\(--line-2\);border-bottom:1px solid var\(--line-2\)[\s\S]*font-weight:700/);
     expect(workspaceCss).toContain('[data-table-logical-col="0"]');
-    expect(workspaceCss).toContain("table > :first-child > tr:first-child > th");
+    // TipTap 表格首子元素是 colgroup,首行上边框必须锚定 thead/tbody 首个,别再退回 :first-child。
+    expect(workspaceCss).toContain("table > :is(thead,tbody):first-of-type > tr:first-child > th");
     expect(workspaceCss).toContain("table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col])");
     expect(workspaceCss).toMatch(/\.tableWrapper\[data-scrolled-x\] \[data-sticky-col\],[\s\S]*box-shadow:6px 0 8px -6px/);
     expect(workspaceCss).toMatch(/\.table-header-overlay-viewport\{[\s\S]*box-shadow:0 6px 8px -6px/);

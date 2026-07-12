@@ -9,7 +9,7 @@ import { Memory } from "@mastra/memory";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import type { ToolCallSpec } from "@qingagent/contract-ts";
-import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
+import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 

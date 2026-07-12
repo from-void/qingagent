@@ -15,7 +15,7 @@ import {
   createSession,
   createSessionScopedTools,
 } from "../bridge/index.js";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
 
 const ctx = {} as any;

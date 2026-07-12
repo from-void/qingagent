@@ -5,15 +5,15 @@ import {
   clearSuspension,
   createSession,
   recordSuspension,
-} from "../bridge/sessionState.js";
-import type { SessionState } from "../bridge/sessionState.js";
+} from "../session/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
 import {
   coerceLegacyContentKind,
   deriveActiveOverlay,
   deriveAgentBusy,
   deriveContentState,
   deriveEditorState,
-} from "../bridge/docStateMachine.js";
+} from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
   state.legacySections = [{ kind: "p", data: { text: "正文" } }];

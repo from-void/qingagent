@@ -12,7 +12,7 @@ import {
 import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
-import { compileSuggestionFromBeforeAfter } from "../bridge/pmPatch.js";
+import { compileSuggestionFromBeforeAfter } from "../doc-engine/pmPatch.js";
 import { documentRepo } from "@qingagent/db";
 import {
   documentInput,

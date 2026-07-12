@@ -4,7 +4,7 @@ import { z } from "zod";
 import { isPlanDraftTool, streamMoreQuestions, schedulePersist } from "@qingagent/core";
 import type { AskUserQuestion } from "@qingagent/contract-ts";
 import { RequestContext } from "@mastra/core/request-context";
-import { getSession } from "../bridge/bridgeHandler";
+import { getSession } from "../gateway/bridgeHandler";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";

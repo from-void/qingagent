@@ -7,9 +7,9 @@ import {
   type PmInlineNode,
   type PmMark,
 } from "@qingagent/pm-schema";
-import { rebaseRemainingPendingDraft } from "../bridge/pendingDraftRebase.js";
-import { applyDiffHunks, buildDraftDiff } from "../bridge/proposalDiff.js";
-import type { SuggestionRecord } from "../bridge/sessionState.js";
+import { rebaseRemainingPendingDraft } from "../doc-engine/pendingDraftRebase.js";
+import { applyDiffHunks, buildDraftDiff } from "../doc-engine/proposalDiff.js";
+import type { SuggestionRecord } from "../session/sessionState.js";
 import { documentDraftRepo } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,

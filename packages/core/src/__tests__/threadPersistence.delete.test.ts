@@ -44,7 +44,7 @@ describe("deleteSessionThread documents 级联顺序", () => {
   });
 
   it("先删除 documents 族,再删除 Mastra thread", async () => {
-    const { deleteSessionThread } = await import("../bridge/threadPersistence.js");
+    const { deleteSessionThread } = await import("../session/threadPersistence.js");
 
     await deleteSessionThread("delete-order-session");
 
@@ -52,7 +52,7 @@ describe("deleteSessionThread documents 级联顺序", () => {
   });
 
   it("documents 族删除失败时抛错并阻断 Mastra thread 删除", async () => {
-    const { deleteSessionThread } = await import("../bridge/threadPersistence.js");
+    const { deleteSessionThread } = await import("../session/threadPersistence.js");
     deleteDocumentFamily.mockRejectedValueOnce(new Error("documents cleanup failed"));
 
     await expect(deleteSessionThread("delete-fail-session")).rejects.toThrow("documents cleanup failed");

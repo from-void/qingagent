@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { handleCommand } from "../bridge/bridgeHandler";
+import { handleCommand } from "../gateway/bridgeHandler";
 import type { Command, BridgeFrame } from "@qingagent/contract-ts";
 
 /** Collect all frames from an async generator into an array. */

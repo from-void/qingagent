@@ -6,7 +6,7 @@ import {
   handleCommand,
   getSession,
   sessionManager,
-} from "../bridge/bridgeHandler";
+} from "../gateway/bridgeHandler";
 
 // 0702 review 回归:startSession 命令的入参校验与覆写防护。
 // - 此前 mode.data 缺失 → prepareCommandForActor 抛 TypeError → 500(应 400);

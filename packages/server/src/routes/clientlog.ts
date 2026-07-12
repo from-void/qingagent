@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { mastra, getObservability, sessionIdToTraceId } from "@qingagent/core";
 import { SpanType } from "@mastra/core/observability";
-import { parseOrigin } from "../bridge/bridgeHandler";
+import { parseOrigin } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
 

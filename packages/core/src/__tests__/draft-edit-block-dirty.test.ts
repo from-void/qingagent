@@ -8,13 +8,13 @@ import {
   type PmBlockNode,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
   collectTopLevelTextBlocks,
   findLiteralMatches,
   markTextRuns,
   replaceTextRuns,
-} from "../bridge/textEditOps.js";
+} from "../doc-engine/textEditOps.js";
 
 function p(text: string) {
   return { kind: "p", data: { text } } as const;

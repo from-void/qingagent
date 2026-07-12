@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { RequestContext } from "@mastra/core/request-context";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 
 const mocks = vi.hoisted(() => ({
   branchCall: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock("../llm/modelConfig.js", () => ({
 import {
   generateTitleAfterFirstDraft,
   normalizeGeneratedTitle,
-} from "../bridge/titleGeneration.js";
+} from "../session/titleGeneration.js";
 
 function draftedState(id: string) {
   const state = createSession(id);

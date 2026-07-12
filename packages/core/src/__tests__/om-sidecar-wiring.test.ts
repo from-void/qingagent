@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 
 const mockState = vi.hoisted(() => {
   const schedulePersist = vi.fn(async () => {});
@@ -76,7 +76,7 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => null,
 }));
 
-vi.mock("../bridge/threadPersistence.js", () => ({
+vi.mock("../session/threadPersistence.js", () => ({
   QINGAGENT_RESOURCE_ID: "qingagent-user",
   schedulePersist: mockState.schedulePersist,
 }));
@@ -137,7 +137,7 @@ describe("OM sidecar 接线形状", () => {
     await primed.stream.pipeTo(new WritableStream());
 
     mockState.setStatus({ shouldObserve: true, shouldBuffer: false });
-    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     const state = createSession("om-wire-branch");
     state.threadId = state.sessionId;
     state.messages.push({ role: "user", content: "需要观察的事实" });
@@ -181,7 +181,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   it("用 thread scope sidecar 持久化 MastraDBMessage，并以对象参数触发 buffer", async () => {
-    const { getOmObservations, runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { getOmObservations, runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     const state = createSession("om-wire-buffer");
     state.threadId = state.sessionId;
     state.messages.push({ role: "user", content: "第一轮" });
@@ -254,7 +254,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   it("getStatus.shouldObserve 时以对象参数触发 observe，不走 buffer", async () => {
-    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     mockState.setStatus({ shouldObserve: true, shouldBuffer: true });
     const state = createSession("om-wire-observe");
     state.threadId = state.sessionId;
@@ -278,7 +278,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   it("后台 OM 只接收瘦 RequestContext 快照，不携带 live messages 引用", async () => {
-    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     const state = createSession("om-wire-context-snapshot");
     state.threadId = state.sessionId;
     state.messages.push({ role: "user", content: "第一轮" });
@@ -317,7 +317,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   it("getStatus.shouldReflect 时触发 reflect", async () => {
-    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     mockState.setStatus({
       shouldBuffer: false,
       shouldReflect: true,
@@ -354,7 +354,7 @@ describe("OM sidecar 接线形状", () => {
   });
 
   it("getStatus.canActivate 时先激活 buffered observations 并提交 activated ids", async () => {
-    const { runOmSidecarAfterTurn } = await import("../bridge/omSidecar.js");
+    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     mockState.setStatus({
       canActivate: true,
       shouldBuffer: false,
@@ -396,7 +396,7 @@ describe("OM sidecar 接线形状", () => {
       activeObservations: "- 第一轮事实已经被观察",
       observedMessageIds: ["om-wire-resume-no-latch-1-1"],
     });
-    const { prepareOmContextForTurn } = await import("../bridge/omSidecar.js");
+    const { prepareOmContextForTurn } = await import("../session/omSidecar.js");
     const state = createSession("om-wire-resume-no-latch");
     state.threadId = state.sessionId;
     state.messages.push(

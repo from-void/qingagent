@@ -18,7 +18,7 @@
  *   - chatHistory 中每个 toolCall（name, status；候选建议额外打印
  *     blockIndex / summary / 完整 before / 完整 after / result）
  *
- * 注意 SessionState 的形状（见 packages/core/src/bridge/sessionState.ts）:
+ * 注意 SessionState 的形状（见 packages/core/src/session/sessionState.ts）:
  *   - suggestions / patchVerdicts 是 Map（不是数组）
  *   - chatHistory[i].parts[j] = { kind: "toolCall", data: ToolCallSpec }
  *   - suggestions Map<toolCallId, { suggestion: DocSuggestion, before, after }>

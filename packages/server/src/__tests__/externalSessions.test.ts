@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../bridge/bridgeHandler";
+import { sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 
 const dirs: string[] = [];

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import type { CoreMessage } from "ai";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import {
   buildOmCompressedProjection,
   buildOmMessageAssignments,
@@ -10,7 +10,7 @@ import {
   nextOmTurnIndex,
   pendingOmDbMessages,
   prepareOmContextForTurn,
-} from "../bridge/omSidecar.js";
+} from "../session/omSidecar.js";
 import { buildWorkingMemoryPromptMessage } from "../llm/workingMemoryPrompt.js";
 import {
   buildOmObservationsContent,
@@ -20,7 +20,7 @@ import {
 import {
   wrapModelWithTodoAwareness,
 } from "../llm/todoAwarenessPrompt.js";
-import { TODO_AWARENESS_MARKER } from "../bridge/todoAwareness.js";
+import { TODO_AWARENESS_MARKER } from "../agent-run/todoAwareness.js";
 
 const mockState = vi.hoisted(() => ({
   agentStreamCalls: [] as Array<{
@@ -88,8 +88,8 @@ vi.mock("../agents/qingagent.js", () => ({
   },
 }));
 
-vi.mock("../bridge/omSidecar.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../bridge/omSidecar.js")>();
+vi.mock("../session/omSidecar.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../session/omSidecar.js")>();
   return {
     ...actual,
     prepareOmContextForTurn: vi.fn((...args: unknown[]) => {
@@ -471,7 +471,7 @@ describe("OM sidecar 稳定映射与投影", () => {
   it("两个 OM flag 显式关闭时不注入长期观察，模型输入仍使用原 state.messages 引用", async () => {
     process.env.QINGAGENT_OM_SIDECAR = "0";
     process.env.QINGAGENT_OM_COMPRESS = "0";
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("om-flags-off");
 
     await collectFrames(runAgentTurn(state, "你好"));
@@ -487,7 +487,7 @@ describe("OM sidecar 稳定映射与投影", () => {
   it("压缩态主 agent 不启用 Mastra memory，避免投影消息落入主 Memory", async () => {
     process.env.QINGAGENT_OM_SIDECAR = "1";
     process.env.QINGAGENT_OM_COMPRESS = "1";
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("om-compressed-no-main-memory");
     state.omCompressionActive = true;
 
@@ -504,7 +504,7 @@ describe("OM sidecar 稳定映射与投影", () => {
 
   it("非压缩态 sidecar 不启用主 Memory，且工具上下文能看到长期观察", async () => {
     process.env.QINGAGENT_OM_SIDECAR = "1";
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("om-noncompressed-tool-observations");
     const tailObservationPrompt = `${OM_OBSERVATIONS_MARKER}\n- 用户偏好短句。`;
     mockState.prepareOmContextForTurnOverride = vi.fn(async () => ({
@@ -536,7 +536,7 @@ describe("OM sidecar 稳定映射与投影", () => {
     mockState.prepareOmContextForTurnOverride = vi.fn(async () => {
       throw new Error("projection failed");
     });
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("om-prepare-fail-open");
 
     const frames = await collectFrames(runAgentTurn(state, "继续"));
@@ -556,7 +556,7 @@ describe("OM sidecar 稳定映射与投影", () => {
   it("20 轮历史前缀在 OM 显式关闭时逐字节不变", async () => {
     process.env.QINGAGENT_OM_SIDECAR = "0";
     process.env.QINGAGENT_OM_COMPRESS = "0";
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("om-prefix-stable");
     state.messages.push(...turnMessages(20));
     const prefixBefore = JSON.stringify(state.messages);
@@ -572,7 +572,7 @@ describe("OM sidecar 稳定映射与投影", () => {
       isOmCompressionEnabled,
       isOmSidecarEnabled,
       omCompressionThresholdTokens,
-    } = await import("../bridge/omSidecar.js");
+    } = await import("../session/omSidecar.js");
     expect(isOmSidecarEnabled({})).toBe(true);
     expect(isOmCompressionEnabled({})).toBe(true);
     expect(omCompressionThresholdTokens({})).toBe(500_000);

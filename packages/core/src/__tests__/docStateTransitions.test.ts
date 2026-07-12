@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocState, ToolCallSpec } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
-import type { SessionState } from "../bridge/sessionState.js";
-import { createSession, recordSuspension } from "../bridge/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
+import { createSession, recordSuspension } from "../session/sessionState.js";
 import {
   deriveDocStateFacts,
   DocStateTransitionError,
@@ -11,8 +11,8 @@ import {
   normalizeRestoredDocStateKind,
   normalizeTargetDocState,
   transitionDocState,
-} from "../bridge/docStateTransitions.js";
-import { deriveContentState } from "../bridge/docStateMachine.js";
+} from "../doc-engine/docStateTransitions.js";
+import { deriveContentState } from "../doc-engine/docStateMachine.js";
 
 function seedDoc(state: SessionState): void {
   state.legacySections = [

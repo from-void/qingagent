@@ -21,14 +21,14 @@ vi.mock("../mastra.js", () => ({
   mastra: { getLogger: () => logger, getMemory: () => memory, getAgent: () => ({}) },
   getObservability: () => ({ getDefaultInstance: () => null }),
 }));
-vi.mock("../bridge/agentSpans.js", () => ({ sessionIdToTraceId: (id: string) => `trace-${id}` }));
+vi.mock("../agent-run/agentSpans.js", () => ({ sessionIdToTraceId: (id: string) => `trace-${id}` }));
 vi.mock("@qingagent/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@qingagent/db")>()),
   documentRepo: { load: vi.fn(async () => null) },
 }));
 
-import { loadSessionFromThread } from "../bridge/threadPersistence.js";
-import { emitRestoreFrames } from "../../../server/src/bridge/bridgeHandler.js";
+import { loadSessionFromThread } from "../session/threadPersistence.js";
+import { emitRestoreFrames } from "../../../server/src/gateway/bridgeHandler.js";
 import { validateBridgeFrame } from "../../../../apps/web/src/system/validators/wireFrame.js";
 import { AuthCard } from "../../../../apps/web/src/pages/workspace/components/AuthCard.js";
 import { chatInputBus } from "../../../../apps/web/src/system/chatInputBus.js";

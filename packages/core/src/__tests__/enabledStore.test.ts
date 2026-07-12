@@ -43,7 +43,7 @@ describe("enabledStore", () => {
     const store = await withStore();
     await store.setEnabled("web-search", false);
 
-    const { buildCapabilityTools } = await import("../bridge/sessionTools.js");
+    const { buildCapabilityTools } = await import("../session/sessionTools.js");
     const tools = await buildCapabilityTools();
 
     expect(tools).not.toHaveProperty("webSearch");
@@ -55,7 +55,7 @@ describe("enabledStore", () => {
     const store = await withStore();
     await store.setEnabled("doc-calc", false);
 
-    const { buildCapabilityTools } = await import("../bridge/sessionTools.js");
+    const { buildCapabilityTools } = await import("../session/sessionTools.js");
     const tools = await buildCapabilityTools();
 
     expect(tools).toHaveProperty("run_js");
@@ -72,7 +72,7 @@ describe("enabledStore", () => {
       }),
     }));
 
-    const { buildCapabilityTools } = await import("../bridge/sessionTools.js");
+    const { buildCapabilityTools } = await import("../session/sessionTools.js");
     const tools = await buildCapabilityTools();
 
     expect(Object.keys(tools).filter((name) => name.startsWith("browser_"))).toEqual([]);

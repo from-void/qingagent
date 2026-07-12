@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -58,17 +58,17 @@ describe("AI-IR prompt injection L2", () => {
   beforeEach(async () => {
     agentStreamCalls.length = 0;
     // 固定时钟,让时间锚内容确定可断言(时间注入已恒开,原环境变量开关已转正删除)
-    const { __setTimeProviderForTest } = await import("../bridge/timeProvider.js");
+    const { __setTimeProviderForTest } = await import("../session/timeProvider.js");
     __setTimeProviderForTest(() => new Date(2026, 5, 11, 14, 30));
   });
 
   afterEach(async () => {
-    const { __setTimeProviderForTest } = await import("../bridge/timeProvider.js");
+    const { __setTimeProviderForTest } = await import("../session/timeProvider.js");
     __setTimeProviderForTest(null);
   });
 
   it("末条 user message 不含整篇快照和行号,但包含前置时间锚", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("aiir-injection-on");
     state.legacySections = legacySections();
     state.docVersion = 3;
@@ -110,7 +110,7 @@ describe("AI-IR prompt injection L2", () => {
   });
 
   it("legacy 文档同步不改写既有历史消息字节", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("aiir-history-byte-guard");
     state.legacySections = legacySections();
     state.docVersion = 5;

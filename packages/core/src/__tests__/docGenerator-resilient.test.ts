@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseLegacySections, normalizeLegacySection } from "../bridge/docGenerator.js";
+import { parseLegacySections, normalizeLegacySection } from "../doc-engine/docGenerator.js";
 
 describe("resilient doc generation parsing", () => {
   it("drops malformed or empty sections while keeping useful sections", () => {

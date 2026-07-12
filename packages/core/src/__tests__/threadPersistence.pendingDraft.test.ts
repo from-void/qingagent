@@ -8,9 +8,9 @@ import {
   type PmInlineNode,
   type PmMark,
 } from "@qingagent/pm-schema";
-import { rehydratePendingDraft } from "../bridge/pendingDraftRehydrate.js";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
-import { createSession } from "../bridge/sessionState.js";
+import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
+import { createSession } from "../session/sessionState.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
@@ -149,7 +149,7 @@ describe("pending draft rehydrate", () => {
       },
     });
 
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const restored = await loadSessionFromThread(sessionId);
 
     expect(restored?.docState).toEqual({ kind: "pendingReview" });
@@ -362,7 +362,7 @@ describe("pending draft rehydrate", () => {
       sourceStreamId: "stream-cold",
       sourceToolCallId: "wd-cold",
     });
-    const { loadSessionFromThread } = await import("../bridge/threadPersistence.js");
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
 
     const first = await loadSessionFromThread(sessionId);
     const opTime = (await findOpByDocumentVersion(sessionId, 1))?.createdAt;

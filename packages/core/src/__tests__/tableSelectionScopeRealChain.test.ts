@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pmToAiIr, aiIrToPm, type PmDoc, type PmTableNode } from "@qingagent/pm-schema";
-import { validateTableSelectionScope } from "../bridge/draftScratch.js";
+import { validateTableSelectionScope } from "../doc-engine/draftScratch.js";
 
 // 真实链路回归(2026-07-12 浏览器验收实录):编辑器真实形状的表(随机段落 blockId、
 // 显式 textAlign:null 等默认键)经 pmToAiIr→aiIrToPm 整表往返重建后,未选行仅存在

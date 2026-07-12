@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ToolCallSpec, BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
-import { createSession } from "../bridge/sessionState.js";
-import type { SessionState } from "../bridge/sessionState.js";
-import { emitProjectedDocState } from "../bridge/docStateMachine.js";
-import { transitionDocState } from "../bridge/docStateTransitions.js";
+import { createSession } from "../session/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
+import { emitProjectedDocState } from "../doc-engine/docStateMachine.js";
+import { transitionDocState } from "../doc-engine/docStateTransitions.js";
 
 function seedDoc(state: SessionState): void {
   state.legacySections = [{ kind: "p", data: { text: "正文" } }];
@@ -114,7 +114,7 @@ describe("modern wire projection", () => {
       { mode: "normalize" },
     );
     const source = readFileSync(
-      new URL("../bridge/docStateTransitions.ts", import.meta.url),
+      new URL("../doc-engine/docStateTransitions.ts", import.meta.url),
       "utf8",
     );
 

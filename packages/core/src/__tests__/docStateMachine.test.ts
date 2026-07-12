@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingDocState } from "@qingagent/contract-ts";
-import { coerceLegacyContentKind } from "../bridge/docStateMachine.js";
+import { coerceLegacyContentKind } from "../doc-engine/docStateMachine.js";
 
 // R5e:pre-R5e 的合并维度 adapter `fromWireDocState` 已删除,因(agentBusy/overlay)
 // 改由 facts 现场派生(见 docStateR0Derivation.test.ts 的 deriveAgentBusy/deriveActiveOverlay)。

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import {
   TODO_AWARENESS_MAX_CONTENT_CHARS,
   TODO_AWARENESS_MARKER,
   buildTodoAwarenessContent,
-} from "../bridge/todoAwareness.js";
+} from "../agent-run/todoAwareness.js";
 import {
   appendTodoAwarenessToPromptOptions,
   todoAwarenessContentFromRequestContext,
@@ -86,7 +86,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("有未完成项时在 provider prompt 尾部注入当前清单状态，但不污染 agent 输入", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-inject");
     state.todos = [
       { content: "确认需求范围", status: "completed" },
@@ -115,7 +115,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("全部 completed 时不注入", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-completed");
     state.todos = [
       { content: "确认需求范围", status: "completed" },
@@ -130,7 +130,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("空清单时不注入", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-empty");
 
     await collectFrames(runAgentTurn(state, "你好"));
@@ -237,7 +237,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("同一轮 updateTodos 后 requestContext 源读取最新 state.todos", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-dynamic-source");
     state.todos = [{ content: "旧步骤", status: "pending" }];
 
@@ -255,7 +255,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("连续 3 轮后 state.messages 和 chatHistory 都没有注入残留", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-no-residue");
     state.todos = [{ content: "推进剩余任务", status: "in_progress" }];
 
@@ -278,7 +278,7 @@ describe("任务清单每轮感知", () => {
   });
 
   it("注入本身不产生 todosChanged 帧", async () => {
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
     const state = createSession("todo-awareness-no-frame");
     state.todos = [{ content: "继续未完成任务", status: "pending" }];
 
@@ -295,7 +295,7 @@ describe("任务清单每轮感知", () => {
     const previousFlag = process.env.QINGAGENT_TOOL_SEARCH;
     process.env.QINGAGENT_TOOL_SEARCH = "1";
     try {
-      const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
+      const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
       const { getQingagentSkills } = await import("../agents/qingagent.js");
       vi.mocked(getQingagentSkills).mockResolvedValueOnce({
         maybeRefresh: vi.fn(async () => {}),

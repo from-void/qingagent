@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { legacySectionsToPm, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
-import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/bridge/proposalDiff.js";
+import { applyDiffHunks, buildDraftDiff } from "../../../../../../packages/core/src/doc-engine/proposalDiff.js";
 import {
   derivePatchPresentation,
   cloneListRowDiff,

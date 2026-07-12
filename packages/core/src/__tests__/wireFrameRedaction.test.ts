@@ -3,10 +3,10 @@ import {
   redactedSerializedText,
   redactSensitiveText,
   summarizeToolValue,
-} from "../bridge/redaction.js";
+} from "../agent-run/redaction.js";
 import {
   commandCardFromResult,
-} from "../bridge/toolCards.js";
+} from "../agent-run/toolCards.js";
 
 describe("bridge redaction", () => {
   it("redacts secrets inside non-sensitive string fields in tool IO summaries", () => {

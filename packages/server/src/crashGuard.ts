@@ -184,7 +184,7 @@ async function gracefulShutdown(
 
 async function drainActiveTurnsBestEffort(): Promise<void> {
   try {
-    const bridge = await import("./bridge/bridgeHandler.js");
+    const bridge = await import("./gateway/bridgeHandler.js");
     await bridge.disposeAllSessionsForShutdown?.();
   } catch (err) {
     durableLogSync("warn", "active turn drain failed during shutdown", {

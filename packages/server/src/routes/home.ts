@@ -3,7 +3,7 @@ import type { HomeFeed, SessionMeta, LegacySection } from "@qingagent/contract-t
 import { listHomeSessionThreads, deleteSessionThread, pmToHomeArticleMeta } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
 import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
-import { sessionManager } from "../bridge/bridgeHandler";
+import { sessionManager } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 export const homeRoutes = new Hono();

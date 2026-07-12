@@ -11,17 +11,17 @@ export {
   recordSuspension,
   terminalizeAskUserToolCall,
   updateToolCallInChatHistory,
-} from "./sessionState.js";
-export type { SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "./sessionState.js";
+} from "../session/sessionState.js";
+export type { SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "../session/sessionState.js";
 
 export {
   AGENT_MAX_STEPS,
-} from "./agentLimits.js";
+} from "../agent-run/agentLimits.js";
 
 export {
   buildAgentTracingMetadata,
   sessionIdToTraceId,
-} from "./agentSpans.js";
+} from "../agent-run/agentSpans.js";
 
 export {
   clearDraftMutationScratch,
@@ -31,44 +31,44 @@ export {
   currentPmDoc,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
-} from "./draftScratch.js";
+} from "../doc-engine/draftScratch.js";
 
 export {
   settleDraftCandidate,
-} from "./settleDraftCandidate.js";
+} from "../doc-engine/settleDraftCandidate.js";
 
 export {
   abortAndCleanupTurn,
   finalizeLingeringRunningToolCalls,
-} from "./turnCleanup.js";
+} from "../agent-run/turnCleanup.js";
 
 export {
   buildCapabilityTools,
   createSessionScopedTools,
-} from "./sessionTools.js";
-export type { SelectedSkillInput } from "./sessionTools.js";
+} from "../session/sessionTools.js";
+export type { SelectedSkillInput } from "../session/sessionTools.js";
 
 export {
   runAgentTurn,
-} from "./runAgentTurn.js";
+} from "../agent-run/runAgentTurn.js";
 
 export {
   TODO_AWARENESS_REQUEST_CONTEXT_KEY,
   buildTodoAwarenessContent,
-} from "./todoAwareness.js";
+} from "../agent-run/todoAwareness.js";
 
 export {
   ensureWorkingMemorySnapshot,
   ensureWorkingMemorySnapshotWithStatus,
-} from "./workingMemory.js";
+} from "../session/workingMemory.js";
 
 export {
   processAgentStream,
-} from "./processAgentStream.js";
+} from "../agent-run/processAgentStream.js";
 export type {
   ProcessAgentStreamOptions,
   ProcessOutcome,
-} from "./processAgentStream.js";
+} from "../agent-run/processAgentStream.js";
 
 export {
   estimateTurnCounterFromMessages,
@@ -76,14 +76,14 @@ export {
   nextOmTurnIndex,
   prepareOmContextForTurn,
   scheduleOmSidecarAfterTurn,
-} from "./omSidecar.js";
+} from "../session/omSidecar.js";
 
 export {
   updatePatchVerdict,
   commitPatches,
   expandReviewIds,
   commitReviewGroups,
-} from "./reviewCommit.js";
+} from "../doc-engine/reviewCommit.js";
 
 export {
   parseLegacySections,
@@ -92,21 +92,21 @@ export {
   emitDocumentSnapshotFrames,
   docSectionSchema,
   legacySectionsSchema,
-} from "./docGenerator.js";
+} from "../doc-engine/docGenerator.js";
 
 export {
   cloneLegacySections,
-} from "./docDiff.js";
+} from "../doc-engine/docDiff.js";
 
 export {
   hasApplicableSuggestion,
   hasCanonicalDoc,
-} from "./docFacts.js";
+} from "../doc-engine/docFacts.js";
 
 export {
   isServerReanchorEnabled,
   isTruthyFlag,
-} from "./draftFeatureFlags.js";
+} from "../doc-engine/draftFeatureFlags.js";
 
 export {
   coerceLegacyContentKind,
@@ -115,23 +115,23 @@ export {
   deriveContentState,
   deriveEditorState,
   emitProjectedDocState,
-} from "./docStateMachine.js";
+} from "../doc-engine/docStateMachine.js";
 export type {
   ActiveOverlay,
   EditorState,
-} from "./docStateMachine.js";
+} from "../doc-engine/docStateMachine.js";
 
 export {
   advanceLastContentEditedAt,
   commitDocumentOp,
   getDocumentVersionCommittedAt,
-} from "./commitDocumentOp.js";
+} from "../doc-engine/commitDocumentOp.js";
 export type {
   CommitDocumentOpInput,
   CommitDocumentOpResult,
   CommitIdempotencyKey,
   PmValidationError,
-} from "./commitDocumentOp.js";
+} from "../doc-engine/commitDocumentOp.js";
 
 export {
   buildMaterialFromParse,
@@ -141,14 +141,14 @@ export {
   parseFileFailureFromResult,
   stableErrorMaterialId,
   upsertMaterialByFileId,
-} from "./materialResource.js";
+} from "../session/materialResource.js";
 export type {
   MaterialParseFailure,
   MaterialParseFailureKind,
   MaterialParseOutcome,
   MaterialParseSource,
   UpsertMaterialByFileIdResult,
-} from "./materialResource.js";
+} from "../session/materialResource.js";
 
 export {
   collectTopLevelTextBlocks,
@@ -156,26 +156,26 @@ export {
   findSafeRegexMatches,
   markTextRuns,
   replaceTextRuns,
-} from "./textEditOps.js";
+} from "../doc-engine/textEditOps.js";
 export type {
   QuoteMatch,
   TextBlockRef,
-} from "./textEditOps.js";
+} from "../doc-engine/textEditOps.js";
 
 export {
   compileSafeRegex,
   execSafeRegexAll,
-} from "./safeRegex.js";
+} from "../agent-run/safeRegex.js";
 export type {
   CompileSafeRegexResult,
   ExecSafeRegexResult,
-} from "./safeRegex.js";
+} from "../agent-run/safeRegex.js";
 
-export { serializeReviewOutcome } from "./reviewOutcome.js";
-export { rehydratePendingDraft } from "./pendingDraftRehydrate.js";
-export type { PendingDraftRehydrateResult } from "./pendingDraftRehydrate.js";
-export { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
-export type { PendingDraftRebaseResult, RebaseRemainingPendingDraftInput } from "./pendingDraftRebase.js";
+export { serializeReviewOutcome } from "../doc-engine/reviewOutcome.js";
+export { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
+export type { PendingDraftRehydrateResult } from "../doc-engine/pendingDraftRehydrate.js";
+export { rebaseRemainingPendingDraft } from "../doc-engine/pendingDraftRebase.js";
+export type { PendingDraftRebaseResult, RebaseRemainingPendingDraftInput } from "../doc-engine/pendingDraftRebase.js";
 export {
   appendAskUserAnswerMessageIfMissing,
   appendMissingAskUserAnswerMessagesFromChatHistory,
@@ -190,8 +190,8 @@ export {
   hasVisibleAskUserAnswerMessage,
   normalizeAskUserAnswers,
   visibleAskUserAnswerMessageId,
-} from "./askUserAnswerMessage.js";
-export type { AskUserAnswerRecord } from "./askUserAnswerMessage.js";
+} from "../agent-run/askUserAnswerMessage.js";
+export type { AskUserAnswerRecord } from "../agent-run/askUserAnswerMessage.js";
 
 export {
   deriveDocStateFacts,
@@ -201,13 +201,13 @@ export {
   normalizeTargetDocState,
   transitionDocState,
   DocStateTransitionError,
-} from "./docStateTransitions.js";
+} from "../doc-engine/docStateTransitions.js";
 export type {
   DocStateFacts,
   DocStateTransitionReason,
   RestoreDocStateFacts,
   TransitionDocStateOptions,
-} from "./docStateTransitions.js";
+} from "../doc-engine/docStateTransitions.js";
 
 export {
   createSessionThread,
@@ -222,26 +222,26 @@ export {
   QINGAGENT_RESOURCE_ID,
   __getSessionPersistenceStateForTest,
   __resetSessionPersistenceForTest,
-} from "./threadPersistence.js";
+} from "../session/threadPersistence.js";
 
-export { migrateThreadMetadataToDocuments } from "./migrateThreadMetadataToDocuments.js";
+export { migrateThreadMetadataToDocuments } from "../doc-engine/migrateThreadMetadataToDocuments.js";
 export type {
   MigrationOptions,
   MigrationStats,
-} from "./migrateThreadMetadataToDocuments.js";
-export { redactSensitiveText } from "./redaction.js";
-export { deriveTitleFromSections } from "./title.js";
+} from "../doc-engine/migrateThreadMetadataToDocuments.js";
+export { redactSensitiveText } from "../agent-run/redaction.js";
+export { deriveTitleFromSections } from "../session/title.js";
 export {
   isDirectionReset,
   isPlanDraftTool,
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
-} from "./questionnaireTools.js";
-export { resolveFileIds, UPLOADS_BASE } from "./uploadFileResolver.js";
+} from "../agent-run/questionnaireTools.js";
+export { resolveFileIds, UPLOADS_BASE } from "../session/uploadFileResolver.js";
 
 export type {
   QingagentThreadMetadata,
   HomeSessionThread,
   MaterialRecord,
   SuggestionRecordJson,
-} from "./threadPersistence.js";
+} from "../session/threadPersistence.js";

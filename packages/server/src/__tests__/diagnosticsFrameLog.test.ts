@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../bridge/bridgeHandler.js", () => mocks);
+vi.mock("../gateway/bridgeHandler.js", () => mocks);
 
 function emptyRead() {
   return {

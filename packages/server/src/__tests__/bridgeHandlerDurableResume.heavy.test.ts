@@ -260,7 +260,7 @@ describe("bridgeHandler durable askUser resume", () => {
           qingagentAgent: second.agent,
         };
       });
-      const bridge = await import("../bridge/bridgeHandler");
+      const bridge = await import("../gateway/bridgeHandler");
       const {
         buildAskUserAnswerUserMessage,
         loadSessionFromThread,

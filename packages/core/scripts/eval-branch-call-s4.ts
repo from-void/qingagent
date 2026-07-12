@@ -18,8 +18,8 @@ const {
   createSnapshottingQingagentModel,
 } = await import("../src/llm/modelConfig.js");
 const { buildSystemPrompt } = await import("../src/prompts/system.js");
-const { createSession } = await import("../src/bridge/sessionState.js");
-const { generateTitleAfterFirstDraft } = await import("../src/bridge/titleGeneration.js");
+const { createSession } = await import("../src/session/sessionState.js");
+const { generateTitleAfterFirstDraft } = await import("../src/session/titleGeneration.js");
 const { getDocumentsClient } = await import("../src/db/documentsClient.js");
 
 function context(sessionId: string): RequestContext {

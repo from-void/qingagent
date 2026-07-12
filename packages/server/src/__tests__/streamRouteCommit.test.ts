@@ -5,7 +5,7 @@ import {
   forgetSession,
   handleCommand,
   sessionManager,
-} from "../bridge/bridgeHandler";
+} from "../gateway/bridgeHandler";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];

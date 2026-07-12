@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeLlmUsageCounts } from "../llm/usageAccounting.js";
-import { normalizeLlmUsage } from "../bridge/agentSpans.js";
+import { normalizeLlmUsage } from "../agent-run/agentSpans.js";
 
 // R2-B 回归:cache_hit/miss 全 0 的采集断链——providerMetadata 与 usage 同级被丢、
 // @ai-sdk/openai 把缓存放 providerMetadata.openai.cachedPromptTokens 未被识别。

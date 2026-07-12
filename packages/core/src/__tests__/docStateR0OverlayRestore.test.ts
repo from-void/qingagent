@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallSpec } from "@qingagent/contract-ts";
-import { createSession, recordSuspension } from "../bridge/sessionState.js";
-import type { SessionState } from "../bridge/sessionState.js";
+import { createSession, recordSuspension } from "../session/sessionState.js";
+import type { SessionState } from "../session/sessionState.js";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
-} from "../bridge/docStateMachine.js";
-import { normalizeRestoredDocStateKind } from "../bridge/docStateTransitions.js";
+} from "../doc-engine/docStateMachine.js";
+import { normalizeRestoredDocStateKind } from "../doc-engine/docStateTransitions.js";
 
 function addToolCall(
   state: SessionState,

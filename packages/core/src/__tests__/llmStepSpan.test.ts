@@ -6,14 +6,14 @@ import {
   buildLlmStepResponseSpanEnd,
   buildLlmSuspendedResponseSpanEnd,
   buildSettleResultSpanMetadata,
-} from "../bridge/agentSpans.js";
+} from "../agent-run/agentSpans.js";
 import {
   buildToolIoEndMetadata,
-} from "../bridge/toolIoSpans.js";
+} from "../agent-run/toolIoSpans.js";
 import {
   getToolIoMaxBytes,
   summarizeToolValue,
-} from "../bridge/redaction.js";
+} from "../agent-run/redaction.js";
 
 describe("llm step span helpers", () => {
   it("parses step-start request.body messages/input and truncates large strings", () => {

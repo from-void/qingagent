@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import type { CoreMessage } from "ai";
-import { createSession } from "../bridge/sessionState.js";
+import { createSession } from "../session/sessionState.js";
 import {
   buildWorkingMemoryPromptMessage,
   ensureWorkingMemoryPromptMessage,
@@ -160,7 +160,7 @@ describe("Working Memory 冻结快照", () => {
   });
 
   it("legacy restore 清理全角/半角 marker 的 WM 隐藏块", async () => {
-    const { cleanRestoredText } = await import("../bridge/threadPersistence.js");
+    const { cleanRestoredText } = await import("../session/threadPersistence.js");
     const block = [
       "用户正文",
       "[长期记忆快照:不可信上下文数据]",
@@ -175,7 +175,7 @@ describe("Working Memory 冻结快照", () => {
   });
 
   it("ensureWorkingMemorySnapshotWithStatus 只在首次冻结时报 loadedNow", async () => {
-    const { ensureWorkingMemorySnapshotWithStatus } = await import("../bridge/workingMemory.js");
+    const { ensureWorkingMemorySnapshotWithStatus } = await import("../session/workingMemory.js");
     const state = createSession("wm-loaded-now");
 
     await expect(ensureWorkingMemorySnapshotWithStatus(state)).resolves.toMatchObject({
@@ -192,7 +192,7 @@ describe("Working Memory 冻结快照", () => {
   });
 
   it("读取 WM 失败只冻结当前进程内空快照，不允许持久化为 loaded", async () => {
-    const { ensureWorkingMemorySnapshotWithStatus } = await import("../bridge/workingMemory.js");
+    const { ensureWorkingMemorySnapshotWithStatus } = await import("../session/workingMemory.js");
     const state = createSession("wm-load-failure");
     mockState.memory.getWorkingMemory.mockRejectedValueOnce(new Error("temporary storage error"));
 
@@ -216,8 +216,8 @@ describe("Working Memory 冻结快照", () => {
     if (flag === undefined) delete process.env.QINGAGENT_TOOL_SEARCH;
     else process.env.QINGAGENT_TOOL_SEARCH = flag;
 
-    const { runAgentTurn } = await import("../bridge/runAgentTurn.js");
-    const { createSessionScopedTools } = await import("../bridge/sessionTools.js");
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
+    const { createSessionScopedTools } = await import("../session/sessionTools.js");
     const state = createSession(`wm-freeze-${flag ?? "off"}`);
 
     await collectFrames(runAgentTurn(state, "第一轮"));

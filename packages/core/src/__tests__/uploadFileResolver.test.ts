@@ -9,7 +9,7 @@ let tmpDir: string;
 
 async function loadResolver() {
   vi.resetModules();
-  return import("../bridge/uploadFileResolver.js");
+  return import("../session/uploadFileResolver.js");
 }
 
 describe("uploadFileResolver", () => {

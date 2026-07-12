@@ -21,10 +21,10 @@ import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
-import { buildDraftDiff } from "../bridge/proposalDiff.js";
+import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { toDocx, toHtml, toPdf } from "@qingagent/doc-render";
-import type { SessionState } from "../bridge/sessionState.js";
-import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
+import type { SessionState } from "../session/sessionState.js";
+import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 import { hasChromium } from "@qingagent/doc-render/testing";
 
 const { memory, threads } = vi.hoisted(() => {
@@ -79,7 +79,7 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => null,
 }));
 
-vi.mock("../bridge/agentSpans.js", () => ({
+vi.mock("../agent-run/agentSpans.js", () => ({
   sessionIdToTraceId: (sessionId: string) => `trace-${sessionId}`,
 }));
 
@@ -94,12 +94,12 @@ beforeEach(async () => {
   threads.clear();
   vi.restoreAllMocks();
   vi.clearAllMocks();
-  const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+  const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
   __resetSessionPersistenceForTest();
 });
 
 afterEach(async () => {
-  const { __resetSessionPersistenceForTest } = await import("../bridge/threadPersistence.js");
+  const { __resetSessionPersistenceForTest } = await import("../session/threadPersistence.js");
   __resetSessionPersistenceForTest();
   tempDb.cleanup();
 });
@@ -250,8 +250,8 @@ function bindRichDoc(state: SessionState, value: PmDoc): void {
 
 describe("rich formats persistence and scale pressure", () => {
   it("threadPersistence 通过 thread.metadata 恢复富格式 doc,docVersion 与 chatHistory 不丢", async () => {
-    const { createSession } = await import("../bridge/sessionState.js");
-    const { loadSessionFromThread, persistSessionMetadata } = await import("../bridge/threadPersistence.js");
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import("../session/threadPersistence.js");
     const state = createSession("rich-persist-session");
     const richDoc = richPersistenceDoc();
     const expectedBytes = getStablePmJson(richDoc);

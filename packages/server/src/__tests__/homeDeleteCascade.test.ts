@@ -41,7 +41,7 @@ beforeEach(async () => {
 afterEach(async () => {
   const { rmSync } = await import("node:fs");
   vi.doUnmock("@qingagent/core");
-  vi.doUnmock("../bridge/bridgeHandler");
+  vi.doUnmock("../gateway/bridgeHandler");
   vi.resetModules();
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
@@ -63,7 +63,7 @@ async function loadApp() {
       pmToHomeArticleMeta: homeMeta.pmToHomeArticleMeta,
     };
   });
-  vi.doMock("../bridge/bridgeHandler", () => ({
+  vi.doMock("../gateway/bridgeHandler", () => ({
     sessionManager,
   }));
   const { Hono } = await import("hono");

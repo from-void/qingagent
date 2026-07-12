@@ -60,11 +60,11 @@ async function loadBridge() {
     deleteUploadedFile: vi.fn(async () => true),
   }));
 
-  const bridge = await import("../bridge/bridgeHandler");
+  const bridge = await import("../gateway/bridgeHandler");
   return { bridge, schedulePersist, clearFolderSourceCacheMock };
 }
 
-async function createSession(bridge: typeof import("../bridge/bridgeHandler")) {
+async function createSession(bridge: typeof import("../gateway/bridgeHandler")) {
   const frames = await collectFrames(
     bridge.handleCommand({
       kind: "startSession",

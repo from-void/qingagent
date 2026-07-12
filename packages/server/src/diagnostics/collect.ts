@@ -129,7 +129,7 @@ export async function collectFrameLogs(
 ): Promise<CollectedFrameLogFile[]> {
   const maxSessions = Math.max(0, Math.floor(options.maxSessions ?? 20));
   if (maxSessions === 0) return [];
-  const bridge = await import("../bridge/bridgeHandler.js");
+  const bridge = await import("../gateway/bridgeHandler.js");
   const { sessionManager } = bridge;
   // 用户勾选了具体文档 → 只导出这些会话(去重 + 去空);否则回退到最近 maxSessions 个会话。
   const picked = Array.from(new Set((options.sessionIds ?? []).filter((id) => typeof id === "string" && id.length > 0)));

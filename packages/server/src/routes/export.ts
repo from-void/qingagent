@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { loadSessionFromThread } from "@qingagent/core";
 import { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "@qingagent/doc-render";
-import { getSession } from "../bridge/bridgeHandler";
+import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";

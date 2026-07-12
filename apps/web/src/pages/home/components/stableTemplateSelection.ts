@@ -4,7 +4,7 @@ import {
   type SelectorOptions,
   type TemplateDefinition,
   type TemplateRegistry,
-} from "chinese-masonry";
+} from "@qingagent/chinese-masonry";
 import type { HomeSession } from "../data/sessions";
 import { hashSeed, makeRng } from "./inkBrush";
 import { homeSessionToArticle } from "./masonryAdapters";

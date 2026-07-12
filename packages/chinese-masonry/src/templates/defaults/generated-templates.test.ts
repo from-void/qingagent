@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { calculateTemplateTextCapacity } from '../capacity';
 import { defaultTemplates } from '.';
-import type { ImageElement } from '../types';
+import type { ImageElement, LineElement, TextElement } from '../types';
 
 const isImageElement = (element: unknown): element is ImageElement =>
   typeof element === 'object' && element !== null && 'type' in element && element.type === 'image';
+const isLineElement = (element: unknown): element is LineElement =>
+  typeof element === 'object' && element !== null && 'type' in element && element.type === 'line';
+const isTextElement = (element: unknown): element is TextElement =>
+  typeof element === 'object' && element !== null && 'type' in element && element.type === 'text';
 
 describe('curated default templates', () => {
   it('uses the curated ink background template set', () => {
@@ -54,7 +58,7 @@ describe('curated default templates', () => {
 
   it('uses thin default lines and includes editable seal stamps', () => {
     const lineElements = defaultTemplates.flatMap((template) =>
-      template.elements.filter((element) => element.type === 'line'),
+      template.elements.filter(isLineElement),
     );
     const stampElements = defaultTemplates.flatMap((template) =>
       template.elements.filter((element): element is ImageElement => isImageElement(element) && element.role === 'stamp'),
@@ -108,7 +112,7 @@ describe('curated default templates', () => {
 
   it('keeps text editable and includes varied vertical and quote layouts', () => {
     const textElements = defaultTemplates.flatMap((template) =>
-      template.elements.filter((element) => element.type === 'text'),
+      template.elements.filter(isTextElement),
     );
 
     expect(defaultTemplates.some((template) => template.meta.preferVerticalText)).toBe(true);
@@ -120,7 +124,7 @@ describe('curated default templates', () => {
   it('includes landscape, square and portrait background families', () => {
     const imageUrls = defaultTemplates
       .flatMap((template) => template.elements)
-      .filter((element) => element.type === 'image')
+      .filter(isImageElement)
       .map((element) => element.staticUrl ?? '');
 
     expect(imageUrls.some((url) => url.includes('wide-'))).toBe(true);

@@ -118,7 +118,7 @@ export function createTemplateSelector(
       if (cursor <= 0) return entry.template;
     }
 
-    return pool[pool.length - 1].template;
+    return pool[pool.length - 1]!.template;
   }
 
   return { select, score };

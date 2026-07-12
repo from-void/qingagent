@@ -1,34 +1,35 @@
 {
-  "name": "chinese-masonry",
+  "name": "@qingagent/chinese-masonry",
   "version": "0.1.0",
-  "description": "中国风瀑布流 React 组件库，包含固定 290px 卡片、模板系统、约束式模板编辑器和 Demo。",
+  "description": "青简首页画廊使用的中国风卡片渲染与模板选择模块。",
   "type": "module",
   "license": "MIT",
   "private": true,
-  "module": "./dist/chinese-masonry.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/chinese-masonry.js"
-    },
-    "./style.css": "./dist/style.css"
+    ".": "./src/index.ts",
+    "./style.css": "./src/style.css"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "sideEffects": [
     "*.css"
   ],
   "peerDependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react": "^18",
+    "react-dom": "^18"
   },
-  "dependencies": {
-    "immer": "^10.1.1",
-    "masonic": "3.7.0",
-    "react-colorful": "^5.6.1",
-    "zustand": "^4.5.7"
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.1",
+    "@types/node": "20.16.5",
+    "@types/react": "18.3.5",
+    "@types/react-dom": "18.3.0",
+    "@vitejs/plugin-react": "4.3.1",
+    "jsdom": "^25.0.1",
+    "typescript": "5.4.5",
+    "vite": "5.4.8",
+    "vitest": "2.1.9"
   }
 }

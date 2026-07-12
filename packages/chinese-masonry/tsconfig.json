@@ -18,8 +18,8 @@
     "types": ["node", "vitest/globals", "@testing-library/jest-dom"],
     "baseUrl": ".",
     "paths": {
-      "chinese-masonry": ["src/index.ts"]
+      "@qingagent/chinese-masonry": ["src/index.ts"]
     }
   },
-  "include": ["src", "demo/src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "vitest.config.ts"]
 }

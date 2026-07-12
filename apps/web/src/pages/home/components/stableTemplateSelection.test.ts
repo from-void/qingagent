@@ -3,7 +3,7 @@ import {
   createTemplateSelector,
   type ArticleData,
   type SelectorOptions,
-} from "chinese-masonry";
+} from "@qingagent/chinese-masonry";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HomeSession } from "../data/sessions";
 import { qingagentTemplateFilter } from "./masonryAdapters";

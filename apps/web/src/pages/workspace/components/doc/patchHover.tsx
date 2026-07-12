@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PatchMeta } from "../DocumentSnapshotView";
+import type { PatchMeta } from "../../data/patchMeta";
 
 const PATCH_POPUP_HIDE_DELAY_MS = 200;
 

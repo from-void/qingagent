@@ -1,5 +1,6 @@
 import type { Command, ToolCallSpec, ViewDocumentSnapshot } from "./protocol";
 import type { DocDimensions } from "./docDimensions";
+import type { NativePresentationRun } from "./nativeDiffAnimation";
 
 /** 一个生成草稿是否真有内容(sections 非空)。generation_started 刚建出的占位草稿 sections=[]。 */
 export function generationDraftHasContent(
@@ -103,6 +104,14 @@ export function canEditDocument(
   viewingVersion: number | null,
 ): boolean {
   return dim.editor === "editable" && viewingVersion === null;
+}
+
+export function canUseDocumentEditing(
+  dim: DocDimensions,
+  viewingVersion: number | null,
+  presentationRun: NativePresentationRun | null,
+): boolean {
+  return canEditDocument(dim, viewingVersion) && !presentationRun;
 }
 
 export function buildCancelStreamCommands(streamIds: readonly string[]): Command[] {

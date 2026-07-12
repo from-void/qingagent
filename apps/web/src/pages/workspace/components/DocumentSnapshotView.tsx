@@ -18,7 +18,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
 import { findDraggableBlock, type MovableBlock } from "./ColumnDnD";
@@ -134,28 +134,9 @@ import { PmBlockView } from "./doc/PmStaticView";
 import { TableControls } from "./doc/TableControls";
 import { TableHeaderOverlay } from "./doc/TableHeaderOverlay";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
+import type { PatchMeta } from "../data/patchMeta";
+export type { PatchMeta, PatchMetaChange } from "../data/patchMeta";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
-
-export type PatchMetaChange =
-  | { kind: "content"; before: string; after: string }
-  | {
-      kind: "mark";
-      op: "markAdd" | "markRemove";
-      marks?: PmMark[];
-      label?: string;
-    };
-
-export interface PatchMeta {
-  before: string;
-  after: string;
-  kind?: "text" | "markAdd" | "markRemove" | "insert" | "delete" | "replace";
-  marks?: PmMark[];
-  label?: string;
-  /** 原始 before PM node:hover 卡片"原文"据此用 PmBlockView 渲成真内容(表格/图表/公式/嵌套列表全保真)。 */
-  beforePmNodes?: readonly PmBlockNode[];
-  changes?: PatchMetaChange[];
-  index: number;
-}
 
 export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;

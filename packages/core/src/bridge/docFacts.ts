@@ -1,7 +1,7 @@
-import type { SessionState } from "./sessionState.js";
-
-type CanonicalDocState = Pick<SessionState, "doc">;
-type SuggestionState = Pick<SessionState, "suggestions">;
+type CanonicalDocState = {
+  doc?: { content: readonly unknown[]; [key: string]: unknown };
+};
+type SuggestionState = { suggestions: { size: number } };
 
 export function hasCanonicalDoc(state: CanonicalDocState): boolean {
   return (state.doc?.content.length ?? 0) > 0;

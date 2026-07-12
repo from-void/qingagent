@@ -1,4 +1,3 @@
-import type { SessionState } from "./sessionState.js";
 import type { AskUserSpec, ToolCallSpec } from "@qingagent/contract-ts";
 import { hasCanonicalDoc } from "./docFacts.js";
 
@@ -35,7 +34,11 @@ export function questionnaireRenderMode(toolName: QuestionnaireToolName): Questi
 
 /** 已确认过方向或已有成稿时，再次发起 planDraft 即为方向重设。 */
 export function isDirectionReset(
-  state: Pick<SessionState, "_askUserCompleted" | "doc" | "legacySections">,
+  state: {
+    _askUserCompleted?: boolean;
+    doc?: { content: readonly unknown[]; [key: string]: unknown };
+    legacySections: readonly unknown[];
+  },
 ): boolean {
   return state._askUserCompleted === true || hasCanonicalDoc(state);
 }

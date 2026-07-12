@@ -2,18 +2,9 @@ import { countDocVisibleChars, countVisibleChars, type PmDoc } from "@qingagent/
 import type { Command, ReviewOutcome, ReviewOutcomeHunk } from "@qingagent/contract-ts";
 import { validateCommand } from "../../../system/validators";
 import type { DocDimensions } from "./docDimensions";
-import type { NativePresentationRun } from "./nativeDiffAnimation";
 import type { AppliedPatch, ToolCallSpec, ViewDocumentSnapshot } from "./protocol";
-import { canEditDocument } from "./workspacePageView";
-import type { PatchMeta, PatchMetaChange } from "../components/DocumentSnapshotView";
-
-export function canUseDocumentEditing(
-  dim: DocDimensions,
-  viewingVersion: number | null,
-  presentationRun: NativePresentationRun | null,
-): boolean {
-  return canEditDocument(dim, viewingVersion) && !presentationRun;
-}
+import type { PatchMeta, PatchMetaChange } from "./patchMeta";
+export { canUseDocumentEditing } from "./workspacePageView";
 
 function reviewPatchVisibleChangeChars(patch: ToolCallSpec): number {
   if (patch.body.kind !== "docSuggestion") return 0;

@@ -1,6 +1,5 @@
 import type { DocDimensions } from "./docDimensions";
-import { canUseDocumentEditing } from "./reviewActions";
-import { workspaceVisualState } from "./workspacePageView";
+import { canUseDocumentEditing, workspaceVisualState } from "./workspacePageView";
 
 export interface FindSegment {
   text: string;

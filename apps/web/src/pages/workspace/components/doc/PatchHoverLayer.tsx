@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
-import type { PatchMeta } from "../DocumentSnapshotView";
+import type { PatchMeta } from "../../data/patchMeta";
 import {
   PatchFormatPopup,
   PatchStatePopup,

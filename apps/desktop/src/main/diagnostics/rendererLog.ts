@@ -7,8 +7,8 @@ const transports = new Map<string, ReturnType<typeof createRollingConsoleTranspo
 export function attachRendererDiagnostics(contents: WebContents, logDir: string): void {
   const transport = rendererTransport(logDir);
 
-  contents.on("console-message", (_event, ...args: unknown[]) => {
-    const parsed = parseConsoleMessageArgs(args);
+  contents.on("console-message", (event, ...args: unknown[]) => {
+    const parsed = parseConsoleMessageArgs([event, ...args]) ?? parseConsoleMessageArgs(args);
     if (!parsed || (parsed.level !== "warning" && parsed.level !== "error")) return;
     transport.write(parsed.level === "error" ? "error" : "warn", [
       formatRendererConsoleLine({
@@ -69,7 +69,7 @@ function rendererTransport(logDir: string): ReturnType<typeof createRollingConso
   return created;
 }
 
-function parseConsoleMessageArgs(args: unknown[]): {
+export function parseConsoleMessageArgs(args: unknown[]): {
   level: "warning" | "error" | "info" | "debug";
   message: string;
   sourceId?: string;

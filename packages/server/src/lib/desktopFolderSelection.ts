@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename } from "node:path";
@@ -86,7 +87,7 @@ export async function countFolderFiles(
 
   async function walk(dir: string): Promise<void> {
     if (capped) return;
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries: Dirent<string>[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {

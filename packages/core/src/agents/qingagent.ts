@@ -1,6 +1,7 @@
 import { Agent, type ToolsInput } from "@mastra/core/agent";
 import { Workspace, LocalFilesystem } from "@mastra/core/workspace";
 import { access, readdir } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { planDraftTool } from "../tools/planDraft.js";
 import { askUserQuestionTool } from "../tools/askUserQuestion.js";
@@ -123,7 +124,7 @@ async function hasSkillFile(dir: string): Promise<boolean> {
 }
 
 async function collectSkillDirs(root: string): Promise<string[]> {
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent<string>[];
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {

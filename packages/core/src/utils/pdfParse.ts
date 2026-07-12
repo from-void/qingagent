@@ -21,9 +21,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function loadPdfParseConstructor(): Promise<PdfParseConstructor> {
   const mod = await import("pdf-parse");
-  const defaultExport = isRecord(mod) ? mod.default : undefined;
+  const moduleRecord: Record<string, unknown> = mod;
+  const defaultExport = moduleRecord.default;
   const PDFParse =
-    (isRecord(mod) ? mod.PDFParse : undefined) ??
+    moduleRecord.PDFParse ??
     (isRecord(defaultExport) ? defaultExport.PDFParse : undefined) ??
     defaultExport;
 

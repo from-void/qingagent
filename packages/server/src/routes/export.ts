@@ -93,8 +93,8 @@ async function renderExport(
   }
 }
 
-function toUint8Array(buffer: Buffer): Uint8Array {
-  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength) as Uint8Array<ArrayBuffer>;
 }
 
 function errorMessage(err: unknown): string {

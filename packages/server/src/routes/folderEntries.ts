@@ -139,8 +139,8 @@ function contentTypeForPath(path: string): string {
   }
 }
 
-function toBytes(content: string | Buffer): Uint8Array {
-  return typeof content === "string" ? Buffer.from(content) : content;
+function toBytes(content: string | Buffer): Uint8Array<ArrayBuffer> {
+  return (typeof content === "string" ? Buffer.from(content) : content) as Uint8Array<ArrayBuffer>;
 }
 
 folderEntriesRoutes.get("/sessions/:sessionId/folder-sources/:folderId/entries", async (c) => {

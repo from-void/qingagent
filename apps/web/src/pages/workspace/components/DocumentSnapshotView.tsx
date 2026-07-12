@@ -18,7 +18,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
+import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
 import { findDraggableBlock, type MovableBlock } from "./ColumnDnD";
@@ -331,7 +331,7 @@ export const DocumentSnapshotView = forwardRef<
         data-version={doc.version}
         spellCheck={false}
       >
-        {doc.pmDoc?.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)}
+        {doc.pmDoc ? flattenNestedTablesInCells(doc.pmDoc).content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />) : null}
       </article>
       {/* 审阅态(静态补丁路径,editable=false)也把落款这块奶白纸提前占好位:
           内容(署名文字/印章)以占位态隐藏、不跑入场动画,只把高度预留出来。
@@ -868,7 +868,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       chunkSize: timing.chunkSize,
       maxDurationMs: timing.totalDurationMs,
     });
-    const finalContent = presentationRun.finalDoc ?? doc.pmDoc;
+    const rawFinalContent = presentationRun.finalDoc ?? doc.pmDoc;
+    const finalContent = rawFinalContent ? flattenNestedTablesInCells(rawFinalContent) : undefined;
     const finalHtml = viewSectionsToHtml(presentationRun.finalSections);
     const seedHtml = viewSectionsToHtml(buildNativePresentationSeedSections(presentationRun));
 

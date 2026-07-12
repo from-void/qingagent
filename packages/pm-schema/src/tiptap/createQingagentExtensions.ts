@@ -1,6 +1,7 @@
 import { Extension, InputRule, Mark, Node, type AnyExtension } from "@tiptap/core";
 import type { Node as PmModelNode } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
+import { Plugin } from "@tiptap/pm/state";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -127,6 +128,7 @@ export function createQingagentExtensions(options: {
     TableRow,
     TableHeaderWithBackground,
     TableCellWithBackground,
+    RejectNestedTableTransactions,
     DedupeBlockIds,
     // 占位符(对齐飞书):空标题显示"几级标题",空文档首段给一句轻提示;其余空块返回空串不显示,
     // 避免每个空行都冒字。showOnlyWhenEditable 默认 true,只读快照视图不显示。
@@ -205,6 +207,29 @@ const TableHeaderWithBackground = TableHeader.extend({
       ...this.parent?.(),
       ...tableCellBackgroundAttribute,
     };
+  },
+});
+
+function hasNestedTable(doc: PmModelNode): boolean {
+  let nested = false;
+  doc.descendants((node) => {
+    if (node.type.spec.tableRole !== "cell" && node.type.spec.tableRole !== "header_cell") return !nested;
+    node.descendants((child) => {
+      if (child.type.spec.tableRole === "table") nested = true;
+      return !nested;
+    });
+    return !nested;
+  });
+  return nested;
+}
+
+const RejectNestedTableTransactions = Extension.create({
+  name: "rejectNestedTableTransactions",
+
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      filterTransaction: (transaction) => !transaction.docChanged || !hasNestedTable(transaction.doc),
+    })];
   },
 });
 

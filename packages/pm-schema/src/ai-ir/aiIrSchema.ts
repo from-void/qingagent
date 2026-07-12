@@ -95,10 +95,24 @@ export type AiBlock =
   | { type: "blockMath"; latex: string }
   | { type: "diagram"; lang: string; source: string; svg?: string | null };
 
+function aiBlockContainsTable(block: AiBlock): boolean {
+  if (block.type === "table") return true;
+  if (block.type === "bulletList" || block.type === "orderedList") {
+    return block.items.some((item) => item.children?.some(aiBlockContainsTable));
+  }
+  if (block.type === "taskList") {
+    return block.items.some((item) => item.children?.some(aiBlockContainsTable));
+  }
+  if (block.type === "columnList") {
+    return block.columns.some((column) => column.blocks.some(aiBlockContainsTable));
+  }
+  return false;
+}
+
 export const aiTableCellSchema: z.ZodType<AiTableCell> = z.lazy(() =>
   z.object({
     blocks: z.array(aiBlockSchema).refine(
-      (blocks) => blocks.every((block) => block.type !== "table"),
+      (blocks) => blocks.every((block) => !aiBlockContainsTable(block)),
       { message: "table cell blocks must not contain table" },
     ),
     header: z.boolean().optional(),

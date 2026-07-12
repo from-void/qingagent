@@ -40,6 +40,21 @@ describe("aiIrRoundTrip", () => {
     }).success).toBe(false);
   });
 
+  it("AI-IR table cell 不接受列表 children 内的递归 table", () => {
+    expect(aiTableCellSchema.safeParse({
+      blocks: [{
+        type: "bulletList",
+        items: [{
+          runs: [{ text: "外层" }],
+          children: [{
+            type: "table",
+            rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "nested" }] }] }] }],
+          }],
+        }],
+      }],
+    }).success).toBe(false);
+  });
+
   it("compiles AI-IR to valid PM and back without schemaVersion/blockId in the IR", () => {
     const ir: AiDocument = {
       title: "示例",

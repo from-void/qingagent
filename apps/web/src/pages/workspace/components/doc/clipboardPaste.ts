@@ -130,9 +130,14 @@ export function handleQingagentPaste(
   const slice = !html && text ? parsePlainTextClipboard(text, view) : parsedSlice ?? null;
   if (isTextSelectionInsideTableCell(view) && sliceContainsTable(slice)) {
     if (handleTablePaste(view, event, slice!)) return true;
-    const flattened = parsePlainTextClipboard(flattenSliceForTableCell(slice!), view);
-    if (!flattened) return false;
     event.preventDefault();
+    // Excel/飞书通常自带完整 TSV；优先用它，避免从 HTML slice 二次提取时损失换行与空格。
+    const fallbackText = text || flattenSliceForTableCell(slice!);
+    const flattened = parsePlainTextClipboard(fallbackText, view);
+    if (!flattened) {
+      onToast?.("粘贴的表格没有可插入的文本内容");
+      return true;
+    }
     view.dispatch(view.state.tr.replaceSelection(flattened).scrollIntoView());
     return true;
   }
@@ -172,22 +177,30 @@ function sliceContainsTable(slice: Slice | null): boolean {
 function flattenSliceForTableCell(slice: Slice): string {
   const parts: string[] = [];
   slice.content.forEach((node) => parts.push(flattenNodeForTableCell(node)));
-  return parts.filter(Boolean).join("\n");
+  return parts.join("\n");
 }
 
 function flattenNodeForTableCell(node: ProseMirrorNode): string {
   if (node.type.spec.tableRole === "table") return tableText(node);
   if (node.isText) return node.text ?? "";
+  if (node.type.name === "hardBreak") return "\n";
+  if (node.type.name === "image") {
+    return String(node.attrs.alt ?? node.attrs.caption ?? node.attrs.title ?? node.attrs.src ?? "[图片]");
+  }
+  if (node.type.name === "fileAttachment") {
+    return String(node.attrs.filename ?? "[附件]");
+  }
+  if (node.isAtom) return node.textContent || `[${node.type.name}]`;
   const parts: string[] = [];
   node.forEach((child) => parts.push(flattenNodeForTableCell(child)));
-  return parts.filter(Boolean).join(node.isTextblock ? "" : "\n");
+  return parts.join(node.isTextblock ? "" : "\n");
 }
 
 function tableText(table: ProseMirrorNode): string {
   const rows: string[] = [];
   table.forEach((row) => {
     const cells: string[] = [];
-    row.forEach((cell) => cells.push(cell.textContent));
+    row.forEach((cell) => cells.push(flattenNodeForTableCell(cell)));
     rows.push(cells.join("\t"));
   });
   return rows.join("\n");

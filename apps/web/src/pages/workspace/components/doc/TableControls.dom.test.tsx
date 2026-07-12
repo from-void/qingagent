@@ -736,7 +736,8 @@ describe("TableControls AI 修改", () => {
     await act(async () => alignment?.click());
     const alignmentMenu = toolbar?.querySelector('[role="menu"]');
     expect(alignmentMenu?.textContent).toContain("左对齐居中右对齐");
-    const centerAlignment = [...(alignmentMenu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    expect(alignmentMenu?.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toContain("左对齐");
+    const centerAlignment = [...(alignmentMenu?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])]
       .find((item) => item.textContent?.includes("居中"));
     await act(async () => centerAlignment?.click());
     expect(editor.isActive({ textAlign: "center" })).toBe(true);

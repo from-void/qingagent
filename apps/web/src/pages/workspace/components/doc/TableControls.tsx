@@ -675,16 +675,17 @@ export function TableControls({ editor, onAiModify, onToast }: {
             className="dt-btn"
             data-table-structure={structureMode}
             title={structureMode === "split" ? "拆分单元格" : "合并单元格"}
+            aria-label={structureMode === "split" ? "拆分单元格" : "合并单元格"}
             disabled={!canMergeCells && !canSplitCell}
             onClick={() => applyTableToolbarStructure(editor, structureMode === "split" ? "splitCell" : "mergeCells")}
           ><TableStructureIcon mode={structureMode} /></button>
           {selRows ? null : (
-            <button className="dt-btn" title="删除列" onClick={() => deleteAxis("column")} style={{ color: "var(--mark)" }}>
+            <button className="dt-btn" title="删除列" aria-label="删除列" onClick={() => deleteAxis("column")} style={{ color: "var(--mark)" }}>
               <DeleteTableAxisIcon axis="column" />
             </button>
           )}
           {selCols ? null : (
-            <button className="dt-btn" title="删除行" onClick={() => deleteAxis("row")} style={{ color: "var(--mark)" }}>
+            <button className="dt-btn" title="删除行" aria-label="删除行" onClick={() => deleteAxis("row")} style={{ color: "var(--mark)" }}>
               <DeleteTableAxisIcon axis="row" />
             </button>
           )}
@@ -693,6 +694,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
             <button
               className="dt-btn"
               title={`对齐方式：${alignmentLabel(currentAlignment)}`}
+              aria-label={`对齐方式：${alignmentLabel(currentAlignment)}`}
               aria-haspopup="menu"
               aria-expanded={openTableMenu === "align"}
               disabled={!toolbarUnlock.table}
@@ -703,9 +705,9 @@ export function TableControls({ editor, onAiModify, onToast }: {
             </button>
             {openTableMenu === "align" ? (
               <div className="dt-menu" role="menu">
-                <TableAlignmentMenuItem mode="left" onPick={() => fmtSel("alignLeft")} />
-                <TableAlignmentMenuItem mode="center" onPick={() => fmtSel("alignCenter")} />
-                <TableAlignmentMenuItem mode="right" onPick={() => fmtSel("alignRight")} />
+                <TableAlignmentMenuItem mode="left" current={currentAlignment === "left"} onPick={() => fmtSel("alignLeft")} />
+                <TableAlignmentMenuItem mode="center" current={currentAlignment === "center"} onPick={() => fmtSel("alignCenter")} />
+                <TableAlignmentMenuItem mode="right" current={currentAlignment === "right"} onPick={() => fmtSel("alignRight")} />
               </div>
             ) : null}
           </div>
@@ -915,15 +917,18 @@ function alignmentLabel(mode: "left" | "center" | "right"): string {
 
 function TableAlignmentMenuItem({
   mode,
+  current,
   onPick,
 }: {
   mode: "left" | "center" | "right";
+  current: boolean;
   onPick: () => void;
 }) {
   return (
     <div
       className="dt-mi"
-      role="menuitem"
+      role="menuitemradio"
+      aria-checked={current}
       tabIndex={0}
       onClick={onPick}
       onKeyDown={(event) => {

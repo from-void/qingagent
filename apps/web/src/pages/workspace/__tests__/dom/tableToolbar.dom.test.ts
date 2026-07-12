@@ -267,6 +267,31 @@ describe("tableToolbar PM-010", () => {
     }
   });
 
+  it("cell 内 mixed slice 原生覆盖不可用时优先用 text/plain 且始终接管", () => {
+    const editor = createTableEditor();
+    try {
+      editor.commands.setTextSelection(4);
+      const paragraph = editor.schema.node("paragraph", { blockId: "lead" }, editor.schema.text("前言"));
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["html 文本"]]));
+      const slice = new Slice(Fragment.fromArray([paragraph, pastedTable]), 0, 0);
+      const preventDefault = vi.fn();
+      const event = {
+        clipboardData: {
+          files: [],
+          getData: (type: string) => type === "text/html" ? "<p>前言</p><table><tr><td>html 文本</td></tr></table>" : "前言\n剪贴板 TSV",
+        },
+        preventDefault,
+      } as unknown as ClipboardEvent;
+
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(true);
+      expect(preventDefault).toHaveBeenCalled();
+      expect(editor.getText()).toContain("剪贴板 TSV");
+      expect(JSON.stringify(editor.getJSON()).match(/\"type\":\"table\"/g)).toHaveLength(1);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("正文 TextSelection 粘贴表格仍交给默认表格插入路径", () => {
     const editor = new Editor({
       extensions: createQingagentExtensions(),

@@ -84,6 +84,43 @@ describe("schemaSync", () => {
     expect(schema.nodes.tableCell!.spec.content).not.toBe("block+");
     expect(() => PMNode.fromJSON(schema, nestedTableDoc).check()).toThrow();
   });
+
+  it("cell 内经列表递归嵌入 table 仍被 validator 与编辑事务拒绝", async () => {
+    const inner = {
+      type: "table",
+      attrs: { blockId: "inner" },
+      content: [{ type: "tableRow", content: [{ type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "inner-p" } }] }] }],
+    };
+    const nestedBlock = {
+      type: "bulletList",
+      attrs: { blockId: "list" },
+      content: [{ type: "listItem", attrs: { blockId: "item" }, content: [{ type: "paragraph", attrs: { blockId: "item-p" } }, inner] }],
+    };
+    const nestedDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: "outer" },
+        content: [{ type: "tableRow", content: [{ type: "tableCell", content: [nestedBlock] }] }],
+      }],
+    };
+    expect(safeParsePmDoc(nestedDoc).success).toBe(false);
+
+    const { Editor } = await import("@tiptap/core");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "before" }, content: [{ type: "text", text: "保留" }] }] },
+    });
+    try {
+      editor.commands.setContent(nestedDoc);
+      expect(editor.getText()).toBe("保留");
+      expect(JSON.stringify(editor.getJSON())).not.toContain('"blockId":"inner"');
+    } finally {
+      editor.destroy();
+    }
+  });
 });
 
 describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", () => {

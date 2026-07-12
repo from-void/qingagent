@@ -190,6 +190,7 @@ import {
   sendReviewOutcomeFollowup,
   shouldCloseMaterialPreviewForReview,
   shouldDispatchManualDocSavedForWriteResult,
+  shouldRetainPresentationRun,
   shouldSuppressPresentationRun,
 } from "./data/reviewActions";
 export {
@@ -203,6 +204,7 @@ export {
   sendReviewOutcomeFollowup,
   shouldCloseMaterialPreviewForReview,
   shouldDispatchManualDocSavedForWriteResult,
+  shouldRetainPresentationRun,
   shouldSuppressPresentationRun,
 } from "./data/reviewActions";
 import {
@@ -1614,20 +1616,20 @@ export function WorkspacePage() {
   useEffect(() => {
     setPresentationRun((run) => {
       if (!run) return run;
-      if (reducedMotion) return null;
-      if (run.docVersion !== state.doc?.version) return null;
-      if (
-        dim.editor !== "editable" &&
-        !dim.agentBusy &&
-        !state.streamActive &&
-        dim.content.kind !== "pendingReview"
-      ) {
-        return null;
-      }
-      if (run.sessionId !== state.sessionId) return null;
-      return run;
+      // generation_finished 会先交付终稿并清 busy，随后服务端才可能完成异步标题生成、
+      // 投影 editing。这个窗口里 docState 仍是 drafting，editor 因而暂时 locked；
+      // 不能据此清掉刚 staged 的同版本 presentationRun，否则 effect cleanup 会在
+      // 第一帧后直接回灌成品。run 自身由完成/取消回调或 watchdog 收口；这里只清理
+      // 真正失配的版本、会话与 reduced-motion 情形。
+      return shouldRetainPresentationRun({
+        reducedMotion,
+        runDocVersion: run.docVersion,
+        currentDocVersion: state.doc?.version ?? null,
+        runSessionId: run.sessionId,
+        currentSessionId: state.sessionId,
+      }) ? run : null;
     });
-  }, [dim, reducedMotion, state.doc?.version, state.sessionId, state.streamActive]);
+  }, [reducedMotion, state.doc?.version, state.sessionId]);
 
   // Create the server stream once. We use a ref-based approach so
   // StrictMode's cleanup/re-mount cycle does NOT dispose the stream

@@ -1,6 +1,6 @@
 import { SpanType } from "@mastra/core/observability";
 import type { Span } from "@mastra/core/observability";
-import { getObservability } from "../mastra.js";
+import { getObservability } from "./runtime.js";
 
 const PROMPT_SUMMARY_MAX_BYTES = 2048;
 

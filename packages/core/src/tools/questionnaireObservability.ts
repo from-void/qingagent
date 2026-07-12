@@ -1,6 +1,6 @@
 import { SpanType } from "@mastra/core/observability";
-import { getObservability } from "../mastra.js";
 import { deriveSessionTraceId } from "../observability/innerLlmSpan.js";
+import { getObservability } from "../observability/runtime.js";
 
 type QuestionnaireToolContext = {
   requestContext?: { get?: (key: string) => unknown };

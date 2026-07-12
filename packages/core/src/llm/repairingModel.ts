@@ -1,6 +1,5 @@
 import { ModelRouterLanguageModel, type OpenAICompatibleConfig } from "@mastra/core/llm";
-import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
-import { writeDraftInputSchema } from "../tools/writeDraft.js";
+import { editDraftInputSchema, writeDraftInputSchema } from "./draftToolSchemas.js";
 import { guardBeforeProviderCall } from "./prefixCacheGuard.js";
 import { repairToolCallJson } from "./repairToolCallJson.js";
 import { resolveDeepseekRouterModelId } from "./modelConfig.js";

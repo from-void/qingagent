@@ -4,6 +4,9 @@ import type { MastraCompositeStore } from "@mastra/core/storage";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { qingagentAgent } from "./agents/qingagent.js";
+import { registerObservabilityEntrypoint } from "./observability/runtime.js";
+
+export { getObservability } from "./observability/runtime.js";
 
 /**
  * Central Mastra instance -- registers the qingagent agent with LibSQL storage.
@@ -51,24 +54,6 @@ export function getMemory(): Memory {
 }
 
 /**
- * The observability entrypoint registered via `configureObservability()`.
- * Kept module-scoped so other backend code (e.g. the stream bridge) can fetch
- * the default tracing instance to emit custom spans — notably Layer ③ 模型
- * response 落库. Stays `null` in the desktop bundle, which never calls
- * `configureObservability`, so observability remains an opt-in side path.
- */
-let observabilityEntrypoint: ObservabilityEntrypoint | null = null;
-
-/**
- * Returns the configured observability entrypoint, or `null` when observability
- * was never wired (e.g. the Electron desktop bundle). Callers MUST treat this as
- * optional and never let a missing instance affect the main request path.
- */
-export function getObservability(): ObservabilityEntrypoint | null {
-  return observabilityEntrypoint;
-}
-
-/**
  * Attach observability (tracing, structured logging, sensitive-data filtering)
  * to the shared Mastra instance. Call this once at server startup -- before any
  * agent invocations -- to wire in DuckDB-backed composite storage and the
@@ -86,7 +71,7 @@ export function configureObservability(opts: {
 
   // Expose the entrypoint to the rest of the backend (e.g. agentSpans'
   // llm_response span) via getObservability().
-  observabilityEntrypoint = opts.observability;
+  registerObservabilityEntrypoint(opts.observability);
 
   // The Mastra instance above is constructed WITHOUT observability so that
   // @mastra/duckdb's native bindings never enter core's dependency tree (they

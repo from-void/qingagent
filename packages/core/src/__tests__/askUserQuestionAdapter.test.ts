@@ -6,7 +6,7 @@ const observabilityMocks = vi.hoisted(() => ({
   startSpan: vi.fn(),
 }));
 
-vi.mock("../mastra.js", () => ({
+vi.mock("../observability/runtime.js", () => ({
   getObservability: () => ({
     getDefaultInstance: () => ({
       startSpan: observabilityMocks.startSpan.mockReturnValue({ end: observabilityMocks.end }),

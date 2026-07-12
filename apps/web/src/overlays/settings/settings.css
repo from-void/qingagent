@@ -250,7 +250,7 @@
 .qj-sheet-body .sk-subhead{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:0 6px 11px 0;border-bottom:1px solid var(--qj-tag-border)}
 .qj-sheet-body .sk-back{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 13px 0 9px;border-radius:0;cursor:pointer;border:1px solid var(--qj-switch-border);background:transparent;color:var(--qj-ink);font:inherit;font-size:12px;font-weight:700;font-family:var(--font-zh-serif)}
 .qj-sheet-body .sk-back:hover{background:var(--qj-switch-active-bg);border-color:var(--qj-cinnabar)}
-.qj-sheet-body .sk-back-arrow{font-size:17px;line-height:1;color:var(--qj-cinnabar)}
+.qj-sheet-body .sk-back-arrow{font-size:17px;line-height:1;color:var(--qj-cinnabar);transform:translateY(-1.5px)}
 .qj-sheet-body .sk-subtitle{font-family:var(--font-zh-serif);font-size:14px;font-weight:700;color:var(--qj-ink)}
 .qj-sheet-body .sk-detail-hero{display:flex;align-items:center;gap:11px;margin:0 6px 12px 0}
 .qj-sheet-body .sk-detail-hero .sk-card-icon{width:22px;height:22px}

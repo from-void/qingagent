@@ -704,7 +704,9 @@
   display:inline-flex;align-items:center;padding:1px 7px;border:1px solid var(--qj-switch-border);
   border-radius:999px;font-size:9.5px;line-height:1.5;color:var(--qj-header-sub);white-space:nowrap;
 }
-.qj-sheet-body .cn-badge--connected{border-color:var(--qj-cinnabar);color:var(--qj-cinnabar)}
+/* 已连接用绿:连接感要一眼可辨(与技能卡「已启用」的绿点同族),不随金调。 */
+.qj-sheet-body .cn-badge--connected{border-color:rgba(94,184,125,.55);color:#7fd49b;background:rgba(94,184,125,.1)}
+.qj-sheet-body .cn-badge--connected::before{content:"";width:5px;height:5px;border-radius:999px;background:#5eb87d;margin-right:5px}
 .qj-sheet-body .cn-badge--pending{background:var(--qj-switch-active-bg);color:var(--qj-ink)}
 .qj-sheet-body .cn-badge--needs_reauth{border-color:var(--qj-seal-red-deep);color:var(--qj-cinnabar-lite)}
 .cn-unofficial{font-size:9.5px;color:var(--qj-header-sub)}

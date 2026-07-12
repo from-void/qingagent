@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 async function loadApp() {
   vi.resetModules();
-  vi.doMock("../bridge/bridgeHandler", () => ({
+  vi.doMock("../gateway/bridgeHandler", () => ({
     findMaterial: vi.fn(() => null),
     getSession: vi.fn(() => null),
     parseOrigin: vi.fn(() => "manual"),
@@ -197,7 +197,7 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
   afterEach(() => {
     delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
     delete process.env.QINGAGENT_ENABLE_DEBUG;
-    vi.doUnmock("../bridge/bridgeHandler");
+    vi.doUnmock("../gateway/bridgeHandler");
     vi.doUnmock("@qingagent/core");
     vi.resetModules();
   });

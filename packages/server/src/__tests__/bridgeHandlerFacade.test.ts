@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as bridge from "../bridge/bridgeHandler";
+import * as bridge from "../gateway/bridgeHandler";
 
 describe("bridgeHandler facade", () => {
   it("保留拆分前的运行时导出", () => {

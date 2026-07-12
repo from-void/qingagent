@@ -54,11 +54,11 @@ async function loadBridge() {
     };
   });
 
-  return await import("../bridge/bridgeHandler");
+  return await import("../gateway/bridgeHandler");
 }
 
 async function createCachedSession(
-  bridge: typeof import("../bridge/bridgeHandler"),
+  bridge: typeof import("../gateway/bridgeHandler"),
 ): Promise<NonNullable<ReturnType<typeof bridge.getSession>>> {
   const frames = await collectFrames(
     bridge.handleCommand({

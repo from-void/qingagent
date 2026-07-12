@@ -39,7 +39,7 @@ async function loadBridge() {
     };
   });
 
-  const bridge = await import("../bridge/bridgeHandler");
+  const bridge = await import("../gateway/bridgeHandler");
   return {
     bridge,
     commitDocumentOp,
@@ -50,7 +50,7 @@ async function loadBridge() {
 }
 
 async function createDraftSession(
-  bridge: typeof import("../bridge/bridgeHandler"),
+  bridge: typeof import("../gateway/bridgeHandler"),
 ): Promise<NonNullable<ReturnType<typeof bridge.getSession>>> {
   const frames = await collectFrames(
     bridge.handleCommand({

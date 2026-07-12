@@ -30,13 +30,13 @@ async function loadBridge() {
     deleteUploadedFile,
   }));
 
-  const bridge = await import("../bridge/bridgeHandler");
+  const bridge = await import("../gateway/bridgeHandler");
   const core = await import("@qingagent/core");
   return { bridge, schedulePersist, deleteUploadedFile, core };
 }
 
 async function createSession(
-  bridge: typeof import("../bridge/bridgeHandler"),
+  bridge: typeof import("../gateway/bridgeHandler"),
 ): Promise<NonNullable<ReturnType<typeof bridge.getSession>>> {
   const frames = await collectFrames(
     bridge.handleCommand({

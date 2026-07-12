@@ -10,7 +10,7 @@ vi.mock("@qingagent/core", async () => {
   return { ...actual, listHomeSessionThreads };
 });
 
-vi.mock("../bridge/bridgeHandler", () => ({
+vi.mock("../gateway/bridgeHandler", () => ({
   sessionManager: { disposeSession: vi.fn(async () => undefined) },
 }));
 

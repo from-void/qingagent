@@ -11,7 +11,7 @@ vi.mock("@qingagent/core", async () => {
   };
 });
 
-import { handleCommand } from "../bridge/bridgeHandler";
+import { handleCommand } from "../gateway/bridgeHandler";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];

@@ -6,7 +6,7 @@
 // 连接-断开压测,直接断言两类资源归零。
 import { describe, expect, it } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../bridge/bridgeHandler";
+import { sessionManager } from "../gateway/bridgeHandler";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

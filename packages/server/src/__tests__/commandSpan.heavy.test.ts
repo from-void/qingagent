@@ -21,7 +21,7 @@ async function loadBridgeWithFakeObservability(
   } = {},
 ): Promise<{
   spans: FakeSpan[];
-  bridge: typeof import("../bridge/bridgeHandler");
+  bridge: typeof import("../gateway/bridgeHandler");
 }> {
   vi.resetModules();
   const spans: FakeSpan[] = [];
@@ -53,7 +53,7 @@ async function loadBridgeWithFakeObservability(
     };
   });
 
-  const bridge = await import("../bridge/bridgeHandler");
+  const bridge = await import("../gateway/bridgeHandler");
   return { spans, bridge };
 }
 

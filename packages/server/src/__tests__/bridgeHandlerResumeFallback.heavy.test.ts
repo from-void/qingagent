@@ -176,11 +176,11 @@ async function loadBridge() {
     };
   });
 
-  return await import("../bridge/bridgeHandler");
+  return await import("../gateway/bridgeHandler");
 }
 
 async function createCachedSession(
-  bridge: typeof import("../bridge/bridgeHandler"),
+  bridge: typeof import("../gateway/bridgeHandler"),
 ): Promise<NonNullable<ReturnType<typeof bridge.getSession>>> {
   const frames = await collectFrames(
     bridge.handleCommand({
@@ -196,7 +196,7 @@ async function createCachedSession(
 }
 
 function seedSuspendedAskUserSession(
-  session: NonNullable<ReturnType<typeof import("../bridge/bridgeHandler").getSession>>,
+  session: NonNullable<ReturnType<typeof import("../gateway/bridgeHandler").getSession>>,
   runId: string,
   streamId = `restored:${runId}`,
   toolName: "askUser" | "planDraft" | "askUserQuestion" = "askUser",

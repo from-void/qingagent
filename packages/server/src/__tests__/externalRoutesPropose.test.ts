@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
 import { getDocumentsClient } from "@qingagent/core";
-import { getOrRestoreSession, sessionManager } from "../bridge/bridgeHandler";
+import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 
 const dirs: string[] = [];

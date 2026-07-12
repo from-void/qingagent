@@ -19,7 +19,7 @@ import {
 import { z } from "zod";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
-import { refreshBrowserFolderSourceFileCountsForBridgeConnection } from "../bridge/bridgeHandler";
+import { refreshBrowserFolderSourceFileCountsForBridgeConnection } from "../gateway/bridgeHandler";
 
 const HEADER_SESSION_ID = "x-qingagent-session-id";
 const HEADER_FOLDER_ID = "x-qingagent-folder-id";

@@ -45,7 +45,7 @@ vi.mock("../../../core/src/agents/qingagent.js", () => ({
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 let tempDir = "";
-let bridge: typeof import("../bridge/bridgeHandler");
+let bridge: typeof import("../gateway/bridgeHandler");
 let core: typeof import("@qingagent/core");
 let resetDocumentsClientForTest: () => void;
 let resetDocumentsSchemaForTest: () => void;
@@ -131,7 +131,7 @@ beforeAll(async () => {
   resetDocumentsSchemaForTest = core.__resetMigrationsForTest;
   resetDocumentsClientForTest();
   resetDocumentsSchemaForTest();
-  bridge = await import("../bridge/bridgeHandler");
+  bridge = await import("../gateway/bridgeHandler");
 });
 
 afterAll(async () => {

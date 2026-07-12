@@ -13,9 +13,9 @@ import {
   sessionManager,
   collectRestoreFrames,
   sessionExists,
-} from "../bridge/bridgeHandler";
-import type { LoggedFrame } from "../bridge/frameLog";
-import { SessionActorCommandError } from "../bridge/sessionActor";
+} from "../gateway/bridgeHandler";
+import type { LoggedFrame } from "../gateway/frameLog";
+import { SessionActorCommandError } from "../gateway/sessionActor";
 import {
   updatePatchVerdict,
   commitPatches as commitPatchesBridge,

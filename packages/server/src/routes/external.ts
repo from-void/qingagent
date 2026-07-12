@@ -13,8 +13,8 @@ import {
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
-import { getOrRestoreSession, sessionManager } from "../bridge/bridgeHandler";
-import type { LoggedFrame } from "../bridge/frameLog";
+import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import type { LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
 
 export const externalRoutes = new Hono();

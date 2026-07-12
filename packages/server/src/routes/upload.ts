@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { findMaterial } from "../bridge/bridgeHandler";
+import { findMaterial } from "../gateway/bridgeHandler";
 import { UPLOAD_DIR, findOrStoreUploadedFile, isValidUploadId, isWithinUploadDir } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";

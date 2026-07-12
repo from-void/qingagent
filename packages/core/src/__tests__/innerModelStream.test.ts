@@ -92,6 +92,8 @@ describe("streamInnerModel", () => {
       return { ok: true, text: "甲乙", finishReason: "stop", attempts: 1, toolCallRetries: 0 };
     });
     const deltas: string[] = [];
+    const starts: number[] = [];
+    let activities = 0;
 
     const result = await streamInnerModel({
       callSite: "writeDraft",
@@ -102,10 +104,14 @@ describe("streamInnerModel", () => {
       thinking: false,
       temperature: 0.4,
       maxTokens: 4096,
+      onActivity: () => { activities += 1; },
+      onContentStart: (ms) => starts.push(ms),
       onContentDelta: (_delta, raw) => deltas.push(raw),
     });
 
     expect(result).toMatchObject({ raw: "甲乙", finishReason: "stop" });
+    expect(activities).toBe(2);
+    expect(starts).toHaveLength(1);
     expect(deltas).toEqual(["甲乙"]);
     expect(branchCallMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionSnapshot: snapshot,

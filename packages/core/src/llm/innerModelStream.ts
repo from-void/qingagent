@@ -24,6 +24,8 @@ export interface InnerModelStreamCall {
   abortSignal?: AbortSignal;
   maxRetries?: number;
   maxTokens?: number;
+  /** 每次上游流有活动时触发；与只触发一次的内容启动事件分离。 */
+  onActivity?: () => void;
   onContentStart?: (elapsedMs: number) => void;
   onContentDelta?: (delta: string, raw: string) => void;
   /** 有主链快照时优先借道；失败则原样回退下面的 streamText 请求。 */
@@ -57,10 +59,9 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       temperature: input.temperature,
       maxTokens: input.maxTokens,
       onActivity: () => {
+        input.onActivity?.();
         if (contentStartMs === null) {
           contentStartMs = Date.now() - startedAt;
-          input.onContentStart?.(contentStartMs);
-        } else {
           input.onContentStart?.(contentStartMs);
         }
       },
@@ -115,6 +116,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
   let contentStartMs: number | null = null;
   let finishReason: string | null = null;
   for await (const part of result.fullStream) {
+    input.onActivity?.();
     if (part.type === "error") {
       throw part.error instanceof Error ? part.error : new Error(String(part.error));
     }

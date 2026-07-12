@@ -28,6 +28,8 @@
     "pm:css:check": "node scripts/pm-css-check.mjs",
     "lint:skills": "node scripts/check-skill-scripts.mjs",
     "export:matrix": "pnpm --filter @qingagent/doc-render test -- export-format-matrix"
+    ,"external-contract:generate": "pnpm --filter @qingagent/contract-ts generate:external"
+    ,"external-contract:check": "pnpm --filter @qingagent/contract-ts check:external"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",

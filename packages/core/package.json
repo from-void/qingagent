@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.85",
-    "@ai-sdk/anthropic-v5": "npm:@ai-sdk/anthropic@^2.0.85",
     "@ai-sdk/openai-compatible": "^1.0.42",
     "@libsql/client": "^0.15.15",
     "@mastra/agent-browser": "0.4.0",

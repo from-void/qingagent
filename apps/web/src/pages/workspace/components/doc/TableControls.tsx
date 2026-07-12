@@ -680,12 +680,12 @@ export function TableControls({ editor, onAiModify, onToast }: {
             onClick={() => applyTableToolbarStructure(editor, structureMode === "split" ? "splitCell" : "mergeCells")}
           ><TableStructureIcon mode={structureMode} /></button>
           {selRows ? null : (
-            <button className="dt-btn" title="删除列" aria-label="删除列" onClick={() => deleteAxis("column")} style={{ color: "var(--mark)" }}>
+            <button className="dt-btn dt-btn-danger" title="删除列" aria-label="删除列" onClick={() => deleteAxis("column")}>
               <DeleteTableAxisIcon axis="column" />
             </button>
           )}
           {selCols ? null : (
-            <button className="dt-btn" title="删除行" aria-label="删除行" onClick={() => deleteAxis("row")} style={{ color: "var(--mark)" }}>
+            <button className="dt-btn dt-btn-danger" title="删除行" aria-label="删除行" onClick={() => deleteAxis("row")}>
               <DeleteTableAxisIcon axis="row" />
             </button>
           )}
@@ -876,7 +876,7 @@ function TableColorGrid({
 
 function TableStructureIcon({ mode }: { mode: "merge" | "split" }) {
   return (
-    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="dt-svg dt-svg-thin" viewBox="0 0 16 16" aria-hidden="true">
       <rect x="2" y="3" width="12" height="10" />
       <path d="M8 3v10" />
       {mode === "merge" ? (
@@ -890,7 +890,7 @@ function TableStructureIcon({ mode }: { mode: "merge" | "split" }) {
 
 function DeleteTableAxisIcon({ axis }: { axis: "row" | "column" }) {
   return (
-    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="dt-svg dt-svg-thin" viewBox="0 0 16 16" aria-hidden="true">
       <rect x="2" y="2.5" width="9" height="11" />
       <path d={axis === "column" ? "M6.5 2.5v11" : "M2 8h9"} />
       <path d="M12.2 6.2l2.8 2.8M15 6.2L12.2 9" />
@@ -905,7 +905,7 @@ function AlignmentIcon({ mode }: { mode: "left" | "center" | "right" }) {
       ? [[2, 4, 12], [5, 7, 9], [2, 10, 12], [7, 13, 7]]
       : [[2, 4, 12], [3.5, 7, 9], [2, 10, 12], [4.5, 13, 7]];
   return (
-    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="dt-svg dt-svg-thin" viewBox="0 0 16 16" aria-hidden="true">
       {lines.map(([x, y, width]) => <path key={`${x}-${y}`} d={`M${x} ${y}h${width}`} />)}
     </svg>
   );

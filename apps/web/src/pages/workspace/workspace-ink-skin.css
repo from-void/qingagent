@@ -1086,6 +1086,19 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
   box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.3);
 }
+#view-workspace .askuser-overlay[data-portal="true"],
+#view-workspace .auq-lightbox-panel {
+  --mark: #b59a63;
+  --ink-1: #ece3d0;
+  --ink-2: rgba(236, 227, 208, 0.64);
+  --ink-3: rgba(236, 227, 208, 0.44);
+  --ink-4: rgba(236, 227, 208, 0.3);
+  --line-1: rgba(184, 169, 140, 0.16);
+  --line-2: rgba(184, 169, 140, 0.28);
+  --bg-canvas: rgba(17, 20, 19, 0.98);
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+}
 /* 审批操作条(patch-nav / 整篇审 wdr-nav)统一成深色风格,和问卷条(askuser-overlay)一致。
    它挂在右侧文档区(.ws-right),原本走 base 浅色令牌(--bg-subtle 暖白 / --line-2 浅描边),
    且 .ws-right 没有覆盖 --mark → 整条上的 var(--mark) 会落到 ui-kit base 的暗红 #b15059

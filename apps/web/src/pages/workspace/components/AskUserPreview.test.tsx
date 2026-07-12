@@ -77,6 +77,26 @@ describe("AskUserPreview", () => {
     expect(host?.querySelector(".pm-diagram-error")?.textContent).toContain(source);
   });
 
+  it("点击 Mermaid 打开放大层，Esc 与点外关闭", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    const source = "flowchart TD\nA-->B";
+    await render(`\`\`\`mermaid\n${source}\n\`\`\``);
+
+    await click(host!.querySelector<HTMLElement>(".auq-preview-diagram")!);
+    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).not.toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
+
+    await click(host!.querySelector<HTMLElement>(".auq-preview-diagram")!);
+    await click(workspace.querySelector<HTMLElement>(".auq-lightbox")!);
+    expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
+    workspace.remove();
+  });
+
   it("按 Unicode code point 截断到 800 后追加省略号", () => {
     const source = "你".repeat(ASK_USER_PREVIEW_MAX_CODE_POINTS + 1);
     const truncated = truncateAskUserPreview(source);
@@ -92,5 +112,12 @@ async function render(markdown: string): Promise<void> {
   root = createRoot(host);
   await act(async () => {
     root?.render(<AskUserPreview markdown={markdown} />);
+  });
+}
+
+async function click(element: HTMLElement): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
 }

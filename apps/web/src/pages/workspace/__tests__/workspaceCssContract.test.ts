@@ -160,6 +160,10 @@ describe("workspaceCssContract", () => {
       path.join(repoRoot, "apps/web/src/pages/workspace/WorkspacePage.tsx"),
       "utf8",
     );
+    const askUserOverlay = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/AskUserOverlay.tsx"),
+      "utf8",
+    );
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     const inkSkinCss = readFileSync(
       path.join(repoRoot, "apps/web/src/pages/workspace/workspace-ink-skin.css"),
@@ -186,6 +190,12 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("-webkit-appearance:none;appearance:none;width:100%;height:34px;background:transparent;");
     expect(workspaceCss).toContain("#view-workspace .aus2-bubble{");
     expect(inkSkinCss).toContain("#view-workspace .aus2-scale span[data-hit=\"true\"]");
+    expect(workspaceCss).toContain("#view-workspace .askuser-portal-anchor{");
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.askuser-overlay\[data-portal="true"\]\{[\s\S]*left:var\(--au-portal-left\);[\s\S]*bottom:var\(--au-portal-bottom\)/,
+    );
+    expect(askUserOverlay).toContain('document.getElementById("view-workspace")');
+    expect(askUserOverlay).toContain("anchorRef.current?.getBoundingClientRect()");
   });
 
   it("keeps material text preview as auto-height paper scrolled by ws-right", () => {

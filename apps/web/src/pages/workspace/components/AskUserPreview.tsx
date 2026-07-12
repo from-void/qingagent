@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { markdownToPm, type PmBlockNode } from "@qingagent/pm-schema";
 import { MermaidPreview } from "./MermaidPreview";
 import { PmBlockView } from "./doc/PmStaticView";
@@ -53,6 +54,7 @@ export function filterAskUserPreviewNodes(nodes: readonly PmBlockNode[]): Previe
 }
 
 export function AskUserPreview({ markdown }: { markdown: string }) {
+  const [lightboxSource, setLightboxSource] = useState<string | null>(null);
   const parsed = useMemo(() => {
     const safeMarkdown = truncateAskUserPreview(markdown);
     try {
@@ -66,22 +68,67 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
     }
   }, [markdown]);
 
+  useEffect(() => {
+    if (!lightboxSource) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxSource(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lightboxSource]);
+
+  const portalTarget = typeof document === "undefined"
+    ? null
+    : document.getElementById("view-workspace");
+
   return (
     <div className="auq-preview-doc wf-doc" data-wf="AskUserPreview">
       {parsed.fallback !== null ? (
         <pre className="auq-preview-fallback">{parsed.fallback}</pre>
       ) : parsed.nodes.map((node, index) =>
         node.type === "diagram" ? (
-          <div className="pm-diagram" data-pm-node="diagram" key={node.attrs.blockId ?? index}>
+          <button
+            type="button"
+            className="pm-diagram auq-preview-diagram"
+            data-pm-node="diagram"
+            aria-label="放大查看流程图"
+            key={node.attrs.blockId ?? index}
+            onClick={() => setLightboxSource(node.attrs.source)}
+          >
             <MermaidPreview
               source={node.attrs.source}
               lang="mermaid"
               readOnly
             />
-          </div>
+          </button>
         ) : (
           <PmBlockView key={node.attrs.blockId ?? index} node={node} />
         ),
+      )}
+      {lightboxSource && portalTarget && createPortal(
+        <div
+          className="auq-lightbox"
+          data-wf="AskUserPreviewLightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="流程图放大预览"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setLightboxSource(null);
+          }}
+        >
+          <div className="auq-lightbox-panel">
+            <button
+              type="button"
+              className="auq-lightbox-close"
+              aria-label="关闭放大预览"
+              onClick={() => setLightboxSource(null)}
+            >
+              ×
+            </button>
+            <MermaidPreview source={lightboxSource} lang="mermaid" readOnly />
+          </div>
+        </div>,
+        portalTarget,
       )}
     </div>
   );

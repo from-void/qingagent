@@ -1,4 +1,4 @@
-import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
+import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
 import { mastra } from "../mastra.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
@@ -11,7 +11,7 @@ import {
   transitionAndProjectDocState,
 } from "./docStateSync.js";
 import { DRAFT_TOOL_JSON_RETRY_NOTICE } from "./draftToolArgs.js";
-import { chatMessageAppended } from "./frames.js";
+import { chatMessageAppended, toolCallUpdated } from "./frames.js";
 import { settleDraftCandidate } from "./settleDraftCandidate.js";
 import {
   appendPartToChatHistory,
@@ -28,6 +28,36 @@ import { schedulePersist } from "./threadPersistence.js";
 import { endToolIoSpan } from "./toolIoSpans.js";
 
 const logger = mastra.getLogger();
+
+function failPendingToolCallsAfterTimeout(
+  context: AgentStreamTurnContext,
+): Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> {
+  const pendingIds = new Set(context.toolIoSpans.keys());
+  const updates: Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> = [];
+  if (pendingIds.size === 0) return updates;
+
+  for (const message of context.state.chatHistory) {
+    for (let index = 0; index < message.parts.length; index += 1) {
+      const part = message.parts[index]!;
+      if (
+        part.kind !== "toolCall" ||
+        !pendingIds.has(part.data.id) ||
+        (part.data.status.kind !== "pending" && part.data.status.kind !== "running")
+      ) {
+        continue;
+      }
+      const reason = "工具长时间未返回结果，本轮已中止";
+      const spec: ToolCallSpec = {
+        ...part.data,
+        status: { kind: "failed", data: { retriable: true, reason } },
+        result: part.data.result ?? { kind: "genericText", data: reason },
+      };
+      message.parts[index] = { kind: "toolCall", data: spec };
+      updates.push({ messageId: message.id, toolCallId: spec.id, spec });
+    }
+  }
+  return updates;
+}
 
 export async function* finalizeAgentStream(
   context: AgentStreamTurnContext,
@@ -98,6 +128,12 @@ export async function* finalizeAgentStream(
     yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
   }
 
+  if (context.sawIdleTimeout) {
+    for (const update of failPendingToolCallsAfterTimeout(context)) {
+      yield toolCallUpdated(update.messageId, update.toolCallId, update.spec);
+      outcome.producedVisibleFrame = true;
+    }
+  }
   for (const [toolCallId, span] of context.toolIoSpans) {
     endToolIoSpan(span, { status: "streamEndedWithoutResult" }, false, {
       status: "streamEndedWithoutResult",

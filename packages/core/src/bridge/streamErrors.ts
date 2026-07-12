@@ -7,6 +7,12 @@ import type { AgentStreamErrorEvent } from "./agentStreamEvents.js";
 export const USER_ABORT_REASON = "user_abort";
 export const IDLE_TIMEOUT_ABORT_REASON = "idle_timeout";
 
+export interface IdleTimeoutOptions<T> {
+  /** 连续只有 heartbeat 时允许维持主流的最长时间。 */
+  heartbeatOnlyTimeoutMs?: number;
+  isHeartbeat?: (chunk: T) => boolean;
+}
+
 export function isUserAbortSignal(signal: AbortSignal): boolean {
   return signal.aborted && signal.reason !== IDLE_TIMEOUT_ABORT_REASON;
 }
@@ -15,19 +21,43 @@ export async function* withIdleTimeout<T>(
   source: AsyncIterable<T>,
   timeoutMs: number,
   onTimeout: () => void,
+  options: IdleTimeoutOptions<T> = {},
 ): AsyncGenerator<T | AgentStreamErrorEvent> {
   const iterator = source[Symbol.asyncIterator]();
   let timedOut = false;
+  let heartbeatOnlySince: number | null = null;
+  const idleTimeoutSignal = Symbol("idle-timeout");
+  const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
   try {
     for (;;) {
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const timeout = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), timeoutMs);
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+      const idleTimeout = new Promise<typeof idleTimeoutSignal>((resolve) => {
+        idleTimer = setTimeout(() => resolve(idleTimeoutSignal), timeoutMs);
       });
       const next = iterator.next();
-      const raced = await Promise.race([next, timeout]);
-      if (timer) clearTimeout(timer);
-      if (raced === "timeout") {
+      const races: Array<
+        Promise<IteratorResult<T> | typeof idleTimeoutSignal | typeof heartbeatTimeoutSignal>
+      > = [next, idleTimeout];
+      if (
+        heartbeatOnlySince !== null &&
+        options.heartbeatOnlyTimeoutMs !== undefined
+      ) {
+        const remainingMs = Math.max(
+          0,
+          options.heartbeatOnlyTimeoutMs - (Date.now() - heartbeatOnlySince),
+        );
+        races.push(new Promise<typeof heartbeatTimeoutSignal>((resolve) => {
+          heartbeatTimer = setTimeout(
+            () => resolve(heartbeatTimeoutSignal),
+            remainingMs,
+          );
+        }));
+      }
+      const raced = await Promise.race(races);
+      if (idleTimer) clearTimeout(idleTimer);
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      if (raced === idleTimeoutSignal || raced === heartbeatTimeoutSignal) {
         timedOut = true;
         // 竞态护栏:timeout 赢了,挂起的 next 还在跑;吞掉它后续可能的 reject,
         // 否则上游在 abort 后才报错会变成 unhandledRejection。
@@ -40,12 +70,18 @@ export async function* withIdleTimeout<T>(
           type: "error",
           payload: {
             idleTimeout: true,
+            heartbeatOnly: raced === heartbeatTimeoutSignal,
             error: new Error("agent stream idle timeout"),
           },
         };
         return;
       }
       if (raced.done) return;
+      if (options.isHeartbeat?.(raced.value)) {
+        heartbeatOnlySince ??= Date.now();
+      } else {
+        heartbeatOnlySince = null;
+      }
       yield raced.value;
     }
   } finally {

@@ -2127,14 +2127,15 @@
   #view-workspace .tbl-dot:hover .tbl-dot-mark{display:block}
 
   /* guide line on dot hover — clipped to table size via --tbl-guide */
+  /* z-index:-1 让指示线沉到按钮不透明底之下,避免贯穿加号(按钮自身是 stacking context,不会漏到页面层)。 */
   #view-workspace .tbl-dot-col:hover::after{
-    content:"";position:absolute;top:50%;left:50%;
+    content:"";position:absolute;top:50%;left:50%;z-index:-1;
     width:1px;height:var(--tbl-guide,100px);
     background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateX(-50%);
     pointer-events:none;
   }
   #view-workspace .tbl-dot-row:hover::after{
-    content:"";position:absolute;top:50%;left:50%;
+    content:"";position:absolute;top:50%;left:50%;z-index:-1;
     height:1px;width:var(--tbl-guide,200px);
     background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateY(-50%);
     pointer-events:none;

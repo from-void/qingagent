@@ -89,16 +89,23 @@ describe("MediaZoomFullscreen", () => {
       const content = document.body.querySelector<HTMLElement>(".media-zoom-content")!;
       // 静止:不能常驻 will-change:transform(否则内容上合成层 → 矢量 SVG 被栅格化 → 全屏发糊)。
       expect(content.style.willChange === "transform").toBe(false);
-      // 开始拖拽平移:挂上 will-change 让平移顺滑。
+      expect(viewport.classList.contains("is-panning")).toBe(false);
+      // 仅按下还不进入拖拽态；实际移动超过阈值后才挂合成层与 grabbing 光标。
       await act(async () => {
         viewport.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
       });
+      expect(viewport.classList.contains("is-panning")).toBe(false);
+      await act(async () => {
+        viewport.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 }));
+      });
       expect(content.style.willChange).toBe("transform");
+      expect(viewport.classList.contains("is-panning")).toBe(true);
       // 松手:撤掉,回到矢量清晰。
       await act(async () => {
         viewport.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, button: 0 }));
       });
       expect(content.style.willChange === "transform").toBe(false);
+      expect(viewport.classList.contains("is-panning")).toBe(false);
     } finally {
       rafSpy.mockRestore();
       await act(async () => {

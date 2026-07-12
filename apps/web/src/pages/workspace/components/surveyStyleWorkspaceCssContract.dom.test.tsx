@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 const inkSkinCss = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"), "utf8");
+const workspaceCss = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
 
 describe("survey style workspaceCssContract", () => {
   it("在 WebKit 引擎恢复自定义细滚动条，同时保留 Firefox 标准属性", () => {
@@ -28,5 +29,12 @@ describe("survey style workspaceCssContract", () => {
     expect(inkSkinCss).toMatch(
       /\.askuser-card--answers \.askuser-card-a\s*\{[\s\S]*?white-space:\s*normal;[\s\S]*?overflow:\s*visible;[\s\S]*?text-overflow:\s*clip;[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?text-align:\s*right;[\s\S]*?\}/,
     );
+  });
+
+  it("纸底预览控件用深墨色，问卷正文与底部输入各自留在视口预算内", () => {
+    expect(inkSkinCss).toMatch(/\.askuser-overlay \.auq-preview-fullscreen\s*\{[^}]*color:\s*#6b5836/s);
+    expect(workspaceCss).toMatch(/\.askuser-overlay\s*\{[^}]*max-height:calc\(100dvh - 24px\);[^}]*overflow:hidden/s);
+    expect(workspaceCss).toMatch(/\.au-body-scroll\{[^}]*flex:1 1 auto;[^}]*overflow:hidden/s);
+    expect(workspaceCss).toMatch(/\.auq-other-wrap\{[^}]*flex:0 0 auto;[^}]*padding:8px 15px 0/s);
   });
 });

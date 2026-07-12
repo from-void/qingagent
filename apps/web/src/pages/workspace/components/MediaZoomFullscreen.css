@@ -45,11 +45,12 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  cursor: grab;
+  cursor: default;
   touch-action: none;
 }
 
-.media-zoom-viewport:active {
+.media-zoom-viewport.is-panning,
+.media-zoom-viewport.is-panning .media-zoom-content {
   cursor: grabbing;
 }
 
@@ -66,7 +67,7 @@
   /* 全屏预览所见即所得:用文档纸米黄 #efe7d6 作底,等于图嵌进正文后的真实观感 */
   background: var(--bg-paper-deep);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-  cursor: default;
+  cursor: grab;
   /* 不在这里常驻 will-change:transform —— 那会把内容常驻合成层、把矢量 SVG 栅格化,
    * 默认(scale=1)全屏看图表就发糊(用户反馈"全屏甘特图还是有点模糊")。
    * 改为仅在拖拽平移时由组件内联挂 will-change,静止/缩放后保持矢量清晰。 */

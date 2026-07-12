@@ -432,10 +432,8 @@ export function AskUserOverlay({
                   key={currentQuestion.id}
                   question={currentQuestion}
                   answer={answers[currentQuestion.id] ?? emptyAnswer()}
-                  customActive={customActive[currentQuestion.id] === true}
                   onSingle={setSingle}
                   onMulti={toggleMulti}
-                  onOtherText={setOtherText}
                 />
               )}
             </div>
@@ -443,6 +441,15 @@ export function AskUserOverlay({
         </div>
         <div className="au-edge au-edge-bottom" data-show={!scrollEdge.bottom} aria-hidden="true" />
       </div>
+
+      {currentQuestion && currentQuestion.kind.kind !== "slider" && currentQuestion.kind.kind !== "text" && (
+        <ChoiceQuestionOtherField
+          question={currentQuestion}
+          answer={answers[currentQuestion.id] ?? emptyAnswer()}
+          customActive={customActive[currentQuestion.id] === true}
+          onOtherText={setOtherText}
+        />
+      )}
 
       <div className="au-foot">
         <Button variant="ghost" size="small" onClick={onAbort}>手动输入</Button>
@@ -508,17 +515,13 @@ function otherPlaceholder(kind: AskUserQuestion["kind"]["kind"]): string {
 function ChoiceQuestionFields({
   question,
   answer,
-  customActive,
   onSingle,
   onMulti,
-  onOtherText,
 }: {
   question: AskUserQuestion;
   answer: AskUserAnswer;
-  customActive: boolean;
   onSingle: (qid: string, value: string) => void;
   onMulti: (qid: string, value: string) => void;
-  onOtherText: (qid: string, value: string) => void;
 }) {
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const hasPreview = question.options.some((option) => Boolean(option.preview?.trim()));
@@ -529,9 +532,6 @@ function ChoiceQuestionFields({
     ?? selectedPreview
     ?? question.options.find((option) => Boolean(option.preview?.trim()));
   const hasDescriptions = question.options.some((option) => Boolean(option.description?.trim()));
-  const customHasText = (answer.freeText ?? "").trim().length > 0;
-  const customIsEffective = question.kind.kind === "multi" ? customHasText : customActive && customHasText;
-
   const options = (
     <div
       className={hasDescriptions ? "auq-options" : "au-opts"}
@@ -572,24 +572,41 @@ function ChoiceQuestionFields({
           </div>
         </div>
       ) : options}
-      <div className="auq-other-wrap">
-        <input
-          className="au-other"
-          type="text"
-          placeholder={otherPlaceholder(question.kind.kind)}
-          value={answer.freeText ?? ""}
-          data-active={customIsEffective ? "true" : "false"}
-          onChange={(event) => onOtherText(question.id, event.target.value)}
-        />
-        <div className="auq-other-state" aria-live="polite">
-          {question.kind.kind === "single" && customIsEffective
-            ? "以自定义内容作答（点击任一选项可切回）"
-            : question.kind.kind === "multi" && customHasText
-              ? "自定义内容将随所选项一并提交"
-              : ""}
-        </div>
-      </div>
     </>
+  );
+}
+
+function ChoiceQuestionOtherField({
+  question,
+  answer,
+  customActive,
+  onOtherText,
+}: {
+  question: AskUserQuestion;
+  answer: AskUserAnswer;
+  customActive: boolean;
+  onOtherText: (qid: string, value: string) => void;
+}) {
+  const customHasText = (answer.freeText ?? "").trim().length > 0;
+  const customIsEffective = question.kind.kind === "multi" ? customHasText : customActive && customHasText;
+  return (
+    <div className="auq-other-wrap">
+      <input
+        className="au-other"
+        type="text"
+        placeholder={otherPlaceholder(question.kind.kind)}
+        value={answer.freeText ?? ""}
+        data-active={customIsEffective ? "true" : "false"}
+        onChange={(event) => onOtherText(question.id, event.target.value)}
+      />
+      <div className="auq-other-state" aria-live="polite">
+        {question.kind.kind === "single" && customIsEffective
+          ? "以自定义内容作答（点击任一选项可切回）"
+          : question.kind.kind === "multi" && customHasText
+            ? "自定义内容将随所选项一并提交"
+            : ""}
+      </div>
+    </div>
   );
 }
 

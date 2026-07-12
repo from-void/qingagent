@@ -35,6 +35,7 @@ export function MediaZoomFullscreen({
     startY: number;
     originX: number;
     originY: number;
+    moved: boolean;
   } | null>(null);
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   // 仅拖拽平移期间挂 will-change:transform(合成层让拖拽顺滑);静止/缩放后撤掉,
@@ -134,7 +135,7 @@ export function MediaZoomFullscreen({
       </div>
       <div
         ref={viewportRef}
-        className="media-zoom-viewport"
+        className={`media-zoom-viewport${panning ? " is-panning" : ""}`}
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) onClose();
         }}
@@ -150,22 +151,27 @@ export function MediaZoomFullscreen({
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
-          setPanning(true);
           dragRef.current = {
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
             originX: transform.x,
             originY: transform.y,
+            moved: false,
           };
         }}
         onPointerMove={(event) => {
           const drag = dragRef.current;
           if (!drag || drag.pointerId !== event.pointerId) return;
+          const deltaX = event.clientX - drag.startX;
+          const deltaY = event.clientY - drag.startY;
+          if (!drag.moved && Math.hypot(deltaX, deltaY) < 3) return;
+          drag.moved = true;
+          setPanning(true);
           setTransform((current) => ({
             ...current,
-            x: drag.originX + event.clientX - drag.startX,
-            y: drag.originY + event.clientY - drag.startY,
+            x: drag.originX + deltaX,
+            y: drag.originY + deltaY,
           }));
         }}
         onPointerUp={(event) => {

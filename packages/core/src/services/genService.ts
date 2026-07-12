@@ -2,13 +2,13 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { streamText } from "ai";
 import { extractJsonArray } from "../utils/extractJsonArray.js";
 import {
-  branchCall,
   getDeepseekModel,
   getSessionSnapshot,
   resolveModelParams,
   type BranchMessage,
   type SessionSnapshot,
 } from "../llm/modelConfig.js";
+import { runSideChannel } from "../llm/sideChannel.js";
 import { repairModelJson } from "../llm/repairToolCallJson.js";
 
 export interface GeneratedQuestion {
@@ -391,10 +391,10 @@ ${currentQuestionSummary(input)}
 要求：问题应覆盖尚未涉及的方面且不重复已有问题；id 为 q-extra-{简短英文主题}；kind 只能是 single/multi/text；选择题不超过 4 个选项；文本题 options 为空数组；使用中文。`;
 }
 
-async function runBranch(
+function prepareBranch(
   input: GenerateQuestionsInput,
   snapshot: SessionSnapshot,
-): Promise<{ questions: GeneratedQuestion[] | null; failure: string | null; toolCallRetries: number }> {
+): { steeringTail: BranchMessage[]; progressState: { signature: string } } {
   pruneQuestionBranches();
   const prompt = input.mode === "initial" ? initialPrompt(input) : additionalPrompt(input);
   let steeringTail: BranchMessage[] = [{ role: "user", content: prompt }];
@@ -404,38 +404,7 @@ async function runBranch(
       steeringTail = [...history.messages, { role: "user", content: prompt }];
     }
   }
-  const progressState = { signature: "" };
-  let lastPartial: GeneratedQuestion[] = [];
-  const result = await branchCall({
-    sessionSnapshot: snapshot,
-    steeringTail,
-    callSite: input.mode === "initial" ? "planDraft" : "askMore",
-    requestContext: input.requestContext,
-    abortSignal: input.abortSignal,
-    streamTextDeltas: true,
-    onTextDelta: async (_delta, accumulated) => {
-      const partial = parsePartialGeneratedQuestions(accumulated);
-      if (partial.length > 0) lastPartial = partial;
-      await emitQuestionProgress(input, partial, progressState);
-    },
-  });
-  if (!result.ok) {
-    return { questions: null, failure: result.reason, toolCallRetries: result.toolCallRetries };
-  }
-  const questions = parseGeneratedQuestions(result.text) ?? lastPartial;
-  if (questions.length === 0) {
-    return { questions: null, failure: "invalid_questions", toolCallRetries: result.toolCallRetries };
-  }
-  const branchMessages = [...steeringTail, result.assistantMessage];
-  questionBranches.delete(snapshot.sessionId);
-  questionBranches.set(snapshot.sessionId, {
-    generation: snapshot.generation,
-    epoch: snapshot.epoch,
-    messages: branchMessages,
-    touchedAt: Date.now(),
-  });
-  await emitQuestionProgress(input, questions, progressState);
-  return { questions, failure: null, toolCallRetries: result.toolCallRetries };
+  return { steeringTail, progressState: { signature: "" } };
 }
 
 async function runFallback(input: GenerateQuestionsInput): Promise<GeneratedQuestion[]> {
@@ -496,29 +465,45 @@ function rememberFallbackQuestions(
 export async function generateQuestions(input: GenerateQuestionsInput): Promise<GenerateQuestionsResult> {
   if (input.abortSignal?.aborted) throw new DOMException("Question generation aborted", "AbortError");
   const snapshot = getSessionSnapshot(input.requestContext);
-  let branchFailure: string | null = snapshot ? null : "snapshot_unavailable";
-  let toolCallRetries = 0;
-  if (snapshot) {
-    const branched = await runBranch(input, snapshot);
-    if (input.abortSignal?.aborted) throw new DOMException("Question generation aborted", "AbortError");
-    branchFailure = branched.failure;
-    toolCallRetries = branched.toolCallRetries;
-    if (branched.questions) {
-      return {
-        questions: branched.questions,
-        transport: "branch",
-        branchFailure: null,
-        toolCallRetries,
-      };
-    }
+  const prepared = snapshot ? prepareBranch(input, snapshot) : null;
+  let lastPartial: GeneratedQuestion[] = [];
+  let branchText = "";
+  const result = await runSideChannel({
+    callSite: input.mode === "initial" ? "planDraft" : "askMore",
+    requestContext: input.requestContext,
+    steeringTail: prepared?.steeringTail ?? (input.mode === "initial" ? initialPrompt(input) : additionalPrompt(input)),
+    abortSignal: input.abortSignal,
+    streamTextDeltas: true,
+    onTextDelta: async (_delta, accumulated) => {
+      const partial = parsePartialGeneratedQuestions(accumulated);
+      if (partial.length > 0) lastPartial = partial;
+      if (prepared) await emitQuestionProgress(input, partial, prepared.progressState);
+    },
+    parse: (text) => {
+      branchText = text;
+      const questions = parseGeneratedQuestions(text) ?? lastPartial;
+      return questions.length > 0 ? questions : null;
+    },
+    fallback: async () => {
+      const questions = await runFallback(input);
+      if (snapshot) rememberFallbackQuestions(snapshot, input, questions);
+      return questions;
+    },
+  });
+  if (result.transport === "branch" && snapshot && prepared) {
+    questionBranches.delete(snapshot.sessionId);
+    questionBranches.set(snapshot.sessionId, {
+      generation: snapshot.generation,
+      epoch: snapshot.epoch,
+      messages: [...prepared.steeringTail, { role: "assistant", content: branchText }],
+      touchedAt: Date.now(),
+    });
+    await emitQuestionProgress(input, result.value, prepared.progressState);
   }
-  console.warn(`[genService] fallback engaged reason=${branchFailure ?? "unknown"} snapshot=${!!snapshot}`);
-  const fallbackQuestions = await runFallback(input);
-  if (snapshot) rememberFallbackQuestions(snapshot, input, fallbackQuestions);
   return {
-    questions: fallbackQuestions,
-    transport: "fallback",
-    branchFailure,
-    toolCallRetries,
+    questions: result.value,
+    transport: result.transport,
+    branchFailure: result.branchFailure,
+    toolCallRetries: result.toolCallRetries,
   };
 }

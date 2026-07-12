@@ -41,6 +41,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
   const snapshot = input.branchSteeringTail ? getSessionSnapshot(input.requestContext) : null;
   let branchAttempts = 0;
   if (snapshot && input.branchSteeringTail) {
+    // SIDECHANNEL_PHASE2_EXEMPT: fallback attempt 必须叠加 branch attempts；统一入口当前不暴露该计数。
     let contentStartMs: number | null = null;
     const branched = await branchCall({
       sessionSnapshot: snapshot,
@@ -79,6 +80,9 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
         ? input.abortSignal.reason
         : new DOMException("Inner model branch aborted", "AbortError");
     }
+    console.warn(
+      `[sideChannel] site=${input.callSite} fallback engaged reason=${branched.reason} snapshot=true`,
+    );
   }
   const protocol = resolveProtocol(input.requestContext);
   const result = streamText({

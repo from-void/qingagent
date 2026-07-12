@@ -44,6 +44,8 @@ function github(state: ConnectorState, reasonCode: string | null = null): Connec
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-12T09:00:00.000Z"));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -57,6 +59,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("ConnectionsPanel", () => {

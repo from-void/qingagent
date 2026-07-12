@@ -2103,9 +2103,10 @@
   }
 
   /* edge dots — small circles between col/row borders */
+  /* 默认态保持低调:透明底无描边只见 ::before 小点;不透明纸底只给 hover 态(+号),避免一排白圈扎眼。 */
   #view-workspace .tbl-dot{
     width:16px;height:16px;border-radius:50%;
-    box-sizing:border-box;border:1px solid var(--line-2);background:var(--bg-canvas);color:var(--mark);
+    box-sizing:border-box;border:1px solid transparent;background:transparent;color:var(--mark);
     cursor:pointer;z-index:100020;
     display:flex;align-items:center;justify-content:center;
     transform:translate(-50%,-50%);

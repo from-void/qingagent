@@ -136,14 +136,17 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content > \.table-header-overlay__table\{\s*margin:0;/);
   });
 
-  it("插入圆点使用不透明纸底与 1px 双向指示线", () => {
+  it("插入圆点默认态低调透明,hover 态不透明纸底与 1px 双向指示线", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     const dotRule = cssRule(workspaceCss, "#view-workspace .tbl-dot");
+    const dotHoverRule = cssRule(workspaceCss, "#view-workspace .tbl-dot:hover");
     const columnGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-col:hover::after");
     const rowGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-row:hover::after");
 
-    expect(dotRule).toContain("border:1px solid var(--line-2)");
-    expect(dotRule).toContain("background:var(--bg-canvas)");
+    // 默认态不许有可见底/描边(用户五轮半反馈:一排白圈扎眼);不透明底只属于 hover 态。
+    expect(dotRule).toContain("border:1px solid transparent");
+    expect(dotRule).toContain("background:transparent");
+    expect(dotHoverRule).toContain("background:var(--bg-paper-deep)");
     expect(columnGuideRule).toContain("width:1px");
     expect(rowGuideRule).toContain("height:1px");
   });

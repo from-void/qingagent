@@ -19,7 +19,7 @@ product code and quality-gate scripts live here.
 | `packages/server` | Hono HTTP service (`:8080`) |
 | `apps/web` | Vite + React SPA (`:5173`, proxies `/api` → `:8080`) |
 | `apps/desktop` | Electron shell |
-| others | `contract-ts` (hand-maintained contracts) / `ui-kit` / `stream-source` / `mocks` / `chinese-masonry` |
+| others | `contract-ts` (hand-maintained contracts) / `ui-kit` / `pm-schema` / `diagram-engine` / `qa-cli` / `chinese-masonry` (homepage gallery rendering) |
 
 Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `README.md`.
 
@@ -126,10 +126,3 @@ Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `R
   CI/workflow permissions. These need explicit human authorization.
 - MUST NOT run two machines on the same branch concurrently. Commit and push
   first; on the other side clear any stale state, then `pull`.
-
-## 4. Background
-
-The project started as Rust + TS, then was rewritten to pure TypeScript (Mastra).
-It was once driven by an A/B/C/D stage model plus a capsule / cross-review
-heavyweight process; it is now a **single-repo, continuous full-stack lightweight
-flow**.

@@ -1,5 +1,5 @@
 // Command validator — runs at command dispatch (UI before send).
-// Stateless; mirrors `crates/agent-contract/src/validate.rs::validate_command`.
+// 无状态，是 command 运行时校验的唯一真源。
 //
 import type { ChatChip, Command, ResourceRef, SendMessage } from "@qingagent/contract-ts";
 import { safeParsePmDoc } from "@qingagent/pm-schema";

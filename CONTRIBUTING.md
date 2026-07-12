@@ -54,7 +54,3 @@ apps/web 的测试分默认与 DOM 两套,`pnpm --filter @qingagent/web test` �
 - Bug 报告请带:复现步骤、期望/实际行为、版本或 commit、必要日志截图(用 issue 模板)。
 - 安全漏洞**不要**走公开 issue,发 security@qingagent.com(见 [SECURITY.md](./SECURITY.md))。
 - PR 描述用中文,说明动机与验证方式;保持单一主题,大改动建议先开 issue 讨论。
-
-## 历史背景
-
-仓库早期为 Rust + TS 混合架构,后整体改写为纯 TypeScript;历史设计材料不随公开源码发布。

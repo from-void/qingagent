@@ -12,7 +12,7 @@
 <!-- 候选主图之一:新建页(新起一卷)。工作台流式成稿/审核 diff/导出效果等过程图,
      可自行起服务(pnpm dev / dev:server)后补拍替换,占位见下。 -->
 
-qingagent is a local-first AI writing workbench for Chinese long-form content: chat-driven drafting, reviewable AI edits with per-change accept/reject, and high-fidelity export. Self-host it with a single DeepSeek API key, or grab the desktop app.
+qingagent is a local-first AI writing workbench for Chinese long-form content: chat-driven drafting, reviewable AI edits with per-change accept/reject, and high-fidelity export. Get the desktop app for the primary experience, or run it from source with a single DeepSeek API key.
 
 ## 为什么是青简
 
@@ -20,7 +20,7 @@ qingagent is a local-first AI writing workbench for Chinese long-form content: c
 
 **为中文写作而生的排版。** 宋体、暖纸、直角的界面语言,写作过程即所见即所得;导出 PDF/Word 保持同一套观感,写完即交付。
 
-**本地优先,自带钥匙。** 文档与会话存在本机数据库;一把 DeepSeek API Key 即可自托管,不经过任何中间服务器;源码构建零遥测。
+**本地优先,自带钥匙。** 文档与会话存在本机数据库;桌面客户端直接使用你自己的 DeepSeek API Key,不经过任何中间服务器;源码构建零遥测。
 
 ## 功能亮点
 
@@ -31,7 +31,7 @@ qingagent is a local-first AI writing workbench for Chinese long-form content: c
 - **技能系统**:飞书文档/多维表格等集成,输入框 chip 一点即用
 - **观察记忆**:长会话跨几十轮不忘早期细节(可选开启)
 - **高保真导出**:PDF(Chromium 渲染)/ Word / Markdown / HTML
-- **双形态**:桌面客户端(Windows/macOS)与自托管 Web
+- **双形态**:桌面客户端(Windows/macOS)为主,开发者也可从源码运行 Web
 
 **开场问卷收敛需求**——动笔前先问几句,把主题/侧重/文体确认清楚再生成:
 
@@ -39,7 +39,13 @@ qingagent is a local-first AI writing workbench for Chinese long-form content: c
 
 <!-- 待补过程图:审核 diff 逐条采纳 · 素材区解析 · 导出效果对比(起服务后补拍)。 -->
 
-## 快速开始(自托管 Web)
+## 下载桌面客户端（首选）
+
+到 [Releases](https://github.com/from-void/qingagent/releases) 下载 Windows 或 macOS 安装包。macOS 当前提供免签名 zip,首次打开时按系统提示放行。
+
+## 从源码运行（开发者）
+
+源码运行适合开发、走查与验收。若你需要自行托管 Web,也从这里开始。
 
 前置:Node >= 22、pnpm 9、一把 [DeepSeek API Key](https://platform.deepseek.com)。
 
@@ -59,8 +65,6 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 ```
 
 打开 `http://localhost:5173`,新建会话即可开写。
-
-桌面端:到 [Releases](https://github.com/from-void/qingagent/releases) 下载安装包(macOS 为免签名 zip,首次打开按系统提示放行;Docker 部署规划中)。
 
 ## 配置参考
 
@@ -115,9 +119,11 @@ qingagent 是单用户自托管产品,不提供多租户或多用户隔离。信
 
 默认安全边界是本机回环:后端默认只监听 `127.0.0.1`,只允许本机访问;桌面端开箱即是这个形态。要让外部设备或公网访问,必须由部署者显式改配置并承担对应加固责任。
 
+部署边界:会话运行状态保存在单进程内存中,SSE 连接绑定该进程;系统按单实例、单进程设计,不支持多实例横向扩展。文档与版本历史则持久化在本机数据库中。
+
 不要把端口直接暴露到公网且不设置 `QINGAGENT_AUTH_TOKEN`。这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额;如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,还会扩大到在你的机器上执行命令的风险。不要这样做。
 
-推荐的公网形态是:nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。生成 token 示例:
+若你确要将服务暴露到公网,请使用 nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。生成 token 示例:
 
 ```bash
 openssl rand -hex 32

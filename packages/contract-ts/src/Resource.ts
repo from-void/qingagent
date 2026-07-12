@@ -6,9 +6,7 @@ export type Resource = { resourceRef: ResourceRef, displayName: string,
  */
 summary: string, mime: string | null, 
 /**
- * `u64` on the wire. ts-rs would default-map to `bigint`, but
- * serde_json emits a plain number. Override the TS type so the
- * generated contract matches the actual JSON.
+ * Wire 侧语义为 `u64`，TypeScript 侧统一用 `number` 承载。
  */
 byteLen: number | null, createdAt: string, 
 /**

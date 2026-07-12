@@ -1,7 +1,7 @@
 // Frame-ingest validator — runs at the stream boundary on every wire
 // frame the client decodes. Throws on structural / domain violations.
 //
-// Mirrors `crates/agent-contract/src/validate.rs::validate_wire_frame`.
+// Wire 帧运行时校验的唯一真源。
 
 import type {
   ChatChip,

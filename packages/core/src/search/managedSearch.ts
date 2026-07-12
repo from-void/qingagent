@@ -2,7 +2,7 @@ import {
   SETTING_SEARCH_PRIMARY,
   SETTING_SEARCH_PROVIDER_CONFIG,
   getAppSetting,
-} from "../db/appSettingsRepo.js";
+} from "@qingagent/db";
 import { SearchProviderError } from "./errors.js";
 import { MultiSourceSearchProvider, type SearchSource } from "./multiSource.js";
 import type { SearchProvider, SearchResult } from "./provider.js";

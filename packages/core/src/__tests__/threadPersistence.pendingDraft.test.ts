@@ -11,16 +11,16 @@ import {
 import { rehydratePendingDraft } from "../bridge/pendingDraftRehydrate.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
 import { createSession } from "../bridge/sessionState.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
-import { documentRepo } from "../db/documentRepo.js";
-import { getDocumentsClient } from "../db/documentsClient.js";
-import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
-import { listVersions } from "../db/documentVersionRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
+import { documentRepo } from "@qingagent/db";
+import { getDocumentsClient } from "@qingagent/db";
+import { findOpByDocumentVersion } from "@qingagent/db";
+import { listVersions } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();

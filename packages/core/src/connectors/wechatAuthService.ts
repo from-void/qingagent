@@ -1,5 +1,5 @@
-import type { Browser, Page } from "playwright";
-import { browserLaunchCandidates } from "../browser/pool.js";
+import type { Browser, Page } from "@qingagent/doc-render/browser";
+import { browserLaunchCandidates } from "@qingagent/doc-render/browser";
 import {
   saveConnectorCredentialBundle,
 } from "../credentials/credentialsRepo.js";

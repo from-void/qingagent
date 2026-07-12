@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { commitTransaction, getDocumentsClient, withTransaction } from "../db/documentsClient.js";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "../db/__tests__/dbTestUtils.js";
+import { commitTransaction, getDocumentsClient, withTransaction } from "@qingagent/db";
+import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 import { __resetCredentialKeyForTest } from "./crypto.js";
 import {
   ConnectorCredentialCasError,

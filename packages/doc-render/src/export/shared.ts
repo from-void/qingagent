@@ -3,7 +3,7 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { uploadsBaseDir } from "../workspace/uploadsDir.js";
+import { uploadsBaseDir } from "../paths/uploadsDir.js";
 
 export interface ExportOptions {
   title?: string;

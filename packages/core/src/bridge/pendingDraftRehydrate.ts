@@ -5,7 +5,7 @@ import {
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { documentDraftRepo, type DocumentDraftRow } from "../db/documentDraftRepo.js";
+import { documentDraftRepo, type DocumentDraftRow } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { buildDraftDiff } from "./proposalDiff.js";

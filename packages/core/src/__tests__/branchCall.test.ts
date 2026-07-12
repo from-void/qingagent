@@ -2,7 +2,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
-vi.mock("../db/usageRepo.js", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
+vi.mock("@qingagent/db", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
 
 import {
   advanceSessionSnapshotEpoch,

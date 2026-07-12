@@ -3,6 +3,7 @@ import type { ObservabilityEntrypoint } from "@mastra/core/observability";
 import type { MastraCompositeStore } from "@mastra/core/storage";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
+import { setDocRenderLogger } from "@qingagent/doc-render";
 import { qingagentAgent } from "./agents/qingagent.js";
 import { registerObservabilityEntrypoint } from "./observability/runtime.js";
 
@@ -47,6 +48,8 @@ export const mastra = new Mastra({
   storage: store,
   memory: { default: memory },
 });
+
+setDocRenderLogger(mastra.getLogger());
 
 /** Convenience accessor for the default Memory instance. */
 export function getMemory(): Memory {

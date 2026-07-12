@@ -15,8 +15,8 @@ import {
   listCredentialMeta,
   saveCredentialRecord,
 } from "../credentialsRepo.js";
-import { __resetDocumentsClientForTest, getDocumentsClient } from "../../db/documentsClient.js";
-import { __resetMigrationsForTest } from "../../db/migrations.js";
+import { __resetDocumentsClientForTest, getDocumentsClient } from "@qingagent/db";
+import { __resetMigrationsForTest } from "@qingagent/db";
 
 // 沙箱凭据子系统:加密往返 + 加密存储 + env 注入 + 脱敏
 

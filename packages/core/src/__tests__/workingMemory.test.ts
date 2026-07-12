@@ -101,7 +101,8 @@ vi.mock("../skills/enabledStore.js", () => ({
   readDisabledSet: vi.fn(async () => new Set<string>()),
 }));
 
-vi.mock("../browser/agentBrowser.js", () => ({
+vi.mock("@qingagent/doc-render/browser", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@qingagent/doc-render/browser")>()),
   getAgentBrowserTools: () => ({}),
 }));
 

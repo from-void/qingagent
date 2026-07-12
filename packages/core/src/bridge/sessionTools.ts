@@ -17,7 +17,7 @@ import {
 } from "../workspace/protectedFolderSourceTools.js";
 import { createReadDocumentTool, createSearchDocumentsTool } from "../tools/folderDocuments.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
-import { getAgentBrowserTools } from "../browser/agentBrowser.js";
+import { getAgentBrowserTools } from "@qingagent/doc-render/browser";
 import { parseFileTool } from "../tools/parseFile.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
 import { webSearchTool } from "../tools/webSearch.js";

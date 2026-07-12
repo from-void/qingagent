@@ -10,7 +10,7 @@ import {
   type SuggestionRecord,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "../db/__tests__/dbTestUtils.js";
+import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 
 vi.mock("../bridge/commitDocumentOp.js", () => ({
   commitDocumentOp: vi.fn(),

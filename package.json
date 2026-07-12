@@ -27,7 +27,7 @@
     "pm:commit:check": "pnpm --filter @qingagent/core test -- commitDocumentOp",
     "pm:css:check": "node scripts/pm-css-check.mjs",
     "lint:skills": "node scripts/check-skill-scripts.mjs",
-    "export:matrix": "pnpm --filter @qingagent/core test -- export-format-matrix"
+    "export:matrix": "pnpm --filter @qingagent/doc-render test -- export-format-matrix"
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",

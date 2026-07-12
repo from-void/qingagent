@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("../db/usageRepo.js", () => ({ recordUsageEvent: recordUsageEventMock }));
+vi.mock("@qingagent/db", () => ({ recordUsageEvent: recordUsageEventMock }));
 
 const { createUsageMiddleware } = await import("../llm/usageMiddleware.js");
 

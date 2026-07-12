@@ -4,7 +4,7 @@ import { createSession } from "../sessionState.js";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
 
-vi.mock("../../db/usageRepo.js", () => ({
+vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
 }));
 

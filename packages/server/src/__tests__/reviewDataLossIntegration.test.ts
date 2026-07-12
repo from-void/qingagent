@@ -125,7 +125,7 @@ async function updateDoc(sessionId: string, version: number, doc: PmDoc, mutatio
 beforeAll(async () => {
   tempDir = mkdtempSync(join(tmpdir(), "qingagent-review-data-loss-"));
   process.env.DATABASE_URL = `file:${join(tempDir, "documents.db")}`;
-  const documentsClient = await import("../../../core/src/db/documentsClient.js");
+  const documentsClient = await import("@qingagent/db/client");
   resetDocumentsClientForTest = documentsClient.__resetDocumentsClientForTest;
   core = await import("@qingagent/core");
   resetDocumentsSchemaForTest = core.__resetMigrationsForTest;

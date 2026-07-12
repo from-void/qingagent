@@ -15,7 +15,8 @@ const { deleteDocumentFamily, memory, events } = vi.hoisted(() => {
   };
 });
 
-vi.mock("../db/documentFamilyRepo.js", () => ({
+vi.mock("@qingagent/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@qingagent/db")>()),
   deleteDocumentFamily,
 }));
 

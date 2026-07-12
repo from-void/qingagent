@@ -16,16 +16,16 @@ import {
   type PmDoc,
   type PmInlineNode,
 } from "@qingagent/pm-schema";
-import { documentRepo } from "../db/documentRepo.js";
+import { documentRepo } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
-import { toDocx, toHtml, toPdf } from "../export/index.js";
+import { toDocx, toHtml, toPdf } from "@qingagent/doc-render";
 import type { SessionState } from "../bridge/sessionState.js";
 import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
-import { hasChromium } from "./browserTestGate.js";
+import { hasChromium } from "@qingagent/doc-render/testing";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();

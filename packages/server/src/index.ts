@@ -18,7 +18,7 @@ import { logStartupSecurityWarnings } from "./lib/debugGate";
 // 与迁移的 BEGIN IMMEDIATE 并发争同库写锁 → SQLITE_BUSY + mastra 背景 init 崩(unhandledRejection)。
 // migrations.ts 的依赖图只有 libsql,不碰 mastra;先跑完迁移,再动态 import 观测/app/回填(那时才
 // 让 mastra 存储 init,已无锁竞争)。
-import { runMigrations } from "@qingagent/core/src/db/migrations.js";
+import { runMigrations } from "@qingagent/db/migrations";
 
 const port = Number(process.env.PORT ?? 8080);
 // 默认只监听本机回环;Docker/局域网部署需要显式设置 QINGAGENT_HOST=0.0.0.0。

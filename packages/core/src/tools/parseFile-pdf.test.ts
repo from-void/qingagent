@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadPdfParseConstructor } from "../utils/pdfParse.js";
+import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
 import { parseFileBuffer } from "./parseFile.js";
 
 function createTextPdfFixture(): Buffer {

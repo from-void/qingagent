@@ -15,7 +15,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
   // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
   // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一管理这段启动顺序。
-  const { runMigrations } = await import("@qingagent/core/src/db/migrations.js");
+  const { runMigrations } = await import("@qingagent/db/migrations");
   try {
     await runMigrations();
   } catch (err) {

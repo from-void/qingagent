@@ -1,4 +1,4 @@
-import type { Client, Row } from "@libsql/client";
+import type { Client, Row } from "@qingagent/db";
 import type { PatchConflict } from "@qingagent/contract-ts";
 import {
   getDeterministicId,
@@ -10,21 +10,21 @@ import {
 import {
   buildPmProjection,
   parsePmDoc,
-} from "../db/documentRepo.js";
+} from "@qingagent/db";
 import {
   commitTransaction,
   rollbackTransaction,
   withTransaction,
-} from "../db/documentsClient.js";
+} from "@qingagent/db";
 import {
   findOpByDocumentVersion,
   findOpByIdempotencyKey,
   insertOp,
   type DocumentOpKind,
   type DocumentOpRow,
-} from "../db/documentOpsRepo.js";
+} from "@qingagent/db";
 import type { SessionState } from "./sessionState.js";
-import { ensureMigrated } from "../db/migrations.js";
+import { ensureMigrated } from "@qingagent/db";
 import {
   getLatestVersionRow,
   getMaxDocumentSnapshotVersion,
@@ -32,7 +32,7 @@ import {
   insertVersion,
   rollVersionRow,
   type DocumentVersionActorType,
-} from "../db/documentVersionRepo.js";
+} from "@qingagent/db";
 import { runExclusiveCommit } from "./docCommitQueue.js";
 
 /**

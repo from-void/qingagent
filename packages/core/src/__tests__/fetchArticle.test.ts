@@ -6,22 +6,19 @@ const mockFetchArticleDeps = vi.hoisted(() => ({
   scrapeWithBrowserImpl: vi.fn(),
 }));
 
-vi.mock("../browser/extractor.js", async () => {
-  const actual = await vi.importActual<typeof import("../browser/extractor.js")>(
-    "../browser/extractor.js",
+vi.mock("@qingagent/doc-render/browser", async () => {
+  const actual = await vi.importActual<typeof import("@qingagent/doc-render/browser")>(
+    "@qingagent/doc-render/browser",
   );
   return {
     ...actual,
     extractArticleContent: mockFetchArticleDeps.extractArticleContent,
+    scrapeWithBrowserImpl: mockFetchArticleDeps.scrapeWithBrowserImpl,
   };
 });
 
-vi.mock("../browser/scrapePage.js", () => ({
-  scrapeWithBrowserImpl: mockFetchArticleDeps.scrapeWithBrowserImpl,
-}));
-
 import { fetchArticleTool, shouldFallbackToBrowser } from "../tools/fetchArticle.js";
-import { isUnsupportedForHtmlExtraction, resolveSiteAdapter } from "../browser/extractor.js";
+import { isUnsupportedForHtmlExtraction, resolveSiteAdapter } from "@qingagent/doc-render/browser";
 
 function wordCount(text: string): number {
   return text.replace(/\s+/g, "").length;

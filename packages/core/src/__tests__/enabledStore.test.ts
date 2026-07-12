@@ -20,7 +20,7 @@ async function withStore() {
 
 afterEach(async () => {
   process.env.QINGAGENT_USER_SKILLS_DIR = originalUserSkillsDir;
-  vi.doUnmock("../browser/agentBrowser.js");
+  vi.doUnmock("@qingagent/doc-render/browser");
   vi.resetModules();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -64,7 +64,8 @@ describe("enabledStore", () => {
   it("omits browser tools when browser-ops is disabled", async () => {
     const store = await withStore();
     await store.setEnabled("browser-ops", false);
-    vi.doMock("../browser/agentBrowser.js", () => ({
+    vi.doMock("@qingagent/doc-render/browser", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("@qingagent/doc-render/browser")>()),
       getAgentBrowserTools: () => ({
         browser_goto: { id: "browser_goto" },
         browser_click: { id: "browser_click" },

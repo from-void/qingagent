@@ -15,6 +15,12 @@ export {
 } from "./credentialsRepo.js";
 export { redactSecret } from "./crypto.js";
 export {
+  initializeEnvironmentCredentialKeyProvider,
+  initializeSafeStorageCredentialKeyProvider,
+  setCredentialKeyProvider,
+} from "./crypto.js";
+export { verifyStoredCredentialCiphertextsWithKey } from "./credentialsRepo.js";
+export {
   PLATFORM_CREDENTIAL_SPECS,
   type PlatformCredentialSpec,
 } from "./specs.js";

@@ -9,7 +9,7 @@ import {
   type PmDoc,
   type PmNode,
 } from "@qingagent/pm-schema";
-import { uploadsBaseDir } from "../../workspace/uploadsDir.js";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 import { fillLocalSvgImageDimensions } from "../imageDimensionFallback.js";
 
 const SVG_ID = "550e8400-e29b-41d4-a716-446655440000";

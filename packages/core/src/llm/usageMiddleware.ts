@@ -1,6 +1,6 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import type { LanguageModelMiddleware } from "ai-v5";
-import { recordUsageEvent } from "../db/usageRepo.js";
+import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelTypes.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";

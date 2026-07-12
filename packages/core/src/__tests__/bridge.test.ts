@@ -13,12 +13,12 @@ import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { compileSuggestionFromBeforeAfter } from "../bridge/pmPatch.js";
-import { documentRepo } from "../db/documentRepo.js";
+import { documentRepo } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 import { mastra } from "../mastra.js";
 
 let tempDb: TempDocumentsDb;

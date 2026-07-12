@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { prepareTempDocumentsDb, type TempDocumentsDb } from "../../../core/src/db/__tests__/dbTestUtils.js";
-import { getDocumentsClient } from "../../../core/src/db/documentsClient.js";
-import { __resetMigrationsForTest, runMigrations } from "../../../core/src/db/migrations.js";
-import { MIGRATIONS } from "../../../core/src/db/migrations/index.js";
+import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
+import { getDocumentsClient } from "@qingagent/db/client";
+import { __resetMigrationsForTest, runMigrations } from "@qingagent/db/migrations";
+import { MIGRATIONS } from "@qingagent/db/migrations/registry";
 
 let db: TempDocumentsDb;
 beforeEach(() => { db = prepareTempDocumentsDb("qingagent-server-usage-upgrade-"); });

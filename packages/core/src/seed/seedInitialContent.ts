@@ -23,7 +23,7 @@ import type {
 } from "@qingagent/contract-ts";
 
 import { mastra } from "../mastra.js";
-import { documentRepo, projectPmDocToSections } from "../db/documentRepo.js";
+import { documentRepo, projectPmDocToSections } from "@qingagent/db";
 import {
   QINGAGENT_RESOURCE_ID,
   type QingagentThreadMetadata,

@@ -55,7 +55,7 @@ jobs:
       - name: pnpm build
         run: pnpm -r --if-present build
 
-      # PDF 导出已改为 headless Chromium 渲染 HTML(packages/core toHtml + htmlToPdf)。
+      # PDF 导出已改为 headless Chromium 渲染 HTML(@qingagent/doc-render 的 toHtml + htmlToPdf)。
       # 需要:① 中文字体(导出排版用 Noto Sans/Serif CJK,family 名为 "Noto Sans CJK SC"/"Noto Serif CJK SC");
       #       ② Playwright 的 Chromium 二进制 + 系统依赖。没装 Chromium 时 PDF 烟测会自动 skip
       #       (browserTestGate.ts 探测),装上即真正跑、覆盖真实 PDF 字节。
@@ -64,11 +64,11 @@ jobs:
 
       - name: install Playwright Chromium (PDF export render)
         run: |
-          pnpm --filter @qingagent/core exec playwright install --with-deps chromium
+          pnpm --filter @qingagent/doc-render exec playwright install --with-deps chromium
           # 关键:显式把浏览器池指向 Playwright 装好的 Chromium。否则 systemBrowser 探测顺序会
           # 优先命中 runner 上预装的 /usr/bin/microsoft-edge——edge 冷启动+渲染 math→PNG 慢且
           # 非确定,导出烟测在 CI 上时而 >30s 超时(flaky)。用 gate 同款 chromium 即快又稳。
-          CHROMIUM_PATH="$(pnpm --filter @qingagent/core exec node -e 'console.log(require("playwright").chromium.executablePath())')"
+          CHROMIUM_PATH="$(pnpm --filter @qingagent/doc-render exec node -e 'console.log(require("playwright").chromium.executablePath())')"
           echo "QINGAGENT_BROWSER_EXECUTABLE_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
           echo "browser pool -> $CHROMIUM_PATH"
 

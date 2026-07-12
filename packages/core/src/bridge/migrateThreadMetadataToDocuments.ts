@@ -3,13 +3,13 @@ import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   documentRepo,
   type DocumentSaveInput,
-} from "./documentRepo.js";
-import { coerceLegacyContentKind } from "../bridge/docStateMachine.js";
+} from "@qingagent/db";
+import { coerceLegacyContentKind } from "./docStateMachine.js";
 import {
   listSessionThreads,
   QINGAGENT_RESOURCE_ID,
   type QingagentThreadMetadata,
-} from "../bridge/threadPersistence.js";
+} from "./threadPersistence.js";
 import { mastra } from "../mastra.js";
 
 const logger = mastra.getLogger();

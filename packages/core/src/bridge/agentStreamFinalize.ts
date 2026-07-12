@@ -1,5 +1,5 @@
 import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { recordLlmResponseSpan } from "./agentSpans.js";

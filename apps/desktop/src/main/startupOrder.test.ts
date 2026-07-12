@@ -44,9 +44,9 @@ test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧
   const tempDir = mkdtempSync(path.join(tmpdir(), "qingagent-desktop-usage-upgrade-"));
   const previousDatabaseUrl = process.env.DATABASE_URL;
   process.env.DATABASE_URL = `file:${path.join(tempDir, "documents.db")}`;
-  const clients = await import("@qingagent/core/src/db/documentsClient.js");
-  const migrations = await import("@qingagent/core/src/db/migrations.js");
-  const registry = await import("@qingagent/core/src/db/migrations/index.js");
+  const clients = await import("@qingagent/db/client");
+  const migrations = await import("@qingagent/db/migrations");
+  const registry = await import("@qingagent/db/migrations/registry");
   clients.__resetDocumentsClientForTest();
   migrations.__resetMigrationsForTest();
   try {

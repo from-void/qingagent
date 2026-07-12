@@ -5,19 +5,16 @@ const mockDeps = vi.hoisted(() => ({
   scrapeWithBrowserImpl: vi.fn(),
 }));
 
-vi.mock("../browser/extractor.js", async () => {
-  const actual = await vi.importActual<typeof import("../browser/extractor.js")>(
-    "../browser/extractor.js",
+vi.mock("@qingagent/doc-render/browser", async () => {
+  const actual = await vi.importActual<typeof import("@qingagent/doc-render/browser")>(
+    "@qingagent/doc-render/browser",
   );
   return {
     ...actual,
     extractArticleContent: mockDeps.extractArticleContent,
+    scrapeWithBrowserImpl: mockDeps.scrapeWithBrowserImpl,
   };
 });
-
-vi.mock("../browser/scrapePage.js", () => ({
-  scrapeWithBrowserImpl: mockDeps.scrapeWithBrowserImpl,
-}));
 
 import { fetchArticleTool } from "./fetchArticle.js";
 

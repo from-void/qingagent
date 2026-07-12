@@ -162,9 +162,9 @@ if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
   console.warn("[sandbox] QINGAGENT_SANDBOX_NODE_RUNTIME=system, using host node for diagnostics only");
 } else {
   const { ensureNodeRuntimeShim, isElectronRuntime } = await import(
-    "@qingagent/core/src/workspace/nodeRuntimeShim.js"
+    "@qingagent/core/workspace/runtime-shims"
   );
-  const { ensureLarkCliShim } = await import("@qingagent/core/src/workspace/larkCliShim.js");
+  const { ensureLarkCliShim } = await import("@qingagent/core/workspace/runtime-shims");
   const nodeShimPath = ensureNodeRuntimeShim({ execPath: process.execPath, electron: isElectronRuntime() });
 
   // 飞书 lark-cli:随包带到 Resources/lark-cli(build.mjs 暂存,electron-builder extraResources),
@@ -218,17 +218,15 @@ const { startServer } = await import("./server.js");
 // bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。
 const { installLongKeepAliveDispatcher } = await import("@qingagent/server/httpDispatcher");
 installLongKeepAliveDispatcher();
-const { installNetProbe } = await import("@qingagent/core/src/llm/netProbe.js");
-const { resolveBaseUrl } = await import("@qingagent/core/src/llm/modelBaseUrl.js");
-const { warmUpModelEndpoint } = await import("@qingagent/core/src/llm/modelWarmup.js");
+const { installNetProbe, resolveBaseUrl, warmUpModelEndpoint } = await import("@qingagent/core/llm/runtime");
 const { telemetry } = await import("./telemetry/index.js");
 const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js");
 
 // PDF 导出复用 Electron 自带 Chromium(printToPDF):打包后没有随包 Playwright Chromium,
 // 默认路径会硬失败到 500。注册自定义渲染器后,htmlToPdf 优先走 Electron,零增量体积。
 {
-  const { setHtmlToPdfRenderer } = await import("@qingagent/core/src/export/pdfRenderer.js");
-  const { systemBrowserExecutablePath } = await import("@qingagent/core/src/browser/systemBrowser.js");
+  const { setHtmlToPdfRenderer } = await import("@qingagent/doc-render/export");
+  const { systemBrowserExecutablePath } = await import("@qingagent/doc-render/browser");
   const { renderPdfViaElectron } = await import("./pdfRenderer.js");
   setHtmlToPdfRenderer(renderPdfViaElectron);
 

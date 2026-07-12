@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { cleanText } from "../browser/extractor.js";
+import { cleanText } from "@qingagent/doc-render/browser";
 
 export interface SearchResult {
   title: string;

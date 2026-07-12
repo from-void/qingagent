@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
-import { validateFetchUrl } from "../browser/extractor.js";
-import { localUploadPath, readLocalUploadBuffer } from "../export/shared.js";
-import { uploadsBaseDir } from "../workspace/uploadsDir.js";
+import { validateFetchUrl } from "@qingagent/doc-render/browser";
+import { localUploadPath, readLocalUploadBuffer } from "@qingagent/doc-render";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_IMAGE_BASE64_CHARS = Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 1024;

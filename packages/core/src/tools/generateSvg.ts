@@ -4,15 +4,15 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "../browser/svgSanitize.js";
-import { lintSvg, type SvgLintIssue } from "../browser/svgQualityLint.js";
+import { buildPartialSvgDraft, hasVisibleSvgContent, sanitizeSvg, SVG_MAX_BYTES, utf8ByteLength } from "@qingagent/doc-render/browser";
+import { lintSvg, type SvgLintIssue } from "@qingagent/doc-render/browser";
 import {
   resolveModelParams,
 } from "../llm/modelConfig.js";
 import { streamInnerModel } from "../llm/innerModelStream.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
-import { uploadsBaseDir } from "../workspace/uploadsDir.js";
-import { SVG_TEMPLATES } from "../svgTemplates/index.js";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
+import { SVG_TEMPLATES } from "@qingagent/doc-render/svg-templates";
 
 // 空闲看门狗:连续无任何输出超过该时长才判定卡死掐断——只要还在流式吐字就不断重置,
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。

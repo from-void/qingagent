@@ -35,9 +35,15 @@ importers:
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
+      katex:
+        specifier: ^0.16.47
+        version: 0.16.47
       libsql:
         specifier: ^0.5.29
         version: 0.5.29
+      mermaid:
+        specifier: ^11.15.0
+        version: 11.15.0
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -52,6 +58,12 @@ importers:
       '@qingagent/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@qingagent/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@qingagent/doc-render':
+        specifier: workspace:*
+        version: link:../../packages/doc-render
       '@qingagent/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -195,12 +207,6 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: ^1.0.42
         version: 1.0.42(zod@4.4.3)
-      '@libsql/client':
-        specifier: ^0.15.15
-        version: 0.15.15
-      '@mastra/agent-browser':
-        specifier: 0.4.0
-        version: 0.4.0(@mastra/core@1.49.0(ai@4.3.19(react@18.3.1)(zod@4.4.3))(express@5.2.1)(zod@4.4.3))(zod@4.4.3)
       '@mastra/core':
         specifier: ^1.49.0
         version: 1.49.0(ai@4.3.19(react@18.3.1)(zod@4.4.3))(express@5.2.1)(zod@4.4.3)
@@ -213,9 +219,15 @@ importers:
       '@qingagent/contract-ts':
         specifier: workspace:*
         version: link:../contract-ts
+      '@qingagent/db':
+        specifier: workspace:*
+        version: link:../db
       '@qingagent/diagram-engine':
         specifier: workspace:*
         version: link:../diagram-engine
+      '@qingagent/doc-render':
+        specifier: workspace:*
+        version: link:../doc-render
       '@qingagent/pm-schema':
         specifier: workspace:*
         version: link:../pm-schema
@@ -234,33 +246,12 @@ importers:
       diff-match-patch:
         specifier: ^1.0.5
         version: 1.0.5
-      docx:
-        specifier: ^9.7.1
-        version: 9.7.1
-      highlight.js:
-        specifier: ^11
-        version: 11.11.1
-      iconv-lite:
-        specifier: ^0.7.2
-        version: 0.7.2
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
-      katex:
-        specifier: ^0.16.47
-        version: 0.16.47
       mammoth:
         specifier: ^1.12.0
         version: 1.12.0
-      mermaid:
-        specifier: ^11.15.0
-        version: 11.15.0
-      pdf-parse:
-        specifier: ^2.4.5
-        version: 2.4.5
-      playwright:
-        specifier: ^1.60.0
-        version: 1.60.0
       pyodide:
         specifier: 0.29.4
         version: 0.29.4
@@ -284,8 +275,85 @@ importers:
         specifier: 2.1.9
         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
 
+  packages/db:
+    dependencies:
+      '@libsql/client':
+        specifier: ^0.15.15
+        version: 0.15.15
+      '@qingagent/contract-ts':
+        specifier: workspace:*
+        version: link:../contract-ts
+      '@qingagent/pm-schema':
+        specifier: workspace:*
+        version: link:../pm-schema
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 2.1.9
+        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
+
   packages/diagram-engine:
     devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 2.1.9
+        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)
+
+  packages/doc-render:
+    dependencies:
+      '@mastra/agent-browser':
+        specifier: 0.4.0
+        version: 0.4.0(@mastra/core@1.49.0(express@5.2.1)(zod@4.4.3))(zod@4.4.3)
+      '@qingagent/contract-ts':
+        specifier: workspace:*
+        version: link:../contract-ts
+      '@qingagent/diagram-engine':
+        specifier: workspace:*
+        version: link:../diagram-engine
+      '@qingagent/pm-schema':
+        specifier: workspace:*
+        version: link:../pm-schema
+      '@xmldom/xmldom':
+        specifier: ^0.9.10
+        version: 0.9.10
+      cheerio:
+        specifier: ^1.2.0
+        version: 1.2.0
+      docx:
+        specifier: ^9.7.1
+        version: 9.7.1
+      highlight.js:
+        specifier: ^11
+        version: 11.11.1
+      iconv-lite:
+        specifier: ^0.7.2
+        version: 0.7.2
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      katex:
+        specifier: ^0.16.47
+        version: 0.16.47
+      mermaid:
+        specifier: ^11.15.0
+        version: 11.15.0
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      mammoth:
+        specifier: ^1.12.0
+        version: 1.12.0
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -389,6 +457,12 @@ importers:
       '@qingagent/core':
         specifier: workspace:*
         version: link:../core
+      '@qingagent/db':
+        specifier: workspace:*
+        version: link:../db
+      '@qingagent/doc-render':
+        specifier: workspace:*
+        version: link:../doc-render
       '@qingagent/pm-schema':
         specifier: workspace:*
         version: link:../pm-schema
@@ -6168,7 +6242,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@mastra/agent-browser@0.4.0(@mastra/core@1.49.0(ai@4.3.19(react@18.3.1)(zod@4.4.3))(express@5.2.1)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/agent-browser@0.4.0(@mastra/core@1.49.0(express@5.2.1)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@mastra/core': 1.49.0(ai@4.3.19(react@18.3.1)(zod@4.4.3))(express@5.2.1)(zod@4.4.3)
       agent-browser: 0.19.0

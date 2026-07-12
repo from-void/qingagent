@@ -17,9 +17,9 @@ import { applySuggestionsToDoc } from "./pmPatch.js";
 import { applyDiffHunks } from "./proposalDiff.js";
 import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSuggestions.js";
 import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
-import { updateDocumentSuggestionStatus } from "../db/documentSuggestionsRepo.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
-import { documentRepo } from "../db/documentRepo.js";
+import { updateDocumentSuggestionStatus } from "@qingagent/db";
+import { documentDraftRepo } from "@qingagent/db";
+import { documentRepo } from "@qingagent/db";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 describe("parseFileBuffer PDF cold-start retry", () => {
   afterEach(() => {
     vi.resetModules();
-    vi.doUnmock("../utils/pdfParse.js");
+    vi.doUnmock("@qingagent/doc-render/browser");
   });
 
   it("PDF 首次返回空文本时会内部重试并使用第二次正文", async () => {
@@ -27,7 +27,8 @@ describe("parseFileBuffer PDF cold-start retry", () => {
         await destroy();
       }
     };
-    vi.doMock("../utils/pdfParse.js", () => ({
+    vi.doMock("@qingagent/doc-render/browser", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("@qingagent/doc-render/browser")>()),
       loadPdfParseConstructor: async () => PDFParse,
     }));
     const { parseFileBuffer } = await import("../tools/parseFile.js");

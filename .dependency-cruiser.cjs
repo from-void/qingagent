@@ -11,16 +11,14 @@ module.exports = {
     {
       name: "core-lower-layers-no-bridge",
       severity: "error",
-      comment: "core 的 db/llm/tools/workspace/browser 低层不得新增对 bridge 组合层的依赖。",
+      comment: "core 的 llm/tools/workspace 低层不得新增对 bridge 组合层的依赖。",
       from: {
-        path: "^packages/core/src/(db|llm|tools|workspace|browser)/",
+        path: "^packages/core/src/(llm|tools|workspace)/",
         pathNot: [
           "(^|/)__tests__/",
           "^packages/core/src/llm/todoAwarenessPrompt[.]ts$",
           "^packages/core/src/tools/parseFile[.]ts$",
           "^packages/core/src/tools/writeDraft[.]ts$",
-          "^packages/core/src/browser/agentBrowser[.]ts$",
-          "^packages/core/src/db/migrateThreadMetadataToDocuments[.]ts$",
         ],
       },
       to: { path: "^packages/core/src/bridge/" },
@@ -56,26 +54,19 @@ module.exports = {
       },
     },
     {
-      name: "freeze-agent-browser-bridge-edge",
+      name: "split-packages-no-core-back-edge",
       severity: "error",
-      comment: "存量冻结：agentBrowser 读取 bridge 的草稿特性开关；开关尚未迁到独立配置层。",
-      from: { path: "^packages/core/src/browser/agentBrowser[.]ts$" },
-      to: {
-        path: "^packages/core/src/bridge/",
-        pathNot: "^packages/core/src/bridge/draftFeatureFlags[.]ts$",
-      },
+      comment: "物理拆出的 db/doc-render 是 core 的下层包，禁止反向依赖 core。",
+      from: { path: "^packages/(db|doc-render)/src/" },
+      to: { path: "^packages/core/src/" },
     },
     {
-      name: "freeze-db-migration-bridge-edges",
+      name: "db-is-leaf-package",
       severity: "error",
-      comment: "存量冻结：一次性线程迁移复用 bridge 的文档状态机和持久化逻辑；迁移退役前不复制实现。",
-      from: { path: "^packages/core/src/db/migrateThreadMetadataToDocuments[.]ts$" },
+      comment: "db 仅可依赖自身与 hand-maintained contract/PM schema 叶包。",
+      from: { path: "^packages/db/src/" },
       to: {
-        path: "^packages/core/src/bridge/",
-        pathNot: [
-          "^packages/core/src/bridge/docStateMachine[.]ts$",
-          "^packages/core/src/bridge/threadPersistence[.]ts$",
-        ],
+        path: "^packages/(?!db/|contract-ts/|pm-schema/)[^/]+/src/",
       },
     },
     {

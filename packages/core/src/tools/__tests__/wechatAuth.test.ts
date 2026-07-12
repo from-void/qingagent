@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { browserLaunchCandidates } from "../../browser/pool.js";
+import { browserLaunchCandidates } from "@qingagent/doc-render/browser";
 import { saveConnectorCredentialBundle } from "../../credentials/credentialsRepo.js";
 import { readWechatCredentialBundle } from "../../connectors/wechatCredentials.js";
 import { wechatAuthService } from "../../connectors/wechatAuthService.js";
 import { probeWechatSearchbiz } from "../wechatSearch.js";
 import { wechatAuthStartTool, wechatAuthStatusTool } from "../wechatAuth.js";
 
-vi.mock("../../browser/pool.js", () => ({ browserLaunchCandidates: vi.fn() }));
+vi.mock("@qingagent/doc-render/browser", () => ({ browserLaunchCandidates: vi.fn() }));
 vi.mock("../../credentials/credentialsRepo.js", () => ({ saveConnectorCredentialBundle: vi.fn() }));
 vi.mock("../../connectors/wechatCredentials.js", () => ({
   readWechatCredentialBundle: vi.fn(), clearWechatSessionIssue: vi.fn(),

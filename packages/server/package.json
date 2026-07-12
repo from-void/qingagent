@@ -27,6 +27,8 @@
     "@mastra/observability": "^1.15.2",
     "@qingagent/contract-ts": "workspace:*",
     "@qingagent/core": "workspace:*",
+    "@qingagent/db": "workspace:*",
+    "@qingagent/doc-render": "workspace:*",
     "@qingagent/pm-schema": "workspace:*",
     "dotenv": "^16.4.7",
     "hono": "^4.7.10",

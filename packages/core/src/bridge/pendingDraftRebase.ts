@@ -5,7 +5,7 @@ import {
   safeParsePmDoc,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { applyDiffHunkToDoc, buildDraftDiff } from "./proposalDiff.js";
 import type { SuggestionRecord } from "./sessionState.js";

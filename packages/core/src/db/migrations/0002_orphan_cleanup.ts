@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import type { Migration } from "../migrations.js";
+import type { Migration } from "./types.js";
 
 async function tableExists(client: Client, tableName: string): Promise<boolean> {
   const res = await client.execute({

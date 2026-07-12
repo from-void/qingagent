@@ -1,5 +1,6 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import { streamText, type CoreMessage } from "ai";
+import type { ModelMessage } from "ai-v5";
+import { streamText } from "./streamTextCompat.js";
 import {
   branchCall,
   getDeepseekModel,
@@ -95,7 +96,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       thinking: input.thinking,
     }),
     ...(input.messages
-      ? { messages: input.messages as CoreMessage[] }
+      ? { messages: input.messages as ModelMessage[] }
       : { system: input.system ?? "", prompt: input.prompt ?? "" }),
     ...(input.thinking ? {} : { temperature: input.temperature }),
     ...(protocol === "anthropic"
@@ -107,7 +108,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       : {}),
     abortSignal: input.abortSignal,
     maxRetries: input.maxRetries,
-    maxTokens: input.maxTokens,
+    maxOutputTokens: input.maxTokens,
   });
 
   let raw = "";
@@ -121,13 +122,13 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       finishReason = part.finishReason;
       continue;
     }
-    if (part.type !== "text-delta" || !part.textDelta) continue;
+    if (part.type !== "text-delta" || !part.text) continue;
     if (contentStartMs === null) {
       contentStartMs = Date.now() - startedAt;
       input.onContentStart?.(contentStartMs);
     }
-    raw += part.textDelta;
-    input.onContentDelta?.(part.textDelta, raw);
+    raw += part.text;
+    input.onContentDelta?.(part.text, raw);
   }
   return { raw, contentStartMs, finishReason };
 }

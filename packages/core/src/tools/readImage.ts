@@ -1,9 +1,10 @@
 import { createTool } from "@mastra/core/tools";
 import type { RequestContext } from "@mastra/core/request-context";
 import { createHash } from "node:crypto";
-import { streamText, type CoreMessage } from "ai";
+import type { ModelMessage } from "ai-v5";
 import { z } from "zod";
 import { getVisionModel } from "../llm/modelConfig.js";
+import { streamText } from "../llm/streamTextCompat.js";
 import { ImageInputError, resolveImageInput } from "./imageInput.js";
 
 export const READ_IMAGE_TIMEOUT_MS = 60_000;
@@ -81,7 +82,7 @@ function writeVisionCache(key: string, text: string): void {
   if (oldest !== undefined) visionCache.delete(oldest);
 }
 
-function textContentFromMessage(message: CoreMessage): string | null {
+function textContentFromMessage(message: ModelMessage): string | null {
   const role = message.role;
   if (role !== "system" && role !== "user" && role !== "assistant") return null;
   if (typeof message.content === "string") return message.content;
@@ -102,9 +103,9 @@ function recentTextConversation(requestContext?: RequestContext): string {
   const selected: string[] = [];
   let bytes = 0;
   for (const message of raw.slice().reverse()) {
-    const text = textContentFromMessage(message as CoreMessage)?.trim();
+    const text = textContentFromMessage(message as ModelMessage)?.trim();
     if (!text) continue;
-    const role = (message as CoreMessage).role;
+    const role = (message as ModelMessage).role;
     const line = `${role}: ${text}`;
     const nextBytes = utf8ByteLength(line) + 1;
     if (bytes + nextBytes > CONVERSATION_MAX_BYTES) break;
@@ -257,7 +258,7 @@ export const readImageTool = createTool({
           try {
             const result = streamText({
               model,
-              maxTokens: READ_IMAGE_MAX_OUTPUT_TOKENS,
+              maxOutputTokens: READ_IMAGE_MAX_OUTPUT_TOKENS,
               maxRetries: 0,
               toolChoice: "none",
               abortSignal: abortController.signal,
@@ -266,7 +267,7 @@ export const readImageTool = createTool({
                   role: "user",
                   content: [
                     { type: "text", text: textPart },
-                    { type: "image", image: image.buffer, mimeType: image.mimeType },
+                    { type: "image", image: image.buffer, mediaType: image.mimeType },
                   ],
                 },
               ],
@@ -279,22 +280,21 @@ export const readImageTool = createTool({
               if (part.type === "error") {
                 throw part.error instanceof Error ? part.error : new Error(String(part.error));
               }
-              // 推理增量:部分多模态推理模型会以 reasoning part 吐思考(展示用,不进答案)
-              if (part.type === "reasoning") {
-                const rd = (part as { textDelta?: string }).textDelta ?? "";
-                if (rd) {
-                  display += rd;
+              // 推理增量:部分多模态推理模型会以 reasoning-delta 吐思考(展示用,不进答案)
+              if (part.type === "reasoning-delta") {
+                if (part.text) {
+                  display += part.text;
                   emitProgress();
                 }
               }
               if (part.type === "text-delta") {
-                bytes += utf8ByteLength(part.textDelta);
+                bytes += utf8ByteLength(part.text);
                 if (bytes > READ_IMAGE_MAX_OUTPUT_BYTES) {
                   abortController.abort();
                   throw new Error(`图像识别输出超过 ${READ_IMAGE_MAX_OUTPUT_BYTES} 字节上限`);
                 }
-                text += part.textDelta;
-                display += part.textDelta;
+                text += part.text;
+                display += part.text;
                 emitProgress();
               }
             }

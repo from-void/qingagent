@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import type { Migration } from "../migrations.js";
+import type { Migration } from "./types.js";
 
 // ⚠️ baseline 专用幂等 helper：只允许本 0001 迁移使用。
 // 存量用户库形态各异（缺列 / 含已退役 doc_sections / 部分列已加），且都没有

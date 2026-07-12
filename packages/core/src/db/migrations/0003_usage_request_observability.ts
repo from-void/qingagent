@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import type { Migration } from "../migrations.js";
+import type { Migration } from "./types.js";
 
 async function up(client: Client): Promise<void> {
   await client.execute("ALTER TABLE llm_usage_events ADD COLUMN usage_state TEXT NOT NULL DEFAULT 'recorded'");

@@ -39,16 +39,15 @@ import {
   buildQingagentOutputProcessors,
 } from "./processors.js";
 import { isQingagentToolSearchEnabled } from "./toolSearch.js";
-// 主 Agent 走 Mastra agent.stream(),需 v2/v3 spec model;Mastra 不内置 anthropic provider,
-// 故 anthropic 用 AI SDK v5 版(@ai-sdk/anthropic@3,v3 spec)直接交给 Mastra。
-// (工具内层走 ai v4 streamText 仍用 v1 版,见 modelConfig.createDeepseekProvider)
-import { createAnthropic as createAnthropicV5 } from "@ai-sdk/anthropic-v5";
+// 主 Agent 与工具内层统一使用 AI SDK 5 的 v2 provider；Mastra 自身的 ai v4 peer
+// 由包管理器隔离，内层 streamText 从 ai-v5 alias 导入。
+import { createAnthropic } from "@ai-sdk/anthropic";
 import type { RequestContext } from "@mastra/core/request-context";
 import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
 // F1 两层 key:模型实例按"实际生效的 apiKey"缓存——env 兜底请求共用一个实例(等价
 // 旧单例,保留 prompt-cache 等收益),访客自带 key 的请求各自命中自己的缓存项。
 // 上限防滥用:访客 key 任意多,缓存只留最近 16 个。
-type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropicV5>>;
+type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropic>>;
 type RepairingAgentAnthropicModel = AgentAnthropicModel & RepairableLanguageModel;
 const modelCache = new Map<string, RepairingAgentAnthropicModel>();
 const MODEL_CACHE_LIMIT = 16;
@@ -66,14 +65,14 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     }
   };
 
-  // anthropic(智谱 GLM Coding 等):保留 v3 provider 原始 spec,只在 tool-call 参数 JSON 上加 fail-closed 修复层。
+  // anthropic(智谱 GLM Coding 等):保留 v2 provider 原始 spec,只在 tool-call 参数 JSON 上加 fail-closed 修复层。
   if (resolveProtocol(requestContext) === "anthropic") {
     const anthModel = resolveModelId(requestContext, "flash");
     const anthKey = `anthropic ${baseUrl} ${anthModel} ${effectiveKey}`;
     let m = modelCache.get(anthKey);
     if (!m) {
       m = wrapToolCallRepairingModel(
-        createAnthropicV5({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
+        createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
           anthModel,
         ) as RepairingAgentAnthropicModel,
       );

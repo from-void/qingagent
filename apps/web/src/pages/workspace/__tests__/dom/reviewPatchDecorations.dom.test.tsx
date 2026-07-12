@@ -1017,6 +1017,57 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector(".patch-row-popup")?.textContent).toContain("def");
   });
 
+  it("table granular rowspan 覆盖行保留真实逻辑列，避免首个 DOM 格误补左框", async () => {
+    const baselineDoc = paragraphDoc("正文");
+    const tableNode = (value: string) => ({
+      type: "table", attrs: { blockId: "table-rowspan" }, content: [
+        { type: "tableRow", content: [
+          { type: "tableHeader", attrs: { rowspan: 2 }, content: [{ type: "paragraph", attrs: {}, content: [{ type: "text", text: "部门" }] }] },
+          { type: "tableCell", attrs: {}, content: [{ type: "paragraph", attrs: {}, content: [{ type: "text", text: "一季度" }] }] },
+        ] },
+        { type: "tableRow", content: [
+          { type: "tableCell", attrs: {}, content: [{ type: "paragraph", attrs: {}, content: [{ type: "text", text: value }] }] },
+        ] },
+      ],
+    });
+    const beforeNode = tableNode("旧值");
+    const afterNode = tableNode("新值");
+    const block = {
+      kind: "table", blockId: "table-rowspan", head: ["部门", "一季度"], rows: [["新值"]], node: afterNode,
+      cellDiff: [
+        { status: "same", cells: [
+          { status: "same", spans: [{ kind: "text", text: "部门" }] },
+          { status: "same", spans: [{ kind: "text", text: "一季度" }] },
+        ] },
+        { status: "changed", cells: [{
+          status: "changed", oldText: "旧值", spans: [
+            { kind: "patchDel", text: "旧值", patchId: "table-rowspan-rep" },
+            { kind: "patchIns", text: "新值", patchId: "table-rowspan-rep" },
+          ],
+        }] },
+      ],
+    } as unknown as ViewBlock;
+
+    act(() => root.render(
+      <DocumentSnapshotView
+        doc={pmDocToViewDocumentSnapshot(baselineDoc, 1)} editable interactiveEditable={false} showPatches
+        acceptedPatches={new Set()} rejectedPatches={new Set()}
+        reviewBlockPatches={[blockPatch("table-rowspan-rep", "replace", {
+          blocks: [block], replaceBeforeBlocks: [block], granular: true,
+          beforePmNodes: [beforeNode as unknown as import("@qingagent/pm-schema").PmBlockNode],
+        })]}
+        reviewAppliedPatches={[appliedPatch("table-rowspan-rep", 17, "replace", "旧值", "新值")]}
+        patchMeta={new Map([["table-rowspan-rep", { before: "旧值", after: "新值", kind: "replace", index: 17 }]])}
+      />,
+    ));
+    await flush();
+
+    const rows = host.querySelectorAll<HTMLTableRowElement>('[data-patch-id="table-rowspan-rep"] table > tbody > tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.cells[0]?.getAttribute("data-table-logical-col")).toBe("0");
+    expect(rows[1]?.cells[0]?.getAttribute("data-table-logical-col")).toBe("1");
+  });
+
   it("table 加行时整表块级 replace：只显示新表、无格级/红删标记，hover 看旧表背景", async () => {
     const baselineDoc = paragraphDoc("正文");
     const tableNode = (rows: string[]) => ({

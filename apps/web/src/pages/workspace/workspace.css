@@ -1632,17 +1632,17 @@
     min-width:80px;vertical-align:top;position:relative;
     font-size:13px;line-height:1.6;
   }
-  #view-workspace .wf-doc table > tbody > tr:first-child > th,
-  #view-workspace .wf-doc table > tbody > tr:first-child > td{
+  #view-workspace .wf-doc table > :first-child > tr:first-child > th,
+  #view-workspace .wf-doc table > :first-child > tr:first-child > td{
     border-top:1px solid var(--line-2);
   }
   /* TableMap / 静态渲染写入逻辑列号；overlay 等无标记克隆退回首个 DOM 格。 */
-  #view-workspace .wf-doc table > tbody > tr > [data-table-logical-col="0"],
-  #view-workspace .wf-doc table > tbody > tr > :first-child:not([data-table-logical-col]){
+  #view-workspace .wf-doc table > :is(thead,tbody,tfoot) > tr > [data-table-logical-col="0"],
+  #view-workspace .wf-doc table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col]){
     border-left:1px solid var(--line-2);
   }
   #view-workspace .wf-doc th{
-    background:var(--bg-subtle);font-weight:600;font-size:12.5px;color:var(--ink-2);
+    background:var(--bg-subtle);font-weight:700;font-size:12.5px;color:var(--ink-2);
   }
   /* 标题列由 JS 按逻辑第 0 列标记，rowspan 覆盖行不重复标记。 */
   #view-workspace .wf-doc [data-sticky-col]{
@@ -1652,9 +1652,17 @@
   #view-workspace .wf-doc [data-sticky-col]:not([data-bg-color]){
     background:var(--bg-canvas);
   }
+  #view-workspace .wf-doc th[data-sticky-col]:not([data-bg-color]){
+    background:var(--bg-subtle);
+  }
+  #view-workspace .wf-doc .tableWrapper[data-scrolled-x] [data-sticky-col],
+  #view-workspace .wf-doc .pm-table-scroll[data-scrolled-x] [data-sticky-col],
+  #view-workspace .table-header-overlay-viewport[data-scrolled-x] [data-sticky-col]{
+    box-shadow:6px 0 8px -6px color-mix(in srgb,var(--ink-1) 22%,transparent);
+  }
   #view-workspace .table-header-overlay-viewport{
     overflow:clip;z-index:100005;background:var(--bg-canvas);pointer-events:auto;
-    box-shadow:0 1px 0 var(--line-2);
+    box-shadow:0 6px 8px -6px color-mix(in srgb,var(--ink-1) 22%,transparent);
   }
   /* 只借用 wf-doc 的正文语义样式；display:contents 隔离墨水皮肤的整页纸面盒模型。 */
   #view-workspace .wf-doc.table-header-overlay-content{
@@ -1669,7 +1677,7 @@
   #view-workspace .table-header-overlay__table th{
     box-sizing:border-box;border:0;border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);padding:8px 12px;
     min-width:80px;vertical-align:top;text-align:left;background:var(--bg-subtle);
-    font-size:12.5px;line-height:1.6;font-weight:600;color:var(--ink-2);cursor:pointer;
+    font-size:12.5px;line-height:1.6;font-weight:700;color:var(--ink-2);cursor:pointer;
   }
   #view-workspace .table-header-overlay__table th:hover{background:var(--bg-hover)}
   #view-workspace .wf-doc td p{margin:0}
@@ -2097,7 +2105,7 @@
   /* edge dots — small circles between col/row borders */
   #view-workspace .tbl-dot{
     width:16px;height:16px;border-radius:50%;
-    box-sizing:border-box;border:1px solid transparent;background:transparent;color:var(--mark);
+    box-sizing:border-box;border:1px solid var(--line-2);background:var(--bg-canvas);color:var(--mark);
     cursor:pointer;z-index:100020;
     display:flex;align-items:center;justify-content:center;
     transform:translate(-50%,-50%);
@@ -2120,14 +2128,14 @@
   /* guide line on dot hover — clipped to table size via --tbl-guide */
   #view-workspace .tbl-dot-col:hover::after{
     content:"";position:absolute;top:50%;left:50%;
-    width:2px;height:var(--tbl-guide,100px);
-    background:color-mix(in srgb,var(--mark) 30%,transparent);transform:translateX(-50%);
+    width:1px;height:var(--tbl-guide,100px);
+    background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateX(-50%);
     pointer-events:none;
   }
   #view-workspace .tbl-dot-row:hover::after{
     content:"";position:absolute;top:50%;left:50%;
-    height:2px;width:var(--tbl-guide,200px);
-    background:color-mix(in srgb,var(--mark) 30%,transparent);transform:translateY(-50%);
+    height:1px;width:var(--tbl-guide,200px);
+    background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateY(-50%);
     pointer-events:none;
   }
 
@@ -2777,18 +2785,30 @@
   #view-workspace .pm-hover-original > :first-child{ margin-top:0; }
   #view-workspace .pm-hover-original > :last-child{ margin-bottom:0; }
   #view-workspace .pm-hover-original table{
-    border-collapse:collapse;
+    border-collapse:separate;
+    border-spacing:0;
     width:auto;
     max-width:100%;
     margin:4px 0;
-    border:1px solid var(--line-2);
+    border:0;
+    box-shadow:none;
   }
   #view-workspace .pm-hover-original th,
   #view-workspace .pm-hover-original td{
-    border:1px solid var(--line-2);
+    border:0;
+    border-right:1px solid var(--line-2);
+    border-bottom:1px solid var(--line-2);
     padding:4px 8px;
     text-align:left;
     vertical-align:top;
+  }
+  #view-workspace .pm-hover-original table > :first-child > tr:first-child > th,
+  #view-workspace .pm-hover-original table > :first-child > tr:first-child > td{
+    border-top:1px solid var(--line-2);
+  }
+  #view-workspace .pm-hover-original table > :is(thead,tbody,tfoot) > tr > [data-table-logical-col="0"],
+  #view-workspace .pm-hover-original table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col]){
+    border-left:1px solid var(--line-2);
   }
   /* 单元格内段落去掉 UA 外边距(对齐正文 .wf-doc td p{margin:0}),行高不虚胖。 */
   #view-workspace .pm-hover-original th > p,

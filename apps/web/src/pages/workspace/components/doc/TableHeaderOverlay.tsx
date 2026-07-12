@@ -16,6 +16,7 @@ interface TableHeaderOverlayState {
   tableWidth: number;
   cellWidths: number[];
   trueCells: HTMLTableCellElement[];
+  scrolledX: boolean;
 }
 
 interface TableCandidate {
@@ -23,6 +24,7 @@ interface TableCandidate {
   tablePos: number;
   element: HTMLTableElement;
   wrapper: HTMLElement;
+  hasHeaderRow: boolean;
 }
 
 export function TableHeaderOverlay({ editor }: { editor: Editor }) {
@@ -42,7 +44,10 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
       : new ResizeObserver(() => scheduleMeasure());
 
     const clearMeasuredTargets = () => {
-      for (const wrapper of measuredWrappers) wrapper.removeEventListener("scroll", scheduleMeasure);
+      for (const wrapper of measuredWrappers) {
+        wrapper.removeEventListener("scroll", scheduleMeasure);
+        wrapper.removeAttribute("data-scrolled-x");
+      }
       measuredWrappers.clear();
       for (const element of observedElements) resizeObserver?.unobserve(element);
       observedElements.clear();
@@ -51,7 +56,10 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
     const syncMeasuredTargets = (candidates: TableCandidate[]) => {
       const nextWrappers = new Set(candidates.map((candidate) => candidate.wrapper));
       for (const wrapper of measuredWrappers) {
-        if (!nextWrappers.has(wrapper)) wrapper.removeEventListener("scroll", scheduleMeasure);
+        if (!nextWrappers.has(wrapper)) {
+          wrapper.removeEventListener("scroll", scheduleMeasure);
+          wrapper.removeAttribute("data-scrolled-x");
+        }
       }
       for (const wrapper of nextWrappers) {
         if (!measuredWrappers.has(wrapper)) wrapper.addEventListener("scroll", scheduleMeasure, { passive: true });
@@ -81,12 +89,16 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
         setOverlay(null);
         return;
       }
-      const candidates = findHeaderTableCandidates(editor);
+      const candidates = findTableCandidates(editor);
       syncMeasuredTargets(candidates);
+      for (const candidate of candidates) {
+        candidate.wrapper.toggleAttribute("data-scrolled-x", candidate.wrapper.scrollLeft > 0);
+      }
 
       const wsRect = ws.getBoundingClientRect();
       let next: TableHeaderOverlayState | null = null;
       for (const candidate of candidates) {
+        if (!candidate.hasHeaderRow) continue;
         const headerRow = candidate.element.rows[0];
         if (!headerRow) continue;
         const tableRect = candidate.element.getBoundingClientRect();
@@ -109,6 +121,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
           tableWidth: tableRect.width,
           cellWidths: trueCells.map((cell) => cell.getBoundingClientRect().width),
           trueCells,
+          scrolledX: candidate.wrapper.scrollLeft > 0,
         };
         break;
       }
@@ -159,6 +172,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
     <div
       className="table-header-overlay-viewport"
       data-table-pos={overlay.tablePos}
+      data-scrolled-x={overlay.scrolledX ? "" : undefined}
       style={{
         position: "fixed",
         top: overlay.top,
@@ -185,6 +199,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
                   key={cellIndex}
                   cell={cell}
                   cellStyle={{ width: overlay.cellWidths[cellIndex] }}
+                  stickyColumn={overlay.trueCells[cellIndex]?.hasAttribute("data-sticky-col")}
                   onClick={() => focusTrueCell(cellIndex)}
                 >
                   {cell.content.map((block, blockIndex) => <PmBlockView key={block.attrs.blockId ?? blockIndex} node={block} />)}
@@ -199,7 +214,7 @@ export function TableHeaderOverlay({ editor }: { editor: Editor }) {
   return createPortal(content, resolveWorkspaceFloatingPortalTarget());
 }
 
-function findHeaderTableCandidates(editor: Editor): TableCandidate[] {
+function findTableCandidates(editor: Editor): TableCandidate[] {
   const candidates: TableCandidate[] = [];
   editor.state.doc.descendants((node, pos) => {
     if (node.type.spec.tableRole !== "table") return true;
@@ -207,7 +222,6 @@ function findHeaderTableCandidates(editor: Editor): TableCandidate[] {
     if (!firstRow || firstRow.childCount === 0) return false;
     const hasHeaderRow = Array.from({ length: firstRow.childCount }, (_, index) => firstRow.child(index))
       .every((cell) => cell.type.name === "tableHeader");
-    if (!hasHeaderRow) return false;
     const nodeDom = editor.view.nodeDOM(pos);
     const root = nodeDom instanceof HTMLElement ? nodeDom : null;
     const element = root instanceof HTMLTableElement ? root : root?.querySelector<HTMLTableElement>("table");
@@ -217,6 +231,7 @@ function findHeaderTableCandidates(editor: Editor): TableCandidate[] {
       tablePos: pos,
       element,
       wrapper: element.closest<HTMLElement>(".tableWrapper") ?? element,
+      hasHeaderRow,
     });
     return false;
   });

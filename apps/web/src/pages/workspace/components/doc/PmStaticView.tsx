@@ -1,4 +1,4 @@
-import React, { useMemo, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
+import React, { useEffect, useMemo, useRef, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { PmBlockNode, PmInlineNode, PmMark, PmTableCellNode, PmTableNode } from "@qingagent/pm-schema";
@@ -6,6 +6,33 @@ import { splitGraphemes } from "../../data/presentationSpans";
 import { reviewTableCellKey, type ReviewTableCellTypedCounts } from "../../data/tableTypewriter";
 import { ReadonlyImageFigure } from "../ImageView";
 import { DiagramRenderer } from "../diagram/DiagramRenderer";
+
+export function PmTableScroll({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const wrapper = ref.current;
+    if (!wrapper) return;
+    let rafId: number | null = null;
+    const syncScrolledState = () => wrapper.toggleAttribute("data-scrolled-x", wrapper.scrollLeft > 0);
+    const scheduleSync = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        syncScrolledState();
+      });
+    };
+    wrapper.addEventListener("scroll", scheduleSync, { passive: true });
+    syncScrolledState();
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      wrapper.removeEventListener("scroll", scheduleSync);
+      wrapper.removeAttribute("data-scrolled-x");
+    };
+  }, []);
+
+  return <div ref={ref} className={`pm-table-scroll${className ? ` ${className}` : ""}`}>{children}</div>;
+}
 
 export function PmBlockView({ node }: { node: PmBlockNode }) {
   switch (node.type) {
@@ -74,7 +101,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
       const stickyCellIndexes = staticStickyHeaderCellIndexes(node, logicalColumns);
       // 裹一层横滚容器:持久化 colwidth 总和超过可用宽度时,宽表在容器内横向滚动而非撑破/裁切正文与卡片。
       return (
-        <div className="pm-table-scroll">
+        <PmTableScroll>
           <table>
             <tbody>
               {node.content.map((row, rowIndex) => (
@@ -91,7 +118,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </PmTableScroll>
       );
 	    }
 	    case "image":
@@ -162,6 +189,7 @@ export function PmTypewriterTableView({
   typedCounts: ReviewTableCellTypedCounts;
 }) {
   const logicalColumns = staticTableCellLogicalColumns(node);
+  const stickyCellIndexes = staticStickyHeaderCellIndexes(node, logicalColumns);
   let activeCellKey: string | null = null;
   node.content.forEach((row, rowIndex) => {
     row.content.forEach((cell, cellIndex) => {
@@ -172,7 +200,7 @@ export function PmTypewriterTableView({
     });
   });
   return (
-    <div className="pm-table-scroll">
+    <PmTableScroll>
       <table data-review-table-reveal="true">
         <tbody>
           {node.content.map((row, rowIndex) => (
@@ -191,6 +219,7 @@ export function PmTypewriterTableView({
                     key={cellIndex}
                     cell={cell}
                     logicalColumn={logicalColumns.get(`${rowIndex}:${cellIndex}`)}
+                    stickyColumn={stickyCellIndexes.has(`${rowIndex}:${cellIndex}`)}
                   >
                     <div className="review-table-reveal-cell" data-review-cell-key={key}>
                       {revealedBlock ? <PmBlockView node={revealedBlock} /> : null}
@@ -208,7 +237,7 @@ export function PmTypewriterTableView({
           ))}
         </tbody>
       </table>
-    </div>
+    </PmTableScroll>
   );
 }
 

@@ -6,8 +6,8 @@ import { act } from "react";
 import { Editor } from "@tiptap/core";
 import type { PmDoc, PmTableNode } from "@qingagent/pm-schema";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { afterEach, describe, expect, it } from "vitest";
-import { PmBlockView } from "../../components/doc/PmStaticView";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PmBlockView, PmTypewriterTableView } from "../../components/doc/PmStaticView";
 import { TableStickyColumnExtension } from "../../data/tableStickyColumn";
 
 let editor: Editor | null = null;
@@ -19,6 +19,7 @@ afterEach(() => {
   editor?.destroy();
   editor = null;
   document.body.innerHTML = "";
+  vi.restoreAllMocks();
 });
 
 describe("合并表标题列 sticky 标记", () => {
@@ -47,6 +48,34 @@ describe("合并表标题列 sticky 标记", () => {
     expect([...host.querySelectorAll("[data-sticky-col]")].map((cell) => cell.textContent)).toEqual(["部门", "销售"]);
     expect([...host.querySelectorAll("[data-table-logical-col]")].map((cell) => cell.getAttribute("data-table-logical-col")))
       .toEqual(["0", "1", "1", "0", "1"]);
+  });
+
+  it("静态横滚容器按 rAF 切换状态属性", () => {
+    let pendingFrame: FrameRequestCallback | null = null;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      pendingFrame = callback;
+      return 1;
+    });
+    const host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    const table = documentWithRowspanHeaderColumn().content[0] as PmTableNode;
+    act(() => root?.render(<PmBlockView node={table} />));
+    const wrapper = host.querySelector<HTMLElement>(".pm-table-scroll")!;
+    Object.defineProperty(wrapper, "scrollLeft", { configurable: true, writable: true, value: 20 });
+
+    wrapper.dispatchEvent(new Event("scroll"));
+    expect(wrapper.hasAttribute("data-scrolled-x")).toBe(false);
+    act(() => pendingFrame?.(0));
+    expect(wrapper.hasAttribute("data-scrolled-x")).toBe(true);
+  });
+
+  it("流式静态表沿用标题列 sticky 语义", () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    const table = documentWithRowspanHeaderColumn().content[0] as PmTableNode;
+    act(() => root?.render(<PmTypewriterTableView node={table} blockIndex={0} typedCounts={new Map()} />));
+
+    expect([...host.querySelectorAll("[data-sticky-col]")].map((cell) => cell.textContent)).toEqual(["部门", "销售"]);
   });
 });
 

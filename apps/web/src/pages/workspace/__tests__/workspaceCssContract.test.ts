@@ -116,19 +116,36 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).not.toContain(":has(> table > tbody > tr > td:first-child)");
     expect(workspaceCss).toContain(".pm-table-scroll > table{overflow:visible}");
     expect(workspaceCss).toMatch(/\.wf-doc table\{\s*border-collapse:separate;border-spacing:0/);
-    expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:600/);
+    expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:700/);
     expect(workspaceCss).toMatch(/\[data-sticky-col\]\{\s*position:sticky;left:0;z-index:4;/);
     expect(workspaceCss).toMatch(/\[data-sticky-col\]:not\(\[data-bg-color\]\)\{\s*background:var\(--bg-canvas\)/);
     expect(workspaceCss).toMatch(/\.table-header-overlay-content > \.table-header-overlay__table\{[\s\S]*border-collapse:separate;border-spacing:0/);
-    expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*border-right:1px solid var\(--line-2\);border-bottom:1px solid var\(--line-2\)[\s\S]*font-weight:600/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*border-right:1px solid var\(--line-2\);border-bottom:1px solid var\(--line-2\)[\s\S]*font-weight:700/);
     expect(workspaceCss).toContain('[data-table-logical-col="0"]');
+    expect(workspaceCss).toContain("table > :first-child > tr:first-child > th");
+    expect(workspaceCss).toContain("table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col])");
+    expect(workspaceCss).toMatch(/\.tableWrapper\[data-scrolled-x\] \[data-sticky-col\],[\s\S]*box-shadow:6px 0 8px -6px/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay-viewport\{[\s\S]*box-shadow:0 6px 8px -6px/);
+    expect(workspaceCss).toMatch(/\.pm-hover-original table\{\s*border-collapse:separate;\s*border-spacing:0/);
     expect(workspaceCss).not.toContain(".table-header-overlay__table th > p{margin:0}");
-    expect(staticView).toContain('className="pm-table-scroll"');
+    expect(staticView).toContain("function PmTableScroll");
     expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
     expect(headerOverlay).toContain('className="table-header-overlay-viewport"');
     expect(headerOverlay).not.toContain('className="wf-doc table-header-overlay-viewport"');
     expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content\{\s*display:contents!important;[\s\S]*padding:0!important;width:auto!important;max-width:none!important;min-height:0!important/);
     expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content > \.table-header-overlay__table\{\s*margin:0;/);
+  });
+
+  it("插入圆点使用不透明纸底与 1px 双向指示线", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const dotRule = cssRule(workspaceCss, "#view-workspace .tbl-dot");
+    const columnGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-col:hover::after");
+    const rowGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-row:hover::after");
+
+    expect(dotRule).toContain("border:1px solid var(--line-2)");
+    expect(dotRule).toContain("background:var(--bg-canvas)");
+    expect(columnGuideRule).toContain("width:1px");
+    expect(rowGuideRule).toContain("height:1px");
   });
 
   it("keeps round-1 editor CSS fixes present", () => {

@@ -101,6 +101,30 @@ describe("TableHeaderOverlay", () => {
     expect(overlayCells[1]?.style.width).toBe("110px");
   });
 
+  it("横滚状态按 rAF 写入 wrapper 属性，归零与卸载时清理", async () => {
+    const setup = setupEditor(true);
+    await renderOverlay(setup.overlayHost);
+    expect(setup.wrapper.hasAttribute("data-scrolled-x")).toBe(false);
+
+    Object.defineProperty(setup.wrapper, "scrollLeft", { configurable: true, writable: true, value: 24 });
+    setup.wrapper.dispatchEvent(new Event("scroll"));
+    expect(setup.wrapper.hasAttribute("data-scrolled-x")).toBe(false);
+    await act(async () => flushAnimationFrames());
+    expect(setup.wrapper.hasAttribute("data-scrolled-x")).toBe(true);
+
+    setup.wrapper.scrollLeft = 0;
+    setup.wrapper.dispatchEvent(new Event("scroll"));
+    await act(async () => flushAnimationFrames());
+    expect(setup.wrapper.hasAttribute("data-scrolled-x")).toBe(false);
+
+    setup.wrapper.scrollLeft = 12;
+    setup.wrapper.dispatchEvent(new Event("scroll"));
+    await act(async () => flushAnimationFrames());
+    act(() => root?.unmount());
+    root = null;
+    expect(setup.wrapper.hasAttribute("data-scrolled-x")).toBe(false);
+  });
+
   it("表尾仍有表体可见时保持固定，表滚完或回滚到表头可见时消失", async () => {
     const setup = setupEditor(true);
     await renderOverlay(setup.overlayHost);

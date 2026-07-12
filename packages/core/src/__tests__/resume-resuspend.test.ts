@@ -475,6 +475,10 @@ describe("processAgentStream resume re-suspend handling", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("direct-rejected");
     const frames = await collectFrames(processAgentStream(streamOf(
+      {
+        type: "tool-call-input-streaming-start",
+        payload: { toolName: "askUserQuestion", toolCallId: "direct-rejected-tc" },
+      },
       askUserQuestionToolCall("direct-rejected-tc"),
       {
         type: "tool-result",
@@ -502,11 +506,73 @@ describe("processAgentStream resume re-suspend handling", () => {
       frame.data.spec.status.kind === "failed",
     );
     expect(failedUpdates).toHaveLength(1);
+    const appended = frames.filter((frame) =>
+      frame.kind === "chatMessageAppended" &&
+      frame.data.part.kind === "toolCall" &&
+      frame.data.part.data.id === "direct-rejected-tc"
+    );
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      data: { part: { data: {
+        name: "askUserQuestion",
+        status: { kind: "running" },
+        body: { kind: "askUser", data: { mode: { kind: "overlay" }, questions: [] } },
+      } } },
+    });
+    expect(state.chatHistory.flatMap((message) => message.parts).some((part) =>
+      part.kind === "toolCall" &&
+      part.data.id === "direct-rejected-tc" &&
+      part.data.status.kind === "running"
+    )).toBe(false);
     expect(state._askUserCompleted).not.toBe(true);
     expect(state._suspensionOwner).toBeNull();
     expect(frames.at(-1)).not.toMatchObject({
       kind: "docStateChanged",
       data: { activeOverlay: "askUser" },
+    });
+  });
+
+  it("askUserQuestion streaming-start 占位在 suspend 到达后原位替换成可操作问卷", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("direct-streaming-suspend");
+    const frames = await collectFrames(processAgentStream(streamOf(
+      {
+        type: "tool-call-input-streaming-start",
+        payload: { toolName: "askUserQuestion", toolCallId: "direct-streaming-tc" },
+      },
+      askUserQuestionToolCall("direct-streaming-tc"),
+      askUserSuspend("direct-streaming-tc", true, "askUserQuestion"),
+    ), {
+      state,
+      agentMessageId: "agent-msg",
+      streamId: "stream-direct-streaming",
+      runId: "run-direct-streaming",
+    }));
+
+    const appended = frames.filter((frame) =>
+      frame.kind === "chatMessageAppended" &&
+      frame.data.part.kind === "toolCall" &&
+      frame.data.part.data.id === "direct-streaming-tc"
+    );
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      data: { part: { data: {
+        name: "askUserQuestion",
+        status: { kind: "running" },
+        body: { kind: "askUser", data: { mode: { kind: "overlay" }, questions: [] } },
+      } } },
+    });
+    const suspended = frames.filter((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === "direct-streaming-tc" &&
+      frame.data.spec.status.kind === "pending"
+    );
+    expect(suspended).toHaveLength(1);
+    expect(suspended[0]).toMatchObject({
+      data: { spec: {
+        name: "askUserQuestion",
+        body: { kind: "askUser", data: { mode: { kind: "overlay" }, questions: oneRenderedQuestion() } },
+      } },
     });
   });
 

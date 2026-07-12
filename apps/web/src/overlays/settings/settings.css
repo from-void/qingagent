@@ -742,6 +742,7 @@
 .cn-scopes{display:flex;gap:6px;flex-wrap:wrap}
 .cnd-warnbox{color:var(--qj-header-sub)}
 .cnd-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:16px 6px 0;padding-top:14px;border-top:1px solid var(--qj-switch-border);font-size:10.5px;color:var(--qj-header-sub)}
+.cnd-foot .sk-btn-danger{flex-shrink:0;white-space:nowrap}
 
 /* 技能卡/详情的连接依赖行 */
 .qj-sheet-body .sk-dep{

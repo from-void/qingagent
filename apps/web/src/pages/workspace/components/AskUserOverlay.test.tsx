@@ -153,6 +153,35 @@ describe("AskUserOverlay", () => {
     trigger.remove();
   });
 
+  it("单题时不渲染问题导航、题号前缀与进度计数", async () => {
+    await renderOverlay(focusSpec);
+
+    expect(host?.querySelector(".auq-tabs")).toBeNull();
+    expect(host?.querySelector(".au-q-num")).toBeNull();
+    expect(host?.querySelector(".au-progress")).toBeNull();
+  });
+
+  it("两题时保留问题导航、题号前缀与进度计数", async () => {
+    await renderOverlay({
+      ...focusSpec,
+      id: "ask-two-questions",
+      questions: [
+        ...focusSpec.questions,
+        {
+          id: "q-2",
+          label: "补充说明",
+          kind: { kind: "text" },
+          options: [],
+          placeholder: null,
+        },
+      ],
+    });
+
+    expect(host?.querySelectorAll(".auq-tab")).toHaveLength(2);
+    expect(host?.querySelector(".au-q-num")?.textContent).toBe("01");
+    expect(host?.querySelector(".au-progress")?.textContent).toContain("0 / 1");
+  });
+
   it("自由输入时选项始终在 DOM；单选自定义与选项提交语义 XOR", async () => {
     const onSubmit = vi.fn();
     await renderOverlay(focusSpec, onSubmit);
@@ -234,7 +263,6 @@ describe("AskUserOverlay", () => {
       other.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await click(host!.querySelector<HTMLInputElement>('input[type="radio"]')!);
-    await click(host!.querySelector<HTMLButtonElement>(".auq-tab")!);
 
     const appended: AskUserSpec = {
       ...focusSpec,

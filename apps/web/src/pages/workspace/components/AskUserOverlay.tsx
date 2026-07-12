@@ -312,7 +312,7 @@ export function AskUserOverlay({
         <button type="button" className="au-x" aria-label="关闭" onClick={onClose}>×</button>
       </div>
 
-      {!isLoading && (
+      {!isLoading && spec.questions.length > 1 && (
         <div className="auq-tabs" role="tablist" aria-label="问题导航" ref={tabsRef}>
           {spec.questions.map((question, index) => {
             const answered = hasMeaningfulAnswer(answersForSubmit[question.id]);
@@ -367,7 +367,9 @@ export function AskUserOverlay({
             >
               {spec.rationale && <div className="au-rationale">{spec.rationale}</div>}
               <div className="au-q">
-                <span className="au-q-num">{String(currentIndex + 1).padStart(2, "0")}</span>
+                {spec.questions.length > 1 && (
+                  <span className="au-q-num">{String(currentIndex + 1).padStart(2, "0")}</span>
+                )}
                 {currentQuestion.label}
                 {currentQuestion.kind.kind === "multi" && <span className="hint">可多选</span>}
               </div>
@@ -435,7 +437,7 @@ export function AskUserOverlay({
               </Button>
             </>
           )}
-          {!isLoading && (
+          {!isLoading && spec.questions.length > 1 && (
             <span className="au-progress" aria-label={`已回答 ${answeredRequiredCount} 道必答题，共 ${requiredQuestions.length} 道`}>
               {answeredRequiredCount} / {requiredQuestions.length}
             </span>

@@ -93,7 +93,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const [info, setInfo] = useState<TblInfo | null>(null);
   const [selCols, setSelCols] = useState<Range2 | null>(null);
   const [selRows, setSelRows] = useState<Range2 | null>(null);
-  const [openTableColor, setOpenTableColor] = useState<"text" | "highlight" | "cell" | null>(null);
+  const [openTableMenu, setOpenTableMenu] = useState<"text" | "highlight" | "cell" | "align" | null>(null);
   const [axisDrag, setAxisDrag] = useState<AxisDragPreview | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -122,7 +122,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
     const resetSelectionProjection = () => {
       setSelCols(null);
       setSelRows(null);
-      setOpenTableColor(null);
+      setOpenTableMenu(null);
     };
     const clearMeasuredTargets = () => {
       scrollWrapper?.removeEventListener("scroll", scheduleMeasure);
@@ -396,17 +396,18 @@ export function TableControls({ editor, onAiModify, onToast }: {
       normalizedValue = val === "transparent" ? "transparent" : normalizeToolbarHighlightColor(val);
       if (!normalizedValue) return;
     }
-    if (!selCols && !selRows && !singleCellTextSelection) return;
+    if (!selCols && !selRows && !singleCellTextSelection && !(editor.state.selection instanceof CellSelection)) return;
     applyTableToolbarFormat(editor, cmd, normalizedValue);
-    setOpenTableColor(null);
+    setOpenTableMenu(null);
   }, [editor, info, selCols, selRows, singleCellTextSelection, toolbarUnlock]);
 
-  const doDelete = useCallback(() => {
+  const deleteAxis = useCallback((axis: "row" | "column") => {
     if (!editor.isEditable || !info) return;
-    if (selCols) editor.chain().focus().deleteColumn().run();
-    else if (selRows) editor.chain().focus().deleteRow().run();
-    setOpenTableColor(null);
-  }, [editor, info, selCols, selRows]);
+    const chain = editor.chain().focus();
+    if (axis === "column") chain.deleteColumn().run();
+    else chain.deleteRow().run();
+    setOpenTableMenu(null);
+  }, [editor, info]);
 
   const doAiModify = useCallback(async () => {
     if (!editor.isEditable) return;
@@ -448,6 +449,12 @@ export function TableControls({ editor, onAiModify, onToast }: {
   const hasAxisSelection = selCols !== null || selRows !== null;
   const hasCellSelection = editor.state.selection instanceof CellSelection;
   const hasSel = hasAxisSelection || hasCellSelection || singleCellTextSelection;
+  const canMergeCells = canApplyTableToolbarStructure(editor, "mergeCells");
+  const canSplitCell = canApplyTableToolbarStructure(editor, "splitCell");
+  const structureMode: "merge" | "split" = canSplitCell ? "split" : "merge";
+  const currentAlignment: "left" | "center" | "right" = editor.isActive({ textAlign: "center" })
+    ? "center"
+    : editor.isActive({ textAlign: "right" }) ? "right" : "left";
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
 
   const viewport = resolveTableChromeViewport(rect, wrapperRect, workspaceRect);
@@ -616,48 +623,48 @@ export function TableControls({ editor, onAiModify, onToast }: {
           <button className="dt-btn" title="下划线" disabled={!toolbarUnlock.table} onClick={() => fmtSel("underline")}><u>U</u></button>
           <button className="dt-btn" title="删除线" disabled={!toolbarUnlock.table} onClick={() => fmtSel("strike")}><s>S</s></button>
           <button className="dt-btn" title="行内代码" disabled={!toolbarUnlock.table} onClick={() => fmtSel("code")}><code>&lt;/&gt;</code></button>
-          <div className={`dt-group dt-dropdown tbl-color-group${openTableColor === "text" ? " open" : ""}`}>
+          <div className={`dt-group dt-dropdown tbl-color-group${openTableMenu === "text" ? " open" : ""}`}>
             <button
               className="dt-btn"
               title="文字颜色"
               disabled={!toolbarUnlock.table}
-              onClick={() => setOpenTableColor((v) => (v === "text" ? null : "text"))}
+              onClick={() => setOpenTableMenu((v) => (v === "text" ? null : "text"))}
             >
               <span className="dt-lbl dt-hi-lbl">A<span className="dt-text-bar" /></span>
             </button>
-            {openTableColor === "text" && (
+            {openTableMenu === "text" && (
               <div className="dt-menu dt-menu-colors dt-menu-table-colors" role="menu">
                 <TableColorGrid kind="text" onPick={(color) => fmtSel("textColor", color)} />
               </div>
             )}
           </div>
-          <div className={`dt-group dt-dropdown tbl-color-group${openTableColor === "highlight" ? " open" : ""}`}>
+          <div className={`dt-group dt-dropdown tbl-color-group${openTableMenu === "highlight" ? " open" : ""}`}>
             <button
               className="dt-btn"
               title="背景高亮"
               disabled={!toolbarUnlock.table}
-              onClick={() => setOpenTableColor((value) => (value === "highlight" ? null : "highlight"))}
+              onClick={() => setOpenTableMenu((value) => (value === "highlight" ? null : "highlight"))}
             >
               <span className="dt-lbl dt-hi-lbl">H<span className="dt-hi-bar" /></span>
             </button>
-            {openTableColor === "highlight" && (
+            {openTableMenu === "highlight" && (
               <div className="dt-menu dt-menu-colors dt-menu-table-colors" role="menu">
                 <TableColorGrid kind="highlight" onPick={(color) => fmtSel("highlight", color)} />
               </div>
             )}
           </div>
-          <div className={`dt-group dt-dropdown tbl-color-group${openTableColor === "cell" ? " open" : ""}`}>
+          <div className={`dt-group dt-dropdown tbl-color-group${openTableMenu === "cell" ? " open" : ""}`}>
             <button
               className="dt-btn"
               title="单元格底色"
               disabled={!toolbarUnlock.table}
-              onClick={() => setOpenTableColor((v) => (v === "cell" ? null : "cell"))}
+              onClick={() => setOpenTableMenu((v) => (v === "cell" ? null : "cell"))}
             >
               <span className="dt-cell-fill-icon" aria-hidden="true">
                 <span />
               </span>
             </button>
-            {openTableColor === "cell" && (
+            {openTableMenu === "cell" && (
               <div className="dt-menu dt-menu-colors dt-menu-table-colors" role="menu">
                 <TableColorGrid kind="cell" onPick={(color) => fmtSel("cellBackground", color)} />
               </div>
@@ -666,26 +673,48 @@ export function TableControls({ editor, onAiModify, onToast }: {
           <div className="dt-divider" />
           <button
             className="dt-btn"
-            title="合并单元格"
-            disabled={!canApplyTableToolbarStructure(editor, "mergeCells")}
-            onClick={() => applyTableToolbarStructure(editor, "mergeCells")}
-          >合并单元格</button>
-          <button
-            className="dt-btn"
-            title="拆分单元格"
-            disabled={!canApplyTableToolbarStructure(editor, "splitCell")}
-            onClick={() => applyTableToolbarStructure(editor, "splitCell")}
-          >拆分单元格</button>
+            data-table-structure={structureMode}
+            title={structureMode === "split" ? "拆分单元格" : "合并单元格"}
+            disabled={!canMergeCells && !canSplitCell}
+            onClick={() => applyTableToolbarStructure(editor, structureMode === "split" ? "splitCell" : "mergeCells")}
+          ><TableStructureIcon mode={structureMode} /></button>
+          {selRows ? null : (
+            <button className="dt-btn" title="删除列" onClick={() => deleteAxis("column")} style={{ color: "var(--mark)" }}>
+              <DeleteTableAxisIcon axis="column" />
+            </button>
+          )}
+          {selCols ? null : (
+            <button className="dt-btn" title="删除行" onClick={() => deleteAxis("row")} style={{ color: "var(--mark)" }}>
+              <DeleteTableAxisIcon axis="row" />
+            </button>
+          )}
           <div className="dt-divider" />
-          <button className="dt-btn" title="左对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignLeft")}>≡←</button>
-          <button className="dt-btn" title="居中" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignCenter")}>≡</button>
-          <button className="dt-btn" title="右对齐" disabled={!toolbarUnlock.table} onClick={() => fmtSel("alignRight")}>→≡</button>
+          <div className={`dt-group dt-dropdown${openTableMenu === "align" ? " open" : ""}`}>
+            <button
+              className="dt-btn"
+              title={`对齐方式：${alignmentLabel(currentAlignment)}`}
+              aria-haspopup="menu"
+              aria-expanded={openTableMenu === "align"}
+              disabled={!toolbarUnlock.table}
+              onClick={() => setOpenTableMenu((value) => value === "align" ? null : "align")}
+            >
+              <AlignmentIcon mode={currentAlignment} />
+              <span className="dt-caret">▾</span>
+            </button>
+            {openTableMenu === "align" ? (
+              <div className="dt-menu" role="menu">
+                <TableAlignmentMenuItem mode="left" onPick={() => fmtSel("alignLeft")} />
+                <TableAlignmentMenuItem mode="center" onPick={() => fmtSel("alignCenter")} />
+                <TableAlignmentMenuItem mode="right" onPick={() => fmtSel("alignRight")} />
+              </div>
+            ) : null}
+          </div>
           <button
             className="dt-btn"
             title="链接"
             disabled={!toolbarUnlock.table || !singleCellTextSelection}
             onClick={(event) => {
-              setOpenTableColor(null);
+              setOpenTableMenu(null);
               openLinkEditor(floatingAnchorFromElement(event.currentTarget));
             }}
           >
@@ -703,14 +732,6 @@ export function TableControls({ editor, onAiModify, onToast }: {
           >
             <span className="dt-ai-ico">✨</span><span>修改选中文字</span>
           </button>
-          {hasAxisSelection ? (
-            <>
-              <div className="dt-divider" />
-              <button className="dt-btn" title={selCols ? "删除列" : "删除行"} onClick={doDelete} style={{color:"var(--mark)"}}>
-                {selCols ? "删除列" : "删除行"}
-              </button>
-            </>
-          ) : null}
         </div>
         );
       })()}
@@ -847,6 +868,72 @@ function TableColorGrid({
           <span className="dt-color-none" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function TableStructureIcon({ mode }: { mode: "merge" | "split" }) {
+  return (
+    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="2" y="3" width="12" height="10" />
+      <path d="M8 3v10" />
+      {mode === "merge" ? (
+        <path d="M4.2 8h2.4M5.6 6.6L7 8 5.6 9.4M11.8 8H9.4M10.4 6.6L9 8l1.4 1.4" />
+      ) : (
+        <path d="M7 8H4.2M5.6 6.6L4.2 8l1.4 1.4M9 8h2.8M10.4 6.6L11.8 8l-1.4 1.4" />
+      )}
+    </svg>
+  );
+}
+
+function DeleteTableAxisIcon({ axis }: { axis: "row" | "column" }) {
+  return (
+    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="2" y="2.5" width="9" height="11" />
+      <path d={axis === "column" ? "M6.5 2.5v11" : "M2 8h9"} />
+      <path d="M12.2 6.2l2.8 2.8M15 6.2L12.2 9" />
+    </svg>
+  );
+}
+
+function AlignmentIcon({ mode }: { mode: "left" | "center" | "right" }) {
+  const lines = mode === "left"
+    ? [[2, 4, 12], [2, 7, 9], [2, 10, 12], [2, 13, 7]]
+    : mode === "right"
+      ? [[2, 4, 12], [5, 7, 9], [2, 10, 12], [7, 13, 7]]
+      : [[2, 4, 12], [3.5, 7, 9], [2, 10, 12], [4.5, 13, 7]];
+  return (
+    <svg className="dt-svg" viewBox="0 0 16 16" aria-hidden="true">
+      {lines.map(([x, y, width]) => <path key={`${x}-${y}`} d={`M${x} ${y}h${width}`} />)}
+    </svg>
+  );
+}
+
+function alignmentLabel(mode: "left" | "center" | "right"): string {
+  return mode === "left" ? "左对齐" : mode === "center" ? "居中" : "右对齐";
+}
+
+function TableAlignmentMenuItem({
+  mode,
+  onPick,
+}: {
+  mode: "left" | "center" | "right";
+  onPick: () => void;
+}) {
+  return (
+    <div
+      className="dt-mi"
+      role="menuitem"
+      tabIndex={0}
+      onClick={onPick}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onPick();
+      }}
+    >
+      <AlignmentIcon mode={mode} />
+      {alignmentLabel(mode)}
     </div>
   );
 }

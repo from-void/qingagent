@@ -5,7 +5,7 @@ import { CellSelection } from "@tiptap/pm/tables";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { pmToMarkdown, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { selectTableColumns, setTableCellSelectionFromDom, TableAxisSelectionExtension } from "../../data/tableToolbar";
+import { selectTableColumns, selectTableRows, setTableCellSelectionFromDom, TableAxisSelectionExtension } from "../../data/tableToolbar";
 import { TableControls } from "./TableControls";
 import { TABLE_INSERT_DOT_HOVER_SIZE } from "./tableChromeGeometry";
 import { BlockHandle } from "./BlockHandle";
@@ -249,9 +249,35 @@ describe("TableControls 真选区与 chrome", () => {
     await renderControls(editor);
     const merge = portal.querySelector<HTMLButtonElement>('[title="合并单元格"]');
     expect(merge?.disabled).toBe(false);
+    expect(portal.querySelectorAll("[data-table-structure]")).toHaveLength(1);
+    expect(merge?.textContent).toBe("");
     await act(async () => { merge?.click(); });
     const split = portal.querySelector<HTMLButtonElement>('[title="拆分单元格"]');
     expect(split?.disabled).toBe(false);
+    expect(portal.querySelectorAll("[data-table-structure]")).toHaveLength(1);
+  });
+
+  it("删除入口按轴向收敛，单格选区同时显示删除行列", async () => {
+    const { editor, portal, tables } = setupTable({ blockId: "table-1" });
+    expect(selectTableColumns(editor, "table-1", 0, 0)).toBe(true);
+    await renderControls(editor);
+    expect(portal.querySelector('[title="删除列"]')).not.toBeNull();
+    expect(portal.querySelector('[title="删除行"]')).toBeNull();
+
+    await act(async () => {
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(true);
+      flushAnimationFrames();
+    });
+    expect(portal.querySelector('[title="删除列"]')).toBeNull();
+    expect(portal.querySelector('[title="删除行"]')).not.toBeNull();
+
+    const cells = tables[0]!.querySelectorAll("td");
+    await act(async () => {
+      expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement)).toBe(true);
+      flushAnimationFrames();
+    });
+    expect(portal.querySelector('[title="删除列"]')).not.toBeNull();
+    expect(portal.querySelector('[title="删除行"]')).not.toBeNull();
   });
   it("HTML 粘贴合并表后可显示逻辑列头、删列、AI 回填并正确导出 md", async () => {
     const { editor, portal } = setupTable({ blockId: "table-1" });
@@ -702,9 +728,19 @@ describe("TableControls AI 修改", () => {
 
     const toolbar = portal.querySelector<HTMLElement>(".tbl-sel-toolbar");
     expect(toolbar).not.toBeNull();
-    for (const title of ["行内代码", "背景高亮", "左对齐", "居中", "右对齐", "链接"]) {
+    for (const title of ["行内代码", "背景高亮", "对齐方式：左对齐", "链接", "删除行", "删除列"]) {
       expect(toolbar?.querySelector(`[title="${title}"]`)).not.toBeNull();
     }
+    expect(toolbar?.querySelectorAll('[title^="对齐方式："]')).toHaveLength(1);
+    const alignment = toolbar?.querySelector<HTMLButtonElement>('[title="对齐方式：左对齐"]');
+    await act(async () => alignment?.click());
+    const alignmentMenu = toolbar?.querySelector('[role="menu"]');
+    expect(alignmentMenu?.textContent).toContain("左对齐居中右对齐");
+    const centerAlignment = [...(alignmentMenu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+      .find((item) => item.textContent?.includes("居中"));
+    await act(async () => centerAlignment?.click());
+    expect(editor.isActive({ textAlign: "center" })).toBe(true);
+    expect(toolbar?.querySelector('[title="对齐方式：居中"]')).not.toBeNull();
     const linkButton = toolbar?.querySelector<HTMLButtonElement>('[title="链接"]');
     expect(linkButton?.disabled).toBe(false);
     await act(async () => linkButton?.click());

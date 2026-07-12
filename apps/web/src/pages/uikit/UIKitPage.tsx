@@ -1813,9 +1813,13 @@ export function UIKitPage() {
                   </button>
                 </div>
                 <div className="dt-divider" />
-                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
+                <button className="dt-btn" type="button" title="合并单元格" aria-label="合并单元格">⇥▦⇤</button>
+                <button className="dt-btn" type="button" title="删除列" aria-label="删除列" style={{ color: "var(--mark)" }}>⌫</button>
+                <div className="dt-group dt-dropdown">
+                  <button className="dt-btn" type="button" title="对齐方式：左对齐">≡<span className="dt-caret">▾</span></button>
+                </div>
                 <div className="dt-divider" />
-                <button className="dt-btn" type="button" style={{ color: "var(--mark)" }}>删除列</button>
+                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
               </div>
             </div>
             <p className="uk-cap uk-lead">

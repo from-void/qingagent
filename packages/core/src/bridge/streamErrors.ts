@@ -2,6 +2,7 @@ import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
 import type { SessionState } from "./sessionState.js";
 import { appendPartToChatHistory, nextSeq } from "./sessionState.js";
 import { chatMessageAppended } from "./frames.js";
+import type { AgentStreamErrorEvent } from "./agentStreamEvents.js";
 
 export const USER_ABORT_REASON = "user_abort";
 export const IDLE_TIMEOUT_ABORT_REASON = "idle_timeout";
@@ -10,11 +11,11 @@ export function isUserAbortSignal(signal: AbortSignal): boolean {
   return signal.aborted && signal.reason !== IDLE_TIMEOUT_ABORT_REASON;
 }
 
-export async function* withIdleTimeout(
-  source: AsyncIterable<any>,
+export async function* withIdleTimeout<T>(
+  source: AsyncIterable<T>,
   timeoutMs: number,
   onTimeout: () => void,
-): AsyncGenerator<any> {
+): AsyncGenerator<T | AgentStreamErrorEvent> {
   const iterator = source[Symbol.asyncIterator]();
   let timedOut = false;
   try {

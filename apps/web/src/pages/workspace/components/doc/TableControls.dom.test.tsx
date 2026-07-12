@@ -732,6 +732,31 @@ describe("TableControls AI 修改", () => {
     await act(async () => toolbar?.querySelector<HTMLButtonElement>('[title="背景高亮"]')?.click());
     expect(portal.querySelector('.tbl-color-group.open [role="menu"]')).not.toBeNull();
   });
+
+  it("宽表横滚后选列工具栏按可视选区锚定并完整夹在纸张内", async () => {
+    const { editor, portal, tables, ws } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    const wrapper = tableElement.closest(".tableWrapper") ?? tableElement;
+    setRect(ws, rect(500, 0, 800, 600));
+    setRect(editor.view.dom, rect(500, 0, 800, 600));
+    setRect(wrapper, rect(556, 90, 664, 120));
+    setRect(tableElement, rect(134, 100, 1944, 80));
+    [...tableElement.rows].forEach((row, rowIndex) => {
+      setRect(row, rect(134, 100 + rowIndex * 40, 1944, 40));
+      [...row.cells].forEach((tableCell, colIndex) => {
+        setRect(tableCell, rect(134 + colIndex * 972, 100 + rowIndex * 40, 972, 40));
+      });
+    });
+    expect(selectTableColumns(editor, "table-1", 1, 1)).toBe(true);
+    await renderControls(editor);
+
+    const toolbar = portal.querySelector<HTMLElement>(".tbl-sel-toolbar")!;
+    const center = Number.parseFloat(toolbar.style.left);
+    // jsdom 下该工具栏 CSS 布局宽 508px，中心被夹在纸张可视左界 500 + 8 + 254。
+    expect(center).toBe(762);
+    expect(center).toBeGreaterThan(500);
+    expect(center).toBeLessThan(Math.min(1300, window.innerWidth));
+  });
 });
 
 describe("TableControls 大表拖选基准", () => {

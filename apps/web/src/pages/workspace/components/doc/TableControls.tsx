@@ -17,7 +17,7 @@ import {
   selectTableColumns,
   selectTableRows,
 } from "../../data/tableToolbar";
-import { resolveCenteredFloatingPosition } from "../../data/floatingPosition";
+import { intersectFloatingAnchor, resolveCenteredFloatingPosition } from "../../data/floatingPosition";
 import {
   isTableToolbarCommandEnabled,
   normalizeToolbarHighlightColor,
@@ -48,6 +48,7 @@ interface TblInfo {
   rect: DOMRect;
   wrapperRect: DOMRect;
   workspaceRect: DOMRect;
+  paperRect: DOMRect;
   cols: ColInfo[];
   rows: RowInfo[];
   el: HTMLTableElement;
@@ -164,6 +165,8 @@ export function TableControls({ editor, onAiModify, onToast }: {
         width: window.innerWidth,
         height: window.innerHeight,
       });
+      const measuredPaperRect = editor.view.dom.getBoundingClientRect();
+      const paperRect = measuredPaperRect.width > 0 ? measuredPaperRect : workspaceRect;
       const cols = measureLogicalColumns(editor, blockIdFromTable(editor, table));
       const rows: RowInfo[] = Array.from(table.rows).map((r) => { const b = r.getBoundingClientRect(); return { top: b.top, height: b.height, bottom: b.bottom }; });
       const blockId = resolveSelectedTableBlockId(editor);
@@ -175,6 +178,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
         rect,
         wrapperRect,
         workspaceRect,
+        paperRect,
         cols,
         rows,
         el: table,
@@ -440,7 +444,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
   }, [editor, info, onAiModify, onToast, selCols, selRows]);
 
   if (!editor.isEditable || !info) return null;
-  const { rect, wrapperRect, workspaceRect, cols, rows } = info;
+  const { rect, wrapperRect, workspaceRect, paperRect, cols, rows } = info;
   const hasAxisSelection = selCols !== null || selRows !== null;
   const hasCellSelection = editor.state.selection instanceof CellSelection;
   const hasSel = hasAxisSelection || hasCellSelection || singleCellTextSelection;
@@ -548,15 +552,29 @@ export function TableControls({ editor, onAiModify, onToast }: {
 
       {/* ── selection toolbar ── */}
       {hasSel && (() => {
-        let cX = rect.left + rect.width / 2;
+        let selectionAnchor = { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width };
         if (selCols) {
           const lo = cols[Math.min(selCols[0], selCols[1])];
           const hi = cols[Math.max(selCols[0], selCols[1])];
-          if (lo && hi) cX = (lo.left + hi.right) / 2;
+          if (lo && hi) selectionAnchor = { top: rect.top, bottom: rect.bottom, left: lo.left, width: hi.right - lo.left };
         } else if (selRows) {
-          cX = rect.left + rect.width / 2;
+          const lo = rows[Math.min(selRows[0], selRows[1])];
+          const hi = rows[Math.max(selRows[0], selRows[1])];
+          if (lo && hi) selectionAnchor = { top: lo.top, bottom: hi.bottom, left: rect.left, width: rect.width };
+        } else if (hasCellSelection) {
+          const selectedCells = [...info.el.querySelectorAll<HTMLElement>(".selectedCell")];
+          if (selectedCells.length > 0) {
+            const selectedRects = selectedCells.map((cell) => cell.getBoundingClientRect());
+            const left = Math.min(...selectedRects.map((cellRect) => cellRect.left));
+            selectionAnchor = {
+              top: Math.min(...selectedRects.map((cellRect) => cellRect.top)),
+              bottom: Math.max(...selectedRects.map((cellRect) => cellRect.bottom)),
+              left,
+              width: Math.max(...selectedRects.map((cellRect) => cellRect.right)) - left,
+            };
+          }
         }
-        let toolbarAnchor = { top: rect.top - COL_HDR, bottom: rect.bottom, left: cX, width: 0 };
+        let toolbarAnchor = selectionAnchor;
         if (singleCellTextSelection) {
           try {
             const from = editor.view.coordsAtPos(editor.state.selection.from);
@@ -572,11 +590,22 @@ export function TableControls({ editor, onAiModify, onToast }: {
             // DOM 选区刚替换时沿用表格几何。
           }
         }
+        const wrapperVisibleRect = {
+          top: Math.max(wrapperRect.top, workspaceRect.top),
+          right: Math.min(wrapperRect.right, workspaceRect.right),
+          bottom: Math.min(wrapperRect.bottom, workspaceRect.bottom),
+          left: Math.max(wrapperRect.left, workspaceRect.left),
+        };
+        toolbarAnchor = intersectFloatingAnchor(toolbarAnchor, wrapperVisibleRect);
+        const paperVisibleBounds = {
+          left: Math.max(paperRect.left, workspaceRect.left),
+          right: Math.min(paperRect.right, workspaceRect.right),
+        };
         const toolbarPos = resolveCenteredFloatingPosition(
           toolbarAnchor,
           { width: toolbarRef.current?.offsetWidth || 620, height: 40 },
           { width: window.innerWidth, height: window.innerHeight },
-          { gap: 8 },
+          { gap: 8, horizontalBounds: paperVisibleBounds },
         );
         return (
         <div ref={toolbarRef} className={`doc-toolbar on tbl-sel-toolbar${toolbarPos.placement === "below" ? " is-below" : ""}`} onMouseDown={prevent}

@@ -37,7 +37,7 @@ export function resolveCenteredFloatingPosition(
   anchor: FloatingAnchorRect,
   size: FloatingSize,
   viewport: FloatingViewport,
-  options: { margin?: number; gap?: number } = {},
+  options: { margin?: number; gap?: number; horizontalBounds?: { left: number; right: number } } = {},
 ): FloatingPosition {
   const margin = options.margin ?? 8;
   const gap = options.gap ?? 10;
@@ -54,13 +54,38 @@ export function resolveCenteredFloatingPosition(
   top = clamp(top, margin, viewport.height - height - margin);
 
   const half = width / 2;
+  const horizontalLeft = options.horizontalBounds
+    ? Math.max(margin, options.horizontalBounds.left + margin)
+    : margin;
+  const horizontalRight = options.horizontalBounds
+    ? Math.min(viewport.width - margin, options.horizontalBounds.right - margin)
+    : viewport.width - margin;
   const left = clamp(
     anchor.left + anchor.width / 2,
-    half + margin,
-    viewport.width - half - margin,
+    horizontalLeft + half,
+    horizontalRight - half,
   );
 
   return { top, left, placement };
+}
+
+export function intersectFloatingAnchor(
+  anchor: FloatingAnchorRect,
+  bounds: { top: number; right: number; bottom: number; left: number },
+): FloatingAnchorRect {
+  const anchorRight = anchor.left + anchor.width;
+  const left = Math.max(anchor.left, bounds.left);
+  const right = Math.min(anchorRight, bounds.right);
+  const top = Math.max(anchor.top, bounds.top);
+  const bottom = Math.min(anchor.bottom, bounds.bottom);
+  const fallbackX = clamp(anchor.left + anchor.width / 2, bounds.left, bounds.right);
+  const fallbackY = clamp((anchor.top + anchor.bottom) / 2, bounds.top, bounds.bottom);
+  return {
+    left: right >= left ? left : fallbackX,
+    width: right >= left ? right - left : 0,
+    top: bottom >= top ? top : fallbackY,
+    bottom: bottom >= top ? bottom : fallbackY,
+  };
 }
 
 export function resolveAnchoredBubblePosition(

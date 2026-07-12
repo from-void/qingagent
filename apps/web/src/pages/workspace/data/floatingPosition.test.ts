@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  intersectFloatingAnchor,
   resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
   resolveSideFloatingPosition,
@@ -29,6 +30,25 @@ describe("floatingPosition", () => {
     );
     expect(pos.top).toBe(250);
     expect(pos.placement).toBe("above");
+  });
+
+  it("clamps a centered toolbar inside paper horizontal bounds", () => {
+    const pos = resolveCenteredFloatingPosition(
+      { top: 300, bottom: 330, left: 1200, width: 100 },
+      { width: 620, height: 40 },
+      { width: 1400, height: 600 },
+      { margin: 8, horizontalBounds: { left: 500, right: 1300 } },
+    );
+    expect(pos.left).toBe(982);
+    expect(pos.left - 310).toBeGreaterThanOrEqual(508);
+    expect(pos.left + 310).toBeLessThanOrEqual(1292);
+  });
+
+  it("uses the visible intersection as the floating anchor", () => {
+    expect(intersectFloatingAnchor(
+      { top: 100, bottom: 180, left: 134, width: 1944 },
+      { top: 90, right: 1220, bottom: 210, left: 556 },
+    )).toEqual({ top: 100, bottom: 180, left: 556, width: 664 });
   });
 
   it("keeps an anchored link bubble in the viewport", () => {

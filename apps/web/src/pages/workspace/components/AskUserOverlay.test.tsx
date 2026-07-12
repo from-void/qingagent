@@ -333,6 +333,9 @@ describe("AskUserOverlay", () => {
     expect(portalOverlay).not.toBeNull();
     expect(portalOverlay?.style.getPropertyValue("--au-portal-left")).toMatch(/px$/);
     expect(portalOverlay?.querySelector(".auq-preview")?.textContent).toContain("温和样张");
+    const fixedOther = portalOverlay!.querySelector<HTMLElement>(".auq-other-wrap")!;
+    expect(fixedOther.closest(".au-body-scroll")).toBeNull();
+    expect(fixedOther.nextElementSibling?.classList.contains("au-foot")).toBe(true);
     const secondCard = portalOverlay!.querySelectorAll<HTMLElement>(".auq-card")[1]!;
     await act(async () => {
       secondCard.querySelector<HTMLInputElement>("input")!.focus();

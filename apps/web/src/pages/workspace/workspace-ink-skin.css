@@ -1363,7 +1363,16 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: var(--ink-4);
 }
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc {
-  color: var(--ink-2);
+  color: #433a2b;
+}
+#view-workspace .askuser-overlay .auq-preview-fullscreen {
+  border-color: rgba(107, 88, 54, 0.46);
+  background: rgba(239, 231, 214, 0.94);
+  color: #6b5836;
+}
+#view-workspace .askuser-overlay .auq-preview-fullscreen:hover {
+  border-color: #6b5836;
+  color: #433a2b;
 }
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc h1,
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc h2,
@@ -1371,13 +1380,13 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc h4,
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc h5,
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc h6 {
-  color: var(--ink-1);
+  color: #30291f;
 }
 #view-workspace .askuser-overlay .auq-preview-doc.wf-doc blockquote {
-  color: var(--ink-3);
+  color: #6b5836;
 }
 #view-workspace .askuser-overlay .auq-preview-fallback {
-  color: var(--ink-3);
+  color: #6b5836;
 }
 #view-workspace .aus2-track {
   background: var(--line-1);

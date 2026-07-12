@@ -70,7 +70,8 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
     case "codeBlock":
       return <pre className="md-code-block" data-language={node.attrs.language ?? "plaintext"}>{pmInlineText(node.content ?? [])}</pre>;
     case "table": {
-      const stickyCellIndexes = staticStickyHeaderCellIndexes(node);
+      const logicalColumns = staticTableCellLogicalColumns(node);
+      const stickyCellIndexes = staticStickyHeaderCellIndexes(node, logicalColumns);
       // 裹一层横滚容器:持久化 colwidth 总和超过可用宽度时,宽表在容器内横向滚动而非撑破/裁切正文与卡片。
       return (
         <div className="pm-table-scroll">
@@ -82,6 +83,7 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
                     <PmTableCellView
                       key={cellIndex}
                       cell={cell}
+                      logicalColumn={logicalColumns.get(`${rowIndex}:${cellIndex}`)}
                       stickyColumn={stickyCellIndexes.has(`${rowIndex}:${cellIndex}`)}
                     />
                   ))}
@@ -159,6 +161,7 @@ export function PmTypewriterTableView({
   blockIndex: number;
   typedCounts: ReviewTableCellTypedCounts;
 }) {
+  const logicalColumns = staticTableCellLogicalColumns(node);
   let activeCellKey: string | null = null;
   node.content.forEach((row, rowIndex) => {
     row.content.forEach((cell, cellIndex) => {
@@ -184,7 +187,11 @@ export function PmTypewriterTableView({
                   ? withTruncatedPmInlineContent(block, inlineContent, typed)
                   : null;
                 return (
-                  <PmTableCellView key={cellIndex} cell={cell}>
+                  <PmTableCellView
+                    key={cellIndex}
+                    cell={cell}
+                    logicalColumn={logicalColumns.get(`${rowIndex}:${cellIndex}`)}
+                  >
                     <div className="review-table-reveal-cell" data-review-cell-key={key}>
                       {revealedBlock ? <PmBlockView node={revealedBlock} /> : null}
                       {activeCellKey === key ? (
@@ -236,6 +243,7 @@ export function PmTableCellView({
   onClick,
   cellStyle,
   stickyColumn,
+  logicalColumn,
 }: {
   cell: PmTableCellNode;
   className?: string;
@@ -248,6 +256,7 @@ export function PmTableCellView({
   onClick?: MouseEventHandler<HTMLTableCellElement>;
   cellStyle?: CSSProperties;
   stickyColumn?: boolean;
+  logicalColumn?: number;
 }) {
   const Tag = cell.type === "tableHeader" ? "th" : "td";
   const attrs = cell.attrs as { backgroundColor?: string | null; colspan?: number; rowspan?: number; colwidth?: number[] | null } | undefined;
@@ -262,6 +271,7 @@ export function PmTableCellView({
       ref={cellRef}
       className={className}
       data-bg-color={attrs?.backgroundColor ?? undefined}
+      data-table-logical-col={logicalColumn}
       data-sticky-col={stickyColumn ? "" : undefined}
       data-review-target-id={reviewTargetId}
       data-review-target-index={reviewTargetIndex}
@@ -277,16 +287,16 @@ export function PmTableCellView({
   );
 }
 
-function staticStickyHeaderCellIndexes(table: PmTableNode): Set<string> {
+export function staticTableCellLogicalColumns(table: PmTableNode): Map<string, number> {
   const occupied: Array<Array<string | undefined>> = [];
-  const origins = new Map<string, PmTableCellNode>();
+  const logicalColumns = new Map<string, number>();
   table.content.forEach((row, rowIndex) => {
     occupied[rowIndex] ??= [];
     let logicalColumn = 0;
     row.content.forEach((cell, cellIndex) => {
       while (occupied[rowIndex]![logicalColumn] !== undefined) logicalColumn += 1;
       const key = `${rowIndex}:${cellIndex}`;
-      origins.set(key, cell);
+      logicalColumns.set(key, logicalColumn);
       const colspan = Math.max(1, Number(cell.attrs?.colspan) || 1);
       const rowspan = Math.max(1, Number(cell.attrs?.rowspan) || 1);
       for (let rowOffset = 0; rowOffset < rowspan; rowOffset += 1) {
@@ -298,7 +308,20 @@ function staticStickyHeaderCellIndexes(table: PmTableNode): Set<string> {
       logicalColumn += colspan;
     });
   });
-  const firstColumnKeys = [...new Set(occupied.map((row) => row?.[0]).filter((key): key is string => Boolean(key)))];
+  return logicalColumns;
+}
+
+function staticStickyHeaderCellIndexes(
+  table: PmTableNode,
+  logicalColumns = staticTableCellLogicalColumns(table),
+): Set<string> {
+  const origins = new Map<string, PmTableCellNode>();
+  table.content.forEach((row, rowIndex) => {
+    row.content.forEach((cell, cellIndex) => origins.set(`${rowIndex}:${cellIndex}`, cell));
+  });
+  const firstColumnKeys = [...logicalColumns]
+    .filter(([, column]) => column === 0)
+    .map(([key]) => key);
   return firstColumnKeys.length > 0 && firstColumnKeys.every((key) => origins.get(key)?.type === "tableHeader")
     ? new Set(firstColumnKeys)
     : new Set();

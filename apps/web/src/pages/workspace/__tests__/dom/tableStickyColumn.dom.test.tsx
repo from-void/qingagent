@@ -31,6 +31,8 @@ describe("合并表标题列 sticky 标记", () => {
     });
 
     expect([...host.querySelectorAll("[data-sticky-col]")].map((cell) => cell.textContent)).toEqual(["部门", "销售"]);
+    expect([...host.querySelectorAll("[data-table-logical-col]")].map((cell) => cell.getAttribute("data-table-logical-col")))
+      .toEqual(["0", "1", "1", "0", "1"]);
     editor.commands.setTextSelection(4);
     expect(editor.chain().focus().toggleHeaderColumn().run()).toBe(true);
     expect(host.querySelectorAll("[data-sticky-col]")).toHaveLength(0);
@@ -43,6 +45,8 @@ describe("合并表标题列 sticky 标记", () => {
     act(() => root?.render(<PmBlockView node={table} />));
 
     expect([...host.querySelectorAll("[data-sticky-col]")].map((cell) => cell.textContent)).toEqual(["部门", "销售"]);
+    expect([...host.querySelectorAll("[data-table-logical-col]")].map((cell) => cell.getAttribute("data-table-logical-col")))
+      .toEqual(["0", "1", "1", "0", "1"]);
   });
 });
 

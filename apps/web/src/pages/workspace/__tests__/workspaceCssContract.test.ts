@@ -115,10 +115,13 @@ describe("workspaceCssContract", () => {
 
     expect(workspaceCss).not.toContain(":has(> table > tbody > tr > td:first-child)");
     expect(workspaceCss).toContain(".pm-table-scroll > table{overflow:visible}");
+    expect(workspaceCss).toMatch(/\.wf-doc table\{\s*border-collapse:separate;border-spacing:0/);
     expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:600/);
-    expect(workspaceCss).toMatch(/\[data-sticky-col\]\{\s*position:sticky;left:0;z-index:4;\s*box-shadow/);
+    expect(workspaceCss).toMatch(/\[data-sticky-col\]\{\s*position:sticky;left:0;z-index:4;/);
     expect(workspaceCss).toMatch(/\[data-sticky-col\]:not\(\[data-bg-color\]\)\{\s*background:var\(--bg-canvas\)/);
-    expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*background:var\(--bg-subtle\);[\s\S]*font-weight:600/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay-content > \.table-header-overlay__table\{[\s\S]*border-collapse:separate;border-spacing:0/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*border-right:1px solid var\(--line-2\);border-bottom:1px solid var\(--line-2\)[\s\S]*font-weight:600/);
+    expect(workspaceCss).toContain('[data-table-logical-col="0"]');
     expect(workspaceCss).not.toContain(".table-header-overlay__table th > p{margin:0}");
     expect(staticView).toContain('className="pm-table-scroll"');
     expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
@@ -139,7 +142,7 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("#view-workspace .wf-doc .code-block-node{\n    position:relative;margin:14px 0;\n  }");
     expect(workspaceCss).toContain("#view-workspace .wf-doc pre .hljs-keyword");
     expect(workspaceCss).toContain("border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;");
-    expect(workspaceCss).toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
+    expect(workspaceCss).not.toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
     expect(componentCss).toMatch(/\.wf-doc h3\s*\{[^}]*font-size:\s*17px/s);
     expect(componentCss).toMatch(/\.wf-doc h4\s*\{[^}]*font-size:\s*15\.5px/s);
     expect(componentCss).toMatch(/\.wf-doc h5\s*\{[^}]*font-size:\s*14\.8px/s);

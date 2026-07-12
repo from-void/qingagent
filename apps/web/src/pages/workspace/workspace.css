@@ -913,10 +913,6 @@
     min-width:0;max-height:430px;overflow:auto;padding:11px 13px;border:1px solid var(--line-1);
     scrollbar-width:thin;
   }
-  #view-workspace .auq-preview-tag{
-    display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:10px;letter-spacing:.12em;
-  }
-  #view-workspace .auq-preview-tag::before{content:"";width:5px;height:5px;background:var(--mark)}
   #view-workspace .auq-preview-doc.wf-doc{padding:0;min-height:0;font-size:12px;line-height:1.75}
   #view-workspace .auq-preview-doc.wf-doc h1,
   #view-workspace .auq-preview-doc.wf-doc h2,

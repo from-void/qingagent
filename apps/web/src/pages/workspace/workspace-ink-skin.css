@@ -1365,7 +1365,6 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   background: rgba(17, 20, 19, 0.55);
   scrollbar-color: rgba(184, 169, 140, 0.3) transparent;
 }
-#view-workspace .askuser-overlay .auq-preview-tag,
 #view-workspace .askuser-overlay .auq-preview-empty {
   color: var(--ink-4);
 }

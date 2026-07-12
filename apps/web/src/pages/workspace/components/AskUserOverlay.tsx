@@ -557,11 +557,10 @@ function ChoiceQuestionFields({
         <div className="auq-split">
           <div className="auq-option-column">{options}</div>
           <div className="auq-preview" aria-live="polite">
-            <div className="auq-preview-tag">样张预览 · 所见即所得</div>
             {previewOption?.preview ? (
               <AskUserPreview markdown={previewOption.preview} />
             ) : (
-              <div className="auq-preview-empty">悬停或选中一个选项查看样张</div>
+              <div className="auq-preview-empty">悬停或选中一个选项查看预览</div>
             )}
           </div>
         </div>

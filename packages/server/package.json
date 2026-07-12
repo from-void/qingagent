@@ -17,7 +17,8 @@
     "dev": "NODE_OPTIONS='--use-env-proxy' tsx watch src/index.ts",
     "start": "NODE_OPTIONS='--use-env-proxy' tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --testTimeout 10000"
+    "test": "vitest run",
+    "test:heavy": "vitest run --config vitest.heavy.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.1",

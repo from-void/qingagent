@@ -26,6 +26,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:heavy": "vitest run --config vitest.heavy.config.ts",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "pm:model-smoke": "tsx scripts/pm-model-smoke.ts",
     "usage:balance": "tsx scripts/observe-deepseek-balance.ts",
     "usage:verify-inner": "tsx scripts/verify-inner-usage-ledger.ts"

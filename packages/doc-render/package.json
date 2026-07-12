@@ -15,7 +15,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:heavy": "vitest run --config vitest.heavy.config.ts"
   },
   "dependencies": {
     "@mastra/agent-browser": "0.4.0",

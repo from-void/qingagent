@@ -7,7 +7,5 @@ export default defineConfig({
       "**/*.heavy.test.{ts,tsx}",
       "**/*.perf.test.{ts,tsx}",
     ],
-    testTimeout: 30000,
-    hookTimeout: 30000,
   },
 });

@@ -59,6 +59,9 @@ jobs:
       - name: deterministic scorers
         run: pnpm scorers
 
+      - name: external contract drift check
+        run: pnpm external-contract:check
+
   unit-tests:
     name: Unit 测试（快速并行层）
     runs-on: ubuntu-latest

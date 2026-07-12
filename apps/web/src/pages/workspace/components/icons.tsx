@@ -1,6 +1,6 @@
 // 工作区共用图标(描线 SVG,随 currentColor 着色)。
 
-/** 对勾:替代各处的 ✓ 符号/emoji。描线收笔,水墨描线风。 */
+/** 对勾:替代各处的文字勾符号/emoji。描线收笔,水墨描线风。 */
 export function CheckIcon({ size = 13 }: { size?: number }) {
   return (
     <svg

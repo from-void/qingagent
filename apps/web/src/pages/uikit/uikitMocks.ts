@@ -270,7 +270,7 @@ export const askUserQuestionOverlaySpec: AskUserSpec = {
           value: "popular",
           label: "通俗科普",
           description: "用生活化语言解释技术原理，面向大众读者",
-          preview: "## AI 正在学会「读心」？\n其实背后没有魔法，它只是更善于理解上下文。\n\n> 把复杂的事讲简单，是这种文风的骨架。",
+          preview: "## AI 正在学会「读心」？\n其实背后没有魔法，它只是更善于理解上下文。\n\n```mermaid\nflowchart LR\n  A[提问] --> B[理解语境]\n  B --> C[清晰回答]\n```\n\n> 把复杂的事讲简单，是这种文风的骨架。",
         },
         {
           value: "structure",

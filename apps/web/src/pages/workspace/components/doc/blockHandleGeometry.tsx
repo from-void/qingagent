@@ -111,14 +111,14 @@ export function glyphForBlock(node: { type: { name: string }; attrs?: Record<str
     case "codeBlock":
       return "{}";
     case "taskList":
-      return "✓";
+      return "task";
     default:
       return "T";
   }
 }
 
 export function glyphForListItem(item: DraggableListItem): string {
-  if (item.itemType === "taskItem") return "✓";
+  if (item.itemType === "taskItem") return "task";
   return item.listType === "orderedList" ? "1." : "•";
 }
 
@@ -134,7 +134,7 @@ export function HandleTypeIcon({ glyph }: { glyph: string }): JSX.Element {
       </svg>
     );
   }
-  if (glyph === "✓") {
+  if (glyph === "task") {
     return (
       <svg className="bh-type-svg" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
         <rect x="1" y="1" width="10" height="10" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />

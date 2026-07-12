@@ -10,6 +10,7 @@ import type {
 import type { ServerStream } from "../data/serverStream";
 import { askUserPurposeLabel } from "../data/workspacePageView";
 import { SliderQuestionInput, defaultSliderValue, sliderValueLabel } from "./SliderQuestionInput";
+import { CheckIcon } from "./icons";
 
 /**
  * Wire-side: BigPlan = AskUser tool-call with mode=fullpage.
@@ -493,6 +494,7 @@ const OptChip = memo(function OptChip({
       }
     >
       <span className="bp-opt-label">{option.label}</span>
+      {checked && <span className="qa-check-icon bp-opt-check"><CheckIcon size={11} /></span>}
       {hasDesc && <span className="bp-opt-desc">{option.description}</span>}
     </button>
   );

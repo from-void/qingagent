@@ -5,6 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AskUserSpec } from "../data/protocol";
 import { AskUserOverlay } from "./AskUserOverlay";
+import { renderMermaid } from "./mermaidRender";
+
+vi.mock("./mermaidRender", () => ({
+  renderMermaid: vi.fn(async (source: string) => `<svg data-source="${source}"></svg>`),
+}));
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -122,6 +127,7 @@ describe("AskUserOverlay", () => {
     }
     host?.remove();
     host = null;
+    vi.mocked(renderMermaid).mockClear();
   });
 
   it("空问题时显示 loading，保留手动输入且禁用提交", async () => {
@@ -341,6 +347,83 @@ describe("AskUserOverlay", () => {
       root = null;
     });
     expect(workspace.querySelector(".askuser-overlay")).toBeNull();
+    workspace.remove();
+  });
+
+  it("切换 preview 时保留已挂载内容，避免 Mermaid 异步渲染期间空帧", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    const spec: AskUserSpec = {
+      ...focusSpec,
+      id: "ask-preview-buffer",
+      questions: [{
+        ...focusSpec.questions[0]!,
+        options: [
+          { value: "warm", label: "温和", description: null, preview: "## 温和样张" },
+          { value: "sharp", label: "锐利", description: null, preview: "## 锐利样张" },
+        ],
+      }],
+    };
+    await render(
+      <AskUserOverlay spec={spec} onClose={() => undefined} onSubmit={() => undefined} onAbort={() => undefined} />,
+      workspace,
+    );
+
+    const preview = workspace.querySelector(".auq-preview")!;
+    const initialNodes = preview.querySelectorAll('[data-preview-key]');
+    expect(initialNodes).toHaveLength(2);
+    expect(initialNodes[0]?.getAttribute("data-active")).toBe("true");
+    const firstRenderedNode = initialNodes[0];
+
+    await act(async () => workspace.querySelectorAll<HTMLInputElement>('.wf-chip input')[1]!.focus());
+    expect(preview.querySelectorAll('[data-preview-key]')).toHaveLength(2);
+    expect(firstRenderedNode?.isConnected).toBe(true);
+    expect(preview.querySelector('[data-preview-key="sharp"]')?.getAttribute("data-active")).toBe("true");
+    workspace.remove();
+  });
+
+  it("预渲染 Mermaid 后反复切换命中缓存，不重复渲染", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    const diagram = (id: string) => `\`\`\`mermaid\nflowchart LR\n${id}-->B\n\`\`\``;
+    await render(<AskUserOverlay spec={{ ...focusSpec, id: "ask-preview-cache", questions: [{ ...focusSpec.questions[0]!, options: [
+      { value: "a", label: "A", description: null, preview: diagram("A") },
+      { value: "b", label: "B", description: null, preview: diagram("B") },
+    ] }] }} onClose={() => undefined} onSubmit={() => undefined} onAbort={() => undefined} />, workspace);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const initialRenderCount = vi.mocked(renderMermaid).mock.calls.length;
+    expect(initialRenderCount).toBeGreaterThanOrEqual(2);
+    const inputs = workspace.querySelectorAll<HTMLInputElement>('.wf-chip input');
+    await act(async () => inputs[1]!.focus());
+    await act(async () => inputs[0]!.focus());
+    await act(async () => inputs[1]!.focus());
+    expect(renderMermaid).toHaveBeenCalledTimes(initialRenderCount);
+    workspace.remove();
+  });
+
+  it("选项使用 roving tabindex；方向键移动高亮、Enter 选中且输入框不劫持", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    await render(<AskUserOverlay spec={{ ...focusSpec, id: "ask-keyboard", questions: [{ ...focusSpec.questions[0]!, options: [
+      { value: "warm", label: "温和", description: null, preview: "## 温和样张" },
+      { value: "sharp", label: "锐利", description: null, preview: "## 锐利样张" },
+    ] }] }} onClose={() => undefined} onSubmit={() => undefined} onAbort={() => undefined} />, workspace);
+    const inputs = workspace.querySelectorAll<HTMLInputElement>('.wf-chip input');
+    expect(inputs[0]?.tabIndex).toBe(0);
+    expect(inputs[1]?.tabIndex).toBe(-1);
+    inputs[0]!.focus();
+    await act(async () => inputs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    expect(document.activeElement).toBe(inputs[1]);
+    expect(workspace.querySelector('[data-preview-key="sharp"]')?.getAttribute("data-active")).toBe("true");
+    await act(async () => inputs[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(inputs[1]?.checked).toBe(true);
+    const other = workspace.querySelector<HTMLInputElement>(".au-other")!;
+    other.focus();
+    await act(async () => other.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    expect(document.activeElement).toBe(other);
     workspace.remove();
   });
 

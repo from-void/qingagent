@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./MediaZoomFullscreen.css";
 
@@ -17,15 +17,18 @@ export function MediaZoomFullscreen({
   children,
   ariaLabel = "全屏查看",
   contentClassName,
+  restoreFocusRef,
 }: {
   open: boolean;
   onClose: () => void;
   children: ReactNode;
   ariaLabel?: string;
   contentClassName?: string;
+  restoreFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -64,6 +67,7 @@ export function MediaZoomFullscreen({
 
   useEffect(() => {
     if (!open) return;
+    closeRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -71,8 +75,11 @@ export function MediaZoomFullscreen({
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, open]);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (restoreFocusRef?.current?.isConnected) restoreFocusRef.current.focus({ preventScroll: true });
+    };
+  }, [onClose, open, restoreFocusRef]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextScale: number) => {
     const viewport = viewportRef.current;
@@ -121,8 +128,8 @@ export function MediaZoomFullscreen({
         <button type="button" className="media-zoom-btn media-zoom-btn--text" onClick={reset}>
           复位
         </button>
-        <button type="button" className="media-zoom-btn media-zoom-btn--text" onClick={onClose}>
-          关闭
+        <button ref={closeRef} type="button" className="media-zoom-btn media-zoom-btn--close" aria-label="关闭全屏查看" onClick={onClose}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
         </button>
       </div>
       <div

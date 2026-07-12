@@ -4,6 +4,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
+import { CheckIcon } from "./icons";
 import {
   resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
@@ -968,7 +969,7 @@ export function DocToolbar({
           <MenuItem k=">" onPick={() => runCommand("blockquote")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             引用
           </MenuItem>
-          <MenuItem k="☑" onPick={() => runCommand("taskList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
+          <MenuItem k={<CheckIcon size={12} />} onPick={() => runCommand("taskList")} disabled={!editorEditable || !toolbarUnlock.blocks}>
             待办清单
           </MenuItem>
           <MenuItem k="💡" onPick={() => runCommand("callout")} disabled={!editorEditable || !toolbarUnlock.blocks}>
@@ -1249,7 +1250,7 @@ function MenuItem({
   disabled = false,
   children,
 }: {
-  k?: string;
+  k?: React.ReactNode;
   onPick: () => void;
   className?: string;
   disabled?: boolean;

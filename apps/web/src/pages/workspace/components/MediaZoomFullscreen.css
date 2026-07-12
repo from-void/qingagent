@@ -32,6 +32,9 @@
 .media-zoom-btn:hover {
   background: rgba(255, 255, 255, 0.24);
 }
+.media-zoom-btn:focus-visible { outline: 1px solid var(--mark); outline-offset: 2px; }
+.media-zoom-btn--close { display:flex;align-items:center;justify-content:center;width:34px;padding:0; }
+.media-zoom-btn--close svg { width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round; }
 
 .media-zoom-btn--text {
   min-width: 48px;
@@ -110,3 +113,18 @@
   margin: 0;
   border-radius: 0;
 }
+.media-zoom-content--ask-preview {
+  width: min(92vw, 1280px);
+  max-width: none;
+  max-height: none;
+  min-height: min(82vh, 820px);
+  padding: clamp(28px, 4vw, 58px);
+  overflow: visible;
+}
+.media-zoom-content--ask-preview .auq-preview-doc--fullscreen { min-height:70vh;font-size:15px;line-height:1.8; }
+.media-zoom-content--ask-preview .auq-preview-fullscreen { display:none; }
+.media-zoom-content--ask-preview .auq-preview-diagram { display:block;width:100%;padding:0;border:0;background:transparent;color:inherit;text-align:inherit; }
+.media-zoom-content--ask-preview .auq-preview-diagram .pm-diagram-view--readonly,
+.media-zoom-content--ask-preview .auq-preview-diagram .pm-diagram-svg,
+.media-zoom-content--ask-preview .auq-preview-diagram .pm-diagram-svg-inner { width:100%;min-height:min(52vh,620px);height:auto; }
+.media-zoom-content--ask-preview .auq-preview-diagram svg { width:100% !important;max-width:none !important;height:auto !important; }

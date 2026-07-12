@@ -47,6 +47,7 @@ interface RowInfo { top: number; height: number; bottom: number }
 interface TblInfo {
   rect: DOMRect;
   wrapperRect: DOMRect;
+  workspaceRect: DOMRect;
   cols: ColInfo[];
   rows: RowInfo[];
   el: HTMLTableElement;
@@ -157,6 +158,12 @@ export function TableControls({ editor, onAiModify, onToast }: {
       }
       const rect = table.getBoundingClientRect();
       const wrapperRect = wrapper.getBoundingClientRect();
+      const workspaceRect = ws?.getBoundingClientRect() ?? DOMRect.fromRect({
+        x: 0,
+        y: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
       const cols = measureLogicalColumns(editor, blockIdFromTable(editor, table));
       const rows: RowInfo[] = Array.from(table.rows).map((r) => { const b = r.getBoundingClientRect(); return { top: b.top, height: b.height, bottom: b.bottom }; });
       const blockId = resolveSelectedTableBlockId(editor);
@@ -167,6 +174,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
       setInfo({
         rect,
         wrapperRect,
+        workspaceRect,
         cols,
         rows,
         el: table,
@@ -432,13 +440,13 @@ export function TableControls({ editor, onAiModify, onToast }: {
   }, [editor, info, onAiModify, onToast, selCols, selRows]);
 
   if (!editor.isEditable || !info) return null;
-  const { rect, wrapperRect, cols, rows } = info;
+  const { rect, wrapperRect, workspaceRect, cols, rows } = info;
   const hasAxisSelection = selCols !== null || selRows !== null;
   const hasCellSelection = editor.state.selection instanceof CellSelection;
   const hasSel = hasAxisSelection || hasCellSelection || singleCellTextSelection;
   const portalTarget = resolveWorkspaceFloatingPortalTarget();
 
-  const viewport = resolveTableChromeViewport(rect, wrapperRect);
+  const viewport = resolveTableChromeViewport(rect, wrapperRect, workspaceRect);
 
   const controls = (
     <>

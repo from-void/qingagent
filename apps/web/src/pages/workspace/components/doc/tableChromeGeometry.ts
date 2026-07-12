@@ -18,20 +18,31 @@ export interface TableChromeRect {
 export function resolveTableChromeViewport(
   tableRect: Pick<DOMRect, "top" | "left">,
   wrapperRect: Pick<DOMRect, "top" | "right" | "bottom" | "left">,
+  workspaceRect: Pick<DOMRect, "top" | "right" | "bottom" | "left">,
 ): TableChromeRect {
   const dotRadius = TABLE_INSERT_DOT_HOVER_SIZE / 2;
-  const top = Math.min(
-    wrapperRect.top,
-    tableRect.top - TABLE_COLUMN_HEADER_SIZE - TABLE_INSERT_DOT_GAP - dotRadius,
+  const visibleTop = Math.max(wrapperRect.top, workspaceRect.top);
+  const visibleLeft = Math.max(wrapperRect.left, workspaceRect.left);
+  const visibleRight = Math.min(wrapperRect.right, workspaceRect.right);
+  const visibleBottom = Math.min(wrapperRect.bottom, workspaceRect.bottom);
+  const tableTopEdgeVisible = tableRect.top >= visibleTop && tableRect.top <= visibleBottom;
+  const tableLeftEdgeVisible = tableRect.left >= visibleLeft && tableRect.left <= visibleRight;
+  const top = Math.max(
+    workspaceRect.top,
+    tableTopEdgeVisible
+      ? Math.min(visibleTop, tableRect.top - TABLE_COLUMN_HEADER_SIZE - TABLE_INSERT_DOT_GAP - dotRadius)
+      : visibleTop,
   );
-  const left = Math.min(
-    wrapperRect.left,
-    tableRect.left - TABLE_ROW_HEADER_SIZE - TABLE_INSERT_DOT_GAP - dotRadius,
+  const left = Math.max(
+    workspaceRect.left,
+    tableLeftEdgeVisible
+      ? Math.min(visibleLeft, tableRect.left - TABLE_ROW_HEADER_SIZE - TABLE_INSERT_DOT_GAP - dotRadius)
+      : visibleLeft,
   );
   return {
     top,
     left,
-    width: Math.max(0, wrapperRect.right - left),
-    height: Math.max(0, wrapperRect.bottom - top),
+    width: Math.max(0, visibleRight - left),
+    height: Math.max(0, visibleBottom - top),
   };
 }

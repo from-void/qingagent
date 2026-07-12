@@ -446,6 +446,27 @@ describe("TableControls 真选区与 chrome", () => {
     expect(Number.parseFloat(lastColumnDot.style.left)).toBeGreaterThan(viewportWidth);
   });
 
+  it("横滚宽表后 chrome 左缘夹到 wrapper 可视区，不越到左侧面板", async () => {
+    const { editor, portal, tables, ws } = setupTable({ blockId: "table-1" });
+    const tableElement = tables[0]!;
+    const wrapper = tableElement.closest(".tableWrapper") ?? tableElement;
+    setRect(ws, rect(500, 0, 800, 600));
+    setRect(wrapper, rect(556, 90, 664, 120));
+    setRect(tableElement, rect(134, 100, 1944, 80));
+    [...tableElement.rows].forEach((row, rowIndex) => {
+      setRect(row, rect(134, 100 + rowIndex * 40, 1944, 40));
+      [...row.cells].forEach((tableCell, colIndex) => {
+        setRect(tableCell, rect(134 + colIndex * 972, 100 + rowIndex * 40, 972, 40));
+      });
+    });
+
+    await renderControls(editor);
+    const viewport = portal.querySelector<HTMLElement>(".tbl-chrome-viewport")!;
+    expect(viewport.style.left).toBe("556px");
+    expect(viewport.style.width).toBe("664px");
+    expect(Number.parseFloat(viewport.style.left)).toBeGreaterThanOrEqual(556);
+  });
+
   it("window resize 与 ResizeObserver 都会按新 rect 重新测量", async () => {
     const { editor, portal, tables } = setupTable({ blockId: "table-1" });
     await renderControls(editor);

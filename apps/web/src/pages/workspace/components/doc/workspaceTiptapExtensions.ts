@@ -10,6 +10,7 @@ import { DocFindDecorations } from "../../data/docFindPm";
 import { NativePresentationDecorations } from "../../data/nativePresentationPm";
 import { PatchDecorations } from "../../data/patchDecorations";
 import { TableAxisSelectionExtension } from "../../data/tableToolbar";
+import { TableStickyColumnExtension } from "../../data/tableStickyColumn";
 
 export const MATH_CLICK_EVENT = "qingagent:math-click";
 
@@ -31,6 +32,7 @@ export function createWorkspaceTiptapExtensions(options: {
   }),
   ListItemDnDExtension,
   TableAxisSelectionExtension,
+  TableStickyColumnExtension,
   BlockCollapseExtension.configure({
     docId: options.docId,
     forceExpanded: options.forceExpandCollapse,

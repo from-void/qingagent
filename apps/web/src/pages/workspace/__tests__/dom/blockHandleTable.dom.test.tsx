@@ -198,6 +198,14 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(readTableBlockMenuState(table())).toEqual({ hasHeaderRow: true, hasHeaderColumn: true });
   });
 
+  it("rowspan 覆盖行仍按逻辑第 0 列识别标题列", () => {
+    editor = createEditor(undefined, rowspanHeaderColumnTable());
+    expect(readTableBlockMenuState(editor.state.doc.nodeAt(0))).toEqual({
+      hasHeaderRow: false,
+      hasHeaderColumn: true,
+    });
+  });
+
   it("开关标题行列保留数据格类型与自定义底色", () => {
     editor = createEditor(undefined, coloredTable());
     const table = () => editor!.state.doc.nodeAt(0)!;
@@ -306,6 +314,30 @@ function spanTable() {
           cell("c", { colspan: 1, rowspan: 1, colwidth: [120] }),
           cell("d", { colspan: 1, rowspan: 1, colwidth: [180] }),
           cell("e", { colspan: 1, rowspan: 1, colwidth: [300] }),
+        ],
+      },
+    ],
+  };
+}
+
+function rowspanHeaderColumnTable() {
+  return {
+    type: "table",
+    attrs: { blockId: "table-rowspan-header" },
+    content: [
+      {
+        type: "tableRow",
+        content: [
+          { ...cell("a", { rowspan: 2 }), type: "tableHeader" },
+          cell("b"),
+        ],
+      },
+      { type: "tableRow", content: [cell("c")] },
+      {
+        type: "tableRow",
+        content: [
+          { ...cell("d"), type: "tableHeader" },
+          cell("e"),
         ],
       },
     ],

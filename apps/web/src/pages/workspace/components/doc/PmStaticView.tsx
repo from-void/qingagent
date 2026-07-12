@@ -69,7 +69,8 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
       return <hr />;
     case "codeBlock":
       return <pre className="md-code-block" data-language={node.attrs.language ?? "plaintext"}>{pmInlineText(node.content ?? [])}</pre>;
-    case "table":
+    case "table": {
+      const stickyCellIndexes = staticStickyHeaderCellIndexes(node);
       // 裹一层横滚容器:持久化 colwidth 总和超过可用宽度时,宽表在容器内横向滚动而非撑破/裁切正文与卡片。
       return (
         <div className="pm-table-scroll">
@@ -77,13 +78,20 @@ export function PmBlockView({ node }: { node: PmBlockNode }) {
             <tbody>
               {node.content.map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {row.content.map((cell, cellIndex) => <PmTableCellView key={cellIndex} cell={cell} />)}
+                  {row.content.map((cell, cellIndex) => (
+                    <PmTableCellView
+                      key={cellIndex}
+                      cell={cell}
+                      stickyColumn={stickyCellIndexes.has(`${rowIndex}:${cellIndex}`)}
+                    />
+                  ))}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       );
+	    }
 	    case "image":
 	      return (
 	        <ReadonlyImageFigure
@@ -227,6 +235,7 @@ export function PmTableCellView({
   reviewTargetIndex,
   onClick,
   cellStyle,
+  stickyColumn,
 }: {
   cell: PmTableCellNode;
   className?: string;
@@ -238,6 +247,7 @@ export function PmTableCellView({
   reviewTargetIndex?: number;
   onClick?: MouseEventHandler<HTMLTableCellElement>;
   cellStyle?: CSSProperties;
+  stickyColumn?: boolean;
 }) {
   const Tag = cell.type === "tableHeader" ? "th" : "td";
   const attrs = cell.attrs as { backgroundColor?: string | null; colspan?: number; rowspan?: number; colwidth?: number[] | null } | undefined;
@@ -252,6 +262,7 @@ export function PmTableCellView({
       ref={cellRef}
       className={className}
       data-bg-color={attrs?.backgroundColor ?? undefined}
+      data-sticky-col={stickyColumn ? "" : undefined}
       data-review-target-id={reviewTargetId}
       data-review-target-index={reviewTargetIndex}
       colSpan={typeof colspan === "number" && colspan > 1 ? colspan : undefined}
@@ -264,6 +275,33 @@ export function PmTableCellView({
       {children ?? cell.content.map((child, i) => <PmBlockView key={i} node={child} />)}
     </Tag>
   );
+}
+
+function staticStickyHeaderCellIndexes(table: PmTableNode): Set<string> {
+  const occupied: Array<Array<string | undefined>> = [];
+  const origins = new Map<string, PmTableCellNode>();
+  table.content.forEach((row, rowIndex) => {
+    occupied[rowIndex] ??= [];
+    let logicalColumn = 0;
+    row.content.forEach((cell, cellIndex) => {
+      while (occupied[rowIndex]![logicalColumn] !== undefined) logicalColumn += 1;
+      const key = `${rowIndex}:${cellIndex}`;
+      origins.set(key, cell);
+      const colspan = Math.max(1, Number(cell.attrs?.colspan) || 1);
+      const rowspan = Math.max(1, Number(cell.attrs?.rowspan) || 1);
+      for (let rowOffset = 0; rowOffset < rowspan; rowOffset += 1) {
+        occupied[rowIndex + rowOffset] ??= [];
+        for (let colOffset = 0; colOffset < colspan; colOffset += 1) {
+          occupied[rowIndex + rowOffset]![logicalColumn + colOffset] = key;
+        }
+      }
+      logicalColumn += colspan;
+    });
+  });
+  const firstColumnKeys = [...new Set(occupied.map((row) => row?.[0]).filter((key): key is string => Boolean(key)))];
+  return firstColumnKeys.length > 0 && firstColumnKeys.every((key) => origins.get(key)?.type === "tableHeader")
+    ? new Set(firstColumnKeys)
+    : new Set();
 }
 
 function PmInlineView({ node }: { node: PmInlineNode }) {

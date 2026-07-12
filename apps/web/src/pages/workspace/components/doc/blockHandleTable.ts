@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { TableMap } from "@tiptap/pm/tables";
+import { stickyHeaderColumnOffsets } from "../../data/tableStickyColumn";
 
 export interface TableBlockMenuState {
   hasHeaderRow: boolean;
@@ -18,9 +19,7 @@ export function readTableBlockMenuState(table: ProseMirrorNode | null | undefine
     Array.from({ length: firstRow.childCount }, (_, index) => firstRow.child(index))
       .every((cell) => cell.type.name === "tableHeader"),
   );
-  const hasHeaderColumn = table.childCount > 0 &&
-    Array.from({ length: table.childCount }, (_, index) => table.child(index))
-      .every((row) => row.firstChild?.type.name === "tableHeader");
+  const hasHeaderColumn = stickyHeaderColumnOffsets(table).length > 0;
   return { hasHeaderRow, hasHeaderColumn };
 }
 

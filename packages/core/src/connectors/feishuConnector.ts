@@ -1,7 +1,8 @@
 import { extractLarkConfigInitUrl } from "../tools/larkConfigUrl.js";
 import { PendingStore, PendingStoreError } from "./pendingStore.js";
+import { registerConnector } from "./registryCore.js";
 import { createConnectorStatus } from "./service.js";
-import type { ConnectorAdapter, ConnectorStatusDto } from "./types.js";
+import type { ConnectorAdapter, ConnectorDefinition, ConnectorStatusDto } from "./types.js";
 import {
   LARK_AUTH_DOMAINS,
   LARK_DEVICE_CODE,
@@ -26,6 +27,20 @@ interface FeishuPendingValue {
   configurationUrl?: string;
   outcome: Promise<void>;
 }
+
+const feishuConnectorDefinition = {
+  id: "feishu",
+  name: "飞书",
+  icon: "feishu",
+  official: true,
+  authStrategy: "device-flow-cli",
+  custody: "external-cli",
+  scopeGroups: [],
+  tools: ["feishu_auth_start"],
+  usedBySkills: ["feishu"],
+} satisfies ConnectorDefinition;
+
+registerConnector(feishuConnectorDefinition, () => new FeishuConnector());
 
 export type FeishuStartResult =
   | {

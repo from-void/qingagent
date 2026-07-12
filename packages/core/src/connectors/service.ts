@@ -1,4 +1,4 @@
-import { getConnectorDefinition } from "./registry.js";
+import { getConnectorDefinition } from "./registryCore.js";
 import type {
   ConnectorId,
   ConnectorState,

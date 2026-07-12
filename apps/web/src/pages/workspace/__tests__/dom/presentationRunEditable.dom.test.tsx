@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 import { pmDocToViewDocumentSnapshot, type ViewDocumentSnapshot } from "../../data/protocol";
+import { shouldRetainPresentationRun } from "../../data/reviewActions";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
@@ -77,6 +78,10 @@ function presentationRunFor(doc: ViewDocumentSnapshot): NativePresentationRun {
   };
 }
 
+function editorText(editor: Editor): string {
+  return editor.state.doc.textContent;
+}
+
 async function flush(times = 4) {
   await act(async () => {
     for (let i = 0; i < times; i++) {
@@ -85,13 +90,13 @@ async function flush(times = 4) {
   });
 }
 
-async function drainAnimationFrames(done: () => boolean) {
-  for (let i = 0; i < 20 && !done(); i++) {
+async function drainAnimationFrames(done: () => boolean, stepMs = 1000) {
+  for (let i = 0; i < 200 && !done(); i++) {
     const callbacks = Array.from(rafCallbacks.values());
     rafCallbacks.clear();
     expect(callbacks.length).toBeGreaterThan(0);
     await act(async () => {
-      frameTime += 1000;
+      frameTime += stepMs;
       callbacks.forEach((callback) => callback(frameTime));
     });
     await flush(1);
@@ -185,5 +190,107 @@ describe("presentationRun editable unlock", () => {
     expect(container?.querySelector<HTMLElement>(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
     expect(editorRef.current?.isEditable).toBe(true);
     expect(container?.textContent).toContain("写完即可编辑");
+  });
+
+  it("doc.version 与 presentationRun 同时到达时主 effect 让渡，正文经多帧单调揭示", async () => {
+    const oldDoc = pmDocToViewDocumentSnapshot(pmDoc("旧稿"), 1, "t1");
+    const finalText = "逐字揭示必须经过多帧，不能被成品直接覆盖";
+    const nextDoc = pmDocToViewDocumentSnapshot(pmDoc(finalText), 2, "t2");
+    const writes: string[] = [];
+    let editor: Editor | null = null;
+
+    const renderView = async (
+      doc: ViewDocumentSnapshot,
+      presentationRun: NativePresentationRun | null,
+    ) => {
+      await act(async () => {
+        root?.render(createElement(DocumentSnapshotView, {
+          doc,
+          editable: false,
+          interactiveEditable: false,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+          onEditorReady: (nextEditor) => {
+            if (!nextEditor) {
+              editor = null;
+              return;
+            }
+            if (editor === nextEditor) return;
+            editor = nextEditor;
+            nextEditor.on("transaction", () => writes.push(editorText(nextEditor)));
+          },
+          presentationRun,
+          presentationReducedMotion: false,
+        }));
+      });
+      await flush(2);
+    };
+
+    await renderView(oldDoc, null);
+    writes.length = 0;
+    await renderView(nextDoc, presentationRunFor(nextDoc));
+    await drainAnimationFrames(() => Boolean(editor && editorText(editor).includes(finalText)), 20);
+
+    const revealWrites = writes.filter((text, index) => index === 0 || text !== writes[index - 1]);
+    const lengths = revealWrites.map((text) => text.length);
+    expect(revealWrites.length).toBeGreaterThan(2);
+    expect(lengths.some((length) => length > 0 && length < finalText.length)).toBe(true);
+    expect(lengths.every((length, index) => index === 0 || length >= lengths[index - 1]!)).toBe(true);
+    expect(revealWrites.at(-1)).toBe(finalText);
+    expect(revealWrites.indexOf(finalText)).toBe(revealWrites.length - 1);
+  });
+
+  it("generation_finished 后异步标题的 locked 空窗保留 run，并最终完成揭示", async () => {
+    const doc = pmDocToViewDocumentSnapshot(pmDoc("标题生成期间也要继续写完正文"), 2, "t");
+    const initialRun = presentationRunFor(doc);
+    const onPresentationFinish = vi.fn();
+
+    function Harness() {
+      const [run, setRun] = useState<NativePresentationRun | null>(initialRun);
+      const [projection, setProjection] = useState<"locked" | "editing">("locked");
+      return createElement("div", null,
+        createElement("button", { onClick: () => setProjection("editing") }, "project-editing"),
+        createElement("output", { "data-projection": projection }, projection),
+        createElement(DocumentSnapshotView, {
+          doc,
+          editable: projection === "editing" && run === null,
+          interactiveEditable: projection === "editing" && run === null,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+          presentationRun: run,
+          presentationReducedMotion: false,
+          onPresentationFinish: () => {
+            onPresentationFinish();
+            setRun(null);
+          },
+        }),
+        createElement("output", { "data-run-retained": String(Boolean(run && shouldRetainPresentationRun({
+          reducedMotion: false,
+          runDocVersion: run.docVersion,
+          currentDocVersion: doc.version,
+          runSessionId: run.sessionId,
+          currentSessionId: "session-presentation",
+        }))) }),
+      );
+    }
+
+    await act(async () => root?.render(createElement(Harness)));
+    await flush(2);
+    expect(container?.querySelector("[data-projection]")?.textContent).toBe("locked");
+    expect(container?.querySelector("[data-run-retained]")?.getAttribute("data-run-retained")).toBe("true");
+    expect(container?.querySelector(".native-presentation-active")).not.toBeNull();
+
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    await flush(1);
+    expect(container?.querySelector("[data-projection]")?.textContent).toBe("editing");
+    expect(container?.querySelector(".native-presentation-active")).not.toBeNull();
+
+    await drainAnimationFrames(() => onPresentationFinish.mock.calls.length > 0);
+    expect(onPresentationFinish).toHaveBeenCalledTimes(1);
+    expect(container?.textContent).toContain("标题生成期间也要继续写完正文");
   });
 });

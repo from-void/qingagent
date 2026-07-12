@@ -310,10 +310,18 @@ describe("candidate-diff backend flow", () => {
     );
     expect(finished?.kind).toBe("docGenerationEvent");
     if (finished?.kind === "docGenerationEvent" && finished.data.kind === "generation_finished") {
-      // generation_finished 必须带 pmDoc,前端 pmDocToViewDocumentSnapshot 才能驱动整篇 native presentation。
+      // 前端揭示契约:必须是 generation_finished + 完整 PM doc + 推进后的版本/hash。
+      // 事件先于异步标题与 editing 投影交付,故 web 必须能跨这个 locked 空窗保留 run。
       expect(docText(finished.data.data.doc)).toBe("第一版正文");
       expect(finished.data.data.finalVersion).toBe(state.docVersion);
+      expect(finished.data.data.contentHash).toBe(getPmContentHash(generatedDoc));
     }
+    const finishedIndex = frames.indexOf(finished!);
+    const editingIndex = frames.findIndex(
+      (frame) => frame.kind === "docStateChanged" && frame.data.state.kind === "editing",
+    );
+    expect(finishedIndex).toBeGreaterThanOrEqual(0);
+    expect(editingIndex).toBeGreaterThan(finishedIndex);
     // 首稿走整篇直接落地,不进审查、不发裸 documentSnapshotWritten。
     expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
     expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);

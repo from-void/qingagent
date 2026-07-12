@@ -50,6 +50,24 @@ const SIMPLE_BLOCK_TYPES = [
   "blockMath",
 ] as const satisfies readonly PmBlockNode["type"][];
 
+// tableCell/tableHeader 的 runtime schema 明确排除直接 table；fuzz 必须从同一白名单取样，
+// 否则会把产品已禁止的嵌套表误当合法基线，后续脏变体的错误索引也会被基线错误污染。
+const TABLE_CELL_BLOCK_TYPES = [
+  "paragraph",
+  "heading",
+  "blockquote",
+  "bulletList",
+  "orderedList",
+  "horizontalRule",
+  "codeBlock",
+  "image",
+  "fileAttachment",
+  "penNote",
+  "taskList",
+  "callout",
+  "blockMath",
+] as const satisfies readonly PmBlockNode["type"][];
+
 const PM_MARK_BITS = ["bold", "italic", "underline", "strike", "code", "link", "highlight"] as const;
 const MARK_COMBINATION_COUNT = 1 << PM_MARK_BITS.length;
 
@@ -463,7 +481,7 @@ function randomTable(ctx: GenCtx, rng: Prng, depth: number): PmBlockNode {
     content: Array.from({ length: columnCount }, (_, columnIndex): PmTableCellNode => ({
       type: rowIndex === 0 && rng.chance(0.45) ? "tableHeader" : "tableCell",
       attrs: rng.chance(0.25) ? { colspan: 1, rowspan: 1, colwidth: [rng.int(80, 240)] } : undefined,
-      content: randomNestedBlocks(ctx, rng, depth + 1, columnIndex % 2 === 0 ? "paragraph" : undefined),
+      content: randomTableCellBlocks(ctx, rng, depth + 1, columnIndex % 2 === 0 ? "paragraph" : undefined),
     })),
   }));
   return { type: "table", attrs: { blockId: nextBlockId(ctx, "table") }, content };
@@ -531,6 +549,22 @@ function randomNestedBlocks(
 ): PmBlockNode[] {
   return Array.from({ length: rng.int(1, 3) }, (_, index) =>
     randomPmBlock(ctx, rng, depth, index === 0 ? forcedFirstType : undefined),
+  );
+}
+
+function randomTableCellBlocks(
+  ctx: GenCtx,
+  rng: Prng,
+  depth: number,
+  forcedFirstType?: PmBlockNode["type"],
+): PmBlockNode[] {
+  return Array.from({ length: rng.int(1, 3) }, (_, index) =>
+    randomPmBlock(
+      ctx,
+      rng,
+      depth,
+      index === 0 && forcedFirstType ? forcedFirstType : rng.pick(TABLE_CELL_BLOCK_TYPES),
+    ),
   );
 }
 

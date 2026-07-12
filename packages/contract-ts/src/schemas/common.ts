@@ -4,6 +4,7 @@ import type { ChatChipKind } from "../ChatChipKind";
 import type { ResourceDomain } from "../ResourceDomain";
 import type { ResourceRef } from "../ResourceRef";
 import type { SkillRef } from "../SkillRef";
+import type { TableSelection } from "../TableSelection";
 import type { Equal, Expect } from "./typeAssert";
 
 /**
@@ -73,6 +74,17 @@ export const chatChipKindSchema = z.discriminatedUnion("kind", [
 ]) satisfies z.ZodType<ChatChipKind>;
 type _ChatChipKindExact = Expect<Equal<z.infer<typeof chatChipKindSchema>, ChatChipKind>>;
 
+export const tableSelectionSchema = z.object({
+  axis: z.enum(["row", "column"]),
+  startIndex: z.number().int().nonnegative(),
+  endIndex: z.number().int().nonnegative(),
+  signature: z.string().optional(),
+}).refine(
+  (selection) => selection.startIndex <= selection.endIndex,
+  { path: ["endIndex"], message: "endIndex must be greater than or equal to startIndex" },
+) satisfies z.ZodType<TableSelection>;
+type _TableSelectionExact = Expect<Equal<z.infer<typeof tableSelectionSchema>, TableSelection>>;
+
 /** 用户侧 chip 回显。 */
 export const chatChipSchema = z.object({
   kind: chatChipKindSchema,
@@ -84,6 +96,10 @@ export const chatChipSchema = z.object({
   from: z.number().optional(),
   to: z.number().optional(),
   selectionRefs: z.array(z.string()).optional(),
+  tableSelection: tableSelectionSchema.optional(),
   text: z.string().nullable().optional(),
-}) satisfies z.ZodType<ChatChip>;
+}).refine(
+  (chip) => chip.tableSelection === undefined || chip.kind.kind === "selection",
+  { path: ["tableSelection"], message: "tableSelection is only allowed on selection chips" },
+) satisfies z.ZodType<ChatChip>;
 type _ChatChipExact = Expect<Equal<z.infer<typeof chatChipSchema>, ChatChip>>;

@@ -12,7 +12,11 @@ function source(file: string) {
 
 describe("round1 editor source contract", () => {
   it("does not use native prompt for toolbar link creation", () => {
-    expect(source("apps/web/src/pages/workspace/components/DocToolbar.tsx")).not.toContain("window.prompt");
+    const toolbar = source("apps/web/src/pages/workspace/components/DocToolbar.tsx");
+    const tableControls = source("apps/web/src/pages/workspace/components/doc/TableControls.tsx");
+    expect(toolbar).not.toContain("window.prompt");
+    expect(toolbar).toContain("useToolbarLinkEditor");
+    expect(tableControls).toContain("useToolbarLinkEditor");
   });
 
   it("keeps block handle Escape dismissal wired at document level", () => {
@@ -36,7 +40,7 @@ describe("round1 editor source contract", () => {
       'insertBlock("inlineMath")',
       'insertBlock("blockMath")',
       'insertBlock("diagram")',
-      'insertBlock("table")',
+      "openTablePicker",
       'insertBlock("codeBlock")',
       'insertBlock("horizontalRule")',
       'convertBlock("taskList")',
@@ -49,7 +53,7 @@ describe("round1 editor source contract", () => {
       'runCommand("insertInlineMath")',
       'runCommand("insertBlockMath")',
       'runCommand("insertDiagram")',
-      'runCommand("insertTable")',
+      "insertTableAtSize",
       'runCommand("codeBlock")',
       'runCommand("horizontalRule")',
     ]) {

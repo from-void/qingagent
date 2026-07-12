@@ -67,9 +67,89 @@ describe("workspaceCssContract", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
     // 解禁规则仍在(否则 .open 也没用)
     expect(workspaceCss).toContain("#view-workspace .dt-group.open .dt-menu{display:block}");
-    // 两个表格色板 dt-group 都按 openTableColor 条件加 .open
-    expect(snapshotView).toContain('tbl-color-group${openTableColor === "text" ? " open" : ""}');
-    expect(snapshotView).toContain('tbl-color-group${openTableColor === "cell" ? " open" : ""}');
+    // 表格色板与对齐下拉共用 openTableMenu，展开态都必须加 .open。
+    expect(snapshotView).toContain('tbl-color-group${openTableMenu === "text" ? " open" : ""}');
+    expect(snapshotView).toContain('tbl-color-group${openTableMenu === "cell" ? " open" : ""}');
+    expect(snapshotView).toContain('dt-dropdown${openTableMenu === "align" ? " open" : ""}');
+  });
+
+  it("keeps table CellSelection overlay, clipped chrome and PM resize cursor styles", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const selectedCellRule = cssRule(workspaceCss, "#view-workspace .wf-doc .selectedCell::after");
+
+    expect(selectedCellRule).toContain("background:color-mix(in srgb,var(--mark) 18%,transparent)");
+    expect(selectedCellRule).not.toMatch(/box-shadow|outline|border/);
+    expect(workspaceCss).toMatch(/\.tbl-chrome-viewport\{\s*overflow:clip;pointer-events:none/);
+    expect(workspaceCss).toContain("#view-workspace .wf-doc .column-resize-handle");
+    expect(workspaceCss).toContain("#view-workspace .wf-doc.resize-cursor");
+    expect(workspaceCss).not.toContain(".tbl-cell-sel");
+  });
+
+  it("列宽拖拽命中区与细金线视觉分离", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const handleRule = cssRule(workspaceCss, "#view-workspace .wf-doc .column-resize-handle");
+    const lineRule = cssRule(workspaceCss, "#view-workspace .wf-doc .column-resize-handle::before");
+
+    expect(handleRule).toContain("width:8px");
+    expect(handleRule).toContain("background:transparent");
+    expect(handleRule).toContain("pointer-events:none");
+    expect(lineRule).toContain("width:1px");
+    expect(lineRule).toContain("var(--mark)");
+    expect(workspaceCss).toMatch(/\.column-resize-dragging \.column-resize-handle::before\{\s*background:var\(--mark\)/);
+  });
+
+  it("标题列只在每行首格为 th 时 sticky，标题行 overlay 只过编辑门", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const snapshotView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/DocumentSnapshotView.tsx"),
+      "utf8",
+    );
+    const staticView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/PmStaticView.tsx"),
+      "utf8",
+    );
+    const headerOverlay = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/doc/TableHeaderOverlay.tsx"),
+      "utf8",
+    );
+
+    expect(workspaceCss).not.toContain(":has(> table > tbody > tr > td:first-child)");
+    expect(workspaceCss).toContain(".pm-table-scroll > table{overflow:visible}");
+    expect(workspaceCss).toMatch(/\.wf-doc table\{\s*border-collapse:separate;border-spacing:0/);
+    expect(workspaceCss).toMatch(/\.wf-doc th\{\s*background:var\(--bg-subtle\);font-weight:700/);
+    expect(workspaceCss).toMatch(/\[data-sticky-col\]\{\s*position:sticky;left:0;z-index:4;/);
+    expect(workspaceCss).toMatch(/\[data-sticky-col\]:not\(\[data-bg-color\]\)\{\s*background:var\(--bg-canvas\)/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay-content > \.table-header-overlay__table\{[\s\S]*border-collapse:separate;border-spacing:0/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay__table th\{[\s\S]*border-right:1px solid var\(--line-2\);border-bottom:1px solid var\(--line-2\)[\s\S]*font-weight:700/);
+    expect(workspaceCss).toContain('[data-table-logical-col="0"]');
+    // TipTap 表格首子元素是 colgroup,首行上边框必须锚定 thead/tbody 首个,别再退回 :first-child。
+    expect(workspaceCss).toContain("table > :is(thead,tbody):first-of-type > tr:first-child > th");
+    expect(workspaceCss).toContain("table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col])");
+    expect(workspaceCss).toMatch(/\.tableWrapper\[data-scrolled-x\] \[data-sticky-col\],[\s\S]*box-shadow:6px 0 8px -6px/);
+    expect(workspaceCss).toMatch(/\.table-header-overlay-viewport\{[\s\S]*box-shadow:0 6px 8px -6px/);
+    expect(workspaceCss).toMatch(/\.pm-hover-original table\{\s*border-collapse:separate;\s*border-spacing:0/);
+    expect(workspaceCss).not.toContain(".table-header-overlay__table th > p{margin:0}");
+    expect(staticView).toContain("function PmTableScroll");
+    expect(snapshotView).toContain("interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null");
+    expect(headerOverlay).toContain('className="table-header-overlay-viewport"');
+    expect(headerOverlay).not.toContain('className="wf-doc table-header-overlay-viewport"');
+    expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content\{\s*display:contents!important;[\s\S]*padding:0!important;width:auto!important;max-width:none!important;min-height:0!important/);
+    expect(workspaceCss).toMatch(/\.wf-doc\.table-header-overlay-content > \.table-header-overlay__table\{\s*margin:0;/);
+  });
+
+  it("插入圆点默认态低调透明,hover 态不透明纸底与 1px 双向指示线", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    const dotRule = cssRule(workspaceCss, "#view-workspace .tbl-dot");
+    const dotHoverRule = cssRule(workspaceCss, "#view-workspace .tbl-dot:hover");
+    const columnGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-col:hover::after");
+    const rowGuideRule = cssRule(workspaceCss, "#view-workspace .tbl-dot-row:hover::after");
+
+    // 默认态不许有可见底/描边(用户五轮半反馈:一排白圈扎眼);不透明底只属于 hover 态。
+    expect(dotRule).toContain("border:1px solid transparent");
+    expect(dotRule).toContain("background:transparent");
+    expect(dotHoverRule).toContain("background:var(--bg-paper-deep)");
+    expect(columnGuideRule).toContain("width:1px");
+    expect(rowGuideRule).toContain("height:1px");
   });
 
   it("keeps round-1 editor CSS fixes present", () => {
@@ -83,9 +163,7 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toContain("#view-workspace .wf-doc .code-block-node{\n    position:relative;margin:14px 0;\n  }");
     expect(workspaceCss).toContain("#view-workspace .wf-doc pre .hljs-keyword");
     expect(workspaceCss).toContain("border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;");
-    expect(workspaceCss).toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
-    expect(workspaceCss).toContain("box-shadow:inset 0 0 0 1.5px var(--mark)");
-
+    expect(workspaceCss).not.toContain("box-shadow:inset 0 0 0 1px var(--line-2)");
     expect(componentCss).toMatch(/\.wf-doc h3\s*\{[^}]*font-size:\s*17px/s);
     expect(componentCss).toMatch(/\.wf-doc h4\s*\{[^}]*font-size:\s*15\.5px/s);
     expect(componentCss).toMatch(/\.wf-doc h5\s*\{[^}]*font-size:\s*14\.8px/s);

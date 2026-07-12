@@ -42,6 +42,7 @@ import {
   currentPmDoc,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
+  validateCurrentTableSelectionScopes,
 } from "./draftScratch.js";
 import {
   collectReadableDraftRefs,
@@ -72,6 +73,7 @@ import {
   type AiRunMark,
   type BlockEdit,
   type FragmentAction,
+  type PmDoc,
   type QingmlFragmentResult,
 } from "@qingagent/pm-schema";
 
@@ -710,6 +712,7 @@ export function createSessionScopedTools(
       "把已有正文整理/重构成嵌套列表、或改成章>条>款层级时,先 readDraft 取目标块,再用 replaceBlock 把这些块重写成带层级的嵌套列表,尽量逐字保留原文,只动用户指定的范围。" +
       "多级列表统一用 QingML 嵌套标签表达:父 <li>/<task> 内放子 <ul>/<ol>/<tasks>,子列表的 <li>/<task> 才是下一层。3 级及以上也继续使用同一套嵌套 QingML,不要改成扁平中间格式,不要用 1.1/①/缩进文本假装层级。\n" +
       "只替换、插入或删除列表中的整行时,优先用行级 op: replaceListItem {ref,item} 保留目标行 ref; insertListItem {parentRef,at,ref?,item}; deleteListItem {ref}。item 是一个 <li>/<task> QingML 片段或裸行内片段;子层级放在该 <li>/<task> 内的子列表标签里,不要把 1.1/① 写成正文假装层级。taskList 行未传 checked 时 replaceListItem 保留原勾选状态。\n" +
+      "表格单元格统一放块标签：简单形状 <td><p>文字</p></td>；多块形状 <td><p>结论</p><ul><li>依据</li></ul></td>，也支持 <ol>/<tasks>/<callout>。replaceBlock 重发表格时，必须逐块保留 readDraft 返回的 cell 内容，原有 colspan/rowspan 属性照抄；列宽由系统自动保留，不要改、清空或编造。cell/row 无稳定 ref，只能使用 table ref + 当前 0-based index。插删行列穿过合并区时系统按逻辑网格自动调整，只需按当前 readDraft 结构给 0-based 索引。\n" +
       "只给已有表格加/删行列时,优先用表格增量 op,不要 replaceBlock 重写整表: insertTableRow {ref,at,rowIndex?,cells}; insertTableColumn {ref,at,columnIndex?,cells}; deleteTableRow {ref,rowIndex}; deleteTableColumn {ref,columnIndex}。cells 是 <tr> 或 <td>/<th> QingML 片段。ref 指向 table 块本身;表格 cell/row 无稳定 id,rowIndex/columnIndex 一律是当前表的 0-based 索引;insert 的 at 只能是 before/after/end,before/after 必须传对应 rowIndex/columnIndex,end 不需要索引。同一次 editDraft 调用内多个表格 op 按声明顺序依次应用,后续 op 的索引以前序 op 应用后的当前表为准。跨轮引用索引不可靠,改表前先 readDraft 确认当前表结构。删除表头行、在表头行前插入数据行、索引越界、删除到 0 行/0 列会失败并返回可自纠错误;删除唯一数据行后只剩表头是合法的。新增列在表头行对应的新 cell 自动作为表头单元格。\n" +
       "block/blocks/item/cells 必须是 QingML 片段字符串(即 readDraft 返回里的 qingml 片段或按同规格改写后的片段),不要带 ref/editability/text 外壳。QingML 行内样式用 <b>/<i>/<a href=\"...\">/<mark color=\"...\">/<color val=\"...\"> 等标签表达。\n" +
       'markText 的 mark 参数仍是 JSON 标记对象:加链接用 {"type":"link","href":"https://…"},加粗用 {"type":"bold"}。\n' +
@@ -734,7 +737,19 @@ export function createSessionScopedTools(
       const editDraftToolCallId =
         (context as { agent?: { toolCallId?: string | null } } | undefined)?.agent?.toolCallId ?? null;
       const editDraftExecuteSeq = bumpEditDraftExecuteCount(turnRunId);
-      const candidateDoc = ensureDraftCandidateDoc(state);
+      let candidateDoc: PmDoc;
+      try {
+        candidateDoc = ensureDraftCandidateDoc(state);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // 只把已知可由刷新自愈的重复标识转成模型可行动结果；其余初始化异常维持原抛错语义。
+        if (!/重复 blockId/.test(message)) throw error;
+        return {
+          ok: false,
+          applied: [],
+          error: addDuplicateBlockIdRecoveryGuidance(message),
+        };
+      }
       const candidateBlocksBefore = candidateDoc.content.length;
       logger.info("[editDraft.execute] enter", {
         sessionId: state.sessionId,
@@ -846,7 +861,7 @@ export function createSessionScopedTools(
           return {
             ok: false,
             applied: [],
-            error: blockResult.error,
+            error: addDuplicateBlockIdRecoveryGuidance(blockResult.error),
             failedOpIndex:
               blockResult.failedOpIndex === undefined
                 ? undefined
@@ -901,6 +916,19 @@ export function createSessionScopedTools(
       const parsedDoc = safeParsePmDoc(workingDoc);
       if (!parsedDoc.success) {
         return { ok: false, applied: [], error: parsedDoc.error.message };
+      }
+      const scopeValidation = validateCurrentTableSelectionScopes(state, candidateDoc, workingDoc);
+      if (!scopeValidation.ok) {
+        const failedOpIndex = input.ops.findIndex((op) =>
+          ("ref" in op && op.ref === scopeValidation.tableRef) ||
+          ("withinRef" in op && op.withinRef === scopeValidation.tableRef),
+        );
+        return {
+          ok: false,
+          applied: [],
+          error: scopeValidation.error,
+          ...(failedOpIndex >= 0 ? { failedOpIndex } : {}),
+        };
       }
       const candidate = replaceDraftCandidateDoc(state, workingDoc);
       context?.requestContext?.set("legacySections", candidate);
@@ -988,7 +1016,11 @@ export function createSessionScopedTools(
     },
   });
 
-  const writeDraft = state
+  const hasTableSelectionScope = state?._currentChips?.some(
+    (chip) => chip.kind.kind === "selection" && chip.tableSelection !== undefined,
+  ) ?? false;
+  // 表格选区轮只能走带后置范围审计的 editDraft，整篇 writeDraft 会绕过物理行列边界。
+  const writeDraft = state && !hasTableSelectionScope
     ? createWriteDraftTool({ state, replaceDraftCandidateDoc })
     : null;
   const executeCommand = state
@@ -1052,4 +1084,9 @@ export function createSessionScopedTools(
     updateWorkingMemory,
     ...(writeDraft ? { writeDraft } : {}),
   };
+}
+
+function addDuplicateBlockIdRecoveryGuidance(error: string | undefined): string | undefined {
+  if (!error || !/重复 blockId/.test(error)) return error;
+  return `${error}；文档标识发生冲突，请提示用户刷新文档以触发自动修复后再试。`;
 }

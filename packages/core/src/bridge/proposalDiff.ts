@@ -159,6 +159,8 @@ export interface ApplyDiffHunksResult {
   applied: DiffHunk[];
   /** 因目标块已被并发删除等原因被跳过、未落上的 hunk(保持传入顺序)。 */
   skipped: DiffHunk[];
+  /** 跳过原因，供提交层区分“块删除可局部结算”和“块内容漂移必须整批回滚”。 */
+  skippedDetails: Array<{ hunk: DiffHunk; reason: string }>;
 }
 
 export function applyDiffHunks(
@@ -170,12 +172,15 @@ export function applyDiffHunks(
   // 落库排序(逆文档序)只影响应用顺序,不影响 applied/skipped 的对外顺序。
   const ordered = [...hunks].sort(compareHunksForApply);
   const appliedIds = new Set<string>();
+  const skippedReasonById = new Map<string, string>();
 
   for (const hunk of ordered) {
     const applied = applyDiffHunkToDoc(doc, hunk, options);
     if (applied.ok) {
       doc = applied.doc;
       appliedIds.add(hunk.hunkId);
+    } else {
+      skippedReasonById.set(hunk.hunkId, applied.reason);
     }
   }
 
@@ -186,7 +191,11 @@ export function applyDiffHunks(
     (appliedIds.has(hunk.hunkId) ? applied : skipped).push(hunk);
   }
 
-  return { doc: normalizePmDoc(doc), applied, skipped };
+  const skippedDetails = skipped.map((hunk) => ({
+    hunk,
+    reason: skippedReasonById.get(hunk.hunkId) ?? `failed to apply ${hunk.hunkId}`,
+  }));
+  return { doc: normalizePmDoc(doc), applied, skipped, skippedDetails };
 }
 
 export type ApplyDiffHunkToDocResult =
@@ -207,6 +216,9 @@ export function applyDiffHunkToDoc(
 
   if (hunk.op === "insert") {
     const blocks = nodesToBlocks(hunk.after);
+    if (blocks.length === 0) {
+      return { ok: false, reason: `missing inserted blocks for ${hunk.hunkId}` };
+    }
     const insertAt = options.anchorByBlockId === true
       ? (hunk.anchor.gravity === "before" ? index : index + 1)
       : index;
@@ -216,6 +228,17 @@ export function applyDiffHunkToDoc(
 
   if (hunk.op === "delete") {
     const deleteCount = Math.max(1, nodesToBlocks(hunk.before).length);
+    const expectedBlocks = nodesToBlocks(hunk.before);
+    if (expectedBlocks.length === 0) {
+      return { ok: false, reason: `missing expected block for ${hunk.hunkId}` };
+    }
+    const currentBlocks = content.slice(index, index + deleteCount);
+    if (
+      getStablePmJson(currentBlocks.map(stripDiagramSvgForCompare)) !==
+        getStablePmJson(expectedBlocks.map(stripDiagramSvgForCompare))
+    ) {
+      return { ok: false, reason: `target block changed for ${hunk.hunkId}` };
+    }
     content.splice(index, deleteCount);
     return { ok: true, doc: normalizePmDoc(doc) };
   }
@@ -266,6 +289,16 @@ export function applyDiffHunkToDoc(
   const replacement = nodeToBlock(hunk.afterBlock) ?? nodesToBlocks(hunk.after)[0];
   if (!replacement) {
     return { ok: false, reason: `missing replacement block for ${hunk.hunkId}` };
+  }
+  const expected = nodeToBlock(hunk.beforeBlock) ?? nodesToBlocks(hunk.before)[0];
+  if (!expected) {
+    return { ok: false, reason: `missing expected block for ${hunk.hunkId}` };
+  }
+  if (
+    getStablePmJson(stripDiagramSvgForCompare(currentBlock)) !==
+      getStablePmJson(stripDiagramSvgForCompare(expected))
+  ) {
+    return { ok: false, reason: `target block changed for ${hunk.hunkId}` };
   }
   content.splice(index, 1, cloneValue(replacement));
   return { ok: true, doc: normalizePmDoc(doc) };

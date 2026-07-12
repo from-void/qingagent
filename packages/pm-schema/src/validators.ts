@@ -355,11 +355,23 @@ const listItemSchema: LazyNode = z.lazy(() =>
   }),
 );
 
+function containsTableNode(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  const value = node as { type?: unknown; content?: unknown };
+  if (value.type === "table") return true;
+  return Array.isArray(value.content) && value.content.some(containsTableNode);
+}
+
 const tableCellSchema: LazyNode = z.lazy(() =>
   z.object({
     type: z.union([z.literal("tableCell"), z.literal("tableHeader")]),
     attrs: tableCellAttrsSchema,
-    content: z.array(blockNodeSchema).min(1),
+    content: z
+      .array(blockNodeSchema)
+      .min(1)
+      .refine((content) => content.every((block) => !containsTableNode(block)), {
+        message: "tableCell content must not contain table",
+      }),
   }),
 );
 

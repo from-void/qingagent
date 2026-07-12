@@ -1,5 +1,6 @@
 import { pmToPlainText } from "../pmToPlainText";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "../types";
+import { pmTableToHtml } from "../clipboard/pmToClipboardHtml";
 
 export function pmToMarkdown(doc: PmDoc): string {
   return doc.content.map(blockToMarkdown).filter(Boolean).join("\n\n");
@@ -178,6 +179,10 @@ function tableCellToMarkdown(cell: { content: readonly PmBlockNode[] }): string 
 }
 
 function tableToMarkdown(node: Extract<PmBlockNode, { type: "table" }>): string {
+  const hasSpan = node.content.some((row) => row.content.some((cell) =>
+    (cell.attrs?.colspan ?? 1) > 1 || (cell.attrs?.rowspan ?? 1) > 1,
+  ));
+  if (hasSpan) return pmTableToHtml(node);
   const rows = node.content.map((row) =>
     row.content.map((cell) =>
       tableCellToMarkdown(cell)
@@ -187,8 +192,16 @@ function tableToMarkdown(node: Extract<PmBlockNode, { type: "table" }>): string 
     ),
   );
   if (rows.length === 0) return "";
-  const header = rows[0] ?? [];
-  const body = rows.slice(1);
+  const firstRow = node.content[0];
+  const hasHeaderRow = Boolean(
+    firstRow &&
+    firstRow.content.length > 0 &&
+    firstRow.content.every((cell) => cell.type === "tableHeader"),
+  );
+  const header = hasHeaderRow
+    ? rows[0] ?? []
+    : Array.from({ length: rows[0]?.length ?? 0 }, () => "");
+  const body = hasHeaderRow ? rows.slice(1) : rows;
   const separator = header.map(() => "---");
   return [header, separator, ...body]
     .map((row) => `| ${row.join(" | ")} |`)

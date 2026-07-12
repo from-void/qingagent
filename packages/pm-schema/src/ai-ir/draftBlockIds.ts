@@ -12,31 +12,63 @@ export function allocateMaterializedBlockIds(
   opts: { namespace?: string; existingIds?: ReadonlySet<string>; occurrence?: number },
 ): { nodes: PmBlockNode[]; ids: string[]; nextOccurrence: number } {
   const used = new Set(opts.existingIds ?? []);
+  for (const blockId of collectBlockIds(nodes)) {
+    if (!isGeneratedAiBlockId(blockId)) used.add(blockId);
+  }
   let occurrence = opts.occurrence ?? 0;
   const ids: string[] = [];
+  const baseNamespace = opts.namespace ?? "draft.materialize";
+
+  const allocatePrefix = <T extends PmNode>(node: T, sourceBlockId: string, namespace: string): T => {
+    const baseId = getDeterministicId("block", {
+      namespace,
+      sourceBlockId,
+      type: node.type,
+      contentHash: getPmContentHash(stripBlockIds(node)),
+    });
+    const sourceIds = collectBlockIds(node).filter((id) => id.startsWith(sourceBlockId));
+    let blockId = baseId;
+    let projected = sourceIds.map((id) => `${blockId}${id.slice(sourceBlockId.length)}`);
+    while (projected.some((id) => used.has(id))) {
+      blockId = `${baseId}~${occurrence}`;
+      occurrence += 1;
+      projected = sourceIds.map((id) => `${blockId}${id.slice(sourceBlockId.length)}`);
+    }
+    projected.forEach((id) => used.add(id));
+    return rewriteBlockIdPrefix(node, sourceBlockId, blockId);
+  };
 
   const materialized = nodes.map((node) => {
     const sourceBlockId = node.attrs.blockId;
-    if (!isGeneratedAiBlockId(sourceBlockId)) {
-      used.add(sourceBlockId);
-      ids.push(sourceBlockId);
-      return node;
-    }
+    const top = isGeneratedAiBlockId(sourceBlockId)
+      ? allocatePrefix(node, sourceBlockId, baseNamespace)
+      : node;
+    const topBlockId = top.attrs.blockId;
+    used.add(topBlockId);
+    ids.push(topBlockId);
 
-    const baseId = getDeterministicId("block", {
-      namespace: opts.namespace ?? "draft.materialize",
-      sourceBlockId,
-      type: node.type,
-      contentHash: getPmContentHash(contentFingerprint(node)),
-    });
-    let blockId = baseId;
-    while (used.has(blockId)) {
-      blockId = `${baseId}~${occurrence}`;
-      occurrence += 1;
+    const visitChildren = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(visitNode);
+      return value;
+    };
+    const visitNode = (value: unknown): unknown => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      let current = value as PmNode;
+      const currentRecord = current as unknown as { attrs?: { blockId?: unknown } };
+      const currentId = currentRecord.attrs?.blockId;
+      if (isGeneratedAiBlockId(currentId)) {
+        current = allocatePrefix(current, currentId, `${baseNamespace}:${topBlockId}`);
+      }
+      const record = current as unknown as Record<string, unknown>;
+      return Array.isArray(record.content)
+        ? { ...record, content: visitChildren(record.content) }
+        : current;
+    };
+    const record = top as unknown as Record<string, unknown>;
+    if (!Array.isArray(record.content)) {
+      return top;
     }
-    used.add(blockId);
-    ids.push(blockId);
-    return rewriteBlockIdPrefix(node, sourceBlockId, blockId);
+    return { ...record, content: visitChildren(record.content) } as PmBlockNode;
   });
 
   return { nodes: materialized, ids, nextOccurrence: occurrence };
@@ -85,10 +117,6 @@ export function materializeDraftBlockIds(doc: PmDoc, opts?: { namespace?: string
   }
   assertUniqueBlockIds(parsed.data as PmDoc);
   return parsed.data as PmDoc;
-}
-
-function contentFingerprint(node: PmBlockNode): unknown {
-  return stripBlockIds(node);
 }
 
 function stripBlockIds(value: unknown): unknown {

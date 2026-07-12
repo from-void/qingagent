@@ -1,4 +1,6 @@
-import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
+import { DOMParser as ProseMirrorDOMParser, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { CellSelection, handlePaste as handleTablePaste } from "@tiptap/pm/tables";
+import { TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { markdownToPm, pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 
@@ -11,6 +13,7 @@ export function writeSelectionToClipboard(
 ): boolean {
   try {
     const { selection, doc: stateDoc } = view.state;
+    if (selection instanceof CellSelection) return false;
     if (selection.empty || !event.clipboardData) return false;
     if (isCut && !view.editable) return false;
     // doc.cut 保持块结构完整(跨节点选区自动补全包裹层)。
@@ -102,7 +105,9 @@ export function handleQingagentPaste(
   event: ClipboardEvent,
   onToast?: (message: string) => void,
   onImageFiles?: (files: File[]) => void,
+  parsedSlice?: Slice,
 ): boolean {
+  if (view.state.selection instanceof CellSelection) return false;
   // 图片:有上传处理器就走上传链路插 image 节点;没有(老调用/测试)则保持旧提示行为。
   const imageFiles = collectPasteImageFiles(event.clipboardData);
   if (imageFiles.length > 0) {
@@ -122,12 +127,83 @@ export function handleQingagentPaste(
   }
 
   const text = event.clipboardData?.getData("text/plain") ?? "";
+  const slice = !html && text ? parsePlainTextClipboard(text, view) : parsedSlice ?? null;
+  if (isTextSelectionInsideTableCell(view) && sliceContainsTable(slice)) {
+    if (handleTablePaste(view, event, slice!)) return true;
+    event.preventDefault();
+    // Excel/飞书通常自带完整 TSV；优先用它，避免从 HTML slice 二次提取时损失换行与空格。
+    const fallbackText = text || flattenSliceForTableCell(slice!);
+    const flattened = parsePlainTextClipboard(fallbackText, view);
+    if (!flattened) {
+      onToast?.("粘贴的表格没有可插入的文本内容");
+      return true;
+    }
+    view.dispatch(view.state.tr.replaceSelection(flattened).scrollIntoView());
+    return true;
+  }
   if (!text || html) return false;
-  const slice = parsePlainTextClipboard(text, view);
   if (!slice) return false;
   event.preventDefault();
   view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
   return true;
+}
+
+function isTextSelectionInsideTableCell(view: EditorView): boolean {
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection)) return false;
+  const cellDepth = (pos: typeof selection.$from): number => {
+    for (let depth = pos.depth; depth > 0; depth -= 1) {
+      const name = pos.node(depth).type.name;
+      if (name === "tableCell" || name === "tableHeader") return depth;
+    }
+    return -1;
+  };
+  return cellDepth(selection.$from) >= 0 && cellDepth(selection.$to) >= 0;
+}
+
+function sliceContainsTable(slice: Slice | null): boolean {
+  if (!slice) return false;
+  let found = false;
+  slice.content.descendants((node) => {
+    if (node.type.spec.tableRole === "table") {
+      found = true;
+      return false;
+    }
+    return !found;
+  });
+  return found;
+}
+
+function flattenSliceForTableCell(slice: Slice): string {
+  const parts: string[] = [];
+  slice.content.forEach((node) => parts.push(flattenNodeForTableCell(node)));
+  return parts.join("\n");
+}
+
+function flattenNodeForTableCell(node: ProseMirrorNode): string {
+  if (node.type.spec.tableRole === "table") return tableText(node);
+  if (node.isText) return node.text ?? "";
+  if (node.type.name === "hardBreak") return "\n";
+  if (node.type.name === "image") {
+    return String(node.attrs.alt ?? node.attrs.caption ?? node.attrs.title ?? node.attrs.src ?? "[图片]");
+  }
+  if (node.type.name === "fileAttachment") {
+    return String(node.attrs.filename ?? "[附件]");
+  }
+  if (node.isAtom) return node.textContent || `[${node.type.name}]`;
+  const parts: string[] = [];
+  node.forEach((child) => parts.push(flattenNodeForTableCell(child)));
+  return parts.join(node.isTextblock ? "" : "\n");
+}
+
+function tableText(table: ProseMirrorNode): string {
+  const rows: string[] = [];
+  table.forEach((row) => {
+    const cells: string[] = [];
+    row.forEach((cell) => cells.push(flattenNodeForTableCell(cell)));
+    rows.push(cells.join("\t"));
+  });
+  return rows.join("\n");
 }
 
 function looksLikeBlockMarkdown(text: string): boolean {

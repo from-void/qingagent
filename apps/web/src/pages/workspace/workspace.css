@@ -1237,6 +1237,12 @@
     width:16px;height:16px;display:block;fill:none;
     stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
   }
+  /* 表格结构类图标(合并/删除/对齐)线条多,1.8 描边显糊粗,细化与左侧文字钮协调。 */
+  #view-workspace .dt-svg-thin{stroke-width:1.3}
+  /* 删除行/列是危险操作,用项目红提亮(深底可辨),避免金棕被误读为禁用态;
+     需盖过 .doc-toolbar .dt-btn 的 ink-on-dark。 */
+  #view-workspace .doc-toolbar .dt-btn.dt-btn-danger{color:#d97a5e}
+  #view-workspace .doc-toolbar .dt-btn.dt-btn-danger:hover{color:#e8907a}
   #view-workspace .dt-code-icon{
     width:30px;height:22px;display:inline-flex;align-items:center;justify-content:center;
     border:1px solid rgba(255,255,255,.28);border-radius:0;
@@ -1264,6 +1270,7 @@
     outline-offset:-2px;
   }
   #view-workspace .dt-mi:hover{background:var(--bg-hover)}
+  #view-workspace .dt-mi-spacer{margin-left:auto;color:var(--ink-3);font-family:var(--font-zh-serif)}
   #view-workspace .dt-mi-k{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);min-width:24px}
   #view-workspace .dt-menu-icon{
     width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;
@@ -1275,6 +1282,30 @@
   }
   #view-workspace .dt-menu-colors{
     min-width:214px;padding:10px;max-height:min(70vh,560px);overflow:auto;
+  }
+  #view-workspace .table-size-picker{
+    position:fixed;z-index:100070;box-sizing:border-box;width:238px;padding:10px;
+    background:var(--bg-canvas);border:1px solid var(--line-2);border-radius:0;
+    box-shadow:0 10px 28px rgba(20,30,38,.18),0 2px 6px rgba(20,30,38,.08);
+    color:var(--ink-1);font-family:var(--font-zh-serif);user-select:none;
+  }
+  #view-workspace .table-size-picker:focus-visible{outline:1px solid var(--mark);outline-offset:2px}
+  #view-workspace .table-size-picker__head{
+    display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;
+    font-size:12.5px;color:var(--ink-2);
+  }
+  #view-workspace .table-size-picker__head output{
+    color:var(--mark);font-family:var(--font-mono);font-size:11px;font-variant-numeric:tabular-nums;
+  }
+  #view-workspace .table-size-picker__grid{
+    display:grid;grid-template-columns:repeat(10,18px);grid-auto-rows:18px;gap:3px;
+  }
+  #view-workspace .table-size-picker__grid [data-table-size-cell]{
+    width:18px;height:18px;box-sizing:border-box;padding:0;border:1px solid var(--line-2);
+    border-radius:0;background:var(--bg-subtle);cursor:pointer;
+  }
+  #view-workspace .table-size-picker__grid [data-table-size-cell].is-active{
+    border-color:var(--mark);background:var(--mark-soft);
   }
   #view-workspace .dt-color-menu{display:flex;flex-direction:column;gap:10px}
   #view-workspace .dt-color-menu-compact{gap:6px}
@@ -1595,27 +1626,88 @@
   /* ============ Table 基础样式 ============ */
   #view-workspace .wf-doc .tableWrapper{overflow-x:auto;max-width:100%}
   #view-workspace .wf-doc table{
-    border-collapse:collapse;width:auto;min-width:240px;
-    margin:16px 0;border:1px solid var(--line-2);
-    box-shadow:inset 0 0 0 1px var(--line-2);
+    border-collapse:separate;border-spacing:0;width:auto;min-width:240px;
+    margin:16px 0;border:0;box-shadow:none;
   }
+  /* UIKit 的 table overflow:hidden 会截断 cell sticky 的滚动参照；真表由外层 wrapper 负责裁剪。 */
+  #view-workspace .wf-doc .tableWrapper > table,
+  #view-workspace .wf-doc .pm-table-scroll > table{overflow:visible}
   #view-workspace .wf-doc th,
   #view-workspace .wf-doc td{
-    border:1px solid var(--line-2);padding:8px 12px;
+    border:0;border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);padding:8px 12px;
     min-width:80px;vertical-align:top;position:relative;
     font-size:13px;line-height:1.6;
   }
-  #view-workspace .wf-doc th{
-    background:rgba(168,130,63,.16);font-weight:600;font-size:12.5px;color:var(--ink-2);
+  /* TipTap 表格首子元素是 colgroup,:first-child 会落空;按 thead/tbody 首个取首行补上边框。 */
+  #view-workspace .wf-doc table > :is(thead,tbody):first-of-type > tr:first-child > th,
+  #view-workspace .wf-doc table > :is(thead,tbody):first-of-type > tr:first-child > td{
+    border-top:1px solid var(--line-2);
   }
+  /* TableMap / 静态渲染写入逻辑列号；overlay 等无标记克隆退回首个 DOM 格。 */
+  #view-workspace .wf-doc table > :is(thead,tbody,tfoot) > tr > [data-table-logical-col="0"],
+  #view-workspace .wf-doc table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col]){
+    border-left:1px solid var(--line-2);
+  }
+  #view-workspace .wf-doc th{
+    background:var(--bg-subtle);font-weight:700;font-size:12.5px;color:var(--ink-2);
+  }
+  /* 标题列由 JS 按逻辑第 0 列标记，rowspan 覆盖行不重复标记。 */
+  #view-workspace .wf-doc [data-sticky-col]{
+    position:sticky;left:0;z-index:4;
+  }
+  /* 无自定义底色时补不透明纸底；显式 data-bg-color 继续保留用户选择的实色。 */
+  #view-workspace .wf-doc [data-sticky-col]:not([data-bg-color]){
+    background:var(--bg-canvas);
+  }
+  #view-workspace .wf-doc th[data-sticky-col]:not([data-bg-color]){
+    background:var(--bg-subtle);
+  }
+  #view-workspace .wf-doc .tableWrapper[data-scrolled-x] [data-sticky-col],
+  #view-workspace .wf-doc .pm-table-scroll[data-scrolled-x] [data-sticky-col],
+  #view-workspace .table-header-overlay-viewport[data-scrolled-x] [data-sticky-col]{
+    box-shadow:6px 0 8px -6px color-mix(in srgb,var(--ink-1) 22%,transparent);
+  }
+  #view-workspace .table-header-overlay-viewport{
+    overflow:clip;z-index:100005;background:var(--bg-canvas);pointer-events:auto;
+    box-shadow:0 6px 8px -6px color-mix(in srgb,var(--ink-1) 22%,transparent);
+  }
+  /* 只借用 wf-doc 的正文语义样式；display:contents 隔离墨水皮肤的整页纸面盒模型。 */
+  #view-workspace .wf-doc.table-header-overlay-content{
+    display:contents!important;background:transparent!important;box-shadow:none!important;
+    padding:0!important;width:auto!important;max-width:none!important;min-height:0!important;margin:0!important;
+  }
+  #view-workspace .wf-doc.table-header-overlay-content > .table-header-overlay__table{
+    margin:0;border-collapse:separate;border-spacing:0;border:0;box-shadow:none;
+    background:var(--bg-canvas);color:var(--ink-1);
+    font-family:var(--font-zh-serif);
+  }
+  #view-workspace .table-header-overlay__table th{
+    box-sizing:border-box;border:0;border-right:1px solid var(--line-2);border-bottom:1px solid var(--line-2);padding:8px 12px;
+    min-width:80px;vertical-align:top;text-align:left;background:var(--bg-subtle);
+    font-size:12.5px;line-height:1.6;font-weight:700;color:var(--ink-2);cursor:pointer;
+  }
+  #view-workspace .table-header-overlay__table th:hover{background:var(--bg-hover)}
   #view-workspace .wf-doc td p{margin:0}
   #view-workspace .wf-doc td img{max-width:100%;margin:4px 0;border-radius:var(--r-sm)}
   /* TipTap selected cell highlight */
   #view-workspace .wf-doc .selectedCell::after{
     content:"";position:absolute;inset:0;
-    background:rgba(168,130,63,.18);pointer-events:none;
-    box-shadow:inset 0 0 0 1.5px var(--mark);
+    background:color-mix(in srgb,var(--mark) 18%,transparent);pointer-events:none;
   }
+  #view-workspace .wf-doc .column-resize-handle{
+    position:absolute;top:0;right:-4px;bottom:-2px;width:8px;
+    background:transparent;pointer-events:none;
+  }
+  #view-workspace .wf-doc .column-resize-handle::before{
+    content:"";position:absolute;inset:0 auto 0 50%;width:1px;
+    transform:translateX(-50%);
+    background:color-mix(in srgb,var(--mark) 62%,transparent);
+  }
+  #view-workspace .wf-doc .column-resize-dragging .column-resize-handle::before{
+    background:var(--mark);
+  }
+  #view-workspace .wf-doc.resize-cursor,
+  #view-workspace .wf-doc.resize-cursor *{cursor:col-resize!important}
 
   /* ============ 待办清单 taskList ============ */
   #view-workspace .wf-doc ul[data-type="taskList"],
@@ -1972,9 +2064,18 @@
 
   /* ============ Table controls (Feishu-style) ============ */
 
+  #view-workspace .tbl-chrome-viewport{
+    overflow:clip;pointer-events:none;z-index:100010;
+  }
+  #view-workspace .tbl-span-hint{
+    z-index:100040;padding:4px 8px;border:1px solid var(--line-2);border-radius:0;
+    background:var(--bg-canvas);color:var(--ink-2);box-shadow:var(--shadow-2);
+    font:12px/1.5 var(--font-zh-serif);pointer-events:none;
+  }
+
   /* column / row header bars — always visible when cursor in table */
   #view-workspace .tbl-col-hdr{
-    cursor:pointer;z-index:100010;
+    cursor:pointer;z-index:100010;pointer-events:auto;
     background:rgba(168,130,63,.16);
     border-radius:0;
     transition:background .1s;
@@ -1983,7 +2084,7 @@
   #view-workspace .tbl-col-hdr.active{background:rgba(168,130,63,.55)}
 
   #view-workspace .tbl-row-hdr{
-    cursor:pointer;z-index:100010;
+    cursor:pointer;z-index:100010;pointer-events:auto;
     background:rgba(168,130,63,.16);
     border-radius:0;
     transition:background .1s;
@@ -1991,39 +2092,59 @@
   #view-workspace .tbl-row-hdr:hover{background:rgba(168,130,63,.25)}
   #view-workspace .tbl-row-hdr.active{background:rgba(168,130,63,.55)}
 
+  #view-workspace .tbl-axis-drag-ghost{
+    z-index:100025;pointer-events:none;background:rgba(168,130,63,.18);
+    border:1px solid rgba(168,130,63,.48);opacity:.68;
+  }
+  #view-workspace .tbl-axis-drag-ghost[data-clone="true"]{
+    box-shadow:4px 4px 0 rgba(168,130,63,.14);
+  }
+  #view-workspace .tbl-axis-drop-line{
+    z-index:100030;pointer-events:none;background:var(--mark);
+    box-shadow:0 0 8px rgba(168,130,63,.32);
+  }
+  #view-workspace .tbl-axis-drop-line[data-axis="column"]{width:2px;transform:translateX(-1px)}
+  #view-workspace .tbl-axis-drop-line[data-axis="row"]{height:2px;transform:translateY(-1px)}
+  #view-workspace .tbl-axis-drop-line.is-forbidden{
+    background:rgba(176,74,52,.85);box-shadow:none;
+  }
+
   /* edge dots — small circles between col/row borders */
+  /* 默认态保持低调:透明底无描边只见 ::before 小点;不透明纸底只给 hover 态(+号),避免一排白圈扎眼。 */
   #view-workspace .tbl-dot{
     width:16px;height:16px;border-radius:50%;
-    border:none;background:transparent;
+    box-sizing:border-box;border:1px solid transparent;background:transparent;color:var(--mark);
     cursor:pointer;z-index:100020;
     display:flex;align-items:center;justify-content:center;
     transform:translate(-50%,-50%);
-    padding:0;position:relative;
+    padding:0;position:relative;pointer-events:auto;
+    transition:width .12s,height .12s,background .12s,border-color .12s,color .12s;
   }
   #view-workspace .tbl-dot::before{
     content:"";width:5px;height:5px;border-radius:50%;
-    background:rgba(168,130,63,.5);transition:opacity .12s;
+    background:color-mix(in srgb,var(--mark) 50%,transparent);transition:opacity .12s;
   }
   #view-workspace .tbl-dot .tbl-dot-mark{
-    display:none;font-size:13px;font-weight:700;line-height:1;color:#fff;
+    display:none;position:relative;z-index:1;overflow:visible;pointer-events:none;
   }
   #view-workspace .tbl-dot:hover::before{display:none}
   #view-workspace .tbl-dot:hover{
-    background:rgba(168,130,63,.85);width:18px;height:18px;
+    width:18px;height:18px;background:var(--bg-paper-deep);border-color:var(--mark);color:var(--mark);
   }
   #view-workspace .tbl-dot:hover .tbl-dot-mark{display:block}
 
   /* guide line on dot hover — clipped to table size via --tbl-guide */
+  /* z-index:-1 让指示线沉到按钮不透明底之下,避免贯穿加号(按钮自身是 stacking context,不会漏到页面层)。 */
   #view-workspace .tbl-dot-col:hover::after{
-    content:"";position:absolute;top:50%;left:50%;
-    width:2px;height:var(--tbl-guide,100px);
-    background:rgba(168,130,63,.30);transform:translateX(-50%);
+    content:"";position:absolute;top:50%;left:50%;z-index:-1;
+    width:1px;height:var(--tbl-guide,100px);
+    background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateX(-50%);
     pointer-events:none;
   }
   #view-workspace .tbl-dot-row:hover::after{
-    content:"";position:absolute;top:50%;left:50%;
-    height:2px;width:var(--tbl-guide,200px);
-    background:rgba(168,130,63,.30);transform:translateY(-50%);
+    content:"";position:absolute;top:50%;left:50%;z-index:-1;
+    height:1px;width:var(--tbl-guide,200px);
+    background:color-mix(in srgb,var(--mark) 42%,transparent);transform:translateY(-50%);
     pointer-events:none;
   }
 
@@ -2031,13 +2152,6 @@
   #view-workspace .tbl-sel-toolbar{z-index:100040}
   /* 箭头已改 clip-path 纯三角(见 .doc-toolbar::after),不再用 rotate 方块,这里只居中即可。 */
   #view-workspace .tbl-sel-toolbar.doc-toolbar::after{left:50%;transform:translateX(-50%)}
-
-  /* selected cells highlight */
-  #view-workspace .wf-doc td.tbl-cell-sel,
-  #view-workspace .wf-doc th.tbl-cell-sel{
-    background:rgba(168,130,63,.18) !important;
-    box-shadow:inset 0 0 0 1px rgba(168,130,63,.25);
-  }
 
   /* editing idle · .wf-doc 可编辑 · 不加任何背景/focus 染色 */
   body[data-content="editing"][data-tool="none"] #view-workspace .wf-doc{outline:none;background:transparent;cursor:text}
@@ -2671,22 +2785,40 @@
      宽表在卡片内横向滚动、不被裁切;收紧首尾外边距贴合紧凑卡片。 */
   /* 静态 PM 表格横滚容器(正文块级补丁 / hover 原文共用):宽表在此滚动,不撑破布局。 */
   #view-workspace .pm-table-scroll{ overflow-x:auto; max-width:100%; }
+  #view-workspace .review-table-reveal-cell{
+    display:flex;align-items:baseline;min-height:1.6em;
+  }
+  #view-workspace .review-table-reveal-cell > p{margin:0;min-width:0}
+  #view-workspace .review-table-reveal-cursor{flex:0 0 auto;pointer-events:none}
   #view-workspace .pm-hover-original{ overflow-x:auto; }
   #view-workspace .pm-hover-original > :first-child{ margin-top:0; }
   #view-workspace .pm-hover-original > :last-child{ margin-bottom:0; }
   #view-workspace .pm-hover-original table{
-    border-collapse:collapse;
+    border-collapse:separate;
+    border-spacing:0;
     width:auto;
     max-width:100%;
     margin:4px 0;
-    border:1px solid var(--line-2);
+    border:0;
+    box-shadow:none;
   }
   #view-workspace .pm-hover-original th,
   #view-workspace .pm-hover-original td{
-    border:1px solid var(--line-2);
+    border:0;
+    border-right:1px solid var(--line-2);
+    border-bottom:1px solid var(--line-2);
     padding:4px 8px;
     text-align:left;
     vertical-align:top;
+  }
+  /* 同 .wf-doc:colgroup 抢占 :first-child,按 thead/tbody 首个取首行补上边框。 */
+  #view-workspace .pm-hover-original table > :is(thead,tbody):first-of-type > tr:first-child > th,
+  #view-workspace .pm-hover-original table > :is(thead,tbody):first-of-type > tr:first-child > td{
+    border-top:1px solid var(--line-2);
+  }
+  #view-workspace .pm-hover-original table > :is(thead,tbody,tfoot) > tr > [data-table-logical-col="0"],
+  #view-workspace .pm-hover-original table > :is(thead,tbody,tfoot) > tr > :first-child:not([data-table-logical-col]){
+    border-left:1px solid var(--line-2);
   }
   /* 单元格内段落去掉 UA 外边距(对齐正文 .wf-doc td p{margin:0}),行高不虚胖。 */
   #view-workspace .pm-hover-original th > p,

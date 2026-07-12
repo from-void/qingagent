@@ -1,5 +1,18 @@
 import { safeParsePmDoc } from "../validators";
-import { getDeterministicId, getPmContentHash } from "../hash";
+import { getSchema } from "@tiptap/core";
+import { EditorState } from "@tiptap/pm/state";
+import {
+  CellSelection,
+  TableMap,
+  addColumnAfter,
+  addColumnBefore,
+  addRowAfter,
+  addRowBefore,
+  deleteColumn,
+  deleteRow,
+} from "@tiptap/pm/tables";
+import { createQingagentExtensions } from "../tiptap/createQingagentExtensions";
+import { getDeterministicId, getPmContentHash, getStablePmJson } from "../hash";
 import type {
   PmBlockNode,
   PmDiagramOverlay,
@@ -22,9 +35,11 @@ export type ListItemDraft = {
 };
 
 export type TableCellDraft = {
-  runs?: unknown[];
+  blocks?: unknown[];
   header?: boolean;
   backgroundColor?: string;
+  colspan?: number;
+  rowspan?: number;
 };
 
 type ListBlockNode = Extract<PmBlockNode, { type: "bulletList" | "orderedList" | "taskList" }>;
@@ -113,9 +128,18 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
           if (idx === undefined) throw new OpError(opIndex, `块 ${op.ref} 不存在,请先 readDraft`);
           const compiled = compileBlocks([op.block], opIndex);
           if (compiled.length !== 1) throw new OpError(opIndex, "replaceBlock 期望单个块");
-          // 保留原 blockId,并在改表丢表头时用旧表结构信号确定性还原表头行。
-          const replacement = withBlockId(compiled[0]!, op.ref);
-          replaceAt.set(idx, carryOverDiagramOverlay(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)));
+          // 保留原 blockId，并把临时 ai-block-* 后代深度 materialize 到最终 ref 命名空间；
+          // 否则 table 顶层转正后，cell 多块后代仍可能沿用临时前缀或与另一张相同表撞 id。
+          const replacement = materializeAnchoredReplacement(compiled[0]!, op.ref, {
+            existingIds: collectBlockIdsExcluding(nodes, idx),
+          });
+          replaceAt.set(
+            idx,
+            carryOverDiagramOverlay(
+              nodes[idx]!,
+              carryOverTableColwidth(nodes[idx]!, carryOverTableHeader(nodes[idx]!, replacement)),
+            ),
+          );
           applied.push(op.ref);
           break;
         }
@@ -213,6 +237,7 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
 
     const parsed = safeParsePmDoc(withTables.doc);
     if (!parsed.success) throw new Error(`结果未过 pmDocSchema: ${parsed.error.message}`);
+    assertUniqueBlockIds(withTables.doc);
 
     return { ok: true, doc: withTables.doc, applied, skippedDuplicateInserts };
   } catch (err) {
@@ -236,21 +261,56 @@ export function applyBlockEdits(originalDoc: PmDoc, ops: readonly BlockEdit[]): 
   }
 }
 
-function withBlockId(node: PmBlockNode, blockId: string): PmBlockNode {
-  return { ...node, attrs: { ...node.attrs, blockId } } as PmBlockNode;
+function materializeAnchoredReplacement(
+  node: PmBlockNode,
+  blockId: string,
+  opts: { existingIds: ReadonlySet<string> },
+): PmBlockNode {
+  const rebased = rebaseBlockIdPrefixDeep(node, node.attrs.blockId, blockId);
+  const materialized = materializeGeneratedBlockIdsDeep(rebased, {
+    namespace: `editDraft.replaceBlock:${blockId}`,
+    existingIds: opts.existingIds,
+  }).node;
+  // anchored replace 的锚点 ref 必须原样保留；深度 materialize 只负责后代临时 ID。
+  return { ...materialized, attrs: { ...materialized.attrs, blockId } } as PmBlockNode;
 }
 
-// 取表格单元格纯文字(拼接其内段落的 text run),用于比对表头标签是否在编辑后仍保留。
+function rebaseBlockIdPrefixDeep<T extends PmNode>(node: T, oldPrefix: string, newPrefix: string): T {
+  const rewrite = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const currentId = attrs?.blockId;
+    const nextAttrs = typeof currentId === "string" && currentId.startsWith(oldPrefix)
+      ? { ...attrs, blockId: `${newPrefix}${currentId.slice(oldPrefix.length)}` }
+      : attrs;
+    return {
+      ...record,
+      ...(nextAttrs ? { attrs: nextAttrs } : {}),
+      ...(Array.isArray(record.content) ? { content: record.content.map(rewrite) } : {}),
+    };
+  };
+  return rewrite(node) as T;
+}
+
+// 取表格单元格递归纯文字，用于比对含列表/待办等多块表头标签是否仍保留。
 function tableCellText(cell: { content: PmBlockNode[] }): string {
-  let out = "";
-  for (const block of cell.content) {
-    const inline = (block as { content?: Array<{ type?: string; text?: string }> }).content;
-    if (!inline) continue;
-    for (const node of inline) {
-      if (node.type === "text" && typeof node.text === "string") out += node.text;
+  const text: string[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
     }
-  }
-  return out.trim();
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") text.push(record.text);
+    visit(record.content);
+  };
+  visit(cell.content);
+  return text.join("").trim();
 }
 
 // editDraft 改表(replaceBlock)时,模型常重生成整张表却丢掉表头行的 header 标记
@@ -292,6 +352,33 @@ function carryOverTableHeader(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlo
           }
         : row,
     ),
+  };
+}
+
+// AI-IR 不表达像素列宽。按逻辑列收集旧宽度，再投影到新表 cell 覆盖的逻辑区间；
+// 列数变化时前缀对齐，新增逻辑列为 null。span cell 只有整段宽度均已知时才写 colwidth 数组。
+function carryOverTableColwidth(oldNode: PmBlockNode, newNode: PmBlockNode): PmBlockNode {
+  if (oldNode.type !== "table" || newNode.type !== "table") return newNode;
+  const oldWidths: Array<number | null> = [];
+  for (const placement of tableLogicalPlacements(oldNode)) {
+    const widths = oldNode.content[placement.rowIndex]!.content[placement.cellIndex]!.attrs?.colwidth;
+    if (!Array.isArray(widths) || widths.length !== placement.colspan) continue;
+    widths.forEach((width, offset) => { oldWidths[placement.left + offset] ??= width; });
+  }
+  const placements = tableLogicalPlacements(newNode);
+  const byCell = new Map(placements.map((placement) => [`${placement.rowIndex}:${placement.cellIndex}`, placement]));
+  return {
+    ...newNode,
+    content: newNode.content.map((row, rowIndex) => ({
+      ...row,
+      content: row.content.map((cell, cellIndex) => {
+        if (cell.attrs?.colwidth !== undefined) return cell;
+        const placement = byCell.get(`${rowIndex}:${cellIndex}`)!;
+        const mapped = Array.from({ length: placement.colspan }, (_, offset) => oldWidths[placement.left + offset] ?? null);
+        const colwidth = mapped.every((width): width is number => typeof width === "number") ? mapped : null;
+        return { ...cell, attrs: { ...cell.attrs, colwidth } };
+      }),
+    })),
   };
 }
 
@@ -532,51 +619,19 @@ function applyTableEdits(
   for (const { op, opIndex } of ops) {
     const target = findTableByRef(workingDoc, op.ref);
     if (!target) throw new OpError(opIndex, `表格 ${op.ref} 不存在,请先 readDraft`);
-    assertNoMergedTableCells(target.table, opIndex, op.ref);
-
     if (op.action === "insertTableRow") {
-      const columnCount = tableColumnCount(target.table);
-      const cells = op.cells ?? [];
-      if (cells.length > columnCount) {
-        throw new OpError(opIndex, `insertTableRow.cells 有 ${cells.length} 个,超过当前表格 ${columnCount} 列`);
-      }
-      const existingIds = collectBlockIds(workingDoc);
-      const nextRow: PmTableRowNode = {
-        type: "tableRow",
-        content: Array.from({ length: columnCount }, (_, columnIndex) =>
-          compileTableCell(cells[columnIndex], { opIndex, header: false, existingIds }),
-        ),
-      };
       const insertIndex = resolveTableRowInsertIndex(target.table, op, opIndex);
-      const nextRows = [...target.table.content];
-      nextRows.splice(insertIndex, 0, nextRow);
-      workingDoc = replaceNodeAtPath(workingDoc, target.path, withTableRows(target.table, nextRows));
+      workingDoc = applyNativeTableEdit(workingDoc, op.ref, { axis: "row", kind: "insert", index: insertIndex }, op.cells, opIndex);
       applied.push(op.ref);
       assertTableEditDocValid(workingDoc, opIndex);
       continue;
     }
 
     if (op.action === "insertTableColumn") {
-      const cells = op.cells ?? [];
-      if (cells.length > target.table.content.length) {
-        throw new OpError(opIndex, `insertTableColumn.cells 有 ${cells.length} 个,超过当前表格 ${target.table.content.length} 行`);
-      }
-      const existingIds = collectBlockIds(workingDoc);
-      const fixedInsertIndex = op.at === "end"
-        ? null
+      const insertIndex = op.at === "end"
+        ? tableColumnCount(target.table)
         : resolveTableColumnInsertIndex(target.table, op, opIndex);
-      const nextRows = target.table.content.map((row, rowIndex): PmTableRowNode => {
-        const insertIndex = fixedInsertIndex ?? row.content.length;
-        const newCell = compileTableCell(cells[rowIndex], {
-          opIndex,
-          header: rowIsHeader(row),
-          existingIds,
-        });
-        const nextCells = [...row.content];
-        nextCells.splice(insertIndex, 0, newCell);
-        return { ...row, content: nextCells };
-      });
-      workingDoc = replaceNodeAtPath(workingDoc, target.path, withTableRows(target.table, nextRows));
+      workingDoc = applyNativeTableEdit(workingDoc, op.ref, { axis: "column", kind: "insert", index: insertIndex }, op.cells, opIndex);
       applied.push(op.ref);
       assertTableEditDocValid(workingDoc, opIndex);
       continue;
@@ -592,9 +647,7 @@ function applyTableEdits(
       if (target.table.content.length <= 1) {
         throw new OpError(opIndex, "deleteTableRow 会让表格没有任何行;表格至少需要保留一行");
       }
-      const nextRows = [...target.table.content];
-      nextRows.splice(op.rowIndex, 1);
-      workingDoc = replaceNodeAtPath(workingDoc, target.path, withTableRows(target.table, nextRows));
+      workingDoc = applyNativeTableEdit(workingDoc, op.ref, { axis: "row", kind: "delete", index: op.rowIndex }, undefined, opIndex);
       applied.push(op.ref);
       assertTableEditDocValid(workingDoc, opIndex);
       continue;
@@ -606,15 +659,7 @@ function applyTableEdits(
     if (columnCount <= 1) {
       throw new OpError(opIndex, "deleteTableColumn 会让表格没有任何列;表格至少需要保留一列");
     }
-    const nextRows = target.table.content.map((row, rowIndex): PmTableRowNode => {
-      if (op.columnIndex >= row.content.length) {
-        throw new OpError(opIndex, `deleteTableColumn columnIndex:${op.columnIndex} 在第 ${rowIndex} 行越界,请先 readDraft 确认当前表格结构`);
-      }
-      const nextCells = [...row.content];
-      nextCells.splice(op.columnIndex, 1);
-      return { ...row, content: nextCells };
-    });
-    workingDoc = replaceNodeAtPath(workingDoc, target.path, withTableRows(target.table, nextRows));
+    workingDoc = applyNativeTableEdit(workingDoc, op.ref, { axis: "column", kind: "delete", index: op.columnIndex }, undefined, opIndex);
     applied.push(op.ref);
     assertTableEditDocValid(workingDoc, opIndex);
   }
@@ -634,6 +679,213 @@ function assertTableEditDocValid(doc: PmDoc, opIndex: number): void {
   if (!parsed.success) {
     throw new OpError(opIndex, `表格增量编辑后结果未过 pmDocSchema: ${parsed.error.message}`);
   }
+}
+
+type NativeTableEdit = {
+  axis: "row" | "column";
+  kind: "insert" | "delete";
+  index: number;
+};
+
+const tableEditSchema = getSchema(createQingagentExtensions());
+
+/** 结构变换完全委托 prosemirror-tables；这里只负责选中逻辑坐标和回填新 cell 内容。 */
+function applyNativeTableEdit(
+  doc: PmDoc,
+  tableRef: string,
+  edit: NativeTableEdit,
+  cells: readonly (TableCellDraft | unknown)[] | undefined,
+  opIndex: number,
+): PmDoc {
+  const pmDoc = tableEditSchema.nodeFromJSON(doc);
+  let table: Parameters<typeof TableMap.get>[0] | null = null;
+  let tablePos = -1;
+  pmDoc.descendants((node, pos) => {
+    if (node.type.spec.tableRole === "table" && node.attrs.blockId === tableRef) {
+      table = node;
+      tablePos = pos;
+      return false;
+    }
+    return true;
+  });
+  if (!table || tablePos < 0) throw new OpError(opIndex, `表格 ${tableRef} 不存在,请先 readDraft`);
+  const map = TableMap.get(table);
+  const isEnd = edit.kind === "insert" && edit.index === (edit.axis === "row" ? map.height : map.width);
+  const boundaryIndex = Math.min(edit.index, (edit.axis === "row" ? map.height : map.width) - 1);
+  const cellOffset = findNativeBoundaryCellOffset(map, boundaryIndex, edit.axis);
+  const $cell = pmDoc.resolve(tablePos + 1 + cellOffset);
+  let state = EditorState.create({ doc: pmDoc, selection: CellSelection.create(pmDoc, $cell.pos) });
+  const command = edit.kind === "delete"
+    ? edit.axis === "row" ? deleteRow : deleteColumn
+    : edit.axis === "row"
+      ? isEnd ? addRowAfter : addRowBefore
+      : isEnd ? addColumnAfter : addColumnBefore;
+  const changed = command(state, (transaction) => { state = state.apply(transaction); });
+  if (!changed) throw new OpError(opIndex, `表格 ${tableRef} ${edit.axis} ${edit.kind} 原生事务未生效`);
+  const nativeDoc = state.doc.toJSON() as PmDoc;
+  const nativeTarget = findTableByRef(nativeDoc, tableRef);
+  const originalTarget = findTableByRef(doc, tableRef);
+  if (!nativeTarget || !originalTarget) throw new OpError(opIndex, `表格 ${tableRef} 原生事务后丢失`);
+  let result = replaceNodeAtPath(
+    doc,
+    originalTarget.path,
+    reconcileNativeTable(originalTarget.table, nativeTarget.table),
+  );
+  if (edit.kind === "insert") {
+    result = materializeNativeInsertedCells(result, tableRef, edit, cells ?? [], opIndex);
+  }
+  return result;
+}
+
+function findNativeBoundaryCellOffset(map: TableMap, index: number, axis: "row" | "column"): number {
+  const offsets = new Set(map.map);
+  let fallback: number | null = null;
+  for (const offset of offsets) {
+    const rect = map.findCell(offset);
+    if ((axis === "row" ? rect.top : rect.left) !== index) continue;
+    fallback ??= offset;
+    if ((axis === "row" ? rect.bottom - rect.top : rect.right - rect.left) === 1) return offset;
+  }
+  return fallback ?? (axis === "row" ? map.map[index * map.width]! : map.map[index]!);
+}
+
+function reconcileNativeTable(oldTable: PmTableNode, nativeTable: PmTableNode): PmTableNode {
+  const oldCells = oldTable.content.flatMap((row) => row.content);
+  return {
+    ...oldTable,
+    content: nativeTable.content.map((row) => ({
+      type: "tableRow" as const,
+      content: row.content.map((nativeCell) => {
+        const content = cleanNativeContent(nativeCell.content);
+        const attrs = cleanNativeCellAttrs(nativeCell.attrs);
+        const identity = tableCellIdentity(nativeCell);
+        const oldCell = oldCells.find((candidate) => candidate.type === nativeCell.type && tableCellIdentity(candidate) === identity);
+        if (!oldCell) {
+          const { attrs: _attrs, ...rest } = nativeCell;
+          return { ...rest, ...(attrs ? { attrs } : {}), content };
+        }
+        if (getStablePmJson(oldCell.attrs ?? {}) === getStablePmJson(attrs ?? {})) return oldCell;
+        const { attrs: _attrs, ...rest } = oldCell;
+        return { ...rest, ...(attrs ? { attrs } : {}) };
+      }),
+    })),
+  };
+}
+
+function tableCellIdentity(cell: PmTableCellNode): string {
+  const first = cell.content[0]?.attrs?.blockId;
+  return typeof first === "string" ? first : getStablePmJson(cell.content);
+}
+
+function cleanNativeCellAttrs(attrs: PmTableCellNode["attrs"]): PmTableCellNode["attrs"] {
+  if (!attrs) return undefined;
+  const result = {
+    ...(attrs.colspan && attrs.colspan > 1 ? { colspan: attrs.colspan } : {}),
+    ...(attrs.rowspan && attrs.rowspan > 1 ? { rowspan: attrs.rowspan } : {}),
+    ...(Array.isArray(attrs.colwidth)
+      ? {
+          colwidth: attrs.colwidth.map((width, index, widths) =>
+            width > 0
+              ? width
+              : widths[index - 1] && widths[index - 1]! > 0
+                ? widths[index - 1]!
+                : widths.find((candidate) => candidate > 0) ?? 1,
+          ),
+        }
+      : {}),
+    ...(attrs.backgroundColor ? { backgroundColor: attrs.backgroundColor } : {}),
+  };
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function cleanNativeContent(content: PmTableCellNode["content"]): PmTableCellNode["content"] {
+  const clean = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(clean);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    const rawAttrs = record.attrs && typeof record.attrs === "object"
+      ? Object.fromEntries(Object.entries(record.attrs as Record<string, unknown>).filter(([, item]) => item != null))
+      : undefined;
+    const { attrs: _attrs, content: _content, ...rest } = record;
+    return {
+      ...rest,
+      ...(rawAttrs && Object.keys(rawAttrs).length > 0 ? { attrs: rawAttrs } : {}),
+      ...(Array.isArray(record.content) ? { content: record.content.map(clean) } : {}),
+    };
+  };
+  return clean(content) as PmTableCellNode["content"];
+}
+
+type TablePlacement = {
+  rowIndex: number;
+  cellIndex: number;
+  top: number;
+  left: number;
+  rowspan: number;
+  colspan: number;
+};
+
+function tableLogicalPlacements(table: PmTableNode): TablePlacement[] {
+  const occupied: boolean[][] = [];
+  const placements: TablePlacement[] = [];
+  table.content.forEach((row, rowIndex) => {
+    occupied[rowIndex] ??= [];
+    let left = 0;
+    row.content.forEach((cell, cellIndex) => {
+      while (occupied[rowIndex]![left]) left += 1;
+      const colspan = cell.attrs?.colspan ?? 1;
+      const rowspan = cell.attrs?.rowspan ?? 1;
+      placements.push({ rowIndex, cellIndex, top: rowIndex, left, rowspan, colspan });
+      for (let y = rowIndex; y < rowIndex + rowspan; y += 1) {
+        occupied[y] ??= [];
+        for (let x = left; x < left + colspan; x += 1) occupied[y]![x] = true;
+      }
+      left += colspan;
+    });
+  });
+  return placements;
+}
+
+function materializeNativeInsertedCells(
+  doc: PmDoc,
+  tableRef: string,
+  edit: NativeTableEdit,
+  cells: readonly (TableCellDraft | unknown)[],
+  opIndex: number,
+): PmDoc {
+  const target = findTableByRef(doc, tableRef);
+  if (!target) throw new OpError(opIndex, `表格 ${tableRef} 原生事务后丢失`);
+  const placements = tableLogicalPlacements(target.table).filter((placement) =>
+    edit.axis === "row"
+      ? placement.top === edit.index
+      : placement.left === edit.index,
+  );
+  const existingIds = collectBlockIds(doc);
+  let nextTable = target.table;
+  for (const placement of placements) {
+    const sourceIndex = edit.axis === "row" ? placement.left : placement.top;
+    const placeholder = nextTable.content[placement.rowIndex]!.content[placement.cellIndex]!;
+    const compiled = compileTableCell(cells[sourceIndex], {
+      opIndex,
+      header: placeholder.type === "tableHeader",
+      existingIds,
+    });
+    const row = nextTable.content[placement.rowIndex]!;
+    const nextCells = [...row.content];
+    // 原生事务决定 span/colwidth；用户内容只替换新建 cell 的内容、底色和显式 span。
+    nextCells[placement.cellIndex] = {
+      ...compiled,
+      attrs: {
+        ...placeholder.attrs,
+        ...compiled.attrs,
+        colwidth: compiled.attrs?.colwidth ?? placeholder.attrs?.colwidth ?? null,
+      },
+    };
+    const nextRows = [...nextTable.content];
+    nextRows[placement.rowIndex] = { ...row, content: nextCells };
+    nextTable = { ...nextTable, content: nextRows };
+  }
+  return replaceNodeAtPath(doc, target.path, nextTable);
 }
 
 function compileListItemForParent(
@@ -789,22 +1041,7 @@ function rowIsHeader(row: PmTableRowNode): boolean {
 }
 
 function tableColumnCount(table: PmTableNode): number {
-  return Math.max(...table.content.map((row) => row.content.length));
-}
-
-function assertNoMergedTableCells(table: PmTableNode, opIndex: number, ref: string): void {
-  for (const row of table.content) {
-    for (const cell of row.content) {
-      const colspan = cell.attrs?.colspan ?? 1;
-      const rowspan = cell.attrs?.rowspan ?? 1;
-      if (colspan > 1 || rowspan > 1) {
-        throw new OpError(
-          opIndex,
-          `表格 ${ref} 含合并单元格(colspan/rowspan),表格增量行列 op 暂不支持;请先 readDraft 后 replaceBlock 整表重构`,
-        );
-      }
-    }
-  }
+  return tableLogicalPlacements(table).reduce((width, item) => Math.max(width, item.left + item.colspan), 0);
 }
 
 function resolveTableRowInsertIndex(
@@ -833,12 +1070,6 @@ function resolveTableColumnInsertIndex(
   assertTableIndex(opIndex, "columnIndex", op.columnIndex);
   const columnCount = tableColumnCount(table);
   if (op.columnIndex >= columnCount) throw tableColumnIndexError(opIndex, op.ref, op.columnIndex, columnCount);
-  for (let rowIndex = 0; rowIndex < table.content.length; rowIndex += 1) {
-    const row = table.content[rowIndex]!;
-    if (op.columnIndex >= row.content.length) {
-      throw new OpError(opIndex, `insertTableColumn columnIndex:${op.columnIndex} 在第 ${rowIndex} 行越界,请先 readDraft 确认当前表格结构`);
-    }
-  }
   return op.at === "before" ? op.columnIndex : op.columnIndex + 1;
 }
 
@@ -866,9 +1097,11 @@ function compileTableCell(
       type: "table",
       rows: [{
         cells: [{
-          runs: cell.runs ?? [],
+          blocks: cell.blocks ?? [],
           header: opts.header || cell.header === true,
           ...(cell.backgroundColor ? { backgroundColor: cell.backgroundColor } : {}),
+          ...(cell.colspan ? { colspan: cell.colspan } : {}),
+          ...(cell.rowspan ? { rowspan: cell.rowspan } : {}),
         }],
       }],
     }],
@@ -888,18 +1121,30 @@ function compileTableCell(
 function normalizeTableCellDraft(rawCell: unknown, opIndex: number): TableCellDraft {
   if (rawCell === undefined) return {};
   if (!rawCell || typeof rawCell !== "object" || Array.isArray(rawCell)) {
-    throw new OpError(opIndex, "table cell 必须是对象,形如 {runs, header?, backgroundColor?}");
+    throw new OpError(opIndex, "table cell 必须是对象,形如 {blocks, header?, backgroundColor?}");
   }
   const cell = rawCell as Record<string, unknown>;
+  if ("blocks" in cell && !Array.isArray(cell.blocks)) throw new OpError(opIndex, "table cell.blocks 必须是 block 数组");
   if ("runs" in cell && !Array.isArray(cell.runs)) throw new OpError(opIndex, "table cell.runs 必须是数组");
   if ("header" in cell && typeof cell.header !== "boolean") throw new OpError(opIndex, "table cell.header 必须是 boolean");
   if ("backgroundColor" in cell && typeof cell.backgroundColor !== "string") {
     throw new OpError(opIndex, "table cell.backgroundColor 必须是字符串主题色名");
   }
+  for (const name of ["colspan", "rowspan"] as const) {
+    if (name in cell && (!Number.isInteger(cell[name]) || Number(cell[name]) < 1)) {
+      throw new OpError(opIndex, `table cell.${name} 必须是大于等于 1 的整数`);
+    }
+  }
+  // 存量会话可能仍携带 runs；只在边界读取一次，归一后的公开类型与内部数据均只保留 blocks。
+  const legacyBlocks = Array.isArray(cell.runs)
+    ? [{ type: "paragraph", runs: cell.runs }]
+    : [];
   return {
-    ...(Array.isArray(cell.runs) ? { runs: cell.runs } : {}),
+    blocks: Array.isArray(cell.blocks) ? cell.blocks : legacyBlocks,
     ...(typeof cell.header === "boolean" ? { header: cell.header } : {}),
     ...(typeof cell.backgroundColor === "string" ? { backgroundColor: cell.backgroundColor } : {}),
+    ...(typeof cell.colspan === "number" ? { colspan: cell.colspan } : {}),
+    ...(typeof cell.rowspan === "number" ? { rowspan: cell.rowspan } : {}),
   };
 }
 
@@ -993,6 +1238,36 @@ function collectBlockIds(value: unknown): Set<string> {
   };
   visit(value);
   return ids;
+}
+
+function collectBlockIdsExcluding(nodes: readonly PmBlockNode[], excludedIndex: number): Set<string> {
+  return collectBlockIds(nodes.filter((_, index) => index !== excludedIndex));
+}
+
+function assertUniqueBlockIds(value: unknown): void {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const blockId = attrs?.blockId;
+    if (typeof blockId === "string") {
+      if (seen.has(blockId)) duplicates.add(blockId);
+      seen.add(blockId);
+    }
+    visit(record.content);
+  };
+  visit(value);
+  if (duplicates.size > 0) {
+    throw new Error(`applyBlockEdits 结果出现重复 blockId: ${[...duplicates].join(", ")}`);
+  }
 }
 
 function stripBlockIds(value: unknown): unknown {

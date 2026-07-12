@@ -265,6 +265,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "pre":
       return { type: "codeBlock", language: optionalString(element.attribs.lang), text: rawTextElementText(element, ctx) };
     case "table":
+      warnIfTruncatedTableStructure(element, ctx);
       return { type: "table", rows: parseTableRows(element, ctx) };
     case "callout": {
       const block: AiBlock = { type: "callout", runs: parseInlineNodes(element.children, ctx, { inlineOnlyTag: name }) };
@@ -370,13 +371,72 @@ function parseTableRows(element: DomElement, ctx: ParseContext) {
 }
 
 function parseTableCell(element: DomElement, ctx: ParseContext): AiTableCell {
+  warnIfTruncatedTableStructure(element, ctx);
+  const parsedBlocks = parseNodesAsBlocks(element.children, ctx);
   const cell: AiTableCell = {
-    runs: parseInlineNodes(element.children, ctx, { inlineOnlyTag: element.name }),
+    // PM tableCell/tableHeader 要求 block+；旧式裸文本由 parseNodesAsBlocks 合成 paragraph，
+    // 空 td/th 则在这里补一个空 paragraph。
+    blocks: parsedBlocks.length > 0 ? parsedBlocks : [{ type: "paragraph", runs: [] }],
   };
   if (element.name === "th") cell.header = true;
   const bg = optionalString(element.attribs.bg);
   if (bg) cell.backgroundColor = bg;
+  const colspan = tableSpanAttr(element, "colspan", ctx);
+  const rowspan = tableSpanAttr(element, "rowspan", ctx);
+  if (colspan !== undefined) cell.colspan = colspan;
+  if (rowspan !== undefined) cell.rowspan = rowspan;
   return cell;
+}
+
+function tableSpanAttr(
+  element: DomElement,
+  name: "colspan" | "rowspan",
+  ctx: ParseContext,
+): number | undefined {
+  const raw = element.attribs[name];
+  if (raw === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    warn(ctx, "invalid-table-span", "bad-block", `<${element.name}> 的 ${name} 必须是大于等于 1 的整数。`);
+    return undefined;
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed)) {
+    warn(ctx, "invalid-table-span", "bad-block", `<${element.name}> 的 ${name} 超出安全整数范围。`);
+    return undefined;
+  }
+  return parsed;
+}
+
+const QINGML_VOID_TAGS = new Set(["br", "hr", "img", "file"]);
+
+function warnIfTruncatedTableStructure(element: DomElement, ctx: ParseContext): void {
+  const visit = (node: DomElement): void => {
+    if (!QINGML_VOID_TAGS.has(node.name) && !hasExplicitClosingTag(node, ctx.source)) {
+      warn(ctx, "truncated-table-structure", "bad-block", `表格内 <${node.name}> 缺少显式闭合标签，疑似输出截断。`);
+    }
+    node.children.filter(isTag).forEach(visit);
+  };
+  visit(element);
+}
+
+function hasExplicitClosingTag(element: DomElement, source: string): boolean {
+  if (typeof element.startIndex !== "number" || typeof element.endIndex !== "number") return true;
+  const slice = source.slice(element.startIndex, element.endIndex + 1);
+  const tagPattern = new RegExp(`<\\s*(/?)\\s*${escapeRegExp(element.name)}\\b[^>]*>`, "gi");
+  let depth = 0;
+  let sawOpeningTag = false;
+  for (const match of slice.matchAll(tagPattern)) {
+    const token = match[0];
+    if (match[1] === "/") {
+      depth -= 1;
+    } else if (!/\/\s*>$/.test(token)) {
+      sawOpeningTag = true;
+      depth += 1;
+    }
+    if (depth < 0) return false;
+  }
+  // 同名标签可嵌套；必须整段配平，不能让内层 </table> 冒充外层闭合。
+  return sawOpeningTag && depth === 0;
 }
 
 function parseColumns(element: DomElement, ctx: ParseContext): AiColumn[] {

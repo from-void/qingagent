@@ -24,6 +24,7 @@ async function loadBridge() {
   const persistSessionMetadata = vi.fn(async () => undefined);
   const schedulePersist = vi.fn(async () => undefined);
   const runAgentTurn = vi.fn(async function* (..._args: unknown[]): AsyncGenerator<BridgeFrame> {});
+  const invalidateDraftStateAfterCanonicalWrite = vi.fn(async () => undefined);
 
   vi.doMock("@qingagent/core", async () => {
     const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
@@ -33,12 +34,19 @@ async function loadBridge() {
       persistSessionMetadata,
       schedulePersist,
       runAgentTurn,
+      invalidateDraftStateAfterCanonicalWrite,
       createSessionThread: vi.fn(async () => undefined),
     };
   });
 
   const bridge = await import("../bridge/bridgeHandler");
-  return { bridge, commitDocumentOp, persistSessionMetadata, runAgentTurn };
+  return {
+    bridge,
+    commitDocumentOp,
+    persistSessionMetadata,
+    runAgentTurn,
+    invalidateDraftStateAfterCanonicalWrite,
+  };
 }
 
 async function createDraftSession(
@@ -123,7 +131,12 @@ describe("handleCommand updateDoc", () => {
   });
 
   it("writes with doc_version, syncs in-memory state, and persists metadata", async () => {
-    const { bridge, commitDocumentOp, persistSessionMetadata } = await loadBridge();
+    const {
+      bridge,
+      commitDocumentOp,
+      persistSessionMetadata,
+      invalidateDraftStateAfterCanonicalWrite,
+    } = await loadBridge();
     const session = await createDraftSession(bridge);
     const submittedDoc = legacySectionsToPm([section("new")]);
     commitDocumentOp.mockResolvedValue({
@@ -158,6 +171,7 @@ describe("handleCommand updateDoc", () => {
     expect(session.docVersion).toBe(2);
     expect(session.lastContentEditedAt).toBe("2026-03-04T05:06:07.000Z");
     expect(session.lastSyncedDocumentSnapshot).toBe(1);
+    expect(invalidateDraftStateAfterCanonicalWrite).toHaveBeenCalledWith(session);
     expect(persistSessionMetadata).toHaveBeenCalledWith(session);
   });
 

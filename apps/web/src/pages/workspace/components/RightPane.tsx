@@ -15,6 +15,8 @@ import { clientPerformanceNow } from "../data/sessionFrameGuards";
 import { logClientEvent } from "../data/clientLog";
 import type { DocDimensions } from "../data/docDimensions";
 import type { NativePresentationRun } from "../data/nativeDiffAnimation";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
+import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import type {
   AppliedPatch,
   AskUserAnswers,
@@ -75,12 +77,14 @@ interface RightPaneProps {
   revealedPatchIds: ReadonlySet<string> | null;
   revealCursors: ReadonlyMap<string, number>;
   typedByPatch: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   patchRevealing: boolean;
   sessionId: string | null;
   stream: ServerStream | null;
   presentationRun: NativePresentationRun | null;
   presentationReducedMotion: boolean;
   onToast: (msg: string) => void;
+  onAiModify: (target: AiModifyTarget) => Promise<boolean>;
   onSubmitPlan: (toolCallId: string, answers: AskUserAnswers) => void;
   onJumpPrev: () => void;
   onJumpNext: () => void;
@@ -158,12 +162,14 @@ export function RightPane({
   revealedPatchIds,
   revealCursors,
   typedByPatch,
+  tableTypedByPatch = null,
   patchRevealing,
   sessionId,
   stream,
   presentationRun,
   presentationReducedMotion,
   onToast,
+  onAiModify,
   onSubmitPlan,
   onJumpPrev,
   onJumpNext,
@@ -375,6 +381,7 @@ export function RightPane({
             docId={sessionId}
             editable={true}
             interactiveEditable={false}
+            deferBlockIdNormalization
             showPatches={false}
             acceptedPatches={new Set<string>()}
             rejectedPatches={new Set<string>()}
@@ -424,12 +431,14 @@ export function RightPane({
         docId={sessionId}
         editable={mountEditableSurface}
         interactiveEditable={interactiveEditable}
+        deferBlockIdNormalization={dimensions.content.kind === "pendingReview"}
         showPatches={showPatches}
         acceptedPatches={patchesAccepted}
         rejectedPatches={patchesRejected}
         revealedPatchIds={revealedPatchIds}
         revealCursors={revealCursors}
         typedByPatch={typedByPatch}
+        tableTypedByPatch={tableTypedByPatch}
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
@@ -442,6 +451,7 @@ export function RightPane({
         onEditorReady={onEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
+        onAiModify={onAiModify}
         presentationRun={presentationRun}
         presentationReducedMotion={presentationReducedMotion}
         onPresentationFinish={onPresentationFinish}

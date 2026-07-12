@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   advanceNativeConcurrentState,
   buildNativeDiffInstructions,
+  buildNativePresentationSeedSections,
   createNativeConcurrentState,
   type NativeConcurrentStep,
   type NativePresentationRun,
 } from "../../../data/nativeDiffAnimation";
+import { canResolveNativePresentationCoordinates } from "../../DocumentSnapshotView";
 import { laneColor } from "../../../data/humanCursorLanes";
 import {
   applyNativeConcurrentFrame,
@@ -20,6 +22,7 @@ import {
 } from "../../../data/nativePresentationPm";
 import { splitGraphemes } from "../../../data/presentationSpans";
 import type { ViewBlock } from "../../../data/protocol";
+import { viewSectionsToHtml } from "../../doc/viewDocHtml";
 
 interface FrameHarness {
   oldEditor: Editor;
@@ -390,6 +393,95 @@ describe("nativePresentationFrameTape", () => {
       expect(counts.every((count) => count.newDispatchCount <= 1)).toBe(true);
     } finally {
       destroyHarness(harness);
+    }
+  });
+
+  it("普通 3×3 表按物理 cell 逐字，offset/光标不跨格", () => {
+    const finalSections: ViewBlock[] = [{
+      kind: "table",
+      head: ["H", "😀", " "],
+      rows: [["A", "BC", "D"], ["E", "F", "G"]],
+    }];
+    const run: NativePresentationRun = {
+      id: 45,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections,
+    };
+    const instructions = buildNativeDiffInstructions(run);
+    let scheduler = createNativeConcurrentState({
+      run,
+      instructions,
+      agentCount: 1,
+      stepDelayMs: 18,
+      chunkSize: 99,
+      maxDurationMs: 10_000,
+      startJitter: false,
+    });
+    const editor = createEditor(viewSectionsToHtml(buildNativePresentationSeedSections(run)));
+    const runtime = createRuntime();
+    const seenTargets: string[] = [];
+
+    try {
+      expect(canResolveNativePresentationCoordinates(editor, scheduler)).toBe(true);
+      for (let frame = 0; frame < 100 && scheduler.phase !== "done"; frame += 1) {
+        const advanced = advanceNativeConcurrentState(scheduler, scheduler.stepDelayMs);
+        scheduler = advanced.state;
+        if (advanced.steps.length === 0) continue;
+        runtime.charEnters.length = 0;
+        const markers = applyNativeConcurrentFrame(editor, advanced.steps, runtime);
+        expect(advanced.steps).toHaveLength(1);
+        const step = advanced.steps[0]!;
+        expect(step.kind).toBe("insertText");
+        if (step.kind !== "insertText" || step.target?.kind !== "tableCell") continue;
+        expect(step.chunkTo - step.chunkFrom).toBe(1);
+        const key = `${step.target.rowIndex}:${step.target.cellIndex}`;
+        seenTargets.push(key);
+        const row = editor.view.dom.querySelectorAll("tr")[step.target.rowIndex];
+        const cell = row?.querySelectorAll("th,td")[step.target.cellIndex];
+        expect(cell?.textContent).toContain(step.text);
+        expect(markers).toHaveLength(1);
+        expect(editor.view.dom.querySelectorAll("[data-hc-lane]")).toHaveLength(1);
+        expect(editor.view.dom.querySelector("[data-hc-lane]")?.closest("th,td")).toBe(cell);
+      }
+
+      expect(scheduler.phase).toBe("done");
+      expect(Array.from(editor.view.dom.querySelectorAll("th,td"), (cell) => cell.textContent)).toEqual([
+        "H", "😀", " ", "A", "BC", "D", "E", "F", "G",
+      ]);
+      expect(seenTargets).toEqual(["0:0", "0:1", "0:2", "1:0", "1:1", "1:1", "1:2", "2:0", "2:1", "2:2"]);
+      expect(Array.from(runtime.offsets.keys())).toContain("table:0:1:1:0");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("表格坐标失配在开播前判为不可解析", () => {
+    const run: NativePresentationRun = {
+      id: 46,
+      docVersion: 1,
+      sessionId: "s",
+      mode: "whole",
+      baselineSections: [],
+      finalSections: [{ kind: "table", head: ["A"], rows: [] }],
+    };
+    const state = createNativeConcurrentState({
+      run,
+      instructions: buildNativeDiffInstructions(run),
+      agentCount: 1,
+      startJitter: false,
+    });
+    const editor = createEditor("<table><tbody><tr><th></th></tr></tbody></table>");
+    const operation = state.tasks[0]?.operations[0];
+    if (operation?.kind === "insertText" && operation.target?.kind === "tableCell") {
+      operation.target.rowIndex = 99;
+    }
+    try {
+      expect(canResolveNativePresentationCoordinates(editor, state)).toBe(false);
+    } finally {
+      editor.destroy();
     }
   });
 

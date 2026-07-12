@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { aiBlockSchema } from "../ai-ir/aiIrSchema";
+import { aiBlockSchema, aiTableCellSchema } from "../ai-ir/aiIrSchema";
 import { aiIrToPm, compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
 import { pmToAiIr } from "../ai-ir/pmToAiIr";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
 import { isAllowedImageSrc, safeParsePmDoc } from "../validators";
-import type { AiDocument } from "../ai-ir/aiIrSchema";
+import type { AiDocument, AiRun, AiTableCell } from "../ai-ir/aiIrSchema";
+import type { PmDoc } from "../types";
 
 type NodeLike = {
   type?: string;
@@ -22,7 +23,38 @@ function hasListItemContainingNestedListItem(node: NodeLike): boolean {
   return (node.content ?? []).some(hasListItemContainingNestedListItem);
 }
 
+function tableCell(
+  runs: AiRun[],
+  attrs: Omit<AiTableCell, "blocks"> = {},
+): AiTableCell {
+  return { blocks: [{ type: "paragraph", runs }], ...attrs };
+}
+
 describe("aiIrRoundTrip", () => {
+  it("AI-IR table cell 不接受嵌套 table block", () => {
+    expect(aiTableCellSchema.safeParse({
+      blocks: [{
+        type: "table",
+        rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "nested" }] }] }] }],
+      }],
+    }).success).toBe(false);
+  });
+
+  it("AI-IR table cell 不接受列表 children 内的递归 table", () => {
+    expect(aiTableCellSchema.safeParse({
+      blocks: [{
+        type: "bulletList",
+        items: [{
+          runs: [{ text: "外层" }],
+          children: [{
+            type: "table",
+            rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "nested" }] }] }] }],
+          }],
+        }],
+      }],
+    }).success).toBe(false);
+  });
+
   it("compiles AI-IR to valid PM and back without schemaVersion/blockId in the IR", () => {
     const ir: AiDocument = {
       title: "示例",
@@ -46,14 +78,14 @@ describe("aiIrRoundTrip", () => {
           rows: [
             {
               cells: [
-                { runs: [{ text: "列A", marks: [{ type: "bold" }] }], header: true },
-                { runs: [{ text: "列B" }], header: true },
+                tableCell([{ text: "列A", marks: [{ type: "bold" }] }], { header: true }),
+                tableCell([{ text: "列B" }], { header: true }),
               ],
             },
             {
               cells: [
-                { runs: [{ text: "甲", marks: [{ type: "italic" }] }] },
-                { runs: [{ text: "乙", marks: [{ type: "strikeThrough" }] }] },
+                tableCell([{ text: "甲", marks: [{ type: "italic" }] }]),
+                tableCell([{ text: "乙", marks: [{ type: "strikeThrough" }] }]),
               ],
             },
           ],
@@ -91,14 +123,14 @@ describe("aiIrRoundTrip", () => {
         rows: [
           {
             cells: [
-              { runs: [{ text: "列A", marks: [{ type: "bold" }] }], header: true },
-              { runs: [{ text: "列B" }], header: true },
+              tableCell([{ text: "列A", marks: [{ type: "bold" }] }], { header: true }),
+              tableCell([{ text: "列B" }], { header: true }),
             ],
           },
           {
             cells: [
-              { runs: [{ text: "甲", marks: [{ type: "italic" }] }] },
-              { runs: [{ text: "乙", marks: [{ type: "strike" }] }] },
+              tableCell([{ text: "甲", marks: [{ type: "italic" }] }]),
+              tableCell([{ text: "乙", marks: [{ type: "strike" }] }]),
             ],
           },
         ],
@@ -126,14 +158,14 @@ describe("aiIrRoundTrip", () => {
           rows: [
             {
               cells: [
-                { runs: [{ text: "标题" }], header: true, backgroundColor: "rose" },
-                { runs: [{ text: "无色头" }], header: true },
+                tableCell([{ text: "标题" }], { header: true, backgroundColor: "rose" }),
+                tableCell([{ text: "无色头" }], { header: true }),
               ],
             },
             {
               cells: [
-                { runs: [{ text: "甲" }], backgroundColor: "sky" },
-                { runs: [{ text: "乙" }] },
+                tableCell([{ text: "甲" }], { backgroundColor: "sky" }),
+                tableCell([{ text: "乙" }]),
               ],
             },
           ],
@@ -163,7 +195,7 @@ describe("aiIrRoundTrip", () => {
       blocks: [
         {
           type: "table",
-          rows: [{ cells: [{ runs: [{ text: "x" }], backgroundColor: "not-a-theme-color" }] }],
+          rows: [{ cells: [tableCell([{ text: "x" }], { backgroundColor: "not-a-theme-color" })] }],
         },
       ],
     };
@@ -173,6 +205,152 @@ describe("aiIrRoundTrip", () => {
       content: Array<{ content: Array<{ attrs?: { backgroundColor?: string } }> }>;
     };
     expect(table.content[0]!.content[0]!.attrs?.backgroundColor).toBeUndefined();
+  });
+
+  it("表格 cell 多块/列表/待办/callout/marks/空段/bg+span 首轮无损", () => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: "table-rich" },
+        content: [{
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            attrs: { colspan: 2, rowspan: 3, backgroundColor: "rose" },
+            content: [
+              { type: "paragraph", attrs: { blockId: "cell-p1" }, content: [{ type: "text", text: "首段", marks: [{ type: "bold" }] }] },
+              { type: "paragraph", attrs: { blockId: "cell-empty" }, content: [] },
+              {
+                type: "bulletList",
+                attrs: { blockId: "cell-ul" },
+                content: [{
+                  type: "listItem",
+                  attrs: { blockId: "cell-ul-i1" },
+                  content: [{ type: "paragraph", attrs: { blockId: "cell-ul-i1-p" }, content: [{ type: "text", text: "无序", marks: [{ type: "italic" }] }] }],
+                }],
+              },
+              {
+                type: "orderedList",
+                attrs: { blockId: "cell-ol", start: 1, listStyle: "lower-alpha" },
+                content: [{
+                  type: "listItem",
+                  attrs: { blockId: "cell-ol-i1" },
+                  content: [{ type: "paragraph", attrs: { blockId: "cell-ol-i1-p" }, content: [{ type: "text", text: "有序" }] }],
+                }],
+              },
+              {
+                type: "taskList",
+                attrs: { blockId: "cell-tasks" },
+                content: [{
+                  type: "taskItem",
+                  attrs: { blockId: "cell-task-1", checked: true },
+                  content: [{ type: "paragraph", attrs: { blockId: "cell-task-1-p" }, content: [{ type: "text", text: "待办" }] }],
+                }],
+              },
+              {
+                type: "callout",
+                attrs: { blockId: "cell-callout", emoji: "!", tone: "warning" },
+                content: [{ type: "paragraph", attrs: { blockId: "cell-callout-p" }, content: [{ type: "text", text: "提示" }] }],
+              },
+            ],
+          }, {
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-1" }, content: [{ type: "text", text: "侧栏一" }] }],
+          }],
+        }, {
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-2" }, content: [{ type: "text", text: "侧栏二" }] }],
+          }],
+        }, {
+          type: "tableRow",
+          content: [{
+            type: "tableCell",
+            content: [{ type: "paragraph", attrs: { blockId: "cell-side-3" }, content: [{ type: "text", text: "侧栏三" }] }],
+          }],
+        }],
+      }],
+    };
+
+    const sourceIr = pmToAiIr(source);
+    const first = aiIrToPm(sourceIr);
+
+    expect(safeParsePmDoc(first).success).toBe(true);
+    expect(pmToAiIr(first)).toEqual(sourceIr);
+    const table = sourceIr.blocks[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") throw new Error("missing table");
+    expect(table.rows[0]!.cells[0]).toMatchObject({
+      backgroundColor: "rose",
+      colspan: 2,
+      rowspan: 3,
+      blocks: [
+        { type: "paragraph" },
+        { type: "paragraph", runs: [] },
+        { type: "bulletList" },
+        { type: "orderedList" },
+        { type: "taskList" },
+        { type: "callout" },
+      ],
+    });
+  });
+
+  it("旧 cell.runs 只在解析入口归一为单 paragraph blocks，空 blocks 补空段", () => {
+    const legacy = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [{ runs: [{ text: "旧缓存", bold: true }] }] }] }],
+    });
+    expect(legacy.ok).toBe(true);
+    expect(legacy.doc && pmToAiIr(legacy.doc).blocks[0]).toMatchObject({
+      type: "table",
+      rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [{ text: "旧缓存", marks: [{ type: "bold" }] }] }] }] }],
+    });
+
+    const empty = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [{ blocks: [] }] }] }],
+    });
+    expect(empty.ok).toBe(true);
+    const table = empty.doc?.content[0];
+    expect(table?.type === "table" ? table.content[0]?.content[0]?.content : null).toMatchObject([
+      { type: "paragraph", content: [] },
+    ]);
+  });
+
+  it("span 必须展开为完整矩形网格，拒绝缺格与越过末行", () => {
+    const paragraphCell = (text: string, attrs: { colspan?: number; rowspan?: number } = {}) => ({
+      blocks: [{ type: "paragraph" as const, runs: [{ text }] }],
+      ...attrs,
+    });
+    const valid = compileAiDocumentToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [paragraphCell("A", { rowspan: 2 }), paragraphCell("B")] },
+          { cells: [paragraphCell("C")] },
+        ],
+      }],
+    });
+    expect(valid.ok).toBe(true);
+
+    const missing = compileAiDocumentToPm({
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [paragraphCell("A", { colspan: 2 })] },
+          { cells: [paragraphCell("B")] },
+        ],
+      }],
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.blockErrors[0]?.message).toContain("span 网格不完整");
+
+    const overrun = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [paragraphCell("A", { rowspan: 2 })] }] }],
+    });
+    expect(overrun.ok).toBe(false);
+    expect(overrun.blockErrors[0]?.message).toContain("rowspan 超出最后一行");
   });
 
   it("列表项 / 引用块的行内 marks 往返不丢(对抗不变量 #3,修 pmToAiIr 拍平洞)", () => {

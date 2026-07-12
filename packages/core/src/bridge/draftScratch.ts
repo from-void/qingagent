@@ -3,13 +3,18 @@ import type {
   LegacySection,
 } from "@qingagent/contract-ts";
 import {
+  findPmTableByBlockId,
   getPmContentHash,
+  getStablePmJson,
   legacySectionsToPm,
   materializeDraftBlockIds,
   pmToLegacySections,
   pmToPlainText,
+  pmTableLogicalGrid,
   type PmBlockNode,
   type PmDoc,
+  type PmTableCellNode,
+  type PmTableNode,
 } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "../db/documentDraftRepo.js";
@@ -77,6 +82,22 @@ export function clearInMemoryDraftDocs(state: SessionState): void {
 export function clearDraftConfirmationState(state: SessionState): void {
   clearInMemoryDraftDocs(state);
   clearDraftMutationScratch(state);
+}
+
+/**
+ * canonical 正文被用户写入后，旧候选不再有资格作为下一轮基线。
+ * 内存先同步失效；持久化草稿清理失败时冷恢复仍会按 base hash 冲突关闭，不能阻断已成功的正文保存回执。
+ */
+export async function invalidateDraftStateAfterCanonicalWrite(state: SessionState): Promise<void> {
+  clearDraftConfirmationState(state);
+  clearSuggestionReviewState(state);
+  await documentDraftRepo.clear(state.docId).catch((error) => {
+    logger.warn("Failed to clear stale draft after canonical document write", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 export function ensureDraftCandidate(state: SessionState): LegacySection[] {
@@ -172,6 +193,223 @@ export function warnIfSelectionDiffEscapesSelectedBlocks(input: {
     selectedBlockIds: [...selectedBlockIds],
     escapedHunks: escaped,
   });
+}
+
+export interface TableSelectionScopeViolation {
+  ok: false;
+  tableRef: string;
+  rowIndex: number;
+  columnIndex: number;
+  error: string;
+}
+
+export type TableSelectionScopeResult = { ok: true } | TableSelectionScopeViolation;
+
+/**
+ * cell 内的块 id 会在整表 replaceBlock 时由 aiIrToPm 重新派生，不代表内容变化。
+ * diagram.svg 是客户端渲染缓存，aiIrToPm 也会归零；除此之外的 attrs、marks、文本与结构都保留。
+ * attrs 里值为 null/undefined 的键与"键不存在"等价(PM attrs 的 null 即默认态):真实编辑器
+ * 节点常带显式 textAlign:null 等默认键,aiIrToPm 重建节点则缺省不写——键集差异不是内容变化,
+ * 不归一会造成"未选行逐字保留的整表替换"被假阳性拒绝(2026-07-12 浏览器验收实录)。
+ */
+function stripBlockIdsDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripBlockIdsDeep);
+  if (!value || typeof value !== "object") return value;
+
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record).flatMap(([key, item]) => {
+    if (key !== "attrs" || !item || typeof item !== "object" || Array.isArray(item)) {
+      return [[key, stripBlockIdsDeep(item)] as const];
+    }
+    const normalized = Object.entries(item)
+      .filter(([attrName, attrValue]) =>
+        attrName !== "blockId" &&
+        !(record.type === "diagram" && attrName === "svg") &&
+        attrValue !== null &&
+        attrValue !== undefined)
+      .map(([attrName, attrValue]) => [attrName, stripBlockIdsDeep(attrValue)] as const);
+    // attrs 归一后为空时整个键丢弃,与"节点无 attrs"等价。
+    return normalized.length > 0 ? [[key, Object.fromEntries(normalized)] as const] : [];
+  }));
+}
+
+function tableCellFingerprint(cell: PmTableCellNode | undefined): string | null {
+  if (!cell) return null;
+  const attrs = cell.attrs;
+  return JSON.stringify({
+    type: cell.type,
+    text: pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: cell.content }).trim(),
+    // 纯文本相同时仍需识别未选单元格里的 mark、链接及子块结构变化。
+    content: getStablePmJson(stripBlockIdsDeep(cell.content)),
+    attrs: {
+      // 显式默认值与缺省键等价:colspan/rowspan 缺省即 1,colwidth/backgroundColor 缺省即 null。
+      colspan: attrs?.colspan ?? 1,
+      rowspan: attrs?.rowspan ?? 1,
+      colwidth: attrs?.colwidth ?? null,
+      backgroundColor: attrs?.backgroundColor ?? null,
+    },
+  });
+}
+
+function replaceReferencedTable(value: unknown, tableRef: string, replacement: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceReferencedTable(item, tableRef, replacement));
+  }
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const attrs = record.attrs;
+  if (
+    record.type === "table" &&
+    attrs &&
+    typeof attrs === "object" &&
+    (attrs as Record<string, unknown>).blockId === tableRef
+  ) {
+    return replacement;
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, replaceReferencedTable(item, tableRef, replacement)]),
+  );
+}
+
+function documentOutsideTableFingerprint(doc: PmDoc, tableRef: string): string {
+  return getStablePmJson(replaceReferencedTable(doc, tableRef, { type: "tableSelectionTarget" }));
+}
+
+function documentScopeViolation(tableRef: string, detail: string): TableSelectionScopeViolation {
+  return {
+    ok: false,
+    tableRef,
+    rowIndex: -1,
+    columnIndex: -1,
+    error: `表格选区越界:${detail};本轮仅允许修改表 ref="${tableRef}" 的选中范围，请先 readDraft 核对后重试。`,
+  };
+}
+
+function scopeViolation(input: {
+  tableRef: string;
+  axis: "row" | "column";
+  startIndex: number;
+  endIndex: number;
+  rowIndex: number;
+  columnIndex: number;
+}): TableSelectionScopeViolation {
+  const axisLabel = input.axis === "row" ? "行" : "列";
+  return {
+    ok: false,
+    tableRef: input.tableRef,
+    rowIndex: input.rowIndex,
+    columnIndex: input.columnIndex,
+    error:
+      `表格选区越界:未选中的 0-based 位置 row=${input.rowIndex}, column=${input.columnIndex} 发生变化;` +
+      `本轮仅允许修改表 ref="${input.tableRef}" 的第 ${input.startIndex}..${input.endIndex} ${axisLabel},` +
+      `请先 readDraft 核对后缩小 editDraft 操作范围重试。`,
+  };
+}
+
+function compareRowsAt(
+  before: PmTableNode,
+  after: PmTableNode,
+  beforeRowIndex: number,
+  afterRowIndex: number,
+  selection: { axis: "row" | "column"; startIndex: number; endIndex: number },
+  tableRef: string,
+): TableSelectionScopeResult {
+  const beforeRow = pmTableLogicalGrid(before)[beforeRowIndex];
+  const afterRow = pmTableLogicalGrid(after)[afterRowIndex];
+  const width = Math.max(beforeRow?.length ?? 0, afterRow?.length ?? 0);
+  for (let columnIndex = 0; columnIndex < width; columnIndex += 1) {
+    if (tableCellFingerprint(beforeRow?.[columnIndex]) !== tableCellFingerprint(afterRow?.[columnIndex])) {
+      return scopeViolation({ ...selection, tableRef, rowIndex: beforeRowIndex, columnIndex });
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * 比较表格编辑前后未选范围。选中轴允许增删，因此前缀按起点对齐、后缀按表尾对齐；
+ * 未选单元格比较去除派生 blockId 后的完整内容和 cell attrs，不做任何结构修补或内容猜测。
+ */
+export function validateTableSelectionScope(input: {
+  before: PmTableNode;
+  after: PmTableNode | null;
+  tableRef: string;
+  selection: { axis: "row" | "column"; startIndex: number; endIndex: number };
+}): TableSelectionScopeResult {
+  const { before, after, tableRef, selection } = input;
+  if (selection.axis === "row") {
+    const prefixCount = selection.startIndex;
+    const suffixCount = Math.max(0, before.content.length - selection.endIndex - 1);
+    if (!after || after.content.length < prefixCount + suffixCount) {
+      const rowIndex = prefixCount > 0 ? 0 : selection.endIndex + 1;
+      return scopeViolation({ ...selection, tableRef, rowIndex, columnIndex: 0 });
+    }
+    for (let rowIndex = 0; rowIndex < prefixCount; rowIndex += 1) {
+      const result = compareRowsAt(before, after, rowIndex, rowIndex, selection, tableRef);
+      if (!result.ok) return result;
+    }
+    for (let offset = 0; offset < suffixCount; offset += 1) {
+      const beforeRowIndex = selection.endIndex + 1 + offset;
+      const afterRowIndex = after.content.length - suffixCount + offset;
+      const result = compareRowsAt(before, after, beforeRowIndex, afterRowIndex, selection, tableRef);
+      if (!result.ok) return result;
+    }
+    return { ok: true };
+  }
+
+  if (!after || before.content.length !== after.content.length) {
+    return scopeViolation({ ...selection, tableRef, rowIndex: Math.min(before.content.length, after?.content.length ?? 0), columnIndex: 0 });
+  }
+  const beforeGrid = pmTableLogicalGrid(before);
+  const afterGrid = pmTableLogicalGrid(after);
+  const beforeWidth = Math.max(0, ...beforeGrid.map((row) => row.length));
+  const afterWidth = Math.max(0, ...afterGrid.map((row) => row.length));
+  const suffixCount = Math.max(0, beforeWidth - selection.endIndex - 1);
+  if (afterWidth < selection.startIndex + suffixCount) {
+    return scopeViolation({ ...selection, tableRef, rowIndex: 0, columnIndex: selection.startIndex > 0 ? 0 : selection.endIndex + 1 });
+  }
+  // 每个物理 cell 只按起点列归属一次；colspan 占位格不重复审计。
+  for (const origin of tableCellOrigins(before)) {
+    if (origin.columnIndex >= selection.startIndex && origin.columnIndex <= selection.endIndex) continue;
+    const mappedColumn = origin.columnIndex < selection.startIndex
+      ? origin.columnIndex
+      : afterWidth - (beforeWidth - origin.columnIndex);
+    if (tableCellFingerprint(origin.cell) !== tableCellFingerprint(afterGrid[origin.rowIndex]?.[mappedColumn])) {
+      return scopeViolation({ ...selection, tableRef, rowIndex: origin.rowIndex, columnIndex: origin.columnIndex });
+    }
+  }
+  return { ok: true };
+}
+
+function tableCellOrigins(table: PmTableNode): Array<{ rowIndex: number; columnIndex: number; cell: PmTableCellNode }> {
+  const grid = pmTableLogicalGrid(table);
+  const seen = new Set<PmTableCellNode>();
+  const origins: Array<{ rowIndex: number; columnIndex: number; cell: PmTableCellNode }> = [];
+  grid.forEach((row, rowIndex) => row.forEach((cell, columnIndex) => {
+    if (seen.has(cell)) return;
+    seen.add(cell);
+    origins.push({ rowIndex, columnIndex, cell });
+  }));
+  return origins;
+}
+
+export function validateCurrentTableSelectionScopes(
+  state: SessionState,
+  beforeDoc: PmDoc,
+  afterDoc: PmDoc,
+): TableSelectionScopeResult {
+  for (const chip of state._currentChips ?? []) {
+    if (chip.kind.kind !== "selection" || !chip.tableSelection || !chip.resourceRef?.id) continue;
+    const tableRef = chip.resourceRef.id;
+    const before = findPmTableByBlockId(beforeDoc, tableRef);
+    if (!before) return documentScopeViolation(tableRef, "选区目标表在编辑前已不存在");
+    if (documentOutsideTableFingerprint(beforeDoc, tableRef) !== documentOutsideTableFingerprint(afterDoc, tableRef)) {
+      return documentScopeViolation(tableRef, "目标表外的文档内容发生变化");
+    }
+    const after = findPmTableByBlockId(afterDoc, tableRef);
+    const result = validateTableSelectionScope({ before, after, tableRef, selection: chip.tableSelection });
+    if (!result.ok) return result;
+  }
+  return { ok: true };
 }
 
 export function docHasBlockType(doc: PmDoc, type: PmBlockNode["type"]): boolean {

@@ -84,7 +84,7 @@ function blockQingml(block: Record<string, unknown>): string {
 function tableBlock(): Record<string, unknown> {
   const cell = (text: string, header = false) => ({
     ...(header ? { header: true } : {}),
-    runs: [{ text }],
+    blocks: [{ type: "paragraph", runs: [{ text }] }],
   });
   return {
     type: "table",

@@ -217,6 +217,91 @@ describe("ChatInput", () => {
     });
   });
 
+  it("表格 selection chip 的 snapshot/restore 保留结构化范围", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const tableSelection = {
+      axis: "column" as const,
+      startIndex: 1,
+      endIndex: 2,
+      signature: "fnv1a-deadbeef",
+    };
+
+    let inserted = false;
+    act(() => {
+      inserted = ref.current?.insertChip({
+        kind: "sel",
+        label: "甲\n乙",
+        suffix: "表格·第2–3列",
+        blockId: "table-1",
+        tableSelection,
+      }) ?? false;
+    });
+
+    expect(inserted).toBe(true);
+    const chip = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="sel"]');
+    expect(chip?.dataset.tableSelection).toBe(JSON.stringify(tableSelection));
+    const snapshot = ref.current?.snapshot();
+    expect(snapshot?.chips[0]?.tableSelection).toEqual(tableSelection);
+
+    act(() => {
+      ref.current?.clear();
+      ref.current?.restore(snapshot!);
+    });
+
+    expect(ref.current?.snapshot().chips[0]?.tableSelection).toEqual(tableSelection);
+  });
+
+  it("insertChip 在 disabled 或编辑器卸载后返回 false", async () => {
+    const disabledRef = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={disabledRef}
+        disabled
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    expect(disabledRef.current?.insertChip({ kind: "sel", label: "不可插入" })).toBe(false);
+    expect(disabledRef.current?.snapshot().chips).toEqual([]);
+
+    const handle = disabledRef.current!;
+    act(() => root?.unmount());
+    root = null;
+    expect(handle.insertChip({ kind: "sel", label: "已卸载" })).toBe(false);
+  });
+
+  it("removeChipAt 仅移除指定的过期表格 chip", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    act(() => {
+      ref.current?.insertChip({ kind: "attach", label: "资料.pdf" });
+      ref.current?.insertChip({
+        kind: "sel",
+        label: "A1",
+        blockId: "table-1",
+        tableSelection: { axis: "row", startIndex: 0, endIndex: 0, signature: "fnv1a-deadbeef" },
+      });
+      ref.current?.removeChipAt(1);
+    });
+    expect(ref.current?.snapshot().chips).toEqual([expect.objectContaining({ kind: "attach", label: "资料.pdf" })]);
+  });
+
   it("文件菜单连接本地文件夹：首次显示引导框，勾选后下次跳过", async () => {
     const onAttachFolder = vi.fn(async () => undefined);
     await render(

@@ -13,13 +13,15 @@ export function createDefaultColumnListNode(): Record<string, unknown> {
   };
 }
 
-export function createDefaultTableNode(): Record<string, unknown> {
+export function createDefaultTableNode(rows = 3, cols = 3, withHeaderRow = false): Record<string, unknown> {
+  const safeRows = Math.min(10, Math.max(1, Math.floor(rows)));
+  const safeCols = Math.min(10, Math.max(1, Math.floor(cols)));
   return {
     type: "table",
-    content: Array.from({ length: 3 }, (_, rowIndex) => ({
+    content: Array.from({ length: safeRows }, (_, rowIndex) => ({
       type: "tableRow",
-      content: Array.from({ length: 3 }, () => ({
-        type: rowIndex === 0 ? "tableHeader" : "tableCell",
+      content: Array.from({ length: safeCols }, () => ({
+        type: withHeaderRow && rowIndex === 0 ? "tableHeader" : "tableCell",
         content: [{ type: "paragraph" }],
       })),
     })),

@@ -34,7 +34,10 @@ describe("toolbarUnlock", () => {
     ];
 
     expect(commands.every(([cmd, val]) => isToolbarCommandEnabled(cmd, val, config))).toBe(true);
-    expect(["bold", "italic", "underline", "strike", "textColor", "cellBackground"].every((cmd) => isTableToolbarCommandEnabled(cmd, config))).toBe(true);
+    expect([
+      "bold", "italic", "underline", "strike", "code", "textColor", "highlight",
+      "cellBackground", "alignLeft", "alignCenter", "alignRight", "link",
+    ].every((cmd) => isTableToolbarCommandEnabled(cmd, config))).toBe(true);
   });
 
   it("sanitize link href 并把旧 hex 高亮值规范到 PM 白名单", () => {

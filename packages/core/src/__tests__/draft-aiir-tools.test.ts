@@ -109,6 +109,10 @@ describe("QingML draft tools", () => {
     expect(description).toContain("同一次 editDraft 调用内多个表格 op 按声明顺序依次应用");
     expect(description).toContain("新增列在表头行对应的新 cell 自动作为表头单元格");
     expect(description).toContain("在表头行前插入数据行");
+    expect(description).toContain("<td><p>结论</p><ul><li>依据</li></ul></td>");
+    expect(description).toContain("逐块保留 readDraft 返回的 cell 内容");
+    expect(description).toContain("colspan/rowspan 属性照抄");
+    expect(description).toContain("列宽由系统自动保留");
     expect(description).not.toContain("items+depth");
     expect(description).not.toContain("必须用扁平");
   });
@@ -299,6 +303,28 @@ describe("QingML draft tools", () => {
     expect(state.docDraftCandidateDoc ? getStablePmJson(state.docDraftCandidateDoc) : before).toBe(before);
   });
 
+  it("editDraft 保留重复 blockId 防线，并把刷新自愈指引返回给模型", async () => {
+    const state = createSession("s-duplicate-block-id-guidance");
+    bindDoc(state, doc([
+      paragraph("duplicate-ref", "第一段"),
+      paragraph("duplicate-ref", "第二段"),
+    ]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "duplicate-ref",
+        block: qingmlParagraph("尝试修改"),
+      }],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("重复 blockId");
+    expect(result.error).toContain("请提示用户刷新文档");
+    expect(state.docDraftCandidateDoc).toBeNull();
+  });
+
   it("editDraft 服务端 fail-closed 拒绝仍有损的 replaceBlock,但 deleteBlock 放行", async () => {
     const state = createSession("s-lossy");
     const multiParagraphCallout: PmBlockNode = {
@@ -323,6 +349,74 @@ describe("QingML draft tools", () => {
     }, ctx) as any;
     expect(deleted.ok).toBe(true);
     expect(state.docDraftCandidateDoc?.content).toHaveLength(0);
+  });
+
+  it("editDraft 放行多块 table cell，并拒绝 span+colwidth 合并表", async () => {
+    const multiBlockTable: PmBlockNode = {
+      type: "table",
+      attrs: { blockId: "block-table" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          content: [
+            paragraph("block-table-p1", "第一段") as Extract<PmBlockNode, { type: "paragraph" }>,
+            {
+              type: "bulletList",
+              attrs: { blockId: "block-table-list" },
+              content: [{
+                type: "listItem",
+                attrs: { blockId: "block-table-item" },
+                content: [paragraph("block-table-item-p", "列表项") as Extract<PmBlockNode, { type: "paragraph" }>],
+              }],
+            },
+          ],
+        }],
+      }],
+    };
+    const state = createSession("s-rich-table");
+    bindDoc(state, doc([multiBlockTable]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+
+    const readable = await readDraftAiIr.execute!({ mode: "full" }, ctx) as any;
+    expect(readable.blocks[0].editability).toEqual({ replaceBlockAllowed: true, lossyReasons: [] });
+
+    const allowed = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "block-table",
+        block: "<table><tr><td><p>新段落</p><ul><li>新列表</li></ul><callout tone=\"warning\">提示</callout></td></tr></table>",
+      }],
+    }, ctx) as any;
+    expect(allowed.ok).toBe(true);
+    const candidate = state.docDraftCandidateDoc?.content[0];
+    expect(candidate?.type === "table" ? candidate.content[0]!.content[0]!.content.map((block) => block.type) : []).toEqual([
+      "paragraph",
+      "bulletList",
+      "callout",
+    ]);
+
+    const mergedState = createSession("s-merged-width-table");
+    bindDoc(mergedState, doc([{
+      type: "table",
+      attrs: { blockId: "block-merged" },
+      content: [{
+        type: "tableRow",
+        content: [{
+          type: "tableCell",
+          attrs: { colspan: 2, colwidth: [120, 180] },
+          content: [paragraph("block-merged-p", "合并") as Extract<PmBlockNode, { type: "paragraph" }>],
+        }],
+      }],
+    }]));
+    const mergedTools = createSessionScopedTools(mergedState);
+    const mergedResult = await mergedTools.editDraft.execute!({
+      ops: [{ action: "replaceBlock", ref: "block-merged", block: "<table><tr><td colspan=\"2\"><p>新</p></td></tr></table>" }],
+    }, ctx) as any;
+    expect(mergedResult.ok).toBe(true);
+    const mergedCandidate = mergedState.docDraftCandidateDoc?.content[0];
+    expect(mergedCandidate?.type === "table" ? mergedCandidate.content[0]?.content[0]?.attrs?.colwidth : null)
+      .toEqual([120, 180]);
   });
 
   it("editDraft ok:true 但实际 0 diff 时返回 changed:false/hunkCount:0", async () => {
@@ -460,14 +554,14 @@ describe("QingML draft tools", () => {
       rows: [
         {
           cells: [
-            { runs: [{ text: "列A，表头。" }], header: true },
-            { runs: [{ text: "列B\"引用\"", marks: [{ type: "link", href: "https://example.com" }] }], header: true },
+            { blocks: [{ type: "paragraph", runs: [{ text: "列A，表头。" }] }], header: true },
+            { blocks: [{ type: "paragraph", runs: [{ text: "列B\"引用\"", marks: [{ type: "link", href: "https://example.com" }] }] }], header: true },
           ],
         },
         {
           cells: [
-            { runs: [{ text: "a1，全角。" }] },
-            { runs: [{ text: "b1，保持。" }] },
+            { blocks: [{ type: "paragraph", runs: [{ text: "a1，全角。" }] }] },
+            { blocks: [{ type: "paragraph", runs: [{ text: "b1，保持。" }] }] },
           ],
         },
       ],

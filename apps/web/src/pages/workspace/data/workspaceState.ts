@@ -865,6 +865,9 @@ function partialBlockNode(block: GenerationDraftBlock): PmBlockNode {
 }
 
 function runToInlineNodes(run: AiRun): PmInlineNode[] {
+  if (run.marks?.some((mark) => mark.type === "math")) {
+    return [{ type: "inlineMath", attrs: { latex: run.text } }];
+  }
   const marks = aiMarksToPmMarks(run.marks);
   const parts = run.text.split("\n");
   const nodes: PmInlineNode[] = [];
@@ -879,25 +882,27 @@ function runToInlineNodes(run: AiRun): PmInlineNode[] {
 
 function aiMarksToPmMarks(marks: AiRun["marks"]): PmMark[] {
   if (!marks || marks.length === 0) return [];
-  return marks.map((mark): PmMark => {
+  return marks.flatMap((mark): PmMark[] => {
     switch (mark.type) {
       case "bold":
       case "italic":
       case "underline":
       case "strike":
       case "code":
-        return { type: mark.type };
+        return [{ type: mark.type }];
       case "strikeThrough":
-        return { type: "strike" };
+        return [{ type: "strike" }];
       case "link":
-        return {
+        return [{
           type: "link",
           attrs: { href: mark.href, title: mark.title ?? null },
-        };
+        }];
       case "textColor":
-        return { type: "textColor", attrs: { color: mark.color } };
+        return [{ type: "textColor", attrs: { color: mark.color } }];
       case "highlight":
-        return { type: "highlight", attrs: { color: mark.color } };
+        return [{ type: "highlight", attrs: { color: mark.color } }];
+      case "math":
+        return [];
     }
   });
 }

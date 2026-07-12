@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { tableSelectionTextSignature } from "../../TableSelection";
 import { commandSchema, COMMAND_KINDS, COMMAND_KIND_SET } from "../command";
+
+function sendMessageWithChip(chip: unknown): unknown {
+  return {
+    kind: "sendMessage",
+    data: {
+      sessionId: "s",
+      text: "修改",
+      mentions: [],
+      skills: [],
+      chips: [chip],
+      fileIds: [],
+    },
+  };
+}
+
+function selectionChip(tableSelection: unknown): unknown {
+  return {
+    kind: { kind: "selection" },
+    resourceRef: { id: "table-1", domain: { kind: "docSpan" } },
+    prefix: null,
+    label: "A | B",
+    suffix: "表格·第1行",
+    tableSelection,
+  };
+}
 
 /**
  * 契约包内的 schema 级脏路径测试(与 server 侧等价回归互补)。这里只验 `commandSchema`
@@ -18,6 +44,46 @@ describe("commandSchema", () => {
       data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [], fileIds: [] },
     });
     expect(r.success).toBe(true);
+  });
+
+  it("保留 selection chip 的 tableSelection 字段", () => {
+    const tableSelection = {
+      axis: "row",
+      startIndex: 0,
+      endIndex: 1,
+      signature: tableSelectionTextSignature(["A", "B"]),
+    } as const;
+    const parsed = commandSchema.parse(sendMessageWithChip(selectionChip(tableSelection)));
+    expect(parsed.kind).toBe("sendMessage");
+    if (parsed.kind === "sendMessage") {
+      expect(parsed.data.chips[0]?.tableSelection).toEqual(tableSelection);
+    }
+  });
+
+  it.each([
+    ["负数", { axis: "row", startIndex: -1, endIndex: 0 }],
+    ["小数", { axis: "row", startIndex: 0.5, endIndex: 1 }],
+    ["反向", { axis: "column", startIndex: 2, endIndex: 1 }],
+    ["非法 axis", { axis: "cell", startIndex: 0, endIndex: 1 }],
+  ])("拒绝 tableSelection 脏值:%s", (_label, tableSelection) => {
+    expect(commandSchema.safeParse(sendMessageWithChip(selectionChip(tableSelection))).success).toBe(false);
+  });
+
+  it("拒绝非 selection chip 携带 tableSelection", () => {
+    expect(commandSchema.safeParse(sendMessageWithChip({
+      kind: { kind: "text" },
+      resourceRef: null,
+      prefix: null,
+      label: "正文",
+      suffix: null,
+      tableSelection: { axis: "row", startIndex: 0, endIndex: 0 },
+    })).success).toBe(false);
+  });
+
+  it("表格选区签名按单元格边界和顺序稳定区分", () => {
+    expect(tableSelectionTextSignature(["ab", "c"])).not.toBe(tableSelectionTextSignature(["a", "bc"]));
+    expect(tableSelectionTextSignature(["A", "B"])).not.toBe(tableSelectionTextSignature(["B", "A"]));
+    expect(tableSelectionTextSignature(["A", "B"])).toBe(tableSelectionTextSignature(["A", "B"]));
   });
 
   it("fileIds 缺省时补为空数组", () => {

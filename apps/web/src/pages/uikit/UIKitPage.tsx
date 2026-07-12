@@ -1779,10 +1779,14 @@ export function UIKitPage() {
                 </table>
                 {/* 插入圆点(列右边界 / 行下边界) */}
                 <button className="tbl-dot tbl-dot-col" type="button" title="插入列" style={{ top: -19, left: 82, "--tbl-guide": "80px" } as CSSProperties}>
-                  <span className="tbl-dot-mark">│</span>
+                  <svg className="tbl-dot-mark" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M5 1.5v7M1.5 5h7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
                 </button>
                 <button className="tbl-dot tbl-dot-row" type="button" title="插入行" style={{ top: 61, left: -19, "--tbl-guide": "260px" } as CSSProperties}>
-                  <span className="tbl-dot-mark">─</span>
+                  <svg className="tbl-dot-mark" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M5 1.5v7M1.5 5h7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -1809,9 +1813,13 @@ export function UIKitPage() {
                   </button>
                 </div>
                 <div className="dt-divider" />
-                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
+                <button className="dt-btn" type="button" title="合并单元格" aria-label="合并单元格">⇥▦⇤</button>
+                <button className="dt-btn" type="button" title="删除列" aria-label="删除列" style={{ color: "var(--mark)" }}>⌫</button>
+                <div className="dt-group dt-dropdown">
+                  <button className="dt-btn" type="button" title="对齐方式：左对齐">≡<span className="dt-caret">▾</span></button>
+                </div>
                 <div className="dt-divider" />
-                <button className="dt-btn" type="button" style={{ color: "var(--mark)" }}>删除列</button>
+                <button className="dt-btn dt-ai" type="button"><span className="dt-ai-ico">✨</span><span>修改选中文字</span></button>
               </div>
             </div>
             <p className="uk-cap uk-lead">

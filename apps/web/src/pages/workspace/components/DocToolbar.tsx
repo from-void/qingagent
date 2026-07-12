@@ -1,12 +1,14 @@
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
+import { CellSelection } from "@tiptap/pm/tables";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { CheckIcon } from "./icons";
+import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
-  resolveAnchoredBubblePosition,
   resolveCenteredFloatingPosition,
   shouldFlipDropdownUp,
   type FloatingAnchorRect,
@@ -20,8 +22,8 @@ import {
   normalizeToolbarHighlightColor,
   normalizeToolbarTextColor,
   resolveToolbarUnlockConfig,
-  sanitizeToolbarLinkHref,
 } from "../data/toolbarUnlock";
+import { useToolbarLinkEditor } from "./doc/ToolbarLinkEditor";
 
 interface ToolbarPos {
   top: number;
@@ -30,25 +32,11 @@ interface ToolbarPos {
   placement: "above" | "below";
 }
 
-interface LinkEditBubble {
-  top: number;
-  left: number;
-  from: number;
-  to: number;
-}
-
 export interface DocToolbarProps {
   active: boolean;
   editor: Editor | null;
   containerSelector: string;
-  onAiModify: (
-    text: string,
-    location: string,
-    from?: number,
-    to?: number,
-    blockId?: string,
-    selectionRefs?: string[],
-  ) => void;
+  onAiModify: (target: AiModifyTarget) => Promise<boolean>;
   onToast?: (message: string) => void;
 }
 
@@ -350,14 +338,15 @@ export function DocToolbar({
   const barRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<ToolbarPos | null>(null);
   const [blockSel, setBlockSel] = useState<SelectedBlockNode | null>(null);
+  const [cellSelectionSuppressed, setCellSelectionSuppressed] = useState(
+    () => Boolean(editor && editor.state.selection instanceof CellSelection),
+  );
   const lastPosRef = useRef<ToolbarPos | null>(null);
   if (pos) lastPosRef.current = pos;
   const [openDd, setOpenDd] = useState<string | null>(null);
   const [flipUp, setFlipUp] = useState(false);
-  const [linkBubble, setLinkBubble] = useState<LinkEditBubble | null>(null);
-  const [linkDraft, setLinkDraft] = useState("");
-  const linkBubbleRef = useRef<HTMLDivElement>(null);
-  const linkInputRef = useRef<HTMLInputElement>(null);
+  const [tablePicker, setTablePicker] = useState<{ anchor: HTMLElement; autoFocus: boolean } | null>(null);
+  const { openLinkEditor, closeLinkEditor, linkEditor } = useToolbarLinkEditor({ editor, onToast, ignoreRef: barRef });
   const toolbarUnlock = resolveToolbarUnlockConfig();
   const editorEditable = editor ? editor.isEditable : true;
 
@@ -394,8 +383,32 @@ export function DocToolbar({
     [],
   );
 
+  useEffect(() => {
+    const syncCellSelectionSuppression = () => {
+      setCellSelectionSuppressed(Boolean(
+        active && editor && editor.state.selection instanceof CellSelection,
+      ));
+    };
+    syncCellSelectionSuppression();
+    if (!active || !editor) return undefined;
+    editor.on("selectionUpdate", syncCellSelectionSuppression);
+    return () => {
+      editor.off("selectionUpdate", syncCellSelectionSuppression);
+    };
+  }, [active, editor]);
+
   const positionToolbar = useCallback(() => {
     if (!active || !editor || !editor.isEditable) {
+      setCellSelectionSuppressed(false);
+      setPos(null);
+      setBlockSel(null);
+      return;
+    }
+    // 表格 CellSelection 自带专用选区工具栏；正文 DocToolbar 只为格内普通 TextSelection 保留。
+    // 抑制仅作用于浮层渲染，selectionchange 下方的 savedSelRef 快照仍照常执行。
+    const suppressForCellSelection = editor.state.selection instanceof CellSelection;
+    setCellSelectionSuppressed(suppressForCellSelection);
+    if (suppressForCellSelection) {
       setPos(null);
       setBlockSel(null);
       return;
@@ -462,20 +475,25 @@ export function DocToolbar({
     setPos(null);
     setBlockSel(null);
     setOpenDd(null);
-    setLinkBubble(null);
+    closeLinkEditor();
+    setTablePicker(null);
     savedSelRef.current = null;
-  }, [editorEditable]);
+  }, [closeLinkEditor, editorEditable]);
 
   useEffect(() => {
     if (!active) {
       setPos(null);
       setOpenDd(null);
-      setLinkBubble(null);
+      closeLinkEditor();
+      setTablePicker(null);
       savedSelRef.current = null;
       return;
     }
     const onSel = () => {
-      if (toolbarPointerDownRef.current || document.activeElement?.closest?.(".doc-toolbar")) return;
+      if (
+        toolbarPointerDownRef.current ||
+        document.activeElement?.closest?.(".doc-toolbar, .table-size-picker")
+      ) return;
       setOpenDd(null);
       positionToolbar();
 
@@ -521,14 +539,16 @@ export function DocToolbar({
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("keyup", onKeyUp);
     container?.addEventListener("scroll", schedulePositionToolbar, { passive: true });
+    window.addEventListener("resize", schedulePositionToolbar, { passive: true });
     return () => {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       document.removeEventListener("selectionchange", onSel);
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("keyup", onKeyUp);
       container?.removeEventListener("scroll", schedulePositionToolbar);
+      window.removeEventListener("resize", schedulePositionToolbar);
     };
-  }, [active, editor, positionToolbar, containerSelector]);
+  }, [active, closeLinkEditor, editor, positionToolbar, containerSelector]);
 
   useLayoutEffect(() => {
     if (!openDd) {
@@ -548,6 +568,10 @@ export function DocToolbar({
     window.requestAnimationFrame(() => {
       menuEl.querySelector<HTMLElement>('.dt-mi[role="menuitem"]:not(.disabled)')?.focus();
     });
+  }, [openDd]);
+
+  useEffect(() => {
+    if (openDd !== "insert") setTablePicker(null);
   }, [openDd]);
 
   useEffect(() => {
@@ -583,31 +607,6 @@ export function DocToolbar({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [openDd]);
-
-  useEffect(() => {
-    if (!linkBubble) return;
-    linkInputRef.current?.focus();
-    linkInputRef.current?.select();
-  }, [linkBubble]);
-
-  useEffect(() => {
-    if (!linkBubble) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (linkBubbleRef.current?.contains(target)) return;
-      if (barRef.current?.contains(target)) return;
-      setLinkBubble(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLinkBubble(null);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [linkBubble]);
 
   const swallowMouseDown = useCallback((e: React.MouseEvent) => {
     markToolbarPointerDown();
@@ -704,7 +703,7 @@ export function DocToolbar({
           break;
         }
         case "insertTable":
-          run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
+          run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: false }).run());
           break;
         case "insertColumns": {
           // 在当前顶层块之后插入,不能用 insertContent(会替换选区:全选时清空正文,e2e V1-c1)。
@@ -755,16 +754,8 @@ export function DocToolbar({
           }
           break;
         case "createLink": {
-          const current = editor.getAttributes("link").href;
-          const { from, to } = editor.state.selection;
           const anchor = selectionAnchorRect(editor, pos ?? lastPosRef.current);
-          const bubblePos = resolveAnchoredBubblePosition(
-            anchor,
-            { width: 320, height: 42 },
-            { width: window.innerWidth, height: window.innerHeight },
-          );
-          setLinkDraft(typeof current === "string" ? current : "https://");
-          setLinkBubble({ ...bubblePos, from, to });
+          openLinkEditor(anchor);
           setOpenDd(null);
           return;
         }
@@ -772,34 +763,8 @@ export function DocToolbar({
       setOpenDd(null);
       positionToolbar();
     },
-    [editor, onToast, pos, positionToolbar, toolbarUnlock],
+    [editor, onToast, openLinkEditor, pos, positionToolbar, toolbarUnlock],
   );
-
-  const applyLinkBubble = useCallback(() => {
-    if (!editor || !linkBubble) return;
-    if (!editor.isEditable) return;
-    const draft = linkDraft.trim();
-    const chain = editor
-      .chain()
-      .focus()
-      .setTextSelection({ from: linkBubble.from, to: linkBubble.to })
-      .extendMarkRange("link");
-
-    if (!draft) {
-      chain.unsetLink().run();
-      setLinkBubble(null);
-      return;
-    }
-
-    const href = sanitizeToolbarLinkHref(draft);
-    if (!href) {
-      onToast?.("链接只支持 http(s)、/ 开头或 # 开头");
-      return;
-    }
-
-    chain.setLink({ href }).run();
-    setLinkBubble(null);
-  }, [editor, linkBubble, linkDraft, onToast]);
 
   const handleInsertImage = useCallback(() => {
     if (!editor) return;
@@ -840,7 +805,17 @@ export function DocToolbar({
     // 原子块:把整个块(图表/图片/公式等)作为引用推进输入框,让用户跟 AI 说"改这个图表"。
     const block = resolveSelectedBlockNode(editor);
     if (block) {
-      onAiModify(block.label, block.type, block.from, block.to, block.blockId);
+      if (!block.blockId) {
+        onToast?.("暂时无法定位选区,请重新选择");
+        return;
+      }
+      void onAiModify({
+        label: block.label,
+        suffix: "批注",
+        blockId: block.blockId,
+        from: block.from,
+        to: block.to,
+      });
       setPos(null);
       setBlockSel(null);
       setOpenDd(null);
@@ -863,14 +838,20 @@ export function DocToolbar({
       return;
     }
 
-    onAiModify(
-      target.text,
-      target.location,
-      target.from,
-      target.to,
-      target.selectionRefs?.[0] ?? (target.from !== undefined ? resolveItemBlockIdAtPos(editor, target.from) : undefined),
-      target.selectionRefs,
-    );
+    const blockId = target.selectionRefs?.[0] ??
+      (target.from !== undefined ? resolveItemBlockIdAtPos(editor, target.from) : undefined);
+    if (!blockId) {
+      onToast?.("暂时无法定位选区,请重新选择");
+      return;
+    }
+    void onAiModify({
+      label: target.text,
+      suffix: "批注",
+      blockId,
+      from: target.from,
+      to: target.to,
+      selectionRefs: target.selectionRefs,
+    });
     savedSelRef.current = null;
     editor.commands.blur();
     setPos(null);
@@ -881,11 +862,27 @@ export function DocToolbar({
     setOpenDd((prev) => (prev === id ? null : id));
   }, []);
 
+  const insertTableAtSize = useCallback((size: TableSize) => {
+    if (!editor || !editor.isEditable || !toolbarUnlock.blocks) return;
+    reportToolbarCommandResult(
+      editor.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: false }).run(),
+      "插入表格",
+      onToast,
+    );
+    setTablePicker(null);
+    setOpenDd(null);
+    positionToolbar();
+  }, [editor, onToast, positionToolbar, toolbarUnlock.blocks]);
+
   const activeOrderedListStyle = editor?.isActive("orderedList")
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"
     : null;
 
-  if (!active) return null;
+  if (
+    !active ||
+    cellSelectionSuppressed ||
+    Boolean(editor && editor.state.selection instanceof CellSelection)
+  ) return null;
 
   return (
     <>
@@ -1102,7 +1099,10 @@ export function DocToolbar({
           <MenuItem onPick={() => runCommand("insertInlineMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="inlineMath" />行内公式</MenuItem>
           <MenuItem onPick={() => runCommand("insertBlockMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="blockMath" />公式块</MenuItem>
           <MenuItem onPick={() => runCommand("insertDiagram")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="diagram" />插入图表</MenuItem>
-          <MenuItem onPick={() => runCommand("insertTable")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="table" />插入表格</MenuItem>
+          <MenuItem
+            onPreview={(anchor, autoFocus) => setTablePicker({ anchor, autoFocus })}
+            disabled={!editorEditable || !toolbarUnlock.blocks}
+          ><MenuIcon name="table" />插入表格<span className="dt-mi-spacer">›</span></MenuItem>
           <MenuItem onPick={() => runCommand("insertColumns")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="columns" />插入分栏</MenuItem>
           <MenuItem onPick={() => runCommand("codeBlock")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="code" />代码块</MenuItem>
           <MenuItem onPick={() => runCommand("horizontalRule")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="divider" />分隔线</MenuItem>
@@ -1123,41 +1123,15 @@ export function DocToolbar({
       </>
       )}
     </div>
-    {linkBubble && (
-      <div
-        ref={linkBubbleRef}
-        className="link-hover-card"
-        style={{ position: "fixed", top: linkBubble.top, left: linkBubble.left, zIndex: 99999 }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="lhc-edit">
-          <input
-            ref={linkInputRef}
-            className="lhc-input"
-            value={linkDraft}
-            placeholder="输入链接地址"
-            onChange={(e) => setLinkDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                applyLinkBubble();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setLinkBubble(null);
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="lhc-btn primary"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={applyLinkBubble}
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    )}
+    {linkEditor}
+    {tablePicker ? (
+      <TableSizePicker
+        anchor={tablePicker.anchor}
+        autoFocus={tablePicker.autoFocus}
+        onSelect={insertTableAtSize}
+        onClose={() => setTablePicker(null)}
+      />
+    ) : null}
     </>
   );
 }
@@ -1248,10 +1222,12 @@ function MenuItem({
   onPick,
   className,
   disabled = false,
+  onPreview,
   children,
 }: {
   k?: React.ReactNode;
-  onPick: () => void;
+  onPick?: () => void;
+  onPreview?: (anchor: HTMLElement, autoFocus: boolean) => void;
   className?: string;
   disabled?: boolean;
   children: React.ReactNode;
@@ -1261,14 +1237,25 @@ function MenuItem({
       role="menuitem"
       tabIndex={0}
       aria-disabled={disabled}
+      aria-haspopup={onPreview ? "dialog" : undefined}
       className={["dt-mi", disabled ? "disabled" : null, className].filter(Boolean).join(" ")}
-      onClick={() => {
-        if (!disabled) onPick();
+      onMouseEnter={(event) => {
+        if (!disabled) onPreview?.(event.currentTarget, false);
+      }}
+      onFocus={(event) => {
+        if (!disabled) onPreview?.(event.currentTarget, false);
+      }}
+      onClick={(event) => {
+        if (disabled) return;
+        if (onPreview) onPreview(event.currentTarget, true);
+        else onPick?.();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          if (!disabled) onPick();
+          if (disabled) return;
+          if (onPreview) onPreview(e.currentTarget, true);
+          else onPick?.();
         }
       }}
     >

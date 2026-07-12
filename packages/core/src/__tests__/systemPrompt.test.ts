@@ -118,6 +118,12 @@ describe("system prompt S3", () => {
       "严禁吞标题",
       "作为栏前标题",
       "严禁只把该章节的正文/条款搬进各栏而把章节 heading 删掉",
+      // 表格多块 cell / span / 列宽范本必须在编辑侧真实上下文。
+      "<td><p>结论</p><ul><li>依据一</li><li>依据二</li></ul></td>",
+      "逐块保留 readDraft 返回的 cell 内容",
+      "colspan/rowspan 属性必须照抄",
+      "列宽由系统自动保留",
+      "table ref + 当前 0-based 索引",
     ]) {
       expect(prompt).toContain(keyword);
     }

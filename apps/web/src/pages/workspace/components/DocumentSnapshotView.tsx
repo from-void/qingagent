@@ -17,8 +17,8 @@ import { NodeSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
+import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc, type PmInlineNode, type PmMark, type PmTableCellNode } from "@qingagent/pm-schema";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
 import { findDraggableBlock, type MovableBlock } from "./ColumnDnD";
@@ -59,7 +59,7 @@ import {
 import {
   applyNativeConcurrentFrame,
   NativePresentationDecorations,
-  resolveTextBlockRange,
+  resolveNativeTargetRange,
   setNativePresentationDecorations,
   type NativeEditorOperationRuntime,
 } from "../data/nativePresentationPm";
@@ -69,6 +69,7 @@ import {
   setPatchDecorations,
 } from "../data/patchDecorations";
 import { sectionText } from "../data/presentationSpans";
+import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import {
   classifyIncomingDoc,
   pushPendingSelfDocKey,
@@ -131,6 +132,8 @@ import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";
 import { PmBlockView } from "./doc/PmStaticView";
 import { TableControls } from "./doc/TableControls";
+import { TableHeaderOverlay } from "./doc/TableHeaderOverlay";
+import type { AiModifyTarget } from "../data/aiModifyTarget";
 export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 
 export type PatchMetaChange =
@@ -166,6 +169,8 @@ export interface DocumentSnapshotViewProps {
   editable: boolean;
   /** TipTap 已挂载时是否允许用户交互编辑；presentation 动画期间会强制只读。 */
   interactiveEditable?: boolean;
+  /** 审阅态锚点基于原文 PM 位置；退出审阅前延后存量 blockId 自愈，避免改写位置与锚点错位。 */
+  deferBlockIdNormalization?: boolean;
   showPatches: boolean;
   acceptedPatches: ReadonlySet<string>;
   rejectedPatches: ReadonlySet<string>;
@@ -175,6 +180,7 @@ export interface DocumentSnapshotViewProps {
   revealCursors?: ReadonlyMap<string, number> | null;
   /** 改动B 逐字打字:每处新增文案已"打"出的字符数;null/undefined = 不截断(全显示)。 */
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
   /** Maps patchId to before/after text and sequence number. */
   patchMeta?: Map<string, PatchMeta>;
@@ -189,6 +195,7 @@ export interface DocumentSnapshotViewProps {
   onEditorReady?: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
+  onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
   presentationReducedMotion?: boolean;
   onPresentationFinish?: () => void;
@@ -204,12 +211,14 @@ export const DocumentSnapshotView = forwardRef<
     docId = null,
     editable,
     interactiveEditable,
+    deferBlockIdNormalization = false,
     showPatches,
     acceptedPatches,
     rejectedPatches,
     revealedPatchIds,
     revealCursors,
     typedByPatch,
+    tableTypedByPatch,
     onPatchVerdict,
     patchMeta,
     activePatchId,
@@ -222,6 +231,7 @@ export const DocumentSnapshotView = forwardRef<
     onEditorReady,
     onEditorChange,
     onToast,
+    onAiModify,
     presentationRun,
     presentationReducedMotion = false,
     onPresentationFinish,
@@ -278,6 +288,7 @@ export const DocumentSnapshotView = forwardRef<
         ref={tiptapRef}
         doc={doc}
         interactiveEditable={tiptapInteractiveEditable}
+        deferBlockIdNormalization={deferBlockIdNormalization}
         docId={docId}
         forceExpandCollapse={showPatches || !editable || Boolean(presentationRun)}
         showPatches={showPatches}
@@ -286,6 +297,7 @@ export const DocumentSnapshotView = forwardRef<
         revealedPatchIds={revealedPatchIds}
         revealCursors={revealCursors}
         typedByPatch={typedByPatch}
+        tableTypedByPatch={tableTypedByPatch}
         onPatchVerdict={onPatchVerdict}
         patchMeta={patchMeta}
         activePatchId={activePatchId}
@@ -298,6 +310,7 @@ export const DocumentSnapshotView = forwardRef<
         onEditorReady={handleEditorReady}
         onEditorChange={onEditorChange}
         onToast={onToast}
+        onAiModify={onAiModify}
         presentationRun={presentationRun}
         presentationReducedMotion={presentationReducedMotion}
         onPresentationFinish={onPresentationFinish}
@@ -318,7 +331,7 @@ export const DocumentSnapshotView = forwardRef<
         data-version={doc.version}
         spellCheck={false}
       >
-        {doc.pmDoc?.content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />)}
+        {doc.pmDoc ? flattenNestedTablesInCells(doc.pmDoc).content.map((node, i) => <PmBlockView key={`pm-${i}`} node={node} />) : null}
       </article>
       {/* 审阅态(静态补丁路径,editable=false)也把落款这块奶白纸提前占好位:
           内容(署名文字/印章)以占位态隐藏、不跑入场动画,只把高度预留出来。
@@ -340,6 +353,7 @@ interface TipTapDocHandle {
 const TipTapDoc = forwardRef<TipTapDocHandle, {
   doc: ViewDocumentSnapshot;
   interactiveEditable: boolean;
+  deferBlockIdNormalization: boolean;
   docId: string | null;
   forceExpandCollapse: boolean;
   showPatches: boolean;
@@ -348,6 +362,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   revealedPatchIds?: ReadonlySet<string> | null;
   revealCursors?: ReadonlyMap<string, number> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   onPatchVerdict?: (patchId: string, verdict: "accepted" | "rejected") => void;
   patchMeta?: Map<string, PatchMeta>;
   activePatchId?: string | null;
@@ -360,6 +375,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   onEditorReady: (editor: Editor | null) => void;
   onEditorChange?: (doc: PmDoc) => void | Promise<void>;
   onToast?: (message: string) => void;
+  onAiModify?: (target: AiModifyTarget) => Promise<boolean>;
   presentationRun?: NativePresentationRun | null;
   presentationReducedMotion: boolean;
   onPresentationFinish?: () => void;
@@ -368,6 +384,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   {
     doc,
     interactiveEditable,
+    deferBlockIdNormalization,
     docId,
     forceExpandCollapse,
     showPatches,
@@ -376,6 +393,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     revealedPatchIds,
     revealCursors,
     typedByPatch,
+    tableTypedByPatch,
     onPatchVerdict,
     patchMeta,
     activePatchId,
@@ -388,6 +406,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     onEditorReady,
     onEditorChange,
     onToast,
+    onAiModify,
     presentationRun,
     presentationReducedMotion,
     onPresentationFinish,
@@ -496,7 +515,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
           return true;
         },
       },
-      handlePaste: (view, event) => handleQingagentPaste(view, event, onToast, handlePasteImages),
+      handlePaste: (view, event, slice) => handleQingagentPaste(view, event, onToast, handlePasteImages, slice),
     },
   });
 
@@ -589,6 +608,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     activeReviewTargetId,
     revealedPatchIds,
     typedByPatch,
+    tableTypedByPatch,
     revealCursors,
   });
 
@@ -671,8 +691,13 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   const latestPresentationDocVersionRef = useRef<number | null>(
     presentationRun?.docVersion ?? null,
   );
+  const deferBlockIdNormalizationRef = useRef(deferBlockIdNormalization);
+  const interactiveEditableRef = useRef(interactiveEditable);
+  const repairedBlockIdVersionRef = useRef<string | null>(null);
   latestDocVersionRef.current = doc.version;
   latestPresentationDocVersionRef.current = presentationRun?.docVersion ?? null;
+  deferBlockIdNormalizationRef.current = deferBlockIdNormalization;
+  interactiveEditableRef.current = interactiveEditable;
   useEffect(() => {
     if (
       editor &&
@@ -731,7 +756,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             pendingSelfDocKeysRef.current = [];
             const hadFocus = editor.isFocused;
             const prevSelection = editor.state.selection;
-            editor.commands.setContent(incoming);
+            setRemoteEditorContent(editor, incoming);
             lastVersionRef.current = scheduledVersion;
             if (hadFocus) {
               const size = editor.state.doc.content.size;
@@ -765,6 +790,68 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   ]);
 
   useEffect(() => {
+    if (
+      !editor ||
+      editor.isDestroyed ||
+      !onEditorChange ||
+      presentationRun ||
+      deferBlockIdNormalization ||
+      !interactiveEditable
+    ) {
+      return;
+    }
+    const targetVersion = doc.version;
+    const repairKey = `${docId ?? ""}:${targetVersion}`;
+    if (repairedBlockIdVersionRef.current === repairKey) return;
+
+    // 初次 content 与外部 setContent 都已在此 effect 之前排入 microtask；归一事务随后执行，
+    // 既能覆盖存量文档，也不会抢在远端正文装载前误扫旧 editor state。
+    scheduleMicrotask(() => {
+      if (!editor || editor.isDestroyed) return;
+      if (latestDocVersionRef.current !== targetVersion) return;
+      if (isPresentationApplyingRef.current) return;
+      // pendingReview 期间 blockId/PM position 是审阅 decoration 的锚点，绝不在原文上改写；
+      // 用户退出审阅回到 editing 后，同一版本会因 defer=false 重新进入本 effect 并完成自愈。
+      if (deferBlockIdNormalizationRef.current || !interactiveEditableRef.current) return;
+      if (repairedBlockIdVersionRef.current === repairKey) return;
+
+      const repair = createDedupeBlockIdsTransaction(editor.state);
+      repairedBlockIdVersionRef.current = repairKey;
+      if (!repair) return;
+
+      beginApplyingRemote();
+      try {
+        editor.view.dispatch(repair);
+        const repairedDoc = normalizePmDoc(editor.getJSON());
+        // update 监听被 isApplyingRemote 抑制；这里只显式保存一次修复结果，回声由既有
+        // pendingSelfDocKeys 识别，不会形成 setContent → dirty-save 循环。
+        pendingSelfDocKeysRef.current = pushPendingSelfDocKey(
+          pendingSelfDocKeysRef.current,
+          JSON.stringify(repairedDoc),
+        );
+        void Promise.resolve(onEditorChange(repairedDoc)).catch((error: unknown) => {
+          repairedBlockIdVersionRef.current = null;
+          console.error("[doc] 存量 blockId 自愈保存失败", error);
+          onToast?.("文档标识修复未保存，请刷新后重试");
+        });
+      } finally {
+        finishApplyingRemoteSoon();
+      }
+    });
+  }, [
+    beginApplyingRemote,
+    deferBlockIdNormalization,
+    doc.version,
+    docId,
+    editor,
+    finishApplyingRemoteSoon,
+    interactiveEditable,
+    onEditorChange,
+    onToast,
+    presentationRun,
+  ]);
+
+  useEffect(() => {
     if (!editor || editor.isDestroyed || !presentationRun) {
       return;
     }
@@ -773,7 +860,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     let cancelled = false;
     let completed = false;
     const instructions = buildNativeDiffInstructions(presentationRun);
-    const timing = planNativeTiming(instructions);
+    const timing = planNativeTiming(instructions, undefined, presentationRun.finalDoc);
     let scheduler = createNativeConcurrentState({
       run: presentationRun,
       instructions,
@@ -781,7 +868,8 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       chunkSize: timing.chunkSize,
       maxDurationMs: timing.totalDurationMs,
     });
-    const finalContent = presentationRun.finalDoc ?? doc.pmDoc;
+    const rawFinalContent = presentationRun.finalDoc ?? doc.pmDoc;
+    const finalContent = rawFinalContent ? flattenNestedTablesInCells(rawFinalContent) : undefined;
     const finalHtml = viewSectionsToHtml(presentationRun.finalSections);
     const seedHtml = viewSectionsToHtml(buildNativePresentationSeedSections(presentationRun));
 
@@ -833,7 +921,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (!editor || editor.isDestroyed) return;
       beginApplyingRemote();
       try {
-        editor.commands.setContent(content);
+        setRemoteEditorContent(editor, content);
         lastVersionRef.current = doc.version;
       } finally {
         finishApplyingRemoteSoon();
@@ -959,7 +1047,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (!hasMissingPresentationBlockId(editor.getJSON())) return;
       beginApplyingRemote();
       try {
-        editor.commands.setContent(targetDoc);
+        setRemoteEditorContent(editor, targetDoc);
         lastVersionRef.current = targetVersion;
       } finally {
         finishApplyingRemoteSoon();
@@ -1000,7 +1088,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       ) : null}
       {interactiveEditable && editor ? <BlockHandle editor={editor} onToast={onToast} /> : null}
       {interactiveEditable && editor ? <LinkHoverCard editor={editor} onToast={onToast} /> : null}
-      {interactiveEditable && editor ? <TableControls editor={editor} /> : null}
+      {interactiveEditable && editor && onAiModify ? (
+        <TableControls editor={editor} onAiModify={onAiModify} onToast={onToast} />
+      ) : null}
+      {interactiveEditable && editor ? <TableHeaderOverlay editor={editor} /> : null}
       {interactiveEditable && mathEdit ? (
         <MathEditPopover
           target={mathEdit}
@@ -1013,6 +1104,10 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     </div>
   );
 });
+
+function setRemoteEditorContent(editor: Editor, content: string | PmDoc): void {
+  editor.chain().setMeta(APPLYING_REMOTE_META, true).setContent(content).run();
+}
 
 function useReviewPatchDecorations({
   editor,
@@ -1029,6 +1124,7 @@ function useReviewPatchDecorations({
   activeReviewTargetId,
   revealedPatchIds,
   typedByPatch,
+  tableTypedByPatch,
   revealCursors,
 }: {
   editor: Editor | null;
@@ -1045,6 +1141,7 @@ function useReviewPatchDecorations({
   activeReviewTargetId?: string | null;
   revealedPatchIds?: ReadonlySet<string> | null;
   typedByPatch?: ReadonlyMap<string, number> | null;
+  tableTypedByPatch?: ReviewTableTypedByPatch | null;
   revealCursors?: ReadonlyMap<string, number> | null;
 }) {
   const suggestionsKey = useMemo(
@@ -1105,6 +1202,10 @@ function useReviewPatchDecorations({
     () => (revealCursors ? mapKey(revealCursors) : ""),
     [revealCursors],
   );
+  const tableTypedByPatchKey = useMemo(
+    () => nestedMapKey(tableTypedByPatch),
+    [tableTypedByPatch],
+  );
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
@@ -1126,6 +1227,7 @@ function useReviewPatchDecorations({
       revealedPatchIds,
       typedByPatch,
       revealCursors,
+      tableTypedByPatch,
       mountBlockView: mountBlockPatchView,
     });
     if (dropped.length > 0) {
@@ -1165,6 +1267,8 @@ function useReviewPatchDecorations({
     typedByPatchKey,
     revealCursors,
     revealCursorsKey,
+    tableTypedByPatch,
+    tableTypedByPatchKey,
   ]);
 
   // 卸载或更换 editor 时才彻底清理 patch decorations;更新期间不清,避免全量重挂闪烁(见上)。
@@ -1186,24 +1290,33 @@ function mapKey(values: ReadonlyMap<string, number>): string {
     .join(",");
 }
 
-function canResolveNativePresentationCoordinates(
+function nestedMapKey(values: ReviewTableTypedByPatch | null | undefined): string {
+  if (!values) return "";
+  return Array.from(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([patchId, cells]) => `${patchId}[${mapKey(cells)}]`)
+    .join("|");
+}
+
+export function canResolveNativePresentationCoordinates(
   editor: Editor,
   state: ReturnType<typeof createNativeConcurrentState>,
 ): boolean {
   if (state.tasks.length === 0) return false;
   try {
-    for (const task of state.tasks.slice(0, 8)) {
-      const operation = task.operations[0];
-      if (!operation) continue;
-      const at =
-        operation.kind === "deleteText"
-          ? operation.from
-          : operation.kind === "insertText" || operation.kind === "cursor" || operation.kind === "redDot"
-            ? operation.at
-            : 0;
-      const range = resolveTextBlockRange(editor, operation.blockIndex, at, at);
-      if (!range) return false;
-      editor.view.coordsAtPos(range.from);
+    for (const task of state.tasks) {
+      for (const operation of task.operations) {
+        const at = operation.kind === "deleteText" ? operation.from : operation.at;
+        const range = resolveNativeTargetRange(
+          editor,
+          operation.blockIndex,
+          operation.target,
+          at,
+          at,
+        );
+        if (!range) return false;
+        editor.view.coordsAtPos(range.from);
+      }
     }
     return true;
   } catch {

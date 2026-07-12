@@ -110,7 +110,10 @@ export function isTableToolbarCommandEnabled(
   cmd: string,
   config: ToolbarUnlockConfig = resolveToolbarUnlockConfig(),
 ): boolean {
-  return ["bold", "italic", "underline", "strike", "textColor", "cellBackground"].includes(cmd) ? config.table : true;
+  return [
+    "bold", "italic", "underline", "strike", "code", "textColor", "highlight",
+    "cellBackground", "alignLeft", "alignCenter", "alignRight", "link",
+  ].includes(cmd) ? config.table : true;
 }
 
 export function sanitizeToolbarLinkHref(input: string | null | undefined): string | null {

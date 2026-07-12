@@ -13,7 +13,15 @@ import type {
   ViewTableCellDiff,
   ViewTableRowDiff,
 } from "../../data/protocol";
-import { PmBlockView, PmTableCellView, applyMarks, MathView, textAlignStyle } from "./PmStaticView";
+import {
+  PmBlockView,
+  PmTableCellView,
+  PmTableScroll,
+  applyMarks,
+  MathView,
+  staticTableCellLogicalColumns,
+  textAlignStyle,
+} from "./PmStaticView";
 import { placePatchPopupByAnchorRect } from "./patchHover";
 import { viewSectionToLegacy } from "./viewDocHtml";
 
@@ -645,11 +653,13 @@ function ChangedTableCell({
   beforeCell,
   diff,
   targetPath,
+  logicalColumn,
 }: {
   cell: PmTableCellNode;
   beforeCell?: PmTableCellNode;
   diff: Extract<ViewTableCellDiff, { status: "changed" }>;
   targetPath: string;
+  logicalColumn?: number;
 }) {
   const original = beforeCell
     ? <div className="wf-row-orig">{beforeCell.content.map((child, index) => <PmBlockView key={child.attrs.blockId ?? index} node={child} />)}</div>
@@ -663,6 +673,7 @@ function ChangedTableCell({
       cellRef={anchorRef}
       reviewTargetId={target?.id}
       reviewTargetIndex={target?.index}
+      logicalColumn={logicalColumn}
       onMouseEnter={(event) => { if (shouldShowLocalPopup(event)) show(); }}
       onMouseLeave={scheduleHide}
     >
@@ -687,10 +698,12 @@ function ReviewTableStateRow({
   status,
   row,
   targetPath,
+  logicalColumns,
 }: {
   status: "added" | "removed";
   row: TableNode["content"][number];
   targetPath: string;
+  logicalColumns?: ReadonlyMap<number, number>;
 }) {
   const { targetClass, targetAttrs, targetIndex } = useReviewTarget(targetPath);
   const { anchorRef, show, scheduleHide, popup } = useReviewOriginalPopup<HTMLTableRowElement>(renderTableRowPopup(row), targetIndex, status);
@@ -709,7 +722,14 @@ function ReviewTableStateRow({
         </td>
       ) : (
         <>
-          {row.content.map((cell, index) => <PmTableCellView key={index} cell={cell} className="wf-table-cell" />)}
+          {row.content.map((cell, index) => (
+            <PmTableCellView
+              key={index}
+              cell={cell}
+              className="wf-table-cell"
+              logicalColumn={logicalColumns?.get(index)}
+            />
+          ))}
           {popup}
         </>
       )}
@@ -731,16 +751,34 @@ function ReviewTableDiff({
 }) {
   const beforeRows = isTableNode(beforeNode) ? beforeNode.content : [];
   const afterRows = node.content;
+  const beforeLogicalColumns = isTableNode(beforeNode) ? staticTableCellLogicalColumns(beforeNode) : new Map<string, number>();
+  const afterLogicalColumns = staticTableCellLogicalColumns(node);
   let beforeCursor = 0;
   let afterCursor = 0;
   const rows = cellDiff.map((rowDiff, rowIndex) => {
-    const beforeRow = rowDiff.status === "added" ? undefined : beforeRows[beforeCursor++];
-    const afterRow = rowDiff.status === "removed" ? undefined : afterRows[afterCursor++];
+    const beforeRowIndex = rowDiff.status === "added" ? null : beforeCursor++;
+    const afterRowIndex = rowDiff.status === "removed" ? null : afterCursor++;
+    const beforeRow = beforeRowIndex === null ? undefined : beforeRows[beforeRowIndex];
+    const afterRow = afterRowIndex === null ? undefined : afterRows[afterRowIndex];
     const row = afterRow ?? beforeRow;
     if (!row) return null;
     const rowPath = `${targetPrefix}/row:${rowIndex}`;
     if (rowDiff.status === "added" || rowDiff.status === "removed") {
-      return <ReviewTableStateRow key={rowIndex} status={rowDiff.status} row={row} targetPath={rowPath} />;
+      const sourceColumns = rowDiff.status === "added" ? afterLogicalColumns : beforeLogicalColumns;
+      const sourceRowIndex = rowDiff.status === "added" ? afterRowIndex : beforeRowIndex;
+      const logicalColumns = new Map(row.content.map((_, cellIndex) => [
+        cellIndex,
+        sourceColumns.get(`${sourceRowIndex}:${cellIndex}`) ?? cellIndex,
+      ]));
+      return (
+        <ReviewTableStateRow
+          key={rowIndex}
+          status={rowDiff.status}
+          row={row}
+          targetPath={rowPath}
+          logicalColumns={logicalColumns}
+        />
+      );
     }
     const rowClass = `wf-table-row wf-table-row--${rowDiff.status}`;
     return (
@@ -750,6 +788,9 @@ function ReviewTableDiff({
           const beforeCell = beforeRow?.content[cellIndex];
           const cell = afterCell ?? beforeCell;
           if (!cell) return null;
+          const logicalColumn = afterCell && afterRowIndex !== null
+            ? afterLogicalColumns.get(`${afterRowIndex}:${cellIndex}`)
+            : beforeRowIndex !== null ? beforeLogicalColumns.get(`${beforeRowIndex}:${cellIndex}`) : undefined;
           const diff = rowDiff.cells[cellIndex];
           if (rowDiff.status === "changed" && diff?.status === "changed") {
             return (
@@ -759,15 +800,21 @@ function ReviewTableDiff({
                 beforeCell={beforeCell}
                 diff={diff}
                 targetPath={`${rowPath}/cell:${cellIndex}`}
+                logicalColumn={logicalColumn}
               />
             );
           }
-          return <PmTableCellView key={cellIndex} cell={cell} className="wf-table-cell" />;
+          return <PmTableCellView
+            key={cellIndex}
+            cell={cell}
+            className="wf-table-cell"
+            logicalColumn={logicalColumn}
+          />;
         })}
       </tr>
     );
   });
-  return <div className="pm-table-scroll"><table><tbody>{rows}</tbody></table></div>;
+  return <PmTableScroll><table><tbody>{rows}</tbody></table></PmTableScroll>;
 }
 
 function ChangedContainerTextBlock({

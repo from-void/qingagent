@@ -170,6 +170,12 @@ import {
   type UploadedAsset,
 } from "./data/useMaterialParseTracker";
 import { planRevealTypewriter, revealNewPartLen } from "./data/revealTypewriter";
+import {
+  buildReviewTableRevealPlan,
+  reconcileFinalizedReviewTablePatchIds,
+  reviewTableTypedCounts,
+  type ReviewTableTypedByPatch,
+} from "./data/tableTypewriter";
 import { validateCommand } from "../../system/validators";
 import { resources, useResourceList } from "../../system/resources";
 import type { ChatChipSpec } from "./components/ChatInput";
@@ -221,6 +227,8 @@ import {
   runAfterPendingDocSave,
   type PendingDocSaveWaiter,
 } from "./data/pendingDocSave";
+import { runAiModifyTarget, type AiModifyTarget } from "./data/aiModifyTarget";
+import { staleTableSelectionChipIndices } from "./data/tableSelectionFreshness";
 export {
   PendingDocSaveError,
   docSaveFailureToastMessage,
@@ -597,6 +605,7 @@ export function WorkspacePage() {
     ) {
       return;
     }
+
     const waiters = docSaveDrainWaitersRef.current.splice(0);
     for (const waiter of waiters) waiter.resolve();
   }, []);
@@ -911,6 +920,8 @@ export function WorkspacePage() {
       ),
     [dim, askUserInputDisabled, viewingHistory, hasAskUserCard],
   );
+  const chatInputBlockReasonRef = useRef(chatInputBlockReason);
+  chatInputBlockReasonRef.current = chatInputBlockReason;
   const chatInputPlaceholder =
     chatInputBlockReason?.placeholder ?? DEFAULT_CHAT_INPUT_PLACEHOLDER;
   const chatInputEditorDisabled = chatInputBlockReason !== null;
@@ -1162,6 +1173,18 @@ export function WorkspacePage() {
   //   打 data-hc-lane 锚点(供拟人鼠标 HumanCursorOverlay 定位);Agent·N 名字已迁移到鼠标承载,光标不带文字。
   // - patchRevealing:整个打字过程布尔(隐藏顶部审批条 / 左侧 loading / 右栏发光)。
   const [typedByPatch, setTypedByPatch] = useState<ReadonlyMap<string, number> | null>(null);
+  const [tableTypedByPatch, setTableTypedByPatch] = useState<ReviewTableTypedByPatch | null>(null);
+  const finalizedTablePatchIdsRef = useRef<Set<string>>(new Set());
+  const tableRevealReplayNonceRef = useRef(revealReplayNonce);
+  const finalizeReviewTablePatch = useCallback((patchId: string) => {
+    finalizedTablePatchIdsRef.current.add(patchId);
+    setTableTypedByPatch((current) => {
+      if (!current?.has(patchId)) return current;
+      const next = new Map(current);
+      next.delete(patchId);
+      return next.size > 0 ? next : null;
+    });
+  }, []);
   const [revealCursors, setRevealCursors] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [patchRevealing, setPatchRevealing] = useState(false);
   const hasPatchCalls = allReviewPatches.length > 0;
@@ -1413,6 +1436,34 @@ export function WorkspacePage() {
     () => (patchPresentation?.applied ?? []).map((a) => a.id).join(","),
     [patchPresentation],
   );
+  const tableBlockPatchIds = useMemo(
+    () => new Set(
+      blockPatchInputs
+        .filter((input) =>
+          input.op !== "delete" && input.blocks.some((block) => block.kind === "table"),
+        )
+        .map((input) => input.patchId),
+    ),
+    [blockPatchInputs],
+  );
+  const tableRevealPlans = useMemo(
+    () => blockPatchInputs.flatMap((input) => {
+      const plan = buildReviewTableRevealPlan(input);
+      return plan ? [plan] : [];
+    }),
+    [blockPatchInputs],
+  );
+  const tableBlockPatchIdsKey = useMemo(
+    () => Array.from(tableBlockPatchIds).sort().join(","),
+    [tableBlockPatchIds],
+  );
+  const tableRevealPlansKey = useMemo(
+    () => tableRevealPlans
+      .map((plan) => `${plan.patchId}:${plan.cells.map((cell) => `${cell.key}=${cell.graphemeCount}`).join("|")}`)
+      .sort()
+      .join(","),
+    [tableRevealPlans],
+  );
   // 在 effect 内读最新 patchMeta 算每处目标字数,但不让 meta 引用进 effect 依赖
   // (meta 与 appliedIdsKey 同源,key 变时 meta 也新)。
   const patchMetaRef = useRef(patchMeta);
@@ -1422,14 +1473,24 @@ export function WorkspacePage() {
       setRevealedPatchIds(null);
       setTypedByPatch(null);
       setRevealCursors(new Map());
+      setTableTypedByPatch(null);
+      finalizedTablePatchIdsRef.current.clear();
       setPatchRevealing(false);
       return;
     }
     const ids = appliedIdsKey.split(",");
+    const replayChanged = tableRevealReplayNonceRef.current !== revealReplayNonce;
+    finalizedTablePatchIdsRef.current = reconcileFinalizedReviewTablePatchIds(
+      finalizedTablePatchIdsRef.current,
+      ids,
+      replayChanged,
+    );
+    tableRevealReplayNonceRef.current = revealReplayNonce;
     if (reducedMotion) {
       setRevealedPatchIds(new Set(ids));
       setTypedByPatch(null); // 降级:不逐字,全显示
       setRevealCursors(new Map());
+      setTableTypedByPatch(null);
       setPatchRevealing(false);
       return;
     }
@@ -1438,7 +1499,12 @@ export function WorkspacePage() {
 
     // 每处新增文案的目标字数(纯删除/无新增处为 0,不占打字头、瞬时入场)。
     const meta = patchMetaRef.current;
+    const tablePlanByPatchId = new Map(tableRevealPlans.map((plan) => [plan.patchId, plan]));
     const targetOf = (id: string): number => {
+      if (tableBlockPatchIds.has(id)) {
+        if (finalizedTablePatchIdsRef.current.has(id)) return 0;
+        return tablePlanByPatchId.get(id)?.totalGraphemes ?? 0;
+      }
       const m = meta.get(id);
       return m ? revealNewPartLen(m.before, m.after) : 0;
     };
@@ -1446,8 +1512,21 @@ export function WorkspacePage() {
     const frames = planRevealTypewriter(ids, targetOf, cfgConcurrency, cfgCharsPerTick);
 
     const applyFrame = (f: (typeof frames)[number]) => {
+      const typedFrame = new Map(f.typed);
       setRevealedPatchIds(new Set(f.revealed));
-      setTypedByPatch(new Map(f.typed));
+      // inline 文本与表格各走自己的表示，禁止把整表总字数塞进 typedByPatch。
+      setTypedByPatch(new Map(
+        Array.from(f.typed).filter(([patchId]) => !tableBlockPatchIds.has(patchId)),
+      ));
+      const nextTableTyped = new Map<string, ReadonlyMap<string, number>>();
+      for (const plan of tableRevealPlans) {
+        if (!f.revealed.includes(plan.patchId) || finalizedTablePatchIdsRef.current.has(plan.patchId)) continue;
+        nextTableTyped.set(
+          plan.patchId,
+          reviewTableTypedCounts(plan, typedFrame.get(plan.patchId) ?? 0),
+        );
+      }
+      setTableTypedByPatch(nextTableTyped.size > 0 ? nextTableTyped : null);
       setRevealCursors(new Map(f.cursors.map((c) => [c.id, c.lane])));
     };
 
@@ -1457,6 +1536,7 @@ export function WorkspacePage() {
       // 末批光标停留片刻收尾,再升起审批条(此时帧已无光标)
       endTimer = setTimeout(() => {
         setRevealCursors(new Map());
+        setTableTypedByPatch(null);
         setPatchRevealing(false);
       }, tailHoldMs);
     };
@@ -1493,6 +1573,8 @@ export function WorkspacePage() {
     cfgStepDelayMs,
     cfgCharsPerTick,
     cfgTailHoldMs,
+    tableBlockPatchIdsKey,
+    tableRevealPlansKey,
     revealReplayNonce,
   ]);
 
@@ -2664,6 +2746,22 @@ export function WorkspacePage() {
       return;
     }
 
+    const hasTableSelectionChip = snap.chips.some((chip) => chip.tableSelection !== undefined);
+    if (hasTableSelectionChip) {
+      const currentDoc = (tiptapEditor?.getJSON() as unknown as PmDoc | undefined) ??
+        stateRef.current.doc?.pmDoc;
+      const staleIndices = currentDoc
+        ? staleTableSelectionChipIndices(snap, currentDoc)
+        : snap.chips.flatMap((chip, index) => chip.tableSelection ? [index] : []);
+      if (staleIndices.length > 0) {
+        [...staleIndices].sort((a, b) => b - a).forEach((index) => {
+          chatInputRef.current?.removeChipAt(index);
+        });
+        showToast("表格已变化,请重新选择");
+        return;
+      }
+    }
+
     const keepMessageCount = stateRef.current.messages.length;
 
     // Optimistic UI: add user message bubble to chat.
@@ -2760,7 +2858,7 @@ export function WorkspacePage() {
         error: e,
       });
     });
-  }, [askUserInputDisabled, dim, ensureSessionId, flushPendingDocSave, markMaterialParsing, showToast]);
+  }, [askUserInputDisabled, dim, ensureSessionId, flushPendingDocSave, markMaterialParsing, showToast, tiptapEditor]);
   // 让 chatInputBus.send 的订阅者拿到最新 handleSubmitChat(每渲染同步)。
   handleSubmitChatRef.current = handleSubmitChat;
 
@@ -2867,64 +2965,19 @@ export function WorkspacePage() {
   }, [showToast]);
 
   const handleAiModify = useCallback(
-    async (
-      text: string,
-      _location: string,
-      from?: number,
-      to?: number,
-      blockId?: string,
-      selectionRefs?: string[],
-    ) => {
-      const handle = chatInputRef.current;
-      if (!handle) return;
-      // 输入框被门控(问卷未答/有未提交候选/看历史版本)时,insertChip 会静默 no-op
-      // (ChatInput.insertChip 首行 `if (!edit || disabled) return`)——用户点 ✨AI修改
-      // 毫无反应。这里前置同一门控判据,给出与输入框一致的明确 toast 而非静默吞。
-      if (chatInputBlockReason) {
-        showToast(chatInputBlockReason.toast);
-        return;
-      }
-      const hasSelectionRefs = Boolean(selectionRefs && selectionRefs.length > 0);
-      if (
-        from !== undefined &&
-        to !== undefined &&
-        tiptapEditor &&
-        !hasSelectionRefs &&
-        !isEditorRangeWithinSingleTextBlock(tiptapEditor, from, to) &&
-        // 原子块(图表/图片/公式等)整块引用放行——用户要把这个块丢给 AI 改
-        !isEditorRangeSingleAtomBlock(tiptapEditor, from, to)
-      ) {
-        showToast("暂不支持跨段落修改,请在同一段内选择");
-        return;
-      }
-      try {
-        await runAfterPendingDocSave({
-          flushPendingDocSave,
-          onFlushFailure: (error) => {
-            showToast(docSaveFailureToastMessage(error));
-          },
-          run: async () => {
-            const raw = text.replace(/^"|"$/g, "");
-            handle.insertChip({
-              kind: "sel",
-              label: raw,
-              suffix: "批注",
-              from,
-              to,
-              blockId,
-              selectionRefs,
-            });
-            // Focus + caret placement is handled inside insertChip via
-            // requestAnimationFrame so it survives the React re-renders
-            // triggered by showToast / DocToolbar state updates below.
-            showToast("选段已加入输入框");
-          },
-        });
-      } catch {
-        return;
-      }
-    },
-    [chatInputBlockReason, flushPendingDocSave, showToast, tiptapEditor],
+    async (target: AiModifyTarget): Promise<boolean> => runAiModifyTarget({
+      target,
+      getBlockReason: () => chatInputBlockReasonRef.current,
+      isTextRangeAllowed: (from, to) => !tiptapEditor ||
+        isEditorRangeWithinSingleTextBlock(tiptapEditor, from, to) ||
+        // 原子块(图表/图片/公式等)整块引用放行。
+        isEditorRangeSingleAtomBlock(tiptapEditor, from, to),
+      flushPendingDocSave,
+      insertChip: (spec) => chatInputRef.current?.insertChip(spec) ?? false,
+      onToast: showToast,
+      onSaveFailure: (error) => showToast(docSaveFailureToastMessage(error)),
+    }),
+    [flushPendingDocSave, showToast, tiptapEditor],
   );
 
   const handleRejectAll = useCallback(() => {
@@ -2944,6 +2997,7 @@ export function WorkspacePage() {
       buildReviewGroupRejectSelection(currentPatches);
     const reviewOutcome = buildReviewOutcome(currentPatches, { rejectUndecided: true });
 
+    setTableTypedByPatch(null);
     dispatch({ kind: "forceUnlockReview" });
     setActiveReviewTargetId(null);
     showToast(
@@ -2993,6 +3047,7 @@ export function WorkspacePage() {
       showToast("正在查看历史版本，先返回当前版本");
       return;
     }
+    setTableTypedByPatch(null);
     const currentPatches = selectPatches(stateRef.current);
     const stream = streamRef.current;
     const currentSessionId = stateRef.current.sessionId;
@@ -3046,6 +3101,7 @@ export function WorkspacePage() {
         showToast("正在查看历史版本，先返回当前版本");
         return;
       }
+      finalizeReviewTablePatch(patchId);
       const command = buildPatchVerdictCommand(selectPatches(stateRef.current), patchId, verdict);
       try {
         validateCommand(command);
@@ -3063,7 +3119,7 @@ export function WorkspacePage() {
         });
       showToast(verdict === "accepted" ? "已保留这处改动" : "已取消这处改动");
     },
-    [showToast],
+    [finalizeReviewTablePatch, showToast],
   );
 
   const handleCommit = useCallback(() => {
@@ -3582,12 +3638,14 @@ export function WorkspacePage() {
             revealedPatchIds={revealedPatchIds}
             revealCursors={revealCursors}
             typedByPatch={typedByPatch}
+            tableTypedByPatch={tableTypedByPatch}
             patchRevealing={effectivePatchRevealing}
             sessionId={state.sessionId}
             stream={streamRef.current}
             presentationRun={effectivePresentationRun}
             presentationReducedMotion={reducedMotion}
             onToast={showToast}
+            onAiModify={handleAiModify}
             onSubmitPlan={handleSubmitPlan}
             onJumpPrev={handleJumpPrev}
             onJumpNext={handleJumpNext}

@@ -20,7 +20,7 @@ const PRESENTATION_RUN_WATCHDOG_MAX_MS = 65_000;
 
 export function presentationRunWatchdogMs(run: NativePresentationRun): number {
   try {
-    const timing = planNativeTiming(buildNativeDiffInstructions(run));
+    const timing = planNativeTiming(buildNativeDiffInstructions(run), undefined, run.finalDoc);
     return Math.min(
       PRESENTATION_RUN_WATCHDOG_MAX_MS,
       Math.max(
@@ -65,6 +65,7 @@ export function toContractChip(spec: ChatChipSpec): ChatChip {
   if (spec.from !== undefined) chip.from = spec.from;
   if (spec.to !== undefined) chip.to = spec.to;
   if (spec.selectionRefs && spec.selectionRefs.length > 0) chip.selectionRefs = spec.selectionRefs;
+  if (spec.tableSelection !== undefined) chip.tableSelection = spec.tableSelection;
   // 长文本卡片携带完整原文,供后端 composeInlineChipText 原位内联,并供气泡还原展示。
   if (spec.text !== undefined) chip.text = spec.text;
   return chip;

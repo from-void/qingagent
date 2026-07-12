@@ -4,8 +4,6 @@ export type AiIrLossyReason =
   | "nestedList"
   | "multiBlockListItem"
   | "complexListItemBlock"
-  | "multiBlockTableCell"
-  | "complexTableCellBlock"
   | "multiBlockBlockquote"
   | "complexBlockquoteChild"
   | "columnLayout";
@@ -62,9 +60,7 @@ function visitBlock(block: PmBlockNode, reasons: Set<AiIrLossyReason>): void {
   if (block.type === "table") {
     for (const row of block.content) {
       for (const cell of row.content) {
-        if (cell.content.length > 1) reasons.add("multiBlockTableCell");
         for (const child of cell.content) {
-          if (!SIMPLE_CHILD_TYPES.has(child.type)) reasons.add("complexTableCellBlock");
           visitBlock(child, reasons);
         }
       }

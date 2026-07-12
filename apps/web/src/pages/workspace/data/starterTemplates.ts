@@ -546,7 +546,7 @@ function templateBlockToAiBlock(block: StarterTemplateBlock): AiBlock {
         type: "table",
         rows: block.rows.map((row) => ({
           cells: row.cells.map((cell) => ({
-            runs: [{ text: cell.text }],
+            blocks: [{ type: "paragraph", runs: [{ text: cell.text }] }],
             ...(cell.header ? { header: true } : {}),
           })),
         })),

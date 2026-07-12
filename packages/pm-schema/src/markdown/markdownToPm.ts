@@ -5,6 +5,11 @@ import {
   type LegacyTaskItem,
 } from "../legacy/legacySectionsToPm";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "../types";
+import { parseDocument } from "htmlparser2";
+import { compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
+import { qingmlParse } from "../ai-ir/qingmlParse";
+import { materializeDraftBlockIds } from "../ai-ir/draftBlockIds";
+import { isAllowedLinkHref, isAllowedThemeColor } from "../validators";
 
 type ParsedMarkdownListKind = "bullet" | "ordered" | "task";
 
@@ -29,10 +34,28 @@ interface ParsedMarkdownListItem {
 export function markdownToPm(markdown: string): PmDoc {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const sections: LegacyLegacySection[] = [];
+  const htmlTables = new Map<string, PmBlockNode>();
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? "";
     if (!line.trim()) continue;
+
+    if (/^\s*<table\b/i.test(line)) {
+      const fragment: string[] = [line];
+      while (!/<\/table\s*>/i.test(fragment.join("\n")) && i + 1 < lines.length) {
+        fragment.push(lines[++i] ?? "");
+      }
+      const source = fragment.join("\n");
+      const parsed = parseSafeHtmlTable(source);
+      if (parsed) {
+        const sentinel = `__QA_HTML_TABLE_${htmlTables.size}__`;
+        htmlTables.set(sentinel, parsed);
+        sections.push({ kind: "p", data: { text: sentinel } });
+      } else {
+        sections.push({ kind: "p", data: { text: source } });
+      }
+      continue;
+    }
 
     if (line.trim() === "$$") {
       const body: string[] = [];
@@ -95,7 +118,9 @@ export function markdownToPm(markdown: string): PmDoc {
     }
 
     if (isPipeTableHeader(lines, i)) {
-      const head = splitPipeTableRow(line);
+      const parsedHead = splitPipeTableRow(line);
+      // 空表头行是 pmToMarkdown 为“无标题行表格”写出的 GFM 占位，不应反向造出标题行。
+      const head = parsedHead.every((cell) => cell.trim() === "") ? [] : parsedHead;
       const rows: string[][] = [];
       let cursor = i + 2;
       while (cursor < lines.length && isPipeTableRow(lines[cursor] ?? "")) {
@@ -118,7 +143,122 @@ export function markdownToPm(markdown: string): PmDoc {
     sections.push({ kind: "p", data: { text: line } });
   }
 
-  return withParsedMarkdownInlines(legacySectionsToPm(sections));
+  const base = legacySectionsToPm(sections);
+  const replaced: PmDoc = {
+    ...base,
+    content: base.content.map((block) => {
+      if (block.type !== "paragraph" || block.content?.length !== 1 || block.content[0]?.type !== "text") return block;
+      return htmlTables.get(block.content[0].text) ?? block;
+    }),
+  };
+  return materializeDraftBlockIds(withParsedMarkdownInlines(replaced), { namespace: "markdown.html-table" });
+}
+
+type HtmlNode = {
+  type: string;
+  name?: string;
+  data?: string;
+  attribs?: Record<string, string>;
+  children?: HtmlNode[];
+};
+
+const TABLE_TAGS = new Set(["table", "thead", "tbody", "tr", "td", "th", "p", "ul", "ol", "li", "b", "strong", "em", "u", "del", "code", "a", "br"]);
+const TABLE_ATTRS = new Set(["colspan", "rowspan", "colwidth", "data-bg-color", "href"]);
+
+function parseSafeHtmlTable(source: string): PmBlockNode | null {
+  if (source.length > 50_000 || !/<\/table\s*>\s*$/i.test(source.trim()) || !hasBalancedHtmlTableTags(source)) return null;
+  try {
+    const document = parseDocument(source, { lowerCaseTags: true, lowerCaseAttributeNames: true });
+    const roots = (document.children as HtmlNode[]).filter((node) => node.type !== "text" || node.data?.trim());
+    if (roots.length !== 1 || roots[0]?.type !== "tag" || roots[0].name !== "table") return null;
+    const widths: Array<number[] | null> = [];
+    const sanitized = sanitizeTableNode(roots[0], 0, widths);
+    if (!sanitized) return null;
+    const parsed = qingmlParse(sanitized);
+    if (parsed.warnings.some((warning) => warning.severity === "bad-block") || parsed.blocks.length !== 1 || parsed.blocks[0]?.type !== "table") return null;
+    const compiled = compileAiDocumentToPm({ blocks: parsed.blocks });
+    if (!compiled.ok || !compiled.doc || compiled.doc.content[0]?.type !== "table") return null;
+    let widthIndex = 0;
+    const table = compiled.doc.content[0];
+    return {
+      ...table,
+      content: table.content.map((row) => ({
+        ...row,
+        content: row.content.map((cell) => {
+          const colwidth = widths[widthIndex++] ?? null;
+          const colspan = cell.attrs?.colspan ?? 1;
+          if (colwidth && colwidth.length !== colspan) throw new Error("colwidth 与 colspan 不一致");
+          return { ...cell, attrs: { ...cell.attrs, colwidth } };
+        }),
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hasBalancedHtmlTableTags(source: string): boolean {
+  const stack: string[] = [];
+  const voidTags = new Set(["br"]);
+  for (const match of source.matchAll(/<\s*(\/?)\s*([a-z][\w-]*)\b[^>]*>/gi)) {
+    const closing = match[1] === "/";
+    const name = match[2]!.toLowerCase();
+    if (voidTags.has(name) || /\/\s*>$/.test(match[0])) continue;
+    if (!closing) {
+      stack.push(name);
+      if (stack.length > 32) return false;
+    } else if (stack.pop() !== name) {
+      return false;
+    }
+  }
+  return stack.length === 0;
+}
+
+function sanitizeTableNode(node: HtmlNode, depth: number, widths: Array<number[] | null>): string | null {
+  if (depth > 32) return null;
+  if (node.type === "text") return escapeHtmlText(node.data ?? "");
+  if (node.type !== "tag" || !node.name) return "";
+  const name = node.name;
+  if (name === "script" || name === "style") return "";
+  const children = (node.children ?? []).map((child) => sanitizeTableNode(child, depth + 1, widths));
+  if (children.some((child) => child === null)) return null;
+  const inner = children.join("");
+  if (!TABLE_TAGS.has(name)) return inner;
+  const attrs = node.attribs ?? {};
+  const outAttrs: string[] = [];
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith("on")) continue;
+    if (!TABLE_ATTRS.has(key)) continue;
+    if (key === "href") {
+      if (!isAllowedLinkHref(value)) continue;
+      outAttrs.push(`href="${escapeHtmlAttr(value)}"`);
+    } else if (key === "data-bg-color") {
+      if (isAllowedThemeColor(value)) outAttrs.push(`bg="${escapeHtmlAttr(value)}"`);
+    } else if (key === "colwidth") {
+      // 结构编译后按物理 cell 顺序回填，不把非 QingML 属性传给解析器。
+    } else if (/^[1-9]\d*$/.test(value)) {
+      outAttrs.push(`${key}="${value}"`);
+    } else {
+      return null;
+    }
+  }
+  if (name === "td" || name === "th") {
+    const raw = attrs.colwidth;
+    const parsed = raw && /^\d+(?:,\d+)*$/.test(raw) ? raw.split(",").map(Number) : null;
+    if (raw && (!parsed || parsed.some((width) => !Number.isSafeInteger(width) || width <= 0))) return null;
+    widths.push(parsed);
+  }
+  const tag = name === "strong" ? "b" : name;
+  const attrText = outAttrs.length ? ` ${outAttrs.join(" ")}` : "";
+  return tag === "br" ? `<br>` : `<${tag}${attrText}>${inner}</${tag}>`;
+}
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttr(value: string): string {
+  return escapeHtmlText(value).replace(/"/g, "&quot;");
 }
 
 function parseMarkdownList(
@@ -239,11 +379,11 @@ function markdownTaskItemToLegacy(item: ParsedMarkdownListItem): LegacyTaskItem 
 function withParsedMarkdownInlines(doc: PmDoc): PmDoc {
   return {
     ...doc,
-    content: doc.content.map(parseBlockMarkdownInlines),
+    content: doc.content.map((node) => parseBlockMarkdownInlines(node)),
   };
 }
 
-function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
+function parseBlockMarkdownInlines(node: PmBlockNode, inTableCell = false): PmBlockNode {
   const mathBlock = maybeConvertMathParagraph(node);
   if (mathBlock.type === "blockMath") return mathBlock;
 
@@ -253,17 +393,17 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
     case "penNote":
       return {
         ...node,
-        content: parseInlineNodes(node.content),
+        content: parseInlineNodes(node.content, inTableCell),
       };
     case "blockquote":
-      return { ...node, content: node.content.map(parseBlockMarkdownInlines) };
+      return { ...node, content: node.content.map((child) => parseBlockMarkdownInlines(child)) };
     case "bulletList":
     case "orderedList":
       return {
         ...node,
         content: node.content.map((item) => ({
           ...item,
-          content: item.content.map(parseBlockMarkdownInlines),
+          content: item.content.map((child) => parseBlockMarkdownInlines(child)),
         })),
       };
     case "taskList":
@@ -271,7 +411,7 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
         ...node,
         content: node.content.map((item) => ({
           ...item,
-          content: item.content.map(parseBlockMarkdownInlines) as typeof item.content,
+          content: item.content.map((child) => parseBlockMarkdownInlines(child)) as typeof item.content,
         })),
       };
     case "table":
@@ -281,12 +421,12 @@ function parseBlockMarkdownInlines(node: PmBlockNode): PmBlockNode {
           ...row,
           content: row.content.map((cell) => ({
             ...cell,
-            content: cell.content.map(parseBlockMarkdownInlines),
+            content: cell.content.map((block) => parseBlockMarkdownInlines(block, true)),
           })),
         })),
       };
     case "callout":
-      return { ...node, content: node.content.map(parseBlockMarkdownInlines) as typeof node.content };
+      return { ...node, content: node.content.map((child) => parseBlockMarkdownInlines(child)) as typeof node.content };
     case "blockMath":
       return node;
     default:
@@ -307,7 +447,10 @@ function maybeConvertMathParagraph(node: PmBlockNode): PmBlockNode {
   };
 }
 
-function parseInlineNodes(content: readonly PmInlineNode[] | undefined): PmInlineNode[] | undefined {
+function parseInlineNodes(
+  content: readonly PmInlineNode[] | undefined,
+  parseTableBreaks = false,
+): PmInlineNode[] | undefined {
   if (!content?.length) return content ? [] : undefined;
   const out: PmInlineNode[] = [];
   for (const node of content) {
@@ -315,7 +458,15 @@ function parseInlineNodes(content: readonly PmInlineNode[] | undefined): PmInlin
       out.push(node);
       continue;
     }
-    out.push(...parseInlineMarkdown(node.text));
+    if (!parseTableBreaks) {
+      out.push(...parseInlineMarkdown(node.text));
+      continue;
+    }
+    const parts = node.text.split(/<br\s*\/?>/gi);
+    parts.forEach((part, index) => {
+      if (index > 0) out.push({ type: "hardBreak" });
+      out.push(...parseInlineMarkdown(part));
+    });
   }
   return out;
 }

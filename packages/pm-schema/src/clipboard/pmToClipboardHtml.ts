@@ -45,13 +45,20 @@ function imageStyle(width: number | null, align: ImageAlign): string {
 }
 
 function tableCellAttrsToHtml(node: PmNode): string {
-  const attrs = (node as { attrs?: { colspan?: unknown; rowspan?: unknown; backgroundColor?: unknown } }).attrs;
+  const attrs = (node as { attrs?: { colspan?: unknown; rowspan?: unknown; colwidth?: unknown; backgroundColor?: unknown } }).attrs;
   const parts: string[] = [];
   const colspan = positiveIntAttr(attrs?.colspan);
   const rowspan = positiveIntAttr(attrs?.rowspan);
   const backgroundColor = themeColorAttr(attrs?.backgroundColor);
   if (colspan && colspan > 1) parts.push(`colspan="${colspan}"`);
   if (rowspan && rowspan > 1) parts.push(`rowspan="${rowspan}"`);
+  if (
+    Array.isArray(attrs?.colwidth) &&
+    attrs.colwidth.length === (colspan ?? 1) &&
+    attrs.colwidth.every((width) => positiveIntAttr(width))
+  ) {
+    parts.push(`colwidth="${attrs.colwidth.join(",")}"`);
+  }
   if (backgroundColor) {
     parts.push(`data-bg-color="${backgroundColor}"`);
     parts.push(`style="background-color:${PM_THEME_HIGHLIGHT_COLOR_VALUES[backgroundColor]}"`);
@@ -233,4 +240,8 @@ function nodeToHtml(node: PmNode): string {
 /** 整篇或选区子文档 → 语义 HTML(白名单标签,无 data-* 噪音)。 */
 export function pmToClipboardHtml(doc: PmDoc): string {
   return doc.content.map(nodeToHtml).filter(Boolean).join("");
+}
+
+export function pmTableToHtml(table: Extract<PmNode, { type: "table" }>): string {
+  return nodeToHtml(table);
 }

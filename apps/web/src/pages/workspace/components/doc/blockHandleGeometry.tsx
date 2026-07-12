@@ -2,6 +2,13 @@ import type { JSX } from "react";
 import type { Editor } from "@tiptap/react";
 import { getCollapsedBlockIds } from "../BlockCollapse";
 import { findDraggableListItem, getListItemRowMetrics, type DraggableListItem } from "../ListItemDnD";
+import { BlockHandleIcon } from "./BlockHandleIcons";
+import {
+  TABLE_COLUMN_HEADER_SIZE,
+  TABLE_INSERT_DOT_GAP,
+  TABLE_INSERT_DOT_SIZE,
+  TABLE_ROW_HEADER_SIZE,
+} from "./tableChromeGeometry";
 
 /* ───────────── 块级左侧手柄(对齐飞书):显示块类型 / 点击转换格式 / 拖拽排序 ───────────── */
 
@@ -16,6 +23,7 @@ export interface HandleState {
   blockEl: HTMLElement; // 块 DOM(拖拽预览 + 滚动跟随重定位)
   blockId?: string | null;
   itemType?: DraggableListItem["itemType"];
+  nodeType: string;
 }
 
 export interface BlockMenuPlacement {
@@ -28,6 +36,9 @@ const BLOCK_MENU_EST_WIDTH = 222;
 const BLOCK_MENU_EST_HEIGHT = 280;
 const BLOCK_MENU_VIEWPORT_MARGIN = 8;
 const BLOCK_MENU_GAP = 12;
+export const TABLE_BLOCK_HANDLE_LEFT_OFFSET =
+  TABLE_ROW_HEADER_SIZE + TABLE_INSERT_DOT_GAP + TABLE_INSERT_DOT_SIZE / 2;
+export const TABLE_BLOCK_HANDLE_TOP_OFFSET = TABLE_COLUMN_HEADER_SIZE + TABLE_INSERT_DOT_GAP;
 
 function clampViewportValue(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
@@ -46,6 +57,20 @@ function getVisibleBlockMenuHeight(menuEl?: HTMLElement | null): number {
   return BLOCK_MENU_EST_HEIGHT;
 }
 
+/** 表格块手柄需避让 B3 行列头与首位插入圆点；其他块仍沿用首行中线锚点。 */
+export function blockHandleGeometry(
+  blockEl: HTMLElement,
+  nodeType: string,
+): { top: number; left: number } {
+  const rect = blockEl.getBoundingClientRect();
+  const top = rect.top + firstLineCenterOffset(blockEl);
+  if (nodeType !== "table") return { top, left: rect.left };
+  return {
+    top: top - TABLE_BLOCK_HANDLE_TOP_OFFSET,
+    left: rect.left - TABLE_BLOCK_HANDLE_LEFT_OFFSET,
+  };
+}
+
 export function refreshHandleGeometryFromDom(h: HandleState, editorDom: HTMLElement): HandleState | null {
   // 同 computeBlockMenuPlacement:只查 isConnected,不要求 getClientRects 非空——键盘唤起 / jsdom 下
   // getClientRects 可能为空,但仍要能刷新出 handle 几何(rect 由 getBoundingClientRect 提供)。
@@ -57,7 +82,7 @@ export function refreshHandleGeometryFromDom(h: HandleState, editorDom: HTMLElem
     const geometry = listItemHandleGeometry(h.blockEl, h.itemType);
     return { ...h, top: geometry.top, left: geometry.left };
   }
-  return { ...h, top: rect.top + firstLineCenterOffset(h.blockEl), left: rect.left };
+  return { ...h, ...blockHandleGeometry(h.blockEl, h.nodeType) };
 }
 
 export function computeBlockMenuPlacement(h: HandleState, menuEl?: HTMLElement | null): BlockMenuPlacement | null {
@@ -72,7 +97,8 @@ export function computeBlockMenuPlacement(h: HandleState, menuEl?: HTMLElement |
   const menuWidth = menuEl?.offsetWidth || BLOCK_MENU_EST_WIDTH;
   const menuHeight = getVisibleBlockMenuHeight(menuEl);
   const margin = BLOCK_MENU_VIEWPORT_MARGIN;
-  const anchorTop = rect.top + firstLineCenterOffset(h.blockEl);
+  const anchor = blockHandleGeometry(h.blockEl, h.nodeType);
+  const anchorTop = anchor.top;
   const belowTop = anchorTop + BLOCK_MENU_GAP;
   const aboveTop = anchorTop - menuHeight - BLOCK_MENU_GAP;
   const belowFits = belowTop + menuHeight + margin <= window.innerHeight;
@@ -84,7 +110,7 @@ export function computeBlockMenuPlacement(h: HandleState, menuEl?: HTMLElement |
   // 菜单比视口还高的极端情形 maxTop<margin → 钉在 margin,由 CSS max-height+overflow 兜底可滚。
   const maxTop = Math.max(margin, window.innerHeight - menuHeight - margin);
   const top = clampViewportValue(preferredTop, margin, maxTop);
-  const preferredLeft = rect.left - 24;
+  const preferredLeft = anchor.left - 24;
   const maxLeft = window.innerWidth - menuWidth - margin;
 
   return {
@@ -112,6 +138,8 @@ export function glyphForBlock(node: { type: { name: string }; attrs?: Record<str
       return "{}";
     case "taskList":
       return "task";
+    case "table":
+      return "table";
     default:
       return "T";
   }
@@ -124,6 +152,7 @@ export function glyphForListItem(item: DraggableListItem): string {
 
 /** 托柄左侧"格式图标"(对齐飞书:无序列表用列表图标、待办用方框勾、其余用文字徽标如 H1/1./T)。 */
 export function HandleTypeIcon({ glyph }: { glyph: string }): JSX.Element {
+  if (glyph === "table") return <BlockHandleIcon name="table" />;
   if (glyph === "•") {
     return (
       <svg className="bh-type-svg" width="13" height="11" viewBox="0 0 13 11" aria-hidden="true" focusable="false">

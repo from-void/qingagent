@@ -12,8 +12,18 @@ import {
   type AiRun,
   type AiRunMark,
   type AiTableCell,
+  type AiTableRow,
   type AiTaskListItem,
 } from "./aiIrSchema";
+
+/**
+ * 表格 cell 后代 blockId 规范：
+ * - 单段 paragraph 沿用 `${tableId}-rN-cN-p`（N 为 1-based，仅 ID 命名如此）；
+ * - 多块 cell 的第 k 个直接子块为 `${tableId}-rN-cN-bK`；
+ * - 嵌套后代继续由既有 blockToPm/materialize 体系派生，并以最终 table ref 为命名空间；
+ * - anchored replace 把顶层临时 `ai-block-*` 转成稳定 ref 时，applyBlockEdits 必须同步
+ *   深度重写后代前缀并 materialize 其余临时 ID，不能只浅改 table.attrs.blockId。
+ */
 
 export interface AiIrBlockError {
   index: number;
@@ -184,8 +194,18 @@ function repairAiIrBlockShorthand(block: unknown, options: { skipPseudoNestedLis
         cells: r.cells.map((cell) => {
           if (!cell || typeof cell !== "object" || Array.isArray(cell)) return cell;
           const c = cell as Record<string, unknown>;
-          if (!Array.isArray(c.runs)) return cell;
-          return { ...c, runs: c.runs.map(repairAiIrRunShorthand) };
+          const normalized: Record<string, unknown> = { ...c };
+          if (Array.isArray(c.blocks)) {
+            normalized.blocks = c.blocks.map((child) => repairAiIrBlockShorthand(child));
+          } else if (Array.isArray(c.runs)) {
+            // 旧 AI-IR/会话缓存的一次性入口归一:cell.runs → 单 paragraph blocks。
+            normalized.blocks = [{
+              type: "paragraph",
+              runs: c.runs.map(repairAiIrRunShorthand),
+            }];
+          }
+          delete normalized.runs;
+          return normalized;
         }),
       };
     });
@@ -605,7 +625,8 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
       };
     case "horizontalRule":
       return { type: "horizontalRule", attrs: { blockId } };
-    case "table":
+    case "table": {
+      assertValidAiTableGrid(block.rows);
       return {
         type: "table",
         attrs: { blockId },
@@ -619,6 +640,7 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
           })),
         })),
       };
+    }
     case "image":
       return { type: "image", attrs: { blockId, src: block.src, alt: block.alt ?? null, caption: block.caption ?? null, width: block.width ?? null, height: block.height ?? null, align: block.align ?? "center" } };
     case "diagram":
@@ -716,6 +738,54 @@ function attrsWithAlign(blockId: string, textAlign: PmTextAlign | undefined) {
   return textAlign ? { blockId, textAlign } : { blockId };
 }
 
+// PM 的结构 schema 只验证 tableRow/tableCell 形状，不验证 span 展开后的矩形网格。
+// 在 AI-IR 编译边界确定性排布逻辑列，拒绝缺格、越界和跨出末行的 rowspan，避免把
+// TableMap 会判为 broken 的表格交给编辑器；这里只校验，不猜测或补造任何单元格。
+function assertValidAiTableGrid(rows: readonly AiTableRow[]): void {
+  let expectedWidth: number | undefined;
+  let activeRowspans: number[] = [];
+
+  rows.forEach((row, rowIndex) => {
+    const occupied = activeRowspans.map((remaining) => remaining > 0);
+    const nextRowspans = activeRowspans.map((remaining) => Math.max(0, remaining - 1));
+    let cursor = 0;
+
+    for (const cell of row.cells) {
+      const colspan = cell.colspan ?? 1;
+      const rowspan = cell.rowspan ?? 1;
+      while (occupied[cursor]) cursor += 1;
+
+      let start = cursor;
+      while (true) {
+        const conflict = Array.from({ length: colspan }, (_, offset) => start + offset)
+          .find((column) => occupied[column]);
+        if (conflict === undefined) break;
+        start = conflict + 1;
+        while (occupied[start]) start += 1;
+      }
+
+      for (let column = start; column < start + colspan; column += 1) {
+        occupied[column] = true;
+        if (rowspan > 1) nextRowspans[column] = rowspan - 1;
+      }
+      cursor = start + colspan;
+    }
+
+    const width = occupied.reduce((last, value, column) => value ? column + 1 : last, 0);
+    if (expectedWidth === undefined) expectedWidth = width;
+    const hasGap = Array.from({ length: expectedWidth }, (_, column) => occupied[column] === true)
+      .some((filled) => !filled);
+    if (width !== expectedWidth || hasGap) {
+      throw new Error(`table span 网格不完整:第 ${rowIndex + 1} 行展开为 ${width} 列，期望 ${expectedWidth} 列`);
+    }
+    activeRowspans = nextRowspans;
+  });
+
+  if (activeRowspans.some((remaining) => remaining > 0)) {
+    throw new Error("table rowspan 超出最后一行");
+  }
+}
+
 function cellToPm(
   cell: AiTableCell,
   opts: { blockId: string; rowIndex: number; cellIndex: number; header: boolean },
@@ -723,18 +793,48 @@ function cellToPm(
   const cellBlockId = `${opts.blockId}-r${opts.rowIndex + 1}-c${opts.cellIndex + 1}`;
   // cell 背景色往返:仅当是合法主题色才写 attrs,非法值不写(交由 PM 校验,不污染)。
   const bg = cell.backgroundColor;
-  const cellAttrs = bg && isAllowedThemeColor(bg) ? { backgroundColor: bg as PmThemeColor } : undefined;
+  const cellAttrs = {
+    ...(bg && isAllowedThemeColor(bg) ? { backgroundColor: bg as PmThemeColor } : {}),
+    ...(cell.colspan !== undefined ? { colspan: cell.colspan } : {}),
+    ...(cell.rowspan !== undefined ? { rowspan: cell.rowspan } : {}),
+  };
+  const sourceBlocks = cell.blocks.length > 0
+    ? cell.blocks
+    : [{ type: "paragraph" as const, runs: [] }];
+  const singleParagraph = sourceBlocks.length === 1 && sourceBlocks[0]?.type === "paragraph";
+  const content = sourceBlocks.map((block, blockIndex) => {
+    const compiled = blockToPm(block, `${opts.blockId}-r${opts.rowIndex + 1}-c${opts.cellIndex + 1}-b${blockIndex + 1}`);
+    const directBlockId = singleParagraph
+      ? `${cellBlockId}-p`
+      : `${cellBlockId}-b${blockIndex + 1}`;
+    return rebaseBlockIdPrefix(compiled, compiled.attrs.blockId, directBlockId);
+  });
   return {
     type: opts.header ? "tableHeader" as const : "tableCell" as const,
-    ...(cellAttrs ? { attrs: cellAttrs } : {}),
-    content: [
-      {
-        type: "paragraph" as const,
-        attrs: { blockId: `${cellBlockId}-p` },
-        content: runsToInline(cell.runs),
-      },
-    ],
+    ...(Object.keys(cellAttrs).length > 0 ? { attrs: cellAttrs } : {}),
+    content,
   };
+}
+
+function rebaseBlockIdPrefix<T extends PmBlockNode>(node: T, oldPrefix: string, newPrefix: string): T {
+  const rewrite = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    const attrs = record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)
+      ? record.attrs as Record<string, unknown>
+      : null;
+    const blockId = attrs?.blockId;
+    const nextAttrs = typeof blockId === "string" && blockId.startsWith(oldPrefix)
+      ? { ...attrs, blockId: `${newPrefix}${blockId.slice(oldPrefix.length)}` }
+      : attrs;
+    return {
+      ...record,
+      ...(nextAttrs ? { attrs: nextAttrs } : {}),
+      ...(Array.isArray(record.content) ? { content: record.content.map(rewrite) } : {}),
+    };
+  };
+  return rewrite(node) as T;
 }
 
 function runsToInline(runs: readonly AiRun[]): PmInlineNode[] {

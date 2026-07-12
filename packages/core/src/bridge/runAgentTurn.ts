@@ -46,8 +46,10 @@ import {
   sessionIdToTraceId,
 } from "./agentSpans.js";
 import {
+  buildTableSelectionContext,
   buildSectionToLineMap,
   resolveSelectionChipBlocks,
+  validateTableSelectionFreshness,
 } from "./draftReadContext.js";
 import { syncContentAndProjectDocState } from "./docStateSync.js";
 import { emitProjectedDocState } from "./docStateMachine.js";
@@ -116,6 +118,19 @@ export async function* runAgentTurn(
 ): AsyncGenerator<BridgeFrame> {
   const turnStartedAt = Date.now();
   const streamId = newId();
+  const tableSelectionFreshness = validateTableSelectionFreshness(state, chips);
+  if (!tableSelectionFreshness.ok) {
+    logger.warn("Rejected stale table selection before agent turn", {
+      sessionId: state.sessionId,
+      streamId,
+      tableRef: tableSelectionFreshness.tableRef,
+      docVersion: state.docVersion,
+    });
+    yield streamStart(streamId);
+    yield draftingFailedFrame(streamId, tableSelectionFreshness.reason, false);
+    yield streamEnd(streamId, { kind: "error", data: tableSelectionFreshness.reason });
+    return;
+  }
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();
@@ -202,6 +217,8 @@ export async function* runAgentTurn(
     selectionChips.length > 0
       ? `\n\n【用户选中的文档片段】\n${selectionChips
           .map((c) => {
+            const tableSelectionContext = buildTableSelectionContext(state, c);
+            if (tableSelectionContext) return tableSelectionContext;
             // 优先按稳定 blockId 精确命中(对图表/图片等原子块也有效,且不受位置估算漂移影响)。
             const exactBlocks = resolveSelectionChipBlocks(state, c);
             if (exactBlocks.length > 0) {

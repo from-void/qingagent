@@ -7,6 +7,8 @@ import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeSelection } from "@tiptap/pm/state";
+import { CellSelection } from "@tiptap/pm/tables";
+import { setTableCellSelectionFromDom } from "../../data/tableToolbar";
 import {
   DocToolbar,
   resolveDiagramSourceForInsert,
@@ -41,7 +43,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -53,6 +55,34 @@ describe("DocToolbar round-1 regressions", () => {
     expect(host?.textContent).toContain("插入分栏");
     expect(host?.textContent).toContain("代码块");
     expect(host?.textContent).toContain("分隔线");
+  });
+
+  it("工具栏尺寸浮层按所选行列插入无标题行表格", async () => {
+    editor = createTextEditor("正文");
+    vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
+      .mockImplementation(() => undefined);
+    editor.commands.setTextSelection(3);
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => getButtonByText("插入表格").click());
+    const sizeCell = document.querySelector<HTMLButtonElement>('[data-row="2"][data-col="4"]');
+    expect(sizeCell).not.toBeNull();
+    await act(async () => sizeCell?.click());
+
+    const table = normalizePmDoc(editor.getJSON()).content.find((node) => node.type === "table");
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.content).toHaveLength(2);
+    expect(table.content.every((row) => row.content.length === 4)).toBe(true);
+    expect(table.content.flatMap((row) => row.content).every((tableCell) => tableCell.type === "tableCell")).toBe(true);
   });
 
   it("工具栏 title 用稳定 command 映射拼快捷键", () => {
@@ -74,7 +104,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -92,6 +122,80 @@ describe("DocToolbar round-1 regressions", () => {
     expect(host?.textContent).toContain("插入表格");
   });
 
+  it("CellSelection 不渲染正文工具栏，格内 TextSelection 仍渲染", async () => {
+    editor = createTableEditor();
+    const cells = editor.view.dom.querySelectorAll<HTMLTableCellElement>("td");
+    expect(setTableCellSelectionFromDom(editor, cells[0]!, cells[1]!)).toBe(true);
+
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+    await act(async () => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(host?.querySelector('[aria-label="文档格式工具栏"]')).toBeNull();
+
+    const textNode = cells[0]!.querySelector("p")?.firstChild;
+    if (!textNode) throw new Error("table cell text not found");
+    const from = editor.view.posAtDOM(textNode, 0);
+    await act(async () => {
+      editor!.commands.setTextSelection({ from, to: from + 2 });
+    });
+    // 只靠 TipTap selectionUpdate 即解除抑制，不依赖下一次 DOM selectionchange 才恢复节点。
+    expect(host?.querySelector('[aria-label="文档格式工具栏"]')).not.toBeNull();
+
+    await act(async () => {
+      editor!.view.focus();
+      const range = window.getSelection()?.getRangeAt(0);
+      if (!range) throw new Error("text selection range not found");
+      Object.defineProperty(range, "getBoundingClientRect", {
+        configurable: true,
+        value: () => DOMRect.fromRect({ x: 120, y: 80, width: 32, height: 18 }),
+      });
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    expect(editor.state.selection).not.toBeInstanceOf(CellSelection);
+    expect(host?.querySelector('[aria-label="文档格式工具栏"]')?.classList.contains("on")).toBe(true);
+  });
+
+  it("切换 editor 时不会沿用旧 CellSelection 抑制态", async () => {
+    const tableEditor = createTableEditor();
+    editor = tableEditor;
+    const cells = tableEditor.view.dom.querySelectorAll<HTMLTableCellElement>("td");
+    expect(setTableCellSelectionFromDom(tableEditor, cells[0]!, cells[1]!)).toBe(true);
+    await render(
+      <DocToolbar
+        active
+        editor={tableEditor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+    expect(host?.querySelector('[aria-label="文档格式工具栏"]')).toBeNull();
+
+    const textEditor = createTextEditor("新编辑器正文");
+    editor = textEditor;
+    await act(async () => {
+      root?.render(
+        <DocToolbar
+          active
+          editor={textEditor}
+          containerSelector="body"
+          onAiModify={async () => true}
+        />,
+      );
+    });
+    tableEditor.destroy();
+
+    expect(host?.querySelector('[aria-label="文档格式工具栏"]')).not.toBeNull();
+  });
+
   it("链接按钮打开就地输入气泡并写入 link mark,不再调用 window.prompt", async () => {
     editor = createSelectedEditor();
     vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
@@ -103,7 +207,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -146,7 +250,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -174,7 +278,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -197,7 +301,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={fakeEditor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
         onToast={onToast}
       />,
     );
@@ -207,6 +311,9 @@ describe("DocToolbar round-1 regressions", () => {
     });
     await act(async () => {
       getButtonByText("插入表格").click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-row="3"][data-col="3"]')?.click();
     });
 
     expect(onToast).toHaveBeenCalledWith("无法执行：插入表格");
@@ -222,7 +329,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -253,7 +360,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={editor}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -279,7 +386,7 @@ describe("DocToolbar round-1 regressions", () => {
         active
         editor={null}
         containerSelector="body"
-        onAiModify={() => undefined}
+        onAiModify={async () => true}
       />,
     );
 
@@ -389,6 +496,34 @@ function createTextEditor(text: string, blockId = "p-text") {
   });
 }
 
+function createTableEditor() {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  return new Editor({
+    element,
+    extensions: createQingagentExtensions(),
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "table",
+        attrs: { blockId: "table-toolbar" },
+        content: [{
+          type: "tableRow",
+          content: ["甲乙", "丙丁"].map((text, index) => ({
+            type: "tableCell",
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: `cell-${index}` },
+              content: [{ type: "text", text }],
+            }],
+          })),
+        }],
+      }],
+    } satisfies PmDoc,
+  });
+}
+
 function createOrderedListEditor() {
   const element = document.createElement("div");
   document.body.appendChild(element);
@@ -435,6 +570,8 @@ function createCommandEditor(runResult: boolean): Editor {
     isDestroyed: false,
     isActive: () => false,
     getAttributes: () => ({}),
+    on: vi.fn(),
+    off: vi.fn(),
     chain: () => chain,
     state: {
       selection: { from: 0, to: 0, empty: true },

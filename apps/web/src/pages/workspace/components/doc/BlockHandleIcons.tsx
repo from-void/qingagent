@@ -27,6 +27,7 @@ export type BlockHandleIconName =
   | "cut"
   | "delete"
   | "insert"
+  | "equalColumns"
   | "chevron";
 
 export function BlockHandleIcon({ name }: { name: BlockHandleIconName }) {
@@ -200,6 +201,13 @@ export function BlockHandleIcon({ name }: { name: BlockHandleIconName }) {
         <svg className="bh-svg" viewBox="0 0 16 16" aria-hidden="true">
           <rect x="3" y="3" width="10" height="10" rx="1.4" />
           <path d="M8 5.5v5M5.5 8h5" />
+        </svg>
+      );
+    case "equalColumns":
+      return (
+        <svg className="bh-svg" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2.5" y="3" width="11" height="10" />
+          <path d="M6.2 3v10M9.8 3v10M4 8h.7M7.7 8h.7M11.3 8h.7" />
         </svg>
       );
     case "chevron":

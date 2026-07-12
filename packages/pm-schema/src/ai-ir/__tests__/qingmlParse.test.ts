@@ -49,19 +49,81 @@ describe("qingmlParse", () => {
           {
             header: true,
             cells: [
-              { header: true, runs: [{ text: "指标" }] },
-              { header: true, runs: [{ text: "数值" }] },
+              { header: true, blocks: [{ type: "paragraph", runs: [{ text: "指标" }] }] },
+              { header: true, blocks: [{ type: "paragraph", runs: [{ text: "数值" }] }] },
             ],
           },
           {
             cells: [
-              { backgroundColor: "rose", runs: [{ text: "收入" }] },
-              { runs: [{ text: "100", marks: [{ type: "bold" }] }] },
+              { backgroundColor: "rose", blocks: [{ type: "paragraph", runs: [{ text: "收入" }] }] },
+              { blocks: [{ type: "paragraph", runs: [{ text: "100", marks: [{ type: "bold" }] }] }] },
             ],
           },
         ],
       },
     ]);
+  });
+
+  it("表格 cell 直嵌多块、旧裸文本、空 cell 与 span 均规范化", () => {
+    const result = qingmlParse(`
+      <table><tr>
+        <td colspan="2" rowspan="3" bg="rose"><p>首段</p><ul><li>列表项</li></ul><tasks><task checked>完成</task></tasks></td>
+        <td>旧式 <b>裸文本</b></td>
+        <td></td>
+      </tr></table>
+    `);
+
+    expect(result.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
+    const table = result.blocks[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") throw new Error("missing table");
+    expect(table.rows[0]!.cells).toEqual([
+      {
+        colspan: 2,
+        rowspan: 3,
+        backgroundColor: "rose",
+        blocks: [
+          { type: "paragraph", runs: [{ text: "首段" }] },
+          { type: "bulletList", items: [{ runs: [{ text: "列表项" }] }] },
+          { type: "taskList", items: [{ checked: true, runs: [{ text: "完成" }] }] },
+        ],
+      },
+      {
+        blocks: [{
+          type: "paragraph",
+          runs: [{ text: "旧式 " }, { text: "裸文本", marks: [{ type: "bold" }] }],
+        }],
+      },
+      { blocks: [{ type: "paragraph", runs: [] }] },
+    ]);
+  });
+
+  it.each(["0", "-1", "1.5"])("非法 colspan=%s 产生 bad-block，供工具层 fail-closed", (value) => {
+    const result = qingmlParse(`<table><tr><td colspan="${value}"><p>x</p></td></tr></table>`);
+    expect(result.warnings).toContainEqual(expect.objectContaining({
+      kind: "invalid-table-span",
+      severity: "bad-block",
+    }));
+  });
+
+  it("cell 深嵌套列表在 fence 中闭合可解析，截断结构 fail-closed", () => {
+    const closed = qingmlParse("```qingml\n<table><tr><td><ul><li>一<ul><li>二<ul><li>三</li></ul></li></ul></li></ul></td></tr></table>\n```");
+    expect(closed.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
+    const table = closed.blocks[0];
+    expect(table?.type === "table" ? maxListDepth(table.rows[0]!.cells[0]!.blocks[0]) : 0).toBe(3);
+
+    const truncated = qingmlParse(`<table><tr><td><p>未闭合`);
+    expect(truncated.warnings).toContainEqual(expect.objectContaining({
+      kind: "truncated-table-structure",
+      severity: "bad-block",
+    }));
+
+    const nestedSameTag = qingmlParse("<table><tr><td><table><tr><td>x</td></tr></table>");
+    expect(nestedSameTag.warnings).toContainEqual(expect.objectContaining({
+      kind: "truncated-table-structure",
+      severity: "bad-block",
+      detail: expect.stringContaining("<table>"),
+    }));
   });
 
   it("解析 columns + callout", () => {
@@ -274,13 +336,19 @@ describe("qingmlParseFragment", () => {
     expect(row.ok).toBe(true);
     if (!row.ok || row.kind !== "row") throw new Error("missing row");
     expect(row.cells.every((cell) => aiTableCellSchema.safeParse(cell).success)).toBe(true);
-    expect(row.cells).toEqual([{ header: true, runs: [{ text: "A" }] }, { runs: [{ text: "B" }] }]);
+    expect(row.cells).toEqual([
+      { header: true, blocks: [{ type: "paragraph", runs: [{ text: "A" }] }] },
+      { blocks: [{ type: "paragraph", runs: [{ text: "B" }] }] },
+    ]);
 
     const column = qingmlParseFragment(`<table><tr><td>A1</td></tr><tr><td>A2</td></tr></table>`, "insertTableColumn");
     expect(column.ok).toBe(true);
     if (!column.ok || column.kind !== "column") throw new Error("missing column");
     expect(column.cells.every((cell) => aiTableCellSchema.safeParse(cell).success)).toBe(true);
-    expect(column.cells).toEqual([{ runs: [{ text: "A1" }] }, { runs: [{ text: "A2" }] }]);
+    expect(column.cells).toEqual([
+      { blocks: [{ type: "paragraph", runs: [{ text: "A1" }] }] },
+      { blocks: [{ type: "paragraph", runs: [{ text: "A2" }] }] },
+    ]);
   });
 
   it("拒收越界根节点，不做三载体宽容归一", () => {

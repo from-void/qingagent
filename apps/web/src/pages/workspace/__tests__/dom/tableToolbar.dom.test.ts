@@ -1,17 +1,27 @@
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc, type PmMark } from "@qingagent/pm-schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { CellSelection } from "@tiptap/pm/tables";
+import { Fragment, Slice } from "@tiptap/pm/model";
 import {
   applyTableToolbarFormat,
+  applyTableToolbarStructure,
+  canApplyTableToolbarStructure,
+  isSingleTableCellTextSelection,
+  readTableAxisSelection,
+  selectTableColumns,
+  selectTableRows,
   setTableCellSelectionFromDom,
+  TableAxisSelectionExtension,
   type TableToolbarFormatCommand,
 } from "../../data/tableToolbar";
+import { handleQingagentPaste, writeSelectionToClipboard } from "../../components/doc/clipboardPaste";
 import { resolveWorkspaceFloatingPortalTarget } from "../../components/DocumentSnapshotView";
 
 function createTableEditor() {
   return new Editor({
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
     content: {
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -39,6 +49,31 @@ function createTableEditor() {
       ],
     } satisfies PmDoc,
   });
+}
+
+function createTwoTableEditor() {
+  return new Editor({
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        table("table-1", [["a1", "a2"], ["b1", "b2"]]),
+        table("table-2", [["c1", "c2"], ["d1", "d2"]]),
+      ],
+    } satisfies PmDoc,
+  });
+}
+
+function table(blockId: string, rows: string[][]) {
+  return {
+    type: "table" as const,
+    attrs: { blockId },
+    content: rows.map((row) => ({
+      type: "tableRow" as const,
+      content: row.map(cell),
+    })),
+  };
 }
 
 function cell(text: string) {
@@ -75,7 +110,207 @@ function allCellBackgrounds(editor: Editor): Array<string | null | undefined> {
   return table.content.flatMap((row) => row.content.map((tableCell) => tableCell.attrs?.backgroundColor));
 }
 
+function allCellAlignments(editor: Editor): Array<string | null | undefined> {
+  const doc = normalizePmDoc(editor.getJSON());
+  const table = doc.content[0];
+  if (table?.type !== "table") return [];
+  return table.content.flatMap((row) => row.content.map((tableCell) => {
+    const paragraph = tableCell.content[0];
+    return paragraph?.type === "paragraph" ? paragraph.attrs.textAlign : undefined;
+  }));
+}
+
+function rowCellTexts(editor: Editor, rowIndex: number): string[] {
+  type JsonNode = { text?: string; content?: JsonNode[] };
+  const tableNode = (editor.getJSON() as JsonNode).content?.[0];
+  const row = tableNode?.content?.[rowIndex];
+  const textOf = (node: JsonNode): string =>
+    node.text ?? node.content?.map(textOf).join("") ?? "";
+  return row?.content?.map(textOf) ?? [];
+}
+
 describe("tableToolbar PM-010", () => {
+  it("merge/split 仅在原生命令满足选区前置条件时可用", () => {
+    const editor = createTableEditor();
+    try {
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(false);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(false);
+      const cells = editor.view.dom.querySelectorAll("td");
+      expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[1] as HTMLTableCellElement)).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(true);
+      expect(applyTableToolbarStructure(editor, "mergeCells")).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "mergeCells")).toBe(false);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(true);
+      expect(applyTableToolbarStructure(editor, "splitCell")).toBe(true);
+      expect(canApplyTableToolbarStructure(editor, "splitCell")).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
+  it("按 TableMap 建立整行/整列 CellSelection，并可从真实选区反推范围", () => {
+    const editor = createTableEditor();
+    try {
+      expect(selectTableColumns(editor, "table-1", 0, 1)).toBe(true);
+      expect(editor.state.selection).toBeInstanceOf(CellSelection);
+      expect((editor.state.selection as CellSelection).isColSelection()).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")).toEqual({
+        axis: "column",
+        startIndex: 0,
+        endIndex: 1,
+      });
+
+      expect(selectTableRows(editor, "table-1", 1, 0)).toBe(true);
+      expect((editor.state.selection as CellSelection).isRowSelection()).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")).toEqual({
+        axis: "row",
+        startIndex: 0,
+        endIndex: 1,
+      });
+      expect(selectTableRows(editor, "table-1", 1, 0)).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("1×1 整表选区从 PM plugin state 反推出 row 轴", () => {
+    const editor = new Editor({
+      extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [table("table-1", [["a"]])],
+      } satisfies PmDoc,
+    });
+    try {
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")).toEqual({
+        axis: "row",
+        startIndex: 0,
+        endIndex: 0,
+      });
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(false);
+      expect(selectTableColumns(editor, "table-1", 0, 0)).toBe(true);
+      expect(readTableAxisSelection(editor, "table-1")?.axis).toBe("column");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("两张表选列时 selectedCell 装饰只落到目标表", () => {
+    const editor = createTwoTableEditor();
+    try {
+      expect(selectTableColumns(editor, "table-2", 0, 0)).toBe(true);
+      const tables = editor.view.dom.querySelectorAll("table");
+      expect(tables).toHaveLength(2);
+      expect(tables[0]!.querySelectorAll(".selectedCell")).toHaveLength(0);
+      expect(tables[1]!.querySelectorAll(".selectedCell")).toHaveLength(2);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("整行 CellSelection 的 Delete 由表格插件清空所选单元格", () => {
+    const editor = createTableEditor();
+    try {
+      expect(selectTableRows(editor, "table-1", 0, 0)).toBe(true);
+      editor.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+      expect(rowCellTexts(editor, 0)).toEqual(["", ""]);
+      expect(rowCellTexts(editor, 1)).toEqual(["b1", "b2"]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("矩形 CellSelection 的 copy/cut/paste 直接放行 PM 表格插件", () => {
+    const editor = createTableEditor();
+    try {
+      expect(selectTableColumns(editor, "table-1", 0, 0)).toBe(true);
+      const clipboardData = {
+        files: [],
+        getData: () => "",
+        setData: () => undefined,
+      } as unknown as DataTransfer;
+      const event = {
+        clipboardData,
+        preventDefault: () => undefined,
+      } as unknown as ClipboardEvent;
+      expect(writeSelectionToClipboard(editor.view, event, false)).toBe(false);
+      expect(writeSelectionToClipboard(editor.view, event, true)).toBe(false);
+      expect(handleQingagentPaste(editor.view, event)).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("cell 内 TextSelection 粘贴表格走原生网格覆盖，不产生 table-in-table", () => {
+    const editor = createTableEditor();
+    try {
+      editor.commands.setTextSelection(4);
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["x1", "x2"], ["y1", "y2"]]));
+      const slice = new Slice(Fragment.from(pastedTable), 0, 0);
+      const preventDefault = vi.fn();
+      const event = {
+        clipboardData: {
+          files: [],
+          getData: (type: string) => type === "text/html" ? "<table><tr><td>x1</td><td>x2</td></tr></table>" : "x1\tx2\ny1\ty2",
+        },
+        preventDefault,
+      } as unknown as ClipboardEvent;
+
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(true);
+      const json = editor.getJSON();
+      expect(JSON.stringify(json).match(/\"type\":\"table\"/g)).toHaveLength(1);
+      expect(rowCellTexts(editor, 0)).toEqual(["x1", "x2"]);
+      expect(rowCellTexts(editor, 1)).toEqual(["y1", "y2"]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("cell 内 mixed slice 原生覆盖不可用时优先用 text/plain 且始终接管", () => {
+    const editor = createTableEditor();
+    try {
+      editor.commands.setTextSelection(4);
+      const paragraph = editor.schema.node("paragraph", { blockId: "lead" }, editor.schema.text("前言"));
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["html 文本"]]));
+      const slice = new Slice(Fragment.fromArray([paragraph, pastedTable]), 0, 0);
+      const preventDefault = vi.fn();
+      const event = {
+        clipboardData: {
+          files: [],
+          getData: (type: string) => type === "text/html" ? "<p>前言</p><table><tr><td>html 文本</td></tr></table>" : "前言\n剪贴板 TSV",
+        },
+        preventDefault,
+      } as unknown as ClipboardEvent;
+
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(true);
+      expect(preventDefault).toHaveBeenCalled();
+      expect(editor.getText()).toContain("剪贴板 TSV");
+      expect(JSON.stringify(editor.getJSON()).match(/\"type\":\"table\"/g)).toHaveLength(1);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("正文 TextSelection 粘贴表格仍交给默认表格插入路径", () => {
+    const editor = new Editor({
+      extensions: createQingagentExtensions(),
+      content: { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "body" } }] } satisfies PmDoc,
+    });
+    try {
+      editor.commands.setTextSelection(1);
+      const pastedTable = editor.schema.nodeFromJSON(table("clipboard-table", [["x"]]));
+      const slice = new Slice(Fragment.from(pastedTable), 0, 0);
+      const event = {
+        clipboardData: { files: [], getData: (type: string) => type === "text/html" ? "<table><tr><td>x</td></tr></table>" : "x" },
+        preventDefault: vi.fn(),
+      } as unknown as ClipboardEvent;
+      expect(handleQingagentPaste(editor.view, event, undefined, undefined, slice)).toBe(false);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("表格浮动控件挂到 workspace 根层,脱离文档纸局部层叠上下文", () => {
     const root = document.createElement("div");
     root.id = "view-workspace";
@@ -133,6 +368,63 @@ describe("tableToolbar PM-010", () => {
       expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
       expect(applyTableToolbarFormat(editor, "cellBackground", "rose")).toBe(true);
       expect(allCellBackgrounds(editor)).toEqual(["rose", "rose", "rose", "rose"]);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("新增 code/highlight 命令作用于整个 CellSelection", () => {
+    for (const [command, mark, value] of [
+      ["code", "code", undefined],
+      ["highlight", "highlight", "yellow"],
+    ] as const) {
+      const editor = createTableEditor();
+      try {
+        const cells = editor.view.dom.querySelectorAll("td");
+        expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+        expect(applyTableToolbarFormat(editor, command, value)).toBe(true);
+        expect(allCellMarks(editor).every((marks) => marks.some((item) => {
+          if (item.type !== mark) return false;
+          return item.type !== "highlight" || item.attrs.color === "yellow";
+        }))).toBe(true);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });
+
+  it("原生 setTextAlign 在 CellSelection 下覆盖全部 cell 段落", () => {
+    for (const [command, align] of [
+      ["alignLeft", "left"],
+      ["alignCenter", "center"],
+      ["alignRight", "right"],
+    ] as const) {
+      const editor = createTableEditor();
+      try {
+        const cells = editor.view.dom.querySelectorAll("td");
+        expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+        expect(applyTableToolbarFormat(editor, command)).toBe(true);
+        expect(allCellAlignments(editor)).toEqual([align, align, align, align]);
+      } finally {
+        editor.destroy();
+      }
+    }
+  });
+
+  it("链接只允许单 cell 的非空 TextSelection，矩形 CellSelection 禁用", () => {
+    const editor = createTableEditor();
+    try {
+      let firstTextPos = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.isText && node.text === "a1") firstTextPos = pos;
+        return true;
+      });
+      editor.commands.setTextSelection({ from: firstTextPos, to: firstTextPos + 2 });
+      expect(isSingleTableCellTextSelection(editor)).toBe(true);
+
+      const cells = editor.view.dom.querySelectorAll("td");
+      expect(setTableCellSelectionFromDom(editor, cells[0] as HTMLTableCellElement, cells[3] as HTMLTableCellElement)).toBe(true);
+      expect(isSingleTableCellTextSelection(editor)).toBe(false);
     } finally {
       editor.destroy();
     }

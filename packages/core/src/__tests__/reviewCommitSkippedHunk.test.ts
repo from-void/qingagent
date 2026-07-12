@@ -35,6 +35,26 @@ function paragraph(blockId: string, value: string): PmBlockNode {
   return { type: "paragraph", attrs: { blockId }, content: [text(value)] };
 }
 
+function table(blockId: string, left: string, right: string): PmBlockNode {
+  return {
+    type: "table",
+    attrs: { blockId },
+    content: [{
+      type: "tableRow",
+      content: [
+        {
+          type: "tableCell",
+          content: [paragraph(`${blockId}-left-p`, left)],
+        },
+        {
+          type: "tableCell",
+          content: [paragraph(`${blockId}-right-p`, right)],
+        },
+      ],
+    }],
+  };
+}
+
 function doc(content: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content };
 }
@@ -134,6 +154,10 @@ function failedReasonsFor(frames: readonly BridgeFrame[], suggestionId: string):
   return reasons;
 }
 
+function firstFrameIndex(frames: readonly BridgeFrame[], kind: BridgeFrame["kind"]): number {
+  return frames.findIndex((frame) => frame.kind === kind);
+}
+
 async function patchStepCounts(docId: string): Promise<number[]> {
   const client = getDocumentsClient();
   const result = await client.execute({
@@ -186,5 +210,95 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     // 4) 两项都已结算收尾,回到 editing。
     expect(state.suggestions.size).toBe(0);
     expect(state.docState).toEqual({ kind: "editing" });
+  });
+
+  it("同 blockId 正文已漂移时整批 fail-closed，并回发当前 canonical 快照", async () => {
+    const state = createSession("commit-fail-closed-changed-block");
+    const base = doc([paragraph("blk-a", "用户原文")]);
+    const draft = doc([paragraph("blk-a", "AI 修改")]);
+    const [hunk] = seedReviewState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing hunk");
+
+    const userEdited = doc([paragraph("blk-a", "用户提交前又手动修改")]);
+    await seedCanonical(state, userEdited);
+
+    const frames = await collectFrames(commitPatches(state, [hunk.hunkId]));
+    const stored = await documentRepo.load(state.docId);
+
+    expect(stored?.pmDoc?.content.map(blockText)).toEqual(["用户提交前又手动修改"]);
+    expect(state.doc?.content.map(blockText)).toEqual(["用户提交前又手动修改"]);
+    expect(await patchStepCounts(state.docId)).toEqual([]);
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
+    expect(failedReasonsFor(frames, hunk.hunkId).join("")).toContain("正文已变化");
+    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeGreaterThanOrEqual(0);
+    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
+      firstFrameIndex(frames, "toolCallUpdated"),
+    );
+  });
+
+  it("表格整块 hunk 的 canonical 已被用户改动时 fail-closed，不覆盖未选中单元格", async () => {
+    const state = createSession("commit-fail-closed-changed-table");
+    const base = doc([table("table-a", "用户原文", "待修改")]);
+    const draft = doc([table("table-a", "用户原文", "AI 修改")]);
+    const [hunk] = seedReviewState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing table hunk");
+
+    const userEdited = doc([table("table-a", "用户提交前手改", "待修改")]);
+    await seedCanonical(state, userEdited);
+
+    const frames = await collectFrames(commitPatches(state, [hunk.hunkId]));
+    const stored = await documentRepo.load(state.docId);
+
+    expect(stored?.pmDoc).toEqual(userEdited);
+    expect(state.doc).toEqual(userEdited);
+    expect(await patchStepCounts(state.docId)).toEqual([]);
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
+    expect(failedReasonsFor(frames, hunk.hunkId).join("")).toContain("正文已变化");
+    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
+      firstFrameIndex(frames, "toolCallUpdated"),
+    );
+  });
+
+  it("全部 hunk 的目标均已删除时不写空 patch 版本，并按冲突收尾", async () => {
+    const state = createSession("commit-all-targets-deleted");
+    const survivor = paragraph("blk-survivor", "未涉及正文");
+    const base = doc([paragraph("blk-a", "原文"), survivor]);
+    const draft = doc([paragraph("blk-a", "AI 修改"), survivor]);
+    const [hunk] = seedReviewState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing hunk");
+
+    const canonical = doc([survivor]);
+    await seedCanonical(state, canonical);
+    const frames = await collectFrames(commitPatches(state, [hunk.hunkId]));
+    const stored = await documentRepo.load(state.docId);
+
+    expect(stored?.docVersion).toBe(1);
+    expect(stored?.pmDoc).toEqual(canonical);
+    expect(await patchStepCounts(state.docId)).toEqual([]);
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
+    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
+      firstFrameIndex(frames, "toolCallUpdated"),
+    );
+  });
+
+  it("损坏的空 insert hunk 不写空 patch 版本", async () => {
+    const state = createSession("commit-empty-insert-hunk");
+    const base = doc([paragraph("blk-a", "原文")]);
+    const draft = doc([paragraph("blk-a", "原文"), paragraph("blk-new", "AI 新增")]);
+    const [hunk] = seedReviewState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing insert hunk");
+    hunk.after = null;
+    if (state.suggestions.get(hunk.hunkId)?.suggestion.diffHunk) {
+      state.suggestions.get(hunk.hunkId)!.suggestion.diffHunk!.after = null;
+    }
+    await seedCanonical(state, base);
+
+    const frames = await collectFrames(commitPatches(state, [hunk.hunkId]));
+    const stored = await documentRepo.load(state.docId);
+
+    expect(stored?.docVersion).toBe(1);
+    expect(stored?.pmDoc).toEqual(base);
+    expect(await patchStepCounts(state.docId)).toEqual([]);
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
   });
 });

@@ -380,6 +380,7 @@ export {
   hasApplicableSuggestion,
   hasCanonicalDoc,
   currentPmDoc,
+  invalidateDraftStateAfterCanonicalWrite,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
   settleDraftCandidate,

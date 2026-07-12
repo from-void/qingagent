@@ -43,14 +43,14 @@ const RICH_BLOCKS: unknown[] = [
     rows: [
       {
         cells: [
-          { runs: [{ text: "厂商" }], header: true },
-          { runs: [{ text: "参数" }], header: true },
+          { blocks: [{ type: "paragraph", runs: [{ text: "厂商" }] }], header: true },
+          { blocks: [{ type: "paragraph", runs: [{ text: "参数" }] }], header: true },
         ],
       },
       {
         cells: [
-          { runs: [{ text: "DeepSeek-V4" }] },
-          { runs: [{ text: "284B/13B" }] },
+          { blocks: [{ type: "paragraph", runs: [{ text: "DeepSeek-V4" }] }] },
+          { blocks: [{ type: "paragraph", runs: [{ text: "284B/13B" }] }] },
         ],
       },
     ],

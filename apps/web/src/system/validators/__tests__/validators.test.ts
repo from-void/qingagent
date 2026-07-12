@@ -170,6 +170,76 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).not.toThrow();
   });
 
+  it("accepts normalized table selection on selection chip", () => {
+    const cmd: Command = {
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "修改",
+        mentions: [],
+        skills: [],
+        chips: [{
+          kind: { kind: "selection" },
+          resourceRef: { id: "table-1", domain: { kind: "docSpan" } },
+          prefix: null,
+          label: "A | B",
+          suffix: "表格·第1行",
+          tableSelection: { axis: "row", startIndex: 0, endIndex: 1, signature: "fnv1a-deadbeef" },
+        }],
+        fileIds: [],
+      },
+    };
+    expect(() => validateCommand(cmd)).not.toThrow();
+  });
+
+  it.each([
+    ["负数", { axis: "row" as const, startIndex: -1, endIndex: 0 }],
+    ["小数", { axis: "row" as const, startIndex: 0.5, endIndex: 1 }],
+    ["反向", { axis: "column" as const, startIndex: 2, endIndex: 1 }],
+  ])("rejects invalid table selection: %s", (_label, tableSelection) => {
+    const cmd: Command = {
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "修改",
+        mentions: [],
+        skills: [],
+        chips: [{
+          kind: { kind: "selection" },
+          resourceRef: { id: "table-1", domain: { kind: "docSpan" } },
+          prefix: null,
+          label: "A",
+          suffix: null,
+          tableSelection,
+        }],
+        fileIds: [],
+      },
+    };
+    expect(() => validateCommand(cmd)).toThrow(CommandValidationError);
+  });
+
+  it("rejects table selection on non-selection chip", () => {
+    const cmd: Command = {
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "修改",
+        mentions: [],
+        skills: [],
+        chips: [{
+          kind: { kind: "text" },
+          resourceRef: null,
+          prefix: null,
+          label: "正文",
+          suffix: null,
+          tableSelection: { axis: "row", startIndex: 0, endIndex: 0 },
+        }],
+        fileIds: [],
+      },
+    };
+    expect(() => validateCommand(cmd)).toThrow(CommandValidationError);
+  });
+
   it("accepts valid updateDoc", () => {
     const cmd: Command = {
       kind: "updateDoc",

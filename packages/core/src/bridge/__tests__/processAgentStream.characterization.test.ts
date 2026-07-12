@@ -1,0 +1,257 @@
+import type { BridgeFrame } from "@qingagent/contract-ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createSession } from "../sessionState.js";
+
+const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("../../db/usageRepo.js", () => ({
+  recordUsageEvent: recordUsageEventMock,
+}));
+
+vi.mock("../../mastra.js", () => ({
+  mastra: {
+    getLogger: () => ({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+  },
+  getObservability: () => null,
+}));
+
+async function* streamOf(...chunks: unknown[]): AsyncGenerator<unknown> {
+  for (const chunk of chunks) yield chunk;
+}
+
+async function collectFramesAndReturn<TReturn>(
+  generator: AsyncGenerator<BridgeFrame, TReturn>,
+): Promise<{ frames: BridgeFrame[]; result: TReturn }> {
+  const frames: BridgeFrame[] = [];
+  for (;;) {
+    const next = await generator.next();
+    if (next.done) return { frames, result: next.value };
+    frames.push(next.value);
+  }
+}
+
+describe("processAgentStream 行为特征", () => {
+  beforeEach(() => {
+    recordUsageEventMock.mockClear();
+  });
+
+  it("按原顺序追加 text/thinking 增量并共享单调 seq", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-text-reasoning");
+    state.chatHistory.push({
+      id: "agent-message",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [],
+      chips: null,
+    });
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf(
+          { type: "text-delta", payload: { id: "text-1", text: "甲" } },
+          { type: "reasoning-start", payload: { id: "reasoning-1" } },
+          { type: "reasoning-delta", payload: { id: "reasoning-1", text: "思考" } },
+          { type: "reasoning-end", payload: { id: "reasoning-1" } },
+          { type: "text-delta", payload: { id: "text-1", text: "乙" } },
+        ),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-text-reasoning",
+          runId: "run-text-reasoning",
+        },
+      ),
+    );
+
+    expect(frames).toEqual([
+      {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "agent-message",
+          seq: 1,
+          part: { kind: "text", data: { body: "甲" } },
+        },
+      },
+      {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "agent-message",
+          seq: 2,
+          part: {
+            kind: "thinking",
+            data: { id: "reasoning-1", steps: ["思考"] },
+          },
+        },
+      },
+      {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "agent-message",
+          seq: 3,
+          part: { kind: "text", data: { body: "乙" } },
+        },
+      },
+    ]);
+    expect(state.chatHistory[0]?.parts).toEqual(frames.map((frame) => {
+      if (frame.kind !== "chatMessageAppended") throw new Error("unexpected frame");
+      return frame.data.part;
+    }));
+    expect(state.messages).toEqual([{ role: "assistant", content: "甲乙" }]);
+    expect(result).toMatchObject({
+      producedVisibleFrame: true,
+      sawToolCall: false,
+      sawSideEffectToolCall: false,
+      streamWasUserAborted: false,
+    });
+  });
+
+  it("step-finish 把 usage 与同级 providerMetadata 合并后记入 agent 账本", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-step-usage");
+
+    await collectFramesAndReturn(
+      processAgentStream(
+        streamOf(
+          {
+            type: "step-start",
+            payload: { request: { body: "{}" } },
+          },
+          { type: "text-delta", payload: { id: "text-1", text: "完成" } },
+          {
+            type: "step-finish",
+            payload: {
+              stepResult: { reason: "stop" },
+              output: { usage: { inputTokens: 120, outputTokens: 8 } },
+              providerMetadata: {
+                openai: { cachedPromptTokens: 90 },
+              },
+            },
+          },
+        ),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-step-usage",
+          runId: "run-step-usage",
+        },
+      ),
+    );
+
+    expect(recordUsageEventMock).toHaveBeenCalledOnce();
+    expect(recordUsageEventMock).toHaveBeenCalledWith({
+      sessionId: "characterize-step-usage",
+      runId: "run-step-usage",
+      callSite: "agent",
+      modelId: expect.any(String),
+      keyOrigin: expect.stringMatching(/^(none|env)$/),
+      inputTokens: 120,
+      outputTokens: 8,
+      cacheHitTokens: 90,
+      cacheMissTokens: 30,
+    });
+  });
+
+  it("askUser 恢复流收到 null result 时仍原位收口问卷卡", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-null-questionnaire-result");
+    state.chatHistory.push({
+      id: "previous-agent-message",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [
+        {
+          kind: "toolCall",
+          data: {
+            id: "ask-1",
+            name: "planDraft",
+            render: { kind: "chatInline" },
+            status: { kind: "running", data: { progressPct: null, etaSec: null } },
+            body: { kind: "generic", data: { argsJson: "{}" } },
+            result: null,
+          },
+        },
+      ],
+      chips: null,
+    });
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf({
+          type: "tool-result",
+          payload: {
+            toolName: "planDraft",
+            toolCallId: "ask-1",
+            args: {},
+            result: null,
+          },
+        }),
+        {
+          state,
+          agentMessageId: "resumed-agent-message",
+          streamId: "stream-null-questionnaire-result",
+          runId: "run-null-questionnaire-result",
+        },
+      ),
+    );
+
+    expect(frames).toEqual([
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "previous-agent-message",
+          toolCallId: "ask-1",
+          spec: expect.objectContaining({
+            id: "ask-1",
+            name: "planDraft",
+            status: { kind: "done" },
+            result: { kind: "genericText", data: "已提交" },
+          }),
+        },
+      },
+      {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "resumed-agent-message",
+          seq: 1,
+          part: {
+            kind: "text",
+            data: {
+              body: "做了多步操作，但还没给出最终结果。回复“继续”我接着完成，或重试。",
+            },
+          },
+        },
+      },
+      {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "stream-null-questionnaire-result",
+            retriable: true,
+            reason: "做了多步操作，但还没给出最终结果。回复“继续”我接着完成，或重试。",
+          },
+        },
+      },
+    ]);
+    expect(state.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: {
+        id: "ask-1",
+        status: { kind: "done" },
+        result: { kind: "genericText", data: "已提交" },
+      },
+    });
+    expect(result).toMatchObject({
+      producedVisibleFrame: true,
+      sawToolCall: true,
+      sawSideEffectToolCall: false,
+      streamWasUserAborted: false,
+    });
+  });
+});

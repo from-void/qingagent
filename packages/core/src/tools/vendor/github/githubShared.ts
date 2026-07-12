@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { getConnectorCredentialBundle } from "../credentials/credentialsRepo.js";
-import { GithubClient } from "../connectors/github/githubClient.js";
-import type { GithubCredentialPayload } from "../connectors/githubConnector.js";
+import { getConnectorCredentialBundle } from "../../../credentials/credentialsRepo.js";
+import { GithubClient } from "../../../connectors/github/githubClient.js";
+import type { GithubCredentialPayload } from "../../../connectors/githubConnector.js";
 
 export async function githubClient(allowAnonymous = true): Promise<{ client: GithubClient; connected: boolean }> {
   const bundle = await getConnectorCredentialBundle<GithubCredentialPayload>("github");

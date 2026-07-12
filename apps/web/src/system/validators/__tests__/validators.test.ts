@@ -792,9 +792,17 @@ describe("validateBridgeFrame", () => {
   it("accepts valid docCommitted frames", () => {
     const frame: BridgeFrame = {
       kind: "docCommitted",
-      data: { sessionId: "s1", version: 2 },
+      data: { sessionId: "s1", version: 2, appliedCount: 1, conflictCount: 1 },
     };
     expect(() => validateBridgeFrame(frame)).not.toThrow();
+  });
+
+  it("rejects docCommitted with invalid review result counts", () => {
+    const frame: BridgeFrame = {
+      kind: "docCommitted",
+      data: { sessionId: "s1", version: 2, appliedCount: -1, conflictCount: 0 },
+    };
+    expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
   });
 
   it("rejects docCommitted without sessionId", () => {

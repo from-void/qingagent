@@ -480,9 +480,12 @@ export async function* commitPatches(
   }
 
   // 审核提交按 blockId 锚定应用;目标块被并发删除的 hunk 会被 applyDiffHunks 跳过。
-  // 跳过集合在 apply 闭包内产生,captured 到外层以便提交成功后据此结算 + 提示用户。
-  // (commitDocumentOp 在带 opId 的提交路径里 apply 恰好执行一次,captured 值即最终结果。)
+  // 首次提交的 summary 在 apply 闭包后按真实结果生成；提交后的审阅结算还会从
+  // document_ops.steps 恢复 suggestionId，保证 DB 已提交后的幂等重放不丢失部分 conflict。
   let skippedHunks: DiffHunk[] = [];
+  let appliedHunkCount = 0;
+  let commitResultCountsKnown = true;
+  let legacyReplayUnknown = false;
   let result: Awaited<ReturnType<typeof commitDocumentOp>>;
   const previousDocVersion = state.docVersion;
   try {
@@ -494,7 +497,12 @@ export async function* commitPatches(
       opId: `patch:${state.sessionId}:${expandedIds.join(",")}:${state.docVersion}`,
       opKind: "patch_steps",
       actorType: "agent",
-      summary: `提交 ${accepted.length} 处局部修改`,
+      summary: () => {
+        if (!shouldCommitDiffHunks || skippedHunks.length === 0) {
+          return `提交 ${accepted.length} 处局部修改`;
+        }
+        return `提交 ${appliedHunkCount} 处局部修改，${skippedHunks.length} 处因文档变化失效`;
+      },
       ...(shouldCommitDiffHunks && state.docVersion === 0
         ? {
             createIfMissing: {
@@ -511,6 +519,7 @@ export async function* commitPatches(
             anchorByBlockId: true,
           });
           skippedHunks = applyResult.skipped;
+          appliedHunkCount = applyResult.applied.length;
           // 目标块被删除可沿既有“跳过该 hunk、提交其余项”语义结算；块仍在但内容/行内范围
           // 对不上，说明用户正文已漂移，整批必须事务回滚，不能用空 steps 记一次假提交。
           const changedTargets = applyResult.skippedDetails
@@ -559,11 +568,15 @@ export async function* commitPatches(
             nextDoc: applyResult.doc,
             // steps 只为真正落上的 hunk 生成——被跳过的 hunk 不再写进 document_ops(修记假账)。
             steps: applyResult.applied.map((hunk) =>
-              diffHunkToStep(
-                hunk,
-                hunk.anchor.pmFrom ?? 0,
-                hunk.anchor.pmTo ?? hunk.anchor.pmFrom ?? 0,
-              ),
+              ({
+                ...diffHunkToStep(
+                  hunk,
+                  hunk.anchor.pmFrom ?? 0,
+                  hunk.anchor.pmTo ?? hunk.anchor.pmFrom ?? 0,
+                ),
+                // 只作为 document_ops 幂等结算元数据落库，不进入 suggestion wire step。
+                suggestionId: hunk.hunkId,
+              }),
             ),
           };
         }
@@ -641,6 +654,30 @@ export async function* commitPatches(
     return;
   }
 
+  if (shouldCommitDiffHunks) {
+    const persistedAppliedIds = new Set(
+      (result.steps ?? [])
+        .map((step) => step.suggestionId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    if (persistedAppliedIds.size > 0) {
+      appliedHunkCount = acceptedDiffHunks.filter((hunk) => persistedAppliedIds.has(hunk.hunkId)).length;
+      skippedHunks = acceptedDiffHunks.filter((hunk) => !persistedAppliedIds.has(hunk.hunkId));
+    } else if (!result.createdNewVersion && acceptedDiffHunks.length > 0) {
+      // 升级前 op 没有 suggestionId，无法诚实恢复部分成功计数；必须把全部项按未知冲突
+      // 结算并省略计数，不能猜测某项已提交或伪报精确 0/0。
+      commitResultCountsKnown = false;
+      legacyReplayUnknown = true;
+      skippedHunks = acceptedDiffHunks;
+      appliedHunkCount = 0;
+      logger.warn("Idempotent patch replay lacks persisted suggestion ids", {
+        sessionId: state.sessionId,
+        docId: state.docId,
+        docVersion: result.docVersion,
+      });
+    }
+  }
+
   advanceLastContentEditedAt(state, result, previousDocVersion);
   state.doc = result.doc;
   state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
@@ -669,12 +706,14 @@ export async function* commitPatches(
 
   yield* settleResolvedReviewRecords(state, settledRecords);
   if (skippedRecords.length > 0) {
-    const message = `有 ${skippedRecords.length} 处修改因文档已变化而失效，未写入；其余修改已提交。`;
+    const message = legacyReplayUnknown
+      ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
+      : `有 ${skippedRecords.length} 处修改因文档已变化而失效，未写入；其余修改已提交。`;
     yield* settleUnappliedReviewRecords(
       state,
       skippedRecords,
       skippedRecords.map((record): PatchConflict => ({
-        kind: "block_removed",
+        kind: legacyReplayUnknown ? "version_conflict" : "block_removed",
         message,
         suggestionId: record.suggestion.id,
         blockId: record.suggestion.anchor.blockId,
@@ -733,7 +772,19 @@ export async function* commitPatches(
     clearReviewDiffState(state);
   }
 
-  yield { kind: "docCommitted", data: { sessionId: state.sessionId, version: state.docVersion } };
+  yield {
+    kind: "docCommitted",
+    data: {
+      sessionId: state.sessionId,
+      version: state.docVersion,
+      ...(commitResultCountsKnown
+        ? {
+            appliedCount: shouldCommitDiffHunks ? appliedHunkCount : accepted.length,
+            conflictCount: shouldCommitDiffHunks ? skippedHunks.length : 0,
+          }
+        : {}),
+    },
+  };
   if (state.suggestions.size === 0) {
     await documentDraftRepo.clear(state.docId).catch((err) => {
       logger.warn("Failed to clear pending draft after commit", {

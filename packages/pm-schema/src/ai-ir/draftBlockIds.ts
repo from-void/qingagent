@@ -115,7 +115,7 @@ export function materializeDraftBlockIds(doc: PmDoc, opts?: { namespace?: string
   if (!parsed.success) {
     throw new Error(`materialized draft doc 未过 pmDocSchema: ${parsed.error.message}`);
   }
-  assertUniqueBlockIds(parsed.data as PmDoc);
+  assertUniquePmBlockIds(parsed.data as PmDoc);
   return parsed.data as PmDoc;
 }
 
@@ -153,7 +153,8 @@ function rewriteAttrs(attrs: Record<string, unknown>, oldPrefix: string, newPref
   return { ...attrs, blockId: `${newPrefix}${blockId.slice(oldPrefix.length)}` };
 }
 
-function assertUniqueBlockIds(doc: PmDoc): void {
+/** 只校验 canonical 身份唯一性，不物化或改写任何 blockId。 */
+export function assertUniquePmBlockIds(doc: PmDoc): void {
   const seen = new Set<string>();
   for (const blockId of collectBlockIds(doc)) {
     if (seen.has(blockId)) throw new Error(`materialized draft doc 出现重复 blockId: ${blockId}`);

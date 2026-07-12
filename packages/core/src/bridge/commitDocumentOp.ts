@@ -71,7 +71,11 @@ export interface CommitDocumentOpBaseInput {
     steps?: PmStep[];
     conflicts?: PatchConflict[];
   };
-  summary?: string;
+  /**
+   * 版本摘要可延迟到 apply 完成后计算，供部分成功的 patch 提交按真实 applied/conflict
+   * 数量记账；普通写入仍直接传字符串。
+   */
+  summary?: string | (() => string);
 }
 
 export type CommitDocumentOpInput = CommitDocumentOpBaseInput & CommitIdempotencyKey;
@@ -87,6 +91,8 @@ export type CommitDocumentOpResult =
       createdNewVersion: boolean;
       /** 对应 document_ops.created_at；幂等回放返回既有 op 的原始时间。 */
       committedAt: string;
+      /** 实际落库的 steps；幂等回放从 document_ops 恢复，供调用方如实续办结算。 */
+      steps?: PmStep[];
       conflicts?: PatchConflict[];
     }
   | { status: "conflict"; currentVersion: number; currentHash: string }
@@ -224,6 +230,7 @@ async function committedResultFromOp(
       versionId: version.versionId,
       createdNewVersion: false,
       committedAt: op.createdAt,
+      steps: op.steps ?? undefined,
     };
   }
 
@@ -239,6 +246,7 @@ async function committedResultFromOp(
       versionId: latestVersion.versionId,
       createdNewVersion: false,
       committedAt: op.createdAt,
+      steps: op.steps ?? undefined,
     };
   }
 
@@ -256,6 +264,7 @@ async function committedResultFromOp(
       }),
       createdNewVersion: false,
       committedAt: op.createdAt,
+      steps: op.steps ?? undefined,
     };
   }
   throw new Error(`document_ops points to missing document: ${op.opId}`);
@@ -529,7 +538,7 @@ export async function commitDocumentOp(
           contentHash,
           schemaVersion: projection.schemaVersion,
           actorType: input.actorType,
-          summary: input.summary ?? null,
+          summary: typeof input.summary === "function" ? input.summary() : input.summary ?? null,
           snapshotPm: nextDoc,
           parentVersion: currentHighWater,
           createdAt,
@@ -563,6 +572,7 @@ export async function commitDocumentOp(
       versionId: committedVersionId,
       createdNewVersion: true,
       committedAt: createdAt,
+      steps: applied.steps,
       conflicts: applied.conflicts,
     } satisfies CommitDocumentOpResult);
   });

@@ -1,8 +1,6 @@
-import { FeishuConnector } from "./feishuConnector.js";
-import { GithubConnector } from "./githubConnector.js";
 import { listConnectorDefinitions } from "./registry.js";
+import { createConnectorAdapters } from "./registryCore.js";
 import type { ConnectorAdapter, ConnectorId, ConnectorStatusDto } from "./types.js";
-import { WechatConnector } from "./wechatConnector.js";
 
 export interface ConnectorInfoDto {
   id: ConnectorId;
@@ -14,10 +12,8 @@ export interface ConnectorInfoDto {
   status: ConnectorStatusDto;
 }
 
-const CONNECTOR_IDS = new Set<ConnectorId>(["github", "feishu", "wechat-mp"]);
-
 export function isConnectorId(value: string): value is ConnectorId {
-  return CONNECTOR_IDS.has(value as ConnectorId);
+  return listConnectorDefinitions().some((definition) => definition.id === value);
 }
 
 export class ConnectorService {
@@ -79,10 +75,6 @@ export class ConnectorService {
 let defaultService: ConnectorService | null = null;
 
 export function getConnectorService(): ConnectorService {
-  defaultService ??= new ConnectorService({
-    github: new GithubConnector(),
-    feishu: new FeishuConnector(),
-    "wechat-mp": new WechatConnector(),
-  });
+  defaultService ??= new ConnectorService(createConnectorAdapters());
   return defaultService;
 }

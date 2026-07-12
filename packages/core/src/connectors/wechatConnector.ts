@@ -4,7 +4,8 @@ import {
 } from "../credentials/credentialsRepo.js";
 import { probeWechatSearchbiz, type WechatAuthProbeResult } from "../tools/wechatSearch.js";
 import { createConnectorStatus } from "./service.js";
-import type { ConnectorAdapter, ConnectorStatusDto } from "./types.js";
+import { registerConnector } from "./registryCore.js";
+import type { ConnectorAdapter, ConnectorDefinition, ConnectorStatusDto } from "./types.js";
 import { wechatAuthService } from "./wechatAuthService.js";
 import {
   clearWechatSessionIssue,
@@ -20,6 +21,21 @@ interface WechatConnectorDependencies {
   deleteBundle: (revision: number | null) => Promise<void>;
   now: () => Date;
 }
+
+const wechatConnectorDefinition = {
+  id: "wechat-mp",
+  name: "微信公众号",
+  icon: "wechat",
+  official: false,
+  authStrategy: "qr-session",
+  custody: "internal",
+  scopeGroups: [],
+  tools: ["wechat_auth_start", "wechat_auth_status", "wechat_search_mp", "wechat_list_articles"],
+  usedBySkills: ["wechat-official-account"],
+  riskNote: "非官方接口，登录态可能提前失效，并存在平台风控风险。",
+} satisfies ConnectorDefinition;
+
+registerConnector(wechatConnectorDefinition, () => new WechatConnector());
 
 export class WechatConnector implements ConnectorAdapter {
   private readonly deps: WechatConnectorDependencies;

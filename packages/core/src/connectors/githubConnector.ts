@@ -8,8 +8,9 @@ import { GithubDeviceAuth, type GithubDeviceCode } from "./github/githubAuth.js"
 import { GithubClient } from "./github/githubClient.js";
 import { GithubConnectorError } from "./github/githubErrors.js";
 import { PendingStore, PendingStoreError } from "./pendingStore.js";
+import { registerConnector } from "./registryCore.js";
 import { createConnectorStatus } from "./service.js";
-import type { ConnectorAdapter, ConnectorStatusDto } from "./types.js";
+import type { ConnectorAdapter, ConnectorDefinition, ConnectorStatusDto } from "./types.js";
 
 // 产品官方 GitHub OAuth App(device flow)。client_id 是公开标识,不含任何权限;
 // env QINGAGENT_GITHUB_CLIENT_ID 可覆盖(自建 App/测试用 fake provider)。
@@ -22,6 +23,23 @@ export interface GithubCredentialPayload {
   account: { id: string; displayName: string };
   token: string;
 }
+
+const githubConnectorDefinition = {
+  id: "github",
+  name: "GitHub",
+  icon: "github",
+  official: true,
+  authStrategy: "oauth2-device",
+  custody: "internal",
+  scopeGroups: [
+    { id: "public", name: "公开仓库", scopes: ["public_repo"], description: "读取账号可见的公开仓库" },
+    { id: "private", name: "私有仓库", scopes: ["repo"], description: "读取账号可见的公开与私有仓库" },
+  ],
+  tools: ["github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
+  usedBySkills: ["github-materials"],
+} satisfies ConnectorDefinition;
+
+registerConnector(githubConnectorDefinition, () => new GithubConnector());
 
 interface GithubPendingValue {
   device: GithubDeviceCode;

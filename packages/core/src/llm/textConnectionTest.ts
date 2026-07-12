@@ -1,5 +1,5 @@
 import { RequestContext } from "@mastra/core/request-context";
-import { streamText } from "ai";
+import { streamText } from "./streamTextCompat.js";
 import {
   getDeepseekModel,
   MODEL_OVERRIDES_CONTEXT_KEY,
@@ -32,7 +32,7 @@ export async function testTextModelConnection(input: TextConnectionTestInput): P
     const result = streamText({
       model: getDeepseekModel(requestContext, "flash", { callSite: "anthropicConnectionTest" }),
       prompt: "hi",
-      maxTokens: 4,
+      maxOutputTokens: 4,
       maxRetries: 0,
       toolChoice: "none",
       abortSignal: controller.signal,

@@ -45,8 +45,8 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   // 「外观」整组已隐藏:产品只保留浅色宣纸,无深/浅模式与外观设置。
   { id: "skills", label: "技能" },
   { id: "connections", label: "连接" },
-  { id: "diagnostics", label: "反馈" },
   { id: "shortcuts", label: "快捷键" },
+  { id: "diagnostics", label: "反馈" },
   { id: "about", label: "关于" },
 ];
 

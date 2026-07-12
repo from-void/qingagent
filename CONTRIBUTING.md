@@ -24,7 +24,7 @@ pnpm dev:desktop  # Electron 壳
 | `packages/server` | Hono HTTP 服务(routes + bridge + DuckDB observability),`:8080` |
 | `packages/contract-ts` | **手维护**契约类型——改完必须跑 `pnpm -r typecheck` |
 | `packages/pm-schema` | PM 文档 canonical schema + AI-IR 编译 + TipTap 扩展 |
-| `packages/ui-kit` | 设计系统 CSS + 基础 React 组件 |
+| `packages/ui-kit` | 设计 token 与基础样式的唯一来源(附少量已消费的原始组件,非组件库) |
 | `apps/web` | Vite + React SPA;Vitest 测试(默认+DOM 两套) |
 | `apps/desktop` | Electron 壳 |
 
@@ -48,6 +48,8 @@ apps/web 的测试分默认与 DOM 两套,`pnpm --filter @qingagent/web test` �
 ## UI 约定
 
 `#/uikit` 页面(运行中的应用内)是 UI 规范的活文档:宋体正文、直角为主、暖纸/金/墨色 token、全站唯一 toast 家族 `qa-toast`。改 UI 前先看它;规范页与代码不一致时以规范页为准。
+
+`packages/ui-kit` 不建设 React 组件全家桶；应用层优先复用“裸元素 + CSS 类 + token”。新组件只有在至少 3 处真实跨页面复用且样式、交互稳定时才可收录，否则留在使用处。
 
 ## Issue 与 PR
 

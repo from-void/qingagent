@@ -1,3 +1,4 @@
+// @qingagent/ui-kit is the design-token and stylesheet source, not a full component library.
 // Side-effect imports inject the design tokens, base resets, and component
 // CSS into any consumer that imports `@qingagent/ui-kit`. Each file is also
 // re-exported as a named entry point (`@qingagent/ui-kit/tokens.css`,

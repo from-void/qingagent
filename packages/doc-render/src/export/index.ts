@@ -7,3 +7,9 @@ export { toTxt } from "./toTxt.js";
 export { setHtmlToPdfRenderer, getHtmlToPdfRenderer } from "./pdfRenderer.js";
 export type { HtmlToPdfRenderer } from "./pdfRenderer.js";
 export type { ExportOptions } from "./shared.js";
+export {
+  isRenderableSvg,
+  localUploadPath,
+  readLocalUploadBuffer,
+  readLocalUploadText,
+} from "./shared.js";

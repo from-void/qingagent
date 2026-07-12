@@ -3,7 +3,7 @@ import type { ChatMessage, FolderSourceRecord } from "@qingagent/contract-ts";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 const { logger, memory } = vi.hoisted(() => {
   const logger = {

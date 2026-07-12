@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { hasVisibleSvgContent, sanitizeSvg } from "../browser/svgSanitize.js";
-import { lintSvg } from "../browser/svgQualityLint.js";
-import { SVG_TEMPLATES } from "../svgTemplates/index.js";
+import { hasVisibleSvgContent, sanitizeSvg } from "@qingagent/doc-render/browser";
+import { lintSvg } from "@qingagent/doc-render/browser";
+import { SVG_TEMPLATES } from "@qingagent/doc-render/svg-templates";
 import { generateSvgTool } from "../tools/generateSvg.js";
 
 const streamInnerModelMock = vi.hoisted(() => vi.fn());

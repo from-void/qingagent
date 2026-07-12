@@ -3,14 +3,14 @@ import { getStablePmJson, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   __resetDocumentsClientForTest,
   getDocumentsClient,
-} from "../../../core/src/db/documentsClient.js";
-import { __resetMigrationsForTest, ensureMigrated } from "../../../core/src/db/migrations.js";
+} from "@qingagent/db/client";
+import { __resetMigrationsForTest, ensureMigrated } from "@qingagent/db/migrations";
 
 const callOrder: string[] = [];
 
 const deleteSessionThread = vi.fn(async (sessionId: string) => {
   callOrder.push(`delete:${sessionId}`);
-  const { deleteDocumentFamily } = await import("../../../core/src/db/documentFamilyRepo.js");
+  const { deleteDocumentFamily } = await import("@qingagent/db");
   await deleteDocumentFamily(sessionId);
 });
 
@@ -53,7 +53,7 @@ afterEach(async () => {
 async function loadApp() {
   vi.resetModules();
   vi.doMock("@qingagent/core", async () => {
-    const versions = await import("../../../core/src/db/documentVersionRepo.js");
+    const versions = await import("@qingagent/db");
     const homeMeta = await import("../../../core/src/home/pmToHomeArticleMeta.js");
     return {
       deleteSessionThread,

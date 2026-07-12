@@ -17,15 +17,15 @@ import {
   type PmInlineNode,
   type PmMark,
 } from "@qingagent/pm-schema";
-import { documentRepo } from "../db/documentRepo.js";
-import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
-import { listVersions } from "../db/documentVersionRepo.js";
+import { documentRepo } from "@qingagent/db";
+import { findOpByDocumentVersion } from "@qingagent/db";
+import { documentDraftRepo } from "@qingagent/db";
+import { listVersions } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 const { agentStream, logger, memory, memoryEnabled, threads } = vi.hoisted(() => {
   const logger = {

@@ -18,7 +18,7 @@ import {
   type PmTableNode,
 } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
 import { hasCanonicalDoc } from "./docFacts.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import { cloneLegacySections } from "./docDiff.js";

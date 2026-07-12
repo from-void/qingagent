@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mastra } from "../mastra.js";
 import { renderDiagramSvgs } from "../export/mermaidServer.js";
+import { setDocRenderLogger } from "../renderLogger.js";
 import { hasChromium } from "./browserTestGate.js";
 
 const getBrowserMock = vi.hoisted(() => vi.fn());
@@ -44,6 +44,7 @@ function installFakeBrowser(mermaid: FakeMermaid): void {
 
 beforeEach(() => {
   getBrowserMock.mockReset();
+  setDocRenderLogger(console);
 });
 
 afterEach(() => {
@@ -99,7 +100,8 @@ describe("mermaidServer 引号 normalization", () => {
   });
 
   it("真失败时返回 null 并记录 warn，包含原因、图型和源码摘要", async () => {
-    const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
+    const warn = vi.fn();
+    setDocRenderLogger({ warn });
     const mermaid: FakeMermaid = {
       initialize: vi.fn(),
       parse: vi.fn(async () => false),

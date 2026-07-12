@@ -20,7 +20,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { wrapLanguageModel, type LanguageModel } from "ai-v5";
 import type { RequestContext } from "@mastra/core/request-context";
-import { validateFetchUrl } from "../browser/extractor.js";
+import { validateFetchUrl } from "@qingagent/doc-render/browser";
 export {
   DEEPSEEK_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,

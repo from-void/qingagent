@@ -224,6 +224,21 @@ export {
   __resetSessionPersistenceForTest,
 } from "./threadPersistence.js";
 
+export { migrateThreadMetadataToDocuments } from "./migrateThreadMetadataToDocuments.js";
+export type {
+  MigrationOptions,
+  MigrationStats,
+} from "./migrateThreadMetadataToDocuments.js";
+export { redactSensitiveText } from "./redaction.js";
+export { deriveTitleFromSections } from "./title.js";
+export {
+  isDirectionReset,
+  isPlanDraftTool,
+  isQuestionnaireTool,
+  normalizeQuestionnaireSpecForRestore,
+} from "./questionnaireTools.js";
+export { resolveFileIds, UPLOADS_BASE } from "./uploadFileResolver.js";
+
 export type {
   QingagentThreadMetadata,
   HomeSessionThread,

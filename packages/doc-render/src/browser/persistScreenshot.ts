@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { uploadsBaseDir } from "./uploadsDir.js";
+import { uploadsBaseDir } from "../paths/uploadsDir.js";
 
 export async function persistScreenshot(buffer: Buffer): Promise<string> {
   const imageId = randomUUID();

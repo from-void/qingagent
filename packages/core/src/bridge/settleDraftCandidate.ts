@@ -1,8 +1,8 @@
 import type { BridgeFrame, LegacySection, MessagePart } from "@qingagent/contract-ts";
 import type { RequestContext } from "@mastra/core/request-context";
 import { mastra } from "../mastra.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
-import { upsertDocumentSuggestion } from "../db/documentSuggestionsRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
+import { upsertDocumentSuggestion } from "@qingagent/db";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";

@@ -11,7 +11,7 @@ import {
   formatBrowserUnavailableError,
   isBrowserAvailabilityError,
 } from "./browserErrors.js";
-import { persistScreenshot } from "../workspace/persistScreenshot.js";
+import { persistScreenshot } from "./persistScreenshot.js";
 
 const MIN_TEXT = 40;
 // 30s:慢/重页面(政务、大列表、富媒体资讯)20s 到不了 domcontentloaded 会超时丢失;

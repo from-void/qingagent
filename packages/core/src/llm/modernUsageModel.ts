@@ -1,5 +1,5 @@
 import type { RequestContext } from "@mastra/core/request-context";
-import { recordUsageEvent } from "../db/usageRepo.js";
+import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelConfig.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";

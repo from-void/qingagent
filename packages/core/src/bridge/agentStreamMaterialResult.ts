@@ -2,7 +2,7 @@ import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract
 import crypto from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isSubstantiveContent } from "../browser/contentQuality.js";
+import { isSubstantiveContent } from "@qingagent/doc-render/browser";
 import { mastra } from "../mastra.js";
 import { downloadRemoteImage } from "../tools/imageInput.js";
 import type { Material } from "../types/material.js";

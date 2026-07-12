@@ -2,25 +2,25 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   findOpByIdempotencyKey,
-} from "../../db/documentOpsRepo.js";
+} from "@qingagent/db";
 import {
   commitTransaction,
   getDocumentsClient,
   withTransaction,
-} from "../../db/documentsClient.js";
-import { documentRepo } from "../../db/documentRepo.js";
+} from "@qingagent/db";
+import { documentRepo } from "@qingagent/db";
 import {
   getVersionSnapshot,
   insertVersion,
   listVersions,
-} from "../../db/documentVersionRepo.js";
+} from "@qingagent/db";
 import {
   documentInput,
   pmDocFromText,
   prepareTempDocumentsDb,
   section,
   type TempDocumentsDb,
-} from "../../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 import {
   advanceLastContentEditedAt,
   commitDocumentOp,

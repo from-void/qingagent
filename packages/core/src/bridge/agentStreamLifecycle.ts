@@ -1,6 +1,6 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { mastra } from "../mastra.js";
-import { recordUsageEvent } from "../db/usageRepo.js";
+import { recordUsageEvent } from "@qingagent/db";
 import { resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
 import {
   normalizeLlmUsage,

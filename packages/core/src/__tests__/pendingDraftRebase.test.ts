@@ -10,11 +10,11 @@ import {
 import { rebaseRemainingPendingDraft } from "../bridge/pendingDraftRebase.js";
 import { applyDiffHunks, buildDraftDiff } from "../bridge/proposalDiff.js";
 import type { SuggestionRecord } from "../bridge/sessionState.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 let tempDb: TempDocumentsDb;
 

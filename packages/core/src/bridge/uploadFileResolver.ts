@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { uploadsBaseDir } from "../workspace/uploadsDir.js";
+import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 
 export type ResolvedUploadedFile = {
   fileId: string;

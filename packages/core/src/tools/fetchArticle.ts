@@ -1,10 +1,10 @@
 import { createTool } from "@mastra/core/tools";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { extractArticleContent, UNSUPPORTED_CONTENT_ERROR_PREFIX } from "../browser/extractor.js";
-import { isSubstantiveContent } from "../browser/contentQuality.js";
-import { scrapeWithBrowserImpl, type ScrapeResult } from "../browser/scrapePage.js";
-import { persistScreenshot } from "../workspace/persistScreenshot.js";
+import { extractArticleContent, UNSUPPORTED_CONTENT_ERROR_PREFIX } from "@qingagent/doc-render/browser";
+import { isSubstantiveContent } from "@qingagent/doc-render/browser";
+import { scrapeWithBrowserImpl, type ScrapeResult } from "@qingagent/doc-render/browser";
+import { persistScreenshot } from "@qingagent/doc-render/browser";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 const MIN_EXTRACTED_TEXT_LENGTH = 40;

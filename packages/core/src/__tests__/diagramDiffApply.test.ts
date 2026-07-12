@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { buildDraftDiff, applyDiffHunks } from "../bridge/proposalDiff.js";
-import { isRenderableSvg } from "../export/shared.js";
+import { isRenderableSvg } from "@qingagent/doc-render";
 
 // 回归:diagram 此前不在 BLOCK_NODE_TYPES,导致 diff 接受 diagram 的 insert/replace
 // 会被 applyDiffHunks 静默过滤成 no-op(改写图表表面成功实则没改)。补进白名单后必须真应用。

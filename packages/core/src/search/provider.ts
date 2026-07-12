@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { decodeHtml, validateFetchUrl } from "../browser/extractor.js";
+import { decodeHtml, validateFetchUrl } from "@qingagent/doc-render/browser";
 import {
   parseDdgHtml,
   parseLiteSerp,

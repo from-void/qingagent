@@ -6,7 +6,6 @@ import type { LegacySection } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { createSession } from "../../bridge/sessionState.js";
 import type { QingagentThreadMetadata } from "../../bridge/threadPersistence.js";
-import { documentRepo } from "../documentRepo.js";
 import {
   __resetDocumentsClientForTest,
   __resetShadowCircuitForTest,
@@ -17,8 +16,9 @@ import {
   SHADOW_CIRCUIT_COOLDOWN_MS,
   SHADOW_CIRCUIT_FAIL_THRESHOLD,
   withWriteRetry,
-} from "../documentsClient.js";
-import { __resetMigrationsForTest } from "../migrations.js";
+  __resetMigrationsForTest,
+  documentRepo,
+} from "@qingagent/db";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();

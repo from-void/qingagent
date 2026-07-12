@@ -13,13 +13,13 @@ import {
   type SessionState,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
-import { documentRepo } from "../db/documentRepo.js";
-import { getDocumentsClient } from "../db/documentsClient.js";
+import { documentRepo } from "@qingagent/db";
+import { getDocumentsClient } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 // 单①回归:审核提交时,若某 hunk 的目标块已被并发删除(canonical 文档比审阅候选少一块),
 // 该 hunk 必须被跳过——不能记进 document_ops.steps(修记假账),对应 suggestion 按"未应用"

@@ -1,0 +1,43 @@
+{
+  "name": "@qingagent/doc-render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser/index.ts",
+    "./export": "./src/export/index.ts",
+    "./paths": "./src/paths/index.ts",
+    "./svg-templates": "./src/svgTemplates/index.ts",
+    "./testing": "./src/__tests__/browserTestGate.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mastra/agent-browser": "0.4.0",
+    "@qingagent/contract-ts": "workspace:*",
+    "@qingagent/diagram-engine": "workspace:*",
+    "@qingagent/pm-schema": "workspace:*",
+    "@xmldom/xmldom": "^0.9.10",
+    "cheerio": "^1.2.0",
+    "docx": "^9.7.1",
+    "highlight.js": "^11",
+    "iconv-lite": "^0.7.2",
+    "jszip": "^3.10.1",
+    "katex": "^0.16.47",
+    "mermaid": "^11.15.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.60.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "mammoth": "^1.12.0",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9"
+  },
+  "license": "MIT"
+}

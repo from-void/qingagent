@@ -16,13 +16,13 @@ import {
   type SessionState,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../bridge/proposalDiff.js";
-import { documentRepo } from "../db/documentRepo.js";
-import { findOpByDocumentVersion } from "../db/documentOpsRepo.js";
+import { documentRepo } from "@qingagent/db";
+import { findOpByDocumentVersion } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 import { mastra } from "../mastra.js";
 
 let tempDb: TempDocumentsDb;

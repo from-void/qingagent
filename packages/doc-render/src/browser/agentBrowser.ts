@@ -7,7 +7,7 @@ import { validateFetchUrl } from "./extractor.js";
 import { proxyFromEnv } from "./pool.js";
 import { systemBrowserExecutablePath } from "./systemBrowser.js";
 import { browserUnavailableToolResult } from "./browserErrors.js";
-import { isTruthyFlag } from "../bridge/draftFeatureFlags.js";
+import { isTruthyFlag } from "./envFlag.js";
 
 /**
  * 0603 — 浏览器自主操作(browser_*)能力接入点。

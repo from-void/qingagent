@@ -14,7 +14,7 @@ const mockAppSettings = vi.hoisted(() => {
   };
 });
 
-vi.mock("../db/appSettingsRepo.js", () => ({
+vi.mock("@qingagent/db", () => ({
   SETTING_SEARCH_PROVIDER_CONFIG: "search_provider_config",
   SETTING_SEARCH_PRIMARY: "search_primary",
   getAppSetting: mockAppSettings.getAppSetting,

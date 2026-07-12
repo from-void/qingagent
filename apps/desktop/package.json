@@ -21,11 +21,15 @@
     "dotenv": "^16.4.7",
     "electron-updater": "^6.8.9",
     "libsql": "^0.5.29",
+    "katex": "^0.16.47",
+    "mermaid": "^11.15.0",
     "pdf-parse": "^2.4.5",
     "playwright": "1.60.0"
   },
   "devDependencies": {
     "@qingagent/core": "workspace:*",
+    "@qingagent/db": "workspace:*",
+    "@qingagent/doc-render": "workspace:*",
     "@qingagent/server": "workspace:*",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",

@@ -19,8 +19,8 @@ export async function configureDesktopCredentialKeyProvider(options: {
   env?: DesktopCredentialEnv;
 }): Promise<{ protectionLevel: string; reasonCode?: string }> {
   const env = options.env ?? process.env;
-  const crypto = await import("@qingagent/core/src/credentials/crypto.js");
-  const repo = await import("@qingagent/core/src/credentials/credentialsRepo.js");
+  const crypto = await import("@qingagent/core/credentials");
+  const repo = crypto;
 
   if (env.QINGAGENT_CREDENTIAL_KEY) {
     const provider = await crypto.initializeEnvironmentCredentialKeyProvider({

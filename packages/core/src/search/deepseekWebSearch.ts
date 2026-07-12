@@ -3,7 +3,7 @@
 // 参考 github.com/lyumeng/websearch-deepseek(MCP server,同一机制)。
 import type { SearchResult } from "./provider.js";
 import { DEEPSEEK_MODEL_IDS, type ApiKeyOrigin } from "../llm/modelConfig.js";
-import { recordUsageEvent } from "../db/usageRepo.js";
+import { recordUsageEvent } from "@qingagent/db";
 import type { RequestContext } from "@mastra/core/request-context";
 import { nextUsageAttempt } from "../llm/usageAttempt.js";
 

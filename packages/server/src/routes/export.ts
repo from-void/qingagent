@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { loadSessionFromThread, toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "@qingagent/core";
+import { loadSessionFromThread } from "@qingagent/core";
+import { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "@qingagent/doc-render";
 import { getSession } from "../bridge/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 

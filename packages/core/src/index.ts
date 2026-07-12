@@ -1,239 +1,107 @@
-// Mastra
-export { mastra, configureObservability, getObservability, getMemory } from "./mastra.js";
-export { qingagentAgent, getQingagentSkills } from "./agents/qingagent.js";
-export { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, SKILLS_INSTALL_DIR } from "./skills/paths.js";
-export { ARCHIVED_BUILTIN_SKILLS, isArchivedBuiltinSkillName } from "./skills/archived.js";
-export { ensureNodeRuntimeShim, isElectronRuntime } from "./workspace/nodeRuntimeShim.js";
-export { ensureLarkCliShim } from "./workspace/larkCliShim.js";
-export { evaluateCommandPolicy } from "./workspace/commandPolicy.js";
+// 根入口仅保留仓内实际消费的兼容 API；完整能力请从 package.json 声明的域 subpath 导入。
 export {
-  buildSandboxEnv,
-  SANDBOX_BIN_DIR,
-  sandboxExtraReadOnlyPaths,
-  resolveIsolation,
-} from "./workspace/sessionWorkspace.js";
-export { redactProbe } from "./workspace/probeRedaction.js";
-export { getQingagentSessionWorkspace } from "./agents/qingagent.js";
-export {
-  readDisabledSet,
-  writeDisabledSet,
-  isDisabled,
-  setEnabled,
-} from "./skills/enabledStore.js";
-
-// Tools
-export {
-  adaptAskUserQuestionInput,
-  askUserQuestionInputSchema,
-  askUserQuestionTool,
-  // 仅供老会话快照 resume 注入；老会话数据迁移或过期后删除。
-  askUserTool,
-  planDraftTool,
-  buildQuestionnaireRejectedResult,
-  questionnaireRejectedResultSchema,
-} from "./tools/index.js";
+  getQingagentSessionWorkspace,
+  getQingagentSkills,
+  qingagentAgent,
+} from "./agents/qingagent.js";
 export type {
-  AdaptedAskUserQuestionInput,
-  AdaptedAskUserQuestion,
-  AskUserQuestionInput,
-  QuestionnaireRejectedResult,
-} from "./tools/index.js";
-export { parseFileTool } from "./tools/index.js";
-export { parseFileBuffer } from "./tools/index.js";
-export type {
-  ParseFileBufferFailure,
-  ParseFileBufferInput,
-  ParseFileBufferOutput,
-  ParseFileBufferResult,
-} from "./tools/index.js";
-export { storeMaterialTool } from "./tools/index.js";
-export { fetchArticleTool } from "./tools/index.js";
-export { systemBrowserExecutablePath, systemBrowserCandidates } from "./browser/systemBrowser.js";
-export { webSearchTool } from "./tools/index.js";
-export { generateSvgTool } from "./tools/index.js";
-export { readImageTool } from "./tools/index.js";
-export { runJsTool, runJsInWorker } from "./tools/index.js";
-export type { RunJsInput, RunJsResult } from "./tools/index.js";
-export { runPythonTool, getPyodideTools } from "./tools/index.js";
-export type { RunPythonInput, RunPythonResult } from "./tools/index.js";
-export { streamMoreQuestions } from "./tools/index.js";
-export { redactSensitiveText } from "./bridge/redaction.js";
-export { extractJsonArray } from "./utils/extractJsonArray.js";
+  QingagentThreadMetadata,
+  SessionState,
+} from "./bridge/index.js";
 export {
-  guardBeforeProviderCall,
-  guardContext,
-  guardReset,
-  withPrefixCacheGuardContext,
-  PrefixCacheGuardError,
-} from "./llm/prefixCacheGuard.js";
-export {
-  DEEPSEEK_BASE_URL,
-  DEEPSEEK_MODEL_IDS,
-  DEEPSEEK_CONTEXT_WINDOWS,
-  MODEL_OVERRIDES_CONTEXT_KEY,
-  resolveBaseUrl,
-  resolveDeepseekAuth,
-  resolveDeepseekRouterModelId,
-  resolveModelId,
-  resolveModelParams,
-  resolveModelTier,
-  createDeepseekProvider,
-  beginSessionSnapshotTurn,
-  advanceSessionSnapshotEpoch,
-  clearSessionSnapshot,
-  getDeepseekModel,
-  sanitizeBaseUrl,
-  sanitizeModelId,
-  resolveVisionConfig,
-  getVisionModel,
-  anthropicBaseUrl,
-} from "./llm/modelConfig.js";
-export { clearQuestionBranch } from "./services/genService.js";
-export { installNetProbe } from "./llm/netProbe.js";
-export { warmUpModelEndpoint } from "./llm/modelWarmup.js";
-export {
-  VISION_TEST_TIMEOUT_MS,
-  testVisionConnection,
-} from "./llm/visionTest.js";
-export { testTextModelConnection } from "./llm/textConnectionTest.js";
-export type { TextConnectionTestInput } from "./llm/textConnectionTest.js";
-export type {
-  ApiKeyOrigin,
-  DeepseekTier,
-  ModelProtocol,
-  ModelOverrides,
-  ModelParamOverrides,
-  ResolvedDeepseekAuth,
-  ResolvedVisionConfig,
-  UsageTrackedModelOptions,
-} from "./llm/modelConfig.js";
-export {
-  DEFAULT_DEEPSEEK_PRICING_CNY_PER_MILLION,
-  estimateCostCny,
-  getDeepseekPricingTable,
-} from "./llm/deepseekPricing.js";
-export type {
-  DeepseekModelPricing,
-  DeepseekPricingTable,
-  TokenUsageForCost,
-} from "./llm/deepseekPricing.js";
-export type {
-  PrefixCacheGuardContext,
-  PrefixCacheGuardDiff,
-  PrefixCacheGuardLineage,
-  PrefixCacheGuardResult,
-} from "./llm/prefixCacheGuard.js";
-
-// Types
-export type { Material } from "./types/material.js";
-export * from "./connectors/index.js";
-export {
-  askUserRenderModeFromSpec,
-  buildAskUserToolCallSpec,
-  githubAuthCardToolCallSpec,
-  feishuAuthCardToolCallSpec,
-} from "./bridge/toolCards.js";
-export type {
-  AskUserPurposeKind,
-  BuildAskUserToolCallSpecInput,
-} from "./bridge/toolCards.js";
-export {
+  AGENT_MAX_STEPS,
+  QINGAGENT_RESOURCE_ID,
+  TODO_AWARENESS_REQUEST_CONTEXT_KEY,
+  UPLOADS_BASE,
+  abortAndCleanupTurn,
+  activeSuspensionOwnedBy,
+  advanceLastContentEditedAt,
+  appendAskUserAnswerMessageIfMissing,
+  appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
+  buildAgentTracingMetadata,
+  buildAskUserAnswerUserMessage,
+  buildCapabilityTools,
+  buildDocumentSnapshot,
+  buildTodoAwarenessContent,
+  buildVisibleAskUserAnswerMessage,
+  cleanRestoredText,
+  clearStaleSuspensionIfInactive,
+  clearSuspension,
+  clonePmDoc,
+  collectTopLevelTextBlocks,
+  commitDocumentOp,
+  commitPatches,
+  commitReviewGroups,
+  createSession,
+  createSessionScopedTools,
+  createSessionThread,
+  deleteSessionThread,
+  deriveActiveOverlay,
+  deriveAgentBusy,
+  deriveContentState,
+  deriveDocStateFacts,
+  deriveEditorState,
+  deriveTitleFromSections,
+  drainSessionPersistence,
+  emitProjectedDocState,
+  enrichAskUserResumeAnswersWithLabels,
+  ensureDraftCandidateDoc,
+  ensureWorkingMemorySnapshot,
+  ensureWorkingMemorySnapshotWithStatus,
+  finalizeLingeringRunningToolCalls,
+  findLiteralMatches,
+  findMaterialByFileId,
+  getActiveSuspensionOwner,
+  getDocumentVersionCommittedAt,
+  hasActiveSuspension,
+  hasVisibleAskUserAnswerMessage,
+  invalidateDraftStateAfterCanonicalWrite,
   isDirectionReset,
+  isOmSidecarEnabled,
   isPlanDraftTool,
   isQuestionnaireTool,
+  listHomeSessionThreads,
+  listSessionThreads,
+  loadSessionFromThread,
+  migrateThreadMetadataToDocuments,
+  normalizeAskUserAnswers,
   normalizeQuestionnaireSpecForRestore,
-  QUESTIONNAIRE_TOOL_NAMES,
-  questionnaireRenderMode,
-} from "./bridge/questionnaireTools.js";
-export type {
-  PlanDraftToolName,
-  QuestionnaireToolName,
-  QuestionnaireRenderMode,
-} from "./bridge/questionnaireTools.js";
-
-// Export
-export { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "./export/index.js";
-export { setHtmlToPdfRenderer, getHtmlToPdfRenderer } from "./export/index.js";
-export type { ExportOptions, HtmlToPdfRenderer } from "./export/index.js";
-export { pmToHomeArticleMeta } from "./home/pmToHomeArticleMeta.js";
-export type { HomeArticleMeta, HomeArticleMetaInput } from "./home/pmToHomeArticleMeta.js";
-export { validateFetchUrl } from "./browser/extractor.js";
-export { deriveTitleFromSections } from "./bridge/title.js";
-
-// 桌面端首启示例内容(分叉骨架,once 门在桌面主进程)
-export { seedInitialContent } from "./seed/seedInitialContent.js";
-
-// Documents shadow table
-export { documentRepo, projectPmDocToSections } from "./db/documentRepo.js";
-export { deleteDocumentFamily } from "./db/documentFamilyRepo.js";
-export type {
-  DocumentRepo,
-  DocumentRow,
-  DocumentSaveInput,
-} from "./db/documentRepo.js";
+  normalizeRestoredDocStateKind,
+  normalizeTargetDocState,
+  persistSessionMetadata,
+  prepareOmContextForTurn,
+  processAgentStream,
+  redactSensitiveText,
+  replaceDraftCandidateDoc,
+  replaceTextRuns,
+  resolveFileIds,
+  runAgentTurn,
+  scheduleOmSidecarAfterTurn,
+  schedulePersist,
+  serializeReviewOutcome,
+  sessionIdToTraceId,
+  settleDraftCandidate,
+  stableErrorMaterialId,
+  terminalizeAskUserToolCall,
+  transitionDocState,
+  updatePatchVerdict,
+  upsertMaterialByFileId,
+} from "./bridge/index.js";
+export type { ConnectorInfoDto } from "./connectors/index.js";
 export {
-  ensureMigrated,
-  runMigrations,
-  assertMigrationsContinuous,
-  __resetMigrationsForTest,
-  __setMigrationsForTest,
-} from "./db/migrations.js";
-export type { Migration, MigrationResult } from "./db/migrations.js";
-export { getDocumentsClient } from "./db/documentsClient.js";
+  ConnectorService,
+  createConnectorStatus,
+  getConnectorService,
+  isConnectorId,
+  listConnectorDefinitions,
+} from "./connectors/index.js";
 export {
-  SETTING_DEEPSEEK_GLOBAL_KEY,
-  SETTING_MODEL_PARAMS,
-  SETTING_SEARCH_PRIMARY,
-  SETTING_SEARCH_PROVIDER_CONFIG,
-  deleteAppSetting,
-  getAppSetting,
-  setAppSetting,
-} from "./db/appSettingsRepo.js";
-export {
-  SearchProviderError,
-  classifySearchHttpStatus,
-  searchProviderErrorFromStatus,
-} from "./search/errors.js";
-export type { SearchProviderErrorKind } from "./search/errors.js";
-export {
-  SEARCH_PROVIDER_IDS,
-  SEARCH_PROVIDER_REGISTRY,
-  getSearchProviderRegistryEntry,
-  isSearchProviderId,
-} from "./search/registry.js";
-export type {
-  SearchProviderConfig,
-  SearchProviderConfigMap,
-  SearchProviderId,
-  SearchProviderKind,
-  SearchProviderRegistryEntry,
-} from "./search/registry.js";
-export {
-  SEARCH_PROVIDER_QUOTA_COOLDOWN_MS,
-  clearSearchProviderHealth,
-  getSearchProviderHealth,
-  markSearchProviderAuthFailed,
-  markSearchProviderQuota,
-  recordSearchProviderError,
-  shouldSkipSearchProvider,
-} from "./search/health.js";
-export type {
-  SearchProviderHealth,
-  SearchProviderHealthStatus,
-} from "./search/health.js";
-export {
-  clearManagedSearchProviderHealth,
-  getManagedSearchProvider,
-  getPrimarySearchConfig,
-  getSearchProviderConfig,
-  invalidateManagedSearchConfig,
-  invalidatePrimarySearchConfig,
-  parsePrimarySearchConfig,
-  parseSearchProviderConfig,
-} from "./search/managedSearch.js";
-export type { PrimarySearchConfig } from "./search/managedSearch.js";
-export { describeToolsForDebug } from "./debug/toolsInspector.js";
-export type { DebugToolEntry } from "./debug/toolsInspector.js";
+  PLATFORM_CREDENTIAL_SPECS,
+  deleteCredential,
+  listCredentialMeta,
+  saveCredentialRecord,
+} from "./credentials/index.js";
+export { describeToolsForDebug } from "./debug/index.js";
 export {
   DEFAULT_DIAG_ERROR_FIELD_BYTES,
   DEFAULT_DIAG_FIELD_BYTES,
@@ -241,234 +109,130 @@ export {
   exportedSpanToDiagSpan,
   statusFromError,
   truncateField,
-} from "./diagnostics/diagSpan.js";
+} from "./diagnostics/index.js";
 export {
   browserFolderSourcesEnabled,
+  cleanupOldFolderSourceCaches,
+  clearFolderSourceCache,
   folderSourcesToWire,
   getSessionFolderSources,
   localFolderSourcesEnabled,
   markFolderSourceDetached,
   registerSessionFolderSources,
-  toFolderSourceWire,
   unregisterSessionFolderSources,
-} from "./folderSources/runtime.js";
+} from "./folderSources/index.js";
+export { pmToHomeArticleMeta } from "./home/index.js";
+export type {
+  DeepseekTier,
+  ModelOverrides,
+  ModelParamOverrides,
+  ModelProtocol,
+} from "./llm/index.js";
 export {
-  BrowserBridgeFilesystem,
-  __browserFolderBridgeStatsForTest,
-  __resetBrowserFolderBridgeForTest,
-  getBrowserFolderBridgeClientFolderIds,
-  getBrowserFolderBridgePendingRequest,
-  isBrowserFolderBridgeClientRegistered,
-  isBrowserFolderSourceRegistered,
-  openBrowserFolderBridgeConnection,
-  registerBrowserFolderSource,
-  requestBrowserFolderBridge,
-  resolveBrowserFolderBridgeResponse,
-  unregisterBrowserFolderSession,
-  unregisterBrowserFolderSource,
-} from "./workspace/browserBridgeFilesystem.js";
+  DEEPSEEK_CONTEXT_WINDOWS,
+  DEEPSEEK_MODEL_IDS,
+  QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY,
+  QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY,
+  VISION_TEST_TIMEOUT_MS,
+  beginSessionSnapshotTurn,
+  clearSessionSnapshot,
+  estimateCostCny,
+  guardContext,
+  guardReset,
+  installNetProbe,
+  resolveBaseUrl,
+  resolveModelParams,
+  sanitizeBaseUrl,
+  sanitizeModelId,
+  testTextModelConnection,
+  testVisionConnection,
+  warmUpModelEndpoint,
+  withPrefixCacheGuardContext,
+} from "./llm/index.js";
+export {
+  configureObservability,
+  getMemory,
+  getObservability,
+  mastra,
+} from "./mastra.js";
+export type {
+  SearchProviderConfig,
+  SearchProviderConfigMap,
+  SearchProviderErrorKind,
+  SearchProviderId,
+  SearchProviderRegistryEntry,
+} from "./search/index.js";
+export {
+  SEARCH_PROVIDER_REGISTRY,
+  SearchProviderError,
+  clearManagedSearchProviderHealth,
+  getSearchProviderHealth,
+  invalidateManagedSearchConfig,
+  invalidatePrimarySearchConfig,
+  isSearchProviderId,
+  markSearchProviderAuthFailed,
+  markSearchProviderQuota,
+  parsePrimarySearchConfig,
+  parseSearchProviderConfig,
+} from "./search/index.js";
+export { seedInitialContent } from "./seed/seedInitialContent.js";
+export { clearQuestionBranch } from "./services/genService.js";
+export {
+  ARCHIVED_BUILTIN_SKILLS,
+  BUILTIN_SKILLS_DIR,
+  SKILLS_INSTALL_DIR,
+  USER_SKILLS_DIR,
+  readDisabledSet,
+  setEnabled,
+} from "./skills/index.js";
+export {
+  askUserTool,
+  parseFileBuffer,
+  readDocumentForSession,
+  streamMoreQuestions,
+} from "./tools/index.js";
+export type { Material } from "./types/material.js";
 export type {
   BrowserFolderBridgeBoundResponse,
   BrowserFolderBridgeEntry,
-  BrowserFolderBridgeRequest,
   BrowserFolderBridgeResponse,
   BrowserFolderBridgeStat,
-} from "./workspace/browserBridgeFilesystem.js";
+} from "./workspace/index.js";
 export {
-  clearFolderSourceCache,
-  clearSessionFolderSourceCache,
-  cleanupOldFolderSourceCaches,
-} from "./folderSources/cache.js";
+  SANDBOX_BIN_DIR,
+  __resetBrowserFolderBridgeForTest,
+  buildSandboxEnv,
+  getBrowserFolderBridgeClientFolderIds,
+  getBrowserFolderBridgePendingRequest,
+  invalidateSessionWorkspace,
+  isBrowserFolderBridgeClientRegistered,
+  isBrowserFolderSourceRegistered,
+  openBrowserFolderBridgeConnection,
+  redactProbe,
+  registerBrowserFolderSource,
+  requestBrowserFolderBridge,
+  resolveBrowserFolderBridgeResponse,
+  resolveIsolation,
+  unregisterBrowserFolderSession,
+  unregisterBrowserFolderSource,
+} from "./workspace/index.js";
 export {
-  readDocumentForSession,
-  resolveFolderSourcePath,
-  searchDocumentsForSession,
-} from "./tools/index.js";
-export type {
-  ReadDocumentResult,
-  ResolvedFolderSourcePath,
-  SearchDocumentsResult,
-} from "./tools/index.js";
-export {
+  SETTING_DEEPSEEK_GLOBAL_KEY,
+  SETTING_MODEL_PARAMS,
+  SETTING_SEARCH_PRIMARY,
+  SETTING_SEARCH_PROVIDER_CONFIG,
+  __resetMigrationsForTest,
   aggregateUsageByDay,
   aggregateUsageBySession,
   aggregateUsageTotal,
-  latestAgentUsageForSession,
-  recordUsageEvent,
-} from "./db/usageRepo.js";
-export type {
-  UsageAggRow,
-  UsageEventInput,
-} from "./db/usageRepo.js";
-export {
+  deleteAppSetting,
+  documentDraftRepo,
+  documentRepo,
+  getAppSetting,
+  getDocumentsClient,
   getVersionSnapshot,
+  latestAgentUsageForSession,
   listVersions,
-} from "./db/documentVersionRepo.js";
-export type {
-  DocumentVersionRow,
-} from "./db/documentVersionRepo.js";
-export { documentDraftRepo } from "./db/documentDraftRepo.js";
-export type {
-  DocumentDraftRow,
-  DocumentDraftStatus,
-  SaveCandidateDraftInput,
-  SavePendingDraftInput,
-} from "./db/documentDraftRepo.js";
-export { migrateThreadMetadataToDocuments } from "./db/migrateThreadMetadataToDocuments.js";
-export type { MigrationStats } from "./db/migrateThreadMetadataToDocuments.js";
-export {
-  QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY,
-} from "./llm/workingMemoryPrompt.js";
-export {
-  QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY,
-} from "./llm/omObservationsPrompt.js";
-
-// Bridge
-export {
-  createSession,
-  activeSuspensionOwnedBy,
-  clearSuspension,
-  clearStaleSuspensionIfInactive,
-  createSessionScopedTools,
-  buildCapabilityTools,
-  abortAndCleanupTurn,
-  finalizeLingeringRunningToolCalls,
-  getActiveSuspensionOwner,
-  getSuspensionLiveness,
-  hasActiveSuspension,
-  TODO_AWARENESS_REQUEST_CONTEXT_KEY,
-  buildTodoAwarenessContent,
-  ensureWorkingMemorySnapshot,
-  ensureWorkingMemorySnapshotWithStatus,
-  nextSeq,
-  runAgentTurn,
-  serializeReviewOutcome,
-  processAgentStream,
-  estimateTurnCounterFromMessages,
-  isOmSidecarEnabled,
-  nextOmTurnIndex,
-  prepareOmContextForTurn,
-  scheduleOmSidecarAfterTurn,
-  terminalizeAskUserToolCall,
-  updatePatchVerdict,
-  commitPatches,
-  expandReviewIds,
-  commitReviewGroups,
-  rehydratePendingDraft,
-  rebaseRemainingPendingDraft,
-  buildMaterialFromParse,
-  findMaterialByFileId,
-  materialResourceUpsertedFrame,
-  materialToResource,
-  parseFileFailureFromResult,
-  stableErrorMaterialId,
-  upsertMaterialByFileId,
-  appendAskUserAnswerMessageIfMissing,
-  appendMissingAskUserAnswerMessagesFromChatHistory,
-  appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
-  askUserAnswerMarker,
-  buildAskUserAnswerCardItems,
-  buildAskUserAnswerUserMessage,
-  buildVisibleAskUserAnswerMessage,
-  enrichAskUserResumeAnswersWithLabels,
-  findAskUserToolCallSpecInChatHistory,
-  hasAskUserAnswerMessage,
-  hasVisibleAskUserAnswerMessage,
-  normalizeAskUserAnswers,
-  visibleAskUserAnswerMessageId,
-  advanceLastContentEditedAt,
-  commitDocumentOp,
-  getDocumentVersionCommittedAt,
-  clonePmDoc,
-  hasApplicableSuggestion,
-  hasCanonicalDoc,
-  currentPmDoc,
-  invalidateDraftStateAfterCanonicalWrite,
-  ensureDraftCandidateDoc,
-  replaceDraftCandidateDoc,
-  settleDraftCandidate,
-  buildDocumentSnapshot,
-  cloneLegacySections,
-  deriveDocStateFacts,
-  emitDocumentSnapshotFrames,
-  idleDocState,
-  normalizePersistedDocStateKind,
-  normalizeRestoredDocStateKind,
-  normalizeTargetDocState,
-  transitionDocState,
-  DocStateTransitionError,
-  docSectionSchema,
-  legacySectionsSchema,
-  createSessionThread,
-  drainSessionPersistence,
-  persistSessionMetadata,
-  schedulePersist,
-  loadSessionFromThread,
-  listHomeSessionThreads,
-  listSessionThreads,
-  deleteSessionThread,
-  cleanRestoredText,
-  sessionIdToTraceId,
-  buildAgentTracingMetadata,
-  AGENT_MAX_STEPS,
-  collectTopLevelTextBlocks,
-  findLiteralMatches,
-  isServerReanchorEnabled,
-  isTruthyFlag,
-  replaceTextRuns,
-  coerceLegacyContentKind,
-  deriveActiveOverlay,
-  deriveAgentBusy,
-  deriveContentState,
-  deriveEditorState,
-  emitProjectedDocState,
-  QINGAGENT_RESOURCE_ID,
-  __getSessionPersistenceStateForTest,
-  __resetSessionPersistenceForTest,
-} from "./bridge/index.js";
-export { resolveFileIds, UPLOADS_BASE } from "./bridge/uploadFileResolver.js";
-
-export type {
-  SessionState,
-  SuggestionRecord,
-  DocStateFacts,
-  DocStateTransitionReason,
-  RestoreDocStateFacts,
-  TransitionDocStateOptions,
-  ActiveOverlay,
-  EditorState,
-  QingagentThreadMetadata,
-  MaterialRecord,
-  SuggestionRecordJson,
-  PendingDraftRehydrateResult,
-  PendingDraftRebaseResult,
-  RebaseRemainingPendingDraftInput,
-  CommitDocumentOpInput,
-  CommitDocumentOpResult,
-  CommitIdempotencyKey,
-  PmValidationError,
-  AskUserAnswerRecord,
-  MaterialParseFailure,
-  MaterialParseFailureKind,
-  MaterialParseOutcome,
-  MaterialParseSource,
-  UpsertMaterialByFileIdResult,
-} from "./bridge/index.js";
-export type { ResolvedUploadedFile } from "./bridge/uploadFileResolver.js";
-
-// 沙箱凭据子系统(后端 API 录入,加密落库,注入会话沙箱)
-export {
-  saveCredentialRecord,
-  getCredentialsForPlatform,
-  getAllCredentialEnv,
-  listCredentialMeta,
-  deleteCredential,
-  getConnectorCredentialBundle,
-  deleteConnectorCredentialBundle,
-  redactSecret,
-  PLATFORM_CREDENTIAL_SPECS,
-  type CredentialInput,
-  type CredentialMeta,
-  type PlatformCredentialSpec,
-} from "./credentials/index.js";
-export { invalidateSessionWorkspace } from "./workspace/sessionWorkspace.js";
+  setAppSetting,
+} from "@qingagent/db";
+export { validateFetchUrl } from "@qingagent/doc-render/browser";

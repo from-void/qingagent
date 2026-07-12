@@ -15,7 +15,7 @@ import {
 } from "../search/deepseekWebSearch.js";
 import type { SearchResult } from "../search/provider.js";
 import { getCachedSearch, setCachedSearch } from "../search/searchCache.js";
-import { isSubstantiveContent } from "../browser/contentQuality.js";
+import { isSubstantiveContent } from "@qingagent/doc-render/browser";
 import { fetchArticleTool } from "./fetchArticle.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { getObservability } from "../mastra.js";

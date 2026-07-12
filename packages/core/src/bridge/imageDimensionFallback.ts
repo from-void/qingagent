@@ -1,7 +1,7 @@
 import type { AiBlock, AiListItem, AiTaskListItem, BlockEdit } from "@qingagent/pm-schema";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
-import { localUploadPath } from "../export/shared.js";
+import { localUploadPath } from "@qingagent/doc-render";
 
 const MAX_SVG_BYTES = 200 * 1024;
 const DEFAULT_SVG_WIDTH = 800;

@@ -1,7 +1,7 @@
 // 0603 — Bing(国内 cn.bing.com)SERP 抓取 provider:确定性 fetch + parseBingSerp。
 // best-effort:网络/反爬失败吞成 []。链接为真实 URL;广告在 parseBingSerp 里按 li.b_algo 天然剔除。
 import { Buffer } from "node:buffer";
-import { decodeHtml } from "../browser/extractor.js";
+import { decodeHtml } from "@qingagent/doc-render/browser";
 import type { SearchProvider, SearchResult } from "./provider.js";
 import { parseBingSerp } from "./parseBing.js";
 

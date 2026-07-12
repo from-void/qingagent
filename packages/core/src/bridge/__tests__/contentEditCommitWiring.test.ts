@@ -20,14 +20,14 @@ import { commitDocumentOp } from "../commitDocumentOp.js";
 import { __resetDocCommitQueueForTest } from "../docCommitQueue.js";
 import { diffHunkToStep } from "../draftReviewSuggestions.js";
 import { applyDiffHunks } from "../proposalDiff.js";
-import { documentRepo } from "../../db/documentRepo.js";
-import { getDocumentsClient } from "../../db/documentsClient.js";
-import { listVersions } from "../../db/documentVersionRepo.js";
+import { documentRepo } from "@qingagent/db";
+import { getDocumentsClient } from "@qingagent/db";
+import { listVersions } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 
 const workspaceRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
 let tempDb: TempDocumentsDb;

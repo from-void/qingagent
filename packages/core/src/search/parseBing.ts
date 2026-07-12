@@ -1,7 +1,7 @@
 // 0603 — Bing SERP 解析(确定性,cheerio)。organic = #b_results > li.b_algo;
 // 广告是 li.b_ad / .b_adTop / .b_adBottom,因只选 li.b_algo 故天然剔除。链接是真实 URL。
 import * as cheerio from "cheerio";
-import { cleanText } from "../browser/extractor.js";
+import { cleanText } from "@qingagent/doc-render/browser";
 import type { SearchResult } from "./provider.js";
 
 export function parseBingSerp(html: string, limit = 10): SearchResult[] {

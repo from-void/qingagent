@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import { Buffer } from "node:buffer";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
-import { loadPdfParseConstructor } from "../utils/pdfParse.js";
+import { loadPdfParseConstructor } from "./pdfParse.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
 
 export interface ExtractedArticleContent {

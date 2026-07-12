@@ -6,8 +6,8 @@ import {
   getDocumentsClient,
   withTransaction,
   withWriteRetry,
-} from "../db/documentsClient.js";
-import { ensureMigrated } from "../db/migrations.js";
+} from "@qingagent/db";
+import { ensureMigrated } from "@qingagent/db";
 import {
   decryptCredential,
   decryptCredentialWithKey,

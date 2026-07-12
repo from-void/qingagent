@@ -21,7 +21,7 @@ beforeAll(async () => {
   tempDir = mkdtempSync(join(tmpdir(), "qingagent-rich-formats-bridge-"));
   process.env.DATABASE_URL = `file:${join(tempDir, "bridge.db")}`;
 
-  const documentsClient = await import("../../../core/src/db/documentsClient.js");
+  const documentsClient = await import("@qingagent/db/client");
   resetDocumentsClientForTest = documentsClient.__resetDocumentsClientForTest;
   core = await import("@qingagent/core");
   resetDocumentsSchemaForTest = core.__resetMigrationsForTest;

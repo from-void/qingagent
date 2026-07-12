@@ -221,8 +221,8 @@ describe("askUser durable resume across fresh Mastra instances", () => {
       const dbFile = join(tempDir, "durable.db");
       // 影子双写已恒开:DATABASE_URL 指向临时库,双写天然隔离,无需再关。
       process.env.DATABASE_URL = `file:${dbFile}`;
-      const migrations = await import("../db/migrations.js");
-      const documentsClient = await import("../db/documentsClient.js");
+      const migrations = await import("@qingagent/db/migrations");
+      const documentsClient = await import("@qingagent/db/client");
       migrations.__resetMigrationsForTest();
       await migrations.runMigrations();
       documentsClient.__resetDocumentsClientForTest();

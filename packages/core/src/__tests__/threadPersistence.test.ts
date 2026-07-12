@@ -10,13 +10,13 @@ import type {
 } from "@qingagent/contract-ts";
 import type { SessionState } from "../bridge/sessionState.js";
 import type { QingagentThreadMetadata } from "../bridge/threadPersistence.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
-import { documentRepo } from "../db/documentRepo.js";
-import { insertVersion, listVersions } from "../db/documentVersionRepo.js";
+import { documentDraftRepo } from "@qingagent/db";
+import { documentRepo } from "@qingagent/db";
+import { insertVersion, listVersions } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
-} from "../db/__tests__/dbTestUtils.js";
+} from "@qingagent/db/testing";
 import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

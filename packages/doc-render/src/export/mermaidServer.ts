@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import { normalizeMermaidQuotes } from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
-import { mastra } from "../mastra.js";
+import { getDocRenderLogger } from "../renderLogger.js";
 import { isRenderableSvg, type ExportDocument } from "./shared.js";
 
 /**
@@ -60,8 +60,6 @@ const WARM_THEME_VARS = {
 };
 // 文档纸内字体是宋体(水墨皮肤把 --font-sans 映射成 serif),图表文字对齐之。
 const DIAGRAM_FONT = '"Noto Serif SC","Songti SC","STSong",serif';
-const logger = mastra.getLogger();
-
 interface MermaidRenderInput {
   source: string;
   normalizedSource: string;
@@ -106,7 +104,7 @@ function renderInputForSource(source: string): MermaidRenderInput {
 }
 
 function warnMermaidRenderFailure(input: MermaidRenderInput, reason: string): void {
-  logger.warn("Mermaid server render failed; export will fall back to source", {
+  getDocRenderLogger().warn("Mermaid server render failed; export will fall back to source", {
     reason,
     diagramType: input.diagramType,
     sourceSummary: input.sourceSummary,

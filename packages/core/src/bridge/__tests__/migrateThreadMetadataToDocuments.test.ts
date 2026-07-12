@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LegacySection, IncomingDocState } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import type { QingagentThreadMetadata } from "../../bridge/threadPersistence.js";
-import { documentRepo } from "../documentRepo.js";
-import { __resetDocumentsClientForTest } from "../documentsClient.js";
-import { __resetMigrationsForTest } from "../migrations.js";
+import {
+  __resetDocumentsClientForTest,
+  __resetMigrationsForTest,
+  documentRepo,
+} from "@qingagent/db";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();

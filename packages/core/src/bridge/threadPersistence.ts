@@ -23,14 +23,14 @@ import type {
 } from "./sessionState.js";
 import { sessionIdToTraceId } from "./agentSpans.js";
 import type { Material } from "../types/material.js";
-import { documentRepo, type DocumentRow } from "../db/documentRepo.js";
-import { deleteDocumentFamily } from "../db/documentFamilyRepo.js";
+import { documentRepo, type DocumentRow } from "@qingagent/db";
+import { deleteDocumentFamily } from "@qingagent/db";
 import {
   getMinDocumentSnapshotVersion,
   getVersionSnapshot,
   insertVersion,
-} from "../db/documentVersionRepo.js";
-import { documentDraftRepo } from "../db/documentDraftRepo.js";
+} from "@qingagent/db";
+import { documentDraftRepo } from "@qingagent/db";
 import { rehydratePendingDraft } from "./pendingDraftRehydrate.js";
 import { getDocumentVersionCommittedAt } from "./commitDocumentOp.js";
 import {
@@ -46,7 +46,7 @@ import {
   shadowCircuitOpen,
   shouldWarn,
   withWriteRetry,
-} from "../db/documentsClient.js";
+} from "@qingagent/db";
 import {
   appendMissingAskUserAnswerMessagesFromChatHistory,
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,

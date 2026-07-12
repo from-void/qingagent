@@ -5,7 +5,7 @@ import type {
   ToolCallSpec,
 } from "@qingagent/contract-ts";
 import crypto from "node:crypto";
-import { isSubstantiveContent } from "../browser/contentQuality.js";
+import { isSubstantiveContent } from "@qingagent/doc-render/browser";
 import { mastra } from "../mastra.js";
 import { thumbnailSrcForImageInput } from "../tools/imageInput.js";
 import { restoreDocStateAfterGenerateSvg, transitionAndProjectDocState } from "./docStateSync.js";

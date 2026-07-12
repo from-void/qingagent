@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasVisibleSvgContent, sanitizeSvg } from "../browser/svgSanitize.js";
+import { hasVisibleSvgContent, sanitizeSvg } from "@qingagent/doc-render/browser";
 import { buildGenerateSvgBranchTail } from "../tools/generateSvg.js";
 
 const size = { width: 800, height: 450 };

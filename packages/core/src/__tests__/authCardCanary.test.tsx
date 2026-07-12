@@ -22,7 +22,10 @@ vi.mock("../mastra.js", () => ({
   getObservability: () => ({ getDefaultInstance: () => null }),
 }));
 vi.mock("../bridge/agentSpans.js", () => ({ sessionIdToTraceId: (id: string) => `trace-${id}` }));
-vi.mock("../db/documentRepo.js", () => ({ documentRepo: { load: vi.fn(async () => null) } }));
+vi.mock("@qingagent/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@qingagent/db")>()),
+  documentRepo: { load: vi.fn(async () => null) },
+}));
 
 import { loadSessionFromThread } from "../bridge/threadPersistence.js";
 import { emitRestoreFrames } from "../../../server/src/bridge/bridgeHandler.js";

@@ -301,7 +301,11 @@ describe("AskUserOverlay", () => {
     expect(findSubmitButton().disabled).toBe(false);
   });
 
-  it("preview 由 hover 与选中项切换，并启用左栏内宽版", async () => {
+  it("preview 激活后按锚点 portal 右展开，关闭后移除", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    const onClose = vi.fn();
     const spec: AskUserSpec = {
       ...focusSpec,
       id: "ask-preview",
@@ -314,17 +318,44 @@ describe("AskUserOverlay", () => {
         ],
       }],
     };
-    await renderOverlay(spec);
+    await render(
+      <AskUserOverlay spec={spec} onClose={onClose} onSubmit={() => undefined} onAbort={() => undefined} />,
+      workspace,
+    );
 
-    expect(host?.querySelector(".askuser-overlay")?.getAttribute("data-wide")).toBe("true");
-    expect(host?.querySelector(".auq-preview")?.textContent).toContain("温和样张");
-    const secondCard = host!.querySelectorAll<HTMLElement>(".auq-card")[1]!;
+    const portalOverlay = workspace.querySelector<HTMLElement>('.askuser-overlay[data-portal="true"]');
+    expect(portalOverlay).not.toBeNull();
+    expect(portalOverlay?.style.getPropertyValue("--au-portal-left")).toMatch(/px$/);
+    expect(portalOverlay?.querySelector(".auq-preview")?.textContent).toContain("温和样张");
+    const secondCard = portalOverlay!.querySelectorAll<HTMLElement>(".auq-card")[1]!;
     await act(async () => {
       secondCard.querySelector<HTMLInputElement>("input")!.focus();
     });
-    expect(host?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
+    expect(portalOverlay?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
     await click(secondCard.querySelector("input")!);
-    expect(host?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
+    expect(portalOverlay?.querySelector(".auq-preview")?.textContent).toContain("锐利样张");
+    await click(portalOverlay!.querySelector<HTMLElement>(".au-x")!);
+    expect(onClose).toHaveBeenCalledOnce();
+    act(() => {
+      root?.unmount();
+      root = null;
+    });
+    expect(workspace.querySelector(".askuser-overlay")).toBeNull();
+    workspace.remove();
+  });
+
+  it("无 preview 的题保持原窄浮层且不 portal", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    document.body.appendChild(workspace);
+    await render(
+      <AskUserOverlay spec={focusSpec} onClose={() => undefined} onSubmit={() => undefined} onAbort={() => undefined} />,
+      workspace,
+    );
+
+    expect(host?.querySelector('.askuser-overlay[data-portal="false"]')).not.toBeNull();
+    expect(workspace.querySelector('.askuser-overlay[data-portal="true"]')).toBeNull();
+    workspace.remove();
   });
 
   it("滑块触顶显示 aboveLabel", async () => {
@@ -364,9 +395,9 @@ async function rerenderOverlay(spec: AskUserSpec, onSubmit = vi.fn()): Promise<v
   });
 }
 
-async function render(element: ReactNode): Promise<void> {
+async function render(element: ReactNode, parent: HTMLElement = document.body): Promise<void> {
   host = document.createElement("div");
-  document.body.appendChild(host);
+  parent.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root?.render(element);

@@ -1024,6 +1024,8 @@ export async function* processAgentStream(
       const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
       const toolName = typeof payload.toolName === "string" ? payload.toolName : null;
       // 覆盖所有工具:模型一确定 toolName(参数 JSON 还没开始生成)就提前建占位卡。
+      // askUserQuestion 的 preview 可能让参数 JSON 很长，必须在此时就建 overlay 空问卷，
+      // 由前端显示「正在准备问题…」；后续 suspend / rejected 仍按同 toolCallId 原位终态化。
       // 整块 tool-call 各分支统一走 emitOrUpdateToolCall 去重,故全覆盖天然安全。
       if (!toolCallId || !toolName) {
         continue;

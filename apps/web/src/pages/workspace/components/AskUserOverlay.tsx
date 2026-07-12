@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@qingagent/ui-kit";
 import type {
   AskUserAnswer,
@@ -102,6 +103,8 @@ export function AskUserOverlay({
   const customActiveRef = useRef(customActive);
   const currentIndexRef = useRef(currentIndex);
   const questionsRef = useRef(spec.questions);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [portalStyle, setPortalStyle] = useState<React.CSSProperties | null>(null);
 
   answersRef.current = answers;
   customActiveRef.current = customActive;
@@ -192,6 +195,29 @@ export function AskUserOverlay({
   const canSubmit = !isLoading && requiredReady && hasAnyMeaningfulAnswer;
   const currentQuestion = spec.questions[currentIndex] ?? null;
   const hasPreview = currentQuestion?.options.some((option) => Boolean(option.preview?.trim())) ?? false;
+
+  useLayoutEffect(() => {
+    if (!hasPreview) {
+      setPortalStyle(null);
+      return;
+    }
+    const updatePlacement = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPortalStyle({
+        "--au-portal-left": `${rect.left}px`,
+        "--au-portal-bottom": `${Math.max(12, window.innerHeight - rect.bottom)}px`,
+        "--au-portal-max-width": `${Math.max(420, window.innerWidth - rect.left - 12)}px`,
+      } as React.CSSProperties);
+    };
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [hasPreview]);
 
   const scheduleAutoAdvance = (qid: string) => {
     if (autoAdvanceTimerRef.current !== null) {
@@ -294,12 +320,14 @@ export function AskUserOverlay({
     if (canSubmit) onSubmit(answersForSubmit);
   };
 
-  return (
+  const overlay = (
     <div
       ref={overlayRef}
       className="askuser-overlay"
       data-wf="AskUserOverlay"
       data-wide={hasPreview ? "true" : "false"}
+      data-portal={portalStyle ? "true" : "false"}
+      style={portalStyle ?? undefined}
       role="dialog"
       aria-modal="true"
       aria-busy={isLoading ? true : undefined}
@@ -455,6 +483,18 @@ export function AskUserOverlay({
       </div>
     </div>
   );
+
+  const portalTarget = typeof document === "undefined"
+    ? null
+    : document.getElementById("view-workspace");
+  return (
+    <>
+      <div ref={anchorRef} className="askuser-portal-anchor" aria-hidden="true" />
+      {hasPreview && portalStyle && portalTarget
+        ? createPortal(overlay, portalTarget)
+        : overlay}
+    </>
+  );
 }
 
 function otherPlaceholder(kind: AskUserQuestion["kind"]["kind"]): string {
@@ -517,11 +557,10 @@ function ChoiceQuestionFields({
         <div className="auq-split">
           <div className="auq-option-column">{options}</div>
           <div className="auq-preview" aria-live="polite">
-            <div className="auq-preview-tag">样张预览 · 所见即所得</div>
             {previewOption?.preview ? (
               <AskUserPreview markdown={previewOption.preview} />
             ) : (
-              <div className="auq-preview-empty">悬停或选中一个选项查看样张</div>
+              <div className="auq-preview-empty">悬停或选中一个选项查看预览</div>
             )}
           </div>
         </div>

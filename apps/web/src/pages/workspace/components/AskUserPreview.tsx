@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { markdownToPm, type PmBlockNode } from "@qingagent/pm-schema";
 import { MermaidPreview } from "./MermaidPreview";
@@ -55,6 +55,8 @@ export function filterAskUserPreviewNodes(nodes: readonly PmBlockNode[]): Previe
 
 export function AskUserPreview({ markdown }: { markdown: string }) {
   const [lightboxSource, setLightboxSource] = useState<string | null>(null);
+  const lightboxCloseRef = useRef<HTMLButtonElement>(null);
+  const lightboxTriggerRef = useRef<HTMLElement | null>(null);
   const parsed = useMemo(() => {
     const safeMarkdown = truncateAskUserPreview(markdown);
     try {
@@ -70,11 +72,20 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
 
   useEffect(() => {
     if (!lightboxSource) return;
+    lightboxCloseRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLightboxSource(null);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setLightboxSource(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (lightboxTriggerRef.current?.isConnected) {
+        lightboxTriggerRef.current.focus({ preventScroll: true });
+      }
+    };
   }, [lightboxSource]);
 
   const portalTarget = typeof document === "undefined"
@@ -93,7 +104,10 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
             data-pm-node="diagram"
             aria-label="放大查看流程图"
             key={node.attrs.blockId ?? index}
-            onClick={() => setLightboxSource(node.attrs.source)}
+            onClick={(event) => {
+              lightboxTriggerRef.current = event.currentTarget;
+              setLightboxSource(node.attrs.source);
+            }}
           >
             <MermaidPreview
               source={node.attrs.source}
@@ -118,6 +132,7 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
         >
           <div className="auq-lightbox-panel">
             <button
+              ref={lightboxCloseRef}
               type="button"
               className="auq-lightbox-close"
               aria-label="关闭放大预览"

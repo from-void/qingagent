@@ -84,12 +84,16 @@ describe("AskUserPreview", () => {
     const source = "flowchart TD\nA-->B";
     await render(`\`\`\`mermaid\n${source}\n\`\`\``);
 
-    await click(host!.querySelector<HTMLElement>(".auq-preview-diagram")!);
+    const trigger = host!.querySelector<HTMLElement>(".auq-preview-diagram")!;
+    trigger.focus();
+    await click(trigger);
     expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).not.toBeNull();
+    expect(document.activeElement).toBe(workspace.querySelector(".auq-lightbox-close"));
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
     expect(workspace.querySelector('[data-wf="AskUserPreviewLightbox"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
 
     await click(host!.querySelector<HTMLElement>(".auq-preview-diagram")!);
     await click(workspace.querySelector<HTMLElement>(".auq-lightbox")!);

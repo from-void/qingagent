@@ -4,10 +4,6 @@ import { z } from "zod";
 import type { Command, BridgeFrame } from "@qingagent/contract-ts";
 import { safeParsePmDoc } from "@qingagent/pm-schema";
 import {
-  getSession,
-  findSessionByPatch,
-  recordCommandSpan,
-  normalizeClientTraceId,
   parseOrigin,
   resolveCommandSessionId,
   sessionManager,
@@ -16,11 +12,6 @@ import {
 } from "../gateway/bridgeHandler";
 import type { LoggedFrame } from "../gateway/frameLog";
 import { SessionActorCommandError } from "../gateway/sessionActor";
-import {
-  updatePatchVerdict,
-  commitPatches as commitPatchesBridge,
-  commitReviewGroups,
-} from "@qingagent/core";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
@@ -154,12 +145,8 @@ function commandFrames(entries: LoggedFrame[]): BridgeFrame[] {
   return entries.map((entry) => entry.frame);
 }
 
-function logCommitFrame(sessionId: string, frame: BridgeFrame): { seq: number; frame: BridgeFrame } {
-  const seq = sessionManager.frameLog.append(sessionId, frame);
-  if (seq === null) {
-    throw new Error("Failed to append commit frame");
-  }
-  return { seq, frame };
+function loggedCommandFrames(entries: LoggedFrame[]): Array<{ seq: number; frame: BridgeFrame }> {
+  return entries.map(({ seq, frame }) => ({ seq, frame }));
 }
 
 function prepareCommandForActor(command: Command): { command: Command; sessionId?: string } {
@@ -395,23 +382,6 @@ streamRoutes.post("/commit", async (c) => {
     keepPendingReviewBatchIds,
   } = body as Record<string, unknown>;
 
-  // 阶段4a follow-up — /commit 是独立 REST 端点（不走 handleCommand），所以
-  // commit 操作此前没有 ② command span。这里读 x-client-trace-id（与 /stream 端点
-  // 一致），下面确定 validIds 后补记一条 command span，使 commit 也能按单次点击关联。
-  const rawClientTraceId = c.req.header("x-client-trace-id");
-  const modelOverrides = await resolveRequestModelOverrides({
-    visitorKey: c.req.header("x-deepseek-key"),
-    baseUrl: c.req.header("x-model-base-url"),
-    modelFlash: c.req.header("x-model-flash"),
-    modelPro: c.req.header("x-model-pro"),
-    modelTier: c.req.header("x-model-tier"),
-    protocol: c.req.header("x-model-protocol"),
-    visionKey: c.req.header("x-vision-key"),
-    visionBaseUrl: c.req.header("x-vision-base-url"),
-    visionModel: c.req.header("x-vision-model"),
-    visionProtocol: c.req.header("x-vision-protocol"),
-  });
-
   if (typeof sessionId !== "string" || !sessionId) {
     return c.json({ error: "sessionId must be a non-empty string" }, 400);
   }
@@ -438,102 +408,35 @@ streamRoutes.post("/commit", async (c) => {
     }
   }
 
-  const session = getSession(sessionId);
-  if (!session) {
-    return c.json({ error: `Session not found: ${sessionId}` }, 404);
-  }
-  session.modelOverrides = modelOverrides;
-
-  try {
-    const loggedFrames: Array<{ seq: number; frame: BridgeFrame }> = [];
-    const clientTraceId = normalizeClientTraceId(rawClientTraceId, sessionId);
-    session.clientTraceId = clientTraceId;
-    // 0603 — /commit 独立端点也读 x-origin,绑会话 + 带进 command/db_write span。
-    const origin = parseOrigin(c.req.header("x-origin"));
-    session.origin = origin;
-
-    if (hasGroupCommit) {
-      const commandSpan = recordCommandSpan(
-        {
-          kind: "commitPatches",
-          data: {
-            ids: [],
-            reviewBatchIds: acceptReviewBatchIds as string[],
-          },
-        } as Command,
-        sessionId,
-        clientTraceId,
-        origin,
-      );
-
-      try {
-        for await (const frame of commitReviewGroups(session, {
+  const command: Command = hasGroupCommit
+    ? {
+        kind: "commitReviewGroups",
+        data: {
           acceptReviewBatchIds: acceptReviewBatchIds as string[],
           rejectReviewBatchIds: (rejectReviewBatchIds as string[] | undefined) ?? [],
           keepPendingReviewBatchIds: (keepPendingReviewBatchIds as string[] | undefined) ?? [],
-        })) {
-          loggedFrames.push(logCommitFrame(sessionId, frame));
-        }
-        commandSpan.endOk({ accepted: true, frameCount: loggedFrames.length });
-      } catch (error) {
-        commandSpan.endError(error, { failureKind: "commitFailed" });
-        throw error;
+        },
       }
+    : { kind: "commitPatches", data: { ids: patchIds as string[] } };
+  const context = await readCommandRequestContext(c);
 
-      return c.json(loggedFrames);
-    }
+  // commit 故意是非抢占命令：经同一 actor 排在运行中的 sendMessage 后执行，避免旁路写
+  // 与生成态交错。REST 端点保留，只为绕开浏览器 HTTP/1.1 的 SSE 连接数限制。
+  // 本改动仅关闭 single-writer 旁路；手打块保真已有独立修复与回归，不在这里重复归因。
+  const promise = sessionManager.submit(sessionId, {
+    command,
+    clientTraceId: context.clientTraceId,
+    origin: context.origin,
+    modelOverrides: context.modelOverrides,
+  });
 
-    // Filter to review items that actually exist. Validation-failed tool calls are
-    // never registered, so skip them silently.
-    const validIds = (patchIds as string[]).filter(
-      (id) => session.suggestions?.has(id),
-    );
-    if (validIds.length === 0) {
-      return c.json([]);
-    }
-
-    // 阶段4a follow-up — 记 ② command span（复用 handleCommand 路径的
-    // recordCommandSpan(command, sessionId, clientTraceId)，与 /stream 路径同范式与同
-    // summarizeCommandInput 摘要逻辑，避免在 REST 这里另拼一套不一致的实现）。
-    // - clientTraceId 经 normalizeClientTraceId 归一化（合法 32hex 用 header，否则用
-    //   sessionIdToTraceId(sessionId) 兜底），与 /stream、clientlog 同协议（修 Codex
-    //   review #2/#3：不直接把 raw header 塞进 span）。
-    // - 同时绑到 session.clientTraceId，使紧随其后的 updatePatchVerdict / commitPatches
-    //   触发的 ④ db_write span 也带上同一个 clientTraceId，四层不断链（修 Codex review #2）。
-    // - 构造合成 commitPatches Command 喂给 recordCommandSpan，input 由
-    //   summarizeCommandInput 取 { patchIds, patchCount }，只含 id 摘要，绝不放文档正文。
-    // recordCommandSpan 内部已 try/catch，绝不影响 commit 主链路。
-    const commandSpan = recordCommandSpan(
-      { kind: "commitPatches", data: { ids: validIds } } as Command,
-      sessionId,
-      clientTraceId,
-      origin,
-    );
-
-    try {
-      // 1. Accept all patches that are still in "reviewing" status
-      for (const id of validIds) {
-        const verdict = session.patchVerdicts.get(id);
-        if (!verdict) {
-          for (const frame of updatePatchVerdict(session, id, "accepted")) {
-            loggedFrames.push(logCommitFrame(sessionId, frame));
-          }
-        }
-      }
-
-      // 2. Commit all patches
-      for await (const frame of commitPatchesBridge(session, validIds)) {
-        loggedFrames.push(logCommitFrame(sessionId, frame));
-      }
-      commandSpan.endOk({ accepted: true, frameCount: loggedFrames.length });
-    } catch (error) {
-      commandSpan.endError(error, { failureKind: "commitFailed" });
-      throw error;
-    }
-
-    return c.json(loggedFrames);
+  try {
+    return c.json(loggedCommandFrames(await promise));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    console.error("[commit] command failed:", redactStreamErrorForLog(error));
+    if (error instanceof SessionActorCommandError && error.frames.length > 0) {
+      return c.json(loggedCommandFrames(error.frames));
+    }
+    return c.json({ error: publicStreamErrorReason() }, 500);
   }
 });

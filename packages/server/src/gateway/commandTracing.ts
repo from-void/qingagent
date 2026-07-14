@@ -36,6 +36,9 @@ export function resolveCommandSessionId(command: Command): string | undefined {
           ? findSessionByReviewBatchId(command.data.reviewBatchIds[0])?.sessionId
           : undefined)
       );
+    case "commitReviewGroups":
+      // 该命令没有内嵌 sessionId；/commit 必须把 REST body.sessionId 作为 actor 路由键传入。
+      return undefined;
     case "cancelStream":
       return findSessionByStream(command.data.streamId)?.sessionId;
     default: {
@@ -126,6 +129,12 @@ export function summarizeCommandInput(command: Command): Record<string, unknown>
         patchIds: command.data.ids,
         patchCount: command.data.ids.length,
         reviewBatchIds: command.data.reviewBatchIds,
+      };
+    case "commitReviewGroups":
+      return {
+        acceptReviewBatchIds: command.data.acceptReviewBatchIds,
+        rejectReviewBatchIds: command.data.rejectReviewBatchIds,
+        keepPendingReviewBatchIds: command.data.keepPendingReviewBatchIds,
       };
     case "updateDoc":
       return {

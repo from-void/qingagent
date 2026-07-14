@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
-import type { BridgeFrame, Command } from "@qingagent/contract-ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import { app } from "../app";
 import {
   forgetSession,
+  getSession,
   handleCommand,
   sessionManager,
 } from "../gateway/bridgeHandler";
+import { InMemoryFrameLog } from "../gateway/frameLog";
+import { SessionManager } from "../gateway/sessionManager";
+import type { HandleCommandFn } from "../gateway/sessionActor";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -29,12 +33,24 @@ async function request(
 describe("POST /api/v1/commit", () => {
   const sessionIds: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
     for (const sessionId of sessionIds.splice(0)) {
-      forgetSession(sessionId);
-      sessionManager.frameLog.evict(sessionId);
+      await sessionManager.disposeSession(sessionId);
     }
   });
+
+  async function startPersistedSession(sessionId: string) {
+    sessionIds.push(sessionId);
+    await collectFrames(handleCommand({
+      kind: "startSession",
+      data: { mode: { kind: "new", data: { sessionId, template: null } } },
+    }));
+    const session = getSession(sessionId);
+    if (!session) throw new Error("missing session");
+    await session.threadCreatePromise;
+    return session;
+  }
 
   it("拒绝不受信 Origin 的 commit 写入口", async () => {
     const res = await app.request("/api/v1/commit", {
@@ -52,12 +68,7 @@ describe("POST /api/v1/commit", () => {
 
   it("把 commit 产生的帧写入 FrameLog，并返回带 seq 的帧", async () => {
     const sessionId = "commit-frame-log-test";
-    sessionIds.push(sessionId);
-    const startCommand: Command = {
-      kind: "startSession",
-      data: { mode: { kind: "new", data: { sessionId, template: null } } },
-    };
-    await collectFrames(handleCommand(startCommand));
+    await startPersistedSession(sessionId);
 
     const res = await request("POST", "/api/v1/commit", {
       sessionId,
@@ -77,5 +88,166 @@ describe("POST /api/v1/commit", () => {
     ]);
     const logged = sessionManager.frameLog.readFrom(sessionId, 0).frames;
     expect(logged.map(({ seq, frame }) => ({ seq, frame }))).toEqual(json);
+  });
+
+  it("sendMessage 运行中 POST /commit 经同一 actor 排队在后，不发生状态交错", async () => {
+    const order: string[] = [];
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handleCommand: HandleCommandFn = async function* (command) {
+      if (command.kind === "sendMessage") {
+        order.push("send:start");
+        started();
+        await releasePromise;
+        order.push("send:end");
+        yield { kind: "sessionMeta", data: { sessionId: "route-serial", title: "send" } };
+        return;
+      }
+      if (command.kind === "commitReviewGroups") {
+        order.push("commit");
+        yield { kind: "sessionMeta", data: { sessionId: "route-serial", title: "commit" } };
+      }
+    };
+    const abortSession = vi.fn();
+    const manager = new SessionManager({
+      frameLog: new InMemoryFrameLog(),
+      handleCommand,
+      abortSession,
+      cleanupSession: vi.fn(),
+    });
+    const submitSpy = vi.spyOn(sessionManager, "submit").mockImplementation((sessionId, input) =>
+      manager.submit(sessionId, input));
+
+    const send = manager.submit("route-serial", {
+      command: {
+        kind: "sendMessage",
+        data: {
+          sessionId: "route-serial",
+          text: "running",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      },
+    });
+    await startedPromise;
+    const pendingResponse = request("POST", "/api/v1/commit", {
+      sessionId: "route-serial",
+      acceptReviewBatchIds: ["batch-1"],
+    });
+    for (let i = 0; i < 20 && submitSpy.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["send:start"]);
+    expect(abortSession).not.toHaveBeenCalled();
+
+    release();
+    const [response] = await Promise.all([pendingResponse, send]);
+    expect(response.status).toBe(200);
+    expect(order).toEqual(["send:start", "send:end", "commit"]);
+    expect(await response.json()).toEqual([
+      {
+        seq: 2,
+        frame: { kind: "sessionMeta", data: { sessionId: "route-serial", title: "commit" } },
+      },
+    ]);
+    await manager.disposeAll();
+  });
+
+  it.each([
+    ["review group", { acceptReviewBatchIds: ["cold-batch"] }],
+    ["patch ids", { patchIds: ["cold-patch"] }],
+  ])("内存逐出后 %s commit 按 REST sessionId 冷恢复", async (_label, payload) => {
+    const sessionId = `commit-cold-${_label.replace(/\s+/g, "-")}`;
+    const original = await startPersistedSession(sessionId);
+    forgetSession(sessionId);
+    expect(getSession(sessionId)).toBeUndefined();
+
+    const res = await request("POST", "/api/v1/commit", { sessionId, ...payload });
+
+    expect(res.status).toBe(200);
+    expect(getSession(sessionId)).toBeDefined();
+    expect(getSession(sessionId)).not.toBe(original);
+    expect(Array.isArray(await res.json())).toBe(true);
+  });
+
+  it.each(["acceptPatch", "rejectPatch"] as const)(
+    "%s 分发收到 actor 路由键后也走 getOrRestoreSession",
+    async (kind) => {
+      const sessionId = `commit-cold-${kind}`;
+      await startPersistedSession(sessionId);
+      forgetSession(sessionId);
+
+      await collectFrames(handleCommand(
+        { kind, data: { id: "already-resolved-patch" } },
+        undefined,
+        "manual",
+        undefined,
+        undefined,
+        sessionId,
+      ));
+
+      expect(getSession(sessionId)).toBeDefined();
+    },
+  );
+
+  it("重复提交同一批次保持稳定，响应 seq 单调且形状只含 seq/frame", async () => {
+    const sessionId = "commit-repeat-test";
+    await startPersistedSession(sessionId);
+
+    const first = await request("POST", "/api/v1/commit", {
+      sessionId,
+      acceptReviewBatchIds: ["already-resolved"],
+    });
+    const second = await request("POST", "/api/v1/commit", {
+      sessionId,
+      acceptReviewBatchIds: ["already-resolved"],
+    });
+    const firstBody = await first.json() as Array<Record<string, unknown>>;
+    const secondBody = await second.json() as Array<Record<string, unknown>>;
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(firstBody).toHaveLength(1);
+    expect(secondBody).toHaveLength(1);
+    expect(Object.keys(firstBody[0]!).sort()).toEqual(["frame", "seq"]);
+    expect(Number(secondBody[0]!.seq)).toBeGreaterThan(Number(firstBody[0]!.seq));
+  });
+
+  it.each([
+    ["空 sessionId", { sessionId: "", patchIds: ["p"] }, "sessionId must be a non-empty string"],
+    ["空 patchIds", { sessionId: "s", patchIds: [] }, "patchIds must be a non-empty array"],
+    ["group 元素为空", { sessionId: "s", acceptReviewBatchIds: [""] }, "acceptReviewBatchIds[] must be non-empty strings"],
+    ["reject 不是数组", { sessionId: "s", acceptReviewBatchIds: [], rejectReviewBatchIds: "x" }, "rejectReviewBatchIds must be an array"],
+  ])("非法载荷返回 400：%s", async (_label, body, error) => {
+    const res = await request("POST", "/api/v1/commit", body);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error });
+  });
+
+  it("内部异常返回脱敏通用错误，不泄漏原始 error.message", async () => {
+    vi.spyOn(sessionManager, "submit").mockRejectedValueOnce(
+      new Error("secret path /tmp/private-key sk-supersecret"),
+    );
+
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "commit-error-test",
+      acceptReviewBatchIds: ["batch"],
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "模型服务暂时不可用，请稍后重试" });
+    expect(JSON.stringify(body)).not.toContain("private-key");
+    expect(JSON.stringify(body)).not.toContain("supersecret");
   });
 });

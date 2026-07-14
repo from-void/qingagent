@@ -9,6 +9,7 @@ import type { CancelStream } from "../CancelStream";
 import type { AcceptPatch } from "../AcceptPatch";
 import type { RejectPatch } from "../RejectPatch";
 import type { CommitPatches } from "../CommitPatches";
+import type { CommitReviewGroups } from "../CommitReviewGroups";
 import type { SubmitReviewOutcome } from "../SubmitReviewOutcome";
 import type { ResumeAskUser } from "../ResumeAskUser";
 import type { AskUserAnswer } from "../AskUserAnswer";
@@ -111,6 +112,15 @@ const commitPatchesDataSchema = z
     "must include ids or reviewBatchIds",
   ) satisfies z.ZodType<CommitPatches>;
 type _CommitPatchesExact = Expect<Equal<z.infer<typeof commitPatchesDataSchema>, CommitPatches>>;
+
+const commitReviewGroupsDataSchema = z.object({
+  acceptReviewBatchIds: z.array(z.string().min(1)),
+  rejectReviewBatchIds: z.array(z.string().min(1)).optional(),
+  keepPendingReviewBatchIds: z.array(z.string().min(1)).optional(),
+}) satisfies z.ZodType<CommitReviewGroups>;
+type _CommitReviewGroupsExact = Expect<
+  Equal<z.infer<typeof commitReviewGroupsDataSchema>, CommitReviewGroups>
+>;
 
 const reviewOutcomeHunkSchema = z.object({
   verdict: z.enum(["accepted", "rejected"]),
@@ -251,6 +261,7 @@ export const COMMAND_KINDS = [
   "acceptPatch",
   "rejectPatch",
   "commitPatches",
+  "commitReviewGroups",
   "submitReviewOutcome",
   "resumeAskUser",
   "cancelAskUser",
@@ -277,6 +288,7 @@ export const commandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("acceptPatch"), data: acceptPatchDataSchema }),
   z.object({ kind: z.literal("rejectPatch"), data: rejectPatchDataSchema }),
   z.object({ kind: z.literal("commitPatches"), data: commitPatchesDataSchema }),
+  z.object({ kind: z.literal("commitReviewGroups"), data: commitReviewGroupsDataSchema }),
   z.object({ kind: z.literal("submitReviewOutcome"), data: submitReviewOutcomeDataSchema }),
   z.object({ kind: z.literal("resumeAskUser"), data: resumeAskUserDataSchema }),
   z.object({ kind: z.literal("cancelAskUser"), data: cancelAskUserDataSchema }),

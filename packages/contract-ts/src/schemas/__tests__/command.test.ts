@@ -32,9 +32,9 @@ function selectionChip(tableSelection: unknown): unknown {
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
-  it("COMMAND_KINDS 覆盖 16 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(16);
-    expect(COMMAND_KIND_SET.size).toBe(16);
+  it("COMMAND_KINDS 覆盖 17 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(17);
+    expect(COMMAND_KIND_SET.size).toBe(17);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
   });
 
@@ -105,6 +105,19 @@ describe("commandSchema", () => {
     expect(r.success).toBe(true);
   });
 
+  it("接受 commitReviewGroups 的 accept/reject/keep-pending 原子载荷", () => {
+    const r = commandSchema.safeParse({
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["accept-1"],
+        rejectReviewBatchIds: ["reject-1"],
+        keepPendingReviewBatchIds: ["pending-1"],
+      },
+    });
+
+    expect(r.success).toBe(true);
+  });
+
   it.each([
     ["未知 kind", { kind: "bogus", data: {} }],
     ["非对象 body", 42],
@@ -116,6 +129,7 @@ describe("commandSchema", () => {
     ["fileIds 含非字符串", { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: [1] } }],
     ["acceptPatch 两者皆空", { kind: "acceptPatch", data: {} }],
     ["commitPatches 空 ids", { kind: "commitPatches", data: { ids: [] } }],
+    ["commitReviewGroups accept 含空 id", { kind: "commitReviewGroups", data: { acceptReviewBatchIds: [""] } }],
     ["resumeAskUser 空 answers", { kind: "resumeAskUser", data: { sessionId: "s", answers: {} } }],
     ["resumeAskUser 空 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "", answers: { q1: { chosen: [], freeText: "x" } } } }],
     ["reparseMaterial sessionId 空", { kind: "reparseMaterial", data: { sessionId: "", fileId: "file-1" } }],

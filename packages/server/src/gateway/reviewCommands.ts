@@ -4,37 +4,65 @@ import {
   commitReviewGroups,
   updatePatchVerdict,
 } from "./bridgeCore";
-import { bindClientTraceId, normalizeClientTraceId } from "./commandTracing";
+import { bindClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
-import { findSessionByPatch, findSessionByReviewBatchId } from "./sessionLifecycle";
+import {
+  findSessionByPatch,
+  findSessionByReviewBatchId,
+  getOrRestoreSession,
+} from "./sessionLifecycle";
 
 type ReviewCommand = Extract<Command, {
-  kind: "acceptPatch" | "rejectPatch" | "commitPatches";
+  kind: "acceptPatch" | "rejectPatch" | "commitPatches" | "commitReviewGroups";
 }>;
+
+function inMemoryReviewSessionId(command: ReviewCommand): string | undefined {
+  switch (command.kind) {
+    case "acceptPatch":
+    case "rejectPatch":
+      return (
+        (command.data.id ? findSessionByPatch(command.data.id)?.sessionId : undefined) ??
+        (command.data.reviewBatchId
+          ? findSessionByReviewBatchId(command.data.reviewBatchId)?.sessionId
+          : undefined)
+      );
+    case "commitPatches":
+      return (
+        (command.data.ids[0] ? findSessionByPatch(command.data.ids[0])?.sessionId : undefined) ??
+        (command.data.reviewBatchIds?.[0]
+          ? findSessionByReviewBatchId(command.data.reviewBatchIds[0])?.sessionId
+          : undefined)
+      );
+    case "commitReviewGroups":
+      return undefined;
+  }
+}
+
+async function restoreReviewSession(
+  command: ReviewCommand,
+  context: CommandExecutionContext,
+) {
+  const sessionId = context.sessionId ?? inMemoryReviewSessionId(command);
+  if (!sessionId) {
+    throw new Error(`Unable to route ${command.kind} to a session`);
+  }
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  return session;
+}
 
 export async function* handleReviewCommand(
   command: ReviewCommand,
   context: CommandExecutionContext,
 ): AsyncGenerator<BridgeFrame> {
-  const { clientTraceId, origin, modelOverrides } = context;
+  const { resolvedClientTraceId, origin, modelOverrides } = context;
   switch (command.kind) {
     case "acceptPatch": {
       if (!command.data.id && !command.data.reviewBatchId) {
         throw new Error("AcceptPatch.data must include id or reviewBatchId for session routing");
       }
-      const session =
-        (command.data.id ? findSessionByPatch(command.data.id) : undefined) ??
-        (command.data.reviewBatchId
-          ? findSessionByReviewBatchId(command.data.reviewBatchId)
-          : undefined);
-      if (!session) {
-        throw new Error(
-          `No session owns patchId/reviewBatchId: ${command.data.id ?? command.data.reviewBatchId}`,
-        );
-      }
-      // 这些命令按 patch 反查会话，入口无 sessionId；这里按真实会话重新归一化
-      // clientTraceId（兜底用本会话 traceId）后绑定。
-      bindClientTraceId(session, normalizeClientTraceId(clientTraceId, session.sessionId), origin, modelOverrides);
+      const session = await restoreReviewSession(command, context);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
       yield* updatePatchVerdict(session, command.data.id, "accepted", command.data.reviewBatchId);
       return;
     }
@@ -43,17 +71,8 @@ export async function* handleReviewCommand(
       if (!command.data.id && !command.data.reviewBatchId) {
         throw new Error("RejectPatch.data must include id or reviewBatchId for session routing");
       }
-      const session =
-        (command.data.id ? findSessionByPatch(command.data.id) : undefined) ??
-        (command.data.reviewBatchId
-          ? findSessionByReviewBatchId(command.data.reviewBatchId)
-          : undefined);
-      if (!session) {
-        throw new Error(
-          `No session owns patchId/reviewBatchId: ${command.data.id ?? command.data.reviewBatchId}`,
-        );
-      }
-      bindClientTraceId(session, normalizeClientTraceId(clientTraceId, session.sessionId), origin, modelOverrides);
+      const session = await restoreReviewSession(command, context);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
       yield* updatePatchVerdict(session, command.data.id, "rejected", command.data.reviewBatchId);
       return;
     }
@@ -64,13 +83,8 @@ export async function* handleReviewCommand(
       if (!firstId && !firstReviewBatchId) {
         throw new Error("CommitPatches.data must include ids or reviewBatchIds");
       }
-      const session =
-        (firstId ? findSessionByPatch(firstId) : undefined) ??
-        (firstReviewBatchId ? findSessionByReviewBatchId(firstReviewBatchId) : undefined);
-      if (!session) {
-        throw new Error(`No session owns patchId/reviewBatchId: ${firstId ?? firstReviewBatchId}`);
-      }
-      bindClientTraceId(session, normalizeClientTraceId(clientTraceId, session.sessionId), origin, modelOverrides);
+      const session = await restoreReviewSession(command, context);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
       if (command.data.reviewBatchIds && command.data.reviewBatchIds.length > 0) {
         for await (const frame of commitReviewGroups(session, {
           acceptReviewBatchIds: command.data.reviewBatchIds,
@@ -83,6 +97,13 @@ export async function* handleReviewCommand(
       for await (const frame of commitPatchesBridge(session, command.data.ids)) {
         yield frame;
       }
+      return;
+    }
+
+    case "commitReviewGroups": {
+      const session = await restoreReviewSession(command, context);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      yield* commitReviewGroups(session, command.data);
       return;
     }
   }

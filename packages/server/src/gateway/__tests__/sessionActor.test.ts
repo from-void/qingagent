@@ -21,6 +21,17 @@ function sendMessage(text: string): Command {
   };
 }
 
+function commitReviewGroups(batchId = "batch-1"): Command {
+  return {
+    kind: "commitReviewGroups",
+    data: { acceptReviewBatchIds: [batchId] },
+  };
+}
+
+function cancelStream(): Command {
+  return { kind: "cancelStream", data: { streamId: "stream-1" } };
+}
+
 function meta(title: string): BridgeFrame {
   return { kind: "sessionMeta", data: { sessionId: "s1", title } };
 }
@@ -50,6 +61,104 @@ describe("SessionActor", () => {
 
     expect(order).toEqual(["start:a", "end:a", "start:b", "end:b"]);
     expect(log.readFrom("s1", 0).frames.map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
+  it("运行中的 sendMessage 后串行 commit，且把 actor sessionId 传给无 sessionId 命令", async () => {
+    const log = new InMemoryFrameLog();
+    const order: string[] = [];
+    const routedSessionIds: Array<string | undefined> = [];
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handleCommand: HandleCommandFn = async function* (
+      command,
+      _trace,
+      _origin,
+      _overrides,
+      _client,
+      routedSessionId,
+    ) {
+      routedSessionIds.push(routedSessionId);
+      if (command.kind === "sendMessage") {
+        order.push("send:start");
+        started();
+        await releasePromise;
+        order.push("send:end");
+        yield meta("send");
+        return;
+      }
+      if (command.kind === "commitReviewGroups") {
+        order.push("commit");
+        yield meta("commit");
+      }
+    };
+    const abortSession = vi.fn();
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand,
+      abortSession,
+    });
+
+    const send = actor.enqueue({ command: sendMessage("running") });
+    await startedPromise;
+    const commit = actor.enqueue({ command: commitReviewGroups() });
+    await Promise.resolve();
+    expect(order).toEqual(["send:start"]);
+    expect(abortSession).not.toHaveBeenCalled();
+
+    release();
+    await Promise.all([send, commit]);
+
+    expect(order).toEqual(["send:start", "send:end", "commit"]);
+    expect(routedSessionIds).toEqual(["s1", "s1"]);
+  });
+
+  it("cancelStream 与运行中的 commit 交错时先 abort、再安全串行处理 cancel", async () => {
+    const log = new InMemoryFrameLog();
+    const order: string[] = [];
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handleCommand: HandleCommandFn = async function* (command) {
+      if (command.kind === "commitReviewGroups") {
+        order.push("commit:start");
+        started();
+        await releasePromise;
+        order.push("commit:end");
+        yield meta("commit");
+        return;
+      }
+      if (command.kind === "cancelStream") {
+        order.push("cancel");
+        yield meta("cancel");
+      }
+    };
+    const abortSession = vi.fn(() => release());
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand,
+      abortSession,
+    });
+
+    const commit = actor.enqueue({ command: commitReviewGroups() });
+    await startedPromise;
+    const cancel = actor.enqueue({ command: cancelStream() });
+
+    await Promise.all([commit, cancel]);
+    expect(abortSession).toHaveBeenCalledWith("s1");
+    expect(order).toEqual(["commit:start", "commit:end", "cancel"]);
   });
 
   it("sendMessage 抢占正在运行的命令并触发 abort", async () => {

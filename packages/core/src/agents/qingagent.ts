@@ -188,22 +188,9 @@ export async function resolveEnabledSkillDirsFromRoots(
     .map(toPosixPath);
 }
 
-async function resolveSessionCredentialEnv(): Promise<Record<string, string>> {
-  try {
-    const { getAllCredentialEnv } = await import("../credentials/credentialsRepo.js");
-    return await getAllCredentialEnv();
-  } catch (error) {
-    console.error("[sessionWorkspace] 凭据注入读取失败", error);
-    return {};
-  }
-}
-
 export async function getQingagentSessionWorkspace(sessionId: string): Promise<Workspace> {
   return await getSessionWorkspace(sessionId, {
     resolveSkillDirs: resolveEnabledSkillDirs,
-    // 凭据注入:把仍走后端托管的平台凭据(钉钉等)解密后注入沙箱 env,
-    // CLI skill 脚本从 env 读取认证信息。读失败不阻断沙箱(返回空)。
-    resolveCredentialEnv: resolveSessionCredentialEnv,
     resolveFolderSources: getSessionFolderSources,
   });
 }

@@ -1,6 +1,6 @@
 // 沙箱凭据子系统统一入口。
 // 录入走后端 API(前端设置页),密钥加密落库,不经过 LLM 上下文;
-// 注入沙箱时由 sessionWorkspace 的 resolveCredentialEnv 钩子解密成 env。
+// 仅由命令 gate 对受信 node skill 脚本按次解密成 env，不进入沙箱基础环境。
 
 export {
   saveCredentialRecord,

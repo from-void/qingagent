@@ -61,13 +61,15 @@ describe("sessionWorkspaceDirName 路径安全", () => {
 });
 
 describe("buildSandboxEnv 最小环境", () => {
-  it("带必需系统变量+代理+显式注入,不继承宿主业务变量", () => {
+  it("带必需系统变量+代理,不继承宿主业务变量或托管凭据", () => {
     process.env.SOME_HOST_SECRET = "leak-me";
-    const env = buildSandboxEnv({ DINGTALK_APP_SECRET: "t-1" });
+    process.env.DINGTALK_APP_SECRET = "t-1";
+    const env = buildSandboxEnv();
     expect(env.PATH).toContain(process.env.PATH!); // 含宿主 PATH(前置了产品 bin 目录)
-    expect(env.DINGTALK_APP_SECRET).toBe("t-1");
+    expect(env.DINGTALK_APP_SECRET).toBeUndefined();
     expect(env.SOME_HOST_SECRET).toBeUndefined();
     delete process.env.SOME_HOST_SECRET;
+    delete process.env.DINGTALK_APP_SECRET;
   });
   it("代理透传(lark-cli 是 Go net/http,认 HTTP(S)_PROXY、尊重 NO_PROXY、不读 ALL_PROXY;ALL_PROXY 仍透传兼容其它工具)", () => {
     process.env.HTTPS_PROXY = "http://127.0.0.1:10809";
@@ -306,28 +308,23 @@ describe("getSessionWorkspace 装配与缓存", () => {
   });
 
   it("Round9 回归:同会话并发首建只产出一个实例(inflight 去重,防游离实例泄漏)", async () => {
-    // BUG-1:cache miss 与 cache.set 之间有 await(resolveCredentialEnv 让出事件循环),
-    // 并发多路会各建一个 Workspace。这里用一个真异步的 resolveCredentialEnv 放大竞态窗口,
+    // BUG-1:cache miss 与 cache.set 之间有异步资料源解析让出事件循环，
+    // 并发多路会各建一个 Workspace。这里用一个真异步的 resolveFolderSources 放大竞态窗口，
     // 断言 8 路并发拿到的是同一个实例。
-    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
     __resetSessionWorkspaceCacheForTest();
     const slowOpts = {
       ...opts,
-      resolveCredentialEnv: async () => {
+      resolveFolderSources: async () => {
         await new Promise((r) => setTimeout(r, 5));
-        return {};
+        return [];
       },
     };
-    try {
-      const all = await Promise.all(
-        Array.from({ length: 8 }, () => getSessionWorkspace("sess-concurrent", slowOpts)),
-      );
-      const unique = new Set(all);
-      expect(unique.size).toBe(1);
-      expect(all[0]).toBe(await getSessionWorkspace("sess-concurrent", slowOpts));
-    } finally {
-      delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
-    }
+    const all = await Promise.all(
+      Array.from({ length: 8 }, () => getSessionWorkspace("sess-concurrent", slowOpts)),
+    );
+    const unique = new Set(all);
+    expect(unique.size).toBe(1);
+    expect(all[0]).toBe(await getSessionWorkspace("sess-concurrent", slowOpts));
   });
 
   it("装配出的 Workspace 带 sandbox 与组合文件系统", async () => {
@@ -367,49 +364,27 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(__sessionWorkspaceCacheStatsForTest().generationKeys).not.toContain(cleanupKey);
 
     const resetKey = sessionWorkspaceDirName("sess-generation-reset");
-    const gate = new Promise<void>(() => undefined);
-    void getSessionWorkspace("sess-generation-reset", {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = getSessionWorkspace("sess-generation-reset", {
       ...opts,
-      resolveCredentialEnv: async () => {
+      resolveFolderSources: async () => {
         await gate;
-        return {};
+        return [];
       },
-    }).catch(() => undefined);
+    });
     await Promise.resolve();
     invalidateSessionWorkspace("sess-generation-reset");
     expect(__sessionWorkspaceCacheStatsForTest().generationKeys).toContain(resetKey);
     __resetSessionWorkspaceCacheForTest();
     expect(__sessionWorkspaceCacheStatsForTest().generationSize).toBe(0);
     expect(__sessionWorkspaceCacheStatsForTest().activeBuildSize).toBe(0);
-  });
-
-  it("凭据注入开关关闭时不读取凭据", async () => {
-    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "0";
+    // 释放被 reset 摘除的旧构建，避免测试留下永不 settle 的异步句柄。
+    release();
+    await pending;
     __resetSessionWorkspaceCacheForTest();
-    let asked = false;
-    await getSessionWorkspace("sess-nocred", {
-      ...opts,
-      resolveCredentialEnv: () => {
-        asked = true;
-        return {};
-      },
-    });
-    expect(asked).toBe(false);
-    delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
-  });
-
-  it("凭据注入默认关闭时不读取凭据", async () => {
-    delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
-    __resetSessionWorkspaceCacheForTest();
-    let asked = false;
-    await getSessionWorkspace("sess-default-nocred", {
-      ...opts,
-      resolveCredentialEnv: () => {
-        asked = true;
-        return {};
-      },
-    });
-    expect(asked).toBe(false);
   });
 
   // BUG-A1 回归:会话 Workspace 的技能发现源若沿用 CompositeFilesystem,
@@ -468,21 +443,6 @@ describe("getSessionWorkspace 装配与缓存", () => {
     expect(String(listOutput)).not.toContain(outsideDir);
     expect(String(listOutput)).not.toContain("ROUND17_SOURCE_SECRET");
     expect(String(listOutput)).not.toContain("ROUND17_HOST_SECRET");
-  });
-
-  it("凭据注入钩子生效", async () => {
-    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
-    __resetSessionWorkspaceCacheForTest();
-    let asked: string | null = null;
-    const ws = await getSessionWorkspace("sess-d", {
-      ...opts,
-      resolveCredentialEnv: (sid) => {
-        asked = sid;
-        return { DINGTALK_APP_SECRET: "tok_x" };
-      },
-    });
-    expect(ws.sandbox).toBeTruthy();
-    expect(asked).toBe("sess-d");
   });
 
   it("本地文件夹资料库以 /sources 下嵌套 CompositeFilesystem 挂载且只读", async () => {
@@ -582,9 +542,9 @@ describe("getSessionWorkspace 装配与缓存", () => {
     });
     const first = getSessionWorkspace("sess-race", {
       ...opts,
-      resolveCredentialEnv: async () => {
+      resolveFolderSources: async () => {
         await gate;
-        return {};
+        return [];
       },
     });
     await Promise.resolve();
@@ -620,9 +580,9 @@ describe("getSessionWorkspace 装配与缓存", () => {
     const key = sessionWorkspaceDirName(sessionId);
     const first = getSessionWorkspace(sessionId, {
       ...opts,
-      resolveCredentialEnv: async () => {
+      resolveFolderSources: async () => {
         await gate;
-        return {};
+        return [];
       },
     });
     await Promise.resolve();

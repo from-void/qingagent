@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import {
@@ -23,6 +23,45 @@ function decisionBg(command: string) {
 }
 
 describe("commandPolicy P0 gate", () => {
+  it("放行产品 bin 目录内有执行位的实名 CLI，拒绝无执行位、不存在、路径限定、解释器与 symlink 逃逸", () => {
+    const dir = mkdtempSync(join(tmpdir(), "command-policy-bin-cli-"));
+    const binDir = join(dir, "bin");
+    const outsideDir = join(dir, "outside");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(outsideDir, { recursive: true });
+    const extension = process.platform === "win32" ? ".cmd" : "";
+    const cliName = `yuque-cli${extension}`;
+    const cliPath = join(binDir, cliName);
+    const nonExecutableCli = join(binDir, `non-executable-cli${extension}`);
+    const outsideCli = join(outsideDir, `escape-cli${extension}`);
+    const escapedLink = join(binDir, `escape-cli${extension}`);
+    const deniedInterpreter = join(binDir, `python${extension}`);
+    writeFileSync(cliPath, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    writeFileSync(nonExecutableCli, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    writeFileSync(outsideCli, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    writeFileSync(deniedInterpreter, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    if (process.platform !== "win32") {
+      chmodSync(cliPath, 0o755);
+      chmodSync(nonExecutableCli, 0o644);
+      chmodSync(outsideCli, 0o755);
+      chmodSync(deniedInterpreter, 0o755);
+    }
+    try {
+      symlinkSync(outsideCli, escapedLink, "file");
+      const options = { workspaceCwd, sandboxBinDir: binDir };
+      expect(evaluateCommandPolicy(`${cliName} export --output /tmp/result`, options)).toEqual({ action: "allow" });
+      if (process.platform !== "win32") {
+        expect(evaluateCommandPolicy(`non-executable-cli list`, options).action).toBe("deny");
+      }
+      expect(evaluateCommandPolicy(`missing-cli list`, options).action).toBe("deny");
+      expect(evaluateCommandPolicy(`./${cliName} list`, options).action).toBe("deny");
+      expect(evaluateCommandPolicy(`python -c print(1)`, options).action).toBe("deny");
+      expect(evaluateCommandPolicy(`escape-cli${extension} list`, options).action).toBe("deny");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("允许 trusted skills 目录下的 node 脚本,包含平台写入脚本", () => {
     expect(decision(`node "${calcScript}" sum`).action).toBe("allow");
     expect(decision(`node "${dingtalkScript}" doc-create --title x`).action).toBe("allow");

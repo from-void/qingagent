@@ -120,9 +120,9 @@ function shouldBypassProxyForFeishu(): boolean {
   return process.env.QINGAGENT_SANDBOX_FEISHU_NO_PROXY !== "0";
 }
 
-/** 沙箱进程 env:最小化——只带必需系统变量(按平台)+代理+显式注入,绝不继承宿主全量环境。
+/** 沙箱进程 env:最小化——只带必需系统变量(按平台)+代理,绝不继承宿主全量环境或托管凭据。
  *  PATH 前置产品级 SANDBOX_BIN_DIR,让沙箱优先用产品自带/锁版本的 CLI(lark-cli 等)。 */
-export function buildSandboxEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+export function buildSandboxEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const systemKeys = process.platform === "win32" ? SYSTEM_ENV_KEYS_WIN : SYSTEM_ENV_KEYS_POSIX;
   for (const key of [...systemKeys, ...PROXY_ENV_KEYS]) {
@@ -151,7 +151,7 @@ export function buildSandboxEnv(extra?: Record<string, string>): NodeJS.ProcessE
     env.NO_PROXY = merged;
     env.no_proxy = merged; // 大小写都给,Go 与各工具识别习惯不一
   }
-  return { ...env, ...extra };
+  return env;
 }
 
 /** 额外只读挂载路径:给打包态 Electron/bwrap 暴露主二进制与 resources 深层依赖。 */
@@ -178,9 +178,9 @@ function isEnvEnabled(raw: string | undefined): boolean {
   return TRUTHY_ENV_VALUES.has(raw.trim().toLowerCase());
 }
 
-/** 凭据是否注入沙箱 env。默认关闭(安全默认),避免服务端形态把真实凭据注入任意命令;
- *  桌面主进程显式设 QINGAGENT_SANDBOX_INJECT_CREDENTIALS=1 补回本地登录态能力,
- *  服务端"全能力"镜像也必须在部署层显式开启。 */
+/** 是否允许向受信 node skill 脚本按次注入凭据。默认关闭(安全默认)，generic CLI、
+ *  lark-cli 与 LocalSandbox 基础 env 均不受此开关影响、始终拿不到托管凭据；桌面主进程
+ *  显式设 QINGAGENT_SANDBOX_INJECT_CREDENTIALS=1 补回本地登录态能力。 */
 export function shouldInjectCredentials(): boolean {
   return isEnvEnabled(process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS);
 }
@@ -195,8 +195,6 @@ export function allowUnisolatedCommands(): boolean {
 export interface SessionWorkspaceFactoryOptions {
   /** 解析已启用技能目录(与全局 Workspace 共用同一来源)。 */
   resolveSkillDirs: () => Promise<string[]> | string[];
-  /** 凭据 env 注入钩子(P2 接 credentials 子系统;缺省只有 PATH+代理)。 */
-  resolveCredentialEnv?: (sessionId: string) => Promise<Record<string, string>> | Record<string, string>;
   /** 解析本会话已连接的只读本地资料库。 */
   resolveFolderSources?: (sessionId: string) => Promise<FolderSourceRecord[]> | FolderSourceRecord[];
 }
@@ -344,7 +342,7 @@ export async function getSessionWorkspace(
   }
 
   // 并发去重:同一 key 首次构建时只建一次,其余并发调用 await 同一 Promise。
-  // 否则 cache miss 与 cache.set 之间有 await(resolveCredentialEnv 让出事件循环),
+  // 否则 cache miss 与 cache.set 之间有异步资料源解析让出事件循环,
   // 并发多路会各建一个 Workspace → 泄漏 N-1 个游离实例 + 破坏单例语义(R9 BUG-1)。
   const pending = inflight.get(key);
   if (pending) return pending;
@@ -382,10 +380,6 @@ async function buildSessionWorkspace(
   // 无文件系统隔离(none)且未显式允许时:不装 sandbox(不暴露命令执行),
   // 只留文件工具+技能发现。多租户服务器靠此强制要求真隔离。
   const commandsEnabled = isolation !== "none" || allowUnisolatedCommands();
-  // 凭据仅在显式开启时注入;默认关闭时任意命令都读不到 token。
-  const credentialEnv = shouldInjectCredentials()
-    ? (await opts.resolveCredentialEnv?.(sessionId)) ?? {}
-    : {};
   const rawFolderSources = Array.from(
     (await opts.resolveFolderSources?.(sessionId)) ??
     getSessionFolderSources(sessionId),
@@ -503,7 +497,9 @@ async function buildSessionWorkspace(
               readOnlyPaths: [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
               readWritePaths: [sessionDir],
             },
-            env: buildSandboxEnv(credentialEnv),
+            // 托管凭据不得进入 LocalSandbox 基础 env；仅由 gatedExecuteCommandTool
+            // 对受信 node skill 脚本按次发放，generic CLI 与 lark-cli 始终看不到。
+            env: buildSandboxEnv(),
             timeout: SANDBOX_TIMEOUT_MS,
           }),
         }

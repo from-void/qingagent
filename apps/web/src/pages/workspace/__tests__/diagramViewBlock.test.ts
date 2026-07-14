@@ -32,6 +32,18 @@ describe("ViewBlock 保留 diagram(不降级为 code)", () => {
 });
 
 describe("viewSectionsToHtml 审阅态行内 patch 保真", () => {
+  it("有序列表把 listStyle 写回 TipTap 可识别的 HTML attrs", () => {
+    const html = viewSectionsToHtml([{
+      kind: "list",
+      ordered: true,
+      listStyle: "upper-roman",
+      items: ["条目"],
+    }]);
+
+    expect(html).toContain('data-list-style="upper-roman"');
+    expect(html).toContain('style="list-style-type: upper-roman"');
+  });
+
   it("quote 带 patch inlineMath 时不被原始 pm 节点序列化吞掉", () => {
     const latex = String.raw`\sqrt{\sigma^{}} & x < y`;
     const html = viewSectionsToHtml([{

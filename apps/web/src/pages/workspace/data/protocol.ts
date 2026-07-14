@@ -66,7 +66,7 @@ import type {
   ToolCallSpec,
   WireActiveOverlay,
 } from "@qingagent/contract-ts";
-import type { PmBlockNode, PmDiagramOverlay, PmDoc, PmInlineNode, PmMark, PmTableCellNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDiagramOverlay, PmDoc, PmInlineNode, PmMark, PmOrderedListStyle, PmTableCellNode } from "@qingagent/pm-schema";
 
 /** 从 `AskUserQuestion.id` 到用户答案的映射，仅供 workspace view 层使用。 */
 export type AskUserAnswers = Record<string, AskUserAnswer>;
@@ -185,7 +185,7 @@ export type ViewBlock = ViewBlockMeta & (
   | { kind: "h3" | "h4" | "h5" | "h6"; text: string; spans?: ViewDocSpan[]; textAlign?: string }
   | { kind: "p"; spans: ViewDocSpan[]; textAlign?: string }
   | { kind: "quote"; text: string; spans?: ViewDocSpan[]; node?: PmBlockNode }
-  | { kind: "list"; ordered: boolean; items: string[]; itemSpans?: ViewDocSpan[][]; start?: number; rowDiff?: ViewListRowDiff[]; node?: PmBlockNode }
+  | { kind: "list"; ordered: boolean; items: string[]; itemSpans?: ViewDocSpan[][]; start?: number; listStyle?: PmOrderedListStyle; rowDiff?: ViewListRowDiff[]; node?: PmBlockNode }
   | { kind: "hr" }
   | {
       kind: "table";
@@ -327,6 +327,7 @@ function pmBlockToViewSections(node: PmBlockNode): ViewBlock[] {
         kind: "list",
         ordered: node.type === "orderedList",
         ...(node.type === "orderedList" && typeof node.attrs.start === "number" ? { start: node.attrs.start } : {}),
+        ...(node.type === "orderedList" && node.attrs.listStyle ? { listStyle: node.attrs.listStyle } : {}),
         items: node.content.map((item) => item.content.map(pmBlockText).join("\n")),
         // 富 spans:保留加粗/链接等行内样式,审阅渲染优先消费(items 仍供文本派生)
         itemSpans: node.content.map((item) => pmBlocksInlineSpans(item.content)),
@@ -2018,6 +2019,7 @@ function cloneViewBlock(section: ViewBlock): ViewBlock {
         kind: "list",
         ordered: section.ordered,
         ...(section.start != null ? { start: section.start } : {}),
+        ...(section.listStyle ? { listStyle: section.listStyle } : {}),
         items: section.items.slice(),
         ...(section.itemSpans ? { itemSpans: section.itemSpans.map(cloneSpans) } : {}),
         ...(section.rowDiff ? { rowDiff: cloneListRowDiff(section.rowDiff) } : {}),

@@ -6,7 +6,8 @@ describe("cloneViewSections", () => {
   it("递归保留列表 rowDiff.childLists，且深层 spans 独立克隆", () => {
     const section = {
       kind: "list",
-      ordered: false,
+      ordered: true,
+      listStyle: "lower-alpha",
       items: ["父项"],
       rowDiff: [{
         status: "same",

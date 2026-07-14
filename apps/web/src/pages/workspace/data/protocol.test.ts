@@ -229,6 +229,25 @@ function blockSuggestion(id: string, hunk: DiffHunk): DocSuggestion {
 }
 
 describe("pmDocToViewDocumentSnapshot — columnList 保真", () => {
+  it("有序列表投影保留 listStyle", () => {
+    const snapshot = pmDocToViewDocumentSnapshot(pmDoc([{
+      type: "orderedList",
+      attrs: { blockId: "ordered-style", start: 3, listStyle: "upper-roman" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "ordered-style-item" },
+        content: [pmParagraph("ordered-style-p", "条目")],
+      }],
+    }]), 1, "t");
+
+    expect(snapshot.sections[0]).toMatchObject({
+      kind: "list",
+      ordered: true,
+      start: 3,
+      listStyle: "upper-roman",
+    });
+  });
+
   it("审核态保留 columnList 为单个保真块(携带原始 pm 节点),不再拍平成纵向堆叠", () => {
     const snapshot = pmDocToViewDocumentSnapshot(pmDoc([pmColumnList("columns-view")]), 1, "t");
 

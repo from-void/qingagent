@@ -954,6 +954,7 @@ function cloneViewSection(section: ViewBlock): ViewBlock {
         kind: "list",
         ordered: section.ordered,
         ...(section.start != null ? { start: section.start } : {}),
+        ...(section.listStyle ? { listStyle: section.listStyle } : {}),
         items: section.items.slice(),
         ...(section.node ? { node: cloneJson(section.node) } : {}),
         ...(section.itemSpans ? { itemSpans: section.itemSpans.map((spans) => spans.map((sp) => ({ ...sp }))) } : {}),

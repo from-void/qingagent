@@ -112,7 +112,10 @@ function sectionToHtml(section: ViewBlock): string {
       return `<blockquote><p>${section.spans ? section.spans.map(spanToText).join("") : esc(section.text)}</p></blockquote>`;
     case "list": {
       const tag = section.ordered ? "ol" : "ul";
-      return `<${tag}>${section.items.map((item, i) => `<li><p>${section.itemSpans?.[i]?.length ? section.itemSpans[i]!.map(spanToText).join("") : esc(item)}</p></li>`).join("")}</${tag}>`;
+      const attrs = section.ordered && section.listStyle
+        ? ` data-list-style="${escAttr(section.listStyle)}" style="list-style-type: ${escAttr(section.listStyle)}"`
+        : "";
+      return `<${tag}${attrs}>${section.items.map((item, i) => `<li><p>${section.itemSpans?.[i]?.length ? section.itemSpans[i]!.map(spanToText).join("") : esc(item)}</p></li>`).join("")}</${tag}>`;
     }
     case "hr":
       return "<hr />";

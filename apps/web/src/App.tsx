@@ -48,6 +48,14 @@ export default function App() {
 // 开源 fork 直接构建即得干净默认(复用遥测端点 opt-in 范式:源码零默认)。
 const DESKTOP_SITE_URL = (import.meta.env.VITE_DESKTOP_SITE_URL ?? "").trim();
 const MOBILE_VIEWPORT_QUERY = "(max-width: 767px)";
+const ROUTE_PRESENTATION: Partial<
+  Record<RouteName, { pageFrameModifier?: string; suspenseBackground: string }>
+> = {
+  // 这些纯色来自各懒加载页面 CSS 的最底层；CSS chunk 未到时由主包先铺同色，避免切页露底。
+  home: { pageFrameModifier: "web-page-frame--qingjian-home", suspenseBackground: "#1c1915" },
+  "new-session": { suspenseBackground: "#16212c" },
+  workspace: { pageFrameModifier: "web-page-frame--workspace", suspenseBackground: "#16212c" },
+};
 
 function AppShell() {
   const toast = useToast();
@@ -81,9 +89,11 @@ function AppShell() {
   // 编辑页尤甚:首页跑完深色到达帧切来后,若 --workspace 靠 paint 后的 useEffect 才加,会先闪一帧
   // 浅色窄框(见 workspace 从 useEffect 迁到此处的修复)。
   const route = useRoute();
+  const routePresentation = ROUTE_PRESENTATION[route];
   const pageFrameClass = `web-page-frame${
-    route === "home" ? " web-page-frame--qingjian-home" : route === "workspace" ? " web-page-frame--workspace" : ""
+    routePresentation?.pageFrameModifier ? ` ${routePresentation.pageFrameModifier}` : ""
   }`;
+  const suspenseBackground = routePresentation?.suspenseBackground ?? "var(--app-boot-bg, #ece4d3)";
   if (isMobileViewport) {
     return <MobileOpenOnDesktopNotice onCopied={() => action("复制成功")} />;
   }
@@ -102,10 +112,7 @@ function AppShell() {
         <Suspense
           fallback={
             <div
-              style={{
-                height: "100vh",
-                background: route === "workspace" ? "#16212c" : "var(--app-boot-bg, #ece4d3)",
-              }}
+              style={{ height: "100vh", background: suspenseBackground }}
               aria-hidden
             />
           }

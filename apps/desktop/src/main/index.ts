@@ -18,13 +18,16 @@ import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.j
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
+  isAllowedMainFrameNavigation,
+  shouldOpenMainWindowNavigationExternally,
+} from "./navigationPolicy.js";
+import {
   getCurrentUpdateStatus,
   RELEASES_URL,
   manualCheckForUpdates,
   quitAndInstallUpdate,
   startDesktopUpdater,
 } from "./update/updater.js";
-import { isAllowedMainFrameNavigation } from "./navigationPolicy.js";
 import { acquireSingleInstanceLock } from "./singleInstance.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -228,7 +231,7 @@ if (!process.env.QINGAGENT_PYODIDE_ENABLED) {
 
 // Dynamic import after env is configured — server/core reads DATABASE_URL at module-evaluation time.
 // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一串起迁移、Mastra 与 server app。
-const { startServer } = await import("./server.js");
+const { isReportedServerStartupError, startServer } = await import("./server.js");
 // 长 keep-alive 必须经 server 包转导出取 undici(desktop 无直接依赖且 esbuild 整包
 // bundle,createRequire 在打包态解析不到),详见 httpDispatcher.ts 注释。
 const { installLongKeepAliveDispatcher } = await import("@qingagent/server/httpDispatcher");
@@ -261,6 +264,27 @@ const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js"
 let appOpenedCaptured = false;
 const appStartedAt = Date.now();
 let embeddedServerPort: number | null = null;
+let embeddedServerReady: Promise<{ port: number }> | null = null;
+let windowStartupInProgress = false;
+
+const STARTUP_SHELL_HTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light">
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; background: #ece4d3; }
+    body { display: grid; place-items: center; color: #2f2a22; font-family: "Songti SC", "STSong", serif; }
+    .shell { display: grid; justify-items: center; gap: 14px; }
+    .mark { font-size: 22px; letter-spacing: 0.36em; text-indent: 0.36em; }
+    .breath { width: 42px; height: 1px; background: #6f6252; animation: breathe 1.8s ease-in-out infinite; }
+    @keyframes breathe { 0%, 100% { opacity: 0.25; transform: scaleX(0.62); } 50% { opacity: 0.9; transform: scaleX(1); } }
+    @media (prefers-reduced-motion: reduce) { .breath { animation: none; opacity: 0.65; } }
+  </style>
+</head>
+<body><div class="shell"><div class="mark">青简</div><div class="breath"></div></div></body>
+</html>`;
+const STARTUP_SHELL_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STARTUP_SHELL_HTML)}`;
 
 function captureAppOpenedOnce() {
   if (appOpenedCaptured) return;
@@ -609,15 +633,38 @@ function filenameFromContentDisposition(value: string | null): string | null {
   return plain ? plain.trim() : null;
 }
 
+function addAllowedOrigin(origins: Set<string>, url: string): void {
+  try {
+    origins.add(new URL(url).origin);
+  } catch {
+    console.warn("[startup] 忽略非法应用地址:", url);
+  }
+}
+
 async function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  if (windowStartupInProgress) return;
+
+  windowStartupInProgress = true;
+  try {
+    await createWindowOnce();
+  } finally {
+    windowStartupInProgress = false;
+  }
+}
+
+async function createWindowOnce() {
   captureAppOpenedOnce();
 
-  const { port } = await startServer({ desktopLogDir });
-  embeddedServerPort = port;
-  installNetProbe();
-  // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
-  warmUpModelEndpoint(resolveBaseUrl());
-  await maybeSeedInitialContent();
+  const isDev = !app.isPackaged;
+  const devContentUrl = process.env.QINGAGENT_DESKTOP_DEV_URL ?? "http://localhost:6173";
+  const allowedAppOrigins = new Set<string>();
+  if (isDev) addAllowedOrigin(allowedAppOrigins, devContentUrl);
 
   // 顶部菜单栏(File / Edit / View / Window / Help)对终端用户无意义,整窗去掉。
   Menu.setApplicationMenu(null);
@@ -637,8 +684,8 @@ async function createWindow() {
     center: true,
     title: "青简",
     autoHideMenuBar: true,
-    // 启动直出:先隐藏窗口、深色底兜白屏,首帧就绪后再 show(见下 ready-to-show)。
-    backgroundColor: "#1a1a1a",
+    // 原生底色、启动壳与 Web boot 契约统一为暖纸色，整个导航链路不产生色阶跳变。
+    backgroundColor: "#ece4d3",
     show: false,
     webPreferences: {
       // preload 以 CommonJS .cjs 产出(见 build.mjs);ESM 的 .js preload 在 Electron 里
@@ -651,67 +698,97 @@ async function createWindow() {
       backgroundThrottling: false,
     },
   });
+  const contentWindow = mainWindow;
+  contentWindow.once("closed", () => {
+    if (mainWindow === contentWindow) mainWindow = null;
+  });
 
-  attachRendererDiagnostics(mainWindow.webContents, desktopLogDir);
-  attachRendererTelemetry(mainWindow, telemetry.getRendererBootstrap());
+  attachRendererDiagnostics(contentWindow.webContents, desktopLogDir);
 
-  // 启动直出:首帧就绪即显示;幂等 revealWindow + 5s 兜底(并清掉 timer),避免
-  // did-finish-load 那种会被 reload/导航多次触发、把已最小化窗口又弹出来的问题。
-  let revealed = false;
-  let revealFallback: ReturnType<typeof setTimeout> | null = null;
-  const revealWindow = () => {
-    if (revealed || !mainWindow) return;
-    revealed = true;
-    if (revealFallback) {
-      clearTimeout(revealFallback);
-      revealFallback = null;
-    }
-    mainWindow.show();
-  };
-  mainWindow.once("ready-to-show", revealWindow);
-  revealFallback = setTimeout(revealWindow, 5000);
-
-  const isDev = !app.isPackaged;
-  // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
-  const devUrl = process.env.QINGAGENT_DESKTOP_DEV_URL ?? "http://localhost:6173";
-
-  // 外部链接走系统默认浏览器,不在 app 内弹小窗 / 不把主窗口导航走。
-  // ① target=_blank / window.open():拦下新窗,http(s)/mailto 交给系统浏览器,其余一律 deny。
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  // 外部链接走系统默认浏览器，不允许启动壳或内容页把主窗口导航到应用 origin 之外。
+  // 监听器必须早于 data: 启动壳加载挂载，避免壳阶段的 http(s) 导航逃逸。
+  contentWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) {
       void shell.openExternal(url);
     }
     return { action: "deny" };
   });
-  // ② 整页导航与服务端重定向:SPA 内部跳转走 history API 不触发这些事件。白名单只含
-  //    当前应用同源 http(s) 与开发服务器；file:、about:、跨源和畸形 URL 均不得接管主窗口。
+  // 整页导航与服务端重定向：显式放行内置服务、开发服务器和当前同源；file:、about:、
+  // 跨源及畸形 URL 都不能接管主窗口。用户主动点出的外部 Web 链接交给系统浏览器。
   const guardMainFrameNavigation = (event: Event, url: string): void => {
-    if (!isAllowedMainFrameNavigation(url, mainWindow?.webContents.getURL() ?? "", isDev ? devUrl : undefined)) {
+    if (
+      !isAllowedMainFrameNavigation(
+        url,
+        contentWindow.webContents.getURL(),
+        isDev ? devContentUrl : undefined,
+        allowedAppOrigins,
+      )
+    ) {
       event.preventDefault();
     }
   };
-  mainWindow.webContents.on("will-navigate", guardMainFrameNavigation);
-  mainWindow.webContents.on("will-redirect", guardMainFrameNavigation);
+  contentWindow.webContents.on("will-navigate", (event, url) => {
+    guardMainFrameNavigation(event, url);
+    if (shouldOpenMainWindowNavigationExternally(url, allowedAppOrigins)) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+  contentWindow.webContents.on("will-redirect", guardMainFrameNavigation);
 
-  const updateWindow = mainWindow;
-  updateWindow.webContents.once("did-finish-load", () => {
+  // 启动壳不依赖服务端和外部资源：先发起加载并立即显示暖纸窗口，再并行启动服务端。
+  const startupShellReady = contentWindow.loadURL(STARTUP_SHELL_URL).catch((error) => {
+    console.warn("[startup] 启动壳加载失败:", error);
+  });
+  contentWindow.show();
+  const serverReady = embeddedServerReady ??= startServer({ desktopLogDir });
+
+  // 迁移失败已由 startServer 报错；其余启动异常也必须明确告知并退出，不能永远停在启动壳。
+  let port: number;
+  try {
+    ({ port } = await serverReady);
+  } catch (error) {
+    if (!isReportedServerStartupError(error)) {
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      dialog.showErrorBox(
+        "本地服务启动失败",
+        "青简无法启动本地服务，应用将退出。\n\n" + detail,
+      );
+    }
+    app.exit(1);
+    return;
+  }
+  embeddedServerPort = port;
+  addAllowedOrigin(allowedAppOrigins, `http://localhost:${port}`);
+  addAllowedOrigin(allowedAppOrigins, `http://127.0.0.1:${port}`);
+  installNetProbe();
+  // 桌面端没有 env key,这里仅预热默认官方 endpoint;访客自定义 endpoint 随请求透传,此处无法提前知道。
+  warmUpModelEndpoint(resolveBaseUrl());
+  await maybeSeedInitialContent();
+  await startupShellReady;
+  if (contentWindow.isDestroyed()) return;
+
+  // 启动壳已完成，遥测从此处挂载，确保首个 did-finish-load 对应真正内容页。
+  attachRendererTelemetry(contentWindow, telemetry.getRendererBootstrap());
+
+  contentWindow.webContents.once("did-finish-load", () => {
     setTimeout(() => {
-      void startDesktopUpdater({ window: updateWindow });
+      void startDesktopUpdater({ window: contentWindow });
     }, 250);
   });
 
-  if (isDev) {
-    // In dev mode, load from the Vite dev server.
-    // The web app's vite config proxies /api to the Hono server.
-    mainWindow.loadURL(devUrl);
-    mainWindow.webContents.openDevTools();
-  } else {
-    // In production, the Hono server serves both API and static files.
-    mainWindow.loadURL(`http://localhost:${port}`);
-  }
+  const contentUrl = isDev
+    // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
+    ? devContentUrl
+    // 打包态由内置 Hono 同时提供 API 与静态文件。
+    : `http://localhost:${port}`;
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  const contentLoad = contentWindow.loadURL(contentUrl);
+  if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
+    contentWindow.webContents.openDevTools({ mode: "detach" });
+  }
+  void contentLoad.catch((error) => {
+    console.error("[startup] 内容页加载失败:", error);
   });
 }
 

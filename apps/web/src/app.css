@@ -168,8 +168,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* 启动/路由切换时露这层 = --app-boot-bg(首页暖纸稳态色 #ece4d3(--bg-window),见 index.html),
-     消除懒加载大 chunk 下载期的"中间黑块"闪;workspace 自己设 --bg-canvas 亮底(见 workspace.css)。 */
+  /* React 挂载前仍使用 index.html 的暖纸启动底；路由切换时由 App.tsx 的 Suspense
+     按目标页面铺真实底色，避免懒加载 chunk 下载期露出错误色阶。 */
   background: var(--app-boot-bg, var(--bg-canvas));
 }
 

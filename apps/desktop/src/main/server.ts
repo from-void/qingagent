@@ -2,11 +2,23 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { app as electronApp, dialog } from "electron";
 import path from "node:path";
+import { listenWithDesktopPortFallback, resolveDesktopPort } from "./desktopPort.js";
 import { telemetry } from "./telemetry/index.js";
 import { createSingleFlightStarter } from "./serverSingleton.js";
 import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
 
 const toolCallStreamScanner = new ToolCallStreamScanner((name) => telemetry.trackToolUsed(name));
+const reportedServerStartupErrors = new WeakSet<object>();
+
+export function isReportedServerStartupError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && reportedServerStartupErrors.has(error));
+}
+
+function markServerStartupErrorReported(error: unknown): Error {
+  const reportedError = error instanceof Error ? error : new Error(String(error));
+  reportedServerStartupErrors.add(reportedError);
+  return reportedError;
+}
 
 export interface StartServerOptions {
   desktopLogDir: string;
@@ -28,7 +40,7 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
         detail,
     );
     electronApp.exit(1);
-    throw err;
+    throw markServerStartupErrorReported(err);
   }
 
   const { installDesktopObservability } = await import("./diagnostics/observability.js");
@@ -114,17 +126,32 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
     return res;
   };
 
-  return new Promise((resolve) => {
-    // 桌面渲染端只加载本机 localhost 服务,固定回环监听可减少局域网暴露面。
-    const server = serve({ fetch: observedFetch, port: 0, hostname: "127.0.0.1" }, (info) => {
-      console.log(`Embedded server started on port ${info.port}`);
-      void import("@qingagent/server/externalInstance").then(({ startExternalInstance }) =>
-        startExternalInstance({ port: info.port }),
-      ).catch((error) => {
-        console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
-      });
-      resolve({ port: info.port });
+  const preferredPort = resolveDesktopPort(process.env.QINGAGENT_DESKTOP_PORT);
+  const result = await listenWithDesktopPortFallback(
+    preferredPort,
+    (port) => listenEmbeddedServer(observedFetch, port),
+  );
+  if (result.fellBack) {
+    console.warn(`[desktop] 端口 ${preferredPort} 已被占用，已回退到随机端口 ${result.port}`);
+  }
+  console.log(`Embedded server started on port ${result.port}`);
+  void import("@qingagent/server/externalInstance").then(({ startExternalInstance }) =>
+    startExternalInstance({ port: result.port }),
+  ).catch((error) => {
+    console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
+  });
+  return { port: result.port };
+}
+
+function listenEmbeddedServer(fetch: Parameters<typeof serve>[0]["fetch"], port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    // 桌面渲染端只加载本机 localhost 服务，固定回环监听可减少局域网暴露面。
+    const onError = (error: Error) => reject(error);
+    const server = serve({ fetch, port, hostname: "127.0.0.1" }, (info) => {
+      server.off("error", onError);
+      resolve(info.port);
     });
+    server.once("error", onError);
   });
 }
 

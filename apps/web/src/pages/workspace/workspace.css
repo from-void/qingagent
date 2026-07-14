@@ -300,6 +300,7 @@
   /* ============ 消息样式 · agent 平铺 / user 气泡右对齐 ============ */
   /* 对话流式"逐段进场"动画(StreamingChars):效果/时长/分段由 streamFxConfig 默认值决定,
      经 CSS 变量驱动。每段挂载即播一次。 */
+  .sfx-seg{ pointer-events:none; }
   .sfx-blur{ animation:sfx-blur var(--sfx-dur, 700ms) ease-out; }
   .sfx-rise{ display:inline-block; animation:sfx-rise var(--sfx-dur, 520ms) cubic-bezier(.22,1,.36,1); }
   .sfx-soft{ animation:sfx-soft var(--sfx-dur, 900ms) ease-out; }

@@ -56,6 +56,12 @@ describe("workspaceCssContract", () => {
     );
   });
 
+  it("keeps streaming text decoration from covering workspace controls", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    expect(workspaceCss).toMatch(/\.sfx-seg\s*\{[^}]*pointer-events\s*:\s*none\s*;/);
+  });
+
   it("keeps table color dropdowns wired to .open so the palette is visible (非display:none)", () => {
     // 回归 tbl-cell-color-palette-display-none(R34-c1):表格选择条的文字色/单元格底色
     // dt-group 必须随 openTableColor 加 .open class,否则 CSS .dt-menu{display:none} 永不解禁、

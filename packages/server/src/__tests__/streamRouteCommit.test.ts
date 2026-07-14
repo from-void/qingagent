@@ -8,8 +8,12 @@ import {
   sessionManager,
 } from "../gateway/bridgeHandler";
 import { InMemoryFrameLog } from "../gateway/frameLog";
+import type { LoggedFrame } from "../gateway/frameLog";
 import { SessionManager } from "../gateway/sessionManager";
-import type { HandleCommandFn } from "../gateway/sessionActor";
+import {
+  SessionActorCommandError,
+  type HandleCommandFn,
+} from "../gateway/sessionActor";
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
@@ -232,6 +236,77 @@ describe("POST /api/v1/commit", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error });
+  });
+
+  it("accept/reject 批次重叠在进入 actor 前返回稳定 400", async () => {
+    const submit = vi.spyOn(sessionManager, "submit");
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "commit-overlap-test",
+      acceptReviewBatchIds: ["batch-1", "batch-overlap"],
+      rejectReviewBatchIds: ["batch-overlap"],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "acceptReviewBatchIds and rejectReviewBatchIds must not overlap",
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("/commands 同样在 schema 层拒绝 accept/reject 批次重叠", async () => {
+    const submit = vi.spyOn(sessionManager, "submit");
+    const res = await request("POST", "/api/v1/commands", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["batch-overlap"],
+        rejectReviewBatchIds: ["batch-overlap"],
+      },
+    });
+    const body = await res.json() as { error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "commitReviewGroups.data.rejectReviewBatchIds: must not overlap with acceptReviewBatchIds",
+    );
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("真正执行中的 actor 失败仍返回 200+脱敏帧，不透传原始 message", async () => {
+    const failureFrame: LoggedFrame = {
+      seq: 7,
+      epoch: 1,
+      generation: 2,
+      frame: {
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            streamId: "error",
+            reason: "操作未能完成，请刷新页面后重试",
+            retriable: true,
+          },
+        },
+      },
+    };
+    vi.spyOn(sessionManager, "submit").mockRejectedValueOnce(
+      new SessionActorCommandError(
+        "Session actor command failed",
+        new Error("secret path /tmp/private-review sk-reviewsecret"),
+        [failureFrame],
+      ),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "commit-runtime-failure-test",
+      acceptReviewBatchIds: ["batch-1"],
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual([{ seq: 7, frame: failureFrame.frame }]);
+    expect(JSON.stringify(body)).not.toContain("private-review");
+    expect(JSON.stringify(body)).not.toContain("reviewsecret");
   });
 
   it("内部异常返回脱敏通用错误，不泄漏原始 error.message", async () => {

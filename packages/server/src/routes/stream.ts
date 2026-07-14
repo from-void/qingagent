@@ -397,6 +397,12 @@ streamRoutes.post("/commit", async (c) => {
         }
       }
     }
+    const accepted = new Set(acceptReviewBatchIds as string[]);
+    if ((rejectReviewBatchIds as string[] | undefined)?.some((id) => accepted.has(id))) {
+      return c.json({
+        error: "acceptReviewBatchIds and rejectReviewBatchIds must not overlap",
+      }, 400);
+    }
   } else {
     if (!Array.isArray(patchIds) || patchIds.length === 0) {
       return c.json({ error: "patchIds must be a non-empty array" }, 400);

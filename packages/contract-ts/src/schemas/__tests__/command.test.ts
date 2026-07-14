@@ -130,6 +130,13 @@ describe("commandSchema", () => {
     ["acceptPatch 两者皆空", { kind: "acceptPatch", data: {} }],
     ["commitPatches 空 ids", { kind: "commitPatches", data: { ids: [] } }],
     ["commitReviewGroups accept 含空 id", { kind: "commitReviewGroups", data: { acceptReviewBatchIds: [""] } }],
+    ["commitReviewGroups accept/reject 重叠", {
+      kind: "commitReviewGroups",
+      data: {
+        acceptReviewBatchIds: ["batch-1", "batch-2"],
+        rejectReviewBatchIds: ["batch-2"],
+      },
+    }],
     ["resumeAskUser 空 answers", { kind: "resumeAskUser", data: { sessionId: "s", answers: {} } }],
     ["resumeAskUser 空 toolCallId", { kind: "resumeAskUser", data: { sessionId: "s", toolCallId: "", answers: { q1: { chosen: [], freeText: "x" } } } }],
     ["reparseMaterial sessionId 空", { kind: "reparseMaterial", data: { sessionId: "", fileId: "file-1" } }],

@@ -113,11 +113,22 @@ const commitPatchesDataSchema = z
   ) satisfies z.ZodType<CommitPatches>;
 type _CommitPatchesExact = Expect<Equal<z.infer<typeof commitPatchesDataSchema>, CommitPatches>>;
 
-const commitReviewGroupsDataSchema = z.object({
-  acceptReviewBatchIds: z.array(z.string().min(1)),
-  rejectReviewBatchIds: z.array(z.string().min(1)).optional(),
-  keepPendingReviewBatchIds: z.array(z.string().min(1)).optional(),
-}) satisfies z.ZodType<CommitReviewGroups>;
+const commitReviewGroupsDataSchema = z
+  .object({
+    acceptReviewBatchIds: z.array(z.string().min(1)),
+    rejectReviewBatchIds: z.array(z.string().min(1)).optional(),
+    keepPendingReviewBatchIds: z.array(z.string().min(1)).optional(),
+  })
+  .refine(
+    (data) => {
+      const accepted = new Set(data.acceptReviewBatchIds);
+      return !(data.rejectReviewBatchIds ?? []).some((id) => accepted.has(id));
+    },
+    {
+      path: ["rejectReviewBatchIds"],
+      message: "must not overlap with acceptReviewBatchIds",
+    },
+  ) satisfies z.ZodType<CommitReviewGroups>;
 type _CommitReviewGroupsExact = Expect<
   Equal<z.infer<typeof commitReviewGroupsDataSchema>, CommitReviewGroups>
 >;

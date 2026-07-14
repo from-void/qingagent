@@ -30,6 +30,26 @@ async function ledgerIds(client: Client): Promise<number[]> {
   return res.rows.map((r) => Number(r.id));
 }
 
+async function seedLedger(
+  rows: Array<{ id: number; name: string }>,
+  options: { primaryKey?: boolean } = {},
+): Promise<void> {
+  const client = getDocumentsClient();
+  await client.execute(
+    `CREATE TABLE schema_migrations (
+      id INTEGER ${options.primaryKey === false ? "" : "PRIMARY KEY"},
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    )`,
+  );
+  for (const row of rows) {
+    await client.execute({
+      sql: "INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)",
+      args: [row.id, row.name, "2026-01-01T00:00:00.000Z"],
+    });
+  }
+}
+
 describe("assertMigrationsContinuous", () => {
   it("接受从 1 连续的注册表", () => {
     expect(() =>
@@ -71,7 +91,7 @@ describe("runMigrations 记账与幂等", () => {
     expect(applied).toEqual([1, 2]);
   });
 
-  it("只应用高于账本 MAX(id) 的迁移", async () => {
+  it("合法连续账本只应用未记账的连续尾段", async () => {
     await runMigrations([{ id: 1, name: "one", up: async () => {} }]);
     const ran: number[] = [];
     const r = await runMigrations([
@@ -80,6 +100,63 @@ describe("runMigrations 记账与幂等", () => {
     ]);
     expect(r.appliedIds).toEqual([2]);
     expect(ran).toEqual([2]); // id=1 不重跑
+  });
+});
+
+describe("迁移账本完整性 fail-stop", () => {
+  const migrations: Migration[] = [
+    { id: 1, name: "one", up: async () => {} },
+    { id: 2, name: "two", up: async () => {} },
+    { id: 3, name: "three", up: async () => {} },
+  ];
+
+  it("拒绝中间空洞，且不执行后续迁移或生成备份", async () => {
+    await seedLedger([
+      { id: 1, name: "one" },
+      { id: 3, name: "three" },
+    ]);
+    let ran = false;
+    const registry = migrations.map((migration) => ({
+      ...migration,
+      up: async () => {
+        ran = true;
+      },
+    }));
+
+    await expect(runMigrations(registry)).rejects.toThrow(/id 有空洞.*期望 id=2.*实际为 id=3/);
+    expect(ran).toBe(false);
+    expect(readdirSync(db.tempDir).some((name) => name.includes(".bak-pre-v"))).toBe(false);
+  });
+
+  it("拒绝重复 id，即使账本表被手工改成无主键", async () => {
+    await seedLedger([
+      { id: 1, name: "one" },
+      { id: 1, name: "one" },
+    ], { primaryKey: false });
+
+    await expect(runMigrations(migrations)).rejects.toThrow(/重复迁移 id=1/);
+  });
+
+  it("拒绝同 id 的 name 漂移", async () => {
+    await seedLedger([
+      { id: 1, name: "renamed" },
+    ]);
+
+    await expect(runMigrations(migrations)).rejects.toThrow(
+      /id=1 的 name 不匹配.*期望 "one".*实际为 "renamed"/,
+    );
+  });
+
+  it("拒绝未来 id，并给出升级应用或还原备份指引", async () => {
+    await seedLedger([
+      { id: 1, name: "one" },
+      { id: 2, name: "two" },
+      { id: 3, name: "three" },
+    ]);
+
+    await expect(runMigrations(migrations.slice(0, 2))).rejects.toThrow(
+      /未来迁移 id=3.*数据库来自更新版本，请升级应用或还原备份/,
+    );
   });
 });
 

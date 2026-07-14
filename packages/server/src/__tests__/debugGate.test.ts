@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { assessBindSafety, isDebugEndpointEnabled, isExternallyExposed } from "../lib/debugGate";
+import {
+  assessBindSafety,
+  isDebugEndpointEnabled,
+  isExternallyExposed,
+  normalizeHost,
+} from "../lib/debugGate";
 
 afterEach(() => {
   delete process.env.QINGAGENT_ENABLE_DEBUG;
@@ -53,6 +58,14 @@ describe("assessBindSafety", () => {
     expect(assessBindSafety("127.0.0.1", { QINGAGENT_PUBLIC_DEPLOYMENT: "1" })).toEqual({
       allowed: true,
     });
+  });
+});
+
+describe("normalizeHost", () => {
+  it("把 IPv6 URL 括号写法归一化为 serve 可绑定的主机名", () => {
+    expect(normalizeHost("[::1]")).toBe("::1");
+    expect(normalizeHost("::1")).toBe("::1");
+    expect(normalizeHost("localhost")).toBe("localhost");
   });
 });
 

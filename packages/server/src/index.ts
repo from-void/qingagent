@@ -12,7 +12,7 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
 }
 import "./crashGuard.js"; // Install crash/signal handlers + in-process durable log FIRST
 import { serve } from "@hono/node-server";
-import { assessBindSafety, logStartupSecurityWarnings } from "./lib/debugGate";
+import { assessBindSafety, logStartupSecurityWarnings, normalizeHost } from "./lib/debugGate";
 // ⚠️ runMigrations 从深路径导入,刻意避开 @qingagent/core barrel:barrel 求值会连带 eval
 // core/mastra.ts 的 `new Mastra`(eager-init LibSQLStore、对同一 qingagent.db 建 mastra_* 表),
 // 与迁移的 BEGIN IMMEDIATE 并发争同库写锁 → SQLITE_BUSY + mastra 背景 init 崩(unhandledRejection)。
@@ -22,7 +22,7 @@ import { runMigrations } from "@qingagent/db/migrations";
 
 const port = Number(process.env.PORT ?? 8080);
 // 默认只监听本机回环;Docker/局域网部署需要显式设置 QINGAGENT_HOST=0.0.0.0。
-const hostname = process.env.QINGAGENT_HOST ?? "127.0.0.1";
+const hostname = normalizeHost(process.env.QINGAGENT_HOST ?? "127.0.0.1");
 const bindSafety = assessBindSafety(hostname);
 if (!bindSafety.allowed) {
   console.error(bindSafety.error);

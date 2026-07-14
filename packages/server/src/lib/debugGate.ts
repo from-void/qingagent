@@ -7,7 +7,7 @@ export type BindSafetyAssessment =
   | { allowed: true; auditWarning?: string }
   | { allowed: false; error: string };
 
-function normalizeHost(host: string): string {
+export function normalizeHost(host: string): string {
   const normalized = host.trim().toLowerCase();
   if (normalized.startsWith("[") && normalized.endsWith("]")) {
     return normalized.slice(1, -1);

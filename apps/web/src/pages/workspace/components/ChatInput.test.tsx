@@ -6,6 +6,7 @@ import type { FolderSource, Resource } from "@qingagent/contract-ts";
 import { SKILLS_CHANGED_EVENT } from "../../../overlays/settings/useSkills";
 import { resources } from "../../../system/resources";
 import type { MaterialParseRow } from "../data/useMaterialParseTracker";
+import { DEFAULT_UPLOAD_MAX_BYTES } from "../data/uploadAsset";
 import { ChatInput, type ChatInputHandle, type ChatInputProps } from "./ChatInput";
 
 let root: Root | null = null;
@@ -155,6 +156,33 @@ describe("ChatInput", () => {
     expect(attachChipLabels()).toEqual(["draft.md"]);
     expect(host?.querySelector('[data-wf="LinkedFilesBar"]')).toBeNull();
     expect(host?.querySelector('[data-wf="LinkedFilesPanel"]')).toBeNull();
+  });
+
+  it("文件菜单选择超限文件时显示上限 toast，且不加入待发送附件", async () => {
+    const ref = createRef<ChatInputHandle>();
+    const onToast = vi.fn();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+        onToast={onToast}
+      />,
+    );
+    const oversized = new File(["x"], "52m.bin", { type: "application/octet-stream" });
+    Object.defineProperty(oversized, "size", {
+      value: DEFAULT_UPLOAD_MAX_BYTES + 1,
+    });
+
+    openFileMenu();
+    clickElement(getChooseFileRow());
+    await selectFile(oversized);
+
+    expect(onToast).toHaveBeenCalledWith("文件过大（上限 50 MB）");
+    expect(ref.current?.snapshot().files).toEqual([]);
+    expect(attachChipLabels()).toEqual([]);
+    expect(host?.querySelector('[data-wf="WsFileMenu"]')).toBeNull();
   });
 
   it("工具栏只保留 技能 / 文件 两个动作入口", async () => {

@@ -23,15 +23,20 @@ function fileTooLargeMessage(maxBytes: number): string {
   return `文件过大（上限 ${formatUploadLimit(maxBytes)}）`;
 }
 
+export function uploadFileSizeError(file: Pick<File, "size">): Error | null {
+  return file.size > DEFAULT_UPLOAD_MAX_BYTES
+    ? new Error(fileTooLargeMessage(DEFAULT_UPLOAD_MAX_BYTES))
+    : null;
+}
+
 export function uploadFailureMessage(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
   return message.startsWith("文件过大（上限 ") ? message : fallback;
 }
 
 export async function uploadAssetFile(file: File, options: UploadAssetOptions = {}): Promise<UploadedAsset> {
-  if (file.size > DEFAULT_UPLOAD_MAX_BYTES) {
-    throw new Error(fileTooLargeMessage(DEFAULT_UPLOAD_MAX_BYTES));
-  }
+  const sizeError = uploadFileSizeError(file);
+  if (sizeError) throw sizeError;
   const content = await fileToBase64(file);
   return uploadJson(
     file,

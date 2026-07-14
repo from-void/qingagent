@@ -69,6 +69,7 @@ import {
   setPatchDecorations,
 } from "../data/patchDecorations";
 import { sectionText } from "../data/presentationSpans";
+import { uploadFailureMessage } from "../data/uploadAsset";
 import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import {
   classifyIncomingDoc,
@@ -445,7 +446,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             await insertImageAsset(ed, file);
           } catch (error) {
             console.error("[workspace] paste image upload failed", error);
-            onToast?.("图片上传失败，请重试");
+            onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
           }
         }
       })();

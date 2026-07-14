@@ -124,7 +124,7 @@ qingagent 是单用户自托管产品,不提供多租户或多用户隔离。信
 
 部署边界:会话运行状态保存在单进程内存中,SSE 连接绑定该进程;系统按单实例、单进程设计,不支持多实例横向扩展。文档与版本历史则持久化在本机数据库中。
 
-不要把端口直接暴露到公网且不设置 `QINGAGENT_AUTH_TOKEN`。这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额;如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,还会扩大到在你的机器上执行命令的风险。不要这样做。
+服务端在实际监听地址非回环且未设置 `QINGAGENT_AUTH_TOKEN` 时会拒绝启动。只有显式设置高危逃生开关 `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1` 才会放行并打印审计告警；这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额。如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,风险还会扩大到在你的机器上执行命令。不要这样做。
 
 若你确要将服务暴露到公网,请使用 nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。生成 token 示例:
 
@@ -174,11 +174,13 @@ server {
 
 | 变量 | 默认值 | 作用 |
 |---|---|---|
-| `QINGAGENT_AUTH_TOKEN` | 未设置 | 可选 API token。未设置时本机零配置直通;公网部署必须设置强随机值。 |
+| `QINGAGENT_AUTH_TOKEN` | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
 | `QINGAGENT_TRUSTED_ORIGINS` | 空;内置 localhost/127.0.0.1/::1 | 额外可信 Origin,多个值用逗号分隔。公网反代建议设为 `https://你的域名`。 |
 | `QINGAGENT_HOST` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
+| `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC` | 未设置 | 高危逃生开关。仅 `=1` 允许无 token 的非回环监听,启动时打印审计告警。 |
 | `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |
 | `QINGAGENT_ENABLE_DEBUG` | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
+| `QINGAGENT_UPLOAD_MAX_BYTES` | `52428800`（50 MB） | 单个上传文件解码后的最大字节数；服务端同时限制 base64 JSON 请求体，前端按默认 50 MB 预检。 |
 | `DATABASE_URL` | `file:./qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
 | `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启等同扩大 RCE 面。 |
 | `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启会把凭据注入执行环境,等同扩大 RCE 面。 |

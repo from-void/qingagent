@@ -56,6 +56,10 @@ async function uploadDirs(uploadDir: string): Promise<string[]> {
   return entries.filter((entry) => /^[0-9a-f-]{36}$/i.test(entry)).sort();
 }
 
+async function uploadEntries(uploadDir: string): Promise<string[]> {
+  return fs.readdir(uploadDir).catch(() => []);
+}
+
 describe("uploadRoutes 下载响应头", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-route-"));
@@ -204,5 +208,80 @@ describe("uploadRoutes 下载响应头", () => {
     expect(uploaded.res.status).toBe(200);
     expect(uploaded.body.fileId).not.toBe(missingFileId);
     expect(await uploadDirs(uploadDir)).toEqual([uploaded.body.fileId]);
+  });
+});
+
+describe("uploadRoutes 上传上限与 base64 校验", () => {
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-limit-"));
+    process.chdir(tmpDir);
+    process.env.QINGAGENT_UPLOAD_MAX_BYTES = "8";
+  });
+
+  afterEach(async () => {
+    delete process.env.QINGAGENT_UPLOAD_MAX_BYTES;
+    process.chdir(originalCwd);
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("有 Content-Length 且请求体声明超限时直接返回稳定 413 契约", async () => {
+    const { app, uploadDir } = await createUploadApp();
+    const res = await app.request("/api/v1/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(80 * 1024),
+      },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toEqual({ error: "file_too_large", maxBytes: 8 });
+    expect(await uploadEntries(uploadDir)).toEqual([]);
+  });
+
+  it("无 Content-Length 时按流累计，请求体超限仍返回稳定 413 契约", async () => {
+    const { app, uploadDir } = await createUploadApp();
+    const request = new Request("http://localhost/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: "big.bin", content: "A".repeat(70 * 1024) }),
+    });
+    expect(request.headers.get("content-length")).toBeNull();
+
+    const res = await app.request(request);
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toEqual({ error: "file_too_large", maxBytes: 8 });
+    expect(await uploadEntries(uploadDir)).toEqual([]);
+  });
+
+  it("请求体未超限但解码后文件超限时 413，且不落盘、不写索引", async () => {
+    const { app, uploadDir } = await createUploadApp();
+    const res = await app.request("/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: "nine.bin",
+        content: Buffer.alloc(9, 1).toString("base64"),
+      }),
+    });
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toEqual({ error: "file_too_large", maxBytes: 8 });
+    expect(await uploadEntries(uploadDir)).toEqual([]);
+  });
+
+  it.each(["%%%...==", "AAA", "AB=="])("非法或非规范 base64 拒绝为 400：%s", async (content) => {
+    const { app, uploadDir } = await createUploadApp();
+    const res = await app.request("/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: "bad.bin", content }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_base64" });
+    expect(await uploadEntries(uploadDir)).toEqual([]);
   });
 });

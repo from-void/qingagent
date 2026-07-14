@@ -9,7 +9,29 @@ export interface UploadAssetOptions {
   onProgress?: (progress: number | null) => void;
 }
 
+export const DEFAULT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+function formatUploadLimit(maxBytes: number): string {
+  const mib = maxBytes / (1024 * 1024);
+  if (mib >= 1) return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MB`;
+  const kib = maxBytes / 1024;
+  if (kib >= 1) return `${Number.isInteger(kib) ? kib : kib.toFixed(1)} KB`;
+  return `${maxBytes} 字节`;
+}
+
+function fileTooLargeMessage(maxBytes: number): string {
+  return `文件过大（上限 ${formatUploadLimit(maxBytes)}）`;
+}
+
+export function uploadFailureMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  return message.startsWith("文件过大（上限 ") ? message : fallback;
+}
+
 export async function uploadAssetFile(file: File, options: UploadAssetOptions = {}): Promise<UploadedAsset> {
+  if (file.size > DEFAULT_UPLOAD_MAX_BYTES) {
+    throw new Error(fileTooLargeMessage(DEFAULT_UPLOAD_MAX_BYTES));
+  }
   const content = await fileToBase64(file);
   return uploadJson(
     file,
@@ -70,6 +92,10 @@ function uploadJson(file: File, body: string, options: UploadAssetOptions): Prom
     xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}: network error`));
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
+        if (xhr.status === 413) {
+          reject(new Error(fileTooLargeMessage(readUploadMaxBytes(xhr.responseText) ?? DEFAULT_UPLOAD_MAX_BYTES)));
+          return;
+        }
         const detail = readUploadErrorText(xhr.responseText);
         reject(new Error(detail || `Upload failed for ${file.name}: ${xhr.status}`));
         return;
@@ -82,6 +108,20 @@ function uploadJson(file: File, body: string, options: UploadAssetOptions): Prom
     };
     xhr.send(body);
   });
+}
+
+function readUploadMaxBytes(text: string): number | null {
+  if (!text) return null;
+  try {
+    const body = JSON.parse(text) as unknown;
+    if (!body || typeof body !== "object") return null;
+    const maxBytes = (body as Record<string, unknown>).maxBytes;
+    return typeof maxBytes === "number" && Number.isSafeInteger(maxBytes) && maxBytes > 0
+      ? maxBytes
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function readUploadErrorText(text: string): string | null {

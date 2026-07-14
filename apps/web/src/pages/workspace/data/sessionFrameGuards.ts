@@ -3,7 +3,7 @@ import { buildNativeDiffInstructions, planNativeTiming, type NativePresentationR
 import type { StreamError } from "./protocol";
 import type { WorkspaceAction } from "./workspaceState";
 import { HISTORY_CHAT_INPUT_BLOCK_REASON } from "./chatInputBlockReason";
-import { uploadAssetFile } from "./uploadAsset";
+import { uploadAssetFile, uploadFailureMessage } from "./uploadAsset";
 import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../components/ChatInput";
 import type { UploadedAsset } from "./useMaterialParseTracker";
 
@@ -88,8 +88,7 @@ export async function uploadFiles(files: File[]): Promise<UploadedAsset[]> {
 }
 
 export function sendFailureToastMessage(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error || "");
-  return detail ? "发送失败，请重试" : "发送失败，请重试";
+  return uploadFailureMessage(error, "发送失败，请重试");
 }
 
 const RESTORE_EXISTING_RETRY_DELAYS_MS = [500, 1000, 2000] as const;

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Workspace } from "@mastra/core/workspace";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
@@ -20,6 +20,7 @@ interface GatedExecuteInput {
 
 interface SandboxExecuteOptions {
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
   timeout?: number;
   maxRetainedBytes?: number;
   abortSignal?: AbortSignal;
@@ -29,13 +30,16 @@ interface SandboxExecuteOptions {
 
 interface SandboxSpawnOptions {
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
   timeout?: number;
   maxRetainedBytes?: number;
   abortSignal?: AbortSignal;
 }
 
 const calcScript = resolve(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
+const dingtalkScript = resolve(BUILTIN_SKILLS_DIR, "capability", "dingtalk-docs", "scripts", "dingtalk.mjs");
 const allowedFileCommand = `node ${JSON.stringify(calcScript)} stats --file passwd`;
+const dingtalkCommand = `node ${JSON.stringify(dingtalkScript)} doc-list`;
 const toolInvocationOptions = { toolCallId: "gated-execute-test", messages: [] } as never;
 
 function validateToolInput(
@@ -55,7 +59,13 @@ function validateToolInput(
   }
 }
 
-function createToolHarness(sessionId = "gated-cwd-test") {
+function createToolHarness(
+  sessionId = "gated-cwd-test",
+  options: {
+    resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
+    sandboxBinDir?: string;
+  } = {},
+) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
   const workspace = {
@@ -85,6 +95,8 @@ function createToolHarness(sessionId = "gated-cwd-test") {
   const tool = createGatedExecuteCommandTool({
     sessionId,
     getWorkspace: async () => workspace,
+    resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
+    sandboxBinDir: options.sandboxBinDir,
   });
   return { tool, executeCalls, spawnCalls };
 }
@@ -259,5 +271,80 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(spawnCalls).toHaveLength(1);
     // 默认超时只对前台;后台不传则保持 undefined(生命周期由 process manager / abortSignal 管理)
     expect(spawnCalls[0]?.timeout).toBeUndefined();
+  });
+});
+
+describe("gated execute_command tool 凭据按 consumer 发放", () => {
+  const originalSwitch = process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
+
+  afterEach(() => {
+    if (originalSwitch === undefined) delete process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS;
+    else process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = originalSwitch;
+  });
+
+  it("开关开启时受信 node skill 脚本拿到 per-call 凭据 env", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+    let resolveCount = 0;
+    const { tool, executeCalls, spawnCalls } = createToolHarness("gated-credential-node", {
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_KEY: "app_x", DINGTALK_APP_SECRET: "sec_y" };
+      },
+    });
+
+    expect(await executeTool(tool, { command: dingtalkCommand })).toBe("ok");
+    expect(await executeTool(tool, { command: dingtalkCommand, background: true })).toContain("Started background process");
+    expect(resolveCount).toBe(2);
+    expect(executeCalls[0]?.env).toEqual({
+      DINGTALK_APP_KEY: "app_x",
+      DINGTALK_APP_SECRET: "sec_y",
+    });
+    expect(spawnCalls[0]?.env).toEqual({
+      DINGTALK_APP_KEY: "app_x",
+      DINGTALK_APP_SECRET: "sec_y",
+    });
+  });
+
+  it("generic bin CLI 与 lark-cli 均不解析、不接收托管凭据", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+    const root = mkdtempSync(resolve(tmpdir(), "gated-credential-bin-"));
+    const extension = process.platform === "win32" ? ".cmd" : "";
+    const cliName = `yuque-cli${extension}`;
+    const cliPath = resolve(root, cliName);
+    writeFileSync(cliPath, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    if (process.platform !== "win32") chmodSync(cliPath, 0o755);
+    let resolveCount = 0;
+    const { tool, executeCalls } = createToolHarness("gated-credential-generic", {
+      sandboxBinDir: root,
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_SECRET: "must-not-leak" };
+      },
+    });
+    try {
+      expect(await executeTool(tool, { command: `${cliName} list` })).toBe("ok");
+      expect(await executeTool(tool, { command: "lark-cli whoami" })).toBe("ok");
+      expect(resolveCount).toBe(0);
+      expect(executeCalls).toHaveLength(2);
+      expect(executeCalls[0]?.env).toBeUndefined();
+      expect(executeCalls[1]?.env).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("开关关闭时受信 node skill 脚本也不解析、不接收凭据", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "0";
+    let resolveCount = 0;
+    const { tool, executeCalls } = createToolHarness("gated-credential-disabled", {
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_SECRET: "must-not-leak" };
+      },
+    });
+
+    expect(await executeTool(tool, { command: allowedFileCommand })).toBe("ok");
+    expect(resolveCount).toBe(0);
+    expect(executeCalls[0]?.env).toBeUndefined();
   });
 });

@@ -4,7 +4,11 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
 import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
-import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "./sessionWorkspace.js";
+import {
+  SANDBOX_TIMEOUT_MS,
+  sessionWorkspaceDir,
+  shouldInjectCredentials,
+} from "./sessionWorkspace.js";
 
 const secondsSchema = z.preprocess(
   (value) => {
@@ -29,6 +33,10 @@ const executeCommandInputSchema = z.object({
 export interface GatedExecuteCommandToolOptions {
   sessionId: string;
   getWorkspace: () => Promise<Workspace>;
+  /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
+  resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
+  /** 测试可注入临时产品 CLI 目录；生产默认使用 SANDBOX_BIN_DIR。 */
+  sandboxBinDir?: string;
 }
 
 function tailLines(output: string, tail?: number | null): string {
@@ -79,7 +87,22 @@ function resolveExecutionCwd(sessionDir: string, inputCwd?: string | null): stri
   return isInsideRoot(cwdReal, sessionReal) ? cwdReal : null;
 }
 
-export function createGatedExecuteCommandTool({ sessionId, getWorkspace }: GatedExecuteCommandToolOptions) {
+async function resolveManagedCredentialEnv(): Promise<Record<string, string>> {
+  try {
+    const { getAllCredentialEnv } = await import("../credentials/credentialsRepo.js");
+    return await getAllCredentialEnv();
+  } catch (error) {
+    console.error("[gatedExecuteCommandTool] 凭据注入读取失败", error);
+    return {};
+  }
+}
+
+export function createGatedExecuteCommandTool({
+  sessionId,
+  getWorkspace,
+  resolveCredentialEnv = resolveManagedCredentialEnv,
+  sandboxBinDir,
+}: GatedExecuteCommandToolOptions) {
   return createTool({
     id: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
     description:
@@ -105,6 +128,7 @@ export function createGatedExecuteCommandTool({ sessionId, getWorkspace }: Gated
       const decision = evaluateCommandPolicy(input.command, {
         workspaceCwd: sessionDir,
         background: input.background === true,
+        sandboxBinDir,
       });
       if (decision.action !== "allow") {
         return commandPolicyDenyMessage(decision);
@@ -113,6 +137,15 @@ export function createGatedExecuteCommandTool({ sessionId, getWorkspace }: Gated
       const workspace = await getWorkspace();
       const sandbox = workspace.sandbox;
       if (!sandbox) return "命令已被拒绝: 当前会话没有可用沙箱";
+      // LocalSandbox 基础 env 永不含托管凭据。只有策略已确认的受信 node skill 脚本，
+      // 且部署开关显式开启时，才通过 Mastra 的 per-call env 向这个进程发放。
+      const credentialEnv = decision.credentialConsumer === "trusted-node-skill" &&
+          shouldInjectCredentials() && resolveCredentialEnv
+        ? await resolveCredentialEnv()
+        : undefined;
+      const perCallCredentialEnv = credentialEnv && Object.keys(credentialEnv).length > 0
+        ? { env: credentialEnv }
+        : {};
       const timeoutSeconds = typeof input.timeout === "number" ? input.timeout : undefined;
       const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
       // 前台命令套默认超时挡 runaway;后台进程是有意长跑的(dev server 等),只用模型显式值、不强加默认。
@@ -123,6 +156,7 @@ export function createGatedExecuteCommandTool({ sessionId, getWorkspace }: Gated
         if (!sandbox.processes) return "命令已被拒绝: 当前沙箱不支持后台进程";
         const handle = await sandbox.processes.spawn(input.command, {
           cwd,
+          ...perCallCredentialEnv,
           timeout: explicitTimeout,
           maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
           abortSignal: context?.abortSignal,
@@ -135,6 +169,7 @@ export function createGatedExecuteCommandTool({ sessionId, getWorkspace }: Gated
       try {
         const result = await sandbox.executeCommand(input.command, [], {
           cwd,
+          ...perCallCredentialEnv,
           timeout: foregroundTimeout,
           maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
           abortSignal: context?.abortSignal,

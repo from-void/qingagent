@@ -1,7 +1,8 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { assessCommand } from "./commandRisk.js";
+import { SANDBOX_BIN_DIR } from "./sandboxPaths.js";
 import { SANDBOX_SESSIONS_BASE } from "./sessionWorkspace.js";
 // shell-quote 无类型声明(CJS 包、无 @types)。必须用静态 import 让打包器(esbuild)把它
 // 内联进 bundle——桌面端打包后不随包发布 node_modules,运行时 require 会找不到模块。
@@ -15,7 +16,7 @@ const { parse: parseShell } = shellQuote as {
 };
 
 export type PolicyDecision =
-  | { action: "allow" }
+  | { action: "allow"; credentialConsumer?: "trusted-node-skill" }
   | { action: "deny"; reason: string }
   | { action: "confirm"; reason: string };
 
@@ -24,6 +25,8 @@ export interface CommandPolicyOptions {
   workspaceCwd?: string;
   /** 受信脚本根。默认只允许内置 skills 与用户 skills。 */
   trustedScriptRoots?: string[];
+  /** 产品级 CLI 目录。生产环境默认 SANDBOX_BIN_DIR；测试可注入临时目录。 */
+  sandboxBinDir?: string;
   /** 是否以后台进程方式执行(execute_command background:true)。gate 据此区分前台/后台:
    *  阻塞式命令(lark-cli config init)前台 deny、后台放行(后台不挂死本轮,由 get_process_output 取早期输出)。 */
   background?: boolean;
@@ -131,6 +134,46 @@ function realpathIfExists(path: string): string {
   } catch {
     return resolve(path);
   }
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) return false;
+    // Windows 由受支持的可执行扩展名判定；POSIX 至少需要一类主体拥有执行位。
+    return process.platform === "win32" || (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function sandboxBinCandidates(command: string, binDir: string): string[] {
+  if (process.platform !== "win32") return [resolve(binDir, command)];
+  const lower = command.toLowerCase();
+  if ([".cmd", ".exe", ".bat"].some((ext) => lower.endsWith(ext))) {
+    return [resolve(binDir, command)];
+  }
+  return [".cmd", ".exe", ".bat"].map((ext) => resolve(binDir, `${command}${ext}`));
+}
+
+/** 产品安装目录内的实名 CLI：只认裸命令对应的真实可执行文件，拒绝 symlink 逃逸。 */
+function isInstalledSandboxBinCli(command: string, binDir = SANDBOX_BIN_DIR): boolean {
+  let realBinDir: string;
+  try {
+    realBinDir = realpathSync(binDir);
+  } catch {
+    return false;
+  }
+
+  const literalBinDir = resolve(binDir);
+  return sandboxBinCandidates(command, literalBinDir).some((candidate) => {
+    if (!isInsideRoot(candidate, literalBinDir) || !isExecutableFile(candidate)) return false;
+    try {
+      return isInsideRoot(realpathSync(candidate), realBinDir);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function resolveThroughExistingAncestors(path: string): string {
@@ -518,7 +561,7 @@ function evaluateNodeCommand(args: string[], options: CommandPolicyOptions): Pol
   const scriptArgs = args.slice((script.scriptIndex ?? 0) + 1);
   const fileArgDecision = validateTrustedScriptFileArgs(scriptArgs, cwd);
   if (fileArgDecision) return fileArgDecision;
-  return { action: "allow" };
+  return { action: "allow", credentialConsumer: "trusted-node-skill" };
 }
 
 function stripLarkGlobalFlags(args: string[]): string[] {
@@ -620,6 +663,12 @@ export function evaluateCommandPolicy(command: string, options: CommandPolicyOpt
       action: "deny",
       reason: "命令必须用裸命令名(经受控 PATH 解析到打包 node shim / 系统二进制),不允许路径限定的可执行文件",
     };
+  }
+  // 产品安装进 SANDBOX_BIN_DIR 的第三方 CLI 仍在既有 OS 沙箱中运行：cwd 已锁定会话目录，
+  // 写入边界由 OS 沙箱承担。这里不复制 lark-cli 的逐 flag 路径白名单；lark-cli 因持有专有
+  // OAuth 凭据继续走上面的特批分支。实名文件还需 realpath 留在 bin 内，避免 symlink 指向目录外。
+  if (isInstalledSandboxBinCli(rawCommand, options.sandboxBinDir)) {
+    return { action: "allow" };
   }
 
   const verdict = assessCommand(command);

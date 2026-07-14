@@ -11,6 +11,7 @@ import { UPLOAD_DIR, findOrStoreUploadedFile, isValidUploadId, isWithinUploadDir
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { resolveUploadMaxBytes, uploadBodyMaxBytes } from "../lib/uploadLimits";
 import { parseBody } from "../lib/validation";
+import { decodeBase64 } from "../lib/base64";
 
 export const uploadRoutes = new Hono();
 const uploadMaxBytes = resolveUploadMaxBytes();
@@ -26,17 +27,6 @@ const uploadBodySchema = z.object({
 /** Validate that a filename does not contain path separators or traversal sequences. */
 function isSafeFilename(filename: string): boolean {
   return !filename.includes("/") && !filename.includes("\\") && !filename.includes("..");
-}
-
-function decodeBase64(content: string): Buffer | null {
-  if (
-    content.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)
-  ) {
-    return null;
-  }
-  const buffer = Buffer.from(content, "base64");
-  return buffer.toString("base64") === content ? buffer : null;
 }
 
 /** Sanitize a filename for use in Content-Disposition header. */

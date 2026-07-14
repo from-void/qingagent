@@ -272,6 +272,31 @@ describe("uploadRoutes 上传上限与 base64 校验", () => {
     expect(await uploadEntries(uploadDir)).toEqual([]);
   });
 
+  it("配置上限的精确边界成功，上限加一稳定返回 413", async () => {
+    const { app, uploadDir } = await createUploadApp();
+    const atLimit = await postUpload(app, {
+      filename: "eight.bin",
+      content: "12345678",
+    });
+    expect(atLimit.res.status).toBe(200);
+    expect(atLimit.body.size).toBe(8);
+
+    const overLimit = await app.request("/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: "nine.bin",
+        content: Buffer.alloc(9, 1).toString("base64"),
+      }),
+    });
+    expect(overLimit.status).toBe(413);
+    await expect(overLimit.json()).resolves.toEqual({
+      error: "file_too_large",
+      maxBytes: 8,
+    });
+    expect(await uploadDirs(uploadDir)).toEqual([atLimit.body.fileId]);
+  });
+
   it.each(["%%%...==", "AAA", "AB=="])("非法或非规范 base64 拒绝为 400：%s", async (content) => {
     const { app, uploadDir } = await createUploadApp();
     const res = await app.request("/api/v1/upload", {

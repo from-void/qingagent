@@ -6,6 +6,7 @@ import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
+import { uploadFailureMessage } from "../data/uploadAsset";
 import { CheckIcon } from "./icons";
 import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
@@ -777,7 +778,7 @@ export function DocToolbar({
         await insertImageAsset(editor, file);
       } catch (error) {
         console.error("[workspace] image upload failed", error);
-        onToast?.("图片上传失败，请重试");
+        onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
   }, [editor, onToast]);
@@ -793,7 +794,7 @@ export function DocToolbar({
         await insertFileAsset(editor, file);
       } catch (error) {
         console.error("[workspace] file upload failed", error);
-        onToast?.("文件上传失败，请重试");
+        onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
   }, [editor, onToast]);

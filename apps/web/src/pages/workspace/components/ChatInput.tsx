@@ -33,6 +33,7 @@ import {
 } from "../../../system/longText";
 import { FileActionMenu } from "./FileActionMenu";
 import { LinkedFilesPanel } from "./LinkedFilesPanel";
+import { uploadFailureMessage, uploadFileSizeError } from "../data/uploadAsset";
 
 export interface ChatChipSpec {
   kind: "sel" | "attach" | "mention" | "longtext";
@@ -878,6 +879,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       // Reset input so the same file can be re-selected
       e.target.value = "";
 
+      const sizeError = uploadFileSizeError(file);
+      if (sizeError) {
+        onToast?.(uploadFailureMessage(sizeError, "文件上传失败，请重试"));
+        return;
+      }
+
       if (!isAcceptedUploadFile(file)) {
         window.alert(
           `暂不支持这种文件，可以试试 PDF、Word、Excel、PPT、TXT、Markdown 或图片。`,
@@ -915,7 +922,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       savedRangeRef.current = r2.cloneRange();
       reportChange();
     },
-    [attachedFiles, disabled, restoreOrEndRange, reportChange],
+    [attachedFiles, disabled, onToast, restoreOrEndRange, reportChange],
   );
 
   // 引用:把素材作为下一条消息上下文,在编辑器末尾插入 attach chip(文件名)。

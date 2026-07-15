@@ -21,8 +21,11 @@ export async function* handleCommand(
   origin: Origin = "manual",
   modelOverrides?: ModelOverrides,
   client?: string,
+  routedSessionId?: string,
 ): AsyncGenerator<BridgeFrame> {
-  const cmdSessionId = resolveCommandSessionId(command);
+  // Actor 的 keyed route 是权威 sessionId。commitReviewGroups 本身不携带 sessionId，
+  // /commit 冷恢复必须沿用 REST body 的路由键，不能依赖重启后不存在的 patch 内存索引。
+  const cmdSessionId = routedSessionId ?? resolveCommandSessionId(command);
   const resolvedClientTraceId = normalizeClientTraceId(clientTraceId, cmdSessionId);
   console.info(formatAcceptedTurnLog(cmdSessionId ?? "unknown", command.kind));
   const existingSession = cmdSessionId ? getSession(cmdSessionId) : undefined;
@@ -32,6 +35,7 @@ export async function* handleCommand(
   }
   const commandSpan = recordCommandSpan(command, cmdSessionId, resolvedClientTraceId, origin);
   const context: CommandExecutionContext = {
+    sessionId: cmdSessionId,
     clientTraceId,
     resolvedClientTraceId,
     origin,
@@ -105,7 +109,8 @@ async function* routeCommand(
     }
     case "acceptPatch":
     case "rejectPatch":
-    case "commitPatches": {
+    case "commitPatches":
+    case "commitReviewGroups": {
       const { handleReviewCommand } = await import("./reviewCommands");
       yield* handleReviewCommand(command, context);
       return;

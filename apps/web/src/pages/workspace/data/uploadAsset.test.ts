@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { uploadAssetFile, uploadedAssetUrl } from "./uploadAsset";
+import {
+  DEFAULT_UPLOAD_MAX_BYTES,
+  uploadAssetFile,
+  uploadFailureMessage,
+  uploadedAssetUrl,
+} from "./uploadAsset";
 
 describe("uploadAssetFile", () => {
   afterEach(() => {
@@ -57,6 +62,33 @@ describe("uploadAssetFile", () => {
     await expect(pending).rejects.toThrow(
       "filename must not contain path separators or '..'",
     );
+  });
+
+  it("preflights the default decoded-byte limit before reading or creating XHR", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    const file = new File(["x"], "huge.bin", { type: "application/octet-stream" });
+    Object.defineProperty(file, "size", { value: DEFAULT_UPLOAD_MAX_BYTES + 1 });
+
+    await expect(uploadAssetFile(file)).rejects.toThrow("文件过大（上限 50 MB）");
+    expect(MockUploadRequest.instances).toEqual([]);
+  });
+
+  it("maps 413 and the server maxBytes contract to a clear localized message", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    const file = new File(["x"], "large.bin", { type: "application/octet-stream" });
+
+    const pending = uploadAssetFile(file);
+    const xhr = await waitForRequest();
+    xhr.reject(413, JSON.stringify({ error: "file_too_large", maxBytes: 10 * 1024 * 1024 }));
+
+    await expect(pending).rejects.toThrow("文件过大（上限 10 MB）");
+  });
+
+  it("only forwards file-too-large details through production toast helpers", () => {
+    expect(uploadFailureMessage(new Error("文件过大（上限 10 MB）"), "上传失败")).toBe(
+      "文件过大（上限 10 MB）",
+    );
+    expect(uploadFailureMessage(new Error("internal path leaked"), "上传失败")).toBe("上传失败");
   });
 });
 

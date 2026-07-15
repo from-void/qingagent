@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { stream } from "hono/streaming";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -8,9 +9,13 @@ import { z } from "zod";
 import { findMaterial } from "../gateway/bridgeHandler";
 import { UPLOAD_DIR, findOrStoreUploadedFile, isValidUploadId, isWithinUploadDir } from "../lib/uploadStorage";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
+import { resolveUploadMaxBytes, uploadBodyMaxBytes } from "../lib/uploadLimits";
 import { parseBody } from "../lib/validation";
+import { decodeBase64 } from "../lib/base64";
 
 export const uploadRoutes = new Hono();
+const uploadMaxBytes = resolveUploadMaxBytes();
+const uploadRequestMaxBytes = uploadBodyMaxBytes(uploadMaxBytes);
 
 /** 上传请求体:filename/content 必填非空(base64),mimeType 可选;路径安全在下方业务校验。 */
 const uploadBodySchema = z.object({
@@ -71,49 +76,62 @@ function shouldServeInline(contentType: string): boolean {
  * and persist it to disk under ./uploads/<fileId>/<filename>.
  * Returns { fileId, filename, mimeType, size }.
  */
-uploadRoutes.post("/upload", async (c) => {
-  const rejected = requireTrustedOrigin(c);
-  if (rejected) return rejected;
+uploadRoutes.post(
+  "/upload",
+  bodyLimit({
+    maxSize: uploadRequestMaxBytes,
+    onError: (c) => c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413),
+  }),
+  async (c) => {
+    const rejected = requireTrustedOrigin(c);
+    if (rejected) return rejected;
 
-  const parsed = await parseBody(c, uploadBodySchema);
-  if (!parsed.ok) return parsed.response;
-  const { filename, mimeType, content } = parsed.data;
+    const parsed = await parseBody(c, uploadBodySchema);
+    if (!parsed.ok) return parsed.response;
+    const { filename, mimeType, content } = parsed.data;
 
-  if (!isSafeFilename(filename)) {
-    return c.json({ error: "filename must not contain path separators or '..'" }, 400);
-  }
-
-  const buffer = Buffer.from(content, "base64");
-  const normalizedMimeType = mimeType || "application/octet-stream";
-  let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
-  try {
-    stored = await findOrStoreUploadedFile({
-      filename,
-      mimeType: normalizedMimeType,
-      buffer,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "invalid filename") {
-      return c.json({ error: "invalid filename" }, 400);
+    if (!isSafeFilename(filename)) {
+      return c.json({ error: "filename must not contain path separators or '..'" }, 400);
     }
-    throw error;
-  }
-  const { record, deduped } = stored;
 
-  console.info("[upload] file stored", {
-    fileId: record.fileId,
-    filename: record.filename,
-    size: record.size,
-    deduped,
-  });
+    const buffer = decodeBase64(content);
+    if (!buffer) {
+      return c.json({ error: "invalid_base64" }, 400);
+    }
+    if (buffer.byteLength > uploadMaxBytes) {
+      return c.json({ error: "file_too_large", maxBytes: uploadMaxBytes }, 413);
+    }
+    const normalizedMimeType = mimeType || "application/octet-stream";
+    let stored: Awaited<ReturnType<typeof findOrStoreUploadedFile>>;
+    try {
+      stored = await findOrStoreUploadedFile({
+        filename,
+        mimeType: normalizedMimeType,
+        buffer,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid filename") {
+        return c.json({ error: "invalid filename" }, 400);
+      }
+      throw error;
+    }
+    const { record, deduped } = stored;
 
-  return c.json({
-    fileId: record.fileId,
-    filename: record.filename,
-    mimeType: record.mimeType || normalizedMimeType,
-    size: record.size,
-  });
-});
+    console.info("[upload] file stored", {
+      fileId: record.fileId,
+      filename: record.filename,
+      size: record.size,
+      deduped,
+    });
+
+    return c.json({
+      fileId: record.fileId,
+      filename: record.filename,
+      mimeType: record.mimeType || normalizedMimeType,
+      size: record.size,
+    });
+  },
+);
 
 /**
  * GET /api/v1/files/:fileId — 流式返回上传文件。只有少量安全 MIME 白名单允许

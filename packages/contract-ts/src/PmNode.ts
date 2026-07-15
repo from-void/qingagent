@@ -2,6 +2,13 @@ import type { PmMark, PmThemeColor } from "./PmMark";
 
 export type PmTextAlign = "left" | "center" | "right" | "justify";
 
+export type PmOrderedListStyle =
+  | "decimal"
+  | "lower-alpha"
+  | "upper-alpha"
+  | "lower-roman"
+  | "upper-roman";
+
 export type PmTextNode = {
   type: "text";
   text: string;
@@ -61,7 +68,10 @@ export type PmBulletListNode = {
 
 export type PmOrderedListNode = {
   type: "orderedList";
-  attrs: PmBlockAttrs & { start?: number | null };
+  attrs: PmBlockAttrs & {
+    start?: number | null;
+    listStyle?: PmOrderedListStyle | null;
+  };
   content: Array<PmListItemNode>;
 };
 

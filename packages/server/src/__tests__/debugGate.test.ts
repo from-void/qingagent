@@ -1,15 +1,72 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { isDebugEndpointEnabled, isExternallyExposed } from "../lib/debugGate";
+import {
+  assessBindSafety,
+  isDebugEndpointEnabled,
+  isExternallyExposed,
+  normalizeHost,
+} from "../lib/debugGate";
 
 afterEach(() => {
   delete process.env.QINGAGENT_ENABLE_DEBUG;
   delete process.env.QINGAGENT_HOST;
   delete process.env.QINGAGENT_PUBLIC_DEPLOYMENT;
   delete process.env.QINGAGENT_AUTH_TOKEN;
+  delete process.env.QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC;
   vi.doUnmock("@qingagent/core");
   vi.doUnmock("../routes/skills");
   vi.resetModules();
+});
+
+describe("assessBindSafety", () => {
+  it("实际回环监听无 token 永远放行", () => {
+    for (const host of ["127.0.0.1", "::1", "[::1]", "localhost"]) {
+      expect(assessBindSafety(host, {})).toEqual({ allowed: true });
+    }
+  });
+
+  it("实际公开监听无 token 时 fail-closed", () => {
+    const result = assessBindSafety("0.0.0.0", {});
+
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.error).toContain("拒绝在 0.0.0.0 上公开监听");
+      expect(result.error).toContain("QINGAGENT_AUTH_TOKEN");
+      expect(result.error).toContain("QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1");
+    }
+  });
+
+  it("实际公开监听有 token 时放行", () => {
+    expect(assessBindSafety("0.0.0.0", { QINGAGENT_AUTH_TOKEN: "secret" })).toEqual({
+      allowed: true,
+    });
+  });
+
+  it("实际公开监听显式 override 时放行并返回醒目审计告警", () => {
+    const result = assessBindSafety("0.0.0.0", {
+      QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC: "1",
+    });
+
+    expect(result.allowed).toBe(true);
+    if (result.allowed) {
+      expect(result.auditWarning).toContain("审计告警");
+      expect(result.auditWarning).toContain("任何人可读写文档并消耗模型 key");
+    }
+  });
+
+  it("PUBLIC 声明不覆盖实际回环 bind 的安全结论", () => {
+    expect(assessBindSafety("127.0.0.1", { QINGAGENT_PUBLIC_DEPLOYMENT: "1" })).toEqual({
+      allowed: true,
+    });
+  });
+});
+
+describe("normalizeHost", () => {
+  it("把 IPv6 URL 括号写法归一化为 serve 可绑定的主机名", () => {
+    expect(normalizeHost("[::1]")).toBe("::1");
+    expect(normalizeHost("::1")).toBe("::1");
+    expect(normalizeHost("localhost")).toBe("localhost");
+  });
 });
 
 describe("isExternallyExposed", () => {

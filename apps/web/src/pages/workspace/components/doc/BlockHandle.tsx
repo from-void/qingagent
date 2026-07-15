@@ -6,6 +6,7 @@ import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
 import { findDraggableListItem, LIST_ITEM_DND_MIME, resolveListItemByBlockId, type DraggableListItem } from "../ListItemDnD";
 import { getBlockCollapseInfo, qingagentCollapseKey, toggleBlockCollapse } from "../BlockCollapse";
 import { insertFileAsset, insertImageAsset } from "../../data/insertUploadedAsset";
+import { uploadFailureMessage } from "../../data/uploadAsset";
 import { pickFile } from "./pickFile";
 import {
   createBlockDragPayload,
@@ -661,7 +662,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         await insertImageAsset(editor, file);
       } catch (error) {
         console.error("[workspace] image upload failed", error);
-        onToast?.("图片上传失败，请重试");
+        onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
   }, [editor, onToast, handle, seedInsertChain]);
@@ -680,7 +681,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         await insertFileAsset(editor, file);
       } catch (error) {
         console.error("[workspace] file upload failed", error);
-        onToast?.("文件上传失败，请重试");
+        onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
   }, [editor, onToast, handle, seedInsertChain]);

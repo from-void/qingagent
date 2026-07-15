@@ -52,10 +52,61 @@ async function ensureLedger(client: Client): Promise<void> {
   );
 }
 
-async function readAppliedMax(client: Client): Promise<number> {
-  const res = await client.execute(`SELECT MAX(id) AS maxId FROM ${LEDGER_TABLE}`);
-  const raw = res.rows[0]?.maxId;
-  return raw == null ? 0 : Number(raw);
+type AppliedMigration = { id: number; name: string };
+
+function ledgerIntegrityError(reason: string): Error {
+  return new Error(
+    `迁移账本完整性校验失败：${reason}。为保护数据已停止迁移；请升级应用或从备份还原，勿继续启动。`,
+  );
+}
+
+/**
+ * 逐行校验已应用账本，而不是以 MAX(id) 猜测历史是否完整。当前迁移是 TypeScript
+ * `up(client)` 函数，server 的 tsx 与 desktop 的打包产物没有稳定的同一源码文本可 hash；
+ * 手写 checksum 常量也只会退化成第二个 name。若未来迁移改为不可变 SQL 文件，再以文件内容
+ * checksum 重启内容完整性校验。
+ */
+async function readAndValidateAppliedMigrations(
+  client: Client,
+  migrations: readonly Migration[],
+): Promise<AppliedMigration[]> {
+  const res = await client.execute(`SELECT id, name FROM ${LEDGER_TABLE} ORDER BY id`);
+  const rows = res.rows.map((row) => ({ id: Number(row.id), name: String(row.name) }));
+  const seen = new Set<number>();
+
+  for (const row of rows) {
+    if (!Number.isSafeInteger(row.id) || row.id < 1) {
+      throw ledgerIntegrityError(`账本含非法迁移 id=${String(row.id)}`);
+    }
+    if (seen.has(row.id)) {
+      throw ledgerIntegrityError(`账本含重复迁移 id=${row.id}`);
+    }
+    seen.add(row.id);
+  }
+
+  const registryMax = migrations.length;
+  const future = rows.find((row) => row.id > registryMax);
+  if (future) {
+    throw ledgerIntegrityError(
+      `账本含未来迁移 id=${future.id}（当前注册表最大 id=${registryMax}），数据库来自更新版本，请升级应用或还原备份`,
+    );
+  }
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const expectedId = index + 1;
+    if (row.id !== expectedId) {
+      throw ledgerIntegrityError(`账本迁移 id 有空洞：期望 id=${expectedId}，实际为 id=${row.id}`);
+    }
+    const expectedName = migrations[index]!.name;
+    if (row.name !== expectedName) {
+      throw ledgerIntegrityError(
+        `账本迁移 id=${row.id} 的 name 不匹配：期望 ${JSON.stringify(expectedName)}，实际为 ${JSON.stringify(row.name)}`,
+      );
+    }
+  }
+
+  return rows;
 }
 
 /**
@@ -158,8 +209,20 @@ export async function runMigrations(
   await ensurePragmas(client);
   await ensureLedger(client);
 
-  const appliedMax = await readAppliedMax(client);
-  const pending = migrations.filter((m) => m.id > appliedMax);
+  // 完整性校验必须先于备份和任何迁移写入；坏账本只读 fail-stop。
+  const applied = await readAndValidateAppliedMigrations(client, migrations);
+  const appliedIds = new Set(applied.map((row) => row.id));
+  const pending = migrations.filter((migration) => !appliedIds.has(migration.id));
+  const pendingStart = applied.length + 1;
+  for (let index = 0; index < pending.length; index += 1) {
+    const expectedId = pendingStart + index;
+    if (pending[index]!.id !== expectedId) {
+      // readAndValidateAppliedMigrations 已保证历史为连续前缀；这里是内部不变量守卫。
+      throw new Error(
+        `Pending migration invariant failed at index ${index}: expected id ${expectedId}, got ${pending[index]!.id}`,
+      );
+    }
+  }
   if (pending.length === 0) {
     return { appliedIds: [], backupPath: null };
   }
@@ -169,7 +232,7 @@ export async function runMigrations(
   let backupPath: string | null = null;
   const dbFile = resolveDbFilePath();
   if (dbFile && existsSync(dbFile)) {
-    const nonFresh = appliedMax > 0 || (await hasPreExistingAppTables(client));
+    const nonFresh = applied.length > 0 || (await hasPreExistingAppTables(client));
     if (nonFresh) {
       const targetId = pending[pending.length - 1]!.id;
       backupPath = await backupBeforeMigrate(client, dbFile, targetId, new Date());

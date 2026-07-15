@@ -401,7 +401,7 @@ function ReviewListLevel({
   beforeNode?: PmBlockNode;
   afterNode?: PmBlockNode;
   targetPrefix: string;
-  fallback?: { isTask: boolean; ordered: boolean; start?: number };
+  fallback?: { isTask: boolean; ordered: boolean; start?: number; listStyle?: string };
 }) {
   const listNode = isListNode(afterNode) ? afterNode : isListNode(beforeNode) ? beforeNode : undefined;
   const isTask = listNode ? isTaskListNode(listNode) : fallback?.isTask ?? false;
@@ -486,7 +486,8 @@ function ReviewListLevel({
   if (isTask) return <ul className="pm-task-list" data-type="taskList">{items}</ul>;
   const ordered = listNode ? listNode.type === "orderedList" : fallback?.ordered ?? false;
   const start = listNode?.type === "orderedList" ? listNode.attrs.start : fallback?.start;
-  if (ordered) return <ol start={start ?? undefined}>{items}</ol>;
+  const listStyle = listNode?.type === "orderedList" ? listNode.attrs.listStyle : fallback?.listStyle;
+  if (ordered) return <ol start={start ?? undefined} style={listStyle ? { listStyleType: listStyle } : undefined}>{items}</ol>;
   return <ul>{items}</ul>;
 }
 
@@ -503,6 +504,7 @@ function ReviewListDiff({ block, beforeNode, targetPrefix }: { block: ListDiffBl
         isTask: block.kind === "taskList",
         ordered: block.kind === "list" && block.ordered,
         ...(block.kind === "list" && block.start !== undefined ? { start: block.start } : {}),
+        ...(block.kind === "list" && block.listStyle ? { listStyle: block.listStyle } : {}),
       }}
     />
   );

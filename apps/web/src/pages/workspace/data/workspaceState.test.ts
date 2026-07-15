@@ -14,7 +14,7 @@ import {
 } from "./workspaceState";
 import { deriveDocDimensions } from "./docDimensions";
 import { resources } from "../../../system/resources";
-import type { DocumentSnapshot, FolderSource } from "@qingagent/contract-ts";
+import type { AnnotationGroup, DocumentSnapshot, FolderSource } from "@qingagent/contract-ts";
 
 function reduce(...frames: WorkspaceAction[]) {
   return frames.reduce(workspaceReducer, initialWorkspaceState);
@@ -190,6 +190,53 @@ describe("workspaceReducer", () => {
       expect(next.viewingVersion).toBeNull();
     });
   });
+
+  it("翻译生成帧按 docId 累积文本、隔离失败并在完成后清理", () => {
+    const streaming = reduce(
+      { kind: "derivativeGenStarted", data: { docId: "en", targetLang: "英语" } },
+      { kind: "derivativeGenStarted", data: { docId: "ja", targetLang: "日语" } },
+      { kind: "derivativeGenDelta", data: { docId: "en", text: "<p>Hello" } },
+      { kind: "derivativeGenDelta", data: { docId: "en", text: " world</p>" } },
+      { kind: "derivativeGenFailed", data: { docId: "ja", reason: "译文生成失败，请重试" } },
+    );
+    expect(streaming.translationGen.get("en")).toEqual({ status: "streaming", text: "<p>Hello world</p>" });
+    expect(streaming.translationGen.get("ja")).toEqual({ status: "failed", text: "", reason: "译文生成失败，请重试" });
+
+    const finished = workspaceReducer(streaming, {
+      kind: "derivativeGenFinished",
+      data: { docId: "en", generatedAt: "2026-07-15T00:00:00.000Z", docVersion: 1 },
+    });
+    expect(finished.translationGen.has("en")).toBe(false);
+    expect(finished.translationGen.get("ja")?.status).toBe("failed");
+  });
+
+describe("annotationGroupsReady 来源增量", () => {
+  const annotation = (id: string, origin: string, status: AnnotationGroup["status"] = "reviewing"): AnnotationGroup => ({
+    id,
+    origin,
+    status,
+    summary: id,
+    note: `${id}-note`,
+    anchors: [{ blockId: "p-1", pmFrom: 1, pmTo: 2, quote: "甲", textHash: `${id}-hash` }],
+  });
+
+  it("同 origin 换代保留其他来源，并保留同 id 的前端 accepted 状态", () => {
+    const seeded = workspaceReducer(initialWorkspaceState, {
+      kind: "annotationGroupsChanged",
+      groups: [annotation("source-old", "source-check"), annotation("consistent", "consistency", "accepted")],
+    });
+    const next = workspaceReducer(seeded, {
+      kind: "annotationGroupsReady",
+      data: {
+        groups: [annotation("source-new", "source-check"), annotation("consistent", "consistency")],
+        replacedOrigins: ["source-check", "consistency"],
+      },
+    });
+
+    expect(next.annotationGroups.map((group) => group.id).sort()).toEqual(["consistent", "source-new"]);
+    expect(next.annotationGroups.find((group) => group.id === "consistent")?.status).toBe("accepted");
+  });
+});
 
   it("folderSourcesChanged 全量替换当前会话文件夹资料库", () => {
     const source: FolderSource = {

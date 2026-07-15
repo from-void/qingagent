@@ -38,6 +38,7 @@ export { githubReadFileTool } from "./vendor/github/githubReadFile.js";
 export { githubSearchCodeTool } from "./vendor/github/githubSearchCode.js";
 export { githubAuthStartTool } from "./vendor/github/githubAuthStart.js";
 export { feishuAuthStartTool, feishuAuthDomainSchema } from "./vendor/feishu/feishuAuthStart.js";
+export { lexiconListTool, sensitiveScanTool, lexiconManageTool } from "./lexicon.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
 export { readImageTool } from "./readImage.js";

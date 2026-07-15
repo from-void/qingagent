@@ -170,6 +170,19 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).not.toThrow();
   });
 
+  it("accepts role review context", () => {
+    const cmd: Command = {
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "角色审查",
+        mentions: [], skills: [], chips: [], fileIds: [],
+        reviewContext: { type: "role", templateId: "review-role-engineer", templateName: "研发工程师" },
+      },
+    };
+    expect(() => validateCommand(cmd)).not.toThrow();
+  });
+
   it("accepts normalized table selection on selection chip", () => {
     const cmd: Command = {
       kind: "sendMessage",
@@ -805,6 +818,16 @@ describe("validateBridgeFrame", () => {
     expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
   });
 
+  it("校验 lexiconEntriesListed 的词库 id 与词条字段", () => {
+    const frame: BridgeFrame = {
+      kind: "lexiconEntriesListed",
+      data: { resourceId: "lex-1", entries: [{ word: "旧称", replacement: "新称", note: null }] },
+    };
+    expect(() => validateBridgeFrame(frame)).not.toThrow();
+    expect(() => validateBridgeFrame({ ...frame, data: { ...frame.data, resourceId: "" } })).toThrow(BridgeFrameValidationError);
+    expect(() => validateBridgeFrame({ ...frame, data: { ...frame.data, entries: [{ word: "", replacement: null, note: null }] } })).toThrow(BridgeFrameValidationError);
+  });
+
   it("rejects docCommitted without sessionId", () => {
     const frame: BridgeFrame = {
       kind: "docCommitted",
@@ -813,6 +836,31 @@ describe("validateBridgeFrame", () => {
     expect(() => validateBridgeFrame(frame)).toThrow(BridgeFrameValidationError);
   });
 
+});
+
+describe("validateBridgeFrame — annotation severity", () => {
+  const frame: BridgeFrame = {
+    kind: "annotationGroupsReady",
+    data: {
+      groups: [{
+        id: "g1",
+        summary: "数字前后不一",
+        note: "两处金额冲突",
+        origin: "consistency",
+        severity: "error",
+        status: "reviewing",
+        anchors: [{ blockId: "p1", pmFrom: 1, pmTo: 3, quote: "130", textHash: "hash" }],
+      }],
+    },
+  };
+
+  it("接受 error/warn/info 并拒绝未知严重度", () => {
+    expect(() => validateBridgeFrame(frame)).not.toThrow();
+    expect(() => validateBridgeFrame({
+      ...frame,
+      data: { groups: [{ ...frame.data.groups[0]!, severity: "fatal" }] },
+    } as unknown as BridgeFrame)).toThrow(BridgeFrameValidationError);
+  });
 });
 
 describe("validateCommand — sendMessage fileIds", () => {

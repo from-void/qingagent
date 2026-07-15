@@ -62,6 +62,65 @@
   #view-workspace .ws-chat::-webkit-scrollbar{width:8px}
   #view-workspace .ws-chat::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:0}
 
+  /* 衍生稿：Tab 与纸张连成同一层，整张纸随 .ws-right 滚动。 */
+  /* Tab 带(用户拍板):挂在 .ws-right 内、绝对定位于纸上方原顶栏空间,随文档滚走且不占流;
+     整个 Tab 背景块左缘与纸左缘对齐,文字保留 12px 内边距;纸的位置不动。
+     未 hover=纯文字,hover/选中=直角背景块;＋为直角线框。 */
+  #view-workspace .ws-deriv-tabs{position:absolute;top:12px;left:0;z-index:4;display:flex;align-items:center;gap:4px;height:32px;font-family:var(--font-zh-serif)}
+  #view-workspace .ws-deriv-tab{position:relative;box-sizing:border-box;display:flex;align-items:center;gap:0;height:28px;max-width:180px;padding:0 12px;border:0;border-radius:0;background:transparent;color:rgba(236,227,208,0.58);font:inherit;font-size:13px;cursor:pointer}
+  #view-workspace .ws-deriv-tab:hover{background:rgba(236,227,208,0.09)}
+  #view-workspace .ws-deriv-tab.is-active{background:rgba(236,227,208,0.16);color:rgba(240,232,214,0.92)}
+  #view-workspace .ws-deriv-tab.is-main{max-width:200px}.ws-deriv-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 改名笔:贴 Tab 右缘的毛玻璃垫(手工调,替换早前的实底方块)——垫用 backdrop 模糊+
+     极浅暗色,任何底(hover/选中/素面)上都不糊字;icon 幽灵态,悬停提亮。 */
+  #view-workspace .ws-deriv-rename{position:absolute;right:0;top:0;height:100%;width:24px;padding:0;border:0;border-radius:0;background:linear-gradient(90deg,rgba(22,28,36,0) 0%,rgba(22,28,36,0.30) 42%,rgba(22,28,36,0.34) 100%);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);color:rgba(240,232,214,0.72);display:grid;place-items:center;opacity:0;pointer-events:none;cursor:pointer;transition:opacity 0.12s ease,color 0.12s ease}
+  #view-workspace .ws-deriv-tab.is-main:hover .ws-deriv-rename,#view-workspace .ws-deriv-rename:focus-visible{opacity:1;pointer-events:auto}
+  #view-workspace .ws-deriv-rename:hover{color:rgba(240,232,214,0.98)}
+  #view-workspace .ws-deriv-rename svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+  #view-workspace .ws-deriv-add svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  #view-workspace .ws-deriv-title-input{box-sizing:border-box;width:180px;height:22px;padding:0 4px;border:0;border-bottom:1px solid rgba(184,169,140,0.62);border-radius:0;outline:0;background:transparent;color:rgba(240,232,214,0.92);font:inherit;font-size:13px}
+  #view-workspace .ws-deriv-add-wrap{position:relative;display:flex;align-items:center;opacity:0;pointer-events:none;transition:opacity 120ms ease}
+  #view-workspace .ws-deriv-tabs:hover .ws-deriv-add-wrap,#view-workspace .ws-deriv-tabs:focus-within .ws-deriv-add-wrap{opacity:1;pointer-events:auto}
+  #view-workspace .ws-deriv-add{box-sizing:border-box;width:28px;height:28px;padding:0;display:inline-grid;place-items:center;border:1px solid rgba(184,169,140,0.34);border-radius:0;background:transparent;color:rgba(236,227,208,0.60);cursor:pointer}
+  #view-workspace .ws-deriv-add:hover{color:rgba(240,232,214,0.92);border-color:rgba(184,169,140,0.62)}
+  /* 下拉菜单完全复用 .ws-export-menu/.ws-export-item 处方,只调锚点方向,不自造样式。 */
+  #view-workspace .ws-deriv-menu{top:34px;left:0;right:auto;min-width:180px}
+  #view-workspace{--danger:var(--ws-red)}
+  #view-workspace .ws-deriv-stale-dot{position:absolute;right:4px;top:4px;width:6px;height:6px;border-radius:var(--r-pill);background:var(--danger)}
+  /* 衍生视图 = 一张纸,几何与主文档纸完全一致(用户拍板:宽度/顶距一模一样):
+     宽 100% 上限 800、padding 52/64、min-height 同款、顶距由 .ws-right padding-top 提供。 */
+  /* flex-shrink:0 与 .ws-paper-surface 同理:.ws-right 是列 flex 容器,默认收缩会把纸压回
+     一屏高,长内容从纸底捅出(走查实证"超出容器")。 */
+  #view-workspace .ws-deriv-view{position:relative;box-sizing:border-box;flex-shrink:0;width:100%;max-width:800px;min-height:var(--ws-paper-min-height,calc(100vh - 52px));margin:0;padding:52px 64px;background:var(--bg-paper-deep);box-shadow:0 30px 80px rgba(0,0,0,0.5);font-family:var(--font-zh-serif);color:var(--ink-1)}
+  #view-workspace .ws-deriv-view.ws-deriv-xhs.is-desktop{max-width:1288px}
+  #view-workspace .ws-deriv-view>.ws-editor-glow{position:absolute;inset:0;width:auto;height:auto;box-sizing:border-box;z-index:4;overflow:hidden;pointer-events:none;opacity:1;animation:ws-paper-breathe 3.6s ease-in-out infinite}
+  /* 生成中必须由纸面本身提供完整几何；QingLoading 的内容高度不能反向决定 glow 高度。 */
+  #view-workspace .ws-deriv-view.is-generating{display:grid;min-height:var(--ws-paper-min-height,calc(100vh - 52px));place-items:center;isolation:isolate}
+  #view-workspace .ws-deriv-primary{padding:10px 22px;border:1px solid var(--ink-1);border-radius:0;background:var(--ink-1);color:var(--bg-canvas);font-family:var(--font-zh-serif);cursor:pointer}
+  #view-workspace .ws-deriv-secondary{padding:10px 22px;border:1px solid var(--line-2);border-radius:0;background:transparent;color:var(--ink-2);font-family:var(--font-zh-serif);cursor:pointer}#view-workspace .ws-deriv-secondary.is-danger{color:var(--danger)}
+  #view-workspace .ws-deriv-empty{min-height:420px;display:grid;place-content:center;justify-items:center;gap:18px;color:var(--ink-3)}
+  #view-workspace .ws-deriv-empty-actions{display:flex;align-items:center;gap:10px}
+  #view-workspace .ws-deriv-toolbar{position:absolute;top:14px;right:18px;z-index:5}.ws-deriv-actions{display:flex;align-items:center;gap:4px}.ws-deriv-toolbar svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  #view-workspace .ws-deriv-tool-btn{height:30px;padding:0 8px;border:0;border-radius:0;background:transparent;color:var(--ink-3);font:12px var(--font-zh-serif);cursor:pointer}#view-workspace .ws-deriv-tool-btn:hover{color:var(--ink-1);background:var(--bg-hover)}
+  #view-workspace .ws-deriv-regen-anchor{position:relative;display:inline-flex}#view-workspace .workspace-tooltip.ws-deriv-stale-tip{position:absolute;right:0;bottom:calc(100% + 8px);width:max-content;max-width:min(240px,calc(100vw - 64px));padding-right:28px;pointer-events:auto}#view-workspace .workspace-tooltip.ws-deriv-stale-tip::after{left:calc(100% - 13px)}#view-workspace .ws-deriv-stale-tip button{position:absolute;top:3px;right:5px;border:0;background:transparent;color:var(--ink-3);font-family:var(--font-zh-serif);cursor:pointer}
+  #view-workspace .ws-export-separator{height:1px;margin:4px 7px;background:var(--line-2)}#view-workspace .ws-export-item.is-danger{color:var(--danger)}
+  #view-workspace .ws-deriv-mode{display:flex;justify-content:center;margin:0 auto 12px}.ws-deriv-mode button{padding:6px 14px;border:1px solid var(--line-2);border-radius:0;background:transparent;color:var(--ink-3);font:inherit;cursor:pointer}.ws-deriv-mode button+button{border-left:0}.ws-deriv-mode button.is-active{background:var(--ink-1);color:var(--bg-paper-deep)}
+  #view-workspace .ws-translate-segmented button{display:inline-flex;align-items:center;gap:7px}
+  #view-workspace .ws-translate-status{display:inline-block;width:7px;height:7px;border-radius:var(--r-pill);background:var(--line-3)}
+  #view-workspace .ws-translate-status.is-streaming{background:var(--mark);animation:ws-translate-status-breathe 1.2s ease-in-out infinite}
+  #view-workspace .ws-translate-status.is-failed{background:var(--danger)}
+  #view-workspace .ws-deriv-streaming-paper{position:relative;isolation:isolate;min-height:420px;max-height:calc(100vh - 210px);overflow-y:auto;padding:24px 20px}
+  #view-workspace .ws-translate-stream-text{display:grid;gap:14px;color:var(--ink-1);font:16px/1.85 var(--font-zh-serif);white-space:pre-wrap}
+  #view-workspace .ws-translate-stream-text p{margin:0}
+  #view-workspace .ws-translate-failed{min-height:420px;display:grid;place-content:center;justify-items:center;gap:12px;text-align:center;color:var(--ink-2)}
+  #view-workspace .ws-translate-failed p{margin:0;color:var(--danger)}
+  #view-workspace .ws-export-item:disabled{cursor:not-allowed;opacity:.45}
+  @keyframes ws-translate-status-breathe{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
+  @media (prefers-reduced-motion:reduce){#view-workspace .ws-translate-status.is-streaming{animation:none;opacity:1}}
+  #view-workspace .ws-translate-article{min-height:calc(var(--ws-paper-min-height,calc(100vh - 52px)) - 104px);font-family:var(--font-zh-serif);color:var(--ink-1)}
+  #view-workspace .wx-desktop{min-height:640px;padding:24px 0;background:#fff}.wx-desktop>.wx-article{max-width:760px;margin:0 auto}
+  /* 生成中态复用产品 QingLoading(青字+古诗辐射),不再有自造骨架样式。 */
+
   #view-workspace .ws-tool-detail{
     margin:-4px 0 8px 4px;padding:8px 12px;
     border-left:2px solid var(--line-2);

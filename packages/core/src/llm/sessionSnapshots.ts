@@ -1,5 +1,6 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { createHash, randomUUID } from "node:crypto";
+import { modelFetch } from "./modelTransport.js";
 
 export const BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY = "branchSnapshotGeneration";
 export const BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY = "branchSnapshotEpoch";
@@ -197,7 +198,7 @@ export function createBranchSnapshotFetch(
 ): typeof fetch {
   return async (url, init) => {
     captureSessionSnapshot(requestContext, apiKey, url, init, validateWireMessages);
-    return globalThis.fetch(url, init);
+    return modelFetch(url, init);
   };
 }
 

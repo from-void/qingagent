@@ -19,6 +19,118 @@ describe("workspaceCssContract", () => {
     expect(lineCount).toBe(contract.lineCount);
   });
 
+  it("keeps workspace ink skin fixture regenerated with workspace CSS changes", () => {
+    const skinContract = contract as typeof contract & {
+      skinFile: string;
+      skinSha256: string;
+      skinLineCount: number;
+    };
+    const css = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
+    expect(createHash("sha256").update(css).digest("hex")).toBe(skinContract.skinSha256);
+    expect(css.split("\n").length - (css.endsWith("\n") ? 1 : 0)).toBe(skinContract.skinLineCount);
+  });
+
+  it("keeps annotation hover card light, anchored, and token-safe", () => {
+    const skinContract = contract as typeof contract & { skinFile: string };
+    const css = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
+    const annotationCss = [...css.matchAll(/#view-workspace [^{]*(?:\.annotation-hover-card|\.ahc-|\.annotation-anchor-|\.annotation-chip-|\.chat-chip-annotation)[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+
+    expect(css).toContain(".annotation-hover-card { position:fixed; z-index:41;");
+    expect(css).toContain("display:flex; flex-direction:column;");
+    expect(css).toContain("width:min(540px,calc(100vw - 24px));");
+    expect(css).toContain("max-height:calc(100vh - 24px); overflow:hidden;");
+    expect(css).toContain(".ahc-body { min-height:0; overflow-y:auto; overscroll-behavior:contain;");
+    expect(css).toContain(".ahc-title-row>strong { flex:1; min-width:0;");
+    expect(css).toContain(".ahc-nav { flex:none; display:flex; align-items:center;");
+    expect(css).toContain(".ahc-suggestion textarea { box-sizing:border-box; width:100%; height:68px;");
+    expect(css).toContain(".annotation-hover-card footer { flex:none;");
+    expect(css).toContain("border:1px solid var(--line-2); border-radius:0; background:var(--bg-canvas); color:var(--ink-1);");
+    expect(css).toContain(".ahc-accept { border:1px solid var(--mark); background:var(--mark); color:var(--ink-surface);");
+    expect(css).toContain(".ahc-ignore { border:1px solid var(--line-2); background:transparent; color:var(--ink-2);");
+    expect(css).toContain(".ahc-ignore:hover { border-color:var(--line-3); background:var(--bg-hover); color:var(--ink-1);");
+    expect(css).toContain(".annotation-anchor-active { text-decoration-line:underline; text-decoration-style:wavy; text-decoration-color:var(--mark);");
+    expect(css).toContain('.annotation-anchor-active[data-annotation-severity="error"] { text-decoration-color:var(--diff-del-ink);');
+    expect(css).toContain('.annotation-anchor-active[data-annotation-severity="warn"] { text-decoration-color:var(--mark);');
+    expect(css).toContain('.annotation-anchor-active[data-annotation-severity="info"] { text-decoration-color:var(--ink-4);');
+    expect(css).toContain(".annotation-anchor-accepted { text-decoration-line:underline; text-decoration-style:wavy; text-decoration-color:var(--ink-4);");
+    expect(css).toContain(".chat-chip.chat-chip-annotation { position:relative; border-color:var(--mark); background:var(--bg-subtle);");
+    expect(css).toContain(".annotation-chip-pop { position:absolute;");
+    expect(css).toContain(".annotation-chip-editor { box-sizing:border-box; width:100%; height:96px;");
+    expect(css).not.toContain(".annotation-carousel");
+    expect(css).not.toMatch(/#view-workspace \.ac-/);
+    expect(annotationCss.length).toBeGreaterThan(0);
+    // 这些裸 token 在全主题均无声明，静态契约兜住只能由真机 computed style 暴露的失效样式。
+    expect(annotationCss).not.toMatch(/var\(--(?:paper|paper-2|line|ink)\)/);
+  });
+
+  it("keeps unified launch modal token-safe with wrapping template cards", () => {
+    const skinContract = contract as typeof contract & { skinFile: string };
+    const css = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+    expect(css).toContain(".ws-launch-modal {");
+    expect(css).toContain("width: min(780px, 94vw);");
+    expect(css).toContain(".ws-launch-template-grid {");
+    expect(css).toContain("grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));");
+    expect(css).toContain(".ws-launch-head {\n  position: relative;\n  display: flex;");
+    expect(css).toContain(".ws-launch-subtitle {");
+    expect(css).not.toContain(".ws-launch-meta");
+    expect(css).not.toContain(".ws-launch-title-badge");
+    expect(css).toContain(".ws-launch-template-group-head { display: flex; align-items: baseline; gap: 12px; }");
+    expect(css).toContain(".ws-launch-template-group:hover .ws-launch-template-new,\n#view-workspace .ws-launch-template-new:focus-visible { opacity: 1; }");
+    expect(css).not.toContain(".ws-launch-template-group:focus-within .ws-launch-template-new");
+    expect(css).toMatch(/\.ws-launch-template-new \{[^}]*border: 0;[^}]*font: 11\.5px\/1\.4 var\(--font-zh-serif\);[^}]*opacity: 0;/s);
+    expect(css).not.toMatch(/\.ws-launch-template-new \{[^}]*border: 1px dashed/s);
+    expect(css).toContain(".ws-launch-template-card:hover .ws-launch-template-edit { opacity: 1; }");
+    expect(css).not.toContain(".ws-launch-template-card:focus-within .ws-launch-template-edit");
+    expect(css).not.toContain(".ws-launch-template-card.is-selected .ws-launch-template-edit");
+    expect(css).toMatch(/\.ws-launch-template-edit \{[^}]*top: 5px;[^}]*right: 5px;/s);
+    expect(css).toMatch(/\.ws-launch-template-edit svg \{[^}]*width: 13px;[^}]*stroke: currentColor;[^}]*stroke-width: 1\.4;/s);
+    expect(css).toMatch(/\.ws-launch-head h2 \{[^}]*font: 700 15px\/1\.3 var\(--font-zh-serif\);/s);
+    expect(css).toMatch(/\.ws-launch-subtitle \{[^}]*font: 11\.5px\/1\.5 var\(--font-zh-serif\);/s);
+    expect(css).toMatch(/\.ws-launch-body \{[^}]*gap: 11px;[^}]*padding: 14px 22px 16px;/s);
+    expect(css).toContain(".ws-launch-editor { display: grid; min-width: 0; gap: 11px; }");
+    expect(css).toMatch(/\.ws-launch-starters \{[^}]*margin-right: auto;/s);
+    expect(css).toMatch(/\.ws-launch-template-group-title \{[^}]*font: 600 12\.5px\/1\.4 var\(--font-zh-serif\);/s);
+    expect(css).toMatch(/\.ws-launch-template-card \{[^}]*min-height: 56px;/s);
+    expect(css).toMatch(/\.ws-launch-template-select \{[^}]*min-height: 54px;[^}]*padding: 8px 11px;/s);
+    expect(css).toMatch(/\.ws-launch-template-name strong \{[^}]*font-size: 12\.5px;/s);
+    expect(css).toMatch(/\.ws-launch-template-summary \{[^}]*font-size: 11\.5px;/s);
+    expect(css).toMatch(/\.ws-launch-resource-row \{[^}]*min-height: 34px;[^}]*font-size: 12\.5px;/s);
+    expect(css).toMatch(/\.ws-launch-field \{[^}]*font: 600 12\.5px\/1\.4 var\(--font-zh-serif\);/s);
+    expect(css).toMatch(/\.ws-launch-field input,[^}]*\.ws-launch-field textarea \{[^}]*font: 400 12\.5px\/1\.6 var\(--font-zh-serif\);/s);
+    expect(css).toContain(".ws-launch-supplement textarea { min-height: 58px;");
+    expect(css).toContain(".ws-launch-actions .wf-btn { padding: 7px 16px; font-size: 12.5px; }");
+    expect(css).not.toMatch(/\.ws-review-(?:template|link|lexicon|builtin)/);
+    expect(`${workspaceCss}\n${css}`).not.toMatch(/\.ws-deriv-(?:modal|generate-form|style-group|template(?:-list|-open|-select|-new)?|style-editor|style-back|modal-error|modal-status|prompt|modal-actions)(?:[\s.{:#])/);
+
+    const launchCss = [...css.matchAll(/#view-workspace [^{]*\.ws-launch-[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+    const allowedTokens = new Set([
+      "--bg-paper-deep", "--bg-canvas", "--bg-subtle", "--bg-hover",
+      "--ink-1", "--ink-2", "--ink-3", "--ink-4",
+      "--line-1", "--line-2", "--line-3", "--mark", "--mark-soft",
+      "--ws-red", "--font-zh-serif", "--font-mono",
+    ]);
+    const usedTokens = [...launchCss.matchAll(/var\((--[a-z0-9-]+)/g)].map(([, token]) => token!);
+    expect(launchCss.length).toBeGreaterThan(0);
+    expect(usedTokens.filter((token) => !allowedTokens.has(token))).toEqual([]);
+  });
+
+  it("keeps xhs preview fixture regenerated with cover CSS changes", () => {
+    const xhsContract = contract as typeof contract & {
+      xhsPreviewFile: string;
+      xhsPreviewSha256: string;
+      xhsPreviewLineCount: number;
+    };
+    const css = readFileSync(path.join(repoRoot, xhsContract.xhsPreviewFile), "utf8");
+    // 更新 xhsPreview.css 后同步刷新 fixture，避免文字封面排版约束静默回退。
+    expect(createHash("sha256").update(css).digest("hex")).toBe(xhsContract.xhsPreviewSha256);
+    expect(css.split("\n").length - (css.endsWith("\n") ? 1 : 0)).toBe(xhsContract.xhsPreviewLineCount);
+  });
+
   it("keeps the rank-0 workspace selectors present", () => {
     const filePath = path.join(repoRoot, contract.file);
     const css = readFileSync(filePath, "utf8");

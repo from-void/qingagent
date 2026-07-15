@@ -6,6 +6,7 @@ import type { AgentStreamEvent } from "./agentStreamEvents.js";
 import type { AgentStreamTurnContext } from "./agentStreamTurnContext.js";
 import { findAskUserToolCallSpecInChatHistory } from "./askUserAnswerMessage.js";
 import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
+import { settleDraftCandidate } from "../doc-engine/settleDraftCandidate.js";
 import { idleDocState, normalizeTargetDocState } from "../doc-engine/docStateTransitions.js";
 import {
   syncContentAndProjectDocState,
@@ -37,6 +38,7 @@ import {
   type AskUserPurposeKind,
 } from "./toolCards.js";
 import { markToolIoSpanSuspended } from "./toolIoSpans.js";
+import { draftingFailedFrame } from "./streamErrors.js";
 
 const logger = mastra.getLogger();
 
@@ -61,6 +63,88 @@ function recordSuspendedStepResponse(
 }
 
 export type SuspensionEventResult = "unhandled" | "handled" | "terminal";
+
+/** writeDraft 后同轮挂起时先沿正式 settle 链收口，避免候选被挂起清理吞掉。 */
+async function* settleWriteDraftBeforeSuspension(
+  context: AgentStreamTurnContext,
+): AsyncGenerator<BridgeFrame, boolean> {
+  const {
+    state,
+    agentMessageId,
+    streamId,
+    runId,
+    requestContext,
+    abortController,
+    outcome,
+  } = context;
+  if (
+    !context.docGeneratedThisTurn ||
+    !context.sawValidDraftMutation ||
+    !state.docDraftCandidateDoc ||
+    abortController.signal.aborted
+  ) {
+    return false;
+  }
+
+  const candidateDoc = state.docDraftCandidateDoc;
+  const candidateSections = state.docDraftCandidateSections;
+  const baseDoc = state.docDraftBaseDoc;
+  const baseSections = state.docDraftBaseSections;
+  const baseVersion = state.docDraftBaseVersion;
+  const restoreCandidate = (): void => {
+    if (state.docDraftCandidateDoc) return;
+    state.docDraftCandidateDoc = candidateDoc;
+    state.docDraftCandidateSections = candidateSections;
+    state.docDraftBaseDoc = baseDoc;
+    state.docDraftBaseSections = baseSections;
+    state.docDraftBaseVersion = baseVersion;
+    requestContext?.set("doc", candidateDoc);
+    requestContext?.set("legacySections", candidateSections ?? []);
+  };
+
+  try {
+    const settled = yield* settleDraftCandidate({
+      state,
+      agentMessageId,
+      streamId,
+      runId,
+      wholeDocument: true,
+      requestContext,
+      generationId: context.settledDocGenerationId,
+      generationLastSeq: context.settledDocGenerationLastSeq,
+      emitGenerationEvent: true,
+    });
+    context.validPatchCount = settled.hunkCount;
+    context.finalDocumentSnapshotEmitted = settled.docWritten;
+    if (settled.hunkCount > 0 || settled.docWritten) {
+      outcome.producedVisibleFrame = true;
+      outcome.sawToolCall = true;
+      outcome.sawSideEffectToolCall = true;
+      logger.info("[settle] writeDraft 候选已在挂起前收口", {
+        streamId,
+        hunkCount: settled.hunkCount,
+        docWritten: settled.docWritten,
+        docVersion: state.docVersion,
+      });
+      return true;
+    }
+    restoreCandidate();
+    return true;
+  } catch (error) {
+    restoreCandidate();
+    logger.error("[settle] writeDraft 挂起前收口异常，已保留候选", {
+      sessionId: state.sessionId,
+      streamId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    yield draftingFailedFrame(
+      streamId,
+      "草稿已生成，但挂起前落定失败；候选已保留，请提交问卷后重试。",
+    );
+    outcome.producedVisibleFrame = true;
+    return true;
+  }
+}
 
 export async function* handleSuspensionEvent(
   context: AgentStreamTurnContext,
@@ -97,8 +181,8 @@ export async function* handleSuspensionEvent(
       runId: state.runId,
       toolCallId: payload.toolCallId,
     });
+    yield* settleWriteDraftBeforeSuspension(context);
     context.wasSuspended = true;
-    clearDraftConfirmationState(state);
     requestContext?.set("legacySections", state.legacySections);
     recordSuspension(state, {
       streamId,
@@ -188,8 +272,9 @@ export async function* handleSuspensionEvent(
     state._askUserSuspendCount = 0;
   }
 
+  const draftSettledBeforeSuspension = yield* settleWriteDraftBeforeSuspension(context);
   context.wasSuspended = true;
-  clearDraftConfirmationState(state);
+  if (!draftSettledBeforeSuspension) clearDraftConfirmationState(state);
   requestContext?.set("legacySections", state.legacySections);
   recordSuspension(state, {
     streamId,

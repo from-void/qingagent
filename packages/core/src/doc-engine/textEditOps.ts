@@ -7,19 +7,17 @@ import {
   type PmNode,
 } from "@qingagent/pm-schema";
 import { compileSafeRegex, execSafeRegexAll } from "../agent-run/safeRegex.js";
+import {
+  collectTopLevelTextBlocks,
+  inlineNodeLen,
+  isInlineTextBlock,
+  type TextBlockRef,
+} from "../utils/pmTextBlocks.js";
 
-export interface TextBlockRef {
-  blockId: string;
-  topBlockId: string;
-  nodeBlockId: string;
-  ancestorBlockIds: string[];
-  path: number[];
-  topIndex: number;
-  textStart: number;
-  textEnd: number;
-  text: string;
-  node: PmBlockNode;
-}
+export {
+  collectTopLevelTextBlocks,
+  type TextBlockRef,
+} from "../utils/pmTextBlocks.js";
 
 export interface QuoteMatch {
   blockId: string;
@@ -31,101 +29,6 @@ export interface QuoteMatch {
   startOffset: number;
   endOffset: number;
   captures?: string[];
-}
-
-function nodeSize(node: PmNode | PmDoc): number {
-  if (node.type === "doc") {
-    return node.content.reduce((sum, child) => sum + nodeSize(child), 0);
-  }
-  if (node.type === "text") return node.text.length;
-  if (node.type === "hardBreak") return 1;
-  if (!("content" in node) || !Array.isArray(node.content)) return 1;
-  return 2 + node.content.reduce((sum, child) => sum + nodeSize(child as PmNode), 0);
-}
-
-// inlineMath 是原子行内节点(PM nodeSize=1):文本投影用 U+FFFC 占位,保证 offset 与 PM 位置一致。
-const INLINE_ATOM_PLACEHOLDER = "￼";
-
-function inlineNodeLen(node: PmInlineNode): number {
-  return node.type === "text" ? node.text.length : 1;
-}
-
-function inlineText(content: readonly PmInlineNode[] | undefined): string {
-  return (content ?? [])
-    .map((node) => {
-      if (node.type === "hardBreak") return "\n";
-      if (node.type === "inlineMath") return INLINE_ATOM_PLACEHOLDER;
-      return node.text;
-    })
-    .join("");
-}
-
-function isInlineTextBlock(node: PmNode): node is PmBlockNode & { content?: PmInlineNode[] } {
-  return (
-    node.type === "paragraph" ||
-    node.type === "heading" ||
-    node.type === "codeBlock" ||
-    node.type === "penNote"
-  );
-}
-
-function getNodeBlockId(node: PmNode): string | undefined {
-  if (!("attrs" in node)) return undefined;
-  const blockId = (node.attrs as Record<string, unknown> | undefined)?.blockId;
-  return typeof blockId === "string" && blockId ? blockId : undefined;
-}
-
-export function collectTopLevelTextBlocks(doc: PmDoc, withinRef?: string): TextBlockRef[] {
-  const out: TextBlockRef[] = [];
-
-  function visit(
-    node: PmNode,
-    path: number[],
-    pos: number,
-    topIndex: number,
-    topBlockId: string,
-    ancestorBlockIds: string[],
-  ): void {
-    const nodeBlockId = getNodeBlockId(node) ?? topBlockId;
-    if (isInlineTextBlock(node)) {
-      const text = inlineText(node.content);
-      const withinMatches =
-        !withinRef ||
-        nodeBlockId === withinRef ||
-        ancestorBlockIds.includes(withinRef) ||
-        topBlockId === withinRef;
-      if (withinMatches) {
-        out.push({
-          blockId: nodeBlockId,
-          topBlockId,
-          nodeBlockId,
-          ancestorBlockIds,
-          path,
-          topIndex,
-          textStart: pos + 1,
-          textEnd: pos + 1 + text.length,
-          text,
-          node,
-        });
-      }
-    }
-
-    if (!("content" in node) || !Array.isArray(node.content)) return;
-    const childAncestorBlockIds = nodeBlockId ? [...ancestorBlockIds, nodeBlockId] : ancestorBlockIds;
-    let childPos = pos + 1;
-    node.content.forEach((child, index) => {
-      if (typeof child !== "object" || child === null) return;
-      visit(child as PmNode, [...path, index], childPos, topIndex, topBlockId, childAncestorBlockIds);
-      childPos += nodeSize(child as PmNode);
-    });
-  }
-
-  let pos = 0;
-  doc.content.forEach((child, index) => {
-    visit(child, [index], pos, index, child.attrs.blockId, []);
-    pos += nodeSize(child);
-  });
-  return out;
 }
 
 function toQuoteMatch(
@@ -151,6 +54,60 @@ function toQuoteMatch(
 function applyAllPolicy(matches: QuoteMatch[], all: boolean): QuoteMatch[] {
   if (all) return matches;
   return matches.length === 1 ? matches : [];
+}
+
+interface LiteralRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * 素材引文存在性校验的规范化口径：兼容空白差异与全/半角差异。
+ * 范围映射只供布尔校验使用，不能用于正文编辑或批注锚点。
+ */
+function findNormalizedLiteralRanges(text: string, find: string): LiteralRange[] {
+  const normalizeWithOffsets = (value: string) => {
+    let normalized = "";
+    const starts: number[] = [];
+    const ends: number[] = [];
+
+    for (let offset = 0; offset < value.length;) {
+      const codePoint = value.codePointAt(offset);
+      if (codePoint === undefined) break;
+      const raw = String.fromCodePoint(codePoint);
+      const nextOffset = offset + raw.length;
+      for (const part of raw.normalize("NFKC")) {
+        if (/\s/u.test(part)) continue;
+        normalized += part;
+        for (let unit = 0; unit < part.length; unit += 1) {
+          starts.push(offset);
+          ends.push(nextOffset);
+        }
+      }
+      offset = nextOffset;
+    }
+
+    return { normalized, starts, ends };
+  };
+
+  const haystack = normalizeWithOffsets(text);
+  const needle = normalizeWithOffsets(find).normalized;
+  if (!needle) return [];
+
+  const ranges: LiteralRange[] = [];
+  let index = haystack.normalized.indexOf(needle);
+  while (index >= 0) {
+    const lastIndex = index + needle.length - 1;
+    const start = haystack.starts[index];
+    const end = haystack.ends[lastIndex];
+    if (start !== undefined && end !== undefined) ranges.push({ start, end });
+    index = haystack.normalized.indexOf(needle, index + Math.max(1, needle.length));
+  }
+  return ranges;
+}
+
+export function containsLiteralMatch(text: string, find: string): boolean {
+  return findNormalizedLiteralRanges(text, find).length > 0;
 }
 
 export function findLiteralMatches(

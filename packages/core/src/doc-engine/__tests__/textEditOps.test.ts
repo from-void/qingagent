@@ -10,6 +10,7 @@ import {
 import { buildDraftDiff } from "../proposalDiff.js";
 import {
   collectTopLevelTextBlocks,
+  containsLiteralMatch,
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
@@ -68,6 +69,10 @@ function listItemTexts(docValue: PmDoc): string[] {
 }
 
 describe("textEditOps", () => {
+  it("tx-contains-literal-normalize: 素材引文校验兼容空白和全半角差异", () => {
+    expect(containsLiteralMatch("收入为１２０\n亿元", "收入为 120亿元")).toBe(true);
+  });
+
   it("tx-replaceText-keepMarks: 替换文本继承命中处 marks", () => {
     const bold = aiRunMarkToPmMark({ type: "bold" });
     const link = aiRunMarkToPmMark({ type: "link", href: "https://example.com", title: "示例" });

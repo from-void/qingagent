@@ -84,6 +84,12 @@ export const TOOL_LABELS: Record<string, string> = {
   github_search_code: "搜索 GitHub 代码",
   github_auth_start: "连接 GitHub",
   feishu_auth_start: "连接飞书",
+  lexicon_list: "查看敏感词词库", sensitive_scan: "敏感词扫描", lexicon_manage: "管理敏感词词库",
+  derivative_brief: "读取稿件任务", generate_derivative: "生成稿件",
+  create_annotation_groups: "生成批注",
+  list_derivatives: "列出稿件", update_derivative_params: "更新稿件设置",
+  style_template_list: "列出风格模板", style_template_get: "读取风格模板",
+  style_template_save: "保存风格模板", style_template_delete: "删除风格模板",
 };
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。
@@ -135,6 +141,11 @@ const LONG_RUNNING = new Set([
 const SKILL_TOOL_NAMES = new Set(["skill", "skill_read"]);
 export type SkillLabelMap = Readonly<Record<string, string>>;
 const EMPTY_SKILL_LABELS: SkillLabelMap = {};
+
+// 已存素材的 materialId → 展示名。storeMaterial 的参数不是已存素材 id，不参与替换。
+const MATERIAL_TOOL_NAMES = new Set(["readMaterial", "summarizeMaterial"]);
+export type MaterialLabelMap = Readonly<Record<string, string>>;
+const EMPTY_MATERIAL_LABELS: MaterialLabelMap = {};
 
 // 注意:不含 "pid" —— 进程号对用户无意义,不该当作主参数显示成"读取运行输出 · 1166276"。
 const PARAM_PRIORITY = ["filePath", "path", "file", "filename", "url", "query", "pattern", "selector", "key", "direction", "dir", "name", "skill", "materialId", "mode", "text"];
@@ -303,7 +314,15 @@ function parseArgs(spec: ToolCallSpec): Record<string, unknown> {
 }
 
 // ═══════════ 基元 1:统一工具条(一行,不可展开) ═══════════
-export function UToolBar({ spec, skillLabels = EMPTY_SKILL_LABELS }: { spec: ToolCallSpec; skillLabels?: SkillLabelMap }) {
+export function UToolBar({
+  spec,
+  skillLabels = EMPTY_SKILL_LABELS,
+  materialLabels = EMPTY_MATERIAL_LABELS,
+}: {
+  spec: ToolCallSpec;
+  skillLabels?: SkillLabelMap;
+  materialLabels?: MaterialLabelMap;
+}) {
   const k = spec.status.kind;
   const pending = k === "pending";
   const running = k === "running";
@@ -330,6 +349,10 @@ export function UToolBar({ spec, skillLabels = EMPTY_SKILL_LABELS }: { spec: Too
   const args = parseArgs(spec);
   let main = SKILL_TOOL_NAMES.has(spec.name) ? pickSkillParam(args) : pickMainParam(args);
   if (main && SKILL_TOOL_NAMES.has(spec.name)) main = clip(skillLabels[main] ?? main);
+  const rawMaterialId = args.materialId == null ? null : String(args.materialId);
+  if (main && rawMaterialId && MATERIAL_TOOL_NAMES.has(spec.name)) {
+    main = clip(materialLabels[rawMaterialId] ?? main);
+  }
   const customOut = !pending && !running && !failed ? pickOutputSummary(spec.result, spec.name) : null;
   const semanticFailed = !pending && !running && !failed && isToolResultFailure(spec.result, spec.name);
   const outputHint = semanticFailed ? pickOutputHint(spec.result, spec.name) : null;
@@ -597,12 +620,20 @@ export function UProcessFold({ steps, defaultOpen = false, children }: {
 
 // ═══════════ dispatch:in-scope 工具调用 → 统一组件 ═══════════
 // (草稿/二维码/问卷 fullpage 由调用方 ChatMessageList 在上游处理,不进这里)
-export function UnifiedToolCall({ spec, skillLabels = EMPTY_SKILL_LABELS }: { spec: ToolCallSpec; skillLabels?: SkillLabelMap }) {
+export function UnifiedToolCall({
+  spec,
+  skillLabels = EMPTY_SKILL_LABELS,
+  materialLabels = EMPTY_MATERIAL_LABELS,
+}: {
+  spec: ToolCallSpec;
+  skillLabels?: SkillLabelMap;
+  materialLabels?: MaterialLabelMap;
+}) {
   const b = spec.body;
   if (b.kind === "researchCard") return <UResearch body={b.data} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
   if (b.kind === "commandCard") return <UCommand body={b.data} />;
   // generic / 旧死 body.kind / askUser overlay → 统一一行
-  return <UToolBar spec={spec} skillLabels={skillLabels} />;
+  return <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
 }

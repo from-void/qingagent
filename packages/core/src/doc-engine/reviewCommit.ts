@@ -7,7 +7,7 @@ import type {
   PatchConflict,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { getPmContentHash, pmToLegacySections, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, pmToLegacySections, type PmDoc, type PmStep } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 import { updateToolCallInChatHistory } from "../session/sessionState.js";
@@ -17,7 +17,7 @@ import { applySuggestionsToDoc } from "./pmPatch.js";
 import { applyDiffHunks } from "./proposalDiff.js";
 import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSuggestions.js";
 import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
-import { updateDocumentSuggestionStatus } from "@qingagent/db";
+import { persistMappedAnnotationGroups, updateDocumentSuggestionStatus } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import {
@@ -38,6 +38,7 @@ import { docDiffReady, toolCallUpdated } from "../agent-run/frames.js";
 import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
+import { mapAnnotationGroupsThroughSteps } from "./annotationMapping.js";
 
 const logger = mastra.getLogger();
 
@@ -683,8 +684,27 @@ export async function* commitPatches(
   state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
   state.docVersion = result.docVersion;
   state._directionChangeAskedSinceLastWrite = false;
+  const committedAnnotationSteps = (result.steps ?? []) as PmStep[];
+  if (state.annotationGroups.length > 0 && committedAnnotationSteps.length > 0) {
+    const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
+    const mapped = mapAnnotationGroupsThroughSteps(
+      state.annotationGroups,
+      committedAnnotationSteps,
+      result.doc,
+    );
+    state.annotationGroups = mapped.groups;
+    await persistMappedAnnotationGroups(
+      state.docId,
+      mapped.groups,
+      mapped.survivingAnchorIndexes,
+    );
+    yield {
+      kind: "annotationGroupsReady",
+      data: { groups: mapped.groups, replacedOrigins },
+    };
+  }
   if (shouldCommitDiffHunks) {
-    const nextTitle = deriveTitleFromSections(state.legacySections);
+    const nextTitle = state.titlePinned ? null : deriveTitleFromSections(state.legacySections);
     if (nextTitle) {
       state.title = nextTitle;
       yield {

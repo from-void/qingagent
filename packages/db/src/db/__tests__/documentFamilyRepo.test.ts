@@ -5,6 +5,7 @@ import { getDocumentsClient } from "../documentsClient.js";
 import { deleteDocumentFamily } from "../documentFamilyRepo.js";
 import { ensureMigrated, runMigrations } from "../migrations.js";
 import { migration0001Baseline } from "../migrations/0001_baseline.js";
+import { MIGRATIONS } from "../migrations/index.js";
 import { prepareTempDocumentsDb, pmDocFromText, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
@@ -119,7 +120,7 @@ describe("migration 0002 orphan cleanup", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([2, 3, 4]);
+    expect(result.appliedIds).toEqual(MIGRATIONS.filter((migration) => migration.id > 1).map((migration) => migration.id));
     expect(await familyCount(client, "orphan-doc", "missing-thread")).toBe(0);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
   });

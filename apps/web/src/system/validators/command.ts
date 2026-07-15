@@ -105,6 +105,28 @@ function checkSendMessage(m: SendMessage): void {
       if (!id) fail(`SendMessage.fileIds[] must be non-empty`);
     }
   }
+  if (m.displayCard) {
+    if (typeof m.displayCard.title !== "string") {
+      fail(`SendMessage.displayCard.title must be a string`);
+    }
+    if (!Array.isArray(m.displayCard.lines)) {
+      fail(`SendMessage.displayCard.lines must be an array`);
+    }
+    for (const line of m.displayCard.lines) {
+      if (typeof line.label !== "string" || typeof line.value !== "string") {
+        fail(`SendMessage.displayCard.lines[] must contain string label/value`);
+      }
+    }
+  }
+  if (m.reviewContext) {
+    const allowedTypes = new Set(["sensitive", "deai", "source", "consistency", "privacy", "format", "role", "custom"]);
+    if (!allowedTypes.has(m.reviewContext.type)) {
+      fail(`SendMessage.reviewContext.type is invalid`);
+    }
+    if (!m.reviewContext.templateId || !m.reviewContext.templateName) {
+      fail(`SendMessage.reviewContext template fields must be non-empty`);
+    }
+  }
 }
 
 function checkLegacySections(value: unknown): void {
@@ -240,5 +262,66 @@ export function validateCommand(cmd: Command): void {
       if (!nonEmptyString(data.folderId)) fail(`DetachFolder.folderId must be non-empty`);
       return;
     }
+    case "listLexicons":
+      if (!cmd.data.sessionId) fail(`ListLexicons.sessionId must be non-empty`);
+      return;
+    case "listLexiconEntries":
+      if (!cmd.data.sessionId || !cmd.data.resourceId) fail(`ListLexiconEntries.data must be non-empty`);
+      return;
+    case "renameSession":
+      if (!cmd.data.sessionId || typeof cmd.data.title !== "string" || !cmd.data.title.trim() || cmd.data.title.trim().length > 48) fail(`RenameSession.data is invalid`);
+      return;
+    case "listDerivatives":
+      if (!cmd.data.sessionId) fail(`ListDerivatives.sessionId must be non-empty`);
+      return;
+    case "createDerivative":
+      if (!cmd.data.sessionId || !cmd.data.templateId || !["gzh", "xhs", "translate"].includes(cmd.data.dtype) || typeof cmd.data.privatePrompt !== "string") fail(`CreateDerivative.data is invalid`);
+      if (cmd.data.dtype === "translate" && !cmd.data.targetLang?.trim()) fail(`CreateDerivative.targetLang is required`);
+      return;
+    case "generateTranslations":
+      if (!cmd.data.sessionId || !Array.isArray(cmd.data.docIds) || cmd.data.docIds.length < 1 || cmd.data.docIds.length > 5 || new Set(cmd.data.docIds).size !== cmd.data.docIds.length || cmd.data.docIds.some((id) => typeof id !== "string" || !id)) fail(`GenerateTranslations.data is invalid`);
+      return;
+    case "deleteDerivative":
+      if (!cmd.data.sessionId || !cmd.data.docId) fail(`DeleteDerivative.data is invalid`);
+      return;
+    case "getDerivativeDoc":
+      if (!cmd.data.sessionId || !cmd.data.docId) fail(`GetDerivativeDoc.data is invalid`);
+      return;
+    case "listStyleTemplates":
+      if (!cmd.data.sessionId || (cmd.data.slot !== undefined && !["layout", "writing", "instruction"].includes(cmd.data.slot))) fail(`ListStyleTemplates.data is invalid`);
+      return;
+    case "getStyleTemplate":
+      if (!cmd.data.sessionId || !cmd.data.id) fail(`GetStyleTemplate.data is invalid`);
+      return;
+    case "saveStyleTemplate":
+      if (!cmd.data.sessionId || !cmd.data.dtype || !["layout", "writing", "instruction"].includes(cmd.data.slot) || !cmd.data.name || typeof cmd.data.prompt !== "string") fail(`SaveStyleTemplate.data is invalid`);
+      return;
+    case "deleteStyleTemplate":
+      if (!cmd.data.sessionId || !cmd.data.id) fail(`DeleteStyleTemplate.data is invalid`);
+      return;
+    case "updateDerivativeParams":
+      if (!cmd.data.sessionId || !cmd.data.docId) fail(`UpdateDerivativeParams.data is invalid`);
+      return;
+    case "listReviewTemplates":
+      if (!cmd.data.sessionId || !cmd.data.type) fail(`ListReviewTemplates.data is invalid`);
+      return;
+    case "saveReviewTemplate":
+      if (!cmd.data.sessionId || !cmd.data.type || !cmd.data.name.trim() || !cmd.data.prompt.trim()) fail(`SaveReviewTemplate.data is invalid`);
+      return;
+    case "deleteReviewTemplate":
+      if (!cmd.data.sessionId || !cmd.data.id) fail(`DeleteReviewTemplate.data is invalid`);
+      return;
+    case "selectReviewTemplate":
+      if (!cmd.data.sessionId || !cmd.data.type || !cmd.data.templateId) fail(`SelectReviewTemplate.data is invalid`);
+      return;
+    case "getReviewSupplement":
+      if (!cmd.data.sessionId || !cmd.data.type) fail(`GetReviewSupplement.data is invalid`);
+      return;
+    case "upsertReviewSupplement":
+      if (!cmd.data.sessionId || !cmd.data.type || typeof cmd.data.supplement !== "string") fail(`UpsertReviewSupplement.data is invalid`);
+      return;
+    case "draftTemplate":
+      if (!cmd.data.sessionId || !cmd.data.scene.label.trim() || typeof cmd.data.intent.name !== "string" || typeof cmd.data.intent.prompt !== "string") fail(`DraftTemplate.data is invalid`);
+      return;
   }
 }

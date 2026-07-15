@@ -1,0 +1,491 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConfirmProvider } from "../../../../system";
+import { DerivTabBar } from "./DerivTabBar";
+import { DerivativeGenerateModal, MAX_TRANSLATION_LANGUAGES, TRANSLATION_LANGUAGES } from "./DerivativeGenerateModal";
+import { DerivativeView } from "./DerivativeView";
+import type { DerivativeItem } from "./types";
+import { buildTranslationDisplayCard, DTYPE_REGISTRY } from "./dtypeRegistry";
+import { calculatePhoneScale } from "./PhoneShell";
+import { calculateDesktopScale, DESKTOP_FRAME, DESKTOP_PAPER_INSET } from "./DesktopShell";
+
+const item: DerivativeItem = {
+  docId: "deriv-1", dtype: "gzh",
+  templateId: "gzh-opinion", templateName: "深度观点文", privatePrompt: "", sourceVersion: null,
+  generatedAt: null, stale: false,
+};
+
+describe("公众号稿生成体验", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
+  afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
+
+  it("PhoneShell 按 375×812 等比缩放并在 560px 锁档", () => {
+    expect(calculatePhoneScale(812)).toBe(1);
+    expect(calculatePhoneScale(686)).toBeCloseTo(686 / 812);
+    expect(calculatePhoneScale(400)).toBeCloseTo(560 / 812);
+  });
+
+  it("常驻 stale 提示右吸附重新生成按钮，并让箭头对准按钮中心", async () => {
+    const staleItem: DerivativeItem = { ...item, sourceVersion: 1, generatedAt: "now", stale: true };
+    const stream = { getDerivativeDoc: vi.fn(async () => ({
+      meta: staleItem,
+      docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}',
+      docVersion: 1,
+      title: "",
+    })) };
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={staleItem} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => Promise.resolve());
+
+    const anchor = host.querySelector(".ws-deriv-regen-anchor")!;
+    expect(anchor.querySelector(":scope > .ws-deriv-stale-tip")).not.toBeNull();
+    expect(anchor.querySelector(':scope > [aria-label="重新生成"]')).not.toBeNull();
+
+    const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
+    expect(css).toMatch(/\.workspace-tooltip\.ws-deriv-stale-tip\{[^}]*right:0;bottom:calc\(100% \+ 8px\);[^}]*max-width:min\(240px,calc\(100vw - 64px\)\)/);
+    expect(css).toMatch(/\.workspace-tooltip\.ws-deriv-stale-tip::after\{left:calc\(100% - 13px\)\}/);
+  });
+
+  it("MacBook 先扣除每侧 40px 纸面留白，再保持 1232×740 整机等比缩放", () => {
+    const scale = calculateDesktopScale(1312, 820);
+    expect(DESKTOP_PAPER_INSET).toEqual({ horizontal: 40, vertical: 80 });
+    expect(DESKTOP_FRAME).toMatchObject({ width: 1232, height: 740, viewportWidth: 1100, viewportHeight: 690, baseHeight: 10 });
+    expect(scale).toBe(1);
+    expect(calculateDesktopScale(1288, 1000)).toBeCloseTo(1208 / 1232);
+  });
+
+  it("Tab 使用类型展示名，＋菜单只列未创建类型且全建完后隐藏", async () => {
+    const onCreate = vi.fn();
+    const renderTabs = async (items: DerivativeItem[]) => act(async () => root.render(
+      <DerivTabBar title="主文档" items={items} activeTab="main" onActivate={vi.fn()} onCreate={onCreate} onRename={vi.fn()} />,
+    ));
+
+    await renderTabs([item]);
+    expect(host.textContent).toContain("公众号文章");
+    expect(host.textContent).not.toContain("深度观点文");
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="新建稿件"]')!.click());
+    const menu = host.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(menu.textContent).toContain("小红书稿");
+    expect(menu.textContent).not.toContain("公众号稿");
+    expect(menu.textContent).not.toContain("打开");
+    expect(menu.textContent).toContain("翻译");
+    expect(menu.textContent).not.toContain("PPT");
+
+    const xhsItem: DerivativeItem = { ...item, docId: "deriv-2", dtype: "xhs", templateName: "种草安利" };
+    await renderTabs([item, xhsItem]);
+    expect(host.textContent).toContain("小红书笔记");
+    expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
+
+    const translateItem: DerivativeItem = { ...item, docId: "deriv-3", dtype: "translate", targetLang: "英语", templateName: "忠实精准" };
+    await renderTabs([item, xhsItem, translateItem]);
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(4);
+    expect(host.querySelector('[aria-label="新建稿件"]')).toBeNull();
+
+    await renderTabs([xhsItem]);
+    expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
+  });
+
+  it("弹框取消无副作用，生成提交当前模板和补充指令", async () => {
+    const close = vi.fn();
+    const generate = vi.fn();
+    const templates = [
+      { id: "layout-a", dtype: "gzh", slot: "layout", name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true },
+      { id: "gzh-opinion", dtype: "gzh", slot: "writing", name: "深度观点文", detail: "深入", prompt: "深度提示", builtin: true },
+      { id: "gzh-tutorial", dtype: "gzh", slot: "writing", name: "干货教程文", detail: "", prompt: "教程提示\n第二行不进摘要", builtin: true },
+      { id: "gzh-story", dtype: "gzh", slot: "writing", name: "故事叙事文", detail: "叙事", prompt: "故事提示", builtin: true },
+    ] as const;
+    const stream = {
+      listStyleTemplates: vi.fn(async () => templates),
+      getStyleTemplate: vi.fn(async (_sessionId: string, id: string) => templates.find((item) => item.id === id)!),
+      saveStyleTemplate: vi.fn(async (_sessionId: string, input: { id?: string; dtype: string; slot: "layout" | "writing"; name: string; detail?: string; prompt: string }) => ({
+        ...input,
+        id: input.id ?? "layout-custom",
+        detail: input.detail ?? "",
+        builtin: false,
+      })),
+    };
+    await act(async () => root.render(<DerivativeGenerateModal descriptor={DTYPE_REGISTRY.gzh} sessionId="session-1" stream={stream as never} open initial={{ templateId: "gzh-opinion", layoutStyleId: "layout-a", privatePrompt: "克制" }} onClose={close} onGenerate={generate}/>));
+    await act(async () => Promise.resolve());
+    expect(host.querySelector(".ws-launch-modal")).not.toBeNull();
+    expect(host.querySelector(".ws-launch-head")?.textContent).toContain("生成公众号文章");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("把主文档改写成适合公众号发布的文章");
+    expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("模板");
+    expect(host.querySelector(".ws-launch-close")).not.toBeNull();
+    expect(host.textContent).not.toContain("选择生成风格；进入模板可查看和编辑完整提示词");
+    expect(Array.from(host.querySelectorAll(".ws-launch-template-group-title")).map((node) => node.textContent)).toEqual(["排版风格", "写作风格"]);
+    expect(host.querySelectorAll(".ws-launch-template-grid")[1]?.querySelectorAll(".ws-launch-template-card")).toHaveLength(3);
+    expect(host.querySelectorAll(".ws-launch-template-edit")).toHaveLength(4);
+    expect(host.querySelectorAll(".ws-launch-template-edit svg")).toHaveLength(4);
+    expect(host.textContent).not.toContain("内置");
+    const tutorialCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((button) => button.textContent?.includes("干货教程文"))!;
+    expect(tutorialCard.querySelector(".ws-launch-template-summary")?.textContent).toBe("教程提示");
+    expect(host.querySelectorAll(".ws-launch-template-new")).toHaveLength(2);
+    expect(Array.from(host.querySelectorAll(".ws-launch-template-new")).every((node) => node.textContent === "＋ 新建")).toBe(true);
+    expect(host.querySelector(".ws-launch-template-grid .ws-launch-template-new")).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-template-new")!.click());
+    expect(host.querySelector(".ws-launch-subtitle")).toBeNull();
+    const editorInputs = host.querySelectorAll<HTMLInputElement>(".ws-launch-editor input");
+    const editorPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    expect(editorInputs).toHaveLength(1);
+    expect(editorInputs[0]?.value).toBe("");
+    expect(editorInputs[0]?.placeholder).toBe("给风格起个名，例如：热点借势评论");
+    expect(host.textContent).not.toContain("说明");
+    expect(editorPrompt.placeholder).toBe("描述排版规则：小标题、段落长度、加粗和分隔的用法");
+    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：重点高亮卡片式✦ AI 起草");
+    expect(host.querySelector(".ws-launch-actions > .ws-launch-starters")).not.toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-starters button")!.click());
+    expect(editorInputs[0]?.value).toBe("重点高亮卡片式");
+    expect(editorPrompt.value).toBe("排版规则：每个小节开头用一句加粗观点句立骨；核心数据与金句独立成段并前置引用线（>）呈现，形成视觉卡片；段落最长不超过3行，列表优先；小节之间用分隔符（———）留气口；全文加粗不超过8处，只用于观点句，数据不加粗（已在卡片里突出）。");
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions > .wf-btn")).map((button) => button.textContent)).toEqual(["保存"]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions > .wf-btn")!.click());
+    expect(stream.saveStyleTemplate).toHaveBeenLastCalledWith("session-1", expect.objectContaining({ id: undefined, detail: "" }));
+    await act(async () => host.querySelectorAll<HTMLButtonElement>(".ws-launch-template-new")[1]!.click());
+    const writingPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    expect(writingPrompt.placeholder).toBe("描述这类稿子怎么写：开头怎么起、正文什么结构、语气什么样、结尾怎么收");
+    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：热点借势评论人物访谈问答体✦ AI 起草");
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-starters button")).find((button) => button.textContent === "热点借势评论")!.click());
+    expect(host.querySelector<HTMLInputElement>(".ws-launch-editor input")?.value).toBe("热点借势评论");
+    expect(writingPrompt.value).toContain("正文用\"现象—本质—主文档的观点/事实\"结构推进");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-back")!.click());
+    const tutorial = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((button) => button.textContent?.includes("干货教程文"))!;
+    const textarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    expect(textarea.placeholder).toBe("这篇想怎么写，例如：语气更克制，保留原文案例");
+    await act(async () => {
+      tutorial.click();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "更短");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    expect(generate).toHaveBeenCalledWith({ templateId: "gzh-tutorial", writingStyleId: "gzh-tutorial", layoutStyleId: "layout-custom", privatePrompt: "更短" });
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("内置模板可直接编辑，保存后沿原 id 降级为用户模板", async () => {
+    const builtin = { id: "gzh-opinion", dtype: "gzh", slot: "writing" as const, name: "深度观点文", detail: "深入", prompt: "旧提示", builtin: true };
+    const layout = { id: "layout-a", dtype: "gzh", slot: "layout" as const, name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true };
+    const saved = { ...builtin, prompt: "新提示", builtin: false };
+    const generate = vi.fn();
+    const stream = {
+      listStyleTemplates: vi.fn(async () => [layout, builtin]),
+      getStyleTemplate: vi.fn(async () => builtin),
+      saveStyleTemplate: vi.fn(async (_sessionId: string, input: { id?: string; detail?: string; prompt: string }) => ({ ...saved, ...input, detail: input.detail ?? builtin.detail })),
+    };
+    await act(async () => root.render(<DerivativeGenerateModal descriptor={DTYPE_REGISTRY.gzh} sessionId="session-1" stream={stream as never} open initial={{ templateId: builtin.id, layoutStyleId: layout.id, privatePrompt: "" }} onClose={vi.fn()} onGenerate={generate}/>));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑深度观点文"]')!.click());
+    await act(async () => Promise.resolve());
+    const builtinFields = host.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".ws-launch-editor input, .ws-launch-editor textarea");
+    expect(builtinFields).toHaveLength(2);
+    expect(Array.from(builtinFields).every((field) => !field.readOnly)).toBe(true);
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("编辑模板");
+    expect(host.textContent).not.toContain("内置");
+    expect(host.textContent).not.toContain("说明");
+    const builtinActions = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"));
+    expect(builtinActions.map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
+    expect(builtinActions[1]?.disabled).toBe(true);
+    expect(builtinActions[1]?.title).toBe("每类至少保留一个模板");
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "新提示");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => builtinActions[3]!.click());
+    expect(stream.saveStyleTemplate).toHaveBeenCalledWith("session-1", expect.objectContaining({ id: builtin.id, detail: "深入", name: "深度观点文", prompt: "新提示" }));
+    expect(Array.from(host.querySelectorAll('[aria-checked="true"]')).some((button) => button.textContent?.includes("深度观点文"))).toBe(true);
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ writingStyleId: builtin.id }));
+  });
+
+  it("用户风格模板可删除，删除选中项后回退同组内置模板", async () => {
+    const layout = { id: "layout-a", dtype: "gzh", slot: "layout" as const, name: "经典排版", detail: "清晰", prompt: "排版提示", builtin: true };
+    const builtin = { id: "gzh-opinion", dtype: "gzh", slot: "writing" as const, name: "深度观点文", detail: "深入", prompt: "深度提示", builtin: true };
+    const user = { id: "user-writing", dtype: "gzh", slot: "writing" as const, name: "我的写法", detail: "自定义", prompt: "自定义提示", builtin: false };
+    const stream = {
+      listStyleTemplates: vi.fn(async () => [layout, builtin, user]),
+      getStyleTemplate: vi.fn(async () => user),
+      saveStyleTemplate: vi.fn(),
+      deleteStyleTemplate: vi.fn(async () => {}),
+    };
+    await act(async () => root.render(<DerivativeGenerateModal descriptor={DTYPE_REGISTRY.gzh} sessionId="session-1" stream={stream as never} open initial={{ templateId: user.id, writingStyleId: user.id, layoutStyleId: layout.id, privatePrompt: "" }} onClose={vi.fn()} onGenerate={vi.fn()}/>));
+    await act(async () => Promise.resolve());
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑我的写法"]')!.click());
+    await act(async () => Promise.resolve());
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button")).map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除")!.click());
+    expect(stream.deleteStyleTemplate).toHaveBeenCalledWith("session-1", user.id);
+    expect(host.textContent).not.toContain("我的写法");
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-checked="true"]')).some((button) => button.textContent?.includes("深度观点文"))).toBe(true);
+  });
+
+  it("新稿生成流停止且时间戳未变时退出 loading，中止空态可确认删除", async () => {
+    vi.useFakeTimers();
+    const stream = { getDerivativeDoc: vi.fn(async () => ({ meta: item, docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}', docVersion: 0, title: "" })), deleteDerivative: vi.fn(async () => {}) };
+    const onDeleted = vi.fn();
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={item} stream={stream as never} streamActive={false} generatingInitially onRefresh={vi.fn(async () => {})} onDeleted={onDeleted} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    expect(host.querySelector(".is-generating")).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
+    expect(host.textContent).toContain("生成已中止");
+    expect(host.querySelector(".is-generating")).toBeNull();
+    expect(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "删除稿件")).toBe(false);
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
+    const deleteButton = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "删除稿件")!;
+    await act(async () => deleteButton.click());
+    expect(host.textContent).toContain("删除这篇公众号稿？");
+    const confirmButton = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "删除")!;
+    await act(async () => confirmButton.click());
+    expect(stream.deleteDerivative).toHaveBeenCalledWith("session-1", "deriv-1");
+    expect(onDeleted).toHaveBeenCalledOnce();
+  });
+
+  it("重新生成流停止且时间戳未变时退出 loading，并提示保留原稿", async () => {
+    vi.useFakeTimers();
+    const generatedAt = "2026-07-15T10:00:00.000Z";
+    const existingItem: DerivativeItem = { ...item, sourceVersion: 1, generatedAt };
+    const stream = { getDerivativeDoc: vi.fn(async () => ({ meta: existingItem, docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}', docVersion: 1, title: "" })) };
+    const onToast = vi.fn();
+    const renderView = (streamActive: boolean) => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={existingItem} stream={stream as never} streamActive={streamActive} generatingInitially onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={onToast} onSendQuery={vi.fn()}/></ConfirmProvider>);
+    await act(async () => renderView(true));
+    expect(host.querySelector(".is-generating")).not.toBeNull();
+    await act(async () => renderView(false));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+
+    expect(host.querySelector(".is-generating")).toBeNull();
+    expect(onToast).toHaveBeenCalledWith("生成已中止，保留原稿");
+    expect(host.textContent).not.toContain("生成已中止");
+  });
+
+  it("轮询 fetch 失败不误判中止，item 刷新为已生成后自愈空态", async () => {
+    vi.useFakeTimers();
+    const generatedItem: DerivativeItem = { ...item, sourceVersion: 1, generatedAt: "done" };
+    const generatedDoc = { meta: generatedItem, docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}', docVersion: 1, title: "" };
+    const stream = { getDerivativeDoc: vi.fn().mockResolvedValueOnce(null).mockRejectedValue(new Error("temporary fetch failure")) };
+    const renderView = (key: string, nextItem: DerivativeItem, generatingInitially = false) => root.render(<ConfirmProvider><DerivativeView key={key} sessionId="session-1" item={nextItem} stream={stream as never} streamActive={false} generatingInitially={generatingInitially} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>);
+
+    await act(async () => renderView("fetch-failure", item, true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
+    expect(host.querySelector(".is-generating")).not.toBeNull();
+    expect(host.textContent).not.toContain("生成已中止");
+
+    stream.getDerivativeDoc.mockResolvedValue(generatedDoc);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(host.querySelector(".is-generating")).toBeNull();
+
+    stream.getDerivativeDoc.mockResolvedValue({ ...generatedDoc, meta: item, docVersion: 0 });
+    await act(async () => renderView("self-heal", item, true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_100); });
+    expect(host.textContent).toContain("生成已中止");
+    stream.getDerivativeDoc.mockResolvedValue(generatedDoc);
+    await act(async () => renderView("self-heal", generatedItem));
+    await act(async () => Promise.resolve());
+    expect(host.textContent).not.toContain("生成已中止");
+    expect(host.textContent).not.toContain("尚未生成");
+  });
+
+  it("翻译弹框提供 20 种语言、最多选五种并生成规范 displayCard", async () => {
+    const templates = DTYPE_REGISTRY.translate.templates.map((template) => ({ ...template, dtype: "translate", slot: "writing" as const, prompt: `${template.name}提示`, builtin: true }));
+    const generate = vi.fn();
+    const stream = { listStyleTemplates: vi.fn(async () => templates), getStyleTemplate: vi.fn(async (_sessionId: string, id: string) => templates.find((item) => item.id === id)!) };
+    await act(async () => root.render(<DerivativeGenerateModal descriptor={DTYPE_REGISTRY.translate} sessionId="session-1" stream={stream as never} open initial={{ templateId: "translate-faithful", privatePrompt: "" }} onClose={vi.fn()} onGenerate={generate}/>));
+    await act(async () => Promise.resolve());
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("翻译文档");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("把主文档翻译成其他语言");
+    expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("翻译风格");
+    const chips = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-language-chips button"));
+    expect(chips).toHaveLength(20);
+    expect(chips.map((chip) => chip.textContent)).toEqual([...TRANSLATION_LANGUAGES]);
+    for (const language of ["日语", "韩语", "法语", "德语"]) await act(async () => chips.find((chip) => chip.textContent === language)!.click());
+    expect(host.querySelectorAll(".ws-translate-language-chips .is-selected")).toHaveLength(MAX_TRANSLATION_LANGUAGES);
+    const spanish = chips.find((chip) => chip.textContent === "西班牙语")!;
+    expect(spanish.disabled).toBe(true);
+    expect(spanish.title).toBe("最多选择 5 种语言");
+    await act(async () => host.querySelector<HTMLFormElement>(".ws-launch-form")!.requestSubmit());
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ targetLanguages: ["英语", "日语", "韩语", "法语", "德语"], writingStyleId: "translate-faithful" }));
+    expect(buildTranslationDisplayCard(["英语", "日语"], "忠实精准", "保留品牌名")).toEqual({ title: "翻译文档", lines: [{ label: "语言", value: "英语、日语" }, { label: "风格", value: "忠实精准" }, { label: "补充", value: "保留品牌名" }] });
+  });
+
+  it("翻译稿聚合为语言 segmented，切换后显示对应译文且删除只在更多菜单", async () => {
+    const english: DerivativeItem = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准", sourceVersion: 1, generatedAt: "en" };
+    const japanese: DerivativeItem = { ...english, docId: "translate-ja", targetLang: "日语", generatedAt: "ja" };
+    const docs: Record<string, string> = {
+      "translate-en": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "en" }, content: [{ type: "text", text: "English copy" }] }] }),
+      "translate-ja": JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "ja" }, content: [{ type: "text", text: "日本語訳" }] }] }),
+    };
+    const stream = { getDerivativeDoc: vi.fn(async (_sessionId: string, docId: string) => ({ meta: docId === english.docId ? english : japanese, docPm: docs[docId], docVersion: 1, title: "" })) };
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => Promise.resolve());
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).map((button) => button.textContent)).toEqual(["英语", "日语"]);
+    expect(host.textContent).toContain("English copy");
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain("日本語訳");
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="导出"]')!.click());
+    expect(host.querySelector('[role="menu"]')?.textContent).toBe("复制文案");
+    expect(host.querySelector('[role="menu"]')?.textContent).not.toContain("导出图片");
+    expect(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "删除稿件")).toBe(false);
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
+    expect(host.querySelector('[role="menu"]')?.textContent).toBe("删除稿件");
+  });
+
+  it("翻译旁支按语言独立流式浮现、失败可重试且生成中禁止删除", async () => {
+    const english: DerivativeItem = { ...item, docId: "translate-stream-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准" };
+    const japanese: DerivativeItem = { ...english, docId: "translate-stream-ja", targetLang: "日语" };
+    const generateTranslations = vi.fn(async () => {});
+    const stream = {
+      getDerivativeDoc: vi.fn(async () => null),
+      generateTranslations,
+      deleteDerivative: vi.fn(async () => {}),
+    };
+    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed"; text: string; reason?: string }>) => root.render(
+      <ConfirmProvider><DerivativeView
+        sessionId="session-1"
+        item={english}
+        items={[english, japanese]}
+        stream={stream as never}
+        streamActive={false}
+        translationGen={translationGen}
+        onRefresh={vi.fn(async () => {})}
+        onDeleted={vi.fn()}
+        onToast={vi.fn()}
+        onSendQuery={vi.fn()}
+      /></ConfirmProvider>,
+    );
+
+    await act(async () => renderView(new Map([
+      [english.docId, { status: "streaming" as const, text: "" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+    ])));
+    expect(host.querySelector('.ws-deriv-streaming-paper [data-wf="QingLoading"]')).not.toBeNull();
+    const streamingView = host.querySelector(".ws-deriv-view")!;
+    const streamingPaper = host.querySelector(".ws-deriv-streaming-paper")!;
+    const streamingGlow = host.querySelector('[data-wf="DerivativeEditorGlow"]');
+    expect(streamingView.querySelector(":scope > .ws-editor-glow")).toBe(streamingGlow);
+    expect(streamingGlow?.parentElement).toBe(streamingView);
+    expect(streamingPaper.querySelector(".ws-editor-glow")).toBeNull();
+    expect(host.querySelectorAll(".ws-translate-status.is-streaming")).toHaveLength(1);
+    expect(host.querySelectorAll(".ws-translate-status.is-failed")).toHaveLength(1);
+
+    await act(async () => renderView(new Map([
+      [english.docId, { status: "streaming" as const, text: "<p>Hello &amp; <mark>world</mark></p><p>Second &#x1F44B;</p>" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+    ])));
+    expect(host.querySelector(".ws-translate-stream-text")?.textContent).toBe("Hello & worldSecond 👋");
+    expect(host.querySelector(".ws-translate-stream-text mark")).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!.click());
+    const deleteButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除稿件")!;
+    expect(deleteButton.disabled).toBe(true);
+    expect(deleteButton.title).toBe("生成中不可删除");
+
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("译文生成失败，请重试");
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "重试")!.click());
+    expect(generateTranslations).toHaveBeenCalledWith("session-1", [japanese.docId]);
+  });
+
+  it("发光、亮红和小红书双壳修复均有 CSS/DOM 回归锚点", async () => {
+    const workspaceCss = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
+    const skinCss = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"), "utf8");
+    const xhsCss = readFileSync(resolve(process.cwd(), "src/pages/workspace/components/derivatives/xhsPreview.css"), "utf8");
+    const xhsOverrides = readFileSync(resolve(process.cwd(), "src/pages/workspace/components/derivatives/xhsOverrides.css"), "utf8");
+    expect(workspaceCss).toContain(".ws-deriv-view.is-generating{display:grid;min-height:var(--ws-paper-min-height");
+    expect(workspaceCss).toContain(".ws-deriv-view>.ws-editor-glow{position:absolute;inset:0;width:auto;height:auto;box-sizing:border-box;z-index:4");
+    expect(workspaceCss).not.toContain(".ws-deriv-streaming-paper>.ws-editor-glow");
+    expect(workspaceCss).not.toContain(".ws-deriv-view.is-generating>.qing-loading");
+    expect(skinCss).toContain(".ws-deriv-view.is-generating > .doc-empty,\n#view-workspace .ws-deriv-streaming-paper.is-generating > .doc-empty {\n  top: 0 !important;\n  box-shadow: none;");
+    expect(skinCss).toContain(".ws-export-menu .ws-export-item.is-danger {\n  color: var(--ws-red-lite);");
+    expect(xhsCss).toContain(".xhs-phone-content .xhs-article{padding-top:0}.xhs-phone-content .xhs-cover{width:calc(100% + 32px);margin:0 -16px 12px}");
+    expect(xhsCss).toContain(".xhs-desktop-content .xhs-article>h1{margin-top:0}");
+    expect(xhsOverrides).toContain(".xhs-desktop-media .xhs-cover{display:grid!important;width:100%;height:100%");
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={item} stream={{ getDerivativeDoc: vi.fn(async () => ({ meta: item, docPm: '{}', docVersion: 0, title: "" })) } as never} streamActive generatingInitially onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    const glow = host.querySelector('[data-glow-surface="derivative-paper"] > [data-wf="DerivativeEditorGlow"]');
+    const empty = host.querySelector('[data-glow-surface="derivative-paper"] > .doc-empty');
+    expect(glow).not.toBeNull();
+    expect(empty).not.toBeNull();
+    expect(glow?.parentElement).toBe(empty?.parentElement);
+  });
+
+  it("注册表驱动小红书弹框与手机预览", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const xhsItem: DerivativeItem = { ...item, dtype: "xhs", templateId: "xhs-recommend", templateName: "种草安利", sourceVersion: 1, generatedAt: "now" };
+    const docPm = JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "heading", attrs: { level: 1, blockId: "h1" }, content: [{ type: "text", text: "通勤效率的 5 个要点⚡" }] }, { type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "第一段体验✨" }] }, { type: "paragraph", attrs: { blockId: "p2" }, content: [{ type: "text", text: "#通勤 #效率 #干货 #收藏" }] }] });
+    const xhsTemplates = DTYPE_REGISTRY.xhs.templates.map((template) => ({ ...template, dtype: "xhs", slot: "writing" as const, prompt: `${template.name}提示`, builtin: true }));
+    const stream = { getDerivativeDoc: vi.fn(async () => ({ meta: xhsItem, docPm, docVersion: 1, title: "" })), updateDerivativeCoverTemplate: vi.fn(async () => ({ ...xhsItem, coverTemplate: "magazine" as const })), listStyleTemplates: vi.fn(async () => xhsTemplates), getStyleTemplate: vi.fn(async (_sessionId: string, id: string) => xhsTemplates.find((template) => template.id === id)!) };
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={xhsItem} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => Promise.resolve());
+    expect(host.querySelector(".xhs-navbar")?.textContent).toContain("青简");
+    expect(host.querySelector(".xhs-navbar button")?.textContent).toBe("关注");
+    expect(host.querySelector(".xhs-cover")?.textContent).toContain("通勤效率");
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-title-size")).toBe("default");
+    expect(host.querySelectorAll(".xhs-cover-dots button")).toHaveLength(5);
+    expect(host.querySelector('[aria-label="上一款封面"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="下一款封面"]')).not.toBeNull();
+    await act(async () => (host.querySelector('[aria-label="下一款封面"]') as HTMLButtonElement).click());
+    expect(stream.updateDerivativeCoverTemplate).toHaveBeenCalledWith("session-1", xhsItem.docId, "magazine");
+    expect(host.querySelector(".xhs-cover")?.getAttribute("data-cover-template")).toBe("magazine");
+    expect(host.querySelector(".xhs-interaction")?.textContent).toContain("128");
+    expect(host.querySelectorAll(".xhs-topic")).toHaveLength(4);
+    expect(host.querySelector(".xhs-back .preview-chevron")).not.toBeNull();
+    expect(host.querySelectorAll(".xhs-share-icon path")).toHaveLength(2);
+    await act(async () => (host.querySelector('[aria-label="导出"]') as HTMLButtonElement).click());
+    expect(host.querySelector('[role="menu"]')?.textContent).toBe("复制文案导出图片");
+    await act(async () => (host.querySelector('[aria-label="更多操作"]') as HTMLButtonElement).click());
+    expect(host.querySelector('[role="menu"]')?.textContent).toBe("删除稿件");
+    await act(async () => (host.querySelector('[aria-label="导出"]') as HTMLButtonElement).click());
+    const copyButton = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "复制文案")!;
+    await act(async () => copyButton.click());
+    expect(writeText).toHaveBeenCalledWith("通勤效率的 5 个要点⚡\n\n第一段体验✨\n\n#通勤 #效率 #干货 #收藏");
+    await act(async () => (host.querySelector('[aria-label="重新生成"]') as HTMLButtonElement).click());
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain("生成小红书笔记");
+    expect(host.textContent).toContain("种草安利");
+    expect(host.textContent).toContain("干货清单");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("把主文档改写成小红书风格的笔记");
+    expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("3 模板");
+    expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("写作风格");
+    expect(host.querySelectorAll(".ws-launch-template-group")).toHaveLength(1);
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe("这篇想怎么写，例如：语气再活泼一点，多用短句");
+  });
+
+  it("微信手机预览包含真实 meta 形态和四组底栏操作", async () => {
+    const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "正文" }] }] } as never;
+    await act(async () => root.render(<DTYPE_REGISTRY.gzh.PhonePreview doc={doc} title="标题" articleRef={vi.fn()}/>));
+    expect(Array.from(host.querySelectorAll(".wx-meta > span")).map((node) => node.textContent)).toEqual(["青简", "刚刚", "广东"]);
+    expect(Array.from(host.querySelectorAll(".wx-toolbar-actions small")).map((node) => node.textContent)).toEqual(["赞", "分享", "推荐", "写留言"]);
+    expect(host.querySelectorAll(".wx-toolbar-actions svg")).toHaveLength(4);
+    expect(host.querySelector(".ps-cellular rect:nth-child(4)")?.getAttribute("height")).toBe("12");
+    expect(host.querySelectorAll(".ps-wifi path")).toHaveLength(3);
+    expect(host.querySelector(".ps-battery-fill")?.getAttribute("width")).toBe("16.2");
+    expect(host.querySelector(".wx-back .preview-chevron path")?.getAttribute("d")).toBe("m15 3-9 9 9 9");
+    expect(host.querySelectorAll(".wx-more-icon circle")).toHaveLength(3);
+  });
+
+  it("小红书电脑预览为左图右文且不伪造评论", async () => {
+    const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "#真实体验" }] }] } as never;
+    await act(async () => root.render(<DTYPE_REGISTRY.xhs.DesktopPreview doc={doc} title="桌面笔记" articleRef={vi.fn()}/>));
+    expect(host.querySelector(".xhs-desktop-card")?.children).toHaveLength(2);
+    expect(host.querySelector(".xhs-desktop-media .xhs-cover")?.textContent).toContain("桌面笔记");
+    expect(host.querySelector(".xhs-comments")?.textContent).toBe("共 0 条评论暂无评论");
+    expect(host.querySelector(".xhs-desktop-content .xhs-interaction")?.textContent).toContain("说点什么");
+    expect(host.querySelectorAll(".xhs-action-icon")).toHaveLength(4);
+    expect(host.querySelector(".ws-macbook-camera")).not.toBeNull();
+    expect(host.querySelector(".ws-macbook-viewport > .xhs-desktop")).not.toBeNull();
+    expect(host.querySelector(".xhs-desktop-card")?.children).toHaveLength(2);
+    expect(host.querySelector(".xhs-desktop-card")?.getAttribute("data-design-size")).toBe("1040x642");
+  });
+
+  it("公众号电脑预览位于可滚动屏内视窗并放宽为 760px 内容栏", async () => {
+    const doc = { type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "p1" }, content: [{ type: "text", text: "长文正文" }] }] } as never;
+    await act(async () => root.render(<DTYPE_REGISTRY.gzh.DesktopPreview doc={doc} title="桌面长文" articleRef={vi.fn()}/>));
+    expect(host.querySelector(".ws-macbook-lid .ws-macbook-bezel .ws-macbook-viewport")).not.toBeNull();
+    expect(host.querySelector(".ws-macbook-viewport > .wx-desktop > .wx-article")?.textContent).toContain("长文正文");
+    expect(host.querySelector(".ws-macbook-base .ws-macbook-notch")).not.toBeNull();
+    expect(host.querySelector(".ws-macbook-viewport")?.getAttribute("data-design-size")).toBe("1100x690");
+    expect(host.querySelector(".ws-macbook-viewport")?.getAttribute("data-scroll")).toBe("vertical");
+    expect(host.querySelector(".wx-desktop")?.getAttribute("data-content-width")).toBe("760");
+  });
+});

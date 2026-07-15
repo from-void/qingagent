@@ -21,6 +21,7 @@ export interface SubmitCommandInput {
   origin?: CommandOrigin;
   client?: string;
   modelOverrides?: ModelOverrides;
+  abortSignal?: AbortSignal;
 }
 
 interface ActorEntry {

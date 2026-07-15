@@ -256,6 +256,9 @@ export function* emitRestoreFrames(
   // If chatHistory exists (rich format with tool bubbles, thinking parts),
   // use it for full-fidelity restore. Otherwise fall back to plain text
   // from session.messages for backward compatibility.
+  const restoredChatMessageIds = new Set(
+    session.chatHistory.map((message) => message.id),
+  );
   if (session.chatHistory.length > 0) {
     // Rich restore path: emit full ChatMessages with all parts
     for (const msg of session.chatHistory) {
@@ -292,11 +295,22 @@ export function* emitRestoreFrames(
         }
       }
     }
-  } else {
-    // Legacy restore path: plain text only (no tool bubbles)
+  }
+
+  // 部分 rich 历史只补其缺失的稳定 id 消息；同 id 时 rich 展示层是保形真相源。
+  if (
+    session.chatHistory.length === 0 ||
+    session.messages.some((message) => {
+      const id = (message as { id?: unknown }).id;
+      return typeof id === "string" && !restoredChatMessageIds.has(id);
+    })
+  ) {
     for (const msg of session.messages) {
       // Skip messages that are not user or assistant (pure tool results)
       if (msg.role !== "user" && msg.role !== "assistant") continue;
+      const messageId = (msg as { id?: unknown }).id;
+      if (typeof messageId === "string" && restoredChatMessageIds.has(messageId)) continue;
+      if (session.chatHistory.length > 0 && typeof messageId !== "string") continue;
 
       let rawContent =
         typeof msg.content === "string"
@@ -321,7 +335,7 @@ export function* emitRestoreFrames(
         kind: "chatMessageAdded",
         data: {
           message: {
-            id: (msg as { id?: string }).id ?? crypto.randomUUID(),
+            id: typeof messageId === "string" ? messageId : crypto.randomUUID(),
             role: { kind: msg.role === "user" ? "user" : "agent" },
             ts:
               (msg as { createdAt?: string }).createdAt ??
@@ -333,6 +347,7 @@ export function* emitRestoreFrames(
           appendSeq: 0,
         },
       };
+      if (typeof messageId === "string") restoredChatMessageIds.add(messageId);
     }
   }
 

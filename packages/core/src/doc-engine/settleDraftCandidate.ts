@@ -2,7 +2,7 @@ import type { BridgeFrame, LegacySection, MessagePart } from "@qingagent/contrac
 import type { RequestContext } from "@mastra/core/request-context";
 import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "@qingagent/db";
-import { upsertDocumentSuggestion } from "@qingagent/db";
+import { persistMappedAnnotationGroups, upsertDocumentSuggestion } from "@qingagent/db";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";
@@ -39,6 +39,7 @@ import {
 } from "../agent-run/agentSpans.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { generateTitleAfterFirstDraft } from "../session/titleGeneration.js";
+import { mapAnnotationGroupsThroughSteps, pmDocContentSize } from "./annotationMapping.js";
 import {
   getPmContentHash,
   legacySectionsToPm,
@@ -273,6 +274,7 @@ export async function* settleDraftCandidate(opts: {
 
   if (wholeDocument) {
     const nextVersionDoc = state.docDraftCandidateDoc ?? legacySectionsToPm(candidate as never);
+    const previousDoc = currentPmDoc(state);
     const previousDocVersion = state.docVersion;
     const result = await commitDocumentOp({
       docId: state.docId,
@@ -334,10 +336,30 @@ export async function* settleDraftCandidate(opts: {
     state.doc = result.doc;
     state.legacySections = pmToLegacySections(result.doc) as unknown as LegacySection[];
     state.docVersion = result.docVersion;
+    state.modelKnownDocVersion = result.docVersion;
     state._directionChangeAskedSinceLastWrite = false;
     requestContext?.set("legacySections", state.legacySections);
     requestContext?.set("doc", result.doc);
     requestContext?.set("directionChangeAskedSinceLastWrite", false);
+    if (state.annotationGroups.length > 0) {
+      const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
+      const mapped = mapAnnotationGroupsThroughSteps(state.annotationGroups, [{
+        stepType: "replace",
+        from: 0,
+        to: pmDocContentSize(previousDoc),
+        slice: { content: result.doc.content, openStart: 0, openEnd: 0 },
+      }], result.doc);
+      state.annotationGroups = mapped.groups;
+      await persistMappedAnnotationGroups(
+        state.docId,
+        mapped.groups,
+        mapped.survivingAnchorIndexes,
+      );
+      yield {
+        kind: "annotationGroupsReady",
+        data: { groups: mapped.groups, replacedOrigins },
+      };
+    }
     const versionDoc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
     const committedDoc = result.doc;
     if (emitGenerationEvent && generationId) {
@@ -360,9 +382,11 @@ export async function* settleDraftCandidate(opts: {
     }
 
     const isFirstSuccessfulDraft = previousDocVersion === 0;
-    const nextTitle = isFirstSuccessfulDraft
-      ? await generateTitleAfterFirstDraft(state, requestContext)
-      : deriveTitleFromSections(state.legacySections);
+    const nextTitle = state.titlePinned
+      ? null
+      : isFirstSuccessfulDraft
+        ? await generateTitleAfterFirstDraft(state, requestContext)
+        : deriveTitleFromSections(state.legacySections);
     const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
     if (abortSignal?.aborted) {
       recordSettleResultSpan(state, {

@@ -83,13 +83,19 @@ export async function* processAgentStream(
       }
 
       const lifecycleResult = yield* handleLifecycleEvent(context, chunk);
-      if (lifecycleResult === "terminal") return context.outcome;
+      if (lifecycleResult === "terminal") {
+        yield* context.annotationPreview.clear();
+        return context.outcome;
+      }
       if (lifecycleResult === "handled") continue;
       if (yield* handleToolOutputEvent(context, chunk)) continue;
       if (yield* handleTextAndReasoningEvent(context, chunk)) continue;
 
       const suspensionResult = yield* handleSuspensionEvent(context, chunk);
-      if (suspensionResult === "terminal") return context.outcome;
+      if (suspensionResult === "terminal") {
+        yield* context.annotationPreview.clear();
+        return context.outcome;
+      }
       if (suspensionResult === "handled") continue;
       if (yield* handleToolCallEvent(context, chunk)) continue;
       if (yield* handleToolResultEvent(context, chunk)) continue;

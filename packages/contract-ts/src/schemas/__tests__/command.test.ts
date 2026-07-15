@@ -32,10 +32,59 @@ function selectionChip(tableSelection: unknown): unknown {
  * 本身的接受/拒绝与消毒行为,不依赖 server。
  */
 describe("commandSchema", () => {
-  it("COMMAND_KINDS 覆盖 17 种且与 Set 一致", () => {
-    expect(COMMAND_KINDS).toHaveLength(17);
-    expect(COMMAND_KIND_SET.size).toBe(17);
+  it("接受三种衍生稿 dtype，翻译要求目标语言并拒绝未知 dtype", () => {
+    const base = { kind: "createDerivative", data: { sessionId: "s", templateId: "xhs-seed", privatePrompt: "" } } as const;
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "gzh" } }).success).toBe(true);
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "xhs" } }).success).toBe(true);
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "translate", targetLang: "英语" } }).success).toBe(true);
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "translate" } }).success).toBe(false);
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "ppt" } }).success).toBe(false);
+  });
+  it("封面模板参数只接受五款已知值", () => {
+    const base = { kind: "updateDerivativeParams", data: { sessionId: "s", docId: "d" } } as const;
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "wenkai" } }).success).toBe(true);
+    expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "unknown" } }).success).toBe(false);
+  });
+  it("generateTranslations 接受 1-5 个唯一稿件 id", () => {
+    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["en", "ja"] } }).success).toBe(true);
+    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: [] } }).success).toBe(false);
+    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["en", "en"] } }).success).toBe(false);
+    expect(commandSchema.safeParse({ kind: "generateTranslations", data: { sessionId: "s", docIds: ["1", "2", "3", "4", "5", "6"] } }).success).toBe(false);
+  });
+
+  it("COMMAND_KINDS 覆盖 38 种且与 Set 一致", () => {
+    expect(COMMAND_KINDS).toHaveLength(38);
+    expect(COMMAND_KIND_SET.size).toBe(38);
     for (const kind of COMMAND_KINDS) expect(COMMAND_KIND_SET.has(kind)).toBe(true);
+  });
+
+  it("接受 draftTemplate 的审查与衍生场景并拒绝空场景标签", () => {
+    expect(commandSchema.safeParse({
+      kind: "draftTemplate",
+      data: { sessionId: "s", scene: { kind: "review", type: "role", label: "角色审查" }, intent: { name: "", prompt: "" } },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "draftTemplate",
+      data: { sessionId: "s", scene: { kind: "derivative", dtype: "gzh", slot: "layout", label: "公众号排版" }, intent: { name: "卡片式", prompt: "短段落" } },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "draftTemplate",
+      data: { sessionId: "s", scene: { kind: "review", type: "role", label: " " }, intent: { name: "", prompt: "" } },
+    }).success).toBe(false);
+  });
+
+  it("listLexiconEntries 要求会话与词库 id 都非空", () => {
+    expect(commandSchema.safeParse({ kind: "listLexiconEntries", data: { sessionId: "s", resourceId: "lex-1" } }).success).toBe(true);
+    expect(commandSchema.safeParse({ kind: "listLexiconEntries", data: { sessionId: "s", resourceId: "" } }).success).toBe(false);
+  });
+
+  it("renameSession 修剪标题并拒绝空串与超长标题", () => {
+    expect(commandSchema.parse({
+      kind: "renameSession",
+      data: { sessionId: "s", title: "  我的标题  " },
+    })).toEqual({ kind: "renameSession", data: { sessionId: "s", title: "我的标题" } });
+    expect(commandSchema.safeParse({ kind: "renameSession", data: { sessionId: "s", title: "  " } }).success).toBe(false);
+    expect(commandSchema.safeParse({ kind: "renameSession", data: { sessionId: "s", title: "长".repeat(49) } }).success).toBe(false);
   });
 
   it("接受合法 sendMessage", () => {
@@ -86,6 +135,67 @@ describe("commandSchema", () => {
     expect(tableSelectionTextSignature(["A", "B"])).toBe(tableSelectionTextSignature(["A", "B"]));
   });
 
+  it("接受带通用展示动作卡的 sendMessage", () => {
+    const r = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "模型载荷",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+        displayCard: {
+          icon: "✦",
+          title: "生成公众号稿",
+          lines: [{ label: "模板", value: "深度长文" }],
+        },
+      },
+    });
+    expect(r.success).toBe(true);
+    if (r.success && r.data.kind === "sendMessage") {
+      expect(r.data.data.displayCard?.title).toBe("生成公众号稿");
+    }
+  });
+
+  it("审查 query 保留结构化类型与模板标识", () => {
+    const r = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "对当前文档做去AI味审查",
+        mentions: [], skills: [], chips: [], fileIds: [],
+        reviewContext: { type: "deai", templateId: "review-deai-deep", templateName: "深度重写" },
+      },
+    });
+    expect(r.success).toBe(true);
+    if (r.success && r.data.kind === "sendMessage") {
+      expect(r.data.data.reviewContext).toEqual({
+        type: "deai",
+        templateId: "review-deai-deep",
+        templateName: "深度重写",
+      });
+    }
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s", text: "审查", mentions: [], skills: [], chips: [], fileIds: [],
+        reviewContext: { type: "unknown", templateId: "x", templateName: "x" },
+      },
+    }).success).toBe(false);
+  });
+
+  it("接受 role 审查上下文", () => {
+    const result = commandSchema.safeParse({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s", text: "角色审查", mentions: [], skills: [], chips: [], fileIds: [],
+        reviewContext: { type: "role", templateId: "review-role-engineer", templateName: "研发工程师" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("fileIds 缺省时补为空数组", () => {
     const r = commandSchema.safeParse({
       kind: "sendMessage",
@@ -116,6 +226,28 @@ describe("commandSchema", () => {
     });
 
     expect(r.success).toBe(true);
+  });
+
+  it.each([
+    { kind: "listReviewTemplates", data: { sessionId: "s", type: "source" } },
+    { kind: "saveReviewTemplate", data: { sessionId: "s", type: "source", name: "我的模板", prompt: "核对金额" } },
+    { kind: "deleteReviewTemplate", data: { sessionId: "s", id: "review-1" } },
+    { kind: "selectReviewTemplate", data: { sessionId: "s", type: "source", templateId: "review-1" } },
+    { kind: "getReviewSupplement", data: { sessionId: "s", type: "source" } },
+    { kind: "upsertReviewSupplement", data: { sessionId: "s", type: "source", supplement: "只看金额" } },
+  ])("接受审查模板命令:$kind", (body) => {
+    expect(commandSchema.safeParse(body).success).toBe(true);
+  });
+
+  it("单条忽略可选择沉淀下次不再提示信号", () => {
+    expect(commandSchema.safeParse({
+      kind: "ignoreAnnotationGroups",
+      data: { sessionId: "s", reason: "item_ignored", groupIds: ["g1"], rememberDismissal: true },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "ignoreAnnotationGroups",
+      data: { sessionId: "s", reason: "item_ignored", rememberDismissal: true },
+    }).success).toBe(false);
   });
 
   it.each([

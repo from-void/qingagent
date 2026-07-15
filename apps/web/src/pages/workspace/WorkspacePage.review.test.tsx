@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
+import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./components/ChatInput";
 import type { DocDimensions } from "./data/docDimensions";
@@ -34,7 +34,10 @@ type MockServerStreamInstance = {
   listeners: Set<(frame: BridgeFrame) => void>;
   sendCommand: ReturnType<typeof vi.fn>;
   startSession: ReturnType<typeof vi.fn>;
+  listDerivatives: ReturnType<typeof vi.fn>;
+  getDerivativeDoc: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
+  ignoreAnnotationGroups: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   emit: (frame: BridgeFrame) => void;
@@ -65,7 +68,10 @@ vi.mock("./data/serverStream", () => {
     startSession = vi.fn(async () =>
       serverStreamMock.startSessionImpl ? serverStreamMock.startSessionImpl() : "s-1",
     );
+    listDerivatives = vi.fn(async () => []);
+    getDerivativeDoc = vi.fn(async () => null);
     commitReviewGroups = vi.fn(async () => []);
+    ignoreAnnotationGroups = vi.fn(async () => undefined);
     stop = vi.fn(() => {
       this.dispatchLocal?.({ kind: "streamTerminated", reason: "stop" });
     });
@@ -1613,6 +1619,135 @@ describe("WorkspacePage review controls", () => {
     });
   });
 
+  it("批注 reviewing 时发送不拦截、不确认且发送后保留", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    const editor = getChatEditor();
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "继续写正文";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await clickButton("发送 →");
+    await flushMicrotasks(5);
+    expect(host?.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+  });
+
+  it("accepted 批注发送后同样保留", async () => {
+    const stream = await renderWorkspaceWithAnnotations("accepted");
+    const editor = getChatEditor();
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "按已接受批注继续修改";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await clickButton("发送 →");
+    await flushMicrotasks(5);
+    expect(host?.querySelector('[data-wf="GlobalConfirm"]')).toBeNull();
+    expect(sendMessageCommands(stream)).toHaveLength(1);
+    expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+  });
+
+  it("docCommitted 不再整体清空批注", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+
+    await emitFrames(stream, [{ kind: "docCommitted", data: { sessionId: "s-1", version: 2 } }]);
+    await flushMicrotasks(3);
+
+    expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+  });
+
+  it("切衍生 tab 只隐藏批注，切回主文档后 reviewing 批注仍在且不发 ignore", async () => {
+    const derivative = {
+      docId: "deriv-annotation-tab",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      templateName: "深度观点文",
+      privatePrompt: "",
+      sourceVersion: 1,
+      generatedAt: "2026-07-15T00:00:00.000Z",
+      stale: false,
+    };
+    const stream = await renderWorkspaceWithAnnotations("reviewing", (nextStream) => {
+      nextStream.listDerivatives.mockResolvedValue([derivative]);
+      nextStream.getDerivativeDoc.mockResolvedValue({
+        meta: derivative,
+        docPm: JSON.stringify(pmDoc([pmParagraph("deriv-p-1", "衍生正文")])),
+        docVersion: 1,
+        title: "",
+      });
+    });
+    await flushMicrotasks(5);
+
+    const derivativeTab = Array.from(host!.querySelectorAll<HTMLElement>('[role="tab"]')).find((tab) => tab.textContent?.includes("公众号文章"));
+    expect(derivativeTab).toBeTruthy();
+    await clickElement(derivativeTab!);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).toBeNull();
+    expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+
+    const mainTab = Array.from(host!.querySelectorAll<HTMLElement>('[role="tab"]')).find((tab) => tab.textContent?.includes("测试批注"));
+    expect(mainTab).toBeTruthy();
+    await clickElement(mainTab!);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+    expect(stream.ignoreAnnotationGroups).not.toHaveBeenCalled();
+  });
+
+  it("批注意见编辑后确认生成短 chip，发送载荷展开完整指令", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    const editor = getChatEditor();
+    bindInnerText(editor);
+    await act(async () => {
+      editor.innerText = "帮我把这段润色一下";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[data-annotation-group="annotation-1"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    const suggestion = host!.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        suggestion,
+        "改为五月发布",
+      );
+      suggestion.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton("确认修改");
+
+    const chip = editor.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chip?.getAttribute("contenteditable")).toBe("false");
+    expect(chip?.querySelector(".c-label")?.textContent).toBe("批注·事实有误");
+    expect(chip?.dataset.text).toBe(
+      "按批注修改:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
+    );
+    expect(editor.textContent).not.toContain("时间与资料不一致");
+
+    vi.useRealTimers();
+    await clickButton("发送 →");
+    await flushMicrotasks(5);
+    const send = sendMessageCommands(stream)[0];
+    expect(send?.kind).toBe("sendMessage");
+    if (send?.kind !== "sendMessage") throw new Error("sendMessage not found");
+    expect(send.data.text).toContain("帮我把这段润色一下");
+    expect(send.data.text).toContain("改为五月发布");
+    expect(send.data.text).toContain("原因:时间与资料不一致");
+    expect(send.data.richText).toContain("{{chip:0}}");
+    expect(send.data.chips).toEqual([expect.objectContaining({
+      kind: { kind: "text" },
+      label: "批注·事实有误",
+      text: "按批注修改:「甲组」——改为五月发布（批注:事实有误；原因:时间与资料不一致）\n",
+    })]);
+  });
+
   it("e2e-loop-0704 P1 回归:2 处候选采纳第 1 处后放弃全部,已采纳 batch 保留提交且反馈计数如实", async () => {
     // 修复前:handleRejectAll 把 batch-a(已采纳)也塞进 rejectReviewBatchIds,
     // server 强制覆盖 verdict → 已采纳改动回滚丢失;outcome 全计 rejected → 卡片误报全拒。
@@ -1759,6 +1894,33 @@ describe("WorkspacePage review controls", () => {
     expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*left:\s*calc\(\(var\(--doc-left, 0px\) \+ var\(--doc-right, 100vw\)\) \/ 2\)/s);
     expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*justify-content:\s*center/s);
     expect(inkSkinCss).toMatch(/body > \.ws-edit-lock\s*\{[^}]*bottom:\s*max\(28px, env\(safe-area-inset-bottom\)\)/s);
+  });
+
+  it("空文档且无衍生稿时隐藏整条 Tab 带，存在衍生稿后恢复", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+
+    expect(host?.querySelector('[role="tablist"]')).toBeNull();
+    expect(host?.textContent).not.toContain("主文档");
+    expect(host?.querySelector('[aria-label="新建稿件"]')).toBeNull();
+
+    stream.listDerivatives.mockResolvedValueOnce([{
+      docId: "deriv-empty-main",
+      dtype: "gzh",
+      templateId: "gzh-deep",
+      templateName: "深度长文",
+      privatePrompt: "",
+      sourceVersion: null,
+      generatedAt: null,
+      stale: false,
+    }]);
+    await emitFrames(stream, [{ kind: "sessionMeta", data: { sessionId: "s-with-derivative", title: "主文档" } }]);
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(host?.textContent).toContain("主文档");
+    expect(host?.textContent).toContain("公众号文章");
   });
 
   it("#29 回归:整篇改写 busy 发光层独立覆盖编辑视口,不被审阅条或编辑锁条接管", async () => {
@@ -2772,6 +2934,32 @@ async function renderWorkspaceWithReview(specs: ToolCallSpec[]): Promise<MockSer
       kind: "toolCallUpdated" as const,
       data: { messageId: "m-review", toolCallId: spec.id, spec },
     })),
+  ]);
+  return stream;
+}
+
+async function renderWorkspaceWithAnnotations(
+  status: AnnotationGroup["status"] = "reviewing",
+  setup?: (stream: MockServerStreamInstance) => void,
+): Promise<MockServerStreamInstance> {
+  const { WorkspacePage } = await import("./WorkspacePage");
+  await render(<WorkspacePage />);
+  const stream = latestServerStream();
+  setup?.(stream);
+  const annotation: AnnotationGroup = {
+    id: "annotation-1",
+    summary: "事实有误",
+    note: "时间与资料不一致",
+    origin: "source-check",
+    suggestion: "改为四月发布",
+    status,
+    anchors: [{ blockId: "p-1", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "hash-annotation-1" }],
+  };
+  await emitFrames(stream, [
+    { kind: "sessionMeta", data: { sessionId: "s-1", title: "测试批注" } },
+    { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(pmDoc([pmParagraph("p-1", "甲组正文")]), 1) } },
+    { kind: "docStateChanged", data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false } },
+    { kind: "annotationGroupsReady", data: { groups: [annotation] } },
   ]);
   return stream;
 }

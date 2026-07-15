@@ -66,13 +66,13 @@ describe("模型传输静态守护", () => {
     const source = readFileSync(resolve(repoRoot, "packages/core/src/llm/modelConfig.ts"), "utf8");
     const branchStart = source.indexOf("export async function branchCall");
     const branchEnd = source.indexOf("\nfunction envModelProtocol", branchStart);
-    const rawFetch = "globalThis.fetch(input.sessionSnapshot.endpoint";
+    const rawFetch = "modelFetch(input.sessionSnapshot.endpoint";
     const rawFetchIndex = source.indexOf(rawFetch);
     expect(branchStart).toBeGreaterThanOrEqual(0);
     expect(branchEnd).toBeGreaterThan(branchStart);
     expect(rawFetchIndex).toBeGreaterThan(branchStart);
     expect(rawFetchIndex).toBeLessThan(branchEnd);
-    expect(source.match(/globalThis\.fetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
+    expect(source.match(/modelFetch\(input\.sessionSnapshot\.endpoint/g)).toHaveLength(1);
     const branchSource = source.slice(branchStart, branchEnd);
     // 5 = provider-reject/流错误/成功/异常兜底 + preflight 拒发(回放前形态卡,同样必须留痕)。
     expect(branchSource.match(/recordBranchUsage\(input/g)).toHaveLength(5);

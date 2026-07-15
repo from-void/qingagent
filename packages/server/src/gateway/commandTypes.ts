@@ -9,4 +9,5 @@ export interface CommandExecutionContext {
   origin: Origin;
   modelOverrides: ModelOverrides | undefined;
   client: string | undefined;
+  commandAbortSignal: AbortSignal | undefined;
 }

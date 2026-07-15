@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { getPyodideTools, runPythonTool } from "../tools/runPython.js";
 import type { RunPythonInput, RunPythonResult } from "../tools/runPython.js";
 import {
@@ -41,6 +43,13 @@ describe("run_python capability tool", () => {
   it("按运行时开关注入工具:显式启用时模型能看到 run_python", () => {
     process.env.QINGAGENT_PYODIDE_ENABLED = "1";
     expect(getPyodideTools()).toHaveProperty("run_python");
+  });
+
+  it("一致性审查 skill 显式允许 readDraft + 两种代码执行工具 + 批注组合", async () => {
+    const skillPath = fileURLToPath(new URL("../../skills/capability/consistency-review/SKILL.md", import.meta.url));
+    const skill = await readFile(skillPath, "utf8");
+    expect(skill).toContain("tools: [readDraft, run_python, run_js, editDraft, create_annotation_groups]");
+    expect(skill).toContain("必须调用代码执行工具(`run_python` 或 `run_js` 均可)真实验算");
   });
 
   it("按运行时开关注入工具:显式关闭时模型看不到 run_python", () => {

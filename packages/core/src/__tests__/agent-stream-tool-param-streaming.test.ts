@@ -205,4 +205,44 @@ describe("processAgentStream tool-call 参数流式占位", () => {
     expect(result.sawSideEffectToolCall).toBe(false);
     expect(result.transientErrorChunk).toBeTruthy();
   });
+
+  it("create_annotation_groups 参数闭合一组即发预览，终局 tool-call 清空", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { legacySectionsToPm } = await import("@qingagent/pm-schema");
+    const state = createSession("annotation-preview-stream");
+    state.doc = legacySectionsToPm([{ kind: "p", data: { text: "需要检查的原句" } }] as never);
+
+    const { frames } = await collectFramesAndReturn(
+      processAgentStream(streamOf(
+        streamingStart("create_annotation_groups", "tc-annotation"),
+        {
+          type: "tool-call-delta",
+          payload: {
+            toolCallId: "tc-annotation",
+            argsTextDelta: '{"groups":[{"summary":"事实核查","note":"稍后终局校验","origin":"source-check","anchors":[{"find":"需要检查的原句"}]}]}',
+          },
+        },
+        toolCall("create_annotation_groups", "tc-annotation", {
+          groups: [{ summary: "事实核查", note: "稍后终局校验", origin: "source-check", anchors: [{ find: "需要检查的原句" }] }],
+        }),
+      ), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-annotation-preview",
+        runId: "run-annotation-preview",
+      }),
+    );
+
+    expect(frames).toContainEqual({
+      kind: "annotationPreview",
+      data: expect.objectContaining({
+        previewId: "annotation-preview-tc-annotation-1",
+        summary: "事实核查",
+        anchors: [expect.objectContaining({ quote: "需要检查的原句" })],
+      }),
+    });
+    const previewIndex = frames.findIndex((frame) => frame.kind === "annotationPreview");
+    const clearIndex = frames.findIndex((frame) => frame.kind === "annotationPreviewCleared");
+    expect(clearIndex).toBeGreaterThan(previewIndex);
+  });
 });

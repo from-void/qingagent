@@ -22,7 +22,8 @@ import {
   type ViewDocumentSnapshot,
 } from "./protocol";
 import { resources } from "../../../system/resources";
-import type { AiRun, TodoItem } from "@qingagent/contract-ts";
+import type { AiRun, BridgeFrame, TodoItem } from "@qingagent/contract-ts";
+import type { AnnotationGroup } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "@qingagent/pm-schema";
 
 // Enable Map/Set support for immer (toolCalls is a Map)
@@ -102,6 +103,13 @@ export interface WorkspaceState {
   viewingSnapshotDoc: ViewDocumentSnapshot | null;
   /** Latest final diff payload for the review/apply stage. */
   docDiff: DocDiffReady | null;
+  annotationGroups: AnnotationGroup[];
+  previewGroups: Array<Extract<BridgeFrame, { kind: "annotationPreview" }>["data"]>;
+  translationGen: Map<string, {
+    status: "streaming" | "failed";
+    text: string;
+    reason?: string;
+  }>;
   /** Doc revision counter. */
   version: number;
   progressPct: number;
@@ -157,6 +165,9 @@ export const initialWorkspaceState: WorkspaceState = {
   viewingVersionId: null,
   viewingSnapshotDoc: null,
   docDiff: null,
+  annotationGroups: [],
+  previewGroups: [],
+  translationGen: new Map(),
   // 空文档基线版本 0(此前残留 12 不合理:doc=null 却 version 12,会让空文档首写的 updateDoc
   // 带错 expectedDocumentSnapshot → createIfMissing 不触发)。真实 session 加载后由回流覆盖。
   version: 0,
@@ -198,6 +209,32 @@ function workspaceReducerMut(
   action: WorkspaceAction,
 ): void {
   switch (action.kind) {
+    case "lexiconsListed":
+      // 命令调用方通过 ServerStream waiter 消费，工作区持久状态无需保存。
+      return;
+    case "derivativeGenStarted":
+      draft.translationGen.set(action.data.docId, { status: "streaming", text: "" });
+      return;
+    case "derivativeGenDelta": {
+      const current = draft.translationGen.get(action.data.docId);
+      draft.translationGen.set(action.data.docId, {
+        status: "streaming",
+        text: `${current?.text ?? ""}${action.data.text}`,
+      });
+      return;
+    }
+    case "derivativeGenFinished":
+      draft.translationGen.delete(action.data.docId);
+      return;
+    case "derivativeGenFailed": {
+      const current = draft.translationGen.get(action.data.docId);
+      draft.translationGen.set(action.data.docId, {
+        status: "failed",
+        text: current?.text ?? "",
+        reason: action.data.reason,
+      });
+      return;
+    }
     case "restoreReset":
       resetSessionScopedStateMut(draft);
       resources.reset();
@@ -334,6 +371,39 @@ function workspaceReducerMut(
         );
         draft.version = action.data.baseVersion ?? draft.version;
       }
+      return;
+    case "annotationGroupsReady":
+      draft.previewGroups = [];
+      if (action.data.groups.length === 0 && !action.data.replacedOrigins?.length) {
+        draft.annotationGroups = [];
+        return;
+      }
+      {
+        const replacedOrigins = new Set(
+          action.data.replacedOrigins ?? action.data.groups.map((group) => group.origin),
+        );
+        const existingById = new Map(draft.annotationGroups.map((group) => [group.id, group]));
+        const retained = draft.annotationGroups.filter((group) => !replacedOrigins.has(group.origin));
+        const incoming = action.data.groups.map((group) => {
+          const existing = existingById.get(group.id);
+          return existing && existing.origin === group.origin && group.status === "reviewing"
+            ? { ...group, status: existing.status }
+            : group;
+        });
+        draft.annotationGroups = [...retained, ...incoming];
+      }
+      return;
+    case "annotationPreview": {
+      const index = draft.previewGroups.findIndex((group) => group.previewId === action.data.previewId);
+      if (index >= 0) draft.previewGroups[index] = action.data;
+      else draft.previewGroups.push(action.data);
+      return;
+    }
+    case "annotationPreviewCleared":
+      draft.previewGroups = [];
+      return;
+    case "annotationGroupsChanged":
+      draft.annotationGroups = action.groups;
       return;
     case "manualDocSaved":
       draft.doc = pmDocToViewDocumentSnapshot(action.pmDoc, action.version);
@@ -591,6 +661,9 @@ function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.viewingVersionId = null;
   draft.viewingSnapshotDoc = null;
   draft.docDiff = null;
+  draft.annotationGroups = [];
+  draft.previewGroups = [];
+  draft.translationGen = new Map();
   draft.version = initialWorkspaceState.version;
   draft.progressPct = 0;
   draft.etaSec = null;
@@ -1127,6 +1200,7 @@ function toolStatusFromSuggestion(suggestion: DocSuggestion): ToolCallSpec["stat
       return { kind: "committed" };
     case "conflict":
     case "reviewing":
+    case "ignored":
       return { kind: "reviewing" };
   }
 }

@@ -25,6 +25,8 @@ import type {
   AskUserPurposeKind,
 } from "./toolCards.js";
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
+import { AnnotationPreviewState } from "./annotationPreview.js";
+import { currentPmDoc } from "../doc-engine/draftScratch.js";
 
 const logger = mastra.getLogger();
 
@@ -109,6 +111,7 @@ export interface AgentStreamTurnContext {
   generateSvgPreviousDocState: DocState | null;
   toolIoSpans: Map<string, Span<SpanType.TOOL_CALL> | null>;
   streamingPlaceholders: Set<string>;
+  annotationPreview: AnnotationPreviewState;
   sawAnyToolCall: boolean;
   sawNonUiToolCall: boolean;
   sawToolHeartbeat: boolean;
@@ -138,6 +141,10 @@ export async function createAgentStreamTurnContext(
     requestContext,
   } = opts;
   const abortController = opts.abortController ?? new AbortController();
+  state._annotationOriginsReplacedThisTurn = new Set();
+  if (requestContext && !requestContext.get("doc")) {
+    requestContext.set("doc", state.docDraftCandidateDoc ?? currentPmDoc(state));
+  }
   const previousStreamId = state.streamId;
   const restoreStreamIdOnExit = previousStreamId === null;
   if (restoreStreamIdOnExit) state.streamId = streamId;
@@ -214,6 +221,7 @@ export async function createAgentStreamTurnContext(
     generateSvgPreviousDocState: null,
     toolIoSpans: new Map(),
     streamingPlaceholders: new Set(),
+    annotationPreview: new AnnotationPreviewState(),
     sawAnyToolCall: false,
     sawNonUiToolCall: false,
     sawToolHeartbeat: false,

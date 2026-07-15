@@ -14,9 +14,53 @@ import type { SubmitReviewOutcome } from "./SubmitReviewOutcome";
 import type { UpdateDoc } from "./UpdateDoc";
 import type { UpdateMaterialSummary } from "./UpdateMaterialSummary";
 import type { ExternalPropose } from "./ExternalPropose";
+import type { ListLexiconEntries, ListLexicons } from "./ListLexicons";
+import type { RenameSession } from "./RenameSession";
+import type { CreateDerivative, DeleteDerivative, GenerateTranslations, GetDerivativeDoc, ListDerivatives, ListStyleTemplates, GetStyleTemplate, SaveStyleTemplate, DeleteStyleTemplate, UpdateDerivativeParams } from "./Derivatives";
+import type { IgnoreAnnotationGroups } from "./IgnoreAnnotationGroups";
+import type { DeleteReviewTemplate, GetReviewSupplement, ListReviewTemplates, SaveReviewTemplate, SelectReviewTemplate, UpsertReviewSupplement } from "./ReviewTemplates";
+import type { DraftTemplate } from "./DraftTemplate";
 
 /**
  * Tagged union over every command kind. Wire format:
  * `{ "kind": "sendMessage", "data": { ... } }`.
  */
-export type Command = { "kind": "startSession", "data": StartSession } | { "kind": "sendMessage", "data": SendMessage } | { "kind": "cancelStream", "data": CancelStream } | { "kind": "acceptPatch", "data": AcceptPatch } | { "kind": "rejectPatch", "data": RejectPatch } | { "kind": "commitPatches", "data": CommitPatches } | { "kind": "commitReviewGroups", "data": CommitReviewGroups } | { "kind": "submitReviewOutcome", "data": SubmitReviewOutcome } | { "kind": "resumeAskUser", "data": ResumeAskUser } | { "kind": "cancelAskUser", "data": CancelAskUser } | { "kind": "updateDoc", "data": UpdateDoc } | { "kind": "updateMaterialSummary", "data": UpdateMaterialSummary } | { "kind": "removeMaterial", "data": RemoveMaterial } | { "kind": "reparseMaterial", "data": ReparseMaterial } | { "kind": "attachFolder", "data": AttachFolder } | { "kind": "detachFolder", "data": DetachFolder } | { "kind": "externalPropose", "data": ExternalPropose };
+export type Command =
+  | { kind: "startSession"; data: StartSession }
+  | { kind: "sendMessage"; data: SendMessage }
+  | { kind: "cancelStream"; data: CancelStream }
+  | { kind: "acceptPatch"; data: AcceptPatch }
+  | { kind: "rejectPatch"; data: RejectPatch }
+  | { kind: "commitPatches"; data: CommitPatches }
+  | { kind: "commitReviewGroups"; data: CommitReviewGroups }
+  | { kind: "submitReviewOutcome"; data: SubmitReviewOutcome }
+  | { kind: "resumeAskUser"; data: ResumeAskUser }
+  | { kind: "cancelAskUser"; data: CancelAskUser }
+  | { kind: "updateDoc"; data: UpdateDoc }
+  | { kind: "updateMaterialSummary"; data: UpdateMaterialSummary }
+  | { kind: "removeMaterial"; data: RemoveMaterial }
+  | { kind: "reparseMaterial"; data: ReparseMaterial }
+  | { kind: "attachFolder"; data: AttachFolder }
+  | { kind: "detachFolder"; data: DetachFolder }
+  | { kind: "externalPropose"; data: ExternalPropose }
+  | { kind: "listLexicons"; data: ListLexicons }
+  | { kind: "listLexiconEntries"; data: ListLexiconEntries }
+  | { kind: "renameSession"; data: RenameSession }
+  | { kind: "listDerivatives"; data: ListDerivatives }
+  | { kind: "createDerivative"; data: CreateDerivative }
+  | { kind: "generateTranslations"; data: GenerateTranslations }
+  | { kind: "deleteDerivative"; data: DeleteDerivative }
+  | { kind: "getDerivativeDoc"; data: GetDerivativeDoc }
+  | { kind: "listStyleTemplates"; data: ListStyleTemplates }
+  | { kind: "getStyleTemplate"; data: GetStyleTemplate }
+  | { kind: "saveStyleTemplate"; data: SaveStyleTemplate }
+  | { kind: "deleteStyleTemplate"; data: DeleteStyleTemplate }
+  | { kind: "updateDerivativeParams"; data: UpdateDerivativeParams }
+  | { kind: "listReviewTemplates"; data: ListReviewTemplates }
+  | { kind: "saveReviewTemplate"; data: SaveReviewTemplate }
+  | { kind: "deleteReviewTemplate"; data: DeleteReviewTemplate }
+  | { kind: "selectReviewTemplate"; data: SelectReviewTemplate }
+  | { kind: "getReviewSupplement"; data: GetReviewSupplement }
+  | { kind: "upsertReviewSupplement"; data: UpsertReviewSupplement }
+  | { kind: "draftTemplate"; data: DraftTemplate }
+  | { kind: "ignoreAnnotationGroups"; data: IgnoreAnnotationGroups };

@@ -24,6 +24,7 @@ import {
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
 import { mastra } from "../mastra.js";
+import { buildDocVersionAwarenessContent } from "../llm/docVersionAwarenessPrompt.js";
 
 let tempDb: TempDocumentsDb;
 
@@ -377,6 +378,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-c", "C 新"),
     ]);
     const hunks = seedDiffState(state, base, draft);
+    state.modelKnownDocVersion = state.docVersion;
     await seedDocumentRow(state);
 
     const [hunkA, hunkB, hunkC] = hunks;
@@ -392,6 +394,11 @@ describe("commitReviewGroups", () => {
     expect(docText(diffFrame.data.editedDoc)).toBe("A 新\nB 新\nC 新");
     expect(diffFrame.data.editedDoc).toEqual(state.docDraftCandidateDoc);
     expect(docText(state.doc)).toBe("A 新\nB 旧\nC 旧");
+    expect(state.docVersion).toBe(2);
+    expect(state.modelKnownDocVersion).toBe(1);
+    expect(buildDocVersionAwarenessContent(state)).toContain(
+      "正文自你上次读取(v1)后已更新到 v2",
+    );
     expect(state.lastContentEditedAt)
       .toBe((await findOpByDocumentVersion(state.docId, state.docVersion))?.createdAt);
     expect(state.suggestions.has(hunkA.hunkId)).toBe(false);

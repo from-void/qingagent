@@ -750,9 +750,12 @@ export async function* handleTurnCommand(
         fileIds,
         chips,
         skills,
-        null, // userDisplayParts:普通发送无展示覆盖(审核结果回流路径才传)
+        command.data.displayCard
+          ? [{ kind: "actionCard", data: command.data.displayCard }]
+          : null,
         command.data.clientMessageId,
         command.data.richText,
+        command.data.reviewContext,
       );
       return;
     }

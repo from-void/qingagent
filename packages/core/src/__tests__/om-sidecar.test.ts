@@ -8,6 +8,12 @@ import {
   makeOmMessageId,
   mergeObservedMessageIds,
   nextOmTurnIndex,
+  OM_BUFFER_TOKENS_ENV,
+  OM_DEFAULT_BUFFER_TOKENS,
+  OM_DEFAULT_OBSERVE_MESSAGE_TOKENS,
+  OM_OBSERVE_MESSAGE_TOKENS_ENV,
+  omBufferTokens,
+  omObserveMessageTokens,
   pendingOmDbMessages,
   prepareOmContextForTurn,
 } from "../session/omSidecar.js";
@@ -578,7 +584,27 @@ describe("OM sidecar 稳定映射与投影", () => {
     expect(omCompressionThresholdTokens({})).toBe(500_000);
   });
 
-  it("同一压缩 epoch 的头部观察块字节稳定，后续消息只追加不重算", async () => {
+  it("OM 观察阈值默认 100k，支持 env 覆盖并对非法值回退", () => {
+    expect(OM_OBSERVE_MESSAGE_TOKENS_ENV).toBe("QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS");
+    expect(OM_DEFAULT_OBSERVE_MESSAGE_TOKENS).toBe(100_000);
+    expect(omObserveMessageTokens({})).toBe(100_000);
+    expect(omObserveMessageTokens({ [OM_OBSERVE_MESSAGE_TOKENS_ENV]: "125000" })).toBe(125_000);
+    expect(omObserveMessageTokens({ [OM_OBSERVE_MESSAGE_TOKENS_ENV]: "not-a-number" })).toBe(100_000);
+    expect(omObserveMessageTokens({ [OM_OBSERVE_MESSAGE_TOKENS_ENV]: "0" })).toBe(100_000);
+  });
+
+  it("OM 异步缓冲默认禁用，仅由合法正数 env 开启", () => {
+    expect(OM_BUFFER_TOKENS_ENV).toBe("QINGAGENT_OM_BUFFER_TOKENS");
+    expect(OM_DEFAULT_BUFFER_TOKENS).toBe(false);
+    expect(omBufferTokens({})).toBe(false);
+    expect(omBufferTokens({ [OM_BUFFER_TOKENS_ENV]: "0" })).toBe(false);
+    expect(omBufferTokens({ [OM_BUFFER_TOKENS_ENV]: "false" })).toBe(false);
+    expect(omBufferTokens({ [OM_BUFFER_TOKENS_ENV]: "invalid" })).toBe(false);
+    expect(omBufferTokens({ [OM_BUFFER_TOKENS_ENV]: "0.25" })).toBe(0.25);
+    expect(omBufferTokens({ [OM_BUFFER_TOKENS_ENV]: "12000" })).toBe(12_000);
+  });
+
+  it("两次观察之间快照与头部投影字节稳定，后续消息只追加", async () => {
     const state = createSession("om-frozen-epoch");
     state.messages.push(...turnMessages(3));
     state.turnCounter = 3;
@@ -589,14 +615,18 @@ describe("OM sidecar 稳定映射与投影", () => {
       observations: "- 冻结观察块",
       removedMessageIds: [makeOmMessageId(state.sessionId, 1, 1), makeOmMessageId(state.sessionId, 1, 2)],
     };
+    const snapshotBefore = state.omCompressionSnapshot;
     const first = await prepareOmContextForTurn(state);
     const firstHead = JSON.stringify(first.messagesForModel.slice(0, 2));
+    const firstObservationMessage = JSON.stringify(first.messagesForModel[0]);
     state.messages.push({ role: "user", content: "第四轮" });
     state.turnCounter = 4;
     const second = await prepareOmContextForTurn(state);
 
     expect(JSON.stringify(second.messagesForModel.slice(0, 2))).toBe(firstHead);
+    expect(JSON.stringify(second.messagesForModel[0])).toBe(firstObservationMessage);
     expect(allText(second.messagesForModel)).toContain("第四轮");
+    expect(state.omCompressionSnapshot).toBe(snapshotBefore);
     expect(state.omCompressionEpoch).toBe(1);
   });
 });

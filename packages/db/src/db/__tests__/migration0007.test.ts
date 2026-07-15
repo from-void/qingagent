@@ -1,0 +1,8 @@
+import {afterEach,beforeEach,describe,expect,it} from "vitest";
+import {getDocumentsClient} from "../documentsClient.js";
+import {runMigrations} from "../migrations.js";
+import {MIGRATIONS} from "../migrations/index.js";
+import {migration0007StyleTemplates,STYLE_TEMPLATE_SEEDS} from "../migrations/0007_style_templates.js";
+import {prepareTempDocumentsDb,type TempDocumentsDb} from "./dbTestUtils.js";
+let db:TempDocumentsDb;beforeEach(()=>{db=prepareTempDocumentsDb("qa-migration-0007-")});afterEach(()=>db.cleanup());
+describe("0007 style templates",()=>{it("升级回填、种子幂等且保留用户修改",async()=>{await runMigrations(MIGRATIONS.slice(0,6));const c=getDocumentsClient();const now="2026-07-13T00:00:00.000Z";await c.execute({sql:"INSERT INTO documents(id,thread_id,resource_id,title,doc_state,doc_pm,created_at,updated_at,role) VALUES('m','t','r','','editing','{}',?,?,'main'),('d','t','r','','editing','{}',?,?,'derivative')",args:[now,now,now,now]});await c.execute({sql:"INSERT INTO document_derivatives(doc_id,source_doc_id,dtype,template_id,created_at,updated_at) VALUES('d','m','gzh','gzh-deep',?,?)",args:[now,now]});await migration0007StyleTemplates.up(c);expect((await c.execute("SELECT layout_style_id FROM document_derivatives WHERE doc_id='d'")).rows[0]?.layout_style_id).toBe("gzh-layout-classic");expect(Number((await c.execute("SELECT COUNT(*) n FROM style_templates")).rows[0]?.n)).toBe(STYLE_TEMPLATE_SEEDS.length);await c.execute("UPDATE style_templates SET prompt='用户修改',builtin=0 WHERE resource_id='gzh-deep'");await migration0007StyleTemplates.up(c);expect((await c.execute("SELECT prompt FROM style_templates WHERE resource_id='gzh-deep'")).rows[0]?.prompt).toBe("用户修改")})});

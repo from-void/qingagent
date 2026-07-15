@@ -1,0 +1,11 @@
+#view-workspace .ws-desktop-slot{position:relative;flex:none;max-width:100%;margin:0 auto}
+#view-workspace .ws-macbook{position:absolute;top:0;left:50%;box-sizing:border-box;width:1232px;height:740px;transform-origin:top center}
+#view-workspace .ws-macbook-lid{position:relative;box-sizing:border-box;width:1140px;height:730px;margin:0 auto;padding:8px;border:1px solid #85898f;border-radius:18px 18px 12px 12px;background:linear-gradient(135deg,#c4c8cd 0%,#b8bcc2 24%,#9da1a7 72%,#8e9298 100%);box-shadow:0 18px 34px rgba(21,24,28,.24),inset 0 1px rgba(255,255,255,.72),inset 0 -1px rgba(45,48,53,.34)}
+#view-workspace .ws-macbook-bezel{position:relative;box-sizing:border-box;width:1122px;height:712px;padding:11px;border:1px solid #111316;border-radius:11px;background:#1a1c1f;box-shadow:inset 0 0 0 1px rgba(255,255,255,.025)}
+#view-workspace .ws-macbook-camera{position:absolute;z-index:2;top:4px;left:50%;width:5px;height:5px;border-radius:var(--r-pill);background:#3a3d42;box-shadow:0 0 0 1px #111317,inset 0 0 1px rgba(128,145,160,.55);transform:translateX(-50%)}
+#view-workspace .ws-macbook-viewport{box-sizing:border-box;width:1100px;height:690px;overflow-x:hidden;overflow-y:auto;border-radius:6px;background:#fff;scrollbar-width:thin;scrollbar-color:#aaa transparent}
+#view-workspace .ws-macbook-viewport::-webkit-scrollbar{width:6px}
+#view-workspace .ws-macbook-viewport::-webkit-scrollbar-thumb{border-radius:var(--r-pill);background:#aaa}
+#view-workspace .ws-macbook-base{position:relative;width:1232px;height:10px;margin-top:0;border-radius:3px 3px 8px 8px;background:linear-gradient(180deg,#d7dade 0%,#b7bbc0 42%,#92969c 100%);box-shadow:0 15px 22px rgba(20,22,25,.25),inset 0 1px rgba(255,255,255,.88),inset 0 -1px rgba(58,61,66,.36)}
+#view-workspace .ws-macbook-base::before{content:"";position:absolute;top:0;left:46px;width:1140px;height:2px;background:linear-gradient(90deg,transparent,#eef0f2 12%,#eef0f2 88%,transparent)}
+#view-workspace .ws-macbook-notch{position:absolute;top:0;left:50%;width:90px;height:5px;border-radius:0 0 45px 45px;background:linear-gradient(180deg,#9a9ea4,#c7cacf 76%,#d9dbde);box-shadow:inset 0 1px 2px rgba(43,46,50,.36);transform:translateX(-50%)}

@@ -16,7 +16,7 @@ export interface RunSideChannelInput<T> {
   callSite: string;
   requestContext?: RequestContext;
   steeringTail: string | BranchMessage[];
-  parse: (text: string) => T | null;
+  parse: (text: string, context: { finishReason: string | null }) => T | null;
   /**
    * 降级若需要请求模型，必须走 AI SDK generateText/streamText 或项目既有模型包装，
    * 以便自动进入 usage 账本；禁止在 fallback 内自行发送 HTTP。
@@ -73,7 +73,7 @@ export async function runSideChannel<T>(
     throwIfAborted(input.abortSignal);
     toolCallRetries = result.toolCallRetries;
     if (result.ok) {
-      const value = input.parse(result.text);
+      const value = input.parse(result.text, { finishReason: result.finishReason });
       if (value !== null) {
         return { value, transport: "branch", branchFailure: null, toolCallRetries };
       }

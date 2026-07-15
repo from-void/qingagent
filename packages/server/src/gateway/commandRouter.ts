@@ -22,6 +22,7 @@ export async function* handleCommand(
   modelOverrides?: ModelOverrides,
   client?: string,
   routedSessionId?: string,
+  commandAbortSignal?: AbortSignal,
 ): AsyncGenerator<BridgeFrame> {
   // Actor 的 keyed route 是权威 sessionId。commitReviewGroups 本身不携带 sessionId，
   // /commit 冷恢复必须沿用 REST body 的路由键，不能依赖重启后不存在的 patch 内存索引。
@@ -41,6 +42,7 @@ export async function* handleCommand(
     origin,
     modelOverrides,
     client,
+    commandAbortSignal,
   };
 
   let failure: { reason: string; failureKind: string } | null = null;
@@ -75,7 +77,8 @@ async function* routeCommand(
   context: CommandExecutionContext,
 ): AsyncGenerator<BridgeFrame> {
   switch (command.kind) {
-    case "startSession": {
+    case "startSession":
+    case "renameSession": {
       const { handleSessionCommand } = await import("./sessionCommands");
       yield* handleSessionCommand(command, context);
       return;
@@ -113,6 +116,38 @@ async function* routeCommand(
     case "commitReviewGroups": {
       const { handleReviewCommand } = await import("./reviewCommands");
       yield* handleReviewCommand(command, context);
+      return;
+    }
+    case "ignoreAnnotationGroups": {
+      const { handleReviewCommand } = await import("./reviewCommands");
+      yield* handleReviewCommand(command, context);
+      return;
+    }
+    case "draftTemplate":
+    case "listLexicons":
+    case "listLexiconEntries":
+    case "listStyleTemplates":
+    case "getStyleTemplate":
+    case "saveStyleTemplate":
+    case "deleteStyleTemplate":
+    case "listReviewTemplates":
+    case "saveReviewTemplate":
+    case "deleteReviewTemplate":
+    case "selectReviewTemplate":
+    case "getReviewSupplement":
+    case "upsertReviewSupplement": {
+      const { handleTemplateCommand } = await import("./templateCommands");
+      yield* handleTemplateCommand(command, context);
+      return;
+    }
+    case "listDerivatives":
+    case "createDerivative":
+    case "generateTranslations":
+    case "updateDerivativeParams":
+    case "deleteDerivative":
+    case "getDerivativeDoc": {
+      const { handleDerivativeCommand } = await import("./derivativeCommands");
+      yield* handleDerivativeCommand(command, context);
       return;
     }
   }

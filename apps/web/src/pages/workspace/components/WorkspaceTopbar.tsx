@@ -1,5 +1,4 @@
-import { ExportMenu } from "./ExportMenu";
-import { ExportIcon, HistoryIcon } from "./RightPane";
+import { HistoryIcon } from "./RightPane";
 import {
   HISTORY_ENTRY_ENABLED,
   type WorkspacePageController,
@@ -13,12 +12,6 @@ export function WorkspaceTopbar({
   const {
     handleBackHome,
     showToast,
-    exportAnchorRef,
-    exportDisabledReason,
-    exportMenuOpen,
-    setExportMenuOpen,
-    flushPendingDocSave,
-    getLatestExportPmDoc,
   } = controller;
 
   return (
@@ -46,31 +39,6 @@ export function WorkspaceTopbar({
             <HistoryIcon />
           </button>
         )}
-        <div className="ws-export-anchor" ref={exportAnchorRef}>
-          <button
-            type="button"
-            className={`ws-doc-btn${exportDisabledReason ? " is-disabled" : ""}`}
-            title={exportDisabledReason ?? "导出"}
-            aria-haspopup="menu"
-            aria-expanded={exportMenuOpen}
-            aria-disabled={exportDisabledReason ? true : undefined}
-            onClick={() => {
-              if (exportDisabledReason) return;
-              setExportMenuOpen((v) => !v);
-            }}
-          >
-            <ExportIcon />
-          </button>
-          {exportMenuOpen && !exportDisabledReason && (
-            <ExportMenu
-              anchorRef={exportAnchorRef}
-              onClose={() => setExportMenuOpen(false)}
-              onAction={showToast}
-              flushPendingDocSave={flushPendingDocSave}
-              getLatestPmDoc={getLatestExportPmDoc}
-            />
-          )}
-        </div>
       </div>
     </>
   );

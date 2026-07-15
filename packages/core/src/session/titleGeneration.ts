@@ -12,6 +12,7 @@ export async function generateTitleAfterFirstDraft(
   state: SessionState,
   requestContext?: RequestContext,
 ): Promise<string | null> {
+  if (state.titlePinned) return null;
   if (state.branchTitleGenerated === true) return null;
   const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
   if (abortSignal?.aborted) return null;

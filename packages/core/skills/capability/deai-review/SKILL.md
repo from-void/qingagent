@@ -1,0 +1,30 @@
+---
+name: deai-review
+label: 去AI味
+summary: 按指定模板逐块清理 AI 写作痕迹
+icon: edit
+description: 按所选模板检查 AI 写作痕迹；单独发起时产批注，写作流程内联时逐块小步修复。
+user-invocable: true
+placeholder: 给当前文档去 AI 味
+tools: [readDraft, editDraft, create_annotation_groups]
+metadata:
+  category: capability
+---
+
+# 去 AI 味
+
+## 什么时候用
+
+用户要求“去AI味”“像人写的”“去机器味”或 humanize 当前文档时使用。
+
+## 两种执行形态
+
+1. **单独审查当前文档**：纯批注、不改稿。query 已携带所选审查模板完整 prompt；先 `readDraft`，再按模板定位确定的 AI 痕迹，用 `create_annotation_groups` 产批注，固定 `origin:"deai"`。`summary` 不超过 15 字，锚点逐字来自正文，`suggestion` 给最小改写；模板要求严重度才填写 `severity`。
+2. **写作流程内联审查**：初始写作请求同时要求去 AI 味时，`writeDraft` 候选后同回合 `readDraft`，严格按模板逐块 `editDraft`，优先 `replaceText`，需要改完整句块时才用 `replaceBlock`；复核后再 settle。不得先交初稿，不得为已修复问题创建批注。
+3. 禁止不读稿就凭空判断，禁止用 `writeDraft` 覆盖已生成候选，禁止改动模板范围外的事实、信息、结构或格式。
+4. 每次发现或修改都按模板中的痕迹类别计数。完成后在聊天中按“痕迹类别：N 处”汇总；没有命中的类别不必罗列。
+5. 零命中时明确说明文本已经自然，禁止为了显得做过处理而硬改。
+6. 轻度去味必须保持段落结构、句序与篇幅，只对命中痕迹作最小替换。
+7. `create_annotation_groups` 返回参数解析失败时，必须拆成小批重试（每次≤3组），不得空手结束。
+
+补充要求只是在所选模板之上收窄或补充偏好，不得覆盖“先读稿、小步处理、不得增删事实”的硬规则。

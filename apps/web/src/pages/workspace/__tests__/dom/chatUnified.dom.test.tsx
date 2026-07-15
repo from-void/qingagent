@@ -9,7 +9,14 @@ import { resolve } from "node:path";
 import gallerySource from "../../../gallery/GalleryPage.tsx?raw";
 import revampUiSource from "../../../gallery/revampUi.tsx?raw";
 import cssText from "../../components/chatUnified.css?raw";
-import { TOOL_LABELS, UResearch, USvg, UToolBar, type SkillLabelMap } from "../../components/chatUnified";
+import {
+  TOOL_LABELS,
+  UResearch,
+  USvg,
+  UToolBar,
+  type MaterialLabelMap,
+  type SkillLabelMap,
+} from "../../components/chatUnified";
 
 // 注意:vite 会把 .css 当副作用模块处理,`?raw` 在 vitest 里返回空串,
 // 因此需要真实 CSS 文本做守门断言时,必须直接从磁盘读源文件(测试固定从 apps/web 运行)。
@@ -38,8 +45,10 @@ afterEach(() => {
 function renderResearch(body: ResearchCardBody) {
   act(() => root.render(<UResearch body={body} />));
 }
-function renderBar(spec: ToolCallSpec, skillLabels?: SkillLabelMap) {
-  act(() => root.render(<UToolBar spec={spec} skillLabels={skillLabels} />));
+function renderBar(spec: ToolCallSpec, skillLabels?: SkillLabelMap, materialLabels?: MaterialLabelMap) {
+  act(() => root.render(
+    <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />,
+  ));
 }
 function renderSvg(body: GenerateSvgCardBody, status: string) {
   act(() => root.render(<USvg body={body} status={status} />));
@@ -204,6 +213,26 @@ describe("UToolBar", () => {
     renderBar(genericSpec("done", "{\"id\":\"unknown-skill\"}", "skill_read"));
     expect(host.textContent).toContain("读取技能");
     expect(host.textContent).toContain("unknown-skill");
+  });
+
+  it("readMaterial 用完整 materialId 查表显示素材名", () => {
+    const materialId = "76a681d9-54aa-4dee-9123-ccfc32ba35c";
+    renderBar(
+      genericSpec("done", JSON.stringify({ materialId }), "readMaterial"),
+      undefined,
+      { [materialId]: "赛事手册.pdf" },
+    );
+
+    expect(host.textContent).toContain("读取素材");
+    expect(host.textContent).toContain("赛事手册.pdf");
+    expect(host.textContent).not.toContain("76a681d9-54");
+  });
+
+  it("readMaterial 找不到素材名时回退截断后的 materialId", () => {
+    const materialId = "76a681d9-54aa-4dee-9123-ccfc32ba35c";
+    renderBar(genericSpec("done", JSON.stringify({ materialId }), "readMaterial"));
+
+    expect(host.textContent).toContain("76a681d9-54…ccfc32ba35c");
   });
 
   it("argsJson 为合法但非对象(null / 数组)时不崩,降级无主参", () => {

@@ -302,6 +302,29 @@ describe("handleCommand updateDoc", () => {
     expect(persistSessionMetadata).toHaveBeenCalledWith(expect.objectContaining({ title: "新标题" }));
   });
 
+  it("用户改名后置 pinned，后续 H1 编辑不再覆盖标题", async () => {
+    const { bridge, commitDocumentOp, persistSessionMetadata } = await loadBridge();
+    const session = await createDraftSession(bridge);
+
+    const renameFrames = await collectFrames(bridge.handleCommand({
+      kind: "renameSession",
+      data: { sessionId: session.sessionId, title: "我的标题" },
+    }));
+    expect(renameFrames).toEqual([
+      { kind: "sessionMeta", data: { sessionId: session.sessionId, title: "我的标题" } },
+    ]);
+    expect(session).toMatchObject({ title: "我的标题", titlePinned: true });
+
+    const pmDoc = legacySectionsToPm([h1("新的 H1"), section("正文")] as never);
+    commitDocumentOp.mockResolvedValue({
+      status: "committed", docVersion: 2, contentHash: "hash-pinned", doc: pmDoc, versionId: "version-pinned",
+    });
+    const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, { doc: pmDoc as never })));
+    expect(frames.some((frame) => frame.kind === "sessionMeta")).toBe(false);
+    expect(session.title).toBe("我的标题");
+    expect(persistSessionMetadata).toHaveBeenCalledWith(expect.objectContaining({ title: "我的标题", titlePinned: true }));
+  });
+
   it("passes windowMs zero to commitDocumentOp when env parsing disables coalescing", async () => {
     process.env.QINGAGENT_USER_VERSION_WINDOW_MS = "invalid";
     const { bridge, commitDocumentOp } = await loadBridge();

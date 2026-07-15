@@ -143,6 +143,7 @@ export interface QingagentThreadMetadata {
   materials: MaterialRecord[];
   folderSources?: FolderSourceRecord[];
   title: string;
+  titlePinned?: boolean;
   runId: string | null;
   toolCallId: string | null;
   previousDocState?: DocState | null;
@@ -577,6 +578,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
     materials: materialRecords,
     folderSources: Array.from(state.folderSources.values()),
     title: state.title,
+    ...(state.titlePinned ? { titlePinned: true } : {}),
     runId: state.runId,
     toolCallId: state.toolCallId,
     previousDocState: state.previousDocState,
@@ -1614,11 +1616,14 @@ export async function loadSessionFromThread(
       : null,
     branchTitleGenerated: meta.branchTitleGenerated === true,
     title: meta.title ?? thread.title ?? "",
+    titlePinned: meta.titlePinned === true,
     docState: meta.docState,
     messages,
     doc,
     legacySections,
     docVersion: meta.docVersion ?? 0,
+    // 仅表示当前进程内模型真正读过的版本；恢复时不从历史上下文推断。
+    modelKnownDocVersion: null,
     lastContentEditedAt:
       parseValidTimestamp(meta.lastContentEditedAt) ?? frozenUpdatedAt,
     streamId: null,
@@ -1629,6 +1634,8 @@ export async function loadSessionFromThread(
     _abortController: null,
     _activeTurnPromise: null,
     suggestions,
+    // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
+    annotationGroups: [],
     patchVerdicts,
     patchValidationResults: new Map(),
     docDraftBaseSections: null,

@@ -44,6 +44,13 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       genericTool("askUser"),
       genericTool("planDraft"),
       genericTool("askUserQuestion"),
+      genericTool("create_annotation_groups"),
+      genericTool("list_derivatives"),
+      genericTool("update_derivative_params"),
+      genericTool("style_template_list"),
+      genericTool("style_template_get"),
+      genericTool("style_template_save"),
+      genericTool("style_template_delete"),
     ]);
 
     const text = host?.textContent ?? "";
@@ -52,6 +59,13 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(text).toContain("生成二维码");
     expect(text).toContain("确认方向");
     expect(text).toContain("有问题待确认");
+    expect(text).toContain("生成批注");
+    expect(text).toContain("列出稿件");
+    expect(text).toContain("更新稿件设置");
+    expect(text).toContain("列出风格模板");
+    expect(text).toContain("读取风格模板");
+    expect(text).toContain("保存风格模板");
+    expect(text).toContain("删除风格模板");
     expect(text).not.toContain("工具调用");
   });
 });

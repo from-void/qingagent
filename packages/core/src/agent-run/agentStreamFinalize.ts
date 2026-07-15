@@ -71,6 +71,7 @@ export async function* finalizeAgentStream(
     abortController,
     outcome,
   } = context;
+  yield* context.annotationPreview.clear();
   context.docJustGenerated = false;
   for (const frame of context.materialFrames) yield frame;
 
@@ -126,6 +127,28 @@ export async function* finalizeAgentStream(
       });
     });
     yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
+  }
+
+  const replacedAnnotationOrigins = [
+    ...(state._annotationOriginsReplacedThisTurn ?? []),
+  ];
+  if (
+    !context.wasSuspended &&
+    !abortController.signal.aborted &&
+    replacedAnnotationOrigins.length > 0
+  ) {
+    const replacedOriginSet = new Set(replacedAnnotationOrigins);
+    yield { kind: "annotationPreviewCleared", data: {} };
+    yield {
+      kind: "annotationGroupsReady",
+      data: {
+        groups: state.annotationGroups.filter((group) =>
+          replacedOriginSet.has(group.origin)
+        ),
+        replacedOrigins: replacedAnnotationOrigins,
+      },
+    };
+    outcome.producedVisibleFrame = true;
   }
 
   if (context.sawIdleTimeout) {

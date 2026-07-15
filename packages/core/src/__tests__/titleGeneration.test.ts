@@ -75,6 +75,17 @@ describe("首稿后 BranchCall 标题", () => {
     expect(normalizeGeneratedTitle("长".repeat(80))).toHaveLength(48);
   });
 
+  it("用户已手动指定标题时首稿起题让路且不结算 once 标记", async () => {
+    const state = draftedState("title-pinned");
+    state.title = "我的标题";
+    state.titlePinned = true;
+
+    await expect(generateTitleAfterFirstDraft(state)).resolves.toBeNull();
+    expect(state.title).toBe("我的标题");
+    expect(state.branchTitleGenerated).toBe(false);
+    expect(mocks.branchCall).not.toHaveBeenCalled();
+  });
+
   it("当前 turn 取消时丢弃迟到标题且不结算 once 标记", async () => {
     const controller = new AbortController();
     let resolveBranch!: (value: unknown) => void;

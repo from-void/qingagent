@@ -21,4 +21,19 @@ describe("toContractChip", () => {
       tableSelection,
     });
   });
+
+  it("批注标记复用 text chip 协议并携带完整模型指令", () => {
+    expect(toContractChip({
+      kind: "annotation",
+      label: "批注·履历时间与素材不符",
+      text: "按批注修改:「2025年入职」——改为2024年（原因:履历原文为2024年）",
+    })).toEqual({
+      kind: { kind: "text" },
+      resourceRef: null,
+      prefix: null,
+      label: "批注·履历时间与素材不符",
+      suffix: null,
+      text: "按批注修改:「2025年入职」——改为2024年（原因:履历原文为2024年）",
+    });
+  });
 });

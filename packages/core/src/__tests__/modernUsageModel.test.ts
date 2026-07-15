@@ -3,7 +3,39 @@ import { RequestContext } from "@mastra/core/request-context";
 
 const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("@qingagent/db", () => ({ recordUsageEvent: recordUsageEventMock }));
+const observeCacheOutcomeMock = vi.hoisted(() => vi.fn());
+vi.mock("../llm/cacheEfficiencySentinel.js", () => ({ observeCacheOutcome: observeCacheOutcomeMock }));
 const { wrapModernModelUsage } = await import("../llm/modernUsageModel.js");
+
+const symbolReader = Symbol("private-reader");
+
+class PrivateFieldModel {
+  #value = "private-ok";
+
+  doGenerate = vi.fn(async () => ({
+    content: [],
+    usage: {
+      inputTokens: 15_000,
+      outputTokens: 10,
+      promptCacheHitTokens: 12_000,
+      promptCacheMissTokens: 3_000,
+    },
+  }));
+
+  doStream = vi.fn(async () => ({ stream: stream([]) }));
+
+  get privateValue(): string {
+    return this.#value;
+  }
+
+  readPrivate(): string {
+    return this.#value;
+  }
+
+  [symbolReader](): string {
+    return this.#value;
+  }
+}
 
 function stream(parts: unknown[]): ReadableStream {
   return new ReadableStream({
@@ -34,7 +66,44 @@ function options() {
 }
 
 describe("modern usage model", () => {
-  beforeEach(() => recordUsageEventMock.mockClear());
+  beforeEach(() => {
+    recordUsageEventMock.mockClear();
+    observeCacheOutcomeMock.mockClear();
+  });
+
+  it("普通方法和 getter 始终以真实实例访问私有字段，并缓存绑定函数", async () => {
+    const target = new PrivateFieldModel();
+    const model = wrapModernModelUsage(target, options());
+
+    expect(model.privateValue).toBe("private-ok");
+    const first = model.readPrivate;
+    expect(model.readPrivate).toBe(first);
+    expect(first()).toBe("private-ok");
+    expect(model[symbolReader]).toBe(model[symbolReader]);
+    expect(model[symbolReader]()).toBe("private-ok");
+
+    target.readPrivate = function (this: PrivateFieldModel): string {
+      return this === target ? "rebound-ok" : "wrong-this";
+    };
+    const rebound = model.readPrivate;
+    expect(rebound).not.toBe(first);
+    expect(rebound()).toBe("rebound-ok");
+
+    await model.doGenerate();
+    await vi.waitFor(() => expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      callSite: "omSidecar",
+      inputTokens: 15_000,
+      outputTokens: 10,
+      cacheHitTokens: 12_000,
+      cacheMissTokens: 3_000,
+    })));
+    expect(observeCacheOutcomeMock).toHaveBeenCalledWith({
+      sessionId: "session-modern",
+      callSite: "omSidecar",
+      hitTokens: 12_000,
+      missTokens: 3_000,
+    });
+  });
 
   it("v2/v3 finish usage 入账且 attempt 按真实请求递增", async () => {
     const base = {

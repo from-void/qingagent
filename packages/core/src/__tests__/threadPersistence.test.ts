@@ -355,10 +355,12 @@ function expectRestoredStableFields(restored: SessionState | null, original: Ses
   expect(restored?.omCompressionSnapshot).toEqual(original.omCompressionSnapshot);
   expect(restored?.branchTitleGenerated).toBe(original.branchTitleGenerated);
   expect(restored?.title).toBe(original.title);
+  expect(restored?.titlePinned).toBe(original.titlePinned);
   expect(restored?.docState).toEqual(original.docState);
   expect(restored?.messages).toEqual(original.messages);
   expect(restored?.legacySections).toEqual(original.legacySections);
   expect(restored?.docVersion).toBe(original.docVersion);
+  expect(restored?.modelKnownDocVersion).toBeNull();
   expect(restored?.lastContentEditedAt).toBe(original.lastContentEditedAt);
   expect(restored?.suggestions).toEqual(original.suggestions);
   expect(restored?.patchVerdicts).toEqual(original.patchVerdicts);
@@ -423,6 +425,42 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(sessionId);
 
     expect(restored?.docId).toBe(sessionId);
+  });
+
+  it("actionCard 经 persist→restore 循环并带活跃流状态时保持展示形状", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import(
+      "../session/threadPersistence.js"
+    );
+    const state = createSession("action-card-restore-loop");
+    state.streamId = "stream-active";
+    state.messages = [{
+      id: "m-user-action",
+      role: "user",
+      content: "机器 query: regenerate_derivative doc_id=internal",
+    } as never];
+    state.chatHistory = [{
+      id: "m-user-action",
+      role: { kind: "user" },
+      ts: "2026-07-12T00:00:00.000Z",
+      parts: [{
+        kind: "actionCard",
+        data: {
+          title: "重新生成公众号稿",
+          lines: [{ label: "模板", value: "产品发布" }],
+        },
+      }],
+      chips: null,
+    }];
+
+    await persistSessionMetadata(state, "test:active_action_card");
+    const first = await loadSessionFromThread(state.sessionId);
+    expect(first?.chatHistory[0]?.parts).toEqual(state.chatHistory[0]?.parts);
+
+    if (!first) throw new Error("missing first restore");
+    await persistSessionMetadata(first, "test:restored_action_card");
+    const second = await loadSessionFromThread(state.sessionId);
+    expect(second?.chatHistory[0]?.parts).toEqual(state.chatHistory[0]?.parts);
   });
 
   it("旧 metadata 懒回填冻结的 thread.updatedAt，await 返回即落盘且二次冷开幂等", async () => {
@@ -979,6 +1017,7 @@ describe("thread persistence", () => {
     state.legacySections = [textSection("第一段"), textSection("第二段")];
     state.doc = legacySectionsToPm(state.legacySections as never);
     state.docVersion = 3;
+    state.modelKnownDocVersion = 3;
     addSuggestion(state);
     state.patchVerdicts.set("patch-1", "accepted");
     state.materials.set("material-1", {
@@ -1012,6 +1051,9 @@ describe("thread persistence", () => {
     state.chatHistory = [chatMessage("chat-1")];
 
     await persistSessionMetadata(state);
+    expect(threads.get(state.sessionId)?.metadata).not.toHaveProperty(
+      "modelKnownDocVersion",
+    );
     const restored = await loadSessionFromThread(state.sessionId);
 
     expectRestoredStableFields(restored, state);
@@ -1779,6 +1821,19 @@ describe("thread persistence", () => {
       status: "editing",
       materialCount: 1,
     });
+  });
+
+  it("持久化并恢复用户手动锁定的标题，老会话缺省为未锁定", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import("../session/threadPersistence.js");
+    const state = createSession("session-title-pinned");
+    state.title = "我的标题";
+    state.titlePinned = true;
+
+    await persistSessionMetadata(state);
+    const restored = await loadSessionFromThread(state.sessionId);
+    expect(restored).toMatchObject({ title: "我的标题", titlePinned: true });
+    expect(createSession("session-title-unpinned").titlePinned).toBe(false);
   });
 
   it("首页查询全量排序后分页，≥51 条时不会漏掉 raw updatedAt 前 50 外的内容第一名", async () => {

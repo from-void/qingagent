@@ -136,6 +136,7 @@ function isBackgroundCommand(command: Command): boolean {
     command.kind === "startSession" ||
     command.kind === "sendMessage" ||
     command.kind === "resumeAskUser" ||
+    command.kind === "generateTranslations" ||
     command.kind === "cancelStream" ||
     command.kind === "cancelAskUser"
   );
@@ -231,6 +232,7 @@ async function handleCommandPost(c: Context) {
     clientTraceId: context.clientTraceId,
     origin: context.origin,
     modelOverrides: context.modelOverrides,
+    abortSignal: c.req.raw.signal,
   });
 
   if (isBackgroundCommand(prepared.command)) {

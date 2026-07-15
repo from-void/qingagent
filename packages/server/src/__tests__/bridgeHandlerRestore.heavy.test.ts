@@ -697,6 +697,45 @@ describe("handleCommand existing-session restore", () => {
     expect(resetFrame.data.snapshotSeq).toBeGreaterThanOrEqual(0);
   });
 
+  it("恢复时同 id 的 Mastra 裸文本不能覆盖 actionCard 展示消息", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    session.docState = { kind: "editing" };
+    session.chatHistory = [{
+      id: "m-user-action",
+      role: { kind: "user" },
+      ts: "2026-07-12T00:00:00.000Z",
+      parts: [{
+        kind: "actionCard",
+        data: {
+          title: "重新生成公众号稿",
+          lines: [{ label: "模板", value: "产品发布" }],
+        },
+      }],
+      chips: null,
+    }];
+    session.messages = [{
+      id: "m-user-action",
+      role: "user",
+      content: "机器 query: regenerate_derivative doc_id=internal",
+    } as never];
+    session.streamId = "stream-active";
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "startSession",
+        data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+      }),
+    );
+
+    const restored = frames.filter(
+      (frame) => frame.kind === "chatMessageAdded" && frame.data.message.id === "m-user-action",
+    );
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.kind === "chatMessageAdded" && restored[0].data.message.parts)
+      .toEqual(session.chatHistory[0]?.parts);
+  });
+
   // 回归(0702 review Lane A · P1「restore 后进行中消息冻结」):生成进行中触发 restore 快照
   // (gap/epoch 不匹配重连,或 startSession existing)时,该消息后续直播 chatMessageAppended 的
   // seq 延续 seqCounters 计数(如 48、49…)而非从 1 重数;前端 restoreReset 清空 appendCursor 后

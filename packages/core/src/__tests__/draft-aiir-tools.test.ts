@@ -128,6 +128,8 @@ describe("QingML draft tools", () => {
 
     const full = await readDraftAiIr.execute!({ mode: "full" }, ctx) as any;
     expect(full.ok).toBe(true);
+    expect(full.docVersion).toBe(1);
+    expect(state.modelKnownDocVersion).toBe(1);
     expect(full.blocks[0].ref).toBe("block-h");
     expect(full.blocks[0].qingml).toBe("<h2>标题</h2>");
     expect(full.blocks[0].text).toBeUndefined();
@@ -141,6 +143,15 @@ describe("QingML draft tools", () => {
     const query = await readDraftAiIr.execute!({ query: "春林" }, ctx) as any;
     expect(query.blocks.map((b: any) => b.ref)).toEqual(["block-b"]);
     expect(query.blocks[0].text).toBe("春林初盛");
+
+    state.modelKnownDocVersion = 0;
+    const failed = await readDraftAiIr.execute!({
+      mode: "range",
+      from: "missing",
+      to: "block-b",
+    }, ctx) as any;
+    expect(failed.ok).toBe(false);
+    expect(state.modelKnownDocVersion).toBe(0);
   });
 
   it("readDraft range 支持 listItem ref 读取该行文本,full 仍只返回顶层块", async () => {

@@ -1,4 +1,4 @@
-import type { Command, BridgeFrame, AskUserQuestion } from "@qingagent/contract-ts";
+import type { Command, BridgeFrame, AskUserQuestion, ReviewType } from "@qingagent/contract-ts";
 import { validateBridgeFrame } from "../../../system/validators";
 import { visitorKeyHeaders } from "../../../overlays/settings/visitorKeyStore";
 import type { AskUserAnswer, StreamError, WorkspaceLocalAction } from "./protocol";
@@ -199,6 +199,161 @@ export class ServerStream {
     return this.sendCommandInternal(command);
   }
 
+  async ignoreAnnotationGroups(
+    sessionId: string,
+    reason: Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"]["reason"],
+    options: Pick<Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"], "groupIds" | "rememberDismissal"> = {},
+  ): Promise<void> {
+    await this.sendCommand({ kind: "ignoreAnnotationGroups", data: { sessionId, reason, ...options } });
+  }
+
+  async listLexicons(sessionId: string): Promise<Extract<BridgeFrame, { kind: "lexiconsListed" }>["data"]["lexicons"]> {
+    const framePromise = this.waitForFrame(
+      (frame) => frame.kind === "lexiconsListed",
+      "listLexicons completed without receiving lexiconsListed frame",
+    );
+    try {
+      await this.sendCommand({ kind: "listLexicons", data: { sessionId } });
+      const frame = await framePromise;
+      if (frame.kind !== "lexiconsListed") throw new Error("词库列表响应类型错误");
+      return frame.data.lexicons;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
+  }
+
+  async listLexiconEntries(sessionId: string, resourceId: string): Promise<Extract<BridgeFrame, { kind: "lexiconEntriesListed" }>["data"]["entries"]> {
+    const framePromise = this.waitForFrame(
+      (frame) => frame.kind === "lexiconEntriesListed" && frame.data.resourceId === resourceId,
+      "listLexiconEntries completed without receiving lexiconEntriesListed frame",
+    );
+    try {
+      await this.sendCommand({ kind: "listLexiconEntries", data: { sessionId, resourceId } });
+      const frame = await framePromise;
+      if (frame.kind !== "lexiconEntriesListed") throw new Error("词条列表响应类型错误");
+      return frame.data.entries;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
+  }
+
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    await this.sendCommand({ kind: "renameSession", data: { sessionId, title } });
+  }
+
+  async draftTemplate(
+    data: Extract<Command, { kind: "draftTemplate" }>["data"],
+    abortSignal?: AbortSignal,
+  ): Promise<Extract<BridgeFrame, { kind: "templateDrafted" }>["data"]> {
+    const framePromise = this.waitForFrame(
+      (frame) => frame.kind === "templateDrafted",
+      "draftTemplate completed without receiving templateDrafted frame",
+    );
+    try {
+      await this.sendCommandInternal({ kind: "draftTemplate", data }, undefined, abortSignal);
+      const frame = await framePromise;
+      if (frame.kind !== "templateDrafted") throw new Error("AI 起草响应类型错误");
+      return frame.data;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
+  }
+
+  private async derivativeFrame<K extends "derivativesListed" | "derivativeCreated" | "derivativeParamsUpdated" | "derivativeDeleted" | "derivativeDocLoaded" | "styleTemplatesListed" | "styleTemplateLoaded" | "styleTemplateSaved" | "styleTemplateDeleted" | "reviewTemplatesListed" | "reviewTemplateSaved" | "reviewTemplateDeleted" | "reviewTemplateSelected" | "reviewSupplementLoaded" | "reviewSupplementSaved">(
+    command: Command,
+    kind: K,
+  ): Promise<Extract<BridgeFrame, { kind: K }>> {
+    const framePromise = this.waitForFrame((frame) => frame.kind === kind, `${kind} response missing`);
+    try {
+      await this.sendCommand(command);
+      return await framePromise as Extract<BridgeFrame, { kind: K }>;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
+  }
+
+  async listDerivatives(sessionId: string) {
+    const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId } }, "derivativesListed");
+    return frame.data.items;
+  }
+
+  async createDerivative(sessionId: string, dtype: "gzh" | "xhs" | "translate", templateId: string, privatePrompt: string, writingStyleId?: string, layoutStyleId?: string | null, targetLang?: string) {
+    const frame = await this.derivativeFrame({ kind: "createDerivative", data: { sessionId, dtype, templateId, writingStyleId, layoutStyleId, targetLang, privatePrompt } }, "derivativeCreated");
+    return frame.data.item;
+  }
+
+  async generateTranslations(sessionId: string, docIds: string[]): Promise<void> {
+    await this.sendCommand({ kind: "generateTranslations", data: { sessionId, docIds } });
+  }
+
+  async updateDerivativeCoverTemplate(sessionId: string, docId: string, coverTemplate: "poster" | "magazine" | "wenkai" | "impact" | "note") {
+    const frame = await this.derivativeFrame({ kind: "updateDerivativeParams", data: { sessionId, docId, coverTemplate } }, "derivativeParamsUpdated");
+    return frame.data.item;
+  }
+
+  async listStyleTemplates(sessionId: string, dtype: string, slot?: "layout" | "writing" | "instruction") {
+    const frame = await this.derivativeFrame({ kind: "listStyleTemplates", data: { sessionId, dtype, slot } }, "styleTemplatesListed");
+    return frame.data.items;
+  }
+
+  async getStyleTemplate(sessionId: string, id: string) {
+    const frame = await this.derivativeFrame({ kind: "getStyleTemplate", data: { sessionId, id } }, "styleTemplateLoaded");
+    return frame.data.item;
+  }
+
+  async saveStyleTemplate(sessionId: string, input: { id?: string; dtype: string; slot: "layout" | "writing" | "instruction"; name: string; detail?: string; prompt: string }) {
+    const frame = await this.derivativeFrame({ kind: "saveStyleTemplate", data: { sessionId, ...input } }, "styleTemplateSaved");
+    return frame.data.item;
+  }
+
+  async deleteStyleTemplate(sessionId: string, id: string) {
+    const frame = await this.derivativeFrame({ kind: "deleteStyleTemplate", data: { sessionId, id } }, "styleTemplateDeleted");
+    if (frame.data.error) throw new Error(frame.data.error);
+  }
+
+  async listReviewTemplates(sessionId: string, type: ReviewType) {
+    const frame = await this.derivativeFrame({ kind: "listReviewTemplates", data: { sessionId, type } }, "reviewTemplatesListed");
+    return frame.data;
+  }
+
+  async saveReviewTemplate(sessionId: string, input: { id?: string; type: ReviewType; name: string; prompt: string }) {
+    const frame = await this.derivativeFrame({ kind: "saveReviewTemplate", data: { sessionId, ...input } }, "reviewTemplateSaved");
+    return frame.data.item;
+  }
+
+  async deleteReviewTemplate(sessionId: string, id: string) {
+    const frame = await this.derivativeFrame({ kind: "deleteReviewTemplate", data: { sessionId, id } }, "reviewTemplateDeleted");
+    if (frame.data.error) throw new Error(frame.data.error);
+    return frame.data.selectedTemplateId;
+  }
+
+  async selectReviewTemplate(sessionId: string, type: ReviewType, templateId: string) {
+    await this.derivativeFrame({ kind: "selectReviewTemplate", data: { sessionId, type, templateId } }, "reviewTemplateSelected");
+  }
+
+  async getReviewSupplement(sessionId: string, type: ReviewType) {
+    const frame = await this.derivativeFrame({ kind: "getReviewSupplement", data: { sessionId, type } }, "reviewSupplementLoaded");
+    return frame.data.supplement;
+  }
+
+  async upsertReviewSupplement(sessionId: string, type: ReviewType, supplement: string) {
+    const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, type, supplement } }, "reviewSupplementSaved");
+    return frame.data.supplement;
+  }
+
+  async deleteDerivative(sessionId: string, docId: string) {
+    await this.derivativeFrame({ kind: "deleteDerivative", data: { sessionId, docId } }, "derivativeDeleted");
+  }
+
+  async getDerivativeDoc(sessionId: string, docId: string) {
+    const frame = await this.derivativeFrame({ kind: "getDerivativeDoc", data: { sessionId, docId } }, "derivativeDocLoaded");
+    return frame.data;
+  }
+
   /**
    * Start a new session and return the server-assigned sessionId.
    *
@@ -220,9 +375,13 @@ export class ServerStream {
     command: Command,
     /** When set, resolve with the sessionId from the first matching frame kind. */
     interceptKind?: "sessionMeta",
+    abortSignal?: AbortSignal,
   ): Promise<string | unknown> {
     const controller = new AbortController();
     this.activeControllers.add(controller);
+    const abortFromCaller = () => controller.abort(abortSignal?.reason);
+    if (abortSignal?.aborted) abortFromCaller();
+    else abortSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
     // 阶段5a — 为本次用户动作生成 clientTraceId（32hex）并经 `x-client-trace-id`
     // 透传给后端（补全阶段4 协议的前端半边）。阶段5c — 自动记一条 client_event
@@ -309,6 +468,7 @@ export class ServerStream {
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         this.rejectWaiter(docWritePromise);
+        if (abortSignal) throw e;
         if (interceptKind) {
           throw new Error("startSession aborted before sessionMeta received");
         }
@@ -317,6 +477,7 @@ export class ServerStream {
       this.rejectWaiter(docWritePromise);
       throw e;
     } finally {
+      abortSignal?.removeEventListener("abort", abortFromCaller);
       this.activeControllers.delete(controller);
     }
   }

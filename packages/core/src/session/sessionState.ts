@@ -5,6 +5,7 @@ import type {
   FolderSourceRecord,
   DiffHunk,
   DocSuggestion,
+  AnnotationGroup,
   LegacySection,
   MessagePart,
   DocState,
@@ -101,9 +102,9 @@ export interface SessionState {
   omObservedMessageIds?: string[];
   /** Single-way latch: once true, model input uses the compressed OM projection. */
   omCompressionActive?: boolean;
-  /** Monotonic compression epoch, advanced only at a turn boundary. */
+  /** 压缩快照代际：首次激活及每次成功观察/反思后单调递增。 */
   omCompressionEpoch?: number;
-  /** Frozen head replacement for byte-stable projection within an epoch. */
+  /** 观察周期之间冻结的头部替换，保证同一代投影字节稳定。 */
   omCompressionSnapshot?: {
     epoch: number;
     observations: string;
@@ -112,12 +113,16 @@ export interface SessionState {
   /** 首次成功落稿后的 BranchCall 标题已经结算；重写不再重复起题。 */
   branchTitleGenerated?: boolean;
   title: string;
+  /** 用户手动指定标题后锁定，正文 H1 与首稿起题不再覆盖。 */
+  titlePinned: boolean;
   docState: DocState;
   messages: CoreMessage[];
   /** Canonical PM document. During transition, legacySections remains the legacy derived mirror. */
   doc?: PmDoc;
   legacySections: LegacySection[];
   docVersion: number;
+  /** 内存态：模型最后一次确知的正文版本；服务重启后重置为 null。 */
+  modelKnownDocVersion: number | null;
   /** 仅成功创建新文档版本时推进；首页按此字段排序。 */
   lastContentEditedAt: string | null;
   streamId: string | null;
@@ -134,6 +139,10 @@ export interface SessionState {
   threadCreatePromise?: Promise<void>;
   /** PM-native review suggestions keyed by suggestion id. */
   suggestions: Map<string, SuggestionRecord>;
+  /** 待用户裁决的问题中心批注组；独立于 revision，绝不驱动 pendingReview。 */
+  annotationGroups: AnnotationGroup[];
+  /** Runtime-only：本轮 create_annotation_groups 要在前端按来源换代的 origin 集合。 */
+  _annotationOriginsReplacedThisTurn?: Set<string>;
   /** Verdict per patch: "accepted" | "rejected". Set by updatePatchVerdict. */
   patchVerdicts: Map<string, "accepted" | "rejected">;
   /** Legacy draft mutation result cache. Kept for persisted-session compatibility. */
@@ -285,11 +294,13 @@ export function createSession(
     omCompressionSnapshot: null,
     branchTitleGenerated: false,
     title: "",
+    titlePinned: false,
     docState: { kind: "empty" },
     messages: [],
     doc: undefined,
     legacySections: [],
     docVersion: 0,
+    modelKnownDocVersion: null,
     lastContentEditedAt: createdAt,
     streamId: null,
     runId: null,
@@ -299,6 +310,7 @@ export function createSession(
     _abortController: null,
     _activeTurnPromise: null,
     suggestions: new Map(),
+    annotationGroups: [],
     patchVerdicts: new Map(),
     patchValidationResults: new Map(),
     docDraftBaseSections: null,

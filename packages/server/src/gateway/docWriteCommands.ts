@@ -212,7 +212,9 @@ export async function* handleDocWriteCommand(
         transitionDocState(session, deriveContentState(session), "user_doc_write", {
           mode: "normalize",
         });
-        const nextTitle = deriveTitleFromSections(session.legacySections);
+        const nextTitle = session.titlePinned
+          ? null
+          : deriveTitleFromSections(session.legacySections);
         if (nextTitle && nextTitle !== session.title) {
           session.title = nextTitle;
           yield {
@@ -322,7 +324,9 @@ export async function* handleDocWriteCommand(
         session.docVersion = result.docVersion;
         session._directionChangeAskedSinceLastWrite = false;
         transitionDocState(session, deriveContentState(session), "user_doc_write", { mode: "normalize" });
-        const nextTitle = deriveTitleFromSections(session.legacySections);
+        const nextTitle = session.titlePinned
+          ? null
+          : deriveTitleFromSections(session.legacySections);
         if (nextTitle && nextTitle !== session.title) {
           session.title = nextTitle;
           yield { kind: "sessionMeta", data: { sessionId: session.sessionId, title: session.title } };

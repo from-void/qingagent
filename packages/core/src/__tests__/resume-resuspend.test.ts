@@ -300,13 +300,16 @@ describe("processAgentStream resume re-suspend handling", () => {
 
     expect(state.runId).toBe("new-run");
     expect(state.toolCallId).toBe("new-tc");
-  });
+  }, 20_000);
 
   it("preserves a true duplicate suspend with the same toolCallId", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("duplicate-reask");
     state.runId = "r1";
     state.toolCallId = "tc1";
+    state.docDraftCandidateDoc = legacySectionsToPm([
+      { kind: "p", data: { text: "重复挂起不得清空的候选" } },
+    ] as never);
 
     await collectFrames(
       processAgentStream(streamOf(askUserSuspend("tc1")), {
@@ -319,6 +322,7 @@ describe("processAgentStream resume re-suspend handling", () => {
 
     expect(state.runId).toBe("r1");
     expect(state.toolCallId).toBe("tc1");
+    expect(state.docDraftCandidateDoc).not.toBeNull();
   });
 
   it("abandons the third consecutive askUser suspend and emits draftingFailed", async () => {

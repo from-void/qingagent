@@ -36,7 +36,7 @@ import { LinkedFilesPanel } from "./LinkedFilesPanel";
 import { uploadFailureMessage, uploadFileSizeError } from "../data/uploadAsset";
 
 export interface ChatChipSpec {
-  kind: "sel" | "attach" | "mention" | "longtext";
+  kind: "sel" | "attach" | "mention" | "longtext" | "annotation";
   /** Bracket prefix shown before the label (e.g. "§"). */
   prefix?: string;
   /** Display text inside the chip body. */
@@ -63,8 +63,8 @@ export interface ChatChipSpec {
    */
   skillId?: string;
   /**
-   * 长文本折叠卡片(kind="longtext")承载的完整原文。粘贴超长文本时折叠成卡片避免撑爆输入框,
-   * 发送时由 snapshot() 原位展开回 text 进入模型上下文;卡片本身只是输入区/气泡的展示。
+   * 长文本折叠卡片(kind="longtext")承载完整原文；批注标记(kind="annotation")承载完整修改指令。
+   * 发送时由 snapshot() 原位展开回 text 进入模型上下文；卡片本身只是输入区/气泡的短展示。
    */
   text?: string;
 }
@@ -333,8 +333,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         // backend receives a clean message without §/×/label noise.
         const clone = edit.cloneNode(true) as HTMLElement;
         for (const c of clone.querySelectorAll<HTMLElement>(".chat-chip")) {
-          // 长文本卡片:原位展开回完整原文,让后端/模型拿到真正的正文;其余 chip 仍剔除。
-          if (c.dataset.kind === "longtext" && c.dataset.text != null) {
+          // 长文本/批注卡片:原位展开完整载荷,让 sendMessage.text 与后端/模型都拿到真实正文；
+          // 其余引用型 chip 仍剔除，仅由 richText + chips 协议表达。
+          if (
+            (c.dataset.kind === "longtext" || c.dataset.kind === "annotation")
+            && c.dataset.text != null
+          ) {
             c.replaceWith(document.createTextNode(c.dataset.text));
           } else {
             c.remove();
@@ -761,6 +765,25 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         return;
       }
       const target = e.target as HTMLElement;
+      if (target.classList.contains("annotation-chip-confirm")) {
+        const chip = target.closest<HTMLElement>('.chat-chip[data-kind="annotation"]');
+        const textarea = chip?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor");
+        if (chip && textarea) {
+          e.preventDefault();
+          e.stopPropagation();
+          const instruction = textarea.value.trim();
+          if (!instruction) {
+            textarea.setAttribute("aria-invalid", "true");
+            textarea.focus();
+            return;
+          }
+          chip.dataset.text = instruction;
+          textarea.removeAttribute("aria-invalid");
+          target.setAttribute("data-saved", "true");
+          reportChange();
+        }
+        return;
+      }
       if (target.classList.contains("c-x")) {
         const chip = target.closest(".chat-chip") as HTMLElement | null;
         if (chip) {
@@ -1189,6 +1212,7 @@ const CHIP_KIND_ICONS: Record<ChatChipSpec["kind"], string> = {
   attach: "📎",
   mention: "@",
   longtext: "❝",
+  annotation: "※",
 };
 
 function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
@@ -1251,6 +1275,34 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
     sx.className = "c-tag";
     sx.textContent = spec.suffix;
     chip.appendChild(sx);
+  }
+
+  if (spec.kind === "annotation") {
+    chip.classList.add("chat-chip-annotation");
+    const pop = document.createElement("span");
+    pop.className = "annotation-chip-pop";
+    pop.setAttribute("contenteditable", "false");
+    pop.setAttribute("role", "group");
+    pop.setAttribute("aria-label", "编辑批注指令");
+
+    const title = document.createElement("span");
+    title.className = "annotation-chip-pop-title";
+    title.textContent = "完整修改指令";
+    pop.appendChild(title);
+
+    const editor = document.createElement("textarea");
+    editor.className = "annotation-chip-editor";
+    editor.rows = 5;
+    editor.value = spec.text ?? "";
+    editor.setAttribute("aria-label", "完整修改指令");
+    pop.appendChild(editor);
+
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "annotation-chip-confirm";
+    confirm.textContent = "确认";
+    pop.appendChild(confirm);
+    chip.appendChild(pop);
   }
 
   const x = document.createElement("span");

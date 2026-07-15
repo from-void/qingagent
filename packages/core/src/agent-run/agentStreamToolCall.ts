@@ -45,6 +45,7 @@ import {
   startToolIoSpan,
 } from "./toolIoSpans.js";
 import { emitOrUpdateToolCall } from "./agentStreamToolOutput.js";
+import { buildAnnotationPreviewData } from "./annotationPreview.js";
 
 const logger = mastra.getLogger();
 export const SESSION_STATE_TOOL_NAMES = new Set(["updateTodos"]);
@@ -68,6 +69,9 @@ export async function* handleToolCallEvent(
     const toolName =
       typeof chunk.payload.toolName === "string" ? chunk.payload.toolName : null;
     if (!toolCallId || !toolName) return true;
+    if (toolName === "create_annotation_groups") {
+      context.annotationPreview.start(toolCallId);
+    }
     if (SESSION_STATE_TOOL_NAMES.has(toolName)) return true;
     if (context.streamingPlaceholders.has(toolCallId)) return true;
     const spec: ToolCallSpec = isQuestionnaireTool(toolName)
@@ -97,12 +101,31 @@ export async function* handleToolCallEvent(
     return true;
   }
 
-  if (chunk.type === "tool-call-delta" || chunk.type === "tool-call-input-streaming-end") {
+  if (chunk.type === "tool-call-delta") {
+    const toolCallId =
+      typeof chunk.payload.toolCallId === "string" ? chunk.payload.toolCallId : null;
+    const argsTextDelta =
+      typeof chunk.payload.argsTextDelta === "string" ? chunk.payload.argsTextDelta : null;
+    if (toolCallId && argsTextDelta && state.doc) {
+      for (const scanned of context.annotationPreview.feed(toolCallId, argsTextDelta)) {
+        const data = buildAnnotationPreviewData(state.doc, scanned.previewId, scanned.source);
+        if (!data) continue;
+        yield { kind: "annotationPreview", data };
+        outcome.producedVisibleFrame = true;
+      }
+    }
+    return true;
+  }
+
+  if (chunk.type === "tool-call-input-streaming-end") {
     return true;
   }
 
   if (chunk.type === "tool-call") {
     const { toolName, toolCallId } = chunk.payload;
+    if (toolName === "create_annotation_groups") {
+      yield* context.annotationPreview.clear();
+    }
     const toolArgs = normalizeToolCallArgs(
       toolName,
       chunk.payload as Record<string, unknown>,
@@ -318,6 +341,9 @@ export async function* handleToolCallEvent(
   const payload = chunk.payload;
   const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : "";
   const toolName = typeof payload.toolName === "string" ? payload.toolName : "";
+  if (toolName === "create_annotation_groups") {
+    yield* context.annotationPreview.clear();
+  }
   const errorText = stringifyToolError(payload.error);
   outcome.sawToolCall = true;
   context.sawAnyToolCall = true;

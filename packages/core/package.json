@@ -46,6 +46,7 @@
     "@qingagent/diagram-engine": "workspace:*",
     "@qingagent/doc-render": "workspace:*",
     "@qingagent/pm-schema": "workspace:*",
+    "@tiptap/pm": "^3.23.1",
     "@xmldom/xmldom": "^0.9.10",
     "ai": "4.3.19",
     "ai-v5": "npm:ai@^5.0.210",

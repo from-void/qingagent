@@ -1,6 +1,7 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { recordUsageEvent } from "@qingagent/db";
 import type { ApiKeyOrigin } from "./modelConfig.js";
+import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
 import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 
@@ -63,6 +64,16 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
         });
         return;
       }
+      const hitTokens = normalized?.promptCacheHitTokens;
+      const missTokens = normalized?.promptCacheMissTokens;
+      if (typeof hitTokens === "number" && typeof missTokens === "number") {
+        void observeCacheOutcome({
+          sessionId: baseEvent.sessionId,
+          callSite: baseEvent.callSite,
+          hitTokens,
+          missTokens,
+        });
+      }
       await recordUsageEvent({
         ...baseEvent,
         inputTokens: normalized?.inputTokens,
@@ -80,9 +91,13 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
     }
   };
 
+  const boundFunctions = new Map<PropertyKey, { source: Function; bound: Function }>();
   return new Proxy(model, {
-    get(target, property, receiver) {
-      const original = Reflect.get(target, property, receiver);
+    get(target, property) {
+      // Mastra 的 ModelRouterLanguageModel 含 #lastStreamTransport 等私有字段；instanceof 会穿透
+      // Proxy，但其方法若以 Proxy 为 this 就会触发私有字段品牌检查异常，因此 getter 与普通方法
+      // 都必须以真实实例为 receiver/this。
+      const original = Reflect.get(target, property, target);
       if (property === "doGenerate" && typeof original === "function") {
         return async (...args: unknown[]) => {
           const attempt = nextUsageAttempt(options.requestContext, options.callSite, options.lane);
@@ -98,8 +113,7 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
           }
         };
       }
-      if (property !== "doStream" || typeof original !== "function") return original;
-      return async (...args: unknown[]) => {
+      if (property === "doStream" && typeof original === "function") return async (...args: unknown[]) => {
         const attempt = nextUsageAttempt(options.requestContext, options.callSite, options.lane);
         const signal = asRecord(args[0])?.abortSignal as AbortSignal | undefined;
         let result: unknown;
@@ -162,6 +176,15 @@ export function wrapModernModelUsage<T extends object>(model: T, options: Modern
         });
         return { ...resultRecord, stream };
       };
+      if (typeof original !== "function") {
+        boundFunctions.delete(property);
+        return original;
+      }
+      const cached = boundFunctions.get(property);
+      if (cached?.source === original) return cached.bound;
+      const bound = original.bind(target) as Function;
+      boundFunctions.set(property, { source: original, bound });
+      return bound;
     },
   });
 }

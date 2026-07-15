@@ -12,6 +12,7 @@ import {
   shouldShowPreTokenLoading,
   splitStreamingInlineRuns,
 } from "./ChatMessageList";
+import { resources } from "../../../system/resources";
 
 const inkBubbleRenderSpy = vi.hoisted(() => vi.fn());
 
@@ -154,6 +155,7 @@ describe("ChatMessageList", () => {
       act(() => root?.unmount());
       root = null;
     }
+    resources.reset();
     host?.remove();
     host = null;
   });
@@ -259,6 +261,38 @@ describe("ChatMessageList", () => {
     expect(host?.textContent).toContain("读取技能");
     expect(host?.textContent).toContain("读资料");
     expect(host?.textContent).not.toContain("materials");
+  });
+
+  it("readMaterial 工具卡使用文件资源的 displayName", async () => {
+    const materialId = "76a681d9-54aa-4dee-9123-ccfc32ba35c";
+    resources.upsert({
+      resourceRef: { id: materialId, domain: { kind: "file" } },
+      displayName: "赛事手册.pdf",
+      summary: "",
+      mime: "application/pdf",
+      byteLen: 1024,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      metadata: null,
+    });
+    const readMaterial: ToolCallSpec = {
+      id: "tc-read-material",
+      name: "readMaterial",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: { kind: "generic", data: { argsJson: JSON.stringify({ materialId }) } },
+      result: null,
+    };
+
+    await render(
+      <ChatMessageList
+        messages={[agentToolMessage(readMaterial)]}
+        streamActive={false}
+      />,
+    );
+
+    expect(host?.textContent).toContain("读取素材");
+    expect(host?.textContent).toContain("赛事手册.pdf");
+    expect(host?.textContent).not.toContain("76a681d9-54");
   });
 
   it("streamActive 再久也不再出现『正在等待模型响应』兜底文案(已改为输入框发光)", async () => {
@@ -457,6 +491,30 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("用连飞书写摘要");
   });
 
+  it("用户气泡里的批注 text chip 只回显短标签，不退化成长文本卡或泄露完整指令", async () => {
+    const messages: ChatMessage[] = [{
+      id: "m-user-annotation-chip",
+      role: { kind: "user" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [{ kind: "text", data: { body: "请处理{{chip:0}}" } }],
+      chips: [{
+        kind: { kind: "text" },
+        resourceRef: null,
+        prefix: null,
+        label: "批注·金额口径漂移",
+        suffix: null,
+        text: "按批注修改:「原句」——改为120亿元（原因:素材口径不一致）",
+      }],
+    }];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    const chip = host?.querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chip?.textContent).toContain("批注·金额口径漂移");
+    expect(host?.querySelector(".chat-chip-longtext")).toBeNull();
+    expect(host?.textContent).not.toContain("素材口径不一致");
+  });
+
   it("用户回流的审核反馈卡不套用户气泡", async () => {
     const messages: ChatMessage[] = [
       {
@@ -487,6 +545,39 @@ describe("ChatMessageList", () => {
     expect(card?.closest(".wf-msg.user")).toBeNull();
     expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
     expect(host?.textContent ?? "").toContain("采纳 1 处 · 拒绝 1 处");
+  });
+
+  it("用户动作卡渲染标题与明细且不套用户气泡", async () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "m-action-card",
+        role: { kind: "user" },
+        ts: "2026-01-01T00:00:00.000Z",
+        parts: [
+          {
+            kind: "actionCard",
+            data: {
+              title: "生成公众号稿",
+              lines: [
+                { label: "模板", value: "深度长文" },
+                { label: "补充", value: "语气更克制" },
+              ],
+            },
+          },
+        ],
+        chips: null,
+      },
+    ];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    const card = host?.querySelector<HTMLElement>('[data-wf="ActionCard"]');
+    expect(card).not.toBeNull();
+    expect(card?.closest(".wf-msg.user")).toBeNull();
+    expect(host?.querySelector('[data-wf="InkBubbleMock"]')).toBeNull();
+    expect(host?.textContent ?? "").toContain("生成公众号稿");
+    expect(host?.textContent ?? "").toContain("模板深度长文");
+    expect(host?.textContent ?? "").toContain("补充语气更克制");
   });
 
   it("用户回流的问卷答案卡复用已提交答案结构且不套用户气泡", async () => {

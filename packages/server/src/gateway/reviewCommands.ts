@@ -2,6 +2,8 @@ import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import {
   commitPatches as commitPatchesBridge,
   commitReviewGroups,
+  ignoreAnnotationGroups,
+  insertReviewDismissalSignal,
   updatePatchVerdict,
 } from "./bridgeCore";
 import { bindClientTraceId } from "./commandTracing";
@@ -13,7 +15,12 @@ import {
 } from "./sessionLifecycle";
 
 type ReviewCommand = Extract<Command, {
-  kind: "acceptPatch" | "rejectPatch" | "commitPatches" | "commitReviewGroups";
+  kind:
+    | "acceptPatch"
+    | "rejectPatch"
+    | "commitPatches"
+    | "commitReviewGroups"
+    | "ignoreAnnotationGroups";
 }>;
 
 function inMemoryReviewSessionId(command: ReviewCommand): string | undefined {
@@ -34,6 +41,7 @@ function inMemoryReviewSessionId(command: ReviewCommand): string | undefined {
           : undefined)
       );
     case "commitReviewGroups":
+    case "ignoreAnnotationGroups":
       return undefined;
   }
 }
@@ -104,6 +112,35 @@ export async function* handleReviewCommand(
       const session = await restoreReviewSession(command, context);
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
       yield* commitReviewGroups(session, command.data);
+      return;
+    }
+
+    case "ignoreAnnotationGroups": {
+      const session = await restoreReviewSession(command, context);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      const groupIds = command.data.groupIds;
+      const selectedIds = new Set(groupIds ?? []);
+      const selectedGroups = groupIds
+        ? session.annotationGroups.filter((group) => selectedIds.has(group.id))
+        : session.annotationGroups;
+      if (command.data.rememberDismissal) {
+        await Promise.all(selectedGroups.map((group) => insertReviewDismissalSignal({
+          docId: session.docId,
+          origin: group.origin,
+          summary: group.summary,
+          quote: group.anchors[0]?.quote ?? "",
+        })));
+      }
+      await ignoreAnnotationGroups(session.docId, groupIds);
+      session.annotationGroups = groupIds
+        ? session.annotationGroups.map((group) => selectedIds.has(group.id)
+          ? { ...group, status: "ignored" as const }
+          : group)
+        : [];
+      yield {
+        kind: "annotationGroupsReady",
+        data: { groups: session.annotationGroups },
+      };
       return;
     }
   }

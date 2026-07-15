@@ -245,6 +245,67 @@ describe("ChatInput", () => {
     });
   });
 
+  it("批注 chip 只显示短标签，hover 浮层确认后更新完整指令并在 snapshot 原位展开", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+
+    act(() => {
+      ref.current?.insertChip({
+        kind: "annotation",
+        label: "批注·金额口径漂移",
+        text: "按批注修改:「原句」——改为120亿元（原因:素材口径不一致）",
+      });
+    });
+
+    const chip = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="annotation"]');
+    expect(chip?.getAttribute("contenteditable")).toBe("false");
+    expect(chip?.querySelector(".c-label")?.textContent).toBe("批注·金额口径漂移");
+    expect(chip?.textContent).not.toContain("素材口径不一致");
+    const pop = chip?.querySelector<HTMLElement>(".annotation-chip-pop");
+    const textarea = pop?.querySelector<HTMLTextAreaElement>(".annotation-chip-editor");
+    expect(pop).not.toBeNull();
+    expect(textarea?.value).toContain("改为120亿元");
+
+    act(() => {
+      chip?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        textarea,
+        "按批注修改:「原句」——改为125亿元（原因:用户确认新口径）",
+      );
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    clickElement(pop!.querySelector<HTMLButtonElement>(".annotation-chip-confirm")!);
+
+    const snapshot = ref.current?.snapshot();
+    expect(snapshot?.chips).toEqual([expect.objectContaining({
+      kind: "annotation",
+      label: "批注·金额口径漂移",
+      text: "按批注修改:「原句」——改为125亿元（原因:用户确认新口径）",
+    })]);
+    expect(snapshot?.richText).toBe("{{chip:0}}");
+    expect(snapshot?.text).toBe("按批注修改:「原句」——改为125亿元（原因:用户确认新口径）");
+
+    act(() => {
+      ref.current?.clear();
+      ref.current?.restore(snapshot!);
+      ref.current?.insertChip({
+        kind: "annotation",
+        label: "批注·日期先后错误",
+        text: "按批注修改:「日期」——调整先后顺序（原因:素材时间线相反）",
+      });
+    });
+    expect(getEditor().querySelector<HTMLTextAreaElement>(".annotation-chip-editor")?.value)
+      .toBe("按批注修改:「原句」——改为125亿元（原因:用户确认新口径）");
+    expect(getEditor().querySelectorAll('.chat-chip[data-kind="annotation"]')).toHaveLength(2);
+  });
+
   it("表格 selection chip 的 snapshot/restore 保留结构化范围", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(

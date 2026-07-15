@@ -3,6 +3,7 @@ import type {
   ChatChip,
   ChatMessage,
   MessagePart,
+  ReviewContext,
 } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
@@ -78,6 +79,10 @@ import {
 import { QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY } from "../llm/omObservationsPrompt.js";
 import { ensureWorkingMemorySnapshot } from "../session/workingMemory.js";
 import {
+  buildDocVersionAwarenessContent,
+  QINGAGENT_DOC_VERSION_AWARENESS_REQUEST_CONTEXT_KEY,
+} from "../llm/docVersionAwarenessPrompt.js";
+import {
   isOmSidecarEnabled,
   nextOmTurnIndex,
   prepareOmContextForTurn,
@@ -115,6 +120,7 @@ export async function* runAgentTurn(
   userDisplayParts: MessagePart[] | null = null,
   clientMessageId?: string,
   richText?: string,
+  reviewContext?: ReviewContext,
 ): AsyncGenerator<BridgeFrame> {
   const turnStartedAt = Date.now();
   const streamId = newId();
@@ -501,6 +507,12 @@ export async function* runAgentTurn(
   yield chatMessageAdded(agentMessage);
   state.chatHistory.push(agentMessage);
 
+  // 展示层消息必须在进入慢模型/工具链前先耐久化。否则活跃回合中的进程切换或冷恢复
+  // 只能从 Mastra 模型消息补建用户气泡,会把 actionCard 等展示 part 退化成机器 query 文本。
+  await schedulePersist(state, "runAgentTurn:display_messages").catch((err) =>
+    logger.error("Persist display messages before agent run failed", { error: String(err) }),
+  );
+
   try {
     const omContextForTurn = await prepareOmContextForTurn(state).catch((error) => {
       logger.warn("[omSidecar] prepare context failed; falling back to full messages", {
@@ -536,7 +548,12 @@ export async function* runAgentTurn(
       [TODO_AWARENESS_REQUEST_CONTEXT_KEY, () => buildTodoAwarenessContent(state.todos)],
       [QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY, frozenWorkingMemorySnapshot],
       [QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY, omContextForTurn.tailObservationPrompt],
+      [
+        QINGAGENT_DOC_VERSION_AWARENESS_REQUEST_CONTEXT_KEY,
+        () => buildDocVersionAwarenessContent(state),
+      ],
       ["userText", userText],
+      ["reviewContext", reviewContext ?? null],
       ["sessionId", state.sessionId],
       ["streamId", streamId],
       ["abortSignal", abortController.signal],
@@ -590,6 +607,7 @@ export async function* runAgentTurn(
     };
     sessionScopedTools.readDraft = sessionTools.readDraftAiIr;
     sessionScopedTools.editDraft = sessionTools.editDraft;
+    sessionScopedTools.create_annotation_groups = sessionTools.createAnnotationGroups;
     sessionScopedTools.readDiff = sessionTools.readDiff;
     if (sessionTools.executeCommand) {
       sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;

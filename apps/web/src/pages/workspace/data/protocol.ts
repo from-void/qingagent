@@ -8,6 +8,7 @@
 
 export type {
   AgentMessage,
+  ActionCardData,
   AskUserAnswer,
   AskUserAnswerCardPart,
   AskUserMode,
@@ -56,6 +57,7 @@ export type {
 
 import type {
   AskUserAnswer,
+  AnnotationGroup,
   ChatMessage as WireChatMessage,
   DiffHunk,
   DocState,
@@ -3063,6 +3065,8 @@ export type WorkspaceLocalAction =
     }
   | { kind: "viewingVersionSet"; version: number | null; versionId?: string | null }
   | { kind: "historySnapshotSet"; doc: ViewDocumentSnapshot | null }
+  /** 前端是本期批注坐标与 accepted/ignored 状态的准源；本地事务用全量替换。 */
+  | { kind: "annotationGroupsChanged"; groups: AnnotationGroup[] }
   /** 诊断 p01:手动编辑 updateDoc 保存成功后,把已保存的 PM 文档同步进
    * state.doc——此前只更新版本号,canonical 文档停留在手动编辑前,导致
    * 进入审阅/拒绝后界面回退、看似"回滚吞了手动编辑"。 */

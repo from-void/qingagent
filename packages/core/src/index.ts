@@ -176,6 +176,19 @@ export {
   parseSearchProviderConfig,
 } from "./search/index.js";
 export { seedInitialContent } from "./seed/seedInitialContent.js";
+export {
+  buildDraftTemplateSteeringTail,
+  draftTemplate,
+  parseDraftTemplate,
+} from "./session/draftTemplate.js";
+export {
+  DerivativeDeltaBatcher,
+  TRANSLATION_PUBLIC_FAILURE_REASON,
+  buildTranslationSteeringTail,
+  generateTranslationDerivative,
+  generateTranslations,
+} from "./session/translationGeneration.js";
+export type { TranslationTarget } from "./session/translationGeneration.js";
 export { clearQuestionBranch } from "./services/genService.js";
 export {
   ARCHIVED_BUILTIN_SKILLS,
@@ -225,14 +238,37 @@ export {
   aggregateUsageByDay,
   aggregateUsageBySession,
   aggregateUsageTotal,
+  createDerivativeDoc,
+  deleteDerivativeDoc,
   deleteAppSetting,
+  deleteStyleTemplate,
+  deleteReviewTemplate,
   documentDraftRepo,
   documentRepo,
+  getDerivativeDocument,
+  getDerivativeMeta,
+  getReviewDocSupplement,
+  getReviewTemplate,
+  getSelectedReviewTemplate,
+  getStyleTemplate,
   getAppSetting,
   getDocumentsClient,
   getVersionSnapshot,
+  ignoreAnnotationGroups,
+  insertReviewDismissalSignal,
   latestAgentUsageForSession,
+  listDerivativesByThread,
+  listLexiconEntries,
+  listLexicons,
+  listReviewTemplates,
+  listStyleTemplates,
   listVersions,
+  loadMainDocumentByThread,
+  saveReviewTemplate,
+  saveStyleTemplate,
+  selectReviewTemplate,
   setAppSetting,
+  updateParams,
+  upsertReviewDocSupplement,
 } from "@qingagent/db";
 export { validateFetchUrl } from "@qingagent/doc-render/browser";

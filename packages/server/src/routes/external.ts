@@ -481,6 +481,8 @@ function partText(part: MessagePart): string {
       return "[引用]";
     case "askUserAnswerCard":
       return "[用户答复]";
+    case "actionCard":
+      return `[操作：${part.data.title}]`;
   }
 }
 

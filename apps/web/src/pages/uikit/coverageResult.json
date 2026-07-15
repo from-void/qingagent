@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-07-11T09:19:04.056Z",
+  "generatedAt": "2026-07-12T17:13:14.436Z",
   "forward": {
     "total": 453,
-    "attributed": 264,
-    "exempt": 189,
-    "missing": 0,
+    "attributed": 258,
+    "exempt": 191,
+    "missing": 4,
     "rows": [
       {
         "cls": "a",
@@ -24,7 +24,8 @@
       {
         "cls": "ai-cursor",
         "family": "ai",
-        "status": "attributed"
+        "status": "exempt",
+        "reason": "编辑器 AI 光标 / 协作光标层,运行时装饰,当前无多人协作场景"
       },
       {
         "cls": "arrowclosed",
@@ -1037,7 +1038,8 @@
       {
         "cls": "native-presentation-cursor",
         "family": "native",
-        "status": "attributed"
+        "status": "exempt",
+        "reason": "沉浸式/演示模式外壳(presentation shell),整屏场景非控件"
       },
       {
         "cls": "native-presentation-shell",
@@ -1101,22 +1103,22 @@
       {
         "cls": "patch-popup-del-seg",
         "family": "patch-popup",
-        "status": "attributed"
+        "status": "missing"
       },
       {
         "cls": "patch-popup-k",
         "family": "patch-popup",
-        "status": "attributed"
+        "status": "missing"
       },
       {
         "cls": "patch-popup-num",
         "family": "patch-popup",
-        "status": "attributed"
+        "status": "missing"
       },
       {
         "cls": "patch-popup-row",
         "family": "patch-popup",
-        "status": "attributed"
+        "status": "missing"
       },
       {
         "cls": "pn-commit",

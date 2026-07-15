@@ -1,5 +1,9 @@
 import { ModelRouterLanguageModel, type OpenAICompatibleConfig } from "@mastra/core/llm";
 import { editDraftInputSchema, writeDraftInputSchema } from "./draftToolSchemas.js";
+import {
+  annotationGroupsParseFailureInput,
+  createAnnotationGroupsInputSchema,
+} from "../tools/annotationGroups.js";
 import { guardBeforeProviderCall } from "./prefixCacheGuard.js";
 import { repairToolCallJson } from "./repairToolCallJson.js";
 import { resolveDeepseekRouterModelId } from "./modelConfig.js";
@@ -10,17 +14,33 @@ type ModelStreamResult = Awaited<ReturnType<ModelRouterLanguageModel["doStream"]
 // 模型调用瞬时网络失败(ECONNRESET / 连接重置 / 超时)是可重试的——上游(DeepSeek/代理)抖一下
 // 不该把整轮甩回给用户"模型服务连接失败,请重试"。仅在"建连/首字节前"失败时重试(此处 await 抛出
 // 即此类),不重试已经流出 token 的中途错误。
-function isRetryableModelError(e: unknown): boolean {
-  const err = e as { isRetryable?: boolean; code?: string; cause?: { code?: string }; message?: string };
-  if (err?.isRetryable === true) return true;
-  const code = err?.code ?? err?.cause?.code ?? "";
-  const msg = String(err?.message ?? "");
-  return (
-    ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "UND_ERR_SOCKET", "ENOTFOUND"].includes(code) ||
-    /ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|Cannot connect|fetch failed|network|terminated|aborted/i.test(
-      msg,
-    )
-  );
+export function isRetryableModelError(e: unknown): boolean {
+  const retryableCodes = new Set([
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ECONNREFUSED",
+    "EPIPE",
+    "UND_ERR_SOCKET",
+    "UND_ERR_CONNECT_TIMEOUT",
+    // 仅 modelTransport 的代理内部 Client 使用短 headersTimeout；这里代表 CONNECT
+    // 隧道未建立，真实模型请求仍保留 undici 默认 headersTimeout。
+    "UND_ERR_HEADERS_TIMEOUT",
+    "ENOTFOUND",
+  ]);
+  let current: unknown = e;
+  const seen = new Set<unknown>();
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const err = current as { isRetryable?: boolean; code?: string; cause?: unknown; message?: string };
+    if (err.isRetryable === true || retryableCodes.has(err.code ?? "")) return true;
+    if (
+      /ECONNRESET|ETIMEDOUT|ECONNREFUSED|UND_ERR_(?:CONNECT|HEADERS)_TIMEOUT|socket hang up|Cannot connect|fetch failed|network|terminated|aborted/i.test(
+        String(err.message ?? ""),
+      )
+    ) return true;
+    current = err.cause;
+  }
+  return false;
 }
 
 async function withModelRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
@@ -80,30 +100,56 @@ function isValidDraftToolInput(toolName: string, value: unknown): boolean {
   return false;
 }
 
+function isValidRepairableToolInput(toolName: string, value: unknown): boolean {
+  if (toolName === "create_annotation_groups") {
+    return createAnnotationGroupsInputSchema.safeParse(value).success;
+  }
+  return isValidDraftToolInput(toolName, value);
+}
+
+function isRepairableToolName(toolName: string): boolean {
+  return toolName === "editDraft" || toolName === "writeDraft" || toolName === "create_annotation_groups";
+}
+
+export function repairSupportedToolCallInput(
+  toolName: string,
+  input: string,
+): string | null {
+  if (!isRepairableToolName(toolName)) return null;
+
+  let parseError: unknown;
+  try {
+    parseJson(input);
+    return null;
+  } catch (error) {
+    parseError = error;
+    // 只有解析失败才尝试高置信度修复。
+  }
+
+  const repaired = repairToolCallJson(input);
+  if (repaired.ok) {
+    let parsed: unknown;
+    try {
+      parsed = parseJson(repaired.json);
+    } catch {
+      parsed = null;
+    }
+    if (isValidRepairableToolInput(toolName, parsed)) return repaired.json;
+  }
+
+  // 草稿工具保持既有 fail-closed 行为。批注工具则返回无副作用诊断信封，避免 Mastra
+  // 把缺失 arguments 写回消息后让下一步请求直接失败，模型可据“第几组/字段”拆批重试。
+  return toolName === "create_annotation_groups"
+    ? annotationGroupsParseFailureInput(input, parseError)
+    : null;
+}
+
 export function repairDraftToolCallInput(
   toolName: string,
   input: string,
 ): string | null {
   if (toolName !== "editDraft" && toolName !== "writeDraft") return null;
-
-  try {
-    parseJson(input);
-    return null;
-  } catch {
-    // 只有解析失败才尝试高置信度修复。
-  }
-
-  const repaired = repairToolCallJson(input);
-  if (!repaired.ok) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = parseJson(repaired.json);
-  } catch {
-    return null;
-  }
-
-  return isValidDraftToolInput(toolName, parsed) ? repaired.json : null;
+  return repairSupportedToolCallInput(toolName, input);
 }
 
 export function repairToolCallStreamPart<T>(part: T): T {
@@ -117,7 +163,7 @@ export function repairToolCallStreamPart<T>(part: T): T {
     "input" in part &&
     typeof part.input === "string"
   ) {
-    const repairedInput = repairDraftToolCallInput(part.toolName, part.input);
+    const repairedInput = repairSupportedToolCallInput(part.toolName, part.input);
     if (repairedInput !== null) {
       return { ...part, input: repairedInput };
     }

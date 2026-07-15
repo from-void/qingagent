@@ -193,6 +193,26 @@ describe("ServerStream", () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("draftTemplate 将调用方 abortSignal 传给请求并立即拒绝", async () => {
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    });
+    const stream = new ServerStream();
+    const controller = new AbortController();
+    const promise = stream.draftTemplate({
+      sessionId: "s-1",
+      scene: { kind: "review", type: "role", label: "角色审查" },
+      intent: { name: "", prompt: "" },
+    }, controller.signal);
+    controller.abort();
+    expect(requestSignal?.aborted).toBe(true);
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("stop() dispatches local stream termination", () => {
     const localActions: WorkspaceLocalAction[] = [];
     const stream = new ServerStream((action) => localActions.push(action));
@@ -361,6 +381,47 @@ describe("ServerStream", () => {
     } satisfies BridgeFrame, "2");
 
     expect(frames.map((frame) => frame.kind)).toEqual(["sessionMeta", "chatMessageAppended"]);
+  });
+
+  it("审查模板与文档补充命令通过 EventSource 返回对应持久化结果", async () => {
+    globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
+    const stream = new ServerStream();
+    const start = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "1");
+    await start;
+
+    const listPromise = stream.listReviewTemplates("s-1", "source");
+    await Promise.resolve();
+    source.emitFrame({
+      kind: "reviewTemplatesListed",
+      data: {
+        items: [{ id: "source-default", type: "source", name: "标准来源核查", prompt: "核对金额", builtin: true, createdAt: "t", updatedAt: "t" }],
+        selectedTemplateId: "source-default",
+      },
+    } satisfies BridgeFrame, "2");
+    await expect(listPromise).resolves.toMatchObject({ selectedTemplateId: "source-default" });
+
+    const supplementPromise = stream.getReviewSupplement("s-1", "source");
+    await Promise.resolve();
+    source.emitFrame({ kind: "reviewSupplementLoaded", data: { type: "source", supplement: "只看金额" } } satisfies BridgeFrame, "3");
+    await expect(supplementPromise).resolves.toBe("只看金额");
+
+    const reviewDeletePromise = stream.deleteReviewTemplate("s-1", "source-default");
+    await Promise.resolve();
+    source.emitFrame({
+      kind: "reviewTemplateDeleted",
+      data: { id: "source-default", selectedTemplateId: "source-default", error: "每类至少保留一个模板" },
+    } satisfies BridgeFrame, "4");
+    await expect(reviewDeletePromise).rejects.toThrow("每类至少保留一个模板");
+
+    const styleDeletePromise = stream.deleteStyleTemplate("s-1", "gzh-layout-classic");
+    await Promise.resolve();
+    source.emitFrame({
+      kind: "styleTemplateDeleted",
+      data: { id: "gzh-layout-classic", error: "每类至少保留一个模板" },
+    } satisfies BridgeFrame, "5");
+    await expect(styleDeletePromise).rejects.toThrow("每类至少保留一个模板");
   });
 
   it("commitReviewGroups 对 REST 和 EventSource 的同 seq 帧只分发一次", async () => {

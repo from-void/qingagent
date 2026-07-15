@@ -11,6 +11,7 @@ export interface ActorCommand {
   origin?: CommandOrigin;
   client?: string;
   modelOverrides?: ModelOverrides;
+  abortSignal?: AbortSignal;
 }
 
 export type HandleCommandFn = (
@@ -20,6 +21,7 @@ export type HandleCommandFn = (
   modelOverrides?: ModelOverrides,
   client?: string,
   routedSessionId?: string,
+  abortSignal?: AbortSignal,
 ) => AsyncGenerator<BridgeFrame>;
 
 export class SessionActorCommandError extends Error {
@@ -134,6 +136,7 @@ export class SessionActor {
           item.input.modelOverrides,
           item.input.client,
           this.options.sessionId,
+          item.input.abortSignal,
         );
         for await (const frame of frames) {
           // dispose 后立即停泵(0702 review):manager 已 frameLog.evict,此处再 append

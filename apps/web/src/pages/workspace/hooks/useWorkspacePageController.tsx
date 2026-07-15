@@ -1,10 +1,13 @@
 import type {
+  ActionCardData,
+  AnnotationGroup,
   BridgeFrame,
   ChatChip,
   Command,
   DocumentSnapshot,
   FolderSource,
   HistorySnapshot,
+  ReviewContext,
 } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import type { Editor } from "@tiptap/react";
@@ -34,12 +37,19 @@ import { resources, useResourceList } from "../../../system/resources";
 import { validateCommand } from "../../../system/validators";
 import type { ChatInputHandle } from "../components/ChatInput";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
+import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
+import {
+  DTYPE_REGISTRY,
+  type DerivativeDtype,
+} from "../components/derivatives/dtypeRegistry";
+import type { DerivativeItem } from "../components/derivatives/types";
 import {
   isEditorRangeSingleAtomBlock,
   isEditorRangeWithinSingleTextBlock,
 } from "../components/DocToolbar";
 import type { DocumentSnapshotViewHandle } from "../components/DocumentSnapshotView";
 import type { StarterBlankTarget } from "../components/StarterPanel";
+import type { ReviewType } from "../components/ReviewLaunchModal";
 import { runAiModifyTarget, type AiModifyTarget } from "../data/aiModifyTarget";
 import {
   magicMoveFromRect,
@@ -61,6 +71,7 @@ import {
 } from "../data/chatInputBlockReason";
 import { logClientEvent } from "../data/clientLog";
 import { cloneViewSections } from "../data/cloneViewDoc";
+import { installAnnotationGroupDecorations } from "../data/annotationDecorations";
 import { deriveDocDimensions } from "../data/docDimensions";
 import {
   buildAttachFolderCommand,
@@ -214,6 +225,25 @@ export function useWorkspacePageController() {
   const { previewExit, previewSource, setPreviewSource } =
     useAssetPreviewState();
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
+  const [derivatives, setDerivatives] = useState<DerivativeItem[]>([]);
+  const [derivativeCreateOpen, setDerivativeCreateOpen] = useState(false);
+  const [derivativeCreateDtype, setDerivativeCreateDtype] =
+    useState<DerivativeDtype>("gzh");
+  const [derivativeCreating, setDerivativeCreating] = useState(false);
+  const [pendingDerivativeGeneration, setPendingDerivativeGeneration] =
+    useState<string | null>(null);
+  const sendDerivativeQueryRef = useRef<
+    (
+      text: string,
+      displayCard: ActionCardData,
+      reviewContext?: ReviewContext,
+    ) => void
+  >(() => undefined);
+  const [activeTab, setActiveTab] = useState<"main" | string>("main");
+  useEffect(() => {
+    // 批注预览是转瞬态：切 tab 不恢复、不保留。
+    dispatch({ kind: "annotationPreviewCleared", data: {} });
+  }, [activeTab]);
   const [presentationRun, setPresentationRun] =
     useState<NativePresentationRun | null>(null);
   const presentationRunRef = useRef<NativePresentationRun | null>(null);
@@ -248,6 +278,7 @@ export function useWorkspacePageController() {
     old: 0,
   });
   const exportAnchorRef = useRef<HTMLDivElement>(null);
+  const reviewAnchorRef = useRef<HTMLDivElement>(null);
   // 输入框 ⇄ 右侧操作条「同体平移」用:输入框外壳 ref + 上一帧条是否在场 + 条最后位置(供返回时幽灵滑回)
   const inputMorphRef = useRef<HTMLDivElement>(null);
   const prevBarPresentRef = useRef(false);
@@ -315,6 +346,18 @@ export function useWorkspacePageController() {
   docVersionRef.current = state.version;
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
+  useEffect(() => {
+    if (!tiptapEditor || tiptapEditor.isDestroyed) return;
+    return installAnnotationGroupDecorations(
+      tiptapEditor,
+      state.docState.kind === "pendingReview" ? [] : state.annotationGroups,
+      (groups) => dispatch({ kind: "annotationGroupsChanged", groups }),
+      state.previewGroups,
+    );
+  }, [state.annotationGroups, state.docState.kind, state.previewGroups, tiptapEditor]);
+  const dispatchAnnotationGroups = useCallback((groups: AnnotationGroup[]) => {
+    dispatch({ kind: "annotationGroupsChanged", groups });
+  }, []);
   tiptapEditorRef.current = tiptapEditor;
   const toast = useToast();
   const confirm = useConfirm();
@@ -976,6 +1019,80 @@ export function useWorkspacePageController() {
   // 避免"信号说有条但条没渲染"时把输入框误藏成凭空消失。
   const [inputHandedOff, setInputHandedOff] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [reviewMenuOpen, setReviewMenuOpen] = useState(false);
+  const [reviewLaunchType, setReviewLaunchType] = useState<ReviewType | null>(
+    null,
+  );
+
+  const loadLexicons = useCallback(async () => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.listLexicons(sessionId);
+  }, []);
+
+  const loadLexiconEntries = useCallback(async (resourceId: string) => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.listLexiconEntries(sessionId, resourceId);
+  }, []);
+
+  const loadReviewTemplates = useCallback(async (type: ReviewType) => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.listReviewTemplates(sessionId, type);
+  }, []);
+
+  const saveReviewTemplate = useCallback(
+    async (input: {
+      id?: string;
+      type: ReviewType;
+      name: string;
+      prompt: string;
+    }) => {
+      const sessionId = stateRef.current.sessionId;
+      const stream = streamRef.current;
+      if (!sessionId || !stream) throw new Error("会话未就绪");
+      return stream.saveReviewTemplate(sessionId, input);
+    },
+    [],
+  );
+
+  const deleteReviewTemplate = useCallback(async (id: string) => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.deleteReviewTemplate(sessionId, id);
+  }, []);
+
+  const selectReviewTemplate = useCallback(
+    async (type: ReviewType, templateId: string) => {
+      const sessionId = stateRef.current.sessionId;
+      const stream = streamRef.current;
+      if (!sessionId || !stream) throw new Error("会话未就绪");
+      await stream.selectReviewTemplate(sessionId, type, templateId);
+    },
+    [],
+  );
+
+  const loadReviewSupplement = useCallback(async (type: ReviewType) => {
+    const sessionId = stateRef.current.sessionId;
+    const stream = streamRef.current;
+    if (!sessionId || !stream) throw new Error("会话未就绪");
+    return stream.getReviewSupplement(sessionId, type);
+  }, []);
+
+  const saveReviewSupplement = useCallback(
+    async (type: ReviewType, supplement: string) => {
+      const sessionId = stateRef.current.sessionId;
+      const stream = streamRef.current;
+      if (!sessionId || !stream) throw new Error("会话未就绪");
+      return stream.upsertReviewSupplement(sessionId, type, supplement);
+    },
+    [],
+  );
 
   // FLIP 编排:以「接管输入框的条/卡是否真在 DOM」为唯一信号(绕开 askUser pending/running/done 等状态时序),
   // 每次提交后检查;只在条出现/消失的瞬间动手(平时只一次 querySelector,零布局成本)。
@@ -1250,6 +1367,21 @@ export function useWorkspacePageController() {
       }
       if (frame.kind === "documentSnapshotWritten") {
         stagePresentationRunForDocFrame(frame.data.doc);
+      }
+      if (frame.kind === "derivativeGenFinished") {
+        const stream = streamRef.current;
+        const sessionId = stateRef.current.sessionId;
+        if (stream && sessionId) {
+          void stream
+            .listDerivatives(sessionId)
+            .then(setDerivatives)
+            .catch((error) => {
+              console.error(
+                "[workspace] refresh finished translation failed",
+                error,
+              );
+            });
+        }
       }
       if (
         frame.kind === "docGenerationEvent" &&
@@ -1633,6 +1765,131 @@ export function useWorkspacePageController() {
   useEffect(() => {
     if (state.title && state.title !== "未命名草稿") setTitle(state.title);
   }, [state.title]);
+
+  const refreshDerivatives = useCallback(async () => {
+    const stream = streamRef.current;
+    const sessionId = stateRef.current.sessionId;
+    if (!stream || !sessionId) return;
+    setDerivatives(await stream.listDerivatives(sessionId));
+  }, []);
+
+  useEffect(() => {
+    if (!state.sessionId) {
+      setDerivatives([]);
+      setActiveTab("main");
+      return;
+    }
+    void refreshDerivatives().catch((error) =>
+      console.error("[workspace] list derivatives failed", error),
+    );
+  }, [refreshDerivatives, state.sessionId]);
+
+  useEffect(() => {
+    if (!state.sessionId || state.version <= 0) return;
+    const timer = window.setTimeout(
+      () =>
+        void refreshDerivatives().catch((error) =>
+          console.error(
+            "[workspace] refresh derivatives after commit failed",
+            error,
+          ),
+        ),
+      800,
+    );
+    return () => window.clearTimeout(timer);
+  }, [refreshDerivatives, state.sessionId, state.version]);
+
+  useEffect(() => {
+    if (activeTab === "main") return;
+    void refreshDerivatives().catch((error) =>
+      console.error("[workspace] refresh derivatives on tab activate failed", error),
+    );
+  }, [activeTab, refreshDerivatives]);
+
+  // 对话工具可在弹框之外完成衍生稿重生成；活动衍生视图持续观察 generatedAt，
+  // 新时间戳进入 props 后 DerivativeView 会自行重取正文，避免必须切 Tab 才看到改稿。
+  useEffect(() => {
+    if (activeTab === "main" || activeTab === "translate" || !state.sessionId)
+      return;
+    const timer = window.setInterval(
+      () =>
+        void refreshDerivatives().catch((error) =>
+          console.error("[workspace] poll derivative generation failed", error),
+        ),
+      2_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [activeTab, refreshDerivatives, state.sessionId]);
+
+  const handleCreateDerivative = useCallback(
+    async (params: DerivativeGenerateParams) => {
+      const stream = streamRef.current;
+      const sessionId = stateRef.current.sessionId;
+      if (!stream || !sessionId) {
+        showToast("会话未就绪");
+        return;
+      }
+      setDerivativeCreating(true);
+      try {
+        const descriptor = DTYPE_REGISTRY[derivativeCreateDtype];
+        const targetLanguages =
+          descriptor.dtype === "translate"
+            ? (params.targetLanguages ?? [])
+            : [undefined];
+        if (descriptor.dtype === "translate" && targetLanguages.length === 0) {
+          throw new Error("请至少选择一种目标语言");
+        }
+        const createdItems: DerivativeItem[] = [];
+        for (const targetLang of targetLanguages) {
+          createdItems.push(
+            await stream.createDerivative(
+              sessionId,
+              descriptor.dtype,
+              params.templateId,
+              params.privatePrompt,
+              params.writingStyleId,
+              params.layoutStyleId,
+              targetLang,
+            ),
+          );
+        }
+        const item = createdItems[0]!;
+        await refreshDerivatives();
+        setDerivativeCreateOpen(false);
+        setPendingDerivativeGeneration(
+          descriptor.dtype === "translate" ? null : item.docId,
+        );
+        setActiveTab(descriptor.dtype === "translate" ? "translate" : item.docId);
+        const templateName =
+          descriptor.templates.find(
+            (template) => template.id === params.templateId,
+          )?.name ?? params.templateId;
+        const lines = [{ label: "模板", value: templateName }];
+        if (params.privatePrompt.trim()) {
+          lines.push({ label: "补充", value: params.privatePrompt.trim() });
+        }
+        if (descriptor.dtype === "translate") {
+          await stream.generateTranslations(
+            sessionId,
+            createdItems.map((created) => created.docId),
+          );
+        } else {
+          sendDerivativeQueryRef.current(descriptor.queryText(item.docId), {
+            title: descriptor.cardTitle(false),
+            lines,
+          });
+        }
+      } catch (error) {
+        console.error("[workspace] create derivative failed", error);
+        showToast(
+          `创建${DTYPE_REGISTRY[derivativeCreateDtype].label}失败 · 请重试`,
+        );
+      } finally {
+        setDerivativeCreating(false);
+      }
+    },
+    [derivativeCreateDtype, refreshDerivatives, showToast],
+  );
 
   useEffect(() => {
     setCurrentSession(state.sessionId, title);
@@ -2034,6 +2291,55 @@ export function useWorkspacePageController() {
       restoreExistingSession,
     });
 
+  const sendDerivativeQuery = useCallback(
+    (
+      text: string,
+      displayCard: ActionCardData,
+      reviewContext?: ReviewContext,
+    ) => {
+      const stream = streamRef.current;
+      if (!stream) {
+        showToast("连接还没准备好");
+        return;
+      }
+      const clientMessageId = `m-user-${Date.now()}`;
+      dispatch({
+        kind: "chatMessageAdded",
+        data: {
+          message: {
+            id: clientMessageId,
+            role: { kind: "user" },
+            ts: new Date().toISOString(),
+            parts: [{ kind: "actionCard", data: displayCard }],
+            chips: [],
+          },
+        },
+      });
+      void (async () => {
+        const sessionId = await ensureSessionId(stream);
+        await stream.sendCommand({
+          kind: "sendMessage",
+          data: {
+            sessionId,
+            text,
+            mentions: [],
+            skills: [],
+            chips: [],
+            fileIds: [],
+            clientMessageId,
+            displayCard,
+            ...(reviewContext ? { reviewContext } : {}),
+          },
+        });
+      })().catch((error) => {
+        console.error("[workspace] derivative query send failed", error);
+        showToast("生成指令发送失败,请重试");
+      });
+    },
+    [ensureSessionId, showToast],
+  );
+  sendDerivativeQueryRef.current = sendDerivativeQuery;
+
   const handleAiModify = useCallback(
     async (target: AiModifyTarget): Promise<boolean> =>
       runAiModifyTarget({
@@ -2181,15 +2487,44 @@ export function useWorkspacePageController() {
   return {
     viewRef,
     dataAttrs,
+    title,
+    setTitle,
     handleBackHome,
     showToast,
     exportAnchorRef,
+    reviewAnchorRef,
     exportDisabledReason,
     exportMenuOpen,
     setExportMenuOpen,
+    reviewMenuOpen,
+    setReviewMenuOpen,
+    reviewLaunchType,
+    setReviewLaunchType,
+    loadLexicons,
+    loadLexiconEntries,
+    loadReviewTemplates,
+    saveReviewTemplate,
+    deleteReviewTemplate,
+    selectReviewTemplate,
+    loadReviewSupplement,
+    saveReviewSupplement,
     flushPendingDocSave,
     getLatestExportPmDoc,
     state,
+    dispatchAnnotationGroups,
+    derivatives,
+    activeTab,
+    setActiveTab,
+    derivativeCreateOpen,
+    setDerivativeCreateOpen,
+    derivativeCreateDtype,
+    setDerivativeCreateDtype,
+    derivativeCreating,
+    pendingDerivativeGeneration,
+    setPendingDerivativeGeneration,
+    handleCreateDerivative,
+    refreshDerivatives,
+    sendDerivativeQuery,
     effectivePatchRevealing,
     reviewUiState,
     liveHunkKey,

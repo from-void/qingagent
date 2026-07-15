@@ -1,0 +1,302 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatMessage, ReviewTemplateItem } from "@qingagent/contract-ts";
+import { ReviewMenu } from "./ReviewMenu";
+import { buildReviewActionCard, buildReviewContext, buildReviewQuery, ReviewLaunchModal } from "./ReviewLaunchModal";
+import { ChatMessageList } from "./ChatMessageList";
+import { ROLE_REVIEW_PROFILES } from "./roleReview";
+
+const now = "2026-07-14T00:00:00.000Z";
+const builtins: ReviewTemplateItem[] = [
+  { id: "source-default", type: "source", name: "标准来源核查", prompt: "核对事实、数字与出处。", builtin: true, createdAt: now, updatedAt: now },
+  { id: "source-strict", type: "source", name: "严格来源核查", prompt: "逐字核对金额和日期。", builtin: false, createdAt: now, updatedAt: now },
+];
+const lexicons = [{ id: "lexicon-ad", name: "广告法极限词", description: "广告合规", entryCount: 2 }];
+
+describe("ReviewLaunchModal", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    host.id = "view-workspace";
+    document.body.append(host);
+    root = createRoot(host);
+  });
+  afterEach(() => { act(() => root.unmount()); host.remove(); });
+
+  function props(overrides: Record<string, unknown> = {}) {
+    return {
+      open: true,
+      type: "source" as const,
+      loadTemplates: vi.fn().mockResolvedValue({ items: builtins, selectedTemplateId: builtins[0]!.id }),
+      saveTemplate: vi.fn().mockImplementation(async (input: { id?: string; type: string; name: string; prompt: string }) => ({
+        id: input.id ?? "source-copy",
+        type: input.type,
+        name: input.name,
+        prompt: input.prompt,
+        builtin: false,
+        createdAt: now,
+        updatedAt: now,
+      })),
+      deleteTemplate: vi.fn().mockResolvedValue(builtins[0]!.id),
+      selectTemplate: vi.fn().mockResolvedValue(undefined),
+      loadSupplement: vi.fn().mockResolvedValue(""),
+      saveSupplement: vi.fn().mockImplementation(async (_type: string, value: string) => value),
+      onClose: vi.fn(),
+      onConfirm: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("头部左对齐呈现动作说明且无计数，审查组标题与弱化新建入口始终存在", async () => {
+    const modalProps = props();
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("来源核查");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("对照素材核对文中的事实与数字");
+    expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("2 模板");
+    expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("审查模板");
+    expect(host.querySelectorAll(".ws-launch-template-edit")).toHaveLength(2);
+    expect(host.querySelectorAll(".ws-launch-template-edit svg")).toHaveLength(2);
+    expect(host.querySelector(".ws-launch-template-edit path")?.getAttribute("d")).toBe("M11.1 2.9a1.75 1.75 0 0 1 2.47 2.47L6 12.9l-3.2.77.77-3.2Z");
+    expect(host.querySelector(".ws-launch-template-edit")?.textContent).toBe("");
+    expect(host.textContent).not.toContain("内置");
+    expect(host.querySelector(".ws-launch-template-new")?.textContent).toBe("＋ 新建");
+    expect(host.querySelector(".ws-launch-template-group-head .ws-launch-template-new")).not.toBeNull();
+    expect(host.querySelector(".ws-launch-template-grid .ws-launch-template-new")).toBeNull();
+    expect(host.textContent).not.toContain("完整提示词会随审查请求发送");
+    expect(host.textContent).not.toContain("按文档保存，不会修改全局模板");
+    expect(host.querySelector(".ws-launch-supplement span")?.textContent).toBe("补充要求");
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe("这次核查要特别注意什么，例如：重点核对数据和引述，标题不用查");
+
+    const strictCard = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent?.includes("严格来源核查"))!;
+    act(() => strictCard.click());
+    expect(modalProps.selectTemplate).toHaveBeenCalledWith("source", "source-strict");
+
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑严格来源核查"]')?.click());
+    expect(host.querySelector(".ws-launch-subtitle")).toBeNull();
+    expect(host.textContent).toContain("另存新模板");
+    expect(host.textContent).toContain("删除");
+    const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(prompt, "只核对金额");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "保存")?.click());
+    expect(modalProps.saveTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: "source-strict", prompt: "只核对金额" }));
+
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑严格来源核查"]')?.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除")?.click());
+    expect(modalProps.deleteTemplate).toHaveBeenCalledWith("source-strict");
+
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑标准来源核查"]')?.click());
+    const builtinFields = host.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(".ws-launch-editor input, .ws-launch-editor textarea");
+    expect(builtinFields).toHaveLength(2);
+    expect(Array.from(builtinFields).every((field) => !field.readOnly)).toBe(true);
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("编辑模板");
+    expect(host.textContent).not.toContain("内置");
+    const builtinActions = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"));
+    expect(builtinActions.map((button) => button.textContent)).toEqual(["删除", "另存新模板", "保存"]);
+    expect(builtinActions[0]?.disabled).toBe(true);
+    expect(builtinActions[0]?.title).toBe("每类至少保留一个模板");
+    const builtinPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(builtinPrompt, "覆盖内置提示");
+      builtinPrompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => builtinActions[2]?.click());
+    expect(modalProps.saveTemplate).toHaveBeenLastCalledWith(expect.objectContaining({ id: "source-default", prompt: "覆盖内置提示" }));
+
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑标准来源核查"]')?.click());
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button")).find((button) => button.textContent === "另存新模板")?.click());
+    expect(modalProps.saveTemplate.mock.calls.at(-1)?.[0]).not.toHaveProperty("id");
+
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-template-new")?.click());
+    const newName = host.querySelector<HTMLInputElement>(".ws-launch-editor input")!;
+    const newPrompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
+    expect(newName.value).toBe("");
+    expect(newName.placeholder).toBe("给模板起个名，例如：投资人视角挑刺");
+    expect(newPrompt.placeholder).toBe("像交代同事一样写：先说以什么身份/立场看稿，再列要逐项检查什么，最后说怎么给修改建议");
+    expect(host.querySelector(".ws-launch-starters")?.textContent).toBe("快速开始：数字专核引述与归属专核");
+    expect(host.querySelector(".ws-launch-actions > .ws-launch-starters")).not.toBeNull();
+    expect(host.querySelector(".ws-launch-editor > .ws-launch-starters")).toBeNull();
+    act(() => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-starters button")).find((button) => button.textContent === "数字专核")?.click());
+    expect(newName.value).toBe("数字专核");
+    expect(newPrompt.value).toBe("本轮只核对数字：把文中所有数字（金额/百分比/日期/数量）与素材逐一对照，数值、单位、口径三样都要对上。素材里没有的数字标「无据」，口径变了标「口径漂移」。引句必须含数字原文。");
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions > .wf-btn")).map((button) => button.textContent)).toEqual(["保存"]);
+  });
+
+  it("内置模板在同类有余量时可删，并原样展示服务端保底错误", async () => {
+    const deleteTemplate = vi.fn().mockRejectedValue(new Error("每类至少保留一个模板"));
+    await act(async () => root.render(<ReviewLaunchModal {...props({ deleteTemplate })} />));
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑标准来源核查"]')?.click());
+    const deleteButton = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"))
+      .find((button) => button.textContent === "删除")!;
+    expect(deleteButton.disabled).toBe(false);
+    await act(async () => deleteButton.click());
+    expect(deleteTemplate).toHaveBeenCalledWith("source-default");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("每类至少保留一个模板");
+  });
+
+  it("文档级补充自动带出、确认即持久化；敏感词弹窗内含词库管理", async () => {
+    let stored = "上次重点核对品牌口号";
+    const modalProps = props({
+      type: "sensitive" as const,
+      loadTemplates: vi.fn().mockResolvedValue({ items: [{ ...builtins[0]!, id: "sensitive-default", type: "sensitive", name: "标准敏感词审查" }], selectedTemplateId: "sensitive-default" }),
+      loadSupplement: vi.fn().mockImplementation(async () => stored),
+      saveSupplement: vi.fn().mockImplementation(async (_type: string, value: string) => { stored = value; return value; }),
+      loadLexicons: vi.fn().mockResolvedValue(lexicons),
+      loadLexiconEntries: vi.fn().mockResolvedValue([{ word: "唯一", replacement: null, note: "仅标记" }]),
+    });
+    await act(async () => root.render(<ReviewLaunchModal {...modalProps} />));
+    const textarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    expect(textarea.value).toBe(stored);
+    expect(textarea.placeholder).toBe("这次审查要特别注意什么，例如：行业黑话不算敏感词，重点看宣传用语");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("按所选词库扫描全文，标记并建议替换");
+    expect(host.textContent).toContain("管理词库");
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-resource-row .ws-launch-link")?.click());
+    expect(host.textContent).toContain("管理敏感词词库");
+    expect(host.querySelector(".ws-launch-subtitle")).toBeNull();
+    expect(host.textContent).toContain("广告法极限词");
+    expect(host.textContent).not.toContain("选择本次审查启用的词库");
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-lexicon-open")?.click());
+    expect(host.querySelector(".ws-launch-head")?.textContent).not.toContain("1 词");
+    expect(host.querySelector(".ws-launch-subtitle")).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    act(() => host.querySelector<HTMLButtonElement>(".ws-launch-back")?.click());
+    const currentTextarea = host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(currentTextarea, "这次只看引述");
+      currentTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>(".ws-launch-actions button:last-child")?.click());
+    expect(modalProps.saveSupplement).toHaveBeenCalledWith("sensitive", "这次只看引述");
+    expect(modalProps.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ id: "sensitive-default" }), "这次只看引述", lexicons);
+  });
+
+  it("菜单无省略号和词库项，query 用完整载荷而卡片只呈现摘要", async () => {
+    act(() => root.render(<ReviewMenu
+      onClose={vi.fn()}
+      onSensitiveReview={vi.fn()}
+      onDeaiReview={vi.fn()}
+      onSourceCheck={vi.fn()}
+      onConsistencyReview={vi.fn()}
+      onPrivacyReview={vi.fn()}
+      onFormatReview={vi.fn()}
+      onRoleReview={vi.fn()}
+      onCustomReview={vi.fn()}
+    />));
+    expect(host.textContent).not.toContain("…");
+    expect(host.textContent).not.toContain("管理敏感词词库");
+    expect(host.textContent).toContain("一致性审查");
+    expect(host.textContent).toContain("隐私泄露审查");
+    expect(host.textContent).toContain("格式规范审查");
+    expect(host.textContent).toContain("自定义审查");
+    expect(host.querySelectorAll("button:disabled")).toHaveLength(0);
+    expect(Array.from(host.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual([
+      "来源核查", "一致性审查",
+      "敏感词审查", "隐私泄露审查",
+      "去AI味", "格式规范审查",
+      "角色审查", "自定义审查",
+    ]);
+    expect(host.querySelectorAll('[role="separator"]')).toHaveLength(3);
+    expect(host.querySelector('[role="menu"]')?.textContent).not.toMatch(/来源与事实|安全合规|表达质量|角色与自定义/);
+    const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace-ink-skin.css"), "utf8");
+    expect(css).toMatch(/\[data-wf="ReviewMenu"\]\s+\.ws-export-separator\s*\{\s*background:\s*var\(--line-2\)/);
+
+    const template = { ...builtins[0]!, prompt: "完整模板规则：逐字核对所有数字。" };
+    const query = buildReviewQuery("source", template, "重点核对月活");
+    const card = buildReviewActionCard("source", template.name, "重点核对月活\n不要联网");
+    const reviewContext = buildReviewContext("source", template);
+    expect(query).toContain(template.prompt);
+    expect(query).toContain("文档级补充要求（只适用于当前文档）：重点核对月活");
+    expect(card).toEqual({ title: "来源核查", lines: [{ label: "模板", value: "标准来源核查" }, { label: "补充", value: "重点核对月活 不要联网" }] });
+    expect(reviewContext).toEqual({ type: "source", templateId: "source-default", templateName: "标准来源核查" });
+    expect(JSON.stringify(card)).not.toContain(template.prompt);
+
+    const messages: ChatMessage[] = [{
+      id: "review-query",
+      role: { kind: "user" },
+      ts: now,
+      parts: [{ kind: "actionCard", data: card }],
+      chips: [],
+    }];
+    act(() => root.render(<ChatMessageList messages={messages} streamActive={false} />));
+    expect(host.querySelector('[data-wf="ActionCard"]')?.textContent).toContain("来源核查");
+    expect(host.querySelector('[data-wf="ActionCard"]')?.textContent).toContain("标准来源核查");
+    expect(host.textContent).not.toContain(template.prompt);
+    expect(host.querySelector(".wf-msg.user")).toBeNull();
+  });
+
+  it.each([
+    ["deai", "轻度去痕", "去AI味", "识别机器腔，把文字改得更像人写的", "这次处理要特别注意什么，例如：保留第一人称口吻，案例部分别改"],
+    ["consistency", "全面自洽核查", "一致性审查", "检查全文时间线、数字与称谓是否自洽", "这次审查要特别注意什么，例如：重点核对时间线，产品名以正文第一次出现为准"],
+    ["privacy", "对外发布", "隐私泄露审查", "发布前检查个人与内部信息泄露", "这次审查要特别注意什么，例如：客户名可以保留，内部项目代号要脱敏"],
+    ["format", "交付前整备", "格式规范审查", "检查标题层级、标点与数字格式", "这次审查要特别注意什么，例如：数字统一用阿拉伯数字"],
+    ["custom", "法务合规视角", "自定义审查", "用你自己的模板定义审查逻辑", "这次审查要特别注意什么"],
+  ] as const)("%s 弹窗呈现对应说明、补充例句与组标题", async (type, templateName, title, subtitle, placeholder) => {
+    const template = { ...builtins[0]!, id: `review-${type}-default`, type, name: templateName };
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      type,
+      loadTemplates: vi.fn().mockResolvedValue({ items: [template], selectedTemplateId: template.id }),
+    })} />));
+
+    expect(host.querySelector('[data-wf="ReviewLaunchModal"]')?.textContent).toContain(title);
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe(subtitle);
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder).toBe(placeholder);
+    expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("审查模板");
+    const cards = host.querySelectorAll<HTMLButtonElement>('.ws-launch-template-grid [role="radio"]');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.getAttribute("aria-checked")).toBe("true");
+    expect(cards[0]?.textContent).toContain(templateName);
+  });
+
+  it("role 弹窗只启用竖卡、12 个固定头像与通用头像，推荐排序不改变选中记忆", async () => {
+    const templates: ReviewTemplateItem[] = [
+      ...[...ROLE_REVIEW_PROFILES].reverse().map((profile) => ({
+        id: profile.id,
+        type: "role" as const,
+        name: profile.name,
+        prompt: `${profile.name}提示词`,
+        builtin: true,
+        createdAt: now,
+        updatedAt: now,
+      })),
+      { id: "review-user-role", type: "role", name: "我的超长自定义审查角色", prompt: "用户提示词", builtin: false, createdAt: now, updatedAt: now },
+    ];
+    const selectedTemplateId = "review-role-beginner";
+    await act(async () => root.render(<ReviewLaunchModal {...props({
+      type: "role",
+      documentTitle: "支付系统技术方案 PRD",
+      documentText: "接口输入输出、异常分支、边界条件、并发性能与数据库兼容性需要补齐。",
+      loadTemplates: vi.fn().mockResolvedValue({ items: templates, selectedTemplateId }),
+    })} />));
+
+    expect(host.querySelector(".ws-launch-head h2")?.textContent).toBe("角色审查");
+    expect(host.querySelector(".ws-launch-subtitle")?.textContent).toBe("请一位虚拟角色来审这篇文档");
+    expect(host.querySelector(".ws-launch-template-group-title")?.textContent).toBe("审查角色");
+    expect(host.querySelector(".ws-launch-template-grid")?.classList.contains("is-portrait")).toBe(true);
+    expect(host.querySelectorAll(".ws-launch-template-card.is-portrait")).toHaveLength(13);
+    expect(host.querySelectorAll(".ws-launch-role-avatar svg")).toHaveLength(13);
+    expect(new Set(Array.from(host.querySelectorAll(".ws-launch-role-avatar svg")).map((svg) => svg.getAttribute("data-avatar-kind"))))
+      .toEqual(new Set([...ROLE_REVIEW_PROFILES.map((profile) => profile.avatar), "generic"]));
+    expect(Array.from(host.querySelectorAll(".ws-launch-role-avatar svg")).every((svg) =>
+      svg.getAttribute("fill") === "none"
+      && svg.getAttribute("stroke") === "currentColor"
+      && svg.getAttribute("stroke-width") === "1.6"
+      && svg.getAttribute("stroke-linecap") === "round",
+    )).toBe(true);
+
+    const cards = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    expect(cards[0]?.textContent).toContain("研发工程师");
+    expect(cards[0]?.textContent).toContain("推荐");
+    expect(cards.find((card) => card.textContent?.includes("小白读者视角"))?.getAttribute("aria-checked")).toBe("true");
+    expect(cards.find((card) => card.textContent?.includes("我的超长自定义审查角色"))?.textContent).toContain("自定义角色");
+    expect(host.querySelector<HTMLTextAreaElement>(".ws-launch-supplement textarea")?.placeholder)
+      .toBe("这次审查要特别注意什么，例如：重点看上线风险和数据口径");
+  });
+});

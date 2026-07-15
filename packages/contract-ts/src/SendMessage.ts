@@ -1,6 +1,8 @@
 import type { ChatChip } from "./ChatChip";
 import type { ResourceRef } from "./ResourceRef";
 import type { SkillRef } from "./SkillRef";
+import type { ActionCardData } from "./ActionCard";
+import type { ReviewContext } from "./ReviewTemplates";
 
 export type SendMessage = { sessionId: string, text: string,
 /**
@@ -37,4 +39,8 @@ clientMessageId?: string,
  * user bubble body so replay/restore render chips inline (WYSIWYG).
  * Absent = plain-text message; behavior unchanged.
  */
-richText?: string, };
+richText?: string,
+/** 可选的用户侧展示卡；模型仍接收 text 原文。 */
+displayCard?: ActionCardData,
+/** 审查菜单发起时的结构化类型/模板标识；只约束当前回合。 */
+reviewContext?: ReviewContext, };

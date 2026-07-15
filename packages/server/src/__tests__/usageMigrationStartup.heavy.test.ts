@@ -25,7 +25,10 @@ describe("旧 DB → server 重启迁移", () => {
     );
     __resetMigrationsForTest();
 
-    expect((await runMigrations()).appliedIds).toEqual([3, 4]);
+    const expectedPendingIds = MIGRATIONS
+      .filter((migration) => migration.id > 2)
+      .map((migration) => migration.id);
+    expect((await runMigrations()).appliedIds).toEqual(expectedPendingIds);
     const row = (await client.execute("SELECT * FROM llm_usage_events WHERE id = 'server-old'")).rows[0];
     expect(Number(row?.input_tokens)).toBe(9);
     expect(String(row?.usage_state)).toBe("recorded");

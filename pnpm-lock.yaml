@@ -234,6 +234,9 @@ importers:
       '@qingagent/pm-schema':
         specifier: workspace:*
         version: link:../pm-schema
+      '@tiptap/pm':
+        specifier: ^3.23.1
+        version: 3.23.1
       '@xmldom/xmldom':
         specifier: ^0.9.10
         version: 0.9.10

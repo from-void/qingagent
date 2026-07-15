@@ -20,6 +20,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { wrapLanguageModel, type LanguageModel } from "ai-v5";
 import type { RequestContext } from "@mastra/core/request-context";
+import { Buffer } from "node:buffer";
 import { validateFetchUrl } from "@qingagent/doc-render/browser";
 export {
   DEEPSEEK_BASE_URL,
@@ -29,6 +30,9 @@ export {
 } from "./modelBaseUrl.js";
 import { MODEL_OVERRIDES_CONTEXT_KEY, resolveBaseUrl, sanitizeBaseUrl } from "./modelBaseUrl.js";
 import { createUsageMiddleware, recordUsageOutcome } from "./usageMiddleware.js";
+import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
+import { modelFetch } from "./modelTransport.js";
+import { normalizeLlmUsageCounts } from "./usageAccounting.js";
 import { nextUsageAttempt } from "./usageAttempt.js";
 import {
   BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY,
@@ -349,6 +353,17 @@ async function recordBranchUsage(
   reason: string | null,
 ): Promise<void> {
   const { origin } = resolveDeepseekAuth(input.requestContext);
+  const normalized = normalizeLlmUsageCounts(usage);
+  const hitTokens = normalized?.promptCacheHitTokens;
+  const missTokens = normalized?.promptCacheMissTokens;
+  if (!reason && typeof hitTokens === "number" && typeof missTokens === "number") {
+    void observeCacheOutcome({
+      sessionId: input.sessionSnapshot.sessionId,
+      callSite: input.callSite,
+      hitTokens,
+      missTokens,
+    });
+  }
   await recordUsageOutcome({
     sessionId: input.sessionSnapshot.sessionId,
     runId: (input.requestContext?.get("runId") as string | null | undefined) ?? null,
@@ -408,7 +423,10 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     const attempt = input.requestContext
       ? nextUsageAttempt(input.requestContext, input.callSite, input.lane)
       : (input.attempt ?? 1) + retry;
-    const replayMessages = [...normalizeReplayMessages(baseBody.messages), ...tail];
+    const normalizedReplayMessages = normalizeReplayMessages(baseBody.messages);
+    const replayMessages = [...normalizedReplayMessages, ...tail];
+    const replayBytes = Buffer.byteLength(JSON.stringify(normalizedReplayMessages), "utf8");
+    const tailBytes = Buffer.byteLength(JSON.stringify(tail), "utf8");
     {
       // 回放前 preflight:不合法就不发——省一次必败的网络往返,秒降级且日志可诊断。
       const violation = validateWireMessages(replayMessages);
@@ -441,10 +459,11 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     console.log(
       `[branchCall] site=${input.callSite} start snapshot(gen=${input.sessionSnapshot.generation}` +
       ` epoch=${input.sessionSnapshot.epoch} age=${Date.now() - Date.parse(input.sessionSnapshot.capturedAt)}ms)` +
-      ` msgs=${(baseBody.messages as unknown[]).length}+${tail.length}tail stream=${!!input.streamTextDeltas}`,
+      ` msgs=${(baseBody.messages as unknown[]).length}+${tail.length}tail stream=${!!input.streamTextDeltas}` +
+      ` replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=${attempt}`,
     );
     try {
-      const response = await globalThis.fetch(input.sessionSnapshot.endpoint, {
+      const response = await modelFetch(input.sessionSnapshot.endpoint, {
         method: "POST",
         headers: {
           ...input.sessionSnapshot.safeHeaders,
@@ -495,6 +514,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           `[branchCall] site=${input.callSite} done latency=${Date.now() - t0}ms` +
           `${tFirstDelta ? ` ttft=${tFirstDelta - t0}ms` : ""}` +
           ` hit/miss=${u?.prompt_cache_hit_tokens ?? "?"}/${u?.prompt_cache_miss_tokens ?? "?"}` +
+          ` replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=${attempt}` +
           ` finish=${raw.finishReason ?? "?"} toolCalled=${raw.toolCalled}`,
         );
       }
@@ -753,14 +773,14 @@ export function createDeepseekProvider(
   const requestFetch = options.thinking === undefined
     ? undefined
     : async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (typeof init?.body !== "string") return globalThis.fetch(url, init);
+        if (typeof init?.body !== "string") return modelFetch(url, init);
         try {
           const body = JSON.parse(init.body) as Record<string, unknown>;
           body.thinking = { type: options.thinking ? "enabled" : "disabled" };
           if (options.thinking) delete body.temperature;
-          return globalThis.fetch(url, { ...init, body: JSON.stringify(body) });
+          return modelFetch(url, { ...init, body: JSON.stringify(body) });
         } catch {
-          return globalThis.fetch(url, init);
+          return modelFetch(url, init);
         }
       };
   const wrapModel = (model: InnerLanguageModel, modelId: string) => wrapLanguageModel({
@@ -775,7 +795,7 @@ export function createDeepseekProvider(
     }),
   });
   if (resolveProtocol(requestContext) === "anthropic") {
-    const provider = createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey });
+    const provider = createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey, fetch: modelFetch });
     return (modelId) => wrapModel(provider(modelId), modelId);
   }
   const provider = createOpenAICompatible({
@@ -785,7 +805,7 @@ export function createDeepseekProvider(
     includeUsage: true,
     // deepseek-v4-flash 拒绝 json_schema；schema 请求降为 json_object + 项目侧解析。
     supportsStructuredOutputs: false,
-    ...(requestFetch ? { fetch: requestFetch } : {}),
+    fetch: requestFetch ?? modelFetch,
   });
   return (modelId) => wrapModel(provider.chatModel(modelId), modelId);
 }
@@ -817,12 +837,17 @@ export async function getVisionModel(
     }),
   });
   if (config.protocol === "anthropic") {
-    return wrapModel(createAnthropic({ baseURL: anthropicBaseUrl(config.baseUrl), apiKey: config.apiKey })(config.model));
+    return wrapModel(createAnthropic({
+      baseURL: anthropicBaseUrl(config.baseUrl),
+      apiKey: config.apiKey,
+      fetch: modelFetch,
+    })(config.model));
   }
   return wrapModel(createOpenAICompatible({
     name: "vision",
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
     includeUsage: true,
+    fetch: modelFetch,
   }).chatModel(config.model));
 }

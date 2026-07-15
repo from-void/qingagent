@@ -5,6 +5,7 @@ import {
   createSessionThread,
   ensureWorkingMemorySnapshotWithStatus,
   loadSessionFromThread,
+  persistSessionMetadata,
   schedulePersist,
   type SessionState,
 } from "./bridgeCore";
@@ -12,6 +13,7 @@ import { bindClientTraceId, normalizeClientTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import {
   getSession,
+  getOrRestoreSession,
   sessionManager,
   sessions,
 } from "./sessionLifecycle";
@@ -42,14 +44,27 @@ function* emitExistingSessionRestore(session: SessionState): Generator<BridgeFra
   yield* emitRestoreFrames(session);
 }
 
-type StartSessionCommand = Extract<Command, { kind: "startSession" }>;
+type SessionCommand = Extract<Command, { kind: "startSession" | "renameSession" }>;
 
 export async function* handleSessionCommand(
-  command: StartSessionCommand,
+  command: SessionCommand,
   context: CommandExecutionContext,
 ): AsyncGenerator<BridgeFrame> {
   const { clientTraceId, resolvedClientTraceId, origin, modelOverrides } = context;
   switch (command.kind) {
+    case "renameSession": {
+      const session = await getOrRestoreSession(command.data.sessionId);
+      if (!session) throw new Error(`Session not found: ${command.data.sessionId}`);
+      bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      session.title = command.data.title.trim();
+      session.titlePinned = true;
+      yield {
+        kind: "sessionMeta",
+        data: { sessionId: session.sessionId, title: session.title },
+      };
+      await persistSessionMetadata(session);
+      return;
+    }
     case "startSession": {
       const mode = command.data.mode;
 

@@ -341,12 +341,12 @@ export const documentRepo: DocumentRepo = {
     const offset = page * perPage;
     const [countResult, rowsResult] = await Promise.all([
       client.execute({
-        sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ?`,
+        sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ? AND role = 'main'`,
         args: [opts.resourceId],
       }),
       client.execute({
         sql: `SELECT * FROM documents
-          WHERE resource_id = ?
+          WHERE resource_id = ? AND role = 'main'
           ORDER BY updated_at DESC
           LIMIT ? OFFSET ?`,
         args: [opts.resourceId, perPage, offset],
@@ -366,9 +366,22 @@ export const documentRepo: DocumentRepo = {
   async countByResourceId(resourceId) {
     const client = await readyClient();
     const result = await client.execute({
-      sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ?`,
+      sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ? AND role = 'main'`,
       args: [resourceId],
     });
     return valueAsNumber(result.rows[0]?.total);
   },
 };
+
+export async function loadMainDocumentByThread(threadId: string): Promise<DocumentRow | null> {
+  const client = await readyClient();
+  const result = await client.execute({
+    sql: "SELECT * FROM documents WHERE thread_id = ? AND role = 'main' LIMIT 1",
+    args: [threadId],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  const mapped = await repairVersionPointerIfNeeded(client, mapRow(row));
+  await repairPmMirrorIfNeeded(client, mapped);
+  return mapped.row;
+}

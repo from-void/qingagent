@@ -435,6 +435,17 @@ function checkMessagePart(p: MessagePart): void {
       }
       if (!Array.isArray(p.data.hunks)) fail(`reviewOutcome.hunks must be an array`);
       return;
+    case "askUserAnswerCard":
+      return;
+    case "actionCard":
+      if (typeof p.data.title !== "string") fail(`actionCard.title must be a string`);
+      if (!Array.isArray(p.data.lines)) fail(`actionCard.lines must be an array`);
+      for (const line of p.data.lines) {
+        if (typeof line.label !== "string" || typeof line.value !== "string") {
+          fail(`actionCard.lines[] must contain string label/value`);
+        }
+      }
+      return;
   }
 }
 
@@ -656,6 +667,70 @@ function checkDocGenerationEvent(frame: Extract<BridgeFrame, { kind: "docGenerat
 
 export function validateBridgeFrame(frame: BridgeFrame): void {
   switch (frame.kind) {
+    case "templateDrafted":
+      if (!frame.data.name.trim() || !frame.data.prompt.trim()) fail("TemplateDrafted.data is invalid");
+      return;
+    case "reviewTemplatesListed":
+      if (!Array.isArray(frame.data.items)) fail("ReviewTemplatesListed.items must be an array");
+      if (frame.data.selectedTemplateId !== null && typeof frame.data.selectedTemplateId !== "string") fail("ReviewTemplatesListed.selectedTemplateId is invalid");
+      return;
+    case "reviewTemplateSaved":
+      if (!frame.data.item.id || !frame.data.item.type) fail("ReviewTemplateSaved.item is invalid");
+      return;
+    case "reviewTemplateDeleted":
+      if (!frame.data.id) fail("ReviewTemplateDeleted.id is invalid");
+      if (frame.data.error !== undefined && !frame.data.error) fail("ReviewTemplateDeleted.error must be non-empty");
+      return;
+    case "reviewTemplateSelected":
+      if (!frame.data.type || !frame.data.templateId) fail("ReviewTemplateSelected.data is invalid");
+      return;
+    case "reviewSupplementLoaded":
+    case "reviewSupplementSaved":
+      if (!frame.data.type || typeof frame.data.supplement !== "string") fail("ReviewSupplement.data is invalid");
+      return;
+    case "styleTemplateDeleted":
+      if (!frame.data.id) fail("StyleTemplateDeleted.id is invalid");
+      if (frame.data.error !== undefined && !frame.data.error) fail("StyleTemplateDeleted.error must be non-empty");
+      return;
+    case "derivativesListed":
+      if (!Array.isArray(frame.data.items)) fail("DerivativesListed.items must be an array");
+      return;
+    case "derivativeCreated":
+      if (!frame.data.item.docId) fail("DerivativeCreated.item is invalid");
+      return;
+    case "derivativeGenStarted":
+      if (!frame.data.docId || !frame.data.targetLang) fail("DerivativeGenStarted.data is invalid");
+      return;
+    case "derivativeGenDelta":
+      if (!frame.data.docId || !frame.data.text) fail("DerivativeGenDelta.data is invalid");
+      return;
+    case "derivativeGenFinished":
+      if (!frame.data.docId || !frame.data.generatedAt || !Number.isInteger(frame.data.docVersion) || frame.data.docVersion < 1) fail("DerivativeGenFinished.data is invalid");
+      return;
+    case "derivativeGenFailed":
+      if (!frame.data.docId || !frame.data.reason) fail("DerivativeGenFailed.data is invalid");
+      return;
+    case "derivativeDeleted":
+      if (!frame.data.docId) fail("DerivativeDeleted.docId is invalid");
+      return;
+    case "derivativeDocLoaded":
+      if (!frame.data.meta.docId || typeof frame.data.docPm !== "string") fail("DerivativeDocLoaded.data is invalid");
+      return;
+    case "lexiconsListed":
+      for (const lexicon of frame.data.lexicons) {
+        if (!lexicon.id || !lexicon.name || !Number.isInteger(lexicon.entryCount) || lexicon.entryCount < 0) {
+          fail("LexiconsListed.lexicons contains an invalid resource");
+        }
+      }
+      return;
+    case "lexiconEntriesListed":
+      if (!frame.data.resourceId) fail("LexiconEntriesListed.resourceId must be non-empty");
+      for (const entry of frame.data.entries) {
+        if (!entry.word || (entry.replacement !== null && typeof entry.replacement !== "string") || (entry.note !== null && typeof entry.note !== "string")) {
+          fail("LexiconEntriesListed.entries contains an invalid entry");
+        }
+      }
+      return;
     case "restoreReset":
       if (!Number.isInteger(frame.data.epoch) || frame.data.epoch < 0) {
         fail("RestoreReset.epoch must be a non-negative integer");
@@ -723,6 +798,37 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       for (const suggestion of frame.data.suggestions) checkDocSuggestion(suggestion);
       if (frame.data.previewDoc) checkPmDoc(frame.data.previewDoc, "DocDiffReady.previewDoc");
       if (frame.data.editedDoc) checkPmDoc(frame.data.editedDoc, "DocDiffReady.editedDoc");
+      return;
+    case "annotationGroupsReady":
+      if (!Array.isArray(frame.data.groups)) fail("AnnotationGroupsReady.groups must be an array");
+      if (frame.data.replacedOrigins !== undefined) {
+        if (!Array.isArray(frame.data.replacedOrigins)) fail("AnnotationGroupsReady.replacedOrigins must be an array");
+        for (const origin of frame.data.replacedOrigins) {
+          if (typeof origin !== "string" || !origin) fail("AnnotationGroupsReady.replacedOrigins must be non-empty strings");
+        }
+      }
+      for (const group of frame.data.groups) {
+        if (!group.id || !group.summary || !group.note || !group.origin) fail("AnnotationGroup fields must be non-empty");
+        if (group.severity !== undefined && !["error", "warn", "info"].includes(group.severity)) {
+          fail("AnnotationGroup.severity must be error, warn, or info");
+        }
+        if (!Array.isArray(group.anchors) || group.anchors.length === 0) fail("AnnotationGroup.anchors must be non-empty");
+        for (const anchor of group.anchors) {
+          if (!anchor.blockId || !anchor.quote || !anchor.textHash) fail("Annotation anchor fields must be non-empty");
+          if (!Number.isInteger(anchor.pmFrom) || !Number.isInteger(anchor.pmTo)) fail("Annotation anchor positions must be integers");
+        }
+      }
+      return;
+    case "annotationPreview":
+      if (!frame.data.previewId || !frame.data.summary || !Array.isArray(frame.data.anchors) || frame.data.anchors.length === 0) {
+        fail("AnnotationPreview.data is invalid");
+      }
+      for (const anchor of frame.data.anchors) {
+        if (!anchor.blockId || !anchor.quote || !anchor.textHash) fail("AnnotationPreview anchor fields must be non-empty");
+        if (!Number.isInteger(anchor.pmFrom) || !Number.isInteger(anchor.pmTo) || anchor.pmTo <= anchor.pmFrom) fail("AnnotationPreview anchor positions are invalid");
+      }
+      return;
+    case "annotationPreviewCleared":
       return;
     case "docStateChanged":
       checkDocStateChanged(frame);

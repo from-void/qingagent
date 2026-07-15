@@ -1,8 +1,14 @@
 import { RequestContext } from "@mastra/core/request-context";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  recordUsageEvent: vi.fn(),
+  observeCacheOutcome: vi.fn(),
+}));
 vi.mock("@qingagent/db", () => ({ recordUsageEvent: mocks.recordUsageEvent }));
+vi.mock("../llm/cacheEfficiencySentinel.js", () => ({
+  observeCacheOutcome: mocks.observeCacheOutcome,
+}));
 
 import {
   advanceSessionSnapshotEpoch,
@@ -58,10 +64,12 @@ describe("BranchCall provider 快照与 raw 回放", () => {
   beforeEach(() => {
     process.env.DEEPSEEK_API_KEY = "sk-branch-call-test";
     mocks.recordUsageEvent.mockReset();
+    mocks.observeCacheOutcome.mockReset();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     if (originalApiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalApiKey;
     for (const id of ["snapshot-basic", "snapshot-race", "snapshot-schema", "snapshot-lease", "snapshot-aba", "branch-success", "branch-tool", "branch-sse", "branch-ledger", "branch-abort", "branch-inflight", "branch-callback-race", "branch-http-error", "branch-parse-error"]) {
@@ -197,6 +205,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     beginSessionSnapshotTurn(requestContext);
     await triggerProviderFetch(requestContext, "main-prefix");
     const snapshot = getSessionSnapshot(requestContext)!;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     fetchMock.mockResolvedValueOnce(jsonResponse(
       { role: "assistant", content: "分支答案" },
       {
@@ -233,9 +242,27 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(result).toMatchObject({ finishReason: "stop" });
     expect(mocks.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
       callSite: "planDraft",
+      runId: "run-stream-main",
       cacheHitTokens: 100,
       cacheMissTokens: 5,
     }));
+    expect(mocks.observeCacheOutcome).toHaveBeenCalledWith({
+      sessionId: "branch-success",
+      callSite: "planDraft",
+      hitTokens: 100,
+      missTokens: 5,
+    });
+    const replayBytes = Buffer.byteLength(JSON.stringify(sourceBody.messages), "utf8");
+    const tailBytes = Buffer.byteLength(JSON.stringify([
+      { role: "user", content: "不要调用任何工具，直接回答。" },
+    ]), "utf8");
+    const logLines = log.mock.calls.map(([line]) => String(line));
+    expect(logLines.find((line) => line.includes(" start snapshot("))).toContain(
+      `replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=1`,
+    );
+    expect(logLines.find((line) => line.includes(" done latency="))).toContain(
+      `hit/miss=100/5 replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=1`,
+    );
   });
 
   it("raw 请求飞行中被新主轮抢占时丢弃结果且不派发文本", async () => {

@@ -4,10 +4,14 @@ import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import {
   RepairingLanguageModelV2,
   RepairingModelRouterLanguageModel,
+  isRetryableModelError,
+  repairSupportedToolCallInput,
   wrapToolCallRepairingModel,
   type RepairableLanguageModel,
   type RepairableLanguageModelV2,
 } from "../llm/repairingModel.js";
+import { createAnnotationGroupsInputSchema } from "../tools/annotationGroups.js";
+import { reviewCenterConsistencyParseFailure } from "./fixtures/reviewCenterConsistencyParseFailure.js";
 import {
   PrefixCacheGuardError,
   __resetPrefixCacheGuardForTest,
@@ -38,6 +42,19 @@ vi.mock("../agents/qingagent.js", () => ({
     resumeStream: vi.fn(),
   },
 }));
+
+describe("isRetryableModelError", () => {
+  it("识别 undici 连接超时及 AI SDK 包装后的嵌套 cause", () => {
+    expect(isRetryableModelError({ code: "UND_ERR_CONNECT_TIMEOUT" })).toBe(true);
+    expect(isRetryableModelError({ code: "UND_ERR_HEADERS_TIMEOUT" })).toBe(true);
+    expect(isRetryableModelError({
+      message: "provider request failed",
+      cause: new TypeError("wrapped request error", {
+        cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+      }),
+    })).toBe(true);
+  });
+});
 
 function pmDoc(text: string, blockId = "block-a"): PmDoc {
   return {
@@ -156,6 +173,30 @@ describe("RepairingLanguageModelV2", () => {
 
     expect(editResult).toMatchObject({ ok: true, applied: ["block-a"] });
     expect(pmToPlainText(state.docDraftCandidateDoc!)).toBe("进入\"土地争夺\"阶段");
+  });
+
+  it("R2:L1 一致性三组的裸引号坏 JSON 可修复并通过真实批注 schema", () => {
+    const repaired = repairSupportedToolCallInput(
+      "create_annotation_groups",
+      reviewCenterConsistencyParseFailure.reconstructedInput,
+    );
+
+    expect(repaired).not.toBeNull();
+    const parsed = JSON.parse(repaired!);
+    expect(createAnnotationGroupsInputSchema.safeParse(parsed).success).toBe(true);
+    expect(parsed.groups).toHaveLength(3);
+    expect(parsed.groups[0].note).toBe('一处写"2022年11月"，另一处写"2023年"。');
+    expect(parsed.groups[1].note).toContain('"1.13亿元"');
+  });
+
+  it("批注 JSON 截断无法安全修复时生成带组号和字段的诊断参数", () => {
+    const truncated = '{"groups":[{"summary":"融资时间冲突","note":"一处写"2022年11月';
+    const repaired = repairSupportedToolCallInput("create_annotation_groups", truncated);
+
+    expect(repaired).not.toBeNull();
+    const parsed = JSON.parse(repaired!);
+    expect(parsed._parseFailure).toMatchObject({ groupIndex: 1, field: "note" });
+    expect(parsed._parseFailure.message).toContain("每次≤3组");
   });
 });
 

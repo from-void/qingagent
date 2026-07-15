@@ -335,6 +335,191 @@ describe("candidate-diff backend flow", () => {
     expect(docText(state.doc)).toBe("第一版正文");
   }, 10_000);
 
+  it("writeDraft 成功后同回合 askUserQuestion 挂起,先落定首稿且恢复后的 readDraft 可读", async () => {
+    const {
+      createSession,
+      createSessionScopedTools,
+      processAgentStream,
+    } = await import("../bridge/index.js");
+    const state = createSession("candidate-write-then-suspend");
+    const generatedDoc = legacySectionsToPm([p("挂起后仍可读取的首稿正文")] as never);
+    state.docDraftCandidateDoc = generatedDoc;
+    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
+
+    const askUserCall = {
+      type: "tool-call",
+      payload: {
+        toolName: "askUserQuestion",
+        toolCallId: "ask-after-write",
+        args: { purpose: "quickClarification" },
+      },
+    } as unknown as StreamChunk;
+    const askUserSuspend = {
+      type: "tool-call-suspended",
+      payload: {
+        toolName: "askUserQuestion",
+        toolCallId: "ask-after-write",
+        args: { purpose: "quickClarification" },
+        suspendPayload: {
+          id: "ask-after-write",
+          purpose: "quickClarification",
+          source: null,
+          rationale: "确认是否精简",
+          questions: [{
+            id: "q-confirm",
+            label: "是否精简到 1800 字？",
+            kind: "single",
+            options: [{ value: "yes", label: "是", description: null, preview: null }],
+            placeholder: null,
+          }],
+        },
+      },
+    } as unknown as StreamChunk;
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          writeDraftCall("wd-before-suspend"),
+          writeDraftResult("wd-before-suspend"),
+          askUserCall,
+          askUserSuspend,
+        ),
+        {
+          state,
+          agentMessageId: "agent-write-then-suspend",
+          streamId: "stream-write-then-suspend",
+          runId: "run-write-then-suspend",
+        },
+      ),
+    );
+
+    // 挂起帧返回前已走与自然回合末相同的 generation settle；首稿成为 canonical，
+    // scratch 可以清掉但内容不能丢，右侧必须先收到完整 PM 文档帧。
+    expect(state.runId).toBe("run-write-then-suspend");
+    expect(state.docVersion).toBe(1);
+    expect(docText(state.doc)).toBe("挂起后仍可读取的首稿正文");
+    expect(state.docDraftCandidateDoc).toBeNull();
+    const finishedIndex = frames.findIndex(
+      (frame) => frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished",
+    );
+    const askPendingIndex = frames.findIndex(
+      (frame) =>
+        frame.kind === "toolCallUpdated" &&
+        frame.data.toolCallId === "ask-after-write" &&
+        frame.data.spec.status.kind === "pending",
+    );
+    expect(finishedIndex).toBeGreaterThanOrEqual(0);
+    expect(askPendingIndex).toBeGreaterThan(finishedIndex);
+    const finished = frames[finishedIndex];
+    if (finished?.kind !== "docGenerationEvent" || finished.data.kind !== "generation_finished") {
+      throw new Error("expected generation_finished before askUser suspension");
+    }
+    expect(docText(finished.data.data.doc)).toBe("挂起后仍可读取的首稿正文");
+    expect(frames.some(
+      (frame) =>
+        frame.kind === "docStateChanged" &&
+        frame.data.state.kind === "editing" &&
+        frame.data.activeOverlay === "askUser",
+    )).toBe(true);
+
+    // handleResume 注入的正是同一个 sessionScoped readDraft；直接执行真实工具，
+    // 验证活会话恢复无需冷回灌也能读到刚才的候选内容。
+    const { readDraftAiIr } = createSessionScopedTools(state);
+    const readResult = await readDraftAiIr.execute!(
+      { mode: "full", includeText: true },
+      {} as never,
+    ) as { ok: boolean; blocks?: Array<{ text?: string }>; wordCount?: number };
+    expect(readResult.ok).toBe(true);
+    expect(readResult.wordCount).toBeGreaterThan(0);
+    expect(readResult.blocks?.map((block) => block.text).join("\n"))
+      .toContain("挂起后仍可读取的首稿正文");
+  }, 10_000);
+
+  it("已有正文的 writeDraft 同回合挂起仍进入 pendingReview,并保留新版候选供 readDraft", async () => {
+    const {
+      createSession,
+      createSessionScopedTools,
+      processAgentStream,
+    } = await import("../bridge/index.js");
+    const state = createSession("candidate-rewrite-then-suspend");
+    const baseDoc = legacySectionsToPm([p("旧版正文")] as never);
+    const generatedDoc = legacySectionsToPm([p("待确认的新版正文")] as never);
+    state.doc = baseDoc;
+    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftBaseDoc = baseDoc;
+    state.docDraftBaseSections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docDraftBaseVersion = 1;
+    state.docDraftCandidateDoc = generatedDoc;
+    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
+    await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          writeDraftCall("wd-rewrite-before-suspend"),
+          writeDraftResult("wd-rewrite-before-suspend"),
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "askUserQuestion",
+              toolCallId: "ask-after-rewrite",
+              args: { purpose: "quickClarification" },
+            },
+          } as unknown as StreamChunk,
+          {
+            type: "tool-call-suspended",
+            payload: {
+              toolName: "askUserQuestion",
+              toolCallId: "ask-after-rewrite",
+              args: { purpose: "quickClarification" },
+              suspendPayload: {
+                id: "ask-after-rewrite",
+                purpose: "quickClarification",
+                source: null,
+                rationale: "确认改写方向",
+                questions: [{
+                  id: "q-confirm-rewrite",
+                  label: "是否采用新版？",
+                  kind: "single",
+                  options: [{ value: "yes", label: "是", description: null, preview: null }],
+                  placeholder: null,
+                }],
+              },
+            },
+          } as unknown as StreamChunk,
+        ),
+        {
+          state,
+          agentMessageId: "agent-rewrite-then-suspend",
+          streamId: "stream-rewrite-then-suspend",
+          runId: "run-rewrite-then-suspend",
+        },
+      ),
+    );
+
+    expect(state.docState).toEqual({ kind: "pendingReview" });
+    expect(state.docVersion).toBe(1);
+    expect(docText(state.doc)).toBe("旧版正文");
+    expect(docText(state.docDraftCandidateDoc ?? undefined)).toBe("待确认的新版正文");
+    expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(true);
+    expect(frames.some(
+      (frame) =>
+        frame.kind === "docStateChanged" &&
+        frame.data.state.kind === "pendingReview" &&
+        frame.data.activeOverlay === "askUser",
+    )).toBe(true);
+
+    const { readDraftAiIr } = createSessionScopedTools(state);
+    const readResult = await readDraftAiIr.execute!(
+      { mode: "full", includeText: true },
+      {} as never,
+    ) as { blocks?: Array<{ text?: string }> };
+    expect(readResult.blocks?.map((block) => block.text).join("\n"))
+      .toContain("待确认的新版正文");
+  }, 10_000);
+
   it("writeDraft 成功后即使 settle 前中断也已写入 draft_candidate row", async () => {
     const { createSession, drainSessionPersistence, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-writedraft-checkpoint");
@@ -420,6 +605,8 @@ describe("candidate-diff backend flow", () => {
       ) ?? [];
     expect(toolNames).toEqual(expect.arrayContaining(["writeDraft", "readDraft"]));
     expect(docText(restored?.doc)).toBe("readDraft 后恢复的首稿");
+    expect(restored?.docVersion).toBe(1);
+    expect(restored?.modelKnownDocVersion).toBeNull();
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
     await expect(listVersions(state.docId)).resolves.toHaveLength(1);
   });

@@ -5,6 +5,9 @@ import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 import { MIGRATIONS } from "../migrations/index.js";
 
+const allMigrationIds = MIGRATIONS.map((migration) => migration.id);
+const migrationIdsAfter = (id: number) => MIGRATIONS.filter((migration) => migration.id > id).map((migration) => migration.id);
+
 // fixture 矩阵(设计 §2.4 核心验收):五形态库 × 跑迁移后 schema 与黄金 schema 全等 +
 // 预置探针数据无损 + 账本记账 + feishu 行被清。
 // 黄金 schema = fresh 库跑 runMigrations(baseline) 的结果;等价性另由 baseline 是历史
@@ -48,6 +51,14 @@ const APP_TABLES = [
   "llm_usage_events",
   "sandbox_credentials",
   "app_settings",
+  "skill_resources",
+  "lexicon_entries",
+  "style_templates",
+  "document_derivatives",
+  "review_templates",
+  "review_doc_supplements",
+  "review_template_selections",
+  "review_dismissal_signals",
 ];
 
 interface ColumnInfo {
@@ -198,10 +209,10 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     const client = getDocumentsClient();
 
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1, 2, 3, 4]);
+    expect(r.appliedIds).toEqual(allMigrationIds);
     expect(r.backupPath).toBeNull(); // 全新库不备份
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1, 2, 3, 4]);
+    expect(await ledgerIds(client)).toEqual(allMigrationIds);
   });
 
   it("v-oldest:缺列/含 doc_sections/含 feishu → 收敛到黄金 schema,探针无损,feishu 清除,已备份", async () => {
@@ -209,11 +220,11 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
 
     await buildOldest(client);
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1, 2, 3, 4]);
+    expect(r.appliedIds).toEqual(allMigrationIds);
     expect(r.backupPath).toBeTruthy(); // 既有库升级前备份
 
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1, 2, 3, 4]);
+    expect(await ledgerIds(client)).toEqual(allMigrationIds);
 
     // 探针数据无损 + 新列默认值
     const doc = await client.execute("SELECT * FROM documents WHERE id = 'doc-old'");
@@ -235,7 +246,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
 
     await buildMid(client);
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1, 2, 3, 4]);
+    expect(r.appliedIds).toEqual(allMigrationIds);
     expect(await captureSchema(client)).toEqual(golden);
 
     const doc = await client.execute("SELECT * FROM documents WHERE id = 'doc-mid'");
@@ -260,9 +271,9 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     __resetMigrationsForTest();
 
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([1, 2, 3, 4]);
+    expect(r.appliedIds).toEqual(allMigrationIds);
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1, 2, 3, 4]);
+    expect(await ledgerIds(client)).toEqual(allMigrationIds);
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-cur'")).toBe(1);
   });
 
@@ -277,7 +288,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     __resetMigrationsForTest();
 
     const r = await runMigrations();
-    expect(r.appliedIds).toEqual([3, 4]);
+    expect(r.appliedIds).toEqual(migrationIdsAfter(2));
     const row = (await client.execute("SELECT * FROM llm_usage_events WHERE id = 'usage-old'"))
       .rows[0] as Record<string, unknown>;
     expect(row).toMatchObject({
@@ -308,7 +319,7 @@ describe("fixture 矩阵:五形态库跑迁移后收敛到黄金 schema", () => 
     expect(r.appliedIds).toEqual([]); // 无未应用迁移
     expect(r.backupPath).toBeNull(); // 无 pending → 不备份
     expect(await captureSchema(client)).toEqual(golden);
-    expect(await ledgerIds(client)).toEqual([1, 2, 3, 4]);
+    expect(await ledgerIds(client)).toEqual(allMigrationIds);
     expect(await count(client, "SELECT COUNT(*) AS n FROM documents WHERE id = 'doc-mig'")).toBe(1);
   });
 });

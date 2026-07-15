@@ -22,6 +22,9 @@ export async function* handleToolResultEvent(
   if (chunk.type !== "tool-result") return false;
   const { state, outcome } = turn;
   const { toolName, toolCallId } = chunk.payload;
+  if (toolName === "create_annotation_groups") {
+    yield* turn.annotationPreview.clear();
+  }
   const rawArgs = (chunk.payload.args ?? {}) as Record<string, unknown>;
   const args = { ...(turn.toolCallArgsById.get(toolCallId) ?? {}), ...rawArgs };
   const payload = chunk.payload as Record<string, unknown>;

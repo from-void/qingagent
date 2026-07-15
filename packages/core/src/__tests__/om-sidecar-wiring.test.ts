@@ -4,15 +4,32 @@ import { createSession } from "../session/sessionState.js";
 
 const mockState = vi.hoisted(() => {
   const schedulePersist = vi.fn(async () => {});
+  const recordUsageEvent = vi.fn(async () => {});
   const memoryStore = { supportsObservationalMemory: true };
   const memory = {
     storage: {
       getStore: vi.fn(async (name: string) => name === "memory" ? memoryStore : undefined),
     },
   };
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const omInstances: any[] = [];
   let status: Record<string, unknown> = {};
   let record: Record<string, unknown> | null = null;
+  let observeError: Error | null = null;
+  let observeResult: Record<string, unknown> = {
+    observed: true,
+    reflected: false,
+    record: { id: "record-1" },
+  };
+  let reflectResult: Record<string, unknown> = {
+    reflected: true,
+    record: { id: "record-1" },
+  };
   class MockObservationalMemory {
     config: Record<string, unknown>;
     persistMessages = vi.fn(async () => {});
@@ -32,8 +49,11 @@ const mockState = vi.hoisted(() => {
       activatedMessageIds: ["activated-id"],
       record: { id: "record-1", observedMessageIds: ["activated-id"] },
     }));
-    observe = vi.fn(async () => ({ observed: true, reflected: false, record: { id: "record-1" } }));
-    reflect = vi.fn(async () => ({ reflected: true, record: { id: "record-1" } }));
+    observe = vi.fn(async () => {
+      if (observeError) throw observeError;
+      return observeResult;
+    });
+    reflect = vi.fn(async () => reflectResult);
     getRecord = vi.fn(async () => record);
     getObservations = vi.fn(async () => undefined);
     waitForBuffering = vi.fn(async () => {});
@@ -50,6 +70,8 @@ const mockState = vi.hoisted(() => {
   }
   return {
     schedulePersist,
+    recordUsageEvent,
+    logger,
     memory,
     omInstances,
     setStatus(next: Record<string, unknown>) {
@@ -57,6 +79,15 @@ const mockState = vi.hoisted(() => {
     },
     setRecord(next: Record<string, unknown> | null) {
       record = next;
+    },
+    setObserveError(next: Error | null) {
+      observeError = next;
+    },
+    setObserveResult(next: Record<string, unknown>) {
+      observeResult = next;
+    },
+    setReflectResult(next: Record<string, unknown>) {
+      reflectResult = next;
     },
     MockObservationalMemory,
     MockTokenCounter,
@@ -70,7 +101,7 @@ vi.mock("@mastra/memory/processors", () => ({
 
 vi.mock("../mastra.js", () => ({
   mastra: {
-    getLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+    getLogger: () => mockState.logger,
   },
   getMemory: () => mockState.memory,
   getObservability: () => null,
@@ -81,18 +112,43 @@ vi.mock("../session/threadPersistence.js", () => ({
   schedulePersist: mockState.schedulePersist,
 }));
 
+vi.mock("@qingagent/db", () => ({
+  recordUsageEvent: mockState.recordUsageEvent,
+}));
+
 describe("OM sidecar 接线形状", () => {
   const originalSidecar = process.env.QINGAGENT_OM_SIDECAR;
   const originalCompress = process.env.QINGAGENT_OM_COMPRESS;
   const originalThreshold = process.env.QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS;
+  const originalRecentTurns = process.env.QINGAGENT_OM_COMPRESS_RECENT_TURNS;
+  const originalObserveMessageTokens = process.env.QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS;
+  const originalBufferTokens = process.env.QINGAGENT_OM_BUFFER_TOKENS;
 
   beforeEach(() => {
     process.env.QINGAGENT_OM_SIDECAR = "1";
+    delete process.env.QINGAGENT_OM_COMPRESS_RECENT_TURNS;
+    delete process.env.QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS;
+    delete process.env.QINGAGENT_OM_BUFFER_TOKENS;
     mockState.schedulePersist.mockClear();
+    mockState.recordUsageEvent.mockClear();
     mockState.memory.storage.getStore.mockClear();
     mockState.omInstances.length = 0;
     mockState.setStatus({});
     mockState.setRecord(null);
+    mockState.setObserveError(null);
+    mockState.setObserveResult({
+      observed: true,
+      reflected: false,
+      record: { id: "record-1" },
+    });
+    mockState.setReflectResult({
+      reflected: true,
+      record: { id: "record-1" },
+    });
+    mockState.logger.debug.mockClear();
+    mockState.logger.info.mockClear();
+    mockState.logger.warn.mockClear();
+    mockState.logger.error.mockClear();
     vi.resetModules();
   });
 
@@ -104,6 +160,12 @@ describe("OM sidecar 接线形状", () => {
     else process.env.QINGAGENT_OM_COMPRESS = originalCompress;
     if (originalThreshold === undefined) delete process.env.QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS;
     else process.env.QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS = originalThreshold;
+    if (originalRecentTurns === undefined) delete process.env.QINGAGENT_OM_COMPRESS_RECENT_TURNS;
+    else process.env.QINGAGENT_OM_COMPRESS_RECENT_TURNS = originalRecentTurns;
+    if (originalObserveMessageTokens === undefined) delete process.env.QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS;
+    else process.env.QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS = originalObserveMessageTokens;
+    if (originalBufferTokens === undefined) delete process.env.QINGAGENT_OM_BUFFER_TOKENS;
+    else process.env.QINGAGENT_OM_BUFFER_TOKENS = originalBufferTokens;
   });
 
   it("OM model 在主链快照可用时通过 BranchCall 生成并按 omObserve 记调用", async () => {
@@ -125,6 +187,7 @@ describe("OM sidecar 接线形状", () => {
     const mainContext = new RequestContext([
       ["sessionId", "om-wire-branch"],
       ["streamId", "stream-main"],
+      ["runId", "run-om-wire-branch"],
       ["modelOverrides", modelOverrides],
     ] as never) as RequestContext;
     beginSessionSnapshotTurn(mainContext);
@@ -168,6 +231,13 @@ describe("OM sidecar 接线形状", () => {
     });
 
     expect(generated.content).toEqual([{ type: "text", text: "- 用户需要严谨表达" }]);
+    await vi.waitFor(() => expect(mockState.recordUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "om-wire-branch",
+      runId: "run-om-wire-branch",
+      callSite: "omObserve",
+      cacheHitTokens: 95,
+      cacheMissTokens: 5,
+    })));
     const replayBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(replayBody.messages.at(-1).content).toContain("长期观察提炼任务");
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -178,6 +248,61 @@ describe("OM sidecar 接线形状", () => {
       ["streamId", "stream-next"],
     ] as never));
     expect(sidecarContext.get("omBranchSnapshot")).toBe(frozenSnapshot);
+  });
+
+  it("OM BranchModel 以真实实例访问私有字段，并在方法替换后刷新绑定", async () => {
+    const symbolReader = Symbol("om-private-reader");
+    class PrivateFieldModel {
+      #value = "om-private-ok";
+
+      get privateValue(): string {
+        return this.#value;
+      }
+
+      readPrivate(): string {
+        return this.#value;
+      }
+
+      [symbolReader](): string {
+        return this.#value;
+      }
+
+      async doGenerate(_options?: unknown): Promise<{ value: string }> {
+        return { value: this.#value };
+      }
+
+      async doStream(_options?: unknown): Promise<{ value: string; stream: ReadableStream }> {
+        return { value: this.#value, stream: new ReadableStream() };
+      }
+    }
+
+    const { createOmBranchModel } = await import("../session/omSidecar.js");
+    const target = new PrivateFieldModel();
+    const model = createOmBranchModel(
+      target as never,
+      undefined,
+      { sessionId: "om-private-proxy" } as never,
+      "omObserve",
+    ) as unknown as PrivateFieldModel;
+
+    expect(model.privateValue).toBe("om-private-ok");
+    const first = model.readPrivate;
+    expect(model.readPrivate).toBe(first);
+    expect(first()).toBe("om-private-ok");
+    expect(model[symbolReader]).toBe(model[symbolReader]);
+    expect(model[symbolReader]()).toBe("om-private-ok");
+
+    target.readPrivate = function (this: PrivateFieldModel): string {
+      return this === target ? "om-rebound-ok" : "wrong-this";
+    };
+    const rebound = model.readPrivate;
+    expect(rebound).not.toBe(first);
+    expect(rebound()).toBe("om-rebound-ok");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(model.doGenerate()).resolves.toEqual({ value: "om-private-ok" });
+    await expect(model.doStream()).resolves.toMatchObject({ value: "om-private-ok" });
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it("用 thread scope sidecar 持久化 MastraDBMessage，并以对象参数触发 buffer", async () => {
@@ -193,7 +318,7 @@ describe("OM sidecar 接线形状", () => {
     const om = mockState.omInstances[0]!;
     expect(om.config).toMatchObject({
       scope: "thread",
-      observation: { observeAttachments: false, messageTokens: 30_000 },
+      observation: { observeAttachments: false, messageTokens: 100_000, bufferTokens: false },
       reflection: { observationTokens: 40_000 },
     });
     const modelFactory = om.config.model as (input: { requestContext?: RequestContext }) => {
@@ -277,6 +402,79 @@ describe("OM sidecar 接线形状", () => {
     expect(om.reflect).not.toHaveBeenCalled();
   });
 
+  it("压缩激活后仅在观察成功落库时重建追加投影与单调删除集", async () => {
+    process.env.QINGAGENT_OM_COMPRESS = "1";
+    process.env.QINGAGENT_OM_COMPRESS_RECENT_TURNS = "1";
+    const { prepareOmContextForTurn, runOmSidecarAfterTurn } = await import(
+      "../session/omSidecar.js"
+    );
+    const state = createSession("om-wire-observation-cycle");
+    state.threadId = state.sessionId;
+    state.turnCounter = 3;
+    state.messages.push(
+      { role: "user", content: "第一轮" },
+      { role: "assistant", content: "第一轮回复" },
+      { role: "user", content: "第二轮" },
+      { role: "assistant", content: "第二轮回复" },
+      { role: "user", content: "第三轮" },
+      { role: "assistant", content: "第三轮回复" },
+    );
+    state.omObservedMessageIds = [
+      `${state.sessionId}-1-1`,
+      `${state.sessionId}-1-2`,
+    ];
+    state.omCompressionActive = true;
+    state.omCompressionEpoch = 1;
+    const previousSnapshot = {
+      epoch: 1,
+      observations: "- 旧观察",
+      removedMessageIds: ["历史已删除消息", `${state.sessionId}-1-1`],
+    };
+    state.omCompressionSnapshot = previousSnapshot;
+    mockState.setStatus({ shouldObserve: true, shouldBuffer: false });
+    mockState.setObserveResult({
+      observed: true,
+      reflected: false,
+      record: {
+        id: "record-observed",
+        activeObservations: "- 旧观察\n- 新观察",
+        observedMessageIds: [
+          `${state.sessionId}-1-1`,
+          `${state.sessionId}-1-2`,
+          `${state.sessionId}-2-1`,
+          `${state.sessionId}-2-2`,
+        ],
+      },
+    });
+
+    await runOmSidecarAfterTurn(state);
+
+    expect(state.omCompressionSnapshot).not.toBe(previousSnapshot);
+    expect(state.omCompressionSnapshot?.observations.startsWith(
+      previousSnapshot.observations,
+    )).toBe(true);
+    expect(state.omCompressionSnapshot?.observations).toBe("- 旧观察\n- 新观察");
+    expect(state.omCompressionSnapshot?.removedMessageIds).toEqual([
+      "历史已删除消息",
+      `${state.sessionId}-1-1`,
+      `${state.sessionId}-1-2`,
+      `${state.sessionId}-2-1`,
+      `${state.sessionId}-2-2`,
+    ]);
+    expect(state.omCompressionEpoch).toBe(2);
+    expect(state.omCompressionSnapshot?.epoch).toBe(2);
+    expect(mockState.schedulePersist).toHaveBeenCalledWith(
+      state,
+      "om_projection:observation_cycle",
+    );
+
+    const context = await prepareOmContextForTurn(state);
+    expect(JSON.stringify(context.messagesForModel)).toContain("新观察");
+    expect(JSON.stringify(context.messagesForModel)).not.toContain("第一轮回复");
+    expect(JSON.stringify(context.messagesForModel)).not.toContain("第二轮回复");
+    expect(JSON.stringify(context.messagesForModel)).toContain("第三轮回复");
+  });
+
   it("后台 OM 只接收瘦 RequestContext 快照，不携带 live messages 引用", async () => {
     const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
     const state = createSession("om-wire-context-snapshot");
@@ -291,6 +489,7 @@ describe("OM sidecar 接线形状", () => {
     const requestContext = new RequestContext([
       ["modelOverrides", overrides],
       ["messages", state.messages],
+      ["runId", "run-om-context-snapshot"],
       ["origin", "manual"],
     ]) as RequestContext<unknown>;
 
@@ -308,6 +507,7 @@ describe("OM sidecar 接线形状", () => {
       "qingagent-user:om-sidecar",
     );
     expect(sidecarContext.get("modelOverrides")).toEqual(overrides);
+    expect(sidecarContext.get("runId")).toBe("run-om-context-snapshot");
     const modelFactory = om.config.model as (input: { requestContext?: RequestContext }) => {
       modelId?: string;
     };
@@ -316,8 +516,56 @@ describe("OM sidecar 接线形状", () => {
     );
   });
 
+  it("后台观察连续失败升级为 error，并明确积压与随下批重试语义", async () => {
+    mockState.setStatus({ shouldObserve: true, shouldBuffer: false });
+    mockState.setObserveError(new Error("observe exploded"));
+    const { scheduleOmSidecarAfterTurn } = await import("../session/omSidecar.js");
+    const state = createSession("om-wire-handoff-failure");
+    state.threadId = state.sessionId;
+    state.omCompressionActive = true;
+    state.omCompressionEpoch = 4;
+    const snapshotBeforeFailure = {
+      epoch: 4,
+      observations: "- 失败前观察",
+      removedMessageIds: ["既有删除消息"],
+    };
+    state.omCompressionSnapshot = snapshotBeforeFailure;
+    state.messages.push({ role: "user", content: "第一批" });
+    const requestContext = new RequestContext([
+      ["sessionId", state.sessionId],
+      ["runId", "run-om-failure"],
+    ] as never);
+
+    scheduleOmSidecarAfterTurn(state, requestContext);
+    await vi.waitFor(() => expect(mockState.logger.error).toHaveBeenCalledTimes(1));
+    expect(String(mockState.logger.error.mock.calls[0]?.[0])).toContain(
+      "该批观察失败，将随下批新消息重试",
+    );
+    expect(mockState.logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("background turn handoff failed"),
+      expect.anything(),
+    );
+
+    state.messages.push({ role: "user", content: "第二批" });
+    scheduleOmSidecarAfterTurn(state, requestContext);
+    await vi.waitFor(() => expect(mockState.logger.error).toHaveBeenCalledTimes(2));
+    expect(mockState.logger.error).toHaveBeenLastCalledWith(
+      expect.stringContaining("连续 2 次，观察积压正在累积"),
+      expect.objectContaining({
+        sessionId: state.sessionId,
+        error: "observe exploded",
+        consecutiveFailures: 2,
+      }),
+    );
+    expect(state.omCompressionSnapshot).toBe(snapshotBeforeFailure);
+    expect(state.omCompressionEpoch).toBe(4);
+  });
+
   it("getStatus.shouldReflect 时触发 reflect", async () => {
-    const { runOmSidecarAfterTurn } = await import("../session/omSidecar.js");
+    process.env.QINGAGENT_OM_COMPRESS = "1";
+    const { prepareOmContextForTurn, runOmSidecarAfterTurn } = await import(
+      "../session/omSidecar.js"
+    );
     mockState.setStatus({
       shouldBuffer: false,
       shouldReflect: true,
@@ -326,9 +574,25 @@ describe("OM sidecar 接线形状", () => {
         observedMessageIds: ["om-wire-reflect-1-1"],
       },
     });
+    mockState.setReflectResult({
+      reflected: true,
+      record: {
+        id: "record-reflected",
+        activeObservations: "- 反思后的整体观察",
+        observedMessageIds: [],
+      },
+    });
     const state = createSession("om-wire-reflect");
     state.threadId = state.sessionId;
     state.omObservedMessageIds = ["legacy-observed"];
+    state.omCompressionActive = true;
+    state.omCompressionEpoch = 7;
+    const snapshotBeforeReflection = {
+      epoch: 7,
+      observations: "- 旧观察第一行\n- 旧观察第二行",
+      removedMessageIds: ["历史已删除消息"],
+    };
+    state.omCompressionSnapshot = snapshotBeforeReflection;
     state.messages.push({ role: "user", content: "第一轮" });
 
     await runOmSidecarAfterTurn(state, new RequestContext([
@@ -351,6 +615,16 @@ describe("OM sidecar 接线形状", () => {
       state,
       "om_sidecar:observed_ids",
     );
+    expect(state.omCompressionSnapshot).not.toBe(snapshotBeforeReflection);
+    expect(state.omCompressionSnapshot).toEqual({
+      epoch: 8,
+      observations: "- 反思后的整体观察",
+      removedMessageIds: ["历史已删除消息"],
+    });
+    expect(state.omCompressionEpoch).toBe(8);
+    const context = await prepareOmContextForTurn(state);
+    expect(JSON.stringify(context.messagesForModel)).toContain("反思后的整体观察");
+    expect(JSON.stringify(context.messagesForModel)).not.toContain("旧观察第一行");
   });
 
   it("getStatus.canActivate 时先激活 buffered observations 并提交 activated ids", async () => {

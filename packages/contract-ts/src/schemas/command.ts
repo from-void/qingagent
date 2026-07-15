@@ -5,6 +5,7 @@ import type { PmDoc } from "../PmDoc";
 import type { SessionMode } from "../SessionMode";
 import type { StartSession } from "../StartSession";
 import type { SendMessage } from "../SendMessage";
+import type { ActionCardData } from "../ActionCard";
 import type { CancelStream } from "../CancelStream";
 import type { AcceptPatch } from "../AcceptPatch";
 import type { RejectPatch } from "../RejectPatch";
@@ -20,6 +21,7 @@ import type { RemoveMaterial } from "../RemoveMaterial";
 import type { ReparseMaterial } from "../ReparseMaterial";
 import type { AttachFolder, DetachFolder } from "../FolderSource";
 import type { ExternalPropose, ExternalProposeOp } from "../ExternalPropose";
+import type { IgnoreAnnotationGroups } from "../IgnoreAnnotationGroups";
 import {
   boundedNonEmptyString,
   chatChipSchema,
@@ -44,6 +46,20 @@ const MAX_HANDLE_LENGTH = 1024;
  */
 const pmDocPassthroughSchema = z.unknown() as unknown as z.ZodType<PmDoc>;
 const legacySectionsPassthroughSchema = z.unknown() as unknown as z.ZodType<Array<LegacySection>>;
+const ignoreAnnotationGroupsDataSchema = z.object({
+  sessionId: z.string().min(1),
+  reason: z.enum(["tab_changed", "message_sent", "doc_committed", "discard_all", "item_ignored"]),
+  groupIds: z.array(z.string().min(1)).min(1).optional(),
+  rememberDismissal: z.boolean().optional(),
+}).superRefine((data, context) => {
+  if (data.rememberDismissal && !data.groupIds?.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["groupIds"],
+      message: "下次不再提示必须指定批注组",
+    });
+  }
+}) satisfies z.ZodType<IgnoreAnnotationGroups>;
 
 // ---- 各 command 载荷 schema(逐一锚定到手写契约类型)----
 
@@ -67,6 +83,22 @@ const startSessionDataSchema = z.object({
 }) satisfies z.ZodType<StartSession>;
 type _StartSessionExact = Expect<Equal<z.infer<typeof startSessionDataSchema>, StartSession>>;
 
+const actionCardDataSchema = z.object({
+  icon: z.string().optional(),
+  title: z.string(),
+  lines: z.array(z.object({ label: z.string(), value: z.string() })),
+}) satisfies z.ZodType<ActionCardData>;
+
+const reviewTypeSchema = z.enum([
+  "sensitive", "deai", "source", "consistency", "privacy", "format", "role", "custom",
+]);
+
+const reviewContextSchema = z.object({
+  type: reviewTypeSchema,
+  templateId: z.string().min(1),
+  templateName: z.string().min(1),
+});
+
 const sendMessageDataSchema = z.object({
   sessionId: z.string().min(1),
   text: z.string(),
@@ -79,6 +111,8 @@ const sendMessageDataSchema = z.object({
   fileIds: z.array(uploadIdSchema).default([]),
   clientMessageId: z.string().optional(),
   richText: z.string().optional(),
+  displayCard: actionCardDataSchema.optional(),
+  reviewContext: reviewContextSchema.optional(),
 }) satisfies z.ZodType<SendMessage>;
 type _SendMessageExact = Expect<Equal<z.infer<typeof sendMessageDataSchema>, SendMessage>>;
 
@@ -283,6 +317,27 @@ export const COMMAND_KINDS = [
   "attachFolder",
   "detachFolder",
   "externalPropose",
+  "listLexicons",
+  "listLexiconEntries",
+  "renameSession",
+  "listDerivatives",
+  "createDerivative",
+  "generateTranslations",
+  "deleteDerivative",
+  "getDerivativeDoc",
+  "listStyleTemplates",
+  "getStyleTemplate",
+  "saveStyleTemplate",
+  "deleteStyleTemplate",
+  "updateDerivativeParams",
+  "listReviewTemplates",
+  "saveReviewTemplate",
+  "deleteReviewTemplate",
+  "selectReviewTemplate",
+  "getReviewSupplement",
+  "upsertReviewSupplement",
+  "draftTemplate",
+  "ignoreAnnotationGroups",
 ] as const;
 type _CommandKindsExact = Expect<Equal<(typeof COMMAND_KINDS)[number], Command["kind"]>>;
 
@@ -310,5 +365,39 @@ export const commandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("attachFolder"), data: attachFolderDataSchema }),
   z.object({ kind: z.literal("detachFolder"), data: detachFolderDataSchema }),
   z.object({ kind: z.literal("externalPropose"), data: externalProposeDataSchema }),
+  z.object({ kind: z.literal("listLexicons"), data: z.object({ sessionId: z.string().min(1) }) }),
+  z.object({ kind: z.literal("listLexiconEntries"), data: z.object({ sessionId: z.string().min(1), resourceId: z.string().min(1) }) }),
+  z.object({ kind: z.literal("renameSession"), data: z.object({ sessionId: z.string().min(1), title: z.string().trim().min(1).max(48) }) }),
+  z.object({ kind: z.literal("listDerivatives"), data: z.object({ sessionId: z.string().min(1) }) }),
+  z.object({ kind: z.literal("createDerivative"), data: z.object({ sessionId: z.string().min(1), dtype: z.enum(["gzh", "xhs", "translate"]), templateId: z.string().min(1), writingStyleId:z.string().min(1).optional(),layoutStyleId:z.string().min(1).nullable().optional(),targetLang:z.string().trim().min(1).optional(), privatePrompt: z.string() }).superRefine((data,ctx)=>{if(data.dtype==="translate"&&!data.targetLang)ctx.addIssue({code:z.ZodIssueCode.custom,path:["targetLang"],message:"翻译稿必须指定目标语言"})}) }),
+  z.object({ kind: z.literal("generateTranslations"), data: z.object({
+    sessionId: z.string().min(1),
+    docIds: z.array(z.string().min(1)).min(1).max(5),
+  }).refine((data) => new Set(data.docIds).size === data.docIds.length, {
+    path: ["docIds"],
+    message: "翻译稿 id 不可重复",
+  }) }),
+  z.object({ kind: z.literal("deleteDerivative"), data: z.object({ sessionId: z.string().min(1), docId: z.string().min(1) }) }),
+  z.object({ kind: z.literal("getDerivativeDoc"), data: z.object({ sessionId: z.string().min(1), docId: z.string().min(1) }) }),
+  z.object({kind:z.literal("listStyleTemplates"),data:z.object({sessionId:z.string().min(1),dtype:z.string().optional(),slot:z.enum(["layout","writing","instruction"]).optional()})}),
+  z.object({kind:z.literal("getStyleTemplate"),data:z.object({sessionId:z.string().min(1),id:z.string().min(1)})}),
+  z.object({kind:z.literal("saveStyleTemplate"),data:z.object({sessionId:z.string().min(1),id:z.string().optional(),dtype:z.string().min(1),slot:z.enum(["layout","writing","instruction"]),name:z.string().min(1),detail:z.string().optional(),prompt:z.string()})}),
+  z.object({kind:z.literal("deleteStyleTemplate"),data:z.object({sessionId:z.string().min(1),id:z.string().min(1)})}),
+  z.object({kind:z.literal("updateDerivativeParams"),data:z.object({sessionId:z.string().min(1),docId:z.string().min(1),layoutStyleId:z.string().min(1).optional(),writingStyleId:z.string().min(1).optional(),privatePrompt:z.string().optional(),coverTemplate:z.enum(["poster","magazine","wenkai","impact","note"]).optional()})}),
+  z.object({kind:z.literal("listReviewTemplates"),data:z.object({sessionId:z.string().min(1),type:reviewTypeSchema})}),
+  z.object({kind:z.literal("saveReviewTemplate"),data:z.object({sessionId:z.string().min(1),id:z.string().min(1).optional(),type:reviewTypeSchema,name:z.string().trim().min(1),prompt:z.string().trim().min(1)})}),
+  z.object({kind:z.literal("deleteReviewTemplate"),data:z.object({sessionId:z.string().min(1),id:z.string().min(1)})}),
+  z.object({kind:z.literal("selectReviewTemplate"),data:z.object({sessionId:z.string().min(1),type:reviewTypeSchema,templateId:z.string().min(1)})}),
+  z.object({kind:z.literal("getReviewSupplement"),data:z.object({sessionId:z.string().min(1),type:reviewTypeSchema})}),
+  z.object({kind:z.literal("upsertReviewSupplement"),data:z.object({sessionId:z.string().min(1),type:reviewTypeSchema,supplement:z.string()})}),
+  z.object({kind:z.literal("draftTemplate"),data:z.object({
+    sessionId:z.string().min(1),
+    scene:z.discriminatedUnion("kind",[
+      z.object({kind:z.literal("review"),type:reviewTypeSchema,label:z.string().trim().min(1)}),
+      z.object({kind:z.literal("derivative"),dtype:z.enum(["gzh","xhs","translate"]),slot:z.enum(["writing","layout"]),label:z.string().trim().min(1)}),
+    ]),
+    intent:z.object({name:z.string(),prompt:z.string()}),
+  })}),
+  z.object({ kind: z.literal("ignoreAnnotationGroups"), data: ignoreAnnotationGroupsDataSchema }),
 ]) satisfies z.ZodType<Command>;
 type _CommandExact = Expect<Equal<z.infer<typeof commandSchema>, Command>>;

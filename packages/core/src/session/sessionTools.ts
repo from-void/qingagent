@@ -1,7 +1,8 @@
-import type { SkillRef } from "@qingagent/contract-ts";
+import type { ReviewContext, SkillRef } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import crypto from "node:crypto";
 import { getQingagentSessionWorkspace } from "../agents/qingagent.js";
 import type { getQingagentSkills } from "../agents/qingagent.js";
 import {
@@ -33,6 +34,9 @@ import { githubReadFileTool } from "../tools/githubReadFile.js";
 import { githubSearchCodeTool } from "../tools/githubSearchCode.js";
 import { githubAuthStartTool } from "../tools/githubAuthStart.js";
 import { feishuAuthStartTool } from "../tools/feishuAuthStart.js";
+import { lexiconListTool, lexiconManageTool, sensitiveScanTool } from "../tools/lexicon.js";
+import { derivativeBriefTool, generateDerivativeTool, listDerivativesTool, updateDerivativeParamsTool } from "../tools/derivatives.js";
+import { styleTemplateDeleteTool, styleTemplateGetTool, styleTemplateListTool, styleTemplateSaveTool } from "../tools/styleTemplates.js";
 import { updateTodosTool } from "../tools/updateTodos.js";
 import { getPyodideTools } from "../tools/runPython.js";
 import { mastra } from "../mastra.js";
@@ -58,6 +62,7 @@ import {
 } from "../doc-engine/draftReadContext.js";
 import {
   collectTopLevelTextBlocks,
+  containsLiteralMatch,
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
@@ -65,6 +70,12 @@ import {
 } from "../doc-engine/textEditOps.js";
 import { createWriteDraftTool } from "../tools/writeDraft.js";
 import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
+import {
+  createAnnotationGroupsInputSchema,
+  reviewOrigin,
+  type AnnotationGroupInput,
+} from "../tools/annotationGroups.js";
+import { replaceAnnotationGroupsByOrigin } from "@qingagent/db";
 import type { Material } from "../types/material.js";
 import {
   applyBlockEdits,
@@ -84,6 +95,29 @@ import {
 } from "@qingagent/pm-schema";
 
 const logger = mastra.getLogger();
+
+function annotationGroupSemanticErrors(source: AnnotationGroupInput, groupIndex: number): string[] {
+  const prefix = `第 ${groupIndex + 1} 组`;
+  const errors: string[] = [];
+  if (source.origin === "source-check") {
+    if (!source.judgment || !["口径漂移", "数字失真", "无据", "素材遗漏"].includes(source.judgment)) {
+      errors.push(`${prefix} judgment 字段必填，必须是“口径漂移”“数字失真”“无据”或“素材遗漏”`);
+    } else if (source.judgment !== "无据" && !source.materialQuote?.trim()) {
+      errors.push(`${prefix} materialQuote 字段必填：${source.judgment}必须逐字引用素材全文`);
+    } else if (source.judgment === "无据" && !source.checkedScope?.trim()) {
+      errors.push(`${prefix} checkedScope 字段必填：无据必须说明已核查的素材范围`);
+    }
+  }
+  if (source.origin === "consistency") {
+    if (!source.judgment || !["时间线", "数字", "称谓与术语", "论断"].includes(source.judgment)) {
+      errors.push(`${prefix} judgment 字段必填，必须是“时间线”“数字”“称谓与术语”或“论断”`);
+    }
+    if (!source.documentQuote?.trim()) {
+      errors.push(`${prefix} documentQuote 字段必填，且必须逐字来自当前文档全文`);
+    }
+  }
+  return errors;
+}
 
 // BB① 埋点用:按 turn(runId)累计 editDraft.execute 次数(模块级,跨同一 turn 内多次调用)。
 const editDraftExecuteCounts = new Map<string, number>();
@@ -125,6 +159,13 @@ function parseEditDraftQingmlFragment<K extends QingmlFragmentKind>(
 }
 
 const CAPABILITY_TOOLS = {
+  derivatives: {
+    derivative_brief: derivativeBriefTool,
+    generate_derivative: generateDerivativeTool,
+    list_derivatives: listDerivativesTool,
+    update_derivative_params: updateDerivativeParamsTool,
+  },
+  "gzh-style": { style_template_list: styleTemplateListTool, style_template_get: styleTemplateGetTool, style_template_save: styleTemplateSaveTool, style_template_delete: styleTemplateDeleteTool },
   "browser-ops": {},
   "web-search": { webSearch: webSearchTool },
   "image-gen": { generateSvg: generateSvgTool },
@@ -143,6 +184,12 @@ const CAPABILITY_TOOLS = {
     github_search_code: githubSearchCodeTool,
   },
   feishu: { feishu_auth_start: feishuAuthStartTool },
+  "sensitive-review": {
+    lexicon_list: lexiconListTool,
+    sensitive_scan: sensitiveScanTool,
+    lexicon_manage: lexiconManageTool,
+  },
+  "deai-review": { style_template_get: styleTemplateGetTool },
 } as const;
 
 // run_js 是系统提示长期承诺的通用精确计算工具。doc-calc 技能只负责点召/preload 与方法论说明,
@@ -170,6 +217,10 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   ],
   "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
   feishu: ["feishu_auth_start"],
+  "sensitive-review": ["lexicon_list", "sensitive_scan", "lexicon_manage"],
+  "deai-review": ["style_template_get"],
+  "consistency-review": ["run_python"],
+  "gzh-style": ["fetchArticle", "style_template_list", "style_template_get", "style_template_save", "style_template_delete"],
 };
 
 export function toSuspensionToolName(toolName: string): SuspensionToolName | null {
@@ -315,6 +366,36 @@ export function missingGenericToolResultFields(
       requireArray("articles");
       requireNullableString("error");
       break;
+    case "lexicon_list":
+      requireBoolean("ok");
+      requireArray("lexicons");
+      break;
+    case "sensitive_scan":
+      requireBoolean("ok");
+      requireArray("hits");
+      requireNumber("totalCount");
+      requireNumber("scannedChars");
+      break;
+    case "lexicon_manage":
+      requireBoolean("ok");
+      requireString("action");
+      requireString("summary");
+      break;
+    case "derivative_brief":
+      requireBoolean("ok");
+      break;
+    case "generate_derivative":
+      requireBoolean("ok");
+      break;
+    case "list_derivatives":
+      requireBoolean("ok"); requireArray("items"); break;
+    case "update_derivative_params":
+    case "style_template_get":
+    case "style_template_save":
+    case "style_template_delete":
+      requireBoolean("ok"); break;
+    case "style_template_list":
+      requireBoolean("ok"); requireArray("templates"); break;
     case "readImage":
       requireBoolean("ok");
       requireString("text");
@@ -582,6 +663,101 @@ export function createSessionScopedTools(
       return { text, filename: mat.filename, wordCount: mat.metadata.wordCount };
     },
   });
+  const createAnnotationGroups = createTool({
+    id: "create_annotation_groups",
+    description: "把审查发现的问题按组创建批注。一个问题一组，可关联多个正文精确锚点；这是批注的唯一生产入口。同一内置审查类型每轮复用固定 origin，角色/自定义审查分别使用『角色审查:<模板名>』『自定义审查:<模板名>』，新一轮只替换同 origin 的旧批注。",
+    inputSchema: createAnnotationGroupsInputSchema,
+    outputSchema: z.object({ ok: z.boolean(), groupCount: z.number(), anchorCount: z.number(), errors: z.array(z.string()) }),
+    execute: async (input, context) => {
+      if (input._parseFailure) {
+        logger.warn("[review] create_annotation_groups 参数 JSON 无法安全修复", {
+          groupIndex: input._parseFailure.groupIndex,
+          field: input._parseFailure.field,
+          error: input._parseFailure.message,
+        });
+        return { ok: false, groupCount: 0, anchorCount: 0, errors: [input._parseFailure.message] };
+      }
+      if (!state?.doc) return { ok: false, groupCount: 0, anchorCount: 0, errors: ["当前没有可批注文档"] };
+      const blocks = collectTopLevelTextBlocks(state.doc);
+      const documentText = blocks.map((block) => block.text).join("\n");
+      const materialTexts = [...materials.values()].map((material) => material.text);
+      const errors: string[] = [];
+      const currentReviewContext = context?.requestContext?.get("reviewContext") as ReviewContext | null | undefined;
+      const forcedOrigin = reviewOrigin(currentReviewContext);
+      const groups = input.groups.flatMap((modelSource, groupIndex) => {
+        const source = forcedOrigin ? { ...modelSource, origin: forcedOrigin } : modelSource;
+        if (forcedOrigin && modelSource.origin !== forcedOrigin) {
+          logger.warn("[review] 覆写模型填写的批注 origin", {
+            reviewType: currentReviewContext?.type,
+            templateName: currentReviewContext?.templateName,
+            groupIndex: groupIndex + 1,
+            modelOrigin: modelSource.origin,
+            forcedOrigin,
+          });
+        }
+        const semanticErrors = annotationGroupSemanticErrors(source, groupIndex);
+        if (semanticErrors.length > 0) {
+          errors.push(...semanticErrors);
+          return [];
+        }
+        if (
+          source.origin === "source-check"
+          && source.judgment !== "无据"
+          && !materialTexts.some((text) => containsLiteralMatch(text, source.materialQuote ?? ""))
+        ) {
+          errors.push(`第 ${groupIndex + 1} 组 materialQuote 字段无效：素材中未找到所引原句「${source.materialQuote ?? ""}」`);
+          return [];
+        }
+        if (
+          source.origin === "consistency"
+          && !containsLiteralMatch(documentText, source.documentQuote ?? "")
+        ) {
+          errors.push(`第 ${groupIndex + 1} 组 documentQuote 字段无效：当前文档中未找到冲突对端原句「${source.documentQuote ?? ""}」`);
+          return [];
+        }
+        const anchors = source.anchors.flatMap((spec, anchorIndex) => {
+          const matches = findLiteralMatches(blocks, spec.find, spec.all === true);
+          if (matches.length === 0) errors.push(`第 ${groupIndex + 1} 组 anchors.${anchorIndex}.find 字段无效：当前文档中未找到精确文本「${spec.find}」`);
+          return matches.map((match) => ({
+            blockId: match.blockId,
+            pmFrom: match.pmFrom,
+            pmTo: match.pmTo,
+            quote: match.matchText,
+            textHash: crypto.createHash("sha256").update(match.matchText).digest("hex").slice(0, 24),
+          }));
+        });
+        if (anchors.length === 0) return [];
+        const evidence = source.origin === "source-check"
+          ? source.judgment === "无据"
+            ? `已核查范围：${source.checkedScope}`
+            : `素材原句：${source.materialQuote}`
+          : source.origin === "consistency"
+            ? `文内冲突原句：${source.documentQuote}`
+            : null;
+        return [{
+          id: `annotation-${crypto.randomUUID()}`,
+          summary: source.summary,
+          note: evidence ? `${source.note}\n${evidence}` : source.note,
+          origin: source.origin,
+          suggestion: source.suggestion,
+          severity: source.severity,
+          status: "reviewing" as const,
+          anchors,
+        }];
+      });
+      if (groups.length) {
+        const replacedOrigins = new Set(groups.map((group) => group.origin));
+        await replaceAnnotationGroupsByOrigin(state.docId, state.docVersion, groups);
+        state.annotationGroups = [
+          ...state.annotationGroups.filter((group) => !replacedOrigins.has(group.origin)),
+          ...groups,
+        ];
+        const turnOrigins = (state._annotationOriginsReplacedThisTurn ??= new Set());
+        replacedOrigins.forEach((origin) => turnOrigins.add(origin));
+      }
+      return { ok: groups.length > 0, groupCount: groups.length, anchorCount: groups.reduce((n, g) => n + g.anchors.length, 0), errors };
+    },
+  });
 
   const summarizeMaterial = createTool({
     id: "summarizeMaterial",
@@ -633,11 +809,15 @@ export function createSessionScopedTools(
       })).optional(),
       blockCount: z.number().optional(),
       wordCount: z.number().optional(),
+      docVersion: z.number().optional(),
       error: z.string().optional(),
     }),
     execute: async (input) => {
       if (!state) return { ok: false, error: "readDraft is unavailable outside a session" };
       const doc = state.docDraftCandidateDoc ?? currentPmDoc(state);
+      // 与本次读取到的文档快照绑定；若读取期间用户又提交了新版本，保留旧版本号，
+      // 下一次模型调用仍会看到更新信号，不会把旧快照误标成最新。
+      const docVersion = state.docVersion;
       const mode = input.mode ?? "full";
       const refEntries = collectReadableDraftRefs(doc);
       const topEntries = refEntries.filter((entry) => entry.path.length === 1);
@@ -724,11 +904,13 @@ export function createSessionScopedTools(
         return out;
       });
 
+      state.modelKnownDocVersion = docVersion;
       return {
         ok: true,
         blocks,
         blockCount: doc.content.length,
         wordCount: countDocVisibleChars(doc),
+        docVersion,
       };
     },
   });
@@ -1113,6 +1295,7 @@ export function createSessionScopedTools(
     readDraft: readDraftAiIr,
     readDraftAiIr,
     editDraft,
+    createAnnotationGroups,
     readDiff,
     executeCommand,
     readDocument,

@@ -11,27 +11,24 @@ import { ObservationalMemory, TokenCounter } from "@mastra/memory/processors";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { ChatMessage } from "@qingagent/contract-ts";
 import {
-  createRepairingQingagentModel,
   qingagentModelConfig,
   wrapToolCallRepairingModel,
 } from "../llm/repairingModel.js";
-import type {
-  RepairableLanguageModel,
-  RepairingModelRouterLanguageModel,
-} from "../llm/repairingModel.js";
+import type { RepairableLanguageModel } from "../llm/repairingModel.js";
 import type { BranchMessage, SessionSnapshot } from "../llm/modelConfig.js";
 import {
   anthropicBaseUrl,
   advanceSessionSnapshotEpoch,
   branchCall,
+  createSnapshottingQingagentModel,
   getSessionSnapshot,
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
   resolveDeepseekAuth,
-  resolveDeepseekRouterModelId,
   resolveModelId,
   resolveProtocol,
 } from "../llm/modelConfig.js";
+import { modelFetch } from "../llm/modelTransport.js";
 import {
   buildOmObservationsContent,
   buildOmObservationsPromptMessage,
@@ -52,16 +49,17 @@ export const OM_SIDECAR_ENV = "QINGAGENT_OM_SIDECAR";
 export const OM_COMPRESS_ENV = "QINGAGENT_OM_COMPRESS";
 export const OM_COMPRESS_THRESHOLD_ENV = "QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS";
 export const OM_COMPRESS_RECENT_TURNS_ENV = "QINGAGENT_OM_COMPRESS_RECENT_TURNS";
+export const OM_OBSERVE_MESSAGE_TOKENS_ENV = "QINGAGENT_OM_OBSERVE_MESSAGE_TOKENS";
+export const OM_BUFFER_TOKENS_ENV = "QINGAGENT_OM_BUFFER_TOKENS";
 export const OM_DEFAULT_COMPRESS_THRESHOLD_TOKENS = 500_000;
 export const OM_DEFAULT_RECENT_TURNS = 12;
+export const OM_DEFAULT_OBSERVE_MESSAGE_TOKENS = 100_000;
+export const OM_DEFAULT_BUFFER_TOKENS = false;
 
 type AgentAnthropicModel = ReturnType<ReturnType<typeof createAnthropic>>;
 type RepairingAgentAnthropicModel = AgentAnthropicModel & RepairableLanguageModel;
 
-const observerModelCache = new Map<
-  string,
-  RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel
->();
+const observerModelCache = new Map<string, RepairableLanguageModel>();
 const OBSERVER_MODEL_CACHE_LIMIT = 16;
 const OM_STORAGE_THREAD_PREFIX = "om-sidecar";
 const OM_STORAGE_RESOURCE_SUFFIX = "om-sidecar";
@@ -69,10 +67,14 @@ const OM_BRANCH_CALL_SITE_KEY = "omBranchCallSite";
 const OM_BRANCH_SNAPSHOT_KEY = "omBranchSnapshot";
 let omSidecarPromise: Promise<ObservationalMemory | null> | null = null;
 const omSidecarQueues = new Map<string, Promise<void>>();
+const omSidecarFailureCounts = new Map<string, number>();
 const tokenCounter = new TokenCounter();
 
 type OmCursorCommitter = (cursor: OmSidecarCursor) => Promise<void>;
 type OmObservedIdsCommitter = (ids: readonly string[]) => Promise<void>;
+type OmCompressionSnapshotCommitter = (
+  record: ObservationalMemoryRecord,
+) => Promise<void>;
 
 export interface OmMessageAssignment {
   message: CoreMessage;
@@ -164,6 +166,26 @@ export function omCompressionRecentTurns(
   return Number.isFinite(raw) && raw > 0
     ? Math.floor(raw)
     : OM_DEFAULT_RECENT_TURNS;
+}
+
+export function omObserveMessageTokens(
+  env: Pick<NodeJS.ProcessEnv, string> = process.env,
+): number {
+  const raw = Number(env[OM_OBSERVE_MESSAGE_TOKENS_ENV]);
+  return Number.isFinite(raw) && raw > 0
+    ? Math.floor(raw)
+    : OM_DEFAULT_OBSERVE_MESSAGE_TOKENS;
+}
+
+export function omBufferTokens(
+  env: Pick<NodeJS.ProcessEnv, string> = process.env,
+): number | false {
+  const raw = env[OM_BUFFER_TOKENS_ENV];
+  if (raw === undefined || raw === "" || raw === "0" || raw.toLowerCase() === "false") {
+    return OM_DEFAULT_BUFFER_TOKENS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : OM_DEFAULT_BUFFER_TOKENS;
 }
 
 export function makeOmMessageId(
@@ -429,7 +451,9 @@ export async function prepareOmContextForTurn(
     });
     return null;
   });
-  const observations = record?.activeObservations?.trim() || null;
+  const observations = record?.activeObservations?.trim()
+    ? record.activeObservations
+    : null;
   const observedMessageIds = mergeObservedMessageIds(
     state.omObservedMessageIds,
     record?.observedMessageIds,
@@ -571,36 +595,15 @@ export function buildOmCompressedProjection(input: OmProjectionInput): OmProject
     };
   }
 
-  const assignments = buildOmMessageAssignments({
+  const removalPlan = buildOmRemovalPlan({
     sessionId: input.sessionId,
     messages: input.messages,
     chatHistory: input.chatHistory,
+    observedMessageIds: observedIds,
     latestTurnIndex: input.latestTurnIndex,
+    recentTurns,
   });
-  const byIndex = new Map(assignments.map((assignment) => [assignment.messageIndex, assignment]));
-  const maxTurnIndex = assignments.reduce(
-    (max, assignment) => Math.max(max, assignment.turnIndex),
-    0,
-  );
-  const recentStartTurn = Math.max(1, maxTurnIndex - recentTurns + 1);
-  const removedMessageIds: string[] = [];
-  const kept: CoreMessage[] = [];
-
-  for (let index = 0; index < input.messages.length; index += 1) {
-    const message = input.messages[index]!;
-    const assignment = byIndex.get(index);
-    if (!assignment) {
-      kept.push(message);
-      continue;
-    }
-    const isRecent = assignment.turnIndex >= recentStartTurn;
-    const isObserved = observedIds.has(assignment.id);
-    if (!isRecent && isObserved) {
-      removedMessageIds.push(assignment.id);
-      continue;
-    }
-    kept.push(message);
-  }
+  const { removedMessageIds } = removalPlan;
 
   if (removedMessageIds.length === 0) {
     return {
@@ -612,6 +615,13 @@ export function buildOmCompressedProjection(input: OmProjectionInput): OmProject
     };
   }
 
+  const removedIds = new Set(removedMessageIds);
+  const byIndex = new Map(
+    removalPlan.assignments.map((assignment) => [assignment.messageIndex, assignment.id]),
+  );
+  const kept = input.messages.filter(
+    (_message, index) => !removedIds.has(byIndex.get(index) ?? ""),
+  );
   const projectionMessages = insertObservationProjectionMessage(kept, observations);
   return {
     messages: projectionMessages,
@@ -619,6 +629,37 @@ export function buildOmCompressedProjection(input: OmProjectionInput): OmProject
     fullTokenEstimate,
     projectedTokenEstimate: countCoreMessageTokens(input.sessionId, projectionMessages),
     removedMessageIds,
+  };
+}
+
+function buildOmRemovalPlan(input: {
+  sessionId: string;
+  messages: readonly CoreMessage[];
+  chatHistory?: readonly ChatMessage[];
+  observedMessageIds: Iterable<string>;
+  latestTurnIndex?: number | null;
+  recentTurns: number;
+}): { assignments: OmMessageAssignment[]; removedMessageIds: string[] } {
+  const observedIds = new Set(input.observedMessageIds);
+  const assignments = buildOmMessageAssignments({
+    sessionId: input.sessionId,
+    messages: input.messages,
+    chatHistory: input.chatHistory,
+    latestTurnIndex: input.latestTurnIndex,
+  });
+  const maxTurnIndex = assignments.reduce(
+    (max, assignment) => Math.max(max, assignment.turnIndex),
+    0,
+  );
+  const recentStartTurn = Math.max(1, maxTurnIndex - input.recentTurns + 1);
+
+  return {
+    assignments,
+    removedMessageIds: assignments
+      .filter((assignment) =>
+        assignment.turnIndex < recentStartTurn && observedIds.has(assignment.id)
+      )
+      .map((assignment) => assignment.id),
   };
 }
 
@@ -633,18 +674,34 @@ export function scheduleOmSidecarAfterTurn(
   const previous = omSidecarQueues.get(state.sessionId) ?? Promise.resolve();
   const next = previous
     .catch(() => {})
-    .then(() =>
-      runOmSidecarSnapshotAfterTurn(
+    .then(async () => {
+      await runOmSidecarSnapshotAfterTurn(
         snapshot,
         requestContextSnapshot,
         (cursor) => commitOmSidecarCursor(state, snapshot, cursor),
         (ids) => commitOmObservedMessageIds(state, snapshot, ids),
-      )
-    )
+        (record) => commitOmCompressionSnapshot(state, snapshot, record),
+      );
+      omSidecarFailureCounts.delete(state.sessionId);
+    })
     .catch((error) => {
-      logger.warn("[omSidecar] background turn handoff failed", {
-        sessionId: state.sessionId,
+      const consecutiveFailures = (omSidecarFailureCounts.get(state.sessionId) ?? 0) + 1;
+      omSidecarFailureCounts.set(state.sessionId, consecutiveFailures);
+      const accumulation = consecutiveFailures >= 2
+        ? `；连续 ${consecutiveFailures} 次，观察积压正在累积`
+        : "";
+      logger.error(
+        `[omSidecar] background turn handoff failed；该批观察失败，将随下批新消息重试${accumulation}`,
+        {
+          sessionId: state.sessionId,
+          error: stringifyError(error),
+          consecutiveFailures,
+        },
+      );
+      recordOmSidecarSpan(snapshot, "om_sidecar_handoff_failed", {
         error: stringifyError(error),
+        consecutiveFailures,
+        retryWithNextBatch: true,
       });
     });
   const queued = next.finally(() => {
@@ -666,6 +723,7 @@ export async function runOmSidecarAfterTurn(
     requestContextSnapshot,
     (cursor) => commitOmSidecarCursor(state, snapshot, cursor),
     (ids) => commitOmObservedMessageIds(state, snapshot, ids),
+    (record) => commitOmCompressionSnapshot(state, snapshot, record),
   );
 }
 
@@ -674,6 +732,7 @@ async function runOmSidecarSnapshotAfterTurn(
   requestContext?: RequestContext,
   commitCursor?: OmCursorCommitter,
   commitObservedIds?: OmObservedIdsCommitter,
+  commitCompressionSnapshot?: OmCompressionSnapshotCommitter,
 ): Promise<void> {
   if (!isOmSidecarEnabled()) return;
   const storageThreadId = omSidecarThreadId(snapshot.threadId);
@@ -756,6 +815,9 @@ async function runOmSidecarSnapshotAfterTurn(
       requestContext: withOmCallSite(requestContext, "omObserve"),
     });
     await commitObservedIdsFromRecord(observeResult.record, commitObservedIds);
+    if (observeResult.observed || observeResult.reflected) {
+      await commitCompressionSnapshot?.(observeResult.record);
+    }
     return;
   }
 
@@ -771,12 +833,16 @@ async function runOmSidecarSnapshotAfterTurn(
   }
 
   if (status.shouldReflect) {
-    await om.reflect(
+    const reflectResult = await om.reflect(
       storageThreadId,
       storageResourceId,
       undefined,
       withOmCallSite(requestContext, "omReflect"),
     );
+    await commitObservedIdsFromRecord(reflectResult.record, commitObservedIds);
+    if (reflectResult.reflected) {
+      await commitCompressionSnapshot?.(reflectResult.record);
+    }
   }
 }
 
@@ -880,6 +946,7 @@ function createOmRequestContextSnapshot(
     [MASTRA_THREAD_ID_KEY, omSidecarThreadId(snapshot.threadId)],
     [MASTRA_RESOURCE_ID_KEY, omSidecarResourceId(snapshot.resourceId)],
     ["sessionId", snapshot.sessionId],
+    ["runId", requestContext.get("runId") ?? null],
     ["origin", requestContext.get("origin") ?? "manual"],
     ["streamId", requestContext.get("streamId") ?? null],
     ["clientTraceId", requestContext.get("clientTraceId") ?? null],
@@ -903,6 +970,7 @@ function withOmCallSite(
     [MASTRA_THREAD_ID_KEY, requestContext.get(MASTRA_THREAD_ID_KEY)],
     [MASTRA_RESOURCE_ID_KEY, requestContext.get(MASTRA_RESOURCE_ID_KEY)],
     ["sessionId", requestContext.get("sessionId")],
+    ["runId", requestContext.get("runId")],
     ["origin", requestContext.get("origin")],
     ["streamId", requestContext.get("streamId")],
     ["clientTraceId", requestContext.get("clientTraceId")],
@@ -954,6 +1022,47 @@ async function commitOmObservedMessageIds(
   await schedulePersist(state, "om_sidecar:observed_ids").catch((error) =>
     logger.warn("[omSidecar] failed to persist observed ids", {
       sessionId: snapshot.sessionId,
+      error: stringifyError(error),
+    }),
+  );
+}
+
+async function commitOmCompressionSnapshot(
+  state: SessionState,
+  turnSnapshot: OmSidecarTurnSnapshot,
+  record: ObservationalMemoryRecord,
+): Promise<void> {
+  if (state.omCompressionActive !== true) return;
+
+  const previous = state.omCompressionSnapshot;
+  const { removedMessageIds: newlyRemovableIds } = buildOmRemovalPlan({
+    sessionId: state.sessionId,
+    messages: state.messages,
+    chatHistory: state.chatHistory,
+    observedMessageIds: state.omObservedMessageIds ?? [],
+    latestTurnIndex: state.turnCounter,
+    recentTurns: omCompressionRecentTurns(),
+  });
+  const epoch = Math.max(
+    state.omCompressionEpoch ?? 0,
+    previous?.epoch ?? 0,
+  ) + 1;
+  const nextSnapshot: NonNullable<SessionState["omCompressionSnapshot"]> = {
+    epoch,
+    observations: record.activeObservations,
+    removedMessageIds: mergeObservedMessageIds(
+      previous?.removedMessageIds,
+      newlyRemovableIds,
+    ),
+  };
+
+  // 构造完成后整对象替换；主回合只可能读到旧代或新代，不会看到半成品。
+  state.omCompressionEpoch = epoch;
+  state.omCompressionSnapshot = nextSnapshot;
+  advanceSessionSnapshotEpoch(state.sessionId);
+  await schedulePersist(state, "om_projection:observation_cycle").catch((error) =>
+    logger.warn("[omSidecar] failed to persist observation-cycle projection", {
+      sessionId: turnSnapshot.sessionId,
       error: stringifyError(error),
     }),
   );
@@ -1033,7 +1142,10 @@ async function createOmSidecar(): Promise<ObservationalMemory | null> {
         getObserverFlashModelFor(requestContext) as never,
       observation: {
         observeAttachments: false,
-        messageTokens: 30_000,
+        messageTokens: omObserveMessageTokens(),
+        // 官方缓冲服务于“30k 激活零等待”；青简 500K 才压缩，平时只消费[长期观察]块，
+        // 不值得为罕见事件持续支付每 6k token 一次的后台调用成本。
+        bufferTokens: omBufferTokens(),
       },
       reflection: {
         observationTokens: 40_000,
@@ -1059,7 +1171,7 @@ async function createOmSidecar(): Promise<ObservationalMemory | null> {
 
 function getObserverFlashModelFor(
   requestContext?: RequestContext,
-): RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel {
+): RepairableLanguageModel {
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const effectiveKey = apiKey || qingagentModelConfig.apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
@@ -1079,7 +1191,11 @@ function getObserverFlashModelFor(
     let model = observerModelCache.get(anthKey);
     if (!model) {
       model = wrapToolCallRepairingModel(
-        createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
+        createAnthropic({
+          baseURL: anthropicBaseUrl(baseUrl),
+          apiKey: effectiveKey,
+          fetch: modelFetch,
+        })(
           anthModel,
         ) as RepairingAgentAnthropicModel,
       );
@@ -1094,11 +1210,11 @@ function getObserverFlashModelFor(
     });
   }
 
-  const modelId = resolveDeepseekRouterModelId(requestContext, "flash");
+  const modelId = resolveModelId(requestContext, "flash");
   const cacheKey = `${baseUrl}|${modelId}|${effectiveKey}`;
   let model = observerModelCache.get(cacheKey);
   if (!model) {
-    model = createRepairingQingagentModel({ id: modelId, url: baseUrl, apiKey: effectiveKey });
+    model = wrapToolCallRepairingModel(createSnapshottingQingagentModel(requestContext));
     evict();
     observerModelCache.set(cacheKey, model);
   }
@@ -1113,7 +1229,7 @@ function getObserverFlashModelFor(
   return createOmBranchModel(fallback, requestContext, snapshot, callSite);
 }
 
-function createOmBranchModel<T extends RepairingModelRouterLanguageModel | RepairingAgentAnthropicModel>(
+export function createOmBranchModel<T extends RepairableLanguageModel>(
   fallback: T,
   requestContext: RequestContext | undefined,
   snapshot: NonNullable<ReturnType<typeof getSessionSnapshot>>,
@@ -1141,14 +1257,20 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
       thinking: false,
     });
   };
+  const boundFunctions = new Map<PropertyKey, { source: Function; bound: Function }>();
   return new Proxy(fallback, {
-    get(target, property, receiver) {
-      if (property === "doGenerate") {
-        return async (options: Record<string, unknown>) => {
+    get(target, property) {
+      // Mastra 的 ModelRouterLanguageModel 含 #lastStreamTransport 等私有字段；instanceof 会穿透
+      // Proxy，但其方法若以 Proxy 为 this 就会触发私有字段品牌检查异常，因此 getter 与普通方法
+      // 都必须以真实实例为 receiver/this。
+      const original = Reflect.get(target, property, target);
+      if (property === "doGenerate" && typeof original === "function") {
+        return async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
           const result = await runBranch(options);
           if (!result.ok) {
             console.warn(`[sideChannel] site=${callSite} fallback engaged reason=${result.reason} snapshot=true`);
-            return await target.doGenerate(options as never);
+            return await Reflect.apply(original, target, args);
           }
           return {
             content: [{ type: "text", text: result.text }],
@@ -1158,12 +1280,13 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
           };
         };
       }
-      if (property === "doStream") {
-        return async (options: Record<string, unknown>) => {
+      if (property === "doStream" && typeof original === "function") {
+        return async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
           const result = await runBranch(options);
           if (!result.ok) {
             console.warn(`[sideChannel] site=${callSite} fallback engaged reason=${result.reason} snapshot=true`);
-            return await target.doStream(options as never);
+            return await Reflect.apply(original, target, args);
           }
           return {
             stream: new ReadableStream({
@@ -1183,7 +1306,15 @@ function createOmBranchModel<T extends RepairingModelRouterLanguageModel | Repai
           };
         };
       }
-      return Reflect.get(target, property, receiver);
+      if (typeof original !== "function") {
+        boundFunctions.delete(property);
+        return original;
+      }
+      const cached = boundFunctions.get(property);
+      if (cached?.source === original) return cached.bound;
+      const bound = original.bind(target) as Function;
+      boundFunctions.set(property, { source: original, bound });
+      return bound;
     },
   });
 }

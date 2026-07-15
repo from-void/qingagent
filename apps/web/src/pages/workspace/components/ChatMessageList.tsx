@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useState, useRef } from "react";
 import type { ReactNode } from "react";
 import type {
   AskUserAnswerCardPart,
+  ActionCardData,
   ChatChip,
   ChatMessage,
   MessagePart,
@@ -17,7 +18,13 @@ import { BrowserViewPart } from "./BrowserViewPart";
 import { DraftMiniCard } from "./DraftMiniCard";
 import { AuthCard } from "./AuthCard";
 import { ReviewOutcomeCard } from "./ReviewOutcomeCard";
-import { UImageSummary, UnifiedToolCall, UProcessFold, type SkillLabelMap } from "./chatUnified";
+import {
+  UImageSummary,
+  UnifiedToolCall,
+  UProcessFold,
+  type MaterialLabelMap,
+  type SkillLabelMap,
+} from "./chatUnified";
 import {
   getLastAssistantMessageId,
   getThinkingSummaryLabel,
@@ -25,6 +32,7 @@ import {
 import { ThinkingMarquee } from "./ThinkingMarquee";
 import { CheckIcon } from "./icons";
 import { useSkills } from "../../../overlays/settings/useSkills";
+import { useResourceList } from "../../../system/resources";
 
 export interface ChatMessageListProps {
   messages: ChatMessage[];
@@ -83,6 +91,13 @@ export function ChatMessageList({
     () => Object.fromEntries(skills.map((skill) => [skill.name, skill.label])),
     [skills],
   );
+  const fileResources = useResourceList({ kind: "file" });
+  const materialLabels = useMemo<MaterialLabelMap>(
+    () => Object.fromEntries(
+      fileResources.map((resource) => [resource.resourceRef.id, resource.displayName]),
+    ),
+    [fileResources],
+  );
   const visibleAskUserAnswerToolCallIds = useMemo(() => {
     const ids = new Set<string>();
     for (const message of messages) {
@@ -125,6 +140,7 @@ export function ChatMessageList({
             wholeDocReviewKeys={hasPatchSummary ? wholeDocReviewKeys : undefined}
             debugMode={debugMode}
             skillLabels={skillLabels}
+            materialLabels={materialLabels}
             visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
           />
         );
@@ -135,6 +151,7 @@ export function ChatMessageList({
       liveHunkKey,
       livePatchCount,
       messages,
+      materialLabels,
       patchRevealing,
       sessionId,
       streamActive,
@@ -187,6 +204,7 @@ type MessageRowProps = {
   wholeDocReviewKeys?: ReadonlySet<string>;
   debugMode?: boolean;
   skillLabels?: SkillLabelMap;
+  materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
 };
 
@@ -196,8 +214,8 @@ type PatchSummaryDataWithReviewOutcome = PatchSummaryPart["data"] & {
   reviewOutcome?: "abandoned";
 };
 
-function isUserStandaloneCardPart(part: MessagePart): part is Extract<MessagePart, { kind: "reviewOutcome" | "askUserAnswerCard" }> {
-  return part.kind === "reviewOutcome" || part.kind === "askUserAnswerCard";
+function isUserStandaloneCardPart(part: MessagePart): part is Extract<MessagePart, { kind: "reviewOutcome" | "askUserAnswerCard" | "actionCard" }> {
+  return part.kind === "reviewOutcome" || part.kind === "askUserAnswerCard" || part.kind === "actionCard";
 }
 
 export function sanitizeVisibleMessagePart(
@@ -222,6 +240,7 @@ export function sanitizeVisibleMessagePart(
     case "patchSummary":
     case "reviewOutcome":
     case "askUserAnswerCard":
+    case "actionCard":
       return part;
     case "thinking":
       return options.debugMode ? part : null;
@@ -360,6 +379,7 @@ const MessageRow = memo(function MessageRow({
   wholeDocReviewKeys,
   debugMode = false,
   skillLabels,
+  materialLabels,
   visibleAskUserAnswerToolCallIds,
 }: MessageRowProps) {
   const role = message.role.kind;
@@ -487,6 +507,7 @@ const MessageRow = memo(function MessageRow({
       wholeDocReview={wholeDocReview}
       wholeDocReviewKeys={wholeDocReviewKeys}
       skillLabels={skillLabels}
+      materialLabels={materialLabels}
       visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
     />
   );
@@ -956,6 +977,27 @@ function AskUserAnswerCard({ data }: { data: AskUserAnswerCardPart }) {
   );
 }
 
+function ActionCard({ data }: { data: ActionCardData }) {
+  return (
+    <div className="askuser-card askuser-card--answers" data-wf="ActionCard" aria-label={data.title}>
+      <div className="askuser-card-header">
+        <span className="askuser-card-check" aria-hidden="true">
+          {data.icon ?? <CheckIcon size={13} />}
+        </span>
+        <span>{data.title}</span>
+      </div>
+      {data.lines.length > 0 ? <div className="askuser-card-body">
+        {data.lines.map((line, index) => (
+          <div className="askuser-card-row" key={`${line.label}-${index}`}>
+            <span className="askuser-card-q">{line.label}</span>
+            <span className="askuser-card-a">{line.value}</span>
+          </div>
+        ))}
+      </div> : null}
+    </div>
+  );
+}
+
 /**
  * Render user message text with inline chips. Parses `{{chip:N}}`
  * markers in the body and replaces them with styled chip badges,
@@ -1000,6 +1042,20 @@ function LongTextChipCard({ chip }: { chip: ChatChip }) {
 
 /** 对话气泡里的引用 chip:与输入框 makeChatChipNode 统一(图标 + 主标签 + 后缀小标签)。 */
 function ChatChipBadge({ chip, inline }: { chip: ChatChip; inline?: boolean }) {
+  // 批注标记在线路上复用 text chip 以把完整指令展开给模型；气泡仍只显示短标签，
+  // 不误渲染成「长文本」卡片，也不暴露隐藏指令。
+  if (chip.kind.kind === "text" && chip.text != null && chip.label.startsWith("批注·")) {
+    return (
+      <span
+        className="chat-chip chat-chip-annotation"
+        data-kind="annotation"
+        style={inline ? { display: "inline-flex", verticalAlign: "baseline" } : undefined}
+      >
+        <span className="c-ico">※</span>
+        <span className="c-label">{chip.label}</span>
+      </span>
+    );
+  }
   // 长文本卡片(kind=text 且带原文)单独渲染成可展开卡片。
   if (chip.kind.kind === "text" && chip.text != null) {
     return <LongTextChipCard chip={chip} />;
@@ -1069,6 +1125,7 @@ type PartViewProps = {
   wholeDocReview?: boolean;
   wholeDocReviewKeys?: ReadonlySet<string>;
   skillLabels?: SkillLabelMap;
+  materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds?: ReadonlySet<string>;
 };
 
@@ -1085,6 +1142,7 @@ const PartView = memo(function PartView({
   wholeDocReview,
   wholeDocReviewKeys,
   skillLabels,
+  materialLabels,
   visibleAskUserAnswerToolCallIds = EMPTY_VISIBLE_ASK_USER_ANSWER_TOOL_CALL_IDS,
 }: PartViewProps) {
   const [open, setOpen] = useState(false);
@@ -1103,11 +1161,14 @@ const PartView = memo(function PartView({
         <ToolCallRow
           spec={part.data}
           skillLabels={skillLabels}
+          materialLabels={materialLabels}
           visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
         />
       );
     case "askUserAnswerCard":
       return <AskUserAnswerCard data={part.data} />;
+    case "actionCard":
+      return <ActionCard data={part.data} />;
     case "thinking": {
       const thinkingText = part.data.steps.join("");
       const summaryLabel = getThinkingSummaryLabel(
@@ -1362,10 +1423,12 @@ function shouldSuppressOverlayAskUserToolCall(
 function ToolCallRow({
   spec,
   skillLabels,
+  materialLabels,
   visibleAskUserAnswerToolCallIds,
 }: {
   spec: ToolCallSpec;
   skillLabels?: SkillLabelMap;
+  materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
 }) {
   const b = spec.body;
@@ -1481,7 +1544,7 @@ function ToolCallRow({
   if (shouldSuppressOverlayAskUserToolCall(spec, visibleAskUserAnswerToolCallIds)) {
     return null;
   }
-  return <UnifiedToolCall spec={spec} skillLabels={skillLabels} />;
+  return <UnifiedToolCall spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
 }
 
 function toolHost(u: unknown): string {

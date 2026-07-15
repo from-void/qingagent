@@ -1,0 +1,346 @@
+import { act, useEffect, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { Editor } from "@tiptap/core";
+import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
+import type { AnnotationGroup } from "@qingagent/contract-ts";
+import { AnnotationCarousel, buildAnnotationInstruction, buildAnnotationSeveritySummary } from "../../components/AnnotationCarousel";
+import { installAnnotationGroupDecorations } from "../../data/annotationDecorations";
+import { initialWorkspaceState, workspaceReducer } from "../../data/workspaceState";
+
+const groups: AnnotationGroup[] = [
+  { id: "g1", summary: "事实有误", note: "时间与资料不一致", origin: "source-check", suggestion: "改为四月发布", status: "reviewing", anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组原句", textHash: "h1" }] },
+  { id: "g2", summary: "表述重复", note: "与上一段语义重复", origin: "consistency", suggestion: "删去重复句", status: "reviewing", anchors: [{ blockId: "p", pmFrom: 3, pmTo: 5, quote: "乙组原句", textHash: "h2" }] },
+];
+
+describe("AnnotationCarousel hover card", () => {
+  let editor: Editor | null = null;
+  let editorHost: HTMLDivElement | null = null;
+  let host: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeAll(() => { (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
+  afterAll(() => { delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT; });
+  afterEach(async () => {
+    if (root) await act(async () => root?.unmount());
+    editor?.destroy();
+    editorHost?.remove();
+    host?.remove();
+    root = null;
+    editor = null;
+    editorHost = null;
+    host = null;
+    vi.useRealTimers();
+  });
+
+  it("一次画出 reviewing 与 accepted 锚点，忽略组不渲染", () => {
+    createEditor();
+    const uninstall = installAnnotationGroupDecorations(editor!, [
+      groups[0]!,
+      { ...groups[1]!, status: "accepted" },
+      { ...groups[1]!, id: "g3", status: "ignored" },
+    ]);
+    expect(editorHost!.querySelectorAll(".annotation-anchor-active")).toHaveLength(1);
+    expect(editorHost!.querySelectorAll(".annotation-anchor-accepted")).toHaveLength(1);
+    expect(editorHost!.querySelector('[data-annotation-group="g3"]')).toBeNull();
+    uninstall();
+  });
+
+  it("预览帧渐显波浪且不可 hover，reduced-motion 标类，groupsReady 由正式组接管", () => {
+    createEditor();
+    let reducedMotion = false;
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === "(prefers-reduced-motion: reduce)" && reducedMotion,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    }));
+    try {
+      const previewFrame = {
+        kind: "annotationPreview" as const,
+        data: {
+          previewId: "preview-1",
+          summary: "流式发现",
+          anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "preview-hash" }],
+        },
+      };
+      let state = workspaceReducer(initialWorkspaceState, previewFrame);
+      let uninstall = installAnnotationGroupDecorations(editor!, state.annotationGroups, undefined, state.previewGroups);
+      const animated = editorHost!.querySelector<HTMLElement>('[data-annotation-group="preview-1"]')!;
+      expect(animated.classList.contains("annotation-anchor-preview")).toBe(true);
+      expect(animated.classList.contains("annotation-anchor-active")).toBe(false);
+      expect(animated.getAttribute("data-annotation-preview")).toBe("true");
+      uninstall();
+
+      reducedMotion = true;
+      uninstall = installAnnotationGroupDecorations(editor!, state.annotationGroups, undefined, state.previewGroups);
+      expect(editorHost!.querySelector('[data-annotation-group="preview-1"]')?.classList.contains("is-reduced-motion")).toBe(true);
+      uninstall();
+
+      state = workspaceReducer(state, {
+        kind: "annotationGroupsReady",
+        data: {
+          groups: [{
+            id: "formal-1",
+            summary: "流式发现",
+            note: "正式校验已通过",
+            origin: "source-check",
+            status: "reviewing",
+            anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "formal-hash" }],
+          }],
+          replacedOrigins: ["source-check"],
+        },
+      });
+      expect(state.previewGroups).toEqual([]);
+      uninstall = installAnnotationGroupDecorations(editor!, state.annotationGroups, undefined, state.previewGroups);
+      expect(editorHost!.querySelector('[data-annotation-group="preview-1"]')).toBeNull();
+      expect(editorHost!.querySelector('[data-annotation-group="formal-1"]')?.classList.contains("annotation-anchor-active")).toBe(true);
+      uninstall();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it("锚内插字使整组静默消失，多锚组不保留残余锚", async () => {
+    createEditor();
+    const onGroupsChange = vi.fn();
+    const multiAnchorGroup: AnnotationGroup = {
+      ...groups[0]!,
+      anchors: [
+        { ...groups[0]!.anchors[0]!, quote: "甲组" },
+        { ...groups[1]!.anchors[0]!, quote: "乙组" },
+      ],
+    };
+    const uninstall = installAnnotationGroupDecorations(editor!, [multiAnchorGroup], onGroupsChange);
+
+    await act(async () => {
+      editor!.commands.insertContentAt(2, "新");
+      await Promise.resolve();
+    });
+
+    expect(onGroupsChange).toHaveBeenLastCalledWith([]);
+    expect(editorHost!.querySelector("[data-annotation-group]")).toBeNull();
+    uninstall();
+  });
+
+  it("锚内删字使整组静默消失", async () => {
+    createEditor();
+    const onGroupsChange = vi.fn();
+    const exactGroup: AnnotationGroup = {
+      ...groups[0]!,
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    };
+    const uninstall = installAnnotationGroupDecorations(editor!, [exactGroup], onGroupsChange);
+
+    await act(async () => {
+      editor!.commands.deleteRange({ from: 1, to: 2 });
+      await Promise.resolve();
+    });
+
+    expect(onGroupsChange).toHaveBeenLastCalledWith([]);
+    uninstall();
+  });
+
+  it("只改格式 mark 不判锚点失效", async () => {
+    createEditor();
+    const onGroupsChange = vi.fn();
+    const exactGroup: AnnotationGroup = {
+      ...groups[0]!,
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    };
+    const uninstall = installAnnotationGroupDecorations(editor!, [exactGroup], onGroupsChange);
+
+    await act(async () => {
+      editor!.chain().setTextSelection({ from: 1, to: 3 }).toggleBold().run();
+      await Promise.resolve();
+    });
+
+    expect(onGroupsChange).not.toHaveBeenCalled();
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.textContent).toBe("甲组");
+    uninstall();
+  });
+
+  it("锚外编辑只平移装饰且组继续存活", async () => {
+    createEditor();
+    const onGroupsChange = vi.fn();
+    const exactGroup: AnnotationGroup = {
+      ...groups[0]!,
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    };
+    const uninstall = installAnnotationGroupDecorations(editor!, [exactGroup], onGroupsChange);
+
+    await act(async () => {
+      editor!.commands.insertContentAt(1, "外");
+      await Promise.resolve();
+    });
+
+    expect(onGroupsChange).toHaveBeenCalledTimes(1);
+    expect(onGroupsChange.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({
+        id: "g1",
+        anchors: [expect.objectContaining({ pmFrom: 2, pmTo: 4, quote: "甲组" })],
+      }),
+    ]);
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.textContent).toBe("甲组");
+    uninstall();
+  });
+
+  it("hover 延迟出宽卡且可桥接，切组后编辑意见并确认修改，忽略立即移除", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    function Harness() {
+      const [currentGroups, setCurrentGroups] = useState(groups);
+      const [input, setInput] = useState("");
+      useEffect(() => installAnnotationGroupDecorations(editor!, currentGroups), [currentGroups]);
+      return <>
+        <div data-testid="chat-input">{input}</div>
+        <AnnotationCarousel
+          groups={currentGroups}
+          editorDom={editor!.view.dom}
+          onAccept={(group, suggestion) => {
+            setInput((value) => value + buildAnnotationInstruction(group, suggestion));
+            setCurrentGroups((value) => value.map((item) => item.id === group.id ? { ...item, status: "accepted" } : item));
+            return true;
+          }}
+          onIgnore={(group) => setCurrentGroups((value) => value.map((item) => item.id === group.id ? { ...item, status: "ignored" } : item))}
+        />
+      </>;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const firstAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g1"]')!;
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(79);
+    });
+    expect(host.querySelector(".annotation-hover-card")).toBeNull();
+    await act(async () => vi.advanceTimersByTime(1));
+    const card = host!.querySelector<HTMLElement>(".annotation-hover-card")!;
+    const body = card.querySelector<HTMLElement>(":scope > .ahc-body")!;
+    expect(body.querySelector(":scope > .ahc-head")).not.toBeNull();
+    expect(body.querySelector(":scope > .ahc-reason")).not.toBeNull();
+    expect(body.querySelector(":scope > .ahc-suggestion")).not.toBeNull();
+    expect(card.querySelector(":scope > footer")).not.toBeNull();
+    expect(card.textContent).toContain("事实有误");
+    expect(card.textContent).toContain("第 1 / 共 2 处");
+    expect(card.textContent).toContain("时间与资料不一致");
+    expect(card.textContent).toContain("改为四月发布");
+    expect(host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")?.value).toBe("改为四月发布");
+    expect(Array.from(card.querySelectorAll("footer button"), (button) => button.textContent)).toEqual(["忽略", "下次不再提示", "确认修改"]);
+    expect(card.querySelectorAll(".ahc-nav button")).toHaveLength(2);
+    expect(host.textContent).not.toContain("全部提交");
+
+    await act(async () => card.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+    expect(host.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).toBe("g2");
+    expect(host.textContent).toContain("第 2 / 共 2 处");
+    await act(async () => host!.querySelector<HTMLButtonElement>('[aria-label="上一处批注"]')!.click());
+
+    await act(async () => {
+      firstAnchor.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+      vi.advanceTimersByTime(100);
+      card.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: firstAnchor }));
+      vi.advanceTimersByTime(100);
+    });
+    expect(host.querySelector(".annotation-hover-card")).not.toBeNull();
+
+    const suggestion = host.querySelector<HTMLTextAreaElement>(".ahc-suggestion textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(suggestion, "改成五月发布");
+      suggestion.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-accept")!.click());
+    expect(host.querySelector('[data-testid="chat-input"]')?.textContent).toBe("按批注修改:「甲组原句」——改成五月发布（批注:事实有误；原因:时间与资料不一致）\n");
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.classList.contains("annotation-anchor-accepted")).toBe(true);
+    expect(host.querySelector(".annotation-hover-card")).toBeNull();
+
+    const secondAnchor = editorHost!.querySelector<HTMLElement>('[data-annotation-group="g2"]')!;
+    await act(async () => {
+      secondAnchor.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    await act(async () => host!.querySelector<HTMLButtonElement>(".ahc-ignore")!.click());
+    expect(editorHost!.querySelector('[data-annotation-group="g2"]')).toBeNull();
+  });
+
+  it("指令原句按 30 字截断并保留末尾换行", () => {
+    const longQuote = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一";
+    expect(buildAnnotationInstruction({ ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: longQuote }] }))
+      .toBe("按批注修改:「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注:事实有误；原因:时间与资料不一致）\n");
+  });
+
+  it("严重度计数只在模板输出分级后显示，缺省项按建议档计数", () => {
+    expect(buildAnnotationSeveritySummary(groups)).toBeNull();
+    expect(buildAnnotationSeveritySummary([
+      { ...groups[0]!, severity: "error" },
+      { ...groups[1]!, severity: "warn" },
+      { ...groups[1]!, id: "g3", severity: "info" },
+      { ...groups[1]!, id: "g4" },
+    ])).toBe("1 严重 · 2 建议 · 1 提示");
+  });
+
+  it("装饰节点透传三档严重度，未分级按 warn 保持现状", () => {
+    createEditor();
+    const uninstall = installAnnotationGroupDecorations(editor!, [
+      { ...groups[0]!, severity: "error", anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }] },
+      { ...groups[1]!, severity: "info", anchors: [{ ...groups[1]!.anchors[0]!, quote: "乙组" }] },
+    ]);
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.getAttribute("data-annotation-severity")).toBe("error");
+    expect(editorHost!.querySelector('[data-annotation-group="g2"]')?.getAttribute("data-annotation-severity")).toBe("info");
+    uninstall();
+
+    const fallback = installAnnotationGroupDecorations(editor!, [{
+      ...groups[0]!,
+      anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }],
+    }]);
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.getAttribute("data-annotation-severity")).toBe("warn");
+    fallback();
+  });
+
+  it("交叠区 hover 显示此处多条并可逐条切换", async () => {
+    vi.useFakeTimers();
+    createEditor();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const overlapping = [
+      { ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: "甲组" }] },
+      { ...groups[1]!, anchors: [{ ...groups[1]!.anchors[0]!, pmFrom: 1, pmTo: 3, quote: "甲组" }] },
+    ];
+
+    function Harness() {
+      useEffect(() => installAnnotationGroupDecorations(editor!, overlapping), []);
+      return <AnnotationCarousel groups={overlapping} editorDom={editor!.view.dom} onAccept={() => true} onIgnore={() => undefined} />;
+    }
+
+    await act(async () => root!.render(<Harness />));
+    const anchors = editorHost!.querySelectorAll<HTMLElement>(".annotation-anchor-active");
+    expect(anchors.length).toBeGreaterThan(0);
+    const deepest = Array.from(anchors).find((anchor) => anchor.dataset.annotationOverlap === "true") ?? anchors[0]!;
+    expect(deepest.dataset.annotationGroups?.split(",").sort()).toEqual(["g1", "g2"]);
+    await act(async () => {
+      deepest.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+
+    expect(host!.textContent).toContain("此处 2 条 · 第 1 / 共 2 条");
+    const firstId = host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId;
+    await act(async () => host!.querySelector<HTMLButtonElement>('[aria-label="下一处批注"]')!.click());
+    expect(host!.querySelector<HTMLElement>(".annotation-hover-card")?.dataset.groupId).not.toBe(firstId);
+    expect(host!.textContent).toContain("此处 2 条 · 第 2 / 共 2 条");
+  });
+
+  function createEditor() {
+    editorHost = document.createElement("div");
+    document.body.appendChild(editorHost);
+    editor = new Editor({ element: editorHost, extensions: createQingagentExtensions(), content: "<p>甲组乙组</p>" });
+  }
+});

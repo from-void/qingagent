@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocGenerationEvent, LegacySection, BridgeFrame } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
+import { buildDocVersionAwarenessContent } from "../llm/docVersionAwarenessPrompt.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -234,6 +235,8 @@ describe("docGenerationEvent stream protocol", () => {
       : null;
     expect(text?.type === "text" ? text.marks : []).toEqual([{ type: "bold" }]);
     expect(state.docVersion).toBe(1);
+    expect(state.modelKnownDocVersion).toBe(1);
+    expect(buildDocVersionAwarenessContent(state)).toBeNull();
     expect(state.doc?.content[0]).toEqual(pmNode);
   });
 

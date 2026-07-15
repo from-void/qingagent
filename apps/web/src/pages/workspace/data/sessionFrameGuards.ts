@@ -40,6 +40,9 @@ export function toContractChip(spec: ChatChipSpec): ChatChip {
     attach: { kind: "attach" },
     mention: spec.skillId ? { kind: "skill" } : { kind: "mention" },
     longtext: { kind: "text" },
+    // 批注 chip 复用既有 text chip 协议：短 label 只负责展示，完整指令走 text，
+    // 后端 composeInlineChipText 会在 richText 的 {{chip:N}} 位置原样展开给模型。
+    annotation: { kind: "text" },
   };
   // Selection, attach, and mention chips require a resourceRef per
   // contract §5.1.3. Generate one with the appropriate domain so the

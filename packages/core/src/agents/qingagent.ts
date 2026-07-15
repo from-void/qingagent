@@ -28,6 +28,10 @@ import {
   wrapModelWithOmObservations,
 } from "../llm/omObservationsPrompt.js";
 import {
+  docVersionAwarenessSourceFromRequestContext,
+  wrapModelWithDocVersionAwareness,
+} from "../llm/docVersionAwarenessPrompt.js";
+import {
   anthropicBaseUrl,
   createSnapshottingQingagentModel,
   resolveBaseUrl,
@@ -45,6 +49,7 @@ import { isQingagentToolSearchEnabled } from "./toolSearch.js";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { RequestContext } from "@mastra/core/request-context";
 import { wrapModernModelUsage } from "../llm/modernUsageModel.js";
+import { modelFetch } from "../llm/modelTransport.js";
 // F1 两层 key:模型实例按"实际生效的 apiKey"缓存——env 兜底请求共用一个实例(等价
 // 旧单例,保留 prompt-cache 等收益),访客自带 key 的请求各自命中自己的缓存项。
 // 上限防滥用:访客 key 任意多,缓存只留最近 16 个。
@@ -56,6 +61,8 @@ const MODEL_CACHE_LIMIT = 16;
 function getRepairingModelFor(requestContext?: RequestContext) {
   const todoAwarenessSource = todoAwarenessSourceFromRequestContext(requestContext);
   const omObservationsSource = omObservationsSourceFromRequestContext(requestContext);
+  const docVersionAwarenessSource =
+    docVersionAwarenessSourceFromRequestContext(requestContext);
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const effectiveKey = apiKey || qingagentModelConfig.apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
@@ -73,7 +80,11 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     let m = modelCache.get(anthKey);
     if (!m) {
       m = wrapToolCallRepairingModel(
-        createAnthropic({ baseURL: anthropicBaseUrl(baseUrl), apiKey: effectiveKey })(
+        createAnthropic({
+          baseURL: anthropicBaseUrl(baseUrl),
+          apiKey: effectiveKey,
+          fetch: modelFetch,
+        })(
           anthModel,
         ) as RepairingAgentAnthropicModel,
       );
@@ -81,7 +92,10 @@ function getRepairingModelFor(requestContext?: RequestContext) {
       modelCache.set(anthKey, m);
     }
     const contextualModel = wrapModelWithTodoAwareness(
-      wrapModelWithOmObservations(m, omObservationsSource),
+      wrapModelWithOmObservations(
+        wrapModelWithDocVersionAwareness(m, docVersionAwarenessSource),
+        omObservationsSource,
+      ),
       todoAwarenessSource,
     );
     return maybeTrackNonBridgeModel(contextualModel, requestContext);
@@ -94,7 +108,10 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     { guardProviderCall: true },
   );
   const contextualModel = wrapModelWithTodoAwareness(
-    wrapModelWithOmObservations(model, omObservationsSource),
+    wrapModelWithOmObservations(
+      wrapModelWithDocVersionAwareness(model, docVersionAwarenessSource),
+      omObservationsSource,
+    ),
     todoAwarenessSource,
   );
   return maybeTrackNonBridgeModel(contextualModel, requestContext);

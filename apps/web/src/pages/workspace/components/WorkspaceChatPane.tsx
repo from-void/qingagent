@@ -2,10 +2,12 @@ import { goConfigureModel } from "../../../system/modelKeyGate";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageList, shouldShowPreTokenLoading } from "./ChatMessageList";
+import { ConfirmOverlay, ConfirmRecordBar } from "./ConfirmOverlay";
 import { extractAskUser } from "./RightPane";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { TaskPill } from "./TaskPill";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
+import { useConfirmCard } from "../hooks/useConfirmCard";
 
 export function WorkspaceChatPane({
   controller,
@@ -46,6 +48,12 @@ export function WorkspaceChatPane({
     handleCancelAskUser,
     handleSubmitAskUserAnswers,
   } = controller;
+  const { confirmRecord, handleConfirmDecision, inlineConfirm } = useConfirmCard({
+    debugMode,
+    blocked: inputHandedOff || Boolean(inlineAsk),
+    sessionId: state.sessionId,
+  });
+  const inputHidden = inputHandedOff || Boolean(inlineConfirm);
 
   return (
     <div className="ws-left">
@@ -66,14 +74,17 @@ export function WorkspaceChatPane({
         debugMode={debugMode}
       />
       <div className="ws-input-wrap">
-        <TaskPill todos={state.todos} inputHidden={inputHandedOff} />
+        {confirmRecord && !inlineConfirm && (
+          <ConfirmRecordBar record={confirmRecord} />
+        )}
+        <TaskPill todos={state.todos} inputHidden={inputHidden} />
         <ScrollToBottomButton
           scrollRef={chatScrollRef}
-          inputHidden={inputHandedOff}
+          inputHidden={inputHidden}
         />
         <div
           ref={inputMorphRef}
-          className={`ws-input-morph${chatInputEditorDisabled ? " is-morph-out" : ""}${inputContentOut ? " is-content-out" : ""}${inputHandedOff ? " is-morph-hidden" : ""}`}
+          className={`ws-input-morph${chatInputEditorDisabled ? " is-morph-out" : ""}${inputContentOut ? " is-content-out" : ""}${inputHidden ? " is-morph-hidden" : ""}${inlineConfirm ? " is-confirm-hidden" : ""}`}
         >
           <ChatInput
             ref={chatInputRef}
@@ -108,6 +119,14 @@ export function WorkspaceChatPane({
               handleSubmitAskUserAnswers(inlineAsk.id, answers, "已提交答案")
             }
             onAbort={() => handleCancelAskUser(inlineAsk)}
+          />
+        )}
+        {inlineConfirm && (
+          <ConfirmOverlay
+            key={inlineConfirm.id}
+            spec={inlineConfirm}
+            inputBoxRef={inputMorphRef}
+            onDecision={handleConfirmDecision}
           />
         )}
       </div>

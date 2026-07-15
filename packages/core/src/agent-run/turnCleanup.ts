@@ -63,6 +63,11 @@ export function finalizeLingeringRunningToolCalls(
 ): Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> {
   const updates: Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> = [];
   const activeOwner = getActiveSuspensionOwner(state);
+  const activeConfirmToolCallIds = new Set(
+    Array.from(state.pendingConfirms.values())
+      .filter((pending) => pending.status === "pending")
+      .map((pending) => pending.toolCallId),
+  );
 
   for (const message of state.chatHistory) {
     for (let i = 0; i < message.parts.length; i++) {
@@ -70,7 +75,10 @@ export function finalizeLingeringRunningToolCalls(
       if (part.kind !== "toolCall") continue;
       const isOwnedSuspensionToolCall =
         activeOwner !== null && part.data.id === activeOwner.toolCallId;
-      const shouldFinalize = part.data.status.kind === "running" && !isOwnedSuspensionToolCall;
+      const shouldFinalize =
+        part.data.status.kind === "running" &&
+        !isOwnedSuspensionToolCall &&
+        !activeConfirmToolCallIds.has(part.data.id);
       if (!shouldFinalize) continue;
 
       const isUnexecutedStreamingPlaceholder =

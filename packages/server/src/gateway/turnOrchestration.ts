@@ -759,6 +759,21 @@ export async function* handleTurnCommand(
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
 
+      if (session.pendingConfirms.size > 0) {
+        yield {
+          kind: "stream",
+          data: {
+            kind: "draftingFailed",
+            data: {
+              streamId: session.streamId ?? "blocked",
+              reason: "请先处理当前确认",
+              retriable: false,
+            },
+          },
+        };
+        return;
+      }
+
       if (clearStaleSuspensionIfInactive(session)) {
         yield* emitProjectedDocState(session, "stale_suspension_cleared");
         schedulePersist(session, "sendMessage:clear_stale_suspension").catch((err) => {
@@ -815,6 +830,21 @@ export async function* handleTurnCommand(
         throw new Error(`Session not found: ${command.data.sessionId}`);
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+
+      if (session.pendingConfirms.size > 0) {
+        yield {
+          kind: "stream",
+          data: {
+            kind: "draftingFailed",
+            data: {
+              streamId: session.streamId ?? "blocked",
+              reason: "请先处理当前确认",
+              retriable: false,
+            },
+          },
+        };
+        return;
+      }
 
       if (clearStaleSuspensionIfInactive(session)) {
         yield* emitProjectedDocState(session, "stale_suspension_cleared");

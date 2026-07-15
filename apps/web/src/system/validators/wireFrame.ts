@@ -23,6 +23,7 @@ import type {
   BridgeFrame,
 } from "@qingagent/contract-ts";
 import { pmDocSchema } from "@qingagent/pm-schema";
+import { confirmRequestedSchema, confirmResolvedSchema } from "@qingagent/contract-ts/schemas";
 import { validateAskUserSpec, AskUserSpecValidationError } from "./askUserSpec";
 
 export class BridgeFrameValidationError extends Error {
@@ -61,6 +62,7 @@ const ALLOWED_DOC_STATE_KINDS = new Set([
 
 const ALLOWED_ACTIVE_OVERLAYS = new Set([
   "askUser",
+  "confirm",
   "imageProgress",
   null,
 ]);
@@ -749,6 +751,16 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       }
       return;
     case "sessionMeta":
+      return;
+    case "confirmRequested":
+      if (!confirmRequestedSchema.safeParse(frame.data).success) {
+        fail("ConfirmRequested.data is invalid");
+      }
+      return;
+    case "confirmResolved":
+      if (!confirmResolvedSchema.safeParse(frame.data).success) {
+        fail("ConfirmResolved.data is invalid");
+      }
       return;
     case "chatMessageAdded":
       checkChatMessage(frame.data.message);

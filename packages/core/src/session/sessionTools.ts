@@ -1231,6 +1231,7 @@ export function createSessionScopedTools(
   const executeCommand = state
     ? createGatedExecuteCommandTool({
         sessionId: state.sessionId,
+        state,
         getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
       })
     : null;

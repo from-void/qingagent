@@ -1,36 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { ConfirmDecision, ConfirmSpec } from "@qingagent/contract-ts";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
 import { CheckIcon } from "./icons";
 import "./confirm-overlay.css";
 
-export interface ConfirmSpec {
-  id: string;
-  kind: "install" | "connect" | "send";
-  title: string;
-  sub?: string;
-  say: string;
-  widget?:
-    | {
-        type: "options";
-        options: {
-          value: string;
-          label: string;
-          description?: string;
-          recommended?: boolean;
-        }[];
-      }
-    | { type: "secretInput"; placeholder: string };
-  footHint: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-}
-
-export interface ConfirmDecision {
-  id: string;
-  accepted: boolean;
-  optionValue?: string;
-  secretValue?: string;
-}
+export type { ConfirmDecision, ConfirmSpec } from "@qingagent/contract-ts";
 
 interface InputBoxRef {
   readonly current: HTMLElement | null;

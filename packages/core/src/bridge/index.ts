@@ -12,7 +12,15 @@ export {
   terminalizeAskUserToolCall,
   updateToolCallInChatHistory,
 } from "../session/sessionState.js";
-export type { SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "../session/sessionState.js";
+export type { PendingConfirm, SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "../session/sessionState.js";
+
+export {
+  ConfirmDecisionError,
+  ConfirmService,
+  confirmService,
+  secretLeaseStore,
+} from "../confirm/index.js";
+export type { SafeSubmitConfirmDecision } from "../confirm/index.js";
 
 export {
   AGENT_MAX_STEPS,

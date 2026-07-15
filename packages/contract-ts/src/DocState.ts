@@ -10,7 +10,7 @@ export type ContentDocState =
  */
 export type DocState = ContentDocState;
 
-export type WireActiveOverlay = "askUser" | "imageProgress" | null;
+export type WireActiveOverlay = "askUser" | "confirm" | "imageProgress" | null;
 
 export type LegacyDocStateKind =
   | "init"

@@ -18,6 +18,9 @@ import {
 } from "@qingagent/db";
 import { emitRestoreFrames } from "./restoreFrames";
 import { sessions } from "./sessionRegistry";
+import { confirmService } from "./bridgeCore";
+import { reconcileRestoredConfirms } from "./confirmRecovery";
+import { handleConfirmExpiry } from "./confirmRuntime";
 export {
   findSessionByPatch,
   findSessionByReviewBatchId,
@@ -89,7 +92,9 @@ export async function getOrRestoreSession(
     if (!restoreOptions || cached.runId) return cached;
     const restored = await loadSessionFromThread(sessionId, restoreOptions);
     if (restored?.runId) {
+      await reconcileRestoredConfirms(restored);
       sessions.set(sessionId, restored);
+      armSessionConfirmTimeouts(restored);
       return restored;
     }
     return cached;
@@ -104,16 +109,19 @@ export async function getOrRestoreSession(
         ? await loadSessionFromThread(sessionId, restoreOptions)
         : await loadSessionFromThread(sessionId);
       if (!restored) return undefined;
+      await reconcileRestoredConfirms(restored);
       // await 期间可能已有别的路径(如 startSession existing)把 session 放回内存,以内存态为准,不覆盖。
       const existing = sessions.get(sessionId);
       if (existing) {
         if (restoreOptions && !existing.runId && restored.runId) {
           sessions.set(sessionId, restored);
+          armSessionConfirmTimeouts(restored);
           return restored;
         }
         return existing;
       }
       sessions.set(sessionId, restored);
+      armSessionConfirmTimeouts(restored);
       return restored;
     })().finally(() => {
       restoreInflight.delete(inflightKey);
@@ -161,6 +169,8 @@ export async function sessionExists(sessionId: string): Promise<boolean> {
 export function forgetSession(sessionId: string): boolean {
   const session = sessions.get(sessionId);
   session?._abortController?.abort();
+  if (session) confirmService.clearSession(session);
+  clearSessionConfirmTimeouts(sessionId);
   const deleted = sessions.delete(sessionId);
   forgetFolderSourceOperationQueue(sessionId);
   unregisterSessionFolderSources(sessionId);
@@ -185,7 +195,57 @@ export const sessionManager = new SessionManager({
     begin: beginSessionDeletion,
     list: listSessionDeletions,
   },
+  afterRun: (sessionId) => {
+    const session = sessions.get(sessionId);
+    if (session) armSessionConfirmTimeouts(session);
+  },
 });
+
+interface ConfirmTimerEntry {
+  expiresAt: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const confirmTimers = new Map<string, Map<string, ConfirmTimerEntry>>();
+
+function clearSessionConfirmTimeouts(sessionId: string): void {
+  const entries = confirmTimers.get(sessionId);
+  if (!entries) return;
+  for (const entry of entries.values()) clearTimeout(entry.timer);
+  confirmTimers.delete(sessionId);
+}
+
+function armSessionConfirmTimeouts(session: SessionState): void {
+  let entries = confirmTimers.get(session.sessionId);
+  if (!entries) {
+    entries = new Map();
+    confirmTimers.set(session.sessionId, entries);
+  }
+  const pendingIds = new Set<string>();
+  for (const pending of session.pendingConfirms.values()) {
+    if (pending.status !== "pending") continue;
+    pendingIds.add(pending.toolCallId);
+    if (entries.get(pending.toolCallId)?.expiresAt === pending.expiresAt) continue;
+    const previous = entries.get(pending.toolCallId);
+    if (previous) clearTimeout(previous.timer);
+    const delay = Math.max(0, Date.parse(pending.expiresAt) - Date.now());
+    const timer = setTimeout(() => {
+      entries?.delete(pending.toolCallId);
+      void sessionManager.runExclusive(
+        session.sessionId,
+        () => handleConfirmExpiry(session.sessionId, pending.toolCallId),
+      ).catch(() => undefined);
+    }, Math.min(delay, 2_147_483_647));
+    timer.unref?.();
+    entries.set(pending.toolCallId, { expiresAt: pending.expiresAt, timer });
+  }
+  for (const [toolCallId, entry] of entries) {
+    if (pendingIds.has(toolCallId)) continue;
+    clearTimeout(entry.timer);
+    entries.delete(toolCallId);
+  }
+  if (entries.size === 0) confirmTimers.delete(session.sessionId);
+}
 
 export async function disposeAllSessionsForShutdown(): Promise<void> {
   // 先快照所有活跃轮的收尾 promise:dispose/forgetSession 会 abort 它们,但 abort 只是发信号,

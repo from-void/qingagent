@@ -27,6 +27,7 @@ import {
   type SessionState,
 } from "./bridgeCore";
 import { folderSourcesChangedFrame } from "./folderSourceFrames";
+import { takeConfirmRecoveryFrames } from "./confirmRecovery";
 
 interface LiveRestoreDocStateDecision {
   target: DocState;
@@ -214,6 +215,24 @@ export function* emitRestoreFrames(
     yield* emitReadOnlyRestoreDocState(session);
   } else {
     yield* emitNormalizedRestoreDocState(session);
+  }
+
+  for (const pending of Array.from(session.pendingConfirms.values())
+    .filter((item) => item.status === "pending" && Date.parse(item.expiresAt) > Date.now())
+    .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt) || a.toolCallId.localeCompare(b.toolCallId))) {
+    yield {
+      kind: "confirmRequested",
+      data: {
+        toolCallId: pending.toolCallId,
+        spec: pending.spec,
+        requestedAt: pending.requestedAt,
+        expiresAt: pending.expiresAt,
+      },
+    };
+  }
+  // gap/epoch restore 必须纯读；restoreReset 已先清空前端队列，无需消费一次性恢复终态帧。
+  if (!readOnly) {
+    for (const frame of takeConfirmRecoveryFrames(session)) yield frame;
   }
 
   // 回放 AI 任务清单(与 docStateChanged 同路数:会话状态帧,页面刷新/重连恢复 pill)。

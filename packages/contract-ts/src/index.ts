@@ -23,6 +23,7 @@ export * from "./CodePatch";
 export * from "./Command";
 export * from "./CommitPatches";
 export * from "./CommitReviewGroups";
+export * from "./Confirm";
 export * from "./DocGenerationEvent";
 export * from "./Derivatives";
 export * from "./LegacySection";

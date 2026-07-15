@@ -9,6 +9,11 @@ import {
   createGatedExecuteCommandTool,
 } from "../workspace/gatedExecuteCommandTool.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+import { RequestContext } from "@mastra/core/request-context";
+import { createSession } from "../session/sessionState.js";
+import { commandConfirmationDigest } from "../confirm/commandConfirmation.js";
+import { issueApprovalProof } from "../confirm/approvalProof.js";
+import type { SessionState } from "../session/sessionState.js";
 
 interface GatedExecuteInput {
   command: string;
@@ -64,12 +69,17 @@ function createToolHarness(
   options: {
     resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
     sandboxBinDir?: string;
+    state?: SessionState;
+    workspaceStatus?: "ready" | "error";
+    sandboxStatus?: "ready" | "running" | "error";
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
   const workspace = {
+    ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
     sandbox: {
+      ...(options.sandboxStatus ? { status: options.sandboxStatus } : {}),
       executeCommand: async (
         _command: string,
         _args: string[],
@@ -94,6 +104,7 @@ function createToolHarness(
   } as unknown as Workspace;
   const tool = createGatedExecuteCommandTool({
     sessionId,
+    state: options.state,
     getWorkspace: async () => workspace,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
@@ -104,9 +115,19 @@ function createToolHarness(
 async function executeTool(
   tool: ReturnType<typeof createGatedExecuteCommandTool>,
   input: GatedExecuteInput,
+  context = toolInvocationOptions,
 ): Promise<string> {
   if (!tool.execute) throw new Error("execute_command execute missing");
-  return await tool.execute(input, toolInvocationOptions) as string;
+  return await tool.execute(input, context) as string;
+}
+
+function approvalContext(runId: string, toolCallId: string) {
+  return {
+    toolCallId,
+    messages: [],
+    requestContext: new RequestContext([["runId", runId]]),
+    agent: { toolCallId },
+  } as never;
 }
 
 describe("gated execute_command tool schema", () => {
@@ -121,6 +142,105 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+  });
+});
+
+describe("gated execute_command approval proof 双门", () => {
+  const confirmInput = { command: "mv draft.txt final.txt" };
+
+  it("动态 requireApproval 仅挂起 confirm，allow/deny 分类仍由原策略执行", async () => {
+    const state = createSession("gated-approval-predicate");
+    const { tool } = createToolHarness(state.sessionId, { state });
+    const predicate = tool.requireApproval;
+    expect(typeof predicate).toBe("function");
+    if (typeof predicate !== "function") return;
+    expect(await predicate(confirmInput)).toBe(true);
+    expect(await predicate({ command: allowedFileCommand })).toBe(false);
+    expect(await predicate({ command: "node /workspace/untrusted.mjs" })).toBe(false);
+  });
+
+  it("直接 approve 但没有宿主 proof 时拒绝，workspace 与 spawn 均不触发", async () => {
+    const state = createSession("gated-no-proof");
+    let workspaceCalls = 0;
+    const harness = createToolHarness(state.sessionId, { state });
+    const tool = createGatedExecuteCommandTool({
+      sessionId: state.sessionId,
+      state,
+      getWorkspace: async () => {
+        workspaceCalls += 1;
+        throw new Error("不应初始化 workspace");
+      },
+    });
+    const result = await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1"));
+    expect(result).toContain("缺少有效的用户确认");
+    expect(workspaceCalls).toBe(0);
+    expect(harness.executeCalls).toHaveLength(0);
+  });
+
+  it("正确 proof 只授权同一调用一次，digest/toolCall/session 不匹配均拒绝", async () => {
+    const state = createSession("gated-proof-once");
+    const { tool, executeCalls } = createToolHarness(state.sessionId, { state });
+    const digest = commandConfirmationDigest(state.sessionId, confirmInput);
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-1",
+      toolCallId: "tool-1",
+      commandDigest: digest,
+    });
+    expect(await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1"))).toBe("ok");
+    expect(executeCalls).toHaveLength(1);
+    expect(await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1")))
+      .toContain("缺少有效的用户确认");
+
+    for (const mismatch of [
+      { sessionId: "other-session", runId: "run-1", toolCallId: "tool-2", commandDigest: digest },
+      { sessionId: state.sessionId, runId: "other-run", toolCallId: "tool-3", commandDigest: digest },
+      { sessionId: state.sessionId, runId: "run-1", toolCallId: "tool-4", commandDigest: "bad" },
+    ]) {
+      issueApprovalProof(state, mismatch);
+      const result = await executeTool(
+        tool,
+        confirmInput,
+        approvalContext("run-1", mismatch.toolCallId),
+      );
+      expect(result).toContain("缺少有效的用户确认");
+    }
+    expect(executeCalls).toHaveLength(1);
+  });
+
+  it("sandbox 不健康时 proof 已通过也不执行", async () => {
+    const state = createSession("gated-unhealthy");
+    const { tool, executeCalls, spawnCalls } = createToolHarness(state.sessionId, {
+      state,
+      sandboxStatus: "error",
+    });
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, confirmInput),
+    });
+    expect(await executeTool(tool, confirmInput, approvalContext("run", "tool")))
+      .toContain("沙箱状态异常");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
+  });
+
+  it("accept 后 policy 重算为 deny 时 proof 也不能放行", async () => {
+    const state = createSession("gated-policy-changed-deny");
+    const deniedInput = { command: "node /workspace/untrusted.mjs" };
+    const { tool, executeCalls, spawnCalls } = createToolHarness(state.sessionId, { state });
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, deniedInput),
+    });
+
+    expect(await executeTool(tool, deniedInput, approvalContext("run", "tool")))
+      .toContain("命令已被拒绝");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 });
 

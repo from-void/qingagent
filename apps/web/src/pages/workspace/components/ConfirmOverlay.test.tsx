@@ -3,6 +3,7 @@
 import { act, type ReactNode, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
   ConfirmOverlay,
   ConfirmRecordBar,
@@ -11,6 +12,7 @@ import {
 } from "./ConfirmOverlay";
 import { useConfirmCard } from "../hooks/useConfirmCard";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
+import type { ServerStream } from "../data/serverStream";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -233,6 +235,71 @@ describe("ConfirmOverlay", () => {
     );
     expect(host?.textContent).not.toContain(secret);
   });
+
+  it("真实 SSE 确认按 FIFO 展示，决策走专用上行且仅由 resolved 关闭", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const resolveConfirm = vi.fn(async () => undefined);
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => {
+          listener = null;
+        };
+      }),
+      resolveConfirm,
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+    const later = {
+      ...installSpec,
+      id: "confirm-live-later",
+      title: "后到确认",
+    };
+    const firstRequested: BridgeFrame = {
+      kind: "confirmRequested",
+      data: {
+        toolCallId: "tool-live-first",
+        spec: { ...installSpec, id: "confirm-live-first", title: "先到确认" },
+        requestedAt: "2026-07-16T10:00:00.000Z",
+        expiresAt: "2026-07-16T10:10:00.000Z",
+      },
+    };
+    const laterRequested: BridgeFrame = {
+      kind: "confirmRequested",
+      data: {
+        toolCallId: "tool-live-later",
+        spec: later,
+        requestedAt: "2026-07-16T10:00:01.000Z",
+        expiresAt: "2026-07-16T10:10:01.000Z",
+      },
+    };
+
+    await act(async () => {
+      listener?.(laterRequested);
+      listener?.(firstRequested);
+    });
+    expect(host?.querySelector(".cf-title")?.textContent).toBe("先到确认");
+
+    await click(findButton("安装并继续"));
+    expect(resolveConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "live-session",
+      toolCallId: "tool-live-first",
+      decisionId: expect.any(String),
+      decision: { id: "confirm-live-first", accepted: true },
+    }));
+    expect(host?.querySelector(".cf-overlay")).not.toBeNull();
+
+    await act(async () => {
+      listener?.({
+        kind: "confirmResolved",
+        data: {
+          id: "confirm-live-first",
+          toolCallId: "tool-live-first",
+          resolution: "accepted",
+        },
+      });
+    });
+    expect(host?.querySelector(".cf-title")?.textContent).toBe("后到确认");
+  });
 });
 
 function ConfirmHarness({
@@ -266,6 +333,17 @@ function ConfirmHarness({
       )}
     </section>
   );
+}
+
+function LiveConfirmHarness({ stream }: { stream: ServerStream }) {
+  const { handleConfirmDecision, inlineConfirm } = useConfirmCard({
+    debugMode: false,
+    sessionId: "live-session",
+    stream,
+  });
+  return inlineConfirm
+    ? <ConfirmOverlay spec={inlineConfirm} onDecision={handleConfirmDecision} />
+    : null;
 }
 
 async function renderOverlay(

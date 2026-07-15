@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ConfirmDecision,
-  ConfirmRecord,
+  ConfirmRequested,
   ConfirmSpec,
+  SubmitConfirmDecision,
+} from "@qingagent/contract-ts";
+import type {
+  ConfirmRecord,
 } from "../components/ConfirmOverlay";
+import type { ServerStream } from "../data/serverStream";
 
 interface ConfirmDemo {
   spec: ConfirmSpec;
@@ -111,20 +116,26 @@ export function useConfirmCard({
   debugMode,
   blocked = false,
   sessionId,
+  stream,
 }: {
   debugMode: boolean;
   blocked?: boolean;
   sessionId?: string | null;
+  stream?: ServerStream | null;
 }) {
-  const [inlineConfirm, setInlineConfirm] = useState<ConfirmSpec | null>(null);
+  const [demoConfirm, setDemoConfirm] = useState<ConfirmSpec | null>(null);
+  const [pendingConfirms, setPendingConfirms] = useState<ConfirmRequested[]>([]);
   const [confirmRecord, setConfirmRecord] = useState<ConfirmRecord | null>(null);
+  const [confirmAttempt, setConfirmAttempt] = useState(0);
   const nextDemoIndexRef = useRef(0);
   const sessionIdRef = useRef(sessionId);
+  const submittingRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (sessionIdRef.current === sessionId) return;
     sessionIdRef.current = sessionId;
-    setInlineConfirm(null);
+    setDemoConfirm(null);
+    setPendingConfirms([]);
     setConfirmRecord(null);
     nextDemoIndexRef.current = 0;
   }, [sessionId]);
@@ -150,27 +161,81 @@ export function useConfirmCard({
       const demo = CONFIRM_CARD_DEMOS[nextDemoIndexRef.current]!;
       nextDemoIndexRef.current =
         (nextDemoIndexRef.current + 1) % CONFIRM_CARD_DEMOS.length;
-      setInlineConfirm(demo.spec);
+      setDemoConfirm(demo.spec);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [blocked, debugMode]);
 
-  const handleConfirmDecision = useCallback((decision: ConfirmDecision) => {
+  useEffect(() => {
+    if (!stream) return;
+    return stream.subscribe((frame) => {
+      if (frame.kind === "restoreReset") {
+        setPendingConfirms([]);
+        return;
+      }
+      if (frame.kind === "confirmRequested") {
+        setPendingConfirms((current) => {
+          const withoutSame = current.filter(
+            (item) => item.toolCallId !== frame.data.toolCallId,
+          );
+          return [...withoutSame, frame.data].sort(
+            (a, b) =>
+              a.requestedAt.localeCompare(b.requestedAt) ||
+              a.toolCallId.localeCompare(b.toolCallId),
+          );
+        });
+        return;
+      }
+      if (frame.kind === "confirmResolved") {
+        submittingRef.current.delete(frame.data.id);
+        setPendingConfirms((current) => current.filter(
+          (item) =>
+            item.spec.id !== frame.data.id &&
+            item.toolCallId !== frame.data.toolCallId,
+        ));
+      }
+    });
+  }, [stream]);
+
+  const liveConfirm = pendingConfirms[0] ?? null;
+  const inlineConfirm = liveConfirm?.spec ?? demoConfirm;
+
+  const handleConfirmDecision = useCallback(async (decision: ConfirmDecision) => {
+    if (liveConfirm && stream && sessionId) {
+      if (submittingRef.current.has(decision.id)) return;
+      submittingRef.current.add(decision.id);
+      const submission: SubmitConfirmDecision = {
+        sessionId,
+        toolCallId: liveConfirm.toolCallId,
+        decisionId: crypto.randomUUID(),
+        decision,
+      };
+      try {
+        await stream.resolveConfirm(submission);
+      } catch {
+        submittingRef.current.delete(decision.id);
+        // Overlay 内部为一次关闭动画；失败时换 key 重挂同一安全卡，允许用户重试。
+        setConfirmAttempt((value) => value + 1);
+      }
+      return;
+    }
+
     const safeDecision = stripSecretFromDecision(decision);
-    console.debug("[confirm-card] decision", safeDecision);
+    if (debugMode) console.debug("[confirm-card] decision", safeDecision);
     if (decision.accepted) {
       const demo = CONFIRM_CARD_DEMOS.find(
         (item) => item.spec.id === decision.id,
       );
       if (demo) setConfirmRecord(demo.record);
     }
-    setInlineConfirm(null);
-  }, []);
+    setDemoConfirm(null);
+  }, [debugMode, liveConfirm, sessionId, stream]);
 
   return {
     confirmRecord,
     handleConfirmDecision,
     inlineConfirm,
+    confirmAttempt,
   };
 }

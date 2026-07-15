@@ -9,6 +9,7 @@ import type {
   LegacySection,
   MessagePart,
   DocState,
+  ConfirmSpec,
   TodoItem,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
@@ -83,6 +84,20 @@ export interface SuspensionOwner {
   runId: string;
   toolCallId: string;
   toolName: SuspensionToolName;
+}
+
+/** confirm 专用挂起记录；与 askUser 的 SuspensionOwner/runId/toolCallId 完全独立。 */
+export interface PendingConfirm {
+  confirmId: string;
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  commandDigest: string;
+  spec: ConfirmSpec;
+  requestedAt: string;
+  expiresAt: string;
+  status: "pending" | "resuming";
+  decisionId?: string;
 }
 
 /** Mutable server-side session state. One per active session. */
@@ -212,6 +227,8 @@ export interface SessionState {
   _suspendedThisTurn?: boolean;
   /** Runtime-only owner for the currently resumable suspension. */
   _suspensionOwner?: SuspensionOwner | null;
+  /** 独立 confirm 通道，以 toolCallId 为键；绝不参与 askUser suspension owner。 */
+  pendingConfirms: Map<string, PendingConfirm>;
   /** Rich chat history (ChatMessage[]) for session restore.
    *  Captures full parts (text, thinking, toolCall) so tool bubbles survive restore. */
   chatHistory: ChatMessage[];
@@ -335,6 +352,7 @@ export function createSession(
     _workingMemoryUpdatedThisSession: false,
     _suspendedThisTurn: false,
     _suspensionOwner: null,
+    pendingConfirms: new Map(),
     chatHistory: [],
   };
 }

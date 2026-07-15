@@ -17,6 +17,7 @@ export interface SessionManagerOptions {
   handleCommand: HandleCommandFn;
   abortSession: (sessionId: string) => void;
   cleanupSession: (sessionId: string) => void | Promise<void>;
+  afterRun?: (sessionId: string) => void;
   frameLog?: FrameLog;
   maxActors?: number;
   markSessionDeleted?: (sessionId: string, docId?: string) => void;
@@ -82,6 +83,14 @@ export class SessionManager {
     }
     const actor = this.getOrCreateActor(sessionId);
     return actor.enqueue(input);
+  }
+
+  runExclusive(
+    sessionId: string,
+    task: () => AsyncGenerator<import("@qingagent/contract-ts").BridgeFrame>,
+  ): Promise<LoggedFrame[]> {
+    const actor = this.getOrCreateActor(sessionId);
+    return actor.enqueueTask(task);
   }
 
   async disposeSession(sessionId: string): Promise<void> {
@@ -310,6 +319,7 @@ export class SessionManager {
       frameLog: this.frameLog,
       handleCommand: this.options.handleCommand,
       abortSession: this.options.abortSession,
+      afterRun: this.options.afterRun,
     });
     this.actors.set(sessionId, { actor, lastAccessAt: Date.now() });
     this.evictIdleActorsIfNeeded(sessionId);

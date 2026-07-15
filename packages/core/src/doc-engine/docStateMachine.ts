@@ -9,7 +9,7 @@ import { hasApplicableSuggestion, hasCanonicalDoc } from "./docFacts.js";
 import { isQuestionnaireTool } from "../agent-run/questionnaireTools.js";
 
 export type ContentState = ContentDocState["kind"];
-export type ActiveOverlay = "askUser" | "imageProgress" | null;
+export type ActiveOverlay = "askUser" | "confirm" | "imageProgress" | null;
 export type EditorState = "empty" | "editable" | "locked" | "pendingReview";
 
 function iterToolCalls(state: SessionState): ToolCallSpec[] {
@@ -49,7 +49,7 @@ export function deriveContentState(state: SessionState): ContentDocState {
 }
 
 export function deriveAgentBusy(state: SessionState): boolean {
-  if (hasActiveSuspension(state)) {
+  if (hasActiveSuspension(state) || state.pendingConfirms.size > 0) {
     return false;
   }
 
@@ -68,6 +68,10 @@ export function deriveActiveOverlay(state: SessionState): ActiveOverlay {
     )
   ) {
     return "askUser";
+  }
+
+  if (Array.from(state.pendingConfirms.values()).some((pending) => pending.status === "pending")) {
+    return "confirm";
   }
 
   if (hasToolCallWithStatus(state, "generateSvg", ["running"])) {

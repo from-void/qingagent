@@ -48,10 +48,11 @@ export function WorkspaceChatPane({
     handleCancelAskUser,
     handleSubmitAskUserAnswers,
   } = controller;
-  const { confirmRecord, handleConfirmDecision, inlineConfirm } = useConfirmCard({
+  const { confirmRecord, handleConfirmDecision, inlineConfirm, confirmAttempt } = useConfirmCard({
     debugMode,
     blocked: inputHandedOff || Boolean(inlineAsk),
     sessionId: state.sessionId,
+    stream: controller.streamRef.current,
   });
   const inputHidden = inputHandedOff || Boolean(inlineConfirm);
 
@@ -123,7 +124,7 @@ export function WorkspaceChatPane({
         )}
         {inlineConfirm && (
           <ConfirmOverlay
-            key={inlineConfirm.id}
+            key={`${inlineConfirm.id}:${confirmAttempt}`}
             spec={inlineConfirm}
             inputBoxRef={inputMorphRef}
             onDecision={handleConfirmDecision}

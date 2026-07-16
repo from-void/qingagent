@@ -28,6 +28,7 @@ export function aiBlockToQingml(block: AiBlock): string {
       return tag("ul", block.items.map((item) => aiListItemToQingml(item)).join(""));
     case "orderedList":
       return tag("ol", block.items.map((item) => aiListItemToQingml(item, true)).join(""), {
+        start: block.start,
         style: block.listStyle,
       });
     case "horizontalRule":
@@ -43,6 +44,7 @@ export function aiBlockToQingml(block: AiBlock): string {
       return selfClosingTag("img", {
         src: block.src,
         alt: block.alt,
+        title: block.title,
         caption: block.caption,
         width: block.width,
         height: block.height,

@@ -811,6 +811,38 @@ describe("aiIrRoundTrip", () => {
     expect(backH3.anchor).toBeUndefined();
   });
 
+  it("orderedList.start 与 image.title 在 PM→AI-IR→PM 往返中保留", () => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "orderedList",
+          attrs: { blockId: "list-1", start: 5, listStyle: "upper-roman" },
+          content: [{
+            type: "listItem",
+            attrs: { blockId: "list-item-1" },
+            content: [{ type: "paragraph", attrs: { blockId: "list-item-1-p" }, content: [{ type: "text", text: "第五项" }] }],
+          }],
+        },
+        {
+          type: "image",
+          attrs: { blockId: "image-1", src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/image.png", alt: "图", title: "图片标题", caption: "图注", width: 320, height: 180, align: "right" },
+        },
+      ],
+    };
+
+    const ir = pmToAiIr(source);
+    expect(ir.blocks[0]).toMatchObject({ type: "orderedList", start: 5, listStyle: "upper-roman" });
+    expect(ir.blocks[1]).toMatchObject({ type: "image", title: "图片标题" });
+
+    const roundTripped = aiIrToPm(ir);
+    const list = roundTripped.content[0];
+    const image = roundTripped.content[1];
+    expect(list?.type === "orderedList" ? list.attrs.start : undefined).toBe(5);
+    expect(image?.type === "image" ? image.attrs.title : undefined).toBe("图片标题");
+  });
+
   it("compiles heading levels 1-6 and rejects bad blocks without producing a canonical doc", () => {
     const result = compileAiDocumentToPm({
       blocks: [

@@ -252,7 +252,9 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
       return { type: "bulletList", items: parseListItems(element, ctx) };
     case "ol": {
       const block: AiBlock = { type: "orderedList", items: parseListItems(element, ctx) };
+      const start = positiveInt(element.attribs.start);
       const listStyle = oneOf(PM_ORDERED_LIST_STYLES, element.attribs.style);
+      if (start !== undefined) block.start = start;
       if (listStyle) block.listStyle = listStyle;
       return block;
     }
@@ -284,11 +286,13 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "img": {
       const block: AiBlock = { type: "image", src: element.attribs.src ?? "" };
       const alt = optionalString(element.attribs.alt);
+      const title = optionalString(element.attribs.title);
       const caption = optionalString(element.attribs.caption);
       const width = positiveInt(element.attribs.width);
       const height = positiveInt(element.attribs.height);
       const align = oneOf(PM_IMAGE_ALIGN_VALUES, element.attribs.align);
       if (alt) block.alt = alt;
+      if (title) block.title = title;
       if (caption) block.caption = caption;
       if (width !== undefined) block.width = width;
       if (height !== undefined) block.height = height;

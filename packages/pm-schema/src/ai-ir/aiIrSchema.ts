@@ -70,13 +70,14 @@ export type AiBlock =
   | { type: "blockquote"; runs: AiRun[] }
   | { type: "codeBlock"; language?: string | null; text: string }
   | { type: "bulletList"; items: AiListItem[] }
-  | { type: "orderedList"; items: AiListItem[]; listStyle?: (typeof PM_ORDERED_LIST_STYLES)[number] | null }
+  | { type: "orderedList"; items: AiListItem[]; start?: number | null; listStyle?: (typeof PM_ORDERED_LIST_STYLES)[number] | null }
   | { type: "horizontalRule" }
   | { type: "table"; rows: AiTableRow[] }
   | {
       type: "image";
       src: string;
       alt?: string | null;
+      title?: string | null;
       caption?: string | null;
       width?: number | null;
       height?: number | null;
@@ -163,6 +164,7 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
     z.object({
       type: z.literal("orderedList"),
       items: z.array(aiListItemSchema).min(1),
+      start: z.number().int().positive().nullable().optional(),
       listStyle: aiOrderedListStyleSchema.nullable().optional(),
     }),
     z.object({ type: z.literal("horizontalRule") }),
@@ -171,6 +173,7 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
       type: z.literal("image"),
       src: z.string().refine(isAllowedImageSrc, { message: "image src is not allowed" }),
       alt: z.string().nullable().optional(),
+      title: z.string().nullable().optional(),
       caption: z.string().nullable().optional(),
       width: z.number().int().positive().nullable().optional(),
       height: z.number().int().positive().nullable().optional(),

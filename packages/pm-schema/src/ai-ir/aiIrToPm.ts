@@ -620,7 +620,7 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
     case "orderedList":
       return {
         type: "orderedList",
-        attrs: { blockId, start: 1, ...(block.listStyle ? { listStyle: block.listStyle } : {}) },
+        attrs: { blockId, start: block.start ?? 1, ...(block.listStyle ? { listStyle: block.listStyle } : {}) },
         content: block.items.map((item, itemIndex) => listItemToPm(item, blockId, index, itemIndex)),
       };
     case "horizontalRule":
@@ -642,7 +642,7 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
       };
     }
     case "image":
-      return { type: "image", attrs: { blockId, src: block.src, alt: block.alt ?? null, caption: block.caption ?? null, width: block.width ?? null, height: block.height ?? null, align: block.align ?? "center" } };
+      return { type: "image", attrs: { blockId, src: block.src, alt: block.alt ?? null, title: block.title ?? null, caption: block.caption ?? null, width: block.width ?? null, height: block.height ?? null, align: block.align ?? "center" } };
     case "diagram":
       // 安全:绝不信任模型给的 svg(会被 dangerouslySetInnerHTML 注入 + 内嵌导出 → 存储型 XSS)。
       // svg 一律置 null,只允许前端 mermaid(securityLevel:strict)渲染后回写的可信缓存。

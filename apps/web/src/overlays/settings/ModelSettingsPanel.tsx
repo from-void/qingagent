@@ -212,10 +212,10 @@ export function ModelSettingsPanel() {
     };
   }, []);
 
-  // 官方 key:输入即自动验证(debounce)。格式满足就实测一次 DeepSeek 接口,有问题立即提示。
+  // 官方 key:输入即自动验证(debounce)。只要非空就实测，不把厂商随时可能调整的格式当成拦截条件。
   useEffect(() => {
     const trimmed = keyInput.trim();
-    if (!/^sk-[A-Za-z0-9]{32}$/.test(trimmed)) {
+    if (!trimmed) {
       setVerifyStatus("idle");
       setVerifyMsg("");
       return;
@@ -281,8 +281,8 @@ export function ModelSettingsPanel() {
   // 验证是输入时自动做的(见上方 useEffect)。保存:验证过→直接存;没过→二次确认(可能失效)。
   const handleSave = async () => {
     const trimmed = keyInput.trim();
-    if (!/^sk-[A-Za-z0-9]{32}$/.test(trimmed)) {
-      setMessage("key 格式不对:需以 sk- 开头,后接 32 位字符");
+    if (!trimmed) {
+      setMessage("请填写 API key");
       return;
     }
     if (verifyStatus !== "ok") {
@@ -303,7 +303,7 @@ export function ModelSettingsPanel() {
     setEditing(false);
     setForceSetup(false);
     setMessage(null);
-    toast.show("key 已验证并保存到本机");
+    toast.show(verifyStatus === "ok" ? "key 已验证并保存到本机" : "key 已保存到本机，尚未验证通过");
     // 保存后回到用量看板:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
     requestAnimationFrame(() => {
       document.querySelector(".qj-sheet-body")?.scrollTo({ top: 0, behavior: "auto" });
@@ -438,7 +438,7 @@ export function ModelSettingsPanel() {
   const estDocs = avgPerDoc != null && balanceNum != null ? balanceNum / avgPerDoc : null;
 
   // 官方 DeepSeek key 表单(未配置态官方 tab 与 editing 态共用)。配置只存本机,无 scope 选择。
-  const keyFormatOk = keyInput.trim() === "" ? null : /^sk-[A-Za-z0-9]{32}$/.test(keyInput.trim());
+  const keyFormatOk = keyInput.trim() === "" ? null : true;
   const customBaseUrlValid = customBaseUrl.trim() === "" ? null : isHttpUrl(customBaseUrl.trim());
   const modelTierSection = (
     <div className="sm-tier-row" data-wf="ModelTierSelector">
@@ -481,9 +481,8 @@ export function ModelSettingsPanel() {
           type="button"
           className="sm-btn"
           onClick={() => void handleSave()}
-          // 未测试通过(verifyStatus!=="ok")前不可保存:必须先验证 key 有效
-          disabled={verifyStatus !== "ok"}
-          title={verifyStatus !== "ok" ? "请先填入有效 key 并等待验证通过" : undefined}
+          disabled={!keyInput.trim()}
+          title={!keyInput.trim() ? "请先填入 API key" : undefined}
         >
           保存
         </button>
@@ -493,9 +492,6 @@ export function ModelSettingsPanel() {
           </button>
         )}
       </div>
-      {keyFormatOk === false && (
-        <p className="sm-field-err">key 格式不对:需以 sk- 开头,后接 32 位字符</p>
-      )}
       {keyFormatOk && verifyStatus === "verifying" && <p className="sm-verify sm-verify--ing">正在验证 key…</p>}
       {verifyStatus === "ok" && (
         <p className="sm-verify sm-verify--ok">

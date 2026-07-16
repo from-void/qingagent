@@ -373,7 +373,7 @@ export async function getCredentialsForPlatform(
   return out;
 }
 
-/** 读取所有平台凭据,扁平成 env 注入用的 key→value(cred_key 即 env 键名)。 */
+/** 读取表单型平台凭据,扁平成 env 注入用的 key→value；连接器凭据只能走连接器 API。 */
 export async function getAllCredentialEnv(scope = DEFAULT_SCOPE): Promise<Record<string, string>> {
   await ensureMigrated();
   const client = getDocumentsClient();
@@ -385,6 +385,7 @@ export async function getAllCredentialEnv(scope = DEFAULT_SCOPE): Promise<Record
   const out: Record<string, string> = {};
   for (const row of res.rows) {
     const platform = String(row.platform);
+    if (platform.startsWith("connector:")) continue;
     const key = String(row.cred_key);
     const allowedKeys = allowedKeysByPlatform.get(platform);
     if (!allowedKeys?.has(key)) continue;

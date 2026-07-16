@@ -14,6 +14,7 @@ import {
   getCredentialsForPlatform,
   listCredentialMeta,
   saveCredentialRecord,
+  saveConnectorCredentialBundle,
 } from "../credentialsRepo.js";
 import { __resetDocumentsClientForTest, getDocumentsClient } from "@qingagent/db";
 import { __resetMigrationsForTest } from "@qingagent/db";
@@ -96,6 +97,23 @@ describe("credentialsRepo 存取与注入", () => {
     await saveCredentialRecord({ platform: "dingtalk", key: "UNKNOWN_TOKEN", value: "bad" });
     const env = await getAllCredentialEnv();
     expect(env).toEqual({ DINGTALK_APP_SECRET: "tok" });
+  });
+
+  it("getAllCredentialEnv 不注入 connector namespace，非连接器凭据仍正常注入", async () => {
+    await saveConnectorCredentialBundle("wechat-mp", {
+      cookie: "secret-cookie",
+      token: "secret-token",
+    });
+    await saveCredentialRecord({
+      platform: "dingtalk",
+      key: "DINGTALK_APP_KEY",
+      value: "app-key",
+    });
+
+    const env = await getAllCredentialEnv();
+
+    expect(env).toEqual({ DINGTALK_APP_KEY: "app-key" });
+    expect(env).not.toHaveProperty("bundle");
   });
 
   it("listCredentialMeta 不含明文,可解密标 status:ok", async () => {

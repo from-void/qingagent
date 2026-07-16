@@ -106,9 +106,10 @@ interface MappedDocumentRow {
   needsPmRepair: boolean;
 }
 
-interface LatestDocumentVersionSnapshot {
-  docVersion: number;
-  snapshotPm: PmDoc;
+export interface DocumentRepairStats {
+  scanned: number;
+  versionPointersRepaired: number;
+  pmMirrorsRepaired: number;
 }
 
 function mapRow(row: Row): MappedDocumentRow {
@@ -233,78 +234,72 @@ async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyCli
   });
 }
 
-async function getLatestVersionSnapshotForDocument(
-  client: Awaited<ReturnType<typeof readyClient>>,
-  docId: string,
-): Promise<LatestDocumentVersionSnapshot | null> {
-  const result = await client.execute({
-    sql: `SELECT doc_version, content_hash, schema_version, snapshot_pm
-      FROM document_versions
-      WHERE doc_id = ?
-      ORDER BY doc_version DESC
-      LIMIT 1`,
-    args: [docId],
-  });
-  const row = result.rows[0];
-  if (!row) return null;
-  return {
-    docVersion: valueAsNumber(row.doc_version),
-    snapshotPm: parsePmDoc(row.snapshot_pm),
-  };
-}
+/**
+ * 在启动后的后台巡检中修复存量 documents 行。
+ *
+ * 读 API 必须保持纯读：不能为了偶发的旧数据修复，在每次 load/list 上抢写锁。
+ * 此处一次查询带回每篇文档的最新版本快照，再按需写回，因此不把逐行 SELECT
+ * 带回列表读取路径。
+ */
+export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
+  const client = await readyClient();
+  const result = await client.execute(`SELECT d.*, dv.doc_version AS latest_doc_version, dv.snapshot_pm AS latest_snapshot_pm
+    FROM documents d
+    LEFT JOIN document_versions dv ON dv.doc_id = d.id
+      AND dv.doc_version = (
+        SELECT MAX(doc_version) FROM document_versions WHERE doc_id = d.id
+      )`);
 
-async function repairVersionPointerIfNeeded(
-  client: Awaited<ReturnType<typeof readyClient>>,
-  mapped: MappedDocumentRow,
-): Promise<MappedDocumentRow> {
-  const latest = await getLatestVersionSnapshotForDocument(client, mapped.row.id);
-  if (!latest || latest.docVersion <= mapped.row.docVersion) return mapped;
+  let versionPointersRepaired = 0;
+  let pmMirrorsRepaired = 0;
+  for (const rawRow of result.rows) {
+    const mapped = mapRow(rawRow);
+    const latestDocVersion = valueAsNumber(rawRow.latest_doc_version);
+    const latestSnapshotPm = rawRow.latest_snapshot_pm;
+    let current = mapped;
 
-  const projection = buildPmProjection({ pmDoc: latest.snapshotPm });
-  await withWriteRetry(async () => {
-    await client.execute({
-      sql: `UPDATE documents SET
-          doc_version = ?,
-          doc_pm = ?,
-          doc_schema_version = ?,
-          content_hash = ?,
-          doc_format = ?,
-          version = version + 1
-        WHERE id = ? AND doc_version < ?`,
-      args: [
-        latest.docVersion,
-        projection.pmJson,
-        projection.schemaVersion,
-        projection.contentHash,
-        projection.docFormat,
-        mapped.row.id,
-        latest.docVersion,
-      ],
-    });
-  });
+    if (latestSnapshotPm != null && latestDocVersion > mapped.row.docVersion) {
+      const snapshotPm = parsePmDoc(latestSnapshotPm);
+      const projection = buildPmProjection({ pmDoc: snapshotPm });
+      await withWriteRetry(async () => {
+        await client.execute({
+          sql: `UPDATE documents SET
+              doc_version = ?, doc_pm = ?, doc_schema_version = ?, content_hash = ?,
+              doc_format = ?, version = version + 1
+            WHERE id = ? AND doc_version < ?`,
+          args: [
+            latestDocVersion,
+            projection.pmJson,
+            projection.schemaVersion,
+            projection.contentHash,
+            projection.docFormat,
+            mapped.row.id,
+            latestDocVersion,
+          ],
+        });
+      });
+      current = {
+        row: {
+          ...mapped.row,
+          docVersion: latestDocVersion,
+          legacySections: projection.legacySections,
+          pmDoc: projection.pmDoc,
+          schemaVersion: projection.schemaVersion,
+          contentHash: projection.contentHash,
+          docFormat: projection.docFormat,
+          version: mapped.row.version + 1,
+        },
+        needsPmRepair: false,
+      };
+      versionPointersRepaired += 1;
+    }
 
-  return {
-    row: {
-      ...mapped.row,
-      docVersion: latest.docVersion,
-      legacySections: projection.legacySections,
-      pmDoc: projection.pmDoc,
-      schemaVersion: projection.schemaVersion,
-      contentHash: projection.contentHash,
-      docFormat: projection.docFormat,
-      version: mapped.row.version + 1,
-    },
-    needsPmRepair: false,
-  };
-}
-
-async function repairDocumentRowIfNeeded(
-  client: Awaited<ReturnType<typeof readyClient>>,
-  mapped: MappedDocumentRow,
-): Promise<DocumentRow> {
-  const versionRepaired = await repairVersionPointerIfNeeded(client, mapped);
-  await repairPmMirrorIfNeeded(client, versionRepaired);
-  return versionRepaired.row;
+    if (current.needsPmRepair) {
+      await repairPmMirrorIfNeeded(client, current);
+      pmMirrorsRepaired += 1;
+    }
+  }
+  return { scanned: result.rows.length, versionPointersRepaired, pmMirrorsRepaired };
 }
 
 export const documentRepo: DocumentRepo = {
@@ -316,8 +311,7 @@ export const documentRepo: DocumentRepo = {
     });
     const row = result.rows[0];
     if (!row) return null;
-    const mapped = mapRow(row);
-    return repairDocumentRowIfNeeded(client, mapped);
+    return mapRow(row).row;
   },
 
   async save(input) {
@@ -354,12 +348,7 @@ export const documentRepo: DocumentRepo = {
       }),
     ]);
     return {
-      rows: await Promise.all(
-        rowsResult.rows.map(async (rawRow) => {
-          const mapped = mapRow(rawRow);
-          return repairDocumentRowIfNeeded(client, mapped);
-        }),
-      ),
+      rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
       total: valueAsNumber(countResult.rows[0]?.total),
     };
   },
@@ -382,7 +371,5 @@ export async function loadMainDocumentByThread(threadId: string): Promise<Docume
   });
   const row = result.rows[0];
   if (!row) return null;
-  const mapped = await repairVersionPointerIfNeeded(client, mapRow(row));
-  await repairPmMirrorIfNeeded(client, mapped);
-  return mapped.row;
+  return mapRow(row).row;
 }

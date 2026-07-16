@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LegacySection } from "@qingagent/contract-ts";
 import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
@@ -9,7 +9,7 @@ import {
   getDocumentsClient,
 } from "../documentsClient.js";
 import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
-import { documentRepo, type DocumentSaveInput } from "../documentRepo.js";
+import { documentRepo, repairStoredDocumentRows, type DocumentSaveInput } from "../documentRepo.js";
 import { insertVersion } from "../documentVersionRepo.js";
 
 let tempDir: string;
@@ -185,7 +185,7 @@ describe("documentRepo", () => {
     expect(loaded?.version).toBe(2);
   });
 
-  it("repairs stale documents.doc_version from the latest document_versions snapshot on load", async () => {
+  it("在后台巡检中从最新 document_versions 快照修复过期版本指针", async () => {
     const staleDoc = legacySectionsToPm([section("visible v2")] as never);
     const latestDoc = legacySectionsToPm([section("snapshot v4")] as never);
     await documentRepo.save(
@@ -207,6 +207,9 @@ describe("documentRepo", () => {
       parentVersion: 3,
       createdAt: "2026-01-03T00:00:00.000Z",
     });
+
+    const stats = await repairStoredDocumentRows();
+    expect(stats.versionPointersRepaired).toBe(1);
 
     const loaded = await documentRepo.load("doc-load-desync");
     expect(loaded?.docVersion).toBe(4);
@@ -237,5 +240,48 @@ describe("documentRepo", () => {
     expect(page0.total).toBe(3);
     expect(page0.rows.map((row) => row.id)).toEqual(["doc-b", "doc-d"]);
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-a"]);
+  });
+
+  it("后台巡检修复过期 PM 镜像", async () => {
+    const pmDoc = legacySectionsToPm([section("镜像正文")] as never);
+    await documentRepo.save(input("pm-mirror", { pmDoc }));
+    await getDocumentsClient().execute({
+      sql: "UPDATE documents SET content_hash = ?, doc_schema_version = ?, doc_format = ? WHERE id = ?",
+      args: ["stale-hash", 0, "legacy", "pm-mirror"],
+    });
+
+    const stats = await repairStoredDocumentRows();
+    expect(stats.pmMirrorsRepaired).toBe(1);
+    const raw = await getDocumentsClient().execute({
+      sql: "SELECT content_hash, doc_schema_version, doc_format FROM documents WHERE id = ?",
+      args: ["pm-mirror"],
+    });
+    expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(pmDoc));
+    expect(raw.rows[0]?.doc_schema_version).toBe(pmDoc.attrs.schemaVersion);
+    expect(raw.rows[0]?.doc_format).toBe("pm");
+  });
+
+  it("load/list 保持纯读，且 list 不为每行追加查询", async () => {
+    await documentRepo.saveMany([
+      input("read-a", { resourceId: "read-resource" }),
+      input("read-b", { resourceId: "read-resource" }),
+    ]);
+    const client = getDocumentsClient();
+    const execute = vi.spyOn(client, "execute");
+
+    await documentRepo.load("read-a");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls.every(([statement]) => {
+      const sql = (statement as unknown as { sql?: string }).sql ?? String(statement);
+      return /^\s*SELECT\b/i.test(sql);
+    })).toBe(true);
+
+    execute.mockClear();
+    await documentRepo.list({ resourceId: "read-resource" });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls.every(([statement]) => {
+      const sql = (statement as unknown as { sql?: string }).sql ?? String(statement);
+      return /^\s*SELECT\b/i.test(sql);
+    })).toBe(true);
   });
 });

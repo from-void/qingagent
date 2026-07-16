@@ -1,11 +1,30 @@
 import { z } from "zod";
-import type { EditDraftInput } from "../DraftMutation";
+import { DRAFT_MARK_COLORS, type DraftTextMark, type EditDraftInput } from "../DraftMutation";
 import type { Equal, Expect } from "./typeAssert";
 
 export type {
+  DraftTextMark,
   DraftMutationOp,
   EditDraftInput,
 } from "../DraftMutation";
+
+const draftTextMarkSchema: z.ZodType<DraftTextMark> = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("bold") }).strict(),
+  z.object({ type: z.literal("italic") }).strict(),
+  z.object({ type: z.literal("underline") }).strict(),
+  z.object({ type: z.literal("strike") }).strict(),
+  z.object({ type: z.literal("strikeThrough") }).strict(),
+  z.object({ type: z.literal("code") }).strict(),
+  z.object({
+    type: z.literal("link"),
+    href: z.string().refine((href) => /^https?:\/\//.test(href) || href.startsWith("/") || href.startsWith("#"), {
+      message: "link href must be http(s), root-relative, or hash-relative",
+    }),
+    title: z.string().nullable().optional(),
+  }).strict(),
+  z.object({ type: z.literal("textColor"), color: z.enum(DRAFT_MARK_COLORS) }).strict(),
+  z.object({ type: z.literal("highlight"), color: z.enum(DRAFT_MARK_COLORS) }).strict(),
+]);
 
 export const editDraftInputSchema = z.object({
   ops: z.array(z.discriminatedUnion("action", [
@@ -61,7 +80,7 @@ export const editDraftInputSchema = z.object({
     z.object({
       action: z.literal("markText"),
       find: z.string(),
-      mark: z.unknown(),
+      mark: draftTextMarkSchema,
       op: z.enum(["add", "remove"]),
       all: z.boolean().optional(),
       isRegex: z.boolean().optional(),

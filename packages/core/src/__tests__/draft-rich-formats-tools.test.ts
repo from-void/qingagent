@@ -243,7 +243,10 @@ describe("draft rich formats session-scoped tools", () => {
 
     await expect(editDraft.execute!({
       ops: [{ action: "markText", find: "核心指标", mark: { type: "math" }, op: "add" }],
-    }, ctx)).rejects.toThrow("math mark 不能与文本样式混用");
+    }, ctx)).resolves.toMatchObject({
+      error: true,
+      message: expect.stringContaining("Invalid discriminator value"),
+    });
     assertSafeDoc(state.docDraftCandidateDoc ?? state.doc, "candidate after rejected math mark");
 
     const result = await editDraft.execute!({

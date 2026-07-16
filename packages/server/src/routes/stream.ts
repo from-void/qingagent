@@ -12,7 +12,11 @@ import {
 } from "../gateway/bridgeHandler";
 import type { LoggedFrame } from "../gateway/frameLog";
 import { SessionActorCommandError } from "../gateway/sessionActor";
-import { commandSchema } from "@qingagent/contract-ts/schemas";
+import {
+  commandSchema,
+  MAX_COMMAND_ARRAY_LENGTH,
+  MAX_COMMAND_STRING_LENGTH,
+} from "@qingagent/contract-ts/schemas";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { formatCommandError, parseBody } from "../lib/validation";
@@ -387,15 +391,24 @@ streamRoutes.post("/commit", async (c) => {
   if (typeof sessionId !== "string" || !sessionId) {
     return c.json({ error: "sessionId must be a non-empty string" }, 400);
   }
+  if (sessionId.length > MAX_COMMAND_STRING_LENGTH) {
+    return c.json({ error: `sessionId must contain at most ${MAX_COMMAND_STRING_LENGTH} characters` }, 400);
+  }
   const hasGroupCommit = Array.isArray(acceptReviewBatchIds);
   if (hasGroupCommit) {
     for (const field of ["acceptReviewBatchIds", "rejectReviewBatchIds", "keepPendingReviewBatchIds"] as const) {
       const value = ({ acceptReviewBatchIds, rejectReviewBatchIds, keepPendingReviewBatchIds })[field];
       if (value === undefined) continue;
       if (!Array.isArray(value)) return c.json({ error: `${field} must be an array` }, 400);
+      if (value.length > MAX_COMMAND_ARRAY_LENGTH) {
+        return c.json({ error: `${field} must contain at most ${MAX_COMMAND_ARRAY_LENGTH} items` }, 400);
+      }
       for (const id of value) {
         if (typeof id !== "string" || !id) {
           return c.json({ error: `${field}[] must be non-empty strings` }, 400);
+        }
+        if (id.length > MAX_COMMAND_STRING_LENGTH) {
+          return c.json({ error: `${field}[] must contain at most ${MAX_COMMAND_STRING_LENGTH} characters` }, 400);
         }
       }
     }
@@ -409,9 +422,15 @@ streamRoutes.post("/commit", async (c) => {
     if (!Array.isArray(patchIds) || patchIds.length === 0) {
       return c.json({ error: "patchIds must be a non-empty array" }, 400);
     }
+    if (patchIds.length > MAX_COMMAND_ARRAY_LENGTH) {
+      return c.json({ error: `patchIds must contain at most ${MAX_COMMAND_ARRAY_LENGTH} items` }, 400);
+    }
     for (const id of patchIds) {
       if (typeof id !== "string" || !id) {
         return c.json({ error: "patchIds[] must be non-empty strings" }, 400);
+      }
+      if (id.length > MAX_COMMAND_STRING_LENGTH) {
+        return c.json({ error: `patchIds[] must contain at most ${MAX_COMMAND_STRING_LENGTH} characters` }, 400);
       }
     }
   }

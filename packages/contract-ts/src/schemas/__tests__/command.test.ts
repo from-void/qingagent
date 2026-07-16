@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { tableSelectionTextSignature } from "../../TableSelection";
 import { commandSchema, COMMAND_KINDS, COMMAND_KIND_SET } from "../command";
+import { MAX_COMMAND_ARRAY_LENGTH, MAX_COMMAND_STRING_LENGTH } from "../common";
 
 function sendMessageWithChip(chip: unknown): unknown {
   return {
@@ -93,6 +94,126 @@ describe("commandSchema", () => {
       data: { sessionId: "s", text: "hi", mentions: [], skills: [], chips: [], fileIds: [] },
     });
     expect(r.success).toBe(true);
+  });
+
+  it("sendMessage 文本与资源字符串在 64 KiB 边界通过，加一拒绝", () => {
+    const baseData = {
+      sessionId: "s",
+      mentions: [],
+      skills: [],
+      chips: [],
+      fileIds: [],
+    };
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: { ...baseData, text: "x".repeat(MAX_COMMAND_STRING_LENGTH) },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: { ...baseData, text: "x".repeat(MAX_COMMAND_STRING_LENGTH + 1) },
+    }).success).toBe(false);
+
+    const mentionAtLimit = {
+      id: "x".repeat(MAX_COMMAND_STRING_LENGTH),
+      domain: { kind: "mention" },
+    };
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: { ...baseData, text: "x", mentions: [mentionAtLimit] },
+    }).success).toBe(true);
+    expect(commandSchema.safeParse({
+      kind: "sendMessage",
+      data: { ...baseData, text: "x", mentions: [{
+        ...mentionAtLimit,
+        id: `${mentionAtLimit.id}x`,
+      }] },
+    }).success).toBe(false);
+  });
+
+  it.each([
+    ["mentions", (): unknown => ({ id: "r", domain: { kind: "mention" } })],
+    ["skills", (): unknown => ({ id: "skill", version: null })],
+    ["chips", (): unknown => ({
+      kind: { kind: "text" },
+      resourceRef: null,
+      prefix: null,
+      label: "长文本",
+      suffix: null,
+    })],
+    ["fileIds", (): unknown => "00000000-0000-4000-8000-000000000000"],
+  ] as const)("sendMessage.%s 数组在 1000 项边界通过，加一拒绝", (field, makeItem) => {
+    const makeCommand = (length: number) => ({
+      kind: "sendMessage",
+      data: {
+        sessionId: "s",
+        text: "x",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: [],
+        [field]: Array.from({ length }, makeItem),
+      },
+    });
+
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH)).success).toBe(true);
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH + 1)).success).toBe(false);
+  });
+
+  it.each([
+    ["commitPatches.ids", (ids: string[]) => ({ kind: "commitPatches", data: { ids } })],
+    ["commitPatches.reviewBatchIds", (ids: string[]) => ({
+      kind: "commitPatches",
+      data: { ids: [], reviewBatchIds: ids },
+    })],
+    ["commitReviewGroups.acceptReviewBatchIds", (ids: string[]) => ({
+      kind: "commitReviewGroups",
+      data: { acceptReviewBatchIds: ids },
+    })],
+    ["commitReviewGroups.rejectReviewBatchIds", (ids: string[]) => ({
+      kind: "commitReviewGroups",
+      data: { acceptReviewBatchIds: [], rejectReviewBatchIds: ids },
+    })],
+    ["commitReviewGroups.keepPendingReviewBatchIds", (ids: string[]) => ({
+      kind: "commitReviewGroups",
+      data: { acceptReviewBatchIds: [], keepPendingReviewBatchIds: ids },
+    })],
+  ] as const)("%s 在 1000 项边界通过，加一拒绝", (_field, makeCommand) => {
+    const atLimit = Array.from({ length: MAX_COMMAND_ARRAY_LENGTH }, (_, index) => `id-${index}`);
+    const overLimit = [...atLimit, "one-more"];
+    expect(commandSchema.safeParse(makeCommand(atLimit)).success).toBe(true);
+    expect(commandSchema.safeParse(makeCommand(overLimit)).success).toBe(false);
+  });
+
+  it("updateDoc.legacySections 在 1000 项边界通过，加一拒绝", () => {
+    const makeCommand = (length: number) => ({
+      kind: "updateDoc",
+      data: {
+        sessionId: "s",
+        expectedDocumentSnapshot: 1,
+        legacySections: Array.from({ length }, () => ({ kind: "p", data: { text: "x" } })),
+        clientMutationId: "m",
+      },
+    });
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH)).success).toBe(true);
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH + 1)).success).toBe(false);
+  });
+
+  it("updateDoc.doc.content 在 1000 个顶层块边界通过，加一拒绝", () => {
+    const makeCommand = (length: number) => ({
+      kind: "updateDoc",
+      data: {
+        sessionId: "s",
+        expectedDocumentSnapshot: 1,
+        doc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: Array.from({ length }, () => ({ type: "paragraph" })),
+        },
+        clientMutationId: "m",
+      },
+    });
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH)).success).toBe(true);
+    expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH + 1)).success).toBe(false);
   });
 
   it("保留 selection chip 的 tableSelection 字段", () => {

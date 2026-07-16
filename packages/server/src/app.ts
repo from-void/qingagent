@@ -27,6 +27,7 @@ import { cleanupOldFolderSourceCaches } from "@qingagent/core";
 import { authTokenMiddleware } from "./lib/authToken";
 import { externalTokenMiddleware } from "./lib/externalAuth";
 import { csrfMutationGuard, isTrustedOrigin } from "./lib/trustedOrigin";
+import { createJsonBodyLimitMiddleware } from "./lib/jsonBodyLimit";
 
 export const app = new Hono();
 
@@ -48,6 +49,7 @@ app.use(
   }),
 );
 app.use("*", logger((message: string, ...rest: string[]) => console.log(redactAuthInLog(message), ...rest)));
+app.use("/api/*", createJsonBodyLimitMiddleware());
 app.use("/api/*", csrfMutationGuard);
 app.use("/api/*", authTokenMiddleware);
 app.use("/api/v1/external/*", externalTokenMiddleware);

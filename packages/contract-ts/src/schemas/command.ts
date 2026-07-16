@@ -25,6 +25,8 @@ import type { IgnoreAnnotationGroups } from "../IgnoreAnnotationGroups";
 import {
   boundedNonEmptyString,
   chatChipSchema,
+  MAX_COMMAND_ARRAY_LENGTH,
+  MAX_COMMAND_STRING_LENGTH,
   resourceRefSchema,
   skillRefSchema,
   uploadIdSchema,
@@ -39,17 +41,42 @@ const MAX_HANDLE_LENGTH = 1024;
 /**
  * updateDoc 的 doc / legacySections 为**运行期直通**(z.unknown()),类型层声明为
  * PmDoc / LegacySection[]。这是设计决策 1 的刻意取舍:contract-ts 不引入对 pm-schema
- * 的生产依赖(避免 contract-ts → pm-schema 依赖环),PM 文档的深层结构校验仍由 server 侧
- * 现有 `safeParsePmDoc` / `validateLegacySections` 承担(与旧行为逐字一致)。
+ * 的生产依赖(避免 contract-ts → pm-schema 依赖环),legacySections 在此只加顶层数组
+ * 长度护栏；PM 文档与 section 元素的深层结构仍由 server 侧现有
+ * `safeParsePmDoc` / `validateLegacySections` 承担。
  * 因此这里用受控 cast 把"运行期 unknown、类型层精确"两者兜住,既不拉依赖、又保住
  * `commandSchema satisfies z.ZodType<Command>` 与等价断言。
  */
-const pmDocPassthroughSchema = z.unknown() as unknown as z.ZodType<PmDoc>;
-const legacySectionsPassthroughSchema = z.unknown() as unknown as z.ZodType<Array<LegacySection>>;
+function addArrayLengthIssue(context: z.RefinementCtx): void {
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: `must contain at most ${MAX_COMMAND_ARRAY_LENGTH} items`,
+  });
+}
+
+const pmDocPassthroughSchema = z.unknown().superRefine((value, context) => {
+  if (
+    value !== null
+    && typeof value === "object"
+    && Array.isArray((value as Record<string, unknown>).content)
+    && (value as { content: unknown[] }).content.length > MAX_COMMAND_ARRAY_LENGTH
+  ) {
+    addArrayLengthIssue(context);
+  }
+}) as unknown as z.ZodType<PmDoc>;
+const legacySectionsPassthroughSchema = z.unknown().superRefine((value, context) => {
+  if (Array.isArray(value) && value.length > MAX_COMMAND_ARRAY_LENGTH) {
+    addArrayLengthIssue(context);
+  }
+}) as unknown as z.ZodType<Array<LegacySection>>;
 const ignoreAnnotationGroupsDataSchema = z.object({
   sessionId: z.string().min(1),
   reason: z.enum(["tab_changed", "message_sent", "doc_committed", "discard_all", "item_ignored"]),
-  groupIds: z.array(z.string().min(1)).min(1).optional(),
+  groupIds: z
+    .array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH))
+    .min(1)
+    .max(MAX_COMMAND_ARRAY_LENGTH)
+    .optional(),
   rememberDismissal: z.boolean().optional(),
 }).superRefine((data, context) => {
   if (data.rememberDismissal && !data.groupIds?.length) {
@@ -84,9 +111,12 @@ const startSessionDataSchema = z.object({
 type _StartSessionExact = Expect<Equal<z.infer<typeof startSessionDataSchema>, StartSession>>;
 
 const actionCardDataSchema = z.object({
-  icon: z.string().optional(),
-  title: z.string(),
-  lines: z.array(z.object({ label: z.string(), value: z.string() })),
+  icon: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
+  title: z.string().max(MAX_COMMAND_STRING_LENGTH),
+  lines: z.array(z.object({
+    label: z.string().max(MAX_COMMAND_STRING_LENGTH),
+    value: z.string().max(MAX_COMMAND_STRING_LENGTH),
+  })).max(MAX_COMMAND_ARRAY_LENGTH),
 }) satisfies z.ZodType<ActionCardData>;
 
 const reviewTypeSchema = z.enum([
@@ -95,22 +125,22 @@ const reviewTypeSchema = z.enum([
 
 const reviewContextSchema = z.object({
   type: reviewTypeSchema,
-  templateId: z.string().min(1),
-  templateName: z.string().min(1),
+  templateId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  templateName: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
 });
 
 const sendMessageDataSchema = z.object({
-  sessionId: z.string().min(1),
-  text: z.string(),
-  mentions: z.array(resourceRefSchema),
-  skills: z.array(skillRefSchema),
-  chips: z.array(chatChipSchema),
+  sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
+  text: z.string().max(MAX_COMMAND_STRING_LENGTH),
+  mentions: z.array(resourceRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
+  skills: z.array(skillRefSchema).max(MAX_COMMAND_ARRAY_LENGTH),
+  chips: z.array(chatChipSchema).max(MAX_COMMAND_ARRAY_LENGTH),
   // fileIds 缺省即 []:契约类型要求 fileIds 存在,但旧手写校验容忍其缺省(视作无文件)。
   // .default([]) 让"输入可省=与旧行为等价、输出恒为 string[]=与契约类型精确等价"两者兼得;
   // 下游 bridgeHandler 亦以 `fileIds ?? []` 消费,[] 与 undefined 行为一致。
-  fileIds: z.array(uploadIdSchema).default([]),
-  clientMessageId: z.string().optional(),
-  richText: z.string().optional(),
+  fileIds: z.array(uploadIdSchema).max(MAX_COMMAND_ARRAY_LENGTH).default([]),
+  clientMessageId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
+  richText: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
   displayCard: actionCardDataSchema.optional(),
   reviewContext: reviewContextSchema.optional(),
 }) satisfies z.ZodType<SendMessage>;
@@ -138,8 +168,11 @@ type _RejectPatchExact = Expect<Equal<z.infer<typeof rejectPatchDataSchema>, Rej
 
 const commitPatchesDataSchema = z
   .object({
-    ids: z.array(z.string().min(1)),
-    reviewBatchIds: z.array(z.string().min(1)).optional(),
+    ids: z.array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH)).max(MAX_COMMAND_ARRAY_LENGTH),
+    reviewBatchIds: z
+      .array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH))
+      .max(MAX_COMMAND_ARRAY_LENGTH)
+      .optional(),
   })
   .refine(
     (data) => data.ids.length > 0 || (data.reviewBatchIds?.length ?? 0) > 0,
@@ -149,9 +182,17 @@ type _CommitPatchesExact = Expect<Equal<z.infer<typeof commitPatchesDataSchema>,
 
 const commitReviewGroupsDataSchema = z
   .object({
-    acceptReviewBatchIds: z.array(z.string().min(1)),
-    rejectReviewBatchIds: z.array(z.string().min(1)).optional(),
-    keepPendingReviewBatchIds: z.array(z.string().min(1)).optional(),
+    acceptReviewBatchIds: z
+      .array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH))
+      .max(MAX_COMMAND_ARRAY_LENGTH),
+    rejectReviewBatchIds: z
+      .array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH))
+      .max(MAX_COMMAND_ARRAY_LENGTH)
+      .optional(),
+    keepPendingReviewBatchIds: z
+      .array(boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH))
+      .max(MAX_COMMAND_ARRAY_LENGTH)
+      .optional(),
   })
   .refine(
     (data) => {
@@ -211,11 +252,11 @@ const cancelAskUserDataSchema = z.object({
 type _CancelAskUserExact = Expect<Equal<z.infer<typeof cancelAskUserDataSchema>, CancelAskUser>>;
 
 const updateDocDataSchema = z.object({
-  sessionId: z.string().min(1),
+  sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   expectedDocumentSnapshot: z.number().int(),
   legacySections: legacySectionsPassthroughSchema.optional(),
   doc: pmDocPassthroughSchema.optional(),
-  clientMutationId: z.string().min(1),
+  clientMutationId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
 }) satisfies z.ZodType<UpdateDoc>;
 type _UpdateDocExact = Expect<Equal<z.infer<typeof updateDocDataSchema>, UpdateDoc>>;
 

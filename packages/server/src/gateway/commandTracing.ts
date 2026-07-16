@@ -54,7 +54,7 @@ export function resolveCommandSessionId(command: Command): string | undefined {
  * - 传入恰好 32hex（清洗去 dash/大小写后）→ 前端透传的合法 clientTraceId，直接用。
  * - 传入缺失或非 32hex（畸形）→ 用 sessionIdToTraceId(sessionId) 兜底（与会话级
  *   traceId 同源）。要求严格 32hex 而非「任意非空 hex」，避免畸形头（如 "abc"）
- *   产生短 id 污染关联（修 Codex review blocking #3）。
+ *   产生短 id 污染关联（修代码评审阻断项 #3）。
  * - 实在派生不出 → undefined。
  */
 export function normalizeClientTraceId(

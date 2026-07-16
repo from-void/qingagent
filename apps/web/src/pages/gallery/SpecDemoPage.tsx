@@ -122,7 +122,7 @@ export function SpecDemoPage() {
         <div className="sp-wrap">
           <header className="sp-head">
             <h1 className="sp-h1">对话工具栏 · 最终设计 demo</h1>
-            <p className="sp-sub">统一后的对话工具元素最终样式（直角 · 满宽 · 弱化成败 · 自设线性图标）。仅预览，未改生产。规范见飞书草案。</p>
+            <p className="sp-sub">统一后的对话工具元素最终样式（直角 · 满宽 · 弱化成败 · 自设线性图标）。仅预览，未改生产。</p>
           </header>
 
           <Section title="一、通用工具栏 · 五要素" hint="① 图标 ② 标题 ③ 参数 ④ 状态(右对齐) ⑤ 箭头；①②④ 必有，③⑤ 可选">
@@ -150,7 +150,7 @@ export function SpecDemoPage() {
             <Row label="引用 UCitation"><UCitation id="src-开幕式" anchor="2" /></Row>
           </Section>
 
-          <Section title="四、轮级折叠（Codex 式）" hint="一轮结束：过程折成一条「过程 · N 步」，只留最终回复；点开看明细">
+          <Section title="四、轮级折叠" hint="一轮结束：过程折成一条「过程 · N 步」，只留最终回复；点开看明细">
             <Row label="折叠态（默认）">
               <div className="sp-turn">
                 <div className="u-userwrap"><div className="u-user">帮我写一篇杭州亚运会的观察报道，800 字左右。</div></div>

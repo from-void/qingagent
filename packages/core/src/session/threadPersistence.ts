@@ -931,7 +931,7 @@ async function waitForInitialThreadCreate(state: SessionState, reason: string): 
  * 计数 / id，绝不含文档正文）。
  *
  * 关键：从 `meta`（写库快照）而非 live state 计算，避免 await 期间 state 被并发
- * 修改导致基线推进到一份从未真正写入的快照（修 Codex review blocking #1）。
+ * 修改导致基线推进到一份从未真正写入的快照（修代码评审阻断项 #1）。
  * meta.docState.kind 已是 serializeMetadata normalizer 的最终落库值，无需再校正。
  */
 function snapshotFromMeta(meta: QingagentThreadMetadata): PersistAuditSnapshot {

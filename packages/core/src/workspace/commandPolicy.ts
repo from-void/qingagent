@@ -646,7 +646,7 @@ export function evaluateCommandPolicy(command: string, options: CommandPolicyOpt
   const cmd = commandName(rawCommand);
   // 受信命令(node / lark-cli)必须是裸命令名,经受控 PATH(打包 node shim + 系统二进制)解析。
   // 路径限定形式(/workspace/node、./node、/tmp/x/node)可能指向工作区内模型自己写的 fake 可执行
-  // 文件——basename 命中白名单会被当成受信 node 放行,实际却跑攻击者文件(R10 codex-4)。故白名单
+  // 文件——basename 命中白名单会被当成受信 node 放行,实际却跑攻击者文件(R10-4)。故白名单
   // 分支只认裸名;denied 解释器仍按 basename 拦(/usr/bin/python3 也要 deny)。
   const isBareCommand = !/[/\\]/.test(rawCommand);
   if (DENIED_INTERPRETERS.has(cmd)) {

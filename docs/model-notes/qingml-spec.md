@@ -4,7 +4,7 @@
 > 白名单映射)→ 复用现有 `AiBlock[]`(pm-schema/src/ai-ir/aiIrSchema.ts)→ 下游 zod/坏块重试/PM 编译/
 > blockId 铸造原样不动。**本文是 C1 解析器与 C2/C3 提示词的共同真相源。**
 >
-> **C0 实测定稿依据**(refactor-expts/c0-findings.md,deepseek-v4-flash,240 轮生成 + 确定性 token):
+> **C0 实测定稿依据**(deepseek-v4-flash,240 轮生成 + 确定性 token):
 > QingML 格式失败率≈0(vs JSON 三级嵌套挂 30%);结构保真 nest3 100%(vs JSON 70%);同文档 token
 > QingML 总体 −19%(嵌套/表格 −33~41%、散文 −4%)。n≈290 QingML 输出仅 1 处越界标签(`<br>`)、
 > §5 边界违规 0。v0 → v1 唯一改动:补 `<br>` 处理。
@@ -38,7 +38,7 @@
 `<math>LaTeX</math>`→math(整 run 转 inlineMath,不与他 mark 组合)。嵌套 marks 解析器归一。
 **`<br>` / `<br/>`** → 当前 run 文本内的换行(soft break),不产生新块。
 
-## 4. 转义与空白（Fable 评审修正:pre/math/mermaid 内文**也要转义**,非 rawtext）
+## 4. 转义与空白（评审修正:pre/math/mermaid 内文**也要转义**,非 rawtext）
 仅 `&lt;`(<)、`&amp;`(&) 需转义;`&gt;`/引号/换行无需转义,裸 `&`(非实体名)容错按字面。
 - **关键**:`<pre>`/`<math-block>`/`<mermaid>` 内文**同样只转义 `&lt;`/`&amp;`**,解析后 htmlparser2 自动
   实体还原为字面 `<`/`&`。**不得当 rawtext 原样写 `<`**——htmlparser2 不把这些自定义标签当 rawtext
@@ -58,7 +58,7 @@
 - 允许块级子结构的:list item(children)、taskList item(children)、column(blocks)、
   **table cell(blocks)**。其余块不嵌块。
 
-## 6. 容错与降级（Fable 评审:区分无害容错 vs 有害降级——后者升级为坏块重试,别静默产坏文档）
+## 6. 容错与降级（评审:区分无害容错 vs 有害降级——后者升级为坏块重试,别静默产坏文档）
 > 失败模式从 JSON 的"响亮"(parse error→重试)变成 QingML 的"静默"(fail-open→剥壳降级)是唯一系统性
 > 回归类别。政策:无害 fail-open 静默容错;有害降级视同坏块走重试,warning 全量进遥测。
 
@@ -84,7 +84,7 @@
   纯文本/CJK 全角/连续空白/`<br>`/非白名单标签/`<pre>` 内含 `<stdio.h>` 等尖括号/`<blockquote><p>×N`/
   全 `<th>` 表头行),快照锚死 htmlparser2 行为。
 
-## 8. editDraft 片段规则（Fable 评审新增;随 C1 定,防数组/单块/envelope 宽容归一在 QingML 形态复活）
+## 8. editDraft 片段规则（评审新增;随 C1 定,防数组/单块/envelope 宽容归一在 QingML 形态复活）
 editDraft 的 op 载荷是 QingML **片段**(非整篇),按 action 规定合法根标签;解析用同一 qingmlParse,
 但按 action 取目标节点、**剥掉模型多包的容器**(裸 `<li>` 被写成 `<ul><li>…</ul>` 时剥外层 `<ul>`):
 

@@ -41,7 +41,7 @@ function normalizeClientTraceId(raw: unknown): string | undefined {
 /**
  * 信任边界净化客户端 meta：只保留可 JSON 序列化、且总字节 ≤ MAX_META_BYTES 的对象，
  * 超限丢弃（不报错）。前端 summarizeCommandForLog 只放计数/枚举，但后端不能信任前端，
- * 故在此硬截断，杜绝用户正文/大对象灌进 span（修 Codex review）。
+ * 故在此硬截断，杜绝用户正文/大对象灌进 span（修代码评审）。
  */
 function sanitizeMeta(meta: unknown): Record<string, unknown> | undefined {
   if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {

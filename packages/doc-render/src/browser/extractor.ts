@@ -25,7 +25,7 @@ const MOBILE_UA =
   "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 
 // 站点适配器:对已知"PC 反爬、移动端可抓"的站,改写到移动子域 + 移动 UA + 追加站点正文选择器。
-// 原则(用户):被搜索引擎收录=必可抓,403/空壳是姿势不对。每个适配器都有真机验证来源(codex 攻坚)。
+// 原则(用户):被搜索引擎收录=必可抓,403/空壳是姿势不对。每个适配器都有真机验证来源（专项验证）。
 interface SiteAdapter {
   test: (host: string) => boolean;
   rewriteUrl?: (u: URL) => URL;

@@ -40,7 +40,7 @@ import { resolveRequestModelOverrides } from "../modelOverridesProvider.js";
 
 const VKEY = `sk-${"a".repeat(32)}`;
 
-// 回归:codex review P1 — 自定义 baseURL/协议/模型名必须绑定 visitor key,
+// 回归:代码评审 P1 — 自定义 baseURL/协议/模型名必须绑定 visitor key,
 // 否则无 key 的请求会借用站点 global/env key 的 Authorization 打到任意 endpoint(凭据泄露)。
 describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key(P1)", () => {
   it("无 visitor key 时,baseUrl/protocol/modelFlash 一律忽略", async () => {

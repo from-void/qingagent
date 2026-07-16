@@ -280,7 +280,7 @@ describe("rich PM export formats", () => {
     expect(md.startsWith("# 整本书")).toBe(true);
   });
 
-  // 边界(codex review 提出)：首块是与 title 同名的 H2 时,Markdown 仍应补一个 H1 文档标题,
+  // 边界（代码评审提出）：首块是与 title 同名的 H2 时,Markdown 仍应补一个 H1 文档标题,
   // 不能因 H2 同名就跳过(requireLevel1 守住此口径,避免去重判定误伤 H2)。
   it("still prepends an H1 title when the body leads with a same-named H2", () => {
     const h2LeadDoc: PmDoc = {

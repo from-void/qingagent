@@ -288,7 +288,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector('[data-patch-id="block-del"].wf-blockmark-del .wf-blockmark-del-line')).not.toBeNull();
   });
 
-  it("块级替换:隐藏旧块 + 渲新块 widget,但不出红删标记(替换走'新块+hover原文',与行级/正文统一;codex 回归)", async () => {
+  it("块级替换:隐藏旧块 + 渲新块 widget,但不出红删标记(替换走'新块+hover原文',与行级/正文统一;回归)", async () => {
     const baselineDoc = twoParagraphDoc();
     const applied = appliedPatch("block-rep", 4, "replace", "第一段", "新增段落");
 
@@ -542,7 +542,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(same?.querySelector(".wf-row-del")).toBeNull();
   });
 
-  it("granular 列表 changed 行 hover 只弹本行原文(旧勾选/旧格式),不弹整块列表卡(codex 回归)", async () => {
+  it("granular 列表 changed 行 hover 只弹本行原文(旧勾选/旧格式),不弹整块列表卡(回归)", async () => {
     const baselineDoc = paragraphDoc("正文");
     // before:待办原态(第2项未勾、纯文本);after:第2项已勾 + 加粗。
     const beforeTaskNode = {
@@ -756,7 +756,7 @@ describe("审阅态 PM patch decorations", () => {
     expect(popup?.textContent).not.toContain("空气凝滞");
   });
 
-  it("granular 有序列表 changed 行 hover 原文不渲成圆点/错误序号——只渲内容(codex 回归)", async () => {
+  it("granular 有序列表 changed 行 hover 原文不渲成圆点/错误序号——只渲内容(回归)", async () => {
     const baselineDoc = paragraphDoc("正文");
     const beforeOl = {
       type: "orderedList",

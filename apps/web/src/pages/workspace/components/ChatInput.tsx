@@ -598,7 +598,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         e.preventDefault();
         return;
       }
-      // 技能菜单开着:↑/↓ 选行、Enter 选中、Esc/Backspace 关、其它字符键关并放行(Codex 式)。
+      // 技能菜单开着:↑/↓ 选行、Enter 选中、Esc/Backspace 关、其它字符键关并放行。
       if (skillMenuOpen) {
         const n = invocableSkillActions.length;
         if (e.key === "ArrowDown") {

@@ -271,7 +271,7 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain("flowchart TD");
   });
 
-  it("带 viewBox 的恶意图表 SVG 不得原样内联(回归 codex 端到端 blocker)", () => {
+  it("带 viewBox 的恶意图表 SVG 不得原样内联(回归端到端阻断项)", () => {
     const evil = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><script>alert(9)</script><rect width="10" height="10" onload="alert(8)"/></svg>';
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: evil } }] as never));
     expect(html).not.toContain("<script>");

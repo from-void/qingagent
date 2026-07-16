@@ -56,26 +56,47 @@ export interface StarterEditorProps {
   onPasteFiles?: (files: File[]) => void;
 }
 
+interface EditorContentWalker {
+  text: (text: string) => void;
+  longText: (text: string) => void;
+  sourceChip: (chip: HTMLElement) => void;
+}
+
+/** 统一识别编辑器内容：长文本小条展开、附件 chip 保留为独立节点。 */
+function walkEditorContent(edit: HTMLElement, handlers: EditorContentWalker): void {
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      handlers.text(node.textContent ?? "");
+      return;
+    }
+    if (node instanceof HTMLElement) {
+      if (node.classList.contains("chat-chip-longtext")) {
+        handlers.longText(node.dataset.text ?? "");
+        return;
+      }
+      if (node.classList.contains("src-chip")) {
+        handlers.sourceChip(node);
+        return;
+      }
+      if (node.tagName === "BR") return; // 原行为:starter 输入吐出时不保留换行
+    }
+    node.childNodes.forEach(walk);
+  };
+  edit.childNodes.forEach(walk);
+}
+
 /** 编辑器纯文本抽取:长文本小条原位展开回完整原文(保留其换行),其余 chip 剔除。 */
 function extractEditorText(edit: HTMLElement): string {
   let out = "";
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      if (el.classList.contains("chat-chip-longtext")) {
-        out += el.dataset.text ?? "";
-        return;
-      }
-      if (el.classList.contains("src-chip")) return;
-      if (el.tagName === "BR") return; // 原行为:starter 输入吐出时不保留换行
-    }
-    if (node.nodeType === Node.TEXT_NODE) {
-      out += node.textContent ?? "";
-      return;
-    }
-    for (const c of node.childNodes) walk(c);
-  };
-  for (const c of edit.childNodes) walk(c);
+  walkEditorContent(edit, {
+    text: (text) => {
+      out += text;
+    },
+    longText: (text) => {
+      out += text;
+    },
+    sourceChip: () => undefined,
+  });
   return out;
 }
 
@@ -165,21 +186,21 @@ export const StarterEditor = forwardRef<StarterEditorHandle, StarterEditorProps>
           let text = "";
           let richText = "";
           const chips: ChipSpec[] = [];
-          const walk = (node: Node) => {
-            if (node.nodeType === Node.TEXT_NODE) {
-              const t = (node.textContent ?? "").replace(/\r?\n/g, "");
+          walkEditorContent(edit, {
+            text: (value) => {
+              const t = value.replace(/\r?\n/g, "");
               text += t;
               richText += t;
-              return;
-            }
-            if (node instanceof HTMLElement && node.classList.contains("src-chip")) {
+            },
+            longText: (value) => {
+              text += value;
+              richText += value;
+            },
+            sourceChip: (chip) => {
               richText += `{{chip:${chips.length}}}`;
-              chips.push(readChipNode(node));
-              return;
-            }
-            node.childNodes.forEach(walk);
-          };
-          edit.childNodes.forEach(walk);
+              chips.push(readChipNode(chip));
+            },
+          });
           return { text, richText, chips };
         },
         insertText(text) {

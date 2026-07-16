@@ -53,14 +53,31 @@ export function buildCommandConfirmSpec(
 ): ConfirmSpec {
   const verdict = assessCommand(input.command);
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
+  const kind = verdict.confirmKind ?? "command";
+  const isMultiEffect = verdict.effects.length > 1;
+  const sub = kind === "install"
+    ? "将修改运行环境"
+    : kind === "send"
+      ? "将向外部发送或写入数据"
+      : isMultiEffect
+        ? "包含多种副作用"
+        : "破坏性命令";
+  const primaryLabel = kind === "install"
+    ? "确认安装"
+    : kind === "send"
+      ? verdict.title.includes("发布") || verdict.title.includes("推送") ? "确认发布" : "确认发送"
+      : "确认执行";
+  const explanation = [reason, verdict.detail]
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+    .join("。");
   return confirmSpecSchema.parse({
     id,
-    kind: "command",
+    kind,
     title: verdict.title.replace(/^需要执行：/, ""),
-    sub: input.background ? "后台命令" : "命令执行",
-    say: `${reason}。命令预览：${preview || "（无可显示内容）"}`,
+    sub: input.background ? `后台执行 · ${sub}` : sub,
+    say: `${explanation}。命令预览：${preview || "（无可显示内容）"}`,
     footHint: "只授权本次调用 · 10 分钟后自动失效",
-    primaryLabel: "确认执行",
+    primaryLabel,
     secondaryLabel: "取消",
   });
 }

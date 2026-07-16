@@ -98,8 +98,8 @@ export function createGatedExecuteCommandTool({
   return createTool({
     id: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
     description:
-      "Execute an allowlisted shell command in the workspace sandbox. " +
-      "Only trusted packaged skill scripts and explicitly allowed read-only CLI commands can run.",
+      "Execute a shell command in the workspace sandbox. " +
+      "Install, external-send, and destructive effects require explicit user approval.",
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
       try {
@@ -120,6 +120,10 @@ export function createGatedExecuteCommandTool({
       if (context?.abortSignal?.aborted) {
         return "命令已取消: 调用前请求已被取消";
       }
+      const stopHeartbeat = startToolHeartbeat(context, {
+        tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
+      });
+      try {
       const sessionDir = sessionWorkspaceDir(sessionId);
       const cwd = resolveExecutionCwd(sessionDir, input.cwd);
       if (!cwd) {
@@ -138,6 +142,7 @@ export function createGatedExecuteCommandTool({
         return commandPolicyDenyMessage(decision);
       }
 
+      let proofConsumed = false;
       if (decision.action === "confirm") {
         const runId = context?.requestContext?.get("runId");
         const toolCallId = context?.agent?.toolCallId;
@@ -154,6 +159,7 @@ export function createGatedExecuteCommandTool({
         if (!hasProof) {
           return "命令已被拒绝: 缺少有效的用户确认";
         }
+        proofConsumed = true;
       }
 
       const workspace = await getWorkspace();
@@ -167,11 +173,13 @@ export function createGatedExecuteCommandTool({
       }
       // LocalSandbox 基础 env 永不含托管凭据。只有策略已确认的受信 node skill 脚本，
       // 且部署开关显式开启时，才通过 Mastra 的 per-call env 向这个进程发放。
-      const credentialEnv = decision.action === "allow" &&
-          decision.credentialConsumer === "trusted-node-skill" &&
-          shouldInjectCredentials() && resolveCredentialEnv
-        ? await resolveCredentialEnv()
-        : undefined;
+      const credentialEnv =
+        decision.credentialConsumer === "trusted-node-skill" &&
+        (decision.action === "allow" || proofConsumed) &&
+        shouldInjectCredentials() &&
+        resolveCredentialEnv
+          ? await resolveCredentialEnv()
+          : undefined;
       const perCallCredentialEnv = credentialEnv && Object.keys(credentialEnv).length > 0
         ? { env: credentialEnv }
         : {};
@@ -244,6 +252,9 @@ export function createGatedExecuteCommandTool({
           },
         });
         return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        stopHeartbeat();
+      }
       } finally {
         stopHeartbeat();
       }

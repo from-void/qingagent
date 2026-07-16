@@ -36,6 +36,13 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const { app: honoApp } = await import("@qingagent/server/app");
   const { serveStatic } = await import("@hono/node-server/serve-static");
 
+  // 存量 documents 的版本指针/PM 镜像仅在启动后后台巡检修复；读取接口保持纯读。
+  // 放在 app 完成求值后再动态加载 DB 聚合入口，维持上方“迁移先于 core/server barrel”的锁顺序。
+  void import("@qingagent/db")
+    .then(({ repairStoredDocumentRows }) => repairStoredDocumentRows())
+    .then((stats) => console.log("[migrations] documents 巡检完成", stats))
+    .catch((e) => console.error("[migrations] documents 巡检失败(non-fatal)", e instanceof Error ? e.message : String(e)));
+
   // 桌面端专有:渲染端埋点同源中继。渲染端 POST 到本 localhost 服务器(同源,无 CORS、
   // 不经系统代理),由主进程转发到 Umami。必须注册在静态服务之前。
   honoApp.post("/__telemetry/send", async (c) => {

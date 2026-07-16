@@ -74,6 +74,18 @@ test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧
   }
 });
 
+test("desktop 在迁移及 server app 求值后非阻断挂载 documents 巡检", () => {
+  const source = readFileSync(path.join(__dirname, "server.ts"), "utf8");
+  const migrationsLine = source.indexOf("await runMigrations()");
+  const appImportLine = source.indexOf('await import("@qingagent/server/app")');
+  const repairImportLine = source.indexOf('void import("@qingagent/db")');
+  const repairCallLine = source.indexOf("repairStoredDocumentRows()", repairImportLine);
+
+  assert.ok(migrationsLine >= 0 && repairImportLine > migrationsLine, "documents 巡检必须晚于迁移启动");
+  assert.ok(appImportLine >= 0 && repairImportLine > appImportLine, "DB 聚合入口必须在 server app 求值后加载");
+  assert.ok(repairCallLine > repairImportLine, "documents 巡检必须由后台动态导入触发");
+});
+
 function findLine(lines: string[], marker: string): number {
   return lines.findIndex((line) => line.includes(marker));
 }

@@ -19,6 +19,20 @@ import {
 export const EXECUTE_COMMAND_MAX_RETAINED_BYTES =
   Number(process.env.QINGAGENT_SANDBOX_MAX_RETAINED_BYTES) || 1_048_576;
 
+const UNHEALTHY_WORKSPACE_STATUSES = new Set<Workspace["status"]>([
+  "error",
+  "destroying",
+  "destroyed",
+  "paused",
+]);
+const UNHEALTHY_SANDBOX_STATUSES = new Set<NonNullable<Workspace["sandbox"]>["status"]>([
+  "error",
+  "stopping",
+  "stopped",
+  "destroying",
+  "destroyed",
+]);
+
 export interface GatedExecuteCommandToolOptions {
   sessionId: string;
   /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
@@ -166,8 +180,8 @@ export function createGatedExecuteCommandTool({
       const sandbox = workspace.sandbox;
       if (!sandbox) return "命令已被拒绝: 当前会话没有可用沙箱";
       if (
-        (workspace.status !== undefined && workspace.status !== "ready") ||
-        (sandbox.status !== undefined && sandbox.status !== "ready" && sandbox.status !== "running")
+        UNHEALTHY_WORKSPACE_STATUSES.has(workspace.status) ||
+        UNHEALTHY_SANDBOX_STATUSES.has(sandbox.status)
       ) {
         return "命令已被拒绝: 当前会话沙箱状态异常";
       }

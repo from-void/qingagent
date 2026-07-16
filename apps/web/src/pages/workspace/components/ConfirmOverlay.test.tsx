@@ -117,6 +117,51 @@ describe("ConfirmOverlay", () => {
     expect(overlay.textContent).toContain(spec.footHint);
   });
 
+  it("自动焦点落在主按钮，不落在关闭按钮", async () => {
+    await renderOverlay(installSpec);
+
+    expect(document.activeElement).toBe(findButton("安装并继续"));
+    expect(document.activeElement).not.toBe(
+      host!.querySelector<HTMLButtonElement>(".cf-close"),
+    );
+  });
+
+  it("主按钮不可用时自动焦点退回 panel 容器", async () => {
+    await renderOverlay(secretSpec);
+
+    const panel = host!.querySelector<HTMLElement>(".cf-overlay")!;
+    expect(panel.tabIndex).toBe(-1);
+    expect(document.activeElement).toBe(panel);
+  });
+
+  it("Escape 保持取消语义", async () => {
+    const onDecision = vi.fn();
+    await renderOverlay(sendSpec, onDecision);
+
+    await act(async () => {
+      host!.querySelector<HTMLElement>(".cf-overlay")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(onDecision).toHaveBeenCalledWith({ id: sendSpec.id, accepted: false });
+  });
+
+  it("commandPreview 存在时才渲染独立命令块", async () => {
+    const commandPreview = "npx skills add ffmpeg --registry https://registry.example.test";
+    await renderOverlay({ ...installSpec, commandPreview });
+
+    const preview = host!.querySelector<HTMLElement>(".cf-command-preview");
+    expect(preview?.tagName).toBe("PRE");
+    expect(preview?.textContent).toBe(commandPreview);
+    expect(preview?.getAttribute("aria-label")).toBe("命令预览");
+
+    await act(async () => {
+      root?.render(<ConfirmOverlay spec={installSpec} onDecision={vi.fn()} />);
+    });
+    expect(host!.querySelector(".cf-command-preview")).toBeNull();
+  });
+
   it.each([
     ["安装并继续", true],
     ["先跳过", false],

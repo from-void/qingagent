@@ -60,11 +60,11 @@ export function ConfirmOverlay({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    panelRef.current
-      ?.querySelector<HTMLElement>(
-        "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex=\"-1\"])",
-      )
-      ?.focus({ preventScroll: true });
+    const panel = panelRef.current;
+    const primaryButton = panel?.querySelector<HTMLElement>(
+      ".cf-primary:not([disabled])",
+    );
+    (primaryButton ?? panel)?.focus({ preventScroll: true });
 
     return () => {
       mountedRef.current = false;
@@ -116,6 +116,7 @@ export function ConfirmOverlay({
       data-kind={spec.kind}
       data-closing={closing ? "true" : "false"}
       role="dialog"
+      tabIndex={-1}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={sayId}
@@ -146,6 +147,12 @@ export function ConfirmOverlay({
         <p className="cf-say" id={sayId}>
           {spec.say}
         </p>
+
+        {spec.commandPreview && (
+          <pre className="cf-command-preview" aria-label="命令预览">
+            {spec.commandPreview}
+          </pre>
+        )}
 
         {spec.widget?.type === "options" && (
           <div className="cf-options" role="radiogroup" aria-label={spec.title}>

@@ -23,6 +23,7 @@ export const CONFIRM_CARD_DEMOS: readonly ConfirmDemo[] = [
       title: "安装工具",
       sub: "ffmpeg · 音视频处理",
       say: "需要安装 ffmpeg,用来把《产品发布会.mp4》转成 GIF · 官方来源 · 约 32 MB",
+      commandPreview: "npx skills add ffmpeg",
       footHint: "以后使用不再询问 · 可在设置里卸载",
       primaryLabel: "安装并继续",
       secondaryLabel: "先跳过",

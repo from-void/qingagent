@@ -24,6 +24,23 @@ describe("confirm contract schemas", () => {
     },
   );
 
+  it("commandPreview 是通用可选字段且最多 2000 字符", () => {
+    const commandPreview = "npx skills add ffmpeg";
+    expect(confirmSpecSchema.parse({
+      ...plainSpec,
+      kind: "connect",
+      commandPreview,
+    }).commandPreview).toBe(commandPreview);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      commandPreview: "x".repeat(2_000),
+    }).success).toBe(true);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      commandPreview: "x".repeat(2_001),
+    }).success).toBe(false);
+  });
+
   it("解析 options 与 secretInput，并按当前 spec 校验接受字段", () => {
     const optionsSpec = confirmSpecSchema.parse({
       ...plainSpec,

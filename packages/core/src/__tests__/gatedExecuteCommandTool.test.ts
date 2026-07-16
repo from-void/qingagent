@@ -71,8 +71,8 @@ function createToolHarness(
     resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
     sandboxBinDir?: string;
     state?: SessionState;
-    workspaceStatus?: "ready" | "error";
-    sandboxStatus?: "ready" | "running" | "error";
+    workspaceStatus?: "pending" | "initializing" | "ready" | "paused" | "error" | "destroying" | "destroyed";
+    sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
@@ -143,6 +143,43 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+  });
+});
+
+describe("gated execute_command 沙箱健康状态", () => {
+  it.each([
+    ["undefined", {}],
+    ["pending", { workspaceStatus: "pending", sandboxStatus: "pending" }],
+    ["initializing", { workspaceStatus: "initializing", sandboxStatus: "initializing" }],
+    ["starting", { workspaceStatus: "ready", sandboxStatus: "starting" }],
+    ["ready", { workspaceStatus: "ready", sandboxStatus: "ready" }],
+    ["running", { workspaceStatus: "ready", sandboxStatus: "running" }],
+  ] as const)("%s 状态允许 executeCommand 惰性启动并执行", async (_label, statuses) => {
+    const { tool, executeCalls } = createToolHarness(`gated-healthy-${_label}`, { ...statuses });
+
+    expect(await executeTool(tool, { command: allowedFileCommand })).toBe("ok");
+    expect(executeCalls).toHaveLength(1);
+  });
+
+  it.each([
+    ["workspace error", { workspaceStatus: "error" }],
+    ["workspace destroying", { workspaceStatus: "destroying" }],
+    ["workspace destroyed", { workspaceStatus: "destroyed" }],
+    ["workspace paused", { workspaceStatus: "paused" }],
+    ["sandbox error", { sandboxStatus: "error" }],
+    ["sandbox stopping", { sandboxStatus: "stopping" }],
+    ["sandbox stopped", { sandboxStatus: "stopped" }],
+    ["sandbox destroying", { sandboxStatus: "destroying" }],
+    ["sandbox destroyed", { sandboxStatus: "destroyed" }],
+  ] as const)("%s 状态拒绝执行", async (_label, statuses) => {
+    const { tool, executeCalls, spawnCalls } = createToolHarness(
+      `gated-unhealthy-${_label.replaceAll(" ", "-")}`,
+      { ...statuses },
+    );
+
+    expect(await executeTool(tool, { command: allowedFileCommand })).toContain("沙箱状态异常");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 });
 

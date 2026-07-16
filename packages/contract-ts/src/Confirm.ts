@@ -23,6 +23,7 @@ export interface ConfirmSpec {
   title: string;
   sub?: string;
   say: string;
+  commandPreview?: string;
   widget?: ConfirmWidget;
   footHint: string;
   primaryLabel: string;

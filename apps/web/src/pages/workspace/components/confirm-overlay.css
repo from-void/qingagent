@@ -146,6 +146,33 @@
   line-height: 1.65;
 }
 
+#view-workspace .cf-command-preview {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 8px 10px;
+  border: 1px solid var(--line-1);
+  border-radius: 0;
+  background: var(--ink-surface);
+  color: var(--ink-2);
+  font: 11px/1.6 var(--font-mono);
+  white-space: pre;
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar {
+  height: 8px;
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 #view-workspace .cf-options {
   display: flex;
   flex-direction: column;

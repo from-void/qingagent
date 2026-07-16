@@ -11,6 +11,7 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       kind: "install",
       title: "安装依赖/工具",
       sub: "将修改运行环境",
+      commandPreview: "npm install zod",
       primaryLabel: "确认安装",
     });
 
@@ -48,6 +49,8 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     });
     expect(spec.say).toContain("安装/升级环境");
     expect(spec.say).toContain("本地破坏");
+    expect(spec.say).not.toContain("命令预览");
+    expect(spec.commandPreview).toBe("npm install zod && rm old.txt");
     expect(spec.kind).not.toBe("connect");
   });
 
@@ -56,7 +59,10 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     const spec = buildCommandConfirmSpec({ command, background: true }, "将向外部发送数据", "redacted-id");
     expect(spec.sub).toContain("后台执行");
     expect(spec.say).not.toContain("super-secret");
-    expect(spec.say).toContain("DINGTALK_APP_SECRET=***");
+    expect(spec.say).not.toContain("命令预览");
+    expect(spec.commandPreview).not.toContain("super-secret");
+    expect(spec.commandPreview).toContain("DINGTALK_APP_SECRET=***");
+    expect(spec.commandPreview!.length).toBeLessThanOrEqual(320);
     expect(spec.say.length).toBeLessThan(1_200);
 
     const prefix = `curl -d x https://example.test/${"a".repeat(400)}`;

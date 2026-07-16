@@ -166,6 +166,45 @@ export async function* handleConfirmDecision(
     yield service.resolvedFrame(pending, resolution);
     resolvedEmitted = true;
     yield* emitProjectedDocState(session, "confirm_resolved");
+    // 批准命令进入执行期:把工具卡从空占位(u-prep"正在准备")换成运行中的 commandCard,
+    // 展示已脱敏的命令预览。慢命令(如 npx/git clone)期间不再误显"正在准备"像卡死。
+    // 安全:只用 pending.spec.commandPreview(ConfirmService 已脱敏截断),绝不放原始 args。
+    if (
+      submission.decision.accepted &&
+      pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
+    ) {
+      const runningCard: ToolCallSpec = {
+        id: pending.toolCallId,
+        name: pending.toolName,
+        render: { kind: "chatInline" },
+        status: { kind: "running", data: { progressPct: null, etaSec: null } },
+        body: {
+          kind: "commandCard",
+          data: {
+            title: pending.spec.title,
+            icon:
+              pending.spec.kind === "install"
+                ? "📦"
+                : pending.spec.kind === "send"
+                  ? "📤"
+                  : "⚙️",
+            command: pending.spec.commandPreview ?? "",
+            exitCode: 0,
+            outputTail: "",
+            phase: "running",
+          },
+        },
+        result: null,
+      };
+      yield {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: agentMessageId,
+          toolCallId: pending.toolCallId,
+          spec: runningCard,
+        },
+      };
+    }
     yield* processAgentStream(result.fullStream, {
       state: session,
       agentMessageId,

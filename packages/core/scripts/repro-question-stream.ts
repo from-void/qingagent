@@ -1,10 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { resolveEvalOutputDir } from "./evalOutputDir.js";
 
-const outputDir = resolve(
-  process.env.QUESTION_STREAM_EVAL_DIR ??
-    "/home/jimmy/proj/qingagent-ops/evals/260712-branchcall",
-);
+const outputDir = resolveEvalOutputDir({ envName: "QINGAGENT_EVAL_OUT_DIR", scriptName: "repro-question-stream" });
 await mkdir(outputDir, { recursive: true });
 process.loadEnvFile(resolve("../server/.env"));
 

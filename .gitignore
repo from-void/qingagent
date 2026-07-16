@@ -66,3 +66,6 @@ packages/server/*.duckdb.wal
 
 # Local scorer / pm-gate output
 output/
+
+# Local evaluation artifacts
+.eval-out/

@@ -71,7 +71,7 @@ export async function* handleTemplateCommand(
         scene: command.data.scene,
         intent: command.data.intent,
       }, requestContext);
-      yield { kind: "templateDrafted", data: result };
+      yield { kind: "templateDrafted", data: { ...result, requestId: command.data.requestId } };
       return;
     }
     case "listLexicons": {
@@ -101,20 +101,20 @@ export async function* handleTemplateCommand(
         dtype: command.data.dtype,
         slot: command.data.slot,
       });
-      yield { kind: "styleTemplatesListed", data: { items } };
+      yield { kind: "styleTemplatesListed", data: { items, requestId: command.data.requestId } };
       return;
     }
     case "getStyleTemplate": {
       await requireSession(command.data.sessionId);
       const item = await getStyleTemplate(command.data.id);
       if (!item) throw new Error("模板不存在");
-      yield { kind: "styleTemplateLoaded", data: { item } };
+      yield { kind: "styleTemplateLoaded", data: { item, requestId: command.data.requestId } };
       return;
     }
     case "saveStyleTemplate": {
       await requireSession(command.data.sessionId);
       const item = await saveStyleTemplate(command.data);
-      yield { kind: "styleTemplateSaved", data: { item } };
+      yield { kind: "styleTemplateSaved", data: { item, requestId: command.data.requestId } };
       return;
     }
     case "deleteStyleTemplate": {
@@ -124,10 +124,10 @@ export async function* handleTemplateCommand(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message !== "每类至少保留一个模板") throw error;
-        yield { kind: "styleTemplateDeleted", data: { id: command.data.id, error: message } };
+        yield { kind: "styleTemplateDeleted", data: { id: command.data.id, error: message, requestId: command.data.requestId } };
         return;
       }
-      yield { kind: "styleTemplateDeleted", data: { id: command.data.id } };
+      yield { kind: "styleTemplateDeleted", data: { id: command.data.id, requestId: command.data.requestId } };
       return;
     }
     case "listReviewTemplates": {
@@ -138,14 +138,14 @@ export async function* handleTemplateCommand(
       ]);
       yield {
         kind: "reviewTemplatesListed",
-        data: { items, selectedTemplateId: selected?.id ?? null },
+        data: { items, selectedTemplateId: selected?.id ?? null, requestId: command.data.requestId },
       };
       return;
     }
     case "saveReviewTemplate": {
       await requireSession(command.data.sessionId);
       const item = await saveReviewTemplate(command.data);
-      yield { kind: "reviewTemplateSaved", data: { item } };
+      yield { kind: "reviewTemplateSaved", data: { item, requestId: command.data.requestId } };
       return;
     }
     case "deleteReviewTemplate": {
@@ -166,6 +166,7 @@ export async function* handleTemplateCommand(
             id: command.data.id,
             selectedTemplateId: selected?.id ?? null,
             error: message,
+            requestId: command.data.requestId,
           },
         };
         return;
@@ -173,7 +174,7 @@ export async function* handleTemplateCommand(
       const selected = type ? await getSelectedReviewTemplate(type) : null;
       yield {
         kind: "reviewTemplateDeleted",
-        data: { id: command.data.id, selectedTemplateId: selected?.id ?? null },
+        data: { id: command.data.id, selectedTemplateId: selected?.id ?? null, requestId: command.data.requestId },
       };
       return;
     }
@@ -182,7 +183,7 @@ export async function* handleTemplateCommand(
       await selectReviewTemplate(command.data.type, command.data.templateId);
       yield {
         kind: "reviewTemplateSelected",
-        data: { type: command.data.type, templateId: command.data.templateId },
+        data: { type: command.data.type, templateId: command.data.templateId, requestId: command.data.requestId },
       };
       return;
     }
@@ -191,7 +192,7 @@ export async function* handleTemplateCommand(
       const supplement = await getReviewDocSupplement(session.docId, command.data.type);
       yield {
         kind: "reviewSupplementLoaded",
-        data: { type: command.data.type, supplement },
+        data: { type: command.data.type, supplement, requestId: command.data.requestId },
       };
       return;
     }
@@ -204,7 +205,7 @@ export async function* handleTemplateCommand(
       );
       yield {
         kind: "reviewSupplementSaved",
-        data: { type: command.data.type, supplement },
+        data: { type: command.data.type, supplement, requestId: command.data.requestId },
       };
       return;
     }

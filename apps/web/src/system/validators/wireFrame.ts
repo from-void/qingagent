@@ -666,6 +666,15 @@ function checkDocGenerationEvent(frame: Extract<BridgeFrame, { kind: "docGenerat
 }
 
 export function validateBridgeFrame(frame: BridgeFrame): void {
+  const requestCorrelatedKinds = new Set([
+    "templateDrafted", "reviewTemplatesListed", "reviewTemplateSaved", "reviewTemplateDeleted",
+    "reviewTemplateSelected", "reviewSupplementLoaded", "reviewSupplementSaved", "styleTemplatesListed",
+    "styleTemplateLoaded", "styleTemplateSaved", "styleTemplateDeleted", "derivativeParamsUpdated",
+    "derivativesListed", "derivativeCreated", "derivativeDeleted", "derivativeDocLoaded",
+  ]);
+  if (requestCorrelatedKinds.has(frame.kind) && !((frame.data as { requestId?: unknown }).requestId)) {
+    fail(`${frame.kind}.requestId must be non-empty`);
+  }
   switch (frame.kind) {
     case "templateDrafted":
       if (!frame.data.name.trim() || !frame.data.prompt.trim()) fail("TemplateDrafted.data is invalid");

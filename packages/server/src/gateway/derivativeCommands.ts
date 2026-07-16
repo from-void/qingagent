@@ -42,7 +42,7 @@ export async function* handleDerivativeCommand(
     case "listDerivatives": {
       await requireSession(command.data.sessionId);
       const items = await listDerivativesByThread(command.data.sessionId);
-      yield { kind: "derivativesListed", data: { items } };
+      yield { kind: "derivativesListed", data: { items, requestId: command.data.requestId } };
       return;
     }
     case "createDerivative": {
@@ -82,7 +82,7 @@ export async function* handleDerivativeCommand(
       }
       yield {
         kind: "derivativeCreated",
-        data: { item: (await getDerivativeMeta(item.docId))! },
+        data: { item: (await getDerivativeMeta(item.docId))!, requestId: command.data.requestId },
       };
       return;
     }
@@ -145,7 +145,7 @@ export async function* handleDerivativeCommand(
       );
       yield {
         kind: "derivativeParamsUpdated",
-        data: { item: (await getDerivativeMeta(meta.docId))! },
+        data: { item: (await getDerivativeMeta(meta.docId))!, requestId: command.data.requestId },
       };
       return;
     }
@@ -156,7 +156,7 @@ export async function* handleDerivativeCommand(
         command.data.docId,
       );
       if (!deleted) throw new Error("衍生稿不存在或不属于当前会话");
-      yield { kind: "derivativeDeleted", data: { docId: command.data.docId } };
+      yield { kind: "derivativeDeleted", data: { docId: command.data.docId, requestId: command.data.requestId } };
       return;
     }
     case "getDerivativeDoc": {
@@ -170,6 +170,7 @@ export async function* handleDerivativeCommand(
       yield {
         kind: "derivativeDocLoaded",
         data: {
+          requestId: command.data.requestId,
           meta,
           docPm: document.docPm,
           docVersion: document.docVersion,

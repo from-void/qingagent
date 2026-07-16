@@ -244,15 +244,16 @@ export class ServerStream {
   }
 
   async draftTemplate(
-    data: Extract<Command, { kind: "draftTemplate" }>["data"],
+    data: Omit<Extract<Command, { kind: "draftTemplate" }>["data"], "requestId">,
     abortSignal?: AbortSignal,
   ): Promise<Extract<BridgeFrame, { kind: "templateDrafted" }>["data"]> {
+    const requestId = crypto.randomUUID();
     const framePromise = this.waitForFrame(
-      (frame) => frame.kind === "templateDrafted",
+      (frame) => frame.kind === "templateDrafted" && frame.data.requestId === requestId,
       "draftTemplate completed without receiving templateDrafted frame",
     );
     try {
-      await this.sendCommandInternal({ kind: "draftTemplate", data }, undefined, abortSignal);
+      await this.sendCommandInternal({ kind: "draftTemplate", data: { ...data, requestId } }, undefined, abortSignal);
       const frame = await framePromise;
       if (frame.kind !== "templateDrafted") throw new Error("AI 起草响应类型错误");
       return frame.data;
@@ -263,10 +264,13 @@ export class ServerStream {
   }
 
   private async derivativeFrame<K extends "derivativesListed" | "derivativeCreated" | "derivativeParamsUpdated" | "derivativeDeleted" | "derivativeDocLoaded" | "styleTemplatesListed" | "styleTemplateLoaded" | "styleTemplateSaved" | "styleTemplateDeleted" | "reviewTemplatesListed" | "reviewTemplateSaved" | "reviewTemplateDeleted" | "reviewTemplateSelected" | "reviewSupplementLoaded" | "reviewSupplementSaved">(
-    command: Command,
+    command: Extract<Command, { kind: "listDerivatives" | "createDerivative" | "updateDerivativeParams" | "deleteDerivative" | "getDerivativeDoc" | "listStyleTemplates" | "getStyleTemplate" | "saveStyleTemplate" | "deleteStyleTemplate" | "listReviewTemplates" | "saveReviewTemplate" | "deleteReviewTemplate" | "selectReviewTemplate" | "getReviewSupplement" | "upsertReviewSupplement" }>,
     kind: K,
   ): Promise<Extract<BridgeFrame, { kind: K }>> {
-    const framePromise = this.waitForFrame((frame) => frame.kind === kind, `${kind} response missing`);
+    const framePromise = this.waitForFrame(
+      (frame) => frame.kind === kind && frame.data.requestId === command.data.requestId,
+      `${kind} response missing`,
+    );
     try {
       await this.sendCommand(command);
       return await framePromise as Extract<BridgeFrame, { kind: K }>;
@@ -277,12 +281,12 @@ export class ServerStream {
   }
 
   async listDerivatives(sessionId: string) {
-    const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId } }, "derivativesListed");
+    const frame = await this.derivativeFrame({ kind: "listDerivatives", data: { sessionId, requestId: crypto.randomUUID() } }, "derivativesListed");
     return frame.data.items;
   }
 
   async createDerivative(sessionId: string, dtype: "gzh" | "xhs" | "translate", templateId: string, privatePrompt: string, writingStyleId?: string, layoutStyleId?: string | null, targetLang?: string) {
-    const frame = await this.derivativeFrame({ kind: "createDerivative", data: { sessionId, dtype, templateId, writingStyleId, layoutStyleId, targetLang, privatePrompt } }, "derivativeCreated");
+    const frame = await this.derivativeFrame({ kind: "createDerivative", data: { sessionId, requestId: crypto.randomUUID(), dtype, templateId, writingStyleId, layoutStyleId, targetLang, privatePrompt } }, "derivativeCreated");
     return frame.data.item;
   }
 
@@ -291,66 +295,66 @@ export class ServerStream {
   }
 
   async updateDerivativeCoverTemplate(sessionId: string, docId: string, coverTemplate: "poster" | "magazine" | "wenkai" | "impact" | "note") {
-    const frame = await this.derivativeFrame({ kind: "updateDerivativeParams", data: { sessionId, docId, coverTemplate } }, "derivativeParamsUpdated");
+    const frame = await this.derivativeFrame({ kind: "updateDerivativeParams", data: { sessionId, requestId: crypto.randomUUID(), docId, coverTemplate } }, "derivativeParamsUpdated");
     return frame.data.item;
   }
 
   async listStyleTemplates(sessionId: string, dtype: string, slot?: "layout" | "writing" | "instruction") {
-    const frame = await this.derivativeFrame({ kind: "listStyleTemplates", data: { sessionId, dtype, slot } }, "styleTemplatesListed");
+    const frame = await this.derivativeFrame({ kind: "listStyleTemplates", data: { sessionId, requestId: crypto.randomUUID(), dtype, slot } }, "styleTemplatesListed");
     return frame.data.items;
   }
 
   async getStyleTemplate(sessionId: string, id: string) {
-    const frame = await this.derivativeFrame({ kind: "getStyleTemplate", data: { sessionId, id } }, "styleTemplateLoaded");
+    const frame = await this.derivativeFrame({ kind: "getStyleTemplate", data: { sessionId, requestId: crypto.randomUUID(), id } }, "styleTemplateLoaded");
     return frame.data.item;
   }
 
   async saveStyleTemplate(sessionId: string, input: { id?: string; dtype: string; slot: "layout" | "writing" | "instruction"; name: string; detail?: string; prompt: string }) {
-    const frame = await this.derivativeFrame({ kind: "saveStyleTemplate", data: { sessionId, ...input } }, "styleTemplateSaved");
+    const frame = await this.derivativeFrame({ kind: "saveStyleTemplate", data: { sessionId, requestId: crypto.randomUUID(), ...input } }, "styleTemplateSaved");
     return frame.data.item;
   }
 
   async deleteStyleTemplate(sessionId: string, id: string) {
-    const frame = await this.derivativeFrame({ kind: "deleteStyleTemplate", data: { sessionId, id } }, "styleTemplateDeleted");
+    const frame = await this.derivativeFrame({ kind: "deleteStyleTemplate", data: { sessionId, requestId: crypto.randomUUID(), id } }, "styleTemplateDeleted");
     if (frame.data.error) throw new Error(frame.data.error);
   }
 
   async listReviewTemplates(sessionId: string, type: ReviewType) {
-    const frame = await this.derivativeFrame({ kind: "listReviewTemplates", data: { sessionId, type } }, "reviewTemplatesListed");
+    const frame = await this.derivativeFrame({ kind: "listReviewTemplates", data: { sessionId, requestId: crypto.randomUUID(), type } }, "reviewTemplatesListed");
     return frame.data;
   }
 
   async saveReviewTemplate(sessionId: string, input: { id?: string; type: ReviewType; name: string; prompt: string }) {
-    const frame = await this.derivativeFrame({ kind: "saveReviewTemplate", data: { sessionId, ...input } }, "reviewTemplateSaved");
+    const frame = await this.derivativeFrame({ kind: "saveReviewTemplate", data: { sessionId, requestId: crypto.randomUUID(), ...input } }, "reviewTemplateSaved");
     return frame.data.item;
   }
 
   async deleteReviewTemplate(sessionId: string, id: string) {
-    const frame = await this.derivativeFrame({ kind: "deleteReviewTemplate", data: { sessionId, id } }, "reviewTemplateDeleted");
+    const frame = await this.derivativeFrame({ kind: "deleteReviewTemplate", data: { sessionId, requestId: crypto.randomUUID(), id } }, "reviewTemplateDeleted");
     if (frame.data.error) throw new Error(frame.data.error);
     return frame.data.selectedTemplateId;
   }
 
   async selectReviewTemplate(sessionId: string, type: ReviewType, templateId: string) {
-    await this.derivativeFrame({ kind: "selectReviewTemplate", data: { sessionId, type, templateId } }, "reviewTemplateSelected");
+    await this.derivativeFrame({ kind: "selectReviewTemplate", data: { sessionId, requestId: crypto.randomUUID(), type, templateId } }, "reviewTemplateSelected");
   }
 
   async getReviewSupplement(sessionId: string, type: ReviewType) {
-    const frame = await this.derivativeFrame({ kind: "getReviewSupplement", data: { sessionId, type } }, "reviewSupplementLoaded");
+    const frame = await this.derivativeFrame({ kind: "getReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type } }, "reviewSupplementLoaded");
     return frame.data.supplement;
   }
 
   async upsertReviewSupplement(sessionId: string, type: ReviewType, supplement: string) {
-    const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, type, supplement } }, "reviewSupplementSaved");
+    const frame = await this.derivativeFrame({ kind: "upsertReviewSupplement", data: { sessionId, requestId: crypto.randomUUID(), type, supplement } }, "reviewSupplementSaved");
     return frame.data.supplement;
   }
 
   async deleteDerivative(sessionId: string, docId: string) {
-    await this.derivativeFrame({ kind: "deleteDerivative", data: { sessionId, docId } }, "derivativeDeleted");
+    await this.derivativeFrame({ kind: "deleteDerivative", data: { sessionId, requestId: crypto.randomUUID(), docId } }, "derivativeDeleted");
   }
 
   async getDerivativeDoc(sessionId: string, docId: string) {
-    const frame = await this.derivativeFrame({ kind: "getDerivativeDoc", data: { sessionId, docId } }, "derivativeDocLoaded");
+    const frame = await this.derivativeFrame({ kind: "getDerivativeDoc", data: { sessionId, requestId: crypto.randomUUID(), docId } }, "derivativeDocLoaded");
     return frame.data;
   }
 

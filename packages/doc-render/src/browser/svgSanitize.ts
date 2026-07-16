@@ -139,9 +139,11 @@ export function hasVisibleSvgContent(svg: string): boolean {
 }
 
 // 流式草稿预览专用:把"半截 SVG 流"快速整理成一个可临时渲染的草稿串。
-// 不追求安全消毒的严谨度(最终落盘仍走 sanitizeSvg),只做三件事:
+// 前半段只负责流式容错与正则预清理,最终结果必须再走 hardenInlineSvg 的 DOMParser
+// 权威加固后才能交给前端 innerHTML。具体做四件事:
 // ① 从 <svg 处截取主体;② 正则粗暴剥掉危险表面(script/事件属性/href/外部 url);
-// ③ 自动闭合未收尾的标签 + </svg>,让浏览器能渲出"正在成形"的草图。
+// ③ 自动闭合未收尾的标签 + </svg>,让浏览器能渲出"正在成形"的草图;
+// ④ DOMParser 解析并剔除脚本/事件/外联等可执行面,堵住正则消毒旁路。
 // 限制体积上限,失败/为空返回 null(前端就继续显示进度文字)。
 const DRAFT_MAX_BYTES = SVG_MAX_BYTES;
 const DRAFT_DANGEROUS_TAGS = /<\/?(?:script|foreignobject|image|use|a|style|iframe|animate|set|audio|video)\b[^>]*>/gi;
@@ -238,7 +240,7 @@ export function buildPartialSvgDraft(
         return `<svg${a}>`;
       },
     );
-    return closed;
+    return hardenInlineSvg(closed);
   } catch {
     return null;
   }

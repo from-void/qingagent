@@ -122,6 +122,35 @@ describe("buildPartialSvgDraft", () => {
     expect(out).toContain("<rect");
   });
 
+  it("流式草稿经权威加固后移除危险节点/属性并保留正常图形", () => {
+    const partial =
+      `<svg viewBox="0 0 800 450" onload="steal()"><g>` +
+      `<script>alert(1)</script>` +
+      `<foreignObject><div onclick="steal()">evil</div></foreignObject>` +
+      `<image href="javascript:alert(1)" width="20" height="20"/>` +
+      `<object data="https://evil.example/payload"></object>` +
+      `<embed src="https://evil.example/payload"/>` +
+      `<rect width="20" height="10" fill="#abc"/>` +
+      `<path d="M0 0 L10 10"/><text x="2" y="8">安全文本</text>`;
+
+    const out = buildPartialSvgDraft(partial, draftSize);
+
+    expect(out).toBeTruthy();
+    expect(out).not.toMatch(/<script\b/i);
+    expect(out).not.toMatch(/<foreignObject\b/i);
+    expect(out).not.toMatch(/<image\b/i);
+    // object/embed 不在流式正则预清理列表中,由末尾 DOMParser 权威加固兜住。
+    expect(out).not.toMatch(/<(?:object|embed)\b/i);
+    expect(out).not.toMatch(/\son[a-z]+\s*=/i);
+    expect(out).not.toMatch(/javascript:/i);
+    expect(out).toMatch(/<g\b/i);
+    expect(out).toMatch(/<rect\b/i);
+    expect(out).toMatch(/<path\b/i);
+    expect(out).toMatch(/<text\b/i);
+    expect(out).toContain("安全文本");
+    expect(out!.trim()).toMatch(/<\/svg>\s*$/i);
+  });
+
   it("returns null when there is no <svg yet and never throws on junk", () => {
     expect(buildPartialSvgDraft("好的，我来生成", draftSize)).toBeNull();
     expect(buildPartialSvgDraft("", draftSize)).toBeNull();

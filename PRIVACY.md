@@ -9,6 +9,13 @@
 - 当前 policy 样例端点为 `https://t.qingagent.com/api/send`。policy 不可达时回退构建期注入端点;两者都没有时不上报。
 - 设置 `QINGAGENT_TELEMETRY_DISABLED=1` 会关闭任何来源的遥测端点。桌面端会读取用户数据目录下的 `.env`,也可在启动环境变量中设置。
 
+## 第三方字体请求
+
+- Web 启动页会通过 Google Fonts 请求 Noto Sans SC、Noto Serif SC 和 JetBrains Mono；桌面端打开启动页时也会发生同样的请求。
+- 以 HTML 格式导出文档时，导出的文件包含同一 Google Fonts 样式表链接；用户在浏览器中打开该文件时会向 Google Fonts 发起请求。PDF 导出不发起此类请求。
+- 这些请求由浏览器直接发送给 Google Fonts。Google 可从请求中获得网络 IP 地址、User-Agent 等浏览器自动携带的信息；qingagent 不会在该请求中附加文档正文、聊天输入、附件或 API Key。
+- 在断网或需要避免此类第三方请求的环境中，可不打开启动页、避免在浏览器中打开 HTML 导出文件，或在部署/构建时将上述字体改为本地自托管。当前仓库不包含这些 Google Fonts 字体文件。
+
 ## 共同字段
 
 每条事件会包含 Umami 需要的基础字段:

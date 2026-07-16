@@ -13,6 +13,7 @@ import {
 const dirs: string[] = [];
 
 afterEach(async () => {
+  delete process.env.QINGAGENT_AUTH_TOKEN;
   await stopExternalInstance();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -38,6 +39,31 @@ describe("external instance + auth", () => {
     const ok = await app.request("/api/v1/external/health", { headers: { Authorization: `Bearer ${token}` } });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, version: "test", pid: process.pid });
+  });
+
+  it("全局鉴权开启时 external 使用独立 Bearer，非 external 仍受全局鉴权保护", async () => {
+    const filePath = await tempInstancePath();
+    await startExternalInstance({ port: 52341, version: "test", filePath });
+    const externalToken = getExternalToken();
+    process.env.QINGAGENT_AUTH_TOKEN = "global-auth-token";
+
+    const externalOk = await app.request("/api/v1/external/health", {
+      headers: { Authorization: `Bearer ${externalToken}` },
+    });
+    expect(externalOk.status).toBe(200);
+
+    const nonExternal = await app.request("/api/v1/home", {
+      headers: { Authorization: `Bearer ${externalToken}` },
+    });
+    expect(nonExternal.status).toBe(401);
+    expect(await nonExternal.json()).toEqual({ error: "unauthorized" });
+
+    const externalMissingBearer = await app.request("/api/v1/external/health");
+    expect(externalMissingBearer.status).toBe(401);
+    expect(await externalMissingBearer.json()).toEqual({
+      error: "unauthorized",
+      code: "AUTH_FAILED",
+    });
   });
 
   it("stop 不删除其他进程写入的 instance.json", async () => {

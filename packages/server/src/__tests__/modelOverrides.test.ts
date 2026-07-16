@@ -20,14 +20,15 @@ vi.mock("@qingagent/core", () => ({
     const value = raw?.trim();
     return value && /^[A-Za-z0-9._:\/-]+$/.test(value) ? value : undefined;
   },
-  validateFetchUrl: vi.fn(async (raw: string) => {
+  validateModelFetchUrl: vi.fn(async (raw: string) => {
     const url = new URL(raw);
     const hostname = url.hostname.toLowerCase();
     if (
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
       hostname === "169.254.169.254" ||
-      hostname.startsWith("10.")
+      hostname.startsWith("10.") ||
+      hostname.startsWith("192.168.") ||
+      hostname.startsWith("[fc") ||
+      hostname.startsWith("[fd")
     ) {
       throw new Error(`blocked ${hostname}`);
     }
@@ -92,7 +93,7 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
     });
     const blockedBaseUrl = await resolveRequestModelOverrides({
       visitorKey: VKEY,
-      baseUrl: "http://127.0.0.1:11434/v1",
+      baseUrl: "http://10.0.0.8/v1",
       protocol: "anthropic",
     });
 
@@ -105,10 +106,10 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
   });
 
   it.each([
-    "http://127.0.0.1:11434/v1",
     "http://169.254.169.254/latest/meta-data",
     "http://10.0.0.8/v1",
-    "http://localhost:8080/v1",
+    "http://192.168.1.8/v1",
+    "http://[fc00::1]:8080/v1",
   ])("带 visitor key 但 baseUrl 指向敏感地址时丢弃:%s", async (baseUrl) => {
     const r = await resolveRequestModelOverrides({
       visitorKey: VKEY,
@@ -119,6 +120,21 @@ describe("resolveRequestModelOverrides — 自定义 endpoint 绑定 visitor key
     expect(r.visitorApiKey).toBe(VKEY);
     expect(r.baseUrl).toBeUndefined();
     expect(r.modelIds).toEqual({ flash: "safe-model-name" });
+  });
+
+  it.each([
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:1234/v1",
+    "http://[::1]:8080/v1",
+  ])("带 visitor key 时允许本机模型 endpoint:%s", async (baseUrl) => {
+    const r = await resolveRequestModelOverrides({
+      visitorKey: VKEY,
+      baseUrl,
+      modelFlash: "local-model",
+    });
+
+    expect(r.baseUrl).toBe(baseUrl);
+    expect(r.modelIds).toEqual({ flash: "local-model" });
   });
 
   it("带 visitor key 但 protocol 非 anthropic → 不设 protocol(默认 openai)", async () => {

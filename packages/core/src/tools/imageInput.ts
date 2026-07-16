@@ -52,7 +52,7 @@ function imageInputError(kind: ImageInputErrorKind, message: string): ImageInput
 function classifyFetchGuardError(error: unknown): ImageInputError {
   if (error instanceof ImageInputError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/Blocked private|private hostname|private IPv[46]/i.test(message)) {
+  if (/Blocked (?:private|loopback)|private hostname|private IPv[46]/i.test(message)) {
     return imageInputError("ssrf_blocked", message);
   }
   if (/Invalid URL|Unsupported URL scheme/i.test(message)) {

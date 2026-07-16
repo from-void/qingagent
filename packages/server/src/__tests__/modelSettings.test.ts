@@ -30,14 +30,15 @@ const mockCore = vi.hoisted(() => {
       const value = raw?.trim();
       return value && /^[A-Za-z0-9._:\/-]+$/.test(value) ? value : undefined;
     }),
-    validateFetchUrl: vi.fn(async (raw: string) => {
+    validateModelFetchUrl: vi.fn(async (raw: string) => {
       const url = new URL(raw);
       const hostname = url.hostname.toLowerCase();
       if (
-        hostname === "localhost" ||
-        hostname === "127.0.0.1" ||
         hostname === "169.254.169.254" ||
-        hostname.startsWith("10.")
+        hostname.startsWith("10.") ||
+        hostname.startsWith("192.168.") ||
+        hostname.startsWith("[fc") ||
+        hostname.startsWith("[fd")
       ) {
         throw new Error(`blocked ${hostname}`);
       }
@@ -226,7 +227,7 @@ describe("modelSettingsRoutes", () => {
       ok: true,
       normalizedBaseUrl: "https://api.example.com/v1",
     });
-    expect(mockCore.validateFetchUrl).toHaveBeenCalledWith("https://api.example.com/v1");
+    expect(mockCore.validateModelFetchUrl).toHaveBeenCalledWith("https://api.example.com/v1");
     expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", {
       headers: { Authorization: "Bearer sk-public" },
       signal: expect.any(AbortSignal) as AbortSignal,
@@ -257,10 +258,10 @@ describe("modelSettingsRoutes", () => {
   });
 
   it.each([
-    "http://127.0.0.1:8080/v1",
     "http://169.254.169.254/latest/meta-data",
     "http://10.0.0.4/v1",
-    "http://localhost:8080/v1",
+    "http://192.168.1.4/v1",
+    "http://[fc00::1]:8080/v1",
   ])("test-custom 在 fetch 前拒绝敏感 baseUrl:%s", async (baseUrl) => {
     const app = await loadApp();
     const fetchMock = vi.fn();
@@ -275,7 +276,27 @@ describe("modelSettingsRoutes", () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json).toMatchObject({ ok: false });
-    expect(String(json.error)).toContain("公开的 API 地址");
+    expect(String(json.error)).toContain("内网、链路本地和云元数据地址默认禁止");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:1234/v1",
+    "http://[::1]:8080/v1",
+  ])("test-custom 允许本机模型并继续连通测试:%s", async (baseUrl) => {
+    const app = await loadApp();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await app.request("/api/v1/settings/model/test-custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseUrl, apiKey: "sk-local", protocol: "openai" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true, normalizedBaseUrl: baseUrl });
+    expect(fetchMock).toHaveBeenCalled();
   });
 });

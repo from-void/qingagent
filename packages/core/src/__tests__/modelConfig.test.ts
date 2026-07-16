@@ -165,7 +165,7 @@ describe("modelConfig", () => {
       ],
     ]);
 
-    await expect(resolveVisionConfig(rc)).rejects.toThrow(/Blocked private/);
+    await expect(resolveVisionConfig(rc)).rejects.toThrow(/Blocked loopback/);
   });
 
   it("OpenAI 工厂把 thinking 开关写入请求体，enabled 时移除 temperature", async () => {

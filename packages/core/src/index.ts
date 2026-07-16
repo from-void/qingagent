@@ -146,6 +146,7 @@ export {
   sanitizeModelId,
   testTextModelConnection,
   testVisionConnection,
+  validateModelFetchUrl,
   warmUpModelEndpoint,
   withPrefixCacheGuardContext,
 } from "./llm/index.js";

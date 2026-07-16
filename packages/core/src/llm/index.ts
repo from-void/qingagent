@@ -1,6 +1,7 @@
 export * from "./deepseekPricing.js";
 export * from "./modelBaseUrl.js";
 export * from "./modelConfig.js";
+export * from "./modelFetchUrl.js";
 export * from "./modelWarmup.js";
 export * from "./netProbe.js";
 export * from "./omObservationsPrompt.js";

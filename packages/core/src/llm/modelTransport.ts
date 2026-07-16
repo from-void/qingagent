@@ -3,6 +3,7 @@ import {
   EnvHttpProxyAgent,
   fetch as undiciFetch,
 } from "undici";
+import { validateModelFetchUrl } from "./modelFetchUrl.js";
 
 export const DEFAULT_MODEL_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -82,6 +83,10 @@ export const modelFetch: typeof globalThis.fetch = async (input, init) => {
   if (process.env.VITEST && globalThis.fetch !== nativeGlobalFetch) {
     return globalThis.fetch(input, init);
   }
+  const rawUrl = typeof input === "string" || input instanceof URL
+    ? input.toString()
+    : input.url;
+  await validateModelFetchUrl(rawUrl);
   const dispatcher = getModelDispatcher();
   return await undiciFetch(
     input as Parameters<typeof undiciFetch>[0],

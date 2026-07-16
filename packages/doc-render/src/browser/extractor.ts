@@ -1,10 +1,11 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import { Buffer } from "node:buffer";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import { loadPdfParseConstructor } from "./pdfParse.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
+import { parseFetchUrl, validateFetchUrl } from "./fetchUrlPolicy.js";
+
+export { validateFetchUrl };
 
 export interface ExtractedArticleContent {
   title: string;
@@ -131,7 +132,6 @@ export function isUnsupportedForHtmlExtraction(
   return !isHtmlish || isAttachment;
 }
 
-const PRIVATE_HOSTS = new Set(["localhost", "0.0.0.0", "::1"]);
 const MAX_REDIRECTS = 5;
 const MIN_EXTRACTED_TEXT_LENGTH = 40;
 const MAX_FETCH_ATTEMPTS = 3;
@@ -144,117 +144,6 @@ const FETCH_TOTAL_TIMEOUT_MS = 9_000;
 
 interface FetchRetryState {
   timeoutErrors: number;
-}
-
-function isPrivateIPv4(address: string): boolean {
-  const parts = address.split(".").map((part) => Number(part));
-  if (
-    parts.length !== 4 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
-    return false;
-  }
-  const [a, b] = parts as [number, number, number, number];
-  return (
-    a === 10 ||
-    a === 127 ||
-    a === 0 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 169 && b === 254) ||
-    (a === 192 && b === 168)
-  );
-}
-
-function extractIPv4MappedIPv6(address: string): string | null {
-  const normalized = address.toLowerCase();
-  const mappedPrefixes = ["::ffff:", "0:0:0:0:0:ffff:"];
-  const prefix = mappedPrefixes.find((candidate) => normalized.startsWith(candidate));
-  if (!prefix) return null;
-
-  const suffix = normalized.slice(prefix.length);
-  if (isIP(suffix) === 4) return suffix;
-
-  const hextets = suffix.split(":");
-  if (hextets.length !== 2) return null;
-
-  const high = Number.parseInt(hextets[0]!, 16);
-  const low = Number.parseInt(hextets[1]!, 16);
-  if (
-    !Number.isInteger(high) ||
-    !Number.isInteger(low) ||
-    high < 0 ||
-    high > 0xffff ||
-    low < 0 ||
-    low > 0xffff
-  ) {
-    return null;
-  }
-
-  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
-}
-
-function isPrivateIPv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  const mappedIPv4 = extractIPv4MappedIPv6(normalized);
-  return (
-    (mappedIPv4 !== null && isPrivateIPv4(mappedIPv4)) ||
-    normalized === "::1" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("fe80:")
-  );
-}
-
-function assertAllowedAddress(address: string, source: string): void {
-  const kind = isIP(address);
-  if (kind === 4 && isPrivateIPv4(address)) {
-    throw new Error(`Blocked private IPv4 address for ${source}: ${address}`);
-  }
-  if (kind === 6 && isPrivateIPv6(address)) {
-    throw new Error(`Blocked private IPv6 address for ${source}: ${address}`);
-  }
-}
-
-function parseFetchUrl(rawUrl: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid URL: ${rawUrl}`);
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
-  }
-
-  return parsed;
-}
-
-export async function validateFetchUrl(rawUrl: string): Promise<URL> {
-  const parsed = parseFetchUrl(rawUrl);
-  const hostname = parsed.hostname.toLowerCase();
-  const addressHostname =
-    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (PRIVATE_HOSTS.has(hostname) || PRIVATE_HOSTS.has(addressHostname)) {
-    throw new Error(`Blocked private hostname: ${hostname}`);
-  }
-
-  const ipKind = isIP(addressHostname);
-  if (ipKind) {
-    assertAllowedAddress(addressHostname, hostname);
-    return parsed;
-  }
-
-  const records = await lookup(hostname, { all: true, verbatim: true });
-  if (records.length === 0) {
-    throw new Error(`Could not resolve hostname: ${hostname}`);
-  }
-  for (const record of records) {
-    assertAllowedAddress(record.address, hostname);
-  }
-
-  return parsed;
 }
 
 function sleep(ms: number): Promise<void> {

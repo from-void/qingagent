@@ -124,6 +124,7 @@ async function saveDocumentFromMetadata(
   overrides: {
     id?: string;
     docState?: string;
+    title?: string;
     docVersion?: number;
     legacySections?: LegacySection[];
   } = {},
@@ -132,7 +133,7 @@ async function saveDocumentFromMetadata(
     id: overrides.id ?? metadata.docId ?? threadId,
     threadId,
     resourceId: "qingagent-user",
-    title: metadata.title,
+    title: overrides.title ?? metadata.title,
     docState: overrides.docState ?? metadata.docState.kind,
     docVersion: overrides.docVersion ?? metadata.docVersion,
     lastSyncedVersion: metadata.lastSyncedDocumentSnapshot,
@@ -275,6 +276,20 @@ describe("migrateThreadMetadataToDocuments", () => {
 
     expect(stats.migrated).toBe(1);
     expect((await documentRepo.load("doc-state"))?.docState).toBe("pendingReview");
+  });
+
+  it("does not skip when sampled title differs", async () => {
+    const meta = validMetadata("新标题", { docId: "doc-title" });
+    addThread("thread-title", meta);
+    await saveDocumentFromMetadata("thread-title", meta, { title: "旧标题" });
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments();
+
+    expect(stats.migrated).toBe(1);
+    expect((await documentRepo.load("doc-title"))?.title).toBe("新标题");
   });
 
   it("does not skip when counts match but a sampled document row is missing", async () => {

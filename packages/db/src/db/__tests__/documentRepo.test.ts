@@ -111,7 +111,7 @@ describe("documentRepo", () => {
     expect(loaded?.legacySections).toEqual([section("latest body")]);
   });
 
-  it("does not let same-version no-op shadow saves overwrite metadata or bump row version", async () => {
+  it("does not bump row version for a same-version no-op shadow save", async () => {
     await documentRepo.save(
       input("doc-same-version", {
         docVersion: 4,
@@ -123,7 +123,7 @@ describe("documentRepo", () => {
     await documentRepo.save(
       input("doc-same-version", {
         docVersion: 4,
-        title: "stale shadow",
+        title: "authoritative",
         legacySections: [section("authoritative body")],
       }),
     );
@@ -133,6 +133,32 @@ describe("documentRepo", () => {
     expect(loaded?.title).toBe("authoritative");
     expect(loaded?.legacySections).toEqual([section("authoritative body")]);
     expect(loaded?.version).toBe(1);
+  });
+
+  it("updates the derived title for a same-version rename without regressing document content", async () => {
+    await documentRepo.save(
+      input("doc-rename", {
+        title: "旧标题",
+        docVersion: 4,
+        legacySections: [section("保持不变的正文")],
+      }),
+    );
+
+    await documentRepo.save(
+      input("doc-rename", {
+        title: "新标题",
+        docVersion: 4,
+        legacySections: [section("保持不变的正文")],
+      }),
+    );
+
+    const loaded = await documentRepo.load("doc-rename");
+    expect(loaded).toMatchObject({
+      title: "新标题",
+      docVersion: 4,
+      legacySections: [section("保持不变的正文")],
+      version: 2,
+    });
   });
 
   it("allows same-version saves when PM content actually changes", async () => {

@@ -203,6 +203,27 @@ describe("persistSessionMetadata shadow write", () => {
     expect(meta.legacySections).toEqual([section("正文")]);
   });
 
+  it("does not skip derived convergence after the former shadow circuit opens", async () => {
+    const now = Date.now();
+    for (let index = 0; index < SHADOW_CIRCUIT_FAIL_THRESHOLD; index++) {
+      recordShadowOutcome(false, now + index);
+    }
+    expect(shadowCircuitOpen(now + SHADOW_CIRCUIT_FAIL_THRESHOLD + 1)).toBe(true);
+
+    const saveSpy = vi.spyOn(documentRepo, "save");
+    const { persistSessionMetadata } = await import("../threadPersistence.js");
+    const state = createSession("session-shadow-converge");
+    state.title = "待收敛标题";
+    state.docState = { kind: "editing" };
+    state.legacySections = [section("正文")];
+    state.doc = legacySectionsToPm(state.legacySections as never);
+
+    await persistSessionMetadata(state);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect((await documentRepo.load(state.docId))?.title).toBe("待收敛标题");
+  });
+
   it("retries SQLITE_BUSY primary metadata writes and eventually persists suspension ids", async () => {
     const { persistSessionMetadata } = await import("../threadPersistence.js");
     let attempts = 0;

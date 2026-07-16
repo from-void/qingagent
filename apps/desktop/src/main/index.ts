@@ -14,6 +14,7 @@ import {
   quitAndInstallUpdate,
   startDesktopUpdater,
 } from "./update/updater.js";
+import { isAllowedMainFrameNavigation } from "./navigationPolicy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -531,6 +532,10 @@ async function createWindow() {
   mainWindow.once("ready-to-show", revealWindow);
   revealFallback = setTimeout(revealWindow, 5000);
 
+  const isDev = !app.isPackaged;
+  // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
+  const devUrl = process.env.QINGAGENT_DESKTOP_DEV_URL ?? "http://localhost:6173";
+
   // 外部链接走系统默认浏览器,不在 app 内弹小窗 / 不把主窗口导航走。
   // ① target=_blank / window.open():拦下新窗,http(s)/mailto 交给系统浏览器,其余一律 deny。
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -539,19 +544,11 @@ async function createWindow() {
     }
     return { action: "deny" };
   });
-  // ② 整页导航:SPA 内部跳转走 history API 不触发本事件;凡是要跳到「与当前页不同源」的
-  //    http(s) 外链(如 <a href> 直接点开网址),拦下用系统浏览器打开,避免主窗口被带走。
+  // ② 整页导航:SPA 内部跳转走 history API 不触发本事件。白名单只含当前应用同源
+  //    http(s) 与开发服务器；file:、about:、跨源和畸形 URL 均不得接管主窗口。
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    try {
-      const target = new URL(url);
-      const current = new URL(mainWindow?.webContents.getURL() ?? "");
-      const isWeb = target.protocol === "http:" || target.protocol === "https:";
-      if (isWeb && target.origin !== current.origin) {
-        event.preventDefault();
-        void shell.openExternal(url);
-      }
-    } catch {
-      // URL 解析失败忽略,交回默认处理。
+    if (!isAllowedMainFrameNavigation(url, mainWindow?.webContents.getURL() ?? "", isDev ? devUrl : undefined)) {
+      event.preventDefault();
     }
   });
 
@@ -562,12 +559,9 @@ async function createWindow() {
     }, 250);
   });
 
-  const isDev = !app.isPackaged;
   if (isDev) {
     // In dev mode, load from the Vite dev server.
     // The web app's vite config proxies /api to the Hono server.
-    // 多 worktree 各自端口不同,用 QINGAGENT_DESKTOP_DEV_URL 覆盖;默认主 worktree 的 6173。
-    const devUrl = process.env.QINGAGENT_DESKTOP_DEV_URL ?? "http://localhost:6173";
     mainWindow.loadURL(devUrl);
     mainWindow.webContents.openDevTools();
   } else {

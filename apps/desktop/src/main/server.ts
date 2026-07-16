@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { app as electronApp, dialog } from "electron";
 import path from "node:path";
 import { telemetry } from "./telemetry/index.js";
+import { createSingleFlightStarter } from "./serverSingleton.js";
 import { ToolCallStreamScanner } from "./toolCallStreamScanner.js";
 
 const toolCallStreamScanner = new ToolCallStreamScanner((name) => telemetry.trackToolUsed(name));
@@ -11,7 +12,7 @@ export interface StartServerOptions {
   desktopLogDir: string;
 }
 
-export async function startServer(options: StartServerOptions): Promise<{ port: number }> {
+async function startServerOnce(options: StartServerOptions): Promise<{ port: number }> {
   // ⚠️ 迁移必须先于 @qingagent/core barrel / @qingagent/server/app 求值。
   // barrel 会连带 eval core/mastra.ts 的 new Mastra,其 LibSQLStore 可能抢同库写锁。
   // TODO(B2 createQingagentRuntime):长期应由显式运行时工厂统一管理这段启动顺序。
@@ -120,6 +121,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     });
   });
 }
+
+export const startServer = createSingleFlightStarter(startServerOnce);
 
 /** 从成功的 API 请求提取语义埋点;fire-and-forget,绝不抛。 */
 function observeApiForTelemetry(req: Request, status: number, bodyClone: Request | null): void {

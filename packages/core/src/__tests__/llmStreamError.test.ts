@@ -386,6 +386,41 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(draftingFailures(frames)).toHaveLength(0);
   });
 
+  it("N2 回归:askuser-progress 已发问卷帧后瞬断不重跑整轮", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    streamMock.mockResolvedValueOnce({
+      runId: "run-askuser-progress",
+      fullStream: streamOf(
+        {
+          type: "tool-output",
+          payload: {
+            toolCallId: "ask-progress",
+            output: {
+              type: "askuser-progress",
+              questions: [
+                {
+                  id: "question-1",
+                  label: "请选择",
+                  kind: "single",
+                  options: [{ value: "yes", label: "是", description: null, preview: null }],
+                  placeholder: null,
+                },
+              ],
+            },
+          },
+        },
+        errorChunk("read ECONNRESET"),
+      ),
+    } as never);
+
+    const frames = await collectFrames(runAgentTurn(createSession("err-askuser-progress"), "开始"));
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(frames.some((frame) => frame.kind === "toolCallUpdated")).toBe(true);
+  });
+
   it("abort/cancel error chunk 不按瞬态重试,仍直接报错", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("err-abort");

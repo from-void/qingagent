@@ -203,6 +203,7 @@ export async function* handleToolOutputEvent(
     }
     yield toolCallUpdated(agentMessageId, targetId, partialSpec);
     updateToolCallInChatHistory(state, agentMessageId, targetId, partialSpec);
+    outcome.producedVisibleFrame = true;
   }
 
   if (

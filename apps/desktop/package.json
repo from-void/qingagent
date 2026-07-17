@@ -11,7 +11,7 @@
     "pack": "pnpm run build && electron-builder --dir",
     "dist": "pnpm run build && electron-builder",
     "build:win": "bash build-win.sh",
-    "test": "node --import tsx --test buildPyodideStage.test.mjs buildTelemetryInfo.test.mjs redact.test.mjs stageLarkCli.test.mjs src/main/exportRequestFilter.test.ts src/main/desktopRuntimeEnv.test.ts src/main/startupOrder.test.ts src/main/diagnostics/jsonlSpanSink.test.ts src/main/diagnostics/rendererLog.test.ts src/main/telemetry/config.test.ts src/main/telemetry/deadline.test.ts src/main/update/policy.test.ts src/main/update/manualCheck.test.ts",
+    "test": "node --import tsx --test buildPyodideStage.test.mjs buildTelemetryInfo.test.mjs redact.test.mjs stageLarkCli.test.mjs src/main/exportRequestFilter.test.ts src/main/desktopRuntimeEnv.test.ts src/main/serverSingleton.test.ts src/main/startupOrder.test.ts src/main/diagnostics/jsonlSpanSink.test.ts src/main/diagnostics/rendererLog.test.ts src/main/telemetry/config.test.ts src/main/telemetry/deadline.test.ts src/main/update/policy.test.ts src/main/update/manualCheck.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {

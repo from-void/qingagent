@@ -2,6 +2,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConfirmProvider } from "../../system/ConfirmProvider";
 import { ToastProvider } from "../../system/ToastProvider";
 import { resetDesktopUpdateStoreForTest } from "../../system/desktopUpdateStore";
 import { AboutPanel } from "./AboutPanel";
@@ -9,7 +10,12 @@ import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
 import { resetSettingsDialogA11yForTest, ensureSettingsDialogA11y } from "./settingsDialogA11y";
-import { getSelectedModelTier, setVisitorDeepseekKey, visitorKeyHeaders } from "./visitorKeyStore";
+import {
+  getSelectedModelTier,
+  getVisitorDeepseekKey,
+  setVisitorDeepseekKey,
+  visitorKeyHeaders,
+} from "./visitorKeyStore";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -118,6 +124,57 @@ describe("Settings Track B", () => {
     await click(getButtonByWf("ModelTierFlash"));
     expect(getSelectedModelTier()).toBe("flash");
     expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
+  });
+
+  it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    const key = "sk-short_key.with-symbol";
+    setInput(getInputByWf("ModelKeyInput"), key);
+    await waitForCondition(
+      () => fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/v1/settings/model/balance")),
+      "非标准 key 自动验证",
+    );
+    await click(getButtonByText("保存"));
+
+    expect(getVisitorDeepseekKey()).toBe(key);
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("已验证并保存");
+  });
+
+  it("N7: 验证失败时仍可确认保存", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/settings/model/balance")) {
+        return json({ ok: false, error: "验证失败" }, 401);
+      }
+      return makeFetchMock()(input);
+    }));
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <ModelSettingsPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    const key = "sk-another_nonstandard-key";
+    setInput(getInputByWf("ModelKeyInput"), key);
+    await waitForCondition(
+      () => (host?.textContent ?? "").includes("验证失败"),
+      "验证失败提示",
+    );
+    await click(getButtonByText("保存"));
+    expect(host?.querySelector('[data-wf="GlobalConfirm"]')?.textContent).toContain("仍要保存这个 key");
+    await click(getButtonByText("仍要保存"));
+
+    expect(getVisitorDeepseekKey()).toBe(key);
   });
 
   it("Vision 测试保存成功走全局 toast,失败提示位置不被成功文案占用", async () => {
@@ -549,6 +606,15 @@ async function waitForA11yState(predicate: () => boolean, label: string): Promis
   const deadline = Date.now() + 500;
   while (Date.now() <= deadline) {
     await waitForA11y();
+    if (predicate()) return;
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function waitForCondition(predicate: () => boolean, label: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() <= deadline) {
+    await flush();
     if (predicate()) return;
   }
   throw new Error(`Timed out waiting for ${label}`);

@@ -47,6 +47,7 @@ describe("draftTemplate bridge 命令", () => {
       kind: "draftTemplate",
       data: {
         sessionId,
+        requestId: "request-draft-template",
         scene: { kind: "review", type: "role", label: "角色审查" },
         intent: { name: "投资人", prompt: "检查回报" },
       },
@@ -54,7 +55,7 @@ describe("draftTemplate bridge 命令", () => {
 
     expect(frames).toContainEqual({
       kind: "templateDrafted",
-      data: { name: "投资人审查", prompt: "逐项检查市场、壁垒与回报。" },
+      data: { name: "投资人审查", prompt: "逐项检查市场、壁垒与回报。", requestId: "request-draft-template" },
     });
     expect(mocks.draftTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId }),

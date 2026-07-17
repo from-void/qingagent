@@ -90,7 +90,9 @@ export function DerivativeView(props: {
   useEffect(() => {
     let current = true;
     setDocument(null);
-    void props.stream.getDerivativeDoc(props.sessionId, item.docId).then((next) => { if (current) setDocument(next); });
+    void props.stream.getDerivativeDoc(props.sessionId, item.docId).then((next) => {
+      if (current && next?.meta.docId === item.docId) setDocument(next);
+    });
     return () => { current = false; };
   }, [item.docId, item.generatedAt, props.sessionId, props.stream]);
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
@@ -117,7 +119,7 @@ export function DerivativeView(props: {
     const poll = async () => {
       const next = await props.stream.getDerivativeDoc(props.sessionId, item.docId).catch(() => null);
       if (stopped) return;
-      if (next?.meta.generatedAt && next.meta.generatedAt !== generationBefore) {
+      if (next?.meta.docId === item.docId && next.meta.generatedAt && next.meta.generatedAt !== generationBefore) {
         setDocument(next); setGenerationComplete(true); setAbortedEmpty(false); await props.onRefresh();
         if (!streamActiveRef.current) setGenerating(false);
         return;

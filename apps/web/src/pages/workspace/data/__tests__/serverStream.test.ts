@@ -393,9 +393,12 @@ describe("ServerStream", () => {
 
     const listPromise = stream.listReviewTemplates("s-1", "source");
     await Promise.resolve();
+    const requestId = () => JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1].body as string).data.requestId as string;
+    const listRequestId = requestId();
     source.emitFrame({
       kind: "reviewTemplatesListed",
       data: {
+        requestId: listRequestId,
         items: [{ id: "source-default", type: "source", name: "标准来源核查", prompt: "核对金额", builtin: true, createdAt: "t", updatedAt: "t" }],
         selectedTemplateId: "source-default",
       },
@@ -404,24 +407,67 @@ describe("ServerStream", () => {
 
     const supplementPromise = stream.getReviewSupplement("s-1", "source");
     await Promise.resolve();
-    source.emitFrame({ kind: "reviewSupplementLoaded", data: { type: "source", supplement: "只看金额" } } satisfies BridgeFrame, "3");
+    source.emitFrame({ kind: "reviewSupplementLoaded", data: { requestId: requestId(), type: "source", supplement: "只看金额" } } satisfies BridgeFrame, "3");
     await expect(supplementPromise).resolves.toBe("只看金额");
 
     const reviewDeletePromise = stream.deleteReviewTemplate("s-1", "source-default");
     await Promise.resolve();
+    const reviewDeleteRequestId = requestId();
     source.emitFrame({
       kind: "reviewTemplateDeleted",
-      data: { id: "source-default", selectedTemplateId: "source-default", error: "每类至少保留一个模板" },
+      data: { requestId: reviewDeleteRequestId, id: "source-default", selectedTemplateId: "source-default", error: "每类至少保留一个模板" },
     } satisfies BridgeFrame, "4");
     await expect(reviewDeletePromise).rejects.toThrow("每类至少保留一个模板");
 
     const styleDeletePromise = stream.deleteStyleTemplate("s-1", "gzh-layout-classic");
     await Promise.resolve();
+    const styleDeleteRequestId = requestId();
     source.emitFrame({
       kind: "styleTemplateDeleted",
-      data: { id: "gzh-layout-classic", error: "每类至少保留一个模板" },
+      data: { requestId: styleDeleteRequestId, id: "gzh-layout-classic", error: "每类至少保留一个模板" },
     } satisfies BridgeFrame, "5");
     await expect(styleDeletePromise).rejects.toThrow("每类至少保留一个模板");
+  });
+
+  it("并发同类请求按 requestId 接收乱序响应，不会串稿或串模板", async () => {
+    globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
+    const stream = new ServerStream();
+    const docA = stream.getDerivativeDoc("s-1", "derivative-a");
+    const docB = stream.getDerivativeDoc("s-1", "derivative-b");
+    const styleA = stream.getStyleTemplate("s-1", "style-a");
+    const styleB = stream.getStyleTemplate("s-1", "style-b");
+    const source = await waitForEventSource();
+    await Promise.resolve();
+    const requests = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .slice(-4)
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string).data.requestId as string);
+    const [docARequestId, docBRequestId, styleARequestId, styleBRequestId] = requests;
+    const derivative = (docId: string) => ({
+      docId, dtype: "translate", templateId: "template", templateName: "模板", privatePrompt: "",
+      sourceVersion: null, generatedAt: null, stale: false,
+    });
+
+    source.emitFrame({
+      kind: "derivativeDocLoaded",
+      data: { requestId: docBRequestId!, meta: derivative("derivative-b"), docPm: "{}", docVersion: 1, title: "B" },
+    } satisfies BridgeFrame, "1");
+    source.emitFrame({
+      kind: "styleTemplateLoaded",
+      data: { requestId: styleBRequestId!, item: { id: "style-b", dtype: "gzh", slot: "writing", name: "B", detail: "", prompt: "", builtin: false } },
+    } satisfies BridgeFrame, "2");
+    source.emitFrame({
+      kind: "derivativeDocLoaded",
+      data: { requestId: docARequestId!, meta: derivative("derivative-a"), docPm: "{}", docVersion: 1, title: "A" },
+    } satisfies BridgeFrame, "3");
+    source.emitFrame({
+      kind: "styleTemplateLoaded",
+      data: { requestId: styleARequestId!, item: { id: "style-a", dtype: "gzh", slot: "writing", name: "A", detail: "", prompt: "", builtin: false } },
+    } satisfies BridgeFrame, "4");
+
+    await expect(docA).resolves.toMatchObject({ meta: { docId: "derivative-a" }, title: "A" });
+    await expect(docB).resolves.toMatchObject({ meta: { docId: "derivative-b" }, title: "B" });
+    await expect(styleA).resolves.toMatchObject({ id: "style-a", name: "A" });
+    await expect(styleB).resolves.toMatchObject({ id: "style-b", name: "B" });
   });
 
   it("commitReviewGroups 对 REST 和 EventSource 的同 seq 帧只分发一次", async () => {

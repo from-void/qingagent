@@ -16,6 +16,7 @@ export interface DraftTemplateIntent {
 
 export interface DraftTemplate {
   sessionId: string;
+  requestId: string;
   scene: DraftTemplateScene;
   intent: DraftTemplateIntent;
 }

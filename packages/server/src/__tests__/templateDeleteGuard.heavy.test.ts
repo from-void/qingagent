@@ -31,6 +31,7 @@ describe("模板删除保底 bridge 路径", () => {
       kind: "saveReviewTemplate",
       data: {
         sessionId,
+        requestId: "request-review-save",
         id: "review-source-default",
         type: "source",
         name: "自定义来源核查",
@@ -40,6 +41,7 @@ describe("模板删除保底 bridge 路径", () => {
     expect(reviewFrames).toContainEqual({
       kind: "reviewTemplateSaved",
       data: {
+        requestId: "request-review-save",
         item: expect.objectContaining({
           id: "review-source-default",
           name: "自定义来源核查",
@@ -50,7 +52,7 @@ describe("模板删除保底 bridge 路径", () => {
 
     const beforeFrames = await collectFrames(handleCommand({
       kind: "getStyleTemplate",
-      data: { sessionId, id: "gzh-tutorial" },
+      data: { sessionId, requestId: "request-style-load", id: "gzh-tutorial" },
     }));
     const before = beforeFrames.find((frame) => frame.kind === "styleTemplateLoaded");
     if (before?.kind !== "styleTemplateLoaded") throw new Error("缺少风格模板");
@@ -59,6 +61,7 @@ describe("模板删除保底 bridge 路径", () => {
       kind: "saveStyleTemplate",
       data: {
         sessionId,
+        requestId: "request-style-save",
         id: "gzh-tutorial",
         dtype: "gzh",
         slot: "writing",
@@ -69,6 +72,7 @@ describe("模板删除保底 bridge 路径", () => {
     expect(styleFrames).toContainEqual({
       kind: "styleTemplateSaved",
       data: {
+        requestId: "request-style-save",
         item: expect.objectContaining({
           id: "gzh-tutorial",
           detail: before.data.item.detail,
@@ -83,11 +87,12 @@ describe("模板删除保底 bridge 路径", () => {
 
     const reviewFrames = await collectFrames(handleCommand({
       kind: "deleteReviewTemplate",
-      data: { sessionId, id: "review-source-default" },
+      data: { sessionId, requestId: "request-review-delete", id: "review-source-default" },
     }));
     expect(reviewFrames).toContainEqual({
       kind: "reviewTemplateDeleted",
       data: {
+        requestId: "request-review-delete",
         id: "review-source-default",
         selectedTemplateId: "review-source-default",
         error: "每类至少保留一个模板",
@@ -96,20 +101,20 @@ describe("模板删除保底 bridge 路径", () => {
 
     const firstStyleDelete = await collectFrames(handleCommand({
       kind: "deleteStyleTemplate",
-      data: { sessionId, id: "gzh-layout-classic" },
+      data: { sessionId, requestId: "request-style-delete-first", id: "gzh-layout-classic" },
     }));
     expect(firstStyleDelete).toContainEqual({
       kind: "styleTemplateDeleted",
-      data: { id: "gzh-layout-classic" },
+      data: { requestId: "request-style-delete-first", id: "gzh-layout-classic" },
     });
 
     const lastStyleDelete = await collectFrames(handleCommand({
       kind: "deleteStyleTemplate",
-      data: { sessionId, id: "gzh-layout-minimal" },
+      data: { sessionId, requestId: "request-style-delete-last", id: "gzh-layout-minimal" },
     }));
     expect(lastStyleDelete).toContainEqual({
       kind: "styleTemplateDeleted",
-      data: { id: "gzh-layout-minimal", error: "每类至少保留一个模板" },
+      data: { requestId: "request-style-delete-last", id: "gzh-layout-minimal", error: "每类至少保留一个模板" },
     });
   });
 });

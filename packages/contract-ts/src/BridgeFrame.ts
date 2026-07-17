@@ -19,26 +19,26 @@ import type { ReviewTemplateItem } from "./ReviewTemplates";
 import type { DraftTemplateResult } from "./DraftTemplate";
 
 export type BridgeFrame =
-  | { kind: "templateDrafted"; data: DraftTemplateResult }
-  | { kind: "reviewTemplatesListed"; data: { items: ReviewTemplateItem[]; selectedTemplateId: string | null } }
-  | { kind: "reviewTemplateSaved"; data: { item: ReviewTemplateItem } }
-  | { kind: "reviewTemplateDeleted"; data: { id: string; selectedTemplateId: string | null; error?: string } }
-  | { kind: "reviewTemplateSelected"; data: { type: string; templateId: string } }
-  | { kind: "reviewSupplementLoaded"; data: { type: string; supplement: string } }
-  | { kind: "reviewSupplementSaved"; data: { type: string; supplement: string } }
-  | { kind: "styleTemplatesListed"; data: { items: StyleTemplateItem[] } }
-  | { kind: "styleTemplateLoaded"; data: { item: StyleTemplateItem } }
-  | { kind: "styleTemplateSaved"; data: { item: StyleTemplateItem } }
-  | { kind: "styleTemplateDeleted"; data: { id: string; error?: string } }
-  | { kind: "derivativeParamsUpdated"; data: { item: DerivativeItem } }
-  | { kind: "derivativesListed"; data: { items: DerivativeItem[] } }
-  | { kind: "derivativeCreated"; data: { item: DerivativeItem } }
+  | { kind: "templateDrafted"; data: DraftTemplateResult & { requestId: string } }
+  | { kind: "reviewTemplatesListed"; data: { requestId: string; items: ReviewTemplateItem[]; selectedTemplateId: string | null } }
+  | { kind: "reviewTemplateSaved"; data: { requestId: string; item: ReviewTemplateItem } }
+  | { kind: "reviewTemplateDeleted"; data: { requestId: string; id: string; selectedTemplateId: string | null; error?: string } }
+  | { kind: "reviewTemplateSelected"; data: { requestId: string; type: string; templateId: string } }
+  | { kind: "reviewSupplementLoaded"; data: { requestId: string; type: string; supplement: string } }
+  | { kind: "reviewSupplementSaved"; data: { requestId: string; type: string; supplement: string } }
+  | { kind: "styleTemplatesListed"; data: { requestId: string; items: StyleTemplateItem[] } }
+  | { kind: "styleTemplateLoaded"; data: { requestId: string; item: StyleTemplateItem } }
+  | { kind: "styleTemplateSaved"; data: { requestId: string; item: StyleTemplateItem } }
+  | { kind: "styleTemplateDeleted"; data: { requestId: string; id: string; error?: string } }
+  | { kind: "derivativeParamsUpdated"; data: { requestId: string; item: DerivativeItem } }
+  | { kind: "derivativesListed"; data: { requestId: string; items: DerivativeItem[] } }
+  | { kind: "derivativeCreated"; data: { requestId: string; item: DerivativeItem } }
   | { kind: "derivativeGenStarted"; data: { docId: string; targetLang: string } }
   | { kind: "derivativeGenDelta"; data: { docId: string; text: string } }
   | { kind: "derivativeGenFinished"; data: { docId: string; generatedAt: string; docVersion: number } }
   | { kind: "derivativeGenFailed"; data: { docId: string; reason: string } }
-  | { kind: "derivativeDeleted"; data: { docId: string } }
-  | { kind: "derivativeDocLoaded"; data: { meta: DerivativeItem; docPm: string; docVersion: number; title: string } }
+  | { kind: "derivativeDeleted"; data: { requestId: string; docId: string } }
+  | { kind: "derivativeDocLoaded"; data: { requestId: string; meta: DerivativeItem; docPm: string; docVersion: number; title: string } }
   | { kind: "lexiconsListed"; data: { lexicons: LexiconResourceSummary[] } }
   | { kind: "lexiconEntriesListed"; data: { resourceId: string; entries: LexiconEntrySummary[] } }
   | { kind: "restoreReset"; data: { epoch: number; snapshotSeq: number } }

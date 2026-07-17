@@ -331,6 +331,25 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector('[role="menu"]')?.textContent).toBe("删除稿件");
   });
 
+  it("快速切换子 Tab 时丢弃与当前 docId 不符的乱序响应", async () => {
+    const english: DerivativeItem = { ...item, docId: "translate-guard-en", dtype: "translate", targetLang: "英语", generatedAt: "en" };
+    const japanese: DerivativeItem = { ...english, docId: "translate-guard-ja", targetLang: "日语", generatedAt: "ja" };
+    const englishDoc = JSON.stringify({ type: "doc", attrs: { schemaVersion: 1 }, content: [{ type: "paragraph", attrs: { blockId: "en" }, content: [{ type: "text", text: "English copy" }] }] });
+    const stream = {
+      getDerivativeDoc: vi.fn(async (_sessionId: string, docId: string) => ({
+        meta: english,
+        docPm: englishDoc,
+        docVersion: 1,
+        title: docId,
+      })),
+    };
+    await act(async () => root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={english} items={[english, japanese]} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>));
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
+    await act(async () => Promise.resolve());
+    expect(stream.getDerivativeDoc).toHaveBeenLastCalledWith("session-1", "translate-guard-ja");
+    expect(host.textContent).not.toContain("English copy");
+  });
+
   it("翻译旁支按语言独立流式浮现、失败可重试且生成中禁止删除", async () => {
     const english: DerivativeItem = { ...item, docId: "translate-stream-en", dtype: "translate", targetLang: "英语", templateId: "translate-faithful", templateName: "忠实精准" };
     const japanese: DerivativeItem = { ...english, docId: "translate-stream-ja", targetLang: "日语" };

@@ -33,7 +33,7 @@ function selectionChip(tableSelection: unknown): unknown {
  */
 describe("commandSchema", () => {
   it("接受三种衍生稿 dtype，翻译要求目标语言并拒绝未知 dtype", () => {
-    const base = { kind: "createDerivative", data: { sessionId: "s", templateId: "xhs-seed", privatePrompt: "" } } as const;
+    const base = { kind: "createDerivative", data: { sessionId: "s", requestId: "request-create", templateId: "xhs-seed", privatePrompt: "" } } as const;
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "gzh" } }).success).toBe(true);
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "xhs" } }).success).toBe(true);
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "translate", targetLang: "英语" } }).success).toBe(true);
@@ -41,7 +41,7 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, dtype: "ppt" } }).success).toBe(false);
   });
   it("封面模板参数只接受五款已知值", () => {
-    const base = { kind: "updateDerivativeParams", data: { sessionId: "s", docId: "d" } } as const;
+    const base = { kind: "updateDerivativeParams", data: { sessionId: "s", requestId: "request-update", docId: "d" } } as const;
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "wenkai" } }).success).toBe(true);
     expect(commandSchema.safeParse({ ...base, data: { ...base.data, coverTemplate: "unknown" } }).success).toBe(false);
   });
@@ -61,15 +61,15 @@ describe("commandSchema", () => {
   it("接受 draftTemplate 的审查与衍生场景并拒绝空场景标签", () => {
     expect(commandSchema.safeParse({
       kind: "draftTemplate",
-      data: { sessionId: "s", scene: { kind: "review", type: "role", label: "角色审查" }, intent: { name: "", prompt: "" } },
+      data: { sessionId: "s", requestId: "request-draft-1", scene: { kind: "review", type: "role", label: "角色审查" }, intent: { name: "", prompt: "" } },
     }).success).toBe(true);
     expect(commandSchema.safeParse({
       kind: "draftTemplate",
-      data: { sessionId: "s", scene: { kind: "derivative", dtype: "gzh", slot: "layout", label: "公众号排版" }, intent: { name: "卡片式", prompt: "短段落" } },
+      data: { sessionId: "s", requestId: "request-draft-2", scene: { kind: "derivative", dtype: "gzh", slot: "layout", label: "公众号排版" }, intent: { name: "卡片式", prompt: "短段落" } },
     }).success).toBe(true);
     expect(commandSchema.safeParse({
       kind: "draftTemplate",
-      data: { sessionId: "s", scene: { kind: "review", type: "role", label: " " }, intent: { name: "", prompt: "" } },
+      data: { sessionId: "s", requestId: "request-draft-3", scene: { kind: "review", type: "role", label: " " }, intent: { name: "", prompt: "" } },
     }).success).toBe(false);
   });
 
@@ -229,12 +229,12 @@ describe("commandSchema", () => {
   });
 
   it.each([
-    { kind: "listReviewTemplates", data: { sessionId: "s", type: "source" } },
-    { kind: "saveReviewTemplate", data: { sessionId: "s", type: "source", name: "我的模板", prompt: "核对金额" } },
-    { kind: "deleteReviewTemplate", data: { sessionId: "s", id: "review-1" } },
-    { kind: "selectReviewTemplate", data: { sessionId: "s", type: "source", templateId: "review-1" } },
-    { kind: "getReviewSupplement", data: { sessionId: "s", type: "source" } },
-    { kind: "upsertReviewSupplement", data: { sessionId: "s", type: "source", supplement: "只看金额" } },
+    { kind: "listReviewTemplates", data: { sessionId: "s", requestId: "request-list", type: "source" } },
+    { kind: "saveReviewTemplate", data: { sessionId: "s", requestId: "request-save", type: "source", name: "我的模板", prompt: "核对金额" } },
+    { kind: "deleteReviewTemplate", data: { sessionId: "s", requestId: "request-delete", id: "review-1" } },
+    { kind: "selectReviewTemplate", data: { sessionId: "s", requestId: "request-select", type: "source", templateId: "review-1" } },
+    { kind: "getReviewSupplement", data: { sessionId: "s", requestId: "request-get", type: "source" } },
+    { kind: "upsertReviewSupplement", data: { sessionId: "s", requestId: "request-upsert", type: "source", supplement: "只看金额" } },
   ])("接受审查模板命令:$kind", (body) => {
     expect(commandSchema.safeParse(body).success).toBe(true);
   });

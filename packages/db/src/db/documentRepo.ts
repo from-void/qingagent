@@ -181,6 +181,7 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
           ) < excluded.doc_version
           AND (
             excluded.content_hash IS NOT documents.content_hash
+            OR excluded.title IS NOT documents.title
             OR excluded.doc_state IS NOT documents.doc_state
             OR excluded.last_synced_version IS NOT documents.last_synced_version
           )

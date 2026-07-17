@@ -1926,11 +1926,12 @@ describe("thread persistence", () => {
       .toBe(true);
   });
 
-  it("reads document body fields from the documents table by default", async () => {
+  it("reads document body fields from documents without replacing authoritative metadata state", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "session-read-table";
     threads.set(sessionId, storedThread(sessionId, metadata({
       docId: "doc-table",
+      title: "thread title",
       docState: { kind: "editing" },
       docVersion: 1,
       legacySections: [textSection("metadata body")],
@@ -1952,6 +1953,7 @@ describe("thread persistence", () => {
     const restored = await loadSessionFromThread(sessionId);
 
     expect(documentRepo.load).toHaveBeenCalledWith("doc-table");
+    expect(restored?.title).toBe("thread title");
     expect(restored?.docState).toEqual({ kind: "editing" });
     expect(restored?.docVersion).toBe(9);
     expect(restored?.legacySections).toEqual([textSection("table body")]);

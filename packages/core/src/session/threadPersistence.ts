@@ -34,17 +34,10 @@ import { documentDraftRepo } from "@qingagent/db";
 import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
 import { getDocumentVersionCommittedAt } from "../doc-engine/commitDocumentOp.js";
 import {
-  coerceLegacyContentKind,
-} from "../doc-engine/docStateMachine.js";
-import {
   normalizePersistedDocStateKind,
   normalizeRestoredDocStateKind,
 } from "../doc-engine/docStateTransitions.js";
 import {
-  getShadowCircuitState,
-  recordShadowOutcome,
-  shadowCircuitOpen,
-  shouldWarn,
   withWriteRetry,
 } from "@qingagent/db";
 import {
@@ -741,7 +734,6 @@ function applyRestoredDocumentRow(
 ): QingagentThreadMetadata {
   return {
     ...meta,
-    docState: coerceLegacyContentKind(docRow.docState),
     docVersion: docRow.docVersion,
     doc: docRow.pmDoc,
     legacySections: docRow.legacySections,
@@ -1116,13 +1108,14 @@ export async function persistSessionMetadata(
         });
       }
 
-      const shadowNow = Date.now();
       // 0702 review Lane A:影子写必须整体使用 serializeMetadata 时刻的快照(meta.doc),
       // 不能晚读活引用 state.doc——updateThread await 期间若发生 updateDoc 提交,
       // 会把「新内容 + 旧 docVersion」的错位对写进 documents(documentRepo.save 的
       // 版本守卫能挡住版本回退,但等版本+内容变化分支仍可能放行错位内容)。
       // 快照一致后,期间的新变更由 schedulePersist 的 dirty 循环下一轮补写。
-      if (!shadowCircuitOpen(shadowNow) && meta.doc) {
+      // documents 只保存正文及其从 Mastra thread 派生出的缓存字段。即使其短暂不可用，
+      // 也不能让熔断器永久跳过后续同步；每次权威元数据落库后都尝试收敛一次。
+      if (meta.doc) {
         try {
           await documentRepo.save({
             id: meta.docId ?? state.sessionId,
@@ -1137,16 +1130,11 @@ export async function persistSessionMetadata(
             createdAt: meta.lastPersistedAt,
             updatedAt: meta.lastPersistedAt,
           });
-          recordShadowOutcome(true, shadowNow);
         } catch (shadowErr) {
-          recordShadowOutcome(false, shadowNow);
-          if (shouldWarn(shadowNow)) {
-            logger.warn("Shadow write to documents failed (rate-limited)", {
-              sessionId: state.sessionId,
-              consecutiveFailures: getShadowCircuitState().consecutiveFailures,
-              error: shadowErr instanceof Error ? shadowErr.message : String(shadowErr),
-            });
-          }
+          logger.warn("Derived documents write failed; it will be reconciled from Mastra metadata", {
+            sessionId: state.sessionId,
+            error: shadowErr instanceof Error ? shadowErr.message : String(shadowErr),
+          });
         }
       }
 

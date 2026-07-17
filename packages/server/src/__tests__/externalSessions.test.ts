@@ -1,11 +1,11 @@
-import { documentRepo, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
+import { documentRepo, persistSessionMetadata, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
 import { markdownToPm, normalizePmDoc } from "@qingagent/pm-schema";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../gateway/bridgeHandler";
+import { getSession, sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
 
 const dirs: string[] = [];
@@ -60,6 +60,35 @@ describe("external sessions", () => {
     expect(listed.status).toBe(200);
     const body = await listed.json() as { sessions: Array<{ id: string }> };
     expect(body.sessions.map((session) => session.id)).not.toContain("orphan-doc-row");
+  });
+
+  it("纯改标题后 list 从权威 thread 派生并返回新标题", async () => {
+    const created = await app.request("/api/v1/external/sessions", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({}),
+    });
+    const { sessionId } = await created.json() as { sessionId: string };
+    const session = getSession(sessionId);
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    session.title = "重命名后的标题";
+    await persistSessionMetadata(session, "test:rename");
+
+    const stored = await documentRepo.load(session.docId);
+    expect(stored).toBeDefined();
+    if (!stored?.pmDoc) return;
+    await documentRepo.save({
+      ...stored,
+      title: "故障窗口中的旧标题",
+      pmDoc: stored.pmDoc,
+    });
+    await sessionManager.disposeAll();
+
+    const listed = await app.request("/api/v1/external/sessions", { headers: authHeaders() });
+    const body = await listed.json() as { sessions: Array<{ id: string; title: string }> };
+    expect(body.sessions.find((item) => item.id === sessionId)?.title).toBe("重命名后的标题");
   });
 });
 

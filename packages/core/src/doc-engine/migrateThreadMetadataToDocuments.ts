@@ -88,6 +88,7 @@ function documentMatchesMetadata(
   if (!docRow) return false;
   return (
     docRow.docVersion === input.docVersion &&
+    docRow.title === input.title &&
     docRow.docState === input.docState &&
     docRow.contentHash === getPmContentHash(input.pmDoc) &&
     legacySectionsSignature(docRow.legacySections) === legacySectionsSignature(input.legacySections)

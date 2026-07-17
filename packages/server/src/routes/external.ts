@@ -67,11 +67,12 @@ externalRoutes.get("/sessions", async (c) => {
   const { rows } = await documentRepo.list({ resourceId: QINGAGENT_RESOURCE_ID, page: 0, perPage: 50 });
   const byId = new Map<string, { id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }>();
   for (const row of rows) {
-    if (!await getOrRestoreSession(row.id)) continue;
+    const session = await getOrRestoreSession(row.id);
+    if (!session) continue;
     byId.set(row.id, {
       id: row.id,
-      title: row.title || "未命名草稿",
-      state: stateFromDocRow(row.docState),
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
       updatedAt: row.updatedAt,
     });
   }
@@ -440,12 +441,6 @@ function parseSeq(value: string | undefined): number {
   if (!value) return 0;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
-}
-
-function stateFromDocRow(docState: string): ContentDocState["kind"] {
-  if (docState === "pendingReview") return "pendingReview";
-  if (docState === "empty") return "empty";
-  return "editing";
 }
 
 function withLineNumbers(markdown: string): string {

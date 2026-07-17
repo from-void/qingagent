@@ -52,10 +52,10 @@ export type AiBlock =
   | { type: "blockquote"; runs: Array<AiRun> }
   | { type: "codeBlock"; language?: string | null; text: string }
   | { type: "bulletList"; items: Array<AiListItem> }
-  | { type: "orderedList"; items: Array<AiListItem>; listStyle?: "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman" | null }
+  | { type: "orderedList"; items: Array<AiListItem>; start?: number | null; listStyle?: "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman" | null }
   | { type: "horizontalRule" }
   | { type: "table"; rows: Array<AiTableRow> }
-  | { type: "image"; src: string; alt?: string | null; caption?: string | null; width?: number | null; height?: number | null; align?: "left" | "center" | "right" | null }
+  | { type: "image"; src: string; alt?: string | null; title?: string | null; caption?: string | null; width?: number | null; height?: number | null; align?: "left" | "center" | "right" | null }
   | { type: "fileAttachment"; fileId: string; filename: string; mimeType: string; size: number }
   | { type: "penNote"; runs: Array<AiRun> }
   | { type: "taskList"; items: Array<AiTaskListItem> }

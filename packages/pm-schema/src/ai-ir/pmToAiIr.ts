@@ -31,8 +31,13 @@ export function blockToAi(node: PmBlockNode): AiBlock {
       return { type: "bulletList", items: node.content.map(listItemToAi) };
     case "orderedList": {
       const listStyle = node.attrs.listStyle ?? "decimal";
+      const start = node.attrs.start ?? 1;
       const block = { type: "orderedList" as const, items: node.content.map(listItemToAi) };
-      return listStyle === "decimal" ? block : { ...block, listStyle };
+      return {
+        ...block,
+        ...(start === 1 ? {} : { start }),
+        ...(listStyle === "decimal" ? {} : { listStyle }),
+      };
     }
     case "horizontalRule":
       return { type: "horizontalRule" };
@@ -41,6 +46,9 @@ export function blockToAi(node: PmBlockNode): AiBlock {
         type: "image",
         src: node.attrs.src,
         alt: node.attrs.alt ?? null,
+        // 与 codeBlock.language 的缺省策略一致：PM 缺 title 时不凭空注入 null，
+        // 保持已有 AI-IR 的省略形态稳定；有值时完整透传。
+        ...(node.attrs.title == null ? {} : { title: node.attrs.title }),
         caption: node.attrs.caption ?? null,
         width: node.attrs.width ?? null,
         height: node.attrs.height ?? null,

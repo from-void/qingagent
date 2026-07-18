@@ -140,6 +140,7 @@ export {
   guardContext,
   guardReset,
   installNetProbe,
+  modelFetch,
   resolveBaseUrl,
   resolveModelParams,
   sanitizeBaseUrl,

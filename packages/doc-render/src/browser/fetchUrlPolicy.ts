@@ -95,6 +95,25 @@ function assertAllowedAddress(
   }
 }
 
+/**
+ * 校验一次 DNS/连接层已经解析出的地址。普通域名不能借 allowLoopback 解析到本机；
+ * 只有字面 loopback/localhost，或显式 allowPrivate，才允许连接 loopback。
+ */
+export function assertFetchAddressAllowed(
+  address: string,
+  sourceHostname: string,
+  options: FetchUrlValidationOptions = {},
+): void {
+  const hostname = sourceHostname.toLowerCase();
+  const addressHostname =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const explicitlyLocal = hostname === "localhost" || isIP(addressHostname) !== 0;
+  assertAllowedAddress(address, hostname, {
+    ...options,
+    allowLoopback: explicitlyLocal ? options.allowLoopback : options.allowPrivate,
+  });
+}
+
 export function parseFetchUrl(rawUrl: string): URL {
   let parsed: URL;
   try {
@@ -124,13 +143,13 @@ export async function validateFetchUrl(
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 
   if (hostname === "localhost") {
-    assertAllowedAddress("127.0.0.1", hostname, options);
+    assertFetchAddressAllowed("127.0.0.1", hostname, options);
     return parsed;
   }
 
   const ipKind = isIP(addressHostname);
   if (ipKind) {
-    assertAllowedAddress(addressHostname, hostname, options);
+    assertFetchAddressAllowed(addressHostname, hostname, options);
     return parsed;
   }
 
@@ -139,11 +158,7 @@ export async function validateFetchUrl(
     throw new Error(`Could not resolve hostname: ${hostname}`);
   }
   for (const record of records) {
-    // 只有用户明确填写的 loopback 地址可走本地模型；公网域名解析到 loopback 仍按 SSRF 拒绝。
-    assertAllowedAddress(record.address, hostname, {
-      ...options,
-      allowLoopback: options.allowPrivate,
-    });
+    assertFetchAddressAllowed(record.address, hostname, options);
   }
 
   return parsed;

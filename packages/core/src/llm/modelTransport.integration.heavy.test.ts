@@ -100,7 +100,7 @@ describe.sequential("modelTransport 集成", () => {
   }
 
   async function fetchBlackholeError(
-    request: () => Promise<unknown> = () => modelFetch("https://model.invalid/v1/chat/completions"),
+    request: () => Promise<unknown> = () => modelFetch("https://93.184.216.34/v1/chat/completions"),
   ): Promise<{ error: unknown; elapsedMs: number }> {
     await installBlackholeProxy();
     const startedAt = performance.now();
@@ -117,7 +117,9 @@ describe.sequential("modelTransport 集成", () => {
   function requestThroughMainModel(): Promise<unknown> {
     const requestContext = new RequestContext([["modelOverrides", {
       visitorApiKey: "sk-connect-timeout-test",
-      baseUrl: "https://model.invalid/v1",
+      // 使用公网字面 IP，避免 DNS 固定护栏把“不可解析的 .invalid”先判为连接失败，
+      // 确保本用例真正抵达并覆盖 CONNECT 黑洞代理。
+      baseUrl: "https://93.184.216.34/v1",
       modelIds: { flash: "test-model" },
       protocol: "openai",
     }]] as never) as RequestContext;

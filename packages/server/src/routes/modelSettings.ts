@@ -4,6 +4,7 @@ import {
   SETTING_MODEL_PARAMS,
   deleteAppSetting,
   getAppSetting,
+  modelFetch,
   sanitizeBaseUrl,
   sanitizeModelId,
   setAppSetting,
@@ -387,7 +388,7 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
     let authFailed = false;
     let lastStatus = 0;
     for (const base of candidates) {
-      const res = await fetch(`${base}/models`, {
+      const res = await modelFetch(`${base}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });

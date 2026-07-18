@@ -44,6 +44,7 @@ const mockCore = vi.hoisted(() => {
       }
       return url;
     }),
+    modelFetch: vi.fn(async () => new Response(null, { status: 200 })),
     testVisionConnection: vi.fn(async () => undefined),
     testTextModelConnection: vi.fn(async () => undefined),
   };
@@ -209,8 +210,6 @@ describe("modelSettingsRoutes", () => {
 
   it("test-custom 正常公网 baseUrl 通过 SSRF 校验后请求 /models", async () => {
     const app = await loadApp();
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
     const res = await app.request("/api/v1/settings/model/test-custom", {
       method: "POST",
@@ -228,10 +227,42 @@ describe("modelSettingsRoutes", () => {
       normalizedBaseUrl: "https://api.example.com/v1",
     });
     expect(mockCore.validateModelFetchUrl).toHaveBeenCalledWith("https://api.example.com/v1");
-    expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", {
+    expect(mockCore.modelFetch).toHaveBeenCalledWith("https://api.example.com/v1/models", {
       headers: { Authorization: "Bearer sk-public" },
       signal: expect.any(AbortSignal) as AbortSignal,
     });
+  });
+
+  it("test-custom 的 /models 探测复用 modelFetch 并拒绝重定向到私网", async () => {
+    const app = await loadApp();
+    const globalFetch = vi.fn();
+    vi.stubGlobal("fetch", globalFetch);
+    mockCore.modelFetch.mockRejectedValueOnce(
+      new TypeError("fetch failed", {
+        cause: new Error("Blocked private address for 169.254.169.254: 169.254.169.254"),
+      }),
+    );
+
+    const res = await app.request("/api/v1/settings/model/test-custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://public-provider.example/v1",
+        apiKey: "sk-must-not-leak",
+        protocol: "openai",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: false, error: "无法连接该地址" });
+    expect(mockCore.modelFetch).toHaveBeenCalledWith(
+      "https://public-provider.example/v1/models",
+      {
+        headers: { Authorization: "Bearer sk-must-not-leak" },
+        signal: expect.any(AbortSignal) as AbortSignal,
+      },
+    );
+    expect(globalFetch).not.toHaveBeenCalled();
   });
 
   it("test-custom anthropic 走 core 计费工厂的最小 messages 连通测试", async () => {
@@ -264,8 +295,6 @@ describe("modelSettingsRoutes", () => {
     "http://[fc00::1]:8080/v1",
   ])("test-custom 在 fetch 前拒绝敏感 baseUrl:%s", async (baseUrl) => {
     const app = await loadApp();
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
 
     const res = await app.request("/api/v1/settings/model/test-custom", {
       method: "POST",
@@ -277,7 +306,7 @@ describe("modelSettingsRoutes", () => {
     const json = await res.json();
     expect(json).toMatchObject({ ok: false });
     expect(String(json.error)).toContain("内网、链路本地和云元数据地址默认禁止");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockCore.modelFetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -286,8 +315,6 @@ describe("modelSettingsRoutes", () => {
     "http://[::1]:8080/v1",
   ])("test-custom 允许本机模型并继续连通测试:%s", async (baseUrl) => {
     const app = await loadApp();
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
     const res = await app.request("/api/v1/settings/model/test-custom", {
       method: "POST",
@@ -297,6 +324,6 @@ describe("modelSettingsRoutes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ ok: true, normalizedBaseUrl: baseUrl });
-    expect(fetchMock).toHaveBeenCalled();
+    expect(mockCore.modelFetch).toHaveBeenCalled();
   });
 });

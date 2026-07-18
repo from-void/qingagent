@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DraftTextMark } from "@qingagent/contract-ts";
 import {
   aiBlockToQingml,
   compileAiDocumentToPm,
@@ -242,7 +243,7 @@ describe("draft rich formats session-scoped tools", () => {
     const { editDraft } = createSessionScopedTools(state);
 
     await expect(editDraft.execute!({
-      ops: [{ action: "markText", find: "核心指标", mark: { type: "math" }, op: "add" }],
+      ops: [{ action: "markText", find: "核心指标", mark: { type: "math" } as unknown as DraftTextMark, op: "add" }],
     }, ctx)).resolves.toMatchObject({
       error: true,
       message: expect.stringContaining("Invalid discriminator value"),

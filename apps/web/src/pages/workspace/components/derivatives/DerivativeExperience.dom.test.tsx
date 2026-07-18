@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -15,8 +15,27 @@ import { calculateDesktopScale, DESKTOP_FRAME, DESKTOP_PAPER_INSET } from "./Des
 const item: DerivativeItem = {
   docId: "deriv-1", dtype: "gzh",
   templateId: "gzh-opinion", templateName: "深度观点文", privatePrompt: "", sourceVersion: null,
+  currentSourceVersion: 1,
   generatedAt: null, stale: false,
 };
+
+function StaleDismissHarness({ stream }: { stream: object }) {
+  const [activeTab, setActiveTab] = useState<"main" | string>("deriv-1");
+  const [currentSourceVersion, setCurrentSourceVersion] = useState(2);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  const staleItem = { ...item, sourceVersion: 1, currentSourceVersion, generatedAt: "now", stale: true };
+  const staleKey = (next: DerivativeItem) => `${next.docId}:${next.currentSourceVersion}`;
+  const isStaleDismissed = useCallback((next: DerivativeItem) => dismissed.has(staleKey(next)), [dismissed]);
+  const dismissStale = useCallback((next: DerivativeItem) => {
+    setDismissed((keys) => new Set(keys).add(staleKey(next)));
+  }, []);
+
+  return <>
+    <button onClick={() => setCurrentSourceVersion((version) => version + 1)}>源文档更新</button>
+    <DerivTabBar title="主文档" items={[staleItem]} activeTab={activeTab} onActivate={setActiveTab} onCreate={vi.fn()} onRename={vi.fn()} isStaleDismissed={isStaleDismissed} />
+    {activeTab === staleItem.docId ? <DerivativeView key={staleItem.docId} sessionId="session-1" item={staleItem} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()} isStaleDismissed={isStaleDismissed} onDismissStale={dismissStale} /> : null}
+  </>;
+}
 
 describe("公众号稿生成体验", () => {
   let host: HTMLDivElement;
@@ -48,6 +67,33 @@ describe("公众号稿生成体验", () => {
     const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
     expect(css).toMatch(/\.workspace-tooltip\.ws-deriv-stale-tip\{[^}]*right:0;bottom:calc\(100% \+ 8px\);[^}]*max-width:min\(240px,calc\(100vw - 64px\)\)/);
     expect(css).toMatch(/\.workspace-tooltip\.ws-deriv-stale-tip::after\{left:calc\(100% - 13px\)\}/);
+  });
+
+  it("关闭 stale 提示后跨 Tab 保持忽略，源版本继续上涨时重新提示", async () => {
+    const stream = { getDerivativeDoc: vi.fn(async () => ({
+      meta: item,
+      docPm: '{"type":"doc","attrs":{"schemaVersion":1},"content":[]}',
+      docVersion: 1,
+      title: "",
+    })) };
+    await act(async () => root.render(<ConfirmProvider><StaleDismissHarness stream={stream} /></ConfirmProvider>));
+    await act(async () => Promise.resolve());
+
+    expect(host.querySelector('.ws-deriv-stale-tip')).not.toBeNull();
+    expect(host.querySelector('.ws-deriv-stale-dot')).not.toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭提示"]')!.click());
+    expect(host.querySelector('.ws-deriv-stale-tip')).toBeNull();
+    expect(host.querySelector('.ws-deriv-stale-dot')).toBeNull();
+
+    await act(async () => host.querySelector<HTMLElement>('[role="tab"]')!.click());
+    await act(async () => host.querySelectorAll<HTMLElement>('[role="tab"]')[1]!.click());
+    expect(host.querySelector('.ws-deriv-stale-tip')).toBeNull();
+    expect(host.querySelector('.ws-deriv-stale-dot')).toBeNull();
+
+    const updateSource = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "源文档更新");
+    await act(async () => updateSource!.click());
+    expect(host.querySelector('.ws-deriv-stale-tip')).not.toBeNull();
+    expect(host.querySelector('.ws-deriv-stale-dot')).not.toBeNull();
   });
 
   it("MacBook 先扣除每侧 40px 纸面留白，再保持 1232×740 整机等比缩放", () => {
@@ -87,6 +133,19 @@ describe("公众号稿生成体验", () => {
 
     await renderTabs([xhsItem]);
     expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
+  });
+
+  it("翻译 Tab 仅在仍有未忽略的过期译稿时显示红点", async () => {
+    const english = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", stale: true };
+    const japanese = { ...english, docId: "translate-ja", targetLang: "日语" };
+    const renderTabs = async (dismissed: (next: DerivativeItem) => boolean) => act(async () => root.render(
+      <DerivTabBar title="主文档" items={[english, japanese]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} isStaleDismissed={dismissed} />,
+    ));
+
+    await renderTabs((next) => next.docId === english.docId);
+    expect(host.querySelector('.ws-deriv-stale-dot')).not.toBeNull();
+    await renderTabs(() => true);
+    expect(host.querySelector('.ws-deriv-stale-dot')).toBeNull();
   });
 
   it("弹框取消无副作用，生成提交当前模板和补充指令", async () => {

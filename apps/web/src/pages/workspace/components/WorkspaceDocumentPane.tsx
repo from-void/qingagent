@@ -1,4 +1,5 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
+import { useCallback, useState } from "react";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -23,12 +24,31 @@ import { ExportIcon } from "./RightPane";
 import { RightPane } from "./RightPane";
 import { canUseDocumentEditing } from "../data/reviewActions";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
+import type { DerivativeItem } from "./derivatives/types";
+
+function staleDismissKey(item: DerivativeItem): string {
+  return `${item.docId}:${item.currentSourceVersion}`;
+}
 
 export function WorkspaceDocumentPane({
   controller,
 }: {
   controller: WorkspacePageController;
 }) {
+  const [dismissedStaleKeys, setDismissedStaleKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const isStaleDismissed = useCallback(
+    (item: DerivativeItem) => dismissedStaleKeys.has(staleDismissKey(item)),
+    [dismissedStaleKeys],
+  );
+  const dismissStale = useCallback((item: DerivativeItem) => {
+    const key = staleDismissKey(item);
+    setDismissedStaleKeys((keys) => {
+      if (keys.has(key)) return keys;
+      return new Set(keys).add(key);
+    });
+  }, []);
   const {
     title,
     setTitle,
@@ -166,6 +186,7 @@ export function WorkspaceDocumentPane({
               setDerivativeCreateDtype(dtype);
               setDerivativeCreateOpen(true);
             }}
+            isStaleDismissed={isStaleDismissed}
             onRename={async (nextTitle) => {
               const previousTitle = title;
               setTitle(nextTitle);
@@ -360,6 +381,8 @@ export function WorkspaceDocumentPane({
             }}
             onToast={showToast}
             onSendQuery={sendDerivativeQuery}
+            isStaleDismissed={isStaleDismissed}
+            onDismissStale={dismissStale}
           />
         ) : null}
 

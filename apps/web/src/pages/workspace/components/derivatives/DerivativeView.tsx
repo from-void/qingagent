@@ -58,6 +58,8 @@ export function DerivativeView(props: {
   translationGen?: ReadonlyMap<string, { status: "streaming" | "failed"; text: string; reason?: string }>;
   onRefresh: () => Promise<void>; onDeleted: () => void; onToast: (text: string) => void;
   onSendQuery: (text: string, displayCard: ActionCardData) => void;
+  isStaleDismissed?: (item: DerivativeItem) => boolean;
+  onDismissStale?: (item: DerivativeItem) => void;
 }) {
   const confirm = useConfirm();
   const [selectedDocId, setSelectedDocId] = useState(props.item.docId);
@@ -75,7 +77,6 @@ export function DerivativeView(props: {
   const [modalOpen, setModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [staleDismissed, setStaleDismissed] = useState(false);
   const [coverTemplate, setCoverTemplate] = useState<XhsCoverTemplate>(item.coverTemplate ?? "poster");
   const articleRef = useRef<HTMLElement>(null);
   const viewRef = useRef<HTMLElement>(null);
@@ -98,7 +99,6 @@ export function DerivativeView(props: {
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
   useEffect(() => { if (generating && generationComplete && !props.streamActive) setGenerating(false); }, [generating, generationComplete, props.streamActive]);
   useEffect(() => { if (item.generatedAt != null || item.sourceVersion != null) setAbortedEmpty(false); }, [item.generatedAt, item.sourceVersion]);
-  useEffect(() => { if (!item.stale) setStaleDismissed(false); }, [item.stale]);
   useEffect(() => { setCoverTemplate(item.coverTemplate ?? "poster"); }, [item.coverTemplate, item.docId]);
   useEffect(() => {
     if (!exportOpen) return;
@@ -218,7 +218,7 @@ export function DerivativeView(props: {
   const toolbar = <div className="ws-deriv-toolbar">
     <div className="ws-deriv-actions">
       <div className="ws-deriv-regen-anchor">
-        {item.stale && !staleDismissed ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => setStaleDismissed(true)}>×</button></div> : null}
+        {item.stale && !props.isStaleDismissed?.(item) ? <div className="workspace-tooltip is-visible ws-deriv-stale-tip" data-placement="top">源文档已更新，可重新生成<button aria-label="关闭提示" onClick={() => props.onDismissStale?.(item)}>×</button></div> : null}
         <button className="ws-docfn-btn" title="重新生成" aria-label="重新生成" onClick={() => setModalOpen(true)}><RegenIcon/></button>
       </div>
       {document?.docVersion ? <div className="ws-export-anchor" ref={exportRef}><button className="ws-docfn-btn" title="导出" aria-label="导出" onClick={() => { setMoreOpen(false); setExportOpen((value) => !value); }}><ExportIcon/></button>

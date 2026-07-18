@@ -21,6 +21,7 @@ export interface DerivativeMeta {
   coverTemplate: "poster" | "magazine" | "wenkai" | "impact" | "note";
   privatePrompt: string;
   sourceVersion: number | null;
+  currentSourceVersion: number;
   generatedAt: string | null;
   stale: boolean;
 }
@@ -46,6 +47,7 @@ function mapMeta(row: Record<string, unknown>): DerivativeMeta {
     coverTemplate: (["poster", "magazine", "wenkai", "impact", "note"] as const).includes(row.cover_template as never) ? row.cover_template as DerivativeMeta["coverTemplate"] : "poster",
     privatePrompt: String(row.private_prompt ?? ""),
     sourceVersion,
+    currentSourceVersion: currentVersion,
     generatedAt: row.generated_at == null ? null : String(row.generated_at),
     stale: sourceVersion != null && sourceVersion < currentVersion,
   };

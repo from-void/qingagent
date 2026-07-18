@@ -444,7 +444,7 @@ describe("ServerStream", () => {
     const [docARequestId, docBRequestId, styleARequestId, styleBRequestId] = requests;
     const derivative = (docId: string) => ({
       docId, dtype: "translate", templateId: "template", templateName: "模板", privatePrompt: "",
-      sourceVersion: null, generatedAt: null, stale: false,
+      sourceVersion: null, currentSourceVersion: 0, generatedAt: null, stale: false,
     });
 
     source.emitFrame({

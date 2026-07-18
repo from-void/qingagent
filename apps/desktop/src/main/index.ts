@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell, type Event } from "electron";
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -544,13 +544,15 @@ async function createWindow() {
     }
     return { action: "deny" };
   });
-  // ② 整页导航:SPA 内部跳转走 history API 不触发本事件。白名单只含当前应用同源
-  //    http(s) 与开发服务器；file:、about:、跨源和畸形 URL 均不得接管主窗口。
-  mainWindow.webContents.on("will-navigate", (event, url) => {
+  // ② 整页导航与服务端重定向:SPA 内部跳转走 history API 不触发这些事件。白名单只含
+  //    当前应用同源 http(s) 与开发服务器；file:、about:、跨源和畸形 URL 均不得接管主窗口。
+  const guardMainFrameNavigation = (event: Event, url: string): void => {
     if (!isAllowedMainFrameNavigation(url, mainWindow?.webContents.getURL() ?? "", isDev ? devUrl : undefined)) {
       event.preventDefault();
     }
-  });
+  };
+  mainWindow.webContents.on("will-navigate", guardMainFrameNavigation);
+  mainWindow.webContents.on("will-redirect", guardMainFrameNavigation);
 
   const updateWindow = mainWindow;
   updateWindow.webContents.once("did-finish-load", () => {

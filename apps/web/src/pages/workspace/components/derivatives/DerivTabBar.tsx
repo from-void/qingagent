@@ -6,6 +6,7 @@ export function DerivTabBar(props: {
   title: string; items: DerivativeItem[]; activeTab: "main" | string;
   onActivate: (id: "main" | string) => void; onCreate: (dtype: DerivativeDtype) => void;
   onRename: (title: string) => void | Promise<void>;
+  isStaleDismissed?: (item: DerivativeItem) => boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -30,6 +31,7 @@ export function DerivTabBar(props: {
   );
   const regularItems = props.items.filter((item) => item.dtype !== "translate");
   const translationItems = props.items.filter((item) => item.dtype === "translate");
+  const hasVisibleStale = (item: DerivativeItem) => item.stale && !props.isStaleDismissed?.(item);
   const submitRename = () => {
     const title = draftTitle.trim();
     setEditing(false);
@@ -46,10 +48,10 @@ export function DerivTabBar(props: {
       }} /> : <><span>{props.title || "主文档"}</span><button type="button" className="ws-deriv-rename" aria-label="修改标题" title="修改标题" onClick={(event) => { event.stopPropagation(); beginRename(); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.1 2.9a1.75 1.75 0 0 1 2.47 2.47L6 12.9l-3.2.77.77-3.2Z"/><path d="m9.7 4.3 2.47 2.47"/></svg></button></>}
     </div>
     {regularItems.map((item) => <button key={item.docId} className={`ws-deriv-tab${props.activeTab === item.docId ? " is-active" : ""}`} role="tab" onClick={() => props.onActivate(item.docId)}>
-      <span>{DTYPE_REGISTRY[item.dtype as DerivativeDtype]?.tabLabel ?? item.templateName}</span>{item.stale ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}
+      <span>{DTYPE_REGISTRY[item.dtype as DerivativeDtype]?.tabLabel ?? item.templateName}</span>{hasVisibleStale(item) ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}
     </button>)}
     {translationItems.length ? <button className={`ws-deriv-tab${props.activeTab === "translate" ? " is-active" : ""}`} role="tab" onClick={() => props.onActivate("translate")}>
-      <span>翻译</span>{translationItems.some((item) => item.stale) ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}
+      <span>翻译</span>{translationItems.some(hasVisibleStale) ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}
     </button> : null}
     {availableDescriptors.length > 0 ? <div className="ws-deriv-add-wrap" ref={menuRef}>
       <button className="ws-deriv-add" title="新建稿件" aria-label="新建稿件" onClick={() => setOpen((value) => !value)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button>

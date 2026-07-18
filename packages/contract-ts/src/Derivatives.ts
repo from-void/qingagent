@@ -11,6 +11,7 @@ export interface DerivativeItem {
   coverTemplate?: "poster" | "magazine" | "wenkai" | "impact" | "note";
   privatePrompt: string;
   sourceVersion: number | null;
+  currentSourceVersion: number;
   generatedAt: string | null;
   stale: boolean;
 }

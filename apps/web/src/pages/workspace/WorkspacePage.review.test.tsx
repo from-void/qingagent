@@ -1671,6 +1671,7 @@ describe("WorkspacePage review controls", () => {
       templateName: "深度观点文",
       privatePrompt: "",
       sourceVersion: 1,
+      currentSourceVersion: 1,
       generatedAt: "2026-07-15T00:00:00.000Z",
       stale: false,
     };
@@ -1912,6 +1913,7 @@ describe("WorkspacePage review controls", () => {
       templateName: "深度长文",
       privatePrompt: "",
       sourceVersion: null,
+      currentSourceVersion: 0,
       generatedAt: null,
       stale: false,
     }]);

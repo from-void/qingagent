@@ -36,9 +36,9 @@ describe("documentDerivativesRepo", () => {
     const second = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-tutorial", privatePrompt: "" });
     expect(second.docId).toBe(first.docId);
     await stampGenerated(first.docId, 1);
-    expect((await listDerivativesByThread("thread"))[0]?.stale).toBe(false);
+    expect((await listDerivativesByThread("thread"))[0]).toMatchObject({ stale: false, currentSourceVersion: 1 });
     await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 2 }));
-    expect((await listDerivativesByThread("thread"))[0]?.stale).toBe(true);
+    expect((await listDerivativesByThread("thread"))[0]).toMatchObject({ stale: true, currentSourceVersion: 2 });
   });
 
   it("封面选择按稿件持久化，重新生成参数更新不重置", async () => {

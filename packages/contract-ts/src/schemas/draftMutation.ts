@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DRAFT_MARK_COLORS, type DraftTextMark, type EditDraftInput } from "../DraftMutation";
+import { isAllowedLinkHref } from "../validators";
 import type { Equal, Expect } from "./typeAssert";
 
 export type {
@@ -17,7 +18,7 @@ const draftTextMarkSchema: z.ZodType<DraftTextMark> = z.discriminatedUnion("type
   z.object({ type: z.literal("code") }).strict(),
   z.object({
     type: z.literal("link"),
-    href: z.string().refine((href) => /^https?:\/\//.test(href) || href.startsWith("/") || href.startsWith("#"), {
+    href: z.string().refine(isAllowedLinkHref, {
       message: "link href must be http(s), root-relative, or hash-relative",
     }),
     title: z.string().nullable().optional(),

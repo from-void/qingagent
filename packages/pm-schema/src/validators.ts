@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAllowedLinkHref } from "@qingagent/contract-ts";
 import { getDeterministicId } from "./hash";
 import { PM_SCHEMA_VERSION } from "./schemaVersion";
 import {
@@ -43,11 +44,7 @@ const BLOCK_NODE_TYPES_WITH_ID = new Set([
   "blockMath",
 ]);
 
-export function isAllowedLinkHref(href: string): boolean {
-  const value = href.trim();
-  if (!value || /[\u0000-\u001f\u007f\s]/.test(value)) return false;
-  return /^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value) || /^#[^\s]*$/.test(value);
-}
+export { isAllowedLinkHref };
 
 const linkHrefSchema = z
   .string()

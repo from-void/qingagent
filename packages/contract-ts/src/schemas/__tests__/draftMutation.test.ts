@@ -73,6 +73,20 @@ describe("editDraftInputSchema", () => {
     }
   });
 
+  it("aligns link href validation with pm-schema security rules", () => {
+    const parseHref = (href: string) => editDraftInputSchema.safeParse({
+      ops: [{ action: "markText", find: "目标文本", mark: { type: "link", href }, op: "add" }],
+    });
+
+    for (const href of ["//evil.example/path", "/\njavascript:alert(1)"]) {
+      expect(parseHref(href).success, href).toBe(false);
+    }
+
+    for (const href of ["HTTPS://example.com", "  https://example.com/path  "]) {
+      expect(parseHref(href).success, href).toBe(true);
+    }
+  });
+
   it("rejects unknown, malformed, or surplus markText payloads", () => {
     const invalidMarks = [
       { type: "math" },

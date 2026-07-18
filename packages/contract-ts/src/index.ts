@@ -94,5 +94,6 @@ export * from "./ToolCallStatus";
 export * from "./ToolRenderTarget";
 export * from "./UpdateDoc";
 export * from "./UpdateMaterialSummary";
+export * from "./validators";
 export * from "./BridgeFrame";
 export * from "./DocSuggestionBody";

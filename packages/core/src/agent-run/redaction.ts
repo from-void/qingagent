@@ -57,7 +57,7 @@ const ENV_UNQUOTED_FIELD_RE = new RegExp(
 );
 // 空格分隔 + 引号包裹的值:`password 'secret'` / `api_key "x"` / `--token 'x'`。
 // 之前只有 `[:=]` 分隔的引号值(DOUBLE/SINGLE_QUOTED_FIELD_RE)和空格分隔的裸值
-// (SPACE_FIELD_RE,值类排除引号)被处理,空格+引号值漏网泄漏(R11 codex-1)。
+// (SPACE_FIELD_RE,值类排除引号)被处理,空格+引号值漏网泄漏(R11-1)。
 const SPACE_DOUBLE_QUOTED_FIELD_RE = new RegExp(
   String.raw`\b(${SENSITIVE_FIELD_SOURCE})\b(\s+)"(?:(?:\\.)|[^"\\])*"`,
   "gi",
@@ -182,7 +182,7 @@ export function redactedSerializedText(value: unknown, maxBytes = getToolIoMaxBy
     text = redactSensitiveText(String(value));
   }
   // 上限封顶:argsJson / 命令卡等帧字段不能因超长输入(大 args / 大 code)无界膨胀,
-  // 撑爆单帧(R11 codex-1)。超限截断并加标记。
+  // 撑爆单帧(R11-1)。超限截断并加标记。
   const capped = truncateUtf8(text, maxBytes);
   return capped.truncated ? `${capped.text}…[truncated]` : capped.text;
 }

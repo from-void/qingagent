@@ -81,7 +81,7 @@ PDF 解析的 `pdf-parse` 运行时依赖 `@napi-rs/canvas` 的平台原生包:
 | `browser_*` 自主浏览器 | Chromium + 开关 | 工具不注入 | 带 Chromium + `QINGAGENT_AGENT_BROWSER=1` 或配 CDP |
 | 主模型 | 用户自配 key | 桌面代码删了 env key,必须用户配 | 提供配置流程,别靠随包 .env |
 
-> 完整盘点见飞书《青简 · 运行时/系统依赖盘点》与本仓 codex 审计;`QINGAGENT_BUNDLE_PYODIDE` 的产物分支见 `build.mjs` / `buildPyodideStage.mjs`。
+> 完整盘点见本仓依赖审计;`QINGAGENT_BUNDLE_PYODIDE` 的产物分支见 `build.mjs` / `buildPyodideStage.mjs`。
 
 ---
 

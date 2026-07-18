@@ -108,7 +108,7 @@ describe("textEditOps", () => {
   });
 
   it("tx-replaceText-reassembledRewrittenPrefix: 选区前缀被改写+带上旧后缀时也不重复(最长重叠裁剪)", () => {
-    // codex 复审变体:find=「多模态大模型综述」被改写成「…研究综述」,replace 仍带旧后缀。
+    // 复审变体:find=「多模态大模型综述」被改写成「…研究综述」,replace 仍带旧后缀。
     // replace 不再以 find 开头/包含 find,靠尾部最长重叠裁掉重复后缀。
     const base = doc([
       {

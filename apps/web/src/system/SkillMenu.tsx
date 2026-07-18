@@ -82,7 +82,7 @@ export function SkillMenuIcon({ icon }: { icon: string }) {
 }
 
 /**
- * 共享技能菜单浮层(Codex 命令面板式:单行「图标 + 粗名 + 行内说明」)。
+ * 共享技能菜单浮层（单行「图标 + 粗名 + 行内说明」）。
  * 新建页与编辑页都渲染它,样式/图标/排版只此一处定义——彻底消除两边漂移。
  * 定位:绝对定位、贴在触发按钮上方(要求父元素 position:relative)。
  * 键盘导航:`selectedIndex` 由调用方驱动(反斜杠唤起后 ↑/↓ 改它、Enter 选中);

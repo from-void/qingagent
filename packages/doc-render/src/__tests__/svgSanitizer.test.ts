@@ -191,7 +191,7 @@ describe("buildPartialSvgDraft", () => {
   });
 });
 
-// 导出内联加固:保真黑名单——剔除可执行面,保留 mermaid 可视元素。回归 codex 端到端发现的 blocker:
+// 导出内联加固:保真黑名单——剔除可执行面,保留 mermaid 可视元素。回归端到端测试发现的阻断项:
 // 带 viewBox 的恶意 SVG(过 isRenderableSvg 尺寸门)曾被原样内联进导出 HTML。
 describe("hardenInlineSvg", () => {
   // 真实 mermaid SVG 一定声明 xmlns:xlink(箭头 marker 用 xlink:href),测试输入对齐之。

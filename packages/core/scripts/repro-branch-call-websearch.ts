@@ -1,11 +1,9 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { RequestContext } from "@mastra/core/request-context";
+import { resolveEvalOutputDir } from "./evalOutputDir.js";
 
-const outputDir = resolve(
-  process.env.BRANCH_CALL_EVAL_DIR ??
-    "/home/jimmy/proj/qingagent-ops/evals/260712-branchcall",
-);
+const outputDir = resolveEvalOutputDir({ envName: "QINGAGENT_EVAL_OUT_DIR", scriptName: "repro-branch-call-websearch" });
 await mkdir(outputDir, { recursive: true });
 process.loadEnvFile(resolve("../server/.env"));
 const usageDbPath = resolve(outputDir, "websearch-repro-usage.db");

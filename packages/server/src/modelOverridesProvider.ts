@@ -122,7 +122,7 @@ export async function resolveRequestModelOverrides(
   headers: RequestModelHeaders,
 ): Promise<ModelOverrides> {
   const visitorApiKey = sanitizeApiKey(headers.visitorKey);
-  // 安全(codex review P1):自定义 baseURL / 协议 / 模型名只在"访客自带 key"时生效。
+  // 安全（代码评审 P1）:自定义 baseURL / 协议 / 模型名只在"访客自带 key"时生效。
   // 否则无 key 的请求会借用站点 global/env key 的 Authorization 打到任意 endpoint,造成凭据泄露。
   const baseUrl = visitorApiKey
     ? await validateVisitorBaseUrl(sanitizeHeaderValue(headers.baseUrl, 300))

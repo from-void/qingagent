@@ -325,7 +325,7 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).dataset.patchState).toBe("replace");
   });
 
-  it("多块替换拆成同 patchId 的 delete+insert 时,delete 半也不出块级红删标记(替换统一;codex 回归)", () => {
+  it("多块替换拆成同 patchId 的 delete+insert 时,delete 半也不出块级红删标记(替换统一;回归)", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       blockPatches: [

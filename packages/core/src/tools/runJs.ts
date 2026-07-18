@@ -139,7 +139,7 @@ function runJsWorkerMain() {
       "    return value;",
       "  }",
       "  if (seen.has(value)) return seen.get(value);",
-      // 内建对象也登记进 seen,保留"同一引用出现多次→克隆后仍共享同一身份"的标准语义(R15 codex-2)。
+      // 内建对象也登记进 seen,保留"同一引用出现多次→克隆后仍共享同一身份"的标准语义(R15-2)。
       "  if (value instanceof Date) { const c = new Date(value.getTime()); seen.set(value, c); return c; }",
       "  if (value instanceof RegExp) { const c = new RegExp(value.source, value.flags); seen.set(value, c); return c; }",
       "  if (value instanceof ArrayBuffer) { const c = value.slice(0); seen.set(value, c); return c; }",
@@ -170,7 +170,7 @@ function runJsWorkerMain() {
       "  return out;",
       "}",
       // queueMicrotask / TextEncoder / TextDecoder:常用无 I/O 标准 API,fresh vm context 缺失
-      // (R13 codex-3)。同 structuredClone:绝不注入 host 真身(host 对象进 vm 留跨 realm 面),
+      // (R13-3)。同 structuredClone:绝不注入 host 真身(host 对象进 vm 留跨 realm 面),
       // 用纯 vm 内 polyfill——UTF-8 编解码自实现(含 4 字节/代理对),只用本 context 内建。
       String.raw`
 function __queueMicrotask(cb) {
@@ -185,7 +185,7 @@ function __utf8Encode(str) {
     if (cp >= 0xd800 && cp <= 0xdbff) {
       const lo = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
       if (lo >= 0xdc00 && lo <= 0xdfff) { cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00); i += 1; }
-      else cp = 0xfffd; // 孤高代理 → U+FFFD(WHATWG,R15 codex-3)
+      else cp = 0xfffd; // 孤高代理 → U+FFFD(WHATWG,R15-3)
     } else if (cp >= 0xdc00 && cp <= 0xdfff) {
       cp = 0xfffd; // 孤低代理 → U+FFFD
     }
@@ -203,7 +203,7 @@ function __utf8Decode(input) {
   else if (input instanceof ArrayBuffer) bytes = new Uint8Array(input);
   else if (ArrayBuffer.isView(input)) bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   else bytes = new Uint8Array(input);
-  // WHATWG UTF-8 解码:非法序列(overlong/孤代理范围/截断/非法首字节)一律 U+FFFD,不解成错字符(R15 codex-3)。
+  // WHATWG UTF-8 解码:非法序列(overlong/孤代理范围/截断/非法首字节)一律 U+FFFD,不解成错字符(R15-3)。
   const cont = (x) => x >= 0x80 && x <= 0xbf;
   const emit = (cp) => {
     if (cp > 0xffff) { cp -= 0x10000; return String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff)); }
@@ -247,7 +247,7 @@ function __utf8Decode(input) {
 class __TextEncoder { encode(s) { return __utf8Encode(s === undefined ? "" : s); } get encoding() { return "utf-8"; } }
 class __TextDecoder { constructor(label) { this.encoding = label ? String(label) : "utf-8"; } decode(b) { return __utf8Decode(b); } }
 `,
-      // URLSearchParams:常见 query 解析/清洗 API(R13 codex-3 / R14 codex-1)。纯 vm 内实现,复用
+  // URLSearchParams:常见 query 解析/清洗 API(R13-3 / R14-1)。纯 vm 内实现,复用
       // 本 context 的 decodeURIComponent/encodeURIComponent 内建(不注入 host 真身)。
       String.raw`
 function __usDecode(value) {
@@ -376,7 +376,7 @@ class __URLSearchParams {
         msg = String(error);
       }
       // error.message 也要封顶:用户可 throw new Error("x".repeat(huge)),不 cap 会让 error 字段无界
-      // 撑爆回传帧(R13 codex-2)。复用 result string 上限。
+      // 撑爆回传帧(R13-2)。复用 result string 上限。
       const limit = Number(workerData.resultStringLimit) || 16384;
       return msg.length > limit ? `${msg.slice(0, limit)}...[truncated]` : msg;
     };

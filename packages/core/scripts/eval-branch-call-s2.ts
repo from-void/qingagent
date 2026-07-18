@@ -4,12 +4,10 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { RequestContext } from "@mastra/core/request-context";
 import { pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
+import { resolveEvalOutputDir } from "./evalOutputDir.js";
 
 const execFileAsync = promisify(execFile);
-const outputDir = resolve(
-  process.env.BRANCH_CALL_EVAL_DIR ??
-    "/home/jimmy/proj/qingagent-ops/evals/260712-branchcall",
-);
+const outputDir = resolveEvalOutputDir({ envName: "QINGAGENT_EVAL_OUT_DIR", scriptName: "eval-branch-call-s2" });
 await mkdir(outputDir, { recursive: true });
 process.loadEnvFile(resolve("../server/.env"));
 const usageDbPath = resolve(outputDir, "s2-usage.db");

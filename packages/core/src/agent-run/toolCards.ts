@@ -56,7 +56,7 @@ export function commandCardFromResult(
   // 退出码:原版失败时结果含 "Exit code: N"
   const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
   // 工具 catch 路径返回 "Error: <msg>"(无 Exit code 行),不能因为没退出码就当成功
-  // (R10 codex-3:Error 前缀无 Exit code 被误渲完成态)。
+  // (R10-3:Error 前缀无 Exit code 被误渲完成态)。
   const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
   const exitCode = exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1;
   const policyBlock = commandPolicyBlockFromOutput(outRaw);

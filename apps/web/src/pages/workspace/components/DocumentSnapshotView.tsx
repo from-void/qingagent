@@ -1024,7 +1024,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     scheduleMicrotask(() => {
       if (!editor || editor.isDestroyed) return;
       // 延后期间状态可能变化(揭示动画起播/外部 setContent 已修好 blockId):microtask 内
-      // 重检触发条件仍成立才补写,避免 stale 覆盖(codex 评审指出的理论风险)。
+      // 重检触发条件仍成立才补写,避免 stale 覆盖（代码评审指出的理论风险）。
       if (isPresentationApplyingRef.current) return;
       if (!hasMissingPresentationBlockId(editor.getJSON())) return;
       beginApplyingRemote();

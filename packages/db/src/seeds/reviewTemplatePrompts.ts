@@ -8,7 +8,7 @@ export type ReviewTemplateSeed = {
 
 /**
  * 2026-07-14 提示词包第一节原文。正文不可在装配层改写或摘要。
- * 来源：qingagent-ops/docs/briefs/260714-prompt-pack.md
+ * 来源：提示词包第一节评审定稿。
  */
 export const REVIEW_TEMPLATE_PROMPT_SEEDS: readonly ReviewTemplateSeed[] = [
   {

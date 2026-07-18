@@ -96,7 +96,7 @@ export async function renderMermaid(rawSource: string): Promise<string> {
     if (!valid) {
       // 原文解析失败:可能模型把弯/全角引号当结构定界符。规范化引号后重试一次。
       // 注意:只对 parse 失败的源做此兜底——合法源(含标签正文里的弯引号/书名号«»)原文就能 parse,
-      // 根本不会走到这里,故不会被误伤(codex 评审指出的全局替换误伤合法源问题)。
+      // 根本不会走到这里,故不会被误伤（代码评审指出的全局替换误伤合法源问题）。
       const normalized = normalizeMermaidQuotes(rawSource);
       if (
         normalized !== rawSource &&

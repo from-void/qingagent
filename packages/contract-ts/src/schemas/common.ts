@@ -7,6 +7,10 @@ import type { SkillRef } from "../SkillRef";
 import type { TableSelection } from "../TableSelection";
 import type { Equal, Expect } from "./typeAssert";
 
+/** 入站命令的宽松资源上限：防滥用，同时容纳数万字长文粘贴。 */
+export const MAX_COMMAND_STRING_LENGTH = 64 * 1024;
+export const MAX_COMMAND_ARRAY_LENGTH = 1_000;
+
 /**
  * 有界非空字符串:对应旧手写校验 `validateNonEmptyBoundedString`
  * (`packages/server/src/routes/stream.ts`)——必须是非空字符串且长度 ≤ max。
@@ -51,15 +55,15 @@ type _ResourceDomainExact = Expect<Equal<z.infer<typeof resourceDomainSchema>, R
 
 /** 通用资源引用(Principle A)。 */
 export const resourceRefSchema = z.object({
-  id: z.string(),
+  id: z.string().max(MAX_COMMAND_STRING_LENGTH),
   domain: resourceDomainSchema,
 }) satisfies z.ZodType<ResourceRef>;
 type _ResourceRefExact = Expect<Equal<z.infer<typeof resourceRefSchema>, ResourceRef>>;
 
 /** 技能引用。 */
 export const skillRefSchema = z.object({
-  id: z.string(),
-  version: z.string().nullable(),
+  id: z.string().max(MAX_COMMAND_STRING_LENGTH),
+  version: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
 }) satisfies z.ZodType<SkillRef>;
 type _SkillRefExact = Expect<Equal<z.infer<typeof skillRefSchema>, SkillRef>>;
 
@@ -78,7 +82,7 @@ export const tableSelectionSchema = z.object({
   axis: z.enum(["row", "column"]),
   startIndex: z.number().int().nonnegative(),
   endIndex: z.number().int().nonnegative(),
-  signature: z.string().optional(),
+  signature: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
 }).refine(
   (selection) => selection.startIndex <= selection.endIndex,
   { path: ["endIndex"], message: "endIndex must be greater than or equal to startIndex" },
@@ -89,15 +93,15 @@ type _TableSelectionExact = Expect<Equal<z.infer<typeof tableSelectionSchema>, T
 export const chatChipSchema = z.object({
   kind: chatChipKindSchema,
   resourceRef: resourceRefSchema.nullable(),
-  skillId: z.string().optional(),
-  prefix: z.string().nullable(),
-  label: z.string(),
-  suffix: z.string().nullable(),
+  skillId: z.string().max(MAX_COMMAND_STRING_LENGTH).optional(),
+  prefix: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
+  label: z.string().max(MAX_COMMAND_STRING_LENGTH),
+  suffix: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable(),
   from: z.number().optional(),
   to: z.number().optional(),
-  selectionRefs: z.array(z.string()).optional(),
+  selectionRefs: z.array(z.string().max(MAX_COMMAND_STRING_LENGTH)).max(MAX_COMMAND_ARRAY_LENGTH).optional(),
   tableSelection: tableSelectionSchema.optional(),
-  text: z.string().nullable().optional(),
+  text: z.string().max(MAX_COMMAND_STRING_LENGTH).nullable().optional(),
 }).refine(
   (chip) => chip.tableSelection === undefined || chip.kind.kind === "selection",
   { path: ["tableSelection"], message: "tableSelection is only allowed on selection chips" },

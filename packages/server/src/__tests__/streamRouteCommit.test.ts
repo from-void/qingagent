@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { MAX_COMMAND_ARRAY_LENGTH } from "@qingagent/contract-ts/schemas";
 import { app } from "../app";
 import {
   forgetSession,
@@ -236,6 +237,20 @@ describe("POST /api/v1/commit", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error });
+  });
+
+  it("REST commit 同步拒绝超过契约上限的 id 数组", async () => {
+    const submit = vi.spyOn(sessionManager, "submit");
+    const res = await request("POST", "/api/v1/commit", {
+      sessionId: "commit-array-limit-test",
+      patchIds: Array.from({ length: MAX_COMMAND_ARRAY_LENGTH + 1 }, (_, index) => `patch-${index}`),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: `patchIds must contain at most ${MAX_COMMAND_ARRAY_LENGTH} items`,
+    });
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("accept/reject 批次重叠在进入 actor 前返回稳定 400", async () => {

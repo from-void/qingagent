@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@libsql/client";
 import { getStablePmJson } from "@qingagent/pm-schema";
 import { getDocumentsClient } from "../documentsClient.js";
 import { deleteDocumentFamily } from "../documentFamilyRepo.js";
 import { ensureMigrated, runMigrations } from "../migrations.js";
 import { migration0001Baseline } from "../migrations/0001_baseline.js";
-import { MIGRATIONS } from "../migrations/index.js";
+import { migration0002OrphanCleanup } from "../migrations/0002_orphan_cleanup.js";
 import { prepareTempDocumentsDb, pmDocFromText, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
@@ -15,6 +15,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   db.cleanup();
 });
 
@@ -110,6 +111,23 @@ describe("deleteDocumentFamily", () => {
 });
 
 describe("migration 0002 orphan cleanup", () => {
+  it("mastra_threads 为空时跳过清理并保留 documents 全家桶", async () => {
+    const client = getDocumentsClient();
+    await runMigrations([migration0001Baseline]);
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await seedFamily(client, "preserved-doc", "missing-thread");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await runMigrations([
+      migration0001Baseline,
+      migration0002OrphanCleanup,
+    ]);
+
+    expect(result.appliedIds).toEqual([2]);
+    expect(await familyCount(client, "preserved-doc", "missing-thread")).toBe(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("跳过 documents 孤儿清理"));
+  });
+
   it("清理 thread 已不存在的 documents 全家桶,保留非孤儿", async () => {
     const client = getDocumentsClient();
     await runMigrations([migration0001Baseline]);
@@ -118,9 +136,12 @@ describe("migration 0002 orphan cleanup", () => {
     await seedFamily(client, "alive-doc", "alive-thread");
     await seedFamily(client, "orphan-doc", "missing-thread");
 
-    const result = await runMigrations();
+    const result = await runMigrations([
+      migration0001Baseline,
+      migration0002OrphanCleanup,
+    ]);
 
-    expect(result.appliedIds).toEqual(MIGRATIONS.filter((migration) => migration.id > 1).map((migration) => migration.id));
+    expect(result.appliedIds).toEqual([2]);
     expect(await familyCount(client, "orphan-doc", "missing-thread")).toBe(0);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
   });

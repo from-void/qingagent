@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildLongTextChip } from "../../../system/longText";
 import { StarterEditor } from "./StarterEditor";
 import type { StarterEditorHandle } from "./StarterEditor";
 
@@ -65,6 +66,38 @@ describe("StarterEditor 附件 chip 同步", () => {
     });
 
     expect(onSubmitFiles).toHaveBeenCalledWith([second]);
+  });
+});
+
+describe("StarterEditor 快照", () => {
+  afterEach(() => {
+    if (root) {
+      act(() => root?.unmount());
+      root = null;
+    }
+    host?.remove();
+    host = null;
+  });
+
+  it("展开长文本小条原文，并保持 src-chip 占位行为", async () => {
+    const editorRef = createRef<StarterEditorHandle>();
+    await render(<StarterEditor ref={editorRef} placeholder="输入" onChange={() => undefined} onSubmit={() => undefined} />);
+    const editor = host?.querySelector<HTMLElement>(".starter-edit");
+    if (!editor) throw new Error("editor not found");
+    const original = "第一行完整原文\n第二行完整原文";
+    const sourceChip = document.createElement("span");
+    sourceChip.className = "src-chip";
+    sourceChip.dataset.type = "txt";
+    sourceChip.dataset.name = "资料.txt";
+    sourceChip.textContent = "[资料.txt]×";
+    editor.append(document.createTextNode("前缀"), buildLongTextChip(original), sourceChip, document.createTextNode("后缀"));
+
+    expect(editorRef.current?.snapshot()).toEqual({
+      text: `前缀${original}后缀`,
+      richText: `前缀${original}{{chip:0}}后缀`,
+      chips: [{ type: "txt", name: "资料.txt" }],
+    });
+    expect(editorRef.current?.snapshot().text).not.toContain("点击查看全文");
   });
 });
 

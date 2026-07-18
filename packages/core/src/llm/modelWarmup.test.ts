@@ -24,8 +24,7 @@ describe("modelWarmup", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(() => warmUpModelEndpoint("https://api.deepseek.com/v1", log)).not.toThrow();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(1));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.deepseek.com/v1/models",
@@ -47,8 +46,7 @@ describe("modelWarmup", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(() => warmUpModelEndpoint("https://api.deepseek.com/v1", log)).not.toThrow();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(1));
 
     expect(log.mock.calls[0]?.[0]).toMatch(/^\[warmup\] origin=https:\/\/api\.deepseek\.com status=error ms=\d+$/);
   });

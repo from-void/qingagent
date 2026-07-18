@@ -1,6 +1,28 @@
 import { DEFAULT_UPDATE_POLICY_URL, readTelemetryBuildInfo } from "../telemetry/config.js";
 
 const DEFAULT_POLICY_TIMEOUT_MS = 1200;
+const TRUSTED_POLICY_HOST = "raw.githubusercontent.com";
+const TRUSTED_POLICY_PATH = "/from-void/qingagent/main/update-policy.json";
+
+// 强更策略只能来自官方仓库的固定 raw 文件。构建时注入的 URL 也必须经过同一校验，
+// 不能把一次构建配置错误扩大为任意远端可强制升级的能力。
+export function isTrustedUpdatePolicyUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === TRUSTED_POLICY_HOST &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === TRUSTED_POLICY_PATH &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
 
 export type UpdatePolicy = {
   minSupported: string | null;
@@ -30,7 +52,8 @@ function optionalString(value: unknown): string {
 }
 
 export function resolveUpdatePolicyUrl(): string {
-  return optionalString(readTelemetryBuildInfo()?.updatePolicyUrl) || DEFAULT_UPDATE_POLICY_URL;
+  const configuredUrl = optionalString(readTelemetryBuildInfo()?.updatePolicyUrl);
+  return isTrustedUpdatePolicyUrl(configuredUrl) ? configuredUrl : DEFAULT_UPDATE_POLICY_URL;
 }
 
 function parsePrerelease(value: string | undefined): PrereleaseIdentifier[] | null {
@@ -117,7 +140,7 @@ export async function fetchUpdatePolicy(
   timeoutMs = DEFAULT_POLICY_TIMEOUT_MS,
 ): Promise<UpdatePolicy> {
   const fetcher = fetchImpl ?? (globalThis.fetch as unknown as UpdatePolicyFetch | undefined);
-  if (!fetcher || !url) return { minSupported: null };
+  if (!fetcher || !isTrustedUpdatePolicyUrl(url)) return { minSupported: null };
 
   // 用手动 AbortController + 可清理 timer 代替 AbortSignal.timeout:后者内部 timer 是 unref 的,
   // 会在 node:test(Node 22.x)里让"event loop 已 resolve 但 promise 仍 pending"误报整文件失败。
@@ -127,6 +150,8 @@ export async function fetchUpdatePolicy(
   try {
     const res = await fetcher(url, {
       headers: { Accept: "application/json" },
+      // 策略端点没有重定向需求；拒绝重定向，避免 TLS 校验后的请求被带往非受信任源。
+      redirect: "error",
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DraftTextMark } from "@qingagent/contract-ts";
 import {
   aiBlockToQingml,
   compileAiDocumentToPm,
@@ -242,8 +243,11 @@ describe("draft rich formats session-scoped tools", () => {
     const { editDraft } = createSessionScopedTools(state);
 
     await expect(editDraft.execute!({
-      ops: [{ action: "markText", find: "核心指标", mark: { type: "math" }, op: "add" }],
-    }, ctx)).rejects.toThrow("math mark 不能与文本样式混用");
+      ops: [{ action: "markText", find: "核心指标", mark: { type: "math" } as unknown as DraftTextMark, op: "add" }],
+    }, ctx)).resolves.toMatchObject({
+      error: true,
+      message: expect.stringContaining("Invalid discriminator value"),
+    });
     assertSafeDoc(state.docDraftCandidateDoc ?? state.doc, "candidate after rejected math mark");
 
     const result = await editDraft.execute!({

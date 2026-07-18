@@ -4,7 +4,7 @@ import {
   getAppSetting,
   sanitizeBaseUrl,
   sanitizeModelId,
-  validateFetchUrl,
+  validateModelFetchUrl,
   type ModelOverrides,
   type DeepseekTier,
   type ModelProtocol,
@@ -49,10 +49,11 @@ function sanitizeModelTier(raw: string | undefined | null): DeepseekTier | undef
 async function validateVisitorBaseUrl(raw: string | undefined): Promise<string | undefined> {
   if (!raw) return undefined;
   try {
-    await validateFetchUrl(raw);
+    await validateModelFetchUrl(raw);
     return raw;
   } catch {
-    // 访客自定义 endpoint 不可信:非法 / 内网 / loopback / 云元数据地址直接回退默认模型地址。
+    // 访客自定义 endpoint 不可信:非法 / 内网 / 云元数据地址直接回退默认模型地址。
+    // localhost / 127.0.0.1 / ::1 是 Ollama、LM Studio 的合法主场景。
     return undefined;
   }
 }

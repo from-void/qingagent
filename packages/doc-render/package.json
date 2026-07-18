@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser/index.ts",
+    "./fetch-url": "./src/browser/fetchUrlPolicy.ts",
     "./export": "./src/export/index.ts",
     "./paths": "./src/paths/index.ts",
     "./svg-templates": "./src/svgTemplates/index.ts",

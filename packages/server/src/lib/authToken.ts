@@ -24,12 +24,14 @@ function extractToken(c: Context): string | null {
 }
 
 // 可选 token 鉴权:QINGAGENT_AUTH_TOKEN 未设则直通(本机/桌面零配置)。设了才对 /api/* 校验。
-// 豁免:OPTIONS(CORS 预检)、POST /api/v1/auth/session(拿 token 换 HttpOnly cookie 的入口)。
+// 豁免:OPTIONS(CORS 预检)、external 子树(由 externalTokenMiddleware 独立鉴权)、
+// POST /api/v1/auth/session(拿 token 换 HttpOnly cookie 的入口)。
 export const authTokenMiddleware: MiddlewareHandler = async (c, next) => {
   const expected = process.env.QINGAGENT_AUTH_TOKEN;
   if (!expected) return next();
   if (c.req.method === "OPTIONS") return next();
   const path = new URL(c.req.url).pathname;
+  if (path.startsWith("/api/v1/external/")) return next();
   if (path === "/api/v1/auth/session") return next();
   const provided = extractToken(c);
   if (provided && tokensMatch(provided, expected)) return next();

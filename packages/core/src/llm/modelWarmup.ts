@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { modelFetch } from "./modelTransport.js";
 
 type LogFn = (line: string) => void;
 
@@ -14,7 +15,7 @@ export function warmUpModelEndpoint(baseUrl: string, log: LogFn = console.log): 
   const origin = safeOrigin(url);
   const startedAt = performance.now();
 
-  void fetch(url, {
+  void modelFetch(url, {
     method: "GET",
     signal: AbortSignal.timeout(5_000),
   })

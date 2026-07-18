@@ -74,6 +74,7 @@ describe("generateSvg 工具卡帧协议", () => {
                   elapsedMs: 1200,
                   rawKb: 1.5,
                   message: "正在生成 SVG 结构",
+                  partialSvg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs><g><path d="M0 0L10 10"/><rect width="5" height="5"/><text>安全预览</text></g></svg>`,
                 },
               },
             },
@@ -100,6 +101,51 @@ describe("generateSvg 工具卡帧协议", () => {
       rawKb: 1.5,
       message: "正在生成 SVG 结构",
     });
+    for (const element of ["linearGradient", "<path", "<rect", "<text"]) {
+      expect(progress?.partialSvg).toContain(element);
+    }
+  });
+
+  it("generatesvg-progress 在卡片收口再次消毒 partialSvg", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("svg-card-sanitize");
+    const maliciousSvg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" onload="alert(1)">` +
+      `<script>alert(1)</script>` +
+      `<foreignObject><img src="x" onerror="alert(1)"/></foreignObject>` +
+      `<rect width="10" height="10"/>` +
+      `</svg>`;
+
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "webSearch",
+              toolCallId: "forged-svg-progress",
+              args: { query: "untrusted progress" },
+            },
+          },
+          {
+            type: "tool-output",
+            payload: {
+              toolCallId: "forged-svg-progress",
+              output: {
+                type: "generatesvg-progress",
+                progress: { stage: "streaming", partialSvg: maliciousSvg },
+              },
+            },
+          },
+        ),
+        { state, agentMessageId: "m", streamId: "s-svg-sanitize", runId: "r" },
+      ),
+    );
+
+    const progress = specs(frames, "forged-svg-progress").at(-1)?.body;
+    const partialSvg = progress?.kind === "generateSvg" ? progress.data.progress?.partialSvg : null;
+    expect(partialSvg).toMatch(/<rect/i);
+    expect(partialSvg).not.toMatch(/onload|onerror|<script|<foreignObject/i);
   });
 
   it("失败只定格 generateSvg 工具卡,不发 draftingFailed", async () => {

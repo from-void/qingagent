@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DRAFT_MARK_COLORS } from "../../DraftMutation";
 import { editDraftInputSchema } from "../draftMutation";
 
 describe("editDraftInputSchema", () => {
@@ -44,5 +45,61 @@ describe("editDraftInputSchema", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("accepts every supported markText mark", () => {
+    const marks = [
+      { type: "bold" },
+      { type: "italic" },
+      { type: "underline" },
+      { type: "strike" },
+      { type: "strikeThrough" },
+      { type: "code" },
+      { type: "link", href: "https://example.com", title: "示例" },
+    ];
+
+    for (const mark of marks) {
+      expect(editDraftInputSchema.safeParse({
+        ops: [{ action: "markText", find: "目标文本", mark, op: "add" }],
+      }).success).toBe(true);
+    }
+
+    for (const color of DRAFT_MARK_COLORS) {
+      for (const type of ["textColor", "highlight"] as const) {
+        expect(editDraftInputSchema.safeParse({
+          ops: [{ action: "markText", find: "目标文本", mark: { type, color }, op: "add" }],
+        }).success).toBe(true);
+      }
+    }
+  });
+
+  it("aligns link href validation with pm-schema security rules", () => {
+    const parseHref = (href: string) => editDraftInputSchema.safeParse({
+      ops: [{ action: "markText", find: "目标文本", mark: { type: "link", href }, op: "add" }],
+    });
+
+    for (const href of ["//evil.example/path", "/\njavascript:alert(1)"]) {
+      expect(parseHref(href).success, href).toBe(false);
+    }
+
+    for (const href of ["HTTPS://example.com", "  https://example.com/path  "]) {
+      expect(parseHref(href).success, href).toBe(true);
+    }
+  });
+
+  it("rejects unknown, malformed, or surplus markText payloads", () => {
+    const invalidMarks = [
+      { type: "math" },
+      { type: "bold", href: "https://example.com" },
+      { type: "link", href: 42 },
+      { type: "textColor", color: "not-a-theme-color" },
+      { type: "highlight" },
+    ];
+
+    for (const mark of invalidMarks) {
+      expect(editDraftInputSchema.safeParse({
+        ops: [{ action: "markText", find: "目标文本", mark, op: "add" }],
+      }).success).toBe(false);
+    }
   });
 });

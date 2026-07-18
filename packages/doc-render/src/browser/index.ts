@@ -3,6 +3,7 @@ export * from "./browserErrors.js";
 export * from "./contentQuality.js";
 export * from "./envFlag.js";
 export * from "./extractor.js";
+export * from "./fetchUrlPolicy.js";
 export * from "./pdfParse.js";
 export * from "./persistScreenshot.js";
 export * from "./pool.js";

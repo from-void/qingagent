@@ -4,12 +4,13 @@ import {
   SETTING_MODEL_PARAMS,
   deleteAppSetting,
   getAppSetting,
+  modelFetch,
   sanitizeBaseUrl,
   sanitizeModelId,
   setAppSetting,
   testVisionConnection,
   testTextModelConnection,
-  validateFetchUrl,
+  validateModelFetchUrl,
   VISION_TEST_TIMEOUT_MS,
   type ModelProtocol,
   type ModelParamOverrides,
@@ -70,7 +71,7 @@ function sanitizeApiKey(raw: unknown): { ok: true; value: string } | { ok: false
 
 async function isFetchSafeBaseUrl(baseUrl: string): Promise<boolean> {
   try {
-    await validateFetchUrl(baseUrl);
+    await validateModelFetchUrl(baseUrl);
     return true;
   } catch {
     return false;
@@ -197,7 +198,7 @@ function classifyVisionTestError(error: unknown): { kind: VisionTestErrorKind; m
   if (error instanceof Error && error.name === "AbortError") {
     return { kind: "timeout", message: `连接超时(${VISION_TEST_TIMEOUT_MS}ms)` };
   }
-  if (/Blocked private|private hostname|private IPv[46]/i.test(message)) {
+  if (/Blocked (?:private|loopback)|private hostname|private IPv[46]/i.test(message)) {
     return { kind: "ssrf_blocked", message };
   }
   if (status === 401 || status === 403 || /\b(401|403)\b|unauthorized|forbidden|api key|apikey|authentication/i.test(message)) {
@@ -356,7 +357,9 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
   if (!(await isFetchSafeBaseUrl(baseUrl))) {
     return c.json({
       ok: false,
-      error: "这个地址不能访问,请换一个公开的 API 地址",
+      error:
+        "API 地址不可用或被安全策略拒绝：仅允许公网地址及本机 localhost/127.0.0.1/[::1]；" +
+        "内网、链路本地和云元数据地址默认禁止",
     }, 400);
   }
   const isAnthropic = body.protocol === "anthropic";
@@ -385,7 +388,7 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
     let authFailed = false;
     let lastStatus = 0;
     for (const base of candidates) {
-      const res = await fetch(`${base}/models`, {
+      const res = await modelFetch(`${base}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });

@@ -369,6 +369,9 @@ importers:
 
   packages/pm-schema:
     dependencies:
+      '@qingagent/contract-ts':
+        specifier: workspace:*
+        version: link:../contract-ts
       '@tiptap/core':
         specifier: ^3.23.1
         version: 3.23.1(@tiptap/pm@3.23.1)
@@ -415,9 +418,6 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@qingagent/contract-ts':
-        specifier: workspace:*
-        version: link:../contract-ts
       '@types/katex':
         specifier: ^0.16.8
         version: 0.16.8

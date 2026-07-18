@@ -77,6 +77,7 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 | `DEEPSEEK_API_KEY` | 必填 | DeepSeek API 密钥(也可在应用设置里按访客填) |
 | `PORT` | `8080` | 后端端口 |
 | `QINGAGENT_DEEPSEEK_BASE_URL` | 官方端点 | 自定义模型网关 |
+| `QINGAGENT_ALLOW_PRIVATE_MODEL_HOST` | 关 | 仅 `=1` 放行主模型访问私网/链路本地（含云元数据）；loopback 无需开启 |
 | `QINGAGENT_MODEL_FLASH` / `QINGAGENT_MODEL_PRO` | deepseek 系 | 快/强两档模型 id |
 | `QINGAGENT_MODEL_PROTOCOL` | `openai` | 模型协议(`openai`/`anthropic`) |
 

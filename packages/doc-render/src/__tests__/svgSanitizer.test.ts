@@ -226,17 +226,20 @@ describe("hardenInlineSvg", () => {
     expect(out).toContain("#frag");
   });
 
-  it("移除 <iframe>/<object>/<embed> 等活动内容元素", () => {
+  it("整体移除 <foreignObject> 及其 HTML 活动内容", () => {
     const out = hardenInlineSvg(wrap(`<foreignObject><iframe src="https://evil"></iframe><object data="x"></object></foreignObject>`));
+    expect(out).not.toMatch(/<foreignObject/i);
     expect(out).not.toMatch(/<iframe/i);
     expect(out).not.toMatch(/<object/i);
   });
 
-  it("剔除 foreignObject 内嵌脚本但保留容器与文本", () => {
-    const out = hardenInlineSvg(wrap(`<foreignObject><div>标签文字<script>steal()</script></div></foreignObject>`));
+  it("不保留 foreignObject 内嵌的 HTML、事件或脚本", () => {
+    const out = hardenInlineSvg(wrap(`<foreignObject><div onload="steal()">标签文字<script>steal()</script></div></foreignObject><rect/>`));
+    expect(out).not.toMatch(/<foreignObject/i);
     expect(out).not.toMatch(/<script/i);
     expect(out).not.toMatch(/steal/);
-    expect(out).toContain("标签文字");
+    expect(out).not.toContain("标签文字");
+    expect(out).toMatch(/<rect/i);
   });
 
   it("清掉 <style> 里的 @import / 外部 url(),保留主题样式块本身", () => {

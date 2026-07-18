@@ -247,11 +247,11 @@ export function buildPartialSvgDraft(
 }
 
 // 导出内联用的「保真加固」:与上面的白名单 sanitizeSvg 不同——白名单会删掉 mermaid 依赖的
-// <style>/<marker>/<foreignObject>/渐变,毁掉图表观感。这里改用黑名单:只剔除会执行脚本/外联的
-// 危险面(<script>/<iframe>/<object>/<embed>、on* 事件属性、非 #local 的 href/src、<style> 里的
+// <style>/<marker>/渐变,毁掉图表观感。这里改用黑名单:只剔除会执行脚本/外联的
+// 危险面(<script>/<iframe>/<object>/<embed>/<foreignObject>、on* 事件属性、非 #local 的 href/src、<style> 里的
 // @import/外部 url()),保留一切可视元素。用于把 mermaid 缓存 SVG / data:image/svg+xml 安全内联进
 // 导出 HTML(该 HTML 可能被用户在浏览器里打开,故必须杜绝可执行内容注入)。
-const REMOVE_ELEMENTS = new Set(["script", "iframe", "object", "embed"]);
+const REMOVE_ELEMENTS = new Set(["script", "iframe", "object", "embed", "foreignobject"]);
 const HREF_ATTRS = new Set(["href", "xlink:href", "src", "xlink:actuate", "xlink:show"]);
 const BAD_STYLE_TEXT = /@import|url\(\s*['"]?\s*(?:https?:|\/\/|data:|javascript:)/i;
 

@@ -9,6 +9,7 @@ import type {
   ToolCallStatus,
   WriteDraftCardBody,
 } from "@qingagent/contract-ts";
+import { hardenInlineSvg } from "@qingagent/doc-render";
 import { Buffer } from "node:buffer";
 import { assessCommand } from "../workspace/commandRisk.js";
 import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
@@ -208,7 +209,9 @@ export function normalizeGenerateSvgProgress(value: unknown): GenerateSvgProgres
     src: typeof record.src === "string" && record.src ? record.src : null,
     width: typeof record.width === "number" && Number.isFinite(record.width) ? record.width : null,
     height: typeof record.height === "number" && Number.isFinite(record.height) ? record.height : null,
-    partialSvg: typeof record.partialSvg === "string" && record.partialSvg ? record.partialSvg : null,
+    partialSvg: typeof record.partialSvg === "string" && record.partialSvg
+      ? hardenInlineSvg(record.partialSvg)
+      : null,
   };
 }
 

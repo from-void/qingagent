@@ -34,6 +34,26 @@ has also been rebuilt to use the QingYanShiSubset family/full/PostScript names.
 The OFL-1.1 license text is included at
 [docs/licenses/texts/OFL-1.1.txt](./docs/licenses/texts/OFL-1.1.txt).
 
+### LXGW WenKai Regular 1.520 webfont — SIL OFL-1.1
+
+This product redistributes `LXGWWenKai-Regular.woff2`, whose embedded font
+metadata identifies it as LXGW WenKai Regular version 1.520 (June 14, 2025).
+It is from the [LXGW WenKai project](https://github.com/lxgw/LxgwWenKai),
+which is derived from Fontworks' Klee One. The original copyright notices and
+license are included at
+[apps/web/public/fonts/LICENSE-LXGWWenKai.txt](./apps/web/public/fonts/LICENSE-LXGWWenKai.txt).
+The SIL Open Font License 1.1 text is included at
+[docs/licenses/texts/OFL-1.1.txt](./docs/licenses/texts/OFL-1.1.txt).
+
+### Smiley Sans Oblique 2.0.1 webfont — SIL OFL-1.1
+
+This product redistributes `SmileySans-Oblique.woff2`, version 2.0.1, from
+the [Smiley Sans project](https://github.com/atelier-anchor/smiley-sans) by
+atelierAnchor. The original copyright notice and license are included at
+[apps/web/public/fonts/LICENSE-SmileySans.txt](./apps/web/public/fonts/LICENSE-SmileySans.txt).
+The SIL Open Font License 1.1 text is included at
+[docs/licenses/texts/OFL-1.1.txt](./docs/licenses/texts/OFL-1.1.txt).
+
 ## Notable runtime dependencies(以依赖形式分发,特殊许可)
 
 ### elkjs — EPL-2.0

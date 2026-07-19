@@ -82,6 +82,36 @@ describe("external events", () => {
     expect(events[0]?.event).toBe("meta");
     expect(JSON.parse(events[0]!.data)).toMatchObject({ minSeq: 1, nextSeq: 1, gap: true });
   });
+
+  it("只下发公开契约帧，并把一次性消费游标收敛到最后一个公开帧", async () => {
+    const sessionId = "events-public-contract-only";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "annotationPreview",
+      data: { previewId: "internal-before", summary: "内部预览", anchors: [] },
+    });
+    sessionManager.frameLog.append(sessionId, {
+      kind: "sessionMeta",
+      data: { sessionId, title: "公开帧" },
+    });
+    sessionManager.frameLog.append(sessionId, {
+      kind: "annotationPreviewCleared",
+      data: {},
+    });
+
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+
+    const events = await readSseEvents(res, controller, 2);
+    const meta = JSON.parse(events[0]!.data) as { minSeq: number; nextSeq: number };
+    const frames = events
+      .filter((event) => event.event === "frame")
+      .map((event) => JSON.parse(event.data) as { seq: number; kind: string });
+    expect(meta).toMatchObject({ minSeq: 2, nextSeq: 3 });
+    expect(frames).toEqual([{ seq: 2, kind: "sessionMeta", data: { sessionId, title: "公开帧" } }]);
+  });
 });
 
 function authHeaders(): HeadersInit {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceTools, WORKSPACE_TOOLS } from "@mastra/core/workspace";
+import { createWorkspaceTools, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
 import {
   __resetIsolationCacheForTest,
@@ -530,7 +530,7 @@ describe("getSessionWorkspace 装配与缓存", () => {
     await ws.destroy();
   });
 
-  it("invalidateSessionWorkspace 同时清 inflight，避免旧首建 promise 覆盖新挂载", async () => {
+  it("invalidateSessionWorkspace 销毁失配代实例，并让旧调用方拿到当前代 workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "folder-source-race-"));
     const sourceDir = join(root, "library");
     mkdirSync(sourceDir, { recursive: true });
@@ -540,35 +540,54 @@ describe("getSessionWorkspace 装配与缓存", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const first = getSessionWorkspace("sess-race", {
-      ...opts,
-      resolveFolderSources: async () => {
-        await gate;
-        return [];
-      },
+    let finishDestroy: () => void = () => undefined;
+    const destroyGate = new Promise<void>((resolve) => {
+      finishDestroy = resolve;
     });
-    await Promise.resolve();
+    const destroy = vi.spyOn(Workspace.prototype, "destroy").mockImplementation(() => destroyGate);
+    try {
+      const first = getSessionWorkspace("sess-race", {
+        ...opts,
+        resolveFolderSources: async () => {
+          await gate;
+          return [];
+        },
+      });
+      await Promise.resolve();
 
-    invalidateSessionWorkspace("sess-race");
-    const second = getSessionWorkspace("sess-race", {
-      ...opts,
-      resolveFolderSources: () => [folderSource(sourceDir, { id: "fld_race", mountName: "source_race", mountPath: "/sources/source_race" })],
-    });
-    release();
+      invalidateSessionWorkspace("sess-race");
+      const second = getSessionWorkspace("sess-race", {
+        ...opts,
+        resolveFolderSources: () => [folderSource(sourceDir, { id: "fld_race", mountName: "source_race", mountPath: "/sources/source_race" })],
+      });
+      release();
 
-    const [oldWs, newWs] = await Promise.all([first, second]);
-    expect(newWs).not.toBe(oldWs);
-    const entries = await newWs.filesystem!.readdir("/sources/source_race");
-    expect(entries.map((entry) => entry.name)).toContain("race.md");
+      const currentWs = await second;
+      await vi.waitFor(() => expect(destroy).toHaveBeenCalledTimes(1));
+      let firstSettled = false;
+      void first.then(() => {
+        firstSettled = true;
+      });
+      await Promise.resolve();
+      expect(firstSettled).toBe(false);
+      finishDestroy();
+      const firstResult = await first;
+      expect(firstResult).toBe(currentWs);
+      const entries = await currentWs.filesystem!.readdir("/sources/source_race");
+      expect(entries.map((entry) => entry.name)).toContain("race.md");
 
-    const cached = await getSessionWorkspace("sess-race", {
-      ...opts,
-      resolveFolderSources: () => [folderSource(sourceDir, { id: "fld_race", mountName: "source_race", mountPath: "/sources/source_race" })],
-    });
-    expect(cached).toBe(newWs);
-    await expect(cached.filesystem!.readdir("/sources/source_race")).resolves.toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "race.md" })]),
-    );
+      const cached = await getSessionWorkspace("sess-race", {
+        ...opts,
+        resolveFolderSources: () => [folderSource(sourceDir, { id: "fld_race", mountName: "source_race", mountPath: "/sources/source_race" })],
+      });
+      expect(cached).toBe(currentWs);
+      await expect(cached.filesystem!.readdir("/sources/source_race")).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "race.md" })]),
+      );
+    } finally {
+      finishDestroy();
+      destroy.mockRestore();
+    }
   });
 
   it("LRU 驱逐 cached workspace 时同步修剪 generation key", async () => {

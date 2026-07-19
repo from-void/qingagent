@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { BridgeFrame, ChatMessage, Command, ContentDocState, FolderSourceRecord, MessagePart } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
+import type { ExternalBridgeFrame } from "../../../contract-ts/src/ExternalApi";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
@@ -14,7 +15,8 @@ import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
-import type { LoggedFrame } from "../gateway/frameLog";
+import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
+import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
 
 export const externalRoutes = new Hono();
@@ -67,7 +69,7 @@ externalRoutes.get("/sessions", async (c) => {
   const { rows } = await documentRepo.list({ resourceId: QINGAGENT_RESOURCE_ID, page: 0, perPage: 50 });
   const byId = new Map<string, { id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }>();
   for (const row of rows) {
-    const session = await getOrRestoreSession(row.id);
+    const session = await getOrRestoreSessionReadOnly(row.id);
     if (!session) continue;
     byId.set(row.id, {
       id: row.id,
@@ -77,7 +79,7 @@ externalRoutes.get("/sessions", async (c) => {
     });
   }
   for (const sessionId of sessionManager.listSessionIds(50)) {
-    const session = await getOrRestoreSession(sessionId);
+    const session = await getOrRestoreSessionReadOnly(sessionId);
     if (!session) continue;
     byId.set(session.sessionId, {
       id: session.sessionId,
@@ -122,7 +124,7 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
-  const session = await getOrRestoreSession(sessionId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("read", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
@@ -148,7 +150,7 @@ externalRoutes.get("/sessions/:id/chat", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
-  const session = await getOrRestoreSession(sessionId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("chatlog", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
@@ -171,7 +173,7 @@ externalRoutes.get("/sessions/:id/files", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
-  const session = await getOrRestoreSession(sessionId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("files", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
@@ -190,7 +192,7 @@ externalRoutes.get("/sessions/:id/files/:materialId/text", async (c) => {
     return limited;
   }
   const sessionId = c.req.param("id");
-  const session = await getOrRestoreSession(sessionId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) {
     externalLog("files", { sessionId, ms: elapsed(startedAt), result: "rejected:SESSION_NOT_FOUND" });
     return externalError(c, 404, "SESSION_NOT_FOUND");
@@ -288,21 +290,24 @@ externalRoutes.get("/sessions/:id/events", (c) => {
       : parseSeq(afterParam);
     let writeChain = Promise.resolve();
     const meta = sessionManager.frameLog.readFrom(sessionId, afterSeq);
+    const publicMeta = externalEventsMeta(meta, afterSeq);
     await stream.writeSSE({
       event: "meta",
       data: JSON.stringify({
-        epoch: meta.epoch,
-        minSeq: meta.minSeq,
-        nextSeq: meta.nextSeq,
-        gap: meta.gap,
+        epoch: publicMeta.epoch,
+        minSeq: publicMeta.minSeq,
+        nextSeq: publicMeta.nextSeq,
+        gap: publicMeta.gap,
       }),
     });
     const enqueue = (entry: LoggedFrame) => {
+      const frame = frameForExternal(entry);
+      if (!frame) return writeChain;
       writeChain = writeChain.then(() =>
         stream.writeSSE({
           id: String(entry.seq),
           event: "frame",
-          data: JSON.stringify(frameForExternal(entry)),
+          data: JSON.stringify(frame),
         }),
       ).catch(() => undefined);
       return writeChain;
@@ -406,8 +411,57 @@ function withSeq<T extends Record<string, unknown>>(body: T, seq: number | null)
   return seq === null ? body : { ...body, seq };
 }
 
-function frameForExternal(entry: LoggedFrame): { seq: number; kind: BridgeFrame["kind"]; data: unknown } {
+const EXTERNAL_FRAME_KIND_ALLOWLIST = {
+  restoreReset: true,
+  sessionMeta: true,
+  chatMessageAdded: true,
+  chatMessageAppended: true,
+  toolCallUpdated: true,
+  documentSnapshotWritten: true,
+  docGenerationEvent: true,
+  docCommitted: true,
+  docDiffReady: true,
+  docWriteResult: true,
+  docStateChanged: true,
+  todosChanged: true,
+  resourceUpserted: true,
+  resourceUpdated: true,
+  resourceRemoved: true,
+  folderSourcesChanged: true,
+  folderSourceOperationResult: true,
+  stream: true,
+} as const satisfies Record<ExternalBridgeFrame["kind"], true>;
+
+const EXTERNAL_FRAME_KINDS: ReadonlySet<ExternalBridgeFrame["kind"]> = new Set(
+  Object.keys(EXTERNAL_FRAME_KIND_ALLOWLIST) as ExternalBridgeFrame["kind"][],
+);
+
+function isExternalFrameKind(kind: BridgeFrame["kind"]): kind is ExternalBridgeFrame["kind"] {
+  return EXTERNAL_FRAME_KINDS.has(kind as ExternalBridgeFrame["kind"]);
+}
+
+function frameForExternal(entry: LoggedFrame): ExternalBridgeFrame | null {
+  if (!isExternalFrameKind(entry.frame.kind)) return null;
   return { seq: entry.seq, kind: entry.frame.kind, data: entry.frame.data };
+}
+
+function externalEventsMeta(
+  meta: FrameLogReadResult,
+  afterSeq: number,
+): { epoch: number; minSeq: number; nextSeq: number; gap: boolean } {
+  const publicFrames = meta.frames.filter((entry) => isExternalFrameKind(entry.frame.kind));
+  const lastPublicSeq = publicFrames.at(-1)?.seq;
+  const nextSeq = lastPublicSeq !== undefined
+    ? lastPublicSeq + 1
+    : meta.gap
+      ? meta.nextSeq
+      : afterSeq + 1;
+  return {
+    epoch: meta.epoch,
+    minSeq: publicFrames[0]?.seq ?? (meta.gap ? meta.minSeq : nextSeq),
+    nextSeq,
+    gap: meta.gap,
+  };
 }
 
 function externalError(

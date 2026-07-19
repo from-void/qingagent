@@ -1197,6 +1197,48 @@ describe("handleResume askUser fresh-turn fallback", () => {
     }
   });
 
+  it("resume 异常只向客户端发送统一错误码，原始细节脱敏后写服务端日志", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(session, "run-private-error");
+    mockState.resumeStream.mockRejectedValue(
+      new Error("Authorization: Bearer sk-live-resume-secret x-api-key=private-resume-key"),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const frames = await collectFrames(bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: { "q-one": { chosen: [], freeText: "继续" } },
+        },
+      }));
+      const failed = frames.find(
+        (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+      );
+
+      expect(failed).toMatchObject({
+        kind: "stream",
+        data: {
+          kind: "draftingFailed",
+          data: {
+            reason: "恢复生成失败，请重试（错误码：TURN_RESUME_FAILED）",
+            retriable: true,
+          },
+        },
+      });
+      expect(JSON.stringify(failed)).not.toContain("sk-live-resume-secret");
+      expect(JSON.stringify(failed)).not.toContain("private-resume-key");
+      const logged = JSON.stringify(consoleError.mock.calls);
+      expect(logged).toContain("TURN_RESUME_FAILED");
+      expect(logged).not.toContain("sk-live-resume-secret");
+      expect(logged).not.toContain("private-resume-key");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("old resume finally does not clear a streamId already owned by a newer turn", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);

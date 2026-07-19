@@ -37,7 +37,7 @@ export async function drainActiveTurnsForShutdown(): Promise<void> {
 }
 
 export async function collectRestoreFrames(sessionId: string): Promise<BridgeFrame[]> {
-  const session = await getOrRestoreSession(sessionId);
+  const session = await getOrRestoreSessionReadOnly(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
   // 只给 /events gap/epoch restore 使用:它不经过 SessionActor 串行泵,可能与活跃生成轮次
   // 并发。这里必须是纯读快照,所有会变异会话状态的归一化/终态化/reconcile 只允许发生在
@@ -56,6 +56,7 @@ export async function collectRestoreFrames(sessionId: string): Promise<BridgeFra
  * 生产隐患尤甚:推 main 自动部署=重启,会让所有活跃会话的后续编辑/追问永久失效。
  */
 const restoreInflight = new Map<string, Promise<SessionState | undefined>>();
+const readOnlyRestoreInflight = new Map<string, Promise<SessionState | undefined>>();
 
 function restoreInflightKey(
   sessionId: string,
@@ -118,12 +119,37 @@ export async function getOrRestoreSession(
 }
 
 /**
+ * 只读冷恢复：优先复用已注册会话；内存 miss 时只加载临时快照，不写入 sessions。
+ * 外部读取与 SSE restore 可因此读取任意历史会话，而不会让全局注册表随访问量常驻增长。
+ */
+export async function getOrRestoreSessionReadOnly(
+  sessionId: string,
+): Promise<SessionState | undefined> {
+  const cached = sessions.get(sessionId);
+  if (cached) return cached;
+
+  let inflight = readOnlyRestoreInflight.get(sessionId);
+  if (!inflight) {
+    inflight = loadSessionFromThread(sessionId)
+      .then((restored) => restored ?? undefined)
+      .finally(() => {
+        readOnlyRestoreInflight.delete(sessionId);
+      });
+    readOnlyRestoreInflight.set(sessionId, inflight);
+  }
+
+  const restored = await inflight;
+  // 加载期间若写命令已注册同一会话，以活跃内存态为准；否则返回不注册的临时快照。
+  return sessions.get(sessionId) ?? restored;
+}
+
+/**
  * 会话是否已存在(内存命中或持久层可恢复)。供 /commands 的 startSession(new) 覆写防护
- * 预检使用。getOrRestoreSession 命中持久层时会顺带把会话载回内存缓存,副作用无害。
+ * 预检使用。预检是只读路径，冷恢复不得把历史会话写入常驻注册表。
  */
 export async function sessionExists(sessionId: string): Promise<boolean> {
   if (sessions.has(sessionId)) return true;
-  const restored = await getOrRestoreSession(sessionId);
+  const restored = await getOrRestoreSessionReadOnly(sessionId);
   return restored !== undefined;
 }
 

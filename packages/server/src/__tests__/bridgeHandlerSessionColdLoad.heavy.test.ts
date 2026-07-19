@@ -146,4 +146,21 @@ describe("handleCommand 命令分支 session 冷加载兜底", () => {
     ).rejects.toThrow(/Session not found/);
     expect(loadSpy).toHaveBeenCalledWith(id);
   });
+
+  it("只读 restore 冷加载返回快照但不写入全局 sessions 注册表", async () => {
+    const bridge = await loadBridge();
+    const session = await createSession(bridge);
+    const id = session.sessionId;
+    bridge.forgetSession(id);
+    restoreImpl = (wanted) => (wanted === id ? session : null);
+
+    const frames = await bridge.collectRestoreFrames(id);
+
+    expect(frames[0]).toMatchObject({
+      kind: "sessionMeta",
+      data: { sessionId: id },
+    });
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(bridge.getSession(id)).toBeUndefined();
+  });
 });

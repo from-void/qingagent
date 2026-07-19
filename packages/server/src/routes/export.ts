@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { loadSessionFromThread } from "@qingagent/core";
+import { loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
 import { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "@qingagent/doc-render";
 import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
@@ -53,8 +53,14 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   try {
     body = await renderExport(format, document, title);
   } catch (err) {
-    console.error("Export failed", err);
-    return c.json({ error: "导出失败，请重试", detail: errorMessage(err) }, 500);
+    const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
+    console.error("[export] render failed", {
+      code: "EXPORT_RENDER_FAILED",
+      detail: redactSensitiveText(internalDetail)
+        .replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/g, "sk-[REDACTED]")
+        .slice(0, 4_000),
+    });
+    return c.json({ error: "导出失败，请重试", code: "EXPORT_RENDER_FAILED" }, 500);
   }
 
   return new Response(body, {
@@ -96,10 +102,6 @@ async function renderExport(
 
 function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength) as Uint8Array<ArrayBuffer>;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function safeFilename(value: string): string {

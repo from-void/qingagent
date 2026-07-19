@@ -216,11 +216,17 @@ const generation = new Map<string, number>();
 const activeBuilds = new Map<string, number>();
 
 function destroyWorkspaceQuietly(workspace: Workspace): void {
-  void workspace.destroy().catch((error) => {
+  void destroyWorkspace(workspace);
+}
+
+async function destroyWorkspace(workspace: Workspace): Promise<void> {
+  try {
+    await workspace.destroy();
+  } catch (error) {
     console.error("[sessionWorkspace] destroy workspace failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-  });
+  }
 }
 
 function evictIfNeeded(): void {
@@ -354,8 +360,12 @@ export async function getSessionWorkspace(
     if ((generation.get(key) ?? 0) === buildGeneration) {
       cache.set(key, { workspace, lastAccessAt: Date.now() });
       evictIfNeeded();
+      return workspace;
     }
-    return workspace;
+    // invalidate 已推进代际：旧实例既不能回写，也不能交给调用方成为游离 workspace。
+    // 先完整销毁，再复用/构建当前代实例。
+    await destroyWorkspace(workspace);
+    return getSessionWorkspace(sessionId, opts);
   })();
   inflight.set(key, building);
   try {

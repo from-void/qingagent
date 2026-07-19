@@ -44,6 +44,7 @@ import {
   QINGAGENT_RESOURCE_ID,
   QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY,
   qingagentAgent,
+  redactSensitiveText,
   resolveModelParams,
   runAgentTurn,
   scheduleOmSidecarAfterTurn,
@@ -660,12 +661,23 @@ async function* handleResume(
       yield* emitProjectedDocState(session, "resume_failed");
       await schedulePersist(session, "resume_failed:fresh_turn_fallback");
     } else {
-      const reason = err instanceof Error ? err.message : String(err);
+      const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
+      const redactedReason = redactSensitiveText(internalDetail)
+        .replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/g, "sk-[REDACTED]")
+        .slice(0, 1_000);
+      console.error("[handleResume] resume failed", {
+        code: "TURN_RESUME_FAILED",
+        detail: redactedReason,
+      });
       yield {
         kind: "stream",
         data: {
           kind: "draftingFailed",
-          data: { streamId, reason, retriable: true },
+          data: {
+            streamId,
+            reason: "恢复生成失败，请重试（错误码：TURN_RESUME_FAILED）",
+            retriable: true,
+          },
         },
       };
 

@@ -4,6 +4,8 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { PM_IMAGE_ALIGN_VALUES, isAllowedImageSrc } from "@qingagent/pm-schema";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import { isSvgSrc, svgFallbackWidth } from "./imageSizing";
+import { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
+export { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
 import "./ImageView.css";
 
 // 全屏查看的图样式:SVG 数据 URI 常无固有尺寸,不给定宽会塌成 0 → 全屏一片空白。
@@ -12,8 +14,6 @@ const fullscreenImgStyle = (src: string): CSSProperties =>
   isSvgSrc(src)
     ? { width: "min(900px, 86vw)", height: "auto", maxHeight: "86vh" }
     : { maxWidth: "92vw", maxHeight: "88vh", width: "auto", height: "auto" };
-
-export type ImageAlign = (typeof PM_IMAGE_ALIGN_VALUES)[number];
 
 const MIN_IMAGE_WIDTH = 80;
 
@@ -313,10 +313,6 @@ export const ImageCM = Node.create({
     };
   },
 });
-
-export function normalizeImageAlign(value: unknown): ImageAlign {
-  return PM_IMAGE_ALIGN_VALUES.includes(value as ImageAlign) ? (value as ImageAlign) : "center";
-}
 
 function parseImageAlign(element: HTMLElement): ImageAlign {
   const explicit = element.getAttribute("data-align");

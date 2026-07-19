@@ -11,7 +11,7 @@ import { useToast } from "../../../system";
 import { validateCommand } from "../../../system/validators";
 import { goConfigureModel } from "../../../system/modelKeyGate";
 import type { Command } from "@qingagent/contract-ts";
-import type { ChatInputHandle } from "../components/ChatInput";
+import type { ChatInputHandle } from "../data/chatInputTypes";
 import {
   canRetryStreamError,
   shouldStickStreamErrorToast,

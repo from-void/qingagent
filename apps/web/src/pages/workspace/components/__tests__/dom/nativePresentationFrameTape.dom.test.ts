@@ -22,7 +22,7 @@ import {
 } from "../../../data/nativePresentationPm";
 import { splitGraphemes } from "../../../data/presentationSpans";
 import type { ViewBlock } from "../../../data/protocol";
-import { viewSectionsToHtml } from "../../doc/viewDocHtml";
+import { viewSectionsToHtml } from "../../../data/viewDocHtml";
 
 interface FrameHarness {
   oldEditor: Editor;

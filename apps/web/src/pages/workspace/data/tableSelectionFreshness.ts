@@ -1,6 +1,6 @@
 import { tableSelectionTextSignature } from "@qingagent/contract-ts";
 import { pmTableSelectionCellTexts, type PmDoc } from "@qingagent/pm-schema";
-import type { ChatInputSnapshot } from "../components/ChatInput";
+import type { ChatInputSnapshot } from "./chatInputTypes";
 
 export function staleTableSelectionChipIndices(
   snapshot: Pick<ChatInputSnapshot, "chips">,

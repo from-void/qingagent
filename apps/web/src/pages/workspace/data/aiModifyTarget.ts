@@ -1,5 +1,5 @@
 import type { TableSelection } from "@qingagent/contract-ts";
-import type { ChatChipSpec } from "../components/ChatInput";
+import type { ChatChipSpec } from "./chatInputTypes";
 import { runAfterPendingDocSave } from "./pendingDocSave";
 
 export interface AiModifyTarget {

@@ -35,7 +35,7 @@ import { useConfirm } from "../../../system/ConfirmProvider";
 import { useModelKeyConfigured } from "../../../system/modelKeyGate";
 import { resources, useResourceList } from "../../../system/resources";
 import { validateCommand } from "../../../system/validators";
-import type { ChatInputHandle } from "../components/ChatInput";
+import type { ChatInputHandle } from "../data/chatInputTypes";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
 import {

@@ -4,7 +4,7 @@ import type { StreamError } from "./protocol";
 import type { WorkspaceAction } from "./workspaceState";
 import { HISTORY_CHAT_INPUT_BLOCK_REASON } from "./chatInputBlockReason";
 import { uploadAssetFile, uploadFailureMessage } from "./uploadAsset";
-import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "../components/ChatInput";
+import type { ChatChipSpec, ChatInputHandle, ChatInputSnapshot } from "./chatInputTypes";
 import type { UploadedAsset } from "./useMaterialParseTracker";
 
 export function clientPerformanceNow(): number {

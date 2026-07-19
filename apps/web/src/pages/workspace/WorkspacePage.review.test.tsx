@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
-import type { ChatInputSnapshot } from "./components/ChatInput";
+import type { ChatInputSnapshot } from "./data/chatInputTypes";
 import type { DocDimensions } from "./data/docDimensions";
 import {
   derivePatchPresentation,

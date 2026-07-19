@@ -17,6 +17,7 @@ const WECHAT_AUTH_LANDING_RE = /^https:\/\/mp\.weixin\.qq\.com\/.*[?&]token=/;
 // 病根:曾死等 /cgi-bin/home,真实登录却落 /cgi-bin/acctclose?...&token=... → token 就在眼前却被当失败死等。
 const WECHAT_QR_SELECTOR = ".login__type__container__scan__qrcode";
 const WECHAT_AUTH_TIMEOUT_MS = 240_000;
+const WECHAT_HOME_REQUEST_TIMEOUT_MS = 10_000;
 const WECHAT_AUTH_EXPIRES_IN_SEC = 240;
 const WECHAT_CREDENTIAL_TTL_MS = 80 * 3600 * 1000;
 const DESKTOP_UA =
@@ -171,15 +172,28 @@ async function launchStandaloneBrowser(): Promise<Browser> {
 }
 
 // 落地 URL 未带 token 时的兜底:带已登录 cookie 请求首页,fetch 默认跟随重定向,从最终 URL 提取 token。
-async function extractTokenViaHomeRequest(cookie: string): Promise<string | null> {
+async function extractTokenViaHomeRequest(cookie: string, signal: AbortSignal): Promise<string | null> {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(signal.reason);
+  if (signal.aborted) forwardAbort();
+  else signal.addEventListener("abort", forwardAbort, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("微信首页兜底请求超时", "TimeoutError")),
+    WECHAT_HOME_REQUEST_TIMEOUT_MS,
+  );
+  timer.unref?.();
   try {
     const res = await fetch(WECHAT_LOGIN_URL, {
       headers: { "User-Agent": DESKTOP_UA, Cookie: cookie, Referer: WECHAT_LOGIN_URL },
       redirect: "follow",
+      signal: controller.signal,
     });
     return res.url.match(/[?&]token=([^&]+)/)?.[1] ?? null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", forwardAbort);
   }
 }
 
@@ -294,7 +308,7 @@ export class WechatAuthService {
             const cookie = cookieHeaderFromCookies(await browserContext.cookies());
             let token = page.url().match(/[?&]token=([^&]+)/)?.[1] ?? null;
             // 兜底:落地 URL 无 token → 带已登录 cookie 请求首页,跟随重定向从最终 URL 提取。
-            if (!token) token = await extractTokenViaHomeRequest(cookie);
+            if (!token) token = await extractTokenViaHomeRequest(cookie, signal);
             if (!token) throw new Error("微信登录成功后未找到 token");
 
             // 能力验证:token+cookie 真打一次 searchbiz,通过才算授权成功(不猜 acctclose 语义)。

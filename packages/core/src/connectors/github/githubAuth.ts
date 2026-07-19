@@ -22,8 +22,19 @@ export interface GithubAuthOptions {
 }
 
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
-  const timer = setTimeout(resolve, ms);
-  const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+  const abort = () => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    reject(new DOMException("Aborted", "AbortError"));
+  };
+  const timer = setTimeout(() => {
+    signal.removeEventListener("abort", abort);
+    resolve();
+  }, ms);
+  if (signal.aborted) {
+    abort();
+    return;
+  }
   signal.addEventListener("abort", abort, { once: true });
 });
 

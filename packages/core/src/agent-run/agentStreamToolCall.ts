@@ -24,6 +24,7 @@ import {
   questionnaireRenderMode,
 } from "./questionnaireTools.js";
 import { redactedSerializedText } from "./redaction.js";
+import { resolveQrContent } from "./qrContentResolver.js";
 import {
   appendPartToChatHistory,
   nextSeq,
@@ -306,9 +307,23 @@ export async function* handleToolCallEvent(
       );
       outcome.producedVisibleFrame = true;
     } else if (toolName === "show_qr") {
+      // 出码前确定性验真:content 若是"出码展示页"链接,替换为页面内嵌的真实授权 URL
+      // (模型侧教学已实证不可靠,见 qrContentResolver 注释)。imageDataUri 模式不涉及。
+      const qrArgs = toolArgs as Record<string, unknown>;
+      let resolvedArgs = toolArgs;
+      if (!qrArgs.imageDataUri) {
+        const resolved = await resolveQrContent(qrArgs.content);
+        if (resolved) {
+          resolvedArgs = { ...qrArgs, content: resolved };
+          logger.info("show_qr content 验真替换为页面内嵌授权 URL", {
+            from: String(qrArgs.content).slice(0, 200),
+            to: resolved.slice(0, 200),
+          });
+        }
+      }
       yield* emitOrUpdateToolCall(
         context,
-        qrCardToolCallSpec(toolCallId, toolArgs, {
+        qrCardToolCallSpec(toolCallId, resolvedArgs, {
           kind: "running",
           data: { progressPct: null, etaSec: null },
         }),

@@ -16,7 +16,11 @@ import {
   type SessionState,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
-import { documentRepo } from "@qingagent/db";
+import {
+  documentRepo,
+  listDocumentSuggestionStatuses,
+  upsertDocumentSuggestion,
+} from "@qingagent/db";
 import { findOpByDocumentVersion } from "@qingagent/db";
 import {
   documentInput,
@@ -70,12 +74,6 @@ function docBlocks(pmDoc: PmDoc | undefined): Array<{ blockId: string | undefine
 async function collectFrames(gen: AsyncIterable<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
   for await (const frame of gen) frames.push(frame);
-  return frames;
-}
-
-function collectSyncFrames(gen: Generator<BridgeFrame>): BridgeFrame[] {
-  const frames: BridgeFrame[] = [];
-  for (const frame of gen) frames.push(frame);
   return frames;
 }
 
@@ -214,7 +212,7 @@ afterEach(() => {
 });
 
 describe("commitReviewGroups", () => {
-  it("acceptPatch 对已解决 reviewBatchId 做成功 no-op 并记录 warn", () => {
+  it("acceptPatch 对已解决 reviewBatchId 做成功 no-op 并记录 warn", async () => {
     const state = createSession("noop-verdict");
     const base = doc([paragraph("block-a", "正文")]);
     state.doc = base;
@@ -223,7 +221,7 @@ describe("commitReviewGroups", () => {
     state.docState = { kind: "pendingReview" };
     const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
 
-    const frames = collectSyncFrames(updatePatchVerdict(
+    const frames = await collectFrames(updatePatchVerdict(
       state,
       undefined,
       "accepted",
@@ -342,13 +340,14 @@ describe("commitReviewGroups", () => {
     expect(expanded.sort()).toEqual(hunks.map((hunk) => hunk.hunkId).sort());
   });
 
-  it("acceptPatch 传入单 id 只同步当前 hunk verdict", () => {
+  it("acceptPatch 传入单 id 只同步当前 hunk verdict", async () => {
     const state = createSession("per-hunk-verdict");
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
     const hunks = seedDiffState(state, base, draft);
+    await upsertDocumentSuggestion(state.suggestions.get(hunks[0]!.hunkId)!.suggestion);
 
-    const frames = collectSyncFrames(updatePatchVerdict(state, hunks[0]!.hunkId, "accepted"));
+    const frames = await collectFrames(updatePatchVerdict(state, hunks[0]!.hunkId, "accepted"));
 
     expect(frames).toHaveLength(1);
     expect(frames.every((frame) => frame.kind === "toolCallUpdated")).toBe(true);
@@ -363,6 +362,8 @@ describe("commitReviewGroups", () => {
     expect(state.patchVerdicts.has(hunks[1]!.hunkId)).toBe(false);
     expect(state.suggestions.get(hunks[0]!.hunkId)?.suggestion.status).toBe("accepted");
     expect(state.suggestions.get(hunks[1]!.hunkId)?.suggestion.status).toBe("reviewing");
+    await expect(listDocumentSuggestionStatuses(state.docId, 1, [hunks[0]!.hunkId]))
+      .resolves.toEqual([{ id: hunks[0]!.hunkId, status: "accepted", conflict: undefined }]);
   });
 
   it("BLOCKED_ON_S5: 部分提交只写入显式接受组,未决组保留在内存态", async () => {
@@ -559,7 +560,7 @@ describe("commitReviewGroups", () => {
     const [hunkA, hunkB] = hunks;
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
 
-    collectSyncFrames(updatePatchVerdict(state, hunkA.hunkId, "accepted"));
+    await collectFrames(updatePatchVerdict(state, hunkA.hunkId, "accepted"));
     expect(state.patchVerdicts.get(hunkA.hunkId)).toBe("accepted");
 
     const frames = await collectFrames(commitReviewGroups(state, {

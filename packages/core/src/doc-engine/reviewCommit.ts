@@ -179,6 +179,40 @@ function deleteSettledRecord(state: SessionState, record: SuggestionRecord): voi
   state.patchValidationResults.delete(id);
 }
 
+async function persistSuggestionStatus(
+  state: SessionState,
+  id: string,
+  status: DocSuggestion["status"],
+  conflict?: PatchConflict,
+): Promise<void> {
+  let firstError: unknown;
+  try {
+    await updateDocumentSuggestionStatus(id, status, conflict);
+    return;
+  } catch (error) {
+    firstError = error;
+    logger.warn("Persisting document suggestion status failed; retrying once", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      suggestionId: id,
+      status,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    await updateDocumentSuggestionStatus(id, status, conflict);
+  } catch (error) {
+    logger.error("Persisting document suggestion status failed after retry", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      suggestionId: id,
+      status,
+      firstError: firstError instanceof Error ? firstError.message : String(firstError),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function* settleResolvedReviewRecords(
   state: SessionState,
   records: readonly SuggestionRecord[],
@@ -187,7 +221,7 @@ async function* settleResolvedReviewRecords(
     const verdict = state.patchVerdicts.get(record.suggestion.id);
     const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
-    await updateDocumentSuggestionStatus(nextSuggestion.id, terminalStatus).catch(() => undefined);
+    await persistSuggestionStatus(state, nextSuggestion.id, terminalStatus);
     const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: terminalStatus });
     yield toolCallUpdated(record.messageId, record.suggestion.id, spec);
     updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
@@ -221,7 +255,7 @@ async function* settleUnappliedReviewRecords(
     const verdict = state.patchVerdicts.get(id);
     if (verdict === "rejected") {
       const nextSuggestion: DocSuggestion = { ...record.suggestion, status: "rejected" };
-      await updateDocumentSuggestionStatus(id, "rejected").catch(() => undefined);
+      await persistSuggestionStatus(state, id, "rejected");
       const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: "rejected" });
       yield toolCallUpdated(record.messageId, id, spec);
       updateToolCallInChatHistory(state, record.messageId, id, spec);
@@ -236,7 +270,7 @@ async function* settleUnappliedReviewRecords(
       status: "conflict",
       conflict,
     };
-    await updateDocumentSuggestionStatus(id, "conflict", conflict).catch(() => undefined);
+    await persistSuggestionStatus(state, id, "conflict", conflict);
     const spec = buildSuggestionToolCallSpec(nextSuggestion, {
       kind: "failed",
       data: { retriable: false, reason: conflict.message },
@@ -280,12 +314,12 @@ async function* finishSettledReviewState(
   );
 }
 
-export function* updatePatchVerdict(
+export async function* updatePatchVerdict(
   state: SessionState,
   patchId: string | undefined,
   verdict: "accepted" | "rejected",
   reviewBatchId?: string,
-): Generator<BridgeFrame> {
+): AsyncGenerator<BridgeFrame> {
   const expandedIds = expandReviewIds(
     state,
     patchId ? [patchId] : [],
@@ -307,7 +341,7 @@ export function* updatePatchVerdict(
     };
     suggestionRecord.suggestion = suggestion;
     state.suggestions.set(id, suggestionRecord);
-    updateDocumentSuggestionStatus(id, verdict).catch(() => undefined);
+    await persistSuggestionStatus(state, id, verdict);
     const spec = buildSuggestionToolCallSpec(suggestion, status);
     yield toolCallUpdated(suggestionRecord.messageId, id, spec);
     updateToolCallInChatHistory(state, suggestionRecord.messageId, id, spec);
@@ -866,12 +900,12 @@ export async function* commitReviewGroups(
 
   for (const id of acceptIds) {
     if (state.patchVerdicts.get(id) !== "accepted") {
-      for (const frame of updatePatchVerdict(state, id, "accepted")) yield frame;
+      for await (const frame of updatePatchVerdict(state, id, "accepted")) yield frame;
     }
   }
   for (const id of rejectIds) {
     if (state.patchVerdicts.get(id) !== "rejected") {
-      for (const frame of updatePatchVerdict(state, id, "rejected")) yield frame;
+      for await (const frame of updatePatchVerdict(state, id, "rejected")) yield frame;
     }
   }
 

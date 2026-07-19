@@ -997,7 +997,7 @@ describe("candidate-diff backend flow", () => {
     expect(state.suggestions.size).toBe(1);
     const [id] = [...state.suggestions.keys()];
     expect(id).toBeTruthy();
-    for (const _frame of updatePatchVerdict(state, id!, "rejected")) {
+    for await (const _frame of updatePatchVerdict(state, id!, "rejected")) {
       // consume generator
     }
 

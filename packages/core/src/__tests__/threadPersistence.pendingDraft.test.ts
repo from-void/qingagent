@@ -10,12 +10,15 @@ import {
 } from "@qingagent/pm-schema";
 import { rehydratePendingDraft } from "../doc-engine/pendingDraftRehydrate.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
+import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
+import { commitReviewGroups, updatePatchVerdict } from "../doc-engine/reviewCommit.js";
 import { createSession } from "../session/sessionState.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
 import { findOpByDocumentVersion } from "@qingagent/db";
 import { listVersions } from "@qingagent/db";
+import { upsertDocumentSuggestion } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
@@ -180,6 +183,69 @@ describe("pending draft rehydrate", () => {
     expect(result.kind === "restored" ? result.frames.some((frame) => frame.kind === "docDiffReady") : false).toBe(true);
     expect(docText(state.doc)).toBe("旧正文");
     expect(state.docState).toEqual({ kind: "pendingReview" });
+  });
+
+  it("拒绝后重启恢复裁决，再提交时不应用已拒绝修改", async () => {
+    const sessionId = "rehy-rejected-verdict";
+    const base = doc([
+      paragraph("block-a", "甲旧"),
+      paragraph("block-b", "乙旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "甲新"),
+      paragraph("block-b", "乙新"),
+    ]);
+    await seedDocument(sessionId, base);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+    const originalHunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    for (const hunk of originalHunks) {
+      await upsertDocumentSuggestion(createSuggestionFromDiffHunk({
+        hunk,
+        docId: sessionId,
+        baseVersion: 1,
+        baseSchemaVersion: 1,
+      }));
+    }
+
+    const beforeRestart = createSession(sessionId);
+    beforeRestart.doc = base;
+    beforeRestart.legacySections = pmToLegacySections(base) as never;
+    beforeRestart.docVersion = 1;
+    await rehydratePendingDraft(beforeRestart);
+    const rejectedHunk = originalHunks[0]!;
+    for await (const _frame of updatePatchVerdict(beforeRestart, rejectedHunk.hunkId, "rejected")) {
+      // 命令帧消费完即代表裁决已落库。
+    }
+
+    const afterRestart = createSession(sessionId);
+    afterRestart.doc = base;
+    afterRestart.legacySections = pmToLegacySections(base) as never;
+    afterRestart.docVersion = 1;
+    const restored = await rehydratePendingDraft(afterRestart);
+    const restoredIds = [...afterRestart.suggestions.keys()];
+
+    expect(restoredIds).toEqual(originalHunks.map((hunk) => hunk.hunkId));
+    expect(afterRestart.patchVerdicts.get(rejectedHunk.hunkId)).toBe("rejected");
+    expect(afterRestart.suggestions.get(rejectedHunk.hunkId)?.suggestion.status).toBe("rejected");
+    expect(restored.kind === "restored"
+      ? restored.frames.find((frame) => frame.kind === "docDiffReady")?.data.suggestions
+        .find((suggestion) => suggestion.id === rejectedHunk.hunkId)?.status
+      : undefined).toBe("rejected");
+
+    const acceptedHunk = originalHunks[1]!;
+    for await (const _frame of commitReviewGroups(afterRestart, {
+      acceptReviewBatchIds: [acceptedHunk.reviewBatchId],
+      rejectReviewBatchIds: [rejectedHunk.reviewBatchId],
+    })) {
+      // 提交完整消费。
+    }
+    expect(docText(afterRestart.doc)).toBe("甲旧\n乙新");
   });
 
   it("hash 不一致时标记 conflict,不静默恢复审查", async () => {

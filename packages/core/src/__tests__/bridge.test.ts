@@ -27,9 +27,9 @@ let tempDb: TempDocumentsDb;
 // Helpers
 // ---------------------------------------------------------------------------
 
-function collectFrames(gen: Generator<BridgeFrame>): BridgeFrame[] {
+async function collectFrames(gen: AsyncIterable<BridgeFrame>): Promise<BridgeFrame[]> {
   const frames: BridgeFrame[] = [];
-  for (const f of gen) {
+  for await (const f of gen) {
     frames.push(f);
   }
   return frames;
@@ -161,12 +161,12 @@ describe("createSession", () => {
 // ---------------------------------------------------------------------------
 
 describe("updatePatchVerdict", () => {
-  it("emits toolCallUpdated with 'accepted' status", () => {
+  it("emits toolCallUpdated with 'accepted' status", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-1");
 
-    const frames = collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
+    const frames = await collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
 
     expect(frames).toHaveLength(1);
     const frame = frames[0]!;
@@ -181,12 +181,12 @@ describe("updatePatchVerdict", () => {
     }
   });
 
-  it("emits toolCallUpdated with 'rejected' status", () => {
+  it("emits toolCallUpdated with 'rejected' status", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-2");
 
-    const frames = collectFrames(updatePatchVerdict(state, "patch-2", "rejected"));
+    const frames = await collectFrames(updatePatchVerdict(state, "patch-2", "rejected"));
 
     expect(frames).toHaveLength(1);
     const frame = frames[0]!;
@@ -196,24 +196,24 @@ describe("updatePatchVerdict", () => {
     }
   });
 
-  it("persists verdict in state.patchVerdicts", () => {
+  it("persists verdict in state.patchVerdicts", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-v1");
     addPatch(state, "patch-v2");
 
-    collectFrames(updatePatchVerdict(state, "patch-v1", "accepted"));
-    collectFrames(updatePatchVerdict(state, "patch-v2", "rejected"));
+    await collectFrames(updatePatchVerdict(state, "patch-v1", "accepted"));
+    await collectFrames(updatePatchVerdict(state, "patch-v2", "rejected"));
 
     expect(state.patchVerdicts.get("patch-v1")).toBe("accepted");
     expect(state.patchVerdicts.get("patch-v2")).toBe("rejected");
   });
 
-  it("unknown patch ID is a logged successful no-op", () => {
+  it("unknown patch ID is a logged successful no-op", async () => {
     const state = createSession("test");
     const warn = vi.spyOn(mastra.getLogger(), "warn").mockImplementation(() => undefined);
 
-    const frames = collectFrames(updatePatchVerdict(state, "nonexistent", "accepted"));
+    const frames = await collectFrames(updatePatchVerdict(state, "nonexistent", "accepted"));
 
     expect(frames).toEqual([
       {
@@ -234,7 +234,7 @@ describe("updatePatchVerdict", () => {
     );
   });
 
-  it("preserves patch body content in emitted spec", () => {
+  it("preserves patch body content in emitted spec", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-3", {
@@ -244,7 +244,7 @@ describe("updatePatchVerdict", () => {
       summary: "将樱花改为梅花",
     });
 
-    const frames = collectFrames(updatePatchVerdict(state, "patch-3", "accepted"));
+    const frames = await collectFrames(updatePatchVerdict(state, "patch-3", "accepted"));
     const frame = frames[0]!;
 
     if (frame.kind === "toolCallUpdated") {
@@ -436,8 +436,8 @@ describe("commitPatches", () => {
     });
 
     // Accept one, reject the other
-    collectFrames(updatePatchVerdict(state, "p-acc", "accepted"));
-    collectFrames(updatePatchVerdict(state, "p-rej", "rejected"));
+    await collectFrames(updatePatchVerdict(state, "p-acc", "accepted"));
+    await collectFrames(updatePatchVerdict(state, "p-rej", "rejected"));
     await seedDocumentRow(state);
 
     const frames = await collectAsyncFrames(commitPatches(state, ["p-acc", "p-rej"]));
@@ -462,7 +462,7 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
     addPatch(state, "patch-cv");
 
-    collectFrames(updatePatchVerdict(state, "patch-cv", "accepted"));
+    await collectFrames(updatePatchVerdict(state, "patch-cv", "accepted"));
     expect(state.patchVerdicts.has("patch-cv")).toBe(true);
     await seedDocumentRow(state);
 
@@ -517,12 +517,12 @@ describe("BridgeFrame format compliance", () => {
     }
   });
 
-  it("toolCallUpdated frame has correct nested structure", () => {
+  it("toolCallUpdated frame has correct nested structure", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-1");
 
-    const frames = collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
+    const frames = await collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
     const frame = frames[0]!;
 
     expect(frame.kind).toBe("toolCallUpdated");

@@ -717,6 +717,64 @@ describe("WorkspacePage review controls", () => {
     expect(stream.dispose).toHaveBeenCalledTimes(1);
   }, 15_000);
 
+  it("编辑后 400ms 内返回首页会先以旧会话身份保存正文", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "待保存会话" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: {
+          doc: wireSnapshotFromPmDoc(
+            pmDoc([pmParagraph("p-home-save", "初始正文")]),
+            1,
+          ),
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    vi.useFakeTimers();
+
+    act(() => {
+      editor!.commands.setContent(
+        pmDoc([pmParagraph("p-home-save", "返回首页前的新正文")]),
+      );
+    });
+    expect(updateDocCommands(stream)).toHaveLength(0);
+
+    await act(async () => {
+      await captured.current!.handleBackHome();
+    });
+
+    expect(updateDocCommands(stream)).toHaveLength(1);
+    expect(updateDocCommands(stream)[0]?.data.sessionId).toBe("s-1");
+    expect(JSON.stringify(updateDocCommands(stream)[0]?.data.doc)).toContain(
+      "返回首页前的新正文",
+    );
+    act(() => vi.advanceTimersByTime(260));
+    expect(window.location.hash).toBe("#/");
+  }, 15_000);
+
   it("多 atomic group 且 agentBusy 未清零时仍渲染审查提交与 hover 取消控件", async () => {
     vi.useFakeTimers();
     const { RightPane } = await import("./WorkspacePage");

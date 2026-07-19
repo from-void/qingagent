@@ -20,6 +20,7 @@ export function useWorkspaceChrome(input: {
   chatScrollRef: RefObject<HTMLDivElement | null>;
   sessionId: string | null;
   reducedMotion: boolean;
+  flushPendingDocSave: () => Promise<void>;
 }) {
   const homeReturnTransitionRef = useRef(false);
   const homeReturnTimerRef = useRef<number | null>(null);
@@ -144,8 +145,32 @@ export function useWorkspaceChrome(input: {
     };
   }, [input.chatScrollRef, input.docScrollRef, input.viewRef]);
 
-  const handleBackHome = useCallback(() => {
+  const handleBackHome = useCallback(async () => {
     if (homeReturnTransitionRef.current) return;
+    homeReturnTransitionRef.current = true;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(
+          () => reject(new Error("home navigation doc save timed out")),
+          300,
+        );
+        input.flushPendingDocSave().then(
+          () => {
+            window.clearTimeout(timer);
+            resolve();
+          },
+          (error) => {
+            window.clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
+    } catch (error) {
+      console.error(
+        "[workspace] failed to flush updateDoc before returning home",
+        error,
+      );
+    }
     const sessionId =
       input.sessionId ?? workspaceSessionIdFromHash(window.location.hash);
     const goHome = () => {
@@ -155,7 +180,6 @@ export function useWorkspaceChrome(input: {
       goHome();
       return;
     }
-    homeReturnTransitionRef.current = true;
     const rect = computeWorkspaceDocRect();
     input.viewRef.current?.classList.add("ws-returning");
     const handoff = () => {
@@ -173,7 +197,12 @@ export function useWorkspaceChrome(input: {
       return;
     }
     homeReturnTimerRef.current = window.setTimeout(handoff, 260);
-  }, [input.reducedMotion, input.sessionId, input.viewRef]);
+  }, [
+    input.flushPendingDocSave,
+    input.reducedMotion,
+    input.sessionId,
+    input.viewRef,
+  ]);
 
   useEffect(
     () => () => {

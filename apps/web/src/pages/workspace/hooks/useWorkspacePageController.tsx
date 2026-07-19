@@ -566,6 +566,10 @@ export function useWorkspacePageController() {
   const updateSessionTitle = useSessionStore((s) => s.updateSessionTitle);
   const reducedMotion = usePrefersReducedMotion();
   reducedMotionRef.current = reducedMotion;
+  const flushPendingDocSaveBeforeNavigation = useCallback(
+    () => flushPendingDocSaveRef.current(),
+    [],
+  );
 
   const { handleBackHome } = useWorkspaceChrome({
     viewRef,
@@ -573,6 +577,7 @@ export function useWorkspacePageController() {
     chatScrollRef,
     sessionId: state.sessionId,
     reducedMotion,
+    flushPendingDocSave: flushPendingDocSaveBeforeNavigation,
   });
 
   useAutoScroll(chatScrollRef);

@@ -248,6 +248,82 @@ describe("pending draft rehydrate", () => {
     expect(docText(afterRestart.doc)).toBe("甲旧\n乙新");
   });
 
+  it("分批提交 rebase 后新批次裁决落库并可在重启后恢复", async () => {
+    const sessionId = "rehy-rebased-verdict";
+    const base = doc([
+      paragraph("block-a", "甲旧"),
+      paragraph("block-b", "乙旧"),
+      paragraph("block-c", "丙旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "甲新"),
+      paragraph("block-b", "乙新"),
+      paragraph("block-c", "丙新"),
+    ]);
+    await seedDocument(sessionId, base);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+    const originalHunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    for (const hunk of originalHunks) {
+      await upsertDocumentSuggestion(createSuggestionFromDiffHunk({
+        hunk,
+        docId: sessionId,
+        baseVersion: 1,
+        baseSchemaVersion: 1,
+      }));
+    }
+
+    const beforeRestart = createSession(sessionId);
+    beforeRestart.doc = base;
+    beforeRestart.legacySections = pmToLegacySections(base) as never;
+    beforeRestart.docVersion = 1;
+    await rehydratePendingDraft(beforeRestart);
+    const [committedHunk, ...keptHunks] = originalHunks;
+    if (!committedHunk || keptHunks.length < 2) throw new Error("fixture missing hunks");
+    for await (const _frame of commitReviewGroups(beforeRestart, {
+      acceptReviewBatchIds: [committedHunk.reviewBatchId],
+      keepPendingReviewBatchIds: keptHunks.map((hunk) => hunk.reviewBatchId),
+    })) {
+      // 完整消费后 rebase 新批次已先于 docDiffReady 落库。
+    }
+
+    expect(beforeRestart.docVersion).toBe(2);
+    const rebasedSuggestion = [...beforeRestart.suggestions.values()]
+      .find((record) => record.diffHunk?.anchor.blockId === "block-b")?.suggestion;
+    if (!rebasedSuggestion) throw new Error("fixture missing rebased suggestion");
+    for await (const _frame of updatePatchVerdict(
+      beforeRestart,
+      rebasedSuggestion.id,
+      "accepted",
+    )) {
+      // 命令完成即代表新 baseVersion 下的裁决已落库。
+    }
+
+    const oldRows = await getDocumentsClient().execute({
+      sql: "SELECT id, status FROM document_suggestions WHERE doc_id = ? AND base_version = 1",
+      args: [sessionId],
+    });
+    expect(oldRows.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: committedHunk.hunkId, status: "committed" }),
+      ...keptHunks.map((hunk) => expect.objectContaining({ id: hunk.hunkId, status: "ignored" })),
+    ]));
+
+    const afterRestart = createSession(sessionId);
+    afterRestart.doc = beforeRestart.doc;
+    afterRestart.legacySections = pmToLegacySections(beforeRestart.doc!) as never;
+    afterRestart.docVersion = beforeRestart.docVersion;
+    const restored = await rehydratePendingDraft(afterRestart);
+
+    expect(restored.kind).toBe("restored");
+    expect(afterRestart.patchVerdicts.get(rebasedSuggestion.id)).toBe("accepted");
+    expect(afterRestart.suggestions.get(rebasedSuggestion.id)?.suggestion.status).toBe("accepted");
+  });
+
   it("hash 不一致时标记 conflict,不静默恢复审查", async () => {
     const bold: PmMark = { type: "bold" };
     const base = doc([paragraph("block-a", [text("正文")])]);

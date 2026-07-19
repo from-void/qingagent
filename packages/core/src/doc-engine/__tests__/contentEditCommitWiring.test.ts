@@ -122,6 +122,51 @@ describe("content-edit commit wiring", () => {
 });
 
 describe("用户手打块的候选审阅提交", () => {
+  it("首次 suggestion 落库失败时不发送 docDiffReady", async () => {
+    const state = createSession("candidate-persist-failure");
+    const base = doc(paragraph("block-a", "旧正文"));
+    const draft = doc(paragraph("block-a", "新正文"));
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftBaseDoc = base;
+    state.docDraftBaseSections = state.legacySections;
+    state.docDraftBaseVersion = 1;
+    state.docDraftCandidateDoc = draft;
+    state.docDraftCandidateSections = pmToLegacySections(draft) as unknown as LegacySection[];
+    await documentRepo.save(documentInput(state.docId, {
+      threadId: state.sessionId,
+      docVersion: 1,
+      pmDoc: base,
+      legacySections: state.legacySections,
+    }));
+    await getDocumentsClient().execute("DROP TABLE document_suggestions");
+
+    const frames = await collectFrames(settleDraftCandidate({
+      state,
+      agentMessageId: "agent-message-persist-failure",
+      streamId: "agent-stream-persist-failure",
+      runId: "agent-run-persist-failure",
+      wholeDocument: false,
+    }));
+
+    expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
+    expect(frames).toContainEqual({
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: "agent-stream-persist-failure",
+          reason: "本次待审草稿保存失败，请重试。",
+          retriable: true,
+        },
+      },
+    });
+    expect(state.suggestions.size).toBe(0);
+    expect(state.docState).toEqual({ kind: "editing" });
+  });
+
   it("docWrite 保存的手打块经 editDraft 局部替换后应 applied，而非 block_removed conflict", async () => {
     const state = createSession("typed-block-commit");
     const submittedDoc = normalizePmDoc(editorTypedDoc("用户手打原文"));

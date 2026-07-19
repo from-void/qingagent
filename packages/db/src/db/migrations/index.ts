@@ -18,6 +18,7 @@ import { migration0016TranslateDerivatives } from "./0016_translate_derivatives.
 import { migration0017DerivativeCoverTemplate } from "./0017_derivative_cover_template.js";
 import { migration0018DocumentOpsMutationScope } from "./0018_document_ops_mutation_scope.js";
 import { migration0019LexiconEntryUniqueness } from "./0019_lexicon_entry_uniqueness.js";
+import { migration0020DocumentSuggestionIdentityScope } from "./0020_document_suggestion_identity_scope.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -42,4 +43,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0017DerivativeCoverTemplate,
   migration0018DocumentOpsMutationScope,
   migration0019LexiconEntryUniqueness,
+  migration0020DocumentSuggestionIdentityScope,
 ];

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DocSuggestion, PatchConflict } from "@qingagent/contract-ts";
 import {
+  ignoreRebasedDocumentSuggestions,
   listDocumentSuggestionStatuses,
   updateDocumentSuggestionStatus,
   upsertDocumentSuggestion,
@@ -32,13 +33,13 @@ describe("document suggestion status query", () => {
     await upsertDocumentSuggestion(suggestion("s-conflict", "doc-a", 3));
     await upsertDocumentSuggestion(suggestion("s-other-version", "doc-a", 4));
     await upsertDocumentSuggestion(suggestion("s-other-doc", "doc-b", 3));
-    await updateDocumentSuggestionStatus("s-accepted", "accepted");
+    await updateDocumentSuggestionStatus("doc-a", 3, "s-accepted", "accepted");
     const conflict: PatchConflict = {
       kind: "version_conflict",
       message: "目标位置已变化",
       suggestionId: "s-conflict",
     };
-    await updateDocumentSuggestionStatus("s-conflict", "conflict", conflict);
+    await updateDocumentSuggestionStatus("doc-a", 3, "s-conflict", "conflict", conflict);
 
     const rows = await listDocumentSuggestionStatuses("doc-a", 3, ["s-accepted", "s-conflict", "s-other-version"]);
 
@@ -48,5 +49,43 @@ describe("document suggestion status query", () => {
     ]));
     expect(rows).toHaveLength(2);
     await expect(listDocumentSuggestionStatuses("doc-a", 3, [])).resolves.toEqual([]);
+  });
+
+  it("相同 suggestion id 按文档和基线版本独立写入与更新", async () => {
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-a", 3));
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-b", 3));
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-a", 4));
+
+    await updateDocumentSuggestionStatus("doc-a", 3, "shared-id", "accepted");
+    await updateDocumentSuggestionStatus("doc-b", 3, "shared-id", "rejected");
+
+    await expect(listDocumentSuggestionStatuses("doc-a", 3)).resolves.toEqual([
+      { id: "shared-id", status: "accepted", conflict: undefined },
+    ]);
+    await expect(listDocumentSuggestionStatuses("doc-b", 3)).resolves.toEqual([
+      { id: "shared-id", status: "rejected", conflict: undefined },
+    ]);
+    await expect(listDocumentSuggestionStatuses("doc-a", 4)).resolves.toEqual([
+      { id: "shared-id", status: "reviewing", conflict: undefined },
+    ]);
+    await expect(
+      updateDocumentSuggestionStatus("doc-a", 9, "shared-id", "accepted"),
+    ).resolves.toBe(0);
+  });
+
+  it("rebase 只失效指定旧批次中的未结算行", async () => {
+    await upsertDocumentSuggestion(suggestion("pending", "doc-a", 3));
+    await upsertDocumentSuggestion(suggestion("settled", "doc-a", 3));
+    await updateDocumentSuggestionStatus("doc-a", 3, "settled", "committed");
+
+    await expect(
+      ignoreRebasedDocumentSuggestions("doc-a", 3, ["pending", "settled"]),
+    ).resolves.toBe(1);
+    await expect(listDocumentSuggestionStatuses("doc-a", 3)).resolves.toEqual(
+      expect.arrayContaining([
+        { id: "pending", status: "ignored", conflict: undefined },
+        { id: "settled", status: "committed", conflict: undefined },
+      ]),
+    );
   });
 });

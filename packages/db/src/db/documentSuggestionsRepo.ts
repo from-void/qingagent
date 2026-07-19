@@ -125,9 +125,7 @@ export async function upsertDocumentSuggestion(
           preview_json, summary, conflict_json, created_at, updated_at
           , severity
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          doc_id = excluded.doc_id,
-          base_version = excluded.base_version,
+        ON CONFLICT(doc_id, base_version, id) DO UPDATE SET
           status = excluded.status,
           anchor_json = excluded.anchor_json,
           steps_json = excluded.steps_json,
@@ -155,20 +153,54 @@ export async function upsertDocumentSuggestion(
 }
 
 export async function updateDocumentSuggestionStatus(
+  docId: string,
+  baseVersion: number,
   id: string,
   status: SuggestionStatus,
   conflict?: DocSuggestion["conflict"],
   client?: Client,
   now = new Date().toISOString(),
-): Promise<void> {
+): Promise<number> {
   const c = await readyClient(client);
-  await withWriteRetry(async () => {
-    await c.execute({
+  return withWriteRetry(async () => {
+    const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
-        WHERE id = ?`,
-      args: [status, conflict ? JSON.stringify(conflict) : null, now, id],
+        WHERE doc_id = ? AND base_version = ? AND id = ?`,
+      args: [
+        status,
+        conflict ? JSON.stringify(conflict) : null,
+        now,
+        docId,
+        baseVersion,
+        id,
+      ],
     });
+    return result.rowsAffected;
+  });
+}
+
+/** rebase 新批次落库后，将被取代且尚未结算的旧批次行保留为失效审计记录。 */
+export async function ignoreRebasedDocumentSuggestions(
+  docId: string,
+  baseVersion: number,
+  suggestionIds: readonly string[],
+  client?: Client,
+  now = new Date().toISOString(),
+): Promise<number> {
+  const ids = [...new Set(suggestionIds.filter(Boolean))];
+  if (ids.length === 0) return 0;
+  const c = await readyClient(client);
+  return withWriteRetry(async () => {
+    const result = await c.execute({
+      sql: `UPDATE document_suggestions
+        SET status = 'ignored', conflict_json = NULL, updated_at = ?
+        WHERE doc_id = ? AND base_version = ?
+          AND id IN (${ids.map(() => "?").join(",")})
+          AND status IN ('reviewing','accepted','rejected')`,
+      args: [now, docId, baseVersion, ...ids],
+    });
+    return result.rowsAffected;
   });
 }
 

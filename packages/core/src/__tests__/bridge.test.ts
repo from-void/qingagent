@@ -13,7 +13,7 @@ import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { compileSuggestionFromBeforeAfter } from "../doc-engine/pmPatch.js";
-import { documentRepo } from "@qingagent/db";
+import { documentRepo, upsertDocumentSuggestion } from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
@@ -65,11 +65,11 @@ type PatchOverrides = Partial<{
   summary: string;
 }>;
 
-function addPatch(
+async function addPatch(
   state: SessionState,
   id: string,
   overrides?: PatchOverrides,
-): void {
+): Promise<void> {
   const patch = {
     messageId: "msg-1",
     toolCallId: id,
@@ -96,6 +96,7 @@ function addPatch(
     blockIndex: result.record.blockIndex,
     suggestion: result.record.suggestion,
   });
+  await upsertDocumentSuggestion(result.record.suggestion);
   state.suggestionBaseDoc ??= state.doc;
   state.suggestionBaseVersion ??= state.docVersion;
 }
@@ -164,7 +165,7 @@ describe("updatePatchVerdict", () => {
   it("emits toolCallUpdated with 'accepted' status", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
 
     const frames = await collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
 
@@ -184,7 +185,7 @@ describe("updatePatchVerdict", () => {
   it("emits toolCallUpdated with 'rejected' status", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-2");
+    await addPatch(state, "patch-2");
 
     const frames = await collectFrames(updatePatchVerdict(state, "patch-2", "rejected"));
 
@@ -199,8 +200,8 @@ describe("updatePatchVerdict", () => {
   it("persists verdict in state.patchVerdicts", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-v1");
-    addPatch(state, "patch-v2");
+    await addPatch(state, "patch-v1");
+    await addPatch(state, "patch-v2");
 
     await collectFrames(updatePatchVerdict(state, "patch-v1", "accepted"));
     await collectFrames(updatePatchVerdict(state, "patch-v2", "rejected"));
@@ -237,7 +238,7 @@ describe("updatePatchVerdict", () => {
   it("preserves patch body content in emitted spec", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-3", {
+    await addPatch(state, "patch-3", {
       before: "樱花树",
       after: "梅花树",
       blockIndex: 3,
@@ -266,7 +267,7 @@ describe("commitPatches", () => {
   it("applies a single patch and emits documentSnapshotWritten + modern docStateChanged", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     state.patchVerdicts.set("patch-1", "accepted");
     state.patchValidationResults.set("patch-1", { ok: true, applied: true });
     await seedDocumentRow(state);
@@ -317,7 +318,7 @@ describe("commitPatches", () => {
   it("提交完全部审阅后释放残留 stream 锁,允许后续图编辑保存", async () => {
     const state = createSession("test-stale-stream");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     state.patchVerdicts.set("patch-1", "accepted");
     state.patchValidationResults.set("patch-1", { ok: true, applied: true });
     state.streamId = "stale-review-stream";
@@ -343,8 +344,8 @@ describe("commitPatches", () => {
   it("提交后清理已提交项，并将缺少 diffHunk 的剩余项结算为失败", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-a");
-    addPatch(state, "patch-b", {
+    await addPatch(state, "patch-a");
+    await addPatch(state, "patch-b", {
       before: "樱花树",
       after: "桃花树",
       blockIndex: 3,
@@ -370,13 +371,13 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
 
     // Add two patches on different sections
-    addPatch(state, "p1", {
+    await addPatch(state, "p1", {
       before: "春天的校园",
       after: "秋天的校园",
       blockIndex: 0,
       summary: "春天改秋天",
     });
-    addPatch(state, "p2", {
+    await addPatch(state, "p2", {
       before: "花开时节",
       after: "落叶时分",
       blockIndex: 2,
@@ -403,7 +404,7 @@ describe("commitPatches", () => {
   it("bumps docVersion after commit", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     await seedDocumentRow(state);
 
     expect(state.docVersion).toBe(1);
@@ -414,7 +415,7 @@ describe("commitPatches", () => {
   it("transitions state to committed then draft", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     await seedDocumentRow(state);
 
     await collectAsyncFrames(commitPatches(state, ["patch-1"]));
@@ -427,13 +428,13 @@ describe("commitPatches", () => {
     seedStateWithDoc(state);
 
     // Add two patches on different sections
-    addPatch(state, "p-acc", {
+    await addPatch(state, "p-acc", {
       before: "春天的校园",
       after: "秋天的校园",
       blockIndex: 0,
       summary: "春天改秋天",
     });
-    addPatch(state, "p-rej", {
+    await addPatch(state, "p-rej", {
       before: "花开时节",
       after: "落叶时分",
       blockIndex: 2,
@@ -465,7 +466,7 @@ describe("commitPatches", () => {
   it("clears patchVerdicts after commit", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-cv");
+    await addPatch(state, "patch-cv");
 
     await collectFrames(updatePatchVerdict(state, "patch-cv", "accepted"));
     expect(state.patchVerdicts.has("patch-cv")).toBe(true);
@@ -510,7 +511,7 @@ describe("BridgeFrame format compliance", () => {
   it("every frame has kind and data properties", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     await seedDocumentRow(state);
 
     const frames = await collectAsyncFrames(commitPatches(state, ["patch-1"]));
@@ -525,7 +526,7 @@ describe("BridgeFrame format compliance", () => {
   it("toolCallUpdated frame has correct nested structure", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
 
     const frames = await collectFrames(updatePatchVerdict(state, "patch-1", "accepted"));
     const frame = frames[0]!;
@@ -556,7 +557,7 @@ describe("BridgeFrame format compliance", () => {
   it("documentSnapshotWritten frame has correct doc structure", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
     await seedDocumentRow(state);
 
     const frames = await collectAsyncFrames(commitPatches(state, ["patch-1"]));
@@ -583,7 +584,7 @@ describe("BridgeFrame format compliance", () => {
   it("docStateChanged frame has correct state shape", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
-    addPatch(state, "patch-1");
+    await addPatch(state, "patch-1");
 
     const frames = await collectAsyncFrames(commitPatches(state, ["patch-1"]));
     const stateFrames = frames.filter((f) => f.kind === "docStateChanged");

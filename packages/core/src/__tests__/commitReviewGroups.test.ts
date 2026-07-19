@@ -18,6 +18,7 @@ import {
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
   documentRepo,
+  getDocumentsClient,
   listDocumentSuggestionStatuses,
   upsertDocumentSuggestion,
 } from "@qingagent/db";
@@ -109,7 +110,7 @@ function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion 
   };
 }
 
-function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk[] {
+async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Promise<DiffHunk[]> {
   state.doc = base;
   state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
@@ -129,11 +130,16 @@ function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk
       suggestion,
       diffHunk: hunk,
     });
+    await upsertDocumentSuggestion(suggestion);
   }
   return hunks;
 }
 
-function seedHunksState(state: SessionState, base: PmDoc, hunks: readonly DiffHunk[]): void {
+async function seedHunksState(
+  state: SessionState,
+  base: PmDoc,
+  hunks: readonly DiffHunk[],
+): Promise<void> {
   state.doc = base;
   state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
@@ -157,6 +163,7 @@ function seedHunksState(state: SessionState, base: PmDoc, hunks: readonly DiffHu
       suggestion,
       diffHunk: hunk,
     });
+    await upsertDocumentSuggestion(suggestion);
   }
 }
 
@@ -303,22 +310,22 @@ describe("commitReviewGroups", () => {
     );
   });
 
-  it("单 patch id 不再按 groupMode 扩展为整组", () => {
+  it("单 patch id 不再按 groupMode 扩展为整组", async () => {
     const state = createSession("per-hunk-expand");
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
 
     const expanded = expandReviewIds(state, [hunks[0]!.hunkId]);
 
     expect(expanded).toEqual([hunks[0]!.hunkId]);
   });
 
-  it("显式 reviewBatchId 仍兼容选择同 batch 旧记录", () => {
+  it("显式 reviewBatchId 仍兼容选择同 batch 旧记录", async () => {
     const state = createSession("legacy-batch-expand");
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     for (const hunk of hunks) {
       const record = state.suggestions.get(hunk.hunkId);
       if (!record) throw new Error("fixture missing record");
@@ -344,8 +351,7 @@ describe("commitReviewGroups", () => {
     const state = createSession("per-hunk-verdict");
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);
-    const hunks = seedDiffState(state, base, draft);
-    await upsertDocumentSuggestion(state.suggestions.get(hunks[0]!.hunkId)!.suggestion);
+    const hunks = await seedDiffState(state, base, draft);
 
     const frames = await collectFrames(updatePatchVerdict(state, hunks[0]!.hunkId, "accepted"));
 
@@ -366,6 +372,27 @@ describe("commitReviewGroups", () => {
       .resolves.toEqual([{ id: hunks[0]!.hunkId, status: "accepted", conflict: undefined }]);
   });
 
+  it("裁决状态落库失败时只发失败帧并保持 reviewing", async () => {
+    const state = createSession("verdict-persist-failure");
+    const base = doc([paragraph("block-a", "旧正文")]);
+    const draft = doc([paragraph("block-a", "新正文")]);
+    const [hunk] = await seedDiffState(state, base, draft);
+    if (!hunk) throw new Error("fixture missing hunk");
+    await getDocumentsClient().execute("DROP TABLE document_suggestions");
+
+    const frames = await collectFrames(updatePatchVerdict(state, hunk.hunkId, "accepted"));
+    const statuses = frames
+      .filter((frame) => frame.kind === "toolCallUpdated")
+      .map((frame) => frame.kind === "toolCallUpdated" ? frame.data.spec.status : null);
+
+    expect(statuses).toEqual([
+      { kind: "failed", data: { retriable: true, reason: "审阅状态保存失败，请重试本项。" } },
+    ]);
+    expect(statuses).not.toContainEqual({ kind: "accepted" });
+    expect(state.patchVerdicts.has(hunk.hunkId)).toBe(false);
+    expect(state.suggestions.get(hunk.hunkId)?.suggestion.status).toBe("reviewing");
+  });
+
   it("BLOCKED_ON_S5: 部分提交只写入显式接受组,未决组保留在内存态", async () => {
     const state = createSession("partial-memory");
     const base = doc([
@@ -378,7 +405,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-b", "B 新"),
       paragraph("block-c", "C 新"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     state.modelKnownDocVersion = state.docVersion;
     await seedDocumentRow(state);
 
@@ -413,7 +440,7 @@ describe("commitReviewGroups", () => {
     const state = createSession("same-paragraph-accept-middle");
     const base = doc([paragraph("block-a", "一猫，二狗，三鸟。")]);
     const draft = doc([paragraph("block-a", "一虎，二狼，三鹰。")]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
 
     expect(hunks.map((hunk) => [hunk.beforeText, hunk.afterText])).toEqual([
@@ -469,7 +496,7 @@ describe("commitReviewGroups", () => {
       before: "FG",
       after: "UV",
     });
-    seedHunksState(state, base, [accept, reject, keep]);
+    await seedHunksState(state, base, [accept, reject, keep]);
     await seedDocumentRow(state);
 
     const frames = await collectFrames(commitReviewGroups(state, {
@@ -499,7 +526,7 @@ describe("commitReviewGroups", () => {
       attrs: { blockId: "callout-a", emoji: "!", tone: "info" },
       content: [paragraph("callout-a-p", "新提示") as Extract<PmBlockNode, { type: "paragraph" }>],
     } as PmBlockNode]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
 
     expect(hunks).toHaveLength(1);
@@ -525,7 +552,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-b", "B 新"),
       paragraph("block-c", "C 新"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
 
     const [hunkA, hunkB, hunkC] = hunks;
@@ -555,7 +582,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-a", "A 新"),
       paragraph("block-b", "B 新"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
     const [hunkA, hunkB] = hunks;
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
@@ -593,7 +620,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-b", "B 新"),
       paragraph("block-c", "C 新"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
     const insertHunk = hunks.find((hunk) => hunk.op === "insert");
     const blockBHunk = hunks.find((hunk) => hunk.anchor.blockId === "block-b");
@@ -638,7 +665,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-c", "C 新文"),
       paragraph("block-d", "D 新文"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     const shiftedCurrent = doc([
       paragraph("user-block", "用户新增前置段"),
       ...base.content,
@@ -679,7 +706,7 @@ describe("commitReviewGroups", () => {
       paragraph("block-c", "C"),
     ]);
     const draft = doc([paragraph("block-a", "A")]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     await seedDocumentRow(state);
     const deleteHunk = hunks.find((hunk) => hunk.op === "delete");
     if (!deleteHunk) throw new Error("fixture missing delete hunk");

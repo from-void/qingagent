@@ -10,6 +10,7 @@ import {
   type SuggestionRecord,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
+import { upsertDocumentSuggestion } from "@qingagent/db";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 
 vi.mock("../doc-engine/commitDocumentOp.js", () => ({
@@ -70,7 +71,7 @@ function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion 
   };
 }
 
-function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk[] {
+async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Promise<DiffHunk[]> {
   state.doc = base;
   state.legacySections = pmToLegacySections(base) as never;
   state.docVersion = 1;
@@ -93,6 +94,7 @@ function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk
       suggestion,
       diffHunk: hunk,
     });
+    await upsertDocumentSuggestion(suggestion);
   }
   return hunks;
 }
@@ -177,7 +179,7 @@ describe("commitReviewGroups 失败 settle", () => {
     const state = createSession(`failure-${_name}`);
     const base = doc([paragraph("block-a", "A 旧")]);
     const draft = doc([paragraph("block-a", "A 新")]);
-    const [hunk] = seedDiffState(state, base, draft);
+    const [hunk] = await seedDiffState(state, base, draft);
     if (!hunk) throw new Error("fixture missing hunk");
     vi.mocked(commitDocumentOp).mockResolvedValueOnce(makeResult(hunk));
 
@@ -195,7 +197,7 @@ describe("commitReviewGroups 失败 settle", () => {
     const state = createSession("failure-exception");
     const base = doc([paragraph("block-a", "A 旧")]);
     const draft = doc([paragraph("block-a", "A 新")]);
-    const [hunk] = seedDiffState(state, base, draft);
+    const [hunk] = await seedDiffState(state, base, draft);
     if (!hunk) throw new Error("fixture missing hunk");
     vi.mocked(commitDocumentOp).mockRejectedValueOnce(new Error("db timeout"));
 
@@ -219,7 +221,7 @@ describe("commitReviewGroups 失败 settle", () => {
       paragraph("block-a", "A 新"),
       paragraph("block-b", "B 新"),
     ]);
-    const hunks = seedDiffState(state, base, draft);
+    const hunks = await seedDiffState(state, base, draft);
     const [hunkA, hunkB] = hunks;
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
     const keepRecord = state.suggestions.get(hunkB.hunkId);

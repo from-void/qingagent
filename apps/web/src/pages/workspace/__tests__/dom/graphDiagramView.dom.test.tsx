@@ -731,10 +731,16 @@ describe("GraphDiagramView", () => {
     expect(interview).toBeTruthy();
     expect(outline).toBeTruthy();
     const onSourceChange = vi.fn();
+    const onOverlayChange = vi.fn();
     await render(
       <EditableDiagramHarness
         source={source}
+        initialOverlay={{
+          positions: { [interview!.id]: { x: 320, y: 180 } },
+          styles: { [interview!.id]: { fill: "#d7e7f6", strokeWidth: 4 } },
+        }}
         onSourceChange={onSourceChange}
+        onOverlayChange={onOverlayChange}
       />,
     );
     const editor = await openEditor();
@@ -744,6 +750,14 @@ describe("GraphDiagramView", () => {
     expect(onSourceChange).toHaveBeenCalledTimes(1);
     const nextSource = onSourceChange.mock.calls[0]![0] as string;
     expect(nextSource).toContain("    素材\n    大纲\n      结构\n      访谈\n");
+    const nextInterview = flattenMindmap((parseDiagram(nextSource).model as MindmapTree).root)
+      .find((node) => node.label === "访谈")!;
+    expect(nextInterview.id).not.toBe(interview!.id);
+    const latestOverlay = onOverlayChange.mock.calls.at(-1)?.[0] as NonNullable<Parameters<typeof DiagramRenderer>[0]["overlay"]>;
+    expect(latestOverlay.positions?.[nextInterview.id]).toEqual({ x: 320, y: 180 });
+    expect(latestOverlay.styles?.[nextInterview.id]).toEqual({ fill: "#d7e7f6", strokeWidth: 4 });
+    expect(latestOverlay.styles?.[interview!.id]).toBeUndefined();
+    expect(editor.querySelector("[aria-label='节点上下文操作']")).not.toBeNull();
   });
 
   it("双击节点标签进入就地 contentEditable 并回写 relabelNode", async () => {

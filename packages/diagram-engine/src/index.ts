@@ -118,9 +118,15 @@ export type EditOp =
 
 export type Capability = { op: EditOp["kind"]; enabled: boolean; reason?: string };
 
+export interface ElementIdMap {
+  nodes?: Record<string, string>;
+  edges?: Record<string, string>;
+}
+
 export interface RewriteResult {
   source: string;
   newNodeId?: string;
+  idMap?: ElementIdMap;
   ok: boolean;
   error?: string;
 }
@@ -245,6 +251,7 @@ export function carryOverDiagramOverlay(
   oldSource: string,
   oldOverlay: DiagramOverlay | null | undefined,
   newSource: string,
+  idMap?: ElementIdMap,
 ): DiagramOverlay | undefined {
   if (!oldOverlay) return undefined;
   const oldParsed = parseDiagram(oldSource);
@@ -254,10 +261,10 @@ export function carryOverDiagramOverlay(
   const newIds = getStableElementIds(newParsed.model);
   const nodes = intersectSets(oldIds.nodes, newIds.nodes);
   const edges = intersectSets(oldIds.edges, newIds.edges);
-  const positions = filterRecord(oldOverlay.positions, nodes);
-  const styles = filterRecord(oldOverlay.styles, nodes);
-  const edgeStyles = filterRecord(oldOverlay.edgeStyles, edges);
-  const edgeHandles = filterRecord(oldOverlay.edgeHandles, edges);
+  const positions = remapRecord(oldOverlay.positions, newIds.nodes, nodes, idMap?.nodes);
+  const styles = remapRecord(oldOverlay.styles, newIds.nodes, nodes, idMap?.nodes);
+  const edgeStyles = remapRecord(oldOverlay.edgeStyles, newIds.edges, edges, idMap?.edges);
+  const edgeHandles = remapRecord(oldOverlay.edgeHandles, newIds.edges, edges, idMap?.edges);
   return emptyOverlay({ positions, styles, edgeStyles, edgeHandles }) ? undefined : { positions, styles, edgeStyles, edgeHandles };
 }
 
@@ -1315,7 +1322,12 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
   }
   if (op.kind === "deleteNode") {
     const end = subtreeEnd(source, node!);
-    return { ok: true, source: applyEdits(source, [{ start: node!.line.start, end, text: "" }]) };
+    const start = node!.line.start;
+    const newSource = applyEdits(source, [{ start, end, text: "" }]);
+    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+      if (oldLineStart >= start && oldLineStart < end) return null;
+      return oldLineStart >= end ? oldLineStart - (end - start) : oldLineStart;
+    });
   }
   if (op.kind === "relabelNode") {
     const lineText = source.slice(node!.line.start, node!.line.end);
@@ -1326,7 +1338,13 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
     const body = parts.wrapped
       ? `${parts.id}${parts.open}${safeMermaidLabel(op.label)}${parts.close}`
       : safeMermaidLabel(op.label);
-    return { ok: true, source: applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: `${leading}${body}${newline}` }]) };
+    const replacement = `${leading}${body}${newline}`;
+    const newSource = applyEdits(source, [{ start: node!.line.start, end: node!.line.end, text: replacement }]);
+    const lengthDelta = replacement.length - (node!.line.end - node!.line.start);
+    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+      if (oldLineStart === node!.line.start) return node!.line.start;
+      return oldLineStart >= node!.line.end ? oldLineStart + lengthDelta : oldLineStart;
+    });
   }
   if (op.kind === "moveNode") {
     const parent = nodes.find((n) => n.id === op.newParentId);
@@ -1350,9 +1368,73 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
       line: { start: parentStart, end: parentStart + (parent.line.end - parent.line.start) },
     };
     const insertAt = subtreeEnd(without, parentAtAdjustedPosition);
-    return { ok: true, source: insertAtLineBoundary(without, insertAt, shifted) };
+    const leadingLength = insertAt > 0 && without[insertAt - 1] !== "\n" ? 1 : 0;
+    const trailingLength = insertAt < without.length && shifted.length > 0 && !shifted.endsWith("\n") ? 1 : 0;
+    const insertedLength = leadingLength + shifted.length + trailingLength;
+    const movedLineStarts = new Map<number, number>();
+    const oldBlockLines = getLines(block);
+    const shiftedBlockLines = getLines(shifted);
+    for (let i = 0; i < oldBlockLines.length; i++) {
+      const oldLine = oldBlockLines[i];
+      const shiftedLine = shiftedBlockLines[i];
+      if (oldLine && shiftedLine) {
+        movedLineStarts.set(oldStart + oldLine.start, insertAt + leadingLength + shiftedLine.start);
+      }
+    }
+    const newSource = insertAtLineBoundary(without, insertAt, shifted);
+    return mindmapRewriteResult(model, newSource, (oldLineStart) => {
+      if (oldLineStart >= oldStart && oldLineStart < oldEnd) {
+        return movedLineStarts.get(oldLineStart) ?? null;
+      }
+      let adjusted = oldLineStart >= oldEnd ? oldLineStart - removedLength : oldLineStart;
+      if (adjusted >= insertAt) adjusted += insertedLength;
+      return adjusted;
+    });
   }
   return unsupportedRewrite(source, op.kind);
+}
+
+function mindmapRewriteResult(
+  oldModel: MindmapTree,
+  newSource: string,
+  mapLineStart: (oldLineStart: number) => number | null,
+): RewriteResult {
+  const reparsed = parseMindmap(newSource);
+  if (!reparsed.ok || reparsed.model.type !== "mindmap") return { ok: true, source: newSource };
+
+  const oldNodes = flattenMindmap(oldModel.root);
+  const newModel = reparsed.model;
+  const newNodesByLineStart = new Map(flattenMindmap(newModel.root).map((node) => [node.line.start, node]));
+  const resolvedNodeIds: Record<string, string> = {};
+  const changedNodeIds: Record<string, string> = {};
+  for (const oldNode of oldNodes) {
+    const newLineStart = mapLineStart(oldNode.line.start);
+    if (newLineStart === null) continue;
+    const newNode = newNodesByLineStart.get(newLineStart);
+    if (!newNode) continue;
+    resolvedNodeIds[oldNode.id] = newNode.id;
+    if (oldNode.id !== newNode.id) changedNodeIds[oldNode.id] = newNode.id;
+  }
+
+  const newEdges = modelEdges(newModel);
+  const changedEdgeIds: Record<string, string> = {};
+  for (const oldEdge of modelEdges(oldModel)) {
+    const newSourceId = resolvedNodeIds[oldEdge.source];
+    const newTargetId = resolvedNodeIds[oldEdge.target];
+    if (!newSourceId || !newTargetId) continue;
+    const newEdge = newEdges.find((edge) =>
+      edge.source === newSourceId &&
+      edge.target === newTargetId &&
+      edge.syntaxKind === oldEdge.syntaxKind
+    );
+    if (newEdge && newEdge.id !== oldEdge.id) changedEdgeIds[oldEdge.id] = newEdge.id;
+  }
+
+  const nodes = Object.keys(changedNodeIds).length > 0 ? changedNodeIds : undefined;
+  const edges = Object.keys(changedEdgeIds).length > 0 ? changedEdgeIds : undefined;
+  return nodes || edges
+    ? { ok: true, source: newSource, idMap: { nodes, edges } }
+    : { ok: true, source: newSource };
 }
 
 interface ParsedFlowNodeRef {
@@ -1762,6 +1844,21 @@ function filterRecord<T>(record: Record<string, T> | undefined, allowed: Set<str
   const out: Record<string, T> = {};
   for (const [key, value] of Object.entries(record)) {
     if (allowed.has(key)) out[key] = value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function remapRecord<T>(
+  record: Record<string, T> | undefined,
+  allowedNewIds: Set<string>,
+  unchangedIds: Set<string>,
+  idMap: Record<string, string> | undefined,
+): Record<string, T> | undefined {
+  if (!record) return undefined;
+  const out: Record<string, T> = {};
+  for (const [oldId, value] of Object.entries(record)) {
+    const newId = idMap?.[oldId] ?? (unchangedIds.has(oldId) ? oldId : null);
+    if (newId && allowedNewIds.has(newId)) out[newId] = value;
   }
   return Object.keys(out).length ? out : undefined;
 }

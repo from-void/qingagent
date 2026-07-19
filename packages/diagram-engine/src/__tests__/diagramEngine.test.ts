@@ -596,7 +596,41 @@ describe("diagram-engine", () => {
     expect(moved.source).not.toContain("素材\n      访谈");
     const next = parseDiagram(moved.source).model as MindmapTree;
     const nextOutline = flattenMindmap(next.root).find((node) => node.label === "大纲")!;
+    const nextInterview = flattenMindmap(next.root).find((node) => node.label === "访谈")!;
     expect(nextOutline.children.map((node) => node.label)).toEqual(["结构", "访谈"]);
+    expect(nextInterview.id).not.toBe(interview.id);
+    expect(moved.idMap?.nodes?.[interview.id]).toBe(nextInterview.id);
+    expect(flattenMindmap(next.root).some((node) => node.id === moved.idMap?.nodes?.[interview.id])).toBe(true);
+  });
+
+  it("mindmap 删除同名兄弟后返回后续兄弟及子树的 id 映射", () => {
+    const source = "mindmap\n  根\n    分支\n      删除\n    分支\n      保留\n";
+    const before = (parseDiagram(source).model as MindmapTree).root;
+    const [deletedBranch, keptBranch] = before.children;
+    const keptLeaf = keptBranch!.children[0]!;
+
+    const deleted = applyEdit(source, { kind: "deleteNode", nodeId: deletedBranch!.id });
+
+    expect(deleted.ok).toBe(true);
+    const after = (parseDiagram(deleted.source).model as MindmapTree).root;
+    const nextBranch = after.children[0]!;
+    const nextLeaf = nextBranch.children[0]!;
+    expect(deleted.idMap?.nodes?.[keptBranch!.id]).toBe(nextBranch.id);
+    expect(deleted.idMap?.nodes?.[keptLeaf.id]).toBe(nextLeaf.id);
+  });
+
+  it("mindmap 改名后返回节点及子树的 id 映射", () => {
+    const source = "mindmap\n  根\n    旧名称\n      子节点\n";
+    const before = (parseDiagram(source).model as MindmapTree).root;
+    const renamedNode = before.children[0]!;
+    const child = renamedNode.children[0]!;
+
+    const renamed = applyEdit(source, { kind: "relabelNode", nodeId: renamedNode.id, label: "新名称" });
+
+    expect(renamed.ok).toBe(true);
+    const after = (parseDiagram(renamed.source).model as MindmapTree).root.children[0]!;
+    expect(renamed.idMap?.nodes?.[renamedNode.id]).toBe(after.id);
+    expect(renamed.idMap?.nodes?.[child.id]).toBe(after.children[0]!.id);
   });
 
   it("safeMermaid 转义 id/label", () => {

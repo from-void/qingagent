@@ -508,6 +508,54 @@ describe("LinkedFilesPanel", () => {
     expect(getFolderRoot().classList.contains("is-located")).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("切换文件夹来源会取消旧请求且迟到响应不覆盖新来源", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(panel({ folderSource: mockFolderSource }));
+    click(getBar());
+    await clickAsync(getFolderRoot());
+    const firstSignal = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(firstSignal?.aborted).toBe(false);
+
+    const nextSource = {
+      ...mockFolderSource,
+      sessionId: "s2",
+      name: "新会话资料",
+    };
+    await rerender(panel({ folderSource: nextSource }));
+    expect(firstSignal?.aborted).toBe(true);
+
+    await clickAsync(getFolderRoot());
+    await act(async () => {
+      second.resolve(jsonResponse({
+        entries: [{ name: "new.txt", kind: "file", childCount: null, byteLen: 12 }],
+        truncated: false,
+      }));
+      await second.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host?.textContent).toContain("new.txt");
+
+    await act(async () => {
+      first.resolve(jsonResponse({
+        entries: [{ name: "stale.txt", kind: "file", childCount: null, byteLen: 8 }],
+        truncated: false,
+      }));
+      await first.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host?.textContent).toContain("new.txt");
+    expect(host?.textContent).not.toContain("stale.txt");
+  });
 });
 
 function panel(overrides: Partial<Parameters<typeof LinkedFilesPanel>[0]> = {}): ReactElement {
@@ -543,6 +591,14 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 function getBar(): HTMLElement {

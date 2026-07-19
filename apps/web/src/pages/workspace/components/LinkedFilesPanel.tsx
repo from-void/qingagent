@@ -11,6 +11,14 @@ const FOLDER_ENTRY_TIMEOUT_MS = 15_000;
 const FOLDER_ENTRY_TIMEOUT_MESSAGE = "读取超时，请点击重试";
 const FOLDER_BRIDGE_UNAVAILABLE_MESSAGE = "此浏览器会话未连接到该文件夹，请断开后重新连接";
 
+function buildFolderIdentity(sessionId: string, folderId: string): string {
+  return `${sessionId}\u0000${folderId}`;
+}
+
+function buildDirStateKey(folderIdentity: string, relPath: string): string {
+  return `${folderIdentity}\u0000${relPath}`;
+}
+
 interface FolderEntry {
   name: string;
   kind: "dir" | "file";
@@ -70,8 +78,23 @@ export function LinkedFilesPanel({
   const [dirStates, setDirStates] = useState<Record<string, DirState>>({});
   const [located, setLocated] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const previousFolderIdRef = useRef<string | null>(folderSource?.id ?? null);
+  const folderIdentity = folderSource
+    ? buildFolderIdentity(folderSource.sessionId, folderSource.id)
+    : null;
+  const currentFolderIdentityRef = useRef<string | null>(folderIdentity);
+  currentFolderIdentityRef.current = folderIdentity;
+  const previousFolderIdentityRef = useRef<string | null>(folderIdentity);
+  const entryControllersRef = useRef<Set<AbortController>>(new Set());
   const locateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleDirStates = useMemo(() => {
+    if (!folderIdentity) return {};
+    const prefix = `${folderIdentity}\u0000`;
+    return Object.fromEntries(
+      Object.entries(dirStates)
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([key, state]) => [key.slice(prefix.length), state]),
+    );
+  }, [dirStates, folderIdentity]);
 
   const summary = useMemo(
     () => buildSummary(materialRows, folderSource),
@@ -110,7 +133,11 @@ export function LinkedFilesPanel({
     setDirStates({});
     setExpandedDirs(new Set());
     setHoverInfo("");
-  }, [folderSource?.id]);
+    return () => {
+      for (const controller of entryControllersRef.current) controller.abort();
+      entryControllersRef.current.clear();
+    };
+  }, [folderIdentity]);
 
   const flashLocated = useCallback(() => {
     if (locateTimerRef.current) clearTimeout(locateTimerRef.current);
@@ -123,12 +150,14 @@ export function LinkedFilesPanel({
 
   const loadEntries = useCallback(
     async (relPath: string, limit = DEFAULT_ENTRY_LIMIT) => {
-      if (!folderSource) return;
+      if (!folderSource || !folderIdentity) return;
+      const requestFolderIdentity = folderIdentity;
+      const stateKey = buildDirStateKey(requestFolderIdentity, relPath);
       setDirStates((prev) => ({
         ...prev,
-        [relPath]: {
-          entries: prev[relPath]?.entries ?? [],
-          truncated: prev[relPath]?.truncated ?? false,
+        [stateKey]: {
+          entries: prev[stateKey]?.entries ?? [],
+          truncated: prev[stateKey]?.truncated ?? false,
           limit,
           loading: true,
           error: null,
@@ -136,6 +165,7 @@ export function LinkedFilesPanel({
       }));
       const params = new URLSearchParams({ path: relPath, limit: String(limit) });
       const controller = new AbortController();
+      entryControllersRef.current.add(controller);
       let timedOut = false;
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -162,9 +192,10 @@ export function LinkedFilesPanel({
           throw new Error(message);
         }
         const body = await res.json() as FolderEntriesResponse;
+        if (currentFolderIdentityRef.current !== requestFolderIdentity) return;
         setDirStates((prev) => ({
           ...prev,
-          [relPath]: {
+          [stateKey]: {
             entries: Array.isArray(body.entries) ? body.entries : [],
             truncated: body.truncated === true,
             limit,
@@ -173,12 +204,16 @@ export function LinkedFilesPanel({
           },
         }));
       } catch (error) {
+        if (
+          currentFolderIdentityRef.current !== requestFolderIdentity ||
+          (controller.signal.aborted && !timedOut)
+        ) return;
         const message = normalizeFolderEntryError(timedOut ? FOLDER_ENTRY_TIMEOUT_MESSAGE : error);
         setDirStates((prev) => ({
           ...prev,
-          [relPath]: {
-            entries: prev[relPath]?.entries ?? [],
-            truncated: prev[relPath]?.truncated ?? false,
+          [stateKey]: {
+            entries: prev[stateKey]?.entries ?? [],
+            truncated: prev[stateKey]?.truncated ?? false,
             limit,
             loading: false,
             error: message,
@@ -186,9 +221,10 @@ export function LinkedFilesPanel({
         }));
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
+        entryControllersRef.current.delete(controller);
       }
     },
-    [folderSource],
+    [folderIdentity, folderSource],
   );
 
   const expandFolderRoot = useCallback(() => {
@@ -199,16 +235,16 @@ export function LinkedFilesPanel({
       next.add("");
       return next;
     });
-    if (!dirStates[""] || dirStates[""].error) void loadEntries("");
+    if (!visibleDirStates[""] || visibleDirStates[""].error) void loadEntries("");
     flashLocated();
-  }, [dirStates, flashLocated, folderSource, loadEntries]);
+  }, [flashLocated, folderSource, loadEntries, visibleDirStates]);
 
   useEffect(() => {
-    const prev = previousFolderIdRef.current;
-    const current = folderSource?.id ?? null;
-    previousFolderIdRef.current = current;
+    const prev = previousFolderIdentityRef.current;
+    const current = folderIdentity;
+    previousFolderIdentityRef.current = current;
     if (prev === null && current !== null) expandFolderRoot();
-  }, [expandFolderRoot, folderSource?.id]);
+  }, [expandFolderRoot, folderIdentity]);
 
   useEffect(() => {
     if (locateFolderSignal <= 0) return;
@@ -222,7 +258,9 @@ export function LinkedFilesPanel({
   const toggleDir = useCallback(
     (relPath: string) => {
       const isOpen = expandedDirs.has(relPath);
-      const shouldLoad = !isOpen && (!dirStates[relPath] || Boolean(dirStates[relPath]?.error));
+      const shouldLoad = !isOpen && (
+        !visibleDirStates[relPath] || Boolean(visibleDirStates[relPath]?.error)
+      );
       setExpandedDirs((prev) => {
         const next = new Set(prev);
         if (next.has(relPath)) {
@@ -234,7 +272,7 @@ export function LinkedFilesPanel({
       });
       if (shouldLoad) void loadEntries(relPath);
     },
-    [dirStates, expandedDirs, loadEntries],
+    [expandedDirs, loadEntries, visibleDirStates],
   );
 
   const handleReference = useCallback(
@@ -326,8 +364,8 @@ export function LinkedFilesPanel({
               <DirChildren
                 relPath=""
                 level={1}
-                state={dirStates[""]}
-                dirStates={dirStates}
+                state={visibleDirStates[""]}
+                dirStates={visibleDirStates}
                 expandedDirs={expandedDirs}
                 disabled={disabled}
                 onHover={setHoverInfo}

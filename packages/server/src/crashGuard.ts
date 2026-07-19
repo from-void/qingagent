@@ -96,6 +96,11 @@ let shuttingDown = false;
 
 type ExitFn = (code?: number) => never | void;
 
+export interface ShutdownSignalOwnershipOptions {
+  /** 宿主完成 drain 后使用的退出动作；桌面端注入 Electron app.exit。 */
+  exit?: ExitFn;
+}
+
 interface GracefulShutdownDeps {
   exit?: ExitFn;
   drainActiveTurns?: () => Promise<void>;
@@ -106,6 +111,7 @@ interface GracefulShutdownDeps {
 
 /** 仅供真实信号子进程测试替换慢阶段；生产默认始终走 best-effort 实现。 */
 let signalShutdownDepsForTest: GracefulShutdownDeps | undefined;
+let ownedShutdownExit: ExitFn | undefined;
 
 async function runShutdownPhase(
   label: string,
@@ -264,9 +270,16 @@ async function flushObservabilityBestEffort(): Promise<void> {
 let installed = false;
 
 const shutdownSignalHandlers = {
-  SIGTERM: () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest),
-  SIGINT: () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest),
+  SIGTERM: () => void gracefulShutdown("SIGTERM", signalShutdownDeps()),
+  SIGINT: () => void gracefulShutdown("SIGINT", signalShutdownDeps()),
 } satisfies Record<"SIGTERM" | "SIGINT", () => void>;
+
+function signalShutdownDeps(): GracefulShutdownDeps {
+  return {
+    ...signalShutdownDepsForTest,
+    exit: signalShutdownDepsForTest?.exit ?? ownedShutdownExit,
+  };
+}
 
 function installShutdownSignalHandlers(): void {
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
@@ -320,7 +333,8 @@ export function installCrashGuard(): void {
  * SIGTERM/SIGINT handler 并直接 process.exit，抢先掐断异步 drain。因此 index.ts 在
  * app/core/doc-render 全部加载后调用本函数，移除竞争 handler，再只装回 crashGuard。
  */
-export function claimShutdownSignalOwnership(): void {
+export function claimShutdownSignalOwnership(options: ShutdownSignalOwnershipOptions = {}): void {
+  ownedShutdownExit = options.exit;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     const listeners = process.listeners(signal);
     const competingCount = listeners.filter(
@@ -353,6 +367,7 @@ export async function gracefulShutdownForTest(
 export function __resetCrashGuardForTest(): void {
   shuttingDown = false;
   signalShutdownDepsForTest = undefined;
+  ownedShutdownExit = undefined;
 }
 
 export function __setSignalShutdownDepsForTest(deps: GracefulShutdownDeps): void {

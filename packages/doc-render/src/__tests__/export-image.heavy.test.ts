@@ -168,11 +168,24 @@ describe("upload src hardening", () => {
     expect(localUploadPath("/api/v1/files/../../etc/passwd/x")).toBeNull();
     expect(localUploadPath("/api/v1/files/12345678-1234-1234-1234-123456789abc/../package.json")).toBeNull();
     expect(localUploadPath("/api/v1/files/not-a-uuid/illustration.svg")).toBeNull();
+    expect(localUploadPath("/api/v1/files/12345678-1234-1234-1234-123456789abc/..%2F..")).toBeNull();
+    expect(localUploadPath("/api/v1/files/12345678-1234-1234-1234-123456789abc/%00.png")).toBeNull();
+    expect(localUploadPath("/api/v1/files/12345678-1234-1234-1234-123456789abc/%E6%B5%8B%E8%AF%95%ZZ.png")).toBeNull();
   });
 
   it("accepts a well-formed uuid upload src inside uploads dir", () => {
     const p = localUploadPath("/api/v1/files/12345678-1234-1234-1234-123456789abc/illustration.svg");
     expect(p).not.toBeNull();
     expect(p!.replace(/\\/g, "/")).toMatch(/\/uploads\/12345678-1234-1234-1234-123456789abc\/illustration\.svg$/);
+  });
+
+  it.each([
+    ["纯英文名", "illustration.svg", "illustration.svg"],
+    ["中文名", "%E6%B5%8B%E8%AF%95.svg", "测试.svg"],
+    ["空格名", "my%20photo.svg", "my photo.svg"],
+  ])("accepts %s after decoding the final segment once", (_case, encoded, decoded) => {
+    const p = localUploadPath(`/api/v1/files/12345678-1234-1234-1234-123456789abc/${encoded}`);
+    expect(p).not.toBeNull();
+    expect(p!.replace(/\\/g, "/")).toMatch(new RegExp(`/uploads/12345678-1234-1234-1234-123456789abc/${decoded.replace(".", "\\.")}$`));
   });
 });

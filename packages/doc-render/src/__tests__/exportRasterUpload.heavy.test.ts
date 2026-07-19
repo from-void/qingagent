@@ -17,6 +17,11 @@ const PNG_1x1 = Buffer.from(
 );
 const ID = "12345678-1234-1234-1234-1234567890ab";
 const uploadsDir = resolve("./uploads", ID);
+const filenames = [
+  { encoded: "pic.png", decoded: "pic.png" },
+  { encoded: "%E6%B5%8B%E8%AF%95.png", decoded: "测试.png" },
+  { encoded: "my%20photo.png", decoded: "my photo.png" },
+];
 
 function imageDoc(src: string): LegacySection[] {
   return [
@@ -28,29 +33,29 @@ function imageDoc(src: string): LegacySection[] {
 describe("本地栅格图上传导出", () => {
   beforeAll(() => {
     mkdirSync(uploadsDir, { recursive: true });
-    writeFileSync(resolve(uploadsDir, "pic.png"), PNG_1x1);
+    for (const { decoded } of filenames) writeFileSync(resolve(uploadsDir, decoded), PNG_1x1);
   });
   afterAll(() => {
     try { rmSync(resolve("./uploads", ID), { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("docx:本地 png 内嵌(输出比缺图回退大)", async () => {
-    const embedded = await toDocx(imageDoc(`/api/v1/files/${ID}/pic.png`), {});
+  it.each(filenames)("docx:本地 png 内嵌($decoded)", async ({ encoded }) => {
+    const embedded = await toDocx(imageDoc(`/api/v1/files/${ID}/${encoded}`), {});
     const fallback = await toDocx(imageDoc(`/api/v1/files/${ID}/missing.png`), {});
     expect(embedded).toBeInstanceOf(Buffer);
     expect(embedded.length).toBeGreaterThan(fallback.length);
   });
 
-  it("html:本地 png 内嵌为 data URI,缺图回退占位文字", () => {
-    const embedded = toHtml(imageDoc(`/api/v1/files/${ID}/pic.png`), {});
+  it.each(filenames)("html:本地 png 内嵌为 data URI($decoded)", ({ encoded }) => {
+    const embedded = toHtml(imageDoc(`/api/v1/files/${ID}/${encoded}`), {});
     expect(embedded).toContain("<img src=\"data:image/png;base64,");
     const fallback = toHtml(imageDoc(`/api/v1/files/${ID}/missing.png`), {});
     expect(fallback).not.toContain("data:image/png;base64,");
     expect(fallback).toContain("[图片：");
   });
 
-  it.skipIf(!hasChromium)("pdf:本地 png 与缺图都能产出 PDF 不崩", async () => {
-    await expect(toPdf(imageDoc(`/api/v1/files/${ID}/pic.png`), {})).resolves.toBeInstanceOf(Buffer);
+  it.skipIf(!hasChromium).each(filenames)("pdf:本地 png 与缺图都能产出 PDF 不崩($decoded)", async ({ encoded }) => {
+    await expect(toPdf(imageDoc(`/api/v1/files/${ID}/${encoded}`), {})).resolves.toBeInstanceOf(Buffer);
     await expect(toPdf(imageDoc(`/api/v1/files/${ID}/missing.png`), {})).resolves.toBeInstanceOf(Buffer);
   });
 });

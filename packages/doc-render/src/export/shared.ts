@@ -102,19 +102,24 @@ export function pmDocToPlainExportText(doc: PmDoc): string {
     .join("\n\n");
 }
 
-// 上传 id 必须是 UUID（generateSvg 用 randomUUID 生成）；文件名限定安全字符。
-// 这样可挡住 `..`、URL 编码注入等路径穿越（/api/v1/files/../package.json/...）。
+// 上传 id 必须是 UUID（generateSvg 用 randomUUID 生成）；文件名只解码最后一个 URL segment，
+// 再拒绝路径分隔符、点目录与控制字符，兼容中文/空格同时挡住路径穿越。
 const UPLOAD_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const UPLOAD_FILENAME = /^[A-Za-z0-9._-]+$/;
+const UPLOAD_FILENAME_CONTROL = /[\u0000-\u001f\u007f]/;
 
 export function localUploadPath(src: string): string | null {
   const match = src.match(/^\/api\/v1\/files\/([^/]+)\/([^/?#]+)$/);
   if (!match) return null;
   const id = match[1]!;
-  const filename = match[2]!;
-  // 严格白名单 + 显式拒绝 . / ..，防止路径穿越
+  let filename: string;
+  try {
+    filename = decodeURIComponent(match[2]!);
+  } catch {
+    return null;
+  }
   if (!UPLOAD_ID.test(id)) return null;
-  if (!UPLOAD_FILENAME.test(filename) || filename === "." || filename === "..") return null;
+  if (!filename || filename === "." || filename === "..") return null;
+  if (filename.includes("/") || filename.includes("\\") || UPLOAD_FILENAME_CONTROL.test(filename)) return null;
   const uploadsBase = uploadsBaseDir();
   const path = join(uploadsBase, id, filename);
   // 双保险：解析后的绝对路径必须仍在 uploads 根之内

@@ -6,7 +6,7 @@
 // 连接-断开压测,直接断言两类资源归零。
 import { describe, expect, it } from "vitest";
 import { app } from "../app";
-import { sessionManager } from "../gateway/bridgeHandler";
+import { getSession, sessionManager } from "../gateway/bridgeHandler";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,6 +23,55 @@ async function openEvents(sessionId: string, epoch: number) {
 }
 
 describe("GET /api/v1/events 断连资源回收", () => {
+  it("两个客户端并发 epoch 不匹配时只追加一份恢复快照", async () => {
+    const started = await app.request("/api/v1/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "startSession",
+        data: { mode: { kind: "new", data: { template: null } } },
+      }),
+    });
+    expect(started.status).toBe(200);
+    const { sessionId, epoch } = (await started.json()) as {
+      sessionId: string;
+      epoch: number;
+    };
+    const sessionDeadline = Date.now() + 3_000;
+    while (!getSession(sessionId) && Date.now() < sessionDeadline) {
+      await sleep(25);
+    }
+    expect(getSession(sessionId)).toBeDefined();
+    const beforeSeq = sessionManager.frameLog.readFrom(
+      sessionId,
+      Number.MAX_SAFE_INTEGER,
+    ).nextSeq;
+
+    const [first, second] = await Promise.all([
+      openEvents(sessionId, epoch - 1),
+      openEvents(sessionId, epoch - 1),
+    ]);
+
+    try {
+      const deadline = Date.now() + 3_000;
+      let restoreResets = 0;
+      do {
+        restoreResets = sessionManager.frameLog
+          .readFrom(sessionId, beforeSeq - 1)
+          .frames.filter((entry) => entry.frame.kind === "restoreReset").length;
+        if (restoreResets === 1) break;
+        await sleep(25);
+      } while (Date.now() < deadline);
+
+      expect(restoreResets).toBe(1);
+    } finally {
+      for (const subscriber of [first, second]) {
+        subscriber.controller.abort();
+        await subscriber.reader?.cancel().catch(() => undefined);
+      }
+    }
+  });
+
   it("多订阅者全部断开后 frameLog listener 与心跳定时器全量回收", async () => {
     // 用真实命令创建会话,拿到合法 epoch
     const started = await app.request("/api/v1/commands", {

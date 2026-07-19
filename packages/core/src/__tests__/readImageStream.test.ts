@@ -169,6 +169,26 @@ describe("readImage stream error handling", () => {
     ).toBe(true);
   });
 
+  it("readimage-progress 写入返回 rejected Promise 时不冒 unhandled rejection", async () => {
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    const write = vi.fn(() => Promise.reject(new Error("async writer boom")));
+    streamTextMock.mockReturnValue(visionText("识别成功"));
+
+    try {
+      const result = await run("img-rejected-writer", { writer: { write } });
+      expect(result.ok).toBe(true);
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({
+        type: "readimage-progress",
+      }));
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("素材无原始文件(fileId 为空)→ ok:false", async () => {
     const materials = new Map<string, unknown>([
       ["mat-scrape", { id: "mat-scrape", filename: "网页", mimeType: "image/png", fileId: null }],

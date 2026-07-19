@@ -18,6 +18,7 @@
     "test:all": "pnpm test && pnpm test:heavy && pnpm test:perf",
     "typecheck": "pnpm -r --if-present typecheck",
     "depcruise": "dependency-cruise packages/*/src apps/*/src --config .dependency-cruiser.cjs",
+    "test:depcruise-guard": "node --test scripts/dependency-cruiser-guard.test.mjs",
     "scorers": "tsx scripts/run-scorers.mts",
     "scorers:live": "tsx scripts/run-live-scorers.mts",
     "pm:schema:check": "pnpm --filter @qingagent/pm-schema test -- schemaSync",

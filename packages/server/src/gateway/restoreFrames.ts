@@ -6,7 +6,7 @@ import type {
   ToolCallSpec,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import crypto from "node:crypto";
+import { getDeterministicId } from "@qingagent/pm-schema";
 import {
   appendMissingVisibleAskUserAnswerMessagesFromChatHistory,
   buildDocumentSnapshot,
@@ -305,7 +305,7 @@ export function* emitRestoreFrames(
       return typeof id === "string" && !restoredChatMessageIds.has(id);
     })
   ) {
-    for (const msg of session.messages) {
+    for (const [messageIndex, msg] of session.messages.entries()) {
       // Skip messages that are not user or assistant (pure tool results)
       if (msg.role !== "user" && msg.role !== "assistant") continue;
       const messageId = (msg as { id?: unknown }).id;
@@ -335,7 +335,12 @@ export function* emitRestoreFrames(
         kind: "chatMessageAdded",
         data: {
           message: {
-            id: typeof messageId === "string" ? messageId : crypto.randomUUID(),
+            id: typeof messageId === "string"
+              ? messageId
+              : getDeterministicId("legacy-message", {
+                  sessionId: session.sessionId,
+                  messageIndex,
+                }),
             role: { kind: msg.role === "user" ? "user" : "agent" },
             ts:
               (msg as { createdAt?: string }).createdAt ??

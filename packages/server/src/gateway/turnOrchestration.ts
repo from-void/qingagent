@@ -141,6 +141,21 @@ function isSnapshotNotFoundError(error: unknown): boolean {
   );
 }
 
+function delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function isAskUserQuestionSpec(spec: ToolCallSpec): boolean {
   return isQuestionnaireTool(spec.name) && spec.body?.kind === "askUser";
 }
@@ -432,7 +447,9 @@ async function* handleResume(
       scopeId: streamId,
     };
     let activePrefixGuardContext = prefixGuardContext;
+    abortController.signal.throwIfAborted();
     for (let attempt = 0; ; attempt++) {
+      abortController.signal.throwIfAborted();
       try {
         const sessionTraceId = deriveSessionTraceId(session.sessionId);
         activePrefixGuardContext = {
@@ -504,7 +521,8 @@ async function* handleResume(
           console.warn(
             `[handleResume] Snapshot not found (attempt ${attempt + 1}/${MAX_RESUME_RETRIES}), retrying in ${RETRY_DELAY_MS}ms...`,
           );
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          await delayWithSignal(RETRY_DELAY_MS, abortController.signal);
+          abortController.signal.throwIfAborted();
           continue;
         }
         throw resumeErr; // non-retryable or exhausted retries
@@ -533,6 +551,7 @@ async function* handleResume(
         streamId,
         runId: result.runId,
         requestContext,
+        abortController,
       }),
     );
     // 诊断 p04:问卷确认后的首次生成最易撞上 DeepSeek 流式瞬断(ECONNRESET)。
@@ -588,7 +607,9 @@ async function* handleResume(
     }
   } catch (err) {
     const askUserSpec = findAskUserToolCallSpec(session, toolCallId);
-    if (isSnapshotNotFoundError(err) && askUserSpec) {
+    if (abortController.signal.aborted) {
+      // 用户取消或流看门狗已经终止本轮时，不再把中止当成恢复失败展示。
+    } else if (isSnapshotNotFoundError(err) && askUserSpec) {
       guardReset(session.sessionId, "snapshot_lost");
       freshTurnPrompt = buildFreshAskUserResumePrompt(
         session,
@@ -688,7 +709,7 @@ async function* handleResume(
     }
   }
 
-  if (freshTurnPrompt !== null) {
+  if (freshTurnPrompt !== null && !abortController.signal.aborted) {
     yield* runAgentTurn(session, freshTurnPrompt);
   }
 }

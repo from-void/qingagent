@@ -11,8 +11,16 @@ vi.mock("./extractor.js", () => ({
   validateFetchUrl: vi.fn(async (url: string) => new URL(url)),
 }));
 
+vi.mock("./browserSecurity.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // rebase 适配:sec2 波在 newPage 前装逐请求校验策略,真实实现需要完整 Playwright context,
+  // 本测试只关心取消收尾路径,策略安装置为 no-op。
+  installBrowserRequestPolicy: vi.fn(async () => undefined),
+}));
+
 vi.mock("./pool.js", () => ({
   withBrowserContextSlot: vi.fn(async (run: () => Promise<unknown>) => run()),
+  proxyFromEnv: vi.fn(() => null),
   getBrowser: vi.fn(async () => ({
     version: () => "120.0.0.0",
     newContext: vi.fn(async () => ({

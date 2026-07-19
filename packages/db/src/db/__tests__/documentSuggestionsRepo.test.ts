@@ -32,13 +32,13 @@ describe("document suggestion status query", () => {
     await upsertDocumentSuggestion(suggestion("s-conflict", "doc-a", 3));
     await upsertDocumentSuggestion(suggestion("s-other-version", "doc-a", 4));
     await upsertDocumentSuggestion(suggestion("s-other-doc", "doc-b", 3));
-    await updateDocumentSuggestionStatus("s-accepted", "accepted");
+    await updateDocumentSuggestionStatus("doc-a", 3, "s-accepted", "accepted");
     const conflict: PatchConflict = {
       kind: "version_conflict",
       message: "目标位置已变化",
       suggestionId: "s-conflict",
     };
-    await updateDocumentSuggestionStatus("s-conflict", "conflict", conflict);
+    await updateDocumentSuggestionStatus("doc-a", 3, "s-conflict", "conflict", conflict);
 
     const rows = await listDocumentSuggestionStatuses("doc-a", 3, ["s-accepted", "s-conflict", "s-other-version"]);
 
@@ -48,5 +48,24 @@ describe("document suggestion status query", () => {
     ]));
     expect(rows).toHaveLength(2);
     await expect(listDocumentSuggestionStatuses("doc-a", 3, [])).resolves.toEqual([]);
+  });
+
+  it("相同 suggestion id 按文档和基线版本独立写入与更新", async () => {
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-a", 3));
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-b", 3));
+    await upsertDocumentSuggestion(suggestion("shared-id", "doc-a", 4));
+
+    await updateDocumentSuggestionStatus("doc-a", 3, "shared-id", "accepted");
+    await updateDocumentSuggestionStatus("doc-b", 3, "shared-id", "rejected");
+
+    await expect(listDocumentSuggestionStatuses("doc-a", 3)).resolves.toEqual([
+      { id: "shared-id", status: "accepted", conflict: undefined },
+    ]);
+    await expect(listDocumentSuggestionStatuses("doc-b", 3)).resolves.toEqual([
+      { id: "shared-id", status: "rejected", conflict: undefined },
+    ]);
+    await expect(listDocumentSuggestionStatuses("doc-a", 4)).resolves.toEqual([
+      { id: "shared-id", status: "reviewing", conflict: undefined },
+    ]);
   });
 });

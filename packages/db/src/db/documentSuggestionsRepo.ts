@@ -125,9 +125,7 @@ export async function upsertDocumentSuggestion(
           preview_json, summary, conflict_json, created_at, updated_at
           , severity
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          doc_id = excluded.doc_id,
-          base_version = excluded.base_version,
+        ON CONFLICT(doc_id, base_version, id) DO UPDATE SET
           status = excluded.status,
           anchor_json = excluded.anchor_json,
           steps_json = excluded.steps_json,
@@ -155,6 +153,8 @@ export async function upsertDocumentSuggestion(
 }
 
 export async function updateDocumentSuggestionStatus(
+  docId: string,
+  baseVersion: number,
   id: string,
   status: SuggestionStatus,
   conflict?: DocSuggestion["conflict"],
@@ -166,8 +166,15 @@ export async function updateDocumentSuggestionStatus(
     await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
-        WHERE id = ?`,
-      args: [status, conflict ? JSON.stringify(conflict) : null, now, id],
+        WHERE doc_id = ? AND base_version = ? AND id = ?`,
+      args: [
+        status,
+        conflict ? JSON.stringify(conflict) : null,
+        now,
+        docId,
+        baseVersion,
+        id,
+      ],
     });
   });
 }

@@ -185,12 +185,13 @@ function deleteSettledRecord(state: SessionState, record: SuggestionRecord): voi
 async function persistSuggestionStatus(
   state: SessionState,
   id: string,
+  baseVersion: number,
   status: DocSuggestion["status"],
   conflict?: PatchConflict,
 ): Promise<void> {
   let firstError: unknown;
   try {
-    await updateDocumentSuggestionStatus(id, status, conflict);
+    await updateDocumentSuggestionStatus(state.docId, baseVersion, id, status, conflict);
     return;
   } catch (error) {
     firstError = error;
@@ -203,7 +204,7 @@ async function persistSuggestionStatus(
     });
   }
   try {
-    await updateDocumentSuggestionStatus(id, status, conflict);
+    await updateDocumentSuggestionStatus(state.docId, baseVersion, id, status, conflict);
   } catch (error) {
     logger.error("Persisting document suggestion status failed after retry", {
       sessionId: state.sessionId,
@@ -224,7 +225,12 @@ async function* settleResolvedReviewRecords(
     const verdict = state.patchVerdicts.get(record.suggestion.id);
     const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
-    await persistSuggestionStatus(state, nextSuggestion.id, terminalStatus);
+    await persistSuggestionStatus(
+      state,
+      nextSuggestion.id,
+      nextSuggestion.baseVersion,
+      terminalStatus,
+    );
     const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: terminalStatus });
     yield toolCallUpdated(record.messageId, record.suggestion.id, spec);
     updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
@@ -258,7 +264,7 @@ async function* settleUnappliedReviewRecords(
     const verdict = state.patchVerdicts.get(id);
     if (verdict === "rejected") {
       const nextSuggestion: DocSuggestion = { ...record.suggestion, status: "rejected" };
-      await persistSuggestionStatus(state, id, "rejected");
+      await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "rejected");
       const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: "rejected" });
       yield toolCallUpdated(record.messageId, id, spec);
       updateToolCallInChatHistory(state, record.messageId, id, spec);
@@ -273,7 +279,7 @@ async function* settleUnappliedReviewRecords(
       status: "conflict",
       conflict,
     };
-    await persistSuggestionStatus(state, id, "conflict", conflict);
+    await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "conflict", conflict);
     const spec = buildSuggestionToolCallSpec(nextSuggestion, {
       kind: "failed",
       data: { retriable: false, reason: conflict.message },
@@ -365,7 +371,7 @@ export async function* updatePatchVerdict(
     };
     suggestionRecord.suggestion = suggestion;
     state.suggestions.set(id, suggestionRecord);
-    await persistSuggestionStatus(state, id, verdict);
+    await persistSuggestionStatus(state, id, suggestion.baseVersion, verdict);
     const spec = buildSuggestionToolCallSpec(suggestion, status);
     yield toolCallUpdated(suggestionRecord.messageId, id, spec);
     updateToolCallInChatHistory(state, suggestionRecord.messageId, id, spec);

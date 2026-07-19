@@ -404,10 +404,10 @@ function parsePseudoListMarker(text: string, fallbackType: AiListBlockType): Pse
   const circled = afterIndent.match(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/);
   if (circled) {
     return {
-      level: Math.max(1, indentLevel),
+      level: indentLevel > 0 ? indentLevel : 0,
       listType: "orderedList",
-      prefixLength: leadingWhitespace.length + circled[0].length,
-      nestingSignal: true,
+      prefixLength: indentLevel > 0 ? leadingWhitespace.length + circled[0].length : 0,
+      nestingSignal: indentLevel > 0,
     };
   }
 

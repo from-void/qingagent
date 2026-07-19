@@ -93,7 +93,11 @@ function suggestionFromHunk(state: SessionState, hunk: DiffHunk): DocSuggestion 
   };
 }
 
-function seedReviewState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHunk[] {
+async function seedReviewState(
+  state: SessionState,
+  base: PmDoc,
+  draft: PmDoc,
+): Promise<DiffHunk[]> {
   state.doc = base;
   state.legacySections = pmToLegacySections(base) as unknown as LegacySection[];
   state.docVersion = 1;
@@ -117,6 +121,7 @@ function seedReviewState(state: SessionState, base: PmDoc, draft: PmDoc): DiffHu
       suggestion,
       diffHunk: hunk,
     });
+    await upsertDocumentSuggestion(suggestion);
   }
   return hunks;
 }
@@ -186,10 +191,8 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const state = createSession("commit-rebase-dropped-hunk");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
     const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
-    const [rejectedHunk, droppedHunk] = seedReviewState(state, base, draft);
+    const [rejectedHunk, droppedHunk] = await seedReviewState(state, base, draft);
     if (!rejectedHunk || !droppedHunk) throw new Error("fixture missing hunks");
-    const droppedSuggestion = state.suggestions.get(droppedHunk.hunkId)!.suggestion;
-    await upsertDocumentSuggestion(droppedSuggestion);
     state.patchVerdicts.set(rejectedHunk.hunkId, "rejected");
 
     const canonical = doc([paragraph("blk-a", "甲原文")]);
@@ -220,7 +223,7 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const state = createSession("commit-skip-deleted-block");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
     const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
-    const [hunkA, hunkB] = seedReviewState(state, base, draft);
+    const [hunkA, hunkB] = await seedReviewState(state, base, draft);
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
 
     // 并发删除 blk-b:canonical 只剩 blk-a(仍是版本 1,CAS 通过)。
@@ -250,7 +253,7 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const state = createSession("commit-fail-closed-changed-block");
     const base = doc([paragraph("blk-a", "用户原文")]);
     const draft = doc([paragraph("blk-a", "AI 修改")]);
-    const [hunk] = seedReviewState(state, base, draft);
+    const [hunk] = await seedReviewState(state, base, draft);
     if (!hunk) throw new Error("fixture missing hunk");
 
     const userEdited = doc([paragraph("blk-a", "用户提交前又手动修改")]);
@@ -274,7 +277,7 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const state = createSession("commit-fail-closed-changed-table");
     const base = doc([table("table-a", "用户原文", "待修改")]);
     const draft = doc([table("table-a", "用户原文", "AI 修改")]);
-    const [hunk] = seedReviewState(state, base, draft);
+    const [hunk] = await seedReviewState(state, base, draft);
     if (!hunk) throw new Error("fixture missing table hunk");
 
     const userEdited = doc([table("table-a", "用户提交前手改", "待修改")]);
@@ -298,7 +301,7 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const survivor = paragraph("blk-survivor", "未涉及正文");
     const base = doc([paragraph("blk-a", "原文"), survivor]);
     const draft = doc([paragraph("blk-a", "AI 修改"), survivor]);
-    const [hunk] = seedReviewState(state, base, draft);
+    const [hunk] = await seedReviewState(state, base, draft);
     if (!hunk) throw new Error("fixture missing hunk");
 
     const canonical = doc([survivor]);
@@ -319,7 +322,7 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const state = createSession("commit-empty-insert-hunk");
     const base = doc([paragraph("blk-a", "原文")]);
     const draft = doc([paragraph("blk-a", "原文"), paragraph("blk-new", "AI 新增")]);
-    const [hunk] = seedReviewState(state, base, draft);
+    const [hunk] = await seedReviewState(state, base, draft);
     if (!hunk) throw new Error("fixture missing insert hunk");
     hunk.after = null;
     if (state.suggestions.get(hunk.hunkId)?.suggestion.diffHunk) {

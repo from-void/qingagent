@@ -194,72 +194,70 @@ async function persistSuggestionStatus(
   status: DocSuggestion["status"],
   conflict?: PatchConflict,
 ): Promise<void> {
-  let firstError: unknown;
-  try {
-    const rowsAffected = await updateDocumentSuggestionStatus(
-      state.docId,
-      baseVersion,
-      id,
-      status,
-      conflict,
-    );
-    if (rowsAffected === 0) {
-      throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
-    }
-    return;
-  } catch (error) {
-    firstError = error;
-    logger.warn("Persisting document suggestion status failed; retrying once", {
-      sessionId: state.sessionId,
-      docId: state.docId,
-      suggestionId: id,
-      status,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const rowsAffected = await updateDocumentSuggestionStatus(
+    state.docId,
+    baseVersion,
+    id,
+    status,
+    conflict,
+  );
+  if (rowsAffected === 0) {
+    throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
   }
-  try {
-    const rowsAffected = await updateDocumentSuggestionStatus(
-      state.docId,
-      baseVersion,
-      id,
-      status,
-      conflict,
-    );
-    if (rowsAffected === 0) {
-      throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
-    }
-  } catch (error) {
-    logger.error("Persisting document suggestion status failed after retry", {
-      sessionId: state.sessionId,
-      docId: state.docId,
-      suggestionId: id,
-      status,
-      firstError: firstError instanceof Error ? firstError.message : String(firstError),
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+}
+
+const SUGGESTION_PERSIST_FAILURE_MESSAGE = "审阅状态保存失败，请重试本项。";
+
+function suggestionPersistenceFailedFrame(
+  state: SessionState,
+  record: SuggestionRecord,
+  attemptedStatus: DocSuggestion["status"],
+  error: unknown,
+): BridgeFrame {
+  logger.error("Persisting document suggestion status failed", {
+    sessionId: state.sessionId,
+    docId: state.docId,
+    suggestionId: record.suggestion.id,
+    baseVersion: record.suggestion.baseVersion,
+    status: attemptedStatus,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  const spec = buildSuggestionToolCallSpec(record.suggestion, {
+    kind: "failed",
+    data: { retriable: true, reason: SUGGESTION_PERSIST_FAILURE_MESSAGE },
+  });
+  updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
+  return toolCallUpdated(record.messageId, record.suggestion.id, spec);
 }
 
 async function* settleResolvedReviewRecords(
   state: SessionState,
   records: readonly SuggestionRecord[],
-): AsyncGenerator<BridgeFrame> {
+): AsyncGenerator<BridgeFrame, boolean> {
+  let allPersisted = true;
   for (const record of records) {
     const verdict = state.patchVerdicts.get(record.suggestion.id);
     const terminalStatus = verdict === "rejected" ? "rejected" : "committed";
     const nextSuggestion: DocSuggestion = { ...record.suggestion, status: terminalStatus };
-    await persistSuggestionStatus(
-      state,
-      nextSuggestion.id,
-      nextSuggestion.baseVersion,
-      terminalStatus,
-    );
+    try {
+      await persistSuggestionStatus(
+        state,
+        nextSuggestion.id,
+        nextSuggestion.baseVersion,
+        terminalStatus,
+      );
+    } catch (error) {
+      allPersisted = false;
+      yield suggestionPersistenceFailedFrame(state, record, terminalStatus, error);
+      continue;
+    }
     const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: terminalStatus });
     yield toolCallUpdated(record.messageId, record.suggestion.id, spec);
     updateToolCallInChatHistory(state, record.messageId, record.suggestion.id, spec);
     record.suggestion = nextSuggestion;
     deleteSettledRecord(state, record);
   }
+  return allPersisted;
 }
 
 function conflictForFailedRecord(
@@ -280,14 +278,21 @@ async function* settleUnappliedReviewRecords(
   records: readonly SuggestionRecord[],
   conflicts: readonly PatchConflict[],
   fallbackReason: string,
-): AsyncGenerator<BridgeFrame> {
+): AsyncGenerator<BridgeFrame, boolean> {
+  let allPersisted = true;
   const byId = new Map(conflicts.map((conflict) => [conflict.suggestionId, conflict]));
   for (const record of records) {
     const id = record.suggestion.id;
     const verdict = state.patchVerdicts.get(id);
     if (verdict === "rejected") {
       const nextSuggestion: DocSuggestion = { ...record.suggestion, status: "rejected" };
-      await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "rejected");
+      try {
+        await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "rejected");
+      } catch (error) {
+        allPersisted = false;
+        yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
+        continue;
+      }
       const spec = buildSuggestionToolCallSpec(nextSuggestion, { kind: "rejected" });
       yield toolCallUpdated(record.messageId, id, spec);
       updateToolCallInChatHistory(state, record.messageId, id, spec);
@@ -302,7 +307,13 @@ async function* settleUnappliedReviewRecords(
       status: "conflict",
       conflict,
     };
-    await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "conflict", conflict);
+    try {
+      await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "conflict", conflict);
+    } catch (error) {
+      allPersisted = false;
+      yield suggestionPersistenceFailedFrame(state, record, "conflict", error);
+      continue;
+    }
     const spec = buildSuggestionToolCallSpec(nextSuggestion, {
       kind: "failed",
       data: { retriable: false, reason: conflict.message },
@@ -312,6 +323,7 @@ async function* settleUnappliedReviewRecords(
     record.suggestion = nextSuggestion;
     deleteSettledRecord(state, record);
   }
+  return allPersisted;
 }
 
 const DROPPED_REBASE_MESSAGE = "目标位置已被前序修改改变,该条已失效,未写入";
@@ -319,10 +331,10 @@ const DROPPED_REBASE_MESSAGE = "目标位置已被前序修改改变,该条已�
 async function* settleDroppedRebaseRecords(
   state: SessionState,
   dropped: readonly DroppedPendingDraftRecord[],
-): AsyncGenerator<BridgeFrame> {
-  if (dropped.length === 0) return;
+): AsyncGenerator<BridgeFrame, boolean> {
+  if (dropped.length === 0) return true;
   const records = dropped.map((item) => item.record);
-  yield* settleUnappliedReviewRecords(
+  return yield* settleUnappliedReviewRecords(
     state,
     records,
     records.map((record): PatchConflict => ({
@@ -387,14 +399,19 @@ export async function* updatePatchVerdict(
     verdict === "accepted" ? { kind: "accepted" } : { kind: "rejected" };
   for (const id of expandedIds) {
     const suggestionRecord = state.suggestions.get(id)!;
-    state.patchVerdicts.set(id, verdict);
     const suggestion: DocSuggestion = {
       ...suggestionRecord.suggestion,
       status: verdict,
     };
+    try {
+      await persistSuggestionStatus(state, id, suggestion.baseVersion, verdict);
+    } catch (error) {
+      yield suggestionPersistenceFailedFrame(state, suggestionRecord, verdict, error);
+      continue;
+    }
+    state.patchVerdicts.set(id, verdict);
     suggestionRecord.suggestion = suggestion;
     state.suggestions.set(id, suggestionRecord);
-    await persistSuggestionStatus(state, id, suggestion.baseVersion, verdict);
     const spec = buildSuggestionToolCallSpec(suggestion, status);
     yield toolCallUpdated(suggestionRecord.messageId, id, spec);
     updateToolCallInChatHistory(state, suggestionRecord.messageId, id, spec);
@@ -496,7 +513,11 @@ export async function* commitPatches(
     acceptedRecords.length > 0 && acceptedDiffHunks.length === acceptedRecords.length;
 
   if (accepted.length === 0) {
-    yield* settleResolvedReviewRecords(state, records);
+    const recordsSettled = yield* settleResolvedReviewRecords(state, records);
+    if (!recordsSettled) {
+      yield* finishSettledReviewState(state, "commitPatches:rejected_only_persist_failed");
+      return;
+    }
     const remainingRecords = [...state.suggestions.values()];
     if (remainingRecords.length > 0) {
       const rebase = await rebaseRemainingPendingDraft({
@@ -509,7 +530,11 @@ export async function* commitPatches(
         remainingRecords,
       });
       if (rebase.status !== "conflict") {
-        yield* settleDroppedRebaseRecords(state, rebase.dropped);
+        const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);
+        if (!droppedSettled) {
+          yield* finishSettledReviewState(state, "commitPatches:rebase_drop_persist_failed");
+          return;
+        }
       }
       if (rebase.status === "pending") {
         const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
@@ -830,12 +855,16 @@ export async function* commitPatches(
     ? records
     : records.filter((record) => !skippedRecords.includes(record));
 
-  yield* settleResolvedReviewRecords(state, settledRecords);
+  const doc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
+  yield { kind: "documentSnapshotWritten", data: { doc } };
+
+  const settledPersisted = yield* settleResolvedReviewRecords(state, settledRecords);
+  let skippedPersisted = true;
   if (skippedRecords.length > 0) {
     const message = legacyReplayUnknown
       ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
       : `有 ${skippedRecords.length} 处修改因文档已变化而失效，未写入；其余修改已提交。`;
-    yield* settleUnappliedReviewRecords(
+    skippedPersisted = yield* settleUnappliedReviewRecords(
       state,
       skippedRecords,
       skippedRecords.map((record): PatchConflict => ({
@@ -847,9 +876,10 @@ export async function* commitPatches(
       message,
     );
   }
-
-  const doc = buildDocumentSnapshot(state.legacySections, state.docVersion, result.doc);
-  yield { kind: "documentSnapshotWritten", data: { doc } };
+  if (!settledPersisted || !skippedPersisted) {
+    yield* finishSettledReviewState(state, "commitPatches:settlement_persist_failed");
+    return;
+  }
 
   const remainingRecords = [...state.suggestions.values()];
   if (remainingRecords.length > 0) {
@@ -863,7 +893,11 @@ export async function* commitPatches(
       remainingRecords,
     });
     if (rebase.status !== "conflict") {
-      yield* settleDroppedRebaseRecords(state, rebase.dropped);
+      const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);
+      if (!droppedSettled) {
+        yield* finishSettledReviewState(state, "commitPatches:rebase_drop_persist_failed");
+        return;
+      }
     }
     if (rebase.status === "pending") {
       const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
@@ -974,8 +1008,6 @@ export async function* commitReviewGroups(
     throw new Error(`Review batch cannot be both accepted and rejected: ${overlapping}`);
   }
 
-  const commitIds = [...new Set([...acceptIds, ...rejectIds])];
-
   for (const id of acceptIds) {
     if (state.patchVerdicts.get(id) !== "accepted") {
       for await (const frame of updatePatchVerdict(state, id, "accepted")) yield frame;
@@ -987,8 +1019,15 @@ export async function* commitReviewGroups(
     }
   }
 
+  const commitIds = [...new Set([
+    ...acceptIds.filter((id) => state.patchVerdicts.get(id) === "accepted"),
+    ...rejectIds.filter((id) => state.patchVerdicts.get(id) === "rejected"),
+  ])];
+
   if (commitIds.length === 0) {
-    yield reviewNoopCompletionFrame(state, "commit");
+    if (acceptIds.length === 0 && rejectIds.length === 0) {
+      yield reviewNoopCompletionFrame(state, "commit");
+    }
     return;
   }
   for await (const frame of commitPatches(state, commitIds)) {

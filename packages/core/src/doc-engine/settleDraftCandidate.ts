@@ -103,12 +103,6 @@ export async function* settleDraftCandidate(opts: {
         }
         warnIfSelectionDiffEscapesSelectedBlocks({ state, hunks, streamId, runId });
 
-        state.suggestions.clear();
-        state.patchVerdicts.clear();
-        clearReviewDiffState(state);
-        state.suggestionBaseDoc = clonePmDoc(baseDoc);
-        state.suggestionBaseVersion = baseVersion;
-
         const suggestions = hunks.map((hunk) =>
           suggestionFromDiffHunk({
             hunk,
@@ -117,6 +111,44 @@ export async function* settleDraftCandidate(opts: {
             baseSchemaVersion: baseDoc.attrs.schemaVersion,
           }),
         );
+        try {
+          for (const suggestion of suggestions) {
+            await upsertDocumentSuggestion(suggestion);
+          }
+          await documentDraftRepo.savePending({
+            docId: state.docId,
+            threadId: state.threadId ?? state.sessionId,
+            baseVersion,
+            baseHash: getPmContentHash(baseDoc),
+            draftPmDoc: draftDoc,
+            reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+            groupMode: suggestions[0]?.groupMode ?? null,
+          });
+        } catch (err) {
+          logger.error("Failed to persist candidate-diff review state", {
+            sessionId: state.sessionId,
+            docId: state.docId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          yield {
+            kind: "stream",
+            data: {
+              kind: "draftingFailed",
+              data: {
+                streamId,
+                reason: "本次待审草稿保存失败，请重试。",
+                retriable: true,
+              },
+            },
+          };
+          return { hunkCount: 0, docWritten: false };
+        }
+
+        state.suggestions.clear();
+        state.patchVerdicts.clear();
+        clearReviewDiffState(state);
+        state.suggestionBaseDoc = clonePmDoc(baseDoc);
+        state.suggestionBaseVersion = baseVersion;
         suggestions.forEach((suggestion, index) => {
           const hunk = hunks[index]!;
           const record: SuggestionRecord = {
@@ -131,50 +163,6 @@ export async function* settleDraftCandidate(opts: {
           state.suggestions.set(suggestion.id, record);
         });
 
-        await Promise.all(
-          suggestions.map((suggestion) =>
-            upsertDocumentSuggestion(suggestion).catch((err) => {
-              logger.warn("Failed to persist candidate-diff suggestion", {
-                suggestionId: suggestion.id,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }),
-          ),
-        );
-
-        let draftPersistWarning: BridgeFrame | null = null;
-        try {
-          await documentDraftRepo.savePending({
-            docId: state.docId,
-            threadId: state.threadId ?? state.sessionId,
-            baseVersion,
-            baseHash: getPmContentHash(baseDoc),
-            draftPmDoc: draftDoc,
-            reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
-            groupMode: suggestions[0]?.groupMode ?? null,
-          });
-        } catch (err) {
-          logger.error("Failed to persist pending review draft", {
-            sessionId: state.sessionId,
-            docId: state.docId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          draftPersistWarning = {
-            kind: "stream",
-            data: {
-              kind: "draftingFailed",
-              data: {
-                streamId,
-                reason: "本次待审草稿未持久化,刷新可能无法恢复。",
-                retriable: false,
-              },
-            },
-          };
-        }
-
-        if (draftPersistWarning) {
-          yield draftPersistWarning;
-        }
         yield docDiffReady(baseVersion, suggestions, baseDoc, draftDoc);
 
         for (const record of state.suggestions.values()) {

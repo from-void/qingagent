@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { applyBlockEdits, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
@@ -264,6 +265,58 @@ function nodeViewDoc(): PmDoc {
   } as unknown as PmDoc;
 }
 
+function diagramEchoDoc(): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "paragraph",
+        attrs: { blockId: "before-echo" },
+        content: [{ type: "text", text: "前文" }],
+      },
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-echo",
+          lang: "mermaid",
+          source: "flowchart LR\n  A --> B",
+          svg: '<svg data-r9="cached"><g /></svg>',
+        },
+      },
+      {
+        type: "paragraph",
+        attrs: { blockId: "tail-echo" },
+        content: [{ type: "text", text: "文末" }],
+      },
+    ],
+  } as PmDoc;
+}
+
+function nodePosition(editor: Editor, type: string): number {
+  let found: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === type) {
+      found = pos;
+      return false;
+    }
+    return true;
+  });
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+function pressEnter(editor: Editor): boolean {
+  const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  let handled = false;
+  editor.view.someProp("handleKeyDown", (handler) => {
+    const result = handler(editor.view, event);
+    handled = handled || result === true;
+    return result === true;
+  });
+  return handled;
+}
+
 describe("DocumentSnapshotView setContent 延迟装载", () => {
   it("400ms 防抖未到时卸载会补发当前编辑内容", async () => {
     let editor: Editor | null = null;
@@ -367,6 +420,69 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
       },
     ]);
     expect(editable.ok, editable.error).toBe(true);
+  });
+
+  it("R9：图表后的新增段落保存回声不会重设选区或把后续输入移到文末", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    const render = (doc: PmDoc, version: number) => {
+      act(() => {
+        root.render(
+          <DocumentSnapshotView
+            doc={pmDocToViewDocumentSnapshot(doc, version)}
+            editable
+            interactiveEditable
+            showPatches={false}
+            acceptedPatches={new Set()}
+            rejectedPatches={new Set()}
+            onEditorReady={(readyEditor) => {
+              editor = readyEditor;
+            }}
+            onEditorChange={onEditorChange}
+          />,
+        );
+      });
+    };
+
+    render(diagramEchoDoc(), 1);
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+    vi.useFakeTimers();
+
+    const diagramPos = nodePosition(editor!, "diagram");
+    act(() => {
+      editor!.commands.focus();
+      editor!.view.dispatch(editor!.state.tr.setSelection(NodeSelection.create(editor!.state.doc, diagramPos)));
+      expect(pressEnter(editor!)).toBe(true);
+      expect(editor!.state.selection).toBeInstanceOf(TextSelection);
+      editor!.view.dispatch(editor!.state.tr.insertText("紧跟输入", editor!.state.selection.from));
+    });
+
+    const selectionBeforeEcho = editor!.state.selection;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(401);
+    });
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    const saved = onEditorChange.mock.calls[0]![0] as PmDoc;
+    expect(normalizePmDoc(editor!.getJSON())).toEqual(saved);
+
+    let echoDocChanges = 0;
+    editor!.on("transaction", ({ transaction }) => {
+      if (transaction.docChanged) echoDocChanges += 1;
+    });
+    render(saved, 2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editor!.state.selection).toBeInstanceOf(TextSelection);
+    expect(editor!.state.selection.eq(selectionBeforeEcho)).toBe(true);
+    expect(editor!.state.doc.textContent).toContain("紧跟输入");
+    expect(editor!.state.doc.textContent).toContain("文末");
+    expect(echoDocChanges).toBe(0);
   });
 
   it("播放 presentationRun 时即使用户不可编辑也挂载 TipTap,结束后可切回编辑态", async () => {

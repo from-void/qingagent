@@ -216,6 +216,37 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
   });
 
+  it("语法完整但 finishReason=length 的稿不入候选池，正常 stop 稿可当选", async () => {
+    const { tool, state } = await makeTool();
+    streamInnerModelMock
+      .mockResolvedValueOnce({ raw: qingmlParagraph("截".repeat(100)), contentStartMs: 0, finishReason: "length" })
+      .mockResolvedValueOnce({ raw: qingmlParagraph("正".repeat(95)), contentStartMs: 0, finishReason: "stop" })
+      .mockResolvedValueOnce({ raw: qingmlParagraph("余".repeat(80)), contentStartMs: 0, finishReason: "stop" })
+      .mockResolvedValueOnce({ raw: qingmlParagraph("备".repeat(70)), contentStartMs: 0, finishReason: "stop" });
+
+    const out = await run(tool, { title: "t", outline: "o", lengthTarget: 100 });
+
+    expect(out).toMatchObject({ ok: true, wordCount: 95, lengthStatus: "accepted_first_pass" });
+    const { pmToPlainText } = await import("@qingagent/pm-schema");
+    expect(pmToPlainText(state.docDraftCandidateDoc!).startsWith("正")).toBe(true);
+  });
+
+  it("全部 lane 都因长度截断时返回明确失败诊断", async () => {
+    const { tool, state } = await makeTool();
+    streamInnerModelMock.mockResolvedValue({
+      raw: qingmlParagraph("完整语法但被截断"),
+      contentStartMs: 0,
+      finishReason: "max_tokens",
+    });
+
+    const out = await run(tool, { title: "t", outline: "o" });
+
+    expect(out.ok).toBe(false);
+    expect((out as { error?: string }).error).toContain("达到输出长度上限而截断");
+    expect((out as { error?: string }).error).toContain('"length_truncated":4');
+    expect(state.docDraftCandidateDoc).toBeNull();
+  });
+
   it("赛马路数锁死 4:env 不再改变 lane 数", async () => {
     process.env.QINGAGENT_RACE_LANES = "2";
     process.env.QINGAGENT_RACE_ROUNDS = "1";

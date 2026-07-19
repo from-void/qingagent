@@ -24,5 +24,6 @@ describe("failureKindFromError:区分超时被掐 vs 真 QingML 结构错", () =
     expect(failureKindFromError(new Error("Unexpected end of JSON"), null)).toBe("unclosed_brackets");
     expect(failureKindFromError(new Error("unterminated string"), null)).toBe("unescaped_quote");
     expect(failureKindFromError(new Error("whatever"), "length")).toBe("length_truncated");
+    expect(failureKindFromError(new Error("whatever"), "max_tokens")).toBe("length_truncated");
   });
 });

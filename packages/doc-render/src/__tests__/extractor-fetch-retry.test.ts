@@ -197,4 +197,34 @@ describe("extractArticleContent fetch 轻量重试", () => {
     );
     expect(cancel).toHaveBeenCalledTimes(1);
   });
+
+  it("主抓取收到非 2xx 响应时取消未读取的响应体", async () => {
+    const body = new ReadableStream<Uint8Array>({ pull() {} });
+    const response = new Response(body, {
+      status: 404,
+      headers: { "content-type": "text/html" },
+    });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    __setPinnedFetchForTest(vi.fn<TestPinnedFetch>(async () => response));
+
+    await expect(extractArticleContent("https://example.com/not-found")).rejects.toThrow(
+      /HTTP 404/,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("主抓取放弃非 HTML 响应时取消响应体", async () => {
+    const body = new ReadableStream<Uint8Array>({ pull() {} });
+    const response = new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/zip" },
+    });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    __setPinnedFetchForTest(vi.fn<TestPinnedFetch>(async () => response));
+
+    await expect(extractArticleContent("https://example.com/archive.zip")).rejects.toThrow(
+      /\[unsupported-content\]/,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 });

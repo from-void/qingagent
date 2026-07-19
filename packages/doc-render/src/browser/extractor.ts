@@ -434,6 +434,11 @@ async function readResponseBodyLimited(
   return Buffer.concat(chunks, totalBytes);
 }
 
+/** 放弃读取响应时主动释放底层流，避免连接长期占用。 */
+async function cancelResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 function charsetFromContentType(contentType: string | null): string | null {
   const match = contentType?.match(/charset\s*=\s*"?([^";\s]+)/i);
   return match?.[1]?.toLowerCase() ?? null;
@@ -932,7 +937,10 @@ async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | 
       `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=${m[1]}&rettype=xml&retmode=xml`,
     );
     const { response } = await fetchWithSsrfGuard(efetchUrl);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      return null;
+    }
     const xml = (await readResponseBodyLimited(response, MAX_HTML_BYTES, "HTML")).toString("utf-8");
     const $x = cheerio.load(xml, { xmlMode: true });
     const title = cleanText($x("article-title").first().text());
@@ -963,6 +971,7 @@ export async function extractArticleContent(
   const { url: finalUrl, response } = await fetchWithSsrfGuard(initialUrl, adapter?.headers);
 
   if (!response.ok) {
+    await cancelResponseBody(response);
     throw new Error(`Failed to fetch ${finalUrl.toString()}: HTTP ${response.status}`);
   }
 
@@ -991,6 +1000,7 @@ export async function extractArticleContent(
   }
   // 其它非 HTML 二进制(下载附件 / 图片 / 压缩包等)不能喂给 cheerio——会爆栈,浏览器降级也救不了。
   if (isUnsupportedForHtmlExtraction(contentType, response.headers.get("content-disposition"))) {
+    await cancelResponseBody(response);
     throw new Error(
       `${UNSUPPORTED_CONTENT_ERROR_PREFIX} 非 HTML 内容(${contentType || "下载附件"}),无法按网页正文解析`,
     );

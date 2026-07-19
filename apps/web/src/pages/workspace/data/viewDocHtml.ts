@@ -1,7 +1,7 @@
 import { flattenNestedTablesInCells, legacySectionsToPm, pmToClipboardHtml, upgradeMermaidCodeBlocksToDiagram, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
-import { normalizeImageAlign } from "../ImageView";
-import { viewDocSpanText } from "../../data/protocol";
-import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "../../data/protocol";
+import { normalizeImageAlign } from "./imageAlign";
+import { viewDocSpanText } from "./protocol";
+import type { ViewBlock, ViewDocSpan, ViewDocumentSnapshot } from "./protocol";
 
 export function viewDocToPm(doc: ViewDocumentSnapshot): PmDoc {
   // 装载侧安全网:把任何"伪装成代码块的 mermaid"升级回 diagram 块,绝不让图表渲染成死代码、丢可视化编辑入口

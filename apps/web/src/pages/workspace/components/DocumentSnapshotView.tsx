@@ -127,7 +127,7 @@ export {
 } from "./doc/structureNodes";
 import { pickFile } from "./doc/pickFile";
 export { pickFile } from "./doc/pickFile";
-import { hasMissingPresentationBlockId, viewDocToPm, viewSectionsToHtml } from "./doc/viewDocHtml";
+import { hasMissingPresentationBlockId, viewDocToPm, viewSectionsToHtml } from "../data/viewDocHtml";
 import { BlockHandle } from "./doc/BlockHandle";
 import { LinkHoverCard } from "./doc/LinkHoverCard";
 import { PatchHoverLayer } from "./doc/PatchHoverLayer";

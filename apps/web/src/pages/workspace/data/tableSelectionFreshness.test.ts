@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { tableSelectionTextSignature } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
-import type { ChatInputSnapshot } from "../components/ChatInput";
+import type { ChatInputSnapshot } from "./chatInputTypes";
 import { staleTableSelectionChipIndices } from "./tableSelectionFreshness";
 
 function tableDoc(text = "A1"): PmDoc {

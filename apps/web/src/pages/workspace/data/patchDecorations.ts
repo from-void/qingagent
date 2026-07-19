@@ -3,7 +3,7 @@ import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
+import { viewSectionsToHtml } from "./viewDocHtml";
 import { createNativeCursorWidget } from "./nativePresentationPm";
 import { splitGraphemes } from "./presentationSpans";
 import type { DocSuggestion } from "./protocol";

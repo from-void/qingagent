@@ -23,7 +23,7 @@ import {
   textAlignStyle,
 } from "./PmStaticView";
 import { placePatchPopupByAnchorRect } from "./patchHover";
-import { viewSectionToLegacy } from "./viewDocHtml";
+import { viewSectionToLegacy } from "../../data/viewDocHtml";
 
 const ROW_POPUP_HIDE_DELAY_MS = 160;
 const ReviewLocalPopupSuppressedContext = createContext(false);

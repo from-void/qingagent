@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../data/protocol";
-import { viewSectionsToHtml } from "../components/doc/viewDocHtml";
+import { viewSectionsToHtml } from "../data/viewDocHtml";
 import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 
 // round-1 真机端到端发现的根因回归:生成的图表在编辑器里显示成代码块。

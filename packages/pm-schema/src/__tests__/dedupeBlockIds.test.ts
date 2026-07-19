@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { Editor, Extension, type AnyExtension, type JSONContent } from "@tiptap/core";
-import { Plugin } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, TableMap, handlePaste } from "@tiptap/pm/tables";
 import { describe, expect, it } from "vitest";
 import { applyBlockEdits } from "../ai-ir/applyBlockEdits";
@@ -67,6 +67,23 @@ function taskItem(blockId: string, content: JSONContent[], checked = false): JSO
   return { type: "taskItem", attrs: { blockId, checked }, content };
 }
 
+function blockMath(blockId: string, latex: string): JSONContent {
+  return { type: "blockMath", attrs: { blockId, latex } };
+}
+
+function fileAttachment(blockId: string): JSONContent {
+  return {
+    type: "fileAttachment",
+    attrs: {
+      blockId,
+      fileId: "file-r9",
+      filename: "brief.pdf",
+      mimeType: "application/pdf",
+      size: 42,
+    },
+  };
+}
+
 function collectBlockIds(value: BlockIdDoc): string[] {
   const ids: string[] = [];
   const visit = (node: BlockIdDoc) => {
@@ -84,6 +101,17 @@ function insertTopLevel(editor: Editor, content: JSONContent) {
 
 function insertHtmlAtEnd(editor: Editor, html: string) {
   expect(editor.commands.insertContentAt(editor.state.doc.content.size, html)).toBe(true);
+}
+
+function pressEnter(editor: Editor): boolean {
+  const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  let handled = false;
+  editor.view.someProp("handleKeyDown", (handler) => {
+    const result = handler(editor.view, event);
+    handled = handled || result === true;
+    return result === true;
+  });
+  return handled;
 }
 
 function topLevelBlocks(editor: Editor): BlockIdDoc[] {
@@ -200,6 +228,67 @@ const AppendLocalDuplicateAfterRemote = Extension.create({
 });
 
 describe("DedupeBlockIds", () => {
+  it("R9：原子块后 Enter 新建的段落在本地事务内获得 blockId", () => {
+    const editor = createEditor(doc([
+      paragraph("before", "前文"),
+      blockMath("math", "E=mc^2"),
+      paragraph("tail", "文末"),
+    ]));
+    try {
+      const mathPos = editor.state.doc.child(0).nodeSize;
+      const math = editor.state.doc.nodeAt(mathPos);
+      expect(math).not.toBeNull();
+      editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, mathPos)));
+
+      expect(pressEnter(editor)).toBe(true);
+      expect(editor.state.selection).toBeInstanceOf(TextSelection);
+      expect(editor.state.selection.from).toBe(mathPos + math!.nodeSize + 1);
+      editor.view.dispatch(editor.state.tr.insertText("紧跟输入", editor.state.selection.from));
+      const blocks = topLevelBlocks(editor);
+      expect(blocks.map((block) => block.type)).toEqual([
+        "paragraph",
+        "blockMath",
+        "paragraph",
+        "paragraph",
+      ]);
+      expect(blocks[2]?.attrs?.blockId).toMatch(/^block-inserted(?:~\d+)?$/);
+      expect(blocks[2]?.content?.[0]?.text).toBe("紧跟输入");
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
+  it("R9：附件后 Enter 新段的 blockId 与输入位置在本地事务内稳定", () => {
+    const editor = createEditor(doc([
+      paragraph("before", "前文"),
+      fileAttachment("file"),
+      paragraph("tail", "文末"),
+    ]));
+    try {
+      const filePos = editor.state.doc.child(0).nodeSize;
+      const file = editor.state.doc.nodeAt(filePos);
+      expect(file).not.toBeNull();
+      editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, filePos)));
+
+      expect(pressEnter(editor)).toBe(true);
+      expect(editor.state.selection).toBeInstanceOf(TextSelection);
+      expect(editor.state.selection.from).toBe(filePos + file!.nodeSize + 1);
+      editor.view.dispatch(editor.state.tr.insertText("附件后输入", editor.state.selection.from));
+
+      const blocks = topLevelBlocks(editor);
+      expect(blocks.map((block) => block.type)).toEqual([
+        "paragraph",
+        "fileAttachment",
+        "paragraph",
+        "paragraph",
+      ]);
+      expect(blocks[2]?.attrs?.blockId).toMatch(/^block-inserted(?:~\d+)?$/);
+      expect(blocks[2]?.content?.[0]?.text).toBe("附件后输入");
+    } finally {
+      destroyEditor(editor);
+    }
+  });
+
   it("真实 EditorView paste 事件复制整行后，全文档唯一且 AI 编辑可用", () => {
     const editor = createEditor(doc([
       table("table-1", [["a1", "a2"], ["b1", "b2"], ["c1", "c2"]]),

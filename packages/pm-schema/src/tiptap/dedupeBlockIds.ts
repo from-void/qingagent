@@ -38,8 +38,14 @@ export const DedupeBlockIds = Extension.create({
             !shouldSkipDedupeTransaction(tr));
           if (!hasLocalDocChange) return null;
 
-          const pasteRanges = collectPasteInsertedRanges(transactions);
-          const missing = pasteRanges.length > 0 ? collectMissingBlockIds(newState.doc, pasteRanges) : [];
+          // 新建段落不只来自粘贴：原子块后的 Enter 也会由 ProseMirror 插入一个没有
+          // blockId 的 paragraph。若等到保存归一化才补 ID，版本回声会被后续缺 ID
+          // 修复路径整篇 setContent，进而重置当前选区。因此所有本地插入都在同一
+          // appendTransaction 内补齐 ID；远端事务仍严格跳过。
+          const insertedRanges = collectLocalInsertedRanges(transactions);
+          const missing = insertedRanges.length > 0
+            ? collectMissingBlockIds(newState.doc, insertedRanges)
+            : [];
           return buildDedupeBlockIdsTransaction(newState, missing);
         },
       }),
@@ -66,7 +72,7 @@ function buildDedupeBlockIdsTransaction(
   const reserved = new Set(occurrences.map((occurrence) => occurrence.blockId));
   const tr = state.tr;
   for (const item of missing) {
-    const nextBlockId = allocateUniqueBlockId("block-pasted", reserved);
+    const nextBlockId = allocateUniqueBlockId("block-inserted", reserved);
     reserved.add(nextBlockId);
     tr.setNodeMarkup(item.pos, undefined, { ...item.node.attrs, blockId: nextBlockId }, item.node.marks);
   }
@@ -112,10 +118,10 @@ function collectMissingBlockIds(doc: PmNode, ranges: readonly { from: number; to
   return missing;
 }
 
-function collectPasteInsertedRanges(transactions: readonly Transaction[]): Array<{ from: number; to: number }> {
+function collectLocalInsertedRanges(transactions: readonly Transaction[]): Array<{ from: number; to: number }> {
   const ranges: Array<{ from: number; to: number }> = [];
   for (const tr of transactions) {
-    if (tr.getMeta("uiEvent") !== "paste") continue;
+    if (!tr.docChanged || tr.getMeta(DEDUPE_META) || shouldSkipDedupeTransaction(tr)) continue;
     for (const step of tr.steps) {
       step.getMap().forEach((_oldStart, _oldEnd, newStart, newEnd) => {
         if (newEnd > newStart) ranges.push({ from: newStart, to: newEnd });

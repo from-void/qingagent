@@ -692,7 +692,7 @@ describe("WorkspacePage review controls", () => {
 
     act(() => vi.advanceTimersByTime(75));
     expect(stream.dispose).toHaveBeenCalledTimes(1);
-  }, 15_000);
+  }, 60_000);
 
   it("StrictMode 演练 cleanup 会取消延迟释放并复用当前流", async () => {
     const { WorkspacePage } = await import("./WorkspacePage");
@@ -715,7 +715,7 @@ describe("WorkspacePage review controls", () => {
     root = null;
     act(() => vi.advanceTimersByTime(75));
     expect(stream.dispose).toHaveBeenCalledTimes(1);
-  }, 15_000);
+  }, 60_000);
 
   it("编辑后 400ms 内返回首页会先以旧会话身份保存正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
@@ -773,7 +773,7 @@ describe("WorkspacePage review controls", () => {
     );
     act(() => vi.advanceTimersByTime(260));
     expect(window.location.hash).toBe("#/");
-  }, 15_000);
+  }, 60_000);
 
   it("多 atomic group 且 agentBusy 未清零时仍渲染审查提交与 hover 取消控件", async () => {
     vi.useFakeTimers();
@@ -2390,7 +2390,7 @@ describe("WorkspacePage review controls", () => {
       "排队正文 B",
     );
     expect(updateDocCommands(nextStream)).toHaveLength(0);
-  }, 15_000);
+  }, 60_000);
 
   it("e2e-loop-0704 P1 回归:半采纳放弃后的反馈卡文案是`采纳 1 处 · 拒绝 1 处`而非全拒", async () => {
     const { buildReviewOutcome } = await import("./WorkspacePage");

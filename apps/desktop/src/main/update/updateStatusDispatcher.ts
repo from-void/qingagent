@@ -22,6 +22,10 @@ export class UpdateStatusDispatcher {
     this.sendToCurrentWindow(payload);
   }
 
+  getStatus(): UpdateStatusPayload {
+    return this.cachedStatus ?? { kind: "none" };
+  }
+
   private sendToCurrentWindow(payload: UpdateStatusPayload): void {
     const window = this.window;
     if (!window || window.isDestroyed()) return;

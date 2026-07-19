@@ -43,7 +43,7 @@ test("首窗销毁后 update-downloaded 状态只发送给新窗口", () => {
   assert.deepEqual(second.received, [downloaded]);
 });
 
-test("关窗期间到达的重要状态在新窗口注册后重放一次", () => {
+test("关窗期间到达的重要状态在新窗口注册后重放一次，同窗口二次注册仍保留缓存", () => {
   const dispatcher = new UpdateStatusDispatcher();
   const first = fakeWindow();
   dispatcher.setWindow(first.window);
@@ -61,4 +61,13 @@ test("关窗期间到达的重要状态在新窗口注册后重放一次", () =>
 
   assert.deepEqual(first.received, []);
   assert.deepEqual(second.received, [downloaded]);
+  assert.deepEqual(dispatcher.getStatus(), downloaded);
+});
+
+test("未缓存重要状态时查询返回中性 none", () => {
+  const dispatcher = new UpdateStatusDispatcher();
+  assert.deepEqual(dispatcher.getStatus(), { kind: "none" });
+
+  dispatcher.dispatch({ kind: "error" });
+  assert.deepEqual(dispatcher.getStatus(), { kind: "none" });
 });

@@ -21,10 +21,30 @@ function ensureAttached(): void {
   if (detachIpc) return;
   const electron = window.electron;
   if (!electron?.isDesktop || !electron.onUpdateStatus) return;
-  detachIpc = electron.onUpdateStatus((payload) => {
-    snapshot = payload as DesktopUpdateStatus;
-    for (const listener of [...listeners]) listener();
+  let active = true;
+  let receivedPush = false;
+  const detach = electron.onUpdateStatus((payload) => {
+    receivedPush = true;
+    publish(payload as DesktopUpdateStatus);
   });
+  detachIpc = () => {
+    active = false;
+    detach();
+  };
+
+  // 先订阅再查询，补齐 reload/挂载晚于主进程 push 的窗口；查询期间若收到新 push，
+  // 以实时 push 为准，避免较旧的查询结果反向覆盖。
+  void electron.getUpdateStatus?.().then((payload) => {
+    if (!active || receivedPush) return;
+    publish(payload as DesktopUpdateStatus);
+  }).catch(() => {
+    // 查询失败只失去回放能力，实时 push 仍继续工作。
+  });
+}
+
+function publish(payload: DesktopUpdateStatus): void {
+  snapshot = payload;
+  for (const listener of [...listeners]) listener();
 }
 
 export function subscribeDesktopUpdate(listener: Listener): () => void {

@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.on("qingagent:update-status", listener);
     return () => ipcRenderer.removeListener("qingagent:update-status", listener);
   },
+  getUpdateStatus: () =>
+    ipcRenderer.invoke("qingagent:update-status-get") as Promise<UpdateStatusPayload>,
   quitAndInstall: () => ipcRenderer.invoke("qingagent:update-quit-install"),
   openDownloadPage: () => ipcRenderer.invoke("qingagent:update-open-download"),
   appVersion,

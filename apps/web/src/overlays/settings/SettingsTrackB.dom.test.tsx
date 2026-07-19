@@ -511,6 +511,15 @@ describe("About Panel", () => {
     expect(quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
+  it("挂载订阅后查询到下载就绪态会立即显示重启更新", async () => {
+    const getUpdateStatus = vi.fn(async () => ({ kind: "soft-ready" as const, version: "1.3.0" }));
+    installAboutElectron({ getUpdateStatus });
+    await renderAbout();
+
+    await vi.waitFor(() => expect(getButtonByWf("AboutUpdateButton").textContent).toContain("重启更新"));
+    expect(getUpdateStatus).toHaveBeenCalledTimes(1);
+  });
+
   it("开发构建按钮禁用且提示不参与更新", async () => {
     installAboutElectron({ appVersion: "1.2.0-dev.3" });
     await renderAbout();
@@ -553,6 +562,7 @@ function installAboutElectron(overrides: Record<string, unknown>): void {
         aboutPushCallbacks = aboutPushCallbacks.filter((item) => item !== cb);
       };
     },
+    getUpdateStatus: vi.fn(async () => ({ kind: "none" as const })),
     quitAndInstall: vi.fn(async () => undefined),
     openDownloadPage: vi.fn(async () => undefined),
     checkForUpdate: vi.fn(async () => ({ kind: "none" as const })),

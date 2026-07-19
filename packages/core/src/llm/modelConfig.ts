@@ -88,6 +88,8 @@ export interface BranchCallInput {
     accumulated: string,
     observedAt: number,
   ) => void | Promise<void>;
+  /** 原始流首次出现正文 delta 时触发；只传时机，不代表文本已通过 tool/lease 验真。 */
+  onRawContentStart?: (observedAt: number) => void | Promise<void>;
   /** 原始响应每次有网络活动即触发；不代表文本已通过 tool/lease 验真。 */
   onActivity?: () => void | Promise<void>;
   /** 验真通过后按 provider 原始粒度顺序回放文本 delta。 */
@@ -154,6 +156,7 @@ async function readRawBranchResponse(
   response: Response,
   onActivity?: BranchCallInput["onActivity"],
   maxBufferedTextBytes?: number,
+  onRawContentStart?: BranchCallInput["onRawContentStart"],
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
@@ -184,6 +187,7 @@ async function readRawBranchResponse(
       const observedAt = Date.now();
       state.textDeltas.push({ text: delta, observedAt });
       state.firstTextAt = observedAt;
+      await onRawContentStart?.(observedAt);
     }
     return state;
   }
@@ -213,7 +217,10 @@ async function readRawBranchResponse(
       }
       const observedAt = Date.now();
       state.textDeltas.push({ text: delta, observedAt });
-      state.firstTextAt ??= observedAt;
+      if (state.firstTextAt === null) {
+        state.firstTextAt = observedAt;
+        await onRawContentStart?.(observedAt);
+      }
     }
   };
   try {
@@ -533,6 +540,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         response,
         input.onActivity,
         input.maxBufferedTextBytes,
+        input.onRawContentStart,
       );
       if (raw.firstTextAt !== null) {
         tFirstDelta = raw.firstTextAt;

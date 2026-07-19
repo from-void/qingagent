@@ -45,9 +45,15 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
   const startedAt = Date.now();
   const snapshot = input.branchSteeringTail ? getSessionSnapshot(input.requestContext) : null;
   let branchAttempts = 0;
+  let contentStartMs: number | null = null;
+  const markContentStarted = (observedAt?: number) => {
+    if (contentStartMs !== null) return;
+    const detectedAt = observedAt ?? Date.now();
+    contentStartMs = detectedAt - startedAt;
+    input.onContentStart?.(contentStartMs, observedAt);
+  };
   if (snapshot && input.branchSteeringTail) {
     // SIDECHANNEL_PHASE2_EXEMPT: fallback attempt 必须叠加 branch attempts；统一入口当前不暴露该计数。
-    let contentStartMs: number | null = null;
     const branched = await branchCall({
       sessionSnapshot: snapshot,
       steeringTail: input.branchSteeringTail,
@@ -64,11 +70,10 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       onActivity: () => {
         input.onActivity?.();
       },
+      onRawContentStart: (observedAt) => {
+        markContentStarted(observedAt);
+      },
       onTextDelta: (delta, raw, observedAt) => {
-        if (contentStartMs === null) {
-          contentStartMs = observedAt - startedAt;
-          input.onContentStart?.(contentStartMs, observedAt);
-        }
         input.onContentDelta?.(delta, raw, observedAt);
       },
     });
@@ -112,7 +117,6 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
   });
 
   let raw = "";
-  let contentStartMs: number | null = null;
   let finishReason: string | null = null;
   for await (const part of result.fullStream) {
     input.onActivity?.();
@@ -124,10 +128,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       continue;
     }
     if (part.type !== "text-delta" || !part.text) continue;
-    if (contentStartMs === null) {
-      contentStartMs = Date.now() - startedAt;
-      input.onContentStart?.(contentStartMs);
-    }
+    markContentStarted();
     raw += part.text;
     input.onContentDelta?.(part.text, raw);
   }

@@ -84,10 +84,12 @@ describe("streamInnerModel", () => {
     getSessionSnapshotMock.mockReturnValue(snapshot);
     branchCallMock.mockImplementationOnce(async (input: {
       onActivity?: () => void;
+      onRawContentStart?: (observedAt: number) => void;
       onTextDelta?: (delta: string, raw: string) => void;
     }) => {
       input.onActivity?.();
       input.onActivity?.();
+      input.onRawContentStart?.(Date.now());
       input.onTextDelta?.("甲乙", "甲乙");
       return { ok: true, text: "甲乙", finishReason: "stop", attempts: 1, toolCallRetries: 0 };
     });
@@ -126,10 +128,14 @@ describe("streamInnerModel", () => {
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
-  it("BranchCall 单次失败时完整降级原 streamText 路径", async () => {
+  it("BranchCall 见字后失败时完整降级原 streamText 路径，且不重复上报内容启动", async () => {
     getSessionSnapshotMock.mockReturnValue({ sessionId: "s" });
-    branchCallMock.mockImplementationOnce(async (input: { onActivity?: () => void }) => {
+    branchCallMock.mockImplementationOnce(async (input: {
+      onActivity?: () => void;
+      onRawContentStart?: (observedAt: number) => void;
+    }) => {
       input.onActivity?.();
+      input.onRawContentStart?.(Date.now());
       return {
         ok: false,
         reason: "tool_call",

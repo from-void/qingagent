@@ -325,13 +325,16 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     await expect(pending).resolves.toMatchObject({ reason: "stale_snapshot", attempts: 1 });
   });
 
-  it("完整响应验真前不派发文本回调", async () => {
+  it("原始流首字立即上报时机，完整响应验真后才派发文本回调", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-buffered", "stream-main");
     beginSessionSnapshotTurn(requestContext);
     await triggerProviderFetch(requestContext, "main-prefix");
     const snapshot = getSessionSnapshot(requestContext)!;
+    const startedAt = Date.now();
+    let now = startedAt;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     const encoder = new TextEncoder();
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     fetchMock.mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({
@@ -340,7 +343,10 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       },
     }), { headers: { "content-type": "text/event-stream" } }));
     const deltas: string[] = [];
+    const events: string[] = [];
+    const rawStarts: number[] = [];
     let activities = 0;
+    let settled = false;
     const pending = branchCall({
       sessionSnapshot: snapshot,
       steeringTail: "直接回答",
@@ -348,15 +354,27 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext,
       streamTextDeltas: true,
       onActivity: () => { activities += 1; },
-      onTextDelta: (delta) => { deltas.push(delta); },
+      onRawContentStart: (observedAt) => {
+        rawStarts.push(observedAt);
+        events.push(`raw:${observedAt}`);
+      },
+      onTextDelta: (delta, _raw, observedAt) => {
+        deltas.push(delta);
+        events.push(`replay:${observedAt}:at:${Date.now()}`);
+      },
     });
+    void pending.then(() => { settled = true; });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    now = startedAt + 2_000;
     streamController.enqueue(encoder.encode(
       'data: {"choices":[{"delta":{"content":"暂存"},"finish_reason":null}]}\n\n',
     ));
-    await vi.waitFor(() => expect(activities).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(rawStarts).toEqual([startedAt + 2_000]));
+    expect(activities).toBeGreaterThan(0);
+    expect(settled).toBe(false);
     expect(deltas).toEqual([]);
 
+    now = startedAt + 20_000;
     streamController.enqueue(encoder.encode(
       'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
     ));
@@ -364,6 +382,10 @@ describe("BranchCall provider 快照与 raw 回放", () => {
 
     await expect(pending).resolves.toMatchObject({ ok: true, text: "暂存" });
     expect(deltas).toEqual(["暂存"]);
+    expect(events).toEqual([
+      `raw:${startedAt + 2_000}`,
+      `replay:${startedAt + 2_000}:at:${startedAt + 20_000}`,
+    ]);
   });
 
   it("text delta 后出现 tool_calls 时丢弃全部外部 delta", async () => {
@@ -380,6 +402,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       "",
     ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
     const deltas: string[] = [];
+    const rawStarts: number[] = [];
 
     const result = await branchCall({
       sessionSnapshot: snapshot,
@@ -387,10 +410,12 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       callSite: "planDraft",
       requestContext,
       streamTextDeltas: true,
+      onRawContentStart: (observedAt) => { rawStarts.push(observedAt); },
       onTextDelta: (delta) => { deltas.push(delta); },
     });
 
     expect(result).toEqual({ ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 });
+    expect(rawStarts).toHaveLength(1);
     expect(deltas).toEqual([]);
   });
 

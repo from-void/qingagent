@@ -113,7 +113,10 @@ export function createGatedExecuteCommandTool({
     id: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
     description:
       "Execute a shell command in the workspace sandbox. " +
-      "Install, external-send, and destructive effects require explicit user approval.",
+      "Install, external-send, and destructive effects require explicit user approval. " +
+      "Commands that block waiting for user authorization (QR-scan / login / init flows that " +
+      "print an auth link then wait) MUST run with background:true; then poll " +
+      "mastra_workspace_get_process_output for the auth URL and present it via show_qr.",
     inputSchema: executeCommandInputSchema,
     requireApproval: (input) => {
       try {

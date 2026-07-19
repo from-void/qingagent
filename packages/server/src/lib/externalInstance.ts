@@ -85,6 +85,8 @@ async function writeInstanceFile(filePath: string, info: ExternalInstanceInfo): 
 function installCleanupHooks(filePath: string): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
+  // 信号退出权由 crashGuard 独占：它会先等待活跃轮次、会话持久化与观测 flush，
+  // 最后调用 process.exit。这里仅保留同步 exit 兜底，避免异步清理抢先结束进程。
   process.once("exit", () => {
     if (existsSync(filePath) && instanceFileOwnedByCurrentProcessSync(filePath)) {
       try {
@@ -94,11 +96,6 @@ function installCleanupHooks(filePath: string): void {
       }
     }
   });
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => {
-      void stopExternalInstance(filePath).finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
-    });
-  }
 }
 
 async function instanceFileOwnedByCurrentProcess(filePath: string): Promise<boolean> {

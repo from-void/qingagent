@@ -103,6 +103,9 @@ interface GracefulShutdownDeps {
   flushObservability?: () => Promise<void>;
 }
 
+/** 仅供真实信号子进程测试替换慢阶段；生产默认始终走 best-effort 实现。 */
+let signalShutdownDepsForTest: GracefulShutdownDeps | undefined;
+
 async function runShutdownPhase(
   label: string,
   timeoutMs: number,
@@ -196,7 +199,8 @@ async function drainActiveTurnsBestEffort(): Promise<void> {
 async function drainSessionPersistenceBestEffort(): Promise<void> {
   try {
     const core = await import("@qingagent/core");
-    await core.drainSessionPersistence?.(4_000);
+    // 略短于外层 4s phase，确保 core 有机会先记录“仍有未保存会话”的明确日志。
+    await core.drainSessionPersistence?.(3_800);
   } catch (err) {
     durableLogSync("warn", "session persistence drain failed during shutdown", {
       error: err instanceof Error ? err.message : String(err),
@@ -274,8 +278,8 @@ export function installCrashGuard(): void {
   });
 
   // 3) SIGTERM / SIGINT：优雅关闭（flush observability + 关 DB stream + exit）。
-  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
-  process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest));
+  process.on("SIGINT", () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest));
 }
 
 // 自安装：crashGuard 被 import 的瞬间就装 handler。ES module import 会先于同模块内
@@ -294,6 +298,11 @@ export async function gracefulShutdownForTest(
 
 export function __resetCrashGuardForTest(): void {
   shuttingDown = false;
+  signalShutdownDepsForTest = undefined;
+}
+
+export function __setSignalShutdownDepsForTest(deps: GracefulShutdownDeps): void {
+  signalShutdownDepsForTest = deps;
 }
 
 export { durableLog, LOG_PATH };

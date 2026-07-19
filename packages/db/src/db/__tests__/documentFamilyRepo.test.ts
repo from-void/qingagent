@@ -132,8 +132,13 @@ describe("migration 0002 orphan cleanup", () => {
     const client = getDocumentsClient();
     await runMigrations([migration0001Baseline]);
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
-    await client.execute("INSERT INTO mastra_threads (id) VALUES ('alive-thread')");
+    await client.execute(
+      "INSERT INTO mastra_threads (id) VALUES ('alive-thread'), ('alive-thread-2'), ('alive-thread-3'), ('alive-thread-4')",
+    );
     await seedFamily(client, "alive-doc", "alive-thread");
+    await seedFamily(client, "alive-doc-2", "alive-thread-2");
+    await seedFamily(client, "alive-doc-3", "alive-thread-3");
+    await seedFamily(client, "alive-doc-4", "alive-thread-4");
     await seedFamily(client, "orphan-doc", "missing-thread");
 
     const result = await runMigrations([
@@ -144,5 +149,29 @@ describe("migration 0002 orphan cleanup", () => {
     expect(result.appliedIds).toEqual([2]);
     expect(await familyCount(client, "orphan-doc", "missing-thread")).toBe(0);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
+    expect(await count(client, "SELECT COUNT(*) AS n FROM documents")).toBe(4);
+  });
+
+  it("mastra_threads 非空但孤儿占比高时视为线程表不完整并全部保留", async () => {
+    const client = getDocumentsClient();
+    await runMigrations([migration0001Baseline]);
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute("INSERT INTO mastra_threads (id) VALUES ('alive-thread')");
+    await seedFamily(client, "alive-doc", "alive-thread");
+    await seedFamily(client, "preserved-orphan-1", "missing-thread-1");
+    await seedFamily(client, "preserved-orphan-2", "missing-thread-2");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await runMigrations([
+      migration0001Baseline,
+      migration0002OrphanCleanup,
+    ]);
+
+    expect(result.appliedIds).toEqual([2]);
+    expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
+    expect(await familyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(5);
+    expect(await familyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("mastra_threads 可能不完整"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orphans=2"));
   });
 });

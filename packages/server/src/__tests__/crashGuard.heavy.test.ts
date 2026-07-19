@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,18 +8,28 @@ import { __resetCrashGuardForTest, gracefulShutdownForTest } from "../crashGuard
 
 const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
-function waitForStartup(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(), timeoutMs);
-    child.once("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.once("exit", (code, signal) => {
-      clearTimeout(timer);
-      reject(new Error(`child exited before startup wait: code=${code} signal=${signal}`));
-    });
-  });
+async function waitForStartup(
+  child: ReturnType<typeof spawn>,
+  readyFile: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `child exited before startup wait: code=${child.exitCode} signal=${child.signalCode}`,
+      );
+    }
+    try {
+      await stat(readyFile);
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  child.kill("SIGKILL");
+  throw new Error(`child startup timeout after ${timeoutMs}ms`);
 }
 
 function waitExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<number | null> {
@@ -67,6 +77,7 @@ describe("crashGuard graceful shutdown", () => {
 
   it("真实 SIGTERM 会进入 crashGuard handler 并正常退出", async () => {
     const logDir = await mkdtemp(join(tmpdir(), "qingagent-crashguard-"));
+    const readyFile = join(logDir, "ready");
     try {
       const child = spawn(
         process.execPath,
@@ -74,19 +85,20 @@ describe("crashGuard graceful shutdown", () => {
           "--import",
           "tsx/esm",
           "-e",
-          "import './src/crashGuard.ts'; console.log('ready'); setInterval(() => {}, 1000);",
+          "import './src/crashGuard.ts'; import { writeFileSync } from 'node:fs'; writeFileSync(process.env.READY_FILE, 'ready'); setInterval(() => {}, 1000);",
         ],
         {
           cwd: SERVER_DIR,
           env: {
             ...process.env,
             QINGAGENT_LOG_DIR: logDir,
+            READY_FILE: readyFile,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
 
-      await waitForStartup(child, 500);
+      await waitForStartup(child, readyFile, 10_000);
       child.kill("SIGTERM");
       await expect(waitExit(child, 15_000)).resolves.toBe(0);
 
@@ -95,6 +107,60 @@ describe("crashGuard graceful shutdown", () => {
       expect(logFile).toBeTruthy();
       const log = await readFile(join(logDir, logFile!), "utf8");
       expect(log).toContain("received SIGTERM, shutting down gracefully");
+      expect(log).toContain("shutdown complete (SIGTERM)");
+    } finally {
+      await rm(logDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("生成中收到 SIGTERM 会完成 drain、清理实例文件并正常退出", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "qingagent-crashguard-active-"));
+    const instanceFile = join(logDir, "instance.json");
+    const activeTurnMarker = join(logDir, "active-turn-drained");
+    const readyFile = join(logDir, "ready");
+    try {
+      const child = spawn(
+        process.execPath,
+        [
+          "--import",
+          "tsx/esm",
+          "-e",
+          [
+            "import { __setSignalShutdownDepsForTest } from './src/crashGuard.ts';",
+            "import { writeFileSync } from 'node:fs';",
+            "import { startExternalInstance } from './src/lib/externalInstance.ts';",
+            "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, flushObservability: async () => {} });",
+            "await startExternalInstance({ port: 52341, version: 'test', filePath: process.env.INSTANCE_FILE });",
+            "writeFileSync(process.env.READY_FILE, 'ready');",
+            "setInterval(() => {}, 1000);",
+          ].join(" "),
+        ],
+        {
+          cwd: SERVER_DIR,
+          env: {
+            ...process.env,
+            ACTIVE_TURN_MARKER: activeTurnMarker,
+            INSTANCE_FILE: instanceFile,
+            QINGAGENT_LOG_DIR: logDir,
+            READY_FILE: readyFile,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+
+      await waitForStartup(child, readyFile, 10_000);
+      child.kill("SIGTERM");
+      await expect(waitExit(child, 15_000)).resolves.toBe(0);
+
+      await expect(readFile(activeTurnMarker, "utf8")).resolves.toBe("drained");
+      await expect(stat(instanceFile)).rejects.toMatchObject({ code: "ENOENT" });
+      const files = await readdir(logDir);
+      const logFile = files.find((file) => file.startsWith("server-") && file.endsWith(".log"));
+      expect(logFile).toBeTruthy();
+      const log = await readFile(join(logDir, logFile!), "utf8");
+      expect(log).toContain("active_turn_drain completed");
+      expect(log).toContain("session_persistence_drain completed");
+      expect(log).toContain("observability_flush completed");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {
       await rm(logDir, { recursive: true, force: true });

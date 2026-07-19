@@ -19,6 +19,19 @@ afterEach(async () => {
 });
 
 describe("external instance + auth", () => {
+  it("安装清理钩子不会注册 SIGINT/SIGTERM 退出处理器", async () => {
+    const before = {
+      SIGINT: process.listenerCount("SIGINT"),
+      SIGTERM: process.listenerCount("SIGTERM"),
+    };
+    const filePath = await tempInstancePath();
+
+    await startExternalInstance({ port: 52341, version: "test", filePath });
+
+    expect(process.listenerCount("SIGINT")).toBe(before.SIGINT);
+    expect(process.listenerCount("SIGTERM")).toBe(before.SIGTERM);
+  });
+
   it("写出 0600 instance.json,可读回,stop 后删除", async () => {
     const filePath = await tempInstancePath();
     const info = await startExternalInstance({ port: 52341, version: "test", filePath });

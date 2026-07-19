@@ -63,6 +63,8 @@ export const QINGAGENT_RESOURCE_ID = "qingagent-user";
 const LEGACY_RESOURCE_ID = "user-default";
 const PRIMARY_METADATA_WRITE_MAX_ATTEMPTS = 5;
 const PRIMARY_METADATA_WRITE_INITIAL_BACKOFF_MS = 50;
+const SCHEDULE_PERSIST_MAX_ATTEMPTS = 3;
+const SCHEDULE_PERSIST_INITIAL_BACKOFF_MS = 50;
 const CONTENT_TIME_EPOCH = "1970-01-01T00:00:00.000Z";
 
 /** 把任意日期输入收敛成可安全输出的 ISO 字符串；非法值返回 null。 */
@@ -885,6 +887,7 @@ export async function createSessionThread(
 const persistQueues = new Map<string, Promise<void>>();
 const persistDirty = new Map<string, boolean>();
 const persistLoops = new Map<string, Promise<void>>();
+const pendingPersists = new Map<string, { state: SessionState; reason: string }>();
 
 function hasDirtySession(): boolean {
   for (const dirty of persistDirty.values()) {
@@ -900,6 +903,10 @@ function timeoutPromise(ms: number, label: string): Promise<never> {
     }, ms);
     if (typeof timer.unref === "function") timer.unref();
   });
+}
+
+function retryDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isThreadNotFoundError(err: unknown): boolean {
@@ -1052,7 +1059,7 @@ function recordDbWriteSpan(
 
 /**
  * Persist current session state to thread metadata.
- * Fire-and-forget — errors are logged but never thrown.
+ * 写入失败会记录日志并向调用方抛出，避免上层把未落盘误判为成功。
  *
  * Calls are serialised per session: if a persist is already in-flight for
  * this session, the new persist waits for it to finish first. This ensures
@@ -1066,7 +1073,9 @@ export async function persistSessionMetadata(
   const sid = state.sessionId;
   const prev = persistQueues.get(sid) ?? Promise.resolve();
 
-  const current = prev.then(async () => {
+  // 前一笔失败已经向它自己的调用方抛出；当前写仍要继续执行，不能让拒绝态永久
+  // 毒化这个 session 的串行队列。
+  const current = prev.catch(() => undefined).then(async () => {
     try {
       const memory = mastra.getMemory("default");
       if (!memory) return;
@@ -1152,6 +1161,7 @@ export async function persistSessionMetadata(
         reason,
         error: err instanceof Error ? err.message : String(err),
       });
+      throw err;
     }
   });
 
@@ -1159,11 +1169,14 @@ export async function persistSessionMetadata(
 
   // Clean up the queue entry when this persist completes so the map
   // doesn't grow unboundedly across sessions.
-  current.finally(() => {
+  const cleanup = () => {
     if (persistQueues.get(sid) === current) {
       persistQueues.delete(sid);
     }
-  });
+  };
+  // 不用 current.finally(cleanup)：finally 会派生一个无人消费的拒绝 Promise，
+  // 在真实写失败时触发 unhandledRejection。
+  void current.then(cleanup, cleanup);
 
   return current;
 }
@@ -1171,6 +1184,7 @@ export async function persistSessionMetadata(
 export function schedulePersist(state: SessionState, reason = "unspecified"): Promise<void> {
   const sid = state.sessionId;
   persistDirty.set(sid, true);
+  pendingPersists.set(sid, { state, reason });
 
   const existing = persistLoops.get(sid);
   if (existing) {
@@ -1184,22 +1198,42 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
 
   let loop!: Promise<void>;
   loop = (async () => {
+    let exhaustedRetries = false;
     try {
       while (persistDirty.get(sid)) {
-        // 先清 dirty 再写；写库期间的新变更会重新置 dirty,下一轮补写尾部快照。
-        persistDirty.set(sid, false);
-        await persistSessionMetadata(state, reason);
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= SCHEDULE_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+          // 写前清除本轮快照的 dirty；写入期间的新变更会重新置 dirty。失败时必须
+          // 立即回置，确保未保存标记不会被当成成功清掉。
+          persistDirty.set(sid, false);
+          try {
+            await persistSessionMetadata(state, reason);
+            lastError = undefined;
+            break;
+          } catch (err) {
+            lastError = err;
+            persistDirty.set(sid, true);
+            if (attempt < SCHEDULE_PERSIST_MAX_ATTEMPTS) {
+              await retryDelay(SCHEDULE_PERSIST_INITIAL_BACKOFF_MS * 2 ** (attempt - 1));
+            }
+          }
+        }
+
+        if (lastError !== undefined) {
+          exhaustedRetries = true;
+          logger.error("Scheduled session metadata persist exhausted retries; session remains dirty", {
+            sessionId: sid,
+            reason,
+            attempts: SCHEDULE_PERSIST_MAX_ATTEMPTS,
+            error: lastError instanceof Error ? lastError.message : String(lastError),
+          });
+          throw lastError;
+        }
       }
-    } catch (err) {
-      logger.error("Scheduled session metadata persist loop failed", {
-        sessionId: sid,
-        reason,
-        error: err instanceof Error ? err.message : String(err),
-      });
     } finally {
       if (persistLoops.get(sid) === loop) {
         persistLoops.delete(sid);
-        if (persistDirty.get(sid)) {
+        if (persistDirty.get(sid) && !exhaustedRetries) {
           void schedulePersist(state, "reschedule_after_loop_finally").catch((err) => {
             logger.error("Failed to reschedule dirty session metadata persist", {
               sessionId: sid,
@@ -1207,7 +1241,10 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
             });
           });
         } else {
-          persistDirty.delete(sid);
+          if (!persistDirty.get(sid)) {
+            persistDirty.delete(sid);
+            pendingPersists.delete(sid);
+          }
         }
       }
     }
@@ -1218,24 +1255,56 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
 }
 
 export async function drainSessionPersistence(timeoutMs = 4_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   const drain = async () => {
     while (persistLoops.size > 0 || hasDirtySession()) {
-      const loops = Array.from(new Set(persistLoops.values()));
+      let loops = Array.from(new Set(persistLoops.values()));
       if (loops.length === 0) {
-        await Promise.resolve();
-        continue;
+        for (const [sid, pending] of pendingPersists) {
+          if (persistDirty.get(sid)) {
+            const drainReason = pending.reason.startsWith("shutdown_drain:")
+              ? pending.reason
+              : `shutdown_drain:${pending.reason}`;
+            void schedulePersist(pending.state, drainReason).catch(() => {
+              // allSettled(loops) 负责消费拒绝；这里仅避免 fire-and-forget 窗口。
+            });
+          }
+        }
+        loops = Array.from(new Set(persistLoops.values()));
+        if (loops.length === 0) break;
       }
-      await Promise.allSettled(loops);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`drainSessionPersistence timed out after ${timeoutMs}ms`);
+      }
+      await Promise.race([
+        Promise.allSettled(loops),
+        timeoutPromise(remainingMs, "drainSessionPersistence"),
+      ]);
     }
   };
 
-  await Promise.race([drain(), timeoutPromise(timeoutMs, "drainSessionPersistence")]);
+  try {
+    await drain();
+  } catch (err) {
+    const sessionIds = Array.from(persistDirty)
+      .filter(([, dirty]) => dirty)
+      .map(([sid]) => sid);
+    logger.error("会话持久化 drain 超时，仍有未保存会话", {
+      timeoutMs,
+      unsavedSessionCount: sessionIds.length,
+      sessionIds,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 export function __resetSessionPersistenceForTest(): void {
   persistQueues.clear();
   persistDirty.clear();
   persistLoops.clear();
+  pendingPersists.clear();
 }
 
 export function __getSessionPersistenceStateForTest(): {

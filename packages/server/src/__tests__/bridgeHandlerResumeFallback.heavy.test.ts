@@ -395,10 +395,16 @@ describe("handleResume askUser fresh-turn fallback", () => {
   });
 
   it("resumeStream 看门狗与 session 共用取消控制器", async () => {
+    let persistedSessionId: string | null = null;
     vi.useFakeTimers();
     try {
       const bridge = await loadBridge();
       const session = await createCachedSession(bridge);
+      // loadBridge 会 mock server 入口的 createSessionThread，但 processAgentStream
+      // 来自 actualCore，内部仍走真实 schedulePersist。为这个看门狗集成用例补齐
+      // 生产环境必有的 thread，避免 stream_end 写入失败后的退避停在 fake timer 中。
+      await actualCore.createSessionThread(session.sessionId, session.title);
+      persistedSessionId = session.sessionId;
       seedSuspendedAskUserSession(session, "run-watchdog-shared-abort");
       const observed: { controller: AbortController | null } = { controller: null };
 
@@ -428,6 +434,9 @@ describe("handleResume askUser fresh-turn fallback", () => {
       )).toBe(true);
     } finally {
       vi.useRealTimers();
+      if (persistedSessionId) {
+        await actualCore.deleteSessionThread(persistedSessionId);
+      }
     }
   });
 

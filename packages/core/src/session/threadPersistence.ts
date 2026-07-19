@@ -894,6 +894,10 @@ export function markSessionDeleted(sessionId: string): void {
   deletedSessions.add(sessionId);
 }
 
+export function unmarkSessionDeleted(sessionId: string): void {
+  deletedSessions.delete(sessionId);
+}
+
 export function isSessionDeleted(sessionId: string): boolean {
   return deletedSessions.has(sessionId);
 }

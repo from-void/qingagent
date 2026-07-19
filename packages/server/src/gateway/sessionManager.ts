@@ -4,6 +4,7 @@ import {
   deleteSessionThread,
   drainSessionPersistenceForSession,
   markSessionDeleted,
+  unmarkSessionDeleted,
 } from "@qingagent/core";
 import { InMemoryFrameLog, type FrameLog, type LoggedFrame } from "./frameLog";
 import {
@@ -19,6 +20,7 @@ export interface SessionManagerOptions {
   frameLog?: FrameLog;
   maxActors?: number;
   markSessionDeleted?: (sessionId: string) => void;
+  unmarkSessionDeleted?: (sessionId: string) => void;
   drainSessionPersistence?: (sessionId: string, timeoutMs: number) => Promise<void>;
   deleteSessionThread?: (sessionId: string) => Promise<void>;
 }
@@ -40,6 +42,7 @@ interface ActorEntry {
 export class SessionManager {
   readonly frameLog: FrameLog;
   private readonly actors = new Map<string, ActorEntry>();
+  private readonly deletingSessions = new Set<string>();
   private readonly destroyedSessions = new Set<string>();
   private readonly maxActors: number;
 
@@ -49,6 +52,9 @@ export class SessionManager {
   }
 
   submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+    if (this.deletingSessions.has(sessionId)) {
+      return Promise.reject(new Error("Session deletion is in progress"));
+    }
     if (this.destroyedSessions.has(sessionId)) {
       return Promise.reject(new Error("Session has been deleted"));
     }
@@ -77,8 +83,17 @@ export class SessionManager {
   }
 
   async destroySession(sessionId: string, timeoutMs = 5_000): Promise<void> {
-    this.destroyedSessions.add(sessionId);
-    (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId);
+    if (this.destroyedSessions.has(sessionId)) return;
+    if (this.deletingSessions.has(sessionId)) {
+      throw new Error("Session deletion is in progress");
+    }
+    this.deletingSessions.add(sessionId);
+    try {
+      (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId);
+    } catch (error) {
+      this.deletingSessions.delete(sessionId);
+      throw error;
+    }
 
     const entry = this.actors.get(sessionId);
     if (entry) {
@@ -114,7 +129,16 @@ export class SessionManager {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
+    try {
+      await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
+    } catch (error) {
+      this.deletingSessions.delete(sessionId);
+      this.destroyedSessions.delete(sessionId);
+      (this.options.unmarkSessionDeleted ?? unmarkSessionDeleted)(sessionId);
+      throw error;
+    }
+    this.deletingSessions.delete(sessionId);
+    this.destroyedSessions.add(sessionId);
   }
 
   getActorState(sessionId: string): SessionActor["state"] | null {

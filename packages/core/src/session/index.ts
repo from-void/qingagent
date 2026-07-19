@@ -59,6 +59,7 @@ export {
   drainSessionPersistenceForSession,
   isSessionDeleted,
   markSessionDeleted,
+  unmarkSessionDeleted,
   persistSessionMetadata,
   schedulePersist,
   loadSessionFromThread,

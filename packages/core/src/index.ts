@@ -65,6 +65,7 @@ export {
   listSessionThreads,
   loadSessionFromThread,
   markSessionDeleted,
+  unmarkSessionDeleted,
   migrateThreadMetadataToDocuments,
   normalizeAskUserAnswers,
   normalizeQuestionnaireSpecForRestore,

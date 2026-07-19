@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SearchProvider, SearchResult } from "./provider.js";
 import {
   MultiSourceSearchProvider,
@@ -105,5 +105,20 @@ describe("MultiSourceSearchProvider", () => {
       { name: "b2", provider: mockProvider([], 0, true) },
     ]);
     expect(await p.search("q", 5)).toEqual([]);
+  });
+
+  it("把取消 signal 转发给所有并发子 provider", async () => {
+    const firstSearch = vi.fn(async () => [r("https://a.com/1")]);
+    const secondSearch = vi.fn(async () => [r("https://b.com/1")]);
+    const p = new MultiSourceSearchProvider([
+      { name: "first", provider: { search: firstSearch } },
+      { name: "second", provider: { search: secondSearch } },
+    ]);
+    const controller = new AbortController();
+
+    await p.search("q", 5, { signal: controller.signal });
+
+    expect(firstSearch).toHaveBeenCalledWith("q", 5, { signal: controller.signal });
+    expect(secondSearch).toHaveBeenCalledWith("q", 5, { signal: controller.signal });
   });
 });

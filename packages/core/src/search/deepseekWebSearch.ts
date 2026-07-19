@@ -28,11 +28,16 @@ export async function fetchDeepseekSearchLinks(
   count: number,
   model = DEEPSEEK_MODEL_IDS.flash,
   usageContext?: DeepseekSearchUsageContext,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const limit = Math.max(1, Math.floor(count));
   if (!query.trim() || !apiKey) return [];
 
   const controller = new AbortController();
+  const abortFromSignal = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromSignal();
+  else signal?.addEventListener("abort", abortFromSignal, { once: true });
+  const removeAbortListener = () => signal?.removeEventListener("abort", abortFromSignal);
   const recordMissing = (reason: string) => {
     if (!usageContext) return;
     void recordUsageEvent({
@@ -65,13 +70,15 @@ export async function fetchDeepseekSearchLinks(
       signal: controller.signal,
     });
   } catch (error) {
-    recordMissing(error instanceof Error && error.name === "AbortError"
-      ? "provider_request_aborted"
-      : "provider_request_error");
+    removeAbortListener();
+    const requestAborted =
+      controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
+    recordMissing(requestAborted ? "provider_request_aborted" : "provider_request_error");
     return [];
   }
   if (!response.ok || !response.body) {
     controller.abort();
+    removeAbortListener();
     recordMissing(response.ok ? "provider_stream_missing_body" : `provider_http_${response.status}`);
     return [];
   }
@@ -143,6 +150,7 @@ export async function fetchDeepseekSearchLinks(
     /* 流读取异常:返回已拿到的链接(可能为空) */
   } finally {
     controller.abort(); // 关连接 → 服务端停止继续生成综述
+    removeAbortListener();
     try {
       await reader.cancel();
     } catch {

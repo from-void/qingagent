@@ -2,7 +2,12 @@
 // best-effort:网络/反爬失败吞成 []。链接为真实 URL;广告在 parseBingSerp 里按 li.b_algo 天然剔除。
 import { Buffer } from "node:buffer";
 import { decodeHtml } from "@qingagent/doc-render/browser";
-import type { SearchProvider, SearchResult } from "./provider.js";
+import {
+  searchRequestSignal,
+  type SearchOptions,
+  type SearchProvider,
+  type SearchResult,
+} from "./provider.js";
 import { parseBingSerp } from "./parseBing.js";
 
 const USER_AGENT =
@@ -10,7 +15,7 @@ const USER_AGENT =
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export class BingProvider implements SearchProvider {
-  async search(query: string, count: number): Promise<SearchResult[]> {
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     if (!query.trim() || count <= 0) return [];
     try {
       const url = new URL("https://cn.bing.com/search");
@@ -23,7 +28,7 @@ export class BingProvider implements SearchProvider {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         },
         redirect: "follow",
-        signal: AbortSignal.timeout(10_000),
+        signal: searchRequestSignal(options?.signal, 10_000),
       });
       if (!resp.ok) return [];
       const html = decodeHtml(

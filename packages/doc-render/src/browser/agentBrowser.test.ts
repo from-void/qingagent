@@ -1,6 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BrowserContext } from "playwright";
 import {
   getAgentBrowserTools,
+  installAgentBrowserRequestPolicy,
   isAgentBrowserEnabled,
   resetAgentBrowserForTest,
 } from "./agentBrowser.js";
@@ -10,6 +12,7 @@ const ENV_KEYS = [
   "QINGAGENT_BROWSER_CDP_URL",
   "QINGAGENT_BROWSER_STORAGE_STATE",
   "QINGAGENT_BROWSER_HEADFUL",
+  "QINGAGENT_BROWSER_ALLOW_DOMAINS",
 ];
 
 describe("agentBrowser 接入", () => {
@@ -93,6 +96,87 @@ describe("agentBrowser 接入", () => {
       const exec = gotoExec();
       // 1.1.1.1 是公网字面 IP(通过私网校验),但不在白名单 → 应被拒
       await expect(Promise.resolve(exec({ url: "http://1.1.1.1/" }, {}))).rejects.toThrow(/白名单/);
+    });
+  });
+
+  describe("Playwright context 逐请求守卫", () => {
+    function mockContext() {
+      const route = vi.fn<
+        (url: string, handler: (route: unknown) => Promise<void>) => Promise<void>
+      >(async () => undefined);
+      const routeWebSocket = vi.fn<
+        (url: string, handler: (route: unknown) => Promise<void>) => Promise<void>
+      >(async () => undefined);
+      return {
+        context: { route, routeWebSocket } as unknown as BrowserContext,
+        route,
+        routeWebSocket,
+      };
+    }
+
+    it("同一 context 只安装一次 HTTP 与 WebSocket 路由", async () => {
+      const mocked = mockContext();
+      await Promise.all([
+        installAgentBrowserRequestPolicy(mocked.context),
+        installAgentBrowserRequestPolicy(mocked.context),
+      ]);
+
+      expect(mocked.route).toHaveBeenCalledTimes(1);
+      expect(mocked.route).toHaveBeenCalledWith("**/*", expect.any(Function));
+      expect(mocked.routeWebSocket).toHaveBeenCalledTimes(1);
+      expect(mocked.routeWebSocket).toHaveBeenCalledWith("**/*", expect.any(Function));
+    });
+
+    it("HTTP(S) 每次请求都校验地址与 scheme，私网/file 中止，公网与本地无网络 scheme 放行", async () => {
+      const mocked = mockContext();
+      await installAgentBrowserRequestPolicy(mocked.context);
+      const handler = mocked.route.mock.calls[0]?.[1] as (route: unknown) => Promise<void>;
+
+      const execute = async (url: string) => {
+        const continueRequest = vi.fn(async () => undefined);
+        const abort = vi.fn(async () => undefined);
+        await handler({
+          request: () => ({ url: () => url }),
+          continue: continueRequest,
+          abort,
+        });
+        return { continueRequest, abort };
+      };
+
+      expect((await execute("https://1.1.1.1/app.js")).continueRequest).toHaveBeenCalledOnce();
+      expect((await execute("data:text/plain,ok")).continueRequest).toHaveBeenCalledOnce();
+      expect((await execute("http://127.0.0.1/admin")).abort).toHaveBeenCalledWith(
+        "blockedbyclient",
+      );
+      expect((await execute("file:///etc/passwd")).abort).toHaveBeenCalledWith("blockedbyclient");
+    });
+
+    it("WebSocket 独立校验：公网连接，私网以 policy violation 关闭", async () => {
+      const mocked = mockContext();
+      await installAgentBrowserRequestPolicy(mocked.context);
+      const handler = mocked.routeWebSocket.mock.calls[0]?.[1] as (
+        route: unknown,
+      ) => Promise<void>;
+
+      const publicRoute = {
+        url: () => "wss://1.1.1.1/socket",
+        connectToServer: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      await handler(publicRoute);
+      expect(publicRoute.connectToServer).toHaveBeenCalledOnce();
+      expect(publicRoute.close).not.toHaveBeenCalled();
+
+      const privateRoute = {
+        url: () => "ws://169.254.169.254/latest/meta-data",
+        connectToServer: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      await handler(privateRoute);
+      expect(privateRoute.connectToServer).not.toHaveBeenCalled();
+      expect(privateRoute.close).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 1008 }),
+      );
     });
   });
 });

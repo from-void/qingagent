@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chromium } from "playwright";
+import type { BrowserContext, Route, WebSocketRoute } from "playwright";
 import { AgentBrowser, type BrowserToolName } from "@mastra/agent-browser";
 import { validateFetchUrl } from "./extractor.js";
 import { proxyFromEnv } from "./pool.js";
@@ -79,6 +80,108 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PROXIED_CDP_PORT = 9333;
 let proxiedProc: ChildProcess | null = null;
 let proxiedCdpUrl: string | null = null;
+let processExitHooksInstalled = false;
+
+const SAFE_LOCAL_BROWSER_SCHEMES = new Set(["about:", "blob:", "data:"]);
+const contextPolicyInstallations = new WeakMap<BrowserContext, Promise<void>>();
+
+async function assertBrowserRequestAllowed(rawUrl: string, websocket: boolean): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid browser request URL: ${rawUrl}`);
+  }
+
+  if (websocket) {
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+      throw new Error(`Unsupported WebSocket scheme: ${parsed.protocol}`);
+    }
+    parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+    await validateFetchUrl(parsed.toString());
+    return;
+  }
+
+  if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+    await validateFetchUrl(parsed.toString());
+    return;
+  }
+  if (!SAFE_LOCAL_BROWSER_SCHEMES.has(parsed.protocol)) {
+    throw new Error(`Unsupported browser request scheme: ${parsed.protocol}`);
+  }
+}
+
+async function handleBrowserRoute(route: Route): Promise<void> {
+  try {
+    await assertBrowserRequestAllowed(route.request().url(), false);
+    await route.continue();
+  } catch {
+    await route.abort("blockedbyclient").catch(() => undefined);
+  }
+}
+
+async function handleBrowserWebSocketRoute(route: WebSocketRoute): Promise<void> {
+  try {
+    await assertBrowserRequestAllowed(route.url(), true);
+    route.connectToServer();
+  } catch {
+    await route
+      .close({ code: 1008, reason: "Blocked by qingagent network policy" })
+      .catch(() => undefined);
+  }
+}
+
+/** 在 context 创建后的首个真实导航前安装全请求策略；同一 context 并发调用只安装一次。 */
+export async function installAgentBrowserRequestPolicy(context: BrowserContext): Promise<void> {
+  const existing = contextPolicyInstallations.get(context);
+  if (existing) return await existing;
+
+  const installation = (async () => {
+    await context.route("**/*", handleBrowserRoute);
+    await context.routeWebSocket("**/*", handleBrowserWebSocketRoute);
+  })();
+  contextPolicyInstallations.set(context, installation);
+  try {
+    await installation;
+  } catch (error) {
+    contextPolicyInstallations.delete(context);
+    throw error;
+  }
+}
+
+/**
+ * AgentBrowser 0.4 的 ensureReady 在任一工具真实操作前完成 context 创建；在这里装 route，
+ * 可覆盖 goto、重定向、脚本导航、iframe、子资源以及之后新开的 page。
+ */
+class SecuredAgentBrowser extends AgentBrowser {
+  override async ensureReady(): Promise<void> {
+    await super.ensureReady();
+    const manager = await this.getManagerForThread();
+    const context = manager.getContext();
+    if (!context) throw new Error("AgentBrowser context 未就绪，无法安装网络安全策略");
+    await installAgentBrowserRequestPolicy(context);
+  }
+}
+
+/** 终止本模块自己拉起的代理 Chromium；复用端口或显式 CDP 从不写 proxiedProc，不会被误关。 */
+export function stopProxiedChromium(): boolean {
+  const owned = proxiedProc;
+  proxiedProc = null;
+  proxiedCdpUrl = null;
+  if (!owned || owned.exitCode !== null || owned.killed) return false;
+  try {
+    return owned.kill("SIGTERM");
+  } catch {
+    return false;
+  }
+}
+
+function installProxiedChromiumExitHooks(): void {
+  if (processExitHooksInstalled) return;
+  processExitHooksInstalled = true;
+  process.once("beforeExit", stopProxiedChromium);
+  process.once("exit", stopProxiedChromium);
+}
 
 /** 读 chromium 的 CDP /json/version,取 webSocketDebuggerUrl(localhost,绕代理)。 */
 async function probeCdpWs(port: number): Promise<string | null> {
@@ -129,29 +232,36 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
   ];
   // 桌面端没有随包 Playwright Chromium,优先用系统已装浏览器(Edge/Chrome);否则回退 Playwright 自带。
   const chromiumBin = systemBrowserExecutablePath() ?? chromium.executablePath();
-  proxiedProc = spawn(chromiumBin, args, { stdio: "ignore" });
+  const spawnedProc = spawn(chromiumBin, args, { stdio: "ignore" });
+  proxiedProc = spawnedProc;
+  installProxiedChromiumExitHooks();
   let spawnFailure: Error | null = null;
   const spawnFailurePromise = new Promise<never>((_, reject) => {
-    proxiedProc?.once("error", (error) => {
+    spawnedProc.once("error", (error) => {
       spawnFailure = error;
-      proxiedProc = null;
-      proxiedCdpUrl = null;
+      if (proxiedProc === spawnedProc) {
+        proxiedProc = null;
+        proxiedCdpUrl = null;
+      }
       reject(error);
     });
-    proxiedProc?.once("exit", (code, signal) => {
-      if (proxiedCdpUrl) return;
+    spawnedProc.once("exit", (code, signal) => {
+      const exitedBeforeReady = proxiedCdpUrl === null;
+      if (proxiedProc === spawnedProc) {
+        proxiedProc = null;
+        proxiedCdpUrl = null;
+      }
+      if (!exitedBeforeReady) return;
       const error = new Error(
         `代理 chromium 进程提前退出(code=${code ?? "null"}, signal=${signal ?? "null"})`,
       );
       spawnFailure = error;
-      proxiedProc = null;
-      proxiedCdpUrl = null;
       reject(error);
     });
   });
   // error/exit 可能先于轮询被 await；先挂 catch，避免自身变成 unhandledRejection。
   void spawnFailurePromise.catch(() => {});
-  proxiedProc.unref();
+  spawnedProc.unref();
   for (let i = 0; i < 60; i++) {
     if (spawnFailure) throw spawnFailure;
     const ws = await Promise.race([probeCdpWs(PROXIED_CDP_PORT), spawnFailurePromise]);
@@ -164,6 +274,7 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
       spawnFailurePromise,
     ]);
   }
+  stopProxiedChromium();
   throw new Error("代理 chromium 的 CDP 端点未就绪");
 }
 
@@ -193,13 +304,13 @@ export function getAgentBrowser(): AgentBrowser {
   // 2) 有代理 env(本机只能经代理上网)→ 自起带 --proxy-server 的 chromium,经 CDP 连它(不带 executablePath)
   // 3) 否则自启(无代理环境;持久化时 shared,否则库默认 thread 隔离)→ 带 executablePath
   if (explicitCdp) {
-    cached = new AgentBrowser({ ...base, cdpUrl: explicitCdp, scope: "shared" });
+    cached = new SecuredAgentBrowser({ ...base, cdpUrl: explicitCdp, scope: "shared" });
   } else if (proxy) {
-    cached = new AgentBrowser({ ...base, cdpUrl: () => ensureProxiedChromiumCdpUrl(), scope: "shared" });
+    cached = new SecuredAgentBrowser({ ...base, cdpUrl: () => ensureProxiedChromiumCdpUrl(), scope: "shared" });
   } else if (savePath) {
-    cached = new AgentBrowser({ ...base, ...launchExec, scope: "shared" });
+    cached = new SecuredAgentBrowser({ ...base, ...launchExec, scope: "shared" });
   } else {
-    cached = new AgentBrowser({ ...base, ...launchExec });
+    cached = new SecuredAgentBrowser({ ...base, ...launchExec });
   }
   return cached;
 }
@@ -220,8 +331,7 @@ function schedulePersist(browser: AgentBrowser, savePath: string | undefined): v
 /**
  * 给工具集打两层包裹:
  *  - browser_goto 入口 URL 安全校验(SSRF):validateFetchUrl 拒私网/元数据/非 http(s) + 可选域名白名单。
- *    注意:0.2.2 不暴露 page 钩子,只能守入口;深层导航(meta-refresh/JS 跳转)与子资源未防护,
- *    生产常开需配合网络层出口管控(egress firewall / 禁私网)。
+ *    真实 context 的逐请求/逐 WebSocket 校验由 SecuredAgentBrowser.ensureReady 生命周期钩子兜底。
  *  - 所有工具成功后 debounce 回写 storageState(web agent 把登录态存进 agent 浏览器,持久复用)。
  */
 function instrument(tools: BrowserToolset, browser: AgentBrowser, savePath: string | undefined): BrowserToolset {
@@ -293,6 +403,7 @@ export function getAgentBrowserTools(): BrowserToolset {
 /** 仅供测试:重置单例。 */
 export function resetAgentBrowserForTest(): void {
   cached = null;
+  stopProxiedChromium();
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;

@@ -4,8 +4,23 @@ import type { ResearchCardBody } from "@qingagent/contract-ts";
 
 const mockSearchDeps = vi.hoisted(() => {
   type PrimaryConfig = { enabled: boolean; apiKey?: string };
-  const fetchDeepseekSearchLinks = vi.fn(async (): Promise<SearchResult[]> => []);
-  const fallbackSearch = vi.fn();
+  const fetchDeepseekSearchLinks = vi.fn<
+    (
+      query: string,
+      apiKey: string,
+      count: number,
+      model: string,
+      usageContext?: unknown,
+      signal?: AbortSignal,
+    ) => Promise<SearchResult[]>
+  >(async () => []);
+  const fallbackSearch = vi.fn<
+    (
+      query: string,
+      count: number,
+      options?: { signal?: AbortSignal },
+    ) => Promise<SearchResult[]>
+  >();
 
   return {
     fetchDeepseekSearchLinks,
@@ -153,10 +168,15 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       4,
       "deepseek-v4-flash",
       expect.objectContaining({ keyOrigin: "global-db" }),
+      expect.any(AbortSignal),
     );
     // 多源始终并发起跑(兜底),即便最终没用到它;传统源使用 keywords。
     expect(mockSearchDeps.getManagedSearchProvider).toHaveBeenCalled();
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("今日 新闻 2026", 4);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith(
+      "今日 新闻 2026",
+      4,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   // 回归(0702 桌面验收根因):桌面端 DeepSeek key 是 visitor 层(x-deepseek-key header,服务端不落盘),
@@ -179,6 +199,7 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       8,
       "deepseek-v4-flash",
       expect.objectContaining({ keyOrigin: "visitor" }),
+      expect.any(AbortSignal),
     );
     expect(result.items[0]?.url).toBe(deepseekResult.url);
   });
@@ -199,6 +220,7 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       8,
       "deepseek-v4-pro",
       expect.objectContaining({ keyOrigin: "visitor" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -211,14 +233,22 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.url).toBe(fallbackResult.url);
     expect(mockSearchDeps.fetchDeepseekSearchLinks).not.toHaveBeenCalled();
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("fallback keyword", 8);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith(
+      "fallback keyword",
+      8,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("keywords 为 null/缺省时,多源回退使用 query", async () => {
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
 
     await executeWebSearch({ query: "fallback query", keywords: null, count: 2 });
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("fallback query", 2);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith(
+      "fallback query",
+      2,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("配置 key 优先级高于 env key", async () => {
@@ -234,6 +264,7 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       8,
       "deepseek-v4-flash",
       expect.objectContaining({ keyOrigin: "global-db" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -244,7 +275,11 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     const result = await executeWebSearch({ query: "empty ds", count: 3 });
 
     expect(result.items.map((item) => item.url)).toEqual([fallbackResult.url]);
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("empty ds", 3);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith(
+      "empty ds",
+      3,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("最终 0 召回时返回可执行重试建议 note", async () => {
@@ -258,6 +293,28 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(mockFetchDeps.fetchArticleExecute).not.toHaveBeenCalled();
   });
 
+  it("多源搜索 5s 超时时 abort 传给 provider 的底层 signal", async () => {
+    vi.useFakeTimers();
+    try {
+      mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+      let timeoutSignal: AbortSignal | undefined;
+      mockSearchDeps.fallbackSearch.mockImplementation((_query, _count, options) => {
+        timeoutSignal = options?.signal;
+        return new Promise<SearchResult[]>(() => {});
+      });
+
+      const pending = executeWebSearch({ query: "slow multisource" });
+      await vi.advanceTimersByTimeAsync(5000);
+      const result = await pending;
+
+      expect(result.items).toEqual([]);
+      expect(timeoutSignal?.aborted).toBe(true);
+      expect(timeoutSignal?.reason).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("DeepSeek 5s 内没回来 → 超时后用多源(整体 5s 封顶)", async () => {
     vi.useFakeTimers();
     // 必须 try/finally 复原 real timers:否则 fake timers 泄漏到同进程后续串行文件,
@@ -265,7 +322,13 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     try {
       mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: true, apiKey: "cfg-key" });
       // DeepSeek 永不返回,模拟它墨迹/卡住
-      mockSearchDeps.fetchDeepseekSearchLinks.mockReturnValue(new Promise<SearchResult[]>(() => {}));
+      let timeoutSignal: AbortSignal | undefined;
+      mockSearchDeps.fetchDeepseekSearchLinks.mockImplementation(
+        (_query, _apiKey, _count, _model, _usageContext, signal) => {
+          timeoutSignal = signal;
+          return new Promise<SearchResult[]>(() => {});
+        },
+      );
       mockSearchDeps.fallbackSearch.mockResolvedValue([fallbackResult]);
 
       const pending = executeWebSearch({ query: "slow ds" });
@@ -273,6 +336,41 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
       const result = await pending;
 
       expect(result.items.map((item) => item.url)).toEqual([fallbackResult.url]);
+      expect(timeoutSignal?.aborted).toBe(true);
+      expect(timeoutSignal?.reason).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("单来源抓取 30s 超时时 abort 传给 fetchArticle 的底层 signal", async () => {
+    vi.useFakeTimers();
+    try {
+      mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+      mockSearchDeps.fallbackSearch.mockResolvedValue([fallbackResult]);
+      let timeoutSignal: AbortSignal | undefined;
+      mockFetchDeps.fetchArticleExecute.mockImplementation(
+        (_input: unknown, fetchContext: { abortSignal?: AbortSignal } | undefined) => {
+          timeoutSignal = fetchContext?.abortSignal;
+          return new Promise((_resolve, reject) => {
+            timeoutSignal?.addEventListener(
+              "abort",
+              () => reject(timeoutSignal?.reason ?? new Error("aborted")),
+              { once: true },
+            );
+          });
+        },
+      );
+
+      const pending = executeWebSearch({ query: "slow article", count: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(timeoutSignal).toBeInstanceOf(AbortSignal);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await pending;
+
+      expect(result.items[0]?.status).toBe("skipped");
+      expect(timeoutSignal?.aborted).toBe(true);
+      expect(timeoutSignal?.reason).toMatchObject({ name: "TimeoutError" });
     } finally {
       vi.useRealTimers();
     }

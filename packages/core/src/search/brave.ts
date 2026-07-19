@@ -1,4 +1,9 @@
-import type { SearchProvider, SearchResult } from "./provider.js";
+import {
+  searchRequestSignal,
+  type SearchOptions,
+  type SearchProvider,
+  type SearchResult,
+} from "./provider.js";
 import {
   asArray,
   asRecord,
@@ -14,7 +19,7 @@ const ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 export class BraveProvider implements SearchProvider {
   constructor(private readonly apiKey: string) {}
 
-  async search(query: string, count: number): Promise<SearchResult[]> {
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     const limit = normalizeSearchLimit(count);
     if (!query.trim() || limit <= 0) return [];
     const apiKey = assertApiKey(PROVIDER_ID, this.apiKey);
@@ -27,7 +32,7 @@ export class BraveProvider implements SearchProvider {
         "Accept-Encoding": "gzip",
         "X-Subscription-Token": apiKey,
       },
-      signal: AbortSignal.timeout(12_000),
+      signal: searchRequestSignal(options?.signal, 12_000),
     });
 
     const root = asRecord(data);

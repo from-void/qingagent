@@ -66,13 +66,27 @@ type WebSearchItemInternal = WebSearchItem & {
   __fullText: string;
 };
 
-/** 给一个 promise 套超时:超时返回 fallback,并清掉定时器避免泄漏。 */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+/** 给一个 promise 套超时：超时先 abort 底层操作，再返回 fallback。 */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  fallback: T,
+  controller: AbortController,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((resolve) => {
-    timer = setTimeout(() => resolve(fallback), Math.max(0, ms));
+    timer = setTimeout(() => {
+      controller.abort(
+        new DOMException(`Operation timed out after ${Math.max(0, ms)}ms`, "TimeoutError"),
+      );
+      resolve(fallback);
+    }, Math.max(0, ms));
   });
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
+function operationSignal(controller: AbortController, parent?: AbortSignal): AbortSignal {
+  return parent ? AbortSignal.any([controller.signal, parent]) : controller.signal;
 }
 
 function normalizeSearchCachePart(value: string): string {
@@ -166,6 +180,7 @@ async function searchLinks(
   requestDeepseekKey: string,
   deepseekModel?: string,
   usageContext?: DeepseekSearchUsageContext,
+  parentSignal?: AbortSignal,
 ): Promise<SearchResult[]> {
   const t0 = Date.now();
   const done = (results: SearchResult[], src: SearchLinksSource) => {
@@ -212,8 +227,10 @@ async function searchLinks(
 
   // 多源(Bing/DuckDuckGo + 已配置 API 源)始终并发起跑,作为兜底/补充。
   const effectiveKeywords = keywords?.trim() || query;
+  const fastController = new AbortController();
+  const fastSignal = operationSignal(fastController, parentSignal);
   const fastPromise: Promise<SearchResult[]> = getManagedSearchProvider()
-    .then((provider) => provider.search(effectiveKeywords, limit))
+    .then((provider) => provider.search(effectiveKeywords, limit, { signal: fastSignal }))
     .catch((e) => {
       // eslint-disable-next-line no-console
       console.warn(`[webSearch] 多源失败: ${String(e).slice(0, 80)}`);
@@ -221,14 +238,33 @@ async function searchLinks(
     });
 
   if (!useDeepseek) {
-    return doneAndCache(await withTimeout(fastPromise, SEARCH_TIMEOUT_MS, []), "multisource(无DeepSeek)");
+    return doneAndCache(
+      await withTimeout(fastPromise, SEARCH_TIMEOUT_MS, [], fastController),
+      "multisource(无DeepSeek)",
+    );
   }
 
   // DeepSeek 只取来源链接(流式读到搜索结果即掐断,不等综述,典型 ~2s),质量优先。
+  const deepseekController = new AbortController();
+  const deepseekSignal = operationSignal(deepseekController, parentSignal);
   const deepseekPromise = (
     deepseekModel && deepseekModel !== DEEPSEEK_MODEL_IDS.flash
-      ? fetchDeepseekSearchLinks(query, deepseekKey, limit, deepseekModel, effectiveUsageContext)
-      : fetchDeepseekSearchLinks(query, deepseekKey, limit, DEEPSEEK_MODEL_IDS.flash, effectiveUsageContext)
+      ? fetchDeepseekSearchLinks(
+          query,
+          deepseekKey,
+          limit,
+          deepseekModel,
+          effectiveUsageContext,
+          deepseekSignal,
+        )
+      : fetchDeepseekSearchLinks(
+          query,
+          deepseekKey,
+          limit,
+          DEEPSEEK_MODEL_IDS.flash,
+          effectiveUsageContext,
+          deepseekSignal,
+        )
   ).catch((e) => {
     // eslint-disable-next-line no-console
     console.warn(`[webSearch] DeepSeek 链接失败: ${String(e).slice(0, 80)}`);
@@ -237,12 +273,24 @@ async function searchLinks(
 
   // 质量优先:5s 内等 DeepSeek;有结果就用它。
   const startedAt = Date.now();
-  const deepseekLinks = await withTimeout(deepseekPromise, SEARCH_TIMEOUT_MS, []);
-  if (deepseekLinks.length > 0) return doneAndCache(deepseekLinks, "deepseek");
+  const deepseekLinks = await withTimeout(
+    deepseekPromise,
+    SEARCH_TIMEOUT_MS,
+    [],
+    deepseekController,
+  );
+  if (deepseekLinks.length > 0) {
+    // DeepSeek 已满足结果，取消不再需要的并行多源请求。
+    fastController.abort(new DOMException("Superseded by DeepSeek results", "AbortError"));
+    return doneAndCache(deepseekLinks, "deepseek");
+  }
 
   // DeepSeek 超时/空 → 用并发已就绪的多源(在 5s 总预算的剩余时间内)。
   const remain = SEARCH_TIMEOUT_MS - (Date.now() - startedAt);
-  return doneAndCache(await withTimeout(fastPromise, remain, []), "multisource(DS兜底)");
+  return doneAndCache(
+    await withTimeout(fastPromise, remain, [], fastController),
+    "multisource(DS兜底)",
+  );
 }
 
 export async function searchLinksForEval(
@@ -286,14 +334,35 @@ const SOURCE_FETCH_TIMEOUT_MS = 30_000;
  * unhandledRejection 把整个后端进程崩掉(R1 实测:搜索重场景拖崩 8203)。给原 promise
  * 挂一个 no-op catch 即可让晚到的错误被吞、不冒泡成进程级未处理拒绝。
  */
-function withSourceTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withSourceTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  label: string,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const signal = operationSignal(controller, parentSignal);
+  const p = Promise.resolve().then(() => run(signal));
   p.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label}-timeout`)), ms);
+  let removeAbortListener = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    const rejectAborted = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new Error(`${label}-aborted`));
+    };
+    if (signal.aborted) {
+      rejectAborted();
+      return;
+    }
+    signal.addEventListener("abort", rejectAborted, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", rejectAborted);
   });
-  return Promise.race([p, timeout]).finally(() => {
+  timer = setTimeout(() => {
+    controller.abort(new DOMException(`${label} timed out after ${ms}ms`, "TimeoutError"));
+  }, ms);
+  return Promise.race([p, aborted]).finally(() => {
     if (timer) clearTimeout(timer);
+    removeAbortListener();
   });
 }
 
@@ -427,6 +496,7 @@ export const webSearchTool = createTool({
           keyOrigin: requestAuth.origin,
           requestContext: context?.requestContext,
         },
+        context?.abortSignal,
       )).slice(0, limit);
       progressItems.push(
         ...results.map((result) => ({
@@ -451,9 +521,14 @@ export const webSearchTool = createTool({
 
         try {
           const article = (await withSourceTimeout(
-            fetchArticleTool.execute!({ url: result.url }, context) as Promise<ArticleFetchResult>,
+            (signal) =>
+              fetchArticleTool.execute!(
+                { url: result.url },
+                { ...context, abortSignal: signal },
+              ) as Promise<ArticleFetchResult>,
             SOURCE_FETCH_TIMEOUT_MS,
             "fetchArticle",
+            context?.abortSignal,
           )) as ArticleFetchResult;
           best = article;
           if (article.via === "browser") {

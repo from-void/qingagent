@@ -1,7 +1,7 @@
 // 0603 — 多源搜索 provider:并行竞速 + 去重聚合 + 全失败兜底。
 // 纯逻辑(provider 注入),不依赖网络,便于单测。各具体源(SearXNG/Bing/Mojeek…)各自实现
 // SearchProvider 接口,组合进这里。
-import type { SearchProvider, SearchResult } from "./provider.js";
+import type { SearchOptions, SearchProvider, SearchResult } from "./provider.js";
 
 export interface SearchSource {
   /** 源名(日志/调试用) */
@@ -79,11 +79,11 @@ export async function raceToGood(
 export class MultiSourceSearchProvider implements SearchProvider {
   constructor(private readonly sources: SearchSource[]) {}
 
-  async search(query: string, count: number): Promise<SearchResult[]> {
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     const limit = Math.max(0, Math.floor(count));
     if (!query.trim() || limit <= 0 || this.sources.length === 0) return [];
     const merged = await raceToGood(
-      this.sources.map((s) => s.provider.search(query, limit)),
+      this.sources.map((s) => s.provider.search(query, limit, options)),
       limit,
     );
     return dedupeResults(merged).slice(0, limit);

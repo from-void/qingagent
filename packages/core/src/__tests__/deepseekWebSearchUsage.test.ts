@@ -45,4 +45,37 @@ describe("DeepSeek webSearch usage 留痕", () => {
       reason: "provider_request_error",
     }));
   });
+
+  it("把外部 signal 的 abort 和 reason 传给内部 fetch controller", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        if (requestSignal?.aborted) {
+          reject(requestSignal.reason);
+          return;
+        }
+        requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true });
+      });
+    }));
+    const controller = new AbortController();
+    const reason = new DOMException("webSearch timed out", "TimeoutError");
+
+    const pending = fetchDeepseekSearchLinks(
+      "查询",
+      "key",
+      3,
+      "deepseek-v4-flash",
+      { sessionId: "session-search", keyOrigin: "visitor" },
+      controller.signal,
+    );
+    controller.abort(reason);
+
+    await expect(pending).resolves.toEqual([]);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(requestSignal?.reason).toBe(reason);
+    expect(recordUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "provider_request_aborted",
+    }));
+  });
 });

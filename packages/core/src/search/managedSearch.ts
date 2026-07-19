@@ -5,7 +5,7 @@ import {
 } from "@qingagent/db";
 import { SearchProviderError } from "./errors.js";
 import { MultiSourceSearchProvider, type SearchSource } from "./multiSource.js";
-import type { SearchProvider, SearchResult } from "./provider.js";
+import type { SearchOptions, SearchProvider, SearchResult } from "./provider.js";
 import { filterByRelevance } from "./relevanceGate.js";
 import {
   SEARCH_PROVIDER_REGISTRY,
@@ -159,9 +159,9 @@ class ManagedApiProvider implements SearchProvider {
     private readonly provider: SearchProvider,
   ) {}
 
-  async search(query: string, count: number): Promise<SearchResult[]> {
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     try {
-      return await this.provider.search(query, count);
+      return await this.provider.search(query, count, options);
     } catch (err) {
       if (err instanceof SearchProviderError) {
         recordSearchProviderError(this.id, err.kind);
@@ -174,8 +174,8 @@ class ManagedApiProvider implements SearchProvider {
 class RelevanceGatedProvider implements SearchProvider {
   constructor(private readonly inner: SearchProvider) {}
 
-  async search(query: string, count: number): Promise<SearchResult[]> {
-    const results = await this.inner.search(query, count);
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
+    const results = await this.inner.search(query, count, options);
     return filterByRelevance(results, query).kept;
   }
 }

@@ -132,7 +132,7 @@ const cases: ProviderCase[] = [
 
 describe("API search providers", () => {
   afterEach(() => {
-  __setSearchFetchForTest(null);
+    __setSearchFetchForTest(null);
     vi.unstubAllGlobals();
   });
 
@@ -163,6 +163,36 @@ describe("API search providers", () => {
         const call = fetchMock.mock.calls[0];
         if (!call) throw new Error("fetch was not called");
         item.assertRequest?.(call[0], call[1]);
+      });
+
+      it("把外部取消传到底层 fetch", async () => {
+        let requestSignal: AbortSignal | null | undefined;
+        const fetchMock = vi.fn(
+          async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            requestSignal = init?.signal;
+            return await new Promise<Response>((_resolve, reject) => {
+              if (requestSignal?.aborted) {
+                reject(requestSignal.reason);
+                return;
+              }
+              requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+                once: true,
+              });
+            });
+          },
+        );
+        __setSearchFetchForTest(
+          fetchMock as unknown as Parameters<typeof __setSearchFetchForTest>[0],
+        );
+        const controller = new AbortController();
+        const reason = new DOMException("parent aborted", "AbortError");
+
+        const pending = item.create().search("测试", 3, { signal: controller.signal });
+        controller.abort(reason);
+
+        await expect(pending).rejects.toBeInstanceOf(SearchProviderError);
+        expect(requestSignal?.aborted).toBe(true);
+        expect(requestSignal?.reason).toBe(reason);
       });
     });
   }

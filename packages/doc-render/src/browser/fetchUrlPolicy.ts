@@ -1,5 +1,5 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 export interface FetchUrlValidationOptions {
   /** 仅放行字面 loopback 与 localhost；普通域名解析到 loopback 仍拒绝。 */
@@ -9,6 +9,13 @@ export interface FetchUrlValidationOptions {
 }
 
 type AddressScope = "public" | "loopback" | "private";
+
+export interface PinnedFetchUrl {
+  url: URL;
+  /** 已通过策略校验、后续连接必须使用的地址。 */
+  address: string;
+  family: 4 | 6;
+}
 
 function ipv4Scope(address: string): AddressScope {
   const parts = address.split(".").map((part) => Number(part));
@@ -130,13 +137,13 @@ export function parseFetchUrl(rawUrl: string): URL {
 }
 
 /**
- * 出站 URL 的公共 SSRF 校验。默认只允许公网；调用方可按明确业务策略放行 loopback/私网。
- * DNS 校验与实际 fetch 仍是两次解析，不能单独防御 DNS rebinding。
+ * 校验出站 URL 并返回本次连接必须使用的地址。域名的全部 DNS 结果都先经过策略校验，
+ * 再固定其中一个地址；调用方必须把该地址交给 {@link createPinnedLookup}，不能再次解析域名。
  */
-export async function validateFetchUrl(
+export async function validateAndPinFetchUrl(
   rawUrl: string,
   options: FetchUrlValidationOptions = {},
-): Promise<URL> {
+): Promise<PinnedFetchUrl> {
   const parsed = parseFetchUrl(rawUrl);
   const hostname = parsed.hostname.toLowerCase();
   const addressHostname =
@@ -144,13 +151,13 @@ export async function validateFetchUrl(
 
   if (hostname === "localhost") {
     assertFetchAddressAllowed("127.0.0.1", hostname, options);
-    return parsed;
+    return { url: parsed, address: "127.0.0.1", family: 4 };
   }
 
   const ipKind = isIP(addressHostname);
   if (ipKind) {
     assertFetchAddressAllowed(addressHostname, hostname, options);
-    return parsed;
+    return { url: parsed, address: addressHostname, family: ipKind as 4 | 6 };
   }
 
   const records = await lookup(hostname, { all: true, verbatim: true });
@@ -161,5 +168,28 @@ export async function validateFetchUrl(
     assertFetchAddressAllowed(record.address, hostname, options);
   }
 
-  return parsed;
+  const pinned = records[0]!;
+  return { url: parsed, address: pinned.address, family: pinned.family as 4 | 6 };
+}
+
+/** 为 node:http(s) 创建只返回已校验地址的 lookup，阻止连接阶段二次 DNS 解析。 */
+export function createPinnedLookup(target: PinnedFetchUrl): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: target.address, family: target.family }]);
+      return;
+    }
+    callback(null, target.address, target.family);
+  };
+}
+
+/**
+ * 只需要做策略判断的调用方沿用 URL 返回值；真正发请求的调用方应使用
+ * validateAndPinFetchUrl + createPinnedLookup 将校验结果绑定到连接。
+ */
+export async function validateFetchUrl(
+  rawUrl: string,
+  options: FetchUrlValidationOptions = {},
+): Promise<URL> {
+  return (await validateAndPinFetchUrl(rawUrl, options)).url;
 }

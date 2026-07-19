@@ -9,9 +9,18 @@ import { markSearchProviderQuota } from "./health.js";
 
 export type { SearchResult } from "./parseDuckDuckGo.js";
 
+export interface SearchOptions {
+  signal?: AbortSignal;
+}
+
 export interface SearchProvider {
   /** Best-effort: rate limits, network errors, and empty SERPs return [] rather than throwing. */
-  search(query: string, count: number): Promise<SearchResult[]>;
+  search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]>;
+}
+
+export function searchRequestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
 const USER_AGENT =
@@ -42,13 +51,19 @@ function isConnectionFailure(err: unknown): boolean {
 }
 
 export class DuckDuckGoProvider implements SearchProvider {
-  async search(query: string, count: number): Promise<SearchResult[]> {
+  async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     const limit = Math.max(0, Math.floor(count));
     if (!query.trim() || limit <= 0) return [];
 
     for (const endpoint of ENDPOINTS) {
       try {
-        const results = await this.searchOne(endpoint.url, endpoint.parse, query, limit);
+        const results = await this.searchOne(
+          endpoint.url,
+          endpoint.parse,
+          query,
+          limit,
+          options?.signal,
+        );
         if (results.length > 0) return results;
       } catch (err) {
         if (isConnectionFailure(err)) {
@@ -66,6 +81,7 @@ export class DuckDuckGoProvider implements SearchProvider {
     parse: (html: string, limit: number) => SearchResult[],
     query: string,
     limit: number,
+    signal?: AbortSignal,
   ): Promise<SearchResult[]> {
     const url = await validateFetchUrl(endpoint);
     const response = await fetch(url, {
@@ -78,7 +94,7 @@ export class DuckDuckGoProvider implements SearchProvider {
         Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
       },
       body: new URLSearchParams({ q: query, kl: "wt-wt" }).toString(),
-      signal: AbortSignal.timeout(2_500),
+      signal: searchRequestSignal(signal, 2_500),
     });
 
     if (!response.ok) throw new Error(`DuckDuckGo search failed: HTTP ${response.status}`);

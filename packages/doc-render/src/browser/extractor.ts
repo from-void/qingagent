@@ -1,9 +1,19 @@
 import { Buffer } from "node:buffer";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import { loadPdfParseConstructor } from "./pdfParse.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
-import { parseFetchUrl, validateFetchUrl } from "./fetchUrlPolicy.js";
+import {
+  createPinnedLookup,
+  parseFetchUrl,
+  validateAndPinFetchUrl,
+  validateFetchUrl,
+  type PinnedFetchUrl,
+} from "./fetchUrlPolicy.js";
 
 export { validateFetchUrl };
 
@@ -91,6 +101,8 @@ export function resolveSiteAdapter(u: URL): SiteAdapter | null {
 
 // PDF 上限:超大 PDF 解析慢,避免拖死整条抓取(论文类一般几 MB)。
 const MAX_PDF_BYTES = 30 * 1024 * 1024;
+// HTML/XML 上限独立于 PDF；静态正文通常远小于 10MiB，超限更可能是误投二进制或异常页面。
+const MAX_HTML_BYTES = 10 * 1024 * 1024;
 
 /** 从 PDF 字节提取纯文本(复用 pdf-parse,与 parseFile 工具同款)。 */
 async function extractPdfText(
@@ -197,8 +209,93 @@ function isRetryableFetchError(error: unknown): boolean {
   );
 }
 
+type PinnedFetchInit = Pick<RequestInit, "headers" | "method" | "signal">;
+type PinnedFetch = (target: PinnedFetchUrl, init: PinnedFetchInit) => Promise<Response>;
+
+function decodedResponseStream(response: IncomingMessage): Readable {
+  const encoding = String(response.headers["content-encoding"] ?? "").toLowerCase().trim();
+  const decoded =
+    encoding === "gzip" || encoding === "x-gzip"
+      ? response.pipe(createGunzip())
+      : encoding === "deflate"
+        ? response.pipe(createInflate())
+        : encoding === "br"
+          ? response.pipe(createBrotliDecompress())
+          : response;
+
+  if (decoded !== response) {
+    // Web ReadableStream 被限额逻辑 cancel 时同步拆掉上游 socket，避免后台继续下载。
+    decoded.once("close", () => {
+      if (!response.destroyed) response.destroy();
+    });
+  }
+  return decoded;
+}
+
+/**
+ * 使用 node:http(s) 的自定义 lookup 发起请求：URL/Host/SNI 仍保留原域名，TCP 连接只会使用
+ * validateAndPinFetchUrl 已校验的地址，因此校验后不会发生第二次 DNS 解析。
+ */
+async function requestPinnedUrl(
+  target: PinnedFetchUrl,
+  init: PinnedFetchInit,
+): Promise<Response> {
+  return await new Promise<Response>((resolve, reject) => {
+    const headers = new Headers(init.headers);
+    if (!headers.has("accept-encoding")) headers.set("accept-encoding", "gzip, deflate, br");
+    const requestHeaders: Record<string, string> = {};
+    headers.forEach((value, name) => {
+      requestHeaders[name] = value;
+    });
+
+    const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(
+      target.url,
+      {
+        method: init.method ?? "GET",
+        headers: requestHeaders,
+        lookup: createPinnedLookup(target),
+        signal: init.signal ?? undefined,
+      },
+      (incoming) => {
+        try {
+          const responseHeaders = new Headers();
+          for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+            const name = incoming.rawHeaders[index];
+            const value = incoming.rawHeaders[index + 1];
+            if (name && value !== undefined) responseHeaders.append(name, value);
+          }
+          const status = incoming.statusCode ?? 500;
+          const hasBody = init.method !== "HEAD" && status !== 204 && status !== 304;
+          const body = hasBody
+            ? (Readable.toWeb(decodedResponseStream(incoming)) as unknown as BodyInit)
+            : null;
+          resolve(
+            new Response(body, {
+              status,
+              statusText: incoming.statusMessage,
+              headers: responseHeaders,
+            }),
+          );
+        } catch (error) {
+          incoming.destroy();
+          reject(error);
+        }
+      },
+    );
+    request.once("error", reject);
+    request.end();
+  });
+}
+
+let activePinnedFetch: PinnedFetch = requestPinnedUrl;
+
+/** 仅供 extractor 单测注入确定性响应；生产传 null 恢复固定连接实现。 */
+export function __setPinnedFetchForTest(fetchImpl: PinnedFetch | null): void {
+  activePinnedFetch = fetchImpl ?? requestPinnedUrl;
+}
+
 async function fetchWithRetry(
-  url: URL,
+  target: PinnedFetchUrl,
   deadlineMs: number,
   retryState: FetchRetryState,
   headersOverride?: Record<string, string>,
@@ -211,8 +308,7 @@ async function fetchWithRetry(
       if (remainingMs <= 0) {
         throw fetchTimeoutError();
       }
-      const response = await fetch(url, {
-        redirect: "manual",
+      const response = await activePinnedFetch(target, {
         signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingMs)),
         headers: {
           "User-Agent": USER_AGENT,
@@ -261,11 +357,12 @@ async function fetchWithSsrfGuard(
   const cookieJar = new Map<string, string>();
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    currentUrl = await validateFetchUrl(currentUrl.toString());
+    const target = await validateAndPinFetchUrl(currentUrl.toString());
+    currentUrl = target.url;
     const cookieHeader = Array.from(cookieJar.entries())
       .map(([k, v]) => `${k}=${v}`)
       .join("; ");
-    const response = await fetchWithRetry(currentUrl, deadlineMs, retryState, {
+    const response = await fetchWithRetry(target, deadlineMs, retryState, {
       ...headersOverride,
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     });
@@ -292,6 +389,49 @@ async function fetchWithSsrfGuard(
   }
 
   throw new Error(`Too many redirects fetching ${url.toString()}`);
+}
+
+function contentTooLargeError(kind: "HTML" | "PDF", receivedBytes: number): Error {
+  return new Error(
+    `${UNSUPPORTED_CONTENT_ERROR_PREFIX} ${kind} 过大(${Math.ceil(receivedBytes / 1048576)}MB),跳过解析`,
+  );
+}
+
+/** 先按 Content-Length 快拒，再边读边计数；reader.cancel 会立即拆掉底层请求。 */
+async function readResponseBodyLimited(
+  response: Response,
+  maxBytes: number,
+  kind: "HTML" | "PDF",
+): Promise<Buffer> {
+  const contentLengthText = response.headers.get("content-length")?.trim() ?? "";
+  if (/^\d+$/.test(contentLengthText)) {
+    const contentLength = Number(contentLengthText);
+    if (Number.isSafeInteger(contentLength) && contentLength > maxBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw contentTooLargeError(kind, contentLength);
+    }
+  }
+
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw contentTooLargeError(kind, totalBytes);
+      }
+      chunks.push(Buffer.from(chunk.value));
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  return Buffer.concat(chunks, totalBytes);
 }
 
 function charsetFromContentType(contentType: string | null): string | null {
@@ -793,7 +933,7 @@ async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | 
     );
     const { response } = await fetchWithSsrfGuard(efetchUrl);
     if (!response.ok) return null;
-    const xml = Buffer.from(await response.arrayBuffer()).toString("utf-8");
+    const xml = (await readResponseBodyLimited(response, MAX_HTML_BYTES, "HTML")).toString("utf-8");
     const $x = cheerio.load(xml, { xmlMode: true });
     const title = cleanText($x("article-title").first().text());
     const paras = $x("abstract p, body p")
@@ -832,12 +972,7 @@ export async function extractArticleContent(
   //(目标:搜索链路 100% 解析率。论文/报告类结果常是 PDF)。按 Content-Type 或 .pdf 路径判定。
   const isPdf = ctLower.includes("pdf") || /\.pdf(\?|#|$)/i.test(finalUrl.pathname);
   if (isPdf) {
-    const buf = Buffer.from(await response.arrayBuffer());
-    if (buf.length > MAX_PDF_BYTES) {
-      throw new Error(
-        `${UNSUPPORTED_CONTENT_ERROR_PREFIX} PDF 过大(${Math.round(buf.length / 1048576)}MB),跳过解析`,
-      );
-    }
+    const buf = await readResponseBodyLimited(response, MAX_PDF_BYTES, "PDF");
     const { text, title: pdfTitle } = await extractPdfText(buf);
     const body = trimArticleBoilerplateLines(cleanText(text.replace(/\f/g, "\n\n")));
     if (body.replace(/\s+/g, "").length < MIN_EXTRACTED_TEXT_LENGTH) {
@@ -860,7 +995,7 @@ export async function extractArticleContent(
       `${UNSUPPORTED_CONTENT_ERROR_PREFIX} 非 HTML 内容(${contentType || "下载附件"}),无法按网页正文解析`,
     );
   }
-  const bodyBuffer = Buffer.from(await response.arrayBuffer());
+  const bodyBuffer = await readResponseBodyLimited(response, MAX_HTML_BYTES, "HTML");
   const html = decodeHtml(bodyBuffer, contentType);
   const $ = cheerio.load(html);
 

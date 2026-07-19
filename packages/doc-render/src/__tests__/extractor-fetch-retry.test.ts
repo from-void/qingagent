@@ -4,13 +4,20 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
 }));
 
-import { extractArticleContent } from "../browser/extractor.js";
+import {
+  __setPinnedFetchForTest,
+  extractArticleContent,
+} from "../browser/extractor.js";
+import type { PinnedFetchUrl } from "../browser/fetchUrlPolicy.js";
+
+type TestPinnedFetch = (target: PinnedFetchUrl, init: RequestInit) => Promise<Response>;
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  __setPinnedFetchForTest(null);
 });
 
 describe("extractArticleContent fetch 轻量重试", () => {
@@ -22,7 +29,7 @@ describe("extractArticleContent fetch 轻量重试", () => {
       "<p>第二次请求返回完整 HTML，应该正常提取标题和文章正文。</p>" +
       "</article></body></html>";
     const fetchMock = vi
-      .fn<typeof fetch>()
+      .fn<TestPinnedFetch>()
       .mockRejectedValueOnce(new TypeError("fetch failed"))
       .mockResolvedValueOnce(
         new Response(Buffer.from(html), {
@@ -30,13 +37,17 @@ describe("extractArticleContent fetch 轻量重试", () => {
           headers: { "content-type": "text/html; charset=utf-8" },
         }),
       );
-    vi.stubGlobal("fetch", fetchMock);
+    __setPinnedFetchForTest(fetchMock);
 
     const result = await extractArticleContent("https://example.com/article");
 
     expect(result.title).toBe("重试成功");
     expect(result.body).toContain("网络抖动后的正文内容");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ address: "93.184.216.34", family: 4 }),
+      expect.any(Object),
+    );
   });
 
   it("静态 fetch 超时最多额外重试一次,不会卡到 60 秒", async () => {
@@ -49,7 +60,7 @@ describe("extractArticleContent fetch 轻量重试", () => {
       abortControllers.push(controller);
       return controller.signal;
     });
-    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
+    const fetchMock = vi.fn<TestPinnedFetch>((_target, init) => {
       const signal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
         const abort = () => {
@@ -66,7 +77,7 @@ describe("extractArticleContent fetch 轻量重试", () => {
         signal?.addEventListener("abort", abort, { once: true });
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    __setPinnedFetchForTest(fetchMock);
 
     const result = extractArticleContent("https://example.com/slow-article");
 
@@ -95,7 +106,7 @@ describe("extractArticleContent fetch 轻量重试", () => {
     });
 
     let callCount = 0;
-    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
+    const fetchMock = vi.fn<TestPinnedFetch>((_target, init) => {
       callCount += 1;
       if (callCount === 2) {
         return Promise.resolve(
@@ -122,7 +133,7 @@ describe("extractArticleContent fetch 轻量重试", () => {
         signal?.addEventListener("abort", abort, { once: true });
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    __setPinnedFetchForTest(fetchMock);
 
     const result = extractArticleContent("https://example.com/redirect-then-slow");
 
@@ -136,5 +147,54 @@ describe("extractArticleContent fetch 轻量重试", () => {
       name: expect.stringMatching(/AbortError|TimeoutError/),
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["HTML", "text/html", 10 * 1024 * 1024 + 1, "https://example.com/oversized.html"],
+    ["PDF", "application/pdf", 30 * 1024 * 1024 + 1, "https://example.com/oversized.pdf"],
+  ] as const)("%s Content-Length 超限时在读取前取消响应体", async (kind, contentType, size, url) => {
+    const body = new ReadableStream<Uint8Array>({
+      pull() {},
+    });
+    const response = new Response(body, {
+      status: 200,
+      headers: {
+        "content-type": contentType,
+        "content-length": String(size),
+      },
+    });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    const fetchMock = vi.fn<TestPinnedFetch>(async () => response);
+    __setPinnedFetchForTest(fetchMock);
+
+    await expect(extractArticleContent(url)).rejects.toThrow(
+      new RegExp(`\\[unsupported-content\\] ${kind} 过大`),
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("HTML 未给 Content-Length 时边读边累计，越过 10MiB 立即取消", async () => {
+    const cancel = vi.fn();
+    let emitted = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted) return;
+        emitted = true;
+        controller.enqueue(new Uint8Array(10 * 1024 * 1024 + 1));
+      },
+      cancel,
+    });
+    const fetchMock = vi.fn<TestPinnedFetch>(async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    __setPinnedFetchForTest(fetchMock);
+
+    await expect(extractArticleContent("https://example.com/streaming-too-large")).rejects.toThrow(
+      /\[unsupported-content\] HTML 过大/,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

@@ -86,7 +86,7 @@ describe("crashGuard graceful shutdown", () => {
     __resetCrashGuardForTest();
   });
 
-  it("SIGTERM drain 顺序为 active turn → session persistence → observability", async () => {
+  it("SIGTERM drain 顺序包含 browser cleanup，且发生在 observability 前", async () => {
     const order: string[] = [];
     const exit = vi.fn();
 
@@ -98,12 +98,36 @@ describe("crashGuard graceful shutdown", () => {
       drainPersistence: async () => {
         order.push("persist");
       },
+      cleanupBrowser: async () => {
+        order.push("browser");
+      },
       flushObservability: async () => {
         order.push("observability");
       },
     });
 
-    expect(order).toEqual(["active", "persist", "observability"]);
+    expect(order).toEqual(["active", "persist", "browser", "observability"]);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("browser cleanup 失败不会阻断 observability flush 与正常退出", async () => {
+    const order: string[] = [];
+    const exit = vi.fn();
+
+    await gracefulShutdownForTest("SIGTERM", {
+      exit,
+      drainActiveTurns: async () => {},
+      drainPersistence: async () => {},
+      cleanupBrowser: async () => {
+        order.push("browser");
+        throw new Error("browser close failed");
+      },
+      flushObservability: async () => {
+        order.push("observability");
+      },
+    });
+
+    expect(order).toEqual(["browser", "observability"]);
     expect(exit).toHaveBeenCalledWith(0);
   });
 
@@ -139,6 +163,7 @@ describe("crashGuard graceful shutdown", () => {
       expect(logFile).toBeTruthy();
       const log = await readFile(join(logDir, logFile!), "utf8");
       expect(log).toContain("received SIGTERM, shutting down gracefully");
+      expect(log).toContain("browser_cleanup");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {
       await rm(logDir, { recursive: true, force: true });
@@ -161,7 +186,7 @@ describe("crashGuard graceful shutdown", () => {
             "import { __setSignalShutdownDepsForTest } from './src/crashGuard.ts';",
             "import { writeFileSync } from 'node:fs';",
             "import { startExternalInstance } from './src/lib/externalInstance.ts';",
-            "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, flushObservability: async () => {} });",
+            "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, cleanupBrowser: async () => {}, flushObservability: async () => {} });",
             "await startExternalInstance({ port: 52341, version: 'test', filePath: process.env.INSTANCE_FILE });",
             "writeFileSync(process.env.READY_FILE, 'ready');",
             "setInterval(() => {}, 1000);",
@@ -192,6 +217,7 @@ describe("crashGuard graceful shutdown", () => {
       const log = await readFile(join(logDir, logFile!), "utf8");
       expect(log).toContain("active_turn_drain completed");
       expect(log).toContain("session_persistence_drain completed");
+      expect(log).toContain("browser_cleanup completed");
       expect(log).toContain("observability_flush completed");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {
@@ -229,6 +255,7 @@ describe("crashGuard graceful shutdown", () => {
       expect(log).toContain("removed competing SIGTERM shutdown handlers");
       expect(log).toContain("active_turn_drain completed");
       expect(log).toContain("session_persistence_drain completed");
+      expect(log).toContain("browser_cleanup completed");
       expect(log).toContain("observability_flush completed");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {

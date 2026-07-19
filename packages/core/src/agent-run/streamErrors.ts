@@ -348,6 +348,17 @@ export function turnRetryDelayMs(attempt: number): number {
   return Math.min(2_000, 400 * 2 ** attempt);
 }
 
-export function delayMs(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+export function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolveDelay, rejectDelay) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolveDelay();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      rejectDelay(signal?.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

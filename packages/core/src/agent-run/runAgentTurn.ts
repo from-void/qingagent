@@ -139,7 +139,7 @@ export async function* runAgentTurn(
   }
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
-  let abortController = new AbortController();
+  const abortController = new AbortController();
   const turnCompletion = createTurnCompletion();
   let turnWasUserAborted = false;
   const omSidecarEnabled = isOmSidecarEnabled();
@@ -635,8 +635,7 @@ export async function* runAgentTurn(
       attempt: number,
       scopedPrefixGuardContext: typeof prefixGuardContext,
     ) => {
-      abortController = new AbortController();
-      state._abortController = abortController;
+      abortController.signal.throwIfAborted();
       return guardContext.run(scopedPrefixGuardContext, () =>
         qingagentAgent.stream(messagesForModel, {
           maxSteps: AGENT_MAX_STEPS,
@@ -680,6 +679,7 @@ export async function* runAgentTurn(
     };
 
     for (let attempt = 0; attempt <= maxTurnRetries; attempt += 1) {
+      abortController.signal.throwIfAborted();
       const scopedPrefixGuardContext = {
         ...prefixGuardContext,
         scopeId: attempt === 0 ? streamId : `${streamId}:retry:${attempt}`,
@@ -721,7 +721,8 @@ export async function* runAgentTurn(
           retryDelayMs,
           error: streamErrorMessage(outcome.transientErrorChunk),
         });
-        await delayMs(retryDelayMs);
+        await delayMs(retryDelayMs, abortController.signal);
+        abortController.signal.throwIfAborted();
         continue;
       }
       if (shouldRetry) {

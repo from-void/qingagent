@@ -52,6 +52,12 @@ function maskTail(key: string): string {
   return key.length > 4 ? `••••${key.slice(-4)}` : "••••";
 }
 
+function visionPersistFailureMessage(): string {
+  return window.electron?.isDesktop
+    ? "系统无安全存储或本机写入失败，未保存"
+    : "浏览器存储不可用，未保存";
+}
+
 export function VisionPanel() {
   const toast = useToast();
   const confirm = useConfirm();
@@ -132,7 +138,10 @@ export function VisionPanel() {
         return;
       }
       const next: VisionProvider = { enabled: true, protocol, baseUrl: base, apiKey: key, model: mdl };
-      writeVisionProvider(next);
+      if (!(await writeVisionProvider(next))) {
+        setMessage(visionPersistFailureMessage());
+        return;
+      }
       setSaved(next);
       setMessage(null);
       toast.show("测试通过,图像识别已启用");
@@ -152,10 +161,13 @@ export function VisionPanel() {
     }
   };
 
-  const handleToggle = () => {
+  const handleToggle = async () => {
     if (!saved) return;
     const next = { ...saved, enabled: !saved.enabled };
-    writeVisionProvider(next);
+    if (!(await writeVisionProvider(next))) {
+      setMessage(visionPersistFailureMessage());
+      return;
+    }
     setSaved(next);
     setMessage(next.enabled ? "已启用图像识别" : "已停用图像识别");
   };
@@ -170,7 +182,10 @@ export function VisionPanel() {
     if (!proceed) {
       return;
     }
-    clearVisionProvider();
+    if (!(await clearVisionProvider())) {
+      setMessage("本机配置清除失败，请重试");
+      return;
+    }
     setSaved(null);
     setBaseUrl("");
     setApiKey("");

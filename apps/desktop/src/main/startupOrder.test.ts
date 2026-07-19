@@ -37,6 +37,7 @@ test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key pro
 
 test("desktop PDF 导出使用私有临时目录、随机文件名和最小文件权限并整目录清理", () => {
   const source = readFileSync(path.join(__dirname, "pdfRenderer.ts"), "utf8");
+  const mainSource = readFileSync(path.join(__dirname, "index.ts"), "utf8");
 
   assert.match(source, /mkdtempSync\(path\.join\(app\.getPath\("temp"\), "qingagent-export-"\)\)/);
   assert.match(source, /chmodSync\(tmpDir, 0o700\)/);
@@ -45,6 +46,10 @@ test("desktop PDF 导出使用私有临时目录、随机文件名和最小文�
   assert.match(source, /flag: "wx"/);
   assert.match(source, /rmSync\(tmpDir, \{ recursive: true, force: true \}\)/);
   assert.doesNotMatch(source, /qingagent-export-\$\{process\.pid\}/);
+  assert.match(source, /EXPORT_ORPHAN_MAX_AGE_MS = 60 \* 60 \* 1000/);
+  assert.match(source, /entry\.isDirectory\(\).*entry\.name\.startsWith\(EXPORT_TEMP_PREFIX\)/);
+  assert.match(source, /stat\.mtimeMs > cutoffMs/);
+  assert.match(mainSource, /cleanupOrphanedPdfExportDirs\(\)/);
 });
 
 test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文且不可用时 fail-closed", () => {
@@ -73,7 +78,13 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
     stripPlaintext > rendererReadStart && unavailableReturn > stripPlaintext,
     "加密不可用前必须先从 renderer 快照剥离明文 key",
   );
-  assert.match(source, /secretPatch\.length > 0 && !isDesktopModelEncryptionAvailable\(\)\) return false/);
+  assert.match(source, /secretPatch\.length > 0 && !encryptionAvailable\) return false/);
+  assert.match(source, /secretEntries\.filter\(\(\[, value\]\) => typeof value === "string" && value !== ""\)/);
+  assert.match(source, /if \(secretEntries\.length > 0\) writeEncryptedClientSecrets\(encrypted\)/);
+  assert.match(source, /delete cfg\[k\]/);
+  assert.match(source, /delete encrypted\[k\]/);
+  assert.match(source, /\^client-config\\\.json\\\.\\d\+\\\.tmp\$/);
+  assert.match(source, /cleanupClientConfigTempFiles\(\)/);
 });
 
 test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧行保真", async () => {

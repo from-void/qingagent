@@ -5,6 +5,7 @@ import {
   isDesktopPersist,
   readPersisted,
   writePersisted,
+  writePersistedAwaited,
 } from "./clientPersist";
 
 type ElectronBridge = {
@@ -59,6 +60,29 @@ describe("clientPersist", () => {
     it("clientConfig 为空对象时仍判定为桌面持久化", () => {
       setElectron({ clientConfig: {}, setClientConfig: vi.fn(async () => true) });
       expect(isDesktopPersist()).toBe(true);
+    });
+
+    it("敏感写入可等待，IPC 失败后恢复写入前的内存镜像", async () => {
+      let finishWrite: ((ok: boolean) => void) | undefined;
+      const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+        finishWrite = resolve;
+      }));
+      setElectron({ clientConfig: { k: "old" }, setClientConfig });
+
+      const pending = writePersistedAwaited("k", "new");
+      // IPC 等待期间仍满足 visitorKeyHeaders 一类调用方的同步读取约束。
+      expect(readPersisted("k")).toBe("new");
+      finishWrite?.(false);
+
+      await expect(pending).resolves.toBe(false);
+      expect(readPersisted("k")).toBe("old");
+    });
+
+    it("敏感删除失败时恢复原值，不能制造已清除假象", async () => {
+      setElectron({ clientConfig: { k: "secret" }, setClientConfig: vi.fn(async () => false) });
+
+      await expect(writePersistedAwaited("k", null)).resolves.toBe(false);
+      expect(readPersisted("k")).toBe("secret");
     });
 
     it("缺 clientConfig(旧 preload)时回退 localStorage", () => {

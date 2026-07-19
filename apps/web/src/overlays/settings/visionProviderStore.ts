@@ -3,7 +3,7 @@
 // 桌面端落 userData(打包后不丢)、web 端仍用 localStorage。
 // DeepSeek 暂不支持多模态,故现在只接第三方多模态厂商;待 DeepSeek 原生支持后复用主模型 key。
 
-import { readPersisted, writePersisted } from "./clientPersist";
+import { readPersisted, writePersistedAwaited } from "./clientPersist";
 
 const VISION_PROVIDER_KEY = "qingagent.vision_provider";
 
@@ -63,12 +63,12 @@ export function readVisionProvider(): VisionProvider | null {
   }
 }
 
-export function writeVisionProvider(v: VisionProvider): void {
-  writePersisted(VISION_PROVIDER_KEY, JSON.stringify(v));
+export function writeVisionProvider(v: VisionProvider): Promise<boolean> {
+  return writePersistedAwaited(VISION_PROVIDER_KEY, JSON.stringify(v));
 }
 
-export function clearVisionProvider(): void {
-  writePersisted(VISION_PROVIDER_KEY, null);
+export function clearVisionProvider(): Promise<boolean> {
+  return writePersistedAwaited(VISION_PROVIDER_KEY, null);
 }
 
 /** 给请求层用:仅当已配置且启用时,返回要附加的 x-vision-* header(契约 A)。 */

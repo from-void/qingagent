@@ -6,7 +6,7 @@
 // 三者透传走同一出口 visitorKeyHeaders(),被对话/余额等请求统一带上。
 
 import { visionKeyHeaders } from "./visionProviderStore";
-import { readPersisted, writePersisted } from "./clientPersist";
+import { readPersisted, writePersisted, writePersistedAwaited } from "./clientPersist";
 
 const STORAGE_KEY = "qingagent.deepseek_api_key";
 const CUSTOM_PROVIDER_KEY = "qingagent.custom_provider";
@@ -39,13 +39,13 @@ export function getVisitorDeepseekKey(): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-export function setVisitorDeepseekKey(key: string): void {
+export function setVisitorDeepseekKey(key: string): Promise<boolean> {
   const trimmed = key.trim();
-  writePersisted(STORAGE_KEY, trimmed ? trimmed : null);
+  return writePersistedAwaited(STORAGE_KEY, trimmed ? trimmed : null);
 }
 
-export function clearVisitorDeepseekKey(): void {
-  setVisitorDeepseekKey("");
+export function clearVisitorDeepseekKey(): Promise<boolean> {
+  return setVisitorDeepseekKey("");
 }
 
 // —— 其他云厂商(进阶):整体覆盖 baseURL + key + 模型别名 ——
@@ -70,12 +70,12 @@ export function readCustomProvider(): CustomProvider | null {
   }
 }
 
-export function writeCustomProvider(v: CustomProvider): void {
-  writePersisted(CUSTOM_PROVIDER_KEY, JSON.stringify(v));
+export function writeCustomProvider(v: CustomProvider): Promise<boolean> {
+  return writePersistedAwaited(CUSTOM_PROVIDER_KEY, JSON.stringify(v));
 }
 
-export function clearCustomProvider(): void {
-  writePersisted(CUSTOM_PROVIDER_KEY, null);
+export function clearCustomProvider(): Promise<boolean> {
+  return writePersistedAwaited(CUSTOM_PROVIDER_KEY, null);
 }
 
 // —— 官方模型前缀覆盖:仅覆盖模型名 ——

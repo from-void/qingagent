@@ -1,5 +1,5 @@
 import { app, BrowserWindow, session, type Session } from "electron";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isAllowedExportRequest } from "./exportRequestFilter.js";
@@ -17,6 +17,31 @@ import { isAllowedExportRequest } from "./exportRequestFilter.js";
  */
 
 const EXPORT_PARTITION = "persist:qingagent-export";
+const EXPORT_TEMP_PREFIX = "qingagent-export-";
+const EXPORT_ORPHAN_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** 启动时回收崩溃遗留的超龄导出目录；新目录可能仍在使用，绝不触碰。 */
+export function cleanupOrphanedPdfExportDirs(
+  tempRoot = app.getPath("temp"),
+  nowMs = Date.now(),
+): void {
+  const cutoffMs = nowMs - EXPORT_ORPHAN_MAX_AGE_MS;
+  try {
+    for (const entry of readdirSync(tempRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(EXPORT_TEMP_PREFIX)) continue;
+      const candidate = path.join(tempRoot, entry.name);
+      try {
+        const stat = lstatSync(candidate);
+        if (!stat.isDirectory() || stat.mtimeMs > cutoffMs) continue;
+        rmSync(candidate, { recursive: true, force: true });
+      } catch {
+        // 目录可能已被并发清理；单项失败不阻断应用启动。
+      }
+    }
+  } catch {
+    // 系统 temp 不可读时跳过，本次启动仍可正常导出。
+  }
+}
 
 let filterInstalled = false;
 function exportSession(): Session {

@@ -3,6 +3,7 @@ import type { Client } from "@libsql/client";
 import { buildPmProjection, parsePmDoc } from "./documentRepo.js";
 import { commitTransaction, getDocumentsClient, withTransaction, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
+import { deleteDocumentFamilyByDocIds } from "./documentFamilyRepo.js";
 import { getDefaultStyleTemplate, getStyleTemplate } from "./styleTemplateRepo.js";
 import type { PmDoc } from "@qingagent/pm-schema";
 
@@ -156,9 +157,7 @@ export async function deleteDerivativeDoc(threadId: string, docId: string): Prom
       args: [docId, threadId],
     });
     if (!owned.rows[0]) return commitTransaction(false);
-    await client.execute({ sql: "DELETE FROM document_versions WHERE doc_id = ?", args: [docId] });
-    await client.execute({ sql: "DELETE FROM document_derivatives WHERE doc_id = ?", args: [docId] });
-    await client.execute({ sql: "DELETE FROM documents WHERE id = ? AND thread_id = ? AND role = 'derivative'", args: [docId, threadId] });
+    await deleteDocumentFamilyByDocIds(client, [docId]);
     return commitTransaction(true);
   });
 }

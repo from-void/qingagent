@@ -16,7 +16,10 @@ import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp
 import { applySuggestionsToDoc } from "./pmPatch.js";
 import { applyDiffHunks } from "./proposalDiff.js";
 import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSuggestions.js";
-import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
+import {
+  rebaseRemainingPendingDraft,
+  type DroppedPendingDraftRecord,
+} from "./pendingDraftRebase.js";
 import { persistMappedAnnotationGroups, updateDocumentSuggestionStatus } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
@@ -282,6 +285,27 @@ async function* settleUnappliedReviewRecords(
   }
 }
 
+const DROPPED_REBASE_MESSAGE = "目标位置已被前序修改改变,该条已失效,未写入";
+
+async function* settleDroppedRebaseRecords(
+  state: SessionState,
+  dropped: readonly DroppedPendingDraftRecord[],
+): AsyncGenerator<BridgeFrame> {
+  if (dropped.length === 0) return;
+  const records = dropped.map((item) => item.record);
+  yield* settleUnappliedReviewRecords(
+    state,
+    records,
+    records.map((record): PatchConflict => ({
+      kind: "block_removed",
+      message: DROPPED_REBASE_MESSAGE,
+      suggestionId: record.suggestion.id,
+      blockId: record.suggestion.anchor.blockId,
+    })),
+    DROPPED_REBASE_MESSAGE,
+  );
+}
+
 async function* finishSettledReviewState(
   state: SessionState,
   persistReason: string,
@@ -442,14 +466,20 @@ export async function* commitPatches(
         committedVersion: state.docVersion,
         remainingRecords,
       });
+      if (rebase.status !== "conflict") {
+        yield* settleDroppedRebaseRecords(state, rebase.dropped);
+      }
       if (rebase.status === "pending") {
+        const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
         const suggestions = rebuildPendingReviewAfterRebase({
           state,
           committedDoc: currentPmDoc(state),
           committedVersion: state.docVersion,
           nextDraftDoc: rebase.nextDraftDoc,
           hunks: rebase.hunks,
-          previousRemainingRecords: remainingRecords,
+          previousRemainingRecords: remainingRecords.filter(
+            (record) => !droppedIds.has(record.suggestion.id),
+          ),
         });
         yield docDiffReady(
           state.docVersion,
@@ -790,14 +820,20 @@ export async function* commitPatches(
       committedVersion: result.docVersion,
       remainingRecords,
     });
+    if (rebase.status !== "conflict") {
+      yield* settleDroppedRebaseRecords(state, rebase.dropped);
+    }
     if (rebase.status === "pending") {
+      const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
       const suggestions = rebuildPendingReviewAfterRebase({
         state,
         committedDoc: result.doc,
         committedVersion: result.docVersion,
         nextDraftDoc: rebase.nextDraftDoc,
         hunks: rebase.hunks,
-        previousRemainingRecords: remainingRecords,
+        previousRemainingRecords: remainingRecords.filter(
+          (record) => !droppedIds.has(record.suggestion.id),
+        ),
       });
       yield docDiffReady(result.docVersion, suggestions, result.doc, rebase.nextDraftDoc);
       for (const record of state.suggestions.values()) {

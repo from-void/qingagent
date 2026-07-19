@@ -1461,7 +1461,7 @@ function ToolCallRow({
         : isReviewing
           ? `修改"${truncated}" · 待审阅`
           : isFailed
-            ? `修改"${truncated}"未应用`
+            ? "修改已失效,未应用"
             : `修改"${truncated}"中`;
     return (
       <div

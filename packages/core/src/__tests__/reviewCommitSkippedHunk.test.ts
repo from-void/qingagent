@@ -13,7 +13,7 @@ import {
   type SessionState,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
-import { documentRepo } from "@qingagent/db";
+import { documentRepo, upsertDocumentSuggestion } from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
 import {
   documentInput,
@@ -182,6 +182,40 @@ afterEach(() => {
 });
 
 describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示", () => {
+  it("rebase 失锚的剩余 suggestion 落 conflict 并发 failed 终态帧", async () => {
+    const state = createSession("commit-rebase-dropped-hunk");
+    const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
+    const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
+    const [rejectedHunk, droppedHunk] = seedReviewState(state, base, draft);
+    if (!rejectedHunk || !droppedHunk) throw new Error("fixture missing hunks");
+    const droppedSuggestion = state.suggestions.get(droppedHunk.hunkId)!.suggestion;
+    await upsertDocumentSuggestion(droppedSuggestion);
+    state.patchVerdicts.set(rejectedHunk.hunkId, "rejected");
+
+    const canonical = doc([paragraph("blk-a", "甲原文")]);
+    state.doc = canonical;
+    state.legacySections = pmToLegacySections(canonical) as unknown as LegacySection[];
+    await seedCanonical(state, canonical);
+
+    const frames = await collectFrames(commitPatches(state, [rejectedHunk.hunkId]));
+    const stored = await getDocumentsClient().execute({
+      sql: "SELECT status, conflict_json FROM document_suggestions WHERE id = ?",
+      args: [droppedHunk.hunkId],
+    });
+
+    expect(toolStatusesFor(frames, droppedHunk.hunkId)).toContain("failed");
+    expect(failedReasonsFor(frames, droppedHunk.hunkId)).toContain(
+      "目标位置已被前序修改改变,该条已失效,未写入",
+    );
+    expect(stored.rows[0]?.status).toBe("conflict");
+    expect(JSON.parse(String(stored.rows[0]?.conflict_json))).toMatchObject({
+      kind: "block_removed",
+      message: "目标位置已被前序修改改变,该条已失效,未写入",
+      suggestionId: droppedHunk.hunkId,
+    });
+    expect(state.suggestions.size).toBe(0);
+  });
+
   it("只应用/记账存活块;失效 hunk 不进 steps,suggestion 按未应用结算并带失效提示", async () => {
     const state = createSession("commit-skip-deleted-block");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);

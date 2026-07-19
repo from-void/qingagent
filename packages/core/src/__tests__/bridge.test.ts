@@ -340,7 +340,7 @@ describe("commitPatches", () => {
     )).toBe("editable");
   });
 
-  it("clears committed patches from state after commit", async () => {
+  it("提交后清理已提交项，并将缺少 diffHunk 的剩余项结算为失败", async () => {
     const state = createSession("test");
     seedStateWithDoc(state);
     addPatch(state, "patch-a");
@@ -353,11 +353,16 @@ describe("commitPatches", () => {
     await seedDocumentRow(state);
 
     // Commit only patch-a
-    await collectAsyncFrames(commitPatches(state, ["patch-a"]));
+    const frames = await collectAsyncFrames(commitPatches(state, ["patch-a"]));
 
-    // patch-a should be removed, patch-b should remain
+    // patch-a 已提交；patch-b 无法 rebase，必须显式失败，不能静默留在待审状态。
     expect(state.suggestions.has("patch-a")).toBe(false);
-    expect(state.suggestions.has("patch-b")).toBe(true);
+    expect(state.suggestions.has("patch-b")).toBe(false);
+    expect(frames.some((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === "patch-b" &&
+      frame.data.spec.status.kind === "failed"
+    )).toBe(true);
   });
 
   it("applies multiple patches in correct order", async () => {

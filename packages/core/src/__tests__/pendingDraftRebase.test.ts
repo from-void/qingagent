@@ -283,6 +283,13 @@ describe("rebaseRemainingPendingDraft", () => {
 
     // 旧行为会把整轮判 conflict 锁死;新行为丢弃这一处落点失败的改动,剩下没有可应用项 → 清空。
     expect(result.status).toBe("cleared");
+    if (result.status !== "cleared") return;
+    expect(result.dropped).toHaveLength(1);
+    expect(result.dropped[0]).toMatchObject({
+      record: { suggestion: { id: records[0]!.suggestion.id } },
+      hunkId: records[0]!.diffHunk!.hunkId,
+      reason: expect.any(String),
+    });
     expect(row).toBeNull();
   });
 
@@ -327,6 +334,11 @@ describe("rebaseRemainingPendingDraft", () => {
     // block-b 那处被丢弃,只剩 block-c → C 新 这一处可继续评审。
     expect(docText(result.nextDraftDoc)).toContain("C 新");
     expect(result.nextDraftDoc.content.map((block) => block.attrs.blockId)).not.toContain("block-b");
+    expect(result.dropped).toHaveLength(1);
+    expect(result.dropped[0]).toMatchObject({
+      record: { suggestion: { anchor: { blockId: "block-b" } } },
+      reason: expect.any(String),
+    });
     const row = await documentDraftRepo.load("doc-anchor-partial");
     expect(row?.status).toBe("pending_review");
   });

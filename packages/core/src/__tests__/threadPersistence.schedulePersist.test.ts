@@ -249,18 +249,20 @@ describe("schedulePersist dirty-loop", () => {
     );
   });
 
-  it("非 busy 主写失败不重试，schedulePersist 保持 resolve 并记录 reason", async () => {
+  it("主写首次失败会保留 dirty，退避重试成功后才清理", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const {
       __getSessionPersistenceStateForTest,
       schedulePersist,
     } = await import("../session/threadPersistence.js");
-    memory.updateThread.mockRejectedValue(new Error("primary write syntax error"));
+    memory.updateThread
+      .mockRejectedValueOnce(new Error("primary write syntax error"))
+      .mockResolvedValueOnce(undefined);
 
     const state = createSession("schedule-nonbusy-primary-fail");
     await expect(schedulePersist(state, "tool_call_suspended")).resolves.toBeUndefined();
 
-    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect(memory.updateThread).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
       "Failed to persist session metadata",
       expect.objectContaining({
@@ -274,5 +276,92 @@ describe("schedulePersist dirty-loop", () => {
       dirtyCount: 0,
       loopCount: 0,
     });
+  });
+
+  it("主写重试耗尽后拒绝调用方并保留 dirty", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      schedulePersist,
+    } = await import("../session/threadPersistence.js");
+    memory.updateThread.mockRejectedValue(new Error("primary write unavailable"));
+
+    const state = createSession("schedule-primary-exhausted");
+    await expect(schedulePersist(state, "stream_end")).rejects.toThrow("primary write unavailable");
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(3);
+    expect(logger.error).toHaveBeenCalledWith(
+      "Scheduled session metadata persist exhausted retries; session remains dirty",
+      expect.objectContaining({
+        sessionId: state.sessionId,
+        reason: "stream_end",
+        attempts: 3,
+        error: "primary write unavailable",
+      }),
+    );
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 1,
+      loopCount: 0,
+    });
+  });
+
+  it("关机 drain 会重新尝试已耗尽但仍 dirty 的会话", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      drainSessionPersistence,
+      schedulePersist,
+    } = await import("../session/threadPersistence.js");
+    memory.updateThread.mockRejectedValue(new Error("primary write unavailable"));
+    const state = createSession("schedule-shutdown-retry");
+    await expect(schedulePersist(state, "stream_end")).rejects.toThrow("primary write unavailable");
+    expect(__getSessionPersistenceStateForTest().dirtyCount).toBe(1);
+
+    memory.updateThread.mockResolvedValue(undefined);
+    await drainSessionPersistence();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(4);
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 0,
+      loopCount: 0,
+    });
+  });
+
+  it("关机 drain 超时会明确记录仍未保存的会话", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createSession } = await import("../session/sessionState.js");
+      const {
+        drainSessionPersistence,
+        schedulePersist,
+      } = await import("../session/threadPersistence.js");
+      memory.updateThread.mockRejectedValue(new Error("storage offline"));
+      const state = createSession("schedule-shutdown-timeout");
+
+      const initialPersist = schedulePersist(state, "stream_end");
+      const initialPersistRejection = expect(initialPersist).rejects.toThrow("storage offline");
+      await vi.runAllTimersAsync();
+      await initialPersistRejection;
+
+      const drain = drainSessionPersistence(25);
+      const drainRejection = expect(drain).rejects.toThrow("drainSessionPersistence timed out");
+      await vi.advanceTimersByTimeAsync(25);
+      await drainRejection;
+      expect(logger.error).toHaveBeenCalledWith(
+        "会话持久化 drain 超时，仍有未保存会话",
+        expect.objectContaining({
+          timeoutMs: 25,
+          unsavedSessionCount: 1,
+          sessionIds: [state.sessionId],
+        }),
+      );
+
+      // 让已被 timeout race 放到后台的有限重试循环收尾，避免跨测试残留。
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

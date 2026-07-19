@@ -415,6 +415,26 @@ describe("thread persistence", () => {
     expect(restored?.docId).toBe("doc-explicit");
   });
 
+  it("主元数据写失败会向直接调用方抛出", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { persistSessionMetadata } = await import("../session/threadPersistence.js");
+    const state = createSession("session-direct-persist-failure");
+    vi.spyOn(memory, "updateThread").mockRejectedValueOnce(new Error("direct persist failed"));
+
+    await expect(persistSessionMetadata(state, "test:direct_failure")).rejects.toThrow(
+      "direct persist failed",
+    );
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to persist session metadata",
+      expect.objectContaining({
+        sessionId: state.sessionId,
+        reason: "test:direct_failure",
+        error: "direct persist failed",
+      }),
+    );
+  });
+
   it("falls back to sessionId when restoring old metadata without docId", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "legacy-session";

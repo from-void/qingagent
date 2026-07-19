@@ -199,7 +199,8 @@ async function drainActiveTurnsBestEffort(): Promise<void> {
 async function drainSessionPersistenceBestEffort(): Promise<void> {
   try {
     const core = await import("@qingagent/core");
-    await core.drainSessionPersistence?.(4_000);
+    // 略短于外层 4s phase，确保 core 有机会先记录“仍有未保存会话”的明确日志。
+    await core.drainSessionPersistence?.(3_800);
   } catch (err) {
     durableLogSync("warn", "session persistence drain failed during shutdown", {
       error: err instanceof Error ? err.message : String(err),

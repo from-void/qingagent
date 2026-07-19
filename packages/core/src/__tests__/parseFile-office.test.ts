@@ -16,14 +16,45 @@ async function executeParseFile(
   filename: string,
   mimeType: string,
 ): Promise<ParseFileResult> {
-  return (await parseFileTool.execute!(
-    {
-      content: buffer.toString("base64"),
-      filename,
-      mimeType,
-    },
-    {} as never,
-  )) as ParseFileResult;
+  const previousRuntime = process.env.QINGAGENT_RUNTIME;
+  process.env.QINGAGENT_RUNTIME = "desktop";
+  try {
+    return (await parseFileTool.execute!(
+      {
+        content: buffer.toString("base64"),
+        filename,
+        mimeType,
+      },
+      {} as never,
+    )) as ParseFileResult;
+  } finally {
+    if (previousRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
+    else process.env.QINGAGENT_RUNTIME = previousRuntime;
+  }
+}
+
+function createSyntheticZipDirectory(
+  entries: Array<{ compressedBytes: number; uncompressedBytes: number }>,
+  declaredEntryCount = entries.length,
+): Buffer {
+  const centralEntries = entries.map((entry, index) => {
+    const filename = Buffer.from(`entry-${index}.xml`, "utf8");
+    const header = Buffer.alloc(46 + filename.length);
+    header.writeUInt32LE(0x02014b50, 0);
+    header.writeUInt32LE(entry.compressedBytes, 20);
+    header.writeUInt32LE(entry.uncompressedBytes, 24);
+    header.writeUInt16LE(filename.length, 28);
+    filename.copy(header, 46);
+    return header;
+  });
+  const centralDirectory = Buffer.concat(centralEntries);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(declaredEntryCount, 8);
+  eocd.writeUInt16LE(declaredEntryCount, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(0, 16);
+  return Buffer.concat([centralDirectory, eocd]);
 }
 
 async function createXlsxFixture(): Promise<Buffer> {
@@ -650,6 +681,55 @@ function createBlankPdfFixture(): Buffer {
 }
 
 describe("parseFile Office 文本解析", () => {
+  it("解压前拒绝高压缩比 Office ZIP，不进入 entry 解压", async () => {
+    const zip = new JSZip();
+    zip.file("xl/workbook.xml", Buffer.alloc(2 * 1024 * 1024, 0x41));
+    const bomb = await zip.generateAsync({
+      type: "nodebuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    });
+
+    const result = await parseFileBuffer({
+      buffer: bomb,
+      filename: "ratio-bomb.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected compression-ratio rejection");
+    expect(result.error).toContain("Office ZIP 安全校验失败");
+    expect(result.error).toContain("压缩比");
+  });
+
+  it("解压前拒绝超量 ZIP 条目和伪造的超大总解压量", async () => {
+    const tooManyEntries = createSyntheticZipDirectory([], 10_001);
+    const oversizedTotal = createSyntheticZipDirectory([
+      { compressedBytes: 48 * 1024 * 1024, uncompressedBytes: 48 * 1024 * 1024 },
+      { compressedBytes: 48 * 1024 * 1024, uncompressedBytes: 48 * 1024 * 1024 },
+      { compressedBytes: 48 * 1024 * 1024, uncompressedBytes: 48 * 1024 * 1024 },
+    ]);
+
+    const [entryResult, totalResult] = await Promise.all([
+      parseFileBuffer({
+        buffer: tooManyEntries,
+        filename: "entry-bomb.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      parseFileBuffer({
+        buffer: oversizedTotal,
+        filename: "size-bomb.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ]);
+
+    expect(entryResult.ok).toBe(false);
+    expect(totalResult.ok).toBe(false);
+    if (entryResult.ok || totalResult.ok) throw new Error("expected ZIP directory limit rejection");
+    expect(entryResult.error).toContain("条目数超过上限");
+    expect(totalResult.error).toContain("总解压量超过");
+  });
+
   it("parseFileBuffer 对脏文本不做 JSON 解析或截断", async () => {
     const dirty = [
       "前导说明",

@@ -6,7 +6,9 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
-import { stat as statHostPath } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open, realpath, stat as statHostPath } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import {
   FOLDER_SOURCE_PARSER_VERSION,
@@ -180,15 +182,119 @@ function sameFileFingerprint(left: FileStat, right: FileStat): boolean {
   );
 }
 
+function isPathInside(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function mergeHostFileStat(base: FileStat, hostStat: Awaited<ReturnType<typeof statHostPath>>): FileStat {
+  return {
+    ...base,
+    type: hostStat.isFile() ? "file" : hostStat.isDirectory() ? "directory" : base.type,
+    size: hostStat.size,
+    createdAt: hostStat.birthtime,
+    modifiedAt: hostStat.mtime,
+  };
+}
+
+async function resolveHostReadPath(args: {
+  filesystem: WorkspaceFilesystem;
+  path: string;
+  source?: FolderSourceRecord;
+  relPath?: string;
+}): Promise<string | null> {
+  const { filesystem, path, source, relPath } = args;
+  if (source?.provider === "desktop-local" && source.desktopRootPath && relPath) {
+    let root: string;
+    try {
+      root = await realpath(source.desktopRootPath);
+    } catch {
+      // 测试替身和非本地 provider 没有宿主路径时回退到 filesystem 自己的受限读取。
+      return null;
+    }
+    const candidate = filesystem.resolveAbsolutePath?.(path) ?? resolve(root, relPath);
+    if (!isPathInside(candidate, root)) throw new Error("invalid_path: path escaped folder source");
+    const canonical = await realpath(candidate);
+    if (!isPathInside(canonical, root)) throw new Error("invalid_path: symlink escaped folder source");
+    return canonical;
+  }
+
+  const resolved = filesystem.resolveAbsolutePath?.(path);
+  return resolved ? realpath(resolved) : null;
+}
+
+async function readHostFileBounded(
+  hostPath: string,
+  initialStat: FileStat,
+): Promise<{ stat: FileStat; buffer: Buffer }> {
+  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open(hostPath, fsConstants.O_RDONLY | noFollow);
+  try {
+    const statBeforeRead = await handle.stat();
+    if (!statBeforeRead.isFile()) throw new Error("invalid_path: path is not a file");
+    if (statBeforeRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_DOCUMENT_BYTES) {
+      // 最多多读 1 字节用于区分“恰好到上限”和“超过上限”，绝不整体吞入竞态后的大文件。
+      const remainingProbeBytes = MAX_DOCUMENT_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remainingProbeBytes));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+      chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
+    }
+
+    const statAfterRead = await handle.stat();
+    if (statAfterRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+    return {
+      stat: mergeHostFileStat(initialStat, statAfterRead),
+      buffer: Buffer.concat(chunks, totalBytes),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readWorkspaceFileBounded(args: {
+  filesystem: WorkspaceFilesystem;
+  path: string;
+  initialStat: FileStat;
+  source?: FolderSourceRecord;
+  relPath?: string;
+}): Promise<{ stat: FileStat; buffer: Buffer }> {
+  const hostPath = await resolveHostReadPath(args);
+  if (hostPath) return readHostFileBounded(hostPath, args.initialStat);
+
+  // browser-fs-access 在客户端 arrayBuffer() 前按 request.maxBytes 检查 File.size，
+  // 核心层仍复核返回长度，防协议实现或测试替身绕过。
+  const buffer = toBuffer(await args.filesystem.readFile(args.path));
+  if (buffer.byteLength > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+  const statAfterRead = await args.filesystem.stat(args.path);
+  if (statAfterRead.type !== "file") throw new Error("invalid_path: path is not a file");
+  if (statAfterRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+  return { stat: statAfterRead, buffer };
+}
+
 async function readFileWithFreshStat(
   filesystem: WorkspaceFilesystem,
   path: string,
   initialStat: FileStat,
+  source?: FolderSourceRecord,
+  relPath?: string,
 ): Promise<{ stat: FileStat; buffer: Buffer; contentSha256: string }> {
   let statBeforeRead = initialStat;
   for (let attempt = 0; attempt < MAX_STABLE_READ_ATTEMPTS; attempt += 1) {
-    const buffer = toBuffer(await filesystem.readFile(path));
-    const statAfterRead = await filesystem.stat(path);
+    const current = await readWorkspaceFileBounded({
+      filesystem,
+      path,
+      initialStat: statBeforeRead,
+      source,
+      relPath,
+    });
+    const { buffer, stat: statAfterRead } = current;
     if (statAfterRead.type !== "file") {
       throw new Error("invalid_path: path is not a file");
     }
@@ -435,7 +541,7 @@ async function parseAndCacheDocument(args: {
   currentContent?: { buffer: Buffer; contentSha256: string };
   deferCacheLimitEnforcement?: boolean;
 }): Promise<{ entry: FolderSourceCacheEntry; text: string; cacheHit: boolean }> {
-  const { sessionId, workspace, resolved, stat: fileStat, previous, currentContent } = args;
+  const { sessionId, resolved, stat: fileStat, previous, currentContent } = args;
   if (fileStat.type !== "file") throw new Error("invalid_path: path is not a file");
   if (fileStat.size > MAX_DOCUMENT_BYTES) {
     throw new Error(DOCUMENT_TOO_LARGE_ERROR);
@@ -472,8 +578,11 @@ async function parseAndCacheDocument(args: {
     throw unsupportedFileTypeError(ext);
   }
 
-  const buffer = currentContent?.buffer ?? toBuffer(await requireFilesystem(workspace).readFile(resolved.path));
-  const contentSha256 = currentContent?.contentSha256 ?? sha256Buffer(buffer);
+  if (!currentContent) {
+    throw new Error("internal: bounded document content is required");
+  }
+  const buffer = currentContent.buffer;
+  const contentSha256 = currentContent.contentSha256;
   if (
     previous &&
     previous.parserVersion === FOLDER_SOURCE_PARSER_VERSION &&
@@ -553,7 +662,13 @@ async function readDocumentForSearchIndex(args: {
 
     let currentDocumentContent: { buffer: Buffer; contentSha256: string } | undefined;
     if (!isImage) {
-      const current = await readFileWithFreshStat(filesystem, resolved.path, fileStat);
+      const current = await readFileWithFreshStat(
+        filesystem,
+        resolved.path,
+        fileStat,
+        resolved.source,
+        resolved.relPath,
+      );
       fileStat = current.stat;
       mimeType = mimeTypeFor(resolved.path, fileStat);
       currentDocumentContent = { buffer: current.buffer, contentSha256: current.contentSha256 };
@@ -611,7 +726,13 @@ export async function readDocumentForSession(args: {
     }
     let currentDocumentContent: { buffer: Buffer; contentSha256: string } | undefined;
     if (!isImage) {
-      const current = await readFileWithFreshStat(filesystem, resolved.path, fileStat);
+      const current = await readFileWithFreshStat(
+        filesystem,
+        resolved.path,
+        fileStat,
+        resolved.source,
+        resolved.relPath,
+      );
       fileStat = current.stat;
       mimeType = mimeTypeFor(resolved.path, fileStat);
       currentDocumentContent = { buffer: current.buffer, contentSha256: current.contentSha256 };
@@ -749,6 +870,7 @@ async function isFreshSearchResult(
   manifests: Map<string, FolderSourceCacheEntry>,
   workspace: Workspace,
   freshPaths: Map<string, string>,
+  sources: FolderSourceRecord[],
 ): Promise<boolean> {
   const path = typeof result.metadata?.path === "string" ? result.metadata.path : null;
   const sha256 = typeof result.metadata?.sha256 === "string" ? result.metadata.sha256 : null;
@@ -777,8 +899,16 @@ async function isFreshSearchResult(
     }
     const current = await filesystem.stat(path);
     if (current.type !== "file") return false;
-    const buffer = toBuffer(await filesystem.readFile(path));
-    const isFresh = sha256Buffer(buffer) === sha256;
+    if (current.size > MAX_DOCUMENT_BYTES) return false;
+    const source = sources.find((candidate) => candidate.id === entry.folderId);
+    const bounded = await readFileWithFreshStat(
+      filesystem,
+      path,
+      current,
+      source,
+      entry.relPath,
+    );
+    const isFresh = sha256Buffer(bounded.buffer) === sha256;
     if (!isFresh) {
       await removeParsedDocumentCacheEntry({
         sessionId,
@@ -1091,7 +1221,14 @@ export async function searchDocumentsForSession(args: {
     const originalText = resultOriginalText(result);
     if (
       matchesRequiredCjkRuns(originalText, requiredCjkRuns) &&
-      await isFreshSearchResult(args.sessionId, result, manifests, args.workspace, freshPaths)
+      await isFreshSearchResult(
+        args.sessionId,
+        result,
+        manifests,
+        args.workspace,
+        freshPaths,
+        sources,
+      )
     ) {
       freshResults.push(result);
       if (freshResults.length >= topK) break;

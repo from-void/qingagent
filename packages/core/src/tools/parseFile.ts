@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
@@ -57,6 +57,63 @@ type ParseFileToolResult = {
 const XLSX_MIME =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+// Office Open XML 本质是 ZIP。这里的限额必须在 mammoth/JSZip 解压任何 entry 之前生效，
+// 避免高压缩比内容把主进程堆内存打满。阈值覆盖正常办公文档，同时给 XML 膨胀留出余量。
+const MAX_OFFICE_ZIP_ENTRIES = 10_000;
+const MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
+const MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
+const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
+
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_BYTES = 22;
+const ZIP_MAX_COMMENT_BYTES = 0xffff;
+const ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES = 46;
+
+const FILE_ACCESS_DENIED_RESULT: ParseFileToolResult = {
+  text: "[Error] 文件不可访问",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+// 路径规则刻意保持短而明确：覆盖操作系统凭据区、常见 CLI 凭据和浏览器凭据库，
+// 不扩展成用户可配置的授权目录/权限系统。
+const SENSITIVE_DESKTOP_PATH_PATTERNS = [
+  /(^|\/)\.ssh(\/|$)/,
+  /(^|\/)\.gnupg(\/|$)/,
+  /(^|\/)\.aws\/credentials$/,
+  /(^|\/)\.azure\/(accessTokens\.json|azureProfile\.json)$/i,
+  /(^|\/)\.config\/gcloud\/(credentials\.db|application_default_credentials\.json)$/,
+  /(^|\/)\.config\/(gh\/hosts\.yml|glab-cli\/config\.yml)$/,
+  /(^|\/)\.docker\/config\.json$/,
+  /(^|\/)\.kube\/config$/,
+  /(^|\/)\.password-store(\/|$)/,
+  /(^|\/)\.local\/share\/keyrings(\/|$)/,
+  /(^|\/)Library\/Keychains(\/|$)/i,
+  /(^|\/)System\/Library\/Keychains(\/|$)/i,
+  /(^|\/)AppData\/(Local|Roaming)\/Microsoft\/(Credentials|Protect)(\/|$)/i,
+  /(^|\/)Library\/Application Support\/(Google\/Chrome|Chromium|BraveSoftware|Microsoft Edge)(\/|$)/i,
+  /(^|\/)AppData\/(Local|Roaming)\/(Google\/Chrome|Chromium|BraveSoftware|Microsoft\/Edge)(\/|$)/i,
+  /(^|\/)(\.mozilla|Library\/Application Support\/Firefox|AppData\/Roaming\/Mozilla\/Firefox)(\/|$)/i,
+  /(^|\/)Library\/Safari(\/|$)/i,
+  /^\/proc\/[^/]+\/(environ|cmdline)$/,
+  /^\/etc\/(shadow|gshadow|sudoers|krb5\.keytab)(\/|$)/,
+  /^\/etc\/ssl\/private(\/|$)/,
+];
+
+const SENSITIVE_DESKTOP_FILENAMES = new Set([
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".git-credentials",
+  ".cred-key",
+  ".cred-key.safe",
+  "credentials.json",
+  "login data",
+  "logins.json",
+  "key4.db",
+  "cookies.sqlite",
+]);
+
 class UnsupportedParseFileError extends Error {
   constructor(message: string) {
     super(message);
@@ -66,6 +123,164 @@ class UnsupportedParseFileError extends Error {
 
 function isZipBuffer(buffer: Buffer): boolean {
   return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+}
+
+function officeZipSafetyError(message: string): Error {
+  return new Error(`Office ZIP 安全校验失败：${message}`);
+}
+
+function findZipEndOfCentralDirectory(buffer: Buffer): number {
+  const firstCandidate = buffer.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES;
+  const lastCandidate = Math.max(
+    0,
+    buffer.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES - ZIP_MAX_COMMENT_BYTES,
+  );
+  for (let offset = firstCandidate; offset >= lastCandidate; offset -= 1) {
+    if (buffer.readUInt32LE(offset) !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
+    const commentLength = buffer.readUInt16LE(offset + 20);
+    if (offset + ZIP_END_OF_CENTRAL_DIRECTORY_BYTES + commentLength === buffer.length) {
+      return offset;
+    }
+  }
+  throw officeZipSafetyError("缺少有效的 ZIP 中央目录");
+}
+
+/** 只读 ZIP 中央目录元数据，不解压 entry。 */
+function assertSafeOfficeZip(buffer: Buffer): void {
+  if (!isZipBuffer(buffer) || buffer.length < ZIP_END_OF_CENTRAL_DIRECTORY_BYTES) {
+    throw officeZipSafetyError("不是有效的 ZIP 文件");
+  }
+
+  const eocdOffset = findZipEndOfCentralDirectory(buffer);
+  const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
+  const centralDirectoryDisk = buffer.readUInt16LE(eocdOffset + 6);
+  const diskEntries = buffer.readUInt16LE(eocdOffset + 8);
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralDirectoryBytes = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + 16);
+
+  if (diskNumber !== 0 || centralDirectoryDisk !== 0 || diskEntries !== totalEntries) {
+    throw officeZipSafetyError("不支持分卷 ZIP");
+  }
+  if (
+    totalEntries === 0xffff ||
+    centralDirectoryBytes === 0xffffffff ||
+    centralDirectoryOffset === 0xffffffff
+  ) {
+    // 正常 Office 文档在上述限额下不需要 ZIP64；拒绝它可避免 64 位扩展字段绕过限额。
+    throw officeZipSafetyError("不支持 ZIP64");
+  }
+  if (totalEntries > MAX_OFFICE_ZIP_ENTRIES) {
+    throw officeZipSafetyError(`条目数超过上限 ${MAX_OFFICE_ZIP_ENTRIES}`);
+  }
+
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectoryBytes;
+  if (
+    centralDirectoryOffset > eocdOffset ||
+    centralDirectoryEnd > eocdOffset ||
+    centralDirectoryEnd > buffer.length
+  ) {
+    throw officeZipSafetyError("ZIP 中央目录范围无效");
+  }
+
+  let cursor = centralDirectoryOffset;
+  let totalCompressedBytes = 0;
+  let totalUncompressedBytes = 0;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (
+      cursor + ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES > centralDirectoryEnd ||
+      buffer.readUInt32LE(cursor) !== ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE
+    ) {
+      throw officeZipSafetyError("ZIP 中央目录条目损坏");
+    }
+
+    const flags = buffer.readUInt16LE(cursor + 8);
+    const compressedBytes = buffer.readUInt32LE(cursor + 20);
+    const uncompressedBytes = buffer.readUInt32LE(cursor + 24);
+    const filenameBytes = buffer.readUInt16LE(cursor + 28);
+    const extraBytes = buffer.readUInt16LE(cursor + 30);
+    const commentBytes = buffer.readUInt16LE(cursor + 32);
+    const entryBytes = ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES + filenameBytes + extraBytes + commentBytes;
+
+    if ((flags & 0x0001) !== 0) {
+      throw officeZipSafetyError("不支持加密 ZIP 条目");
+    }
+    if (compressedBytes === 0xffffffff || uncompressedBytes === 0xffffffff) {
+      throw officeZipSafetyError("不支持 ZIP64 条目");
+    }
+    if (uncompressedBytes > MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES) {
+      throw officeZipSafetyError(
+        `单个条目解压后超过 ${MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES} 字节`,
+      );
+    }
+    if (
+      uncompressedBytes > 0 &&
+      (compressedBytes === 0 || uncompressedBytes / compressedBytes > MAX_OFFICE_ZIP_COMPRESSION_RATIO)
+    ) {
+      throw officeZipSafetyError(`单个条目压缩比超过 ${MAX_OFFICE_ZIP_COMPRESSION_RATIO}:1`);
+    }
+
+    totalCompressedBytes += compressedBytes;
+    totalUncompressedBytes += uncompressedBytes;
+    if (totalUncompressedBytes > MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES) {
+      throw officeZipSafetyError(
+        `总解压量超过 ${MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES} 字节`,
+      );
+    }
+    cursor += entryBytes;
+    if (cursor > centralDirectoryEnd) {
+      throw officeZipSafetyError("ZIP 中央目录条目越界");
+    }
+  }
+
+  if (cursor !== centralDirectoryEnd) {
+    throw officeZipSafetyError("ZIP 中央目录长度不一致");
+  }
+  if (
+    totalUncompressedBytes > 0 &&
+    (totalCompressedBytes === 0 ||
+      totalUncompressedBytes / totalCompressedBytes > MAX_OFFICE_ZIP_COMPRESSION_RATIO)
+  ) {
+    throw officeZipSafetyError(`总压缩比超过 ${MAX_OFFICE_ZIP_COMPRESSION_RATIO}:1`);
+  }
+}
+
+function normalizeDesktopPathForPolicy(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  return (normalized.length > 1 ? normalized.replace(/\/$/, "") : normalized).toLowerCase();
+}
+
+function isSensitiveDesktopFilePath(filePath: string): boolean {
+  const normalized = normalizeDesktopPathForPolicy(filePath);
+  const basename = normalized.split("/").pop()?.toLowerCase() ?? "";
+  if (basename === ".env") return true;
+  if (
+    basename.startsWith(".env.") &&
+    ![".example", ".sample", ".template", ".dist"].some((suffix) => basename.endsWith(suffix))
+  ) {
+    return true;
+  }
+  if (SENSITIVE_DESKTOP_FILENAMES.has(basename)) return true;
+  if (/^(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.|$)/i.test(basename) && !basename.endsWith(".pub")) {
+    return true;
+  }
+  if (/\.(p12|pfx)$/i.test(basename) || /(^|[._-])private[._-]?key(\.|$)/i.test(basename)) {
+    return true;
+  }
+  return SENSITIVE_DESKTOP_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+async function readDesktopFilePath(filePath: string): Promise<Buffer | null> {
+  if (isSensitiveDesktopFilePath(filePath)) return null;
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(filePath);
+  } catch {
+    // 保留正常素材原有的 ENOENT/EACCES 语义；只有命中黑名单时才静默拒绝。
+    return readFile(filePath);
+  }
+  if (isSensitiveDesktopFilePath(canonicalPath)) return null;
+  return readFile(canonicalPath);
 }
 
 function isCsvFile(ext: string, mimeType: string): boolean {
@@ -729,6 +944,7 @@ function parseXlsxSheet(
 async function parseXlsx(buffer: Buffer): Promise<ParsedFileContent> {
   if (buffer.length === 0) throw new Error("xlsx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 xlsx zip 包");
+  assertSafeOfficeZip(buffer);
 
   const [{ default: JSZip }, parser] = await Promise.all([
     import("jszip"),
@@ -950,6 +1166,7 @@ async function readPptxSlideNotesText(
 async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
   if (buffer.length === 0) throw new Error("pptx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 pptx zip 包");
+  assertSafeOfficeZip(buffer);
 
   const [{ default: JSZip }, parser] = await Promise.all([
     import("jszip"),
@@ -1124,6 +1341,7 @@ export async function parseFileBuffer({
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ) {
     try {
+      assertSafeOfficeZip(buffer);
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer });
       const auxiliaryText = await extractDocxAuxiliaryText(buffer);
@@ -1164,22 +1382,20 @@ export async function parseFileBuffer({
  * parseFile tool — extracts plain text from uploaded files.
  * Supports PDF, DOCX, XLSX, CSV, PPTX, TXT, and MD formats.
  *
- * Accepts EITHER a file path (workspace-relative) OR base64-encoded
- * content. When `filePath` is provided it takes precedence; otherwise
- * `content` (base64) is used.
+ * Web 上传文件只接受 fileId；桌面版也可读取本地 filePath，内部调用可传 base64 content。
  */
 export const parseFileTool = createTool({
   id: "parseFile",
   description:
     "解析文件内容。支持 PDF、DOCX、XLSX、CSV、PPTX、TXT、MD 格式。" +
-    "可以传入 filePath（workspace 中的文件路径）、fileId（上传文件的内部 id）或 content（base64 编码内容）。" +
-    "优先级 filePath > content > fileId。返回提取的纯文本和元数据。",
+    "Web 端上传文件使用 fileId；桌面端本地素材可使用 filePath，受信任的桌面内部调用也可传 content。" +
+    "返回提取的纯文本和元数据。",
   inputSchema: z.object({
     filePath: z
       .string()
       .nullable()
       .optional()
-      .describe("文件在 workspace 中的绝对路径（优先使用）"),
+      .describe("桌面版本地素材路径（Web 版不接受）"),
     fileId: z
       .string()
       .nullable()
@@ -1189,7 +1405,7 @@ export const parseFileTool = createTool({
       .string()
       .nullable()
       .optional()
-      .describe("文件内容的 base64 编码（filePath 不存在时使用）"),
+      .describe("文件内容的 base64 编码（仅受信任的桌面内部调用）"),
     filename: z.string().optional().describe("文件名（含扩展名）；传 fileId 时可省略，由 resolver 提供"),
     mimeType: z.string().optional().describe("MIME 类型；传 fileId 时可省略，由 resolver 提供"),
   }),
@@ -1204,6 +1420,7 @@ export const parseFileTool = createTool({
   execute: async (input, context) => {
     const { filePath, content, fileId } = input;
     let { filename, mimeType } = input;
+    const isDesktopRuntime = process.env.QINGAGENT_RUNTIME === "desktop";
 
     // 大 PDF/DOCX 解析(parser.getText() / mammoth.extractRawText())可能静默
     // 10-30s+,在慢环境下可能逼近 agent 90s idle 看门狗;心跳期间往主流注入瞬时 chunk 清零看
@@ -1211,12 +1428,10 @@ export const parseFileTool = createTool({
     const stopHeartbeat = startToolHeartbeat(context, { tool: "parseFile" });
     try {
       let buffer: Buffer;
-      if (filePath) {
-        // Read from filesystem
-        buffer = await readFile(filePath);
-      } else if (content !== undefined && content !== null) {
-        buffer = Buffer.from(content, "base64");
-      } else if (fileId) {
+      if (!isDesktopRuntime) {
+        // Web 模式不信任模型提供的宿主路径或内联内容，只走 uploads resolver 的 fileId 通道。
+        // 即使同时注入 filePath/content，也完全忽略，避免优先级绕过。
+        if (!fileId) return FILE_ACCESS_DENIED_RESULT;
         // CC 脱敏:web 模式模型只拿到 fileId,这里用安全 resolver(限定 ./uploads 根目录、
         // realpath 校验防越权)还原真实路径;filename/mimeType 以 resolver 为准。
         const [resolved] = await resolveFileIds([fileId]);
@@ -1227,8 +1442,25 @@ export const parseFileTool = createTool({
           };
         }
         buffer = await readFile(resolved.filePath);
-        filename = filename ?? resolved.filename;
-        mimeType = mimeType ?? resolved.mimeType;
+        filename = resolved.filename;
+        mimeType = resolved.mimeType;
+      } else if (filePath) {
+        const desktopBuffer = await readDesktopFilePath(filePath);
+        if (desktopBuffer === null) return FILE_ACCESS_DENIED_RESULT;
+        buffer = desktopBuffer;
+      } else if (content !== undefined && content !== null) {
+        buffer = Buffer.from(content, "base64");
+      } else if (fileId) {
+        const [resolved] = await resolveFileIds([fileId]);
+        if (!resolved) {
+          return {
+            text: `[Error] 无法解析 fileId: ${fileId}（上传文件不存在或不可访问）`,
+            metadata: { pages: null, wordCount: 0, title: null },
+          };
+        }
+        buffer = await readFile(resolved.filePath);
+        filename = resolved.filename;
+        mimeType = resolved.mimeType;
       } else {
         return {
           text: "[Error] Either filePath, content or fileId must be provided",

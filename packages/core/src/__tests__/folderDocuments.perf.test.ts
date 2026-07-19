@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FolderSourceRecord } from "@qingagent/contract-ts";
 import { Workspace } from "@mastra/core/workspace";
 import JSZip from "jszip";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, statSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -454,11 +454,12 @@ describe("folder document tools", () => {
     expect(first.indexedCount).toBe(3);
 
     const filesystem = workspace.filesystem!;
-    const originalReadFile = filesystem.readFile.bind(filesystem);
+    const originalResolveAbsolutePath = filesystem.resolveAbsolutePath?.bind(filesystem);
+    if (!originalResolveAbsolutePath) throw new Error("expected local resolveAbsolutePath");
     const readPaths: string[] = [];
-    filesystem.readFile = async (path, options) => {
+    filesystem.resolveAbsolutePath = (path) => {
       readPaths.push(path);
-      return originalReadFile(path, options);
+      return originalResolveAbsolutePath(path);
     };
     try {
       const second = await searchDocumentsForSession({
@@ -473,7 +474,7 @@ describe("folder document tools", () => {
       expect(second.results.map((item) => item.relPath)).toEqual(["apple.md"]);
       expect(readPaths).toEqual(["/sources/source_docs/apple.md"]);
     } finally {
-      filesystem.readFile = originalReadFile;
+      filesystem.resolveAbsolutePath = originalResolveAbsolutePath;
       await clearFolderSourceCache(sessionId, source.id);
     }
   });
@@ -505,11 +506,12 @@ describe("folder document tools", () => {
 
     writeFileSync(join(sourceDir, "dirty.md"), "ROUND12_DIRTY_ONLY_TOKEN");
     const filesystem = workspace.filesystem!;
-    const originalReadFile = filesystem.readFile.bind(filesystem);
+    const originalResolveAbsolutePath = filesystem.resolveAbsolutePath?.bind(filesystem);
+    if (!originalResolveAbsolutePath) throw new Error("expected local resolveAbsolutePath");
     const readPaths: string[] = [];
-    filesystem.readFile = async (path, options) => {
+    filesystem.resolveAbsolutePath = (path) => {
       readPaths.push(path);
-      return originalReadFile(path, options);
+      return originalResolveAbsolutePath(path);
     };
     try {
       const result = await searchDocumentsForSession({
@@ -524,7 +526,7 @@ describe("folder document tools", () => {
       expect(result.results.map((item) => item.relPath)).toEqual(["dirty.md"]);
       expect(readPaths).toEqual(["/sources/source_docs/dirty.md"]);
     } finally {
-      filesystem.readFile = originalReadFile;
+      filesystem.resolveAbsolutePath = originalResolveAbsolutePath;
       await clearFolderSourceCache(sessionId, source.id);
     }
   });
@@ -1135,6 +1137,50 @@ describe("folder document tools", () => {
     expect(imageResult.ok).toBe(false);
     expect(imageResult.error).toContain("too large");
     expect(readCalls).toBe(0);
+  });
+
+  it("readDocument 在 stat 后文件被替换为超大文件时有界拒绝，不整体读入", async () => {
+    process.env.QINGAGENT_SANDBOX_ISOLATION = "none";
+    const sessionId = "sess-folder-bounded-toctou";
+    const root = mkdtempSync(join(tmpdir(), "folder-bounded-toctou-"));
+    const sourceDir = join(root, "docs");
+    mkdirSync(sourceDir, { recursive: true });
+    const file = join(sourceDir, "race.md");
+    writeFileSync(file, "SMALL_BEFORE_STAT_READ_RACE", "utf8");
+    const source = makeSource(sessionId, sourceDir);
+    await clearFolderSourceCache(sessionId, source.id);
+    const workspace = await getSessionWorkspace(sessionId, {
+      resolveSkillDirs: () => [],
+      resolveFolderSources: () => [source],
+    });
+    const filesystem = workspace.filesystem!;
+    const originalStat = filesystem.stat.bind(filesystem);
+    let replaced = false;
+    filesystem.stat = async (path) => {
+      const before = await originalStat(path);
+      if (path === "/sources/source_docs/race.md" && !replaced) {
+        truncateSync(file, 50 * 1024 * 1024 + 1);
+        replaced = true;
+      }
+      return before;
+    };
+
+    try {
+      const result = await readDocumentForSession({
+        sessionId,
+        sources: [source],
+        workspace,
+        path: "/sources/source_docs/race.md",
+      });
+      expect(replaced).toBe(true);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("too large");
+      expect(statSync(file).size).toBe(50 * 1024 * 1024 + 1);
+    } finally {
+      filesystem.stat = originalStat;
+      await clearFolderSourceCache(sessionId, source.id);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("readDocument 对资料库图片返回诚实 P0 文案且不承诺 readImage", async () => {
@@ -1771,12 +1817,13 @@ describe("folder document tools", () => {
     ), { force: true });
 
     const filesystem = workspace.filesystem!;
-    const originalReadFile = filesystem.readFile.bind(filesystem);
-    filesystem.readFile = async (path, options) => {
+    const originalResolveAbsolutePath = filesystem.resolveAbsolutePath?.bind(filesystem);
+    if (!originalResolveAbsolutePath) throw new Error("expected local resolveAbsolutePath");
+    filesystem.resolveAbsolutePath = (path) => {
       if (path === "/sources/source_docs/damaged.md") {
         throw new Error("simulated source read failure");
       }
-      return originalReadFile(path, options);
+      return originalResolveAbsolutePath(path);
     };
     try {
       const result = await searchDocumentsForSession({
@@ -1792,7 +1839,7 @@ describe("folder document tools", () => {
       expect(result.scannedCount).toBe(1);
       expect(JSON.stringify(result)).not.toContain(sourceDir);
     } finally {
-      filesystem.readFile = originalReadFile;
+      filesystem.resolveAbsolutePath = originalResolveAbsolutePath;
       await clearFolderSourceCache(sessionId, source.id);
     }
   });
@@ -1822,16 +1869,17 @@ describe("folder document tools", () => {
     expect(first.text).toContain("RACE_OLD_TOKEN");
 
     const filesystem = workspace.filesystem!;
-    const originalReadFile = filesystem.readFile.bind(filesystem);
+    const originalStat = filesystem.stat.bind(filesystem);
     const oldStat = statSync(file);
     let wroteDuringRead = false;
-    filesystem.readFile = async (path, options) => {
+    filesystem.stat = async (path) => {
+      const before = await originalStat(path);
       if (path === "/sources/source_docs/race.md" && !wroteDuringRead) {
         writeFileSync(file, "RACE_NEW_TOKEN 版本二，保存发生在 stat 后 readFile 前。\n");
         utimesSync(file, oldStat.atime, new Date(oldStat.mtimeMs + 2_000));
         wroteDuringRead = true;
       }
-      return originalReadFile(path, options);
+      return before;
     };
 
     let raceSearch: Awaited<ReturnType<typeof searchDocumentsForSession>>;
@@ -1844,7 +1892,7 @@ describe("folder document tools", () => {
         topK: 3,
       });
     } finally {
-      filesystem.readFile = originalReadFile;
+      filesystem.stat = originalStat;
     }
 
     expect(raceSearch.ok).toBe(true);
@@ -2112,8 +2160,9 @@ describe("folder document tools", () => {
     let releaseRead!: () => void;
     const readStarted = new Promise<void>((resolve) => {
       const filesystem = workspace.filesystem!;
-      const originalReadFile = filesystem.readFile.bind(filesystem);
-      filesystem.readFile = async (path, options) => {
+      const originalStat = filesystem.stat.bind(filesystem);
+      filesystem.stat = async (path) => {
+        const current = await originalStat(path);
         if (path === "/sources/source_docs/slow.md") {
           resolve();
           await new Promise<void>((release) => {
@@ -2121,9 +2170,9 @@ describe("folder document tools", () => {
           });
         }
         try {
-          return await originalReadFile(path, options);
+          return current;
         } finally {
-          filesystem.readFile = originalReadFile;
+          filesystem.stat = originalStat;
         }
       };
     });

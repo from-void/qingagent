@@ -30,6 +30,17 @@ function validateToolInput(
   }
 }
 
+async function executeParseFileOnDesktop(input: Record<string, unknown>): Promise<unknown> {
+  const previousRuntime = process.env.QINGAGENT_RUNTIME;
+  process.env.QINGAGENT_RUNTIME = "desktop";
+  try {
+    return await parseFileTool.execute!(input as never, {} as never);
+  } finally {
+    if (previousRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
+    else process.env.QINGAGENT_RUNTIME = previousRuntime;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests: parseFile tool schema
 // ---------------------------------------------------------------------------
@@ -622,10 +633,11 @@ describe("summarizeMaterial execute — session-scoped closure", () => {
 describe("parseFile execute — TXT", () => {
   it("extracts plain text from a base64-encoded TXT file", async () => {
     const content = Buffer.from("这是一段测试文本内容").toString("base64");
-    const result = await parseFileTool.execute!(
-      { content, filename: "test.txt", mimeType: "text/plain" },
-      ctx,
-    );
+    const result = await executeParseFileOnDesktop({
+      content,
+      filename: "test.txt",
+      mimeType: "text/plain",
+    });
     expect(result).toBeDefined();
     const r = result as { text: string; metadata: { pages: number | null; wordCount: number; title: string | null } };
     expect(r.text).toBe("这是一段测试文本内容");
@@ -636,10 +648,11 @@ describe("parseFile execute — TXT", () => {
   it("extracts plain text from a markdown file", async () => {
     const md = "# Title\n\nSome **bold** text.";
     const content = Buffer.from(md).toString("base64");
-    const result = await parseFileTool.execute!(
-      { content, filename: "readme.md", mimeType: "text/markdown" },
-      ctx,
-    );
+    const result = await executeParseFileOnDesktop({
+      content,
+      filename: "readme.md",
+      mimeType: "text/markdown",
+    });
     expect(result).toBeDefined();
     const r = result as { text: string; metadata: { pages: number | null } };
     expect(r.text).toBe(md);
@@ -663,10 +676,11 @@ describe("parseFile execute — filePath mode", () => {
     const filePath = join(tmpDir, "sample.txt");
     await writeFile(filePath, "Hello from disk");
 
-    const result = await parseFileTool.execute!(
-      { filePath, filename: "sample.txt", mimeType: "text/plain" },
-      ctx,
-    );
+    const result = await executeParseFileOnDesktop({
+      filePath,
+      filename: "sample.txt",
+      mimeType: "text/plain",
+    });
     expect(result).toBeDefined();
     const r = result as { text: string; metadata: { pages: number | null; wordCount: number } };
     expect(r.text).toBe("Hello from disk");
@@ -678,10 +692,10 @@ describe("parseFile execute — filePath mode", () => {
   });
 
   it("returns error when neither filePath nor content is provided", async () => {
-    const result = await parseFileTool.execute!(
-      { filename: "orphan.txt", mimeType: "text/plain" },
-      ctx,
-    );
+    const result = await executeParseFileOnDesktop({
+      filename: "orphan.txt",
+      mimeType: "text/plain",
+    });
     expect(result).toBeDefined();
     const r = result as { text: string; metadata: { wordCount: number } };
     expect(r.text).toContain("[Error]");
@@ -691,14 +705,11 @@ describe("parseFile execute — filePath mode", () => {
 
   it("throws when filePath points to a non-existent file", async () => {
     await expect(
-      parseFileTool.execute!(
-        {
-          filePath: "/tmp/nonexistent-file-" + Date.now() + ".txt",
-          filename: "missing.txt",
-          mimeType: "text/plain",
-        },
-        ctx,
-      ),
+      executeParseFileOnDesktop({
+        filePath: "/tmp/nonexistent-file-" + Date.now() + ".txt",
+        filename: "missing.txt",
+        mimeType: "text/plain",
+      }),
     ).rejects.toThrow();
   });
 
@@ -713,15 +724,12 @@ describe("parseFile execute — filePath mode", () => {
     const filePath = join(tmpDir, "disk.txt");
     await writeFile(filePath, "from disk");
 
-    const result = await parseFileTool.execute!(
-      {
-        filePath,
-        content: Buffer.from("from base64").toString("base64"),
-        filename: "disk.txt",
-        mimeType: "text/plain",
-      },
-      ctx,
-    );
+    const result = await executeParseFileOnDesktop({
+      filePath,
+      content: Buffer.from("from base64").toString("base64"),
+      filename: "disk.txt",
+      mimeType: "text/plain",
+    });
     const r = result as { text: string };
     // filePath takes precedence
     expect(r.text).toBe("from disk");

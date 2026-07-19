@@ -58,6 +58,7 @@ import {
 import { bindClientTraceId, deriveSessionTraceId } from "./commandTracing";
 import type { CommandExecutionContext } from "./commandTypes";
 import { findSessionByStream, getOrRestoreSession } from "./sessionLifecycle";
+import { bindToolsToAbortSignal } from "./abortableTools";
 
 async function* handleCancelAskUser(
   session: SessionState,
@@ -476,19 +477,32 @@ async function* handleResume(
                     },
                   }),
               toolsets: {
-                sessionScoped: {
-                  readMaterial: sessionTools.readMaterial,
-                  summarizeMaterial: sessionTools.summarizeMaterial,
-                  readDraft: sessionTools.readDraftAiIr,
-                  editDraft: sessionTools.editDraft,
-                  readDiff: sessionTools.readDiff,
-                  ...(sessionTools.writeDraft ? { writeDraft: sessionTools.writeDraft } : {}),
-                  ...(sessionTools.updateWorkingMemory ? { updateWorkingMemory: sessionTools.updateWorkingMemory } : {}),
-                },
-                capabilityTools,
+                sessionScoped: bindToolsToAbortSignal(
+                  {
+                    readMaterial: sessionTools.readMaterial,
+                    summarizeMaterial: sessionTools.summarizeMaterial,
+                    readDraft: sessionTools.readDraftAiIr,
+                    editDraft: sessionTools.editDraft,
+                    readDiff: sessionTools.readDiff,
+                    ...(sessionTools.writeDraft ? { writeDraft: sessionTools.writeDraft } : {}),
+                    ...(sessionTools.updateWorkingMemory
+                      ? { updateWorkingMemory: sessionTools.updateWorkingMemory }
+                      : {}),
+                  },
+                  abortController.signal,
+                ),
+                capabilityTools: bindToolsToAbortSignal(
+                  capabilityTools,
+                  abortController.signal,
+                ),
                 // askUser 仅为老会话快照恢复注入；老会话数据迁移或过期后删除。
                 ...(askUserSpecForResume?.name === "askUser"
-                  ? { legacyQuestionnaire: { askUser: askUserTool } }
+                  ? {
+                      legacyQuestionnaire: bindToolsToAbortSignal(
+                        { askUser: askUserTool },
+                        abortController.signal,
+                      ),
+                    }
                   : {}),
               },
               // Keep resumed-run spans on the same session trace as the initial

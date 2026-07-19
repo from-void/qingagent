@@ -156,8 +156,8 @@ function deriveOpId(input: {
   return getDeterministicId("op", input);
 }
 
-function deriveClientMutationOpId(clientMutationId: string): string {
-  return getDeterministicId("op", { clientMutationId });
+function deriveClientMutationOpId(docId: string, clientMutationId: string): string {
+  return getDeterministicId("op", { docId, clientMutationId });
 }
 
 function defaultVersionId(input: {
@@ -333,7 +333,7 @@ async function maybeReturnDerivedIdempotentResult(input: {
     opKind: input.opKind,
     contentHash: getPmContentHash(validation.doc),
   });
-  const op = await findOpByIdempotencyKey({ opId }, input.client);
+  const op = await findOpByIdempotencyKey({ docId: input.docId, opId }, input.client);
   return op ? committedResultFromOp(op, input.client) : null;
 }
 
@@ -355,7 +355,7 @@ export async function commitDocumentOp(
     const snapshotHighWater = await getMaxDocumentSnapshotVersion(input.docId, client);
 
     const existingOp = await findOpByIdempotencyKey(
-      { opId: providedOpId, clientMutationId: providedClientMutationId },
+      { docId: input.docId, opId: providedOpId, clientMutationId: providedClientMutationId },
       client,
     );
     if (existingOp) {
@@ -427,14 +427,14 @@ export async function commitDocumentOp(
     const contentHash = getPmContentHash(nextDoc);
     const opId = providedOpId
       ?? (providedClientMutationId
-        ? deriveClientMutationOpId(providedClientMutationId)
+        ? deriveClientMutationOpId(input.docId, providedClientMutationId)
         : deriveOpId({
             docId: input.docId,
             opKind: input.opKind,
             contentHash,
           }));
     const derivedExistingOp = await findOpByIdempotencyKey(
-      { opId, clientMutationId: providedClientMutationId },
+      { docId: input.docId, opId, clientMutationId: providedClientMutationId },
       client,
     );
     if (derivedExistingOp) {

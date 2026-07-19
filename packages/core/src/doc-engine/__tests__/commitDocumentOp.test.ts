@@ -229,6 +229,44 @@ describe("commitDocumentOp", () => {
     await expect(listVersions("doc-serial-b")).resolves.toHaveLength(1);
   });
 
+  it("同一 clientMutationId 可在不同文档各自独立提交", async () => {
+    await seedDocument("doc-mutation-a", "a base", 1);
+    await seedDocument("doc-mutation-b", "b base", 1);
+
+    const [first, second] = await Promise.all([
+      commitDocumentOp(commitInput({
+        docId: "doc-mutation-a",
+        threadId: "thread-doc-mutation-a",
+        clientMutationId: "shared-client-mutation",
+        apply: () => ({ nextDoc: pmDocFromText("a committed") }),
+      })),
+      commitDocumentOp(commitInput({
+        docId: "doc-mutation-b",
+        threadId: "thread-doc-mutation-b",
+        clientMutationId: "shared-client-mutation",
+        apply: () => ({ nextDoc: pmDocFromText("b committed") }),
+      })),
+    ]);
+
+    await expectCommittedVersion(first, 2);
+    await expectCommittedVersion(second, 2);
+    await expect(documentRepo.load("doc-mutation-a")).resolves.toMatchObject({
+      pmDoc: pmDocFromText("a committed"),
+    });
+    await expect(documentRepo.load("doc-mutation-b")).resolves.toMatchObject({
+      pmDoc: pmDocFromText("b committed"),
+    });
+    const firstOp = await findOpByIdempotencyKey({
+      docId: "doc-mutation-a",
+      clientMutationId: "shared-client-mutation",
+    });
+    const secondOp = await findOpByIdempotencyKey({
+      docId: "doc-mutation-b",
+      clientMutationId: "shared-client-mutation",
+    });
+    expect(firstOp?.opId).not.toBe(secondOp?.opId);
+  });
+
   it("keeps the commit queue usable after a critical-section error", async () => {
     await seedDocument("doc-queue-after-error", "base", 1);
 
@@ -314,7 +352,10 @@ describe("commitDocumentOp", () => {
     });
     expect(versions[0]?.snapshotPm).toEqual(pmDocFromText("after commit"));
 
-    const op = await findOpByIdempotencyKey({ clientMutationId: "client-commit" });
+    const op = await findOpByIdempotencyKey({
+      docId: "doc-commit",
+      clientMutationId: "client-commit",
+    });
     expect(op).toMatchObject({
       opId: expect.any(String),
       docId: "doc-commit",
@@ -705,7 +746,10 @@ describe("commitDocumentOp", () => {
     const result = await commitDocumentOp(commitInput({ docId: "missing" }));
     expect(result).toEqual({ status: "not_found" });
     expect(await listVersions("missing")).toEqual([]);
-    expect(await findOpByIdempotencyKey({ clientMutationId: "client-commit" })).toBeNull();
+    expect(await findOpByIdempotencyKey({
+      docId: "missing",
+      clientMutationId: "client-commit",
+    })).toBeNull();
   });
 
   it("creates the first document row through commitDocumentOp when createIfMissing is explicit", async () => {
@@ -747,7 +791,10 @@ describe("commitDocumentOp", () => {
       docVersion: 1,
       parentVersion: 0,
     });
-    expect(await findOpByIdempotencyKey({ opId: "generation-first-store" })).toMatchObject({
+    expect(await findOpByIdempotencyKey({
+      docId: "doc-first-store",
+      opId: "generation-first-store",
+    })).toMatchObject({
       docId: "doc-first-store",
       fromVersion: 0,
       toVersion: 1,
@@ -881,7 +928,10 @@ describe("commitDocumentOp", () => {
     expect(loaded?.docVersion).toBe(1);
     expect(loaded?.pmDoc).toEqual(pmDocFromText("before"));
     expect(await listVersions("doc-invalid")).toEqual([]);
-    expect(await findOpByIdempotencyKey({ clientMutationId: "client-invalid" })).toBeNull();
+    expect(await findOpByIdempotencyKey({
+      docId: "doc-invalid",
+      clientMutationId: "client-invalid",
+    })).toBeNull();
   });
 
   it.each([
@@ -917,7 +967,10 @@ describe("commitDocumentOp", () => {
     expect(loaded?.docVersion).toBe(1);
     expect(loaded?.pmDoc).toEqual(pmDocFromText("before"));
     expect(await listVersions(`doc-${hookName}`)).toEqual([]);
-    expect(await findOpByIdempotencyKey({ clientMutationId: `client-${hookName}` })).toBeNull();
+    expect(await findOpByIdempotencyKey({
+      docId: `doc-${hookName}`,
+      clientMutationId: `client-${hookName}`,
+    })).toBeNull();
     expect(fakeSession).toEqual({
       doc: pmDocFromText("before"),
       docVersion: 1,
@@ -1001,7 +1054,10 @@ describe("commitDocumentOp", () => {
 
     const versions = await listVersions("doc-desync");
     expect(versions.map((version) => version.docVersion)).toEqual([4, 3]);
-    expect(await findOpByIdempotencyKey({ clientMutationId: "client-desync" })).toBeNull();
+    expect(await findOpByIdempotencyKey({
+      docId: "doc-desync",
+      clientMutationId: "client-desync",
+    })).toBeNull();
   });
 
   it("does not create a new version from stale document content when high water is ahead", async () => {
@@ -1048,7 +1104,10 @@ describe("commitDocumentOp", () => {
       pmDocFromText("stale overwrite"),
     );
     expect(
-      await findOpByIdempotencyKey({ clientMutationId: "client-desync-regression" }),
+      await findOpByIdempotencyKey({
+        docId: "doc-desync-regression",
+        clientMutationId: "client-desync-regression",
+      }),
     ).toBeNull();
   });
 });

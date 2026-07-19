@@ -16,6 +16,7 @@ import { migration0014RefreshBuiltinPromptSeeds } from "./0014_refresh_builtin_p
 import { migration0015RoleReviewTemplates } from "./0015_role_review_templates.js";
 import { migration0016TranslateDerivatives } from "./0016_translate_derivatives.js";
 import { migration0017DerivativeCoverTemplate } from "./0017_derivative_cover_template.js";
+import { migration0018DocumentOpsMutationScope } from "./0018_document_ops_mutation_scope.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -38,4 +39,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0015RoleReviewTemplates,
   migration0016TranslateDerivatives,
   migration0017DerivativeCoverTemplate,
+  migration0018DocumentOpsMutationScope,
 ];

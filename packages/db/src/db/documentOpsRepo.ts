@@ -31,6 +31,7 @@ export interface InsertDocumentOpInput {
 }
 
 export interface FindDocumentOpKey {
+  docId: string;
   opId?: string | null;
   clientMutationId?: string | null;
 }
@@ -122,12 +123,15 @@ export async function findOpByIdempotencyKey(
   const c = await readyClient(client);
   // 用户写入同时携带内部 opId 与 clientMutationId 时，mutation 身份才是幂等主键。
   // 不能用 OR 让另一个 mutation 仅因内容哈希派生出的 opId 相同而命中旧提交。
-  const column = clientMutationId ? "client_mutation_id" : "op_id";
-  const value = clientMutationId ?? opId!;
-  const result = await c.execute({
-    sql: `SELECT * FROM document_ops WHERE ${column} = ? LIMIT 1`,
-    args: [value],
-  });
+  const result = clientMutationId
+    ? await c.execute({
+        sql: "SELECT * FROM document_ops WHERE doc_id = ? AND client_mutation_id = ? LIMIT 1",
+        args: [key.docId, clientMutationId],
+      })
+    : await c.execute({
+        sql: "SELECT * FROM document_ops WHERE op_id = ? LIMIT 1",
+        args: [opId!],
+      });
   const row = result.rows[0];
   return row ? mapOpRow(row) : null;
 }

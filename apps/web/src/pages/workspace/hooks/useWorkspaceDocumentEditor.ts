@@ -33,6 +33,7 @@ import {
   flushDocSaveOnPageExit,
   pageExitDocSaveFingerprint,
   pmDocHasSubstantiveContent,
+  shouldFlushDocSaveOnPageExit,
 } from "../data/pageExitSave";
 import {
   ensureSessionIdOnce,
@@ -452,6 +453,67 @@ export function useWorkspaceDocumentEditor(input: {
     }
   }, [waitForPendingDocSaveDrain]);
 
+  const preparePageExitDocSave = useCallback((): (() => void) | null => {
+    const editor = tiptapEditorRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!editor || editor.isDestroyed || !sessionId) return null;
+    const current = stateRef.current;
+    if (
+      !current.doc ||
+      !canEditDocument(deriveDocDimensions(current), current.viewingVersion)
+    ) {
+      return null;
+    }
+
+    let pmDoc: PmDoc;
+    try {
+      pmDoc = normalizePmDoc(editor.getJSON());
+    } catch (error) {
+      console.error("[workspace] page-exit updateDoc validation failed", error);
+      return null;
+    }
+
+    const expectedDocumentSnapshot = docVersionRef.current;
+    const baselineDoc = current.doc.pmDoc ?? null;
+    const hasPendingDocSave =
+      pendingDocWriteRef.current ||
+      queuedPmDocRef.current !== null ||
+      scheduledDocWriteRef.current;
+    if (
+      (expectedDocumentSnapshot === 0 && !pmDocHasSubstantiveContent(pmDoc)) ||
+      !shouldFlushDocSaveOnPageExit({
+        pmDoc,
+        baselineDoc,
+        hasPendingDocSave,
+      })
+    ) {
+      return null;
+    }
+
+    const fingerprint = pageExitDocSaveFingerprint({
+      sessionId,
+      expectedDocumentSnapshot,
+      pmDoc,
+    });
+    return () => {
+      if (pageExitDocSaveFingerprintRef.current === fingerprint) return;
+      try {
+        const result = flushDocSaveOnPageExit({
+          sessionId,
+          expectedDocumentSnapshot,
+          pmDoc,
+          baselineDoc,
+          hasPendingDocSave,
+        });
+        if (result !== "skipped") {
+          pageExitDocSaveFingerprintRef.current = fingerprint;
+        }
+      } catch (error) {
+        console.error("[workspace] page-exit updateDoc flush failed", error);
+      }
+    };
+  }, []);
+
   const getLatestExportPmDoc = useCallback((): PmDoc | null => {
     const editor = tiptapEditorRef.current;
     if (editor && !editor.isDestroyed) {
@@ -466,52 +528,7 @@ export function useWorkspaceDocumentEditor(input: {
 
   useEffect(() => {
     const pageExitFlush = () => {
-      const editor = tiptapEditorRef.current;
-      const sessionId = sessionIdRef.current;
-      if (!editor || editor.isDestroyed || !sessionId) return;
-      const current = stateRef.current;
-      if (
-        !current.doc ||
-        !canEditDocument(deriveDocDimensions(current), current.viewingVersion)
-      ) {
-        return;
-      }
-
-      let pmDoc: PmDoc;
-      try {
-        pmDoc = normalizePmDoc(editor.getJSON());
-      } catch (error) {
-        console.error(
-          "[workspace] page-exit updateDoc validation failed",
-          error,
-        );
-        return;
-      }
-
-      const expectedDocumentSnapshot = docVersionRef.current;
-      const fingerprint = pageExitDocSaveFingerprint({
-        sessionId,
-        expectedDocumentSnapshot,
-        pmDoc,
-      });
-      if (pageExitDocSaveFingerprintRef.current === fingerprint) return;
-
-      try {
-        const result = flushDocSaveOnPageExit({
-          sessionId,
-          expectedDocumentSnapshot,
-          pmDoc,
-          baselineDoc: current.doc.pmDoc ?? null,
-          hasPendingDocSave:
-            pendingDocWriteRef.current ||
-            queuedPmDocRef.current !== null ||
-            scheduledDocWriteRef.current,
-        });
-        if (result !== "skipped")
-          pageExitDocSaveFingerprintRef.current = fingerprint;
-      } catch (error) {
-        console.error("[workspace] page-exit updateDoc flush failed", error);
-      }
+      preparePageExitDocSave()?.();
     };
 
     const visibilityFlush = () => {
@@ -529,12 +546,13 @@ export function useWorkspaceDocumentEditor(input: {
       window.removeEventListener("beforeunload", pageExitFlush);
       document.removeEventListener("visibilitychange", visibilityFlush);
     };
-  }, [flushPendingDocSave]);
+  }, [flushPendingDocSave, preparePageExitDocSave]);
   return {
     flushPendingDocSave,
     getLatestExportPmDoc,
     handleCreateBlankDoc,
     handleEditorChange,
     handleFillTemplate,
+    preparePageExitDocSave,
   };
 }

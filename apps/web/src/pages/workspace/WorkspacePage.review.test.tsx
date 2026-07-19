@@ -718,6 +718,58 @@ describe("WorkspacePage review controls", () => {
     expect(stream.dispose).toHaveBeenCalledTimes(1);
   }, 60_000);
 
+  it("卸载工作区会等待 deferred 文档 flush，StrictMode 演练不重复 flush", async () => {
+    let resolveFlush!: () => void;
+    const deferredFlush = new Promise<void>((resolve) => {
+      resolveFlush = resolve;
+    });
+    const flushPendingDocSave = vi.fn(() => deferredFlush);
+    const fallbackDocSave = vi.fn();
+    const preparePageExitDocSave = vi.fn(() => fallbackDocSave);
+    vi.doMock("./hooks/useWorkspaceDocumentEditor", () => ({
+      useWorkspaceDocumentEditor: () => ({
+        flushPendingDocSave,
+        getLatestExportPmDoc: () => null,
+        handleCreateBlankDoc: vi.fn(),
+        handleEditorChange: vi.fn(),
+        handleFillTemplate: vi.fn(),
+        preparePageExitDocSave,
+      }),
+    }));
+
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(
+        <StrictMode>
+          <WorkspacePage />
+        </StrictMode>,
+      );
+      const stream = latestServerStream();
+      vi.useFakeTimers();
+
+      act(() => vi.advanceTimersByTime(75));
+      expect(flushPendingDocSave).not.toHaveBeenCalled();
+      expect(stream.dispose).not.toHaveBeenCalled();
+
+      act(() => root?.unmount());
+      root = null;
+      act(() => vi.advanceTimersByTime(75));
+      expect(flushPendingDocSave).toHaveBeenCalledTimes(1);
+      expect(stream.dispose).not.toHaveBeenCalled();
+      expect(fallbackDocSave).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveFlush();
+        await deferredFlush;
+      });
+      await flushMicrotasks(2);
+      expect(stream.dispose).toHaveBeenCalledTimes(1);
+      expect(fallbackDocSave).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("./hooks/useWorkspaceDocumentEditor");
+    }
+  }, 60_000);
+
   it("编辑后 400ms 内返回首页会先以旧会话身份保存正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =

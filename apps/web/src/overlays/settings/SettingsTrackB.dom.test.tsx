@@ -9,7 +9,7 @@ import { AboutPanel } from "./AboutPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
-import { readVisionProvider } from "./visionProviderStore";
+import { readVisionProvider, writeVisionProvider } from "./visionProviderStore";
 import { resetSettingsDialogA11yForTest, ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
   getSelectedModelTier,
@@ -261,6 +261,79 @@ describe("Settings Track B", () => {
     await flush();
 
     expect(readVisionProvider()).toBeNull();
+  });
+
+  it("Vision 测试期间停用后丢弃旧成功响应且不重新启用", async () => {
+    writeVisionProvider({
+      enabled: true,
+      protocol: "openai",
+      baseUrl: "https://vision.example/v1",
+      apiKey: "sk-current",
+      model: "vision-current",
+    });
+    let resolveTest!: (response: Response) => void;
+    const deferredTest = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(() => deferredTest));
+
+    await render(
+      <ToastProvider>
+        <VisionPanel />
+      </ToastProvider>,
+    );
+    await click(getButtonByText("测试并保存"));
+    await click(getButtonByText("已启用"));
+    expect(readVisionProvider()?.enabled).toBe(false);
+
+    await act(async () => {
+      resolveTest(json({ ok: true }));
+      await deferredTest;
+    });
+    await flush();
+
+    expect(readVisionProvider()?.enabled).toBe(false);
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "").not.toContain(
+      "图像识别已启用",
+    );
+  });
+
+  it("Vision 测试期间清除后丢弃旧成功响应且不写回配置", async () => {
+    writeVisionProvider({
+      enabled: true,
+      protocol: "openai",
+      baseUrl: "https://vision.example/v1",
+      apiKey: "sk-current",
+      model: "vision-current",
+    });
+    let resolveTest!: (response: Response) => void;
+    const deferredTest = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(() => deferredTest));
+
+    await render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <VisionPanel />
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    await click(getButtonByText("测试并保存"));
+    await click(getButtonByText("清除"));
+    await click(getButtonByText("清除配置"));
+    expect(readVisionProvider()).toBeNull();
+
+    await act(async () => {
+      resolveTest(json({ ok: true }));
+      await deferredTest;
+    });
+    await flush();
+
+    expect(readVisionProvider()).toBeNull();
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "").not.toContain(
+      "图像识别已启用",
+    );
   });
 
   it("baseURL 即时校验显示字段错误,空值仍可点击并给就近 message", async () => {

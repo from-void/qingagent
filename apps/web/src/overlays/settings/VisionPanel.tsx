@@ -163,6 +163,7 @@ export function VisionPanel() {
 
   const handleToggle = async () => {
     if (!saved) return;
+    invalidateTest();
     const next = { ...saved, enabled: !saved.enabled };
     if (!(await writeVisionProvider(next))) {
       setMessage(visionPersistFailureMessage());
@@ -182,6 +183,7 @@ export function VisionPanel() {
     if (!proceed) {
       return;
     }
+    invalidateTest();
     if (!(await clearVisionProvider())) {
       setMessage("本机配置清除失败，请重试");
       return;
@@ -320,7 +322,7 @@ export function VisionPanel() {
             {testing ? "测试中…" : "测试并保存"}
           </button>
           {saved && (
-            <button type="button" className="sm-btn" onClick={() => void handleClear()} disabled={testing}>
+            <button type="button" className="sm-btn" onClick={() => void handleClear()}>
               清除
             </button>
           )}

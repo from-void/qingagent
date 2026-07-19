@@ -79,6 +79,17 @@ async function familyCount(client: Client, docId: string, threadId: string): Pro
   return parts.reduce((sum, n) => sum + n, 0);
 }
 
+async function quarantinedFamilyCount(client: Client, docId: string, threadId: string): Promise<number> {
+  const parts = await Promise.all([
+    count(client, "SELECT COUNT(*) AS n FROM documents_quarantine_0002 WHERE id = ? OR thread_id = ?", [docId, threadId]),
+    count(client, "SELECT COUNT(*) AS n FROM document_drafts_quarantine_0002 WHERE doc_id = ? OR thread_id = ?", [docId, threadId]),
+    count(client, "SELECT COUNT(*) AS n FROM document_suggestions_quarantine_0002 WHERE doc_id = ?", [docId]),
+    count(client, "SELECT COUNT(*) AS n FROM document_ops_quarantine_0002 WHERE doc_id = ?", [docId]),
+    count(client, "SELECT COUNT(*) AS n FROM document_versions_quarantine_0002 WHERE doc_id = ?", [docId]),
+  ]);
+  return parts.reduce((sum, n) => sum + n, 0);
+}
+
 describe("deleteDocumentFamily", () => {
   it("删除指定会话的五表全家桶,不影响另一个会话", async () => {
     await ensureMigrated();
@@ -128,18 +139,20 @@ describe("migration 0002 orphan cleanup", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("跳过 documents 孤儿清理"));
   });
 
-  it("清理 thread 已不存在的 documents 全家桶,保留非孤儿", async () => {
+  it("threads 丢失 10% 且孤儿占比 15% 时将可疑全家桶保留于隔离表", async () => {
     const client = getDocumentsClient();
     await runMigrations([migration0001Baseline]);
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
-    await client.execute(
-      "INSERT INTO mastra_threads (id) VALUES ('alive-thread'), ('alive-thread-2'), ('alive-thread-3'), ('alive-thread-4')",
-    );
-    await seedFamily(client, "alive-doc", "alive-thread");
-    await seedFamily(client, "alive-doc-2", "alive-thread-2");
-    await seedFamily(client, "alive-doc-3", "alive-thread-3");
-    await seedFamily(client, "alive-doc-4", "alive-thread-4");
-    await seedFamily(client, "orphan-doc", "missing-thread");
+    for (let index = 1; index <= 17; index += 1) {
+      await seedFamily(client, `doc-${index}`, `thread-${index}`);
+      await client.execute({ sql: "INSERT INTO mastra_threads (id) VALUES (?)", args: [`thread-${index}`] });
+    }
+    // 两个正常文档的 thread 恢复不完整（占全部预期 thread 的 10%），另有一个真实孤儿，
+    // 因而 documents 侧观察到的孤儿比例为 3 / 20 = 15%。迁移无法可靠区分三者，必须全部可恢复。
+    await seedFamily(client, "legit-doc-18", "lost-thread-18");
+    await seedFamily(client, "legit-doc-19", "lost-thread-19");
+    await seedFamily(client, "orphan-doc-20", "missing-thread-20");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const result = await runMigrations([
       migration0001Baseline,
@@ -147,12 +160,20 @@ describe("migration 0002 orphan cleanup", () => {
     ]);
 
     expect(result.appliedIds).toEqual([2]);
-    expect(await familyCount(client, "orphan-doc", "missing-thread")).toBe(0);
-    expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
-    expect(await count(client, "SELECT COUNT(*) AS n FROM documents")).toBe(4);
+    expect(await familyCount(client, "legit-doc-18", "lost-thread-18")).toBe(0);
+    expect(await familyCount(client, "legit-doc-19", "lost-thread-19")).toBe(0);
+    expect(await familyCount(client, "orphan-doc-20", "missing-thread-20")).toBe(0);
+    expect(await quarantinedFamilyCount(client, "legit-doc-18", "lost-thread-18")).toBe(5);
+    expect(await quarantinedFamilyCount(client, "legit-doc-19", "lost-thread-19")).toBe(5);
+    expect(await quarantinedFamilyCount(client, "orphan-doc-20", "missing-thread-20")).toBe(5);
+    expect(await familyCount(client, "doc-1", "thread-1")).toBe(5);
+    expect(await count(client, "SELECT COUNT(*) AS n FROM documents")).toBe(17);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("已隔离 3 个 documents 孤儿全家桶"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orphanRatio=0.150"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("*_quarantine_0002"));
   });
 
-  it("mastra_threads 非空但孤儿占比高时视为线程表不完整并全部保留", async () => {
+  it("mastra_threads 非空但孤儿占比高时提升日志级别并可恢复隔离", async () => {
     const client = getDocumentsClient();
     await runMigrations([migration0001Baseline]);
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
@@ -169,9 +190,11 @@ describe("migration 0002 orphan cleanup", () => {
 
     expect(result.appliedIds).toEqual([2]);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
-    expect(await familyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(5);
-    expect(await familyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(5);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("mastra_threads 可能不完整"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orphans=2"));
+    expect(await familyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(0);
+    expect(await familyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(0);
+    expect(await quarantinedFamilyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(5);
+    expect(await quarantinedFamilyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("高比例，线程表可能不完整"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("已隔离 2 个"));
   });
 });

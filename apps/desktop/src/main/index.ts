@@ -18,6 +18,7 @@ import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.j
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
+  getCurrentUpdateStatus,
   RELEASES_URL,
   manualCheckForUpdates,
   quitAndInstallUpdate,
@@ -330,6 +331,8 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
 });
 
 ipcMain.handle("qingagent:update-quit-install", async () => quitAndInstallUpdate());
+
+ipcMain.handle("qingagent:update-status-get", () => getCurrentUpdateStatus());
 
 ipcMain.handle("qingagent:update-open-download", async () => {
   await shell.openExternal(RELEASES_URL);

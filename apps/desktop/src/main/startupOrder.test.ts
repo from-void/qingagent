@@ -139,6 +139,18 @@ test("desktop 在迁移及 server app 求值后非阻断挂载 documents 巡检"
   assert.ok(repairCallLine > repairImportLine, "documents 巡检必须由后台动态导入触发");
 });
 
+test("desktop 在 server app 求值后接管关闭信号并使用 Electron 退出动作", () => {
+  const source = readFileSync(path.join(__dirname, "server.ts"), "utf8");
+  const appImportLine = source.indexOf('await import("@qingagent/server/app")');
+  const guardImportLine = source.indexOf('await import("@qingagent/server/crashGuard")');
+  const claimLine = source.indexOf("claimShutdownSignalOwnership({", guardImportLine);
+  const electronExitLine = source.indexOf("electronApp.exit(code ?? 0)", claimLine);
+
+  assert.ok(appImportLine >= 0 && guardImportLine > appImportLine, "信号接管模块必须在 server app 求值后加载");
+  assert.ok(claimLine > guardImportLine, "desktop server 启动路径必须调用信号所有权接管");
+  assert.ok(electronExitLine > claimLine, "desktop 必须把最终退出动作交给 Electron app.exit");
+});
+
 function findLine(lines: string[], marker: string): number {
   return lines.findIndex((line) => line.includes(marker));
 }

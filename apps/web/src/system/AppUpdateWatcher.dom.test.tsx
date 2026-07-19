@@ -36,6 +36,15 @@ describe("AppUpdateWatcher", () => {
     vi.restoreAllMocks();
   });
 
+  it("挂载订阅后查询到 soft-ready 会立即显示重启更新提示", async () => {
+    const getUpdateStatus = vi.fn(async () => ({ kind: "soft-ready" as const, version: "1.2.3" }));
+    installElectron({ getUpdateStatus });
+    await renderWatcher();
+
+    await vi.waitFor(() => expect(host!.textContent).toContain("新版本已就绪"));
+    expect(getUpdateStatus).toHaveBeenCalledTimes(1);
+  });
+
   it("soft-ready 显示可手动关闭的重启更新 toast", async () => {
     const electron = installElectron();
     await renderWatcher();
@@ -87,7 +96,7 @@ describe("AppUpdateWatcher", () => {
   });
 });
 
-function installElectron() {
+function installElectron(overrides: Record<string, unknown> = {}) {
   const electron = {
     platform: "linux",
     isDesktop: true,
@@ -97,8 +106,10 @@ function installElectron() {
         callbacks = callbacks.filter((item) => item !== cb);
       };
     }),
+    getUpdateStatus: vi.fn(async () => ({ kind: "none" as const })),
     quitAndInstall: vi.fn(async () => undefined),
     openDownloadPage: vi.fn(async () => undefined),
+    ...overrides,
   };
   Object.defineProperty(window, "electron", {
     configurable: true,

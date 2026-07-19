@@ -35,6 +35,12 @@ async function startServerOnce(options: StartServerOptions): Promise<{ port: num
   installDesktopObservability(options.desktopLogDir);
 
   const { app: honoApp } = await import("@qingagent/server/app");
+  const { claimShutdownSignalOwnership } = await import("@qingagent/server/crashGuard");
+  // app/core/doc-render 已完成求值：移除模块级竞争信号处理器。最终用 Electron 的退出动作，
+  // 但仍由 crashGuard 先完成 active turn、会话持久化、浏览器及观测数据的收尾。
+  claimShutdownSignalOwnership({
+    exit: (code) => electronApp.exit(code ?? 0),
+  });
   const { serveStatic } = await import("@hono/node-server/serve-static");
 
   // 存量 documents 的版本指针/PM 镜像仅在启动后后台巡检修复；读取接口保持纯读。

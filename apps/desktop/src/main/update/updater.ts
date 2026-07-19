@@ -145,3 +145,7 @@ export async function quitAndInstallUpdate(): Promise<boolean> {
     return false;
   }
 }
+
+export function getCurrentUpdateStatus(): UpdateStatusPayload {
+  return updateStatusDispatcher.getStatus();
+}

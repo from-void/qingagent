@@ -49,6 +49,7 @@ interface Window {
     clientConfig?: Record<string, string>;
     setClientConfig?: (patch: Record<string, string | null>) => Promise<boolean>;
     onUpdateStatus?: (cb: (payload: ElectronUpdateStatus) => void) => () => void;
+    getUpdateStatus?: () => Promise<ElectronUpdateStatus>;
     quitAndInstall?: () => Promise<unknown>;
     openDownloadPage?: () => Promise<unknown>;
     // 关于页:应用版本号(preload 启动期同步注入)、内核版本、手动检查、第三方声明全文。

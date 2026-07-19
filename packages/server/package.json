@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./app": "./src/app.ts",
+    "./crashGuard": "./src/crashGuard.ts",
     "./src/app": "./src/app.ts",
     "./desktopFolderSelection": "./src/lib/desktopFolderSelection.ts",
     "./externalInstance": "./src/lib/externalInstance.ts",

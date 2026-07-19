@@ -419,6 +419,62 @@ describe("writeDraft intent 调度", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("reason 精修路原始流已见首字但尚未收完时，T_think 不会将其 abort", async () => {
+    vi.useFakeTimers();
+    const { tool } = await makeTool();
+    const calls: InnerModelCall[] = [];
+    streamInnerModelMock.mockImplementation((input: InnerModelCall) => {
+      calls.push(input);
+      const index = calls.length - 1;
+      if (index === 0) {
+        const raw = qingmlParagraph("a".repeat(80));
+        input.onContentStart?.();
+        input.onContentDelta?.(raw, raw);
+        return Promise.resolve({ raw, contentStartMs: 1, finishReason: "stop" });
+      }
+      if (index === 1) {
+        return new Promise((resolve, reject) => {
+          const startTimer = setTimeout(() => {
+            // 模拟 branch 原始流首字时机信号；验真回放尚未发生。
+            input.onContentStart?.();
+          }, 2_000);
+          const finishTimer = setTimeout(() => {
+            input.abortSignal?.removeEventListener("abort", onAbort);
+            const raw = qingmlParagraph("b".repeat(100));
+            input.onContentDelta?.(raw, raw);
+            resolve({ raw, contentStartMs: 2_000, finishReason: "stop" });
+          }, 20_000);
+          const onAbort = () => {
+            clearTimeout(startTimer);
+            clearTimeout(finishTimer);
+            reject(abortError());
+          };
+          input.abortSignal?.addEventListener("abort", onAbort, { once: true });
+        });
+      }
+      return new Promise((_resolve, reject) => {
+        input.abortSignal?.addEventListener("abort", () => reject(abortError()), { once: true });
+      });
+    });
+
+    const pending = run(tool, { title: "t", outline: "o", intent: "reason", lengthTarget: 100 });
+    await waitForCalls(calls, 4);
+    expect(calls).toHaveLength(4);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls[1]!.abortSignal?.aborted).toBe(false);
+    expect(calls[2]!.abortSignal?.aborted).toBe(true);
+    expect(calls[3]!.abortSignal?.aborted).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const out = await pending;
+    expect(out.ok).toBe(true);
+    expect(out.wordCount).toBe(100);
+    expect(out.revisionCount).toBe(1);
+    expect(calls[1]!.abortSignal?.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reason 无字数时 fallback 不提前截停 thinking 精修", async () => {
     const { tool, state } = await makeTool();
     const calls: InnerModelCall[] = [];

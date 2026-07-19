@@ -1,5 +1,6 @@
 import { app, BrowserWindow, session, type Session } from "electron";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isAllowedExportRequest } from "./exportRequestFilter.js";
 
@@ -29,33 +30,30 @@ function exportSession(): Session {
   return sess;
 }
 
-// 临时 HTML 文件名计数器:避免并发导出互相覆盖(配合 pid 唯一)。
-let exportSeq = 0;
-
 /** 用 Electron printToPDF 把自包含 HTML 渲染成 PDF 字节。 */
 export async function renderPdfViaElectron(html: string): Promise<Buffer> {
   // 用临时文件 + loadFile 加载,而非 data: URL —— 内联大量图片的文档其 data: URL 会超
-  // 导航长度上限。临时文件落 app temp 目录,打印后删除。
-  const tmpFile = path.join(
-    app.getPath("temp"),
-    `qingagent-export-${process.pid}-${(exportSeq += 1)}.html`,
-  );
-  writeFileSync(tmpFile, html, "utf8");
-
-  const win = new BrowserWindow({
-    show: false,
-    width: 794, // A4 @96dpi 约 794×1123
-    height: 1123,
-    webPreferences: {
-      session: exportSession(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      spellcheck: false,
-      backgroundThrottling: false,
-    },
-  });
+  // 导航长度上限。每次导出独占 0700 私有目录,文件名不可预测且以 0600 独占创建；结束后
+  // 清理整个目录,避免共享 temp 下其他本地用户读取或利用可预测文件名抢占/替换文件。
+  const tmpDir = mkdtempSync(path.join(app.getPath("temp"), "qingagent-export-"));
+  chmodSync(tmpDir, 0o700);
+  const tmpFile = path.join(tmpDir, `${randomUUID()}.html`);
+  let win: BrowserWindow | null = null;
 
   try {
+    writeFileSync(tmpFile, html, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    win = new BrowserWindow({
+      show: false,
+      width: 794, // A4 @96dpi 约 794×1123
+      height: 1123,
+      webPreferences: {
+        session: exportSession(),
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: false,
+        backgroundThrottling: false,
+      },
+    });
     await win.loadFile(tmpFile);
     // 等字体就绪(最多 4s),避免首屏用回退字体抢跑导致排版漂移;超时则用已就绪字体直接打印。
     await win.webContents
@@ -73,11 +71,11 @@ export async function renderPdfViaElectron(html: string): Promise<Buffer> {
     });
     return data;
   } finally {
-    win.destroy();
+    win?.destroy();
     try {
-      unlinkSync(tmpFile);
+      rmSync(tmpDir, { recursive: true, force: true });
     } catch {
-      // 临时文件删除失败忽略(系统会清理 temp 目录)。
+      // 临时目录删除失败不覆盖渲染结果；目录仍为 0700、文件仍为 0600，系统稍后会清理 temp。
     }
   }
 }

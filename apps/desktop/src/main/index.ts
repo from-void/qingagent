@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell, type Event } from "electron";
 import path from "node:path";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
@@ -356,6 +356,28 @@ ipcMain.handle("qingagent:third-party-notices-get", async () => {
 function clientConfigPath(): string {
   return path.join(app.getPath("userData"), "client-config.json");
 }
+function clientSecretConfigPath(): string {
+  return path.join(app.getPath("userData"), "client-config.secrets.json");
+}
+
+// 这些值会直接或嵌套携带桌面模型 API Key。为保持现有 renderer/clientPersist 契约，主进程
+// 只在 IPC 边界解密/加密整项；磁盘上的普通 client-config.json 永远不保存这些项。
+const DESKTOP_MODEL_SECRET_KEYS = new Set([
+  "qingagent.deepseek_api_key",
+  "qingagent.custom_provider",
+  "qingagent.vision_provider",
+]);
+
+function isDesktopModelEncryptionAvailable(): boolean {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return false;
+    // 与 credentialKeyProvider 的保护判定保持一致：Linux basic_text 只是明文混淆。
+    return process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text";
+  } catch {
+    return false;
+  }
+}
+
 function readClientConfig(): Record<string, string> {
   try {
     const parsed = JSON.parse(readFileSync(clientConfigPath(), "utf8")) as unknown;
@@ -369,16 +391,85 @@ function readClientConfig(): Record<string, string> {
     return {}; // 文件不存在/损坏都当空,绝不让读配置阻断启动。
   }
 }
-function writeClientConfig(cfg: Record<string, string>): void {
+function writePrivateJson(file: string, value: Record<string, string>): void {
   // 临时文件 + rename 原子落盘,避免读到截断的半成品 JSON。
-  const file = clientConfigPath();
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "w",
+  });
   renameSync(tmp, file);
+  chmodSync(file, 0o600);
+}
+function writeClientConfig(cfg: Record<string, string>): void {
+  writePrivateJson(clientConfigPath(), cfg);
+}
+function readEncryptedClientSecrets(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(clientSecretConfigPath(), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (DESKTOP_MODEL_SECRET_KEYS.has(key) && typeof value === "string") out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeEncryptedClientSecrets(secrets: Record<string, string>): void {
+  writePrivateJson(clientSecretConfigPath(), secrets);
+}
+function encryptClientSecret(value: string): string {
+  return safeStorage.encryptString(value).toString("base64");
+}
+function decryptClientSecret(value: string): string {
+  return safeStorage.decryptString(Buffer.from(value, "base64"));
+}
+
+/**
+ * 首次安全读取时迁移旧 client-config.json 中的明文模型 key。
+ * 顺序必须是先可靠写入密文、再清除明文；任一步失败都保留源文件，避免凭据丢失。
+ */
+function migratePlaintextClientSecrets(): void {
+  if (!isDesktopModelEncryptionAvailable()) return;
+  const cfg = readClientConfig();
+  const plaintextEntries = Object.entries(cfg).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
+  if (plaintextEntries.length === 0) return;
+
+  const encrypted = readEncryptedClientSecrets();
+  for (const [key, value] of plaintextEntries) encrypted[key] = encryptClientSecret(value);
+  writeEncryptedClientSecrets(encrypted);
+
+  const sanitized = { ...cfg };
+  for (const [key] of plaintextEntries) delete sanitized[key];
+  writeClientConfig(sanitized);
+}
+
+function readClientConfigForRenderer(): Record<string, string> {
+  const cfg = readClientConfig();
+  // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。
+  for (const key of DESKTOP_MODEL_SECRET_KEYS) delete cfg[key];
+  if (!isDesktopModelEncryptionAvailable()) return cfg;
+
+  try {
+    migratePlaintextClientSecrets();
+    for (const [key, encrypted] of Object.entries(readEncryptedClientSecrets())) {
+      try {
+        cfg[key] = decryptClientSecret(encrypted);
+      } catch {
+        // 单项密文损坏/OS keychain 变化时只隐藏该 key，不回退任何明文。
+      }
+    }
+  } catch (err) {
+    console.warn("[client-config] 模型 key 迁移/解密失败，已按未配置处理:", err);
+  }
+  return cfg;
 }
 // 同步取整份配置(preload sendSync 调用),供渲染层启动期拿到初值快照。
 ipcMain.on("qingagent:client-config-get", (event) => {
-  event.returnValue = readClientConfig();
+  event.returnValue = readClientConfigForRenderer();
 });
 // 合并写入(value=null/空 表示删除该项);返回是否落盘成功。
 ipcMain.handle(
@@ -386,11 +477,21 @@ ipcMain.handle(
   (_event, patch: Record<string, string | null> | undefined) => {
     if (!patch || typeof patch !== "object") return false;
     try {
+      const secretPatch = Object.entries(patch).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
+      if (secretPatch.length > 0 && !isDesktopModelEncryptionAvailable()) return false;
+      if (isDesktopModelEncryptionAvailable()) migratePlaintextClientSecrets();
+
       const cfg = readClientConfig();
+      const encrypted = readEncryptedClientSecrets();
       for (const [k, v] of Object.entries(patch)) {
-        if (v === null || v === undefined || v === "") delete cfg[k];
+        if (DESKTOP_MODEL_SECRET_KEYS.has(k)) {
+          delete cfg[k];
+          if (v === null || v === undefined || v === "") delete encrypted[k];
+          else if (typeof v === "string") encrypted[k] = encryptClientSecret(v);
+        } else if (v === null || v === undefined || v === "") delete cfg[k];
         else if (typeof v === "string") cfg[k] = v;
       }
+      if (secretPatch.length > 0) writeEncryptedClientSecrets(encrypted);
       writeClientConfig(cfg);
       return true;
     } catch {

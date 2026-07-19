@@ -35,6 +35,47 @@ test("desktop 在 embedded server 启动前且 app ready 后装配凭据 key pro
   );
 });
 
+test("desktop PDF 导出使用私有临时目录、随机文件名和最小文件权限并整目录清理", () => {
+  const source = readFileSync(path.join(__dirname, "pdfRenderer.ts"), "utf8");
+
+  assert.match(source, /mkdtempSync\(path\.join\(app\.getPath\("temp"\), "qingagent-export-"\)\)/);
+  assert.match(source, /chmodSync\(tmpDir, 0o700\)/);
+  assert.match(source, /randomUUID\(\)/);
+  assert.match(source, /mode: 0o600/);
+  assert.match(source, /flag: "wx"/);
+  assert.match(source, /rmSync\(tmpDir, \{ recursive: true, force: true \}\)/);
+  assert.doesNotMatch(source, /qingagent-export-\$\{process\.pid\}/);
+});
+
+test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文且不可用时 fail-closed", () => {
+  const source = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+
+  for (const key of [
+    "qingagent.deepseek_api_key",
+    "qingagent.custom_provider",
+    "qingagent.vision_provider",
+  ]) {
+    assert.ok(source.includes(`"${key}"`), `缺少桌面模型敏感配置项：${key}`);
+  }
+  assert.match(source, /safeStorage\.encryptString\(value\)/);
+  assert.match(source, /safeStorage\.decryptString\(Buffer\.from\(value, "base64"\)\)/);
+  assert.match(source, /getSelectedStorageBackend\(\) !== "basic_text"/);
+
+  const migrationStart = source.indexOf("function migratePlaintextClientSecrets()");
+  const encryptedWrite = source.indexOf("writeEncryptedClientSecrets(encrypted);", migrationStart);
+  const plaintextClear = source.indexOf("writeClientConfig(sanitized);", migrationStart);
+  assert.ok(encryptedWrite > migrationStart && plaintextClear > encryptedWrite, "迁移必须先落密文再清明文");
+
+  const rendererReadStart = source.indexOf("function readClientConfigForRenderer()");
+  const stripPlaintext = source.indexOf("delete cfg[key]", rendererReadStart);
+  const unavailableReturn = source.indexOf("if (!isDesktopModelEncryptionAvailable()) return cfg;", rendererReadStart);
+  assert.ok(
+    stripPlaintext > rendererReadStart && unavailableReturn > stripPlaintext,
+    "加密不可用前必须先从 renderer 快照剥离明文 key",
+  );
+  assert.match(source, /secretPatch\.length > 0 && !isDesktopModelEncryptionAvailable\(\)\) return false/);
+});
+
 test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧行保真", async () => {
   const source = readFileSync(path.join(__dirname, "server.ts"), "utf8");
   assert.ok(

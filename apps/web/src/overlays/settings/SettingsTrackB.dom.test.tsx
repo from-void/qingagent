@@ -9,10 +9,12 @@ import { AboutPanel } from "./AboutPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
 import { VisionPanel } from "./VisionPanel";
+import { readVisionProvider } from "./visionProviderStore";
 import { resetSettingsDialogA11yForTest, ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
   getSelectedModelTier,
   getVisitorDeepseekKey,
+  readCustomProvider,
   setVisitorDeepseekKey,
   visitorKeyHeaders,
 } from "./visitorKeyStore";
@@ -100,6 +102,41 @@ describe("Settings Track B", () => {
     expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
     setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://proxy.example/v1");
     expect(saveBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("Model 自定义配置变更后丢弃旧测试成功响应且不清现有 key", async () => {
+    setVisitorDeepseekKey("sk-current");
+    let resolveTest!: (response: Response) => void;
+    const deferredTest = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/test-custom")
+        ? deferredTest
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await click(getButtonByText("修改配置"));
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://a.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-a");
+    await click(getButtonByText("测试并保存"));
+
+    setInput(getInputByPlaceholder("sk-…"), "sk-b");
+    await act(async () => {
+      resolveTest(json({ ok: true }));
+      await deferredTest;
+    });
+    await flush();
+
+    expect(readCustomProvider()).toBeNull();
+    expect(getVisitorDeepseekKey()).toBe("sk-current");
   });
 
   it("Model 档位默认 Flash,切 Pro 后持久化并随请求 header 透传", async () => {
@@ -192,6 +229,38 @@ describe("Settings Track B", () => {
 
     expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent).toContain("图像识别已启用");
     expect(host?.querySelector(".sm-message")?.textContent ?? "").not.toContain("测试通过");
+  });
+
+  it("Vision 配置变更后丢弃旧测试成功响应", async () => {
+    let resolveTest!: (response: Response) => void;
+    const deferredTest = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/vision/test")
+        ? deferredTest
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <VisionPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://a.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-a");
+    setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "vision-a");
+    await click(getButtonByText("测试并保存"));
+
+    setInput(getInputByPlaceholder("https://your-endpoint/v1"), "https://b.example/v1");
+    await act(async () => {
+      resolveTest(json({ ok: true }));
+      await deferredTest;
+    });
+    await flush();
+
+    expect(readVisionProvider()).toBeNull();
   });
 
   it("baseURL 即时校验显示字段错误,空值仍可点击并给就近 message", async () => {

@@ -105,6 +105,15 @@ export function ModelSettingsPanel() {
   const [balanceLoading, setBalanceLoading] = useState(false);
   const mountedRef = useRef(true);
   const balanceControllerRef = useRef<AbortController | null>(null);
+  const customTestRevisionRef = useRef(0);
+  const customTestControllerRef = useRef<AbortController | null>(null);
+
+  const invalidateCustomTest = () => {
+    customTestRevisionRef.current += 1;
+    customTestControllerRef.current?.abort();
+    customTestControllerRef.current = null;
+    setCustomTesting(false);
+  };
 
   const loadServer = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -209,6 +218,9 @@ export function ModelSettingsPanel() {
     return () => {
       mountedRef.current = false;
       balanceControllerRef.current?.abort();
+      customTestRevisionRef.current += 1;
+      customTestControllerRef.current?.abort();
+      customTestControllerRef.current = null;
     };
   }, []);
 
@@ -367,12 +379,19 @@ export function ModelSettingsPanel() {
     }
     const modelFlash = customModelFlash.trim() || "deepseek-v4-flash";
     const modelPro = customModelPro.trim() || "deepseek-v4-pro";
+    customTestControllerRef.current?.abort();
+    const revision = ++customTestRevisionRef.current;
     setCustomTesting(true);
     setMessage("正在测试接口连通性…");
     // 超时保护:测连接打的是用户填的第三方 baseUrl,不可信(可能不通/极慢)。
     // 无 AbortController 时 fetch 会无限挂起,按钮永远卡"测试中…"=整页假死(e2e E1-h2)。
     const testCtrl = new AbortController();
+    customTestControllerRef.current = testCtrl;
     const testTimer = setTimeout(() => testCtrl.abort(), 25_000);
+    const canCommit = () =>
+      mountedRef.current &&
+      customTestRevisionRef.current === revision &&
+      customTestControllerRef.current === testCtrl;
     try {
       const res = await fetch("/api/v1/settings/model/test-custom", {
         method: "POST",
@@ -381,6 +400,7 @@ export function ModelSettingsPanel() {
         signal: testCtrl.signal,
       });
       const body = (await res.json()) as { ok: boolean; keyInvalid?: boolean; error?: string };
+      if (!canCommit()) return;
       if (!body.ok) {
         setMessage(
           body.keyInvalid
@@ -400,14 +420,19 @@ export function ModelSettingsPanel() {
       setMessage(null);
       toast.show("接口测试通过,已保存并启用自定义模型");
     } catch (e) {
-      setMessage(
-        e instanceof DOMException && e.name === "AbortError"
-          ? "测试超时:接口 25 秒无响应,请检查 API 地址是否可达"
-          : "测试失败:网络错误,请重试",
-      );
+      if (canCommit()) {
+        setMessage(
+          e instanceof DOMException && e.name === "AbortError"
+            ? "测试超时:接口 25 秒无响应,请检查 API 地址是否可达"
+            : "测试失败:网络错误,请重试",
+        );
+      }
     } finally {
       clearTimeout(testTimer);
-      setCustomTesting(false);
+      if (canCommit()) {
+        customTestControllerRef.current = null;
+        setCustomTesting(false);
+      }
     }
   };
 
@@ -487,7 +512,14 @@ export function ModelSettingsPanel() {
           保存
         </button>
         {editing && (
-          <button type="button" className="sm-btn" onClick={() => setEditing(false)}>
+          <button
+            type="button"
+            className="sm-btn"
+            onClick={() => {
+              invalidateCustomTest();
+              setEditing(false);
+            }}
+          >
             取消
           </button>
         )}
@@ -545,7 +577,10 @@ export function ModelSettingsPanel() {
           role="tab"
           aria-selected={setupMode === "official"}
           className={`sm-setup-tab${setupMode === "official" ? " sm-active" : ""}`}
-          onClick={() => setSetupMode("official")}
+          onClick={() => {
+            invalidateCustomTest();
+            setSetupMode("official");
+          }}
         >
           <span>接入 DeepSeek 官方 API</span>
           <small>推荐方式（步骤简单）</small>
@@ -555,7 +590,10 @@ export function ModelSettingsPanel() {
           role="tab"
           aria-selected={setupMode === "other"}
           className={`sm-setup-tab${setupMode === "other" ? " sm-active" : ""}`}
-          onClick={() => setSetupMode("other")}
+          onClick={() => {
+            invalidateCustomTest();
+            setSetupMode("other");
+          }}
         >
           <span>接入其他云厂商 / 模型</span>
           <small>进阶设置</small>
@@ -592,7 +630,10 @@ export function ModelSettingsPanel() {
             <select
               className="sm-field-input"
               value={customProtocol}
-              onChange={(e) => setCustomProtocol(e.target.value)}
+              onChange={(e) => {
+                invalidateCustomTest();
+                setCustomProtocol(e.target.value);
+              }}
             >
               <option value="openai">OpenAI 兼容</option>
               <option value="anthropic">Anthropic 兼容</option>
@@ -606,7 +647,10 @@ export function ModelSettingsPanel() {
               value={customBaseUrl}
               aria-invalid={customBaseUrlValid === false}
               aria-describedby={customBaseUrlValid === false ? "model-custom-base-url-error" : undefined}
-              onChange={(e) => setCustomBaseUrl(e.target.value)}
+              onChange={(e) => {
+                invalidateCustomTest();
+                setCustomBaseUrl(e.target.value);
+              }}
             />
             {customBaseUrlValid === false && (
               <p className="sm-field-err" id="model-custom-base-url-error">
@@ -622,7 +666,10 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="sk-…"
               value={customKey}
-              onChange={(e) => setCustomKey(e.target.value)}
+              onChange={(e) => {
+                invalidateCustomTest();
+                setCustomKey(e.target.value);
+              }}
             />
           </div>
           <div className="sm-field">
@@ -631,7 +678,10 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-flash"
               value={customModelFlash}
-              onChange={(e) => setCustomModelFlash(e.target.value)}
+              onChange={(e) => {
+                invalidateCustomTest();
+                setCustomModelFlash(e.target.value);
+              }}
             />
           </div>
           <div className="sm-field">
@@ -640,7 +690,10 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-pro"
               value={customModelPro}
-              onChange={(e) => setCustomModelPro(e.target.value)}
+              onChange={(e) => {
+                invalidateCustomTest();
+                setCustomModelPro(e.target.value);
+              }}
             />
           </div>
           <p className="sm-other-note">
@@ -698,6 +751,7 @@ export function ModelSettingsPanel() {
                 type="button"
                 className="sm-back"
                 onClick={() => {
+                  invalidateCustomTest();
                   setForceSetup(false);
                   setEditing(false);
                 }}

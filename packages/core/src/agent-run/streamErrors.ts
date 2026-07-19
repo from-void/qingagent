@@ -11,6 +11,8 @@ export interface IdleTimeoutOptions<T> {
   /** 连续只有 heartbeat 时允许维持主流的最长时间。 */
   heartbeatOnlyTimeoutMs?: number;
   isHeartbeat?: (chunk: T) => boolean;
+  /** 外部取消时提前结束等待，并走底层迭代器收尾。 */
+  abortSignal?: AbortSignal;
 }
 
 export function isUserAbortSignal(signal: AbortSignal): boolean {
@@ -28,6 +30,8 @@ export async function* withIdleTimeout<T>(
   let heartbeatOnlySince: number | null = null;
   const idleTimeoutSignal = Symbol("idle-timeout");
   const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
+  const abortedSignal = Symbol("aborted");
+  let naturallyEnded = false;
   try {
     for (;;) {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,8 +41,21 @@ export async function* withIdleTimeout<T>(
       });
       const next = iterator.next();
       const races: Array<
-        Promise<IteratorResult<T> | typeof idleTimeoutSignal | typeof heartbeatTimeoutSignal>
+        Promise<
+          | IteratorResult<T>
+          | typeof idleTimeoutSignal
+          | typeof heartbeatTimeoutSignal
+          | typeof abortedSignal
+        >
       > = [next, idleTimeout];
+      let abortListener: (() => void) | null = null;
+      if (options.abortSignal) {
+        races.push(new Promise<typeof abortedSignal>((resolve) => {
+          abortListener = () => resolve(abortedSignal);
+          if (options.abortSignal?.aborted) abortListener();
+          else options.abortSignal?.addEventListener("abort", abortListener, { once: true });
+        }));
+      }
       if (
         heartbeatOnlySince !== null &&
         options.heartbeatOnlyTimeoutMs !== undefined
@@ -55,8 +72,16 @@ export async function* withIdleTimeout<T>(
         }));
       }
       const raced = await Promise.race(races);
+      if (abortListener) options.abortSignal?.removeEventListener("abort", abortListener);
       if (idleTimer) clearTimeout(idleTimer);
       if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      if (raced === abortedSignal) {
+        void next.then(
+          () => undefined,
+          () => undefined,
+        );
+        return;
+      }
       if (raced === idleTimeoutSignal || raced === heartbeatTimeoutSignal) {
         timedOut = true;
         // 竞态护栏:timeout 赢了,挂起的 next 还在跑;吞掉它后续可能的 reject,
@@ -76,7 +101,10 @@ export async function* withIdleTimeout<T>(
         };
         return;
       }
-      if (raced.done) return;
+      if (raced.done) {
+        naturallyEnded = true;
+        return;
+      }
       if (options.isHeartbeat?.(raced.value)) {
         heartbeatOnlySince ??= Date.now();
       } else {
@@ -85,7 +113,7 @@ export async function* withIdleTimeout<T>(
       yield raced.value;
     }
   } finally {
-    if (timedOut) {
+    if (timedOut || !naturallyEnded) {
       // 非阻塞收尾:不能 await(底层 next 仍 pending 时 return() 可能挂起);
       // 但要 catch,防 return() 自身 reject 变 unhandledRejection。
       void Promise.resolve(iterator.return?.()).catch(() => undefined);

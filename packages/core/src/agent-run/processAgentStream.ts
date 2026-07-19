@@ -72,6 +72,7 @@ export async function* processAgentStream(
       {
         heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,
         isHeartbeat: isToolHeartbeatEvent,
+        abortSignal: context.abortController.signal,
       },
     );
     for await (const chunk of monitoredStream) {

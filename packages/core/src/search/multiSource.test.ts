@@ -107,9 +107,16 @@ describe("MultiSourceSearchProvider", () => {
     expect(await p.search("q", 5)).toEqual([]);
   });
 
-  it("把取消 signal 转发给所有并发子 provider", async () => {
-    const firstSearch = vi.fn(async () => [r("https://a.com/1")]);
-    const secondSearch = vi.fn(async () => [r("https://b.com/1")]);
+  it("把级联取消 signal 转发给所有并发子 provider", async () => {
+    const receivedSignals: AbortSignal[] = [];
+    const firstSearch = vi.fn(async (_query, _count, options) => {
+      receivedSignals.push(options?.signal as AbortSignal);
+      return [r("https://a.com/1")];
+    });
+    const secondSearch = vi.fn(async (_query, _count, options) => {
+      receivedSignals.push(options?.signal as AbortSignal);
+      return [r("https://b.com/1")];
+    });
     const p = new MultiSourceSearchProvider([
       { name: "first", provider: { search: firstSearch } },
       { name: "second", provider: { search: secondSearch } },
@@ -118,7 +125,71 @@ describe("MultiSourceSearchProvider", () => {
 
     await p.search("q", 5, { signal: controller.signal });
 
-    expect(firstSearch).toHaveBeenCalledWith("q", 5, { signal: controller.signal });
-    expect(secondSearch).toHaveBeenCalledWith("q", 5, { signal: controller.signal });
+    expect(firstSearch).toHaveBeenCalledWith("q", 5, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(secondSearch).toHaveBeenCalledWith("q", 5, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(receivedSignals[0]).toBe(receivedSignals[1]);
+    expect(receivedSignals[0]).not.toBe(controller.signal);
+  });
+
+  it("快源足量胜出后取消仍在等待的慢源", async () => {
+    let slowSignal: AbortSignal | undefined;
+    const slowAborted = vi.fn();
+    const slow: SearchProvider = {
+      search: vi.fn(async (_query, _count, options) => {
+        slowSignal = options?.signal;
+        return new Promise<SearchResult[]>((_resolve, reject) => {
+          const onAbort = () => {
+            slowAborted();
+            reject(options?.signal?.reason);
+          };
+          if (options?.signal?.aborted) onAbort();
+          else options?.signal?.addEventListener("abort", onAbort, { once: true });
+        });
+      }),
+    };
+    const fast = mockProvider([r("https://fast.com/1"), r("https://fast.com/2")]);
+    const provider = new MultiSourceSearchProvider([
+      { name: "slow", provider: slow },
+      { name: "fast", provider: fast },
+    ]);
+
+    const result = await provider.search("q", 2);
+
+    expect(result.map((item) => item.url)).toEqual([
+      "https://fast.com/1",
+      "https://fast.com/2",
+    ]);
+    expect(slowSignal?.aborted).toBe(true);
+    expect(slowAborted).toHaveBeenCalledTimes(1);
+  });
+
+  it("外部取消会级联到所有子 provider", async () => {
+    const parent = new AbortController();
+    let childSignal: AbortSignal | undefined;
+    const childAborted = vi.fn();
+    const waiting: SearchProvider = {
+      search: vi.fn(async (_query, _count, options) => {
+        childSignal = options?.signal;
+        return new Promise<SearchResult[]>((resolve) => {
+          options?.signal?.addEventListener("abort", () => {
+            childAborted();
+            resolve([]);
+          }, { once: true });
+        });
+      }),
+    };
+    const provider = new MultiSourceSearchProvider([{ name: "waiting", provider: waiting }]);
+    const result = provider.search("q", 2, { signal: parent.signal });
+    await vi.waitFor(() => expect(childSignal).toBeInstanceOf(AbortSignal));
+
+    parent.abort(new DOMException("用户取消", "AbortError"));
+
+    await expect(result).resolves.toEqual([]);
+    expect(childSignal?.aborted).toBe(true);
+    expect(childAborted).toHaveBeenCalledTimes(1);
   });
 });

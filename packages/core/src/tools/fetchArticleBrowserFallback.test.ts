@@ -55,4 +55,31 @@ describe("fetchArticle 浏览器降级失败回退", () => {
     expect(result.wordCount).toBe(staticText.replace(/\s+/g, "").length);
     expect(result.via).toBe("static");
   });
+
+  it("把工具取消信号传给静态抓取并保持 AbortError", async () => {
+    const controller = new AbortController();
+    mockDeps.extractArticleContent.mockImplementationOnce(
+      (_url: string, _selector: string | undefined, signal: AbortSignal | undefined) =>
+        new Promise((_resolve, reject) => {
+          const rejectOnAbort = () => reject(signal?.reason);
+          if (signal?.aborted) rejectOnAbort();
+          else signal?.addEventListener("abort", rejectOnAbort, { once: true });
+        }),
+    );
+
+    const result = fetchArticleTool.execute!(
+      { url: "https://example.com/slow-article" },
+      { abortSignal: controller.signal } as never,
+    );
+    await vi.waitFor(() => expect(mockDeps.extractArticleContent).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException("用户取消", "AbortError"));
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockDeps.extractArticleContent).toHaveBeenCalledWith(
+      "https://example.com/slow-article",
+      undefined,
+      controller.signal,
+    );
+    expect(mockDeps.scrapeWithBrowserImpl).not.toHaveBeenCalled();
+  });
 });

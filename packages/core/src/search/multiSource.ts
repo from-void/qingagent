@@ -82,10 +82,23 @@ export class MultiSourceSearchProvider implements SearchProvider {
   async search(query: string, count: number, options?: SearchOptions): Promise<SearchResult[]> {
     const limit = Math.max(0, Math.floor(count));
     if (!query.trim() || limit <= 0 || this.sources.length === 0) return [];
-    const merged = await raceToGood(
-      this.sources.map((s) => s.provider.search(query, limit, options)),
-      limit,
-    );
-    return dedupeResults(merged).slice(0, limit);
+    const controller = new AbortController();
+    const abortFromParent = () => controller.abort(options?.signal?.reason);
+    if (options?.signal?.aborted) abortFromParent();
+    else options?.signal?.addEventListener("abort", abortFromParent, { once: true });
+
+    try {
+      const childOptions = { ...options, signal: controller.signal };
+      const merged = await raceToGood(
+        this.sources.map((s) => s.provider.search(query, limit, childOptions)),
+        limit,
+      );
+      return dedupeResults(merged).slice(0, limit);
+    } finally {
+      options?.signal?.removeEventListener("abort", abortFromParent);
+      if (!controller.signal.aborted) {
+        controller.abort(new DOMException("Search race settled", "AbortError"));
+      }
+    }
   }
 }

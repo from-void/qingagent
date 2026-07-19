@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { isAllowedImageSrc, safeParsePmDoc } from "../validators";
+import { decodeSvgDataUrl, isAllowedImageSrc, safeParsePmDoc } from "../validators";
 
 describe("imageSrcWhitelist", () => {
   it("rejects blob URLs", () => {
@@ -37,6 +37,19 @@ describe("imageSrcWhitelist", () => {
 
     expect(isAllowedImageSrc(safe)).toBe(true);
     expect(isAllowedImageSrc(unsafe)).toBe(false);
+  });
+
+  it("统一解码 percent-encoded 与 base64 SVG，保留 UTF-8 文本", () => {
+    const svg = "<svg xmlns='http://www.w3.org/2000/svg'><text>中文图</text></svg>";
+    const encoded = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const utf8Alias = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    const base64 = `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+
+    expect(decodeSvgDataUrl(encoded)).toBe(svg);
+    expect(decodeSvgDataUrl(utf8Alias)).toBe(svg);
+    expect(decodeSvgDataUrl(base64)).toBe(svg);
+    expect(isAllowedImageSrc(base64)).toBe(true);
+    expect(decodeSvgDataUrl("data:image/svg+xml,%E0%A4%A")).toBeNull();
   });
 
   it("validates image nodes through the PM validator", () => {

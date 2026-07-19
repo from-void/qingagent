@@ -1,8 +1,13 @@
 import { getDeterministicId } from "../hash";
 import { PM_SCHEMA_VERSION } from "../schemaVersion";
-import { normalizePmDoc } from "../validators";
+import {
+  isAllowedThemeColor,
+  normalizePmDoc,
+  PM_TABLE_MAX_CELLS,
+  PM_TABLE_MAX_LOGICAL_COLUMNS,
+  PM_TABLE_MAX_SPAN,
+} from "../validators";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmTaskItemNode, PmTextAlign, PmThemeColor } from "../types";
-import { isAllowedThemeColor } from "../validators";
 import {
   aiBlockSchema,
   aiDocumentEnvelopeSchema,
@@ -742,6 +747,24 @@ function attrsWithAlign(blockId: string, textAlign: PmTextAlign | undefined) {
 // 在 AI-IR 编译边界确定性排布逻辑列，拒绝缺格、越界和跨出末行的 rowspan，避免把
 // TableMap 会判为 broken 的表格交给编辑器；这里只校验，不猜测或补造任何单元格。
 function assertValidAiTableGrid(rows: readonly AiTableRow[]): void {
+  let totalCells = 0;
+  for (const row of rows) {
+    totalCells += row.cells.length;
+    if (totalCells > PM_TABLE_MAX_CELLS) {
+      throw new Error(`table 单元格总数超过上限 ${PM_TABLE_MAX_CELLS}`);
+    }
+    for (const cell of row.cells) {
+      const colspan = cell.colspan ?? 1;
+      const rowspan = cell.rowspan ?? 1;
+      if (
+        !Number.isSafeInteger(colspan) || colspan < 1 || colspan > PM_TABLE_MAX_SPAN ||
+        !Number.isSafeInteger(rowspan) || rowspan < 1 || rowspan > PM_TABLE_MAX_SPAN
+      ) {
+        throw new Error(`table span 超过上限 ${PM_TABLE_MAX_SPAN}`);
+      }
+    }
+  }
+
   let expectedWidth: number | undefined;
   let activeRowspans: number[] = [];
 
@@ -757,24 +780,38 @@ function assertValidAiTableGrid(rows: readonly AiTableRow[]): void {
 
       let start = cursor;
       while (true) {
-        const conflict = Array.from({ length: colspan }, (_, offset) => start + offset)
-          .find((column) => occupied[column]);
+        let conflict: number | undefined;
+        for (let offset = 0; offset < colspan; offset += 1) {
+          if (occupied[start + offset]) {
+            conflict = start + offset;
+            break;
+          }
+        }
         if (conflict === undefined) break;
         start = conflict + 1;
         while (occupied[start]) start += 1;
       }
 
-      for (let column = start; column < start + colspan; column += 1) {
+      const end = start + colspan;
+      if (end > PM_TABLE_MAX_LOGICAL_COLUMNS) {
+        throw new Error(`table 逻辑列数超过上限 ${PM_TABLE_MAX_LOGICAL_COLUMNS}`);
+      }
+      for (let column = start; column < end; column += 1) {
         occupied[column] = true;
         if (rowspan > 1) nextRowspans[column] = rowspan - 1;
       }
-      cursor = start + colspan;
+      cursor = end;
     }
 
     const width = occupied.reduce((last, value, column) => value ? column + 1 : last, 0);
     if (expectedWidth === undefined) expectedWidth = width;
-    const hasGap = Array.from({ length: expectedWidth }, (_, column) => occupied[column] === true)
-      .some((filled) => !filled);
+    let hasGap = false;
+    for (let column = 0; column < expectedWidth; column += 1) {
+      if (!occupied[column]) {
+        hasGap = true;
+        break;
+      }
+    }
     if (width !== expectedWidth || hasGap) {
       throw new Error(`table span 网格不完整:第 ${rowIndex + 1} 行展开为 ${width} 列，期望 ${expectedWidth} 列`);
     }

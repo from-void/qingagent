@@ -1,4 +1,6 @@
-import { getBrowser } from "../browser/pool.js";
+import { decodeSvgDataUrl } from "@qingagent/pm-schema";
+import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
+import { hardenInlineSvg } from "../browser/svgSanitize.js";
 import { katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
 
 /**
@@ -26,6 +28,17 @@ export function ensureSvgDimensions(svg: string): string {
   return svg.replace(open, injectedOpen);
 }
 
+/**
+ * SVG 栅格化的唯一准备入口：data URL 先统一解码，原始/解码后的 SVG 再统一净化，
+ * 最后补齐可推断的尺寸。任何一步失败都返回 null，调用方据此降级，绝不把原文送进 setContent。
+ */
+export function prepareSvgForRasterization(input: string): string | null {
+  const raw = /^data:image\/svg\+xml/i.test(input) ? decodeSvgDataUrl(input) : input;
+  if (!raw) return null;
+  const safe = hardenInlineSvg(raw);
+  return safe ? ensureSvgDimensions(safe) : null;
+}
+
 export type MathRasterResult = { data: Buffer; width: number; height: number };
 
 /**
@@ -51,46 +64,48 @@ export async function rasterizeMathBatch(
 
   const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{background:#fff;}</style><style>${css}</style></head><body>${items.join("\n")}</body></html>`;
 
-  let browser;
-  try {
-    browser = await getBrowser();
-  } catch {
-    return formulas.map(() => null);
-  }
-  const context = await browser.newContext({ deviceScaleFactor: 2 });
-  await context.route("**/*", (route) => {
-    const url = route.request().url();
-    if (url.startsWith("data:") || url === "about:blank") void route.continue();
-    else void route.abort();
-  });
-  const page = await context.newPage();
-  try {
-    await page.setContent(pageHtml, { waitUntil: "load", timeout: 30_000 });
-    await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
+  return withBrowserContextSlot(async () => {
+    let browser;
+    try {
+      browser = await getBrowser();
+    } catch {
+      return formulas.map(() => null);
+    }
+    const context = await browser.newContext({ deviceScaleFactor: 2 });
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      if (url.startsWith("data:") || url === "about:blank") void route.continue();
+      else void route.abort();
+    });
+    const page = await context.newPage();
+    try {
+      await page.setContent(pageHtml, { waitUntil: "load", timeout: 30_000 });
+      await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
 
-    // 并发截图:先批量拿 ElementHandle,再 Promise.all 并发截图,避免串行 N × RTT 开销。
-    const handles = await Promise.all(formulas.map(async (_, i) => {
-      try { return await page.$(`#m${i}`); } catch { return null; }
-    }));
-    const results: Array<MathRasterResult | null> = await Promise.all(
-      handles.map(async (el) => {
-        if (!el) return null;
-        try {
-          const box = await el.boundingBox();
-          if (!box || box.width < 1 || box.height < 1) return null;
-          const data = Buffer.from(await el.screenshot({ type: "png", omitBackground: false }));
-          return { data, width: Math.round(box.width), height: Math.round(box.height) };
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return results;
-  } catch {
-    return formulas.map(() => null);
-  } finally {
-    await context.close().catch(() => undefined);
-  }
+      // 并发截图:先批量拿 ElementHandle,再 Promise.all 并发截图,避免串行 N × RTT 开销。
+      const handles = await Promise.all(formulas.map(async (_, i) => {
+        try { return await page.$(`#m${i}`); } catch { return null; }
+      }));
+      const results: Array<MathRasterResult | null> = await Promise.all(
+        handles.map(async (el) => {
+          if (!el) return null;
+          try {
+            const box = await el.boundingBox();
+            if (!box || box.width < 1 || box.height < 1) return null;
+            const data = Buffer.from(await el.screenshot({ type: "png", omitBackground: false }));
+            return { data, width: Math.round(box.width), height: Math.round(box.height) };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return results;
+    } catch {
+      return formulas.map(() => null);
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  });
 }
 
 /**
@@ -102,36 +117,40 @@ export async function rasterizeSvgToPng(
   svg: string,
   options: { scale?: number; maxWidth?: number } = {},
 ): Promise<{ data: Buffer; width: number; height: number } | null> {
+  const safeSvg = prepareSvgForRasterization(svg);
+  if (!safeSvg) return null;
   const scale = options.scale ?? 2;
-  let browser;
-  try {
-    browser = await getBrowser();
-  } catch {
-    return null; // 无 Chromium → 调用方回退(svg 图/图表退回源码或占位)
-  }
-  const context = await browser.newContext({ deviceScaleFactor: scale });
-  await context.route("**/*", (route) => {
-    const url = route.request().url();
-    if (url.startsWith("data:") || url === "about:blank") void route.continue();
-    else void route.abort();
+  return withBrowserContextSlot(async () => {
+    let browser;
+    try {
+      browser = await getBrowser();
+    } catch {
+      return null; // 无 Chromium → 调用方回退(svg 图/图表退回源码或占位)
+    }
+    const context = await browser.newContext({ deviceScaleFactor: scale });
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      if (url.startsWith("data:") || url === "about:blank") void route.continue();
+      else void route.abort();
+    });
+    const page = await context.newPage();
+    try {
+      // inline-block + 白底:截图只裁到 svg 自身尺寸;DOCX 页面为白,背景用白最自然。
+      await page.setContent(
+        `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0}html,body{background:#fff}#wrap{display:inline-block}#wrap svg{display:block}</style></head><body><div id="wrap">${safeSvg}</div></body></html>`,
+        { waitUntil: "load", timeout: 30_000 },
+      );
+      await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
+      const el = await page.$("#wrap svg");
+      if (!el) return null;
+      const box = await el.boundingBox();
+      if (!box || box.width < 1 || box.height < 1) return null;
+      const data = Buffer.from(await el.screenshot({ type: "png", omitBackground: false }));
+      return { data, width: Math.round(box.width), height: Math.round(box.height) };
+    } catch {
+      return null;
+    } finally {
+      await context.close().catch(() => undefined);
+    }
   });
-  const page = await context.newPage();
-  try {
-    // inline-block + 白底:截图只裁到 svg 自身尺寸;DOCX 页面为白,背景用白最自然。
-    await page.setContent(
-      `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0}html,body{background:#fff}#wrap{display:inline-block}#wrap svg{display:block}</style></head><body><div id="wrap">${ensureSvgDimensions(svg)}</div></body></html>`,
-      { waitUntil: "load", timeout: 30_000 },
-    );
-    await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
-    const el = await page.$("#wrap svg");
-    if (!el) return null;
-    const box = await el.boundingBox();
-    if (!box || box.width < 1 || box.height < 1) return null;
-    const data = Buffer.from(await el.screenshot({ type: "png", omitBackground: false }));
-    return { data, width: Math.round(box.width), height: Math.round(box.height) };
-  } catch {
-    return null;
-  } finally {
-    await context.close().catch(() => undefined);
-  }
 }

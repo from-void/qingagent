@@ -592,10 +592,10 @@ async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Pro
   const src = section.data.src;
   // svg 只从 data:image/svg+xml 或本地 .svg 取;绝不把栅格图当文本读成 svg。
   // DOCX 不能可靠渲染 SVG,用 headless Chromium 把 SVG 栅格成 PNG 再嵌入(比 sharp 更稳、字体一致)。
-  const isSvgSrc = src.startsWith("data:image/svg+xml") || /\.svg(?:[?#].*)?$/i.test(src);
+  const isSvgSrc = /^data:image\/svg\+xml/i.test(src) || /\.svg(?:[?#].*)?$/i.test(src);
   if (isSvgSrc) {
-    const svg = src.startsWith("data:image/svg+xml")
-      ? decodeURIComponent(src.split(",", 2)[1] ?? "")
+    const svg = /^data:image\/svg\+xml/i.test(src)
+      ? src
       : readLocalUploadText(src);
     if (!svg) return null;
     const raster = await rasterizeSvgToPng(svg);

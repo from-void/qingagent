@@ -3,7 +3,11 @@ import { aiBlockSchema, aiTableCellSchema } from "../ai-ir/aiIrSchema";
 import { aiIrToPm, compileAiDocumentToPm } from "../ai-ir/aiIrToPm";
 import { pmToAiIr } from "../ai-ir/pmToAiIr";
 import { pmToMarkdown } from "../markdown/pmToMarkdown";
-import { isAllowedImageSrc, safeParsePmDoc } from "../validators";
+import {
+  isAllowedImageSrc,
+  PM_TABLE_MAX_LOGICAL_COLUMNS,
+  safeParsePmDoc,
+} from "../validators";
 import type { AiDocument, AiRun, AiTableCell } from "../ai-ir/aiIrSchema";
 import type { PmDoc } from "../types";
 
@@ -351,6 +355,25 @@ describe("aiIrRoundTrip", () => {
     });
     expect(overrun.ok).toBe(false);
     expect(overrun.blockErrors[0]?.message).toContain("rowspan 超出最后一行");
+  });
+
+  it("span 分配前拒绝异常跨度与超量逻辑列", () => {
+    const paragraphCell = (text: string, colspan: number) => ({
+      blocks: [{ type: "paragraph" as const, runs: [{ text }] }],
+      colspan,
+    });
+    const huge = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [paragraphCell("A", 100_000_000)] }] }],
+    });
+    expect(huge.ok).toBe(false);
+    expect(huge.blockErrors[0]?.message).toContain("span 超过上限");
+
+    const half = Math.floor(PM_TABLE_MAX_LOGICAL_COLUMNS / 2) + 1;
+    const tooWide = compileAiDocumentToPm({
+      blocks: [{ type: "table", rows: [{ cells: [paragraphCell("A", half), paragraphCell("B", half)] }] }],
+    });
+    expect(tooWide.ok).toBe(false);
+    expect(tooWide.blockErrors[0]?.message).toContain("逻辑列数超过上限");
   });
 
   it("列表项 / 引用块的行内 marks 往返不丢(对抗不变量 #3,修 pmToAiIr 拍平洞)", () => {

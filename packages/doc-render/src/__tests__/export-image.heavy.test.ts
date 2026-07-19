@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LegacySection } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { toDocx, toPdf, toTxt } from "../export/index.js";
-import { ensureSvgDimensions } from "../export/rasterize.js";
+import { ensureSvgDimensions, prepareSvgForRasterization } from "../export/rasterize.js";
 import { localUploadPath } from "../export/shared.js";
 import { pmInlineToDocx } from "../export/toDocx.js";
 import { pmInlineToHtml } from "../export/toHtml.js";
@@ -69,6 +69,46 @@ describe("ensureSvgDimensions (export-docx-image-lost 回归)", () => {
   it("viewBox 尺寸非正时不注入", () => {
     const svg = '<svg viewBox="0 0 0 0"><g/></svg>';
     expect(ensureSvgDimensions(svg)).toBe(svg);
+  });
+});
+
+describe("SVG rasterization input hardening", () => {
+  it("base64 data URL 走统一解码并在栅格化前净化", () => {
+    const raw = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20" onload="steal()"><script>steal()</script><rect width="40" height="20"/></svg>';
+    const dataUrl = `data:image/svg+xml;base64,${Buffer.from(raw, "utf8").toString("base64")}`;
+    const safe = prepareSvgForRasterization(dataUrl);
+
+    expect(safe).not.toBeNull();
+    expect(safe).not.toMatch(/<script/i);
+    expect(safe).not.toMatch(/onload/i);
+    expect(safe).toMatch(/<rect/i);
+    expect(safe).toMatch(/width="40"/i);
+    expect(safe).toMatch(/height="20"/i);
+  });
+
+  it("畸形、XXE 与非 SVG 输入 fail-closed", () => {
+    expect(prepareSvgForRasterization("<svg><g></svg>")).toBeNull();
+    expect(prepareSvgForRasterization('<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg>&x;</svg>')).toBeNull();
+    expect(prepareSvgForRasterization("<html></html>")).toBeNull();
+    expect(prepareSvgForRasterization("data:image/svg+xml,%E0%A4%A")).toBeNull();
+  });
+});
+
+describe("DOCX SVG data URL", () => {
+  it.skipIf(!hasChromium)("支持 base64 SVG 并导出为 PNG 图片", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><text x="1" y="15">中文</text></svg>';
+    const docx = await toDocx([{
+      kind: "image",
+      data: {
+        src: `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`,
+        alt: "base64 svg",
+        caption: null,
+        width: 40,
+        height: 20,
+      },
+    }]);
+    expect(docx.subarray(0, 2).toString("utf8")).toBe("PK");
+    expect(docx.length).toBeGreaterThan(1_000);
   });
 });
 

@@ -1,5 +1,48 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { browserLaunchCandidates } from "./pool.js";
+import { browserLaunchCandidates, withBrowserContextSlot } from "./pool.js";
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+}
+
+describe("withBrowserContextSlot", () => {
+  it("并发执行最多占用 3 个 browser context 槽位", async () => {
+    const gates = Array.from({ length: 6 }, deferred);
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    const tasks = gates.map((gate) => withBrowserContextSlot(async () => {
+      active += 1;
+      started += 1;
+      peak = Math.max(peak, active);
+      try {
+        await gate.promise;
+      } finally {
+        active -= 1;
+      }
+    }));
+
+    try {
+      await flushMicrotasks();
+      expect(started).toBe(3);
+      expect(peak).toBe(3);
+
+      gates[0]!.resolve();
+      await flushMicrotasks();
+      expect(started).toBe(4);
+      expect(peak).toBe(3);
+    } finally {
+      gates.forEach((gate) => gate.resolve());
+      await Promise.all(tasks);
+    }
+  });
+});
 
 // 浏览器启动候选:① 探测到的系统浏览器 executablePath(优先,可控)② channel(QINGAGENT_BROWSER_CHANNELS)
 // ③ 默认 Chromium 兜底。web/VPS 不设变量、无系统浏览器探测结果时只剩默认项,行为不变。

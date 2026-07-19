@@ -17,6 +17,12 @@ import {
 import type { PmDoc, PmFileAttachmentAttrs } from "./types";
 
 const nonEmpty = z.string().min(1);
+// 表格安全上限同时供 PM 校验与 AI-IR 编译预检使用。跨度/逻辑列限制避免下游按
+// colspan 展开巨型数组，总单元格限制避免单个文档塞入异常大的表格节点树。
+export const PM_TABLE_MAX_SPAN = 1_000;
+export const PM_TABLE_MAX_LOGICAL_COLUMNS = 1_000;
+export const PM_TABLE_MAX_CELLS = 10_000;
+
 const blockIdSchema = z.object({
   blockId: nonEmpty,
   textAlign: z.enum(PM_TEXT_ALIGN_VALUES).nullable().optional(),
@@ -95,11 +101,13 @@ const inlineNodeSchema = z.discriminatedUnion("type", [
   inlineMathNodeSchema,
 ]);
 
+const tableSpanSchema = z.number().int().positive().max(PM_TABLE_MAX_SPAN);
+
 const tableCellAttrsSchema = z
   .object({
-    colspan: z.number().int().positive().nullable().optional(),
-    rowspan: z.number().int().positive().nullable().optional(),
-    colwidth: z.array(z.number().int().positive()).nullable().optional(),
+    colspan: tableSpanSchema.nullable().optional(),
+    rowspan: tableSpanSchema.nullable().optional(),
+    colwidth: z.array(z.number().int().positive()).max(PM_TABLE_MAX_SPAN).nullable().optional(),
     backgroundColor: z.enum(PM_THEME_COLORS).nullable().optional(),
   })
   .optional();
@@ -127,20 +135,23 @@ export function isAllowedImageSrc(src: string): boolean {
   return false;
 }
 
-function isSafeSvgDataUrl(src: string): boolean {
-  const commaIndex = src.indexOf(",");
-  if (commaIndex < 0) return false;
-
-  const meta = src.slice(0, commaIndex).toLowerCase();
-  const payload = src.slice(commaIndex + 1);
-  let svg = "";
-
+/** 解码 data:image/svg+xml，兼容 percent-encoded 与 base64 两种标准形态。 */
+export function decodeSvgDataUrl(src: string): string | null {
+  const match = src.match(/^data:image\/svg\+xml((?:;[^,]*)?),([\s\S]*)$/i);
+  if (!match) return null;
+  const isBase64 = (match[1] ?? "")
+    .split(";")
+    .some((parameter) => parameter.trim().toLowerCase() === "base64");
   try {
-    svg = meta.includes(";base64") ? atobPortable(payload) : decodeURIComponent(payload);
+    return isBase64 ? decodeBase64Utf8(match[2]!) : decodeURIComponent(match[2]!);
   } catch {
-    return false;
+    return null;
   }
+}
 
+function isSafeSvgDataUrl(src: string): boolean {
+  const svg = decodeSvgDataUrl(src);
+  if (!svg) return false;
   const lower = svg.toLowerCase();
   if (!lower.includes("<svg")) return false;
   if (lower.includes("<script") || /\son[a-z]+\s*=/.test(lower)) return false;
@@ -148,11 +159,13 @@ function isSafeSvgDataUrl(src: string): boolean {
   return true;
 }
 
-function atobPortable(payload: string): string {
-  if (typeof globalThis.atob === "function") return globalThis.atob(payload);
+function decodeBase64Utf8(payload: string): string {
   const bufferCtor = (globalThis as { Buffer?: { from(input: string, encoding: "base64"): { toString(): string } } }).Buffer;
-  if (!bufferCtor) throw new Error("base64 decoder unavailable");
-  return bufferCtor.from(payload, "base64").toString();
+  if (bufferCtor) return bufferCtor.from(payload, "base64").toString();
+  if (typeof globalThis.atob !== "function") throw new Error("base64 decoder unavailable");
+  const binary = globalThis.atob(payload);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 export function isAllowedFileAttachment(value: unknown): value is PmFileAttachmentAttrs {
@@ -284,7 +297,7 @@ const blockNodeSchema: LazyNode = z.lazy(() =>
     z.object({
       type: z.literal("table"),
       attrs: blockIdSchema,
-      content: z.array(tableRowSchema).min(1),
+      content: z.array(tableRowSchema).min(1).max(PM_TABLE_MAX_CELLS).superRefine(validatePmTableLimits),
     }),
     z.object({ type: z.literal("image"), attrs: imageAttrsSchema }),
     z.object({ type: z.literal("diagram"), attrs: diagramAttrsSchema }),
@@ -375,9 +388,93 @@ const tableCellSchema: LazyNode = z.lazy(() =>
 const tableRowSchema: LazyNode = z.lazy(() =>
   z.object({
     type: z.literal("tableRow"),
-    content: z.array(tableCellSchema).min(1),
+    content: z.array(tableCellSchema).min(1).max(PM_TABLE_MAX_CELLS),
   }),
 );
+
+function validatePmTableLimits(
+  rows: unknown[],
+  context: z.RefinementCtx,
+): void {
+  let totalCells = 0;
+  let activeRowspans: number[] = [];
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!row || typeof row !== "object" || !Array.isArray((row as { content?: unknown }).content)) {
+      return; // 子 schema 已负责报告形状错误；此处只做安全上限检查。
+    }
+    const cells = (row as { content: unknown[] }).content;
+    totalCells += cells.length;
+    if (totalCells > PM_TABLE_MAX_CELLS) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `table must contain at most ${PM_TABLE_MAX_CELLS} cells`,
+        path: [rowIndex, "content"],
+      });
+      return;
+    }
+
+    const occupied = activeRowspans.map((remaining) => remaining > 0);
+    const nextRowspans = activeRowspans.map((remaining) => Math.max(0, remaining - 1));
+    let cursor = 0;
+
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+      const cell = cells[cellIndex];
+      if (!cell || typeof cell !== "object") return;
+      const attrsValue = (cell as { attrs?: unknown }).attrs;
+      const attrs = attrsValue && typeof attrsValue === "object"
+        ? attrsValue as { colspan?: unknown; rowspan?: unknown }
+        : undefined;
+      const colspan = attrs?.colspan ?? 1;
+      const rowspan = attrs?.rowspan ?? 1;
+      // superRefine 在子 schema 已产生 issue 时仍可能收到 dirty 值；再次 fail-fast，避免
+      // 超大 colspan 落入下方按跨度计数的循环形成 CPU DoS。
+      if (
+        typeof colspan !== "number" || !Number.isSafeInteger(colspan) || colspan < 1 || colspan > PM_TABLE_MAX_SPAN ||
+        typeof rowspan !== "number" || !Number.isSafeInteger(rowspan) || rowspan < 1 || rowspan > PM_TABLE_MAX_SPAN
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `table cell span must be an integer between 1 and ${PM_TABLE_MAX_SPAN}`,
+          path: [rowIndex, "content", cellIndex, "attrs"],
+        });
+        return;
+      }
+      while (occupied[cursor]) cursor += 1;
+
+      let start = cursor;
+      while (true) {
+        let conflict: number | undefined;
+        for (let offset = 0; offset < colspan; offset += 1) {
+          if (occupied[start + offset]) {
+            conflict = start + offset;
+            break;
+          }
+        }
+        if (conflict === undefined) break;
+        start = conflict + 1;
+        while (occupied[start]) start += 1;
+      }
+
+      const end = start + colspan;
+      if (end > PM_TABLE_MAX_LOGICAL_COLUMNS) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `table row must contain at most ${PM_TABLE_MAX_LOGICAL_COLUMNS} logical columns`,
+          path: [rowIndex, "content", cellIndex, "attrs", "colspan"],
+        });
+        return;
+      }
+      for (let column = start; column < end; column += 1) {
+        occupied[column] = true;
+        if (rowspan > 1) nextRowspans[column] = rowspan - 1;
+      }
+      cursor = end;
+    }
+    activeRowspans = nextRowspans;
+  }
+}
 
 export const pmDocSchema = z.object({
   type: z.literal("doc"),

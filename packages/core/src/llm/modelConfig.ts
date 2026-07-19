@@ -83,10 +83,14 @@ export interface BranchCallInput {
   lane?: number | null;
   attempt?: number;
   abortSignal?: AbortSignal;
-  onTextDelta?: (delta: string, accumulated: string) => void | Promise<void>;
+  onTextDelta?: (
+    delta: string,
+    accumulated: string,
+    observedAt: number,
+  ) => void | Promise<void>;
   /** 原始响应每次有网络活动即触发；不代表文本已通过 tool/lease 验真。 */
   onActivity?: () => void | Promise<void>;
-  /** 实时派发已解析的文本 delta；仅适合允许展示可撤销局部结果的 UI 消费方。 */
+  /** 验真通过后按 provider 原始粒度顺序回放文本 delta。 */
   streamTextDeltas?: boolean;
   thinking?: boolean;
   temperature?: number;
@@ -112,6 +116,8 @@ export type BranchCallResult =
 
 interface RawBranchResponse {
   text: string;
+  textDeltas: Array<{ text: string; observedAt: number }>;
+  firstTextAt: number | null;
   reasoning: string;
   toolCalled: boolean;
   usage: unknown;
@@ -123,30 +129,33 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
-function extractRawChunk(payload: unknown, state: RawBranchResponse): void {
+function extractRawChunk(payload: unknown, state: RawBranchResponse): string {
   const record = asRecord(payload);
-  if (!record) return;
+  if (!record) return "";
   const error = asRecord(record.error);
   if (typeof error?.message === "string") state.providerError = error.message;
   if (record.usage) state.usage = record.usage;
   const choice = Array.isArray(record.choices) ? asRecord(record.choices[0]) : null;
-  if (!choice) return;
+  if (!choice) return "";
   if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
   if (choice.finish_reason === "tool_calls") state.toolCalled = true;
   const delta = asRecord(choice.delta) ?? asRecord(choice.message);
-  if (!delta) return;
+  if (!delta) return "";
   if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) state.toolCalled = true;
-  if (typeof delta.content === "string") state.text += delta.content;
+  const textDelta = typeof delta.content === "string" ? delta.content : "";
+  if (textDelta) state.text += textDelta;
   if (typeof delta.reasoning_content === "string") state.reasoning += delta.reasoning_content;
+  return textDelta;
 }
 
 async function readRawBranchResponse(
   response: Response,
-  onTextDelta?: BranchCallInput["onTextDelta"],
   onActivity?: BranchCallInput["onActivity"],
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
+    textDeltas: [],
+    firstTextAt: null,
     reasoning: "",
     toolCalled: false,
     usage: null,
@@ -156,8 +165,12 @@ async function readRawBranchResponse(
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
     await onActivity?.();
-    extractRawChunk(await response.json(), state);
-    if (state.text && onTextDelta) await onTextDelta(state.text, state.text);
+    const delta = extractRawChunk(await response.json(), state);
+    if (delta) {
+      const observedAt = Date.now();
+      state.textDeltas.push({ text: delta, observedAt });
+      state.firstTextAt = observedAt;
+    }
     return state;
   }
   if (!response.body) throw new Error("provider_stream_missing_body");
@@ -172,10 +185,12 @@ async function readRawBranchResponse(
       .join("\n")
       .trim();
     if (!data || data === "[DONE]") return;
-    const before = state.text.length;
-    extractRawChunk(JSON.parse(data), state);
-    const delta = state.text.slice(before);
-    if (delta && onTextDelta) await onTextDelta(delta, state.text);
+    const delta = extractRawChunk(JSON.parse(data), state);
+    if (delta) {
+      const observedAt = Date.now();
+      state.textDeltas.push({ text: delta, observedAt });
+      state.firstTextAt ??= observedAt;
+    }
   };
   for (;;) {
     const { done, value } = await reader.read();
@@ -488,20 +503,12 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
       const raw = await readRawBranchResponse(
         response,
-        input.streamTextDeltas && input.onTextDelta
-          ? async (delta, accumulated) => {
-              if (!ownsCurrentLease() || input.abortSignal?.aborted) {
-                throw new DOMException("stale branch stream", "AbortError");
-              }
-              if (!tFirstDelta) {
-                tFirstDelta = Date.now();
-                console.log(`[branchCall] site=${input.callSite} first-delta ttft=${tFirstDelta - t0}ms`);
-              }
-              await input.onTextDelta?.(delta, accumulated);
-            }
-          : undefined,
         input.onActivity,
       );
+      if (raw.firstTextAt !== null) {
+        tFirstDelta = raw.firstTextAt;
+        console.log(`[branchCall] site=${input.callSite} first-delta ttft=${tFirstDelta - t0}ms`);
+      }
       if (raw.providerError) {
         const error = streamErrorSummary(raw.providerError);
         void recordBranchUsage(input, raw.usage, attempt, error);
@@ -533,11 +540,48 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           toolCallRetries: retry,
         };
       }
-      if (!ownsCurrentLease()) {
-        return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
+      if (input.abortSignal?.aborted) {
+        return {
+          ok: false,
+          reason: "provider_error",
+          attempts: retry + 1,
+          toolCallRetries: retry,
+          error: "provider_request_aborted",
+        };
       }
-      if (!input.streamTextDeltas) await input.onTextDelta?.(raw.text, raw.text);
-      if (!ownsCurrentLease() || input.abortSignal?.aborted) {
+      const replayDeltas = input.streamTextDeltas
+        ? raw.textDeltas
+        : [{ text: raw.text, observedAt: raw.firstTextAt ?? Date.now() }];
+      let replayedText = "";
+      for (const delta of replayDeltas) {
+        if (!ownsCurrentLease()) {
+          return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
+        }
+        if (input.abortSignal?.aborted) {
+          return {
+            ok: false,
+            reason: "provider_error",
+            attempts: retry + 1,
+            toolCallRetries: retry,
+            error: "provider_request_aborted",
+          };
+        }
+        replayedText += delta.text;
+        await input.onTextDelta?.(delta.text, replayedText, delta.observedAt);
+        if (!ownsCurrentLease()) {
+          return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
+        }
+        if (input.abortSignal?.aborted) {
+          return {
+            ok: false,
+            reason: "provider_error",
+            attempts: retry + 1,
+            toolCallRetries: retry,
+            error: "provider_request_aborted",
+          };
+        }
+      }
+      if (!ownsCurrentLease()) {
         return { ok: false, reason: "stale_snapshot", attempts: retry + 1, toolCallRetries: retry };
       }
       return {

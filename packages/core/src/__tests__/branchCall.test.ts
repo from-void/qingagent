@@ -325,6 +325,108 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     await expect(pending).resolves.toMatchObject({ reason: "stale_snapshot", attempts: 1 });
   });
 
+  it("完整响应验真前不派发文本回调", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-buffered", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    const encoder = new TextEncoder();
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    fetchMock.mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    const deltas: string[] = [];
+    let activities = 0;
+    const pending = branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+      streamTextDeltas: true,
+      onActivity: () => { activities += 1; },
+      onTextDelta: (delta) => { deltas.push(delta); },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    streamController.enqueue(encoder.encode(
+      'data: {"choices":[{"delta":{"content":"暂存"},"finish_reason":null}]}\n\n',
+    ));
+    await vi.waitFor(() => expect(activities).toBeGreaterThan(0));
+    expect(deltas).toEqual([]);
+
+    streamController.enqueue(encoder.encode(
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+    ));
+    streamController.close();
+
+    await expect(pending).resolves.toMatchObject({ ok: true, text: "暂存" });
+    expect(deltas).toEqual(["暂存"]);
+  });
+
+  it("text delta 后出现 tool_calls 时丢弃全部外部 delta", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-tool-after-text", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"不可展示"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"planDraft","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
+    const deltas: string[] = [];
+
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+      streamTextDeltas: true,
+      onTextDelta: (delta) => { deltas.push(delta); },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 });
+    expect(deltas).toEqual([]);
+  });
+
+  it("验真后回放期间取消会阻止后续 delta", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-abort-replay", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"甲"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"content":"乙"},"finish_reason":"stop"}]}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
+    const controller = new AbortController();
+    const deltas: string[] = [];
+
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答",
+      callSite: "planDraft",
+      requestContext,
+      abortSignal: controller.signal,
+      streamTextDeltas: true,
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        controller.abort();
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "provider_error" });
+    expect(deltas).toEqual(["甲"]);
+  });
+
   it("遇到 tool_call 立即失败，不原样重试阻塞降级", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
@@ -395,7 +497,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     }));
   });
 
-  it("流式消费逐帧派发文本并解析 SSE 末帧 usage", async () => {
+  it("验真后按原始粒度回放文本并解析 SSE 末帧 usage", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
     vi.stubGlobal("fetch", fetchMock);
     const requestContext = context("branch-sse", "stream-progress");

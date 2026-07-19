@@ -82,6 +82,10 @@ async function* streamOf(...chunks: unknown[]): AsyncGenerator<unknown> {
   for (const chunk of chunks) yield chunk;
 }
 
+async function* neverStream(): AsyncGenerator<unknown> {
+  await new Promise(() => undefined);
+}
+
 function showQrCall(toolCallId: string): unknown {
   return {
     type: "tool-call",
@@ -388,6 +392,107 @@ describe("handleResume askUser fresh-turn fallback", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("resumeStream 看门狗与 session 共用取消控制器", async () => {
+    let persistedSessionId: string | null = null;
+    vi.useFakeTimers();
+    try {
+      const bridge = await loadBridge();
+      const session = await createCachedSession(bridge);
+      // loadBridge 会 mock server 入口的 createSessionThread，但 processAgentStream
+      // 来自 actualCore，内部仍走真实 schedulePersist。为这个看门狗集成用例补齐
+      // 生产环境必有的 thread，避免 stream_end 写入失败后的退避停在 fake timer 中。
+      await actualCore.createSessionThread(session.sessionId, session.title);
+      persistedSessionId = session.sessionId;
+      seedSuspendedAskUserSession(session, "run-watchdog-shared-abort");
+      const observed: { controller: AbortController | null } = { controller: null };
+
+      mockState.resumeStream.mockImplementation(async (_resumeData: unknown, options: any) => {
+        observed.controller = session._abortController;
+        expect(options.abortSignal).toBe(observed.controller?.signal);
+        return {
+          runId: "run-watchdog-shared-abort-resumed",
+          fullStream: neverStream(),
+        };
+      });
+
+      const framesPromise = collectFrames(bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: { "q-one": { chosen: [], freeText: "继续" } },
+        },
+      }));
+      await vi.waitFor(() => expect(mockState.resumeStream).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(90_001);
+      const frames = await framesPromise;
+
+      expect(observed.controller?.signal.aborted).toBe(true);
+      expect(frames.some(
+        (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+      )).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      if (persistedSessionId) {
+        await actualCore.deleteSessionThread(persistedSessionId);
+      }
+    }
+  });
+
+  it("快照退避中取消后不再调用 resumeStream", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = await loadBridge();
+      const session = await createCachedSession(bridge);
+      seedSuspendedAskUserSession(session, "run-cancel-backoff");
+      mockState.resumeStream.mockRejectedValue(new Error("AGENT_RESUME_NO_SNAPSHOT_FOUND"));
+
+      const framesPromise = collectFrames(bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: { "q-one": { chosen: [], freeText: "继续" } },
+        },
+      }));
+      await vi.waitFor(() => expect(mockState.resumeStream).toHaveBeenCalledTimes(1));
+      session._abortController?.abort("user_abort");
+      const frames = await framesPromise;
+
+      expect(mockState.resumeStream).toHaveBeenCalledTimes(1);
+      expect(mockState.runAgentTurn).not.toHaveBeenCalled();
+      expect(frames.some(
+        (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+      )).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("取消后不启动 fresh-turn fallback", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    seedSuspendedAskUserSession(session, "run-cancel-fresh-fallback");
+    mockState.resumeStream.mockResolvedValue({
+      runId: "run-cancel-fresh-fallback-resumed",
+      fullStream: streamOf(transientErrorChunk("other side closed")),
+    });
+    mockState.persistSessionMetadata.mockImplementation(async (target: any, label?: string) => {
+      if (label === "handleResume:finally") {
+        target._abortController?.abort("user_abort");
+      }
+    });
+
+    await collectFrames(bridge.handleCommand({
+      kind: "resumeAskUser",
+      data: {
+        sessionId: session.sessionId,
+        answers: { "q-one": { chosen: [], freeText: "继续" } },
+      },
+    }));
+
+    expect(mockState.resumeStream).toHaveBeenCalledTimes(1);
+    expect(mockState.runAgentTurn).not.toHaveBeenCalled();
   });
 
   it("does not start a fresh turn when resume emits a show_qr card before a transient error", async () => {

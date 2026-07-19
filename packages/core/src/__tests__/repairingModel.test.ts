@@ -54,6 +54,10 @@ describe("isRetryableModelError", () => {
       }),
     })).toBe(true);
   });
+
+  it("AbortError 不归类为可重试网络错误", () => {
+    expect(isRetryableModelError(new DOMException("aborted", "AbortError"))).toBe(false);
+  });
 });
 
 function pmDoc(text: string, blockId = "block-a"): PmDoc {
@@ -219,6 +223,34 @@ describe("wrapToolCallRepairingModel", () => {
     const generateResult = await model.doGenerate({} as never) as { content: any[] };
     const contentToolCall = generateResult.content.find((part) => part.type === "tool-call");
     expect(JSON.parse(contentToolCall.input).outline).toBe("名言：\"Less is more\"。");
+  });
+
+  it("连续网络错误直接交给框架层，repairing 层只调用一次 provider", async () => {
+    const networkError = Object.assign(new Error("fetch failed"), { code: "ECONNRESET" });
+    const doStream = vi.fn(async (_options?: unknown) => {
+      throw networkError;
+    });
+    const model = wrapToolCallRepairingModel({
+      ...fakeV3Model("{}"),
+      doStream,
+    });
+
+    await expect(model.doStream({} as never)).rejects.toBe(networkError);
+    expect(doStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("AbortError 立即上抛且不重试", async () => {
+    const abortError = new DOMException("This operation was aborted", "AbortError");
+    const doStream = vi.fn(async (_options?: unknown) => {
+      throw abortError;
+    });
+    const model = wrapToolCallRepairingModel({
+      ...fakeV3Model("{}"),
+      doStream,
+    });
+
+    await expect(model.doStream({ abortSignal: AbortSignal.abort() } as never)).rejects.toBe(abortError);
+    expect(doStream).toHaveBeenCalledTimes(1);
   });
 });
 

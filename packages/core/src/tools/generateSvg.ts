@@ -209,9 +209,10 @@ export const generateSvgTool = createTool({
       stage: GenerateSvgStage,
       patch: Partial<Omit<GenerateSvgProgress, "stage" | "elapsedMs" | "rawKb">> = {},
       force = false,
+      observedAt = Date.now(),
     ) => {
       if (!writer) return;
-      const now = Date.now();
+      const now = observedAt;
       if (!force && now - lastEmitAt < SVG_PROGRESS_THROTTLE_MS) return;
       currentStage = stage;
       currentMessage = patch.message ?? currentMessage;
@@ -368,11 +369,16 @@ export const generateSvgTool = createTool({
             maxRetries: 0,
             maxTokens,
             onActivity: armIdleTimer,
-            onContentStart: () => {
+            onContentStart: (_elapsedMs, observedAt) => {
               armIdleTimer();
-              void emitProgress("streaming", { message: streamingMessage, partialSvg: null }, true);
+              void emitProgress(
+                "streaming",
+                { message: streamingMessage, partialSvg: null },
+                true,
+                observedAt,
+              );
             },
-            onContentDelta: (delta, raw) => {
+            onContentDelta: (delta, raw, observedAt) => {
               armIdleTimer();
               rawBytes += utf8ByteLength(delta);
               if (rawBytes > GENERATE_SVG_RAW_MAX_BYTES) {
@@ -381,9 +387,10 @@ export const generateSvgTool = createTool({
                 throw error;
               }
               // 流式草稿:只有当本次会真正推送(过了节流窗口)才花成本去构建草稿串,避免每 delta 都解析。
-              const willEmit = Date.now() - lastEmitAt >= SVG_PROGRESS_THROTTLE_MS;
+              const eventAt = observedAt ?? Date.now();
+              const willEmit = eventAt - lastEmitAt >= SVG_PROGRESS_THROTTLE_MS;
               const partialSvg = willEmit ? buildPartialSvgDraft(extractSvg(raw), { width, height }) : undefined;
-              void emitProgress("streaming", { message: streamingMessage, partialSvg });
+              void emitProgress("streaming", { message: streamingMessage, partialSvg }, false, eventAt);
             },
           });
           return { raw: result.raw };

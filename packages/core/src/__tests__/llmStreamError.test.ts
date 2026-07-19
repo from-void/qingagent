@@ -212,7 +212,29 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }
     expect(firstOptions.memory).toBeTruthy();
     expect(secondOptions.memory).toBeUndefined();
-    expect(firstOptions.abortSignal).not.toBe(secondOptions.abortSignal);
+    expect(firstOptions.abortSignal).toBe(secondOptions.abortSignal);
+  });
+
+  it("runAgentTurn 退避中取消后不再发起下一次 stream", async () => {
+    vi.useFakeTimers();
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    const state = createSession("err-retry-aborted-during-backoff");
+
+    streamMock.mockResolvedValueOnce({
+      runId: "run-retry-aborted-0",
+      fullStream: streamOf(errorChunk("read ECONNRESET")),
+    } as never);
+
+    const framesPromise = collectFrames(runAgentTurn(state, "你好"));
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(state._abortController).not.toBeNull());
+    state._abortController?.abort("user_abort");
+    const frames = await framesPromise;
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(draftingFailures(frames)).toHaveLength(0);
   });
 
   it("runAgentTurn 重试耗尽后只产出一次可见连接失败", async () => {
@@ -255,6 +277,52 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     }
     const bodies = textBodies(frames);
     expect(bodies.filter((b) => b.includes("连接失败"))).toHaveLength(1);
+  });
+
+  it("持续网络错误跨框架与回合层的 provider 调用总次数上界为 15", async () => {
+    vi.useFakeTimers();
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const {
+      wrapToolCallRepairingModel,
+    } = await import("../llm/repairingModel.js");
+    const providerError = Object.assign(new Error("fetch failed"), { code: "ECONNRESET" });
+    const providerDoStream = vi.fn(async (_options?: unknown) => {
+      throw providerError;
+    });
+    const repairingModel = wrapToolCallRepairingModel({
+      specificationVersion: "v3" as const,
+      provider: "test",
+      modelId: "persistent-network-error",
+      supportedUrls: {},
+      doGenerate: providerDoStream,
+      doStream: providerDoStream,
+    });
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    streamMock.mockImplementation((async (...args: any[]) => {
+      const options = args[1];
+      const frameworkAttempts = Number(options.modelSettings.maxRetries) + 1;
+      for (let attempt = 0; attempt < frameworkAttempts; attempt += 1) {
+        await repairingModel.doStream({} as never).catch(() => undefined);
+      }
+      return {
+        runId: `run-network-upper-${streamMock.mock.calls.length}`,
+        fullStream: streamOf(errorChunk("fetch failed")),
+      } as never;
+    }) as never);
+
+    const framesPromise = collectFrames(runAgentTurn(createSession("network-retry-upper"), "你好"));
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(401);
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(801);
+    await framesPromise;
+
+    // Mastra maxRetries=4 => 每回合最多 5 次；TURN_RETRY_LIMIT=2 => 最多 3 回合。
+    const expectedUpperBound = 5 * 3;
+    expect(streamMock).toHaveBeenCalledTimes(3);
+    expect(providerDoStream).toHaveBeenCalledTimes(expectedUpperBound);
+    expect(providerDoStream.mock.calls.length).toBeLessThanOrEqual(expectedUpperBound);
   });
 
   it.each([401, 403])("模型鉴权失败 %s 标记为不可重试并提示检查密钥", async (statusCode) => {
@@ -515,8 +583,8 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(bodies.some((b) => b.includes("没有返回任何内容"))).toBe(false);
   });
 
-  it("用户主动 abort 停在工具调用中不产步数上限文案,cleanup 仍把工具卡标记为已中断", async () => {
-    const { abortAndCleanupTurn, createSession, processAgentStream } = await import("../bridge/index.js");
+  it("用户主动 abort 后不写入已排队的正文和工具 chunk", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("err-tool-aborted");
     const abortController = new AbortController();
     abortController.abort();
@@ -546,35 +614,11 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     );
 
     const bodies = textBodies(frames);
-    expect(bodies).toContain("中断前正文");
+    expect(bodies).not.toContain("中断前正文");
     expect(bodies.some((b) => b.includes("步数上限"))).toBe(false);
     expect(bodies.some((b) => b.includes("继续"))).toBe(false);
     expect(draftingFailures(frames)).toHaveLength(0);
-    expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")?.status.kind).toBe("running");
-
-    state.streamId = "stream-tool-aborted";
-    state._abortController = abortController;
-    const cleanupFrames = await collectFrames(
-      abortAndCleanupTurn(state, { emitStreamEnd: false }),
-    );
-
-    expect(cleanupFrames).toContainEqual({
-      kind: "toolCallUpdated",
-      data: {
-        messageId: "agent-msg",
-        toolCallId: "tc-abort-tool",
-        spec: expect.objectContaining({
-          status: {
-            kind: "failed",
-            data: { retriable: false, reason: "本轮生成已中断" },
-          },
-        }),
-      },
-    });
-    expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")?.status).toEqual({
-      kind: "failed",
-      data: { retriable: false, reason: "本轮生成已中断" },
-    });
+    expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")).toBeNull();
   });
 
   it("内部 idle timeout 仍保留工具调用后的长时间无响应收口提示", async () => {

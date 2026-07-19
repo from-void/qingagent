@@ -12,7 +12,11 @@ import { handleTextAndReasoningEvent } from "./agentStreamText.js";
 import { handleToolCallEvent } from "./agentStreamToolCall.js";
 import { handleToolOutputEvent } from "./agentStreamToolOutput.js";
 import { handleToolResultEvent } from "./agentStreamToolResult.js";
-import { IDLE_TIMEOUT_ABORT_REASON, withIdleTimeout } from "./streamErrors.js";
+import {
+  IDLE_TIMEOUT_ABORT_REASON,
+  isUserAbortSignal,
+  withIdleTimeout,
+} from "./streamErrors.js";
 
 // usageCoverageMatrix 以原模块为稳定调用点索引；真实记账实现已下沉到 lifecycle handler。
 const AGENT_USAGE_CALL_SITE = "agent";
@@ -71,6 +75,9 @@ export async function* processAgentStream(
       },
     );
     for await (const chunk of monitoredStream) {
+      // 上游在 abort 前已排队的 chunk 仍可能继续抵达。用户取消后禁止再把这些
+      // 文本/工具事件写入会话；跳出循环仍会经过 finalize/finally 完成必要收尾。
+      if (isUserAbortSignal(context.abortController.signal)) break;
       if (!context.firstChunkLogged) {
         context.firstChunkLogged = true;
         console.info(

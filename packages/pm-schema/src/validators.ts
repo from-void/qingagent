@@ -22,6 +22,8 @@ const nonEmpty = z.string().min(1);
 export const PM_TABLE_MAX_SPAN = 1_000;
 export const PM_TABLE_MAX_LOGICAL_COLUMNS = 1_000;
 export const PM_TABLE_MAX_CELLS = 10_000;
+const PM_TABLE_GRID_WIDTH_MESSAGE_PREFIX = "table row expands to ";
+const PM_TABLE_GRID_ROWSPAN_MESSAGE = "table rowspan must not extend beyond the last row";
 
 const blockIdSchema = z.object({
   blockId: nonEmpty,
@@ -397,6 +399,7 @@ function validatePmTableLimits(
   context: z.RefinementCtx,
 ): void {
   let totalCells = 0;
+  let expectedWidth: number | undefined;
   let activeRowspans: number[] = [];
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
@@ -472,7 +475,33 @@ function validatePmTableLimits(
       }
       cursor = end;
     }
+
+    const width = occupied.reduce((last, value, column) => value ? column + 1 : last, 0);
+    if (expectedWidth === undefined) expectedWidth = width;
+    let hasGap = false;
+    for (let column = 0; column < expectedWidth; column += 1) {
+      if (!occupied[column]) {
+        hasGap = true;
+        break;
+      }
+    }
+    if (width !== expectedWidth || hasGap) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${PM_TABLE_GRID_WIDTH_MESSAGE_PREFIX}${width} logical columns; expected ${expectedWidth}`,
+        path: [rowIndex, "content"],
+      });
+      return;
+    }
     activeRowspans = nextRowspans;
+  }
+
+  if (activeRowspans.some((remaining) => remaining > 0)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: PM_TABLE_GRID_ROWSPAN_MESSAGE,
+      path: [rows.length - 1, "content"],
+    });
   }
 }
 
@@ -499,6 +528,20 @@ export function assertValidPmDoc(value: unknown): PmDoc {
 
 export function normalizePmDoc(value: unknown): PmDoc {
   return assertValidPmDoc(value);
+}
+
+// 存量 documents 可能已含旧校验放过的非矩形表。读取时只兼容本次新增的两类网格 issue，
+// 其它结构、安全上限与内容规则仍严格校验；所有写入继续走 normalizePmDoc。
+export function normalizeStoredPmDoc(value: unknown): PmDoc {
+  const normalized = normalizePmDocShape(value);
+  const parsed = pmDocSchema.safeParse(normalized);
+  if (parsed.success) return parsed.data as PmDoc;
+  const containsOnlyLegacyGridIssues = parsed.error.issues.length > 0 && parsed.error.issues.every(
+    (issue) => issue.message === PM_TABLE_GRID_ROWSPAN_MESSAGE ||
+      issue.message.startsWith(PM_TABLE_GRID_WIDTH_MESSAGE_PREFIX),
+  );
+  if (containsOnlyLegacyGridIssues) return normalized as PmDoc;
+  throw new Error(`Invalid PM doc: ${parsed.error.message}`);
 }
 
 function normalizePmDocShape(value: unknown): unknown {

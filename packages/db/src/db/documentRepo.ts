@@ -4,6 +4,7 @@ import {
   getPmContentHash,
   getStablePmJson,
   normalizePmDoc,
+  normalizeStoredPmDoc,
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
@@ -72,7 +73,7 @@ export function parsePmDoc(value: unknown): PmDoc {
     throw new Error("Invalid documents.doc_pm: expected JSON string");
   }
   const parsed = JSON.parse(value) as unknown;
-  return normalizePmDoc(parsed);
+  return normalizeStoredPmDoc(parsed);
 }
 
 export function projectPmDocToSections(pmDoc: PmDoc): LegacySection[] {
@@ -91,7 +92,10 @@ interface PmProjection {
 export function buildPmProjection(input: {
   pmDoc: PmDoc;
 }): PmProjection {
-  const pmDoc = normalizePmDoc(input.pmDoc);
+  return projectNormalizedPmDoc(normalizePmDoc(input.pmDoc));
+}
+
+function projectNormalizedPmDoc(pmDoc: PmDoc): PmProjection {
   const legacySections = projectPmDocToSections(pmDoc);
   return {
     pmDoc,
@@ -121,7 +125,7 @@ function mapRow(row: Row): MappedDocumentRow {
     throw new Error("Invalid documents.doc_pm: PM document is required");
   }
   const pmDoc = parsePmDoc(rawDocPm);
-  const projection = buildPmProjection({ pmDoc });
+  const projection = projectNormalizedPmDoc(pmDoc);
   return {
     row: {
       id: valueAsString(row.id),

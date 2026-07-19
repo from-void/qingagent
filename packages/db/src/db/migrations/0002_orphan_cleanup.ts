@@ -21,6 +21,7 @@ async function up(client: Client): Promise<void> {
   const threadCount = Number(threadCountResult.rows[0]?.count ?? 0);
   if (threadCount === 0) {
     // 项目尚未开源且装机面可控，允许原地修补已发布迁移；数据防呆优先于迁移不可变惯例。
+    // 本次继续沿用该例外，将可能的孤儿全家桶移入可恢复隔离表，禁止不可逆删除。
     console.warn(
       "[db:migration:0002] mastra_threads 为空，跳过 documents 孤儿清理以避免误删全部文档。",
     );
@@ -42,7 +43,7 @@ async function up(client: Client): Promise<void> {
 
   const orphanRatio = orphanCount / documentCount;
   const hasNoThreadIntersection = matchedCount === 0;
-  if (hasNoThreadIntersection || orphanRatio > MAX_SAFE_ORPHAN_RATIO) {
+  if (hasNoThreadIntersection) {
     console.warn(
       "[db:migration:0002] mastra_threads 可能不完整，跳过 documents 孤儿清理。" +
         ` documents=${documentCount}, orphans=${orphanCount}, matched=${matchedCount}, ` +
@@ -54,12 +55,48 @@ async function up(client: Client): Promise<void> {
   const orphanDocIds = `SELECT id FROM documents
     WHERE thread_id NOT IN (SELECT id FROM mastra_threads)`;
 
+  const quarantineTables = [
+    "documents",
+    "document_drafts",
+    "document_suggestions",
+    "document_ops",
+    "document_versions",
+  ];
+  for (const table of quarantineTables) {
+    await client.execute(
+      `CREATE TABLE IF NOT EXISTS ${table}_quarantine_0002 AS SELECT * FROM ${table} WHERE 0`,
+    );
+  }
+
+  await client.execute(
+    `INSERT INTO documents_quarantine_0002 SELECT * FROM documents WHERE id IN (${orphanDocIds})`,
+  );
+  await client.execute(
+    `INSERT INTO document_drafts_quarantine_0002 SELECT * FROM document_drafts WHERE doc_id IN (${orphanDocIds})`,
+  );
+  await client.execute(
+    `INSERT INTO document_suggestions_quarantine_0002 SELECT * FROM document_suggestions WHERE doc_id IN (${orphanDocIds})`,
+  );
+  await client.execute(
+    `INSERT INTO document_ops_quarantine_0002 SELECT * FROM document_ops WHERE doc_id IN (${orphanDocIds})`,
+  );
+  await client.execute(
+    `INSERT INTO document_versions_quarantine_0002 SELECT * FROM document_versions WHERE doc_id IN (${orphanDocIds})`,
+  );
+
   await client.execute(`DELETE FROM document_drafts WHERE doc_id IN (${orphanDocIds})`);
   await client.execute(`DELETE FROM document_suggestions WHERE doc_id IN (${orphanDocIds})`);
   await client.execute(`DELETE FROM document_ops WHERE doc_id IN (${orphanDocIds})`);
   await client.execute(`DELETE FROM document_versions WHERE doc_id IN (${orphanDocIds})`);
   await client.execute(
     "DELETE FROM documents WHERE thread_id NOT IN (SELECT id FROM mastra_threads)",
+  );
+
+  const riskLevel = orphanRatio > MAX_SAFE_ORPHAN_RATIO ? "高比例，线程表可能不完整" : "低比例";
+  console.warn(
+    `[db:migration:0002] 已隔离 ${orphanCount} 个 documents 孤儿全家桶（${riskLevel}）。` +
+      ` documents=${documentCount}, matched=${matchedCount}, orphanRatio=${orphanRatio.toFixed(3)}, ` +
+      `threshold=${MAX_SAFE_ORPHAN_RATIO.toFixed(3)}；如需恢复，请从 *_quarantine_0002 表按原主键回写。`,
   );
 }
 

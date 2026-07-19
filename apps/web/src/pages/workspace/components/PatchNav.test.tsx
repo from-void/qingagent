@@ -84,4 +84,12 @@ describe("PatchNav", () => {
     });
     expect(onRejectAll).toHaveBeenCalledTimes(1);
   });
+
+  it("提交中禁用提交与放弃入口", async () => {
+    await renderPatchNav(baseProps({ isSubmitting: true }));
+
+    expect(buttonByText("提交 ↵").disabled).toBe(true);
+    expect(buttonByText("放弃全部").disabled).toBe(true);
+    expect(host?.querySelector('[data-wf="PatchNav"]')?.getAttribute("aria-busy")).toBe("true");
+  });
 });

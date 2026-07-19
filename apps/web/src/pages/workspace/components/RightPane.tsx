@@ -58,6 +58,7 @@ interface RightPaneProps {
   reviewedCount: number;
   remainingCount: number;
   activePatchIndex: number;
+  isReviewSubmitting?: boolean;
   visiblePatchCount: number;
   unrenderablePatchCount: number;
   effectiveReview: boolean;
@@ -89,8 +90,8 @@ interface RightPaneProps {
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onRejectAll: () => void;
-  onAcceptAll?: () => void;
-  onCommit: () => void;
+  onAcceptAll?: () => void | Promise<void>;
+  onCommit: () => void | Promise<void>;
   onPatchVerdict: (patchId: string, verdict: "accepted" | "rejected") => void;
   onCancelAskUser: (toolCall: ToolCallSpec) => void;
   onCloseViewingVersion: () => void;
@@ -143,6 +144,7 @@ export function RightPane({
   reviewedCount,
   remainingCount,
   activePatchIndex,
+  isReviewSubmitting,
   visiblePatchCount,
   unrenderablePatchCount,
   effectiveReview,
@@ -369,6 +371,7 @@ export function RightPane({
         <WholeDocReviewNav
           reviewScopeKey={wholeDocReviewScopeKey}
           version={wholeDocVersion}
+          isSubmitting={isReviewSubmitting}
           onVersionChange={onWholeDocVersionChange}
           onApply={onAcceptAll ?? onCommit}
           onRevert={onRejectAll}
@@ -410,6 +413,7 @@ export function RightPane({
           remainingCount={remainingCount}
           totalCount={visiblePatchCount}
           activePatchIndex={activePatchIndex}
+          isSubmitting={isReviewSubmitting}
           onJumpPrev={onJumpPrev}
           onJumpNext={onJumpNext}
           onRejectAll={onRejectAll}

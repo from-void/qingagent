@@ -5,7 +5,11 @@ import {
   pmToLegacySections,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { documentDraftRepo, type DocumentDraftRow } from "@qingagent/db";
+import {
+  documentDraftRepo,
+  listDocumentSuggestionStatuses,
+  type DocumentDraftRow,
+} from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { buildDraftDiff } from "./proposalDiff.js";
@@ -186,7 +190,7 @@ export async function rehydratePendingDraft(
   }
 
   const baseVersion = row.baseVersion;
-  const suggestions = hunks.map((hunk) =>
+  const rebuiltSuggestions = hunks.map((hunk) =>
     createSuggestionFromDiffHunk({
       hunk,
       docId: state.docId,
@@ -194,6 +198,20 @@ export async function rehydratePendingDraft(
       baseSchemaVersion: currentDoc.attrs.schemaVersion,
     }),
   );
+  const persistedStatuses = new Map(
+    (await listDocumentSuggestionStatuses(
+      state.docId,
+      baseVersion,
+      rebuiltSuggestions.map((suggestion) => suggestion.id),
+    )).map((record) => [record.id, record] as const),
+  );
+  const suggestions = rebuiltSuggestions.map((suggestion) => {
+    const persisted = persistedStatuses.get(suggestion.id);
+    if (persisted?.status !== "accepted" && persisted?.status !== "rejected") {
+      return suggestion;
+    }
+    return { ...suggestion, status: persisted.status };
+  });
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
@@ -220,6 +238,9 @@ export async function rehydratePendingDraft(
       diffHunk: hunk,
     };
     state.suggestions.set(suggestion.id, record);
+    if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+      state.patchVerdicts.set(suggestion.id, suggestion.status);
+    }
   });
 
   return {

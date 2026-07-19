@@ -3,6 +3,12 @@ import type { AnnotationGroup, DocSuggestion, SuggestionStatus } from "@qingagen
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
+export interface DocumentSuggestionStatusRecord {
+  id: string;
+  status: SuggestionStatus;
+  conflict: DocSuggestion["conflict"] | undefined;
+}
+
 async function readyClient(client?: Client): Promise<Client> {
   const c = client ?? getDocumentsClient();
   await ensureMigrated();
@@ -164,4 +170,29 @@ export async function updateDocumentSuggestionStatus(
       args: [status, conflict ? JSON.stringify(conflict) : null, now, id],
     });
   });
+}
+
+export async function listDocumentSuggestionStatuses(
+  docId: string,
+  baseVersion: number,
+  suggestionIds?: readonly string[],
+  client?: Client,
+): Promise<DocumentSuggestionStatusRecord[]> {
+  const ids = suggestionIds?.filter(Boolean);
+  if (ids && ids.length === 0) return [];
+  const c = await readyClient(client);
+  const idWhere = ids ? ` AND id IN (${ids.map(() => "?").join(",")})` : "";
+  const result = await c.execute({
+    sql: `SELECT id, status, conflict_json
+      FROM document_suggestions
+      WHERE doc_id = ? AND base_version = ?${idWhere}`,
+    args: [docId, baseVersion, ...(ids ?? [])],
+  });
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    status: String(row.status) as SuggestionStatus,
+    conflict: typeof row.conflict_json === "string"
+      ? JSON.parse(row.conflict_json) as DocSuggestion["conflict"]
+      : undefined,
+  }));
 }

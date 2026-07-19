@@ -14,6 +14,7 @@ import {
   suggestionToBlockPatchInput,
   suggestionToPatchOverlay,
   type AppliedPatch,
+  type ChatMessage,
   type ViewDocumentSnapshot,
 } from "./data/protocol";
 import {
@@ -1340,6 +1341,31 @@ describe("WorkspacePage review controls", () => {
       .map((item) => item.textContent)
       .filter((text): text is string => Boolean(text))
       .every((text) => text.includes("已拒绝"))).toBe(true);
+  });
+
+  it("失效 suggestion 的失败终态在聊天中显示未应用", async () => {
+    const { ChatMessageList } = await import("./components/ChatMessageList");
+    const failedSpec: ToolCallSpec = {
+      ...reviewToolCall("p-invalid", "batch-invalid", "reviewing"),
+      status: {
+        kind: "failed",
+        data: {
+          retriable: false,
+          reason: "目标位置已被前序修改改变,该条已失效,未写入",
+        },
+      },
+    };
+    const messages: ChatMessage[] = [{
+      id: "m-invalid",
+      role: { kind: "agent" },
+      ts: "2026-07-19T00:00:00.000Z",
+      parts: [{ kind: "toolCall", data: failedSpec }],
+      chips: null,
+    }];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    expect(host?.textContent).toContain("修改已失效,未应用");
   });
 
   // 旧断言(forceAllRejected 把 accepted 也全计 rejected)正是 e2e-loop-0704 P1 的错误语义:

@@ -983,13 +983,13 @@ export function createSessionScopedTools(
         opsSummary: input.ops.map((op) => op.action),
       });
       let workingDoc = clonePmDoc(candidateDoc);
-      const blockOps: BlockEdit[] = [];
-      const blockOpIndexes: number[] = [];
       const applied: string[] = [];
+      let skippedDuplicateInserts = 0;
 
       for (let i = 0; i < input.ops.length; i += 1) {
         const op = input.ops[i]!;
         try {
+          let blockEdit: BlockEdit | null = null;
           if (op.action === "replaceBlock") {
             const target = workingDoc.content.find((block) => block.attrs.blockId === op.ref);
             if (!target) return { ok: false, applied: [], error: `块 ${op.ref} 不存在,请先 readDraft`, failedOpIndex: i };
@@ -1007,63 +1007,97 @@ export function createSessionScopedTools(
             if (parsed.fragment.blocks.length !== 1) {
               return { ok: false, applied: [], error: "replaceBlock 期望单个 QingML block", failedOpIndex: i };
             }
-            blockOps.push({ action: "replaceBlock", ref: op.ref, block: parsed.fragment.blocks[0] });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "replaceBlock", ref: op.ref, block: parsed.fragment.blocks[0] };
           } else if (op.action === "insertBlock") {
             const parsed = parseEditDraftQingmlFragment(op.blocks, "insertBlock", "blocks");
             if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
-            blockOps.push({ action: "insertBlock", position: op.position, ref: op.ref, blocks: parsed.fragment.blocks });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "insertBlock", position: op.position, ref: op.ref, blocks: parsed.fragment.blocks };
           } else if (op.action === "deleteBlock") {
-            blockOps.push({ action: "deleteBlock", ref: op.ref });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "deleteBlock", ref: op.ref };
           } else if (op.action === "replaceListItem") {
             const parsed = parseEditDraftQingmlFragment(op.item, "replaceListItem", "listItem");
             if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
-            blockOps.push({ action: "replaceListItem", ref: op.ref, item: parsed.fragment.item });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "replaceListItem", ref: op.ref, item: parsed.fragment.item };
           } else if (op.action === "insertListItem") {
             const parsed = parseEditDraftQingmlFragment(op.item, "insertListItem", "listItem");
             if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
-            blockOps.push({
+            blockEdit = {
               action: "insertListItem",
               parentRef: op.parentRef,
               at: op.at,
               ref: op.ref,
               item: parsed.fragment.item,
-            });
-            blockOpIndexes.push(i);
+            };
           } else if (op.action === "deleteListItem") {
-            blockOps.push({ action: "deleteListItem", ref: op.ref });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "deleteListItem", ref: op.ref };
           } else if (op.action === "insertTableRow") {
             const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableRow", "row");
             if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
-            blockOps.push({
+            blockEdit = {
               action: "insertTableRow",
               ref: op.ref,
               at: op.at,
               rowIndex: op.rowIndex,
               cells: parsed.fragment.cells,
-            });
-            blockOpIndexes.push(i);
+            };
           } else if (op.action === "insertTableColumn") {
             const parsed = parseEditDraftQingmlFragment(op.cells, "insertTableColumn", "column");
             if (!parsed.ok) return { ok: false, applied: [], error: parsed.error, failedOpIndex: i };
-            blockOps.push({
+            blockEdit = {
               action: "insertTableColumn",
               ref: op.ref,
               at: op.at,
               columnIndex: op.columnIndex,
               cells: parsed.fragment.cells,
-            });
-            blockOpIndexes.push(i);
+            };
           } else if (op.action === "deleteTableRow") {
-            blockOps.push({ action: "deleteTableRow", ref: op.ref, rowIndex: op.rowIndex });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "deleteTableRow", ref: op.ref, rowIndex: op.rowIndex };
           } else if (op.action === "deleteTableColumn") {
-            blockOps.push({ action: "deleteTableColumn", ref: op.ref, columnIndex: op.columnIndex });
-            blockOpIndexes.push(i);
+            blockEdit = { action: "deleteTableColumn", ref: op.ref, columnIndex: op.columnIndex };
+          } else {
+            const textBlocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
+            const matches = op.isRegex
+              ? await findSafeRegexMatches(textBlocks, op.find, op.all === true)
+              : findLiteralMatches(textBlocks, op.find, op.all === true);
+            if (matches.length === 0) {
+              return {
+                ok: false,
+                applied: [],
+                error: "文本未命中或未唯一命中,请先 readDraft 后缩小 withinRef 或设置 all:true",
+                failedOpIndex: i,
+              };
+            }
+            if (op.action === "replaceText") {
+              workingDoc = replaceTextRuns(workingDoc, matches, op.replace, op.isRegex === true);
+            } else {
+              const parsedMark = aiRunMarkSchema.safeParse(op.mark);
+              if (!parsedMark.success) {
+                return { ok: false, applied: [], error: parsedMark.error.message, failedOpIndex: i };
+              }
+              workingDoc = markTextRuns(
+                workingDoc,
+                matches,
+                aiRunMarkToPmMark(parsedMark.data as AiRunMark),
+                op.op,
+              );
+            }
+            applied.push(...new Set(matches.map((match) => match.block.topBlockId)));
+          }
+
+          if (blockEdit) {
+            await fillLocalSvgImageDimensions([blockEdit]);
+            const blockResult = applyBlockEdits(workingDoc, [blockEdit]);
+            if (!blockResult.ok || !blockResult.doc) {
+              return {
+                ok: false,
+                applied: [],
+                error: addDuplicateBlockIdRecoveryGuidance(blockResult.error),
+                failedOpIndex: i,
+              };
+            }
+            workingDoc = blockResult.doc;
+            applied.push(...blockResult.applied);
+            skippedDuplicateInserts += blockResult.skippedDuplicateInserts;
           }
         } catch (error) {
           return {
@@ -1075,64 +1109,13 @@ export function createSessionScopedTools(
         }
       }
 
-      let skippedDuplicateInserts = 0;
-      if (blockOps.length > 0) {
-        await fillLocalSvgImageDimensions(blockOps);
-        const blockResult = applyBlockEdits(workingDoc, blockOps);
-        if (!blockResult.ok || !blockResult.doc) {
-          return {
-            ok: false,
-            applied: [],
-            error: addDuplicateBlockIdRecoveryGuidance(blockResult.error),
-            failedOpIndex:
-              blockResult.failedOpIndex === undefined
-                ? undefined
-                : blockOpIndexes[blockResult.failedOpIndex],
-          };
-        }
-        workingDoc = blockResult.doc;
-        applied.push(...blockResult.applied);
-        skippedDuplicateInserts = blockResult.skippedDuplicateInserts;
-        if (skippedDuplicateInserts > 0) {
-          logger.warn("[editDraft.execute] skipped duplicate insertBlock op(s)", {
-            sessionId: state.sessionId,
-            runId: turnRunId,
-            toolCallId: editDraftToolCallId,
-            skippedDuplicateInserts,
-          });
-        }
-      }
-
-      for (let i = 0; i < input.ops.length; i += 1) {
-        const op = input.ops[i]!;
-        if (op.action !== "replaceText" && op.action !== "markText") continue;
-        const textBlocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
-        const matches = op.isRegex
-          ? await findSafeRegexMatches(textBlocks, op.find, op.all === true)
-          : findLiteralMatches(textBlocks, op.find, op.all === true);
-        if (matches.length === 0) {
-          return {
-            ok: false,
-            applied: [],
-            error: "文本未命中或未唯一命中,请先 readDraft 后缩小 withinRef 或设置 all:true",
-            failedOpIndex: i,
-          };
-        }
-        if (op.action === "replaceText") {
-          workingDoc = replaceTextRuns(workingDoc, matches, op.replace, op.isRegex === true);
-        } else {
-          const parsedMark = aiRunMarkSchema.safeParse(op.mark);
-          if (!parsedMark.success) {
-            return { ok: false, applied: [], error: parsedMark.error.message, failedOpIndex: i };
-          }
-          workingDoc = markTextRuns(
-            workingDoc,
-            matches,
-            aiRunMarkToPmMark(parsedMark.data as AiRunMark),
-            op.op,
-          );
-        }
-        applied.push(...new Set(matches.map((match) => match.block.topBlockId)));
+      if (skippedDuplicateInserts > 0) {
+        logger.warn("[editDraft.execute] skipped duplicate insertBlock op(s)", {
+          sessionId: state.sessionId,
+          runId: turnRunId,
+          toolCallId: editDraftToolCallId,
+          skippedDuplicateInserts,
+        });
       }
 
       const parsedDoc = safeParsePmDoc(workingDoc);

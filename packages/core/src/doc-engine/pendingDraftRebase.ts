@@ -12,14 +12,21 @@ import type { SuggestionRecord } from "../session/sessionState.js";
 
 const logger = mastra.getLogger();
 
+export interface DroppedPendingDraftRecord {
+  record: SuggestionRecord;
+  hunkId?: string;
+  reason: string;
+}
+
 export type PendingDraftRebaseResult =
   | {
       status: "pending";
       nextDraftDoc: PmDoc;
       hunks: DiffHunk[];
       baseHash: string;
+      dropped: DroppedPendingDraftRecord[];
     }
-  | { status: "cleared" }
+  | { status: "cleared"; dropped: DroppedPendingDraftRecord[] }
   | { status: "conflict"; reason: string; conflict: unknown };
 
 export interface RebaseRemainingPendingDraftInput {
@@ -49,7 +56,7 @@ export async function rebaseRemainingPendingDraft(
     if (input.persist !== false) {
       await documentDraftRepo.clear(input.docId);
     }
-    return { status: "cleared" };
+    return { status: "cleared", dropped: [] };
   }
 
   let nextDraftDoc = clonePmDoc(input.committedDoc);
@@ -59,11 +66,11 @@ export async function rebaseRemainingPendingDraft(
   // 不动,彻底卡住(线上 225ca665 复现)。正确做法是按用户口径"既然拆了地方,就从当前已提交的
   // 文档地方开始算,不要保留原始整体内容":丢弃那一处无法落点的改动,余下能落点的继续 rebase,
   // 让评审始终可继续,绝不因一处失败而整轮锁死。
-  const dropped: Array<{ suggestionId: string; hunkId?: string; reason: string }> = [];
+  const dropped: DroppedPendingDraftRecord[] = [];
   for (const record of input.remainingRecords) {
     const hunk = record.diffHunk;
     if (!hunk) {
-      dropped.push({ suggestionId: record.suggestion.id, reason: "missing diffHunk" });
+      dropped.push({ record, reason: "missing diffHunk" });
       continue;
     }
     const applied = applyDiffHunkToDoc(nextDraftDoc, hunk, {
@@ -71,12 +78,12 @@ export async function rebaseRemainingPendingDraft(
       anchorByBlockId: true,
     });
     if (!applied.ok) {
-      dropped.push({ suggestionId: record.suggestion.id, hunkId: hunk.hunkId, reason: applied.reason });
+      dropped.push({ record, hunkId: hunk.hunkId, reason: applied.reason });
       continue;
     }
     const parsed = safeParsePmDoc(applied.doc);
     if (!parsed.success) {
-      dropped.push({ suggestionId: record.suggestion.id, hunkId: hunk.hunkId, reason: parsed.error.message });
+      dropped.push({ record, hunkId: hunk.hunkId, reason: parsed.error.message });
       continue;
     }
     nextDraftDoc = materializeDraftBlockIds(parsed.data as PmDoc, {
@@ -88,7 +95,11 @@ export async function rebaseRemainingPendingDraft(
     logger.warn("rebase: dropped un-anchorable hunks to keep review unblocked", {
       docId: input.docId,
       droppedCount: dropped.length,
-      dropped,
+      dropped: dropped.map((item) => ({
+        suggestionId: item.record.suggestion.id,
+        hunkId: item.hunkId,
+        reason: item.reason,
+      })),
     });
   }
 
@@ -100,7 +111,7 @@ export async function rebaseRemainingPendingDraft(
     if (input.persist !== false) {
       await documentDraftRepo.clear(input.docId);
     }
-    return { status: "cleared" };
+    return { status: "cleared", dropped };
   }
 
   if (input.persist !== false) {
@@ -121,5 +132,6 @@ export async function rebaseRemainingPendingDraft(
     nextDraftDoc,
     hunks,
     baseHash,
+    dropped,
   };
 }

@@ -71,7 +71,14 @@ export async function* handleReviewCommand(
       }
       const session = await restoreReviewSession(command, context);
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-      yield* updatePatchVerdict(session, command.data.id, "accepted", command.data.reviewBatchId);
+      for await (const frame of updatePatchVerdict(
+        session,
+        command.data.id,
+        "accepted",
+        command.data.reviewBatchId,
+      )) {
+        yield frame;
+      }
       return;
     }
 
@@ -81,7 +88,14 @@ export async function* handleReviewCommand(
       }
       const session = await restoreReviewSession(command, context);
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-      yield* updatePatchVerdict(session, command.data.id, "rejected", command.data.reviewBatchId);
+      for await (const frame of updatePatchVerdict(
+        session,
+        command.data.id,
+        "rejected",
+        command.data.reviewBatchId,
+      )) {
+        yield frame;
+      }
       return;
     }
 

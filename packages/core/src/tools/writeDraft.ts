@@ -515,6 +515,16 @@ export function createWriteDraftTool(opts: {
           finishReason = result.finishReason;
           updateLaneRaw(laneKey, raw);
           if (displayLaneKey === laneKey) await emitDisplayProgress(true, params.roundIdx > 0 ? "revising" : "writing");
+          if (isLengthTruncatedFinishReason(finishReason)) {
+            failureKinds.push("length_truncated");
+            innerSpan.end({
+              ok: false,
+              outputText: raw,
+              error: `length_truncated: finishReason=${finishReason}`,
+            });
+            markLaneDead(laneKey);
+            return null;
+          }
           const parsed = parseAiDocumentFromQingml(raw, input.title);
           const document = parsed.document;
           const compiled = await compileAiDocumentWithBlockRetry(document, undefined, 0);
@@ -679,7 +689,15 @@ export function createWriteDraftTool(opts: {
             // 按主导失败分型条件化文案:超时/被掐 ≠ QingML 结构错,别再无脑甩锅"校验失败"(否则 debug 走沟里)。
             const totalFails = failureKinds.length || 1;
             const budgetFails = failureSummary["reason_budget_exceeded"] ?? 0;
+            const lengthFails = failureSummary["length_truncated"] ?? 0;
             const detail = `失败分型: ${JSON.stringify(failureSummary)}。`;
+            if (lengthFails === totalFails) {
+              return (
+                `writeDraft 失败: ${lengthFails}/${totalFails} 路都因达到输出长度上限而截断，` +
+                `截断稿未进入候选池。${detail}` +
+                `请直接重新调用 writeDraft 重试。`
+              );
+            }
             if (budgetFails > totalFails / 2) {
               return (
                 `writeDraft 失败: ${budgetFails}/${totalFails} 路因生成超时(时间预算内未完成、当前模型较慢)被中止,` +

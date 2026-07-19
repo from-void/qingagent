@@ -6,6 +6,7 @@ import { ensureMigrated } from "./migrations.js";
 import { deleteDocumentFamilyByDocIds } from "./documentFamilyRepo.js";
 import { getDefaultStyleTemplate, getStyleTemplate } from "./styleTemplateRepo.js";
 import type { PmDoc } from "@qingagent/pm-schema";
+import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
 
 export interface DerivativeMeta {
   docId: string;
@@ -82,6 +83,11 @@ export async function createDerivativeDoc(input: {
   if (!writing || writing.dtype !== input.dtype || writing.slot !== "writing") throw new Error("未知的写作风格模板");
   if (layout && (layout.dtype !== input.dtype || layout.slot !== "layout")) throw new Error("未知的排版风格模板");
   return withTransaction(async (client) => {
+    assertDocumentWriteAllowed({
+      docId: input.sourceDocId,
+      threadId: input.threadId,
+      operation: "document.derivative.create",
+    });
     const existing = await client.execute(input.dtype === "translate" ? {
       sql: `${META_SELECT} WHERE doc.thread_id = ? AND d.dtype = ? AND d.target_lang = ? LIMIT 1`,
       args: [input.threadId, input.dtype, targetLang],

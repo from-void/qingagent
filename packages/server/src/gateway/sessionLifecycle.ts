@@ -4,6 +4,7 @@ import {
   clearSessionSnapshot,
   invalidateSessionWorkspace,
   loadSessionFromThread,
+  resolveSessionDocumentId,
   unregisterBrowserFolderSession,
   unregisterSessionFolderSources,
   type SessionState,
@@ -130,7 +131,7 @@ export async function getOrRestoreSessionReadOnly(
 
   let inflight = readOnlyRestoreInflight.get(sessionId);
   if (!inflight) {
-    inflight = loadSessionFromThread(sessionId)
+    inflight = loadSessionFromThread(sessionId, { mode: "snapshot" })
       .then((restored) => restored ?? undefined)
       .finally(() => {
         readOnlyRestoreInflight.delete(sessionId);
@@ -174,6 +175,8 @@ export const sessionManager = new SessionManager({
   cleanupSession: (sessionId) => {
     forgetSession(sessionId);
   },
+  resolveSessionDocumentId: async (sessionId) =>
+    sessions.get(sessionId)?.docId ?? resolveSessionDocumentId(sessionId),
 });
 
 export async function disposeAllSessionsForShutdown(): Promise<void> {

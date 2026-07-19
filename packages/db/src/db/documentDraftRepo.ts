@@ -6,6 +6,7 @@ import {
 } from "@qingagent/pm-schema";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
+import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
 
 export type DocumentDraftStatus = "draft_candidate" | "pending_review" | "conflict";
 export type DocumentDraftGroupMode = "atomic" | "independent";
@@ -134,6 +135,11 @@ export async function savePendingDocumentDraft(
   const draftPmDoc = normalizePmDoc(input.draftPmDoc);
   const draftPmJson = getStablePmJson(draftPmDoc);
   await withWriteRetry(async () => {
+    assertDocumentWriteAllowed({
+      docId: input.docId,
+      threadId: input.threadId,
+      operation: "documentDraft.savePending",
+    });
     await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
@@ -178,6 +184,11 @@ export async function saveCandidateDocumentDraft(
   const draftPmDoc = normalizePmDoc(input.draftPmDoc);
   const draftPmJson = getStablePmJson(draftPmDoc);
   await withWriteRetry(async () => {
+    assertDocumentWriteAllowed({
+      docId: input.docId,
+      threadId: input.threadId,
+      operation: "documentDraft.saveCandidate",
+    });
     await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,

@@ -139,6 +139,7 @@ async function rehydrateFirstDraftCandidate(
 
 export async function rehydratePendingDraft(
   state: SessionState,
+  options: { readOnly?: boolean } = {},
 ): Promise<PendingDraftRehydrateResult> {
   const row = await documentDraftRepo.load(state.docId);
   if (!row || row.status === "conflict") {
@@ -146,6 +147,8 @@ export async function rehydratePendingDraft(
   }
 
   if (row.status === "draft_candidate" && row.baseVersion === 0) {
+    // 首稿候选恢复会提交正文并清理草稿，只读快照不能把 GET 变成写请求。
+    if (options.readOnly) return { kind: "skipped" };
     return rehydrateFirstDraftCandidate(state, row);
   }
 
@@ -155,10 +158,12 @@ export async function rehydratePendingDraft(
 
   const currentDoc = state.doc;
   if (!currentDoc) {
-    await documentDraftRepo.markConflict({
-      docId: state.docId,
-      conflict: { kind: "missing_current_doc", baseVersion: row.baseVersion },
-    });
+    if (!options.readOnly) {
+      await documentDraftRepo.markConflict({
+        docId: state.docId,
+        conflict: { kind: "missing_current_doc", baseVersion: row.baseVersion },
+      });
+    }
     state.docState = { kind: "editing" };
     clearReviewDraftRuntime(state);
     return { kind: "conflict", frames: [conflictFrame(state.sessionId)] };
@@ -166,15 +171,17 @@ export async function rehydratePendingDraft(
 
   const currentHash = getPmContentHash(currentDoc);
   if (row.baseHash !== currentHash) {
-    await documentDraftRepo.markConflict({
-      docId: state.docId,
-      conflict: {
-        kind: "base_hash_mismatch",
-        baseVersion: row.baseVersion,
-        expectedBaseHash: row.baseHash,
-        currentHash,
-      },
-    });
+    if (!options.readOnly) {
+      await documentDraftRepo.markConflict({
+        docId: state.docId,
+        conflict: {
+          kind: "base_hash_mismatch",
+          baseVersion: row.baseVersion,
+          expectedBaseHash: row.baseHash,
+          currentHash,
+        },
+      });
+    }
     state.docState = { kind: "editing" };
     clearReviewDraftRuntime(state);
     return { kind: "conflict", frames: [conflictFrame(state.sessionId)] };
@@ -183,7 +190,7 @@ export async function rehydratePendingDraft(
   const draftDoc = materializeDraftBlockIds(row.draftPmDoc, { namespace: "draft.rehydrate" });
   const hunks = buildDraftDiff(currentDoc, draftDoc, { baseVersion: row.baseVersion });
   if (hunks.length === 0) {
-    await documentDraftRepo.clear(state.docId);
+    if (!options.readOnly) await documentDraftRepo.clear(state.docId);
     state.docState = { kind: "editing" };
     clearReviewDraftRuntime(state);
     return { kind: "empty_diff", frames: [] };

@@ -5,6 +5,7 @@ export * from "./db/documentFamilyRepo.js";
 export * from "./db/documentOpsRepo.js";
 export * from "./db/documentRepo.js";
 export * from "./db/documentSuggestionsRepo.js";
+export * from "./db/documentWriteGuard.js";
 export * from "./db/documentVersionRepo.js";
 export * from "./db/documentsClient.js";
 export * from "./db/lexiconRepo.js";

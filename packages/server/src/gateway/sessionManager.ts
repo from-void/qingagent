@@ -4,6 +4,7 @@ import {
   deleteSessionThread,
   drainSessionPersistenceForSession,
   markSessionDeleted,
+  unmarkSessionDeleted,
 } from "@qingagent/core";
 import { InMemoryFrameLog, type FrameLog, type LoggedFrame } from "./frameLog";
 import {
@@ -18,9 +19,12 @@ export interface SessionManagerOptions {
   cleanupSession: (sessionId: string) => void | Promise<void>;
   frameLog?: FrameLog;
   maxActors?: number;
-  markSessionDeleted?: (sessionId: string) => void;
+  markSessionDeleted?: (sessionId: string, docId?: string) => void;
+  unmarkSessionDeleted?: (sessionId: string) => void;
+  resolveSessionDocumentId?: (sessionId: string) => Promise<string>;
   drainSessionPersistence?: (sessionId: string, timeoutMs: number) => Promise<void>;
   deleteSessionThread?: (sessionId: string) => Promise<void>;
+  deletionRetryDelayMs?: number;
 }
 
 export interface SubmitCommandInput {
@@ -40,7 +44,9 @@ interface ActorEntry {
 export class SessionManager {
   readonly frameLog: FrameLog;
   private readonly actors = new Map<string, ActorEntry>();
+  private readonly deletingSessions = new Set<string>();
   private readonly destroyedSessions = new Set<string>();
+  private readonly backgroundDeletionJobs = new Map<string, Promise<void>>();
   private readonly maxActors: number;
 
   constructor(private readonly options: SessionManagerOptions) {
@@ -49,6 +55,9 @@ export class SessionManager {
   }
 
   submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+    if (this.deletingSessions.has(sessionId)) {
+      return Promise.reject(new Error("Session deletion is in progress"));
+    }
     if (this.destroyedSessions.has(sessionId)) {
       return Promise.reject(new Error("Session has been deleted"));
     }
@@ -77,14 +86,28 @@ export class SessionManager {
   }
 
   async destroySession(sessionId: string, timeoutMs = 5_000): Promise<void> {
-    this.destroyedSessions.add(sessionId);
-    (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId);
+    if (this.destroyedSessions.has(sessionId)) return;
+    if (this.deletingSessions.has(sessionId)) {
+      throw new Error("Session deletion is in progress");
+    }
+    this.deletingSessions.add(sessionId);
+    let docId: string;
+    try {
+      docId = await (this.options.resolveSessionDocumentId?.(sessionId) ?? Promise.resolve(sessionId));
+      (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId, docId);
+    } catch (error) {
+      this.deletingSessions.delete(sessionId);
+      throw error;
+    }
 
     const entry = this.actors.get(sessionId);
+    const actorSettlement = entry?.actor.disposeAndWait() ?? Promise.resolve();
+    let actorSettled = true;
     if (entry) {
       try {
-        await withTimeout(entry.actor.disposeAndWait(), timeoutMs, "active turn");
+        await withTimeout(actorSettlement, timeoutMs, "active turn");
       } catch (error) {
+        actorSettled = false;
         console.warn("[sessionManager] active turn did not settle before deletion", {
           sessionId,
           error: error instanceof Error ? error.message : String(error),
@@ -103,6 +126,12 @@ export class SessionManager {
       });
     }
 
+    if (!actorSettled) {
+      // 无法证明在途轮次已结束时绝不删库；墓碑与 deleting 状态保留到后台补删完成。
+      this.scheduleDeletionRetry(sessionId, actorSettlement, timeoutMs);
+      return;
+    }
+
     try {
       await (this.options.drainSessionPersistence ?? drainSessionPersistenceForSession)(
         sessionId,
@@ -113,8 +142,17 @@ export class SessionManager {
         sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
+      // 排空超时同样不能进入物理删除，否则已越过旧检查点的写会在删除后复建数据。
+      this.scheduleDeletionRetry(sessionId, Promise.resolve(), timeoutMs);
+      return;
     }
-    await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
+    try {
+      await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
+    } catch (error) {
+      this.rollbackDeletion(sessionId);
+      throw error;
+    }
+    this.completeDeletion(sessionId);
   }
 
   getActorState(sessionId: string): SessionActor["state"] | null {
@@ -138,6 +176,64 @@ export class SessionManager {
 
   getActorCountForTest(): number {
     return this.actors.size;
+  }
+
+  private completeDeletion(sessionId: string): void {
+    this.deletingSessions.delete(sessionId);
+    this.destroyedSessions.add(sessionId);
+  }
+
+  private rollbackDeletion(sessionId: string): void {
+    this.deletingSessions.delete(sessionId);
+    this.destroyedSessions.delete(sessionId);
+    (this.options.unmarkSessionDeleted ?? unmarkSessionDeleted)(sessionId);
+  }
+
+  private scheduleDeletionRetry(
+    sessionId: string,
+    actorSettlement: Promise<void>,
+    timeoutMs: number,
+  ): void {
+    if (this.backgroundDeletionJobs.has(sessionId)) return;
+    const retryDelayMs = this.options.deletionRetryDelayMs ?? 1_000;
+    const job = (async () => {
+      await actorSettlement.catch((error) => {
+        console.warn("[sessionManager] active turn failed while deletion was pending", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      while (this.deletingSessions.has(sessionId)) {
+        await delay(retryDelayMs);
+        try {
+          await (this.options.drainSessionPersistence ?? drainSessionPersistenceForSession)(
+            sessionId,
+            timeoutMs,
+          );
+        } catch (error) {
+          console.warn("[sessionManager] persistence still pending during deletion retry", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+
+        try {
+          await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
+          this.completeDeletion(sessionId);
+        } catch (error) {
+          this.rollbackDeletion(sessionId);
+          console.error("[sessionManager] background session deletion failed", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
+    })().finally(() => {
+      this.backgroundDeletionJobs.delete(sessionId);
+    });
+    this.backgroundDeletionJobs.set(sessionId, job);
   }
 
   private getOrCreateActor(sessionId: string): SessionActor {
@@ -195,5 +291,12 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
         reject(error);
       },
     );
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, ms));
+    if (typeof timer.unref === "function") timer.unref();
   });
 }

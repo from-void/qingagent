@@ -23,7 +23,14 @@ import type {
 } from "./sessionState.js";
 import { sessionIdToTraceId } from "../agent-run/agentSpans.js";
 import type { Material } from "../types/material.js";
-import { documentRepo, type DocumentRow } from "@qingagent/db";
+import {
+  documentRepo,
+  type DocumentRow,
+} from "@qingagent/db";
+import {
+  DocumentWriteBlockedError,
+  setDocumentWriteGuard,
+} from "@qingagent/db/write-guard";
 import { deleteDocumentFamily } from "@qingagent/db";
 import {
   getMinDocumentSnapshotVersion,
@@ -889,13 +896,41 @@ const persistDirty = new Map<string, boolean>();
 const persistLoops = new Map<string, Promise<void>>();
 const pendingPersists = new Map<string, { state: SessionState; reason: string }>();
 const deletedSessions = new Set<string>();
+const deletedDocumentIds = new Set<string>();
+const deletedSessionDocuments = new Map<string, string>();
 
-export function markSessionDeleted(sessionId: string): void {
+function installDocumentWriteGuard(): void {
+  setDocumentWriteGuard((target) => {
+    if (
+      deletedDocumentIds.has(target.docId) ||
+      (target.threadId != null && deletedSessions.has(target.threadId))
+    ) {
+      throw new DocumentWriteBlockedError(target);
+    }
+  });
+}
+
+installDocumentWriteGuard();
+
+export function markSessionDeleted(sessionId: string, docId = sessionId): void {
   deletedSessions.add(sessionId);
+  deletedDocumentIds.add(docId);
+  deletedSessionDocuments.set(sessionId, docId);
+}
+
+export function unmarkSessionDeleted(sessionId: string): void {
+  deletedSessions.delete(sessionId);
+  const docId = deletedSessionDocuments.get(sessionId);
+  if (docId) deletedDocumentIds.delete(docId);
+  deletedSessionDocuments.delete(sessionId);
 }
 
 export function isSessionDeleted(sessionId: string): boolean {
   return deletedSessions.has(sessionId);
+}
+
+export async function resolveSessionDocumentId(sessionId: string): Promise<string> {
+  return (await documentRepo.findIdByThreadId(sessionId)) ?? sessionId;
 }
 
 function hasDirtySession(): boolean {
@@ -1391,6 +1426,9 @@ export function __resetSessionPersistenceForTest(): void {
   persistLoops.clear();
   pendingPersists.clear();
   deletedSessions.clear();
+  deletedDocumentIds.clear();
+  deletedSessionDocuments.clear();
+  installDocumentWriteGuard();
 }
 
 export function __getSessionPersistenceStateForTest(): {
@@ -1479,8 +1517,12 @@ function extractTextFromDbContent(content: unknown): string {
  */
 export async function loadSessionFromThread(
   sessionId: string,
-  options: { preferredAskUserToolCallId?: string | null } = {},
+  options: {
+    preferredAskUserToolCallId?: string | null;
+    mode?: "activate" | "snapshot";
+  } = {},
 ): Promise<SessionState | null> {
+  const isSnapshot = options.mode === "snapshot";
   if (isSessionDeleted(sessionId)) return null;
   const memory = mastra.getMemory("default");
   if (!memory) return null;
@@ -1576,13 +1618,15 @@ export async function loadSessionFromThread(
           metadataHash,
           documentsHash,
         });
-        await rescueMetadataSnapshotOnRestoreConflict({
-          sessionId,
-          docId,
-          docVersion: docRow.docVersion,
-          metadataDoc,
-          metadataHash: metadataHash!,
-        });
+        if (!isSnapshot) {
+          await rescueMetadataSnapshotOnRestoreConflict({
+            sessionId,
+            docId,
+            docVersion: docRow.docVersion,
+            metadataDoc,
+            metadataHash: metadataHash!,
+          });
+        }
         meta = applyRestoredDocumentRow(meta, docRow);
       } else {
         restoredFromDocuments = true;
@@ -1816,10 +1860,12 @@ export async function loadSessionFromThread(
     _lastPersistSnapshot: snapshotFromMeta(meta),
   };
 
-  if (state.folderSources.size > 0) {
-    registerSessionFolderSources(sessionId, state.folderSources.values());
-  } else {
-    unregisterSessionFolderSources(sessionId);
+  if (!isSnapshot) {
+    if (state.folderSources.size > 0) {
+      registerSessionFolderSources(sessionId, state.folderSources.values());
+    } else {
+      unregisterSessionFolderSources(sessionId);
+    }
   }
 
   const rebuiltAnswerMessages = appendMissingAskUserAnswerMessagesFromChatHistory(state);
@@ -1827,7 +1873,7 @@ export async function loadSessionFromThread(
   const docVersionBeforePendingRehydrate = state.docVersion;
   const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
   try {
-    await rehydratePendingDraft(state);
+    await rehydratePendingDraft(state, { readOnly: isSnapshot });
   } catch (err) {
     logger.error("Failed to rehydrate pending document draft", {
       sessionId,
@@ -1841,10 +1887,13 @@ export async function loadSessionFromThread(
     state.lastContentEditedAt !== contentEditedAtBeforePendingRehydrate;
   const rebuiltAskUserState = rebuiltAnswerMessages > 0 || rebuiltVisibleAnswerCards > 0;
   if (
-    needsContentTimeBackfill ||
-    needsRestoreReconcilePersist ||
-    pendingRehydrateChangedCanonical ||
-    rebuiltAskUserState
+    !isSnapshot &&
+    (
+      needsContentTimeBackfill ||
+      needsRestoreReconcilePersist ||
+      pendingRehydrateChangedCanonical ||
+      rebuiltAskUserState
+    )
   ) {
     await schedulePersist(state, "restore:unified_metadata_reconcile").catch((err) => {
       logger.error("Failed to persist unified session restore reconcile", {

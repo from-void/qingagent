@@ -9,6 +9,7 @@ import {
 } from "@qingagent/pm-schema";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
+import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
 
 export interface DocumentRow {
   id: string;
@@ -47,6 +48,7 @@ export interface DocumentSaveInput {
 
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
+  findIdByThreadId(threadId: string): Promise<string | null>;
   save(input: DocumentSaveInput): Promise<void>;
   saveMany(inputs: DocumentSaveInput[]): Promise<void>;
   list(opts: {
@@ -317,9 +319,26 @@ export const documentRepo: DocumentRepo = {
     return mapRow(row).row;
   },
 
+  async findIdByThreadId(threadId) {
+    const client = await readyClient();
+    const result = await client.execute({
+      sql: `SELECT id FROM documents
+        WHERE thread_id = ? AND role = 'main'
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      args: [threadId],
+    });
+    return result.rows[0]?.id == null ? null : String(result.rows[0].id);
+  },
+
   async save(input) {
     const client = await readyClient();
     await withWriteRetry(async () => {
+      assertDocumentWriteAllowed({
+        docId: input.id,
+        threadId: input.threadId,
+        operation: "document.save",
+      });
       await client.execute(upsertStatement(input));
     });
   },
@@ -328,6 +347,13 @@ export const documentRepo: DocumentRepo = {
     if (inputs.length === 0) return;
     const client = await readyClient();
     await withWriteRetry(async () => {
+      for (const input of inputs) {
+        assertDocumentWriteAllowed({
+          docId: input.id,
+          threadId: input.threadId,
+          operation: "document.saveMany",
+        });
+      }
       await client.batch(inputs.map(upsertStatement), "write");
     });
   },

@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/db/documentsClient.ts",
+    "./write-guard": "./src/db/documentWriteGuard.ts",
     "./migrations": "./src/db/migrations.ts",
     "./migrations/registry": "./src/db/migrations/index.ts",
     "./testing": "./src/db/__tests__/dbTestUtils.ts"

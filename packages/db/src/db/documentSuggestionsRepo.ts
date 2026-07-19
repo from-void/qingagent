@@ -2,6 +2,7 @@ import type { Client } from "@libsql/client";
 import type { AnnotationGroup, DocSuggestion, SuggestionStatus } from "@qingagent/contract-ts";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
+import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
 
 export interface DocumentSuggestionStatusRecord {
   id: string;
@@ -46,6 +47,10 @@ export async function insertAnnotationGroups(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
+    assertDocumentWriteAllowed({
+      docId,
+      operation: "documentSuggestion.insertAnnotations",
+    });
     await c.batch(annotationInsertStatements(docId, baseVersion, groups, now));
   });
 }
@@ -62,6 +67,10 @@ export async function replaceAnnotationGroupsByOrigin(
   const c = await readyClient(client);
   const origins = [...new Set(groups.map((group) => group.origin))];
   await withWriteRetry(async () => {
+    assertDocumentWriteAllowed({
+      docId,
+      operation: "documentSuggestion.replaceAnnotations",
+    });
     await c.batch([
       {
         sql: `UPDATE document_suggestions SET status='ignored', updated_at=?
@@ -119,6 +128,10 @@ export async function upsertDocumentSuggestion(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
+    assertDocumentWriteAllowed({
+      docId: suggestion.docId,
+      operation: "documentSuggestion.upsert",
+    });
     await c.execute({
       sql: `INSERT INTO document_suggestions (
           id, doc_id, base_version, status, anchor_json, steps_json,

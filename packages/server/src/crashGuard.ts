@@ -103,6 +103,9 @@ interface GracefulShutdownDeps {
   flushObservability?: () => Promise<void>;
 }
 
+/** 仅供真实信号子进程测试替换慢阶段；生产默认始终走 best-effort 实现。 */
+let signalShutdownDepsForTest: GracefulShutdownDeps | undefined;
+
 async function runShutdownPhase(
   label: string,
   timeoutMs: number,
@@ -274,8 +277,8 @@ export function installCrashGuard(): void {
   });
 
   // 3) SIGTERM / SIGINT：优雅关闭（flush observability + 关 DB stream + exit）。
-  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
-  process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest));
+  process.on("SIGINT", () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest));
 }
 
 // 自安装：crashGuard 被 import 的瞬间就装 handler。ES module import 会先于同模块内
@@ -294,6 +297,11 @@ export async function gracefulShutdownForTest(
 
 export function __resetCrashGuardForTest(): void {
   shuttingDown = false;
+  signalShutdownDepsForTest = undefined;
+}
+
+export function __setSignalShutdownDepsForTest(deps: GracefulShutdownDeps): void {
+  signalShutdownDepsForTest = deps;
 }
 
 export { durableLog, LOG_PATH };

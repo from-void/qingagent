@@ -368,6 +368,7 @@ export const generateSvgTool = createTool({
             abortSignal: linked.controller.signal,
             maxRetries: 0,
             maxTokens,
+            maxBufferedTextBytes: GENERATE_SVG_RAW_MAX_BYTES,
             onActivity: armIdleTimer,
             onContentStart: (_elapsedMs, observedAt) => {
               armIdleTimer();

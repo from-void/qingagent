@@ -24,6 +24,8 @@ export interface InnerModelStreamCall {
   abortSignal?: AbortSignal;
   maxRetries?: number;
   maxTokens?: number;
+  /** 分支验真前允许缓存的文本字节数，缺省不限制。 */
+  maxBufferedTextBytes?: number;
   /** 每次上游流有活动时触发；与只触发一次的内容启动事件分离。 */
   onActivity?: () => void;
   onContentStart?: (elapsedMs: number, observedAt?: number) => void;
@@ -58,6 +60,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       thinking: input.thinking,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
+      maxBufferedTextBytes: input.maxBufferedTextBytes,
       onActivity: () => {
         input.onActivity?.();
       },

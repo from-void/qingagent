@@ -2,6 +2,7 @@ import { decodeSvgDataUrl } from "@qingagent/pm-schema";
 import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
 import { hardenInlineSvg } from "../browser/svgSanitize.js";
 import { katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
+import { MAX_EXPORT_SVG_BYTES } from "./shared.js";
 
 /**
  * 给缺 width/height 的 SVG 从 viewBox 注入显式尺寸。
@@ -35,7 +36,7 @@ export function ensureSvgDimensions(svg: string): string {
 export function prepareSvgForRasterization(input: string): string | null {
   const raw = /^data:image\/svg\+xml/i.test(input) ? decodeSvgDataUrl(input) : input;
   if (!raw) return null;
-  const safe = hardenInlineSvg(raw);
+  const safe = hardenInlineSvg(raw, { maxBytes: MAX_EXPORT_SVG_BYTES });
   return safe ? ensureSvgDimensions(safe) : null;
 }
 

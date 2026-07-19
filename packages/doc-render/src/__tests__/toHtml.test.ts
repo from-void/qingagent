@@ -271,6 +271,15 @@ describe("toHtml 图表与图片", () => {
     expect(html).toContain("flowchart TD");
   });
 
+  it("超过 2MB 的 SVG 显示可见占位并保留图表源码", () => {
+    const oversized = `<svg viewBox="0 0 120 60"><text>${"a".repeat(2_000_000)}</text></svg>`;
+    const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: oversized } }] as never));
+
+    expect(html).toContain("图过大未导出");
+    expect(html).toContain("flowchart TD");
+    expect(html).not.toContain("a".repeat(1_000));
+  });
+
   it("带 viewBox 的恶意图表 SVG 不得原样内联(回归端到端阻断项)", () => {
     const evil = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><script>alert(9)</script><rect width="10" height="10" onload="alert(8)"/></svg>';
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: evil } }] as never));

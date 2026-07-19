@@ -270,4 +270,14 @@ describe("hardenInlineSvg", () => {
     expect(hardenInlineSvg("not svg at all")).toBeNull();
     expect(hardenInlineSvg("")).toBeNull();
   });
+
+  it("默认保持 200KB，显式提高上限时仍走同一净化规则", () => {
+    const large = wrap(`<text>${"a".repeat(250_000)}</text><script>steal()</script>`);
+
+    expect(hardenInlineSvg(large)).toBeNull();
+    const exported = hardenInlineSvg(large, { maxBytes: 2_000_000 });
+    expect(exported).toContain("<text>");
+    expect(exported).not.toContain("<script>");
+    expect(exported).not.toContain("steal()");
+  });
 });

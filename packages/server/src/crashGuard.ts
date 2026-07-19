@@ -245,6 +245,20 @@ async function flushObservabilityBestEffort(): Promise<void> {
 /** 安装所有 handler（幂等：重复调用只装一次）。 */
 let installed = false;
 
+const shutdownSignalHandlers = {
+  SIGTERM: () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest),
+  SIGINT: () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest),
+} satisfies Record<"SIGTERM" | "SIGINT", () => void>;
+
+function installShutdownSignalHandlers(): void {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const handler = shutdownSignalHandlers[signal];
+    if (!process.listeners(signal).includes(handler)) {
+      process.on(signal, handler);
+    }
+  }
+}
+
 export function installCrashGuard(): void {
   if (installed) return;
   installed = true;
@@ -278,8 +292,30 @@ export function installCrashGuard(): void {
   });
 
   // 3) SIGTERM / SIGINT：优雅关闭（flush observability + 关 DB stream + exit）。
-  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest));
-  process.on("SIGINT", () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest));
+  installShutdownSignalHandlers();
+}
+
+/**
+ * 在真实 server 的依赖图加载完成后收口信号所有权。
+ *
+ * crashGuard 必须最早安装，才能覆盖启动期崩溃；但后续依赖仍可能在模块求值时追加
+ * SIGTERM/SIGINT handler 并直接 process.exit，抢先掐断异步 drain。因此 index.ts 在
+ * app/core/doc-render 全部加载后调用本函数，移除竞争 handler，再只装回 crashGuard。
+ */
+export function claimShutdownSignalOwnership(): void {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const listeners = process.listeners(signal);
+    const competingCount = listeners.filter(
+      (listener) => listener !== shutdownSignalHandlers[signal],
+    ).length;
+    process.removeAllListeners(signal);
+    process.on(signal, shutdownSignalHandlers[signal]);
+    if (competingCount > 0) {
+      durableLogSync("info", `removed competing ${signal} shutdown handlers`, {
+        count: competingCount,
+      });
+    }
+  }
 }
 
 // 自安装：crashGuard 被 import 的瞬间就装 handler。ES module import 会先于同模块内

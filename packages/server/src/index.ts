@@ -10,7 +10,7 @@ if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
 } else {
   installLongKeepAliveDispatcher();
 }
-import "./crashGuard.js"; // Install crash/signal handlers + in-process durable log FIRST
+import { claimShutdownSignalOwnership } from "./crashGuard.js"; // Install crash/signal handlers + in-process durable log FIRST
 import { serve } from "@hono/node-server";
 import { assessBindSafety, logStartupSecurityWarnings, normalizeHost } from "./lib/debugGate";
 // ⚠️ runMigrations 从深路径导入,刻意避开 @qingagent/core barrel:barrel 求值会连带 eval
@@ -59,6 +59,12 @@ const {
   warmUpModelEndpoint,
 } = await import("@qingagent/core");
 
+// app/core/doc-render 的完整依赖图此时已求值；移除其后装的竞争信号 handler，确保只有
+// crashGuard 有权结束进程，active turn / persistence / observability drain 不会被抢断。
+claimShutdownSignalOwnership();
+
+const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE;
+
 // 迁移完成后,后台尽力而为回填 thread metadata → documents(失败不阻断启动)。
 void migrateThreadMetadataToDocuments()
   .then((stats) => console.log("[migrations] thread metadata 回填完成", stats))
@@ -72,7 +78,10 @@ void repairStoredDocumentRows()
 
 serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`Qingagent server listening on http://${hostname}:${info.port}`);
-  void startExternalInstance({ port: info.port }).catch((error) => {
+  void startExternalInstance({
+    port: info.port,
+    ...(externalInstanceFile ? { filePath: externalInstanceFile } : {}),
+  }).catch((error) => {
     console.error("[external] 写入 instance.json 失败", error instanceof Error ? error.message : String(error));
   });
   installNetProbe();
@@ -80,5 +89,5 @@ serve({ fetch: app.fetch, port, hostname }, (info) => {
 });
 
 process.once("beforeExit", () => {
-  void stopExternalInstance();
+  void stopExternalInstance(externalInstanceFile);
 });

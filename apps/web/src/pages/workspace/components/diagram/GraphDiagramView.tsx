@@ -945,9 +945,18 @@ export function GraphDiagramView({
       liveSourceRef.current = result.source;
       setLiveSource(result.source);
       onSourceChange(result.source);
+      if (result.idMap) {
+        setSelectedNodeId((current) => remapSelectedId(current, result.idMap?.nodes));
+        setSelectedNodeIds((current) => current.map((id) => result.idMap?.nodes?.[id] ?? id));
+        setSelectedEdgeId((current) => remapSelectedId(current, result.idMap?.edges));
+        setSelectedEdgeIds((current) => current.map((id) => result.idMap?.edges?.[id] ?? id));
+        setRenamingNodeId((current) => remapSelectedId(current, result.idMap?.nodes));
+        setEditingEdgeLabelId((current) => remapSelectedId(current, result.idMap?.edges));
+        setParentPickerNodeId((current) => remapSelectedId(current, result.idMap?.nodes));
+      }
       const currentOverlay = overlayRef.current;
       if (currentOverlay) {
-        const carried = carryOverDiagramOverlay(baseSource, currentOverlay, result.source) ?? null;
+        const carried = carryOverDiagramOverlay(baseSource, currentOverlay, result.source, result.idMap) ?? null;
         overlayRef.current = carried;
         onOverlayChange?.(carried);
       }
@@ -1446,8 +1455,11 @@ export function GraphDiagramView({
         setError("请选择可作为父节点的目标节点");
         return;
       }
-      runEdit({ kind: "moveNode", nodeId: parentPickerNodeId, newParentId: node.id });
-      setSelectedNodeId(parentPickerNodeId);
+      const result = runEdit({ kind: "moveNode", nodeId: parentPickerNodeId, newParentId: node.id });
+      if (!result?.ok) return;
+      const movedNodeId = result.idMap?.nodes?.[parentPickerNodeId] ?? parentPickerNodeId;
+      setSelectedNodeId(movedNodeId);
+      setSelectedNodeIds([movedNodeId]);
       setSelectedEdgeId(null);
       setParentPickerNodeId(null);
       setRenamingNodeId(null);
@@ -1659,9 +1671,11 @@ export function GraphDiagramView({
       }
       if (action.kind === "moveParent") {
         if (!capEnabled(getCapabilities(parseDiagram(liveSourceRef.current), { nodeId: action.nodeId }), "moveNode")) return;
-        runEdit({ kind: "moveNode", nodeId: action.nodeId, newParentId: action.newParentId });
-        setSelectedNodeId(action.nodeId);
-        setSelectedNodeIds([action.nodeId]);
+        const result = runEdit({ kind: "moveNode", nodeId: action.nodeId, newParentId: action.newParentId });
+        if (!result?.ok) return;
+        const movedNodeId = result.idMap?.nodes?.[action.nodeId] ?? action.nodeId;
+        setSelectedNodeId(movedNodeId);
+        setSelectedNodeIds([movedNodeId]);
         setSelectedEdgeId(null);
         setSelectedEdgeIds([]);
         setRenamingNodeId(null);
@@ -2957,6 +2971,10 @@ function normalizeHex(value: string): string | null {
   }
   if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/.test(raw)) return raw;
   return null;
+}
+
+function remapSelectedId(id: string | null, idMap: Record<string, string> | undefined): string | null {
+  return id ? idMap?.[id] ?? id : null;
 }
 
 function cleanOverlay(overlay: DiagramOverlay, nodeIds: Set<string>, edgeIds: Set<string>): DiagramOverlay {

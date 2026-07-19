@@ -24,9 +24,10 @@ import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmOrderedListStyle, PmTa
 import {
   PM_THEME_HIGHLIGHT_COLOR_VALUES,
   PM_THEME_TEXT_COLOR_VALUES,
+  decodeSvgDataUrl,
   isAllowedThemeColor,
 } from "@qingagent/pm-schema";
-import { documentLeadsWithTitle, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, type ExportDocument, type ExportOptions } from "./shared.js";
+import { documentLeadsWithTitle, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
 import { withRenderedDiagrams } from "./mermaidServer.js";
 import { rasterizeMathBatch, rasterizeSvgToPng } from "./rasterize.js";
 
@@ -630,6 +631,12 @@ async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | 
     case "diagram": {
       // svg 看起来合法且不超大才走图片(sharp svg→png);失败/无 svg 一律回退源码代码块,
       // 绝不丢 Mermaid 源码(原先 sharp 失败会落到 [图: 图表] 占位,源码尽失)。
+      if (section.data.svg && svgExceedsExportByteLimit(section.data.svg)) {
+        return [
+          new Paragraph({ children: [new TextRun({ text: "[图过大未导出]", font: FONT })], spacing: { after: 80 } }),
+          ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }),
+        ];
+      }
       if (isRenderableSvg(section.data.svg)) {
         const run = await imageRun({
           kind: "image",
@@ -729,6 +736,19 @@ async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | 
         }),
       ];
     case "image": {
+      const rawSvg = /^data:image\/svg\+xml/i.test(section.data.src)
+        ? decodeSvgDataUrl(section.data.src)
+        : /\.svg(?:[?#].*)?$/i.test(section.data.src)
+          ? readLocalUploadText(section.data.src)
+          : null;
+      if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
+        return [
+          new Paragraph({
+            children: [new TextRun({ text: `[图过大未导出：${section.data.alt}]`, font: FONT })],
+            spacing: { after: 180 },
+          }),
+        ];
+      }
       const run = await imageRun(section);
       const caption = section.data.caption ?? section.data.alt;
       if (!run) {

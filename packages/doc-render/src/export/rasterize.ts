@@ -2,6 +2,7 @@ import { decodeSvgDataUrl } from "@qingagent/pm-schema";
 import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
 import { hardenInlineSvg } from "../browser/svgSanitize.js";
 import { katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
+import { MAX_EXPORT_SVG_BYTES } from "./shared.js";
 
 /**
  * 给缺 width/height 的 SVG 从 viewBox 注入显式尺寸。
@@ -35,7 +36,7 @@ export function ensureSvgDimensions(svg: string): string {
 export function prepareSvgForRasterization(input: string): string | null {
   const raw = /^data:image\/svg\+xml/i.test(input) ? decodeSvgDataUrl(input) : input;
   if (!raw) return null;
-  const safe = hardenInlineSvg(raw);
+  const safe = hardenInlineSvg(raw, { maxBytes: MAX_EXPORT_SVG_BYTES });
   return safe ? ensureSvgDimensions(safe) : null;
 }
 
@@ -72,13 +73,13 @@ export async function rasterizeMathBatch(
       return formulas.map(() => null);
     }
     const context = await browser.newContext({ deviceScaleFactor: 2 });
-    await context.route("**/*", (route) => {
-      const url = route.request().url();
-      if (url.startsWith("data:") || url === "about:blank") void route.continue();
-      else void route.abort();
-    });
-    const page = await context.newPage();
     try {
+      await context.route("**/*", (route) => {
+        const url = route.request().url();
+        if (url.startsWith("data:") || url === "about:blank") void route.continue();
+        else void route.abort();
+      });
+      const page = await context.newPage();
       await page.setContent(pageHtml, { waitUntil: "load", timeout: 30_000 });
       await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
 
@@ -128,13 +129,13 @@ export async function rasterizeSvgToPng(
       return null; // 无 Chromium → 调用方回退(svg 图/图表退回源码或占位)
     }
     const context = await browser.newContext({ deviceScaleFactor: scale });
-    await context.route("**/*", (route) => {
-      const url = route.request().url();
-      if (url.startsWith("data:") || url === "about:blank") void route.continue();
-      else void route.abort();
-    });
-    const page = await context.newPage();
     try {
+      await context.route("**/*", (route) => {
+        const url = route.request().url();
+        if (url.startsWith("data:") || url === "about:blank") void route.continue();
+        else void route.abort();
+      });
+      const page = await context.newPage();
       // inline-block + 白底:截图只裁到 svg 自身尺寸;DOCX 页面为白,背景用白最自然。
       await page.setContent(
         `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0}html,body{background:#fff}#wrap{display:inline-block}#wrap svg{display:block}</style></head><body><div id="wrap">${safeSvg}</div></body></html>`,

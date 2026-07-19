@@ -95,8 +95,8 @@ export function utf8ByteLength(value: string): number {
   return textEncoder.encode(value).length;
 }
 
-function exceedsSvgByteLimit(value: string): boolean {
-  return value.length > SVG_MAX_BYTES || utf8ByteLength(value) > SVG_MAX_BYTES;
+function exceedsSvgByteLimit(value: string, maxBytes = SVG_MAX_BYTES): boolean {
+  return value.length > maxBytes || utf8ByteLength(value) > maxBytes;
 }
 
 function normalizeCssEscapes(value: string): string {
@@ -259,9 +259,10 @@ const BAD_STYLE_TEXT = /@import|url\(\s*['"]?\s*(?:https?:|\/\/|data:|javascript
  * 把一段 SVG 加固成「可安全内联进导出 HTML」的形态:保留可视内容,移除脚本/事件/外联等可执行面。
  * 解析失败 / 含 DOCTYPE|ENTITY(XXE) / 根非 svg → 返回 null,调用方据此回退(图表→源码,图片→占位)。
  */
-export function hardenInlineSvg(raw: string): string | null {
+export function hardenInlineSvg(raw: string, options: { maxBytes?: number } = {}): string | null {
   try {
-    if (typeof raw !== "string" || raw.length === 0 || exceedsSvgByteLimit(raw)) return null;
+    const maxBytes = options.maxBytes ?? SVG_MAX_BYTES;
+    if (typeof raw !== "string" || raw.length === 0 || exceedsSvgByteLimit(raw, maxBytes)) return null;
     if (/[<!]\s*(?:DOCTYPE|ENTITY)\b/i.test(raw)) return null;
 
     const guarded = raw.replace(/<\?[\s\S]*?\?>/g, "");

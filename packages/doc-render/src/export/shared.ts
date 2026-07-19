@@ -133,10 +133,14 @@ export function localUploadPath(src: string): string | null {
  * 不合法/超大/为空 → 调用方回退到源码代码块。HTML→Chromium 导出里,无尺寸 svg 内联后会塌成
  * 0 高或异常拉伸;docx 导出仍走栅格化也需要尺寸。两条出口共用此门,坏图不毁整篇导出。
  */
-const MAX_EXPORT_SVG_BYTES = 2_000_000; // 2MB:正常 mermaid 图远小于此,超大多半是异常
+export const MAX_EXPORT_SVG_BYTES = 2_000_000; // 2MB:正常 mermaid 图远小于此,超大多半是异常
+export function svgExceedsExportByteLimit(svg: string): boolean {
+  return svg.length > MAX_EXPORT_SVG_BYTES || Buffer.byteLength(svg, "utf8") > MAX_EXPORT_SVG_BYTES;
+}
+
 export function isRenderableSvg(svg: string | null | undefined): svg is string {
   if (!svg) return false;
-  if (svg.length > MAX_EXPORT_SVG_BYTES) return false;
+  if (svgExceedsExportByteLimit(svg)) return false;
   // 必须看起来是 svg
   if (!/^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(svg)) return false;
   // 必须带尺寸信息(viewBox 或 width+height),否则内联/栅格化时无参照尺寸。

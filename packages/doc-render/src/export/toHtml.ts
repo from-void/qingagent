@@ -21,10 +21,12 @@ import {
   documentLeadsWithTitle,
   isPmDocDocument,
   isRenderableSvg,
+  MAX_EXPORT_SVG_BYTES,
   readLocalUploadBuffer,
   readLocalUploadText,
   sectionText,
   stripFormatting,
+  svgExceedsExportByteLimit,
   type ExportDocument,
   type ExportOptions,
 } from "./shared.js";
@@ -269,9 +271,12 @@ function pmInlineText(content: readonly { type: string; text?: string }[]): stri
 // ============ 图表 / 图片 ============
 
 function diagramToHtml(source: string, svg: string | null): string {
+  if (svg && svgExceedsExportByteLimit(svg)) {
+    return `<div class="pm-diagram"><div class="doc-file-attach">[图过大未导出]</div></div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+  }
   // 缓存 mermaid SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
   // 加固后仍是可信 SVG,直接内联不转义;加固失败(解析坏/含 XXE)则回退源码。
-  const safe = isRenderableSvg(svg) ? hardenInlineSvg(svg) : null;
+  const safe = isRenderableSvg(svg) ? hardenInlineSvg(svg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safe) {
     return `<div class="pm-diagram">${safe}</div>`;
   }
@@ -298,7 +303,10 @@ function imageToHtml(opts: { src: string; alt: string; caption: string | null; a
   // 是主要注入面)。加固失败 → 落到下方栅格/占位回退。绝不把栅格图当文本读。
   const isSvgSrc = /^data:image\/svg\+xml/i.test(src) || /\.svg(?:[?#].*)?$/i.test(src);
   const rawSvg = isSvgSrc ? (decodeDataSvg(src) ?? readLocalUploadText(src)) : null;
-  const safeSvg = isRenderableSvg(rawSvg) ? hardenInlineSvg(rawSvg) : null;
+  if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
+    return `<figure class="doc-image${alignClass}"><div class="doc-file-attach">[图过大未导出：${escapeHtml(alt)}]</div>${captionHtml}</figure>`;
+  }
+  const safeSvg = isRenderableSvg(rawSvg) ? hardenInlineSvg(rawSvg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safeSvg) {
     return `<figure class="doc-image${alignClass}">${safeSvg}${captionHtml}</figure>`;
   }

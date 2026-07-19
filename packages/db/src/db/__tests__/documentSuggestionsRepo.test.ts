@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DocSuggestion, PatchConflict } from "@qingagent/contract-ts";
 import {
+  ignoreRebasedDocumentSuggestions,
   listDocumentSuggestionStatuses,
   updateDocumentSuggestionStatus,
   upsertDocumentSuggestion,
@@ -67,5 +68,24 @@ describe("document suggestion status query", () => {
     await expect(listDocumentSuggestionStatuses("doc-a", 4)).resolves.toEqual([
       { id: "shared-id", status: "reviewing", conflict: undefined },
     ]);
+    await expect(
+      updateDocumentSuggestionStatus("doc-a", 9, "shared-id", "accepted"),
+    ).resolves.toBe(0);
+  });
+
+  it("rebase 只失效指定旧批次中的未结算行", async () => {
+    await upsertDocumentSuggestion(suggestion("pending", "doc-a", 3));
+    await upsertDocumentSuggestion(suggestion("settled", "doc-a", 3));
+    await updateDocumentSuggestionStatus("doc-a", 3, "settled", "committed");
+
+    await expect(
+      ignoreRebasedDocumentSuggestions("doc-a", 3, ["pending", "settled"]),
+    ).resolves.toBe(1);
+    await expect(listDocumentSuggestionStatuses("doc-a", 3)).resolves.toEqual(
+      expect.arrayContaining([
+        { id: "pending", status: "ignored", conflict: undefined },
+        { id: "settled", status: "committed", conflict: undefined },
+      ]),
+    );
   });
 });

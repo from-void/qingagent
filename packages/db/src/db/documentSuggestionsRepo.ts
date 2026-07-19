@@ -160,10 +160,10 @@ export async function updateDocumentSuggestionStatus(
   conflict?: DocSuggestion["conflict"],
   client?: Client,
   now = new Date().toISOString(),
-): Promise<void> {
+): Promise<number> {
   const c = await readyClient(client);
-  await withWriteRetry(async () => {
-    await c.execute({
+  return withWriteRetry(async () => {
+    const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
         WHERE doc_id = ? AND base_version = ? AND id = ?`,
@@ -176,6 +176,31 @@ export async function updateDocumentSuggestionStatus(
         id,
       ],
     });
+    return result.rowsAffected;
+  });
+}
+
+/** rebase 新批次落库后，将被取代且尚未结算的旧批次行保留为失效审计记录。 */
+export async function ignoreRebasedDocumentSuggestions(
+  docId: string,
+  baseVersion: number,
+  suggestionIds: readonly string[],
+  client?: Client,
+  now = new Date().toISOString(),
+): Promise<number> {
+  const ids = [...new Set(suggestionIds.filter(Boolean))];
+  if (ids.length === 0) return 0;
+  const c = await readyClient(client);
+  return withWriteRetry(async () => {
+    const result = await c.execute({
+      sql: `UPDATE document_suggestions
+        SET status = 'ignored', conflict_json = NULL, updated_at = ?
+        WHERE doc_id = ? AND base_version = ?
+          AND id IN (${ids.map(() => "?").join(",")})
+          AND status IN ('reviewing','accepted','rejected')`,
+      args: [now, docId, baseVersion, ...ids],
+    });
+    return result.rowsAffected;
   });
 }
 

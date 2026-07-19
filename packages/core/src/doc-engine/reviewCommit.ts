@@ -20,7 +20,12 @@ import {
   rebaseRemainingPendingDraft,
   type DroppedPendingDraftRecord,
 } from "./pendingDraftRebase.js";
-import { persistMappedAnnotationGroups, updateDocumentSuggestionStatus } from "@qingagent/db";
+import {
+  ignoreRebasedDocumentSuggestions,
+  persistMappedAnnotationGroups,
+  updateDocumentSuggestionStatus,
+  upsertDocumentSuggestion,
+} from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import {
@@ -191,7 +196,16 @@ async function persistSuggestionStatus(
 ): Promise<void> {
   let firstError: unknown;
   try {
-    await updateDocumentSuggestionStatus(state.docId, baseVersion, id, status, conflict);
+    const rowsAffected = await updateDocumentSuggestionStatus(
+      state.docId,
+      baseVersion,
+      id,
+      status,
+      conflict,
+    );
+    if (rowsAffected === 0) {
+      throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
+    }
     return;
   } catch (error) {
     firstError = error;
@@ -204,7 +218,16 @@ async function persistSuggestionStatus(
     });
   }
   try {
-    await updateDocumentSuggestionStatus(state.docId, baseVersion, id, status, conflict);
+    const rowsAffected = await updateDocumentSuggestionStatus(
+      state.docId,
+      baseVersion,
+      id,
+      status,
+      conflict,
+    );
+    if (rowsAffected === 0) {
+      throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
+    }
   } catch (error) {
     logger.error("Persisting document suggestion status failed after retry", {
       sessionId: state.sessionId,
@@ -382,14 +405,14 @@ export async function* updatePatchVerdict(
 // commitPatches — apply accepted patches and emit new doc version
 // ---------------------------------------------------------------------------
 
-function rebuildPendingReviewAfterRebase(input: {
+async function rebuildPendingReviewAfterRebase(input: {
   state: SessionState;
   committedDoc: PmDoc;
   committedVersion: number;
   nextDraftDoc: PmDoc;
   hunks: DiffHunk[];
   previousRemainingRecords: readonly SuggestionRecord[];
-}): DocSuggestion[] {
+}): Promise<DocSuggestion[]> {
   const { state, committedDoc, committedVersion, nextDraftDoc, hunks } = input;
   const previousById = new Map(
     input.previousRemainingRecords.map((record) => [record.suggestion.id, record]),
@@ -406,6 +429,19 @@ function rebuildPendingReviewAfterRebase(input: {
       baseSchemaVersion: committedDoc.attrs.schemaVersion,
     }),
   );
+
+  for (const suggestion of suggestions) {
+    await upsertDocumentSuggestion(suggestion);
+  }
+  const previousByBaseVersion = new Map<number, string[]>();
+  for (const record of input.previousRemainingRecords) {
+    const ids = previousByBaseVersion.get(record.suggestion.baseVersion) ?? [];
+    ids.push(record.suggestion.id);
+    previousByBaseVersion.set(record.suggestion.baseVersion, ids);
+  }
+  for (const [baseVersion, ids] of previousByBaseVersion) {
+    await ignoreRebasedDocumentSuggestions(state.docId, baseVersion, ids);
+  }
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
@@ -477,7 +513,7 @@ export async function* commitPatches(
       }
       if (rebase.status === "pending") {
         const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
-        const suggestions = rebuildPendingReviewAfterRebase({
+        const suggestions = await rebuildPendingReviewAfterRebase({
           state,
           committedDoc: currentPmDoc(state),
           committedVersion: state.docVersion,
@@ -831,7 +867,7 @@ export async function* commitPatches(
     }
     if (rebase.status === "pending") {
       const droppedIds = new Set(rebase.dropped.map((item) => item.record.suggestion.id));
-      const suggestions = rebuildPendingReviewAfterRebase({
+      const suggestions = await rebuildPendingReviewAfterRebase({
         state,
         committedDoc: result.doc,
         committedVersion: result.docVersion,

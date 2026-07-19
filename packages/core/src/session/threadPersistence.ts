@@ -23,7 +23,14 @@ import type {
 } from "./sessionState.js";
 import { sessionIdToTraceId } from "../agent-run/agentSpans.js";
 import type { Material } from "../types/material.js";
-import { documentRepo, type DocumentRow } from "@qingagent/db";
+import {
+  documentRepo,
+  type DocumentRow,
+} from "@qingagent/db";
+import {
+  DocumentWriteBlockedError,
+  setDocumentWriteGuard,
+} from "@qingagent/db/write-guard";
 import { deleteDocumentFamily } from "@qingagent/db";
 import {
   getMinDocumentSnapshotVersion,
@@ -889,17 +896,41 @@ const persistDirty = new Map<string, boolean>();
 const persistLoops = new Map<string, Promise<void>>();
 const pendingPersists = new Map<string, { state: SessionState; reason: string }>();
 const deletedSessions = new Set<string>();
+const deletedDocumentIds = new Set<string>();
+const deletedSessionDocuments = new Map<string, string>();
 
-export function markSessionDeleted(sessionId: string): void {
+function installDocumentWriteGuard(): void {
+  setDocumentWriteGuard((target) => {
+    if (
+      deletedDocumentIds.has(target.docId) ||
+      (target.threadId != null && deletedSessions.has(target.threadId))
+    ) {
+      throw new DocumentWriteBlockedError(target);
+    }
+  });
+}
+
+installDocumentWriteGuard();
+
+export function markSessionDeleted(sessionId: string, docId = sessionId): void {
   deletedSessions.add(sessionId);
+  deletedDocumentIds.add(docId);
+  deletedSessionDocuments.set(sessionId, docId);
 }
 
 export function unmarkSessionDeleted(sessionId: string): void {
   deletedSessions.delete(sessionId);
+  const docId = deletedSessionDocuments.get(sessionId);
+  if (docId) deletedDocumentIds.delete(docId);
+  deletedSessionDocuments.delete(sessionId);
 }
 
 export function isSessionDeleted(sessionId: string): boolean {
   return deletedSessions.has(sessionId);
+}
+
+export async function resolveSessionDocumentId(sessionId: string): Promise<string> {
+  return (await documentRepo.findIdByThreadId(sessionId)) ?? sessionId;
 }
 
 function hasDirtySession(): boolean {
@@ -1395,6 +1426,9 @@ export function __resetSessionPersistenceForTest(): void {
   persistLoops.clear();
   pendingPersists.clear();
   deletedSessions.clear();
+  deletedDocumentIds.clear();
+  deletedSessionDocuments.clear();
+  installDocumentWriteGuard();
 }
 
 export function __getSessionPersistenceStateForTest(): {

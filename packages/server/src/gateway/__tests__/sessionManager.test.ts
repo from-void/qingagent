@@ -212,7 +212,7 @@ describe("SessionManager", () => {
     });
 
     await expect(manager.destroySession("delete-failed")).rejects.toThrow("delete failed");
-    expect(markSessionDeleted).toHaveBeenCalledWith("delete-failed");
+    expect(markSessionDeleted).toHaveBeenCalledWith("delete-failed", "delete-failed");
     expect(unmarkSessionDeleted).toHaveBeenCalledWith("delete-failed");
 
     const resumed = await manager.submit("delete-failed", {
@@ -248,6 +248,43 @@ describe("SessionManager", () => {
     await destroy;
     await expect(manager.submit("deleting-state", {
       command: startExisting("deleting-state"),
+    })).rejects.toThrow("Session has been deleted");
+  });
+
+  it("destroySession 持久化排空超时后不立即物理删除，并在后台排空后补删", async () => {
+    const drainSessionPersistence = vi.fn()
+      .mockRejectedValueOnce(new Error("drain timed out"))
+      .mockResolvedValue(undefined);
+    const deleteSessionThread = vi.fn(async () => undefined);
+    const markSessionDeleted = vi.fn();
+    const manager = new SessionManager({
+      handleCommand: async function* () {
+        yield frame("drain-timeout");
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      resolveSessionDocumentId: vi.fn(async () => "doc-drain-timeout"),
+      markSessionDeleted,
+      drainSessionPersistence,
+      deleteSessionThread,
+      deletionRetryDelayMs: 20,
+    });
+
+    await manager.destroySession("drain-timeout", 5);
+
+    expect(markSessionDeleted).toHaveBeenCalledWith(
+      "drain-timeout",
+      "doc-drain-timeout",
+    );
+    expect(deleteSessionThread).not.toHaveBeenCalled();
+    await expect(manager.submit("drain-timeout", {
+      command: startExisting("drain-timeout"),
+    })).rejects.toThrow("Session deletion is in progress");
+
+    await vi.waitFor(() => expect(deleteSessionThread).toHaveBeenCalledTimes(1));
+    expect(drainSessionPersistence).toHaveBeenCalledTimes(2);
+    await expect(manager.submit("drain-timeout", {
+      command: startExisting("drain-timeout"),
     })).rejects.toThrow("Session has been deleted");
   });
 });

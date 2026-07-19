@@ -11,6 +11,7 @@ import {
   buildPmProjection,
   parsePmDoc,
 } from "@qingagent/db";
+import { assertDocumentWriteAllowed } from "@qingagent/db/write-guard";
 import {
   commitTransaction,
   rollbackTransaction,
@@ -449,6 +450,12 @@ export async function commitDocumentOp(
       contentHash,
     });
     const projection = buildPmProjection({ pmDoc: nextDoc });
+
+    assertDocumentWriteAllowed({
+      docId: input.docId,
+      threadId: input.threadId,
+      operation: "document.commit",
+    });
 
     if (creating) {
       await client.execute({

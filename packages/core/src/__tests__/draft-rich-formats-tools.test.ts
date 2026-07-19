@@ -208,6 +208,23 @@ describe("draft rich formats session-scoped tools", () => {
     });
   });
 
+  it("editDraft 跨类别 ops 严格按声明顺序执行", async () => {
+    const state = createSession("rich-tools-declared-order");
+    bindDoc(state, doc([paragraph("block-a", "旧字")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    const result = await editDraft.execute!({
+      ops: [
+        { action: "replaceText", find: "旧字", replace: "先改" },
+        { action: "replaceBlock", ref: "block-a", block: "<p>后改</p>" },
+      ],
+    }, ctx) as any;
+
+    expect(result.ok).toBe(true);
+    expect(result.applied).toEqual(["block-a", "block-a"]);
+    expect(pmToPlainText(state.docDraftCandidateDoc!)).toBe("后改");
+  });
+
   it("editDraft replaceBlock 对 taskList/callout/blockMath 坏 QingML 给出字段或 bad-block 错误", async () => {
     const cases: Array<{ name: string; block: string; field: string }> = [
       { name: "taskList", block: "<tasks></tasks>", field: "items" },

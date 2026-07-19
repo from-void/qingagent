@@ -53,6 +53,7 @@ const DISPOSED_ERROR = new Error("Session actor disposed");
 export class SessionActor {
   private readonly queue: QueueItem[] = [];
   private draining = false;
+  private drainPromise: Promise<void> | null = null;
   private current: QueueItem | null = null;
   private stateValue: SessionActorState = "idle";
 
@@ -107,11 +108,17 @@ export class SessionActor {
     }
   }
 
+  async disposeAndWait(): Promise<void> {
+    this.dispose();
+    await this.drainPromise;
+  }
+
   private startDrainLoop(): void {
     if (this.draining) return;
     this.draining = true;
-    void this.drainLoop().finally(() => {
+    this.drainPromise = this.drainLoop().finally(() => {
       this.draining = false;
+      this.drainPromise = null;
       if (this.queue.length > 0 && this.stateValue !== "disposed") {
         this.startDrainLoop();
       }

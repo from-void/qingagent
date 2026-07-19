@@ -1,5 +1,10 @@
 import type { Command } from "@qingagent/contract-ts";
 import type { ModelOverrides } from "@qingagent/core";
+import {
+  deleteSessionThread,
+  drainSessionPersistenceForSession,
+  markSessionDeleted,
+} from "@qingagent/core";
 import { InMemoryFrameLog, type FrameLog, type LoggedFrame } from "./frameLog";
 import {
   SessionActor,
@@ -13,6 +18,9 @@ export interface SessionManagerOptions {
   cleanupSession: (sessionId: string) => void | Promise<void>;
   frameLog?: FrameLog;
   maxActors?: number;
+  markSessionDeleted?: (sessionId: string) => void;
+  drainSessionPersistence?: (sessionId: string, timeoutMs: number) => Promise<void>;
+  deleteSessionThread?: (sessionId: string) => Promise<void>;
 }
 
 export interface SubmitCommandInput {
@@ -32,6 +40,7 @@ interface ActorEntry {
 export class SessionManager {
   readonly frameLog: FrameLog;
   private readonly actors = new Map<string, ActorEntry>();
+  private readonly destroyedSessions = new Set<string>();
   private readonly maxActors: number;
 
   constructor(private readonly options: SessionManagerOptions) {
@@ -40,6 +49,9 @@ export class SessionManager {
   }
 
   submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+    if (this.destroyedSessions.has(sessionId)) {
+      return Promise.reject(new Error("Session has been deleted"));
+    }
     const actor = this.getOrCreateActor(sessionId);
     return actor.enqueue(input);
   }
@@ -62,6 +74,47 @@ export class SessionManager {
   async disposeAll(): Promise<void> {
     const sessionIds = [...this.actors.keys()];
     await Promise.all(sessionIds.map((sessionId) => this.disposeSession(sessionId)));
+  }
+
+  async destroySession(sessionId: string, timeoutMs = 5_000): Promise<void> {
+    this.destroyedSessions.add(sessionId);
+    (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId);
+
+    const entry = this.actors.get(sessionId);
+    if (entry) {
+      try {
+        await withTimeout(entry.actor.disposeAndWait(), timeoutMs, "active turn");
+      } catch (error) {
+        console.warn("[sessionManager] active turn did not settle before deletion", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    this.actors.delete(sessionId);
+    this.frameLog.evict(sessionId);
+
+    try {
+      await this.options.cleanupSession(sessionId);
+    } catch (error) {
+      console.error("[sessionManager] cleanupSession failed during deletion", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      await (this.options.drainSessionPersistence ?? drainSessionPersistenceForSession)(
+        sessionId,
+        timeoutMs,
+      );
+    } catch (error) {
+      console.warn("[sessionManager] persistence did not drain before deletion", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
   }
 
   getActorState(sessionId: string): SessionActor["state"] | null {
@@ -126,4 +179,21 @@ export class SessionManager {
       void this.disposeSession(candidate[0]);
     }
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    if (typeof timer.unref === "function") timer.unref();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }

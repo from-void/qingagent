@@ -3,6 +3,7 @@ import type { AppUpdater } from "electron-updater";
 import { fetchUpdatePolicy, isBelowMinSupported, resolveUpdatePolicyUrl } from "./policy.js";
 import { runManualCheck, type CheckableUpdater } from "./manualCheck.js";
 import { RELEASES_URL, type UpdateStatusPayload } from "./updateTypes.js";
+import { UpdateStatusDispatcher } from "./updateStatusDispatcher.js";
 
 export { RELEASES_URL } from "./updateTypes.js";
 export type { UpdateStatusPayload } from "./updateTypes.js";
@@ -23,6 +24,7 @@ let cachedAutoUpdater: AppUpdater | null = null;
 // 常驻推送监听只挂一次:startDesktopUpdater 与 manualCheckForUpdates 共享同一个 autoUpdater,
 // 重复 configure 会叠加 .on 监听导致对渲染层重复推送。首配置后置真,后续只刷 feed/开关不再挂监听。
 let autoUpdaterConfigured = false;
+const updateStatusDispatcher = new UpdateStatusDispatcher();
 
 async function getAutoUpdater(): Promise<AppUpdater> {
   if (!cachedAutoUpdater) {
@@ -31,16 +33,11 @@ async function getAutoUpdater(): Promise<AppUpdater> {
   return cachedAutoUpdater;
 }
 
-function sendUpdateStatus(window: BrowserWindow, payload: UpdateStatusPayload): void {
-  if (window.isDestroyed()) return;
-  window.webContents.send("qingagent:update-status", payload);
-}
-
 function payloadVersion(info: UpdateInfoLike): string | undefined {
   return typeof info.version === "string" && info.version ? info.version : undefined;
 }
 
-function configureAutoUpdater(updater: AppUpdater, window: BrowserWindow, appVersion: string): void {
+function configureAutoUpdater(updater: AppUpdater, appVersion: string): void {
   updater.logger = console;
   updater.allowPrerelease = appVersion.includes("-beta");
   updater.autoDownload = process.platform !== "darwin";
@@ -57,14 +54,14 @@ function configureAutoUpdater(updater: AppUpdater, window: BrowserWindow, appVer
   updater.on("update-available", (info: UpdateInfoLike) => {
     const version = payloadVersion(info);
     if (process.platform === "darwin") {
-      sendUpdateStatus(window, { kind: "mac-manual", version, notesUrl: RELEASES_URL });
+      updateStatusDispatcher.dispatch({ kind: "mac-manual", version, notesUrl: RELEASES_URL });
       return;
     }
-    sendUpdateStatus(window, { kind: "soft-available", version, notesUrl: RELEASES_URL });
+    updateStatusDispatcher.dispatch({ kind: "soft-available", version, notesUrl: RELEASES_URL });
   });
 
   updater.on("update-downloaded", (event: UpdateInfoLike) => {
-    sendUpdateStatus(window, {
+    updateStatusDispatcher.dispatch({
       kind: "soft-ready",
       version: payloadVersion(event),
       notesUrl: RELEASES_URL,
@@ -72,22 +69,23 @@ function configureAutoUpdater(updater: AppUpdater, window: BrowserWindow, appVer
   });
 
   updater.on("update-not-available", () => {
-    sendUpdateStatus(window, { kind: "none" });
+    updateStatusDispatcher.dispatch({ kind: "none" });
   });
 
   updater.on("error", (err) => {
     console.warn("[update] check failed:", err);
-    sendUpdateStatus(window, { kind: "none" });
+    updateStatusDispatcher.dispatch({ kind: "none" });
   });
 }
 
 export async function startDesktopUpdater(options: StartDesktopUpdaterOptions): Promise<void> {
+  updateStatusDispatcher.setWindow(options.window);
   if (updaterStarted) return;
   updaterStarted = true;
 
   const appVersion = options.appVersion ?? app.getVersion();
   if (!app.isPackaged || appVersion.includes("-dev.")) {
-    sendUpdateStatus(options.window, { kind: "none" });
+    updateStatusDispatcher.dispatch({ kind: "none" });
     return;
   }
 
@@ -95,7 +93,7 @@ export async function startDesktopUpdater(options: StartDesktopUpdaterOptions): 
     options.policyUrl ?? resolveUpdatePolicyUrl(),
   );
   if (policy.minSupported && isBelowMinSupported(appVersion, policy.minSupported)) {
-    sendUpdateStatus(options.window, {
+    updateStatusDispatcher.dispatch({
       kind: "force",
       version: policy.minSupported,
       notesUrl: RELEASES_URL,
@@ -104,12 +102,12 @@ export async function startDesktopUpdater(options: StartDesktopUpdaterOptions): 
   }
 
   const updater = await getAutoUpdater();
-  configureAutoUpdater(updater, options.window, appVersion);
+  configureAutoUpdater(updater, appVersion);
   try {
     await updater.checkForUpdates();
   } catch (err) {
     console.warn("[update] check failed:", err);
-    sendUpdateStatus(options.window, { kind: "none" });
+    updateStatusDispatcher.dispatch({ kind: "none" });
   }
 }
 
@@ -119,6 +117,7 @@ export async function manualCheckForUpdates(options: {
   window: BrowserWindow;
   appVersion?: string;
 }): Promise<UpdateStatusPayload> {
+  updateStatusDispatcher.setWindow(options.window);
   const appVersion = options.appVersion ?? app.getVersion();
   // dev 短路:未打包/开发版直接 none,连 electron-updater 都不 import。
   if (!app.isPackaged || appVersion.includes("-dev.")) {
@@ -126,13 +125,13 @@ export async function manualCheckForUpdates(options: {
   }
 
   const updater = await getAutoUpdater();
-  configureAutoUpdater(updater, options.window, appVersion);
+  configureAutoUpdater(updater, appVersion);
   return runManualCheck({
     updater: updater as unknown as CheckableUpdater,
     platform: process.platform,
     appVersion,
     isPackaged: app.isPackaged,
-    onStatus: (payload) => sendUpdateStatus(options.window, payload),
+    onStatus: (payload) => updateStatusDispatcher.dispatch(payload),
   });
 }
 

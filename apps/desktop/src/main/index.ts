@@ -15,6 +15,10 @@ import {
   startDesktopUpdater,
 } from "./update/updater.js";
 import { isAllowedMainFrameNavigation } from "./navigationPolicy.js";
+import { acquireSingleInstanceLock } from "./singleInstance.js";
+
+let mainWindow: BrowserWindow | null = null;
+const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -244,7 +248,6 @@ const { attachRendererTelemetry } = await import("./telemetry/injectRenderer.js"
   }
 }
 
-let mainWindow: BrowserWindow | null = null;
 let appOpenedCaptured = false;
 const appStartedAt = Date.now();
 let embeddedServerPort: number | null = null;
@@ -600,7 +603,7 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
   app.commandLine.appendSwitch("enable-features", "PlatformVk,SkiaGraphite");
 }
 
-app.whenReady().then(async () => {
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // safeStorage 仅在 app ready 后可靠；同时必须早于 createWindow() 内 startServer()，保证
   // server/core 业务模块首次读取凭据前 provider 已装配。Linux basic_text 不冒充 keychain。
   const credentialKeyState = await configureDesktopCredentialKeyProvider({
@@ -649,6 +652,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
+  if (!hasSingleInstanceLock) return;
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }

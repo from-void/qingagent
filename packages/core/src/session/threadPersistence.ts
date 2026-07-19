@@ -888,6 +888,15 @@ const persistQueues = new Map<string, Promise<void>>();
 const persistDirty = new Map<string, boolean>();
 const persistLoops = new Map<string, Promise<void>>();
 const pendingPersists = new Map<string, { state: SessionState; reason: string }>();
+const deletedSessions = new Set<string>();
+
+export function markSessionDeleted(sessionId: string): void {
+  deletedSessions.add(sessionId);
+}
+
+export function isSessionDeleted(sessionId: string): boolean {
+  return deletedSessions.has(sessionId);
+}
 
 function hasDirtySession(): boolean {
   for (const dirty of persistDirty.values()) {
@@ -1081,6 +1090,10 @@ export async function persistSessionMetadata(
       if (!memory) return;
 
       await waitForInitialThreadCreate(state, reason);
+      if (isSessionDeleted(sid)) {
+        logger.info("Skipping metadata persist for deleted session", { sessionId: sid, reason });
+        return;
+      }
       const meta = serializeMetadata(state);
       // Layer ④ — DB 写入审计：从「即将写入的 meta」快照关键字段（在 await 之前，
       // 锁定本次真正写库的值），避免 await 期间 state 并发修改导致基线漂移。
@@ -1099,6 +1112,13 @@ export async function persistSessionMetadata(
         );
       } catch (err) {
         if (!isThreadNotFoundError(err)) throw err;
+        if (isSessionDeleted(sid)) {
+          logger.info("Refusing to recreate deleted session thread", {
+            sessionId: sid,
+            reason,
+          });
+          return;
+        }
         logger.warn("Primary metadata update missed thread; falling back to saveThread", {
           sessionId: state.sessionId,
           reason,
@@ -1115,6 +1135,14 @@ export async function persistSessionMetadata(
             metadata: meta as unknown as Record<string, unknown>,
           },
         });
+      }
+
+      if (isSessionDeleted(sid)) {
+        logger.info("Skipping derived documents persist for deleted session", {
+          sessionId: sid,
+          reason,
+        });
+        return;
       }
 
       // 0702 review Lane A:影子写必须整体使用 serializeMetadata 时刻的快照(meta.doc),
@@ -1183,6 +1211,9 @@ export async function persistSessionMetadata(
 
 export function schedulePersist(state: SessionState, reason = "unspecified"): Promise<void> {
   const sid = state.sessionId;
+  if (isSessionDeleted(sid)) {
+    return Promise.resolve();
+  }
   persistDirty.set(sid, true);
   pendingPersists.set(sid, { state, reason });
 
@@ -1201,8 +1232,17 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
     let exhaustedRetries = false;
     try {
       while (persistDirty.get(sid)) {
+        if (isSessionDeleted(sid)) {
+          persistDirty.set(sid, false);
+          break;
+        }
         let lastError: unknown;
         for (let attempt = 1; attempt <= SCHEDULE_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+          if (isSessionDeleted(sid)) {
+            persistDirty.set(sid, false);
+            lastError = undefined;
+            break;
+          }
           // 写前清除本轮快照的 dirty；写入期间的新变更会重新置 dirty。失败时必须
           // 立即回置，确保未保存标记不会被当成成功清掉。
           persistDirty.set(sid, false);
@@ -1212,6 +1252,11 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
             break;
           } catch (err) {
             lastError = err;
+            if (isSessionDeleted(sid)) {
+              persistDirty.set(sid, false);
+              lastError = undefined;
+              break;
+            }
             persistDirty.set(sid, true);
             if (attempt < SCHEDULE_PERSIST_MAX_ATTEMPTS) {
               await retryDelay(SCHEDULE_PERSIST_INITIAL_BACKOFF_MS * 2 ** (attempt - 1));
@@ -1300,11 +1345,52 @@ export async function drainSessionPersistence(timeoutMs = 4_000): Promise<void> 
   }
 }
 
+export async function drainSessionPersistenceForSession(
+  sessionId: string,
+  timeoutMs = 4_000,
+): Promise<void> {
+  const drain = async () => {
+    while (true) {
+      let pending = [persistLoops.get(sessionId), persistQueues.get(sessionId)].filter(
+        (promise): promise is Promise<void> => Boolean(promise),
+      );
+      if (pending.length === 0 && !persistDirty.get(sessionId)) return;
+      if (pending.length === 0) {
+        if (isSessionDeleted(sessionId)) {
+          persistDirty.delete(sessionId);
+          pendingPersists.delete(sessionId);
+          return;
+        }
+        const deferred = pendingPersists.get(sessionId);
+        if (deferred) {
+          void schedulePersist(deferred.state, deferred.reason).catch(() => {
+            // 下轮 allSettled 消费拒绝；此处只封住 fire-and-forget 窗口。
+          });
+          pending = [persistLoops.get(sessionId), persistQueues.get(sessionId)].filter(
+            (promise): promise is Promise<void> => Boolean(promise),
+          );
+        }
+      }
+      if (pending.length === 0) {
+        await Promise.resolve();
+        continue;
+      }
+      await Promise.allSettled(pending);
+    }
+  };
+
+  await Promise.race([
+    drain(),
+    timeoutPromise(timeoutMs, `drainSessionPersistenceForSession(${sessionId})`),
+  ]);
+}
+
 export function __resetSessionPersistenceForTest(): void {
   persistQueues.clear();
   persistDirty.clear();
   persistLoops.clear();
   pendingPersists.clear();
+  deletedSessions.clear();
 }
 
 export function __getSessionPersistenceStateForTest(): {
@@ -1395,6 +1481,7 @@ export async function loadSessionFromThread(
   sessionId: string,
   options: { preferredAskUserToolCallId?: string | null } = {},
 ): Promise<SessionState | null> {
+  if (isSessionDeleted(sessionId)) return null;
   const memory = mastra.getMemory("default");
   if (!memory) return null;
 

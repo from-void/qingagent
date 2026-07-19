@@ -278,6 +278,29 @@ describe("schedulePersist dirty-loop", () => {
     });
   });
 
+  it("主写失败期间立墓碑会停止退避重试并清理 dirty", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      __getSessionPersistenceStateForTest,
+      markSessionDeleted,
+      schedulePersist,
+    } = await import("../session/threadPersistence.js");
+    const state = createSession("schedule-deleted-during-failure");
+    memory.updateThread.mockImplementationOnce(async () => {
+      markSessionDeleted(state.sessionId);
+      throw new Error("primary write failed after deletion");
+    });
+
+    await expect(schedulePersist(state, "stream_end")).resolves.toBeUndefined();
+
+    expect(memory.updateThread).toHaveBeenCalledTimes(1);
+    expect(__getSessionPersistenceStateForTest()).toEqual({
+      queueCount: 0,
+      dirtyCount: 0,
+      loopCount: 0,
+    });
+  });
+
   it("主写重试耗尽后拒绝调用方并保留 dirty", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const {

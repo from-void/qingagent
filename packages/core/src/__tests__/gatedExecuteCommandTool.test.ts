@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "@mastra/core/workspace";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -240,6 +240,79 @@ describe("gated execute_command tool cwd 约束", () => {
     expect(result).toBe("ok");
     expect(executeCalls).toHaveLength(1);
     expect(executeCalls[0]?.timeout).toBe(7_000);
+  });
+
+  it("P1-4 回归:前台命令安静运行 120 秒时用心跳避免 90 秒 idle 看门狗误杀", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetIdleWatchdog = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => controller.abort(), 90_000);
+    };
+    resetIdleWatchdog();
+
+    const workspace = {
+      sandbox: {
+        executeCommand: async (
+          _command: string,
+          _args: string[],
+          options: SandboxExecuteOptions,
+        ) => await new Promise<{
+          success: boolean;
+          exitCode: number;
+          stdout: string;
+          stderr: string;
+          executionTimeMs: number;
+        }>((resolveCommand, rejectCommand) => {
+          const commandTimer = setTimeout(() => {
+            resolveCommand({
+              success: true,
+              exitCode: 0,
+              stdout: "ok\n",
+              stderr: "",
+              executionTimeMs: 120_000,
+            });
+          }, 120_000);
+          options.abortSignal?.addEventListener("abort", () => {
+            clearTimeout(commandTimer);
+            rejectCommand(new Error("idle watchdog aborted command"));
+          }, { once: true });
+        }),
+      },
+    } as unknown as Workspace;
+    const tool = createGatedExecuteCommandTool({
+      sessionId: "gated-heartbeat-quiet-command",
+      getWorkspace: async () => workspace,
+      resolveCredentialEnv: () => ({}),
+    });
+    const writer = {
+      write: vi.fn(() => resetIdleWatchdog()),
+      custom: vi.fn(),
+    };
+
+    try {
+      if (!tool.execute) throw new Error("execute missing");
+      const execution = tool.execute(
+        { command: allowedFileCommand, timeout: 120 },
+        {
+          toolCallId: "gated-heartbeat-test",
+          messages: [],
+          abortSignal: controller.signal,
+          writer,
+          agent: { toolCallId: "gated-heartbeat-test" },
+        } as never,
+      ) as Promise<string>;
+
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(await execution).toBe("ok");
+      expect(controller.signal.aborted).toBe(false);
+      expect(writer.write).toHaveBeenCalled();
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+      vi.useRealTimers();
+    }
   });
 
   it("Gap4 回归:前台 executeCommand 显式设置输出保留上限", async () => {

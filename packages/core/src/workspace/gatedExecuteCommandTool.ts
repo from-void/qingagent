@@ -3,6 +3,7 @@ import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
 import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
+import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
 import {
   SANDBOX_TIMEOUT_MS,
@@ -165,6 +166,9 @@ export function createGatedExecuteCommandTool({
       }
 
       if (!sandbox.executeCommand) return "命令已被拒绝: 当前沙箱不支持命令执行";
+      const stopHeartbeat = startToolHeartbeat(context, {
+        tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
+      });
       const startedAt = Date.now();
       try {
         const result = await sandbox.executeCommand(input.command, [], {
@@ -209,6 +213,8 @@ export function createGatedExecuteCommandTool({
           },
         });
         return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        stopHeartbeat();
       }
     },
   });

@@ -26,6 +26,14 @@ const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(
 const TEXT_SECRET_HEADER_RE = /\b(authorization|x-api-key)\b(\s*[:=]\s*)(?:Bearer\s+)?[^\s"',;}\]]+/gi;
 const SK_TOKEN_RE = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/g;
 
+interface RestoreInflightState {
+  epoch: number;
+  resetSeq: number;
+  promise: Promise<void>;
+}
+
+const restoreInflight = new Map<string, RestoreInflightState>();
+
 export function redactStreamErrorForLog(error: unknown): string {
   const raw = error instanceof Error ? error.stack ?? error.message : String(error);
   return raw
@@ -318,20 +326,35 @@ streamRoutes.get("/events", (c) => {
   });
 });
 
-function appendRestoreSnapshot(sessionId: string, epoch: number): number {
+function appendRestoreSnapshot(sessionId: string, requestedEpoch: number): number {
+  // readFrom 与真正追加之间若会话刚好被驱逐，必须以当前 epoch 为准；同一会话
+  // 同一 epoch 的并发重连复用首个恢复，避免重复广播 reset + snapshot。
+  const currentEpoch = sessionManager.frameLog.getEpoch(sessionId);
+  const epoch = currentEpoch === requestedEpoch ? requestedEpoch : currentEpoch;
+  const inflight = restoreInflight.get(sessionId);
+  if (inflight?.epoch === epoch) return inflight.resetSeq - 1;
+
   const snapshotSeq = sessionManager.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER).nextSeq;
   const resetFrame: BridgeFrame = {
     kind: "restoreReset",
     data: { epoch, snapshotSeq },
   };
   const resetSeq = sessionManager.frameLog.append(sessionId, resetFrame) ?? snapshotSeq;
-  void collectRestoreFrames(sessionId)
+  const state: RestoreInflightState = {
+    epoch,
+    resetSeq,
+    promise: Promise.resolve(),
+  };
+  state.promise = collectRestoreFrames(sessionId)
     .then((frames) => {
       for (const frame of frames) {
+        // 恢复期间会话被驱逐/重建时，旧快照不得串入新 epoch。
+        if (sessionManager.frameLog.getEpoch(sessionId) !== epoch) return;
         sessionManager.frameLog.append(sessionId, frame);
       }
     })
     .catch((error) => {
+      if (sessionManager.frameLog.getEpoch(sessionId) !== epoch) return;
       console.error("[events] restore snapshot failed:", redactStreamErrorForLog(error));
       sessionManager.frameLog.append(sessionId, {
         kind: "stream",
@@ -344,7 +367,14 @@ function appendRestoreSnapshot(sessionId: string, epoch: number): number {
           },
         },
       });
+    })
+    .finally(() => {
+      if (restoreInflight.get(sessionId) === state) {
+        restoreInflight.delete(sessionId);
+      }
     });
+  restoreInflight.set(sessionId, state);
+  void state.promise;
   return resetSeq - 1;
 }
 

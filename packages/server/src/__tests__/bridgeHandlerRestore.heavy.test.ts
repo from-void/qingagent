@@ -697,6 +697,36 @@ describe("handleCommand existing-session restore", () => {
     expect(resetFrame.data.snapshotSeq).toBeGreaterThanOrEqual(0);
   });
 
+  it("同一旧消息重复恢复时派生稳定且互不冲突的消息 ID", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    session.docState = { kind: "editing" };
+    session.chatHistory = [];
+    session.messages = [
+      { role: "user", content: "第一条旧消息" },
+      { role: "assistant", content: "第二条旧消息" },
+    ] as never;
+
+    const restore = async () => {
+      const frames = await collectFrames(
+        bridge.handleCommand({
+          kind: "startSession",
+          data: { mode: { kind: "existing", data: { id: session.sessionId } } },
+        }),
+      );
+      return frames
+        .filter((frame) => frame.kind === "chatMessageAdded")
+        .map((frame) => frame.kind === "chatMessageAdded" ? frame.data.message.id : "");
+    };
+
+    const firstIds = await restore();
+    const secondIds = await restore();
+
+    expect(firstIds).toHaveLength(2);
+    expect(new Set(firstIds).size).toBe(2);
+    expect(secondIds).toEqual(firstIds);
+  });
+
   it("恢复时同 id 的 Mastra 裸文本不能覆盖 actionCard 展示消息", async () => {
     const bridge = await loadBridge();
     const session = await createCachedSession(bridge);

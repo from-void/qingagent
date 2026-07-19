@@ -289,8 +289,7 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
   const flattened = modelNodes(parsed.model);
   if (flattened.length === 0) return null;
   const layout = layoutNodes(flattened, edges, overlay);
-  const width = Math.max(420, ...Object.values(layout).map((p) => p.x + 180)) + 32;
-  const height = Math.max(240, ...Object.values(layout).map((p) => p.y + 92)) + 32;
+  const bounds = graphSvgBounds(flattened, edges, layout, overlay);
   const nodeSvg = flattened
     .map((node) => renderSvgNode(node.id, node.label, layout[node.id] ?? { x: 24, y: 24 }, overlay?.styles?.[node.id]))
     .join("");
@@ -298,7 +297,7 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
     .filter((edge) => layout[edge.source] && layout[edge.target])
     .map((edge) => renderSvgEdge(edge, layout[edge.source]!, layout[edge.target]!, overlay?.edgeStyles?.[edge.id]))
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(width)} ${Math.ceil(height)}" role="img">${svgDefs()}<rect width="100%" height="100%" fill="#faf6ec"/>${edgeSvg}${nodeSvg}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs()}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${edgeSvg}${nodeSvg}</svg>`;
 }
 
 function makeFlowchartAdapter(): DiagramAdapter {
@@ -1342,11 +1341,15 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
       .map((line) => (line.trim() ? `${" ".repeat(Math.max(0, (line.match(/^\s*/)?.[0].length ?? 0) + delta))}${line.trimStart()}` : line))
       .join("");
     const without = source.slice(0, oldStart) + source.slice(oldEnd);
-    const adjustedParent = parseMindmap(without);
-    const adjustedTree = adjustedParent.model as MindmapTree;
-    const nextParent = flattenMindmap(adjustedTree.root).find((n) => n.id === op.newParentId);
-    if (!nextParent) return { ok: false, source, error: "移动后找不到父节点" };
-    const insertAt = subtreeEnd(without, nextParent);
+    // 派生 id 会随同名兄弟的序号变化；删除后不再用旧 id 回找父节点，而按删除前记录的
+    // 源码位置校正偏移。显式 Mermaid id/形状文本原样保留，也走同一稳定源码位置。
+    const removedLength = oldEnd - oldStart;
+    const parentStart = parent.line.start >= oldEnd ? parent.line.start - removedLength : parent.line.start;
+    const parentAtAdjustedPosition: MindNode = {
+      ...parent,
+      line: { start: parentStart, end: parentStart + (parent.line.end - parent.line.start) },
+    };
+    const insertAt = subtreeEnd(without, parentAtAdjustedPosition);
     return { ok: true, source: insertAtLineBoundary(without, insertAt, shifted) };
   }
   return unsupportedRewrite(source, op.kind);
@@ -1795,27 +1798,115 @@ function svgDefs(): string {
   return `<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#8d7447"/></marker></defs>`;
 }
 
+const SVG_NODE_WIDTH = 160;
+const SVG_NODE_HEIGHT = 64;
+const SVG_PADDING = 32;
+
+type SvgBounds = { minX: number; minY: number; maxX: number; maxY: number };
+
+function textWidth(text: string, fontSize: number): number {
+  return Array.from(text).reduce((width, char) => width + (/[\u0000-\u00ff]/.test(char) ? fontSize * (char === " " ? 0.35 : 0.62) : fontSize), 0);
+}
+
+function wrapNodeLabel(label: string, fontSize: number): string[] {
+  const maxWidth = SVG_NODE_WIDTH - 16;
+  const lines: string[] = [];
+  let line = "";
+  for (const char of Array.from(label)) {
+    if (char === "\n") {
+      lines.push(line);
+      line = "";
+      continue;
+    }
+    if (line && textWidth(line + char, fontSize) > maxWidth) {
+      lines.push(line);
+      line = char;
+    } else {
+      line += char;
+    }
+  }
+  lines.push(line);
+  if (lines.length <= 2) return lines;
+  let last = lines[1] ?? "";
+  while (last && textWidth(`${last}…`, fontSize) > maxWidth) last = last.slice(0, -1);
+  return [lines[0] ?? "", `${last}…`];
+}
+
+function edgeGeometry(from: { x: number; y: number }, to: { x: number; y: number }) {
+  const x1 = from.x + SVG_NODE_WIDTH;
+  const y1 = from.y + SVG_NODE_HEIGHT / 2;
+  const x2 = to.x;
+  const y2 = to.y + SVG_NODE_HEIGHT / 2;
+  return { x1, y1, x2, y2, c1x: x1 + 40, c2x: x2 - 40 };
+}
+
+function graphSvgBounds(
+  nodes: BaseNode[],
+  edges: BaseEdge[],
+  layout: Record<string, { x: number; y: number }>,
+  overlay: DiagramOverlay | null | undefined,
+): { minX: number; minY: number; width: number; height: number } {
+  const bounds: SvgBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const include = (minX: number, minY: number, maxX: number, maxY: number) => {
+    bounds.minX = Math.min(bounds.minX, minX);
+    bounds.minY = Math.min(bounds.minY, minY);
+    bounds.maxX = Math.max(bounds.maxX, maxX);
+    bounds.maxY = Math.max(bounds.maxY, maxY);
+  };
+  for (const node of nodes) {
+    const pos = layout[node.id]!;
+    const stroke = typeof overlay?.styles?.[node.id]?.strokeWidth === "number" ? Math.max(1, Math.min(8, overlay.styles[node.id]!.strokeWidth!)) : 1.5;
+    include(pos.x - stroke / 2, pos.y - stroke / 2, pos.x + SVG_NODE_WIDTH + stroke / 2, pos.y + SVG_NODE_HEIGHT + stroke / 2);
+  }
+  for (const edge of edges) {
+    const from = layout[edge.source];
+    const to = layout[edge.target];
+    if (!from || !to) continue;
+    const path = edgeGeometry(from, to);
+    include(Math.min(path.x1, path.x2, path.c1x, path.c2x), Math.min(path.y1, path.y2), Math.max(path.x1, path.x2, path.c1x, path.c2x), Math.max(path.y1, path.y2));
+    if (edge.label) {
+      const centerX = (path.x1 + path.x2) / 2;
+      const baseline = (path.y1 + path.y2) / 2 - 6;
+      const halfWidth = textWidth(edge.label, 12) / 2;
+      include(centerX - halfWidth, baseline - 12, centerX + halfWidth, baseline + 3);
+    }
+  }
+  let minX = bounds.minX - SVG_PADDING;
+  let minY = bounds.minY - SVG_PADDING;
+  let width = bounds.maxX - bounds.minX + SVG_PADDING * 2;
+  let height = bounds.maxY - bounds.minY + SVG_PADDING * 2;
+  if (width < 420) {
+    minX -= (420 - width) / 2;
+    width = 420;
+  }
+  if (height < 240) {
+    minY -= (240 - height) / 2;
+    height = 240;
+  }
+  return { minX: Math.floor(minX), minY: Math.floor(minY), width: Math.ceil(width), height: Math.ceil(height) };
+}
+
 function renderSvgNode(id: string, label: string, pos: { x: number; y: number }, style: NodeStyleOverride | undefined): string {
   const fill = sanitizeColor(style?.fill) ?? "#efe3cc";
   const stroke = sanitizeColor(style?.stroke) ?? "#b08a3e";
   const textColor = sanitizeColor(style?.textColor) ?? "#2f2a22";
   const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.5;
   const fontSize = typeof style?.fontSize === "number" ? Math.max(9, Math.min(28, style.fontSize)) : 14;
-  return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="160" height="64" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text x="${pos.x + 80}" y="${pos.y + 38}" text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="Noto Serif SC, Songti SC, serif">${escapeXml(label)}</text></g>`;
+  const lines = wrapNodeLabel(label, fontSize);
+  const firstBaseline = pos.y + (lines.length === 1 ? 38 : 28);
+  const text = lines.map((line, index) => `<tspan x="${pos.x + SVG_NODE_WIDTH / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
+  return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="${SVG_NODE_WIDTH}" height="${SVG_NODE_HEIGHT}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="Noto Serif SC, Songti SC, serif">${text}</text></g>`;
 }
 
 function renderSvgEdge(edge: BaseEdge, from: { x: number; y: number }, to: { x: number; y: number }, style: EdgeStyleOverride | undefined): string {
   const stroke = sanitizeColor(style?.stroke) ?? "#8d7447";
   const textColor = sanitizeColor(style?.textColor) ?? "#5c5346";
   const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.4;
-  const x1 = from.x + 160;
-  const y1 = from.y + 32;
-  const x2 = to.x;
-  const y2 = to.y + 32;
+  const { x1, y1, x2, y2, c1x, c2x } = edgeGeometry(from, to);
   const label = edge.label
     ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="Noto Serif SC, Songti SC, serif">${escapeXml(edge.label)}</text>`
     : "";
-  return `<g data-edge-id="${escapeXml(edge.id)}"><path d="M${x1} ${y1} C${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" marker-end="url(#arrow)"/>${label}</g>`;
+  return `<g data-edge-id="${escapeXml(edge.id)}"><path d="M${x1} ${y1} C${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" marker-end="url(#arrow)"/>${label}</g>`;
 }
 
 function escapeXml(value: string): string {

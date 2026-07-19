@@ -350,6 +350,9 @@ export function useWorkspacePageController() {
   const flushPendingDocSaveRef = useRef<() => Promise<void>>(() =>
     Promise.resolve(),
   );
+  const preparePageExitDocSaveRef = useRef<() => (() => void) | null>(
+    () => null,
+  );
   const reducedMotionRef = useRef(false);
   stateRef.current = state;
   sessionIdRef.current = state.sessionId ?? sessionIdRef.current;
@@ -1807,10 +1810,40 @@ export function useWorkspacePageController() {
       // 避免误杀首轮在途 SSE；真实离开工作区时定时器会关闭客户端通道。
       const streamToDispose = streamRef.current;
       if (!streamToDispose) return;
+      // 子编辑器随后卸载会把 400ms 防抖正文推入保存队列；先同步捕获当前正文，
+      // 供正常 flush 失败/超时时走 beacon/keepalive，避免编辑器销毁后无法取回内容。
+      const fallbackDocSave = preparePageExitDocSaveRef.current();
       streamDisposeTimerRef.current = setTimeout(() => {
         streamDisposeTimerRef.current = null;
-        streamToDispose.dispose();
-        if (streamRef.current === streamToDispose) streamRef.current = null;
+        if (!fallbackDocSave) {
+          streamToDispose.dispose();
+          if (streamRef.current === streamToDispose) streamRef.current = null;
+          return;
+        }
+        void (async () => {
+          let timeout: ReturnType<typeof setTimeout> | null = null;
+          try {
+            await Promise.race([
+              flushPendingDocSaveRef.current(),
+              new Promise<never>((_, reject) => {
+                timeout = setTimeout(
+                  () => reject(new Error("workspace exit doc save timed out")),
+                  300,
+                );
+              }),
+            ]);
+          } catch (error) {
+            console.error(
+              "[workspace] failed to flush updateDoc before workspace exit",
+              error,
+            );
+            fallbackDocSave();
+          } finally {
+            if (timeout !== null) clearTimeout(timeout);
+            streamToDispose.dispose();
+            if (streamRef.current === streamToDispose) streamRef.current = null;
+          }
+        })();
       }, 75);
     };
   }, [
@@ -2087,6 +2120,7 @@ export function useWorkspacePageController() {
     handleCreateBlankDoc,
     handleEditorChange,
     handleFillTemplate,
+    preparePageExitDocSave,
   } = useWorkspaceDocumentEditor({
     tiptapEditor,
     tiptapEditorRef,
@@ -2118,6 +2152,7 @@ export function useWorkspacePageController() {
     waitForPendingDocSaveDrain,
   });
   flushPendingDocSaveRef.current = flushPendingDocSave;
+  preparePageExitDocSaveRef.current = preparePageExitDocSave;
 
   const clearPresentationRun = useCallback(() => {
     setPresentationRun(null);

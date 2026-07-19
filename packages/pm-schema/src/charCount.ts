@@ -9,10 +9,10 @@ export function countVisibleChars(text: string): number {
   return Array.from(normalized).length;
 }
 
-/** 不含标点口径:只数汉字、字母、数字。 */
+/** 不含标点口径:只数 Unicode 字母与数字。 */
 export function countCharsNoPunct(text: string): number {
   const normalized = text.normalize("NFC").replace(/\s+/gu, "");
-  return Array.from(normalized).filter((ch) => /\p{Script=Han}|[A-Za-z0-9]/u.test(ch)).length;
+  return Array.from(normalized).filter((ch) => /[\p{L}\p{N}]/u.test(ch)).length;
 }
 
 /** 对整篇 PmDoc 按可见字符口径计数(经 pmToPlainText 提取正文)。

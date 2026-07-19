@@ -46,6 +46,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   act(() => root.unmount());
   host.remove();
+  vi.useRealTimers();
 });
 
 function renderDoc(doc: PmDoc, version: number, onEditorReady?: (editor: Editor | null) => void) {
@@ -264,6 +265,47 @@ function nodeViewDoc(): PmDoc {
 }
 
 describe("DocumentSnapshotView setContent 延迟装载", () => {
+  it("400ms 防抖未到时卸载会补发当前编辑内容", async () => {
+    let editor: Editor | null = null;
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    act(() => {
+      root.render(
+        <DocumentSnapshotView
+          doc={pmDocToViewDocumentSnapshot(paragraphDoc("初始正文"), 1)}
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={onEditorChange}
+        />,
+      );
+    });
+    await flush();
+    expect(editor).not.toBeNull();
+    onEditorChange.mockClear();
+    vi.useFakeTimers();
+
+    act(() => {
+      editor!.commands.setContent(paragraphDoc("卸载前新内容"));
+    });
+    expect(onEditorChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.render(<div />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onEditorChange).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(onEditorChange.mock.calls[0]?.[0])).toContain(
+      "卸载前新内容",
+    );
+  });
+
   it("载入含重复 blockId 的存量 PmDoc 后只自愈并保存一次，随后 AI 编辑可用", async () => {
     let editor: Editor | null = null;
     const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);

@@ -25,51 +25,69 @@ interface SessionStore {
   addSession: (session: SessionMeta) => void;
 }
 
-export const useSessionStore = create<SessionStore>((set, get) => ({
-  sessions: [],
-  currentSessionId: null,
-  currentSessionTitle: null,
-  isLoading: false,
-  error: null,
+export const useSessionStore = create<SessionStore>((set, get) => {
+  let latestFetchRequest = 0;
+  const deletedSessionIds = new Set<string>();
 
-  fetchSessions: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const res = await fetch("/api/v1/home");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const feed = await res.json();
-      set({ sessions: feed.recent_sessions, isLoading: false });
-    } catch (err) {
+  return {
+    sessions: [],
+    currentSessionId: null,
+    currentSessionTitle: null,
+    isLoading: false,
+    error: null,
+
+    fetchSessions: async () => {
+      const requestId = ++latestFetchRequest;
+      set({ isLoading: true, error: null });
+      try {
+        const res = await fetch("/api/v1/home");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const feed = await res.json();
+        if (requestId !== latestFetchRequest) return;
+        set({
+          sessions: (feed.recent_sessions as SessionMeta[]).filter(
+            (session) => !deletedSessionIds.has(session.id),
+          ),
+          isLoading: false,
+        });
+      } catch (err) {
+        if (requestId !== latestFetchRequest) return;
+        set({
+          error: err instanceof Error ? err.message : "Failed to load sessions",
+          isLoading: false,
+        });
+      }
+    },
+
+    setCurrentSession: (id, title) =>
       set({
-        error: err instanceof Error ? err.message : "Failed to load sessions",
+        currentSessionId: id,
+        currentSessionTitle: title ?? null,
+      }),
+
+    removeSession: async (id) => {
+      const res = await fetch(`/api/v1/sessions/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error("删除失败，请稍后重试");
+      }
+      deletedSessionIds.add(id);
+      latestFetchRequest += 1;
+      set({
+        sessions: get().sessions.filter((s) => s.id !== id),
         isLoading: false,
       });
-    }
-  },
+    },
 
-  setCurrentSession: (id, title) =>
-    set({
-      currentSessionId: id,
-      currentSessionTitle: title ?? null,
-    }),
+    updateSessionTitle: (id, title) =>
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === id ? { ...s, title } : s,
+        ),
+        currentSessionTitle:
+          state.currentSessionId === id ? title : state.currentSessionTitle,
+      })),
 
-  removeSession: async (id) => {
-    const res = await fetch(`/api/v1/sessions/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      throw new Error("删除失败，请稍后重试");
-    }
-    set({ sessions: get().sessions.filter((s) => s.id !== id) });
-  },
-
-  updateSessionTitle: (id, title) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, title } : s,
-      ),
-      currentSessionTitle:
-        state.currentSessionId === id ? title : state.currentSessionTitle,
-    })),
-
-  addSession: (session) =>
-    set({ sessions: [session, ...get().sessions] }),
-}));
+    addSession: (session) =>
+      set({ sessions: [session, ...get().sessions] }),
+  };
+});

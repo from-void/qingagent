@@ -664,6 +664,9 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       if (updateTimerRef.current) {
         clearTimeout(updateTimerRef.current);
         updateTimerRef.current = null;
+        void forwardCurrentEditorDoc().catch((error) => {
+          console.error("[doc] unmount save flush failed", error);
+        });
       }
     };
   }, [editor, forwardCurrentEditorDoc, onEditorChange]);

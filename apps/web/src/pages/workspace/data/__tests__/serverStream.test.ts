@@ -225,7 +225,7 @@ describe("ServerStream", () => {
     });
   });
 
-  it("dispose() only detaches EventSource and clears listeners", async () => {
+  it("dispose() detaches EventSource and clears listeners", async () => {
     globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
     const stream = new ServerStream();
     const frames: BridgeFrame[] = [];
@@ -240,6 +240,28 @@ describe("ServerStream", () => {
     expect(source.closed).toBe(true);
     source.emitFrame({ kind: "restoreReset", data: { epoch: 1, snapshotSeq: 2 } }, "2");
     expect(frames).toHaveLength(1);
+  });
+
+  it("dispose() aborts active client requests without sending a cancel command", async () => {
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        requestSignal = init?.signal ?? undefined;
+        requestSignal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      }));
+    const stream = new ServerStream();
+    const promise = stream.startSession({
+      mode: { kind: "new", data: { template: null } },
+    });
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+
+    stream.dispose();
+
+    expect(requestSignal?.aborted).toBe(true);
+    await expect(promise).rejects.toThrow("startSession aborted before sessionMeta received");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("sendCommand with sendMessage posts to /commands and includes fileIds", async () => {

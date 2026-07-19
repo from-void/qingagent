@@ -163,6 +163,7 @@ class ManagedApiProvider implements SearchProvider {
     try {
       return await this.provider.search(query, count, options);
     } catch (err) {
+      if (options?.signal?.aborted) return [];
       if (err instanceof SearchProviderError) {
         recordSearchProviderError(this.id, err.kind);
       }

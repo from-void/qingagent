@@ -66,6 +66,7 @@ export class DuckDuckGoProvider implements SearchProvider {
         );
         if (results.length > 0) return results;
       } catch (err) {
+        if (options?.signal?.aborted) return [];
         if (isConnectionFailure(err)) {
           markSearchProviderQuota("ddg", 10 * 60 * 1000);
         }

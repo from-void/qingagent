@@ -567,4 +567,52 @@ describe("pending draft rehydrate", () => {
     expect(Number(badOps.rows[0]?.c ?? 0)).toBe(0);
     await expect(listVersions(sessionId)).resolves.toHaveLength(0);
   });
+
+  it("snapshot 恢复跳过首稿候选提交与草稿清理", async () => {
+    const sessionId = "rehy-first-snapshot";
+    const draft = doc([paragraph("block-first", "只读首稿")]);
+    const frozenThreadTime = "2025-01-02T03:04:05.000Z";
+    threads.set(sessionId, {
+      id: sessionId,
+      title: "只读恢复",
+      resourceId: "qingagent-user",
+      createdAt: new Date(frozenThreadTime),
+      updatedAt: new Date(frozenThreadTime),
+      metadata: {
+        docId: sessionId,
+        docState: { kind: "empty" },
+        docVersion: 0,
+        lastContentEditedAt: frozenThreadTime,
+        lastSyncedDocumentSnapshot: 0,
+        legacySections: [],
+        materials: [],
+        title: "只读恢复",
+        runId: null,
+        toolCallId: null,
+        askUserCompleted: false,
+        lastPersistedAt: frozenThreadTime,
+      },
+    });
+    await documentDraftRepo.saveCandidate({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 0,
+      baseHash: getPmContentHash(doc([])),
+      draftPmDoc: draft,
+      sourceStreamId: "stream-snapshot",
+      sourceToolCallId: "wd-snapshot",
+    });
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+
+    const restored = await loadSessionFromThread(sessionId, { mode: "snapshot" });
+
+    expect(restored?.docVersion).toBe(0);
+    await expect(documentRepo.load(sessionId)).resolves.toBeNull();
+    await expect(documentDraftRepo.load(sessionId)).resolves.toMatchObject({
+      status: "draft_candidate",
+      sourceStreamId: "stream-snapshot",
+    });
+    await expect(listVersions(sessionId)).resolves.toHaveLength(0);
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
 });

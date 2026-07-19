@@ -130,7 +130,7 @@ export async function getOrRestoreSessionReadOnly(
 
   let inflight = readOnlyRestoreInflight.get(sessionId);
   if (!inflight) {
-    inflight = loadSessionFromThread(sessionId)
+    inflight = loadSessionFromThread(sessionId, { mode: "snapshot" })
       .then((restored) => restored ?? undefined)
       .finally(() => {
         readOnlyRestoreInflight.delete(sessionId);

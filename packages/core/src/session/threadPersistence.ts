@@ -1479,8 +1479,12 @@ function extractTextFromDbContent(content: unknown): string {
  */
 export async function loadSessionFromThread(
   sessionId: string,
-  options: { preferredAskUserToolCallId?: string | null } = {},
+  options: {
+    preferredAskUserToolCallId?: string | null;
+    mode?: "activate" | "snapshot";
+  } = {},
 ): Promise<SessionState | null> {
+  const isSnapshot = options.mode === "snapshot";
   if (isSessionDeleted(sessionId)) return null;
   const memory = mastra.getMemory("default");
   if (!memory) return null;
@@ -1576,13 +1580,15 @@ export async function loadSessionFromThread(
           metadataHash,
           documentsHash,
         });
-        await rescueMetadataSnapshotOnRestoreConflict({
-          sessionId,
-          docId,
-          docVersion: docRow.docVersion,
-          metadataDoc,
-          metadataHash: metadataHash!,
-        });
+        if (!isSnapshot) {
+          await rescueMetadataSnapshotOnRestoreConflict({
+            sessionId,
+            docId,
+            docVersion: docRow.docVersion,
+            metadataDoc,
+            metadataHash: metadataHash!,
+          });
+        }
         meta = applyRestoredDocumentRow(meta, docRow);
       } else {
         restoredFromDocuments = true;
@@ -1816,10 +1822,12 @@ export async function loadSessionFromThread(
     _lastPersistSnapshot: snapshotFromMeta(meta),
   };
 
-  if (state.folderSources.size > 0) {
-    registerSessionFolderSources(sessionId, state.folderSources.values());
-  } else {
-    unregisterSessionFolderSources(sessionId);
+  if (!isSnapshot) {
+    if (state.folderSources.size > 0) {
+      registerSessionFolderSources(sessionId, state.folderSources.values());
+    } else {
+      unregisterSessionFolderSources(sessionId);
+    }
   }
 
   const rebuiltAnswerMessages = appendMissingAskUserAnswerMessagesFromChatHistory(state);
@@ -1827,7 +1835,7 @@ export async function loadSessionFromThread(
   const docVersionBeforePendingRehydrate = state.docVersion;
   const contentEditedAtBeforePendingRehydrate = state.lastContentEditedAt;
   try {
-    await rehydratePendingDraft(state);
+    await rehydratePendingDraft(state, { readOnly: isSnapshot });
   } catch (err) {
     logger.error("Failed to rehydrate pending document draft", {
       sessionId,
@@ -1841,10 +1849,13 @@ export async function loadSessionFromThread(
     state.lastContentEditedAt !== contentEditedAtBeforePendingRehydrate;
   const rebuiltAskUserState = rebuiltAnswerMessages > 0 || rebuiltVisibleAnswerCards > 0;
   if (
-    needsContentTimeBackfill ||
-    needsRestoreReconcilePersist ||
-    pendingRehydrateChangedCanonical ||
-    rebuiltAskUserState
+    !isSnapshot &&
+    (
+      needsContentTimeBackfill ||
+      needsRestoreReconcilePersist ||
+      pendingRehydrateChangedCanonical ||
+      rebuiltAskUserState
+    )
   ) {
     await schedulePersist(state, "restore:unified_metadata_reconcile").catch((err) => {
       logger.error("Failed to persist unified session restore reconcile", {

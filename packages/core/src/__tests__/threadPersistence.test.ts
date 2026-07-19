@@ -673,6 +673,33 @@ describe("thread persistence", () => {
     __resetFolderSourceRuntimeForTest();
   });
 
+  it("snapshot 恢复不注册文件夹源，也不调度 metadata 自愈写入", async () => {
+    process.env.QINGAGENT_RUNTIME = "desktop";
+    process.env.QINGAGENT_ENABLE_LOCAL_FOLDER_SOURCES = "1";
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const {
+      getSessionFolderSources,
+      __resetFolderSourceRuntimeForTest,
+    } = await import("../folderSources/runtime.js");
+    const sessionId = "folder-source-snapshot-only";
+    const root = mkdtempSync(join(tmpdir(), "qingagent-snapshot-folder-"));
+    writeFileSync(join(root, "alive.md"), "snapshot only");
+    const source = folderSourceRecord(sessionId, root);
+    const oldMeta = metadata({ docId: sessionId, folderSources: [source] });
+    delete oldMeta.lastContentEditedAt;
+    threads.set(sessionId, storedThread(sessionId, oldMeta));
+    memory.updateThread.mockClear();
+
+    const restored = await loadSessionFromThread(sessionId, { mode: "snapshot" });
+
+    expect(restored?.folderSources.get(source.id)?.status).toBe("connected");
+    expect(getSessionFolderSources(sessionId)).toEqual([]);
+    expect(memory.updateThread).not.toHaveBeenCalled();
+
+    rmSync(root, { recursive: true, force: true });
+    __resetFolderSourceRuntimeForTest();
+  });
+
   it("Round9 回归:无 desktop-local flag 冷恢复时不注册为可读 connected", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const {

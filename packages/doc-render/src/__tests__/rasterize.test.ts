@@ -7,7 +7,7 @@ const poolMocks = vi.hoisted(() => ({
 
 vi.mock("../browser/pool.js", () => poolMocks);
 
-import { rasterizeSvgToPng } from "../export/rasterize.js";
+import { rasterizeMathBatch, rasterizeSvgToPng } from "../export/rasterize.js";
 
 describe("rasterizeSvgToPng", () => {
   beforeEach(() => {
@@ -37,6 +37,32 @@ describe("rasterizeSvgToPng", () => {
 
     expect(result).toEqual({ data: Buffer.from(screenshot), width: 800, height: 450 });
     expect(page.setContent).toHaveBeenCalledWith(expect.stringContaining("<svg"), expect.any(Object));
+    expect(context.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("SVG 栅格化 newPage 失败后仍关闭已创建的 BrowserContext", async () => {
+    const context = {
+      route: vi.fn().mockResolvedValue(undefined),
+      newPage: vi.fn().mockRejectedValue(new Error("browser disconnected")),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    poolMocks.getBrowser.mockResolvedValue({ newContext: vi.fn().mockResolvedValue(context) });
+
+    await expect(rasterizeSvgToPng('<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'))
+      .resolves.toBeNull();
+    expect(context.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("公式栅格化 newPage 失败后仍关闭已创建的 BrowserContext", async () => {
+    const context = {
+      route: vi.fn().mockResolvedValue(undefined),
+      newPage: vi.fn().mockRejectedValue(new Error("browser disconnected")),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    poolMocks.getBrowser.mockResolvedValue({ newContext: vi.fn().mockResolvedValue(context) });
+
+    await expect(rasterizeMathBatch([{ latex: "x^2", displayMode: false }]))
+      .resolves.toEqual([null]);
     expect(context.close).toHaveBeenCalledTimes(1);
   });
 });

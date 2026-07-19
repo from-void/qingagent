@@ -615,4 +615,32 @@ describe("diagram-engine", () => {
     expect(flowSvg).toContain('fill="#d7e7f6"');
     expect(flowSvg).toContain("&lt;危险&gt;");
   });
+
+  it("graphToSvg 的 viewBox 覆盖负坐标 overlay", () => {
+    const svg = graphToSvg("flowchart LR\n  A[左侧] --> B[右侧]\n", {
+      positions: { A: { x: -280, y: -150 }, B: { x: 20, y: 30 } },
+    })!;
+    const [, minX, minY, width, height] = svg.match(/viewBox="(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)"/)!;
+    expect(Number(minX)).toBeLessThan(-280);
+    expect(Number(minY)).toBeLessThan(-150);
+    expect(Number(minX) + Number(width)).toBeGreaterThan(180);
+    expect(Number(minY) + Number(height)).toBeGreaterThan(94);
+  });
+
+  it("graphToSvg 节点长标签换行截断且节点/边标签不越画布", () => {
+    const nodeLabel = "这是一个非常非常长并且必须在节点宽度内换行后截断的节点标签";
+    const edgeLabel = "这是一段需要完整计入导出画布边界的超长边标签".repeat(3);
+    const svg = graphToSvg(`flowchart LR\n  A[${nodeLabel}] -->|${edgeLabel}| B[结束]\n`, {
+      positions: { A: { x: 0, y: 20 }, B: { x: 220, y: 20 } },
+    })!;
+    const [, minX, , width] = svg.match(/viewBox="(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)"/)!;
+    const maxX = Number(minX) + Number(width);
+    const edgeCenterX = (160 + 220) / 2;
+    const estimatedEdgeHalfWidth = Array.from(edgeLabel).length * 12 / 2;
+    expect(Number(minX)).toBeLessThanOrEqual(edgeCenterX - estimatedEdgeHalfWidth);
+    expect(maxX).toBeGreaterThanOrEqual(edgeCenterX + estimatedEdgeHalfWidth);
+    expect(svg.match(/<tspan/g)).toHaveLength(3);
+    expect(svg).toContain("…</tspan>");
+    expect(svg).not.toContain(`>${nodeLabel}</text>`);
+  });
 });

@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { readFile, realpath } from "node:fs/promises";
+import { open, readFile, realpath } from "node:fs/promises";
+import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
@@ -54,9 +55,6 @@ type ParseFileToolResult = {
   };
 };
 
-const XLSX_MIME =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-
 // Office Open XML 本质是 ZIP。这里的限额必须在 mammoth/JSZip 解压任何 entry 之前生效，
 // 避免高压缩比内容把主进程堆内存打满。阈值覆盖正常办公文档，同时给 XML 膨胀留出余量。
 const MAX_OFFICE_ZIP_ENTRIES = 10_000;
@@ -81,8 +79,10 @@ const SENSITIVE_DESKTOP_PATH_PATTERNS = [
   /(^|\/)\.ssh(\/|$)/,
   /(^|\/)\.gnupg(\/|$)/,
   /(^|\/)\.aws\/credentials$/,
-  /(^|\/)\.azure\/(accessTokens\.json|azureProfile\.json)$/i,
-  /(^|\/)\.config\/gcloud\/(credentials\.db|application_default_credentials\.json)$/,
+  /(^|\/)\.aws\/(sso|cli)\/cache(\/|$)/,
+  /(^|\/)\.azure\/(accessTokens\.json|azureProfile\.json|msal_token_cache\.(json|bin))$/i,
+  /(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/,
+  /(^|\/)\.config\/gcloud\/legacy_credentials(\/|$)/,
   /(^|\/)\.config\/(gh\/hosts\.yml|glab-cli\/config\.yml)$/,
   /(^|\/)\.docker\/config\.json$/,
   /(^|\/)\.kube\/config$/,
@@ -270,34 +270,44 @@ function isSensitiveDesktopFilePath(filePath: string): boolean {
   return SENSITIVE_DESKTOP_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-async function readDesktopFilePath(filePath: string): Promise<Buffer | null> {
+type DesktopFileReadResult = {
+  buffer: Buffer;
+  canonicalPath: string;
+};
+
+async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadResult | null> {
   if (isSensitiveDesktopFilePath(filePath)) return null;
   let canonicalPath: string;
   try {
     canonicalPath = await realpath(filePath);
   } catch {
-    // 保留正常素材原有的 ENOENT/EACCES 语义；只有命中黑名单时才静默拒绝。
-    return readFile(filePath);
+    // 保留正常素材原有的 ENOENT/EACCES 语义；后续 open 会抛出对应错误。
+    canonicalPath = filePath;
   }
   if (isSensitiveDesktopFilePath(canonicalPath)) return null;
-  return readFile(canonicalPath);
+
+  const fileHandle = await open(canonicalPath, "r");
+  try {
+    const stats = await fileHandle.stat();
+    // realpath 无法识别硬链接。正常用户素材极少带多个硬链接；宁可拒绝可疑文件，
+    // 也不允许攻击者把敏感文件硬链接成无害名称绕过路径黑名单。
+    if (stats.nlink > 1) return null;
+    return { buffer: await fileHandle.readFile(), canonicalPath };
+  } finally {
+    await fileHandle.close();
+  }
 }
 
-function isCsvFile(ext: string, mimeType: string): boolean {
-  return ext === "csv" || /\bcsv\b/i.test(mimeType);
+function isCsvFile(ext: string): boolean {
+  return ext === "csv";
 }
 
-function isExcelFile(ext: string, mimeType: string): boolean {
-  return (
-    ext === "xlsx" ||
-    ext === "xls" ||
-    isCsvFile(ext, mimeType) ||
-    /spreadsheet|excel/i.test(mimeType)
-  );
+function isExcelFile(ext: string): boolean {
+  return ext === "xlsx" || ext === "xls" || isCsvFile(ext);
 }
 
-function isPowerPointFile(ext: string, mimeType: string): boolean {
-  return ext === "pptx" || ext === "ppt" || /presentation|powerpoint/i.test(mimeType);
+function isPowerPointFile(ext: string): boolean {
+  return ext === "pptx" || ext === "ppt";
 }
 
 function decodeUtf8(buffer: Buffer): string {
@@ -493,13 +503,92 @@ function parseWorkbookRelationships(xml: string, parser: Awaited<ReturnType<type
   return parseRelationships(xml, parser, "xl");
 }
 
+type ZipEntryStream = {
+  on(event: "data", callback: (chunk: Uint8Array) => void): ZipEntryStream;
+  on(event: "end", callback: () => void): ZipEntryStream;
+  on(event: "error", callback: (error: Error) => void): ZipEntryStream;
+  pause(): ZipEntryStream;
+  resume(): ZipEntryStream;
+};
+
+type ZipEntryLike = {
+  dir: boolean;
+  async(type: "text"): Promise<string>;
+  internalStream(type: "uint8array"): ZipEntryStream;
+};
+
 type ZipLike = {
-  files: Record<string, unknown>;
-  file(path: string): { async(type: "text"): Promise<string> } | null;
+  files: Record<string, ZipEntryLike>;
+  file(path: string): ZipEntryLike | null;
 };
 
 async function readZipText(zip: ZipLike, path: string): Promise<string | null> {
   return (await zip.file(path)?.async("text")) ?? null;
+}
+
+/**
+ * 逐条目实际解压并按输出 chunk 计数，不能信任 ZIP 中央目录自报的 uncompressed size。
+ * internalStream 不聚合完整 entry，超过限额时 pause 可立即停止继续产出。
+ */
+async function assertSafeOfficeZipInflation(zip: ZipLike): Promise<void> {
+  let totalUncompressedBytes = 0;
+
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir) continue;
+
+    await new Promise<void>((resolve, reject) => {
+      const stream = entry.internalStream("uint8array");
+      let entryUncompressedBytes = 0;
+      let settled = false;
+
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        stream.pause();
+        reject(error);
+      };
+
+      stream
+        .on("data", (chunk) => {
+          if (settled) return;
+          entryUncompressedBytes += chunk.byteLength;
+          totalUncompressedBytes += chunk.byteLength;
+
+          if (entryUncompressedBytes > MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES) {
+            fail(
+              officeZipSafetyError(
+                `单个条目实际解压后超过 ${MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES} 字节`,
+              ),
+            );
+          } else if (totalUncompressedBytes > MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES) {
+            fail(
+              officeZipSafetyError(
+                `实际总解压量超过 ${MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES} 字节`,
+              ),
+            );
+          }
+        })
+        .on("error", (error) => {
+          fail(officeZipSafetyError(`条目实际解压失败：${error.message}`));
+        })
+        .on("end", () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        })
+        .resume();
+    });
+  }
+}
+
+async function loadSafeOfficeZip(buffer: Buffer): Promise<ZipLike> {
+  // 中央目录预检用于快速失败；真正的解压量保护由下方实际流式计数提供。
+  assertSafeOfficeZip(buffer);
+  const { default: JSZip } = await import("jszip");
+  // JSZip 运行时提供 internalStream，但公开类型只声明了 async/nodeStream。
+  const zip = (await JSZip.loadAsync(buffer)) as unknown as ZipLike;
+  await assertSafeOfficeZipInflation(zip);
+  return zip;
 }
 
 function zipDirName(path: string): string {
@@ -944,13 +1033,11 @@ function parseXlsxSheet(
 async function parseXlsx(buffer: Buffer): Promise<ParsedFileContent> {
   if (buffer.length === 0) throw new Error("xlsx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 xlsx zip 包");
-  assertSafeOfficeZip(buffer);
 
-  const [{ default: JSZip }, parser] = await Promise.all([
-    import("jszip"),
+  const [zip, parser] = await Promise.all([
+    loadSafeOfficeZip(buffer),
     createXmlParser(),
   ]);
-  const zip = await JSZip.loadAsync(buffer);
   const workbookFile = zip.file("xl/workbook.xml");
   if (!workbookFile) throw new Error("缺少 xl/workbook.xml");
 
@@ -1001,13 +1088,8 @@ function parseWordTextXml(xml: string, parser: Awaited<ReturnType<typeof createX
     .join("\n");
 }
 
-async function extractDocxAuxiliaryText(buffer: Buffer): Promise<string> {
-  if (!isZipBuffer(buffer)) return "";
-  const [{ default: JSZip }, parser] = await Promise.all([
-    import("jszip"),
-    createXmlParser(),
-  ]);
-  const zip = await JSZip.loadAsync(buffer);
+async function extractDocxAuxiliaryText(zip: ZipLike): Promise<string> {
+  const parser = await createXmlParser();
   const paths = Object.keys(zip.files);
   const headerPaths = sortOfficePartPaths(paths.filter((path) => /^word\/header\d+\.xml$/i.test(path)));
   const footerPaths = sortOfficePartPaths(paths.filter((path) => /^word\/footer\d+\.xml$/i.test(path)));
@@ -1166,13 +1248,11 @@ async function readPptxSlideNotesText(
 async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
   if (buffer.length === 0) throw new Error("pptx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 pptx zip 包");
-  assertSafeOfficeZip(buffer);
 
-  const [{ default: JSZip }, parser] = await Promise.all([
-    import("jszip"),
+  const [zip, parser] = await Promise.all([
+    loadSafeOfficeZip(buffer),
     createXmlParser(),
   ]);
-  const zip = await JSZip.loadAsync(buffer);
   const fallbackSlidePaths = sortPptxSlidePaths(
     Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path)),
   );
@@ -1202,12 +1282,10 @@ async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
   return { text: slideOutputs.join("\n\n"), pages: slidePaths.length };
 }
 
-async function parseExcelBuffer(buffer: Buffer, ext: string, mimeType: string): Promise<ParsedFileContent> {
-  if (isCsvFile(ext, mimeType)) return { text: decodeTextBuffer(buffer), pages: 1 };
+async function parseExcelBuffer(buffer: Buffer, ext: string): Promise<ParsedFileContent> {
+  if (isCsvFile(ext)) return { text: decodeTextBuffer(buffer), pages: 1 };
 
-  const isXlsx =
-    ext === "xlsx" || mimeType.toLowerCase() === XLSX_MIME || /spreadsheetml\.sheet/i.test(mimeType);
-  if (isXlsx) return parseXlsx(buffer);
+  if (ext === "xlsx") return parseXlsx(buffer);
 
   if (looksLikeText(buffer)) return { text: decodeTextBuffer(buffer), pages: 1 };
   throw new UnsupportedParseFileError(
@@ -1309,14 +1387,14 @@ function toParseFileToolResult(result: ParseFileBufferOutput): ParseFileToolResu
 export async function parseFileBuffer({
   buffer,
   filename,
-  mimeType,
 }: ParseFileBufferInput): Promise<ParseFileBufferOutput> {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   let text = "";
   let pages: number | null = null;
   let title: string | null = null;
 
-  if (ext === "pdf" || mimeType === "application/pdf") {
+  // MIME 由调用方声明，只作为接口元数据保留；解析器选择必须由可信 filename 扩展名决定。
+  if (ext === "pdf") {
     // #16 冷启动有界重试 + #11 interop 加载器(在 parsePdfBufferOnce 内)合并
     let emptyFallback: ParseFileBufferResult | null = null;
     let lastError: unknown = null;
@@ -1335,30 +1413,27 @@ export async function parseFileBuffer({
     }
     if (emptyFallback) return emptyFallback;
     return parseFailure("PDF", lastError);
-  } else if (
-    ext === "docx" ||
-    mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ) {
+  } else if (ext === "docx") {
     try {
-      assertSafeOfficeZip(buffer);
+      // mammoth 内部会再次解压；先用 JSZip 实际流式解压计数，确保自报尺寸无法绕过限额。
+      const zip = await loadSafeOfficeZip(buffer);
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer });
-      const auxiliaryText = await extractDocxAuxiliaryText(buffer);
+      const auxiliaryText = await extractDocxAuxiliaryText(zip);
       text = [result.value, auxiliaryText].filter((part) => part.trim().length > 0).join("\n\n");
     } catch (error) {
       return parseFailure("DOCX", error);
     }
-  } else if (isExcelFile(ext, mimeType)) {
+  } else if (isExcelFile(ext)) {
     try {
-      const result = await parseExcelBuffer(buffer, ext, mimeType);
+      const result = await parseExcelBuffer(buffer, ext);
       text = result.text;
       pages = result.pages;
       return successResult(text, pages, title, result.indexable ?? true);
     } catch (error) {
       return parseFailure("Excel", error);
     }
-  } else if (isPowerPointFile(ext, mimeType)) {
+  } else if (isPowerPointFile(ext)) {
     try {
       const result = await parsePowerPointBuffer(buffer, ext);
       text = result.text;
@@ -1445,9 +1520,12 @@ export const parseFileTool = createTool({
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else if (filePath) {
-        const desktopBuffer = await readDesktopFilePath(filePath);
-        if (desktopBuffer === null) return FILE_ACCESS_DENIED_RESULT;
-        buffer = desktopBuffer;
+        const desktopFile = await readDesktopFilePath(filePath);
+        if (desktopFile === null) return FILE_ACCESS_DENIED_RESULT;
+        buffer = desktopFile.buffer;
+        // 桌面 filePath 来自模型，filename/mimeType 同样不可作为真实格式依据；
+        // 用 realpath 后的 basename 固定解析扩展名，避免声明 MIME/文件名改变解析分支。
+        filename = basename(desktopFile.canonicalPath);
       } else if (content !== undefined && content !== null) {
         buffer = Buffer.from(content, "base64");
       } else if (fileId) {

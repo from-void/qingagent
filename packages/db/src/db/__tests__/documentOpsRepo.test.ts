@@ -32,7 +32,7 @@ describe("documentOpsRepo", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     });
 
-    const byOpId = await findOpByIdempotencyKey({ opId: "op-1" });
+    const byOpId = await findOpByIdempotencyKey({ docId: "doc-ops", opId: "op-1" });
     expect(byOpId).toMatchObject({
       opId: "op-1",
       docId: "doc-ops",
@@ -45,11 +45,12 @@ describe("documentOpsRepo", () => {
     expect(byOpId?.steps).toEqual([{ stepType: "replace", from: 1, to: 2 }]);
 
     const byClientMutationId = await findOpByIdempotencyKey({
+      docId: "doc-ops",
       clientMutationId: "client-1",
     });
     expect(byClientMutationId?.opId).toBe("op-1");
 
-    expect(await findOpByIdempotencyKey({})).toBeNull();
+    expect(await findOpByIdempotencyKey({ docId: "doc-ops" })).toBeNull();
   });
 
   it("prefers clientMutationId when both idempotency keys are provided", async () => {
@@ -65,16 +66,18 @@ describe("documentOpsRepo", () => {
     });
 
     await expect(findOpByIdempotencyKey({
+      docId: "doc-ops",
       opId: "content-derived-op",
       clientMutationId: "client-new",
     })).resolves.toBeNull();
     await expect(findOpByIdempotencyKey({
+      docId: "doc-ops",
       opId: "ignored-op",
       clientMutationId: "client-original",
     })).resolves.toMatchObject({ opId: "content-derived-op" });
   });
 
-  it("enforces unique opId and clientMutationId", async () => {
+  it("enforces global unique opId and document-scoped clientMutationId", async () => {
     await insertOp({
       opId: "op-unique",
       docId: "doc-ops",
@@ -110,5 +113,23 @@ describe("documentOpsRepo", () => {
         createdAt: "2026-01-02T00:00:00.000Z",
       }),
     ).rejects.toThrow();
+
+    await expect(
+      insertOp({
+        opId: "op-cross-document",
+        docId: "doc-other",
+        opKind: "replace_doc",
+        clientMutationId: "client-unique",
+        fromVersion: 1,
+        toVersion: 2,
+        actorType: "agent",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      }),
+    ).resolves.toBeUndefined();
+
+    await expect(findOpByIdempotencyKey({
+      docId: "doc-other",
+      clientMutationId: "client-unique",
+    })).resolves.toMatchObject({ opId: "op-cross-document" });
   });
 });

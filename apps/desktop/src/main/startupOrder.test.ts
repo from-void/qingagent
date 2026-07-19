@@ -58,7 +58,8 @@ test("旧 DB 经 desktop startServer 启动迁移后 usage 观测列可用且旧
        VALUES ('desktop-old', 'session-old', 'agent', 'deepseek-v4-flash', 'env', 11, 2, 7, 4, '2026-01-01T00:00:00.000Z')`,
     );
     migrations.__resetMigrationsForTest();
-    assert.deepEqual((await migrations.runMigrations()).appliedIds, [3, 4, 5, 6]);
+    const pendingMigrationIds = registry.MIGRATIONS.slice(2).map((migration) => migration.id);
+    assert.deepEqual((await migrations.runMigrations()).appliedIds, pendingMigrationIds);
     const row = (await client.execute("SELECT * FROM llm_usage_events WHERE id = 'desktop-old'")).rows[0];
     assert.equal(Number(row?.input_tokens), 11);
     assert.equal(String(row?.usage_state), "recorded");

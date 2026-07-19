@@ -14,20 +14,40 @@ describe("documentDerivativesRepo", () => {
     const meta = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-opinion", privatePrompt: "" });
     const client = getDocumentsClient();
     const doc = await getDerivativeDocument(meta.docId);
+    const now = new Date().toISOString();
+    await client.execute({
+      sql: `INSERT INTO document_drafts (
+        doc_id, thread_id, base_version, base_hash, draft_pm, status, created_at, updated_at
+      ) VALUES (?, 'thread', 0, 'hash', ?, 'pending_review', ?, ?)`,
+      args: [meta.docId, doc!.docPm, now, now],
+    });
+    await client.execute({
+      sql: `INSERT INTO document_suggestions (
+        id, doc_id, base_version, status, anchor_json, steps_json,
+        preview_json, summary, created_at, updated_at
+      ) VALUES ('deriv-suggestion', ?, 0, 'reviewing', '{}', '[]', '{}', '修改', ?, ?)`,
+      args: [meta.docId, now, now],
+    });
+    await client.execute({
+      sql: `INSERT INTO document_ops (
+        op_id, doc_id, op_kind, steps, from_version, to_version, actor_type, created_at
+      ) VALUES ('deriv-op', ?, 'replace_doc', '[]', 0, 1, 'agent', ?)`,
+      args: [meta.docId, now],
+    });
     await client.execute({
       sql: `INSERT INTO document_versions (version_id, doc_id, doc_version, content_hash, schema_version, actor_type, summary, snapshot_pm, parent_version, created_at)
         VALUES ('deriv-v1', ?, 1, 'hash', 1, 'agent', '生成', ?, NULL, ?)`,
-      args: [meta.docId, doc!.docPm, new Date().toISOString()],
+      args: [meta.docId, doc!.docPm, now],
     });
     expect(await deleteDerivativeDoc("other-thread", meta.docId)).toBe(false);
     expect(await getDerivativeMeta(meta.docId)).not.toBeNull();
     expect(await deleteDerivativeDoc("thread", meta.docId)).toBe(true);
     expect(await getDerivativeMeta(meta.docId)).toBeNull();
-    const counts = await Promise.all(["documents", "document_derivatives", "document_versions"].map(async (table) => {
+    const counts = await Promise.all(["documents", "document_derivatives", "document_drafts", "document_suggestions", "document_ops", "document_versions"].map(async (table) => {
       const result = await client.execute({ sql: `SELECT COUNT(*) AS n FROM ${table} WHERE ${table === "documents" ? "id" : "doc_id"} = ?`, args: [meta.docId] });
       return Number(result.rows[0]?.n ?? 0);
     }));
-    expect(counts).toEqual([0, 0, 0]);
+    expect(counts).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
   it("创建、每类复用、盖章及源版本上涨后 stale", async () => {

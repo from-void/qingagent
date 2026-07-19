@@ -211,26 +211,28 @@ async function readyClient() {
   return client;
 }
 
-async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyClient>>, mapped: MappedDocumentRow): Promise<void> {
-  if (!mapped.needsPmRepair) return;
-  if (!mapped.row.pmDoc) return;
+async function repairPmMirrorIfNeeded(client: Awaited<ReturnType<typeof readyClient>>, mapped: MappedDocumentRow): Promise<boolean> {
+  if (!mapped.needsPmRepair) return false;
+  if (!mapped.row.pmDoc) return false;
   const projection = buildPmProjection({ pmDoc: mapped.row.pmDoc });
-  await withWriteRetry(async () => {
-    await client.execute({
+  return withWriteRetry(async () => {
+    const result = await client.execute({
       sql: `UPDATE documents SET
           doc_pm = ?,
           doc_schema_version = ?,
           content_hash = ?,
           doc_format = ?
-        WHERE id = ?`,
+        WHERE id = ? AND version = ?`,
       args: [
         projection.pmJson,
         projection.schemaVersion,
         projection.contentHash,
         projection.docFormat,
         mapped.row.id,
+        mapped.row.version,
       ],
     });
+    return result.rowsAffected === 1;
   });
 }
 
@@ -295,8 +297,9 @@ export async function repairStoredDocumentRows(): Promise<DocumentRepairStats> {
     }
 
     if (current.needsPmRepair) {
-      await repairPmMirrorIfNeeded(client, current);
-      pmMirrorsRepaired += 1;
+      if (await repairPmMirrorIfNeeded(client, current)) {
+        pmMirrorsRepaired += 1;
+      }
     }
   }
   return { scanned: result.rows.length, versionPointersRepaired, pmMirrorsRepaired };

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
-import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
+import {
+  commitTransaction,
+  getDocumentsClient,
+  withTransaction,
+  withWriteRetry,
+} from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 
 export interface LexiconResource {
@@ -86,17 +91,34 @@ export async function addLexiconEntries(
   if (normalized.length === 0) return 0;
   const c = await readyClient(client);
   const now = new Date().toISOString();
-  await withWriteRetry(async () => {
+  const writeEntries = async (writeClient: Client): Promise<void> => {
     for (const entry of normalized) {
-      await c.execute({
+      await writeClient.execute({
         sql: `INSERT INTO lexicon_entries
           (id, resource_id, word, replacement, enabled, note, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+          ON CONFLICT(resource_id, word) DO UPDATE SET
+            replacement = excluded.replacement,
+            enabled = 1,
+            note = excluded.note,
+            updated_at = excluded.updated_at`,
         args: [randomUUID(), resourceId, entry.word.trim(), entry.replacement?.trim() || null, entry.note?.trim() || null, now, now],
       });
     }
-    await c.execute({ sql: "UPDATE skill_resources SET updated_at = ? WHERE id = ?", args: [now, resourceId] });
-  });
+    await writeClient.execute({
+      sql: "UPDATE skill_resources SET updated_at = ? WHERE id = ?",
+      args: [now, resourceId],
+    });
+  };
+
+  if (client) {
+    await writeEntries(c);
+  } else {
+    await withTransaction(async (transactionClient) => {
+      await writeEntries(transactionClient);
+      return commitTransaction(undefined);
+    });
+  }
   return normalized.length;
 }
 

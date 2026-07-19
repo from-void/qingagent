@@ -23,6 +23,29 @@ function docWithRows(rows: unknown[]) {
 }
 
 describe("PM table safety limits", () => {
+  it("拒绝 rowspan 悬垂到表尾之外", () => {
+    const result = safeParsePmDoc(docWithRows([
+      { type: "tableRow", content: [cell("a", { rowspan: 2 }), cell("b")] },
+    ]));
+    expect(result.success).toBe(false);
+  });
+
+  it("拒绝展开后行宽不一致的非矩形表格", () => {
+    const result = safeParsePmDoc(docWithRows([
+      { type: "tableRow", content: [cell("a"), cell("b")] },
+      { type: "tableRow", content: [cell("c")] },
+    ]));
+    expect(result.success).toBe(false);
+  });
+
+  it("接受带 rowspan 与 colspan 的合法矩形网格", () => {
+    const result = safeParsePmDoc(docWithRows([
+      { type: "tableRow", content: [cell("a", { rowspan: 2 }), cell("b", { colspan: 2 })] },
+      { type: "tableRow", content: [cell("c"), cell("d")] },
+    ]));
+    expect(result.success).toBe(true);
+  });
+
   it("拒绝超上限的单个 colspan/rowspan", () => {
     for (const attrs of [
       { colspan: PM_TABLE_MAX_SPAN + 1 },

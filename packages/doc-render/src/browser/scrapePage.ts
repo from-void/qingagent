@@ -35,7 +35,7 @@ export type ScrapeResult = {
 
 export async function scrapeWithBrowserImpl(
   url: string,
-  opts?: { waitForSelector?: string },
+  opts?: { waitForSelector?: string; signal?: AbortSignal },
 ): Promise<ScrapeResult> {
   const fail = (error: string): ScrapeResult => {
     // 关键:浏览器启动/导航失败的真因往往被吞进返回值(模型能看到、但 stdout 看不到),
@@ -55,15 +55,24 @@ export async function scrapeWithBrowserImpl(
 
   let finalUrl: URL;
   try {
+    opts?.signal?.throwIfAborted();
     finalUrl = await validateFetchUrl(url);
+    opts?.signal?.throwIfAborted();
   } catch (error) {
+    if (opts?.signal?.aborted) throw error;
     return fail(error instanceof Error ? error.message : String(error));
   }
 
   return withBrowserContextSlot(async () => {
     let context: import("playwright").BrowserContext | null = null;
+    const closeOnAbort = () => {
+      void context?.close().catch(() => undefined);
+    };
+    opts?.signal?.addEventListener("abort", closeOnAbort, { once: true });
     try {
+      opts?.signal?.throwIfAborted();
       const browser = await getBrowser();
+      opts?.signal?.throwIfAborted();
       // UA 与 sec-ch-ua 客户端提示必须一致、且不能暴露 "HeadlessChrome"——否则知乎等会据此判机器人
       //(实测:headless 默认带 sec-ch-ua: "...HeadlessChrome...",知乎 302 到 account/unhuman;
       // 仅把 sec-ch-ua 改成 "Google Chrome" 就放行、拿到 .RichText 全文。这是通用反检测,非只为知乎)。
@@ -97,6 +106,7 @@ export async function scrapeWithBrowserImpl(
         ignoreHTTPSErrors: true,
         ...BROWSER_SECURITY_CONTEXT_OPTIONS,
       });
+      opts?.signal?.throwIfAborted();
       await context.addInitScript(() => {
         // tsx/esbuild 注入的 __name helper 在浏览器上下文不存在，补一个兜底，避免 page.evaluate 崩。
         (globalThis as unknown as { __name?: (fn: unknown) => unknown }).__name ||= (fn) => fn;
@@ -150,6 +160,7 @@ export async function scrapeWithBrowserImpl(
         pinHttpRequests: !proxyConfigured,
       });
       const page = await context.newPage();
+      opts?.signal?.throwIfAborted();
 
       // 整个浏览器抓取硬预算(用户要求外部抓取≤15s):默认 13s,留 ~2s 给提取/截图。
       // 每一步都从"剩余预算"取时间,预算用完立刻收手提取现有内容——绝不死等。
@@ -175,6 +186,7 @@ export async function scrapeWithBrowserImpl(
           throw gotoErr;
         }
       }
+      opts?.signal?.throwIfAborted();
 
       // Defense-in-depth: redirect chain 可能落到别的 host,提取前重新校验落地 URL。
       await validateFetchUrl(page.url());
@@ -414,6 +426,7 @@ export async function scrapeWithBrowserImpl(
           .filter((image) => image.src);
         return { title, body, ogImageUrl, images };
       });
+      opts?.signal?.throwIfAborted();
 
       // 微信公众号文章:用渲染后 HTML 过专用清洗器(输出 Markdown + data-src 懒加载图),
       // 与静态路对齐——避免大页(常 3MB+)走浏览器降级时退回纯文本、漏掉全部配图。
@@ -425,7 +438,8 @@ export async function scrapeWithBrowserImpl(
             const wxShot = await page
               .screenshot({ fullPage: false, type: "jpeg", quality: 80 })
               .catch(() => null);
-            const wxShotSrc = wxShot ? await persistScreenshot(wxShot) : null;
+            opts?.signal?.throwIfAborted();
+            const wxShotSrc = wxShot ? await persistScreenshot(wxShot, opts?.signal) : null;
             return {
               ok: true,
               error: null,
@@ -437,7 +451,8 @@ export async function scrapeWithBrowserImpl(
               ogImageUrl: extracted.ogImageUrl,
             };
           }
-        } catch {
+        } catch (error) {
+          if (opts?.signal?.aborted) throw error;
           // 微信专用清洗失败 → 回落通用抽取,不吞掉可用正文。
         }
       }
@@ -455,7 +470,10 @@ export async function scrapeWithBrowserImpl(
       const screenshot = await page
         .screenshot({ fullPage: false, type: "jpeg", quality: 80 })
         .catch(() => null);
-      const screenshotSrc = screenshot ? await persistScreenshot(screenshot) : null;
+      opts?.signal?.throwIfAborted();
+      const screenshotSrc = screenshot
+        ? await persistScreenshot(screenshot, opts?.signal)
+        : null;
       return {
         ok: true,
         error: null,
@@ -467,12 +485,14 @@ export async function scrapeWithBrowserImpl(
         ogImageUrl: extracted.ogImageUrl,
       };
     } catch (error) {
+      if (opts?.signal?.aborted) throw error;
       return fail(
         isBrowserAvailabilityError(error)
           ? formatBrowserUnavailableError(error)
           : browserErrorMessage(error),
       );
     } finally {
+      opts?.signal?.removeEventListener("abort", closeOnAbort);
       await context?.close().catch(() => {});
     }
   });

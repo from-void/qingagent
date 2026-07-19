@@ -158,8 +158,23 @@ interface FetchRetryState {
   timeoutErrors: number;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function fetchTimeoutError(): DOMException {
@@ -173,12 +188,17 @@ function remainingFetchBudget(deadlineMs: number): number {
   return Math.max(0, deadlineMs - Date.now());
 }
 
-async function sleepWithinFetchBudget(ms: number, deadlineMs: number): Promise<void> {
+async function sleepWithinFetchBudget(
+  ms: number,
+  deadlineMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfAborted(signal);
   const remainingMs = remainingFetchBudget(deadlineMs);
   if (remainingMs <= 0) {
     throw fetchTimeoutError();
   }
-  await sleep(Math.min(ms, remainingMs));
+  await sleep(Math.min(ms, remainingMs), signal);
 }
 
 function isFetchTimeoutError(error: unknown): boolean {
@@ -299,17 +319,24 @@ async function fetchWithRetry(
   deadlineMs: number,
   retryState: FetchRetryState,
   headersOverride?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
     try {
+      throwIfAborted(signal);
       const remainingMs = remainingFetchBudget(deadlineMs);
       if (remainingMs <= 0) {
         throw fetchTimeoutError();
       }
       const response = await activePinnedFetch(target, {
-        signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingMs)),
+        signal: signal
+          ? AbortSignal.any([
+              signal,
+              AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingMs)),
+            ])
+          : AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, remainingMs)),
         headers: {
           "User-Agent": USER_AGENT,
           "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -320,12 +347,17 @@ async function fetchWithRetry(
 
       if (response.status >= 500 && attempt < MAX_FETCH_ATTEMPTS) {
         await response.body?.cancel().catch(() => undefined);
-        await sleepWithinFetchBudget(FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), deadlineMs);
+        await sleepWithinFetchBudget(
+          FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+          deadlineMs,
+          signal,
+        );
         continue;
       }
 
       return response;
     } catch (error) {
+      throwIfAborted(signal);
       lastError = error;
       const timeoutError = isFetchTimeoutError(error);
       if (timeoutError) {
@@ -338,7 +370,11 @@ async function fetchWithRetry(
       ) {
         throw error;
       }
-      await sleepWithinFetchBudget(FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), deadlineMs);
+      await sleepWithinFetchBudget(
+        FETCH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+        deadlineMs,
+        signal,
+      );
     }
   }
 
@@ -348,6 +384,7 @@ async function fetchWithRetry(
 async function fetchWithSsrfGuard(
   url: URL,
   headersOverride?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ url: URL; response: Response }> {
   let currentUrl = url;
   const deadlineMs = Date.now() + FETCH_TOTAL_TIMEOUT_MS;
@@ -357,15 +394,27 @@ async function fetchWithSsrfGuard(
   const cookieJar = new Map<string, string>();
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    throwIfAborted(signal);
     const target = await validateAndPinFetchUrl(currentUrl.toString());
+    throwIfAborted(signal);
     currentUrl = target.url;
     const cookieHeader = Array.from(cookieJar.entries())
       .map(([k, v]) => `${k}=${v}`)
       .join("; ");
-    const response = await fetchWithRetry(target, deadlineMs, retryState, {
-      ...headersOverride,
-      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-    });
+    const response = await fetchWithRetry(
+      target,
+      deadlineMs,
+      retryState,
+      {
+        ...headersOverride,
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      signal,
+    );
+    if (signal?.aborted) {
+      await response.body?.cancel().catch(() => undefined);
+      signal.throwIfAborted();
+    }
 
     const setCookies =
       (response.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
@@ -928,7 +977,10 @@ export function selectBodyText(
  * PubMed Central(PMC)正文页 HTML 命中 Google reCAPTCHA 拿不到正文,但 NCBI 官方 EFetch
  * 接口返回完整 JATS XML 全文(公开、稳定)。从 URL 抽 PMCID 走 EFetch + cheerio xmlMode 解析。
  */
-async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | null> {
+async function tryExtractPmc(
+  parsedUrl: URL,
+  signal?: AbortSignal,
+): Promise<ExtractedArticleContent | null> {
   if (!/(^|\.)ncbi\.nlm\.nih\.gov$/.test(parsedUrl.hostname)) return null;
   const m = parsedUrl.pathname.match(/\/articles\/PMC(\d+)/i);
   if (!m) return null;
@@ -936,7 +988,7 @@ async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | 
     const efetchUrl = parseFetchUrl(
       `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=${m[1]}&rettype=xml&retmode=xml`,
     );
-    const { response } = await fetchWithSsrfGuard(efetchUrl);
+    const { response } = await fetchWithSsrfGuard(efetchUrl, undefined, signal);
     if (!response.ok) {
       await cancelResponseBody(response);
       return null;
@@ -951,7 +1003,8 @@ async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | 
     const body = paras.join("\n\n");
     if (body.replace(/\s+/g, "").length < MIN_EXTRACTED_TEXT_LENGTH) return null;
     return { title: title || parsedUrl.hostname, body, images: [], screenshot: null, ogImageUrl: null };
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return null; // EFetch 失败则回落到常规抓取
   }
 }
@@ -959,16 +1012,27 @@ async function tryExtractPmc(parsedUrl: URL): Promise<ExtractedArticleContent | 
 export async function extractArticleContent(
   url: string,
   waitForSelector?: string,
+  signal?: AbortSignal,
 ): Promise<ExtractedArticleContent> {
+  throwIfAborted(signal);
   const parsedUrl = parseFetchUrl(url);
   // PMC 走官方 EFetch JATS XML(HTML 页有 reCAPTCHA)。命中则直接返回全文。
-  const pmc = await tryExtractPmc(parsedUrl);
+  const pmc = await tryExtractPmc(parsedUrl, signal);
+  throwIfAborted(signal);
   if (pmc) return pmc;
   // 站点适配器:已知"PC 反爬、移动端可抓"的站(百度百科/什么值得买等),改写到移动子域 + 移动 UA,
   // 并追加站点正文选择器,从根上把 403/空壳变成可抓的 SSR 正文。
   const adapter = resolveSiteAdapter(parsedUrl);
   const initialUrl = adapter?.rewriteUrl ? adapter.rewriteUrl(parsedUrl) : parsedUrl;
-  const { url: finalUrl, response } = await fetchWithSsrfGuard(initialUrl, adapter?.headers);
+  const { url: finalUrl, response } = await fetchWithSsrfGuard(
+    initialUrl,
+    adapter?.headers,
+    signal,
+  );
+  if (signal?.aborted) {
+    await cancelResponseBody(response);
+    signal.throwIfAborted();
+  }
 
   if (!response.ok) {
     await cancelResponseBody(response);
@@ -982,7 +1046,9 @@ export async function extractArticleContent(
   const isPdf = ctLower.includes("pdf") || /\.pdf(\?|#|$)/i.test(finalUrl.pathname);
   if (isPdf) {
     const buf = await readResponseBodyLimited(response, MAX_PDF_BYTES, "PDF");
+    throwIfAborted(signal);
     const { text, title: pdfTitle } = await extractPdfText(buf);
+    throwIfAborted(signal);
     const body = trimArticleBoilerplateLines(cleanText(text.replace(/\f/g, "\n\n")));
     if (body.replace(/\s+/g, "").length < MIN_EXTRACTED_TEXT_LENGTH) {
       // 文本过少:多为扫描件/图片型 PDF(无文本层),按解析失败处理。
@@ -1006,6 +1072,7 @@ export async function extractArticleContent(
     );
   }
   const bodyBuffer = await readResponseBodyLimited(response, MAX_HTML_BYTES, "HTML");
+  throwIfAborted(signal);
   const html = decodeHtml(bodyBuffer, contentType);
   const $ = cheerio.load(html);
 

@@ -80,11 +80,17 @@ export const fetchArticleTool = createTool({
   execute: async (input, context) => {
     const stop = startToolHeartbeat(context, { tool: "fetchArticle" });
     const materialId = "mat-" + createHash("sha256").update(input.url).digest("hex").slice(0, 12);
+    const signal = context?.abortSignal;
 
     try {
-      const result = await extractArticleContent(input.url, input.waitForSelector);
+      signal?.throwIfAborted();
+      const result = await extractArticleContent(input.url, input.waitForSelector, signal);
+      signal?.throwIfAborted();
       const wordCount = result.body.replace(/\s+/g, "").length;
-      const screenshotSrc = result.screenshot ? await persistScreenshot(result.screenshot) : null;
+      const screenshotSrc = result.screenshot
+        ? await persistScreenshot(result.screenshot, signal)
+        : null;
+      signal?.throwIfAborted();
 
       let selected: FetchArticleResult = {
         title: result.title,
@@ -102,7 +108,9 @@ export const fetchArticleTool = createTool({
         try {
           const browserResult = await scrapeWithBrowserImpl(input.url, {
             waitForSelector: input.waitForSelector,
+            signal,
           });
+          signal?.throwIfAborted();
           if (shouldUseBrowserResult(selected, browserResult)) {
             selected = {
               title: browserResult.title,
@@ -116,13 +124,15 @@ export const fetchArticleTool = createTool({
               via: "browser",
             };
           }
-        } catch {
+        } catch (error) {
+          if (signal?.aborted) throw error;
           // 浏览器降级失败时保留静态最佳结果,不让单一路径失败吞掉可用内容。
         }
       }
 
       return selected;
     } catch (error) {
+      if (signal?.aborted) throw error;
       const message = error instanceof Error ? error.message : String(error);
       // 二进制/下载型链接(PDF/附件等):浏览器降级也只会触发下载、救不回正文 → 不升级浏览器,
       // 直接判为不支持(文本前缀 [Unsupported] 会被落库门当解析失败,不写入素材)。
@@ -135,7 +145,9 @@ export const fetchArticleTool = createTool({
         try {
           const browserResult = await scrapeWithBrowserImpl(input.url, {
             waitForSelector: input.waitForSelector,
+            signal,
           });
+          signal?.throwIfAborted();
           if (browserResult.ok && isSubstantiveContent(browserResult.text)) {
             return {
               title: browserResult.title,
@@ -149,7 +161,8 @@ export const fetchArticleTool = createTool({
               via: "browser" as const,
             };
           }
-        } catch {
+        } catch (browserError) {
+          if (signal?.aborted) throw browserError;
           // 浏览器也失败 → 落到下方 [Error] 返回,保持原有失败语义。
         }
       }

@@ -21,6 +21,30 @@ afterEach(() => {
 });
 
 describe("extractArticleContent fetch 轻量重试", () => {
+  it("外部 signal 取消后立即中止慢 fetch，且不进入重试", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<TestPinnedFetch>((_target, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const rejectOnAbort = () => reject(init.signal?.reason);
+        if (init.signal?.aborted) rejectOnAbort();
+        else init.signal?.addEventListener("abort", rejectOnAbort, { once: true });
+      }),
+    );
+    __setPinnedFetchForTest(fetchMock);
+
+    const result = extractArticleContent(
+      "https://example.com/slow-article",
+      undefined,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException("用户取消", "AbortError"));
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+  });
+
   it("fetch 瞬时网络失败后重试并成功提取正文", async () => {
     const html =
       "<html><head><title>重试成功</title></head><body><article>" +

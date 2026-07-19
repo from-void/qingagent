@@ -1341,11 +1341,15 @@ function rewriteMindmap(source: string, p: ParseResult, op: EditOp): RewriteResu
       .map((line) => (line.trim() ? `${" ".repeat(Math.max(0, (line.match(/^\s*/)?.[0].length ?? 0) + delta))}${line.trimStart()}` : line))
       .join("");
     const without = source.slice(0, oldStart) + source.slice(oldEnd);
-    const adjustedParent = parseMindmap(without);
-    const adjustedTree = adjustedParent.model as MindmapTree;
-    const nextParent = flattenMindmap(adjustedTree.root).find((n) => n.id === op.newParentId);
-    if (!nextParent) return { ok: false, source, error: "移动后找不到父节点" };
-    const insertAt = subtreeEnd(without, nextParent);
+    // 派生 id 会随同名兄弟的序号变化；删除后不再用旧 id 回找父节点，而按删除前记录的
+    // 源码位置校正偏移。显式 Mermaid id/形状文本原样保留，也走同一稳定源码位置。
+    const removedLength = oldEnd - oldStart;
+    const parentStart = parent.line.start >= oldEnd ? parent.line.start - removedLength : parent.line.start;
+    const parentAtAdjustedPosition: MindNode = {
+      ...parent,
+      line: { start: parentStart, end: parentStart + (parent.line.end - parent.line.start) },
+    };
+    const insertAt = subtreeEnd(without, parentAtAdjustedPosition);
     return { ok: true, source: insertAtLineBoundary(without, insertAt, shifted) };
   }
   return unsupportedRewrite(source, op.kind);

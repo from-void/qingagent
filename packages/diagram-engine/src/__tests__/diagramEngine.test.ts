@@ -504,6 +504,19 @@ describe("diagram-engine", () => {
     expect(moved.source).toContain("  other\n    child");
   });
 
+  it("mindmap 可把前一个同名兄弟移动到后一个同名兄弟下", () => {
+    const source = "mindmap\n  root\n    child\n      leaf\n    child\n";
+    const tree = parseDiagram(source).model as MindmapTree;
+    const [firstChild, secondChild] = tree.root.children;
+    const moved = applyEdit(source, { kind: "moveNode", nodeId: firstChild!.id, newParentId: secondChild!.id });
+    expect(moved.ok).toBe(true);
+    const next = (parseDiagram(moved.source).model as MindmapTree).root;
+    expect(next.children).toHaveLength(1);
+    expect(next.children[0]!.label).toBe("child");
+    expect(next.children[0]!.children[0]!.label).toBe("child");
+    expect(next.children[0]!.children[0]!.children[0]!.label).toBe("leaf");
+  });
+
   it("erDiagram / classDiagram 支持中文(非 ASCII)实体名,属性块也解析(治可视化编辑空白)", () => {
     const er = "erDiagram\n  学生 ||--o{ 课程 : 选修\n  学生 {\n    int 学号 PK\n    string 姓名\n  }\n  课程 {\n    int 课程号 PK\n  }";
     const erModel = parseDiagram(er).model as ErGraph;

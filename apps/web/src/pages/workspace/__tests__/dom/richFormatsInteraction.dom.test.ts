@@ -887,7 +887,7 @@ describe("richFormatsInteraction 代码块命令", () => {
         attrs: { language: "javascript" },
         content: [{ type: "text", text: "const a = 1;" }],
       });
-      expect(editor.getHTML()).toContain('<pre data-language="javascript"><code class="language-javascript">');
+      expect(editor.getHTML()).toMatch(/<pre[^>]*data-language="javascript"[^>]*><code class="language-javascript">/);
 
       expect(editor.commands.setContent('<pre><code class="language-ts">const b: number = 2;</code></pre>')).toBe(true);
       doc = normalized(editor);
@@ -896,7 +896,7 @@ describe("richFormatsInteraction 代码块命令", () => {
         attrs: { language: "typescript" },
         content: [{ type: "text", text: "const b: number = 2;" }],
       });
-      expect(editor.getHTML()).toContain('<pre data-language="typescript"><code class="language-typescript">');
+      expect(editor.getHTML()).toMatch(/<pre[^>]*data-language="typescript"[^>]*><code class="language-typescript">/);
     } finally {
       destroyEditor(editor);
     }

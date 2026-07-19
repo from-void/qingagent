@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getVisionModel } from "../llm/modelConfig.js";
 import { streamText } from "../llm/streamTextCompat.js";
 import { ImageInputError, resolveImageInput } from "./imageInput.js";
+import { startToolHeartbeat } from "./toolHeartbeat.js";
 
 export const READ_IMAGE_TIMEOUT_MS = 60_000;
 export const READ_IMAGE_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -186,6 +187,7 @@ export const readImageTool = createTool({
     materialId: z.string().nullable(),
   }),
   execute: async (input, context) => {
+    const stopHeartbeat = startToolHeartbeat(context, { tool: "readImage" });
     const requestContext = context?.requestContext as RequestContext | undefined;
     try {
       const model = await getVisionModel(requestContext, { callSite: "readImage" });
@@ -219,7 +221,13 @@ export const readImageTool = createTool({
         if (!force && now - lastEmitAt < 300) return; // 节流,避免刷帧过密
         lastEmitAt = now;
         try {
-          void writer.write({ type: "readimage-progress", progress: { excerpt: display.slice(-DISPLAY_CAP) } });
+          const result = writer.write({
+            type: "readimage-progress",
+            progress: { excerpt: display.slice(-DISPLAY_CAP) },
+          });
+          if (result && typeof (result as Promise<unknown>).then === "function") {
+            void (result as Promise<unknown>).catch(() => {});
+          }
         } catch {
           // 进度仅装饰 + 保活,失败静默,绝不影响识图主链
         }
@@ -338,6 +346,8 @@ export const readImageTool = createTool({
       }
     } catch (error) {
       return { ok: false, text: "", error: errorMessageFromUnknown(error), materialId: null };
+    } finally {
+      stopHeartbeat();
     }
   },
 });

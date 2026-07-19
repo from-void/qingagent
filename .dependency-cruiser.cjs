@@ -247,7 +247,7 @@ module.exports = {
       severity: "error",
       comment: "页面 data 层不得依赖展示组件。",
       from: { path: "^apps/web/src/pages/[^/]+/data/" },
-      to: { path: "^apps/web/src/components/" },
+      to: { path: "^apps/web/src/pages/[^/]+/components/" },
     },
   ],
   options: {

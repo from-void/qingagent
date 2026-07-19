@@ -95,6 +95,8 @@ export interface BranchCallInput {
   thinking?: boolean;
   temperature?: number;
   maxTokens?: number;
+  /** 分支验真前允许缓存的文本字节数；缺省不限制。 */
+  maxBufferedTextBytes?: number;
 }
 
 export type BranchCallResult =
@@ -151,6 +153,7 @@ function extractRawChunk(payload: unknown, state: RawBranchResponse): string {
 async function readRawBranchResponse(
   response: Response,
   onActivity?: BranchCallInput["onActivity"],
+  maxBufferedTextBytes?: number,
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
@@ -162,11 +165,22 @@ async function readRawBranchResponse(
     finishReason: null,
     providerError: null,
   };
+  let bufferedTextBytes = 0;
+  const recordBufferedText = (delta: string) => {
+    bufferedTextBytes += Buffer.byteLength(delta, "utf8");
+    if (
+      maxBufferedTextBytes !== undefined &&
+      bufferedTextBytes > maxBufferedTextBytes
+    ) {
+      throw new Error("branch_stream_buffer_exceeded");
+    }
+  };
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
     await onActivity?.();
     const delta = extractRawChunk(await response.json(), state);
     if (delta) {
+      recordBufferedText(delta);
       const observedAt = Date.now();
       state.textDeltas.push({ text: delta, observedAt });
       state.firstTextAt = observedAt;
@@ -187,26 +201,40 @@ async function readRawBranchResponse(
     if (!data || data === "[DONE]") return;
     const delta = extractRawChunk(JSON.parse(data), state);
     if (delta) {
+      try {
+        recordBufferedText(delta);
+      } catch (error) {
+        try {
+          await reader.cancel("branch_stream_buffer_exceeded");
+        } catch {
+          // 读取器取消失败不能遮蔽稳定的超限错误。
+        }
+        throw error;
+      }
       const observedAt = Date.now();
       state.textDeltas.push({ text: delta, observedAt });
       state.firstTextAt ??= observedAt;
     }
   };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (!done || value) await onActivity?.();
-    buffer += decoder.decode(value, { stream: !done });
-    let boundary = buffer.search(/\r?\n\r?\n/);
-    while (boundary >= 0) {
-      const event = buffer.slice(0, boundary);
-      const match = buffer.slice(boundary).match(/^(?:\r?\n){2}/);
-      buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
-      await consumeEvent(event);
-      boundary = buffer.search(/\r?\n\r?\n/);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (!done || value) await onActivity?.();
+      buffer += decoder.decode(value, { stream: !done });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary);
+        const match = buffer.slice(boundary).match(/^(?:\r?\n){2}/);
+        buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
+        await consumeEvent(event);
+        boundary = buffer.search(/\r?\n\r?\n/);
+      }
+      if (done) break;
     }
-    if (done) break;
+    if (buffer.trim()) await consumeEvent(buffer);
+  } finally {
+    reader.releaseLock();
   }
-  if (buffer.trim()) await consumeEvent(buffer);
   return state;
 }
 
@@ -504,6 +532,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       const raw = await readRawBranchResponse(
         response,
         input.onActivity,
+        input.maxBufferedTextBytes,
       );
       if (raw.firstTextAt !== null) {
         tFirstDelta = raw.firstTextAt;

@@ -261,6 +261,47 @@ describe("documentRepo", () => {
     expect(raw.rows[0]?.doc_format).toBe("pm");
   });
 
+  it("后台巡检回写前发生保存时不覆盖新正文与 hash", async () => {
+    const stalePm = legacySectionsToPm([section("巡检读取的旧正文")] as never);
+    const latestPm = legacySectionsToPm([section("并发保存的新正文")] as never);
+    await documentRepo.save(input("pm-mirror-cas", { pmDoc: stalePm }));
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: "UPDATE documents SET content_hash = ?, doc_schema_version = ?, doc_format = ? WHERE id = ?",
+      args: ["stale-hash", 0, "legacy", "pm-mirror-cas"],
+    });
+
+    const originalExecute = client.execute.bind(client);
+    let savedConcurrently = false;
+    vi.spyOn(client, "execute").mockImplementation(async (statement) => {
+      const sql = typeof statement === "string"
+        ? statement
+        : (statement as unknown as { sql: string }).sql;
+      if (!savedConcurrently && /UPDATE documents SET\s+doc_pm = \?/i.test(sql)) {
+        savedConcurrently = true;
+        await documentRepo.save(input("pm-mirror-cas", {
+          docVersion: 2,
+          pmDoc: latestPm,
+          updatedAt: "2026-01-02T00:00:00.000Z",
+        }));
+      }
+      return originalExecute(statement);
+    });
+
+    const stats = await repairStoredDocumentRows();
+    expect(savedConcurrently).toBe(true);
+    expect(stats.pmMirrorsRepaired).toBe(0);
+
+    const raw = await originalExecute({
+      sql: "SELECT doc_version, version, content_hash, doc_pm FROM documents WHERE id = ?",
+      args: ["pm-mirror-cas"],
+    });
+    expect(raw.rows[0]?.doc_version).toBe(2);
+    expect(raw.rows[0]?.version).toBe(2);
+    expect(raw.rows[0]?.content_hash).toBe(getPmContentHash(latestPm));
+    expect(JSON.parse(String(raw.rows[0]?.doc_pm))).toEqual(latestPm);
+  });
+
   it("load/list 保持纯读，且 list 不为每行追加查询", async () => {
     await documentRepo.saveMany([
       input("read-a", { resourceId: "read-resource" }),

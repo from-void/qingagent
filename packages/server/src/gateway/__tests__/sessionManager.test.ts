@@ -140,4 +140,55 @@ describe("SessionManager", () => {
     expect(manager.getActorState("s1")).toBeNull();
     expect(frameLog.getEpoch("s1")).toBeGreaterThan(oldEpoch);
   });
+
+  it("destroySession 会等待在途生成收尾和持久化排空后再删 thread", async () => {
+    const order: string[] = [];
+    let releaseTurn!: () => void;
+    const turnBlocked = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const abortSession = vi.fn(() => {
+      order.push("abort");
+      releaseTurn();
+    });
+    const manager = new SessionManager({
+      handleCommand: async function* () {
+        await turnBlocked;
+        order.push("turn-settled");
+      },
+      abortSession,
+      cleanupSession: vi.fn(async () => {
+        order.push("cleanup");
+      }),
+      markSessionDeleted: vi.fn(() => {
+        order.push("tombstone");
+      }),
+      drainSessionPersistence: vi.fn(async () => {
+        order.push("persist-drained");
+      }),
+      deleteSessionThread: vi.fn(async () => {
+        order.push("thread-deleted");
+      }),
+    });
+
+    const running = manager.submit("destroy-running", {
+      command: startExisting("destroy-running"),
+    });
+    await Promise.resolve();
+    await manager.destroySession("destroy-running");
+    await expect(running).rejects.toThrow("Session actor disposed");
+
+    expect(abortSession).toHaveBeenCalledWith("destroy-running");
+    expect(order).toEqual([
+      "tombstone",
+      "abort",
+      "turn-settled",
+      "cleanup",
+      "persist-drained",
+      "thread-deleted",
+    ]);
+    await expect(manager.submit("destroy-running", {
+      command: startExisting("destroy-running"),
+    })).rejects.toThrow("Session has been deleted");
+  });
 });

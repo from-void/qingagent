@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { HomeFeed, SessionMeta, LegacySection } from "@qingagent/contract-ts";
-import { listHomeSessionThreads, deleteSessionThread, pmToHomeArticleMeta } from "@qingagent/core";
+import { listHomeSessionThreads, pmToHomeArticleMeta } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
 import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 import { sessionManager } from "../gateway/bridgeHandler";
@@ -44,8 +44,7 @@ homeRoutes.delete("/sessions/:id", async (c) => {
   const rejected = requireTrustedOrigin(c);
   if (rejected) return rejected;
   const sessionId = c.req.param("id");
-  await sessionManager.disposeSession(sessionId);
-  await deleteSessionThread(sessionId);
+  await sessionManager.destroySession(sessionId);
   return c.json({ deleted: true });
 });
 

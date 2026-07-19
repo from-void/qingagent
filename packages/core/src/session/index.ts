@@ -56,6 +56,9 @@ export type {
 export {
   createSessionThread,
   drainSessionPersistence,
+  drainSessionPersistenceForSession,
+  isSessionDeleted,
+  markSessionDeleted,
   persistSessionMetadata,
   schedulePersist,
   loadSessionFromThread,
@@ -78,4 +81,3 @@ export type {
   MaterialRecord,
   SuggestionRecordJson,
 } from "./threadPersistence.js";
-

@@ -8,16 +8,14 @@ import { __resetMigrationsForTest, ensureMigrated } from "@qingagent/db/migratio
 
 const callOrder: string[] = [];
 
-const deleteSessionThread = vi.fn(async (sessionId: string) => {
+const destroySession = vi.fn(async (sessionId: string) => {
   callOrder.push(`delete:${sessionId}`);
   const { deleteDocumentFamily } = await import("@qingagent/db");
   await deleteDocumentFamily(sessionId);
 });
 
 const sessionManager = {
-  disposeSession: vi.fn(async (sessionId: string) => {
-    callOrder.push(`dispose:${sessionId}`);
-  }),
+  destroySession,
 };
 
 type DocumentsClient = ReturnType<typeof getDocumentsClient>;
@@ -56,7 +54,6 @@ async function loadApp() {
     const versions = await import("@qingagent/db");
     const homeMeta = await import("../../../core/src/home/pmToHomeArticleMeta.js");
     return {
-      deleteSessionThread,
       getVersionSnapshot: versions.getVersionSnapshot,
       listSessionThreads: vi.fn(async () => ({ threads: [], total: 0, hasMore: false })),
       listVersions: versions.listVersions,
@@ -141,9 +138,8 @@ describe("DELETE /sessions/:id documents 级联", () => {
     });
 
     expect(deleted.status).toBe(200);
-    expect(callOrder).toEqual([`dispose:${sessionId}`, `delete:${sessionId}`]);
-    expect(sessionManager.disposeSession).toHaveBeenCalledWith(sessionId);
-    expect(deleteSessionThread).toHaveBeenCalledWith(sessionId);
+    expect(callOrder).toEqual([`delete:${sessionId}`]);
+    expect(sessionManager.destroySession).toHaveBeenCalledWith(sessionId);
     const after = await app.request(`/api/v1/history?sessionId=${sessionId}`);
     expect(await after.json()).toEqual({ entries: [] });
     await expect(Promise.all([

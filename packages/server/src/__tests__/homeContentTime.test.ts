@@ -11,7 +11,7 @@ vi.mock("@qingagent/core", async () => {
 });
 
 vi.mock("../gateway/bridgeHandler", () => ({
-  sessionManager: { disposeSession: vi.fn(async () => undefined) },
+  sessionManager: { destroySession: vi.fn(async () => undefined) },
 }));
 
 describe("GET /home content edit time", () => {

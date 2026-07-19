@@ -100,6 +100,7 @@ interface GracefulShutdownDeps {
   exit?: ExitFn;
   drainActiveTurns?: () => Promise<void>;
   drainPersistence?: () => Promise<void>;
+  cleanupBrowser?: () => Promise<void>;
   flushObservability?: () => Promise<void>;
 }
 
@@ -132,7 +133,8 @@ async function runShutdownPhase(
 }
 
 /**
- * 优雅关闭：尽力 flush observability（DuckDB exporter），再退出。
+ * 优雅关闭：依次 drain 活跃任务/会话持久化、关闭浏览器、flush observability，
+ * 再退出。
  *
  * 框架优先：动态探测 Observability 实例上是否有 flush/shutdown/close 方法
  * （node_modules 未稳定确认有公开 close API → 用 best-effort 鸭子类型调用，
@@ -149,8 +151,9 @@ async function gracefulShutdown(
   durableLogSync("info", `received ${signal}, shutting down gracefully`);
   console.log(`[crashGuard] received ${signal}, draining + flushing + shutting down`);
 
-  // 超时兜底：6s active turn + 4s persistence + 2s observability，再留少量调度余量。
-  const TIMEOUT_MS = 12_500;
+  // 超时兜底：6s active turn + 4s persistence + 1.5s browser + 2s observability，
+  // 再留少量调度余量。
+  const TIMEOUT_MS = 14_000;
   const timer = setTimeout(() => {
     durableLogSync("warn", "graceful shutdown timed out, forcing exit");
     exit(0);
@@ -167,6 +170,11 @@ async function gracefulShutdown(
     "session_persistence_drain",
     4_000,
     deps.drainPersistence ?? drainSessionPersistenceBestEffort,
+  );
+  await runShutdownPhase(
+    "browser_cleanup",
+    1_500,
+    deps.cleanupBrowser ?? cleanupBrowserBestEffort,
   );
   await runShutdownPhase(
     "observability_flush",
@@ -209,6 +217,16 @@ async function drainSessionPersistenceBestEffort(): Promise<void> {
 }
 
 /**
+ * 关闭 doc-render 共享浏览器池。
+ * 延迟 import 公开 browser 入口，避免 crashGuard（最早 import）提前拉起 Playwright。
+ * 阶段外层统一负责 1.5s 超时与失败降级，不阻断后续 observability flush。
+ */
+async function cleanupBrowserBestEffort(): Promise<void> {
+  const browser = await import("@qingagent/doc-render/browser");
+  await browser.closeBrowser();
+}
+
+/**
  * Best-effort 调用 Observability/DuckDB 上可能存在的 flush/shutdown/close 方法。
  * 延迟 import core，避免 crashGuard（最早 import）反向拉起 observability。
  */
@@ -245,6 +263,20 @@ async function flushObservabilityBestEffort(): Promise<void> {
 /** 安装所有 handler（幂等：重复调用只装一次）。 */
 let installed = false;
 
+const shutdownSignalHandlers = {
+  SIGTERM: () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest),
+  SIGINT: () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest),
+} satisfies Record<"SIGTERM" | "SIGINT", () => void>;
+
+function installShutdownSignalHandlers(): void {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const handler = shutdownSignalHandlers[signal];
+    if (!process.listeners(signal).includes(handler)) {
+      process.on(signal, handler);
+    }
+  }
+}
+
 export function installCrashGuard(): void {
   if (installed) return;
   installed = true;
@@ -277,9 +309,31 @@ export function installCrashGuard(): void {
     console.error("[crashGuard] CRASH unhandledRejection", reason);
   });
 
-  // 3) SIGTERM / SIGINT：优雅关闭（flush observability + 关 DB stream + exit）。
-  process.on("SIGTERM", () => void gracefulShutdown("SIGTERM", signalShutdownDepsForTest));
-  process.on("SIGINT", () => void gracefulShutdown("SIGINT", signalShutdownDepsForTest));
+  // 3) SIGTERM / SIGINT：优雅关闭（drain + 关浏览器 + flush + 关 DB stream + exit）。
+  installShutdownSignalHandlers();
+}
+
+/**
+ * 在真实 server 的依赖图加载完成后收口信号所有权。
+ *
+ * crashGuard 必须最早安装，才能覆盖启动期崩溃；但后续依赖仍可能在模块求值时追加
+ * SIGTERM/SIGINT handler 并直接 process.exit，抢先掐断异步 drain。因此 index.ts 在
+ * app/core/doc-render 全部加载后调用本函数，移除竞争 handler，再只装回 crashGuard。
+ */
+export function claimShutdownSignalOwnership(): void {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const listeners = process.listeners(signal);
+    const competingCount = listeners.filter(
+      (listener) => listener !== shutdownSignalHandlers[signal],
+    ).length;
+    process.removeAllListeners(signal);
+    process.on(signal, shutdownSignalHandlers[signal]);
+    if (competingCount > 0) {
+      durableLogSync("info", `removed competing ${signal} shutdown handlers`, {
+        count: competingCount,
+      });
+    }
+  }
 }
 
 // 自安装：crashGuard 被 import 的瞬间就装 handler。ES module import 会先于同模块内

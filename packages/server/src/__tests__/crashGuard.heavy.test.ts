@@ -2,11 +2,43 @@ import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __resetCrashGuardForTest, gracefulShutdownForTest } from "../crashGuard";
 
 const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const TSX_CLI = createRequire(import.meta.url).resolve("tsx/cli");
+
+function captureOutput(child: ReturnType<typeof spawn>): {
+  read: () => string;
+  waitFor: (needle: string, timeoutMs: number) => Promise<void>;
+} {
+  let output = "";
+  child.stdout?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  return {
+    read: () => output,
+    waitFor: async (needle, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (output.includes(needle)) return;
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error(
+            `child exited before output ${JSON.stringify(needle)}: code=${child.exitCode} signal=${child.signalCode}\n${output}`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      child.kill("SIGKILL");
+      throw new Error(`child output timeout after ${timeoutMs}ms: ${needle}\n${output}`);
+    },
+  };
+}
 
 async function waitForStartup(
   child: ReturnType<typeof spawn>,
@@ -54,7 +86,7 @@ describe("crashGuard graceful shutdown", () => {
     __resetCrashGuardForTest();
   });
 
-  it("SIGTERM drain 顺序为 active turn → session persistence → observability", async () => {
+  it("SIGTERM drain 顺序包含 browser cleanup，且发生在 observability 前", async () => {
     const order: string[] = [];
     const exit = vi.fn();
 
@@ -66,12 +98,36 @@ describe("crashGuard graceful shutdown", () => {
       drainPersistence: async () => {
         order.push("persist");
       },
+      cleanupBrowser: async () => {
+        order.push("browser");
+      },
       flushObservability: async () => {
         order.push("observability");
       },
     });
 
-    expect(order).toEqual(["active", "persist", "observability"]);
+    expect(order).toEqual(["active", "persist", "browser", "observability"]);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("browser cleanup 失败不会阻断 observability flush 与正常退出", async () => {
+    const order: string[] = [];
+    const exit = vi.fn();
+
+    await gracefulShutdownForTest("SIGTERM", {
+      exit,
+      drainActiveTurns: async () => {},
+      drainPersistence: async () => {},
+      cleanupBrowser: async () => {
+        order.push("browser");
+        throw new Error("browser close failed");
+      },
+      flushObservability: async () => {
+        order.push("observability");
+      },
+    });
+
+    expect(order).toEqual(["browser", "observability"]);
     expect(exit).toHaveBeenCalledWith(0);
   });
 
@@ -107,6 +163,7 @@ describe("crashGuard graceful shutdown", () => {
       expect(logFile).toBeTruthy();
       const log = await readFile(join(logDir, logFile!), "utf8");
       expect(log).toContain("received SIGTERM, shutting down gracefully");
+      expect(log).toContain("browser_cleanup");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {
       await rm(logDir, { recursive: true, force: true });
@@ -129,7 +186,7 @@ describe("crashGuard graceful shutdown", () => {
             "import { __setSignalShutdownDepsForTest } from './src/crashGuard.ts';",
             "import { writeFileSync } from 'node:fs';",
             "import { startExternalInstance } from './src/lib/externalInstance.ts';",
-            "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, flushObservability: async () => {} });",
+            "__setSignalShutdownDepsForTest({ drainActiveTurns: () => new Promise((resolve) => setTimeout(() => { writeFileSync(process.env.ACTIVE_TURN_MARKER, 'drained'); resolve(); }, 100)), drainPersistence: async () => {}, cleanupBrowser: async () => {}, flushObservability: async () => {} });",
             "await startExternalInstance({ port: 52341, version: 'test', filePath: process.env.INSTANCE_FILE });",
             "writeFileSync(process.env.READY_FILE, 'ready');",
             "setInterval(() => {}, 1000);",
@@ -160,10 +217,49 @@ describe("crashGuard graceful shutdown", () => {
       const log = await readFile(join(logDir, logFile!), "utf8");
       expect(log).toContain("active_turn_drain completed");
       expect(log).toContain("session_persistence_drain completed");
+      expect(log).toContain("browser_cleanup completed");
       expect(log).toContain("observability_flush completed");
       expect(log).toContain("shutdown complete (SIGTERM)");
     } finally {
       await rm(logDir, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("真实 server 入口收到 SIGTERM 不会被依赖的退出处理器抢断", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "qingagent-server-sigterm-"));
+    const instanceFile = join(tempDir, "instance.json");
+    try {
+      const child = spawn(process.execPath, [TSX_CLI, "src/index.ts"], {
+        cwd: SERVER_DIR,
+        env: {
+          ...process.env,
+          DATABASE_URL: `file:${join(tempDir, "server.db")}`,
+          PORT: "0",
+          QINGAGENT_INSTANCE_FILE: instanceFile,
+          QINGAGENT_LOG_DIR: tempDir,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const output = captureOutput(child);
+
+      await output.waitFor("Qingagent server listening", 20_000);
+      await waitForStartup(child, instanceFile, 10_000);
+      child.kill("SIGTERM");
+      await expect(waitExit(child, 15_000), output.read()).resolves.toBe(0);
+
+      await expect(stat(instanceFile)).rejects.toMatchObject({ code: "ENOENT" });
+      const files = await readdir(tempDir);
+      const logFile = files.find((file) => file.startsWith("server-") && file.endsWith(".log"));
+      expect(logFile).toBeTruthy();
+      const log = await readFile(join(tempDir, logFile!), "utf8");
+      expect(log).toContain("removed competing SIGTERM shutdown handlers");
+      expect(log).toContain("active_turn_drain completed");
+      expect(log).toContain("session_persistence_drain completed");
+      expect(log).toContain("browser_cleanup completed");
+      expect(log).toContain("observability_flush completed");
+      expect(log).toContain("shutdown complete (SIGTERM)");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 40_000);
 });

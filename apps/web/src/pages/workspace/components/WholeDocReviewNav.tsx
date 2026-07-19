@@ -7,11 +7,12 @@ export interface WholeDocReviewNavProps {
   /** 当前整篇审作用域；确认弹层异步返回后必须仍匹配，避免跨会话/跨审阅误执行。 */
   reviewScopeKey: string;
   version: "new" | "old";
+  isSubmitting?: boolean;
   onVersionChange: (v: "new" | "old") => void;
   /** 应用新版 = 提交本轮全部修改(commit)。 */
-  onApply: () => void;
+  onApply: () => void | Promise<void>;
   /** 退回旧版 = 放弃本轮全部修改(discard)。 */
-  onRevert: () => void;
+  onRevert: () => void | Promise<void>;
   onToast?: (message: string) => void;
 }
 
@@ -22,13 +23,15 @@ export interface WholeDocReviewNavProps {
 export function WholeDocReviewNav({
   reviewScopeKey,
   version,
+  isSubmitting = false,
   onVersionChange,
   onApply,
   onRevert,
   onToast,
 }: WholeDocReviewNavProps) {
   const confirm = useConfirm();
-  const [submitting, setSubmitting] = useState(false);
+  const [locallySubmitting, setLocallySubmitting] = useState(false);
+  const submitting = isSubmitting || locallySubmitting;
   const mountedRef = useRef(true);
   const reviewScopeKeyRef = useRef(reviewScopeKey);
   const unlockTimerRef = useRef<number | null>(null);
@@ -47,7 +50,7 @@ export function WholeDocReviewNav({
     if (unlockTimerRef.current !== null) window.clearTimeout(unlockTimerRef.current);
     unlockTimerRef.current = window.setTimeout(() => {
       unlockTimerRef.current = null;
-      setSubmitting(false);
+      setLocallySubmitting(false);
       onToast?.("操作仍未完成，请重试");
     }, SUBMITTING_UNLOCK_TIMEOUT_MS);
   };
@@ -57,15 +60,16 @@ export function WholeDocReviewNav({
       window.clearTimeout(unlockTimerRef.current);
       unlockTimerRef.current = null;
     }
-    setSubmitting(false);
+    setLocallySubmitting(false);
   };
 
   const handleApply = () => {
     if (submitting) return;
-    setSubmitting(true);
+    setLocallySubmitting(true);
     armSubmitTimeout();
     try {
-      onApply();
+      const result = onApply();
+      if (result) void result.then(stopSubmitting, stopSubmitting);
     } catch (error) {
       stopSubmitting();
       throw error;
@@ -81,10 +85,14 @@ export function WholeDocReviewNav({
       confirmLabel: "退回旧版",
     });
     if (!confirmed || !mountedRef.current || reviewScopeKeyRef.current !== activeScopeKey) return;
-    setSubmitting(true);
+    setLocallySubmitting(true);
     armSubmitTimeout();
     try {
-      onRevert();
+      const result = onRevert();
+      if (result) {
+        await result;
+        stopSubmitting();
+      }
     } catch (error) {
       stopSubmitting();
       throw error;

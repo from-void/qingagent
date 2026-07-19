@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
 import { SecretInput } from "./SecretInput";
@@ -66,6 +66,25 @@ export function VisionPanel() {
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const testRevisionRef = useRef(0);
+  const testControllerRef = useRef<AbortController | null>(null);
+
+  const invalidateTest = () => {
+    testRevisionRef.current += 1;
+    testControllerRef.current?.abort();
+    testControllerRef.current = null;
+    setTesting(false);
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      testRevisionRef.current += 1;
+      testControllerRef.current?.abort();
+      testControllerRef.current = null;
+    };
+  }, []);
 
   // 测试并保存:先调后端 test 路由(代理避免 CORS、做真实 image part 连通性检查),通了再落本机。
   const handleTestAndSave = async () => {
@@ -81,12 +100,19 @@ export function VisionPanel() {
       setMessage("API 地址格式不对:需以 http(s):// 开头");
       return;
     }
+    testControllerRef.current?.abort();
+    const revision = ++testRevisionRef.current;
     setTesting(true);
     setMessage(null);
     // 超时保护:测的是用户填的第三方 baseUrl,不可信;无 AbortController 时 fetch 会无限挂起,
     // 按钮永远卡"测试中…"=整页假死(e2e E1-h2)。
     const testCtrl = new AbortController();
+    testControllerRef.current = testCtrl;
     const testTimer = setTimeout(() => testCtrl.abort(), 25_000);
+    const canCommit = () =>
+      mountedRef.current &&
+      testRevisionRef.current === revision &&
+      testControllerRef.current === testCtrl;
     try {
       const res = await fetch("/api/v1/settings/vision/test", {
         method: "POST",
@@ -94,24 +120,24 @@ export function VisionPanel() {
         body: JSON.stringify({ protocol, baseUrl: base, apiKey: key, model: mdl }),
         signal: testCtrl.signal,
       });
+      if (!canCommit()) return;
       if (res.status === 400) {
-        if (mountedRef.current) setMessage("配置无效,请检查 API 地址 / 模型名格式");
+        setMessage("配置无效,请检查 API 地址 / 模型名格式");
         return;
       }
       const body = (await res.json()) as { ok?: boolean; errorKind?: VisionTestErrorKind };
+      if (!canCommit()) return;
       if (!body.ok) {
-        if (mountedRef.current) setMessage(`测试失败:${testErrorLabel(body.errorKind)}`);
+        setMessage(`测试失败:${testErrorLabel(body.errorKind)}`);
         return;
       }
       const next: VisionProvider = { enabled: true, protocol, baseUrl: base, apiKey: key, model: mdl };
       writeVisionProvider(next);
-      if (mountedRef.current) {
-        setSaved(next);
-        setMessage(null);
-        toast.show("测试通过,图像识别已启用");
-      }
+      setSaved(next);
+      setMessage(null);
+      toast.show("测试通过,图像识别已启用");
     } catch (e) {
-      if (mountedRef.current)
+      if (canCommit())
         setMessage(
           e instanceof DOMException && e.name === "AbortError"
             ? "测试超时:接口 25 秒无响应,请检查 API 地址是否可达"
@@ -119,7 +145,10 @@ export function VisionPanel() {
         );
     } finally {
       clearTimeout(testTimer);
-      if (mountedRef.current) setTesting(false);
+      if (canCommit()) {
+        testControllerRef.current = null;
+        setTesting(false);
+      }
     }
   };
 
@@ -216,7 +245,10 @@ export function VisionPanel() {
           <select
             className="sm-field-input"
             value={protocol}
-            onChange={(e) => setProtocol(e.target.value === "anthropic" ? "anthropic" : "openai")}
+            onChange={(e) => {
+              invalidateTest();
+              setProtocol(e.target.value === "anthropic" ? "anthropic" : "openai");
+            }}
           >
             <option value="openai">OpenAI 兼容</option>
             <option value="anthropic">Anthropic 兼容</option>
@@ -230,7 +262,10 @@ export function VisionPanel() {
             value={baseUrl}
             aria-invalid={baseUrlValid === false}
             aria-describedby={baseUrlValid === false ? "vision-base-url-error" : undefined}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={(e) => {
+              invalidateTest();
+              setBaseUrl(e.target.value);
+            }}
           />
           {baseUrlValid === false && (
             <p className="sm-field-err" id="vision-base-url-error">
@@ -246,7 +281,10 @@ export function VisionPanel() {
             className="sm-field-input"
             placeholder={saved?.apiKey ? `已存 ${maskTail(saved.apiKey)}，留空沿用` : "sk-…"}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => {
+              invalidateTest();
+              setApiKey(e.target.value);
+            }}
           />
         </div>
         <div className="sm-field">
@@ -255,7 +293,10 @@ export function VisionPanel() {
             className="sm-field-input"
             placeholder="如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={(e) => {
+              invalidateTest();
+              setModel(e.target.value);
+            }}
           />
         </div>
 

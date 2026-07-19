@@ -4,6 +4,7 @@ export interface PatchNavProps {
   remainingCount: number;
   totalCount: number;
   activePatchIndex: number;
+  isSubmitting?: boolean;
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onRejectAll: () => void;
@@ -18,6 +19,7 @@ export function PatchNav({
   remainingCount,
   totalCount,
   activePatchIndex,
+  isSubmitting = false,
   onJumpPrev,
   onJumpNext,
   onRejectAll,
@@ -26,7 +28,7 @@ export function PatchNav({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
-    <div className="patch-nav" data-wf="PatchNav">
+    <div className="patch-nav" data-wf="PatchNav" aria-busy={isSubmitting}>
       <span className="pn-dot" aria-hidden="true" />
       <span
         className="pn-label"
@@ -63,6 +65,7 @@ export function PatchNav({
         type="button"
         className="pn-commit"
         onClick={onCommit}
+        disabled={isSubmitting}
         title="提交剩余全部改动"
       >
         提交 ↵
@@ -72,6 +75,7 @@ export function PatchNav({
           type="button"
           className="pn-ghost"
           onClick={() => setConfirmOpen(true)}
+          disabled={isSubmitting}
           title="放弃全部剩余改动"
         >
           放弃全部

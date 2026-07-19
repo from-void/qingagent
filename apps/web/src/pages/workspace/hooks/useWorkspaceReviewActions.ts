@@ -79,6 +79,28 @@ export function useWorkspaceReviewActions(input: {
   );
   const [, setGoalLabel] = useState<string | null>(null);
   const autoCommitReviewKeyRef = useRef<string | null>(null);
+  const reviewSettlementInFlightRef = useRef<Promise<void> | null>(null);
+  const [isReviewSubmitting, setIsReviewSubmitting] = useState(false);
+
+  const runReviewSettlement = useCallback(
+    (execute: () => Promise<void>): Promise<void> => {
+      if (reviewSettlementInFlightRef.current) {
+        return reviewSettlementInFlightRef.current;
+      }
+      setIsReviewSubmitting(true);
+      const settlement = Promise.resolve()
+        .then(execute)
+        .finally(() => {
+          if (reviewSettlementInFlightRef.current === settlement) {
+            reviewSettlementInFlightRef.current = null;
+            setIsReviewSubmitting(false);
+          }
+        });
+      reviewSettlementInFlightRef.current = settlement;
+      return settlement;
+    },
+    [],
+  );
 
   const handleRejectAll = useCallback(() => {
     if (stateRef.current.viewingVersion !== null) {
@@ -147,10 +169,10 @@ export function useWorkspaceReviewActions(input: {
     reviewCloseInFlightRef.current = trackedClosePromise;
   }, [showToast]);
 
-  const handleAcceptAll = useCallback(() => {
+  const handleAcceptAll = useCallback((): Promise<void> => {
     if (stateRef.current.viewingVersion !== null) {
       showToast("正在查看历史版本，先返回当前版本");
-      return;
+      return Promise.resolve();
     }
     setTableTypedByPatch(null);
     const currentPatches = selectPatches(stateRef.current);
@@ -158,27 +180,29 @@ export function useWorkspaceReviewActions(input: {
     const currentSessionId = stateRef.current.sessionId;
     if (!stream || !currentSessionId || currentPatches.length === 0) {
       showToast("没有改动可提交");
-      return;
+      return Promise.resolve();
     }
 
-    stream.stop();
     const acceptReviewBatchIds = [
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
-    stream
-      .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
-      .then((frames) => {
-        if (!reviewCommitFramesLeavePendingReview(frames)) {
+    return runReviewSettlement(async () => {
+      stream.stop();
+      await stream
+        .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
+        .then((frames) => {
+          if (!reviewCommitFramesLeavePendingReview(frames)) {
+            dispatch({ kind: "forceUnlockReview" });
+            showToast("审阅状态未自动退出，已恢复编辑");
+          }
+        })
+        .catch((e) => {
+          console.error("[workspace] acceptAll commitReviewGroups failed", e);
           dispatch({ kind: "forceUnlockReview" });
-          showToast("审阅状态未自动退出，已恢复编辑");
-        }
-      })
-      .catch((e) => {
-        console.error("[workspace] acceptAll commitReviewGroups failed", e);
-        dispatch({ kind: "forceUnlockReview" });
-        showToast("提交失败 · 请重试");
-      });
-  }, [showToast]);
+          showToast("提交失败 · 请重试");
+        });
+    });
+  }, [runReviewSettlement, showToast]);
 
   const handleJumpNext = useCallback(() => {
     const allPatchIds = visibleReviewTargetIds;
@@ -237,10 +261,10 @@ export function useWorkspaceReviewActions(input: {
     [finalizeReviewTablePatch, showToast],
   );
 
-  const handleCommit = useCallback(() => {
+  const handleCommit = useCallback((): Promise<void> => {
     if (stateRef.current.viewingVersion !== null) {
       showToast("正在查看历史版本，先返回当前版本");
-      return;
+      return Promise.resolve();
     }
     // Read patches from the ref to guarantee freshness — the useCallback
     // closure can go stale when React batches state updates from the SSE
@@ -251,14 +275,14 @@ export function useWorkspaceReviewActions(input: {
     const total = currentPatches.length;
     if (total === 0) {
       showToast("没有改动可提交");
-      return;
+      return Promise.resolve();
     }
     const stream = streamRef.current;
-    if (!stream) return;
+    if (!stream) return Promise.resolve();
     const currentSessionId = stateRef.current.sessionId;
     if (!currentSessionId) {
       showToast("会话未就绪");
-      return;
+      return Promise.resolve();
     }
 
     const { acceptReviewBatchIds, rejectReviewBatchIds } =
@@ -268,27 +292,29 @@ export function useWorkspaceReviewActions(input: {
     // 提交成功后,若非全量采纳则以用户名义回流给模型。
     const reviewOutcome = buildReviewOutcome(currentPatches);
 
-    stream
-      .commitReviewGroups(currentSessionId, {
-        acceptReviewBatchIds,
-        rejectReviewBatchIds,
-      })
-      .then((frames) => {
-        // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
-        // commit 响应若缺状态转移帧(stale pendingReview),不兜底就永久锁输入。
-        // 逐条处理完的 auto-commit 也汇入本路径,该洞影响面比手动提交更大。
-        if (!reviewCommitFramesLeavePendingReview(frames)) {
+    return runReviewSettlement(async () => {
+      await stream
+        .commitReviewGroups(currentSessionId, {
+          acceptReviewBatchIds,
+          rejectReviewBatchIds,
+        })
+        .then((frames) => {
+          // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
+          // commit 响应若缺状态转移帧(stale pendingReview),不兜底就永久锁输入。
+          // 逐条处理完的 auto-commit 也汇入本路径,该洞影响面比手动提交更大。
+          if (!reviewCommitFramesLeavePendingReview(frames)) {
+            dispatch({ kind: "forceUnlockReview" });
+            showToast("审阅状态未自动退出，已恢复编辑");
+          }
+          sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
+        })
+        .catch((e) => {
+          console.error("[workspace] commitReviewGroups failed", e);
           dispatch({ kind: "forceUnlockReview" });
-          showToast("审阅状态未自动退出，已恢复编辑");
-        }
-        sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
-      })
-      .catch((e) => {
-        console.error("[workspace] commitReviewGroups failed", e);
-        dispatch({ kind: "forceUnlockReview" });
-        showToast("提交失败 · 请重试");
-      });
-  }, [showToast]);
+          showToast("提交失败 · 请重试");
+        });
+    });
+  }, [runReviewSettlement, showToast]);
 
   /**
    * 问卷作答统一提交(BigPlan 全页问卷 + 内联反问卡共用):先乐观把 askUser 卡置 done
@@ -507,6 +533,7 @@ export function useWorkspaceReviewActions(input: {
     handleRejectAll,
     handleSubmitAskUserAnswers,
     handleSubmitPlan,
+    isReviewSubmitting,
     remainingPatches,
     reviewedCount,
     submittingAskUserId,

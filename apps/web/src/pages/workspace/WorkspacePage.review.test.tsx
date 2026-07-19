@@ -1707,6 +1707,28 @@ describe("WorkspacePage review controls", () => {
     expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
   });
 
+  it("首个提交请求未完成时双击只提交一次", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-1", "batch-a", 0),
+    ]);
+    const pendingCommit = mockPendingCommit(stream);
+
+    const commit = buttonByText("提交 ↵");
+    act(() => {
+      commit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      commit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await flushMicrotasks();
+    expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
+    expect(commit.disabled).toBe(true);
+
+    await act(async () => {
+      pendingCommit.resolve([docStateFrame("editing")]);
+      await pendingCommit.promise;
+    });
+  });
+
   it("C11 放弃后立刻追问时 sendMessage 等关闭审阅完成后再发送", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),

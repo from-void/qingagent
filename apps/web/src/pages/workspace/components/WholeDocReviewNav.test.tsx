@@ -49,6 +49,37 @@ describe("WholeDocReviewNav", () => {
 
     expect(onRevert).toHaveBeenCalledTimes(1);
   });
+
+  it("应用新版绑定请求完成后才解除禁用", async () => {
+    let resolveApply!: () => void;
+    const onApply = vi.fn(() => new Promise<void>((resolve) => {
+      resolveApply = resolve;
+    }));
+
+    await render(
+      <ConfirmProvider>
+        <section id="view-workspace">
+          <WholeDocReviewNav
+            reviewScopeKey="session-a:doc-a"
+            version="new"
+            onVersionChange={() => {}}
+            onApply={onApply}
+            onRevert={() => {}}
+          />
+        </section>
+      </ConfirmProvider>,
+    );
+    await click(buttonByText("应用新版"));
+
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(buttonByText("应用新版").disabled).toBe(true);
+
+    await act(async () => {
+      resolveApply();
+      await Promise.resolve();
+    });
+    expect(buttonByText("应用新版").disabled).toBe(false);
+  });
 });
 
 async function renderReviewNav(reviewScopeKey: string, onRevert: () => void): Promise<void> {

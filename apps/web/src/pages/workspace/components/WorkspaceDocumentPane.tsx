@@ -71,6 +71,7 @@ export function WorkspaceDocumentPane({
     visiblePatchCount,
     unrenderablePatchCount,
     inlinePatchReview,
+    isReviewSubmitting,
     awaitingWholeDocReviewMaterial,
     fullpageAsk,
     submittingAskUserId,
@@ -307,6 +308,7 @@ export function WorkspaceDocumentPane({
             reviewedCount={reviewedCount}
             remainingCount={remainingPatches}
             activePatchIndex={activePatchIndex}
+            isReviewSubmitting={isReviewSubmitting}
             visiblePatchCount={visiblePatchCount}
             unrenderablePatchCount={unrenderablePatchCount}
             effectiveReview={inlinePatchReview}

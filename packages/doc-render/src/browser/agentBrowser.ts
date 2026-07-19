@@ -2,13 +2,14 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chromium } from "playwright";
-import type { BrowserContext, Route, WebSocketRoute } from "playwright";
+import type { BrowserContext } from "playwright";
 import { AgentBrowser, type BrowserToolName } from "@mastra/agent-browser";
 import { validateFetchUrl } from "./extractor.js";
 import { proxyFromEnv } from "./pool.js";
 import { systemBrowserExecutablePath } from "./systemBrowser.js";
 import { browserUnavailableToolResult } from "./browserErrors.js";
 import { isTruthyFlag } from "./envFlag.js";
+import { installBrowserRequestPolicy } from "./browserSecurity.js";
 
 /**
  * 0603 — 浏览器自主操作(browser_*)能力接入点。
@@ -27,7 +28,9 @@ import { isTruthyFlag } from "./envFlag.js";
  *   - QINGAGENT_BROWSER_CDP_URL=ws://…   客户端形态:连已运行的持久登录 Chrome(强制 scope:'shared')
  *   - QINGAGENT_BROWSER_STORAGE_STATE=…  登录态 JSON 路径(留空则默认 <cwd>/.qingagent-browser-state.json)
  *   - QINGAGENT_BROWSER_HEADFUL=1        有头模式(首次扫码/人工登录时用,登录后可改回无头复用 storageState)
- *   - QINGAGENT_BROWSER_ALLOW_DOMAINS=…  逗号分隔的登录站域名白名单(留空=不额外限制,仅做私网/scheme 拦截)
+ *   - QINGAGENT_BROWSER_ALLOW_DOMAINS=…  逗号分隔的入口/首站域名白名单(留空=不额外限制)。
+ *                                         这不是全程导航隔离；后续点击/重定向出名单后，
+ *                                         仍由逐请求私网/scheme 守卫兜底。
  */
 
 // 关闭高风险/对本场景无用的工具:
@@ -60,7 +63,7 @@ function storageStatePath(): string | undefined {
   return join(process.cwd(), ".qingagent-browser-state.json");
 }
 
-/** 登录站域名白名单(QINGAGENT_BROWSER_ALLOW_DOMAINS,逗号分隔;留空=不限制)。 */
+/** 入口/首站域名白名单；只约束 browser_goto，不把后续点击/重定向锁在名单内。 */
 function allowedDomains(): string[] {
   return (process.env.QINGAGENT_BROWSER_ALLOW_DOMAINS ?? "")
     .split(",")
@@ -82,71 +85,9 @@ let proxiedProc: ChildProcess | null = null;
 let proxiedCdpUrl: string | null = null;
 let processExitHooksInstalled = false;
 
-const SAFE_LOCAL_BROWSER_SCHEMES = new Set(["about:", "blob:", "data:"]);
-const contextPolicyInstallations = new WeakMap<BrowserContext, Promise<void>>();
-
-async function assertBrowserRequestAllowed(rawUrl: string, websocket: boolean): Promise<void> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid browser request URL: ${rawUrl}`);
-  }
-
-  if (websocket) {
-    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-      throw new Error(`Unsupported WebSocket scheme: ${parsed.protocol}`);
-    }
-    parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
-    await validateFetchUrl(parsed.toString());
-    return;
-  }
-
-  if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-    await validateFetchUrl(parsed.toString());
-    return;
-  }
-  if (!SAFE_LOCAL_BROWSER_SCHEMES.has(parsed.protocol)) {
-    throw new Error(`Unsupported browser request scheme: ${parsed.protocol}`);
-  }
-}
-
-async function handleBrowserRoute(route: Route): Promise<void> {
-  try {
-    await assertBrowserRequestAllowed(route.request().url(), false);
-    await route.continue();
-  } catch {
-    await route.abort("blockedbyclient").catch(() => undefined);
-  }
-}
-
-async function handleBrowserWebSocketRoute(route: WebSocketRoute): Promise<void> {
-  try {
-    await assertBrowserRequestAllowed(route.url(), true);
-    route.connectToServer();
-  } catch {
-    await route
-      .close({ code: 1008, reason: "Blocked by qingagent network policy" })
-      .catch(() => undefined);
-  }
-}
-
 /** 在 context 创建后的首个真实导航前安装全请求策略；同一 context 并发调用只安装一次。 */
 export async function installAgentBrowserRequestPolicy(context: BrowserContext): Promise<void> {
-  const existing = contextPolicyInstallations.get(context);
-  if (existing) return await existing;
-
-  const installation = (async () => {
-    await context.route("**/*", handleBrowserRoute);
-    await context.routeWebSocket("**/*", handleBrowserWebSocketRoute);
-  })();
-  contextPolicyInstallations.set(context, installation);
-  try {
-    await installation;
-  } catch (error) {
-    contextPolicyInstallations.delete(context);
-    throw error;
-  }
+  await installBrowserRequestPolicy(context);
 }
 
 /**
@@ -159,6 +100,8 @@ class SecuredAgentBrowser extends AgentBrowser {
     const manager = await this.getManagerForThread();
     const context = manager.getContext();
     if (!context) throw new Error("AgentBrowser context 未就绪，无法安装网络安全策略");
+    // 上游 BrowserConfig 不透传 serviceWorkers 选项；共用 helper 会用注册拦截、注销已有 SW
+    // 与 CDP Network.setBypassServiceWorker，为它已创建的 context 补上等价防线。
     await installAgentBrowserRequestPolicy(context);
   }
 }
@@ -330,8 +273,9 @@ function schedulePersist(browser: AgentBrowser, savePath: string | undefined): v
 
 /**
  * 给工具集打两层包裹:
- *  - browser_goto 入口 URL 安全校验(SSRF):validateFetchUrl 拒私网/元数据/非 http(s) + 可选域名白名单。
- *    真实 context 的逐请求/逐 WebSocket 校验由 SecuredAgentBrowser.ensureReady 生命周期钩子兜底。
+ *  - browser_goto 入口 URL 安全校验(SSRF):validateFetchUrl 拒私网/元数据/非 http(s) + 可选首站白名单。
+ *    白名单只约束显式 goto，不是全程导航隔离；后续出名单仍由真实 context 的逐请求/逐 WebSocket
+ *    私网与 scheme 守卫兜底。
  *  - 所有工具成功后 debounce 回写 storageState(web agent 把登录态存进 agent 浏览器,持久复用)。
  */
 function instrument(tools: BrowserToolset, browser: AgentBrowser, savePath: string | undefined): BrowserToolset {
@@ -361,7 +305,7 @@ function instrument(tools: BrowserToolset, browser: AgentBrowser, savePath: stri
             }
             if (!hostAllowed(parsed.hostname, allow)) {
               throw new Error(
-                `browser_goto 目标域 ${parsed.hostname} 不在登录站白名单内(QINGAGENT_BROWSER_ALLOW_DOMAINS)`,
+                `browser_goto 入口目标域 ${parsed.hostname} 不在首站白名单内(QINGAGENT_BROWSER_ALLOW_DOMAINS)`,
               );
             }
           }

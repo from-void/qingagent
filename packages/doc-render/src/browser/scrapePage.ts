@@ -5,13 +5,17 @@ import {
 } from "./extractor.js";
 import { isSubstantiveContent } from "./contentQuality.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
-import { getBrowser, withBrowserContextSlot } from "./pool.js";
+import { getBrowser, proxyFromEnv, withBrowserContextSlot } from "./pool.js";
 import {
   browserErrorMessage,
   formatBrowserUnavailableError,
   isBrowserAvailabilityError,
 } from "./browserErrors.js";
 import { persistScreenshot } from "./persistScreenshot.js";
+import {
+  BROWSER_SECURITY_CONTEXT_OPTIONS,
+  installBrowserRequestPolicy,
+} from "./browserSecurity.js";
 
 const MIN_TEXT = 40;
 // 30s:慢/重页面(政务、大列表、富媒体资讯)20s 到不了 domcontentloaded 会超时丢失;
@@ -91,6 +95,7 @@ export async function scrapeWithBrowserImpl(
         // 错误只放宽服务器身份认证，不放宽 SSRF 边界。权衡是挽回大量证书配置不当的
         // 合法 CN 政府/新闻子站；MITM 读到错误内容的风险很低，且抓取内容本就按不可信处理。
         ignoreHTTPSErrors: true,
+        ...BROWSER_SECURITY_CONTEXT_OPTIONS,
       });
       await context.addInitScript(() => {
         // tsx/esbuild 注入的 __name helper 在浏览器上下文不存在，补一个兜底，避免 page.evaluate 崩。
@@ -137,27 +142,14 @@ export async function scrapeWithBrowserImpl(
           /* ignore */
         }
       });
-      const page = await context.newPage();
 
-      // SSRF guard: validateFetchUrl only covered the initial URL. The browser
-      // can still follow HTTP redirects and load subresources to private /
-      // internal addresses. Re-validate every request URL (matching the
-      // per-hop posture of fetchWithSsrfGuard in extractor.ts) and abort any
-      // navigation/subresource pointing at a blocked host. Non-http(s) schemes
-      // (data:, blob:, about:) are allowed through since validateFetchUrl
-      // rejects them but they are not an SSRF vector.
-      await context.route("**/*", async (route) => {
-        const requestUrl = route.request().url();
-        if (/^https?:/i.test(requestUrl)) {
-          try {
-            await validateFetchUrl(requestUrl);
-          } catch {
-            await route.abort("blockedbyclient").catch(() => {});
-            return;
-          }
-        }
-        await route.continue().catch(() => {});
+      const proxyConfigured = Boolean(proxyFromEnv());
+      await installBrowserRequestPolicy(context, {
+        // Node 固定 IP 回填无法继承 Chromium 的外部代理链；代理部署继续由浏览器发请求，
+        // 保留逐请求校验但仍有二次 DNS 的 TOCTOU 窗口。无代理时普通资源全部固定 IP 回填。
+        pinHttpRequests: !proxyConfigured,
       });
+      const page = await context.newPage();
 
       // 整个浏览器抓取硬预算(用户要求外部抓取≤15s):默认 13s,留 ~2s 给提取/截图。
       // 每一步都从"剩余预算"取时间,预算用完立刻收手提取现有内容——绝不死等。

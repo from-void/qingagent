@@ -24,6 +24,12 @@ import { isHttpUrl } from "./visionProviderStore";
 
 ensureSettingsDialogA11y();
 
+function modelPersistFailureMessage(): string {
+  return window.electron?.isDesktop
+    ? "系统无安全存储或本机写入失败，未保存"
+    : "浏览器存储不可用，未保存";
+}
+
 // F1 模型设置面板。两层 key:本浏览器(visitor,localStorage) / 站点全局兜底(global-db)。
 // 未配置态 = 小白引导 + 粘贴 key;已配置态 = 看板(进入即自动加载余额+用量,不再手动点按钮)。
 // 进阶:其他云厂商(custom_provider)整体覆盖 baseURL+key+别名;官方模型前缀(official_model)仅覆盖模型名。
@@ -305,10 +311,16 @@ export function ModelSettingsPanel() {
       });
       if (!proceed) return;
     }
-    setVisitorDeepseekKey(trimmed);
-    setVisitorKey(trimmed);
+    if (!(await setVisitorDeepseekKey(trimmed))) {
+      setMessage(modelPersistFailureMessage());
+      return;
+    }
     // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
-    clearCustomProvider();
+    if (!(await clearCustomProvider())) {
+      setMessage("key 已保存，但旧的自定义模型配置清除失败，请重试");
+      return;
+    }
+    setVisitorKey(trimmed);
     setCustomProvider(null);
     writeOfficialModelOverride({ flash: officialFlash, pro: officialPro });
     setKeyInput("");
@@ -333,7 +345,10 @@ export function ModelSettingsPanel() {
     if (!proceed) {
       return false;
     }
-    clearVisitorDeepseekKey();
+    if (!(await clearVisitorDeepseekKey())) {
+      setMessage("本机配置清除失败，请重试");
+      return false;
+    }
     setVisitorKey(null);
     setMessage(window.electron?.isDesktop ? "已清除本机的 key" : "已清除本浏览器的 key");
     return true;
@@ -348,7 +363,10 @@ export function ModelSettingsPanel() {
     if (!proceed) {
       return false;
     }
-    clearCustomProvider();
+    if (!(await clearCustomProvider())) {
+      setMessage("本机配置清除失败，请重试");
+      return false;
+    }
     setCustomProvider(null);
     setMessage("已清除自定义模型配置");
     return true;
@@ -410,10 +428,16 @@ export function ModelSettingsPanel() {
         return;
       }
       const provider: CustomProvider = { protocol: customProtocol, baseUrl, apiKey, modelFlash, modelPro };
-      writeCustomProvider(provider);
+      if (!(await writeCustomProvider(provider))) {
+        setMessage(modelPersistFailureMessage());
+        return;
+      }
       setCustomProvider(provider);
       // 互斥:切到其他云厂商,清官方 visitor key
-      clearVisitorDeepseekKey();
+      if (!(await clearVisitorDeepseekKey())) {
+        setMessage("自定义模型已保存，但旧的官方 key 清除失败，请重试");
+        return;
+      }
       setVisitorKey(null);
       setEditing(false);
       setForceSetup(false);

@@ -1,6 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell, type Event } from "electron";
 import path from "node:path";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
@@ -360,6 +369,23 @@ function clientSecretConfigPath(): string {
   return path.join(app.getPath("userData"), "client-config.secrets.json");
 }
 
+function cleanupClientConfigTempFiles(): void {
+  try {
+    for (const entry of readdirSync(app.getPath("userData"), { withFileTypes: true })) {
+      // 只回收本应用原子写入留下的明文配置临时文件；不碰密文文件或其他临时文件。
+      if (!/^client-config\.json\.\d+\.tmp$/.test(entry.name)) continue;
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      try {
+        unlinkSync(path.join(app.getPath("userData"), entry.name));
+      } catch {
+        // 单个残片删不掉不阻断启动，后续启动会再次尝试。
+      }
+    }
+  } catch {
+    // userData 不存在或不可读时保持启动可用。
+  }
+}
+
 // 这些值会直接或嵌套携带桌面模型 API Key。为保持现有 renderer/clientPersist 契约，主进程
 // 只在 IPC 边界解密/加密整项；磁盘上的普通 client-config.json 永远不保存这些项。
 const DESKTOP_MODEL_SECRET_KEYS = new Set([
@@ -477,9 +503,15 @@ ipcMain.handle(
   (_event, patch: Record<string, string | null> | undefined) => {
     if (!patch || typeof patch !== "object") return false;
     try {
-      const secretPatch = Object.entries(patch).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
-      if (secretPatch.length > 0 && !isDesktopModelEncryptionAvailable()) return false;
-      if (isDesktopModelEncryptionAvailable()) migratePlaintextClientSecrets();
+      if (Object.values(patch).some((value) =>
+        value !== null && value !== undefined && typeof value !== "string"
+      )) return false;
+      const secretEntries = Object.entries(patch).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
+      const secretPatch = secretEntries.filter(([, value]) => typeof value === "string" && value !== "");
+      const encryptionAvailable = isDesktopModelEncryptionAvailable();
+      // 删除不需要解密/加密能力：即使 Linux 没有 keyring，也必须能清掉旧明文和密文项。
+      if (secretPatch.length > 0 && !encryptionAvailable) return false;
+      if (encryptionAvailable) migratePlaintextClientSecrets();
 
       const cfg = readClientConfig();
       const encrypted = readEncryptedClientSecrets();
@@ -491,7 +523,7 @@ ipcMain.handle(
         } else if (v === null || v === undefined || v === "") delete cfg[k];
         else if (typeof v === "string") cfg[k] = v;
       }
-      if (secretPatch.length > 0) writeEncryptedClientSecrets(encrypted);
+      if (secretEntries.length > 0) writeEncryptedClientSecrets(encrypted);
       writeClientConfig(cfg);
       return true;
     } catch {
@@ -705,6 +737,9 @@ if (process.platform === "darwin" && process.env.QINGAGENT_MAC_GPU_TWEAKS === "1
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  cleanupClientConfigTempFiles();
+  const { cleanupOrphanedPdfExportDirs } = await import("./pdfRenderer.js");
+  cleanupOrphanedPdfExportDirs();
   // safeStorage 仅在 app ready 后可靠；同时必须早于 createWindow() 内 startServer()，保证
   // server/core 业务模块首次读取凭据前 provider 已装配。Linux basic_text 不冒充 keychain。
   const credentialKeyState = await configureDesktopCredentialKeyProvider({

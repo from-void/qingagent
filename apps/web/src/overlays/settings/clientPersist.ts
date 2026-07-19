@@ -9,13 +9,25 @@
 //
 // 同步语义:渲染层在构造请求 header 时同步读取 key(visitorKeyHeaders()),不能改异步。
 // 故桌面端在 preload 阶段用 sendSync 把配置快照注入 window.electron.clientConfig,
-// 这里以它为初值建内存镜像;写入时同步更新镜像 + 异步落盘(IPC),保证后续同步读到最新值。
+// 这里以它为初值建内存镜像;写入时先同步更新镜像,再异步落盘(IPC),保证后续同步读到最新值。
 
 type ConfigMap = Record<string, string>;
 
 // 内存镜像:桌面端首次访问时以 preload 注入的快照为初值;web 端恒为 null(走 localStorage)。
 let cache: ConfigMap | null = null;
 let resolved = false;
+const writeRevisions = new Map<string, number>();
+
+function updateCacheValue(target: ConfigMap, key: string, value: string | null): void {
+  if (value) target[key] = value;
+  else delete target[key];
+}
+
+function nextWriteRevision(key: string): number {
+  const revision = (writeRevisions.get(key) ?? 0) + 1;
+  writeRevisions.set(key, revision);
+  return revision;
+}
 
 function ensureCache(): ConfigMap | null {
   if (resolved) return cache;
@@ -49,10 +61,21 @@ export function readPersisted(key: string): string | null {
 export function writePersisted(key: string, value: string | null): void {
   const c = ensureCache();
   if (c) {
-    if (value) c[key] = value;
-    else delete c[key];
-    // 落盘失败不影响本次会话内存值(下次启动可能丢,但属罕见 IO 异常)。
-    void window.electron?.setClientConfig?.({ [key]: value });
+    updateCacheValue(c, key, value);
+    nextWriteRevision(key);
+    // 普通配置保持宽松语义:内存立即可读，落盘失败只告警。
+    const pending = window.electron?.setClientConfig?.({ [key]: value });
+    if (!pending) {
+      console.warn(`[client-persist] 桌面持久化桥接不可用: ${key}`);
+      return;
+    }
+    void pending
+      .then((ok) => {
+        if (!ok) console.warn(`[client-persist] 桌面配置落盘失败: ${key}`);
+      })
+      .catch((err: unknown) => {
+        console.warn(`[client-persist] 桌面配置落盘异常: ${key}`, err);
+      });
     return;
   }
   try {
@@ -63,8 +86,46 @@ export function writePersisted(key: string, value: string | null): void {
   }
 }
 
+/**
+ * 可等待的写入路径，供含模型 key 的敏感配置使用。
+ * 桌面端仍会先同步更新镜像；IPC 失败时恢复写入前的值，避免形成“本次能用、重启丢失”的假象。
+ */
+export async function writePersistedAwaited(key: string, value: string | null): Promise<boolean> {
+  const c = ensureCache();
+  if (!c) {
+    try {
+      if (value) window.localStorage.setItem(key, value);
+      else window.localStorage.removeItem(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const hadPrevious = Object.prototype.hasOwnProperty.call(c, key);
+  const previous = c[key];
+  updateCacheValue(c, key, value);
+  const revision = nextWriteRevision(key);
+
+  try {
+    const setter = window.electron?.setClientConfig;
+    const ok = setter ? await setter({ [key]: value }) : false;
+    if (ok) return true;
+  } catch {
+    // 统一按落盘失败处理，并在下方回滚镜像。
+  }
+
+  // 只回滚当前这次写入；若同一 key 已有更新请求，不能用旧值覆盖它。
+  if (writeRevisions.get(key) === revision) {
+    if (hadPrevious && previous !== undefined) c[key] = previous;
+    else delete c[key];
+  }
+  return false;
+}
+
 /** 仅供测试:重置内存镜像,使下次读取重新探测 window.electron。 */
 export function __resetClientPersistCacheForTests(): void {
   cache = null;
   resolved = false;
+  writeRevisions.clear();
 }

@@ -97,7 +97,7 @@ describe("generateSvg BranchCall 流式 partialSvg", () => {
     else process.env.DEEPSEEK_API_KEY = originalApiKey;
   });
 
-  it("BranchCall 分段输出未闭合 SVG 时，streaming progress 携带并递增 partialSvg", async () => {
+  it("BranchCall 验真后回放分段 SVG 时，streaming progress 携带并递增 partialSvg", async () => {
     let now = new Date().getTime();
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const context = requestContext();

@@ -26,8 +26,8 @@ export interface InnerModelStreamCall {
   maxTokens?: number;
   /** 每次上游流有活动时触发；与只触发一次的内容启动事件分离。 */
   onActivity?: () => void;
-  onContentStart?: (elapsedMs: number) => void;
-  onContentDelta?: (delta: string, raw: string) => void;
+  onContentStart?: (elapsedMs: number, observedAt?: number) => void;
+  onContentDelta?: (delta: string, raw: string, observedAt?: number) => void;
   /** 有主链快照时优先借道；失败则原样回退下面的 streamText 请求。 */
   branchSteeringTail?: string | BranchMessage[];
 }
@@ -60,17 +60,13 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       maxTokens: input.maxTokens,
       onActivity: () => {
         input.onActivity?.();
-        if (contentStartMs === null) {
-          contentStartMs = Date.now() - startedAt;
-          input.onContentStart?.(contentStartMs);
-        }
       },
-      onTextDelta: (delta, raw) => {
+      onTextDelta: (delta, raw, observedAt) => {
         if (contentStartMs === null) {
-          contentStartMs = Date.now() - startedAt;
-          input.onContentStart?.(contentStartMs);
+          contentStartMs = observedAt - startedAt;
+          input.onContentStart?.(contentStartMs, observedAt);
         }
-        input.onContentDelta?.(delta, raw);
+        input.onContentDelta?.(delta, raw, observedAt);
       },
     });
     branchAttempts = branched.attempts;

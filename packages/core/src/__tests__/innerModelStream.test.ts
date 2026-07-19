@@ -128,16 +128,21 @@ describe("streamInnerModel", () => {
 
   it("BranchCall 单次失败时完整降级原 streamText 路径", async () => {
     getSessionSnapshotMock.mockReturnValue({ sessionId: "s" });
-    branchCallMock.mockResolvedValueOnce({
-      ok: false,
-      reason: "tool_call",
-      attempts: 2,
-      toolCallRetries: 1,
+    branchCallMock.mockImplementationOnce(async (input: { onActivity?: () => void }) => {
+      input.onActivity?.();
+      return {
+        ok: false,
+        reason: "tool_call",
+        attempts: 2,
+        toolCallRetries: 1,
+      };
     });
     streamTextMock.mockReturnValue({ fullStream: fullStream([
       { type: "text-delta", textDelta: "降级成功" },
       { type: "finish", finishReason: "stop" },
     ]) });
+    const starts: number[] = [];
+    const deltas: string[] = [];
 
     const result = await streamInnerModel({
       callSite: "generateSvg",
@@ -146,9 +151,13 @@ describe("streamInnerModel", () => {
       branchSteeringTail: "只输出 SVG",
       thinking: false,
       temperature: 0.4,
+      onContentStart: (ms) => starts.push(ms),
+      onContentDelta: (delta) => { deltas.push(delta); },
     });
 
     expect(result.raw).toBe("降级成功");
+    expect(starts).toHaveLength(1);
+    expect(deltas).toEqual(["降级成功"]);
     expect(streamTextMock).toHaveBeenCalledOnce();
     expect(getDeepseekModelMock).toHaveBeenCalledWith(undefined, "flash", expect.objectContaining({
       attempt: 6,

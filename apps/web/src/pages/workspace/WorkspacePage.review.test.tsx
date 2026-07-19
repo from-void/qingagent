@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from "react";
+import { act, StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -679,6 +679,43 @@ describe("WorkspacePage review controls", () => {
     host?.remove();
     host = null;
   });
+
+  it("离开工作区后延迟关闭客户端流", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    vi.useFakeTimers();
+
+    act(() => root?.unmount());
+    root = null;
+    expect(stream.dispose).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(75));
+    expect(stream.dispose).toHaveBeenCalledTimes(1);
+  }, 15_000);
+
+  it("StrictMode 演练 cleanup 会取消延迟释放并复用当前流", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(
+      <StrictMode>
+        <WorkspacePage />
+      </StrictMode>,
+    );
+    const mountedStreams = [...serverStreamMock.instances];
+    const stream = latestServerStream();
+    vi.useFakeTimers();
+
+    act(() => vi.advanceTimersByTime(75));
+    expect(mountedStreams.length).toBeGreaterThan(0);
+    for (const mountedStream of mountedStreams) {
+      expect(mountedStream.dispose).not.toHaveBeenCalled();
+    }
+
+    act(() => root?.unmount());
+    root = null;
+    act(() => vi.advanceTimersByTime(75));
+    expect(stream.dispose).toHaveBeenCalledTimes(1);
+  }, 15_000);
 
   it("多 atomic group 且 agentBusy 未清零时仍渲染审查提交与 hover 取消控件", async () => {
     vi.useFakeTimers();

@@ -298,6 +298,9 @@ export function useWorkspacePageController() {
   const replaySessionIdRef = useRef<string | null>(state.sessionId);
   const activeWorkspaceSessionTargetRef = useRef<string | null>(null);
   const streamGenerationRef = useRef(0);
+  const streamDisposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const startNewSessionPromiseRef = useRef<Promise<string> | null>(null);
   const startSessionPromisesBySessionRef = useRef<Map<string, Promise<string>>>(
     new Map(),
@@ -1345,6 +1348,10 @@ export function useWorkspacePageController() {
   // StrictMode's cleanup/re-mount cycle does NOT dispose the stream
   // while an in-flight SSE request is still active.
   useEffect(() => {
+    if (streamDisposeTimerRef.current !== null) {
+      clearTimeout(streamDisposeTimerRef.current);
+      streamDisposeTimerRef.current = null;
+    }
     const handleFrame = (
       frame: BridgeFrame,
       streamSessionId: string | null,
@@ -1725,8 +1732,15 @@ export function useWorkspacePageController() {
     return () => {
       window.removeEventListener("hashchange", syncHashSession);
       window.removeEventListener("popstate", syncHashSession);
-      // 不在 cleanup dispose stream:开发 StrictMode 会立即 cleanup/re-run,
-      // 误杀在途 SSE 会复现首轮生成丢帧。
+      // 延迟释放让开发 StrictMode 的立即 cleanup/re-run 有机会取消 dispose，
+      // 避免误杀首轮在途 SSE；真实离开工作区时定时器会关闭客户端通道。
+      const streamToDispose = streamRef.current;
+      if (!streamToDispose) return;
+      streamDisposeTimerRef.current = setTimeout(() => {
+        streamDisposeTimerRef.current = null;
+        streamToDispose.dispose();
+        if (streamRef.current === streamToDispose) streamRef.current = null;
+      }, 75);
     };
   }, [
     rejectPendingDocSaveDrain,

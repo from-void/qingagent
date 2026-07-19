@@ -665,6 +665,10 @@ export class ServerStream {
       window.removeEventListener("qa-auth-changed", this.handleAuthChanged);
     }
     this.detach();
+    for (const controller of this.activeControllers) {
+      controller.abort();
+    }
+    this.activeControllers.clear();
     for (const waiter of this.waiters) {
       clearTimeout(waiter.timer);
       waiter.reject(new Error("ServerStream disposed"));

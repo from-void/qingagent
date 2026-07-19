@@ -279,6 +279,52 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(bodies.filter((b) => b.includes("连接失败"))).toHaveLength(1);
   });
 
+  it("持续网络错误跨框架与回合层的 provider 调用总次数上界为 15", async () => {
+    vi.useFakeTimers();
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const {
+      wrapToolCallRepairingModel,
+    } = await import("../llm/repairingModel.js");
+    const providerError = Object.assign(new Error("fetch failed"), { code: "ECONNRESET" });
+    const providerDoStream = vi.fn(async (_options?: unknown) => {
+      throw providerError;
+    });
+    const repairingModel = wrapToolCallRepairingModel({
+      specificationVersion: "v3" as const,
+      provider: "test",
+      modelId: "persistent-network-error",
+      supportedUrls: {},
+      doGenerate: providerDoStream,
+      doStream: providerDoStream,
+    });
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    streamMock.mockImplementation((async (...args: any[]) => {
+      const options = args[1];
+      const frameworkAttempts = Number(options.modelSettings.maxRetries) + 1;
+      for (let attempt = 0; attempt < frameworkAttempts; attempt += 1) {
+        await repairingModel.doStream({} as never).catch(() => undefined);
+      }
+      return {
+        runId: `run-network-upper-${streamMock.mock.calls.length}`,
+        fullStream: streamOf(errorChunk("fetch failed")),
+      } as never;
+    }) as never);
+
+    const framesPromise = collectFrames(runAgentTurn(createSession("network-retry-upper"), "你好"));
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(401);
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(801);
+    await framesPromise;
+
+    // Mastra maxRetries=4 => 每回合最多 5 次；TURN_RETRY_LIMIT=2 => 最多 3 回合。
+    const expectedUpperBound = 5 * 3;
+    expect(streamMock).toHaveBeenCalledTimes(3);
+    expect(providerDoStream).toHaveBeenCalledTimes(expectedUpperBound);
+    expect(providerDoStream.mock.calls.length).toBeLessThanOrEqual(expectedUpperBound);
+  });
+
   it.each([401, 403])("模型鉴权失败 %s 标记为不可重试并提示检查密钥", async (statusCode) => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession(`err-auth-${statusCode}`);

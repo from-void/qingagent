@@ -11,9 +11,7 @@ import { resolveDeepseekRouterModelId } from "./modelConfig.js";
 type ModelCallOptions = Parameters<ModelRouterLanguageModel["doStream"]>[0];
 type ModelStreamResult = Awaited<ReturnType<ModelRouterLanguageModel["doStream"]>>;
 
-// 模型调用瞬时网络失败(ECONNRESET / 连接重置 / 超时)是可重试的——上游(DeepSeek/代理)抖一下
-// 不该把整轮甩回给用户"模型服务连接失败,请重试"。仅在"建连/首字节前"失败时重试(此处 await 抛出
-// 即此类),不重试已经流出 token 的中途错误。
+// 网络错误分类仅供传输层诊断；实际网络重试统一由 Mastra modelSettings.maxRetries 负责。
 export function isRetryableModelError(e: unknown): boolean {
   const retryableCodes = new Set([
     "ECONNRESET",
@@ -31,32 +29,23 @@ export function isRetryableModelError(e: unknown): boolean {
   const seen = new Set<unknown>();
   for (let depth = 0; current && depth < 8 && !seen.has(current); depth += 1) {
     seen.add(current);
-    const err = current as { isRetryable?: boolean; code?: string; cause?: unknown; message?: string };
+    const err = current as {
+      name?: string;
+      isRetryable?: boolean;
+      code?: string;
+      cause?: unknown;
+      message?: string;
+    };
+    if (err.name === "AbortError") return false;
     if (err.isRetryable === true || retryableCodes.has(err.code ?? "")) return true;
     if (
-      /ECONNRESET|ETIMEDOUT|ECONNREFUSED|UND_ERR_(?:CONNECT|HEADERS)_TIMEOUT|socket hang up|Cannot connect|fetch failed|network|terminated|aborted/i.test(
+      /ECONNRESET|ETIMEDOUT|ECONNREFUSED|UND_ERR_(?:CONNECT|HEADERS)_TIMEOUT|socket hang up|Cannot connect|fetch failed|network|terminated/i.test(
         String(err.message ?? ""),
       )
     ) return true;
     current = err.cause;
   }
   return false;
-}
-
-async function withModelRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 1; i <= attempts; i += 1) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      if (i >= attempts || !isRetryableModelError(e)) throw e;
-      // eslint-disable-next-line no-console
-      console.warn(`[model] 瞬时连接失败,第 ${i}/${attempts - 1} 次重试: ${String((e as Error)?.message ?? e).slice(0, 80)}`);
-      await new Promise((r) => setTimeout(r, 400 * 2 ** (i - 1))); // 400ms, 800ms
-    }
-  }
-  throw lastErr;
 }
 type ModelStreamPart = ModelStreamResult["stream"] extends ReadableStream<infer Part>
   ? Part
@@ -213,14 +202,14 @@ export function wrapToolCallRepairingModel<T extends RepairableLanguageModel>(
       if (prop === "doGenerate") {
         return async (...args: any[]) => {
           if (options.guardProviderCall) guardBeforeProviderCall(args[0]);
-          const result = await withModelRetry(() => Promise.resolve(target.doGenerate(...args)));
+          const result = await target.doGenerate(...args);
           return repairToolCallModelResult(result);
         };
       }
       if (prop === "doStream") {
         return async (...args: any[]) => {
           if (options.guardProviderCall) guardBeforeProviderCall(args[0]);
-          const result = await withModelRetry(() => Promise.resolve(target.doStream(...args)));
+          const result = await target.doStream(...args);
           return repairToolCallModelResult(result);
         };
       }
@@ -243,12 +232,12 @@ export class RepairingLanguageModelV2 implements RepairableLanguageModelV2 {
   }
 
   async doGenerate(options: ModelCallOptions): Promise<ModelStreamResult> {
-    const result = await withModelRetry(() => Promise.resolve(this.inner.doGenerate(options)));
+    const result = await this.inner.doGenerate(options);
     return repairToolCallModelResult(result);
   }
 
   async doStream(options: ModelCallOptions): Promise<ModelStreamResult> {
-    const result = await withModelRetry(() => Promise.resolve(this.inner.doStream(options)));
+    const result = await this.inner.doStream(options);
     return repairToolCallModelResult(result);
   }
 }
@@ -260,13 +249,13 @@ export class RepairingModelRouterLanguageModel extends ModelRouterLanguageModel 
 
   async doGenerate(options: ModelCallOptions): Promise<ModelStreamResult> {
     guardBeforeProviderCall(options);
-    const result = await withModelRetry(() => super.doGenerate(options));
+    const result = await super.doGenerate(options);
     return repairToolCallModelResult(result);
   }
 
   async doStream(options: ModelCallOptions): Promise<ModelStreamResult> {
     guardBeforeProviderCall(options);
-    const result = await withModelRetry(() => super.doStream(options));
+    const result = await super.doStream(options);
     return repairToolCallModelResult(result);
   }
 }

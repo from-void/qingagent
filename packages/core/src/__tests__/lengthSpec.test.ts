@@ -24,6 +24,9 @@ describe("countVisibleChars 计数口径(含标点不含空白)", () => {
   it("不含标点口径只数汉字字母数字", () => {
     expect(countCharsNoPunct("你好，世界。abc123！")).toBe(10);
   });
+  it("不含标点口径统一覆盖各语种 Unicode 字母与数字", () => {
+    expect(countCharsNoPunct("日本語，한국어 café １２３！")).toBe(13);
+  });
 });
 
 describe("makeLengthSpec 四种 bound 语义", () => {

@@ -29,8 +29,16 @@ describe("countVisibleChars", () => {
 });
 
 describe("countCharsNoPunct", () => {
-  it("只数汉字字母数字", () => {
+  it("只数 Unicode 字母与数字", () => {
     expect(countCharsNoPunct("你好，世界！abc 123…")).toBe(10);
+  });
+
+  it("覆盖日文、韩文、重音拉丁与全角数字", () => {
+    expect(countCharsNoPunct("日本語")).toBe(3);
+    expect(countCharsNoPunct("한국어")).toBe(3);
+    expect(countCharsNoPunct("café")).toBe(4);
+    expect(countCharsNoPunct("１２３")).toBe(3);
+    expect(countCharsNoPunct("日本語，한국어 café １２３！")).toBe(13);
   });
 });
 

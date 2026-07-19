@@ -263,7 +263,7 @@ describe("repairAiIrShorthand — run 简写宽容修复(对抗脏输入)", () =
     expect(maxListItemDepth(compileOk(input) as unknown as NodeLike)).toBeGreaterThan(1);
   });
 
-  it("模型用 ①②③ 伪装子项时,挂到前一个一级条目 children 下", () => {
+  it("无缩进的圈号项保留原文并与前项平级", () => {
     const input = {
       blocks: [
         {
@@ -272,6 +272,51 @@ describe("repairAiIrShorthand — run 简写宽容修复(对抗脏输入)", () =
             { runs: [{ text: "一级主题" }] },
             { runs: [{ text: "① 子项一" }] },
             { runs: [{ text: "② 子项二" }] },
+          ],
+        },
+      ],
+    };
+
+    expect(repairAiIrShorthand(input)).toMatchObject({
+      blocks: [
+        {
+          type: "bulletList",
+          items: [
+            { runs: [{ text: "一级主题" }] },
+            { runs: [{ text: "① 子项一" }] },
+            { runs: [{ text: "② 子项二" }] },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("根级 ①②③ 保留圈号且保持平级", () => {
+    const input = {
+      blocks: [
+        {
+          type: "orderedList",
+          items: [
+            { runs: [{ text: "① 第一项" }] },
+            { runs: [{ text: "② 第二项" }] },
+            { runs: [{ text: "③ 第三项" }] },
+          ],
+        },
+      ],
+    };
+
+    expect(repairAiIrShorthand(input)).toEqual(input);
+  });
+
+  it("有真实缩进的圈号项仍修复为 children 并剥离前缀", () => {
+    const input = {
+      blocks: [
+        {
+          type: "bulletList",
+          items: [
+            { runs: [{ text: "一级主题" }] },
+            { runs: [{ text: "  ① 子项一" }] },
+            { runs: [{ text: "  ② 子项二" }] },
           ],
         },
       ],

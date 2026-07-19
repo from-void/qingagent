@@ -153,7 +153,11 @@ import { useReviewReveal } from "./useReviewReveal";
 import { useWorkspaceChatActions } from "./useWorkspaceChatActions";
 import { useWorkspaceChrome } from "./useWorkspaceChrome";
 import { useWorkspaceDebugControls } from "./useWorkspaceDebugControls";
-import { useWorkspaceDocumentEditor } from "./useWorkspaceDocumentEditor";
+import {
+  useWorkspaceDocumentEditor,
+  type QueuedDocWrite,
+  type SendDocWrite,
+} from "./useWorkspaceDocumentEditor";
 import { useWorkspaceFind } from "./useWorkspaceFind";
 import { useWorkspaceReviewActions } from "./useWorkspaceReviewActions";
 export { RightPane } from "../components/RightPane";
@@ -320,7 +324,7 @@ export function useWorkspacePageController() {
   >(new Map());
   const docVersionRef = useRef(state.version);
   const pendingDocWriteRef = useRef(false);
-  const queuedPmDocRef = useRef<PmDoc | null>(null);
+  const queuedPmDocRef = useRef<QueuedDocWrite | null>(null);
   const scheduledDocWriteRef = useRef(false);
   const latestDocMutationIdRef = useRef<string | null>(null);
   const docWriteAckRef = useRef<Map<string, PendingDocSaveWaiter>>(new Map());
@@ -340,7 +344,10 @@ export function useWorkspacePageController() {
   const presentationRunSeqRef = useRef(0);
   const sawDraftingRef = useRef(false);
   const presentedDocumentSnapshotRef = useRef<number | null>(null);
-  const sendDocWriteRef = useRef<(doc: PmDoc) => Promise<void>>(() =>
+  const sendDocWriteRef = useRef<SendDocWrite>(() =>
+    Promise.resolve(),
+  );
+  const flushPendingDocSaveRef = useRef<() => Promise<void>>(() =>
     Promise.resolve(),
   );
   const reducedMotionRef = useRef(false);
@@ -1495,7 +1502,18 @@ export function useWorkspacePageController() {
           scheduledDocWriteRef.current = true;
           window.setTimeout(() => {
             scheduledDocWriteRef.current = false;
-            sendDocWriteRef.current(queued).catch((error) => {
+            if (
+              streamGenerationRef.current !== queued.streamGeneration ||
+              sessionIdRef.current !== queued.sessionId ||
+              streamRef.current !== queued.stream
+            ) {
+              console.warn(
+                "[workspace] discarded queued updateDoc after session boundary",
+              );
+              resolvePendingDocSaveDrain();
+              return;
+            }
+            sendDocWriteRef.current(queued.pmDoc, queued).catch((error) => {
               console.error("[workspace] queued updateDoc failed", error);
             });
           }, 0);
@@ -1519,6 +1537,31 @@ export function useWorkspacePageController() {
       options: { resetSessionState: boolean },
     ): ServerStream => {
       const previousStream = streamRef.current;
+      const abandoningDocSave =
+        pendingDocWriteRef.current ||
+        queuedPmDocRef.current !== null ||
+        scheduledDocWriteRef.current;
+      if (abandoningDocSave) {
+        console.warn(
+          "[workspace] discarding undrained updateDoc at session boundary",
+        );
+        const error = new PendingDocSaveError(
+          "会话已切换，旧会话的待保存内容已停止发送。",
+        );
+        if (docSaveRetryTimerRef.current !== null) {
+          clearTimeout(docSaveRetryTimerRef.current);
+          docSaveRetryTimerRef.current = null;
+        }
+        queuedPmDocRef.current = null;
+        pendingDocWriteRef.current = false;
+        scheduledDocWriteRef.current = false;
+        latestDocMutationIdRef.current = null;
+        for (const waiter of docWriteAckRef.current.values()) {
+          waiter.reject(error);
+        }
+        docWriteAckRef.current.clear();
+        rejectPendingDocSaveDrain(error);
+      }
       const streamGeneration = streamGenerationRef.current + 1;
       streamGenerationRef.current = streamGeneration;
       activeWorkspaceSessionTargetRef.current = targetSessionId;
@@ -1713,13 +1756,36 @@ export function useWorkspacePageController() {
       });
     }
 
-    const syncHashSession = () => {
+    const syncHashSession = async () => {
       const nextSessionId = workspaceSessionIdFromHash(window.location.hash);
       if (
         nextSessionId === activeWorkspaceSessionTargetRef.current &&
         streamRef.current
       )
         return;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(
+            () => reject(new Error("session boundary doc save timed out")),
+            300,
+          );
+          flushPendingDocSaveRef.current().then(
+            () => {
+              window.clearTimeout(timer);
+              resolve();
+            },
+            (error) => {
+              window.clearTimeout(timer);
+              reject(error);
+            },
+          );
+        });
+      } catch (error) {
+        console.error(
+          "[workspace] failed to flush updateDoc before session switch",
+          error,
+        );
+      }
       startWorkspaceStream(nextSessionId, { resetSessionState: true });
     };
 
@@ -2022,6 +2088,7 @@ export function useWorkspacePageController() {
     state,
     stateRef,
     streamRef,
+    streamGenerationRef,
     sessionIdRef,
     startNewSessionPromiseRef,
     docVersionRef,
@@ -2045,6 +2112,7 @@ export function useWorkspacePageController() {
     rejectPendingDocSaveDrain,
     waitForPendingDocSaveDrain,
   });
+  flushPendingDocSaveRef.current = flushPendingDocSave;
 
   const clearPresentationRun = useCallback(() => {
     setPresentationRun(null);

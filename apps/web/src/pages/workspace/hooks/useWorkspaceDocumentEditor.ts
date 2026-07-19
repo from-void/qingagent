@@ -44,6 +44,21 @@ import type { NativePresentationRun } from "../data/nativeDiffAnimation";
 import type { ServerStream } from "../data/serverStream";
 import type { WorkspaceAction, WorkspaceState } from "../data/workspaceState";
 
+export interface DocWriteTarget {
+  sessionId: string;
+  stream: ServerStream;
+  streamGeneration: number;
+}
+
+export interface QueuedDocWrite extends DocWriteTarget {
+  pmDoc: PmDoc;
+}
+
+export type SendDocWrite = (
+  pmDoc: PmDoc,
+  target?: DocWriteTarget,
+) => Promise<void>;
+
 function buildBlankStarterDoc(): PmDoc {
   return aiIrToPm({
     title: null,
@@ -77,17 +92,18 @@ export function useWorkspaceDocumentEditor(input: {
   state: WorkspaceState;
   stateRef: MutableRefObject<WorkspaceState>;
   streamRef: MutableRefObject<ServerStream | null>;
+  streamGenerationRef: MutableRefObject<number>;
   sessionIdRef: MutableRefObject<string | null>;
   startNewSessionPromiseRef: MutableRefObject<Promise<string> | null>;
   docVersionRef: MutableRefObject<number>;
   pendingDocWriteRef: MutableRefObject<boolean>;
-  queuedPmDocRef: MutableRefObject<PmDoc | null>;
+  queuedPmDocRef: MutableRefObject<QueuedDocWrite | null>;
   scheduledDocWriteRef: MutableRefObject<boolean>;
   latestDocMutationIdRef: MutableRefObject<string | null>;
   lastSentPmDocRef: MutableRefObject<PmDoc | null>;
   docWriteAckRef: MutableRefObject<Map<string, PendingDocSaveWaiter>>;
   docSaveRetryTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>;
-  sendDocWriteRef: MutableRefObject<(doc: PmDoc) => Promise<void>>;
+  sendDocWriteRef: MutableRefObject<SendDocWrite>;
   pendingBlankFocusRef: MutableRefObject<StarterBlankTarget | null>;
   fillTemplatePromiseRef: MutableRefObject<Promise<void> | null>;
   presentationRunRef: MutableRefObject<NativePresentationRun | null>;
@@ -106,6 +122,7 @@ export function useWorkspaceDocumentEditor(input: {
     state,
     stateRef,
     streamRef,
+    streamGenerationRef,
     sessionIdRef,
     startNewSessionPromiseRef,
     docVersionRef,
@@ -131,9 +148,11 @@ export function useWorkspaceDocumentEditor(input: {
   } = input;
 
   const sendDocWrite = useCallback(
-    (pmDoc: PmDoc): Promise<void> => {
-      const stream = streamRef.current;
-      const sessionId = sessionIdRef.current;
+    (pmDoc: PmDoc, explicitTarget?: DocWriteTarget): Promise<void> => {
+      const stream = explicitTarget?.stream ?? streamRef.current;
+      const sessionId = explicitTarget?.sessionId ?? sessionIdRef.current;
+      const streamGeneration =
+        explicitTarget?.streamGeneration ?? streamGenerationRef.current;
       if (!stream || !sessionId) {
         const error = new PendingDocSaveError(
           "连接未就绪，刚才的手动编辑未保存。",
@@ -198,6 +217,8 @@ export function useWorkspaceDocumentEditor(input: {
       const MAX_TRANSIENT_DOC_SAVE_RETRIES = 2;
       const canRetryDocSave = () =>
         sessionIdRef.current === sessionId &&
+        streamRef.current === stream &&
+        streamGenerationRef.current === streamGeneration &&
         latestDocMutationIdRef.current === clientMutationId &&
         docWriteAckRef.current.has(clientMutationId);
 
@@ -365,11 +386,26 @@ export function useWorkspaceDocumentEditor(input: {
       }
 
       const persistDoc = (): Promise<void> => {
+        const stream = streamRef.current;
+        const sessionId = sessionIdRef.current;
+        if (!stream || !sessionId) {
+          const error = new PendingDocSaveError(
+            "连接未就绪，刚才的手动编辑未保存。",
+          );
+          showBackgroundDocSaveFailure(error);
+          rejectPendingDocSaveDrain(error);
+          return Promise.reject(error);
+        }
+        const target: DocWriteTarget = {
+          sessionId,
+          stream,
+          streamGeneration: streamGenerationRef.current,
+        };
         if (pendingDocWriteRef.current || scheduledDocWriteRef.current) {
-          queuedPmDocRef.current = pmDoc;
+          queuedPmDocRef.current = { pmDoc, ...target };
           return waitForPendingDocSaveDrain();
         }
-        return sendDocWriteRef.current(pmDoc);
+        return sendDocWriteRef.current(pmDoc, target);
       };
 
       if (!current.sessionId) {
@@ -392,10 +428,9 @@ export function useWorkspaceDocumentEditor(input: {
       }
 
       if (pendingDocWriteRef.current || scheduledDocWriteRef.current) {
-        queuedPmDocRef.current = pmDoc;
-        return waitForPendingDocSaveDrain();
+        return persistDoc();
       }
-      return sendDocWriteRef.current(pmDoc);
+      return persistDoc();
     },
     [
       rejectPendingDocSaveDrain,

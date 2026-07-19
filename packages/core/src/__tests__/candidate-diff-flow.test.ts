@@ -335,6 +335,56 @@ describe("candidate-diff backend flow", () => {
     expect(docText(state.doc)).toBe("第一版正文");
   }, 10_000);
 
+  it.each([
+    [
+      "纯图片文档",
+      pmDoc([{
+        type: "image",
+        attrs: {
+          blockId: "base-image",
+          src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/base.svg",
+          alt: null,
+          caption: null,
+        },
+      }]),
+    ],
+    [
+      "纯分隔线文档",
+      pmDoc([{ type: "horizontalRule", attrs: { blockId: "base-rule" } }]),
+    ],
+  ])("%s 不进 review、直接落地首稿", async (_label, baseDoc) => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession(`candidate-empty-media-${baseDoc.content[0]?.type}`);
+    const generatedDoc = legacySectionsToPm([p("直接落地的首稿正文")] as never);
+    state.doc = baseDoc;
+    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftCandidateDoc = generatedDoc;
+    state.docDraftCandidateSections = pmToLegacySections(generatedDoc) as unknown as LegacySection[];
+    await seedDocument({ docId: state.docId, sessionId: state.sessionId, docVersion: 1, doc: baseDoc });
+
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(writeDraftCall("wd-empty-media"), writeDraftResult("wd-empty-media")),
+        {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-empty-media",
+          runId: "run-empty-media",
+        },
+      ),
+    );
+
+    expect(frames.some((frame) => frame.kind === "docDiffReady")).toBe(false);
+    expect(frames.some(
+      (frame) => frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished",
+    )).toBe(true);
+    expect(state.suggestions.size).toBe(0);
+    expect(state.docState).toEqual({ kind: "editing" });
+    expect(docText(state.doc)).toBe("直接落地的首稿正文");
+  }, 10_000);
+
   it("writeDraft 成功后同回合 askUserQuestion 挂起,先落定首稿且恢复后的 readDraft 可读", async () => {
     const {
       createSession,

@@ -67,14 +67,21 @@ async function executeParseFileFixture(
   mimeType: string,
   buffer = Buffer.from([0, 1, 2, 3, 4, 5]),
 ): Promise<ParseFileResult> {
-  return (await parseFileTool.execute!(
-    {
-      content: buffer.toString("base64"),
-      filename,
-      mimeType,
-    },
-    {} as never,
-  )) as ParseFileResult;
+  const previousRuntime = process.env.QINGAGENT_RUNTIME;
+  process.env.QINGAGENT_RUNTIME = "desktop";
+  try {
+    return (await parseFileTool.execute!(
+      {
+        content: buffer.toString("base64"),
+        filename,
+        mimeType,
+      },
+      {} as never,
+    )) as ParseFileResult;
+  } finally {
+    if (previousRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
+    else process.env.QINGAGENT_RUNTIME = previousRuntime;
+  }
 }
 
 function storeMaterialFailureFor(frames: BridgeFrame[], toolCallId: string): BridgeFrame | undefined {

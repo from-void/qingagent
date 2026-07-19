@@ -1388,7 +1388,7 @@ export const parseFileTool = createTool({
   id: "parseFile",
   description:
     "解析文件内容。支持 PDF、DOCX、XLSX、CSV、PPTX、TXT、MD 格式。" +
-    "Web 端上传文件使用 fileId；桌面端本地素材可使用 filePath，受信任的桌面内部调用也可传 content。" +
+    "Web 端只接受 fileId；桌面端可使用受敏感路径黑名单保护的 filePath，也可使用 fileId 或 content。" +
     "返回提取的纯文本和元数据。",
   inputSchema: z.object({
     filePath: z

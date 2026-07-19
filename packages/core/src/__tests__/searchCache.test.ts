@@ -91,7 +91,11 @@ describe("searchCache", () => {
     ]);
 
     expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledTimes(1);
-    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith("Cache Keyword", 3);
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledWith(
+      "Cache Keyword",
+      3,
+      expect.objectContaining({ signal: expect.anything() }),
+    );
   });
 
   it("TTL 过期后删除缓存并重新真实检索", async () => {

@@ -191,7 +191,7 @@ function mergeHostFileStat(base: FileStat, hostStat: Awaited<ReturnType<typeof s
   return {
     ...base,
     type: hostStat.isFile() ? "file" : hostStat.isDirectory() ? "directory" : base.type,
-    size: hostStat.size,
+    size: Number(hostStat.size),
     createdAt: hostStat.birthtime,
     modifiedAt: hostStat.mtime,
   };

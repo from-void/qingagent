@@ -22,6 +22,7 @@ const mockState = vi.hoisted(() => ({
     return {
       events,
       resumeStream: vi.fn(),
+      buildCapabilityTools: vi.fn(async () => ({})),
       ensureWorkingMemorySnapshot: vi.fn(async () => "# 用户长期记忆\n- 喜欢短句"),
       prepareOmContextForTurn: vi.fn(async (session: any) => ({
         messagesForModel: session?.messages ?? [],
@@ -162,7 +163,7 @@ async function loadBridge() {
   vi.doMock("@qingagent/core", () => {
     return {
       ...actualCore,
-      buildCapabilityTools: vi.fn(async () => ({})),
+      buildCapabilityTools: mockState.buildCapabilityTools,
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: mockState.persistSessionMetadata,
       schedulePersist: mockState.persistSessionMetadata,
@@ -241,6 +242,8 @@ describe("handleResume askUser fresh-turn fallback", () => {
     vi.clearAllMocks();
     mockState.events.length = 0;
     mockState.resumeStream.mockReset();
+    mockState.buildCapabilityTools.mockReset();
+    mockState.buildCapabilityTools.mockResolvedValue({});
     mockState.ensureWorkingMemorySnapshot.mockClear();
     mockState.prepareOmContextForTurn.mockClear();
     mockState.persistSessionMetadata.mockClear();
@@ -434,6 +437,118 @@ describe("handleResume askUser fresh-turn fallback", () => {
       )).toBe(true);
     } finally {
       vi.useRealTimers();
+      if (persistedSessionId) {
+        await actualCore.deleteSessionThread(persistedSessionId);
+      }
+    }
+  });
+
+  it("恢复中工具收到停止信号后立即退出且不再写进度", async () => {
+    let persistedSessionId: string | null = null;
+    let underlyingStarted = false;
+    let releaseUnderlying!: () => void;
+    let resolveUnderlyingSettled!: () => void;
+    const underlyingGate = new Promise<void>((resolve) => {
+      releaseUnderlying = resolve;
+    });
+    const underlyingSettled = new Promise<void>((resolve) => {
+      resolveUnderlyingSettled = resolve;
+    });
+    const staleController = new AbortController();
+    const writer = { write: vi.fn(async () => undefined) };
+    const observed: {
+      signal: AbortSignal | null;
+      wrapperError: unknown;
+    } = {
+      signal: null,
+      wrapperError: null,
+    };
+    const execute = vi.fn(async (_input: unknown, context: any) => {
+      underlyingStarted = true;
+      observed.signal = context.abortSignal;
+      try {
+        await context.writer.write({ type: "research-progress", phase: "fetching" });
+        await underlyingGate;
+        await context.writer.write({ type: "research-progress", phase: "done" });
+        return { ok: true };
+      } finally {
+        resolveUnderlyingSettled();
+      }
+    });
+
+    try {
+      mockState.buildCapabilityTools.mockResolvedValue({
+        abortProbe: { id: "abortProbe", execute },
+      });
+      const bridge = await loadBridge();
+      const session = await createCachedSession(bridge);
+      await actualCore.createSessionThread(session.sessionId, session.title);
+      persistedSessionId = session.sessionId;
+      seedSuspendedAskUserSession(session, "run-tool-abort");
+
+      mockState.resumeStream.mockImplementation(async (_resumeData: unknown, options: any) => {
+        const probe = options.toolsets.capabilityTools.abortProbe;
+        return {
+          runId: "run-tool-abort-resumed",
+          fullStream: (async function* () {
+            try {
+              await probe.execute({}, {
+                abortSignal: staleController.signal,
+                writer,
+              });
+            } catch (error) {
+              observed.wrapperError = error;
+            }
+          })(),
+        };
+      });
+
+      const resumeFramesPromise = collectFrames(bridge.handleCommand({
+        kind: "resumeAskUser",
+        data: {
+          sessionId: session.sessionId,
+          answers: { "q-one": { chosen: [], freeText: "继续" } },
+        },
+      }));
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+
+      const activeStreamId = session.streamId;
+      const activeController = session._abortController;
+      expect(activeStreamId).not.toBeNull();
+      expect(observed.signal).toBe(activeController?.signal);
+      expect(observed.signal).not.toBe(staleController.signal);
+
+      const cancelFramesPromise = collectFrames(bridge.handleCommand({
+        kind: "cancelStream",
+        data: { streamId: activeStreamId! },
+      }));
+      const [resumeFrames, cancelFrames] = await Promise.all([
+        resumeFramesPromise,
+        cancelFramesPromise,
+      ]);
+
+      expect(observed.signal?.aborted).toBe(true);
+      expect(observed.wrapperError).toMatchObject({ name: "AbortError" });
+      expect(session.streamId).toBeNull();
+      expect(session._abortController).toBeNull();
+      expect(session._activeTurnPromise).toBeNull();
+      expect(resumeFrames.some(
+        (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+      )).toBe(false);
+      expect(cancelFrames.some(
+        (frame) =>
+          frame.kind === "stream" &&
+          frame.data.kind === "end" &&
+          frame.data.data.streamId === activeStreamId &&
+          frame.data.data.reason.kind === "cancelled",
+      )).toBe(true);
+
+      releaseUnderlying();
+      await underlyingSettled;
+      expect(writer.write).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseUnderlying?.();
+      if (underlyingStarted) await underlyingSettled;
       if (persistedSessionId) {
         await actualCore.deleteSessionThread(persistedSessionId);
       }

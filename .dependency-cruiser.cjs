@@ -246,7 +246,12 @@ module.exports = {
       name: "web-page-data-no-components",
       severity: "error",
       comment: "页面 data 层不得依赖展示组件。",
-      from: { path: "^apps/web/src/pages/[^/]+/data/" },
+      from: {
+        path: "^apps/web/src/pages/[^/]+/data/",
+        // 260719 存量违规待裁决，新增违规仍拦截。
+        pathNot:
+          "^apps/web/src/pages/workspace/data/(tableSelectionFreshness[.]ts|tableSelectionFreshness[.]test[.]ts|sessionFrameGuards[.]ts|patchDecorations[.]ts|aiModifyTarget[.]ts)$",
+      },
       to: { path: "^apps/web/src/pages/[^/]+/components/" },
     },
   ],

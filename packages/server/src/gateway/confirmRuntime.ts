@@ -31,10 +31,18 @@ export interface ConfirmRuntimeDependencies {
   getSession?: (sessionId: string) => Promise<SessionState | undefined>;
 }
 
+type ConfirmSessionResolver = (sessionId: string) => Promise<SessionState | undefined>;
+
+// sessionLifecycle 负责 timer/recovery 且已静态依赖本模块;反向不 import(连动态 import 也构成
+// 依赖环),由它在模块装配时注册解析器。未注册时按会话不存在处理(fail-closed)。
+let registeredSessionResolver: ConfirmSessionResolver | null = null;
+
+export function registerConfirmSessionResolver(resolver: ConfirmSessionResolver): void {
+  registeredSessionResolver = resolver;
+}
+
 async function defaultGetSession(sessionId: string): Promise<SessionState | undefined> {
-  // sessionLifecycle 负责 timer/recovery，动态取用避免它与 confirmRuntime 形成静态 ESM 环。
-  const { getOrRestoreSession } = await import("./sessionLifecycle");
-  return getOrRestoreSession(sessionId);
+  return registeredSessionResolver?.(sessionId);
 }
 
 function findToolCallMessageId(session: SessionState, toolCallId: string): string | null {

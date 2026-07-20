@@ -4,8 +4,7 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
-import type { SessionState } from "../session/sessionState.js";
-import { consumeApprovalProof } from "../confirm/approvalProof.js";
+import { consumeApprovalProof, type ApprovalProofSession } from "../confirm/approvalProof.js";
 import {
   commandConfirmationDigest,
   executeCommandInputSchema,
@@ -36,7 +35,7 @@ const UNHEALTHY_SANDBOX_STATUSES = new Set<NonNullable<Workspace["sandbox"]>["st
 export interface GatedExecuteCommandToolOptions {
   sessionId: string;
   /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
-  state?: SessionState;
+  state?: ApprovalProofSession;
   getWorkspace: () => Promise<Workspace>;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;

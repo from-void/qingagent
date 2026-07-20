@@ -20,7 +20,7 @@ import { emitRestoreFrames } from "./restoreFrames";
 import { sessions } from "./sessionRegistry";
 import { confirmService } from "./bridgeCore";
 import { reconcileRestoredConfirms } from "./confirmRecovery";
-import { handleConfirmExpiry } from "./confirmRuntime";
+import { handleConfirmExpiry, registerConfirmSessionResolver } from "./confirmRuntime";
 export {
   findSessionByPatch,
   findSessionByReviewBatchId,
@@ -180,6 +180,9 @@ export function forgetSession(sessionId: string): boolean {
   clearQuestionBranch(sessionId);
   return deleted;
 }
+
+// confirmRuntime 不得反向依赖本模块(依赖环);它取会话统一走这里注册的解析器。
+registerConfirmSessionResolver(getOrRestoreSession);
 
 export const sessionManager = new SessionManager({
   handleCommand: dispatchBridgeCommand,

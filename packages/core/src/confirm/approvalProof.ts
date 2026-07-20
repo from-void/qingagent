@@ -1,5 +1,11 @@
 import type { SessionState } from "../session/sessionState.js";
 
+/**
+ * proof 的作用域键。本模块只拿它当 WeakMap 不透明键,从不读字段;workspace 等
+ * core 低层按分层规则不得直依赖 session 域,统一经本别名取类型。
+ */
+export type ApprovalProofSession = SessionState;
+
 export const APPROVAL_PROOF_TTL_MS = 60_000;
 
 interface ApprovalProof {

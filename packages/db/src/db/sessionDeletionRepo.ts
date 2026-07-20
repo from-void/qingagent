@@ -62,6 +62,21 @@ export async function listSessionDeletions(): Promise<SessionDeletionRecord[]> {
   return result.rows.map(mapRecord);
 }
 
+export async function getTombstonedSessionIds(
+  sessionIds: readonly string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(sessionIds)];
+  if (ids.length === 0) return new Set();
+  await ensureMigrated();
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await getDocumentsClient().execute({
+    sql: `SELECT session_id FROM deleted_sessions
+      WHERE session_id IN (${placeholders})`,
+    args: ids,
+  });
+  return new Set(result.rows.map((row) => String(row.session_id)));
+}
+
 /**
  * 在同一写事务内删除 documents 全家桶并推进阶段，避免进程崩溃留下
  * “数据已删但墓碑仍声称尚未产生副作用”的不可恢复中间态。

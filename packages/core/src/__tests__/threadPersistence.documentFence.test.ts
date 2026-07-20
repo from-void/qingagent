@@ -89,5 +89,6 @@ describe("session document deletion fence", () => {
 
     unmarkSessionDeleted(sessionId);
     await expect(documentRepo.save(input)).resolves.toBeUndefined();
+    await expect(documentRepo.load(docId)).resolves.toBeNull();
   });
 });

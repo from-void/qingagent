@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
+  beginSessionDeletion,
+  DocumentWriteBlockedError,
   findOpByIdempotencyKey,
 } from "@qingagent/db";
 import {
@@ -799,6 +801,27 @@ describe("commitDocumentOp", () => {
       fromVersion: 0,
       toVersion: 1,
     });
+  });
+
+  it("持久化墓碑阻止 createIfMissing 绕过 guard 复建 documents", async () => {
+    await beginSessionDeletion("thread-first-store-fenced");
+
+    await expect(commitDocumentOp(
+      commitInput({
+        docId: "doc-first-store-fenced",
+        threadId: "thread-first-store-fenced",
+        expectedDocumentSnapshot: 0,
+        opId: "generation-first-store-fenced",
+        clientMutationId: undefined,
+        createIfMissing: {
+          title: "不应复建",
+          docState: "editing",
+          lastSyncedVersion: 0,
+        },
+        apply: () => ({ nextDoc: pmDocFromText("blocked content") }),
+      }),
+    )).rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(documentRepo.load("doc-first-store-fenced")).resolves.toBeNull();
   });
 
   it("prioritizes repeated clientMutationId while preserving opId-only replay", async () => {

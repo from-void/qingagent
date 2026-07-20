@@ -900,6 +900,7 @@ const persistQueues = new Map<string, Promise<void>>();
 const persistDirty = new Map<string, boolean>();
 const persistLoops = new Map<string, Promise<void>>();
 const pendingPersists = new Map<string, { state: SessionState; reason: string }>();
+const trackedSessionPersistenceTasks = new Map<string, Set<Promise<unknown>>>();
 const deletedSessions = new Set<string>();
 const deletedDocumentIds = new Set<string>();
 const deletedSessionDocuments = new Map<string, string>();
@@ -932,6 +933,27 @@ export function unmarkSessionDeleted(sessionId: string): void {
 
 export function isSessionDeleted(sessionId: string): boolean {
   return deletedSessions.has(sessionId);
+}
+
+/** 将 documents 后台写纳入同一会话的删除 drain；注册动作先于 task 启动。 */
+export function trackSessionPersistenceForSessions<T>(
+  sessionIds: readonly string[],
+  task: () => Promise<T>,
+): Promise<T> {
+  const ids = [...new Set(sessionIds)];
+  const tracked = Promise.resolve().then(task);
+  for (const sessionId of ids) {
+    const tasks = trackedSessionPersistenceTasks.get(sessionId) ?? new Set();
+    tasks.add(tracked);
+    trackedSessionPersistenceTasks.set(sessionId, tasks);
+  }
+  return tracked.finally(() => {
+    for (const sessionId of ids) {
+      const tasks = trackedSessionPersistenceTasks.get(sessionId);
+      tasks?.delete(tracked);
+      if (tasks?.size === 0) trackedSessionPersistenceTasks.delete(sessionId);
+    }
+  });
 }
 
 export async function resolveSessionDocumentId(sessionId: string): Promise<string> {
@@ -1342,8 +1364,15 @@ export function schedulePersist(state: SessionState, reason = "unspecified"): Pr
 export async function drainSessionPersistence(timeoutMs = 4_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const drain = async () => {
-    while (persistLoops.size > 0 || hasDirtySession()) {
-      let loops = Array.from(new Set(persistLoops.values()));
+    while (
+      persistLoops.size > 0 ||
+      hasDirtySession() ||
+      trackedSessionPersistenceTasks.size > 0
+    ) {
+      let loops: Promise<unknown>[] = [
+        ...new Set(persistLoops.values()),
+        ...new Set([...trackedSessionPersistenceTasks.values()].flatMap((tasks) => [...tasks])),
+      ];
       if (loops.length === 0) {
         for (const [sid, pending] of pendingPersists) {
           if (persistDirty.get(sid)) {
@@ -1355,7 +1384,10 @@ export async function drainSessionPersistence(timeoutMs = 4_000): Promise<void> 
             });
           }
         }
-        loops = Array.from(new Set(persistLoops.values()));
+        loops = [
+          ...new Set(persistLoops.values()),
+          ...new Set([...trackedSessionPersistenceTasks.values()].flatMap((tasks) => [...tasks])),
+        ];
         if (loops.length === 0) break;
       }
       const remainingMs = deadline - Date.now();
@@ -1391,9 +1423,11 @@ export async function drainSessionPersistenceForSession(
 ): Promise<void> {
   const drain = async () => {
     while (true) {
-      let pending = [persistLoops.get(sessionId), persistQueues.get(sessionId)].filter(
-        (promise): promise is Promise<void> => Boolean(promise),
-      );
+      let pending: Promise<unknown>[] = [
+        persistLoops.get(sessionId),
+        persistQueues.get(sessionId),
+        ...(trackedSessionPersistenceTasks.get(sessionId) ?? []),
+      ].filter((promise): promise is Promise<unknown> => Boolean(promise));
       if (pending.length === 0 && !persistDirty.get(sessionId)) return;
       if (pending.length === 0) {
         if (isSessionDeleted(sessionId)) {
@@ -1406,9 +1440,11 @@ export async function drainSessionPersistenceForSession(
           void schedulePersist(deferred.state, deferred.reason).catch(() => {
             // 下轮 allSettled 消费拒绝；此处只封住 fire-and-forget 窗口。
           });
-          pending = [persistLoops.get(sessionId), persistQueues.get(sessionId)].filter(
-            (promise): promise is Promise<void> => Boolean(promise),
-          );
+          pending = [
+            persistLoops.get(sessionId),
+            persistQueues.get(sessionId),
+            ...(trackedSessionPersistenceTasks.get(sessionId) ?? []),
+          ].filter((promise): promise is Promise<unknown> => Boolean(promise));
         }
       }
       if (pending.length === 0) {
@@ -1430,6 +1466,7 @@ export function __resetSessionPersistenceForTest(): void {
   persistDirty.clear();
   persistLoops.clear();
   pendingPersists.clear();
+  trackedSessionPersistenceTasks.clear();
   deletedSessions.clear();
   deletedDocumentIds.clear();
   deletedSessionDocuments.clear();

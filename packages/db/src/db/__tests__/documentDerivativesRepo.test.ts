@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDerivativeDoc, deleteDerivativeDoc, getDerivativeDocument, getDerivativeMeta, listDerivativesByThread, stampGenerated, updateParams } from "../documentDerivativesRepo.js";
 import { getDocumentsClient } from "../documentsClient.js";
 import { documentRepo } from "../documentRepo.js";
+import { beginSessionDeletion } from "../sessionDeletionRepo.js";
+import { DocumentWriteBlockedError } from "../documentWriteGuard.js";
 import { prepareTempDocumentsDb, documentInput, type TempDocumentsDb } from "./dbTestUtils.js";
 
 let db: TempDocumentsDb;
@@ -9,6 +11,23 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-derivative-repo-"); });
 afterEach(() => db.cleanup());
 
 describe("documentDerivativesRepo", () => {
+  it("持久化墓碑阻止绕过 documentRepo 的 derivative documents INSERT", async () => {
+    await documentRepo.save(documentInput("main-fenced", {
+      threadId: "thread-fenced",
+      docVersion: 1,
+    }));
+    await beginSessionDeletion("thread-fenced");
+
+    await expect(createDerivativeDoc({
+      threadId: "thread-fenced",
+      sourceDocId: "main-fenced",
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "",
+    })).rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    expect(await listDerivativesByThread("thread-fenced")).toEqual([]);
+  });
+
   it("删除校验会话归属，并级联清理关联行和版本", async () => {
     await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
     const meta = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-opinion", privatePrompt: "" });

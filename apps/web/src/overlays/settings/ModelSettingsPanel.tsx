@@ -82,6 +82,7 @@ export function ModelSettingsPanel() {
   const [keyInput, setKeyInput] = useState("");
   // 其他云厂商配置(进阶):存在即表示当前用自定义模型,覆盖 baseURL+key+别名
   const [customProvider, setCustomProvider] = useState<CustomProvider | null>(() => readCustomProvider());
+  const [persisting, setPersisting] = useState(false);
   // 配置方式:官方 DeepSeek(默认)/ 其他云厂商;已配自定义则默认停在"其他"
   const [setupMode, setSetupMode] = useState<"official" | "other">(() => (readCustomProvider() ? "other" : "official"));
   const [customProtocol, setCustomProtocol] = useState(() => readCustomProvider()?.protocol ?? "openai");
@@ -113,8 +114,15 @@ export function ModelSettingsPanel() {
   const balanceControllerRef = useRef<AbortController | null>(null);
   const customTestRevisionRef = useRef(0);
   const customTestControllerRef = useRef<AbortController | null>(null);
+  const persistRevisionRef = useRef(0);
+
+  const invalidatePersistence = () => {
+    persistRevisionRef.current += 1;
+    setPersisting(false);
+  };
 
   const invalidateCustomTest = () => {
+    invalidatePersistence();
     customTestRevisionRef.current += 1;
     customTestControllerRef.current?.abort();
     customTestControllerRef.current = null;
@@ -311,12 +319,21 @@ export function ModelSettingsPanel() {
       });
       if (!proceed) return;
     }
-    if (!(await setVisitorDeepseekKey(trimmed))) {
+    const revision = persistRevisionRef.current;
+    const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
+    setPersisting(true);
+    const savedKey = await setVisitorDeepseekKey(trimmed);
+    if (!canCommit()) return;
+    if (!savedKey) {
+      setPersisting(false);
       setMessage(modelPersistFailureMessage());
       return;
     }
     // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
-    if (!(await clearCustomProvider())) {
+    const clearedCustom = await clearCustomProvider();
+    if (!canCommit()) return;
+    setPersisting(false);
+    if (!clearedCustom) {
       setMessage("key 已保存，但旧的自定义模型配置清除失败，请重试");
       return;
     }
@@ -345,7 +362,13 @@ export function ModelSettingsPanel() {
     if (!proceed) {
       return false;
     }
-    if (!(await clearVisitorDeepseekKey())) {
+    const revision = persistRevisionRef.current;
+    const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
+    setPersisting(true);
+    const cleared = await clearVisitorDeepseekKey();
+    if (!canCommit()) return false;
+    setPersisting(false);
+    if (!cleared) {
       setMessage("本机配置清除失败，请重试");
       return false;
     }
@@ -363,7 +386,13 @@ export function ModelSettingsPanel() {
     if (!proceed) {
       return false;
     }
-    if (!(await clearCustomProvider())) {
+    const revision = persistRevisionRef.current;
+    const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
+    setPersisting(true);
+    const cleared = await clearCustomProvider();
+    if (!canCommit()) return false;
+    setPersisting(false);
+    if (!cleared) {
       setMessage("本机配置清除失败，请重试");
       return false;
     }
@@ -406,10 +435,12 @@ export function ModelSettingsPanel() {
     const testCtrl = new AbortController();
     customTestControllerRef.current = testCtrl;
     const testTimer = setTimeout(() => testCtrl.abort(), 25_000);
+    const persistRevision = persistRevisionRef.current;
     const canCommit = () =>
       mountedRef.current &&
       customTestRevisionRef.current === revision &&
-      customTestControllerRef.current === testCtrl;
+      customTestControllerRef.current === testCtrl &&
+      persistRevisionRef.current === persistRevision;
     try {
       const res = await fetch("/api/v1/settings/model/test-custom", {
         method: "POST",
@@ -428,16 +459,21 @@ export function ModelSettingsPanel() {
         return;
       }
       const provider: CustomProvider = { protocol: customProtocol, baseUrl, apiKey, modelFlash, modelPro };
-      if (!(await writeCustomProvider(provider))) {
+      setPersisting(true);
+      const savedProvider = await writeCustomProvider(provider);
+      if (!canCommit()) return;
+      if (!savedProvider) {
         setMessage(modelPersistFailureMessage());
         return;
       }
-      setCustomProvider(provider);
       // 互斥:切到其他云厂商,清官方 visitor key
-      if (!(await clearVisitorDeepseekKey())) {
+      const clearedVisitorKey = await clearVisitorDeepseekKey();
+      if (!canCommit()) return;
+      if (!clearedVisitorKey) {
         setMessage("自定义模型已保存，但旧的官方 key 清除失败，请重试");
         return;
       }
+      setCustomProvider(provider);
       setVisitorKey(null);
       setEditing(false);
       setForceSetup(false);
@@ -456,6 +492,7 @@ export function ModelSettingsPanel() {
       if (canCommit()) {
         customTestControllerRef.current = null;
         setCustomTesting(false);
+        setPersisting(false);
       }
     }
   };
@@ -523,14 +560,18 @@ export function ModelSettingsPanel() {
           className="sm-keyinput"
           placeholder="粘贴 DeepSeek API key(sk-…)"
           value={keyInput}
-          onChange={(e) => setKeyInput(e.target.value)}
+          disabled={persisting}
+          onChange={(e) => {
+            invalidatePersistence();
+            setKeyInput(e.target.value);
+          }}
           data-wf="ModelKeyInput"
         />
         <button
           type="button"
           className="sm-btn"
           onClick={() => void handleSave()}
-          disabled={!keyInput.trim()}
+          disabled={persisting || !keyInput.trim()}
           title={!keyInput.trim() ? "请先填入 API key" : undefined}
         >
           保存
@@ -543,6 +584,7 @@ export function ModelSettingsPanel() {
               invalidateCustomTest();
               setEditing(false);
             }}
+            disabled={persisting}
           >
             取消
           </button>
@@ -569,7 +611,11 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-flash"
               value={officialFlash}
-              onChange={(e) => setOfficialFlash(e.target.value)}
+              disabled={persisting}
+              onChange={(e) => {
+                invalidatePersistence();
+                setOfficialFlash(e.target.value);
+              }}
             />
           </div>
           <div className="sm-field">
@@ -578,7 +624,11 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-pro"
               value={officialPro}
-              onChange={(e) => setOfficialPro(e.target.value)}
+              disabled={persisting}
+              onChange={(e) => {
+                invalidatePersistence();
+                setOfficialPro(e.target.value);
+              }}
             />
           </div>
           <p className="sm-keyhint">留空即用官方默认模型名;仅当官方升级换名导致报错时才需要改。</p>
@@ -605,6 +655,7 @@ export function ModelSettingsPanel() {
             invalidateCustomTest();
             setSetupMode("official");
           }}
+          disabled={persisting}
         >
           <span>接入 DeepSeek 官方 API</span>
           <small>推荐方式（步骤简单）</small>
@@ -618,6 +669,7 @@ export function ModelSettingsPanel() {
             invalidateCustomTest();
             setSetupMode("other");
           }}
+          disabled={persisting}
         >
           <span>接入其他云厂商 / 模型</span>
           <small>进阶设置</small>
@@ -654,6 +706,7 @@ export function ModelSettingsPanel() {
             <select
               className="sm-field-input"
               value={customProtocol}
+              disabled={persisting}
               onChange={(e) => {
                 invalidateCustomTest();
                 setCustomProtocol(e.target.value);
@@ -669,6 +722,7 @@ export function ModelSettingsPanel() {
               className={`sm-field-input${customBaseUrlValid === false ? " sm-field-input--invalid" : ""}`}
               placeholder="https://your-endpoint/v1"
               value={customBaseUrl}
+              disabled={persisting}
               aria-invalid={customBaseUrlValid === false}
               aria-describedby={customBaseUrlValid === false ? "model-custom-base-url-error" : undefined}
               onChange={(e) => {
@@ -690,6 +744,7 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="sk-…"
               value={customKey}
+              disabled={persisting}
               onChange={(e) => {
                 invalidateCustomTest();
                 setCustomKey(e.target.value);
@@ -702,6 +757,7 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-flash"
               value={customModelFlash}
+              disabled={persisting}
               onChange={(e) => {
                 invalidateCustomTest();
                 setCustomModelFlash(e.target.value);
@@ -714,6 +770,7 @@ export function ModelSettingsPanel() {
               className="sm-field-input"
               placeholder="deepseek-v4-pro"
               value={customModelPro}
+              disabled={persisting}
               onChange={(e) => {
                 invalidateCustomTest();
                 setCustomModelPro(e.target.value);
@@ -729,8 +786,8 @@ export function ModelSettingsPanel() {
             onClick={() => void handleSaveCustom()}
             // baseURL 非法(非空但格式错)时 proactive 禁用,别等点击才报错——更早阻止无效提交(e2e #15增强)。
             // 空值仍可点(handleSaveCustom 给"请填写 API 地址"就近提示)。
-            disabled={customTesting || customBaseUrlValid === false}
-            aria-disabled={customTesting || customBaseUrlValid === false}
+            disabled={customTesting || persisting || customBaseUrlValid === false}
+            aria-disabled={customTesting || persisting || customBaseUrlValid === false}
             title={customBaseUrlValid === false ? "API 地址格式不对,需以 http(s):// 开头" : undefined}
           >
             {customTesting ? "测试中…" : "测试并保存"}
@@ -779,6 +836,7 @@ export function ModelSettingsPanel() {
                   setForceSetup(false);
                   setEditing(false);
                 }}
+                disabled={persisting}
               >
                 ← 返回看板
               </button>
@@ -911,16 +969,16 @@ export function ModelSettingsPanel() {
                 ) : null}
               </span>
               <span className="md-keyops">
-                <button type="button" className="md-mini-btn" onClick={() => setEditing(true)} data-wf="ModelKeyEdit">
+                <button type="button" className="md-mini-btn" onClick={() => setEditing(true)} data-wf="ModelKeyEdit" disabled={persisting}>
                   修改配置
                 </button>
                 {visitorKey && (
-                  <button type="button" className="md-mini-btn" onClick={() => void handleClearVisitor()}>
+                  <button type="button" className="md-mini-btn" onClick={() => void handleClearVisitor()} disabled={persisting}>
                     {isDesktop ? "清除本机 key" : "清除本浏览器 key"}
                   </button>
                 )}
                 {customProvider && (
-                  <button type="button" className="md-mini-btn" onClick={() => void handleClearCustom()}>
+                  <button type="button" className="md-mini-btn" onClick={() => void handleClearCustom()} disabled={persisting}>
                     清除自定义配置
                   </button>
                 )}
@@ -930,6 +988,7 @@ export function ModelSettingsPanel() {
                     type="button"
                     className="md-mini-btn"
                     title="临时回到未配置的引导/配置流程(不删后端 .env key,刷新即恢复)"
+                    disabled={persisting}
                     onClick={async () => {
                       if (visitorKey && !(await handleClearVisitor())) return;
                       if (customProvider && !(await handleClearCustom())) return;

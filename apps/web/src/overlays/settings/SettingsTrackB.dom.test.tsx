@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmProvider } from "../../system/ConfirmProvider";
 import { ToastProvider } from "../../system/ToastProvider";
 import { resetDesktopUpdateStoreForTest } from "../../system/desktopUpdateStore";
+import { __resetClientPersistCacheForTests } from "./clientPersist";
 import { AboutPanel } from "./AboutPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { SecretInput } from "./SecretInput";
@@ -31,6 +32,8 @@ const dayRows = [
 
 describe("Settings Track B", () => {
   beforeEach(() => {
+    __resetClientPersistCacheForTests();
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
     window.localStorage.clear();
     vi.stubGlobal("fetch", makeFetchMock());
   });
@@ -44,6 +47,8 @@ describe("Settings Track B", () => {
     host = null;
     document.body.innerHTML = "";
     window.localStorage.clear();
+    __resetClientPersistCacheForTests();
+    Object.defineProperty(window, "electron", { configurable: true, value: undefined });
     resetSettingsDialogA11yForTest();
     vi.restoreAllMocks();
   });
@@ -261,6 +266,73 @@ describe("Settings Track B", () => {
     await flush();
 
     expect(readVisionProvider()).toBeNull();
+  });
+
+  it("F3: Vision 落盘期间输入变更后不提交旧配置或假成功", async () => {
+    let resolvePersist!: (ok: boolean) => void;
+    const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+      resolvePersist = resolve;
+    }));
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: { isDesktop: true, clientConfig: {}, setClientConfig },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ToastProvider>
+        <VisionPanel />
+      </ToastProvider>,
+    );
+    const baseInput = getInputByPlaceholder("https://your-endpoint/v1");
+    setInput(baseInput, "https://old.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-old");
+    setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "vision-old");
+    await click(getButtonByText("测试并保存"));
+    await waitForCondition(() => setClientConfig.mock.calls.length === 1, "Vision 开始落盘");
+
+    expect(baseInput.disabled).toBe(true);
+    baseInput.disabled = false;
+    setInput(baseInput, "https://new.example/v1");
+    await act(async () => resolvePersist(true));
+    await flush();
+
+    expect(baseInput.value).toBe("https://new.example/v1");
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "").not.toContain("图像识别已启用");
+  });
+
+  it("F3: Model 落盘期间输入变更后不关编辑态或报假成功", async () => {
+    let resolvePersist!: (ok: boolean) => void;
+    const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+      resolvePersist = resolve;
+    }));
+    Object.defineProperty(window, "electron", {
+      configurable: true,
+      value: { isDesktop: true, clientConfig: {}, setClientConfig },
+    });
+    __resetClientPersistCacheForTests();
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await click(getButtonByText("接入其他云厂商 / 模型"));
+    const baseInput = getInputByPlaceholder("https://your-endpoint/v1");
+    setInput(baseInput, "https://old.example/v1");
+    setInput(getInputByPlaceholder("sk-…"), "sk-old");
+    await click(getButtonByText("测试并保存"));
+    await waitForCondition(() => setClientConfig.mock.calls.length === 1, "Model 开始落盘");
+
+    expect(baseInput.disabled).toBe(true);
+    baseInput.disabled = false;
+    setInput(baseInput, "https://new.example/v1");
+    await act(async () => resolvePersist(true));
+    await flush();
+
+    expect(baseInput.value).toBe("https://new.example/v1");
+    expect(getButtonByText("测试并保存")).toBeTruthy();
+    expect(host?.querySelector('[data-wf="GlobalToast"]')?.textContent ?? "").not.toContain("接口测试通过");
   });
 
   it("Vision 测试期间停用后丢弃旧成功响应且不重新启用", async () => {

@@ -379,6 +379,13 @@ async function* finishSettledReviewState(
   );
 }
 
+function reviewToolCallStatus(suggestion: DocSuggestion): ToolCallStatus {
+  if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+    return { kind: suggestion.status };
+  }
+  return { kind: "reviewing" };
+}
+
 export async function* updatePatchVerdict(
   state: SessionState,
   patchId: string | undefined,
@@ -431,21 +438,77 @@ async function rebuildPendingReviewAfterRebase(input: {
   previousRemainingRecords: readonly SuggestionRecord[];
 }): Promise<DocSuggestion[]> {
   const { state, committedDoc, committedVersion, nextDraftDoc, hunks } = input;
-  const previousById = new Map(
-    input.previousRemainingRecords.map((record) => [record.suggestion.id, record]),
-  );
+  const previousByHunkId = new Map<string, SuggestionRecord>();
+  const previousByBlockAndText = new Map<string, SuggestionRecord[]>();
+  const previousByPathAndText = new Map<string, SuggestionRecord[]>();
+  const previousByText = new Map<string, SuggestionRecord[]>();
+  const appendPrevious = (
+    target: Map<string, SuggestionRecord[]>,
+    key: string,
+    record: SuggestionRecord,
+  ): void => {
+    target.set(key, [...(target.get(key) ?? []), record]);
+  };
+  const hunkTextKey = (hunk: DiffHunk): string => JSON.stringify([
+    hunk.op,
+    hunk.beforeText ?? "",
+    hunk.afterText ?? "",
+  ]);
+  for (const record of input.previousRemainingRecords) {
+    const hunk = record.diffHunk;
+    if (!hunk) continue;
+    previousByHunkId.set(hunk.hunkId, record);
+    const textKey = hunkTextKey(hunk);
+    appendPrevious(previousByText, textKey, record);
+    appendPrevious(previousByBlockAndText, JSON.stringify([
+      hunk.anchor.blockId ?? record.suggestion.anchor.blockId,
+      textKey,
+    ]), record);
+    appendPrevious(previousByPathAndText, JSON.stringify([hunk.blockPath, textKey]), record);
+  }
+  const claimedPreviousIds = new Set<string>();
+  const previousByNewHunkId = new Map<string, SuggestionRecord>();
+  const claimUnique = (records: readonly SuggestionRecord[] | undefined): SuggestionRecord | undefined => {
+    const available = records?.filter(
+      (record) => !claimedPreviousIds.has(record.suggestion.id),
+    ) ?? [];
+    return available.length === 1 ? available[0] : undefined;
+  };
+  for (const hunk of hunks) {
+    const textKey = hunkTextKey(hunk);
+    const exact = previousByHunkId.get(hunk.hunkId);
+    const previous = exact && !claimedPreviousIds.has(exact.suggestion.id)
+      ? exact
+      : claimUnique(previousByBlockAndText.get(JSON.stringify([
+          hunk.anchor.blockId ?? "",
+          textKey,
+        ])))
+        ?? claimUnique(previousByPathAndText.get(JSON.stringify([hunk.blockPath, textKey])))
+        ?? claimUnique(previousByText.get(textKey));
+    if (!previous) continue;
+    claimedPreviousIds.add(previous.suggestion.id);
+    previousByNewHunkId.set(hunk.hunkId, previous);
+  }
   const fallbackMessageId =
     input.previousRemainingRecords[0]?.messageId ??
     `rebased-pending-review:${state.docId}:${committedVersion}`;
 
-  const suggestions = hunks.map((hunk) =>
-    createSuggestionFromDiffHunk({
+  const suggestions = hunks.map((hunk) => {
+    const suggestion = createSuggestionFromDiffHunk({
       hunk,
       docId: state.docId,
       baseVersion: committedVersion,
       baseSchemaVersion: committedDoc.attrs.schemaVersion,
-    }),
-  );
+    });
+    const previous = previousByNewHunkId.get(hunk.hunkId);
+    const verdict = previous
+      ? state.patchVerdicts.get(previous.suggestion.id) ??
+        (previous.suggestion.status === "accepted" || previous.suggestion.status === "rejected"
+          ? previous.suggestion.status
+          : undefined)
+      : undefined;
+    return verdict ? { ...suggestion, status: verdict } : suggestion;
+  });
 
   for (const suggestion of suggestions) {
     await upsertDocumentSuggestion(suggestion);
@@ -473,7 +536,7 @@ async function rebuildPendingReviewAfterRebase(input: {
 
   suggestions.forEach((suggestion, index) => {
     const hunk = hunks[index]!;
-    const previous = previousById.get(suggestion.id);
+    const previous = previousByNewHunkId.get(suggestion.id);
     state.suggestions.set(suggestion.id, {
       messageId: previous?.messageId ?? fallbackMessageId,
       toolCallId: suggestion.id,
@@ -483,6 +546,9 @@ async function rebuildPendingReviewAfterRebase(input: {
       suggestion,
       diffHunk: hunk,
     });
+    if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+      state.patchVerdicts.set(suggestion.id, suggestion.status);
+    }
   });
 
   return suggestions;
@@ -558,7 +624,10 @@ export async function* commitPatches(
           yield toolCallUpdated(
             record.messageId,
             record.suggestion.id,
-            buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" }),
+            buildSuggestionToolCallSpec(
+              record.suggestion,
+              reviewToolCallStatus(record.suggestion),
+            ),
           );
         }
       } else if (rebase.status === "conflict") {
@@ -916,7 +985,10 @@ export async function* commitPatches(
         yield toolCallUpdated(
           record.messageId,
           record.suggestion.id,
-          buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" }),
+          buildSuggestionToolCallSpec(
+            record.suggestion,
+            reviewToolCallStatus(record.suggestion),
+          ),
         );
       }
     } else if (rebase.status === "conflict") {

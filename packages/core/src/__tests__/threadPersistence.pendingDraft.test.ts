@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LegacySection } from "@qingagent/contract-ts";
+import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   pmToLegacySections,
@@ -322,6 +322,74 @@ describe("pending draft rehydrate", () => {
     expect(restored.kind).toBe("restored");
     expect(afterRestart.patchVerdicts.get(rebasedSuggestion.id)).toBe("accepted");
     expect(afterRestart.suggestions.get(rebasedSuggestion.id)?.suggestion.status).toBe("accepted");
+  });
+
+  it("F7: 先裁决 B、仅提交 A 后重启仍恢复 B 的裁决", async () => {
+    const sessionId = "rehy-verdict-before-rebase";
+    const base = doc([
+      paragraph("block-a", "甲旧"),
+      paragraph("block-b", "乙旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "甲新"),
+      paragraph("block-b", "乙新"),
+    ]);
+    await seedDocument(sessionId, base);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+    const originalHunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    for (const hunk of originalHunks) {
+      await upsertDocumentSuggestion(createSuggestionFromDiffHunk({
+        hunk,
+        docId: sessionId,
+        baseVersion: 1,
+        baseSchemaVersion: 1,
+      }));
+    }
+
+    const beforeRestart = createSession(sessionId);
+    beforeRestart.doc = base;
+    beforeRestart.legacySections = pmToLegacySections(base) as never;
+    beforeRestart.docVersion = 1;
+    await rehydratePendingDraft(beforeRestart);
+    const hunkA = originalHunks.find((hunk) => hunk.anchor.blockId === "block-a");
+    const hunkB = originalHunks.find((hunk) => hunk.anchor.blockId === "block-b");
+    if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
+
+    for await (const _frame of updatePatchVerdict(beforeRestart, hunkB.hunkId, "accepted")) {
+      // 先保存 B 的裁决，再单独提交 A。
+    }
+    const frames: BridgeFrame[] = [];
+    for await (const frame of commitReviewGroups(beforeRestart, {
+      acceptReviewBatchIds: [hunkA.reviewBatchId],
+      keepPendingReviewBatchIds: [hunkB.reviewBatchId],
+    })) {
+      frames.push(frame);
+    }
+
+    const rebasedB = [...beforeRestart.suggestions.values()]
+      .find((record) => record.diffHunk?.anchor.blockId === "block-b")?.suggestion;
+    if (!rebasedB) throw new Error("fixture missing rebased B");
+    expect(beforeRestart.patchVerdicts.get(rebasedB.id)).toBe("accepted");
+    expect(rebasedB.status).toBe("accepted");
+    const rebasedBCard = frames
+      .filter((frame) => frame.kind === "toolCallUpdated")
+      .find((frame) => frame.kind === "toolCallUpdated" && frame.data.toolCallId === rebasedB.id);
+    expect(rebasedBCard?.data.spec.status.kind).toBe("accepted");
+
+    const afterRestart = createSession(sessionId);
+    afterRestart.doc = beforeRestart.doc;
+    afterRestart.legacySections = pmToLegacySections(beforeRestart.doc!) as never;
+    afterRestart.docVersion = beforeRestart.docVersion;
+    await rehydratePendingDraft(afterRestart);
+
+    expect(afterRestart.patchVerdicts.get(rebasedB.id)).toBe("accepted");
+    expect(afterRestart.suggestions.get(rebasedB.id)?.suggestion.status).toBe("accepted");
   });
 
   it("hash 不一致时标记 conflict,不静默恢复审查", async () => {

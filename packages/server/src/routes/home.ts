@@ -44,7 +44,10 @@ homeRoutes.delete("/sessions/:id", async (c) => {
   const rejected = requireTrustedOrigin(c);
   if (rejected) return rejected;
   const sessionId = c.req.param("id");
-  await sessionManager.destroySession(sessionId);
+  const result = await sessionManager.destroySession(sessionId);
+  if (!result.deleted) {
+    return c.json({ deleted: false, status: "pending" }, 202);
+  }
   return c.json({ deleted: true });
 });
 

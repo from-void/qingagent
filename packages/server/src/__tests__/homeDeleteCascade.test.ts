@@ -8,10 +8,15 @@ import { __resetMigrationsForTest, ensureMigrated } from "@qingagent/db/migratio
 
 const callOrder: string[] = [];
 
-const destroySession = vi.fn(async (sessionId: string) => {
+type FakeDeleteResult =
+  | { deleted: true; status: "completed" }
+  | { deleted: false; status: "pending" };
+
+const destroySession = vi.fn(async (sessionId: string): Promise<FakeDeleteResult> => {
   callOrder.push(`delete:${sessionId}`);
   const { deleteDocumentFamily } = await import("@qingagent/db");
   await deleteDocumentFamily(sessionId);
+  return { deleted: true as const, status: "completed" as const };
 });
 
 const sessionManager = {
@@ -122,6 +127,19 @@ async function count(client: DocumentsClient, table: string, sessionId: string):
 }
 
 describe("DELETE /sessions/:id documents 级联", () => {
+  it("物理删除尚未完成时返回 202 pending，绝不提前报告 deleted:true", async () => {
+    const app = await loadApp();
+    destroySession.mockResolvedValueOnce({ deleted: false, status: "pending" });
+
+    const response = await app.request("/api/v1/sessions/route-delete-pending", {
+      method: "DELETE",
+      headers: { Origin: "http://localhost:5173" },
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ deleted: false, status: "pending" });
+  });
+
   it("删除会话后 history 不可见且五张 documents 族表无残留", async () => {
     await ensureMigrated();
     const client = getDocumentsClient();

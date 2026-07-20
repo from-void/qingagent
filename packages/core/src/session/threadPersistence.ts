@@ -31,7 +31,12 @@ import {
   DocumentWriteBlockedError,
   setDocumentWriteGuard,
 } from "@qingagent/db/write-guard";
-import { deleteDocumentFamily } from "@qingagent/db";
+import {
+  beginSessionDeletion,
+  completeSessionDeletion,
+  deleteSessionDocumentsAndAdvance,
+  type SessionDeletionPhase,
+} from "@qingagent/db";
 import {
   getMinDocumentSnapshotVersion,
   getVersionSnapshot,
@@ -2053,7 +2058,21 @@ export async function listHomeSessionThreads(opts: {
 /**
  * Delete a session thread and all its messages.
  */
-export async function deleteSessionThread(sessionId: string): Promise<void> {
+export class SessionDeletionError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly phase: Exclude<SessionDeletionPhase, "completed">,
+    cause: unknown,
+  ) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`Session deletion failed in phase ${phase}: ${sessionId}: ${detail}`, { cause });
+    this.name = "SessionDeletionError";
+  }
+}
+
+export async function deleteSessionThread(
+  sessionId: string,
+): Promise<SessionDeletionPhase> {
   clearSessionSnapshot(sessionId);
   clearQuestionBranch(sessionId);
   unregisterSessionFolderSources(sessionId);
@@ -2064,9 +2083,28 @@ export async function deleteSessionThread(sessionId: string): Promise<void> {
   } catch {
     // 清理失败不影响 thread 删除
   }
-  const memory = mastra.getMemory("default");
-  if (!memory) return;
+  await beginSessionDeletion(sessionId);
+  let phase: SessionDeletionPhase;
+  try {
+    phase = await deleteSessionDocumentsAndAdvance(sessionId);
+  } catch (error) {
+    throw new SessionDeletionError(sessionId, "draining", error);
+  }
+  if (phase === "completed") return phase;
 
-  await deleteDocumentFamily(sessionId);
-  await memory.deleteThread(sessionId);
+  const memory = mastra.getMemory("default");
+  if (!memory) {
+    throw new SessionDeletionError(
+      sessionId,
+      "documents_deleted",
+      new Error("Mastra memory is unavailable"),
+    );
+  }
+  try {
+    await memory.deleteThread(sessionId);
+    await completeSessionDeletion(sessionId);
+  } catch (error) {
+    throw new SessionDeletionError(sessionId, "documents_deleted", error);
+  }
+  return "completed";
 }

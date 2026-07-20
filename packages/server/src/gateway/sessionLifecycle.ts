@@ -12,6 +12,10 @@ import {
 import { dispatchBridgeCommand } from "./commandRuntime";
 import { forgetFolderSourceOperationQueue } from "./folderSourceRuntime";
 import { SessionManager } from "./sessionManager";
+import {
+  beginSessionDeletion,
+  listSessionDeletions,
+} from "@qingagent/db";
 import { emitRestoreFrames } from "./restoreFrames";
 import { sessions } from "./sessionRegistry";
 export {
@@ -177,6 +181,10 @@ export const sessionManager = new SessionManager({
   },
   resolveSessionDocumentId: async (sessionId) =>
     sessions.get(sessionId)?.docId ?? resolveSessionDocumentId(sessionId),
+  deletionStore: {
+    begin: beginSessionDeletion,
+    list: listSessionDeletions,
+  },
 });
 
 export async function disposeAllSessionsForShutdown(): Promise<void> {

@@ -1,10 +1,10 @@
 import type { Command } from "@qingagent/contract-ts";
 import type { ModelOverrides } from "@qingagent/core";
+import type { SessionDeletionPhase } from "@qingagent/db";
 import {
   deleteSessionThread,
   drainSessionPersistenceForSession,
   markSessionDeleted,
-  unmarkSessionDeleted,
 } from "@qingagent/core";
 import { InMemoryFrameLog, type FrameLog, type LoggedFrame } from "./frameLog";
 import {
@@ -23,9 +23,24 @@ export interface SessionManagerOptions {
   unmarkSessionDeleted?: (sessionId: string) => void;
   resolveSessionDocumentId?: (sessionId: string) => Promise<string>;
   drainSessionPersistence?: (sessionId: string, timeoutMs: number) => Promise<void>;
-  deleteSessionThread?: (sessionId: string) => Promise<void>;
+  deleteSessionThread?: (sessionId: string) => Promise<SessionDeletionPhase | void>;
   deletionRetryDelayMs?: number;
+  deletionStore?: SessionDeletionStore;
 }
+
+export interface SessionDeletionStoreRecord {
+  sessionId: string;
+  phase: SessionDeletionPhase;
+}
+
+export interface SessionDeletionStore {
+  begin(sessionId: string): Promise<SessionDeletionStoreRecord>;
+  list(): Promise<SessionDeletionStoreRecord[]>;
+}
+
+export type DestroySessionResult =
+  | { deleted: true; status: "completed" }
+  | { deleted: false; status: "pending" };
 
 export interface SubmitCommandInput {
   command: Command;
@@ -48,18 +63,23 @@ export class SessionManager {
   private readonly destroyedSessions = new Set<string>();
   private readonly backgroundDeletionJobs = new Map<string, Promise<void>>();
   private readonly maxActors: number;
+  private readonly deletionStore: SessionDeletionStore;
+  private readonly deletionInitialization: Promise<void>;
 
   constructor(private readonly options: SessionManagerOptions) {
     this.frameLog = options.frameLog ?? new InMemoryFrameLog();
     this.maxActors = options.maxActors ?? 256;
+    this.deletionStore = options.deletionStore ?? createEphemeralDeletionStore();
+    this.deletionInitialization = this.restoreDeletionState();
   }
 
-  submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+  async submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+    await this.deletionInitialization;
     if (this.deletingSessions.has(sessionId)) {
-      return Promise.reject(new Error("Session deletion is in progress"));
+      throw new Error("Session deletion is in progress");
     }
     if (this.destroyedSessions.has(sessionId)) {
-      return Promise.reject(new Error("Session has been deleted"));
+      throw new Error("Session has been deleted");
     }
     const actor = this.getOrCreateActor(sessionId);
     return actor.enqueue(input);
@@ -85,15 +105,26 @@ export class SessionManager {
     await Promise.all(sessionIds.map((sessionId) => this.disposeSession(sessionId)));
   }
 
-  async destroySession(sessionId: string, timeoutMs = 5_000): Promise<void> {
-    if (this.destroyedSessions.has(sessionId)) return;
-    if (this.deletingSessions.has(sessionId)) {
-      throw new Error("Session deletion is in progress");
+  async destroySession(
+    sessionId: string,
+    timeoutMs = 5_000,
+  ): Promise<DestroySessionResult> {
+    await this.deletionInitialization;
+    if (this.destroyedSessions.has(sessionId)) {
+      return { deleted: true, status: "completed" };
     }
-    this.deletingSessions.add(sessionId);
+    if (this.deletingSessions.has(sessionId)) {
+      return { deleted: false, status: "pending" };
+    }
     let docId: string;
     try {
       docId = await (this.options.resolveSessionDocumentId?.(sessionId) ?? Promise.resolve(sessionId));
+      const tombstone = await this.deletionStore.begin(sessionId);
+      if (tombstone.phase === "completed") {
+        this.completeDeletion(sessionId);
+        return { deleted: true, status: "completed" };
+      }
+      this.deletingSessions.add(sessionId);
       (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId, docId);
     } catch (error) {
       this.deletingSessions.delete(sessionId);
@@ -129,7 +160,7 @@ export class SessionManager {
     if (!actorSettled) {
       // 无法证明在途轮次已结束时绝不删库；墓碑与 deleting 状态保留到后台补删完成。
       this.scheduleDeletionRetry(sessionId, actorSettlement, timeoutMs);
-      return;
+      return { deleted: false, status: "pending" };
     }
 
     try {
@@ -144,15 +175,26 @@ export class SessionManager {
       });
       // 排空超时同样不能进入物理删除，否则已越过旧检查点的写会在删除后复建数据。
       this.scheduleDeletionRetry(sessionId, Promise.resolve(), timeoutMs);
-      return;
+      return { deleted: false, status: "pending" };
     }
     try {
       await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
     } catch (error) {
-      this.rollbackDeletion(sessionId);
-      throw error;
+      console.error("[sessionManager] session deletion remains pending", {
+        sessionId,
+        phase: deletionErrorPhase(error),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.scheduleDeletionRetry(sessionId, Promise.resolve(), timeoutMs);
+      return { deleted: false, status: "pending" };
     }
     this.completeDeletion(sessionId);
+    return { deleted: true, status: "completed" };
+  }
+
+  /** 服务启动时加载持久化墓碑；pending 会话在后台按原幂等删除链路续跑。 */
+  async resumePendingDeletions(): Promise<void> {
+    await this.deletionInitialization;
   }
 
   getActorState(sessionId: string): SessionActor["state"] | null {
@@ -183,12 +225,6 @@ export class SessionManager {
     this.destroyedSessions.add(sessionId);
   }
 
-  private rollbackDeletion(sessionId: string): void {
-    this.deletingSessions.delete(sessionId);
-    this.destroyedSessions.delete(sessionId);
-    (this.options.unmarkSessionDeleted ?? unmarkSessionDeleted)(sessionId);
-  }
-
   private scheduleDeletionRetry(
     sessionId: string,
     actorSettlement: Promise<void>,
@@ -203,8 +239,11 @@ export class SessionManager {
           error: error instanceof Error ? error.message : String(error),
         });
       });
+      let attempt = 0;
       while (this.deletingSessions.has(sessionId)) {
-        await delay(retryDelayMs);
+        const backoffMs = Math.min(retryDelayMs * 2 ** attempt, 30_000);
+        await delay(backoffMs);
+        attempt++;
         try {
           await (this.options.drainSessionPersistence ?? drainSessionPersistenceForSession)(
             sessionId,
@@ -221,19 +260,33 @@ export class SessionManager {
         try {
           await (this.options.deleteSessionThread ?? deleteSessionThread)(sessionId);
           this.completeDeletion(sessionId);
+          return;
         } catch (error) {
-          this.rollbackDeletion(sessionId);
           console.error("[sessionManager] background session deletion failed", {
             sessionId,
+            phase: deletionErrorPhase(error),
             error: error instanceof Error ? error.message : String(error),
           });
+          continue;
         }
-        return;
       }
     })().finally(() => {
       this.backgroundDeletionJobs.delete(sessionId);
     });
     this.backgroundDeletionJobs.set(sessionId, job);
+  }
+
+  private async restoreDeletionState(): Promise<void> {
+    const records = await this.deletionStore.list();
+    for (const record of records) {
+      if (record.phase === "completed") {
+        this.destroyedSessions.add(record.sessionId);
+        continue;
+      }
+      this.deletingSessions.add(record.sessionId);
+      (this.options.markSessionDeleted ?? markSessionDeleted)(record.sessionId);
+      this.scheduleDeletionRetry(record.sessionId, Promise.resolve(), 5_000);
+    }
   }
 
   private getOrCreateActor(sessionId: string): SessionActor {
@@ -275,6 +328,30 @@ export class SessionManager {
       void this.disposeSession(candidate[0]);
     }
   }
+}
+
+function createEphemeralDeletionStore(): SessionDeletionStore {
+  const records = new Map<string, SessionDeletionStoreRecord>();
+  return {
+    async begin(sessionId) {
+      const record = records.get(sessionId) ?? {
+        sessionId,
+        phase: "draining" as const,
+      };
+      records.set(sessionId, record);
+      return record;
+    },
+    async list() {
+      return [...records.values()];
+    },
+  };
+}
+
+function deletionErrorPhase(error: unknown): string {
+  if (typeof error === "object" && error && "phase" in error) {
+    return String(error.phase);
+  }
+  return "unknown";
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {

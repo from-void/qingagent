@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type {
   BrowserContext,
@@ -23,6 +23,8 @@ export const BROWSER_SECURITY_CONTEXT_OPTIONS = {
 
 const SAFE_LOCAL_BROWSER_SCHEMES = new Set(["about:", "blob:", "data:"]);
 const PINNED_RESPONSE_LIMIT_BYTES = 32 * 1024 * 1024;
+// 单响应最多 32MiB；context 总额允许少量大响应并发，同时阻止子资源无界占用内存。
+const PINNED_CONTEXT_RESPONSE_BUDGET_BYTES = 128 * 1024 * 1024;
 const PINNED_REQUEST_TIMEOUT_MS = 15_000;
 const CONTINUE_RESOURCE_TYPES = new Set(["eventsource", "media"]);
 const HOP_BY_HOP_HEADERS = new Set([
@@ -55,7 +57,31 @@ interface PinnedBrowserResponse {
   body: Buffer;
 }
 
+interface PinnedResponseBudget {
+  usedBytes: number;
+}
+
 const contextPolicyInstallations = new WeakMap<BrowserContext, Promise<void>>();
+const contextPinnedResponseBudgets = new WeakMap<BrowserContext, PinnedResponseBudget>();
+
+function getPinnedResponseBudget(context: BrowserContext): PinnedResponseBudget {
+  const existing = contextPinnedResponseBudgets.get(context);
+  if (existing) return existing;
+  const budget = { usedBytes: 0 };
+  contextPinnedResponseBudgets.set(context, budget);
+  return budget;
+}
+
+function reservePinnedResponseBytes(budget: PinnedResponseBudget, bytes: number): boolean {
+  if (bytes > PINNED_CONTEXT_RESPONSE_BUDGET_BYTES - budget.usedBytes) return false;
+  // 检查与占额之间没有 await；在 JS 事件循环内作为一个不可分割步骤执行。
+  budget.usedBytes += bytes;
+  return true;
+}
+
+function releasePinnedResponseBytes(budget: PinnedResponseBudget, bytes: number): void {
+  budget.usedBytes -= bytes;
+}
 
 async function assertBrowserRequestAllowed(rawUrl: string, websocket: boolean): Promise<void> {
   let parsed: URL;
@@ -101,51 +127,80 @@ function responseHeaders(rawHeaders: string[]): Record<string, string> {
 async function requestPinnedBrowserUrl(
   target: PinnedFetchUrl,
   browserRequest: PlaywrightRequest,
+  budget: PinnedResponseBudget,
 ): Promise<PinnedBrowserResponse> {
   const requestHeaders = await browserRequest.allHeaders();
   for (const name of HOP_BY_HOP_HEADERS) delete requestHeaders[name];
   const method = browserRequest.method();
   const postData = browserRequest.postDataBuffer() ?? undefined;
 
-  return await new Promise<PinnedBrowserResponse>((resolve, reject) => {
-    const signal = AbortSignal.timeout(PINNED_REQUEST_TIMEOUT_MS);
-    const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(
-      target.url,
-      {
-        method,
-        headers: requestHeaders,
-        lookup: createPinnedLookup(target),
-        signal,
-        // 与 scrapePage 的 ignoreHTTPSErrors 保持一致；这不改变固定 IP 的 SSRF 边界。
-        ...(target.url.protocol === "https:" ? { rejectUnauthorized: false } : {}),
-      },
-      (incoming) => {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        incoming.on("data", (chunk: Buffer | string) => {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          size += buffer.length;
-          if (size > PINNED_RESPONSE_LIMIT_BYTES) {
-            incoming.destroy(
-              new Error(`Pinned browser response exceeds ${PINNED_RESPONSE_LIMIT_BYTES} bytes`),
-            );
-            return;
-          }
-          chunks.push(buffer);
-        });
-        incoming.once("error", reject);
-        incoming.once("end", () => {
-          resolve({
-            status: incoming.statusCode ?? 500,
-            headers: responseHeaders(incoming.rawHeaders),
-            body: Buffer.concat(chunks, size),
+  let reservedBytes = 0;
+  try {
+    return await new Promise<PinnedBrowserResponse>((resolve, reject) => {
+      const signal = AbortSignal.timeout(PINNED_REQUEST_TIMEOUT_MS);
+      let settled = false;
+      let incomingResponse: IncomingMessage | undefined;
+      const rejectOnce = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        if (incomingResponse && !incomingResponse.destroyed) incomingResponse.destroy();
+        reject(error);
+      };
+      const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(
+        target.url,
+        {
+          method,
+          headers: requestHeaders,
+          lookup: createPinnedLookup(target),
+          signal,
+          // 与 scrapePage 的 ignoreHTTPSErrors 保持一致；这不改变固定 IP 的 SSRF 边界。
+          ...(target.url.protocol === "https:" ? { rejectUnauthorized: false } : {}),
+        },
+        (incoming) => {
+          incomingResponse = incoming;
+          const chunks: Buffer[] = [];
+          let size = 0;
+          incoming.on("data", (chunk: Buffer | string) => {
+            if (settled) return;
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            if (buffer.length > PINNED_RESPONSE_LIMIT_BYTES - size) {
+              const error = new Error(
+                `Pinned browser response exceeds ${PINNED_RESPONSE_LIMIT_BYTES} bytes`,
+              );
+              incoming.destroy(error);
+              rejectOnce(error);
+              return;
+            }
+            if (!reservePinnedResponseBytes(budget, buffer.length)) {
+              const error = new Error(
+                `Pinned browser context responses exceed ${PINNED_CONTEXT_RESPONSE_BUDGET_BYTES} bytes`,
+              );
+              incoming.destroy(error);
+              rejectOnce(error);
+              return;
+            }
+            reservedBytes += buffer.length;
+            size += buffer.length;
+            chunks.push(buffer);
           });
-        });
-      },
-    );
-    request.once("error", reject);
-    request.end(postData);
-  });
+          incoming.once("error", rejectOnce);
+          incoming.once("end", () => {
+            if (settled) return;
+            settled = true;
+            resolve({
+              status: incoming.statusCode ?? 500,
+              headers: responseHeaders(incoming.rawHeaders),
+              body: Buffer.concat(chunks, size),
+            });
+          });
+        },
+      );
+      request.once("error", rejectOnce);
+      request.end(postData);
+    });
+  } finally {
+    releasePinnedResponseBytes(budget, reservedBytes);
+  }
 }
 
 function shouldContinueInChromium(request: PlaywrightRequest): boolean {
@@ -155,6 +210,7 @@ function shouldContinueInChromium(request: PlaywrightRequest): boolean {
 async function handleBrowserRoute(
   route: Route,
   options: BrowserRequestPolicyOptions,
+  budget: PinnedResponseBudget,
 ): Promise<void> {
   const request = route.request();
   const requestUrl = request.url();
@@ -186,7 +242,7 @@ async function handleBrowserRoute(
       return;
     }
 
-    const response = await requestPinnedBrowserUrl(target, request);
+    const response = await requestPinnedBrowserUrl(target, request, budget);
     await route.fulfill(response);
   } catch {
     await route.abort("blockedbyclient").catch(() => undefined);
@@ -282,8 +338,9 @@ export async function installBrowserRequestPolicy(
   if (existing) return await existing;
 
   const installation = (async () => {
+    const budget = getPinnedResponseBudget(context);
     await installServiceWorkerBlock(context);
-    await context.route("**/*", (route) => handleBrowserRoute(route, options));
+    await context.route("**/*", (route) => handleBrowserRoute(route, options, budget));
     await context.routeWebSocket("**/*", (route) => handleBrowserWebSocketRoute(route, options));
   })();
   contextPolicyInstallations.set(context, installation);

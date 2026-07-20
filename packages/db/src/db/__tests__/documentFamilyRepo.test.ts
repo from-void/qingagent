@@ -173,7 +173,7 @@ describe("migration 0002 orphan cleanup", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("*_quarantine_0002"));
   });
 
-  it("mastra_threads 非空但孤儿占比高时提升日志级别并可恢复隔离", async () => {
+  it("F5: 1 匹配 + 2 缺失时比例保险丝停止搬迁并等待人工确认", async () => {
     const client = getDocumentsClient();
     await runMigrations([migration0001Baseline]);
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
@@ -190,11 +190,13 @@ describe("migration 0002 orphan cleanup", () => {
 
     expect(result.appliedIds).toEqual([2]);
     expect(await familyCount(client, "alive-doc", "alive-thread")).toBe(5);
-    expect(await familyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(0);
-    expect(await familyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(0);
-    expect(await quarantinedFamilyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(5);
-    expect(await quarantinedFamilyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(5);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("高比例，线程表可能不完整"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("已隔离 2 个"));
+    expect(await familyCount(client, "preserved-orphan-1", "missing-thread-1")).toBe(5);
+    expect(await familyCount(client, "preserved-orphan-2", "missing-thread-2")).toBe(5);
+    expect(await count(
+      client,
+      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name LIKE '%_quarantine_0002'",
+    )).toBe(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("等待人工确认"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orphanRatio=0.667"));
   });
 });

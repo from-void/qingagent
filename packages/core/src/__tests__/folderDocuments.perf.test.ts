@@ -255,6 +255,18 @@ function hasLoneSurrogate(text: string): boolean {
   return false;
 }
 
+async function waitForBridgeRequest(
+  requests: BrowserFolderBridgeRequest[],
+  predicate: (request: BrowserFolderBridgeRequest) => boolean,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (requests.some(predicate)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("timed out waiting for browser bridge request");
+}
+
 describe("folder document tools", () => {
   beforeEach(() => {
     process.env.QINGAGENT_RUNTIME = "desktop";
@@ -425,6 +437,64 @@ describe("folder document tools", () => {
     expect((await loadFolderSourceManifestEntries(sessionId, source.id)).map((entry) => entry.relPath)).not.toContain("apple.md");
 
     await clearFolderSourceCache(sessionId, source.id);
+  });
+
+  it("F9: searchDocuments 扫描目录中取消时原样抛出 AbortError", async () => {
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    const sessionId = "sess-folder-abort-scan";
+    const source = makeBrowserSource(sessionId);
+    const fixture = installBrowserBridgeFixture(source, new Map([["a.md", "abort scan token"]]), { delayMs: 30 });
+    try {
+      const workspace = await getSessionWorkspace(sessionId, { resolveSkillDirs: () => [], resolveFolderSources: () => [source] });
+      const controller = new AbortController();
+      const searching = searchDocumentsForSession({ sessionId, sources: [source], workspace, query: "token", signal: controller.signal });
+      await waitForBridgeRequest(fixture.requests, (request) => request.op === "readdir");
+      controller.abort(new DOMException("取消扫描", "AbortError"));
+      await expect(searching).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      fixture.close();
+      await clearFolderSourceCache(sessionId, source.id);
+    }
+  });
+
+  it("F9: searchDocuments 构建当前缓存索引中取消时原样抛出 AbortError", async () => {
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    const sessionId = "sess-folder-abort-index";
+    const source = makeBrowserSource(sessionId);
+    const files = new Map([["cached.md", "abort cached index token"]]);
+    const warmFixture = installBrowserBridgeFixture(source, files);
+    const workspace = await getSessionWorkspace(sessionId, { resolveSkillDirs: () => [], resolveFolderSources: () => [source] });
+    await searchDocumentsForSession({ sessionId, sources: [source], workspace, query: "token" });
+    warmFixture.close();
+    const fixture = installBrowserBridgeFixture(source, files, { delayMs: 30 });
+    try {
+      const controller = new AbortController();
+      const searching = searchDocumentsForSession({ sessionId, sources: [source], workspace, query: "token", signal: controller.signal });
+      await waitForBridgeRequest(fixture.requests, (request) => request.op === "stat" && request.relPath === "cached.md");
+      controller.abort(new DOMException("取消索引", "AbortError"));
+      await expect(searching).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      fixture.close();
+      await clearFolderSourceCache(sessionId, source.id);
+    }
+  });
+
+  it("F9: searchDocuments 读取候选文档中取消时原样抛出 AbortError", async () => {
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    const sessionId = "sess-folder-abort-read";
+    const source = makeBrowserSource(sessionId);
+    const fixture = installBrowserBridgeFixture(source, new Map([["dirty.md", "abort dirty read token"]]), { delayMs: 30 });
+    try {
+      const workspace = await getSessionWorkspace(sessionId, { resolveSkillDirs: () => [], resolveFolderSources: () => [source] });
+      const controller = new AbortController();
+      const searching = searchDocumentsForSession({ sessionId, sources: [source], workspace, query: "token", signal: controller.signal });
+      await waitForBridgeRequest(fixture.requests, (request) => request.op === "readFile");
+      controller.abort(new DOMException("取消读取", "AbortError"));
+      await expect(searching).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      fixture.close();
+      await clearFolderSourceCache(sessionId, source.id);
+    }
   });
 
   it("searchDocuments warm path 复用 manifest cached text，不再每轮全量 readFile", async () => {

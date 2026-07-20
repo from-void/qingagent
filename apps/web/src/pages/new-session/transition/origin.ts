@@ -201,6 +201,19 @@ export function computeWorkspaceDocRect(
   vw = window.innerWidth,
   vh = window.innerHeight,
 ): ReturnRect {
+  if (!Number.isFinite(vw) || vw <= 0 || !Number.isFinite(vh) || vh <= WS_DOC_TOP) {
+    // 极端冷载/测试环境拿不到有效 viewport 时，退到屏幕中央的可见纸面，避免交接 rect 为 NaN/负高。
+    const safeVw = Number.isFinite(vw) && vw > 0 ? vw : 1280;
+    const safeVh = Number.isFinite(vh) && vh > 0 ? vh : 720;
+    const width = Math.min(WS_DOC_W, Math.max(1, safeVw - WS_PAD * 2));
+    const top = Math.min(WS_DOC_TOP, Math.max(0, Math.round(safeVh * 0.08)));
+    return {
+      left: Math.round((safeVw - width) / 2),
+      top,
+      width,
+      height: Math.max(1, safeVh - top),
+    };
+  }
   // 左右栏已定宽(workspace-ink-skin.css:.ws-left=400 / .ws-right=800,不再随 vw 收窄)。
   // 这里同步成定宽,保证翻转落点 = 编辑页纸的真实 rect;下面 max(0,(avail-groupW)/2) 即
   // CSS 的 `justify-content: safe center`(放得下居中、放不下靠左由 .ws-body 横向滚动)。

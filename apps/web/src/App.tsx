@@ -102,7 +102,10 @@ function AppShell() {
         <Suspense
           fallback={
             <div
-              style={{ height: "100vh", background: "var(--app-boot-bg, #ece4d3)" }}
+              style={{
+                height: "100vh",
+                background: route === "workspace" ? "#16212c" : "var(--app-boot-bg, #ece4d3)",
+              }}
               aria-hidden
             />
           }

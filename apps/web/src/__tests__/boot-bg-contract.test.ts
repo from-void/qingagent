@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // boot 底色契约:首页固定浅色后,React 挂载前的 boot 壳层底色(index.html inline <style>+script、
-// App.tsx Suspense 兜底)必须是首页浅色纸底,绝不能是旧版深色首页遗留的深底——否则懒加载大 chunk
-// 下载期(VPS 慢网)露深底=生产"中间黑块"(daf414e 修)。这是跨副本契约:三处字面量易"改一漏二"。
+// App.tsx Suspense 非工作区兜底)必须是首页浅色纸底,绝不能是旧版深色首页遗留的深底——否则懒加载
+// 大 chunk 下载期(VPS 慢网)露深底=生产"中间黑块"(daf414e 修)。工作区直链则必须用真实玄青桌面色。
 // 真值 = #ece4d3(首页 body 暖纸稳态色 rgb(236,228,211)=--bg-window 运行时值,浏览器实测)。
 // 注:主题暖化后旧冷灰 #e9eae6 与两侧暖底不匹配,首帧闪"暖两侧+冷中心",故 boot 兜底同步为暖值。
 
@@ -27,8 +27,10 @@ describe("boot 底色契约(防黑块回归·跨副本一致)", () => {
     expect(indexHtml).toMatch(/var bg = "#ece4d3"/);
   });
 
-  it("App.tsx Suspense 兜底底色 = #ece4d3(与 boot 同色,消除路由切换色阶)", () => {
-    expect(appTsx).toContain("background: \"var(--app-boot-bg, #ece4d3)\"");
+  it("App.tsx Suspense 按目标路由选择玄青工作区或暖纸兜底", () => {
+    expect(appTsx).toContain(
+      'background: route === "workspace" ? "#16212c" : "var(--app-boot-bg, #ece4d3)"',
+    );
   });
 
   it("三处 boot 副本都不得出现旧版深色(黑块回归红线)", () => {

@@ -6,6 +6,14 @@
   font-display: swap;
 }
 
+:root {
+  /* 转场、新建页与工作区共用同一张玄青桌面，避免跨路由首尾帧色值断层。 */
+  --desk-base: #16212c;
+  --desk-cinnabar-glow: radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.1), transparent 50%);
+  --desk-teal-glow: radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.09), transparent 55%);
+  --desk-vignette: radial-gradient(150% 130% at 50% 42%, transparent 0%, transparent 48%, rgba(8, 13, 19, 0.42) 100%);
+}
+
 /* 外壳锁死一屏高度(替代被删除的 <Laptop> 外壳:固定高度 + overflow:hidden）。
    原先三层用 min-height:100vh 只设下限不设上限,长文档会把整条链一路撑到 body,
    产生浏览器原生滚动条。改为固定 height:100vh,让溢出在内部页面(workspace 文档区 /

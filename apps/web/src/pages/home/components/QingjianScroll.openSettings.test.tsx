@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goConfigureModel } from "../../../system/modelKeyGate";
+import { setHomeArrive } from "../../new-session/transition/origin";
 import { QingjianScroll } from "./QingjianScroll";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -101,5 +102,40 @@ describe("QingjianScroll 去首页配置", () => {
     expect(sheet).not.toBeNull();
     expect(sheet?.dataset.tab).toBe("model");
     expect(window.sessionStorage.getItem("qj-open-settings")).toBeNull();
+  });
+
+  it("系统减动效时直接消费 workspace 返回到达态，不播放深底渐出", async () => {
+    vi.mocked(window.matchMedia).mockImplementation((query) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    setHomeArrive({
+      rect: { left: 488, top: 52, width: 800, height: 848 },
+      x: 888,
+      y: 476,
+      source: "workspace",
+    });
+
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        <QingjianScroll
+          sessions={[]}
+          onOpenSession={() => undefined}
+          onNewSession={() => undefined}
+        />,
+      );
+    });
+
+    expect(window.sessionStorage.getItem("qingagent:home-arrive")).toBeNull();
+    expect(host.querySelector(".qj-root")?.classList.contains("qj-arriving")).toBe(false);
   });
 });

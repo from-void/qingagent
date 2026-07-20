@@ -1728,22 +1728,12 @@ transform 平移内层) */
   z-index: 40;
   pointer-events: none;
   opacity: 0;
-  background:
-    radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.11), transparent 50%),
-    radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.1), transparent 55%),
-    radial-gradient(150% 130% at 50% 42%, #1a232a 0%, #11151a 46%, #0a0d10 100%);
+  background-color: var(--desk-base);
+  background-image:
+    var(--desk-cinnabar-glow),
+    var(--desk-teal-glow),
+    var(--desk-vignette);
   transition: opacity 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.qj-root .ccx-space::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-  background:
-    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 10px),
-    repeating-linear-gradient(94deg, rgba(160, 200, 200, 0.05) 0 1px, transparent 1px 14px);
-  -webkit-mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
-  mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
 }
 .qj-root.ccx-stage-host.is-dark .ccx-space {
   opacity: 1;
@@ -1752,6 +1742,10 @@ transform 平移内层) */
 在不透明墨层底下无缝交接 */
 .qj-root.ccx-stage-host.is-ink-wipe .ccx-space {
   transition: none;
+}
+/* 仅首页去程墨渗中段渐深；snapArrived 不带 is-dark-anim，保持首帧瞬时满深。 */
+.qj-root.ccx-stage-host.is-ink-wipe.is-dark-anim .ccx-space {
+  transition: opacity 0.32s ease;
 }
 /* 墨尘 canvas */
 .qj-root .ccx-dust {
@@ -1832,6 +1826,10 @@ transform 平移内层) */
 .qj-root .ccx-morph.ccx-morph-plain .ccx-morph-frame,
 .qj-root .ccx-morph.ccx-morph-plain .ccx-morph-corner {
   opacity: 0;
+}
+.qj-root .ccx-morph.ccx-morph-plain {
+  background: var(--bg-paper-deep);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
 /* 过渡期间首页内容淡出/压暗(只动额外内容,
 核心卡由 morph 接管) */

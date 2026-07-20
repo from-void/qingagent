@@ -176,10 +176,6 @@ export function useWorkspaceChrome(input: {
     const goHome = () => {
       window.location.hash = routeToHash("home");
     };
-    if (!sessionId) {
-      goHome();
-      return;
-    }
     const rect = computeWorkspaceDocRect();
     input.viewRef.current?.classList.add("ws-returning");
     const handoff = () => {
@@ -188,7 +184,7 @@ export function useWorkspaceChrome(input: {
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2,
         source: "workspace",
-        sessionId,
+        ...(sessionId ? { sessionId } : {}),
       });
       goHome();
     };

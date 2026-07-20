@@ -1311,7 +1311,13 @@ export function QingjianScroll({
     // 待反向动效真正启动(下方 rAF 内)再 clearHomeArrive。
     const arrive = peekHomeArrive();
     let cancelled = false;
-    if (arrive) {
+    const reduceReturnMotion =
+      reduceMotion ||
+      (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+    if (arrive && reduceReturnMotion) {
+      // 减动效直接消费交接态并渲染正常首页，不挂深底静帧，也不播放 620ms 渐出。
+      clearHomeArrive();
+    } else if (arrive) {
       root.classList.add("qj-arriving");
       if (arrive.source === "workspace" && arrive.sessionId) {
         const viewX = computeArticleHomeViewX(arrive.sessionId);
@@ -1329,15 +1335,19 @@ export function QingjianScroll({
           if (cancelled) return;
           clearHomeArrive(); // 动效已启动,此刻消费到达态(避开 StrictMode 误清)
           const dest =
-            arrive.source === "workspace" && arrive.sessionId
-              ? computeArticleCardScreenRect(arrive.sessionId)
+            arrive.source === "workspace"
+              ? arrive.sessionId
+                ? computeArticleCardScreenRect(arrive.sessionId)
+                : null
               : computeNewCardScreenRect();
           const to = dest
             ? dest.rect
-            : { left: NEW_CARD_LEFT, top: window.innerHeight / 2 - NEW_CARD_H / 2, width: CARD_WIDTH, height: NEW_CARD_H };
+            : arrive.source === "workspace"
+              ? arrive.rect
+              : { left: NEW_CARD_LEFT, top: window.innerHeight / 2 - NEW_CARD_H / 2, width: CARD_WIDTH, height: NEW_CARD_H };
           const inkOrigin = dest
             ? { x: dest.centerX, y: dest.centerY }
-            : { x: to.left + CARD_WIDTH / 2, y: to.top + NEW_CARD_H / 2 };
+            : { x: to.left + to.width / 2, y: to.top + to.height / 2 };
           stage
             // 新建页返回保留形变动效;文档编辑页返回只淡出(animate=false)
             .playReturn(arrive.rect, to, inkOrigin, arrive.source !== "workspace")

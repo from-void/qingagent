@@ -828,6 +828,68 @@ describe("WorkspacePage review controls", () => {
     expect(window.location.hash).toBe("#/");
   }, 60_000);
 
+  it("O1: 会话切换 flush 超时后用旧 session 的 beacon 保存当前编辑器正文", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] = await Promise.all([
+      import("./WorkspacePage"),
+      import("./components/WorkspaceDocumentPane"),
+    ]);
+    const captured: { current: ReturnType<typeof useWorkspacePageController> | null } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const oldStream = latestServerStream();
+    await emitFrames(oldStream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "旧会话" } },
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(pmDoc([pmParagraph("p-switch-save", "旧正文")]), 1) } },
+      { kind: "docStateChanged", data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false } },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+    let resolveUpdateDoc: (() => void) | null = null;
+    oldStream.sendCommand.mockImplementation((command: Command) =>
+      command.kind === "updateDoc"
+        ? new Promise<void>((resolve) => { resolveUpdateDoc = resolve; })
+        : Promise.resolve(),
+    );
+    const sendBeacon = vi.fn((_url: string, _data?: BodyInit | null) => true);
+    const originalSendBeacon = navigator.sendBeacon;
+    Object.defineProperty(navigator, "sendBeacon", { configurable: true, value: sendBeacon });
+    vi.useFakeTimers();
+
+    try {
+      act(() => {
+        editor!.commands.setContent(pmDoc([pmParagraph("p-switch-save", "切换前未落盘正文")]));
+        window.history.replaceState(null, "", "#/workspace?session=s-2");
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      await flushMicrotasks(5);
+
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      const beaconBody = JSON.parse(await blobText(sendBeacon.mock.calls[0]?.[1] as Blob));
+      expect(beaconBody).toMatchObject({
+        kind: "updateDoc",
+        data: { sessionId: "s-1" },
+      });
+      expect(JSON.stringify(beaconBody.data.doc)).toContain("切换前未落盘正文");
+      expect(latestServerStream()).not.toBe(oldStream);
+      await act(async () => {
+        resolveUpdateDoc?.();
+        await Promise.resolve();
+      });
+    } finally {
+      Object.defineProperty(navigator, "sendBeacon", { configurable: true, value: originalSendBeacon });
+    }
+  }, 60_000);
+
   it("多 atomic group 且 agentBusy 未清零时仍渲染审查提交与 hover 取消控件", async () => {
     vi.useFakeTimers();
     const { RightPane } = await import("./WorkspacePage");

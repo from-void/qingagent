@@ -42,6 +42,42 @@ describe("withBrowserContextSlot", () => {
       await Promise.all(tasks);
     }
   });
+
+  it("F10: 第 4 个排队任务取消后立即拒绝且不消耗后续槽位", async () => {
+    const occupied = Array.from({ length: 3 }, deferred);
+    let started = 0;
+    const firstThree = occupied.map((gate) => withBrowserContextSlot(async () => {
+      started += 1;
+      await gate.promise;
+    }));
+    await flushMicrotasks();
+    expect(started).toBe(3);
+
+    const controller = new AbortController();
+    let fourthStarted = false;
+    const fourth = withBrowserContextSlot(async () => {
+      fourthStarted = true;
+    }, controller.signal);
+    await flushMicrotasks();
+    controller.abort(new DOMException("取消排队", "AbortError"));
+
+    await expect(fourth).rejects.toMatchObject({ name: "AbortError" });
+    expect(fourthStarted).toBe(false);
+
+    const fifthGate = deferred();
+    let fifthStarted = false;
+    const fifth = withBrowserContextSlot(async () => {
+      fifthStarted = true;
+      await fifthGate.promise;
+    });
+    occupied[0]!.resolve();
+    await flushMicrotasks();
+    expect(fifthStarted).toBe(true);
+
+    occupied.slice(1).forEach((gate) => gate.resolve());
+    fifthGate.resolve();
+    await Promise.all([...firstThree, fifth]);
+  });
 });
 
 // 浏览器启动候选:① 探测到的系统浏览器 executablePath(优先,可控)② channel(QINGAGENT_BROWSER_CHANNELS)

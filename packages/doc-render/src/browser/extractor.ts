@@ -427,6 +427,7 @@ async function fetchWithSsrfGuard(
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) {
+        await response.body?.cancel().catch(() => undefined);
         throw new Error(`Redirect response missing Location header for ${currentUrl.toString()}`);
       }
       await response.body?.cancel().catch(() => undefined);

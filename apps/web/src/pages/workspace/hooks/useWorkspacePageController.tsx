@@ -1771,6 +1771,9 @@ export function useWorkspacePageController() {
         streamRef.current
       )
         return;
+      // hash/popstate 切换不会触发组件 cleanup；先以旧 sessionId 捕获当前编辑器正文，
+      // 正常 flush 超时/失败时复用退出页的 beacon/keepalive 兜底，再清旧会话队列。
+      const fallbackDocSave = preparePageExitDocSaveRef.current();
       try {
         await new Promise<void>((resolve, reject) => {
           const timer = window.setTimeout(
@@ -1793,6 +1796,7 @@ export function useWorkspacePageController() {
           "[workspace] failed to flush updateDoc before session switch",
           error,
         );
+        fallbackDocSave?.();
       }
       startWorkspaceStream(nextSessionId, { resetSessionState: true });
     };

@@ -213,5 +213,6 @@ export async function getDerivativeDocument(docId: string): Promise<{ pmDoc: PmD
   const result = await getDocumentsClient().execute({ sql: "SELECT doc_pm, doc_version, title FROM documents WHERE id = ? AND role = 'derivative'", args: [docId] });
   const row = result.rows[0];
   if (!row) return null;
-  return { pmDoc: parsePmDoc(row.doc_pm), docPm: String(row.doc_pm), docVersion: Number(row.doc_version), title: String(row.title) };
+  const pmDoc = parsePmDoc(row.doc_pm);
+  return { pmDoc, docPm: JSON.stringify(pmDoc), docVersion: Number(row.doc_version), title: String(row.title) };
 }

@@ -1150,6 +1150,25 @@ describe("thread persistence", () => {
     expect(await listVersions(sessionId)).toHaveLength(0);
   });
 
+  it("F14: 版本不一致的 snapshot 恢复不写 reconcile span", async () => {
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const sessionId = "restore-snapshot-no-span";
+    threads.set(sessionId, storedThread(sessionId, metadata({
+      docId: sessionId,
+      docVersion: 1,
+      doc: pmDoc("metadata old"),
+      legacySections: [textSection("metadata old")],
+    })));
+    await saveDocumentRow({ docId: sessionId, sessionId, text: "documents new", docVersion: 2 });
+    spans.length = 0;
+
+    const restored = await loadSessionFromThread(sessionId, { mode: "snapshot" });
+
+    expectRestoredText(restored, "documents new");
+    expect(spans).toHaveLength(0);
+    expect(memory.updateThread).not.toHaveBeenCalled();
+  });
+
   it("恢复仲裁场景2: metadata.doc 为空时视为 documents 胜出", async () => {
     const { loadSessionFromThread, drainSessionPersistence } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-empty-doc";

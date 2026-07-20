@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import { normalizeStoredPmDoc, type PmDoc } from "@qingagent/pm-schema";
 import type { ActionCardData } from "@qingagent/contract-ts";
 import { useConfirm } from "../../../../system";
 import type { ServerStream } from "../../data/serverStream";
@@ -148,7 +148,7 @@ export function DerivativeView(props: {
     element.scrollTop = element.scrollHeight;
   }, [translationState?.status, translationState?.text]);
 
-  const pmDoc = useMemo(() => document && document.docVersion > 0 ? normalizePmDoc(JSON.parse(document.docPm)) : null, [document]);
+  const pmDoc = useMemo(() => document && document.docVersion > 0 ? normalizeStoredPmDoc(JSON.parse(document.docPm)) : null, [document]);
   const title = articleTitle(pmDoc, descriptor.label);
   const beginGenerate = async (params: DerivativeGenerateParams) => {
     try {

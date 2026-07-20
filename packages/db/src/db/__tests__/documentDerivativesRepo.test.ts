@@ -28,6 +28,32 @@ describe("documentDerivativesRepo", () => {
     expect(await listDerivativesByThread("thread-fenced")).toEqual([]);
   });
 
+  it("F4: 衍生稿读取向下游返回宽容归一化后的历史表格 PM", async () => {
+    await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
+    const meta = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-opinion", privatePrompt: "" });
+    const legacyBrokenTable = {
+      type: "doc", attrs: { schemaVersion: 1 }, content: [{
+        type: "table", attrs: { blockId: "legacy-table" }, content: [
+          { type: "tableRow", content: [
+            { type: "tableCell", attrs: { rowspan: 3, backgroundColor: null }, content: [{ type: "paragraph", attrs: { blockId: "a" }, content: [{ type: "text", text: "旧表格" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "b" } }] },
+          ] },
+          { type: "tableRow", content: [
+            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "c" } }] },
+          ] },
+        ],
+      }],
+    };
+    await getDocumentsClient().execute({
+      sql: "UPDATE documents SET doc_pm = ?, doc_version = 1 WHERE id = ?",
+      args: [JSON.stringify(legacyBrokenTable), meta.docId],
+    });
+
+    const loaded = await getDerivativeDocument(meta.docId);
+    expect(JSON.stringify(loaded?.pmDoc)).not.toContain("backgroundColor");
+    expect(JSON.parse(loaded!.docPm)).toEqual(loaded!.pmDoc);
+  });
+
   it("删除校验会话归属，并级联清理关联行和版本", async () => {
     await documentRepo.save(documentInput("main", { threadId: "thread", docVersion: 1 }));
     const meta = await createDerivativeDoc({ threadId: "thread", sourceDocId: "main", dtype: "gzh", templateId: "gzh-opinion", privatePrompt: "" });

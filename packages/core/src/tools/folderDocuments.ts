@@ -202,25 +202,37 @@ async function resolveHostReadPath(args: {
   path: string;
   source?: FolderSourceRecord;
   relPath?: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   const { filesystem, path, source, relPath } = args;
+  args.signal?.throwIfAborted();
   if (source?.provider === "desktop-local" && source.desktopRootPath && relPath) {
     let root: string;
     try {
+      args.signal?.throwIfAborted();
       root = await realpath(source.desktopRootPath);
-    } catch {
+      args.signal?.throwIfAborted();
+    } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       // 测试替身和非本地 provider 没有宿主路径时回退到 filesystem 自己的受限读取。
       return null;
     }
     const candidate = filesystem.resolveAbsolutePath?.(path) ?? resolve(root, relPath);
     if (!isPathInside(candidate, root)) throw new Error("invalid_path: path escaped folder source");
+    args.signal?.throwIfAborted();
     const canonical = await realpath(candidate);
+    args.signal?.throwIfAborted();
     if (!isPathInside(canonical, root)) throw new Error("invalid_path: symlink escaped folder source");
     return canonical;
   }
 
   const resolved = filesystem.resolveAbsolutePath?.(path);
-  return resolved ? realpath(resolved) : null;
+  if (!resolved) return null;
+  args.signal?.throwIfAborted();
+  const canonical = await realpath(resolved);
+  args.signal?.throwIfAborted();
+  return canonical;
 }
 
 async function readHostFileBounded(
@@ -232,8 +244,11 @@ async function readHostFileBounded(
   const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
   signal?.throwIfAborted();
   const handle = await open(hostPath, fsConstants.O_RDONLY | noFollow | nonBlock);
+  signal?.throwIfAborted();
   try {
+    signal?.throwIfAborted();
     const statBeforeRead = await handle.stat();
+    signal?.throwIfAborted();
     if (!statBeforeRead.isFile()) throw new Error("invalid_path: path is not a file");
     signal?.throwIfAborted();
     if (statBeforeRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
@@ -253,7 +268,9 @@ async function readHostFileBounded(
       chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
     }
 
+    signal?.throwIfAborted();
     const statAfterRead = await handle.stat();
+    signal?.throwIfAborted();
     if (statAfterRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
     return {
       stat: mergeHostFileStat(initialStat, statAfterRead),
@@ -274,6 +291,7 @@ async function readWorkspaceFileBounded(args: {
 }): Promise<{ stat: FileStat; buffer: Buffer }> {
   args.signal?.throwIfAborted();
   const hostPath = await resolveHostReadPath(args);
+  args.signal?.throwIfAborted();
   if (hostPath) return readHostFileBounded(hostPath, args.initialStat, args.signal);
 
   // browser-fs-access 在客户端 arrayBuffer() 前按 request.maxBytes 检查 File.size，
@@ -282,7 +300,9 @@ async function readWorkspaceFileBounded(args: {
   const buffer = toBuffer(await args.filesystem.readFile(args.path));
   args.signal?.throwIfAborted();
   if (buffer.byteLength > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
+  args.signal?.throwIfAborted();
   const statAfterRead = await args.filesystem.stat(args.path);
+  args.signal?.throwIfAborted();
   if (statAfterRead.type !== "file") throw new Error("invalid_path: path is not a file");
   if (statAfterRead.size > MAX_DOCUMENT_BYTES) throw new Error(DOCUMENT_TOO_LARGE_ERROR);
   return { stat: statAfterRead, buffer };
@@ -298,6 +318,7 @@ async function readFileWithFreshStat(
 ): Promise<{ stat: FileStat; buffer: Buffer; contentSha256: string }> {
   let statBeforeRead = initialStat;
   for (let attempt = 0; attempt < MAX_STABLE_READ_ATTEMPTS; attempt += 1) {
+    signal?.throwIfAborted();
     const current = await readWorkspaceFileBounded({
       filesystem,
       path,
@@ -306,6 +327,7 @@ async function readFileWithFreshStat(
       relPath,
       signal,
     });
+    signal?.throwIfAborted();
     const { buffer, stat: statAfterRead } = current;
     if (statAfterRead.type !== "file") {
       throw new Error("invalid_path: path is not a file");
@@ -348,11 +370,22 @@ function normalizeSearchIoConcurrency(value: number | undefined): number {
   return Math.max(1, Math.floor(value));
 }
 
+function isAbortError(error: unknown): boolean {
+  return (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") ||
+    (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError");
+}
+
+function throwIfAbortError(error: unknown): void {
+  if (isAbortError(error)) throw error;
+}
+
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
+  signal?.throwIfAborted();
   if (items.length === 0) return [];
   const concurrency = Math.min(items.length, normalizeSearchIoConcurrency(limit));
   const results = new Array<R>(items.length);
@@ -360,10 +393,13 @@ async function mapWithConcurrency<T, R>(
 
   await Promise.all(Array.from({ length: concurrency }, async () => {
     while (true) {
+      signal?.throwIfAborted();
       const index = nextIndex;
       nextIndex += 1;
       if (index >= items.length) return;
+      signal?.throwIfAborted();
       results[index] = await fn(items[index]!, index);
+      signal?.throwIfAborted();
     }
   }));
 
@@ -552,8 +588,10 @@ async function parseAndCacheDocument(args: {
   previous?: FolderSourceCacheEntry;
   currentContent?: { buffer: Buffer; contentSha256: string };
   deferCacheLimitEnforcement?: boolean;
+  signal?: AbortSignal;
 }): Promise<{ entry: FolderSourceCacheEntry; text: string; cacheHit: boolean }> {
   const { sessionId, resolved, stat: fileStat, previous, currentContent } = args;
+  args.signal?.throwIfAborted();
   if (fileStat.type !== "file") throw new Error("invalid_path: path is not a file");
   if (fileStat.size > MAX_DOCUMENT_BYTES) {
     throw new Error(DOCUMENT_TOO_LARGE_ERROR);
@@ -567,6 +605,7 @@ async function parseAndCacheDocument(args: {
     const contentSha256 = `image-${fileStat.size}-${fileStat.modifiedAt.getTime()}`;
     let entry: FolderSourceCacheEntry;
     try {
+      args.signal?.throwIfAborted();
       entry = await putParsedDocument({
         sessionId,
         folderId: resolved.source.id,
@@ -580,7 +619,10 @@ async function parseAndCacheDocument(args: {
         enforceLimits: !args.deferCacheLimitEnforcement,
         flushManifest: !args.deferCacheLimitEnforcement,
       });
+      args.signal?.throwIfAborted();
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       logDerivedDataFailure("[folderDocuments] 图片解析缓存写入失败，继续返回正文", error, [resolved.source]);
       entry = cacheFallbackEntry({ resolved, stat: fileStat, contentSha256, metadata });
     }
@@ -601,7 +643,9 @@ async function parseAndCacheDocument(args: {
     previous.contentSha256 === contentSha256
   ) {
     try {
+      args.signal?.throwIfAborted();
       const text = await loadFolderSourceCachedText(sessionId, resolved.source.id, previous);
+      args.signal?.throwIfAborted();
       const entry = await reuseParsedDocumentWithNewStat({
         sessionId,
         folderId: resolved.source.id,
@@ -613,22 +657,28 @@ async function parseAndCacheDocument(args: {
         metadata: previous.metadata,
         previousParsedFile: previous.parsedFile,
       });
+      args.signal?.throwIfAborted();
       return { entry, text, cacheHit: true };
-    } catch {
+    } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       // 解析缓存是派生数据，manifest 指向的 parsed 文件缺失时按 cache miss 重建。
     }
   }
 
+  args.signal?.throwIfAborted();
   const parsed = await parseFileBuffer({
     buffer,
     filename: basenameOf(resolved.path),
     mimeType,
   });
+  args.signal?.throwIfAborted();
   if (!parsed.ok) {
     throw new Error(parsed.error);
   }
   let entry: FolderSourceCacheEntry;
   try {
+    args.signal?.throwIfAborted();
     entry = await putParsedDocument({
       sessionId,
       folderId: resolved.source.id,
@@ -642,7 +692,10 @@ async function parseAndCacheDocument(args: {
       enforceLimits: !args.deferCacheLimitEnforcement,
       flushManifest: !args.deferCacheLimitEnforcement,
     });
+    args.signal?.throwIfAborted();
   } catch (error) {
+    args.signal?.throwIfAborted();
+    throwIfAbortError(error);
     logDerivedDataFailure("[folderDocuments] 解析缓存写入失败，继续返回正文", error, [resolved.source]);
     entry = cacheFallbackEntry({ resolved, stat: fileStat, contentSha256, metadata: parsed.metadata });
   }
@@ -657,12 +710,15 @@ async function readDocumentForSearchIndex(args: {
   signal?: AbortSignal;
 }): Promise<SearchIndexDocumentReadResult> {
   try {
+    args.signal?.throwIfAborted();
     const resolved = resolveFolderSourcePath(args.sources, args.path);
     if (!isFolderSourceCacheActive(args.sessionId, resolved.source.id)) {
       return { ok: false, path: args.path, error: "folder source is inactive", inactiveSource: true };
     }
     const filesystem = requireFilesystem(args.workspace);
+    args.signal?.throwIfAborted();
     let fileStat = await filesystem.stat(resolved.path);
+    args.signal?.throwIfAborted();
     if (fileStat.type === "file" && fileStat.size > MAX_DOCUMENT_BYTES) {
       throw new Error(DOCUMENT_TOO_LARGE_ERROR);
     }
@@ -683,11 +739,13 @@ async function readDocumentForSearchIndex(args: {
         resolved.relPath,
         args.signal,
       );
+      args.signal?.throwIfAborted();
       fileStat = current.stat;
       mimeType = mimeTypeFor(resolved.path, fileStat);
       currentDocumentContent = { buffer: current.buffer, contentSha256: current.contentSha256 };
     }
 
+    args.signal?.throwIfAborted();
     const cached = await getCachedParsedDocument({
       sessionId: args.sessionId,
       folderId: resolved.source.id,
@@ -696,6 +754,7 @@ async function readDocumentForSearchIndex(args: {
       modifiedAtMs: fileStat.modifiedAt.getTime(),
       contentSha256: currentDocumentContent?.contentSha256,
     });
+    args.signal?.throwIfAborted();
     if (cached.kind === "hit") {
       return { ok: true, entry: cached.entry, text: cached.text };
     }
@@ -707,9 +766,13 @@ async function readDocumentForSearchIndex(args: {
       previous: cached.entry,
       currentContent: currentDocumentContent,
       deferCacheLimitEnforcement: true,
+      signal: args.signal,
     });
+    args.signal?.throwIfAborted();
     return { ok: true, entry: parsed.entry, text: parsed.text };
   } catch (error) {
+    args.signal?.throwIfAborted();
+    throwIfAbortError(error);
     const message = redactFolderSourcePaths(error instanceof Error ? error.message : String(error), args.sources);
     return { ok: false, path: args.path, error: message };
   }
@@ -727,9 +790,12 @@ export async function readDocumentForSession(args: {
 }): Promise<ReadDocumentResult> {
   const sources = Array.from(args.sources);
   try {
+    args.signal?.throwIfAborted();
     const resolved = resolveFolderSourcePath(sources, args.path);
     const filesystem = requireFilesystem(args.workspace);
+    args.signal?.throwIfAborted();
     let fileStat = await filesystem.stat(resolved.path);
+    args.signal?.throwIfAborted();
     if (fileStat.type === "file" && fileStat.size > MAX_DOCUMENT_BYTES) {
       throw new Error(DOCUMENT_TOO_LARGE_ERROR);
     }
@@ -749,6 +815,7 @@ export async function readDocumentForSession(args: {
         resolved.relPath,
         args.signal,
       );
+      args.signal?.throwIfAborted();
       fileStat = current.stat;
       mimeType = mimeTypeFor(resolved.path, fileStat);
       currentDocumentContent = { buffer: current.buffer, contentSha256: current.contentSha256 };
@@ -756,6 +823,7 @@ export async function readDocumentForSession(args: {
     const modifiedAtMs = fileStat.modifiedAt.getTime();
     let cached: Awaited<ReturnType<typeof getCachedParsedDocument>>;
     try {
+      args.signal?.throwIfAborted();
       cached = await getCachedParsedDocument({
         sessionId: args.sessionId,
         folderId: resolved.source.id,
@@ -764,7 +832,10 @@ export async function readDocumentForSession(args: {
         modifiedAtMs,
         contentSha256: currentDocumentContent?.contentSha256,
       });
+      args.signal?.throwIfAborted();
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       logDerivedDataFailure("[folderDocuments] 读取解析缓存失败，按缓存未命中继续", error, sources);
       cached = { kind: "miss", manifest: { version: 1, sessionId: args.sessionId, folderId: resolved.source.id, entries: {} } };
     }
@@ -785,12 +856,15 @@ export async function readDocumentForSession(args: {
         previous: cached.entry,
         currentContent: currentDocumentContent,
         deferCacheLimitEnforcement: args.deferCacheLimitEnforcement,
+        signal: args.signal,
       });
+      args.signal?.throwIfAborted();
       text = parsed.text;
       entry = parsed.entry;
       cacheHit = parsed.cacheHit;
     }
 
+    args.signal?.throwIfAborted();
     const limited = applyRangeAndLimit(text, args);
     return {
       ok: true,
@@ -803,6 +877,8 @@ export async function readDocumentForSession(args: {
       truncated: limited.truncated,
     };
   } catch (error) {
+    args.signal?.throwIfAborted();
+    throwIfAbortError(error);
     return errorResult(args.path, error, sources);
   }
 }
@@ -811,17 +887,24 @@ async function listCandidateFiles(args: {
   workspace: Workspace;
   sources: FolderSourceRecord[];
   limit: number;
+  signal?: AbortSignal;
 }): Promise<{ paths: string[]; scannedCount: number; capped: boolean; rootError?: Error }> {
+  args.signal?.throwIfAborted();
   const paths: string[] = [];
   let scannedCount = 0;
   let capped = false;
 
   async function walk(dir: string, isRoot = false): Promise<void> {
+    args.signal?.throwIfAborted();
     if (capped) return;
     let entries: FileEntry[];
     try {
+      args.signal?.throwIfAborted();
       entries = await requireFilesystem(args.workspace).readdir(dir);
+      args.signal?.throwIfAborted();
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       if (isRoot) {
         throw new Error(
           `folder_source_unavailable: ${dir} is missing or unavailable (${error instanceof Error ? error.message : String(error)})`,
@@ -830,12 +913,15 @@ async function listCandidateFiles(args: {
       return;
     }
     for (const entry of entries) {
+      args.signal?.throwIfAborted();
       if (capped) return;
       const child = `${dir.replace(/\/$/, "")}/${entry.name}`;
       if (entry.type === "directory") {
         if (SKIP_DIRS.has(entry.name)) continue;
         if (entry.isSymlink) continue;
+        args.signal?.throwIfAborted();
         await walk(child);
+        args.signal?.throwIfAborted();
         continue;
       }
       const ext = extensionOf(entry.name);
@@ -852,29 +938,40 @@ async function listCandidateFiles(args: {
   }
 
   for (const source of args.sources) {
+    args.signal?.throwIfAborted();
     if (source.desktopRootPath) {
       try {
+        args.signal?.throwIfAborted();
         const hostStat = await statHostPath(source.desktopRootPath);
+        args.signal?.throwIfAborted();
         if (!hostStat.isDirectory()) {
           throw new Error("desktop root is not a directory");
         }
       } catch (error) {
+        args.signal?.throwIfAborted();
+        throwIfAbortError(error);
         throw new Error(
           `folder_source_unavailable: ${source.mountPath} is missing or unavailable (${error instanceof Error ? error.message : String(error)})`,
         );
       }
     }
     try {
+      args.signal?.throwIfAborted();
       const rootStat = await requireFilesystem(args.workspace).stat(source.mountPath);
+      args.signal?.throwIfAborted();
       if (rootStat.type !== "directory") {
         throw new Error("mount root is not a directory");
       }
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       throw new Error(
         `folder_source_unavailable: ${source.mountPath} is missing or unavailable (${error instanceof Error ? error.message : String(error)})`,
       );
     }
+    args.signal?.throwIfAborted();
     await walk(source.mountPath, true);
+    args.signal?.throwIfAborted();
     if (capped) break;
   }
   return { paths, scannedCount: Math.min(scannedCount, args.limit), capped };
@@ -889,6 +986,7 @@ async function isFreshSearchResult(
   sources: FolderSourceRecord[],
   signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   const path = typeof result.metadata?.path === "string" ? result.metadata.path : null;
   const sha256 = typeof result.metadata?.sha256 === "string" ? result.metadata.sha256 : null;
   if (!path || !sha256) return false;
@@ -904,17 +1002,23 @@ async function isFreshSearchResult(
   if (freshPaths.get(path) === sha256) return true;
   const filesystem = requireFilesystem(workspace);
   try {
+    signal?.throwIfAborted();
     if (!(await filesystem.exists(path))) {
+      signal?.throwIfAborted();
       if (entry) {
+        signal?.throwIfAborted();
         await removeParsedDocumentCacheEntry({
           sessionId,
           folderId: entry.folderId,
           relPath: entry.relPath,
         });
+        signal?.throwIfAborted();
       }
       return false;
     }
+    signal?.throwIfAborted();
     const current = await filesystem.stat(path);
+    signal?.throwIfAborted();
     if (current.type !== "file") return false;
     if (current.size > MAX_DOCUMENT_BYTES) return false;
     const source = sources.find((candidate) => candidate.id === entry.folderId);
@@ -926,16 +1030,21 @@ async function isFreshSearchResult(
       entry.relPath,
       signal,
     );
+    signal?.throwIfAborted();
     const isFresh = sha256Buffer(bounded.buffer) === sha256;
     if (!isFresh) {
+      signal?.throwIfAborted();
       await removeParsedDocumentCacheEntry({
         sessionId,
         folderId: entry.folderId,
         relPath: entry.relPath,
       });
+      signal?.throwIfAborted();
     }
     return isFresh;
-  } catch {
+  } catch (error) {
+    signal?.throwIfAborted();
+    throwIfAbortError(error);
     return false;
   }
 }
@@ -997,12 +1106,14 @@ async function buildCurrentSearchIndex(args: {
   sources: FolderSourceRecord[];
   workspace: Workspace;
   ioConcurrency?: number;
+  signal?: AbortSignal;
 }): Promise<{
   indexWorkspace: Workspace;
   manifests: Map<string, FolderSourceCacheEntry>;
   indexedPaths: Set<string>;
   damagedCachedPaths: Set<string>;
 }> {
+  args.signal?.throwIfAborted();
   const indexWorkspace = createSearchIndexWorkspace();
   const manifests = new Map<string, FolderSourceCacheEntry>();
   const indexedPaths = new Set<string>();
@@ -1011,18 +1122,25 @@ async function buildCurrentSearchIndex(args: {
   const ioConcurrency = normalizeSearchIoConcurrency(args.ioConcurrency);
 
   for (const source of args.sources) {
+    args.signal?.throwIfAborted();
     const entries = await loadFolderSourceManifestEntries(args.sessionId, source.id);
+    args.signal?.throwIfAborted();
     const indexableEntries = await mapWithConcurrency(entries, ioConcurrency, async (entry) => {
       try {
+        args.signal?.throwIfAborted();
         if (!(await filesystem.exists(entry.path))) {
+          args.signal?.throwIfAborted();
           await removeParsedDocumentCacheEntry({
             sessionId: args.sessionId,
             folderId: source.id,
             relPath: entry.relPath,
           });
+          args.signal?.throwIfAborted();
           return null;
         }
+        args.signal?.throwIfAborted();
         const current = await filesystem.stat(entry.path);
+        args.signal?.throwIfAborted();
         if (
           current.type !== "file" ||
           current.size !== entry.size ||
@@ -1035,42 +1153,58 @@ async function buildCurrentSearchIndex(args: {
         if (!isFolderSourceCacheActive(args.sessionId, source.id)) return null;
         let text: string;
         try {
+          args.signal?.throwIfAborted();
           text = await loadFolderSourceCachedText(args.sessionId, source.id, entry);
-        } catch {
+          args.signal?.throwIfAborted();
+        } catch (error) {
+          args.signal?.throwIfAborted();
+          throwIfAbortError(error);
           damagedCachedPaths.add(entry.path);
+          args.signal?.throwIfAborted();
           await removeParsedDocumentCacheEntry({
             sessionId: args.sessionId,
             folderId: source.id,
             relPath: entry.relPath,
           });
+          args.signal?.throwIfAborted();
           return null;
         }
         if (!isFolderSourceCacheActive(args.sessionId, source.id)) return null;
         return { entry, text };
-      } catch {
+      } catch (error) {
+        args.signal?.throwIfAborted();
+        throwIfAbortError(error);
         await removeParsedDocumentCacheEntry({
           sessionId: args.sessionId,
           folderId: source.id,
           relPath: entry.relPath,
         });
+        args.signal?.throwIfAborted();
         // 当前检索索引只允许使用可读缓存；损坏缓存交给后续扫描/读取重建。
         return null;
       }
-    });
+    }, args.signal);
+    args.signal?.throwIfAborted();
 
     for (const item of indexableEntries) {
+      args.signal?.throwIfAborted();
       if (!item) continue;
       if (!isFolderSourceCacheActive(args.sessionId, source.id)) continue;
       try {
+        args.signal?.throwIfAborted();
         await indexDocument(indexWorkspace, item.entry, item.text);
+        args.signal?.throwIfAborted();
         manifests.set(item.entry.path, item.entry);
         indexedPaths.add(item.entry.path);
-      } catch {
+      } catch (error) {
+        args.signal?.throwIfAborted();
+        throwIfAbortError(error);
         await removeParsedDocumentCacheEntry({
           sessionId: args.sessionId,
           folderId: source.id,
           relPath: item.entry.relPath,
         });
+        args.signal?.throwIfAborted();
       }
     }
   }
@@ -1087,6 +1221,7 @@ export async function searchDocumentsForSession(args: {
   ioConcurrency?: number;
   signal?: AbortSignal;
 }): Promise<SearchDocumentsResult> {
+  args.signal?.throwIfAborted();
   const query = args.query.trim();
   if (!query) {
     return { ok: false, query, results: [], indexedCount: 0, scannedCount: 0, fileCountCapped: false, error: "query must be non-empty" };
@@ -1113,8 +1248,12 @@ export async function searchDocumentsForSession(args: {
       workspace: args.workspace,
       sources,
       limit: SEARCH_SCAN_LIMIT,
+      signal: args.signal,
     });
+    args.signal?.throwIfAborted();
   } catch (error) {
+    args.signal?.throwIfAborted();
+    throwIfAbortError(error);
     return searchErrorResult(query, error, sources);
   }
   const ioConcurrency = normalizeSearchIoConcurrency(args.ioConcurrency);
@@ -1123,7 +1262,9 @@ export async function searchDocumentsForSession(args: {
     sources,
     workspace: args.workspace,
     ioConcurrency,
+    signal: args.signal,
   });
+  args.signal?.throwIfAborted();
   const dirtyPaths = candidates.paths.filter((path) => !indexedPaths.has(path));
   const freshPaths = new Map<string, string>();
   async function readAndIndexSearchPaths(paths: string[]): Promise<{
@@ -1132,6 +1273,7 @@ export async function searchDocumentsForSession(args: {
     inactiveSkips: number;
     damagedCacheReadFailures: number;
   }> {
+    args.signal?.throwIfAborted();
     let readSuccesses = 0;
     let readFailures = 0;
     let inactiveSkips = 0;
@@ -1139,16 +1281,21 @@ export async function searchDocumentsForSession(args: {
     if (paths.length === 0) {
       return { readSuccesses, readFailures, inactiveSkips, damagedCacheReadFailures: cacheDamageFailures };
     }
-    const readResults = await mapWithConcurrency(paths, ioConcurrency, async (path) =>
-      readDocumentForSearchIndex({
+    const readResults = await mapWithConcurrency(paths, ioConcurrency, async (path) => {
+      args.signal?.throwIfAborted();
+      const result = await readDocumentForSearchIndex({
         sessionId: args.sessionId,
         sources,
         workspace: args.workspace,
         path,
         signal: args.signal,
-      }),
-    );
+      });
+      args.signal?.throwIfAborted();
+      return result;
+    }, args.signal);
+    args.signal?.throwIfAborted();
     for (const result of readResults) {
+      args.signal?.throwIfAborted();
       if (!result.ok) {
         if (result.inactiveSource) {
           inactiveSkips += 1;
@@ -1164,14 +1311,19 @@ export async function searchDocumentsForSession(args: {
       if (result.entry.metadata.indexable === false) continue;
       if (!isFolderSourceCacheActive(args.sessionId, result.entry.folderId)) continue;
       try {
+        args.signal?.throwIfAborted();
         await indexDocument(indexWorkspace, result.entry, result.text);
+        args.signal?.throwIfAborted();
         indexedPaths.add(result.entry.path);
       } catch (error) {
+        args.signal?.throwIfAborted();
+        throwIfAbortError(error);
         await removeParsedDocumentCacheEntry({
           sessionId: args.sessionId,
           folderId: result.entry.folderId,
           relPath: result.entry.relPath,
         });
+        args.signal?.throwIfAborted();
         manifests.delete(result.entry.path);
         freshPaths.delete(result.entry.path);
         logDerivedDataFailure("[folderDocuments] 搜索 dirty 文档建索引失败，跳过该文档", error, sources);
@@ -1180,22 +1332,34 @@ export async function searchDocumentsForSession(args: {
     return { readSuccesses, readFailures, inactiveSkips, damagedCacheReadFailures: cacheDamageFailures };
   }
 
+  args.signal?.throwIfAborted();
   const dirtyStats = await readAndIndexSearchPaths(dirtyPaths);
+  args.signal?.throwIfAborted();
 
   async function flushSearchCacheWrites(reason: string): Promise<void> {
     try {
+      args.signal?.throwIfAborted();
       await Promise.all(sources.map((source) => flushFolderSourceCacheManifest(args.sessionId, source.id)));
+      args.signal?.throwIfAborted();
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       logDerivedDataFailure(`[folderDocuments] ${reason} 后缓存 manifest flush 失败，继续检索`, error, sources);
     }
     try {
+      args.signal?.throwIfAborted();
       await enforceFolderSourceCacheLimits(args.sessionId);
+      args.signal?.throwIfAborted();
     } catch (error) {
+      args.signal?.throwIfAborted();
+      throwIfAbortError(error);
       logDerivedDataFailure("[folderDocuments] 搜索建索引后缓存限额整理失败，继续检索", error, sources);
     }
   }
   if (dirtyStats.readSuccesses > 0) {
+    args.signal?.throwIfAborted();
     await flushSearchCacheWrites("搜索 dirty 文档读取");
+    args.signal?.throwIfAborted();
   }
   const activeDirtyAttempts = dirtyPaths.length - dirtyStats.inactiveSkips;
   if (candidates.paths.length > 0 && indexedPaths.size === 0 && activeDirtyAttempts > 0) {
@@ -1222,22 +1386,31 @@ export async function searchDocumentsForSession(args: {
       topK: Math.min(20, Math.max(1, Math.floor(args.topK ?? 5))) * 3,
     });
   try {
+    args.signal?.throwIfAborted();
     rawResults = await runSearch();
+    args.signal?.throwIfAborted();
     if (rawResults.length === 0 && candidates.paths.length > 0) {
       const refreshPaths = candidates.paths.filter((path) => !freshPaths.has(path));
+      args.signal?.throwIfAborted();
       const refreshStats = await readAndIndexSearchPaths(refreshPaths);
+      args.signal?.throwIfAborted();
       if (refreshStats.readSuccesses > 0) {
         await flushSearchCacheWrites("搜索空结果兜底刷新");
+        args.signal?.throwIfAborted();
         rawResults = await runSearch();
+        args.signal?.throwIfAborted();
       }
     }
   } catch (error) {
+    args.signal?.throwIfAborted();
+    throwIfAbortError(error);
     return searchErrorResult(query, error, sources);
   }
   const topK = Math.min(20, Math.max(1, Math.floor(args.topK ?? 5)));
   const requiredCjkRuns = multiCharCjkRuns(query);
   const freshResults: typeof rawResults = [];
   for (const result of rawResults) {
+    args.signal?.throwIfAborted();
     const originalText = resultOriginalText(result);
     if (
       matchesRequiredCjkRuns(originalText, requiredCjkRuns) &&
@@ -1251,6 +1424,7 @@ export async function searchDocumentsForSession(args: {
         args.signal,
       )
     ) {
+      args.signal?.throwIfAborted();
       freshResults.push(result);
       if (freshResults.length >= topK) break;
     }
@@ -1258,6 +1432,7 @@ export async function searchDocumentsForSession(args: {
   const results: SearchDocumentsResult["results"] = [];
   let remainingTextChars = SEARCH_RESULTS_TOTAL_TEXT_MAX_CHARS;
   for (const result of freshResults) {
+    args.signal?.throwIfAborted();
     if (remainingTextChars <= 0) break;
     const metadata = result.metadata ?? {};
     const text = searchResultSnippet(

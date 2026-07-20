@@ -497,5 +497,5 @@ export async function scrapeWithBrowserImpl(
       opts?.signal?.removeEventListener("abort", closeOnAbort);
       await context?.close().catch(() => {});
     }
-  });
+  }, opts?.signal);
 }

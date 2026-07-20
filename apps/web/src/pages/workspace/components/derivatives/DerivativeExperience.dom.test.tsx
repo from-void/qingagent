@@ -43,6 +43,32 @@ describe("公众号稿生成体验", () => {
   beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
+  it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
+    const legacyBrokenTable = JSON.stringify({
+      type: "doc", attrs: { schemaVersion: 1 }, content: [{
+        type: "table", attrs: { blockId: "legacy-table" }, content: [
+          { type: "tableRow", content: [
+            { type: "tableCell", attrs: { rowspan: 3, backgroundColor: null }, content: [{ type: "paragraph", attrs: { blockId: "a" }, content: [{ type: "text", text: "旧表格仍可查看" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "b" } }] },
+          ] },
+          { type: "tableRow", content: [
+            { type: "tableCell", content: [{ type: "paragraph", attrs: { blockId: "c" } }] },
+          ] },
+        ],
+      }],
+    });
+    const generated = { ...item, generatedAt: "now" };
+    const stream = { getDerivativeDoc: vi.fn(async () => ({
+      meta: generated, docPm: legacyBrokenTable, docVersion: 1, title: "历史稿",
+    })) };
+
+    await act(async () => {
+      root.render(<ConfirmProvider><DerivativeView sessionId="session-1" item={generated} stream={stream as never} streamActive={false} onRefresh={vi.fn(async () => {})} onDeleted={vi.fn()} onToast={vi.fn()} onSendQuery={vi.fn()}/></ConfirmProvider>);
+    });
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(host.textContent).toContain("旧表格仍可查看");
+  });
+
   it("PhoneShell 按 375×812 等比缩放并在 560px 锁档", () => {
     expect(calculatePhoneScale(812)).toBe(1);
     expect(calculatePhoneScale(686)).toBeCloseTo(686 / 812);

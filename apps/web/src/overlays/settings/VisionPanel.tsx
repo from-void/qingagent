@@ -70,6 +70,7 @@ export function VisionPanel() {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(() => readVisionProvider()?.model ?? "");
   const [testing, setTesting] = useState(false);
+  const [persisting, setPersisting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const testRevisionRef = useRef(0);
@@ -80,6 +81,7 @@ export function VisionPanel() {
     testControllerRef.current?.abort();
     testControllerRef.current = null;
     setTesting(false);
+    setPersisting(false);
   };
 
   useEffect(() => {
@@ -138,7 +140,10 @@ export function VisionPanel() {
         return;
       }
       const next: VisionProvider = { enabled: true, protocol, baseUrl: base, apiKey: key, model: mdl };
-      if (!(await writeVisionProvider(next))) {
+      setPersisting(true);
+      const persisted = await writeVisionProvider(next);
+      if (!canCommit()) return;
+      if (!persisted) {
         setMessage(visionPersistFailureMessage());
         return;
       }
@@ -157,6 +162,7 @@ export function VisionPanel() {
       if (canCommit()) {
         testControllerRef.current = null;
         setTesting(false);
+        setPersisting(false);
       }
     }
   };
@@ -164,8 +170,14 @@ export function VisionPanel() {
   const handleToggle = async () => {
     if (!saved) return;
     invalidateTest();
+    const revision = testRevisionRef.current;
+    const canCommit = () => mountedRef.current && testRevisionRef.current === revision;
     const next = { ...saved, enabled: !saved.enabled };
-    if (!(await writeVisionProvider(next))) {
+    setPersisting(true);
+    const persisted = await writeVisionProvider(next);
+    if (!canCommit()) return;
+    setPersisting(false);
+    if (!persisted) {
       setMessage(visionPersistFailureMessage());
       return;
     }
@@ -184,7 +196,13 @@ export function VisionPanel() {
       return;
     }
     invalidateTest();
-    if (!(await clearVisionProvider())) {
+    const revision = testRevisionRef.current;
+    const canCommit = () => mountedRef.current && testRevisionRef.current === revision;
+    setPersisting(true);
+    const persisted = await clearVisionProvider();
+    if (!canCommit()) return;
+    setPersisting(false);
+    if (!persisted) {
       setMessage("本机配置清除失败，请重试");
       return;
     }
@@ -236,6 +254,7 @@ export function VisionPanel() {
               type="button"
               className={`sk-toggle${saved.enabled ? " sk-on" : ""}`}
               onClick={handleToggle}
+              disabled={persisting}
               aria-pressed={saved.enabled}
             >
               <span className="sk-toggle-dot" aria-hidden="true" />
@@ -262,6 +281,7 @@ export function VisionPanel() {
           <select
             className="sm-field-input"
             value={protocol}
+            disabled={persisting}
             onChange={(e) => {
               invalidateTest();
               setProtocol(e.target.value === "anthropic" ? "anthropic" : "openai");
@@ -277,6 +297,7 @@ export function VisionPanel() {
             className={`sm-field-input${baseUrlValid === false ? " sm-field-input--invalid" : ""}`}
             placeholder="https://your-endpoint/v1"
             value={baseUrl}
+            disabled={persisting}
             aria-invalid={baseUrlValid === false}
             aria-describedby={baseUrlValid === false ? "vision-base-url-error" : undefined}
             onChange={(e) => {
@@ -298,6 +319,7 @@ export function VisionPanel() {
             className="sm-field-input"
             placeholder={saved?.apiKey ? `已存 ${maskTail(saved.apiKey)}，留空沿用` : "sk-…"}
             value={apiKey}
+            disabled={persisting}
             onChange={(e) => {
               invalidateTest();
               setApiKey(e.target.value);
@@ -310,6 +332,7 @@ export function VisionPanel() {
             className="sm-field-input"
             placeholder="如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"
             value={model}
+            disabled={persisting}
             onChange={(e) => {
               invalidateTest();
               setModel(e.target.value);
@@ -318,11 +341,11 @@ export function VisionPanel() {
         </div>
 
         <div className="sm-keyops">
-          <button type="button" className="sm-btn" onClick={() => void handleTestAndSave()} disabled={testing}>
+          <button type="button" className="sm-btn" onClick={() => void handleTestAndSave()} disabled={testing || persisting}>
             {testing ? "测试中…" : "测试并保存"}
           </button>
           {saved && (
-            <button type="button" className="sm-btn" onClick={() => void handleClear()}>
+            <button type="button" className="sm-btn" onClick={() => void handleClear()} disabled={persisting}>
               清除
             </button>
           )}

@@ -158,7 +158,11 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
         id, thread_id, resource_id, title, doc_state, doc_version,
         last_synced_version, doc_pm, doc_schema_version,
         content_hash, doc_format, version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM deleted_sessions
+        WHERE session_id IN (?, ?)
+      )
       ON CONFLICT(id) DO UPDATE SET
         thread_id = excluded.thread_id,
         resource_id = excluded.resource_id,
@@ -207,6 +211,8 @@ function upsertStatement(input: DocumentSaveInput): InStatement {
       projection.docFormat,
       input.createdAt,
       input.updatedAt,
+      input.threadId,
+      input.id,
     ],
   };
 }

@@ -51,6 +51,7 @@ try {
 // import "./observability.js" 先于 import "./app",只是推迟到迁移之后以错开 DB 写锁。
 await import("./observability.js");
 const { app } = await import("./app");
+const { sessionManager } = await import("./gateway/bridgeHandler");
 const { startExternalInstance, stopExternalInstance } = await import("./lib/externalInstance.js");
 const {
   installNetProbe,
@@ -62,6 +63,9 @@ const {
 // app/core/doc-render 的完整依赖图此时已求值；移除其后装的竞争信号 handler，确保只有
 // crashGuard 有权结束进程，active turn / persistence / observability drain 不会被抢断。
 claimShutdownSignalOwnership();
+
+// 先恢复并续跑持久化删除墓碑，再启动任何可能写 documents 的后台任务。
+await sessionManager.resumePendingDeletions();
 
 const externalInstanceFile = process.env.QINGAGENT_INSTANCE_FILE;
 

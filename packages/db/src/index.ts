@@ -12,6 +12,7 @@ export * from "./db/lexiconRepo.js";
 export * from "./db/migrations.js";
 export * from "./db/reviewDismissalSignalRepo.js";
 export * from "./db/reviewTemplateRepo.js";
+export * from "./db/sessionDeletionRepo.js";
 export * from "./db/styleTemplateRepo.js";
 export * from "./db/usageRepo.js";
 export * from "./seeds/dtypeTemplatePrompts.js";

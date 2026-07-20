@@ -8,8 +8,14 @@ import type { QingagentThreadMetadata } from "../../session/threadPersistence.js
 import {
   __resetDocumentsClientForTest,
   __resetMigrationsForTest,
+  beginSessionDeletion,
   documentRepo,
 } from "@qingagent/db";
+import {
+  __resetSessionPersistenceForTest,
+  drainSessionPersistenceForSession,
+  markSessionDeleted,
+} from "../../session/threadPersistence.js";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();
@@ -153,16 +159,71 @@ beforeEach(() => {
   vi.restoreAllMocks();
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
+  __resetSessionPersistenceForTest();
 });
 
 afterEach(() => {
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
+  __resetSessionPersistenceForTest();
   delete process.env.DATABASE_URL;
   rmSync(tempDir, { recursive: true, force: true });
 });
 
 describe("migrateThreadMetadataToDocuments", () => {
+  it("F6: 启动回填跳过持久化墓碑中的会话", async () => {
+    const meta = validMetadata("deleted-backfill", { docId: "doc-deleted-backfill" });
+    addThread("thread-deleted-backfill", meta);
+    await beginSessionDeletion("thread-deleted-backfill");
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const stats = await migrateThreadMetadataToDocuments({ force: true });
+
+    expect(stats.skipped).toBe(1);
+    expect(stats.migrated).toBe(0);
+    expect(await documentRepo.load("doc-deleted-backfill")).toBeNull();
+  });
+
+  it("F6: 删除 drain 会等待已开始的启动回填任务", async () => {
+    const meta = validMetadata("drained-backfill", { docId: "doc-drained-backfill" });
+    addThread("thread-drained-backfill", meta);
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      writeStarted = resolve;
+    });
+    vi.spyOn(documentRepo, "saveMany").mockImplementationOnce(async () => {
+      writeStarted();
+      await writeGate;
+    });
+
+    const { migrateThreadMetadataToDocuments } = await import(
+      "../migrateThreadMetadataToDocuments.js"
+    );
+    const migration = migrateThreadMetadataToDocuments({ force: true });
+    await started;
+    markSessionDeleted("thread-drained-backfill", "doc-drained-backfill");
+    let drained = false;
+    const drain = drainSessionPersistenceForSession("thread-drained-backfill", 1_000)
+      .then(() => {
+        drained = true;
+      });
+    const earlyState = await Promise.race([
+      drain.then(() => "drained" as const),
+      new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 20)),
+    ]);
+    expect(earlyState).toBe("waiting");
+
+    releaseWrite();
+    await Promise.all([migration, drain]);
+    expect(drained).toBe(true);
+  });
+
   it("migrates thread metadata into documents and is idempotent", async () => {
     addThread("thread-1", {
       docId: "doc-1",

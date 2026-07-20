@@ -7,7 +7,7 @@ async function loadApp() {
     getSession: vi.fn(() => null),
     parseOrigin: vi.fn(() => "manual"),
     sessionManager: {
-      destroySession: vi.fn(async () => undefined),
+      destroySession: vi.fn(async () => ({ deleted: true, status: "completed" })),
     },
   }));
   vi.doMock("@qingagent/core", async () => {

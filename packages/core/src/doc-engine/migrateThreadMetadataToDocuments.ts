@@ -2,12 +2,15 @@ import type { StorageThreadType } from "@mastra/core/memory";
 import { getPmContentHash, legacySectionsToPm } from "@qingagent/pm-schema";
 import {
   documentRepo,
+  getTombstonedSessionIds,
   type DocumentSaveInput,
 } from "@qingagent/db";
 import { coerceLegacyContentKind } from "./docStateMachine.js";
 import {
   listSessionThreads,
   QINGAGENT_RESOURCE_ID,
+  isSessionDeleted,
+  trackSessionPersistenceForSessions,
   type QingagentThreadMetadata,
 } from "../session/threadPersistence.js";
 import { mastra } from "../mastra.js";
@@ -197,19 +200,30 @@ export async function migrateThreadMetadataToDocuments(
   let currentPage = firstPage;
   const migratedThreads: MigratedThread[] = [];
   while (true) {
-    const rows: Array<{ thread: StorageThreadType; input: DocumentSaveInput }> = [];
+    const candidates: Array<{ thread: StorageThreadType; input: DocumentSaveInput }> = [];
     for (const thread of currentPage.threads) {
       const input = metadataToDocumentInput(thread);
       if (input) {
-        rows.push({ thread, input });
+        candidates.push({ thread, input });
       } else {
         stats.skipped++;
       }
     }
+    const tombstoned = await getTombstonedSessionIds(
+      candidates.map((row) => row.input.threadId),
+    );
+    const rows = candidates.filter((row) => {
+      const blocked = tombstoned.has(row.input.threadId) || isSessionDeleted(row.input.threadId);
+      if (blocked) stats.skipped++;
+      return !blocked;
+    });
 
     if (rows.length > 0) {
       try {
-        await documentRepo.saveMany(rows.map((row) => row.input));
+        await trackSessionPersistenceForSessions(
+          rows.map((row) => row.input.threadId),
+          () => documentRepo.saveMany(rows.map((row) => row.input)),
+        );
         stats.migrated += rows.length;
         migratedThreads.push(...rows.map((row) => row.thread));
         stats.batches++;
@@ -221,7 +235,16 @@ export async function migrateThreadMetadataToDocuments(
         });
         for (const row of rows) {
           try {
-            await documentRepo.save(row.input);
+            const blocked = isSessionDeleted(row.input.threadId) ||
+              (await getTombstonedSessionIds([row.input.threadId])).has(row.input.threadId);
+            if (blocked || isSessionDeleted(row.input.threadId)) {
+              stats.skipped++;
+              continue;
+            }
+            await trackSessionPersistenceForSessions(
+              [row.input.threadId],
+              () => documentRepo.save(row.input),
+            );
             stats.migrated++;
             migratedThreads.push(row.thread);
           } catch (singleErr) {

@@ -43,9 +43,9 @@ async function up(client: Client): Promise<void> {
 
   const orphanRatio = orphanCount / documentCount;
   const hasNoThreadIntersection = matchedCount === 0;
-  if (hasNoThreadIntersection) {
+  if (hasNoThreadIntersection || orphanRatio > MAX_SAFE_ORPHAN_RATIO) {
     console.warn(
-      "[db:migration:0002] mastra_threads 可能不完整，跳过 documents 孤儿清理。" +
+      "[db:migration:0002] mastra_threads 可能不完整，比例保险丝已停止 documents 孤儿搬迁，等待人工确认。" +
         ` documents=${documentCount}, orphans=${orphanCount}, matched=${matchedCount}, ` +
         `orphanRatio=${orphanRatio.toFixed(3)}, threshold=${MAX_SAFE_ORPHAN_RATIO.toFixed(3)}`,
     );
@@ -92,9 +92,8 @@ async function up(client: Client): Promise<void> {
     "DELETE FROM documents WHERE thread_id NOT IN (SELECT id FROM mastra_threads)",
   );
 
-  const riskLevel = orphanRatio > MAX_SAFE_ORPHAN_RATIO ? "高比例，线程表可能不完整" : "低比例";
   console.warn(
-    `[db:migration:0002] 已隔离 ${orphanCount} 个 documents 孤儿全家桶（${riskLevel}）。` +
+    `[db:migration:0002] 已隔离 ${orphanCount} 个 documents 孤儿全家桶（低比例）。` +
       ` documents=${documentCount}, matched=${matchedCount}, orphanRatio=${orphanRatio.toFixed(3)}, ` +
       `threshold=${MAX_SAFE_ORPHAN_RATIO.toFixed(3)}；如需恢复，请从 *_quarantine_0002 表按原主键回写。`,
   );

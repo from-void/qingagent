@@ -6,7 +6,10 @@ import { ensureMigrated } from "./migrations.js";
 import { deleteDocumentFamilyByDocIds } from "./documentFamilyRepo.js";
 import { getDefaultStyleTemplate, getStyleTemplate } from "./styleTemplateRepo.js";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
+import {
+  assertDocumentWriteAllowed,
+  DocumentWriteBlockedError,
+} from "./documentWriteGuard.js";
 
 export interface DerivativeMeta {
   docId: string;
@@ -124,13 +127,25 @@ export async function createDerivativeDoc(input: {
     const docId = randomUUID();
     const now = new Date().toISOString();
     const projection = buildPmProjection({ pmDoc: emptyPmDoc() });
-    await client.execute({
+    const inserted = await client.execute({
       sql: `INSERT INTO documents (id, thread_id, resource_id, title, doc_state, doc_version,
         last_synced_version, doc_pm, doc_schema_version, content_hash, doc_format, version,
-        created_at, updated_at, role) VALUES (?, ?, ?, ?, 'editing', 0, 0, ?, ?, ?, ?, 1, ?, ?, 'derivative')`,
+        created_at, updated_at, role)
+        SELECT ?, ?, ?, ?, 'editing', 0, 0, ?, ?, ?, ?, 1, ?, ?, 'derivative'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM deleted_sessions WHERE session_id IN (?, ?)
+        )`,
       args: [docId, input.threadId, String(source.resource_id), writing.name, projection.pmJson,
-        projection.schemaVersion, projection.contentHash, projection.docFormat, now, now],
+        projection.schemaVersion, projection.contentHash, projection.docFormat, now, now,
+        input.threadId, input.sourceDocId],
     });
+    if (inserted.rowsAffected === 0) {
+      throw new DocumentWriteBlockedError({
+        docId: input.sourceDocId,
+        threadId: input.threadId,
+        operation: "document.derivative.create",
+      });
+    }
     await client.execute({
       sql: `INSERT INTO document_derivatives (doc_id, source_doc_id, dtype, template_id, layout_style_id,
         target_lang, private_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

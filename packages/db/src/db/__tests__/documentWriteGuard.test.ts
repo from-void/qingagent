@@ -1,8 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import { getPmContentHash } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "../documentDraftRepo.js";
 import { documentRepo } from "../documentRepo.js";
+import { getDocumentsClient } from "../documentsClient.js";
+import {
+  beginSessionDeletion,
+  deleteSessionDocumentsAndAdvance,
+} from "../sessionDeletionRepo.js";
 import {
   listDocumentSuggestionStatuses,
   upsertDocumentSuggestion,
@@ -89,5 +94,64 @@ describe("document write guard", () => {
 
     await expect(documentDraftRepo.load("blocked-doc")).resolves.toBeNull();
     await expect(listDocumentSuggestionStatuses("blocked-doc", 1)).resolves.toEqual([]);
+  });
+
+  it("F6: guard 通过后延迟 SQL，并发删除完成后迟到 UPSERT 不会复活文档", async () => {
+    const sessionId = "atomic-write-fence";
+    await documentRepo.save(documentInput(sessionId, { threadId: sessionId }));
+    const client = getDocumentsClient();
+    const originalExecute = client.execute.bind(client);
+    let releaseSql!: () => void;
+    let sqlEntered!: () => void;
+    const sqlGate = new Promise<void>((resolve) => {
+      releaseSql = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      sqlEntered = resolve;
+    });
+    let shouldDelay = true;
+    vi.spyOn(client, "execute").mockImplementation(async (statement) => {
+      const sql = String(
+        (statement as unknown as { sql?: unknown }).sql ?? statement,
+      );
+      if (shouldDelay && sql.includes("INSERT INTO documents")) {
+        shouldDelay = false;
+        sqlEntered();
+        await sqlGate;
+      }
+      return originalExecute(statement);
+    });
+
+    const lateWrite = documentRepo.save(documentInput(sessionId, {
+      threadId: sessionId,
+      docVersion: 2,
+      updatedAt: "2026-07-20T00:00:01.000Z",
+    }));
+    await entered;
+    await beginSessionDeletion(sessionId);
+    await deleteSessionDocumentsAndAdvance(sessionId);
+    releaseSql();
+    await lateWrite;
+
+    const result = await originalExecute({
+      sql: "SELECT COUNT(*) AS n FROM documents WHERE id = ? OR thread_id = ?",
+      args: [sessionId, sessionId],
+    });
+    expect(Number(result.rows[0]?.n ?? 0)).toBe(0);
+  });
+
+  it("F6: 持久化墓碑同时保护 save 与 saveMany", async () => {
+    await beginSessionDeletion("fenced-single");
+    await beginSessionDeletion("fenced-batch");
+
+    await documentRepo.save(documentInput("fenced-single", {
+      threadId: "fenced-single",
+    }));
+    await documentRepo.saveMany([
+      documentInput("fenced-batch", { threadId: "fenced-batch" }),
+    ]);
+
+    await expect(documentRepo.load("fenced-single")).resolves.toBeNull();
+    await expect(documentRepo.load("fenced-batch")).resolves.toBeNull();
   });
 });

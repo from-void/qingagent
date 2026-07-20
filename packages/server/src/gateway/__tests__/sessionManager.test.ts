@@ -16,6 +16,64 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
+  it("F1: 删除排空超时后新实例从持久化墓碑续跑，完成前只返回 pending", async () => {
+    const records = new Map<string, { sessionId: string; phase: "draining" | "completed" }>();
+    const deletionStore = {
+      begin: vi.fn(async (sessionId: string) => {
+        const record = records.get(sessionId) ?? { sessionId, phase: "draining" as const };
+        records.set(sessionId, record);
+        return record;
+      }),
+      list: vi.fn(async () => [...records.values()]),
+    };
+    const firstManager = new SessionManager({
+      handleCommand: async function* () {
+        yield frame("restart-pending");
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      markSessionDeleted: vi.fn(),
+      drainSessionPersistence: vi.fn(async () => {
+        throw new Error("drain timed out");
+      }),
+      deleteSessionThread: vi.fn(async () => undefined),
+      deletionRetryDelayMs: 60_000,
+      deletionStore,
+    });
+
+    const pending = await firstManager.destroySession("restart-pending", 5);
+    expect(pending).toEqual({ deleted: false, status: "pending" });
+    expect(records.get("restart-pending")?.phase).toBe("draining");
+
+    const resumedDelete = vi.fn(async () => {
+      records.set("restart-pending", {
+        sessionId: "restart-pending",
+        phase: "completed",
+      });
+    });
+    const restartedManager = new SessionManager({
+      handleCommand: async function* () {
+        yield frame("restart-pending");
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      markSessionDeleted: vi.fn(),
+      drainSessionPersistence: vi.fn(async () => undefined),
+      deleteSessionThread: resumedDelete,
+      deletionRetryDelayMs: 1,
+      deletionStore,
+    });
+
+    await restartedManager.resumePendingDeletions();
+    await expect(restartedManager.submit("restart-pending", {
+      command: startExisting("restart-pending"),
+    })).rejects.toThrow("Session deletion is in progress");
+    await vi.waitFor(() => expect(resumedDelete).toHaveBeenCalledWith("restart-pending"));
+    await expect(restartedManager.submit("restart-pending", {
+      command: startExisting("restart-pending"),
+    })).rejects.toThrow("Session has been deleted");
+  });
+
   it("submit 会创建 actor 并写入共享 FrameLog", async () => {
     const frameLog = new InMemoryFrameLog();
     const handleCommand: HandleCommandFn = async function* (command) {
@@ -192,9 +250,14 @@ describe("SessionManager", () => {
     })).rejects.toThrow("Session has been deleted");
   });
 
-  it("destroySession 删除失败会回滚墓碑，后续 submit 恢复可用", async () => {
+  it("F2: documents 已提交后 thread 删除失败保留墓碑并持续补删", async () => {
     const markSessionDeleted = vi.fn();
     const unmarkSessionDeleted = vi.fn();
+    const deleteSessionThread = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("delete failed"), {
+        phase: "documents_deleted",
+      }))
+      .mockResolvedValue(undefined);
     const manager = new SessionManager({
       handleCommand: async function* (command) {
         if (command.kind === "startSession" && command.data.mode.kind === "existing") {
@@ -206,19 +269,24 @@ describe("SessionManager", () => {
       markSessionDeleted,
       unmarkSessionDeleted,
       drainSessionPersistence: vi.fn(async () => undefined),
-      deleteSessionThread: vi.fn(async () => {
-        throw new Error("delete failed");
-      }),
+      deleteSessionThread,
+      deletionRetryDelayMs: 1,
     });
 
-    await expect(manager.destroySession("delete-failed")).rejects.toThrow("delete failed");
+    await expect(manager.destroySession("delete-failed")).resolves.toEqual({
+      deleted: false,
+      status: "pending",
+    });
     expect(markSessionDeleted).toHaveBeenCalledWith("delete-failed", "delete-failed");
-    expect(unmarkSessionDeleted).toHaveBeenCalledWith("delete-failed");
+    expect(unmarkSessionDeleted).not.toHaveBeenCalled();
 
-    const resumed = await manager.submit("delete-failed", {
+    await expect(manager.submit("delete-failed", {
       command: startExisting("delete-failed"),
-    });
-    expect(resumed.map((entry) => entry.frame)).toEqual([frame("delete-failed")]);
+    })).rejects.toThrow("Session deletion is in progress");
+    await vi.waitFor(() => expect(deleteSessionThread).toHaveBeenCalledTimes(2));
+    await expect(manager.submit("delete-failed", {
+      command: startExisting("delete-failed"),
+    })).rejects.toThrow("Session has been deleted");
   });
 
   it("destroySession 进行中与完成后分别返回明确状态", async () => {

@@ -11,7 +11,10 @@ import {
   buildPmProjection,
   parsePmDoc,
 } from "@qingagent/db";
-import { assertDocumentWriteAllowed } from "@qingagent/db/write-guard";
+import {
+  assertDocumentWriteAllowed,
+  DocumentWriteBlockedError,
+} from "@qingagent/db/write-guard";
 import {
   commitTransaction,
   rollbackTransaction,
@@ -458,12 +461,15 @@ export async function commitDocumentOp(
     });
 
     if (creating) {
-      await client.execute({
+      const insertResult = await client.execute({
         sql: `INSERT INTO documents (
             id, thread_id, resource_id, title, doc_state, doc_version,
             last_synced_version, doc_pm, doc_schema_version,
             content_hash, doc_format, version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+          WHERE NOT EXISTS (
+            SELECT 1 FROM deleted_sessions WHERE session_id IN (?, ?)
+          )`,
         args: [
           input.docId,
           input.threadId ?? input.docId,
@@ -478,8 +484,17 @@ export async function commitDocumentOp(
           projection.docFormat,
           createdAt,
           createdAt,
+          input.threadId ?? input.docId,
+          input.docId,
         ],
       });
+      if (insertResult.rowsAffected === 0) {
+        throw new DocumentWriteBlockedError({
+          docId: input.docId,
+          threadId: input.threadId,
+          operation: "document.commit",
+        });
+      }
     } else {
       const updateResult = await client.execute({
         sql: `UPDATE documents SET

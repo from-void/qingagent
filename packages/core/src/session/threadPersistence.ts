@@ -1628,14 +1628,16 @@ export async function loadSessionFromThread(
 
       if (metadataWins) {
         needsRestoreReconcilePersist = true;
-        recordRestoreReconcileSpan({
-          sessionId,
-          docId,
-          metadataDocVersion,
-          documentsDocVersion: docRow.docVersion,
-          resolution: "metadata",
-          lastPersistedAt: meta.lastPersistedAt ?? null,
-        });
+        if (!isSnapshot) {
+          recordRestoreReconcileSpan({
+            sessionId,
+            docId,
+            metadataDocVersion,
+            documentsDocVersion: docRow.docVersion,
+            resolution: "metadata",
+            lastPersistedAt: meta.lastPersistedAt ?? null,
+          });
+        }
         logger.warn("Restore reconcile selected metadata because metadata doc_version is newer", {
           sessionId,
           docId,
@@ -1645,14 +1647,16 @@ export async function loadSessionFromThread(
       } else if (sameVersionHashConflict) {
         restoredFromDocuments = true;
         needsRestoreReconcilePersist = true;
-        recordRestoreReconcileSpan({
-          sessionId,
-          docId,
-          metadataDocVersion,
-          documentsDocVersion: docRow.docVersion,
-          resolution: "conflict-rescue",
-          lastPersistedAt: meta.lastPersistedAt ?? null,
-        });
+        if (!isSnapshot) {
+          recordRestoreReconcileSpan({
+            sessionId,
+            docId,
+            metadataDocVersion,
+            documentsDocVersion: docRow.docVersion,
+            resolution: "conflict-rescue",
+            lastPersistedAt: meta.lastPersistedAt ?? null,
+          });
+        }
         logger.error("Restore reconcile detected same-version content hash conflict; documents wins", {
           sessionId,
           docId,
@@ -1674,14 +1678,16 @@ export async function loadSessionFromThread(
         restoredFromDocuments = true;
         if (docRow.docVersion !== metadataDocVersion) {
           needsRestoreReconcilePersist = true;
-          recordRestoreReconcileSpan({
-            sessionId,
-            docId,
-            metadataDocVersion,
-            documentsDocVersion: docRow.docVersion,
-            resolution: "documents",
-            lastPersistedAt: meta.lastPersistedAt ?? null,
-          });
+          if (!isSnapshot) {
+            recordRestoreReconcileSpan({
+              sessionId,
+              docId,
+              metadataDocVersion,
+              documentsDocVersion: docRow.docVersion,
+              resolution: "documents",
+              lastPersistedAt: meta.lastPersistedAt ?? null,
+            });
+          }
         }
         meta = applyRestoredDocumentRow(meta, docRow);
       }

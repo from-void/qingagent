@@ -16,6 +16,67 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
+  it("F1-R: 删除恢复按需初始化，失败后下一次调用可重试", async () => {
+    const list = vi.fn(async () => []);
+    list.mockRejectedValueOnce(new Error("restore failed"));
+    const deletionStore = {
+      begin: vi.fn(async (sessionId: string) => ({
+        sessionId,
+        phase: "draining" as const,
+      })),
+      list,
+    };
+    const manager = new SessionManager({
+      handleCommand: async function* () {
+        yield frame("lazy-submit");
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      deletionStore,
+    });
+
+    await Promise.resolve();
+    expect(list).not.toHaveBeenCalled();
+
+    await expect(manager.submit("lazy-submit", {
+      command: startExisting("lazy-submit"),
+    })).rejects.toThrow("restore failed");
+    expect(list).toHaveBeenCalledTimes(1);
+
+    await expect(manager.submit("lazy-submit", {
+      command: startExisting("lazy-submit"),
+    })).resolves.toHaveLength(1);
+    expect(list).toHaveBeenCalledTimes(2);
+
+    const destroyList = vi.fn(async () => []);
+    const destroyStore = {
+      begin: vi.fn(async (sessionId: string) => ({
+        sessionId,
+        phase: "draining" as const,
+      })),
+      list: destroyList,
+    };
+    const destroyManager = new SessionManager({
+      handleCommand: async function* () {
+        yield frame("lazy-destroy");
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      markSessionDeleted: vi.fn(),
+      drainSessionPersistence: vi.fn(async () => undefined),
+      deleteSessionThread: vi.fn(async () => undefined),
+      deletionStore: destroyStore,
+    });
+
+    await Promise.resolve();
+    expect(destroyList).not.toHaveBeenCalled();
+    await expect(destroyManager.destroySession("lazy-destroy")).resolves.toEqual({
+      deleted: true,
+      status: "completed",
+    });
+    expect(destroyList).toHaveBeenCalledTimes(1);
+  });
+
   it("F1: 删除排空超时后新实例从持久化墓碑续跑，完成前只返回 pending", async () => {
     const records = new Map<string, { sessionId: string; phase: "draining" | "completed" }>();
     const deletionStore = {

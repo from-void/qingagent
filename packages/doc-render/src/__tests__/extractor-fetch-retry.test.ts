@@ -173,6 +173,18 @@ describe("extractArticleContent fetch 轻量重试", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("F15: 3xx 缺少 Location 时抛错前取消未结束响应体", async () => {
+    const body = new ReadableStream<Uint8Array>({ pull() {} });
+    const response = new Response(body, { status: 302 });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    __setPinnedFetchForTest(vi.fn<TestPinnedFetch>(async () => response));
+
+    await expect(extractArticleContent("https://example.com/redirect-without-location")).rejects.toThrow(
+      /Redirect response missing Location header/,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["HTML", "text/html", 10 * 1024 * 1024 + 1, "https://example.com/oversized.html"],
     ["PDF", "application/pdf", 30 * 1024 * 1024 + 1, "https://example.com/oversized.pdf"],

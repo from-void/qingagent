@@ -569,6 +569,16 @@ describe("commitReviewGroups", () => {
     expect(docText(diffFrame.data.editedDoc)).toBe("A 旧\nB 新\nC 新");
     expect(diffFrame.data.editedDoc).toEqual(state.docDraftCandidateDoc);
     expect(docText(state.doc)).toBe("A 旧\nB 旧\nC 旧");
+    const hunkBRows = await getDocumentsClient().execute({
+      sql: `SELECT batch_id, status FROM document_suggestions
+        WHERE doc_id = ? AND base_version = ? AND id = ?`,
+      args: [state.docId, state.docVersion, hunkB.hunkId],
+    });
+    expect(hunkBRows.rows.map((row) => String(row.status)).sort()).toEqual([
+      "ignored",
+      "reviewing",
+    ]);
+    expect(new Set(hunkBRows.rows.map((row) => String(row.batch_id))).size).toBe(2);
   });
 
   it("先接受一处再撤销全部时会把已接受 batch 也拒绝并回到旧文档", async () => {

@@ -7,7 +7,7 @@ import {
 } from "@qingagent/pm-schema";
 import {
   documentDraftRepo,
-  listDocumentSuggestionStatuses,
+  listDocumentSuggestionStatusesInBatch,
   upsertDocumentSuggestion,
   type DocumentDraftRow,
 } from "@qingagent/db";
@@ -204,11 +204,13 @@ export async function rehydratePendingDraft(
       docId: state.docId,
       baseVersion,
       baseSchemaVersion: currentDoc.attrs.schemaVersion,
+      batchId: row.batchId,
     }),
   );
-  const persistedStatusRows = await listDocumentSuggestionStatuses(
+  const persistedStatusRows = await listDocumentSuggestionStatusesInBatch(
     state.docId,
     baseVersion,
+    row.batchId,
     rebuiltSuggestions.map((suggestion) => suggestion.id),
   );
   const persistedStatuses = new Map(

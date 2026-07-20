@@ -8,6 +8,7 @@ import {
 import { documentDraftRepo } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { applyDiffHunkToDoc, buildDraftDiff } from "./proposalDiff.js";
+import { createSuggestionBatchId } from "./draftReviewSuggestions.js";
 import type { SuggestionRecord } from "../session/sessionState.js";
 
 const logger = mastra.getLogger();
@@ -123,6 +124,7 @@ export async function rebaseRemainingPendingDraft(
       baseVersion: input.committedVersion,
       baseHash,
       draftPmDoc: nextDraftDoc,
+      batchId: createSuggestionBatchId(input.committedVersion, nextDraftDoc),
       reviewBatchId: first?.reviewBatchId ?? null,
       groupMode: first?.groupMode ?? null,
     });

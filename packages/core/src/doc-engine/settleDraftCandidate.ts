@@ -7,6 +7,7 @@ import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";
 import { buildDraftDiff } from "./proposalDiff.js";
+import { createSuggestionBatchId } from "./draftReviewSuggestions.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 import { appendPartToChatHistory, nextSeq } from "../session/sessionState.js";
 import {
@@ -103,12 +104,14 @@ export async function* settleDraftCandidate(opts: {
         }
         warnIfSelectionDiffEscapesSelectedBlocks({ state, hunks, streamId, runId });
 
+        const batchId = createSuggestionBatchId(baseVersion, draftDoc);
         const suggestions = hunks.map((hunk) =>
           suggestionFromDiffHunk({
             hunk,
             docId: state.docId,
             baseVersion,
             baseSchemaVersion: baseDoc.attrs.schemaVersion,
+            batchId,
           }),
         );
         try {
@@ -121,6 +124,7 @@ export async function* settleDraftCandidate(opts: {
             baseVersion,
             baseHash: getPmContentHash(baseDoc),
             draftPmDoc: draftDoc,
+            batchId,
             reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
             groupMode: suggestions[0]?.groupMode ?? null,
           });

@@ -5,6 +5,7 @@ import { documentDraftRepo } from "../documentDraftRepo.js";
 import { replaceRebasedReview } from "../documentReviewRepo.js";
 import {
   listDocumentSuggestionStatuses,
+  listDocumentSuggestionStatusesInBatch,
   updateDocumentSuggestionStatus,
   upsertDocumentSuggestion,
 } from "../documentSuggestionsRepo.js";
@@ -64,14 +65,16 @@ describe("replaceRebasedReview", () => {
         baseVersion: 2,
         baseHash: getPmContentHash(pmDocFromText("新正文")),
         draftPmDoc: newDraft,
+        batchId: "new-batch",
       },
       suggestions: [
-        suggestion("new-1", docId, 2),
-        suggestion("new-2", docId, 2),
-        suggestion("new-3", docId, 2),
+        { ...suggestion("new-1", docId, 2), batchId: "new-batch" },
+        { ...suggestion("new-2", docId, 2), batchId: "new-batch" },
+        { ...suggestion("new-3", docId, 2), batchId: "new-batch" },
       ],
       previousSuggestions: [{
         baseVersion: 1,
+        batchId: "legacy",
         suggestionIds: ["old-accepted", "old-reviewing"],
       }],
     })).rejects.toThrow("injected second suggestion failure");
@@ -79,7 +82,11 @@ describe("replaceRebasedReview", () => {
     const draftAfterFailure = await documentDraftRepo.load(docId);
     expect(draftAfterFailure?.baseVersion).toBe(1);
     expect(draftAfterFailure?.draftPmDoc).toEqual(oldDraft);
-    await expect(listDocumentSuggestionStatuses(docId, 2)).resolves.toEqual([]);
+    await expect(listDocumentSuggestionStatusesInBatch(
+      docId,
+      2,
+      "new-batch",
+    )).resolves.toEqual([]);
     await expect(listDocumentSuggestionStatuses(docId, 1)).resolves.toEqual(
       expect.arrayContaining([
         { id: "old-accepted", status: "accepted", conflict: undefined },

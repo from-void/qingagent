@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import type { DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
-import type { PmStep } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmDoc, type PmStep } from "@qingagent/pm-schema";
+
+export function createSuggestionBatchId(baseVersion: number, draftDoc: PmDoc): string {
+  return `review:${baseVersion}:${getPmContentHash(draftDoc)}`;
+}
 
 function hashSuggestionText(text: string): string {
   return crypto.createHash("sha256").update(text).digest("hex").slice(0, 24);
@@ -46,6 +50,7 @@ export function createSuggestionFromDiffHunk(input: {
   docId: string;
   baseVersion: number;
   baseSchemaVersion: number;
+  batchId?: string;
 }): DocSuggestion {
   const { hunk } = input;
   const pmFrom = hunk.anchor.pmFrom ?? 0;
@@ -58,6 +63,7 @@ export function createSuggestionFromDiffHunk(input: {
     hunk.hunkId;
   return {
     id: hunk.hunkId,
+    ...(input.batchId ? { batchId: input.batchId } : {}),
     docId: input.docId,
     baseVersion: input.baseVersion,
     baseSchemaVersion: input.baseSchemaVersion,

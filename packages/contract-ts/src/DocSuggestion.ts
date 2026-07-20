@@ -34,6 +34,8 @@ export type SuggestionAnchor = {
 
 export type DocSuggestion = {
   id: string;
+  /** 数据库审阅批次标识；同一 hunk 在 rebase 前后必须属于不同批次。 */
+  batchId?: string;
   reviewBatchId?: string;
   groupMode?: ReviewGroupMode;
   docId: string;

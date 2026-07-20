@@ -570,6 +570,7 @@ export function suggestionFromDiffHunk(input: {
   docId: string;
   baseVersion: number;
   baseSchemaVersion: number;
+  batchId?: string;
 }): DocSuggestion {
   return createSuggestionFromDiffHunk(input);
 }

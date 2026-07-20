@@ -8,6 +8,7 @@ import {
 import { documentDraftRepo } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { applyDiffHunkToDoc, buildDraftDiff } from "./proposalDiff.js";
+import { createSuggestionBatchId } from "./draftReviewSuggestions.js";
 import type { SuggestionRecord } from "../session/sessionState.js";
 
 const logger = mastra.getLogger();
@@ -38,6 +39,7 @@ export interface RebaseRemainingPendingDraftInput {
   committedVersion: number;
   remainingRecords: readonly SuggestionRecord[];
   persist?: boolean;
+  persistPending?: boolean;
 }
 
 function clonePmDoc(doc: PmDoc): PmDoc {
@@ -114,7 +116,7 @@ export async function rebaseRemainingPendingDraft(
     return { status: "cleared", dropped };
   }
 
-  if (input.persist !== false) {
+  if (input.persist !== false && input.persistPending !== false) {
     const first = input.remainingRecords[0]?.suggestion;
     await documentDraftRepo.savePending({
       docId: input.docId,
@@ -122,6 +124,7 @@ export async function rebaseRemainingPendingDraft(
       baseVersion: input.committedVersion,
       baseHash,
       draftPmDoc: nextDraftDoc,
+      batchId: createSuggestionBatchId(input.committedVersion, nextDraftDoc),
       reviewBatchId: first?.reviewBatchId ?? null,
       groupMode: first?.groupMode ?? null,
     });

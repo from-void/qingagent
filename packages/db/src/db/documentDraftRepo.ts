@@ -19,6 +19,7 @@ export interface DocumentDraftRow {
   draftPmDoc: PmDoc;
   status: DocumentDraftStatus;
   conflict: unknown | null;
+  batchId: string;
   reviewBatchId: string | null;
   groupMode: DocumentDraftGroupMode | null;
   sourceStreamId: string | null;
@@ -33,6 +34,7 @@ export interface SavePendingDraftInput {
   baseVersion: number;
   baseHash: string;
   draftPmDoc: PmDoc;
+  batchId?: string;
   reviewBatchId?: string | null;
   groupMode?: DocumentDraftGroupMode | null;
   sourceStreamId?: string | null;
@@ -98,6 +100,7 @@ function mapRow(row: Row): DocumentDraftRow {
     draftPmDoc: parseDraftPm(row.draft_pm),
     status: parseStatus(row.status),
     conflict: parseConflict(row.conflict_json),
+    batchId: valueAsString(row.batch_id) || "legacy",
     reviewBatchId: valueAsString(row.review_batch_id) || null,
     groupMode: parseGroupMode(row.group_mode),
     sourceStreamId: valueAsString(row.source_stream_id) || null,
@@ -143,9 +146,9 @@ export async function savePendingDocumentDraft(
     await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
-          conflict_json, review_batch_id, group_mode, source_stream_id,
+          conflict_json, batch_id, review_batch_id, group_mode, source_stream_id,
           source_tool_call_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending_review', NULL, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'pending_review', NULL, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           thread_id = excluded.thread_id,
           base_version = excluded.base_version,
@@ -153,6 +156,7 @@ export async function savePendingDocumentDraft(
           draft_pm = excluded.draft_pm,
           status = 'pending_review',
           conflict_json = NULL,
+          batch_id = excluded.batch_id,
           review_batch_id = excluded.review_batch_id,
           group_mode = excluded.group_mode,
           source_stream_id = excluded.source_stream_id,
@@ -164,6 +168,7 @@ export async function savePendingDocumentDraft(
         input.baseVersion,
         input.baseHash,
         draftPmJson,
+        input.batchId ?? "legacy",
         input.reviewBatchId ?? null,
         input.groupMode ?? null,
         input.sourceStreamId ?? null,
@@ -192,9 +197,9 @@ export async function saveCandidateDocumentDraft(
     await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
-          conflict_json, review_batch_id, group_mode, source_stream_id,
+          conflict_json, batch_id, review_batch_id, group_mode, source_stream_id,
           source_tool_call_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'draft_candidate', NULL, NULL, NULL, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'draft_candidate', NULL, 'legacy', NULL, NULL, ?, ?, ?, ?)
         ON CONFLICT(doc_id) DO UPDATE SET
           thread_id = excluded.thread_id,
           base_version = excluded.base_version,
@@ -202,6 +207,7 @@ export async function saveCandidateDocumentDraft(
           draft_pm = excluded.draft_pm,
           status = 'draft_candidate',
           conflict_json = NULL,
+          batch_id = 'legacy',
           review_batch_id = NULL,
           group_mode = NULL,
           source_stream_id = excluded.source_stream_id,

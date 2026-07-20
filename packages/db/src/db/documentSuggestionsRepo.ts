@@ -4,6 +4,8 @@ import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
 
+export const LEGACY_DOCUMENT_SUGGESTION_BATCH_ID = "legacy";
+
 export interface DocumentSuggestionStatusRecord {
   id: string;
   status: SuggestionStatus;
@@ -134,11 +136,11 @@ export async function upsertDocumentSuggestion(
     });
     await c.execute({
       sql: `INSERT INTO document_suggestions (
-          id, doc_id, base_version, status, anchor_json, steps_json,
+          id, doc_id, base_version, batch_id, status, anchor_json, steps_json,
           preview_json, summary, conflict_json, created_at, updated_at
           , severity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(doc_id, base_version, id) DO UPDATE SET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id, base_version, batch_id, id) DO UPDATE SET
           status = excluded.status,
           anchor_json = excluded.anchor_json,
           steps_json = excluded.steps_json,
@@ -151,6 +153,7 @@ export async function upsertDocumentSuggestion(
         suggestion.id,
         suggestion.docId,
         suggestion.baseVersion,
+        suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
         suggestion.status,
         JSON.stringify(suggestion.anchor),
         JSON.stringify(suggestion.patch.steps),
@@ -174,18 +177,41 @@ export async function updateDocumentSuggestionStatus(
   client?: Client,
   now = new Date().toISOString(),
 ): Promise<number> {
+  return updateDocumentSuggestionStatusInBatch(
+    docId,
+    baseVersion,
+    LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+    id,
+    status,
+    conflict,
+    client,
+    now,
+  );
+}
+
+export async function updateDocumentSuggestionStatusInBatch(
+  docId: string,
+  baseVersion: number,
+  batchId: string,
+  id: string,
+  status: SuggestionStatus,
+  conflict?: DocSuggestion["conflict"],
+  client?: Client,
+  now = new Date().toISOString(),
+): Promise<number> {
   const c = await readyClient(client);
   return withWriteRetry(async () => {
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
-        WHERE doc_id = ? AND base_version = ? AND id = ?`,
+        WHERE doc_id = ? AND base_version = ? AND batch_id = ? AND id = ?`,
       args: [
         status,
         conflict ? JSON.stringify(conflict) : null,
         now,
         docId,
         baseVersion,
+        batchId,
         id,
       ],
     });
@@ -201,6 +227,24 @@ export async function ignoreRebasedDocumentSuggestions(
   client?: Client,
   now = new Date().toISOString(),
 ): Promise<number> {
+  return ignoreRebasedDocumentSuggestionsInBatch(
+    docId,
+    baseVersion,
+    LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+    suggestionIds,
+    client,
+    now,
+  );
+}
+
+export async function ignoreRebasedDocumentSuggestionsInBatch(
+  docId: string,
+  baseVersion: number,
+  batchId: string,
+  suggestionIds: readonly string[],
+  client?: Client,
+  now = new Date().toISOString(),
+): Promise<number> {
   const ids = [...new Set(suggestionIds.filter(Boolean))];
   if (ids.length === 0) return 0;
   const c = await readyClient(client);
@@ -208,10 +252,10 @@ export async function ignoreRebasedDocumentSuggestions(
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = 'ignored', conflict_json = NULL, updated_at = ?
-        WHERE doc_id = ? AND base_version = ?
+        WHERE doc_id = ? AND base_version = ? AND batch_id = ?
           AND id IN (${ids.map(() => "?").join(",")})
           AND status IN ('reviewing','accepted','rejected')`,
-      args: [now, docId, baseVersion, ...ids],
+      args: [now, docId, baseVersion, batchId, ...ids],
     });
     return result.rowsAffected;
   });
@@ -223,6 +267,22 @@ export async function listDocumentSuggestionStatuses(
   suggestionIds?: readonly string[],
   client?: Client,
 ): Promise<DocumentSuggestionStatusRecord[]> {
+  return listDocumentSuggestionStatusesInBatch(
+    docId,
+    baseVersion,
+    LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+    suggestionIds,
+    client,
+  );
+}
+
+export async function listDocumentSuggestionStatusesInBatch(
+  docId: string,
+  baseVersion: number,
+  batchId: string,
+  suggestionIds?: readonly string[],
+  client?: Client,
+): Promise<DocumentSuggestionStatusRecord[]> {
   const ids = suggestionIds?.filter(Boolean);
   if (ids && ids.length === 0) return [];
   const c = await readyClient(client);
@@ -230,8 +290,8 @@ export async function listDocumentSuggestionStatuses(
   const result = await c.execute({
     sql: `SELECT id, status, conflict_json
       FROM document_suggestions
-      WHERE doc_id = ? AND base_version = ?${idWhere}`,
-    args: [docId, baseVersion, ...(ids ?? [])],
+      WHERE doc_id = ? AND base_version = ? AND batch_id = ?${idWhere}`,
+    args: [docId, baseVersion, batchId, ...(ids ?? [])],
   });
   return result.rows.map((row) => ({
     id: String(row.id),

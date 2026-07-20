@@ -2167,6 +2167,7 @@ describe("thread persistence", () => {
       draftPmDoc: draftDoc,
       status: "pending_review",
       conflict: null,
+      batchId: "legacy",
       reviewBatchId: "batch-kept",
       groupMode: "atomic",
       sourceStreamId: "stream-kept",

@@ -7,7 +7,8 @@ import {
 } from "@qingagent/pm-schema";
 import {
   documentDraftRepo,
-  listDocumentSuggestionStatuses,
+  listDocumentSuggestionStatusesInBatch,
+  upsertDocumentSuggestion,
   type DocumentDraftRow,
 } from "@qingagent/db";
 import { mastra } from "../mastra.js";
@@ -203,15 +204,25 @@ export async function rehydratePendingDraft(
       docId: state.docId,
       baseVersion,
       baseSchemaVersion: currentDoc.attrs.schemaVersion,
+      batchId: row.batchId,
     }),
   );
-  const persistedStatuses = new Map(
-    (await listDocumentSuggestionStatuses(
-      state.docId,
-      baseVersion,
-      rebuiltSuggestions.map((suggestion) => suggestion.id),
-    )).map((record) => [record.id, record] as const),
+  const persistedStatusRows = await listDocumentSuggestionStatusesInBatch(
+    state.docId,
+    baseVersion,
+    row.batchId,
+    rebuiltSuggestions.map((suggestion) => suggestion.id),
   );
+  const persistedStatuses = new Map(
+    persistedStatusRows.map((record) => [record.id, record] as const),
+  );
+  if (!options.readOnly && persistedStatuses.size < rebuiltSuggestions.length) {
+    for (const suggestion of rebuiltSuggestions) {
+      if (!persistedStatuses.has(suggestion.id)) {
+        await upsertDocumentSuggestion(suggestion);
+      }
+    }
+  }
   const suggestions = rebuiltSuggestions.map((suggestion) => {
     const persisted = persistedStatuses.get(suggestion.id);
     if (persisted?.status !== "accepted" && persisted?.status !== "rejected") {

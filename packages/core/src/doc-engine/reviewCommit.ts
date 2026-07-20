@@ -15,16 +15,20 @@ import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { applySuggestionsToDoc } from "./pmPatch.js";
 import { applyDiffHunks } from "./proposalDiff.js";
-import { createSuggestionFromDiffHunk, diffHunkToStep } from "./draftReviewSuggestions.js";
+import {
+  createSuggestionBatchId,
+  createSuggestionFromDiffHunk,
+  diffHunkToStep,
+} from "./draftReviewSuggestions.js";
 import {
   rebaseRemainingPendingDraft,
   type DroppedPendingDraftRecord,
 } from "./pendingDraftRebase.js";
 import {
-  ignoreRebasedDocumentSuggestions,
+  LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
   persistMappedAnnotationGroups,
-  updateDocumentSuggestionStatus,
-  upsertDocumentSuggestion,
+  replaceRebasedReview,
+  updateDocumentSuggestionStatusInBatch,
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
@@ -189,20 +193,22 @@ function deleteSettledRecord(state: SessionState, record: SuggestionRecord): voi
 
 async function persistSuggestionStatus(
   state: SessionState,
-  id: string,
-  baseVersion: number,
+  suggestion: DocSuggestion,
   status: DocSuggestion["status"],
   conflict?: PatchConflict,
 ): Promise<void> {
-  const rowsAffected = await updateDocumentSuggestionStatus(
+  const rowsAffected = await updateDocumentSuggestionStatusInBatch(
     state.docId,
-    baseVersion,
-    id,
+    suggestion.baseVersion,
+    suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID,
+    suggestion.id,
     status,
     conflict,
   );
   if (rowsAffected === 0) {
-    throw new Error(`Document suggestion not found: ${state.docId}@${baseVersion}:${id}`);
+    throw new Error(
+      `Document suggestion not found: ${state.docId}@${suggestion.baseVersion}:${suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID}:${suggestion.id}`,
+    );
   }
 }
 
@@ -242,8 +248,7 @@ async function* settleResolvedReviewRecords(
     try {
       await persistSuggestionStatus(
         state,
-        nextSuggestion.id,
-        nextSuggestion.baseVersion,
+        nextSuggestion,
         terminalStatus,
       );
     } catch (error) {
@@ -287,7 +292,7 @@ async function* settleUnappliedReviewRecords(
     if (verdict === "rejected") {
       const nextSuggestion: DocSuggestion = { ...record.suggestion, status: "rejected" };
       try {
-        await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "rejected");
+        await persistSuggestionStatus(state, nextSuggestion, "rejected");
       } catch (error) {
         allPersisted = false;
         yield suggestionPersistenceFailedFrame(state, record, "rejected", error);
@@ -308,7 +313,7 @@ async function* settleUnappliedReviewRecords(
       conflict,
     };
     try {
-      await persistSuggestionStatus(state, id, nextSuggestion.baseVersion, "conflict", conflict);
+      await persistSuggestionStatus(state, nextSuggestion, "conflict", conflict);
     } catch (error) {
       allPersisted = false;
       yield suggestionPersistenceFailedFrame(state, record, "conflict", error);
@@ -379,6 +384,13 @@ async function* finishSettledReviewState(
   );
 }
 
+function reviewToolCallStatus(suggestion: DocSuggestion): ToolCallStatus {
+  if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+    return { kind: suggestion.status };
+  }
+  return { kind: "reviewing" };
+}
+
 export async function* updatePatchVerdict(
   state: SessionState,
   patchId: string | undefined,
@@ -404,7 +416,7 @@ export async function* updatePatchVerdict(
       status: verdict,
     };
     try {
-      await persistSuggestionStatus(state, id, suggestion.baseVersion, verdict);
+      await persistSuggestionStatus(state, suggestion, verdict);
     } catch (error) {
       yield suggestionPersistenceFailedFrame(state, suggestionRecord, verdict, error);
       continue;
@@ -431,34 +443,110 @@ async function rebuildPendingReviewAfterRebase(input: {
   previousRemainingRecords: readonly SuggestionRecord[];
 }): Promise<DocSuggestion[]> {
   const { state, committedDoc, committedVersion, nextDraftDoc, hunks } = input;
-  const previousById = new Map(
-    input.previousRemainingRecords.map((record) => [record.suggestion.id, record]),
-  );
+  const previousByHunkId = new Map<string, SuggestionRecord>();
+  const previousByBlockAndText = new Map<string, SuggestionRecord[]>();
+  const previousByPathAndText = new Map<string, SuggestionRecord[]>();
+  const previousByText = new Map<string, SuggestionRecord[]>();
+  const appendPrevious = (
+    target: Map<string, SuggestionRecord[]>,
+    key: string,
+    record: SuggestionRecord,
+  ): void => {
+    target.set(key, [...(target.get(key) ?? []), record]);
+  };
+  const hunkTextKey = (hunk: DiffHunk): string => JSON.stringify([
+    hunk.op,
+    hunk.beforeText ?? "",
+    hunk.afterText ?? "",
+  ]);
+  for (const record of input.previousRemainingRecords) {
+    const hunk = record.diffHunk;
+    if (!hunk) continue;
+    previousByHunkId.set(hunk.hunkId, record);
+    const textKey = hunkTextKey(hunk);
+    appendPrevious(previousByText, textKey, record);
+    appendPrevious(previousByBlockAndText, JSON.stringify([
+      hunk.anchor.blockId ?? record.suggestion.anchor.blockId,
+      textKey,
+    ]), record);
+    appendPrevious(previousByPathAndText, JSON.stringify([hunk.blockPath, textKey]), record);
+  }
+  const claimedPreviousIds = new Set<string>();
+  const previousByNewHunkId = new Map<string, SuggestionRecord>();
+  const claimUnique = (records: readonly SuggestionRecord[] | undefined): SuggestionRecord | undefined => {
+    const available = records?.filter(
+      (record) => !claimedPreviousIds.has(record.suggestion.id),
+    ) ?? [];
+    return available.length === 1 ? available[0] : undefined;
+  };
+  for (const hunk of hunks) {
+    const textKey = hunkTextKey(hunk);
+    const exact = previousByHunkId.get(hunk.hunkId);
+    const previous = exact && !claimedPreviousIds.has(exact.suggestion.id)
+      ? exact
+      : claimUnique(previousByBlockAndText.get(JSON.stringify([
+          hunk.anchor.blockId ?? "",
+          textKey,
+        ])))
+        ?? claimUnique(previousByPathAndText.get(JSON.stringify([hunk.blockPath, textKey])))
+        ?? claimUnique(previousByText.get(textKey));
+    if (!previous) continue;
+    claimedPreviousIds.add(previous.suggestion.id);
+    previousByNewHunkId.set(hunk.hunkId, previous);
+  }
   const fallbackMessageId =
     input.previousRemainingRecords[0]?.messageId ??
     `rebased-pending-review:${state.docId}:${committedVersion}`;
 
-  const suggestions = hunks.map((hunk) =>
-    createSuggestionFromDiffHunk({
+  const batchId = createSuggestionBatchId(committedVersion, nextDraftDoc);
+  const suggestions = hunks.map((hunk) => {
+    const suggestion = createSuggestionFromDiffHunk({
       hunk,
       docId: state.docId,
       baseVersion: committedVersion,
       baseSchemaVersion: committedDoc.attrs.schemaVersion,
-    }),
-  );
+      batchId,
+    });
+    const previous = previousByNewHunkId.get(hunk.hunkId);
+    const verdict = previous
+      ? state.patchVerdicts.get(previous.suggestion.id) ??
+        (previous.suggestion.status === "accepted" || previous.suggestion.status === "rejected"
+          ? previous.suggestion.status
+          : undefined)
+      : undefined;
+    return verdict ? { ...suggestion, status: verdict } : suggestion;
+  });
 
-  for (const suggestion of suggestions) {
-    await upsertDocumentSuggestion(suggestion);
-  }
-  const previousByBaseVersion = new Map<number, string[]>();
+  const previousBatches = new Map<string, {
+    baseVersion: number;
+    batchId: string;
+    suggestionIds: string[];
+  }>();
   for (const record of input.previousRemainingRecords) {
-    const ids = previousByBaseVersion.get(record.suggestion.baseVersion) ?? [];
-    ids.push(record.suggestion.id);
-    previousByBaseVersion.set(record.suggestion.baseVersion, ids);
+    const previousBatchId = record.suggestion.batchId ?? LEGACY_DOCUMENT_SUGGESTION_BATCH_ID;
+    const key = JSON.stringify([record.suggestion.baseVersion, previousBatchId]);
+    const previous = previousBatches.get(key) ?? {
+      baseVersion: record.suggestion.baseVersion,
+      batchId: previousBatchId,
+      suggestionIds: [],
+    };
+    previous.suggestionIds.push(record.suggestion.id);
+    previousBatches.set(key, previous);
   }
-  for (const [baseVersion, ids] of previousByBaseVersion) {
-    await ignoreRebasedDocumentSuggestions(state.docId, baseVersion, ids);
-  }
+  await replaceRebasedReview({
+    draft: {
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: committedVersion,
+      baseHash: getPmContentHash(committedDoc),
+      draftPmDoc: nextDraftDoc,
+      batchId,
+      reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+      groupMode: suggestions[0]?.groupMode ?? null,
+    },
+    suggestions,
+    previousSuggestions: [...previousBatches.values()],
+  });
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
@@ -473,7 +561,7 @@ async function rebuildPendingReviewAfterRebase(input: {
 
   suggestions.forEach((suggestion, index) => {
     const hunk = hunks[index]!;
-    const previous = previousById.get(suggestion.id);
+    const previous = previousByNewHunkId.get(suggestion.id);
     state.suggestions.set(suggestion.id, {
       messageId: previous?.messageId ?? fallbackMessageId,
       toolCallId: suggestion.id,
@@ -483,6 +571,9 @@ async function rebuildPendingReviewAfterRebase(input: {
       suggestion,
       diffHunk: hunk,
     });
+    if (suggestion.status === "accepted" || suggestion.status === "rejected") {
+      state.patchVerdicts.set(suggestion.id, suggestion.status);
+    }
   });
 
   return suggestions;
@@ -528,6 +619,7 @@ export async function* commitPatches(
         committedDoc: currentPmDoc(state),
         committedVersion: state.docVersion,
         remainingRecords,
+        persistPending: false,
       });
       if (rebase.status !== "conflict") {
         const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);
@@ -558,7 +650,10 @@ export async function* commitPatches(
           yield toolCallUpdated(
             record.messageId,
             record.suggestion.id,
-            buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" }),
+            buildSuggestionToolCallSpec(
+              record.suggestion,
+              reviewToolCallStatus(record.suggestion),
+            ),
           );
         }
       } else if (rebase.status === "conflict") {
@@ -891,6 +986,7 @@ export async function* commitPatches(
       committedDoc: result.doc,
       committedVersion: result.docVersion,
       remainingRecords,
+      persistPending: false,
     });
     if (rebase.status !== "conflict") {
       const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);
@@ -916,7 +1012,10 @@ export async function* commitPatches(
         yield toolCallUpdated(
           record.messageId,
           record.suggestion.id,
-          buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" }),
+          buildSuggestionToolCallSpec(
+            record.suggestion,
+            reviewToolCallStatus(record.suggestion),
+          ),
         );
       }
     } else if (rebase.status === "conflict") {

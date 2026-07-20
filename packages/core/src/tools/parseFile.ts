@@ -289,8 +289,11 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   }
   if (isSensitiveDesktopFilePath(canonicalPath)) return null;
 
+  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
   const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
-  const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | nonBlock);
+  // O_NOFOLLOW 只约束打开时的最终路径组件；父目录中间组件的替换窗口仍由 realpath
+  // 前后两次黑名单检查兜底，并未被完全消除。
+  const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
     const stats = await fileHandle.stat();
     if (!stats.isFile()) return null;

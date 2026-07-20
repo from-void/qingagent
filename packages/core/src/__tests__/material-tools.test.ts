@@ -856,4 +856,27 @@ describe("parseFile execute — filePath mode", () => {
       await rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("reads a regular file reached through an initial symbolic link", async () => {
+    const { mkdtemp, rm, symlink, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = await mkdtemp(join(tmpdir(), "parseFile-symlink-"));
+    const targetPath = join(tmpDir, "target.txt");
+    const symlinkPath = join(tmpDir, "alias.txt");
+
+    try {
+      await writeFile(targetPath, "content through symlink");
+      await symlink(targetPath, symlinkPath);
+
+      const result = await executeParseFileOnDesktop({
+        filePath: symlinkPath,
+        filename: "alias.txt",
+        mimeType: "text/plain",
+      });
+      expect(result).toMatchObject({ text: "content through symlink" });
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

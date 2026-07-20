@@ -17,6 +17,7 @@ import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
 import { findOpByDocumentVersion } from "@qingagent/db";
+import { listDocumentSuggestionStatuses } from "@qingagent/db";
 import { listVersions } from "@qingagent/db";
 import { upsertDocumentSuggestion } from "@qingagent/db";
 import {
@@ -183,6 +184,43 @@ describe("pending draft rehydrate", () => {
     expect(result.kind === "restored" ? result.frames.some((frame) => frame.kind === "docDiffReady") : false).toBe(true);
     expect(docText(state.doc)).toBe("旧正文");
     expect(state.docState).toEqual({ kind: "pendingReview" });
+  });
+
+  it("F8: 恢复 pending draft 时补写活动批次缺失的 suggestion 行", async () => {
+    const state = createSession("rehy-missing-suggestion-row");
+    const base = doc([
+      paragraph("block-a", "甲旧"),
+      paragraph("block-b", "乙旧"),
+    ]);
+    const draft = doc([
+      paragraph("block-a", "甲新"),
+      paragraph("block-b", "乙新"),
+    ]);
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+    const hunks = buildDraftDiff(base, draft, { baseVersion: 1 });
+    await upsertDocumentSuggestion(createSuggestionFromDiffHunk({
+      hunk: hunks[0]!,
+      docId: state.docId,
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+    }));
+
+    await rehydratePendingDraft(state);
+
+    await expect(listDocumentSuggestionStatuses(
+      state.docId,
+      1,
+      hunks.map((hunk) => hunk.hunkId),
+    )).resolves.toHaveLength(hunks.length);
   });
 
   it("拒绝后重启恢复裁决，再提交时不应用已拒绝修改", async () => {

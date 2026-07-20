@@ -21,10 +21,9 @@ import {
   type DroppedPendingDraftRecord,
 } from "./pendingDraftRebase.js";
 import {
-  ignoreRebasedDocumentSuggestions,
   persistMappedAnnotationGroups,
+  replaceRebasedReview,
   updateDocumentSuggestionStatus,
-  upsertDocumentSuggestion,
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
@@ -510,18 +509,28 @@ async function rebuildPendingReviewAfterRebase(input: {
     return verdict ? { ...suggestion, status: verdict } : suggestion;
   });
 
-  for (const suggestion of suggestions) {
-    await upsertDocumentSuggestion(suggestion);
-  }
   const previousByBaseVersion = new Map<number, string[]>();
   for (const record of input.previousRemainingRecords) {
     const ids = previousByBaseVersion.get(record.suggestion.baseVersion) ?? [];
     ids.push(record.suggestion.id);
     previousByBaseVersion.set(record.suggestion.baseVersion, ids);
   }
-  for (const [baseVersion, ids] of previousByBaseVersion) {
-    await ignoreRebasedDocumentSuggestions(state.docId, baseVersion, ids);
-  }
+  await replaceRebasedReview({
+    draft: {
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: committedVersion,
+      baseHash: getPmContentHash(committedDoc),
+      draftPmDoc: nextDraftDoc,
+      reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+      groupMode: suggestions[0]?.groupMode ?? null,
+    },
+    suggestions,
+    previousSuggestions: [...previousByBaseVersion].map(([baseVersion, suggestionIds]) => ({
+      baseVersion,
+      suggestionIds,
+    })),
+  });
 
   state.suggestions.clear();
   state.patchVerdicts.clear();
@@ -594,6 +603,7 @@ export async function* commitPatches(
         committedDoc: currentPmDoc(state),
         committedVersion: state.docVersion,
         remainingRecords,
+        persistPending: false,
       });
       if (rebase.status !== "conflict") {
         const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);
@@ -960,6 +970,7 @@ export async function* commitPatches(
       committedDoc: result.doc,
       committedVersion: result.docVersion,
       remainingRecords,
+      persistPending: false,
     });
     if (rebase.status !== "conflict") {
       const droppedSettled = yield* settleDroppedRebaseRecords(state, rebase.dropped);

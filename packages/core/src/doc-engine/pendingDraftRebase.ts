@@ -38,6 +38,7 @@ export interface RebaseRemainingPendingDraftInput {
   committedVersion: number;
   remainingRecords: readonly SuggestionRecord[];
   persist?: boolean;
+  persistPending?: boolean;
 }
 
 function clonePmDoc(doc: PmDoc): PmDoc {
@@ -114,7 +115,7 @@ export async function rebaseRemainingPendingDraft(
     return { status: "cleared", dropped };
   }
 
-  if (input.persist !== false) {
+  if (input.persist !== false && input.persistPending !== false) {
     const first = input.remainingRecords[0]?.suggestion;
     await documentDraftRepo.savePending({
       docId: input.docId,

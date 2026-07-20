@@ -64,17 +64,16 @@ export class SessionManager {
   private readonly backgroundDeletionJobs = new Map<string, Promise<void>>();
   private readonly maxActors: number;
   private readonly deletionStore: SessionDeletionStore;
-  private readonly deletionInitialization: Promise<void>;
+  private deletionInitialization: Promise<void> | null = null;
 
   constructor(private readonly options: SessionManagerOptions) {
     this.frameLog = options.frameLog ?? new InMemoryFrameLog();
     this.maxActors = options.maxActors ?? 256;
     this.deletionStore = options.deletionStore ?? createEphemeralDeletionStore();
-    this.deletionInitialization = this.restoreDeletionState();
   }
 
   async submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
-    await this.deletionInitialization;
+    await this.ensureDeletionStateRestored();
     if (this.deletingSessions.has(sessionId)) {
       throw new Error("Session deletion is in progress");
     }
@@ -109,7 +108,7 @@ export class SessionManager {
     sessionId: string,
     timeoutMs = 5_000,
   ): Promise<DestroySessionResult> {
-    await this.deletionInitialization;
+    await this.ensureDeletionStateRestored();
     if (this.destroyedSessions.has(sessionId)) {
       return { deleted: true, status: "completed" };
     }
@@ -194,7 +193,7 @@ export class SessionManager {
 
   /** 服务启动时加载持久化墓碑；pending 会话在后台按原幂等删除链路续跑。 */
   async resumePendingDeletions(): Promise<void> {
-    await this.deletionInitialization;
+    await this.ensureDeletionStateRestored();
   }
 
   getActorState(sessionId: string): SessionActor["state"] | null {
@@ -287,6 +286,16 @@ export class SessionManager {
       (this.options.markSessionDeleted ?? markSessionDeleted)(record.sessionId);
       this.scheduleDeletionRetry(record.sessionId, Promise.resolve(), 5_000);
     }
+  }
+
+  private ensureDeletionStateRestored(): Promise<void> {
+    if (!this.deletionInitialization) {
+      this.deletionInitialization = this.restoreDeletionState().catch((error) => {
+        this.deletionInitialization = null;
+        throw error;
+      });
+    }
+    return this.deletionInitialization;
   }
 
   private getOrCreateActor(sessionId: string): SessionActor {

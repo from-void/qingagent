@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { constants as fsConstants } from "node:fs";
 import { open, readFile, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { TextDecoder } from "node:util";
@@ -61,6 +62,8 @@ const MAX_OFFICE_ZIP_ENTRIES = 10_000;
 const MAX_OFFICE_ZIP_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 const MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
+// 64MiB 足以覆盖常见桌面文档素材，同时限制分块汇总缓冲区和后续解析的堆内存占用。
+const MAX_DESKTOP_FILE_BYTES = 64 * 1024 * 1024;
 
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE = 0x02014b50;
@@ -286,13 +289,36 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   }
   if (isSensitiveDesktopFilePath(canonicalPath)) return null;
 
-  const fileHandle = await open(canonicalPath, "r");
+  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
+  // O_NOFOLLOW 只约束打开时的最终路径组件；父目录中间组件的替换窗口仍由 realpath
+  // 前后两次黑名单检查兜底，并未被完全消除。
+  const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
     const stats = await fileHandle.stat();
+    if (!stats.isFile()) return null;
     // realpath 无法识别硬链接。正常用户素材极少带多个硬链接；宁可拒绝可疑文件，
     // 也不允许攻击者把敏感文件硬链接成无害名称绕过路径黑名单。
     if (stats.nlink > 1) return null;
-    return { buffer: await fileHandle.readFile(), canonicalPath };
+    if (stats.size > MAX_DESKTOP_FILE_BYTES) return null;
+
+    // 当前桌面 parseFile 调用链没有可用的 AbortSignal；不为此扩散函数签名，读取由总字节上限约束。
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_DESKTOP_FILE_BYTES) {
+      // 最多多读 1 字节用于区分“恰好到上限”和“超过上限”，避免竞态增大的文件被整体读入。
+      const remainingProbeBytes = MAX_DESKTOP_FILE_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remainingProbeBytes));
+      const { bytesRead } = await fileHandle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_DESKTOP_FILE_BYTES) return null;
+      chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
+    }
+
+    const statsAfterRead = await fileHandle.stat();
+    if (statsAfterRead.size > MAX_DESKTOP_FILE_BYTES) return null;
+    return { buffer: Buffer.concat(chunks, totalBytes), canonicalPath };
   } finally {
     await fileHandle.close();
   }

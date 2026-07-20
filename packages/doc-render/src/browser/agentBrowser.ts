@@ -98,11 +98,16 @@ class SecuredAgentBrowser extends AgentBrowser {
   override async ensureReady(): Promise<void> {
     await super.ensureReady();
     const manager = await this.getManagerForThread();
-    const context = manager.getContext();
-    if (!context) throw new Error("AgentBrowser context 未就绪，无法安装网络安全策略");
+    const contexts = new Set<BrowserContext>();
+    const primaryContext = manager.getContext();
+    if (primaryContext) contexts.add(primaryContext);
+    for (const page of manager.getPages()) contexts.add(page.context());
+    if (contexts.size === 0) {
+      throw new Error("AgentBrowser context 未就绪，无法安装网络安全策略");
+    }
     // 上游 BrowserConfig 不透传 serviceWorkers 选项；共用 helper 会用注册拦截、注销已有 SW
-    // 与 CDP Network.setBypassServiceWorker，为它已创建的 context 补上等价防线。
-    await installAgentBrowserRequestPolicy(context);
+    // 与 CDP Network.setBypassServiceWorker，为它跟踪页面所属的全部 context 补上等价防线。
+    for (const context of contexts) await installAgentBrowserRequestPolicy(context);
   }
 }
 

@@ -6,30 +6,59 @@ let browserPromise: Promise<Browser> | null = null;
 let browserInstance: Browser | null = null;
 const BROWSER_CONTEXT_CONCURRENCY = 3;
 let activeBrowserContexts = 0;
-const browserContextQueue: Array<() => void> = [];
+type BrowserContextWaiter = {
+  signal?: AbortSignal;
+  onAbort: () => void;
+  resolve: () => void;
+  reject: (reason?: unknown) => void;
+};
+const browserContextQueue: BrowserContextWaiter[] = [];
 
-async function acquireBrowserContextSlot(): Promise<void> {
+async function acquireBrowserContextSlot(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (activeBrowserContexts < BROWSER_CONTEXT_CONCURRENCY) {
     activeBrowserContexts += 1;
     return;
   }
 
-  await new Promise<void>((resolve) => {
-    browserContextQueue.push(() => {
-      activeBrowserContexts += 1;
-      resolve();
-    });
+  await new Promise<void>((resolve, reject) => {
+    const waiter: BrowserContextWaiter = {
+      signal,
+      resolve,
+      reject,
+      onAbort: () => {
+        const index = browserContextQueue.indexOf(waiter);
+        if (index >= 0) browserContextQueue.splice(index, 1);
+        signal?.removeEventListener("abort", waiter.onAbort);
+        reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+      },
+    };
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+    if (signal?.aborted) {
+      waiter.onAbort();
+      return;
+    }
+    browserContextQueue.push(waiter);
   });
 }
 
 function releaseBrowserContextSlot(): void {
   activeBrowserContexts = Math.max(0, activeBrowserContexts - 1);
-  const next = browserContextQueue.shift();
-  if (next) next();
+  while (browserContextQueue.length > 0) {
+    const next = browserContextQueue.shift()!;
+    next.signal?.removeEventListener("abort", next.onAbort);
+    if (next.signal?.aborted) {
+      next.reject(next.signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+      continue;
+    }
+    activeBrowserContexts += 1;
+    next.resolve();
+    break;
+  }
 }
 
-export async function withBrowserContextSlot<T>(fn: () => Promise<T>): Promise<T> {
-  await acquireBrowserContextSlot();
+export async function withBrowserContextSlot<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  await acquireBrowserContextSlot(signal);
   try {
     return await fn();
   } finally {

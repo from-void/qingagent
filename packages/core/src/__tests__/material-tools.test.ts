@@ -1,4 +1,29 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+const nonRegularFsMock = vi.hoisted(() => ({
+  path: "/__parse-file-mocked-device__",
+  read: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      if (args[0] === nonRegularFsMock.path) return nonRegularFsMock.path;
+      return actual.realpath(...args);
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (args[0] !== nonRegularFsMock.path) return actual.open(...args);
+      return {
+        stat: async () => ({ isFile: () => false, nlink: 1, size: 0 }),
+        read: nonRegularFsMock.read,
+        close: async () => undefined,
+      } as unknown as Awaited<ReturnType<typeof actual.open>>;
+    },
+  };
+});
+
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
 import { createSessionScopedTools } from "../session/sessionTools.js";
@@ -38,6 +63,23 @@ async function executeParseFileOnDesktop(input: Record<string, unknown>): Promis
   } finally {
     if (previousRuntime === undefined) delete process.env.QINGAGENT_RUNTIME;
     else process.env.QINGAGENT_RUNTIME = previousRuntime;
+  }
+}
+
+const FILE_ACCESS_DENIED_RESULT = {
+  text: "[Error] 文件不可访问",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`操作超过 ${timeoutMs}ms 仍未完成`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -735,5 +777,83 @@ describe("parseFile execute — filePath mode", () => {
     expect(r.text).toBe("from disk");
 
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects a FIFO without a writer instead of blocking", async () => {
+    const { execFile } = await import("node:child_process");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = await mkdtemp(join(tmpdir(), "parseFile-fifo-"));
+    const fifoPath = join(tmpDir, "untrusted.txt");
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile("mkfifo", [fifoPath], (error) => (error ? reject(error) : resolve()));
+      });
+
+      await expect(
+        withTimeout(
+          executeParseFileOnDesktop({
+            filePath: fifoPath,
+            filename: "untrusted.txt",
+            mimeType: "text/plain",
+          }),
+          2_000,
+        ),
+      ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a character device as a non-regular file without reading it", async () => {
+    const { existsSync } = await import("node:fs");
+    const devicePath = existsSync("/dev/zero") ? "/dev/zero" : nonRegularFsMock.path;
+    if (devicePath === "/dev/zero") {
+      const { stat } = await import("node:fs/promises");
+      expect((await stat(devicePath)).isCharacterDevice()).toBe(true);
+    } else {
+      nonRegularFsMock.read.mockClear();
+    }
+
+    await expect(
+      withTimeout(
+        executeParseFileOnDesktop({
+          filePath: devicePath,
+          filename: "zero.txt",
+          mimeType: "text/plain",
+        }),
+        2_000,
+      ),
+    ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);
+    if (devicePath === nonRegularFsMock.path) expect(nonRegularFsMock.read).not.toHaveBeenCalled();
+  });
+
+  it("rejects a regular file larger than the desktop byte limit", async () => {
+    const { mkdtemp, open, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = await mkdtemp(join(tmpdir(), "parseFile-large-"));
+    const filePath = join(tmpDir, "oversized.txt");
+    const handle = await open(filePath, "w");
+
+    try {
+      await handle.truncate(64 * 1024 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
+
+    try {
+      await expect(
+        executeParseFileOnDesktop({
+          filePath,
+          filename: "oversized.txt",
+          mimeType: "text/plain",
+        }),
+      ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

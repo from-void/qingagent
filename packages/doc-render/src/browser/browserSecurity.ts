@@ -42,6 +42,11 @@ export interface BrowserRequestPolicyOptions {
    * 交互式 agent browser 默认关闭，避免改变登录、下载等完整浏览器语义。
    */
   pinHttpRequests?: boolean;
+  /**
+   * 阻断 WebSocket、EventSource 与媒体流；仅供只提取静态 DOM 的文章抓取使用。
+   * 交互式浏览器不得启用，以免破坏登录、实时交互与媒体播放。
+   */
+  blockStreamingResources?: boolean;
 }
 
 interface PinnedBrowserResponse {
@@ -154,6 +159,11 @@ async function handleBrowserRoute(
   const request = route.request();
   const requestUrl = request.url();
   try {
+    if (options.blockStreamingResources && shouldContinueInChromium(request)) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+
     const parsed = new URL(requestUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       await assertBrowserRequestAllowed(requestUrl, false);
@@ -170,7 +180,8 @@ async function handleBrowserRoute(
     const target = await validateAndPinFetchUrl(requestUrl);
     if (shouldContinueInChromium(request)) {
       // EventSource 与媒体响应依赖浏览器流式/分段语义；回填会破坏正常渲染。
-      // 此处保留“校验后 continue”，仍有 Chromium 二次 DNS 的 TOCTOU 残留窗口。
+      // 抓取模式已在上方阻断；只有未启用该模式的交互式浏览器会走到这里，
+      // 并保留“校验后 continue”产生的 Chromium 二次 DNS TOCTOU 残留窗口。
       await route.continue();
       return;
     }
@@ -182,11 +193,19 @@ async function handleBrowserRoute(
   }
 }
 
-async function handleBrowserWebSocketRoute(route: WebSocketRoute): Promise<void> {
+async function handleBrowserWebSocketRoute(
+  route: WebSocketRoute,
+  options: BrowserRequestPolicyOptions,
+): Promise<void> {
   try {
+    if (options.blockStreamingResources) {
+      await route.close({ code: 1008, reason: "Blocked by qingagent network policy" });
+      return;
+    }
     await assertBrowserRequestAllowed(route.url(), true);
-    // Playwright 的 WebSocketRoute 不能指定已校验 IP；这里能阻断当次解析出的私网目标，
-    // 但 connectToServer 仍会由 Chromium 二次解析，保留 DNS TOCTOU 残留风险。
+    // 抓取模式已在上方阻断；未启用该模式的交互式浏览器仍需连接。
+    // Playwright 的 WebSocketRoute 不能指定已校验 IP，connectToServer 会由 Chromium
+    // 二次解析，因此残留 DNS TOCTOU 窗口只存在于交互式浏览器。
     route.connectToServer();
   } catch {
     await route
@@ -265,7 +284,7 @@ export async function installBrowserRequestPolicy(
   const installation = (async () => {
     await installServiceWorkerBlock(context);
     await context.route("**/*", (route) => handleBrowserRoute(route, options));
-    await context.routeWebSocket("**/*", handleBrowserWebSocketRoute);
+    await context.routeWebSocket("**/*", (route) => handleBrowserWebSocketRoute(route, options));
   })();
   contextPolicyInstallations.set(context, installation);
   try {

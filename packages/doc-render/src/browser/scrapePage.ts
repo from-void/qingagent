@@ -158,6 +158,8 @@ export async function scrapeWithBrowserImpl(
         // Node 固定 IP 回填无法继承 Chromium 的外部代理链；代理部署继续由浏览器发请求，
         // 保留逐请求校验但仍有二次 DNS 的 TOCTOU 窗口。无代理时普通资源全部固定 IP 回填。
         pinHttpRequests: !proxyConfigured,
+        // 文章抓取只提取静态 DOM；代理部署下同样阻断无需使用的长连接与媒体流。
+        blockStreamingResources: true,
       });
       const page = await context.newPage();
       opts?.signal?.throwIfAborted();

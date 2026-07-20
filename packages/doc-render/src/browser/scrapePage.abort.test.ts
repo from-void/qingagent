@@ -35,6 +35,7 @@ vi.mock("./pool.js", () => ({
   })),
 }));
 
+import { installBrowserRequestPolicy } from "./browserSecurity.js";
 import { scrapeWithBrowserImpl } from "./scrapePage.js";
 
 describe("scrapeWithBrowserImpl 取消收尾", () => {
@@ -58,5 +59,9 @@ describe("scrapeWithBrowserImpl 取消收尾", () => {
 
     await expect(result).rejects.toBeInstanceOf(Error);
     expect(mocks.close).toHaveBeenCalled();
+    expect(installBrowserRequestPolicy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ blockStreamingResources: true }),
+    );
   });
 });

@@ -300,6 +300,32 @@ describe("toHtml 图表与图片", () => {
     expect(html).not.toContain("onclick");
   });
 
+  it.each([
+    ["utf8 参数", (svg: string) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`],
+    ["base64 参数换序", (svg: string) => `data:image/svg+xml;base64;charset=utf-8,${Buffer.from(svg, "utf8").toString("base64")}`],
+  ])("O2: %s 的 SVG data URL 可导出", (_label, makeSrc) => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><text>共享解码</text></svg>';
+    const html = toHtml(doc([{ type: "image", attrs: { blockId: "i", src: makeSrc(svg), alt: "图" } }] as never));
+
+    expect(html).toContain("<svg");
+    expect(html).toContain("共享解码");
+    expect(html).not.toContain("[图片不可用");
+  });
+
+  it("O2: SVG data URL 在 2MB 边界可导出，超过 1 字节显示占位", () => {
+    const prefix = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><text>';
+    const suffix = "</text></svg>";
+    const svgAtLimit = `${prefix}${"a".repeat(2_000_000 - prefix.length - suffix.length)}${suffix}`;
+    const src = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+
+    const atLimitHtml = toHtml(doc([{ type: "image", attrs: { blockId: "i-limit", src: src(svgAtLimit), alt: "临界图" } }] as never));
+    const overLimitHtml = toHtml(doc([{ type: "image", attrs: { blockId: "i-over", src: src(`${svgAtLimit} `), alt: "超限图" } }] as never));
+
+    expect(atLimitHtml).toContain("<svg");
+    expect(atLimitHtml).not.toContain("图过大未导出");
+    expect(overLimitHtml).toContain("图过大未导出");
+  });
+
   it("data URL png 直接内嵌", () => {
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
     const html = toHtml(doc([{ type: "image", attrs: { blockId: "i", src: `data:image/png;base64,${png}`, alt: "猫", caption: "图1" } }] as never));

@@ -12,6 +12,7 @@ import type {
 import {
   PM_THEME_HIGHLIGHT_COLOR_VALUES,
   PM_THEME_TEXT_COLOR_VALUES,
+  decodeSvgDataUrl,
   isAllowedThemeColor,
 } from "@qingagent/pm-schema";
 import { hardenInlineSvg } from "../browser/svgSanitize.js";
@@ -284,16 +285,6 @@ function diagramToHtml(source: string, svg: string | null): string {
   return `<pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
 }
 
-function decodeDataSvg(src: string): string | null {
-  const match = src.match(/^data:image\/svg\+xml(?:;charset=[^;,]+)?(;base64)?,(.*)$/i);
-  if (!match) return null;
-  try {
-    return match[1] ? Buffer.from(match[2]!, "base64").toString("utf8") : decodeURIComponent(match[2]!);
-  } catch {
-    return null;
-  }
-}
-
 function imageToHtml(opts: { src: string; alt: string; caption: string | null; align: "left" | "center" | "right" | null }): string {
   const { src, alt, caption, align } = opts;
   const alignClass = align === "left" ? " align-left" : align === "right" ? " align-right" : "";
@@ -302,7 +293,7 @@ function imageToHtml(opts: { src: string; alt: string; caption: string | null; a
   // SVG:仅从 data:image/svg+xml 或本地 .svg 取;内联前加固(data:image/svg+xml 完全可控,
   // 是主要注入面)。加固失败 → 落到下方栅格/占位回退。绝不把栅格图当文本读。
   const isSvgSrc = /^data:image\/svg\+xml/i.test(src) || /\.svg(?:[?#].*)?$/i.test(src);
-  const rawSvg = isSvgSrc ? (decodeDataSvg(src) ?? readLocalUploadText(src)) : null;
+  const rawSvg = isSvgSrc ? (decodeSvgDataUrl(src) ?? readLocalUploadText(src)) : null;
   if (rawSvg && svgExceedsExportByteLimit(rawSvg)) {
     return `<figure class="doc-image${alignClass}"><div class="doc-file-attach">[图过大未导出：${escapeHtml(alt)}]</div>${captionHtml}</figure>`;
   }

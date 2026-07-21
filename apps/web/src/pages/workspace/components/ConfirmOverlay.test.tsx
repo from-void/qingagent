@@ -232,6 +232,103 @@ describe("ConfirmOverlay", () => {
     });
   });
 
+  it("桌面原生确认同意后携带一次性 nonce 提交记忆", async () => {
+    const onDecision = vi.fn();
+    const requestGrant = vi.fn(async () => "trusted-nonce");
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: requestGrant,
+    };
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      rememberCategory: {
+        kind: "install",
+        label: "后续的安装指令都默认同意",
+      },
+    };
+    await renderOverlay(rememberSpec, onDecision);
+
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+
+    expect(requestGrant).toHaveBeenCalledWith({
+      sessionId: "test-session",
+      confirmId: rememberSpec.id,
+      kind: "install",
+      trustedGesture: false,
+    });
+    expect(onDecision).toHaveBeenCalledWith({
+      id: rememberSpec.id,
+      accepted: true,
+      remember: true,
+      uiGrantNonce: "trusted-nonce",
+    });
+  });
+
+  it("桌面原生确认取消时取消勾选并降级为本次同意", async () => {
+    const onDecision = vi.fn();
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(async () => null),
+    };
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      rememberCategory: {
+        kind: "install",
+        label: "后续的安装指令都默认同意",
+      },
+    };
+    await renderOverlay(rememberSpec, onDecision);
+    const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!;
+
+    await click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    await click(findButton("安装并继续"));
+
+    expect(checkbox.checked).toBe(false);
+    expect(onDecision).toHaveBeenCalledWith({
+      id: rememberSpec.id,
+      accepted: true,
+    });
+  });
+
+  it("等待桌面 nonce 时组件卸载仍提交普通同意", async () => {
+    const onDecision = vi.fn();
+    let resolveGrant!: (nonce: string | null) => void;
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(() => new Promise<string | null>((resolve) => {
+        resolveGrant = resolve;
+      })),
+    };
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      rememberCategory: {
+        kind: "install",
+        label: "后续的安装指令都默认同意",
+      },
+    };
+    await renderOverlay(rememberSpec, onDecision);
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+
+    await act(async () => {
+      root?.render(<div data-session="switched" />);
+    });
+    await act(async () => {
+      resolveGrant(null);
+      await Promise.resolve();
+    });
+
+    expect(onDecision).toHaveBeenCalledWith({
+      id: rememberSpec.id,
+      accepted: true,
+    });
+  });
+
   it("日志脱敏同时剥掉 secret 与 UI grant nonce", () => {
     expect(stripSecretFromDecision({
       id: "confirm-sensitive",

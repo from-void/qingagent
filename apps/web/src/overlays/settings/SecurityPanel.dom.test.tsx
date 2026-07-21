@@ -107,4 +107,42 @@ describe("SecurityPanel", () => {
     );
     expect(install.getAttribute("aria-pressed")).toBe("false");
   });
+
+  it("桌面原生确认取消时静默保留逐次确认", async () => {
+    const fetchMock = await renderPanel();
+    const requestGrant = vi.fn(async () => null);
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestSettingsRememberGrant: requestGrant,
+    };
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+
+    await click(install);
+
+    expect(requestGrant).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(install.getAttribute("aria-pressed")).toBe("true");
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("桌面原生确认调用失败时使用非术语化提示", async () => {
+    const fetchMock = await renderPanel();
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestSettingsRememberGrant: vi.fn(async () => {
+        throw new Error("desktop unavailable");
+      }),
+    };
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+
+    await click(install);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({
+      message: "桌面端确认未完成，设置未更改",
+      tone: "warn",
+    });
+  });
 });

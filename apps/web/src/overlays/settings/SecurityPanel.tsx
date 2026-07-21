@@ -46,7 +46,7 @@ export function SecurityPanel() {
     let uiGrantNonce: string | undefined;
     if (!needConfirmation && !settings?.insecureRememberAllowed) {
       const requestGrant = window.electron?.requestSettingsRememberGrant;
-      if (!requestGrant || !event.isTrusted) {
+      if (!requestGrant) {
         toast.show({ message: "仅可在桌面端通过真实操作关闭确认", tone: "warn" });
         return;
       }
@@ -56,12 +56,10 @@ export function SecurityPanel() {
           trustedGesture: event.isTrusted,
         }) ?? undefined;
       } catch {
-        uiGrantNonce = undefined;
-      }
-      if (!uiGrantNonce) {
-        toast.show({ message: "未取得桌面安全授权，设置未更改", tone: "warn" });
+        toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
         return;
       }
+      if (!uiGrantNonce) return;
     }
 
     setBusy(category.kind);

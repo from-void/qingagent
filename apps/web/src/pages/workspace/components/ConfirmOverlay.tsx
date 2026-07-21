@@ -102,8 +102,7 @@ export function ConfirmOverlay({
       decision.secretValue = secretInputRef.current?.value ?? "";
     }
     if (accepted && remember && showRemember && spec.rememberCategory) {
-      decision.remember = true;
-      if (rememberCapability && trustedGesture && sessionId) {
+      if (rememberCapability && sessionId) {
         try {
           const nonce = await rememberCapability({
             sessionId,
@@ -111,16 +110,22 @@ export function ConfirmOverlay({
             kind: spec.rememberCategory.kind,
             trustedGesture,
           });
-          if (nonce) decision.uiGrantNonce = nonce;
+          if (nonce) {
+            decision.remember = true;
+            decision.uiGrantNonce = nonce;
+          } else if (mountedRef.current) {
+            setRemember(false);
+          }
         } catch {
-          // nonce 申请失败只放弃记忆；本次同意仍由服务端照常处理。
+          if (mountedRef.current) setRemember(false);
+          // 原生确认未完成只放弃记忆；本次同意仍由服务端照常处理。
         }
+      } else if (spec.rememberCategory.insecureWithoutDesktop) {
+        decision.remember = true;
       }
     }
 
-    const finish = () => {
-      if (mountedRef.current) onDecision(decision);
-    };
+    const finish = () => onDecision(decision);
     const panel = panelRef.current;
     const inputBox = findInputBox(inputBoxRef);
     if (!panel) {

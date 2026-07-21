@@ -117,6 +117,7 @@ describe("processAgentStream tool-call-approval", () => {
 
   it("stored grant 无确认卡帧，仍从 running commandCard 进入完成态", async () => {
     const state = createSession("approval-stream-stored");
+    const audits: Array<Record<string, unknown>> = [];
     const service = new ConfirmService({
       createId: () => "stored-confirm",
       persist: async () => undefined,
@@ -126,7 +127,7 @@ describe("processAgentStream tool-call-approval", () => {
         createdAt: "2026-07-21T00:00:00.000Z",
         source: "settings",
       }),
-      appendAudit: async () => undefined,
+      appendAudit: async (event) => { audits.push(event); },
     });
     const initial = await collectWithOutcome(processAgentStream(
       events(approval("tool-stored", "mv a.txt b.txt")),
@@ -175,5 +176,12 @@ describe("processAgentStream tool-call-approval", () => {
     expect(commandPhases).toContain("running");
     expect(commandPhases).toContain("done");
     expect(state.pendingConfirms.size).toBe(0);
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "decision_finished",
+      source: "stored-grant",
+      grantId: "grant-command",
+      commandDigest: stored.pending.commandDigest,
+      result: "accepted",
+    }));
   });
 });

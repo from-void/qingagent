@@ -374,6 +374,37 @@ describe("ConfirmService", () => {
       grantId: null,
       commandDigest: "digest-expired",
     }));
+
+    const declinedState = createSession("confirm-audit-declined");
+    const declined = {
+      ...pending,
+      confirmId: "confirm-declined",
+      toolCallId: "tool-declined",
+      commandDigest: "digest-declined",
+      spec: { ...pending.spec, id: "confirm-declined" },
+      status: "pending" as const,
+    };
+    declinedState.pendingConfirms.set(declined.toolCallId, declined);
+    const declinedBegun = await service.beginDecision(declinedState, {
+      sessionId: declinedState.sessionId,
+      toolCallId: declined.toolCallId,
+      decisionId: "decision-declined",
+      decision: { id: declined.confirmId, accepted: false },
+      hasSecretValue: false,
+    });
+    await service.finishDecision(
+      declinedState,
+      declinedBegun.pending,
+      "decision-declined",
+      "rejected",
+    );
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "decision_finished",
+      decision: "rejected",
+      source: "ui",
+      grantId: null,
+      commandDigest: "digest-declined",
+    }));
   });
 
   it("审计写失败只记错，不阻断 UI 决策流", async () => {

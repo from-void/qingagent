@@ -356,6 +356,8 @@ export class ConfirmService {
     pending.decisionId = submission.decisionId;
     pending.decisionSource = "ui";
     pending.decisionAccepted = submission.decision.accepted;
+    // pending 恢复或异常重试不得把上一轮 grant 归因带入本次 UI 决策。
+    delete pending.decisionGrantId;
     try {
       await this.#persist(state, "confirm:resuming");
     } catch {

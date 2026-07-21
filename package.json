@@ -29,6 +29,7 @@
     "pm:image:check": "node scripts/pm-image-check.mjs",
     "pm:history:check": "node scripts/pm-history-check.mjs",
     "pm:commit:check": "pnpm --filter @qingagent/core test -- commitDocumentOp",
+    "db:restore-quarantine-0002": "node --import ./packages/server/node_modules/tsx/dist/loader.mjs packages/db/scripts/restore-quarantine-0002.mts",
     "pm:css:check": "node scripts/pm-css-check.mjs",
     "lint:skills": "node scripts/check-skill-scripts.mjs",
     "export:matrix": "pnpm --filter @qingagent/doc-render test -- export-format-matrix",

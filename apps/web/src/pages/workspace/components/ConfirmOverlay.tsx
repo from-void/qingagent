@@ -18,6 +18,9 @@ export interface ConfirmOverlayProps {
     decision: ConfirmDecision,
     context?: { componentMounted: false },
   ) => void;
+  submissionError?: string | null;
+  /** live 卡由 confirmResolved SSE 收口；不能等待阻塞式 decision POST 才关闭。 */
+  waitForResolution?: boolean;
 }
 
 export interface ConfirmRecord {
@@ -44,6 +47,8 @@ export function ConfirmOverlay({
   spec,
   inputBoxRef,
   onDecision,
+  submissionError = null,
+  waitForResolution = false,
 }: ConfirmOverlayProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const secretInputRef = useRef<HTMLInputElement>(null);
@@ -57,13 +62,26 @@ export function ConfirmOverlay({
   const [secretReady, setSecretReady] = useState(
     spec.widget?.type !== "secretInput",
   );
-  const [closing, setClosing] = useState(false);
+  const [pendingState, setPendingState] = useState<
+    { phase: "confirming" | "submitting"; accepted: boolean } | null
+  >(null);
   const [remember, setRemember] = useState(false);
   const rememberCapability = window.electron?.requestConfirmRememberGrant;
   const showRemember = Boolean(
     sessionId && spec.rememberCategory
       && (rememberCapability || spec.rememberCategory.insecureWithoutDesktop),
   );
+  const busy = pendingState !== null;
+  const statusText = pendingState?.phase === "confirming"
+    ? "正在确认…"
+    : pendingState?.accepted === false
+      ? "正在取消…"
+      : "正在执行…";
+  const footHint = spec.commandPreview
+    ? showRemember && spec.rememberCategory
+      ? "不勾选上方选项时，本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭"
+      : "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭"
+    : spec.footHint;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -92,10 +110,23 @@ export function ConfirmOverlay({
     magicMoveFromRect(panel, inputBox?.getBoundingClientRect() ?? null);
   }, [inputBoxRef]);
 
+  useEffect(() => {
+    if (!submissionError) return;
+    closingRef.current = false;
+    setPendingState(null);
+  }, [submissionError]);
+
   const decide = async (accepted: boolean, trustedGesture = false) => {
     if (closingRef.current) return;
     closingRef.current = true;
-    setClosing(true);
+    const needsNativeRememberConfirm = Boolean(
+      accepted && remember && showRemember && spec.rememberCategory
+        && rememberCapability && sessionId,
+    );
+    setPendingState({
+      phase: needsNativeRememberConfirm ? "confirming" : "submitting",
+      accepted,
+    });
 
     const decision: ConfirmDecision = { id: spec.id, accepted };
     if (accepted && spec.widget?.type === "options" && selectedOption) {
@@ -128,10 +159,18 @@ export function ConfirmOverlay({
       }
     }
 
+    if (mountedRef.current) {
+      setPendingState({ phase: "submitting", accepted });
+    }
+
     const finish = () => {
       if (mountedRef.current) onDecision(decision);
       else onDecision(decision, { componentMounted: false });
     };
+    if (waitForResolution) {
+      finish();
+      return;
+    }
     const panel = panelRef.current;
     const inputBox = findInputBox(inputBoxRef);
     if (!panel) {
@@ -149,14 +188,14 @@ export function ConfirmOverlay({
       className="cf-overlay"
       data-wf="ConfirmOverlay"
       data-kind={spec.kind}
-      data-closing={closing ? "true" : "false"}
+      data-busy={busy ? "true" : "false"}
       role="dialog"
       tabIndex={-1}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={sayId}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !busy) {
           event.preventDefault();
           void decide(false);
         }
@@ -172,6 +211,7 @@ export function ConfirmOverlay({
           type="button"
           className="cf-close"
           aria-label="关闭"
+          disabled={busy}
           onClick={() => void decide(false)}
         >
           ×
@@ -179,6 +219,16 @@ export function ConfirmOverlay({
       </div>
 
       <div className="cf-body">
+        {busy ? (
+          <p className="cf-progress" role="status" aria-live="polite">
+            <span className="cf-spinner" aria-hidden="true" />
+            {statusText}
+          </p>
+        ) : submissionError ? (
+          <p className="cf-progress is-error" role="alert">
+            {submissionError}
+          </p>
+        ) : null}
         <p className="cf-say" id={sayId}>
           {spec.say}
         </p>
@@ -204,6 +254,7 @@ export function ConfirmOverlay({
                     name={`confirm-option-${spec.id}`}
                     value={option.value}
                     checked={checked}
+                    disabled={busy}
                     onChange={() => setSelectedOption(option.value)}
                   />
                   <span className="cf-option-title">{option.label}</span>
@@ -232,6 +283,7 @@ export function ConfirmOverlay({
             autoComplete="off"
             placeholder={spec.widget.placeholder}
             aria-label={spec.widget.placeholder}
+            disabled={busy}
             onInput={(event) =>
               setSecretReady(event.currentTarget.value.trim().length > 0)
             }
@@ -243,6 +295,7 @@ export function ConfirmOverlay({
             <input
               type="checkbox"
               checked={remember}
+              disabled={busy}
               onChange={(event) => setRemember(event.currentTarget.checked)}
             />
             <span className="cf-remember-box" aria-hidden="true">
@@ -259,11 +312,12 @@ export function ConfirmOverlay({
       </div>
 
       <div className="cf-foot">
-        <span className="cf-foot-hint">{spec.footHint}</span>
+        <span className="cf-foot-hint">{footHint}</span>
         <div className="cf-actions">
           <button
             type="button"
             className="cf-button cf-secondary"
+            disabled={busy}
             onClick={() => void decide(false)}
           >
             {spec.secondaryLabel}
@@ -271,10 +325,12 @@ export function ConfirmOverlay({
           <button
             type="button"
             className="cf-button cf-primary"
-            disabled={!secretReady}
+            disabled={busy || !secretReady}
+            aria-busy={busy}
             onClick={(event) => void decide(true, event.isTrusted)}
           >
-            {spec.primaryLabel}
+            {busy && <span className="cf-button-spinner" aria-hidden="true" />}
+            {busy ? statusText : spec.primaryLabel}
           </button>
         </div>
       </div>

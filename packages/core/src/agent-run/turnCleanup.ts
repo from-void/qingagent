@@ -11,11 +11,8 @@ import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { USER_ABORT_REASON } from "./streamErrors.js";
-<<<<<<< HEAD
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
-=======
 import { alignCommandCardWithStatus } from "./toolCards.js";
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
 
 const logger = mastra.getLogger();
 

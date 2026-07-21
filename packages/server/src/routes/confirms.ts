@@ -1,12 +1,20 @@
 import { Hono, type Context } from "hono";
-import type { BridgeFrame, SubmitConfirmDecision } from "@qingagent/contract-ts";
-import { submitConfirmDecisionSchema } from "@qingagent/contract-ts/schemas";
+import type {
+  BridgeFrame,
+  CancelConfirmedCommand,
+  SubmitConfirmDecision,
+} from "@qingagent/contract-ts";
+import {
+  cancelConfirmedCommandSchema,
+  submitConfirmDecisionSchema,
+} from "@qingagent/contract-ts/schemas";
 import {
   ConfirmDecisionError,
   confirmService,
   type ConfirmService,
   type SafeSubmitConfirmDecision,
 } from "@qingagent/core/confirm";
+import { cancelConfirmedCommand } from "@qingagent/core";
 import {
   getOrRestoreSession,
   sessionManager,
@@ -14,7 +22,11 @@ import {
 import { handleConfirmDecision } from "../gateway/confirmRuntime";
 import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
-import { createConfirmGrant, type ConfirmGrant } from "@qingagent/db";
+import {
+  createConfirmGrantWithResult,
+  type ConfirmGrant,
+  type ConfirmGrantCreation,
+} from "@qingagent/db";
 import {
   consumeConfirmUiGrant,
   insecureRememberAllowed,
@@ -106,7 +118,8 @@ interface ConfirmRoutesDependencies {
   createGrant?: (input: {
     kind: "install" | "command";
     source: "card";
-  }) => Promise<ConfirmGrant>;
+  }) => Promise<ConfirmGrantCreation | ConfirmGrant>;
+  cancelCommand?: typeof cancelConfirmedCommand;
 }
 
 export function createConfirmRoutes(
@@ -121,7 +134,32 @@ export function createConfirmRoutes(
   const consumeUiGrant = dependencies.consumeUiGrant ?? consumeConfirmUiGrant;
   const allowInsecureRemember = dependencies.insecureRememberAllowed
     ?? insecureRememberAllowed;
-  const createGrant = dependencies.createGrant ?? createConfirmGrant;
+  const createGrant = dependencies.createGrant ?? createConfirmGrantWithResult;
+  const cancelCommand = dependencies.cancelCommand ?? cancelConfirmedCommand;
+
+  routes.post("/confirms/cancel", async (c) => {
+    const originError = requireTrustedOrigin(c);
+    if (originError) return originError;
+
+    let parsed: CancelConfirmedCommand;
+    try {
+      const raw = await readBoundedJson(c);
+      const result = cancelConfirmedCommandSchema.safeParse(raw);
+      if (!result.success) {
+        return c.json({ error: "停止请求无效" }, 400);
+      }
+      parsed = result.data;
+    } catch {
+      return c.json({ error: "停止请求无效" }, 400);
+    }
+
+    const session = await getSession(parsed.sessionId);
+    if (!session) return c.json({ error: "没有找到正在执行的命令" }, 404);
+    if (!cancelCommand(session, parsed.toolCallId)) {
+      return c.json({ error: "这条命令已经结束或尚未开始" }, 409);
+    }
+    return c.json({ accepted: true }, 202);
+  });
 
   routes.post("/confirms/decision", async (c) => {
   const originError = requireTrustedOrigin(c);
@@ -145,6 +183,7 @@ export function createConfirmRoutes(
   const pending = session.pendingConfirms.get(parsed.toolCallId);
   const rememberRequested = parsed.decision.accepted && parsed.decision.remember === true;
   let rememberAuthorized = false;
+  let rememberCreated = false;
   if (rememberRequested && pending?.confirmId !== parsed.decision.id) {
     const relatedPending = pending
       ?? Array.from(session.pendingConfirms.values()).find(
@@ -219,12 +258,19 @@ export function createConfirmRoutes(
             onAccepted: async (current) => {
               if (current.spec.kind !== "install" && current.spec.kind !== "command") return null;
               if (current.spec.rememberCategory?.kind !== current.spec.kind) return null;
-              return createGrant({ kind: current.spec.kind, source: "card" });
+              const creation = await createGrant({ kind: current.spec.kind, source: "card" });
+              if ("grant" in creation) {
+                rememberCreated = creation.created;
+                return creation.grant;
+              }
+              // 兼容注入旧式 createGrant 的调用方；该接口每次调用都表示新建成功。
+              rememberCreated = true;
+              return creation;
             },
           }
         : {}),
     }));
-    return c.json({ accepted: true, remembered: rememberRequested && rememberAuthorized });
+    return c.json({ accepted: true, remembered: rememberCreated });
   } catch (error) {
     service.discardSecret(session, parsed.decision.id);
     if (error instanceof SessionActorQueueFullError) {

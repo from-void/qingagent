@@ -237,15 +237,9 @@ describe("confirm runtime", () => {
     }));
   });
 
-<<<<<<< HEAD
   it("过期 decline 永不 resolve 时，停止可中止局部 controller，后续 send/cancel 不被 Actor 永久堵塞", async () => {
     const expiredSpec: ConfirmSpec = {
       id: "confirm-expiry-hang",
-=======
-  it("过期 decline 永不结束时在硬时限内 fail-closed 收口并标记可重试", async () => {
-    const expiredSpec: ConfirmSpec = {
-      id: "confirm-expired-hung-decline",
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
       kind: "command",
       title: "执行命令",
       say: "将执行一条命令",
@@ -254,7 +248,6 @@ describe("confirm runtime", () => {
       secondaryLabel: "取消",
     };
     const { state, toolCallId } = setupPending(expiredSpec);
-<<<<<<< HEAD
     state.pendingConfirms.get(toolCallId)!.expiresAt =
       new Date(Date.now() - 1).toISOString();
     const service = new ConfirmService({ persist: async () => undefined });
@@ -338,9 +331,6 @@ describe("confirm runtime", () => {
     const { state, toolCallId } = setupPending(expiredSpec);
     state.pendingConfirms.get(toolCallId)!.expiresAt =
       new Date(Date.now() - 1).toISOString();
-=======
-    state.pendingConfirms.get(toolCallId)!.expiresAt = new Date(Date.now() - 1).toISOString();
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
     const service = new ConfirmService({ persist: async () => undefined });
     let declineSignal: AbortSignal | undefined;
     const agent = {
@@ -348,7 +338,6 @@ describe("confirm runtime", () => {
       declineToolCall: vi.fn(async (options: { abortSignal?: AbortSignal }) => {
         declineSignal = options.abortSignal;
         return {
-<<<<<<< HEAD
           fullStream: {
             [Symbol.asyncIterator]() {
               return {
@@ -357,24 +346,15 @@ describe("confirm runtime", () => {
               };
             },
           },
-=======
-          fullStream: (async function* () {
-            await new Promise<void>(() => undefined);
-          })(),
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
         };
       }),
     };
 
-<<<<<<< HEAD
     const startedAt = Date.now();
-=======
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
     const frames = await collect(handleConfirmExpiry(state.sessionId, toolCallId, {
       service,
       agent: agent as never,
       getSession: async () => state,
-<<<<<<< HEAD
       expiryTimeoutMs: 25,
     }));
 
@@ -688,12 +668,42 @@ describe("confirm runtime", () => {
       status: "failed",
     }]);
     expect(state._activeTurnPromise).toBeNull();
-=======
+  });
+
+  it("过期 decline 永不结束时在硬时限内 fail-closed 收口并标记可重试", async () => {
+    const expiredSpec: ConfirmSpec = {
+      id: "confirm-expired-hung-decline",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(expiredSpec);
+    state.pendingConfirms.get(toolCallId)!.expiresAt =
+      new Date(Date.now() - 1).toISOString();
+    const service = new ConfirmService({ persist: async () => undefined });
+    let declineSignal: AbortSignal | undefined;
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn((options: { abortSignal?: AbortSignal }) => {
+        declineSignal = options.abortSignal;
+        return new Promise<never>(() => undefined);
+      }),
+    };
+
+    const frames = await collect(handleConfirmExpiry(state.sessionId, toolCallId, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
       declineTimeoutMs: 5,
     }));
 
     expect(declineSignal?.aborted).toBe(true);
     expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
     expect(frames).toContainEqual(expect.objectContaining({
       kind: "toolCallUpdated",
       data: expect.objectContaining({
@@ -713,7 +723,6 @@ describe("confirm runtime", () => {
         message: expect.stringContaining("清理未完成"),
       }),
     }));
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   });
 
   it("重复 decisionId 幂等且不二次执行，冲突 decisionId fail-closed", async () => {

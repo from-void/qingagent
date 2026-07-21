@@ -77,10 +77,8 @@ function createToolHarness(
     state?: SessionState;
     workspaceStatus?: "pending" | "initializing" | "ready" | "paused" | "error" | "destroying" | "destroyed";
     sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
-<<<<<<< HEAD
     runningProcesses?: number;
     simulateBackgroundTimeout?: boolean;
-=======
     commandResult?: {
       success: boolean;
       exitCode: number;
@@ -90,16 +88,12 @@ function createToolHarness(
       timedOut?: boolean;
       killed?: boolean;
     };
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
-<<<<<<< HEAD
   let spawnedRunning = 0;
-=======
   const mockedCommandResult = options.commandResult;
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   const workspace = {
     ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
     sandbox: {

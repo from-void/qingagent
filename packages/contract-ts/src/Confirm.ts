@@ -56,6 +56,11 @@ export interface SubmitConfirmDecision {
   decision: ConfirmDecision;
 }
 
+export interface CancelConfirmedCommand {
+  sessionId: string;
+  toolCallId: string;
+}
+
 export interface ConfirmRequested {
   toolCallId: string;
   spec: ConfirmSpec;

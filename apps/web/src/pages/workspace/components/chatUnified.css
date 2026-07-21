@@ -166,6 +166,18 @@
 
 /* 命令卡 body:代码块 + 输出块,各自限高,溢出滚动 */
 .u-scope .u-card-bd--cmd { display: flex; flex-direction: column; gap: 6px; }
+.u-scope .u-command-actions { display: flex; justify-content: flex-end; padding-top: 2px; }
+.u-scope .u-command-stop {
+  padding: 4px 9px;
+  border: var(--u-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--u-ink-soft);
+  font: 600 11px/1.4 var(--font-zh-serif);
+  cursor: pointer;
+}
+.u-scope .u-command-stop:hover:not(:disabled) { border-color: var(--u-ink-faint); color: var(--u-ink); }
+.u-scope .u-command-stop:disabled { cursor: not-allowed; opacity: 0.55; }
 .u-scope .u-scrollbox { position: relative; --u-sb-edge: rgba(0, 0, 0, 0.55); }
 .u-scope .u-scrollbox--output { --u-sb-edge: rgba(0, 0, 0, 0.3); }
 .u-scope .u-scrollbox-pre {

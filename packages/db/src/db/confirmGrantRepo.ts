@@ -26,6 +26,11 @@ export interface ConfirmGrant {
   source: ConfirmGrantSource;
 }
 
+export interface ConfirmGrantCreation {
+  grant: ConfirmGrant;
+  created: boolean;
+}
+
 export interface ConfirmAuditEvent {
   eventId: string;
   ts: string;
@@ -126,6 +131,20 @@ export async function createConfirmGrant(input: {
   now?: string;
   subjectId?: string;
 }): Promise<ConfirmGrant> {
+  return (await createConfirmGrantWithResult(input)).grant;
+}
+
+/**
+ * 原子地确保某类 grant 存在，并告诉调用方本次是否真的完成了首次创建。
+ * UI 只可在 created=true 时提示“已记住”，不能把命中既有记录误报为新设置。
+ */
+export async function createConfirmGrantWithResult(input: {
+  kind: ConfirmGrantKind;
+  source: ConfirmGrantSource;
+  grantId?: string;
+  now?: string;
+  subjectId?: string;
+}): Promise<ConfirmGrantCreation> {
   await ensureMigrated();
   return withTransaction(async (client) => {
     const existing = await client.execute({
@@ -133,7 +152,12 @@ export async function createConfirmGrant(input: {
       args: [input.kind],
     });
     const row = existing.rows[0] as Record<string, unknown> | undefined;
-    if (row) return commitTransaction(mapGrant(row));
+    if (row) {
+      return commitTransaction<ConfirmGrantCreation>({
+        grant: mapGrant(row),
+        created: false,
+      });
+    }
 
     const grant: ConfirmGrant = {
       grantId: input.grantId ?? randomUUID(),
@@ -158,7 +182,7 @@ export async function createConfirmGrant(input: {
         input.subjectId ?? "local-user",
       ],
     });
-    return commitTransaction(grant);
+    return commitTransaction<ConfirmGrantCreation>({ grant, created: true });
   });
 }
 

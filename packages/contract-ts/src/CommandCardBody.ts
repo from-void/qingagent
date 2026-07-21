@@ -13,4 +13,6 @@ export type CommandCardBody = {
   outputTail: string;
   /** running=执行中;done=成功;failed=非零退出。 */
   phase: "running" | "done" | "failed";
+  /** 仅确认恢复链路的运行中命令允许按 toolCallId 定向停止。 */
+  cancellable?: boolean;
 };

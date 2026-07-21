@@ -2550,7 +2550,11 @@ export function useWorkspacePageController() {
     [showToast],
   );
 
-  const { handleCancelActiveStream, handleSubmitChat } =
+  const {
+    handleCancelActiveStream,
+    handleCancelConfirmedCommand,
+    handleSubmitChat,
+  } =
     useWorkspaceChatActions({
       dim,
       askUserInputDisabled,
@@ -2886,6 +2890,7 @@ export function useWorkspacePageController() {
     chatInputSendEnabledWhenDisabled,
     handleSubmitChat,
     handleCancelActiveStream,
+    handleCancelConfirmedCommand,
     setPreviewSource,
     handleRemoveMaterial,
     folderSource,

@@ -114,7 +114,7 @@ export function buildCommandConfirmSpec(
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     ...(rememberCategory ? { rememberCategory } : {}),
-    footHint: "仅对本次调用生效 · 10 分钟后自动失效",
+    footHint: "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
     primaryLabel,
     secondaryLabel: "取消",
   });

@@ -34,14 +34,6 @@
   visibility: hidden;
 }
 
-#view-workspace .cf-overlay > * {
-  transition: opacity 0.16s ease;
-}
-
-#view-workspace .cf-overlay[data-closing="true"] > * {
-  opacity: 0;
-}
-
 #view-workspace .cf-head {
   display: flex;
   align-items: center;
@@ -144,6 +136,43 @@
   font-size: 13px;
   font-weight: 400;
   line-height: 1.65;
+}
+
+#view-workspace .cf-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#view-workspace .cf-progress.is-error {
+  color: var(--ws-red-lite);
+}
+
+#view-workspace .cf-spinner,
+#view-workspace .cf-button-spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 1px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: cf-spin 0.7s linear infinite;
+}
+
+#view-workspace .cf-button-spinner {
+  width: 11px;
+  height: 11px;
+}
+
+#view-workspace .cf-overlay[data-busy="true"] .cf-body > :not(.cf-progress) {
+  opacity: 0.58;
 }
 
 #view-workspace .cf-command-preview {
@@ -349,6 +378,10 @@
 }
 
 #view-workspace .cf-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   padding: 6px 15px;
   border-radius: 0;
   font: 600 12px/1.4 var(--font-zh-serif);
@@ -431,6 +464,12 @@
   }
 }
 
+@keyframes cf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes cf-record-in {
   from {
     opacity: 0;
@@ -456,6 +495,8 @@
 @media (prefers-reduced-motion: reduce) {
   #view-workspace .cf-overlay > *,
   #view-workspace .cf-dot,
+  #view-workspace .cf-spinner,
+  #view-workspace .cf-button-spinner,
   #view-workspace .cf-record {
     animation: none;
     transition-duration: 0.01ms;

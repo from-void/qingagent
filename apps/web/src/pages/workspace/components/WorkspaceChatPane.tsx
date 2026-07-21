@@ -33,6 +33,7 @@ export function WorkspaceChatPane({
     chatInputSendEnabledWhenDisabled,
     handleSubmitChat,
     handleCancelActiveStream,
+    handleCancelConfirmedCommand,
     setPreviewSource,
     handleRemoveMaterial,
     showToast,
@@ -48,7 +49,13 @@ export function WorkspaceChatPane({
     handleCancelAskUser,
     handleSubmitAskUserAnswers,
   } = controller;
-  const { confirmRecord, handleConfirmDecision, inlineConfirm, confirmAttempt } = useConfirmCard({
+  const {
+    confirmRecord,
+    handleConfirmDecision,
+    inlineConfirm,
+    decisionError,
+    isLiveConfirm,
+  } = useConfirmCard({
     debugMode,
     blocked: inputHandedOff || Boolean(inlineAsk),
     sessionId: state.sessionId,
@@ -73,6 +80,7 @@ export function WorkspaceChatPane({
         wholeDocReviewKeys={wholeDocReviewKeysRef.current}
         scrollRef={chatScrollRef}
         debugMode={debugMode}
+        onStopCommand={handleCancelConfirmedCommand}
       />
       <div className="ws-input-wrap">
         {confirmRecord && !inlineConfirm && (
@@ -124,11 +132,13 @@ export function WorkspaceChatPane({
         )}
         {inlineConfirm && (
           <ConfirmOverlay
-            key={`${inlineConfirm.id}:${confirmAttempt}`}
+            key={inlineConfirm.id}
             sessionId={state.sessionId}
             spec={inlineConfirm}
             inputBoxRef={inputMorphRef}
             onDecision={handleConfirmDecision}
+            submissionError={decisionError}
+            waitForResolution={isLiveConfirm}
           />
         )}
       </div>

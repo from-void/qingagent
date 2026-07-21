@@ -151,6 +151,8 @@ export interface SessionState {
   _lastEmittedWireKind: string | null;
   /** Runtime-only abort controller for the active agent turn. Not persisted. */
   _abortController: AbortController | null;
+  /** Runtime-only:当前通过确认恢复且可由命令卡定向停止的 toolCallId。 */
+  _activeConfirmedToolCallId: string | null;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
   _activeTurnPromise: Promise<void> | null;
   /** Runtime-only：当前 agent 尝试产生写入时使用的 owner。 */
@@ -336,6 +338,7 @@ export function createSession(
     previousDocState: null,
     _lastEmittedWireKind: null,
     _abortController: null,
+    _activeConfirmedToolCallId: null,
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,

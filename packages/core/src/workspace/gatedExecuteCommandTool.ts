@@ -291,13 +291,16 @@ export function createGatedExecuteCommandTool({
       const toolCallId = context?.agent?.toolCallId;
 
       if (input.background) {
-<<<<<<< HEAD
-        if (!sandbox.processes) return "命令已被拒绝: 当前沙箱不支持后台进程";
+        if (!sandbox.processes) {
+          return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持后台进程");
+        }
         return await withBackgroundSpawnLock(sessionId, async () => {
           const processes = await sandbox.processes!.list();
           const runningCount = processes.filter((process) => process.running).length;
           if (runningCount >= SANDBOX_MAX_BACKGROUND_PROCESSES) {
-            return `命令已被拒绝: 当前会话后台进程已达上限 ${SANDBOX_MAX_BACKGROUND_PROCESSES}`;
+            return rejectedCommandResult(
+              `命令已被拒绝: 当前会话后台进程已达上限 ${SANDBOX_MAX_BACKGROUND_PROCESSES}`,
+            );
           }
           // 当前 Mastra SpawnProcessOptions 只暴露 timeout/output/abort/env/cwd，
           // LocalSandbox/bwrap 没有 per-process cgroup 或 RLIMIT hook；非特权桌面进程也
@@ -311,35 +314,19 @@ export function createGatedExecuteCommandTool({
             abortSignal: context?.abortSignal,
           });
           const clampedLabel = backgroundTimeoutClamped ? "，已按后台上限钳制" : "";
-          return `Started background process (PID: ${handle.pid}; 最长运行: ${
-            formatCommandDuration(backgroundTimeout)
-          }${clampedLabel})`;
+          return commandResult({
+            success: true,
+            exitCode: 0,
+            output: `Started background process (PID: ${handle.pid}; 最长运行: ${
+              formatCommandDuration(backgroundTimeout)
+            }${clampedLabel})`,
+          });
         });
-=======
-        if (!sandbox.processes) {
-          return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持后台进程");
-        }
-        const handle = await sandbox.processes.spawn(input.command, {
-          cwd,
-          ...perCallCredentialEnv,
-          timeout: explicitTimeout,
-          maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-          abortSignal: context?.abortSignal,
-        });
-        return commandResult({
-          success: true,
-          exitCode: 0,
-          output: `Started background process (PID: ${handle.pid})`,
-        });
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
       }
 
       if (!sandbox.executeCommand) {
         return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持命令执行");
       }
-      const stopHeartbeat = startToolHeartbeat(context, {
-        tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
-      });
       const startedAt = Date.now();
       try {
         const result = await sandbox.executeCommand(input.command, [], {
@@ -407,8 +394,6 @@ export function createGatedExecuteCommandTool({
               ? `命令已取消: ${reason}`
               : `Error: ${reason}`,
         });
-      } finally {
-        stopHeartbeat();
       }
       } finally {
         stopHeartbeat();

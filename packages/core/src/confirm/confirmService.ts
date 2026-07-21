@@ -250,28 +250,6 @@ export class ConfirmService {
       await this.#rollbackStoredGrantDecision(state, pending);
       throw error;
     }
-<<<<<<< HEAD
-    if (!currentGrant || currentGrant.grantId !== grant.grantId) {
-      await this.#rollbackStoredGrantDecision(state, pending);
-      throw new ConfirmDecisionError("conflict", "存量确认已撤销");
-    }
-    issueApprovalProof(state, {
-      sessionId: state.sessionId,
-      runId: pending.runId,
-      toolCallId: pending.toolCallId,
-      commandDigest: pending.commandDigest,
-      expiresAt: Math.min(pendingExpiresAt, this.#now() + 60_000),
-    });
-    await this.#safeAppendAudit(state, pending, {
-      eventType: "decision_started",
-      decision: "accepted",
-      source: "stored-grant",
-      grantId: grant.grantId,
-      result: "stored-grant-approved",
-    });
-    return decisionId;
-=======
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   }
 
   #resetStoredGrantDecision(pending: PendingConfirm): void {

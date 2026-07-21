@@ -568,22 +568,37 @@ function ScrollBox({ lines, variant, children }: {
 export function UCommand({
   body,
   status,
+  toolCallId,
+  onStop,
 }: {
   body: CommandCardBody;
-  status?: ToolCallSpec["status"]["kind"];
+  status?: ToolCallSpec["status"];
+  toolCallId?: string;
+  onStop?: (toolCallId: string) => Promise<void>;
 }) {
+  const [stopping, setStopping] = useState(false);
+  const statusKind = status?.kind;
   // status 是单一权威；body.phase 只兼容尚未带终态 status 的旧帧。
-  const phase = status === "failed"
+  const phase = statusKind === "failed"
     ? "failed"
-    : status === "done"
+    : statusKind === "done"
       ? "done"
-      : status === "pending" || status === "running"
+      : statusKind === "pending" || statusKind === "running"
         ? "running"
         : body.phase;
   const done = phase === "done";
   const failed = phase === "failed";
   const running = phase === "running";
-  const meta = done ? "已完成" : failed ? "未完成" : "处理中";
+  const queued = statusKind === "pending";
+  const stoppedWithUnknownResult =
+    status?.kind === "failed" && status.data.reason.includes("已中止");
+  const meta = done
+    ? "已完成"
+    : failed
+      ? stoppedWithUnknownResult ? "已中止 / 结果可能未知" : "未完成"
+      : queued
+        ? "已确认，排队执行"
+        : "处理中";
   const expandable = Boolean(body.command || body.outputTail);
   return (
     <UCard icon={ICO.cmd} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
@@ -594,6 +609,23 @@ export function UCommand({
           )}
           {body.outputTail && (
             <ScrollBox lines={3} variant="output">{body.outputTail}{body.exitCode !== 0 ? `\n(退出码 ${body.exitCode})` : ""}</ScrollBox>
+          )}
+          {statusKind === "running" && body.cancellable === true && onStop && toolCallId && (
+            <div className="u-command-actions">
+              <button
+                type="button"
+                className="u-command-stop"
+                disabled={stopping}
+                onClick={() => {
+                  setStopping(true);
+                  void onStop(toolCallId)
+                    .catch(() => undefined)
+                    .finally(() => setStopping(false));
+                }}
+              >
+                {stopping ? "正在停止…" : "停止此命令"}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -652,16 +684,27 @@ export function UnifiedToolCall({
   spec,
   skillLabels = EMPTY_SKILL_LABELS,
   materialLabels = EMPTY_MATERIAL_LABELS,
+  onStopCommand,
 }: {
   spec: ToolCallSpec;
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
+  onStopCommand?: (toolCallId: string) => Promise<void>;
 }) {
   const b = spec.body;
   if (b.kind === "researchCard") return <UResearch body={b.data} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
-  if (b.kind === "commandCard") return <UCommand body={b.data} status={spec.status.kind} />;
+  if (b.kind === "commandCard") {
+    return (
+      <UCommand
+        body={b.data}
+        status={spec.status}
+        toolCallId={spec.id}
+        onStop={onStopCommand}
+      />
+    );
+  }
   // generic / 旧死 body.kind / askUser overlay → 统一一行
   return <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
 }

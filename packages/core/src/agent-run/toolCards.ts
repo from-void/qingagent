@@ -19,6 +19,7 @@ import {
   redactedSerializedText,
 } from "./redaction.js";
 import type { SessionState } from "../session/sessionState.js";
+import type { PendingConfirm } from "../session/sessionState.js";
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
 
 function commandPolicyBlockFromOutput(output: string): { title: string; icon: string; reason: string } | null {
@@ -40,6 +41,39 @@ export function commandCardStatusFromCard(card: CommandCardBody): ToolCallStatus
       retriable: false,
       reason: card.outputTail || "命令未执行",
     },
+  };
+}
+
+/** 确认通过后的命令卡占位；只含 ConfirmSpec 已脱敏的预览。 */
+export function confirmedCommandCardSpec(
+  pending: PendingConfirm,
+  status: "pending" | "running",
+): ToolCallSpec {
+  return {
+    id: pending.toolCallId,
+    name: pending.toolName,
+    render: { kind: "chatInline" },
+    status: status === "pending"
+      ? { kind: "pending" }
+      : { kind: "running", data: { progressPct: null, etaSec: null } },
+    body: {
+      kind: "commandCard",
+      data: {
+        title: pending.spec.title,
+        icon:
+          pending.spec.kind === "install"
+            ? "📦"
+            : pending.spec.kind === "send"
+              ? "📤"
+              : "⚙️",
+        command: pending.spec.commandPreview ?? "",
+        exitCode: 0,
+        outputTail: "",
+        phase: "running",
+        cancellable: true,
+      },
+    },
+    result: null,
   };
 }
 

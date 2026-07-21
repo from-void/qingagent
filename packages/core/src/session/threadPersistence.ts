@@ -1978,6 +1978,7 @@ export async function loadSessionFromThread(
     previousDocState: null,
     _lastEmittedWireKind: null,
     _abortController: null,
+    _activeConfirmedToolCallId: null,
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  CancelConfirmedCommand,
   ConfirmDecision,
   ConfirmKind,
   ConfirmOption,
@@ -147,6 +148,14 @@ export const submitConfirmDecisionSchema = z.object({
 }).strict() satisfies z.ZodType<SubmitConfirmDecision>;
 type _SubmitConfirmDecisionExact = Expect<
   Equal<z.infer<typeof submitConfirmDecisionSchema>, SubmitConfirmDecision>
+>;
+
+export const cancelConfirmedCommandSchema = z.object({
+  sessionId: boundedNonEmptyString(ID_MAX),
+  toolCallId: boundedNonEmptyString(ID_MAX),
+}).strict() satisfies z.ZodType<CancelConfirmedCommand>;
+type _CancelConfirmedCommandExact = Expect<
+  Equal<z.infer<typeof cancelConfirmedCommandSchema>, CancelConfirmedCommand>
 >;
 
 export const confirmRequestedSchema = z.object({

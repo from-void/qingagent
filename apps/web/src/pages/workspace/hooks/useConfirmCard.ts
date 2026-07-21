@@ -9,6 +9,7 @@ import type {
   ConfirmRecord,
 } from "../components/ConfirmOverlay";
 import type { ServerStream } from "../data/serverStream";
+import { useToast } from "../../../system";
 
 interface ConfirmDemo {
   spec: ConfirmSpec;
@@ -128,10 +129,11 @@ export function useConfirmCard({
   sessionId?: string | null;
   stream?: ServerStream | null;
 }) {
+  const toast = useToast();
   const [demoConfirm, setDemoConfirm] = useState<ConfirmSpec | null>(null);
   const [pendingConfirms, setPendingConfirms] = useState<ConfirmRequested[]>([]);
   const [confirmRecord, setConfirmRecord] = useState<ConfirmRecord | null>(null);
-  const [confirmAttempt, setConfirmAttempt] = useState(0);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   const nextDemoIndexRef = useRef(0);
   const sessionIdRef = useRef(sessionId);
   const submittingRef = useRef(new Set<string>());
@@ -142,6 +144,7 @@ export function useConfirmCard({
     setDemoConfirm(null);
     setPendingConfirms([]);
     setConfirmRecord(null);
+    setDecisionError(null);
     nextDemoIndexRef.current = 0;
   }, [sessionId]);
 
@@ -177,9 +180,11 @@ export function useConfirmCard({
     return stream.subscribe((frame) => {
       if (frame.kind === "restoreReset") {
         setPendingConfirms([]);
+        setDecisionError(null);
         return;
       }
       if (frame.kind === "confirmRequested") {
+        setDecisionError(null);
         setPendingConfirms((current) => {
           const withoutSame = current.filter(
             (item) => item.toolCallId !== frame.data.toolCallId,
@@ -194,14 +199,22 @@ export function useConfirmCard({
       }
       if (frame.kind === "confirmResolved") {
         submittingRef.current.delete(frame.data.id);
+        setDecisionError(null);
         setPendingConfirms((current) => current.filter(
           (item) =>
             item.spec.id !== frame.data.id &&
             item.toolCallId !== frame.data.toolCallId,
         ));
+        if (frame.data.message) {
+          toast.show({
+            message: frame.data.message,
+            tone: frame.data.resolution === "accepted" ? "info" : "warn",
+            dedupeKey: `confirm-resolved:${frame.data.id}`,
+          });
+        }
       }
     });
-  }, [stream]);
+  }, [stream, toast]);
 
   const liveConfirm = pendingConfirms[0] ?? null;
   const inlineConfirm = liveConfirm?.spec ?? demoConfirm;
@@ -229,6 +242,7 @@ export function useConfirmCard({
     if (liveConfirm && stream && sessionId) {
       if (submittingRef.current.has(decision.id)) return;
       submittingRef.current.add(decision.id);
+      setDecisionError(null);
       const submission: SubmitConfirmDecision = {
         sessionId,
         toolCallId: liveConfirm.toolCallId,
@@ -240,16 +254,30 @@ export function useConfirmCard({
         activeBindingRef.current.generation === componentGeneration &&
         activeBindingRef.current.sessionId === sessionId &&
         activeBindingRef.current.confirmId === liveConfirm.spec.id;
-      try {
-        await stream.resolveConfirm(submission, {
-          activateSession: isCurrentBinding(),
-        });
+      void stream.resolveConfirm(submission, {
+        activateSession: isCurrentBinding(),
+      }).then((result) => {
+        if (result.remembered) {
+          const message = liveConfirm.spec.kind === "install"
+            ? "已记住：以后安装时不再询问。可在 设置 → 安全 中恢复每次询问。"
+            : "已记住：以后遇到同类操作不再询问。可在 设置 → 安全 中恢复每次询问。";
+          toast.show({
+            message,
+            tone: "success",
+            dedupeKey: `confirm-remembered:${decision.id}`,
+          });
+        }
         if (!isCurrentBinding()) submittingRef.current.delete(decision.id);
-      } catch {
+      }).catch((error: unknown) => {
         submittingRef.current.delete(decision.id);
-        // Overlay 内部为一次关闭动画；失败时换 key 重挂同一安全卡，允许用户重试。
-        if (isCurrentBinding()) setConfirmAttempt((value) => value + 1);
-      }
+        if (isCurrentBinding()) {
+          setDecisionError(
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : "确认没有提交成功，请再试一次。",
+          );
+        }
+      });
       return;
     }
 
@@ -262,12 +290,13 @@ export function useConfirmCard({
       if (demo) setConfirmRecord(demo.record);
     }
     setDemoConfirm(null);
-  }, [componentGeneration, debugMode, liveConfirm, sessionId, stream]);
+  }, [componentGeneration, debugMode, liveConfirm, sessionId, stream, toast]);
 
   return {
     confirmRecord,
     handleConfirmDecision,
     inlineConfirm,
-    confirmAttempt,
+    decisionError,
+    isLiveConfirm: liveConfirm !== null,
   };
 }

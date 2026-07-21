@@ -840,24 +840,24 @@ async function createWindowOnce() {
       backgroundThrottling: false,
     },
   });
-<<<<<<< HEAD
   const contentWindow = mainWindow;
-  contentWindow.once("closed", () => {
-    trustedRememberUiGate.clear();
-    if (mainWindow === contentWindow) mainWindow = null;
-=======
-  const ownerWindow = mainWindow;
   const rememberGeneration = nativeRememberGrantGate.reset();
   const rememberScope = `desktop-window:${rememberGeneration}`;
   mainWindowRememberGeneration = rememberGeneration;
   mainWindowRememberScope = rememberScope;
 
-  mainWindow.webContents.on("before-input-event", (_event, input) => {
-    trustedRememberUiGate.record(mainWindow?.webContents.id ?? -1, input.type);
-  });
-  mainWindow.webContents.on("before-mouse-event", (_event, input) => {
-    trustedRememberUiGate.record(mainWindow?.webContents.id ?? -1, input.type);
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
+  contentWindow.once("closed", () => {
+    trustedRememberUiGate.clear();
+    nativeRememberGrantGate.cancel(rememberGeneration);
+    void import("@qingagent/server/confirmUiGrant")
+      .then(({ clearConfirmUiGrantsForScope }) => {
+        clearConfirmUiGrantsForScope(rememberScope);
+      })
+      .catch(() => undefined);
+    if (mainWindow === contentWindow) {
+      mainWindow = null;
+      mainWindowRememberScope = null;
+    }
   });
 
   contentWindow.webContents.on("before-input-event", (_event, input) => {
@@ -947,27 +947,12 @@ async function createWindowOnce() {
     // 打包态由内置 Hono 同时提供 API 与静态文件。
     : `http://localhost:${port}`;
 
-<<<<<<< HEAD
   const contentLoad = contentWindow.loadURL(contentUrl);
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
     contentWindow.webContents.openDevTools({ mode: "detach" });
   }
   void contentLoad.catch((error) => {
     console.error("[startup] 内容页加载失败:", error);
-=======
-  ownerWindow.on("closed", () => {
-    trustedRememberUiGate.clear();
-    nativeRememberGrantGate.cancel(rememberGeneration);
-    void import("@qingagent/server/confirmUiGrant")
-      .then(({ clearConfirmUiGrantsForScope }) => {
-        clearConfirmUiGrantsForScope(rememberScope);
-      })
-      .catch(() => undefined);
-    if (mainWindow === ownerWindow) {
-      mainWindow = null;
-      mainWindowRememberScope = null;
-    }
->>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   });
 }
 

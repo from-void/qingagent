@@ -26,6 +26,7 @@ export {
 } from "./processAgentStream.js";
 
 export {
+  cancelConfirmedCommand,
   failConfirmedToolCall,
   resumeConfirmDecision,
 } from "./confirmResume.js";

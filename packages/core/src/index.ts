@@ -87,6 +87,7 @@ export {
   replaceTextRuns,
   resolveFileIds,
   runAgentTurn,
+  cancelConfirmedCommand,
   resumeConfirmDecision,
   scheduleOmSidecarAfterTurn,
   schedulePersist,

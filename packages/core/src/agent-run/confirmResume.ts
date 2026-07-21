@@ -12,13 +12,40 @@ import { schedulePersist } from "../session/threadPersistence.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { processAgentStream } from "./processAgentStream.js";
 import { finalizeLingeringRunningToolCalls } from "./turnCleanup.js";
-import { alignCommandCardWithStatus } from "./toolCards.js";
+import {
+  alignCommandCardWithStatus,
+  confirmedCommandCardSpec,
+} from "./toolCards.js";
 import { chatMessageAdded } from "./frames.js";
 
 export type ApprovalAgent = Pick<
   typeof qingagentAgent,
   "approveToolCall" | "declineToolCall"
 >;
+
+class ConfirmedCommandCancelledError extends Error {
+  constructor(readonly toolCallId: string) {
+    super("confirmed command cancelled by user");
+    this.name = "ConfirmedCommandCancelledError";
+  }
+}
+
+/** 仅当 toolCallId 正是当前确认恢复执行者时才 abort，绝不误停同会话其他命令。 */
+export function cancelConfirmedCommand(
+  session: SessionState,
+  toolCallId: string,
+): boolean {
+  const controller = session._abortController;
+  if (
+    session._activeConfirmedToolCallId !== toolCallId ||
+    !controller ||
+    controller.signal.aborted
+  ) {
+    return false;
+  }
+  controller.abort(new ConfirmedCommandCancelledError(toolCallId));
+  return true;
+}
 
 export function failConfirmedToolCall(
   session: SessionState,
@@ -152,6 +179,7 @@ export async function* resumeConfirmDecision(input: {
   const abortController = new AbortController();
   const previousStreamId = session.streamId;
   const previousAbortController = session._abortController;
+  const previousActiveConfirmedToolCallId = session._activeConfirmedToolCallId;
   const agentMessageId = findToolCallMessageId(session, pending.toolCallId);
   if (!agentMessageId) {
     const reason = "确认恢复失败，命令未执行";
@@ -168,10 +196,26 @@ export async function* resumeConfirmDecision(input: {
 
   session.streamId = streamId;
   session._abortController = abortController;
+  session._activeConfirmedToolCallId = pending.toolCallId;
   let resolvedEmitted = false;
   yield { kind: "stream", data: { kind: "start", data: { streamId } } };
 
   try {
+    if (
+      input.accepted &&
+      pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
+    ) {
+      // 进入这一条 FIFO 槽位就立刻从“已确认，排队执行”切成“处理中”，
+      // 不再等待 buildResumeTools / Mastra approveToolCall 返回。
+      yield {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: agentMessageId,
+          toolCallId: pending.toolCallId,
+          spec: confirmedCommandCardSpec(pending, "running"),
+        },
+      };
+    }
     const toolsets = await buildResumeTools(session);
     const requestContext = safeResumeRequestContext(
       session,
@@ -196,42 +240,6 @@ export async function* resumeConfirmDecision(input: {
       resolvedEmitted = true;
       yield* emitProjectedDocState(session, "confirm_resolved");
     }
-    if (
-      input.accepted &&
-      pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
-    ) {
-      const runningCard: ToolCallSpec = {
-        id: pending.toolCallId,
-        name: pending.toolName,
-        render: { kind: "chatInline" },
-        status: { kind: "running", data: { progressPct: null, etaSec: null } },
-        body: {
-          kind: "commandCard",
-          data: {
-            title: pending.spec.title,
-            icon:
-              pending.spec.kind === "install"
-                ? "📦"
-                : pending.spec.kind === "send"
-                  ? "📤"
-                  : "⚙️",
-            command: pending.spec.commandPreview ?? "",
-            exitCode: 0,
-            outputTail: "",
-            phase: "running",
-          },
-        },
-        result: null,
-      };
-      yield {
-        kind: "toolCallUpdated",
-        data: {
-          messageId: agentMessageId,
-          toolCallId: pending.toolCallId,
-          spec: runningCard,
-        },
-      };
-    }
     const outcome = yield* processAgentStream(result.fullStream, {
       state: session,
       agentMessageId,
@@ -241,6 +249,9 @@ export async function* resumeConfirmDecision(input: {
       abortController,
       confirmService: service,
     });
+    if (abortController.signal.reason instanceof ConfirmedCommandCancelledError) {
+      throw abortController.signal.reason;
+    }
     await service.finishDecision(session, pending, input.decisionId, input.resolution)
       .catch(() => undefined);
 
@@ -256,11 +267,16 @@ export async function* resumeConfirmDecision(input: {
         emitResolvedFrame: false,
       });
     }
-  } catch {
+  } catch (error) {
     await service.failDecision(session, pending).catch(() => undefined);
-    const reason = resolvedEmitted
-      ? "确认恢复异常，执行结果未知且未自动重试"
-      : "确认恢复失败，命令未执行";
+    const targetedCancellation =
+      error instanceof ConfirmedCommandCancelledError ||
+      abortController.signal.reason instanceof ConfirmedCommandCancelledError;
+    const reason = targetedCancellation
+      ? "已中止，结果可能未知"
+      : resolvedEmitted
+        ? "确认恢复异常，执行结果未知且未自动重试"
+        : "确认恢复失败，命令未执行";
     const failed = failConfirmedToolCall(session, pending.toolCallId, reason);
     if (failed) {
       yield {
@@ -273,12 +289,19 @@ export async function* resumeConfirmDecision(input: {
       };
     }
     if (!resolvedEmitted && input.emitResolvedFrame !== false) {
-      yield service.resolvedFrame(pending, "failed", reason);
+      yield service.resolvedFrame(
+        pending,
+        targetedCancellation ? "aborted" : "failed",
+        reason,
+      );
     }
   } finally {
     if (session.streamId === streamId) session.streamId = previousStreamId;
     if (session._abortController === abortController) {
       session._abortController = previousAbortController;
+    }
+    if (session._activeConfirmedToolCallId === pending.toolCallId) {
+      session._activeConfirmedToolCallId = previousActiveConfirmedToolCallId;
     }
     for (const update of finalizeLingeringRunningToolCalls(session)) {
       yield {

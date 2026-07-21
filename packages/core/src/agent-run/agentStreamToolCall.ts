@@ -1,5 +1,6 @@
 import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
 import { todosSchema } from "@qingagent/contract-ts/schemas";
+import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { mastra } from "../mastra.js";
 import { thumbnailSrcForImageInput } from "../tools/imageInput.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
@@ -70,6 +71,9 @@ export async function* handleToolCallEvent(
     const toolName =
       typeof chunk.payload.toolName === "string" ? chunk.payload.toolName : null;
     if (!toolCallId || !toolName) return true;
+    // 命令工具紧接着会进入审批事件；这里先挂 generic 会让命中记忆时闪一下假卡。
+    // 等审批结果后直接产出 confirm 卡或已确认命令卡，参数仍不会泄露进 Frame。
+    if (toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) return true;
     if (toolName === "create_annotation_groups") {
       context.annotationPreview.start(toolCallId);
     }

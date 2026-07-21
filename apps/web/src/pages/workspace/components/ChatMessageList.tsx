@@ -56,6 +56,7 @@ export interface ChatMessageListProps {
   scrollRef?: React.Ref<HTMLDivElement>;
   /** debug 模式:开则思考条常驻可展开(旧行为);关则只在思考进行中显示滚动文案条、完成即隐去。 */
   debugMode?: boolean;
+  onStopCommand?: (toolCallId: string) => Promise<void>;
 }
 
 /** 首 token 前窗口:流已开始但助手第一个 part 还没到 —— 最后一条消息还是 user。 */
@@ -75,6 +76,7 @@ export function ChatMessageList({
   wholeDocReviewKeys,
   scrollRef,
   debugMode = false,
+  onStopCommand,
 }: ChatMessageListProps) {
   const [loadingSlow, setLoadingSlow] = useState(false);
   // Track message IDs that existed on first render — those should not animate
@@ -142,6 +144,7 @@ export function ChatMessageList({
             skillLabels={skillLabels}
             materialLabels={materialLabels}
             visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
+            onStopCommand={onStopCommand}
           />
         );
       }),
@@ -160,6 +163,7 @@ export function ChatMessageList({
       visibleAskUserAnswerToolCallIds,
       wholeDocReview,
       wholeDocReviewKeys,
+      onStopCommand,
     ],
   );
 
@@ -206,6 +210,7 @@ type MessageRowProps = {
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
+  onStopCommand?: (toolCallId: string) => Promise<void>;
 };
 
 type VisibleMessageRole = "user" | "agent" | "system";
@@ -383,6 +388,7 @@ const MessageRow = memo(function MessageRow({
   skillLabels,
   materialLabels,
   visibleAskUserAnswerToolCallIds,
+  onStopCommand,
 }: MessageRowProps) {
   const role = message.role.kind;
   // 审阅 chip 不需要知道来源、其下游逻辑不受影响。判据 = 服务端约定的 external-* 消息 id。
@@ -511,6 +517,7 @@ const MessageRow = memo(function MessageRow({
       skillLabels={skillLabels}
       materialLabels={materialLabels}
       visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
+      onStopCommand={onStopCommand}
     />
   );
 
@@ -1133,6 +1140,7 @@ type PartViewProps = {
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds?: ReadonlySet<string>;
+  onStopCommand?: (toolCallId: string) => Promise<void>;
 };
 
 const EMPTY_VISIBLE_ASK_USER_ANSWER_TOOL_CALL_IDS: ReadonlySet<string> = new Set();
@@ -1150,6 +1158,7 @@ const PartView = memo(function PartView({
   skillLabels,
   materialLabels,
   visibleAskUserAnswerToolCallIds = EMPTY_VISIBLE_ASK_USER_ANSWER_TOOL_CALL_IDS,
+  onStopCommand,
 }: PartViewProps) {
   const [open, setOpen] = useState(false);
   switch (part.kind) {
@@ -1169,6 +1178,7 @@ const PartView = memo(function PartView({
           skillLabels={skillLabels}
           materialLabels={materialLabels}
           visibleAskUserAnswerToolCallIds={visibleAskUserAnswerToolCallIds}
+          onStopCommand={onStopCommand}
         />
       );
     case "askUserAnswerCard":
@@ -1443,11 +1453,13 @@ function ToolCallRow({
   skillLabels,
   materialLabels,
   visibleAskUserAnswerToolCallIds,
+  onStopCommand,
 }: {
   spec: ToolCallSpec;
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
   visibleAskUserAnswerToolCallIds: ReadonlySet<string>;
+  onStopCommand?: (toolCallId: string) => Promise<void>;
 }) {
   const b = spec.body;
   const isRunning = spec.status.kind === "running";
@@ -1562,7 +1574,14 @@ function ToolCallRow({
   if (shouldSuppressOverlayAskUserToolCall(spec, visibleAskUserAnswerToolCallIds)) {
     return null;
   }
-  return <UnifiedToolCall spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
+  return (
+    <UnifiedToolCall
+      spec={spec}
+      skillLabels={skillLabels}
+      materialLabels={materialLabels}
+      onStopCommand={onStopCommand}
+    />
+  );
 }
 
 function toolHost(u: unknown): string {

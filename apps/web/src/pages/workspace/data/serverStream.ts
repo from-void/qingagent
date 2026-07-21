@@ -1,4 +1,11 @@
-import type { Command, BridgeFrame, AskUserQuestion, ReviewType, SubmitConfirmDecision } from "@qingagent/contract-ts";
+import type {
+  AskUserQuestion,
+  BridgeFrame,
+  CancelConfirmedCommand,
+  Command,
+  ReviewType,
+  SubmitConfirmDecision,
+} from "@qingagent/contract-ts";
 import { validateBridgeFrame } from "../../../system/validators";
 import { visitorKeyHeaders } from "../../../overlays/settings/visitorKeyStore";
 import type { AskUserAnswer, StreamError, WorkspaceLocalAction } from "./protocol";
@@ -280,7 +287,7 @@ export class ServerStream {
   async resolveConfirm(
     submission: SubmitConfirmDecision,
     options: { activateSession?: boolean } = {},
-  ): Promise<void> {
+  ): Promise<{ accepted: true; remembered: boolean }> {
     // 旧组件的决策仍必须送达原 session，但不得把当前共享 EventSource 拉回旧会话。
     if (options.activateSession !== false) this.connectEvents(submission.sessionId);
     const controller = new AbortController();
@@ -293,7 +300,43 @@ export class ServerStream {
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`确认请求失败：${response.status}`);
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string" && body.error.trim()
+            ? body.error
+            : "确认没有提交成功，请再试一次。",
+        );
+      }
+      const body = await response.json().catch(() => null) as {
+        accepted?: unknown;
+        remembered?: unknown;
+      } | null;
+      if (body?.accepted !== true || typeof body.remembered !== "boolean") {
+        throw new Error("确认没有提交成功，请再试一次。");
+      }
+      return { accepted: true, remembered: body.remembered };
+    } finally {
+      this.activeControllers.delete(controller);
+    }
+  }
+
+  async cancelConfirmedCommand(input: CancelConfirmedCommand): Promise<void> {
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    try {
+      const response = await fetch("/api/v1/confirms/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string" && body.error.trim()
+            ? body.error
+            : "停止失败，请再试一次。",
+        );
       }
     } finally {
       this.activeControllers.delete(controller);

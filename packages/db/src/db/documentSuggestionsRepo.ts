@@ -1,8 +1,17 @@
 import type { Client } from "@libsql/client";
 import type { AnnotationGroup, DocSuggestion, SuggestionStatus } from "@qingagent/contract-ts";
-import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
+import {
+  commitTransaction,
+  getDocumentsClient,
+  withTransaction,
+  withWriteRetry,
+} from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
-import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
+import {
+  assertDocumentWriteAllowed,
+  DocumentWriteBlockedError,
+  type DocumentWriteTarget,
+} from "./documentWriteGuard.js";
 
 export const LEGACY_DOCUMENT_SUGGESTION_BATCH_ID = "legacy";
 
@@ -29,15 +38,40 @@ function annotationInsertStatements(
       id, doc_id, base_version, status, anchor_json, steps_json, preview_json,
       summary, conflict_json, kind, note, origin, group_id, group_meta_json,
       severity, created_at, updated_at
-    ) VALUES (?, ?, ?, 'reviewing', ?, NULL, NULL, ?, NULL, 'annotation', ?, ?, ?, ?, ?, ?, ?)`,
+    ) SELECT ?, ?, ?, 'reviewing', ?, NULL, NULL, ?, NULL, 'annotation', ?, ?, ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ?)`,
     args: [
       `${group.id}:${index + 1}`, docId, baseVersion, JSON.stringify(anchor), group.summary,
       group.note, group.origin, group.id,
       JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }),
       group.severity ?? null,
-      now, now,
+      now, now, docId,
     ],
   })));
+}
+
+function writeTarget(docId: string, operation: DocumentWriteTarget["operation"]): DocumentWriteTarget {
+  return { docId, operation };
+}
+
+function assertSuggestionWritesAffected(
+  results: readonly { rowsAffected: number }[],
+  target: DocumentWriteTarget,
+): void {
+  if (results.some((result) => result.rowsAffected === 0)) {
+    throw new DocumentWriteBlockedError(target);
+  }
+}
+
+async function assertSuggestionNotTombstoned(
+  client: Client,
+  target: DocumentWriteTarget,
+): Promise<void> {
+  const result = await client.execute({
+    sql: "SELECT 1 FROM deleted_sessions WHERE session_id = ? LIMIT 1",
+    args: [target.docId],
+  });
+  if (result.rows.length > 0) throw new DocumentWriteBlockedError(target);
 }
 
 export async function insertAnnotationGroups(
@@ -49,11 +83,10 @@ export async function insertAnnotationGroups(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
-    assertDocumentWriteAllowed({
-      docId,
-      operation: "documentSuggestion.insertAnnotations",
-    });
-    await c.batch(annotationInsertStatements(docId, baseVersion, groups, now));
+    const target = writeTarget(docId, "documentSuggestion.insertAnnotations");
+    assertDocumentWriteAllowed(target);
+    const results = await c.batch(annotationInsertStatements(docId, baseVersion, groups, now));
+    assertSuggestionWritesAffected(results, target);
   });
 }
 
@@ -68,20 +101,37 @@ export async function replaceAnnotationGroupsByOrigin(
   if (groups.length === 0) return;
   const c = await readyClient(client);
   const origins = [...new Set(groups.map((group) => group.origin))];
-  await withWriteRetry(async () => {
-    assertDocumentWriteAllowed({
-      docId,
-      operation: "documentSuggestion.replaceAnnotations",
-    });
-    await c.batch([
-      {
+  const target = writeTarget(docId, "documentSuggestion.replaceAnnotations");
+  assertDocumentWriteAllowed(target);
+  if (client) {
+    await assertSuggestionNotTombstoned(c, target);
+    await c.execute({
         sql: `UPDATE document_suggestions SET status='ignored', updated_at=?
           WHERE doc_id=? AND kind='annotation' AND origin IN (${origins.map(() => "?").join(",")})
           AND status IN ('reviewing','accepted')`,
         args: [now, docId, ...origins],
-      },
-      ...annotationInsertStatements(docId, baseVersion, groups, now),
-    ]);
+    });
+    const results = [];
+    for (const statement of annotationInsertStatements(docId, baseVersion, groups, now)) {
+      results.push(await c.execute(statement));
+    }
+    assertSuggestionWritesAffected(results, target);
+    return;
+  }
+  await withTransaction(async (transactionClient) => {
+    await assertSuggestionNotTombstoned(transactionClient, target);
+    await transactionClient.execute({
+      sql: `UPDATE document_suggestions SET status='ignored', updated_at=?
+        WHERE doc_id=? AND kind='annotation' AND origin IN (${origins.map(() => "?").join(",")})
+        AND status IN ('reviewing','accepted')`,
+      args: [now, docId, ...origins],
+    });
+    const results = [];
+    for (const statement of annotationInsertStatements(docId, baseVersion, groups, now)) {
+      results.push(await transactionClient.execute(statement));
+    }
+    assertSuggestionWritesAffected(results, target);
+    return commitTransaction(undefined);
   });
 }
 
@@ -130,16 +180,15 @@ export async function upsertDocumentSuggestion(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
-    assertDocumentWriteAllowed({
-      docId: suggestion.docId,
-      operation: "documentSuggestion.upsert",
-    });
-    await c.execute({
+    const target = writeTarget(suggestion.docId, "documentSuggestion.upsert");
+    assertDocumentWriteAllowed(target);
+    const result = await c.execute({
       sql: `INSERT INTO document_suggestions (
           id, doc_id, base_version, batch_id, status, anchor_json, steps_json,
           preview_json, summary, conflict_json, created_at, updated_at
           , severity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ?)
         ON CONFLICT(doc_id, base_version, batch_id, id) DO UPDATE SET
           status = excluded.status,
           anchor_json = excluded.anchor_json,
@@ -163,8 +212,10 @@ export async function upsertDocumentSuggestion(
         now,
         now,
         suggestion.severity ?? null,
+        suggestion.docId,
       ],
     });
+    assertSuggestionWritesAffected([result], target);
   });
 }
 

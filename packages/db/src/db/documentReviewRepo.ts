@@ -6,6 +6,7 @@ import {
   upsertDocumentSuggestion,
 } from "./documentSuggestionsRepo.js";
 import { commitTransaction, withTransaction } from "./documentsClient.js";
+import { DocumentWriteBlockedError } from "./documentWriteGuard.js";
 import { ensureMigrated } from "./migrations.js";
 
 export interface RebasedPreviousSuggestions {
@@ -30,6 +31,17 @@ export async function replaceRebasedReview(input: ReplaceRebasedReviewInput): Pr
   }
   const now = new Date().toISOString();
   await withTransaction(async (client) => {
+    const tombstone = await client.execute({
+      sql: "SELECT 1 FROM deleted_sessions WHERE session_id IN (?, ?) LIMIT 1",
+      args: [input.draft.docId, input.draft.threadId],
+    });
+    if (tombstone.rows.length > 0) {
+      throw new DocumentWriteBlockedError({
+        docId: input.draft.docId,
+        threadId: input.draft.threadId,
+        operation: "documentDraft.savePending",
+      });
+    }
     await savePendingDocumentDraft(input.draft, client, now);
     for (const previous of input.previousSuggestions) {
       await ignoreRebasedDocumentSuggestionsInBatch(

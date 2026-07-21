@@ -6,7 +6,11 @@ import {
 } from "@qingagent/pm-schema";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
-import { assertDocumentWriteAllowed } from "./documentWriteGuard.js";
+import {
+  assertDocumentWriteAllowed,
+  DocumentWriteBlockedError,
+  type DocumentWriteTarget,
+} from "./documentWriteGuard.js";
 
 export type DocumentDraftStatus = "draft_candidate" | "pending_review" | "conflict";
 export type DocumentDraftGroupMode = "atomic" | "independent";
@@ -116,6 +120,10 @@ async function readyClient(client?: Client): Promise<Client> {
   return c;
 }
 
+function assertDraftWriteAffected(rowsAffected: number, target: DocumentWriteTarget): void {
+  if (rowsAffected === 0) throw new DocumentWriteBlockedError(target);
+}
+
 export async function loadDocumentDraft(
   docId: string,
   client?: Client,
@@ -138,17 +146,21 @@ export async function savePendingDocumentDraft(
   const draftPmDoc = normalizePmDoc(input.draftPmDoc);
   const draftPmJson = getStablePmJson(draftPmDoc);
   await withWriteRetry(async () => {
-    assertDocumentWriteAllowed({
+    const target = {
       docId: input.docId,
       threadId: input.threadId,
-      operation: "documentDraft.savePending",
-    });
-    await c.execute({
+      operation: "documentDraft.savePending" as const,
+    };
+    assertDocumentWriteAllowed(target);
+    const result = await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
           conflict_json, batch_id, review_batch_id, group_mode, source_stream_id,
           source_tool_call_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending_review', NULL, ?, ?, ?, ?, ?, ?, ?)
+        ) SELECT ?, ?, ?, ?, ?, 'pending_review', NULL, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM deleted_sessions WHERE session_id IN (?, ?)
+        )
         ON CONFLICT(doc_id) DO UPDATE SET
           thread_id = excluded.thread_id,
           base_version = excluded.base_version,
@@ -175,8 +187,11 @@ export async function savePendingDocumentDraft(
         input.sourceToolCallId ?? null,
         now,
         now,
+        input.docId,
+        input.threadId,
       ],
     });
+    assertDraftWriteAffected(result.rowsAffected, target);
   });
 }
 
@@ -189,17 +204,21 @@ export async function saveCandidateDocumentDraft(
   const draftPmDoc = normalizePmDoc(input.draftPmDoc);
   const draftPmJson = getStablePmJson(draftPmDoc);
   await withWriteRetry(async () => {
-    assertDocumentWriteAllowed({
+    const target = {
       docId: input.docId,
       threadId: input.threadId,
-      operation: "documentDraft.saveCandidate",
-    });
-    await c.execute({
+      operation: "documentDraft.saveCandidate" as const,
+    };
+    assertDocumentWriteAllowed(target);
+    const result = await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
           conflict_json, batch_id, review_batch_id, group_mode, source_stream_id,
           source_tool_call_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'draft_candidate', NULL, 'legacy', NULL, NULL, ?, ?, ?, ?)
+        ) SELECT ?, ?, ?, ?, ?, 'draft_candidate', NULL, 'legacy', NULL, NULL, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM deleted_sessions WHERE session_id IN (?, ?)
+        )
         ON CONFLICT(doc_id) DO UPDATE SET
           thread_id = excluded.thread_id,
           base_version = excluded.base_version,
@@ -223,8 +242,11 @@ export async function saveCandidateDocumentDraft(
         input.sourceToolCallId ?? null,
         now,
         now,
+        input.docId,
+        input.threadId,
       ],
     });
+    assertDraftWriteAffected(result.rowsAffected, target);
   });
 }
 

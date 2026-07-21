@@ -3,13 +3,16 @@ import type { DocSuggestion } from "@qingagent/contract-ts";
 import { getPmContentHash } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "../documentDraftRepo.js";
 import { documentRepo } from "../documentRepo.js";
+import { replaceRebasedReview } from "../documentReviewRepo.js";
 import { getDocumentsClient } from "../documentsClient.js";
 import {
   beginSessionDeletion,
   deleteSessionDocumentsAndAdvance,
 } from "../sessionDeletionRepo.js";
 import {
+  insertAnnotationGroups,
   listDocumentSuggestionStatuses,
+  replaceAnnotationGroupsByOrigin,
   upsertDocumentSuggestion,
 } from "../documentSuggestionsRepo.js";
 import {
@@ -94,6 +97,62 @@ describe("document write guard", () => {
 
     await expect(documentDraftRepo.load("blocked-doc")).resolves.toBeNull();
     await expect(listDocumentSuggestionStatuses("blocked-doc", 1)).resolves.toEqual([]);
+  });
+
+  it("RF2: 进程内 guard 为空时 SQL 墓碑仍拒绝 draft/suggestion 及批量审阅替换", async () => {
+    const docId = "persisted-tombstone";
+    const threadId = "persisted-tombstone-thread";
+    const draftInput = {
+      docId,
+      threadId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(pmDocFromText("基线")),
+      draftPmDoc: pmDocFromText("迟到草稿"),
+    };
+    const oldGroup = {
+      id: "old-group",
+      summary: "旧批注",
+      note: "旧批注",
+      origin: "test",
+      status: "reviewing" as const,
+      anchors: [{ blockId: "p", pmFrom: 1, pmTo: 2, quote: "旧", textHash: "hash" }],
+    };
+    await insertAnnotationGroups(docId, 1, [oldGroup]);
+    setDocumentWriteGuard(null);
+    await beginSessionDeletion(docId);
+    await beginSessionDeletion(threadId);
+
+    await expect(documentDraftRepo.savePending(draftInput))
+      .rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(documentDraftRepo.saveCandidate({
+      ...draftInput,
+      sourceStreamId: "late-stream",
+    })).rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(upsertDocumentSuggestion(suggestion(docId)))
+      .rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(insertAnnotationGroups(docId, 2, [{ ...oldGroup, id: "late-group" }]))
+      .rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(replaceAnnotationGroupsByOrigin(docId, 2, [{
+      ...oldGroup,
+      id: "replacement-group",
+    }])).rejects.toBeInstanceOf(DocumentWriteBlockedError);
+    await expect(replaceRebasedReview({
+      draft: { ...draftInput, batchId: "late-batch" },
+      suggestions: [{ ...suggestion(docId), batchId: "late-batch" }],
+      previousSuggestions: [],
+    })).rejects.toBeInstanceOf(DocumentWriteBlockedError);
+
+    await expect(documentDraftRepo.load(docId)).resolves.toBeNull();
+    await expect(listDocumentSuggestionStatuses(docId, 1)).resolves.toEqual([
+      { id: "old-group:1", status: "reviewing", conflict: undefined },
+    ]);
+    const annotationRows = await getDocumentsClient().execute({
+      sql: "SELECT group_id, status FROM document_suggestions WHERE doc_id = ? ORDER BY group_id",
+      args: [docId],
+    });
+    expect(annotationRows.rows).toMatchObject([
+      { group_id: "old-group", status: "reviewing" },
+    ]);
   });
 
   it("F6: guard 通过后延迟 SQL，并发删除完成后迟到 UPSERT 不会复活文档", async () => {

@@ -87,6 +87,9 @@ let processExitHooksInstalled = false;
 
 /** 在 context 创建后的首个真实导航前安装全请求策略；同一 context 并发调用只安装一次。 */
 export async function installAgentBrowserRequestPolicy(context: BrowserContext): Promise<void> {
+  // 交互式浏览器有意不启用 pinHttpRequests，以保留登录、下载等完整浏览器语义；因此仍有
+  // DNS rebinding / 校验后再解析的 TOCTOU 窗口。当前缓解依赖首跳 origin 白名单与本地
+  // 单用户产品形态；若转为企业网络部署或自动浏览不可信站点，必须重新评估该裁决。
   await installBrowserRequestPolicy(context);
 }
 

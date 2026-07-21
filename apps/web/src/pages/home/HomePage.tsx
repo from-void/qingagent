@@ -114,8 +114,9 @@ export function HomePage() {
   }, [apiSessions, fetchError]);
 
   const handleOpenSession = useCallback((sessionId: string) => {
+    if (sessions.some((session) => session.id === sessionId && session.isDeleting)) return;
     window.location.hash = `${routeToHash("workspace")}?session=${encodeURIComponent(sessionId)}`;
-  }, []);
+  }, [sessions]);
 
   const handleCreate = useCallback(() => {
     // 断掉新建页流程:点「新建」直接进编辑页空态(惰性创建 + 空引导态);
@@ -165,7 +166,7 @@ export function HomePage() {
 
     const articleId = slot.getAttribute("data-id");
     const session = articleId ? sessions.find((item) => item.id === articleId) : undefined;
-    if (!session) return;
+    if (!session || session.isDeleting) return;
 
     const rawX = Number.isFinite(event.clientX) ? event.clientX : 24;
     const rawY = Number.isFinite(event.clientY) ? event.clientY : 24;

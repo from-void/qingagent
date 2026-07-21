@@ -21,6 +21,7 @@ export interface HomeSession {
   recentEditedAt: number;
   createdAt: number;
   pushedAt: number;
+  isDeleting?: boolean;
 }
 
 export type HomeNavId =
@@ -59,6 +60,7 @@ export function sessionMetaToHomeSession(s: SessionMeta): HomeSession {
     recentEditedAt: editedTs,
     createdAt: createdTs,
     pushedAt: editedTs,
+    isDeleting: s.status.kind === "Deleting",
   };
 }
 
@@ -166,6 +168,7 @@ export function makeMockSessions(n: number, opts: { long?: boolean } = {}): Home
       recentEditedAt: created,
       createdAt: created,
       pushedAt: created,
+      isDeleting: false,
     });
   }
   return out;

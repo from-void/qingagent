@@ -73,7 +73,10 @@ describe("sessionStore", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockReturnValueOnce(pendingHome.promise)
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
     vi.stubGlobal("fetch", fetchMock);
 
     const listRequest = useSessionStore.getState().fetchSessions();
@@ -88,5 +91,33 @@ describe("sessionStore", () => {
     );
     expect(useSessionStore.getState().sessions).toEqual([]);
     expect(useSessionStore.getState().isLoading).toBe(false);
+  });
+
+  it("RF1: 202 响应保留会话并标记删除中，完成响应后才移除", async () => {
+    vi.useFakeTimers();
+    const removing = session("pending-session");
+    useSessionStore.setState({ sessions: [removing] });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ deleted: false, status: "pending" }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ deleted: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useSessionStore.getState().removeSession(removing.id);
+
+    expect(useSessionStore.getState().sessions).toEqual([
+      expect.objectContaining({ id: removing.id, status: { kind: "Deleting" } }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(useSessionStore.getState().sessions).toEqual([]);
+    vi.useRealTimers();
   });
 });

@@ -1829,8 +1829,9 @@ export function QingjianScroll({
         });
     };
 
-    const triggerOpenSession = (sessionId: string) => {
+  const triggerOpenSession = (sessionId: string) => {
       if (transitioningRef.current) return;
+      if (sessions.some((session) => session.id === sessionId && session.isDeleting)) return;
       const txStage = txStageRef.current;
       const from = computeArticleCardScreenRect(sessionId);
       if (!txStage || !from) {
@@ -2158,13 +2159,14 @@ export function QingjianScroll({
               {layout.slots.map((slot) => (
                 <div
                   key={slot.entry.id}
-                  className="qj-card-slot"
+                  className={`qj-card-slot${slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? " qj-deleting" : ""}`}
                   data-idx={slot.globalIdx}
                   data-kind={slot.entry.kind}
                   data-id={slot.entry.id}
                   data-layer={slot.layer}
                   data-title={slot.entry.title}
                   data-category={slot.entry.category}
+                  aria-disabled={slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? "true" : undefined}
                   style={{
                     left: `${slot.left}px`,
                     top: `${slot.top}px`,
@@ -2184,6 +2186,9 @@ export function QingjianScroll({
                         template={slot.entry.template}
                         colorConfig={colorConfig}
                       />
+                    ) : null}
+                    {slot.entry.kind === "real" && sessions.find((session) => session.id === slot.entry.id)?.isDeleting ? (
+                      <span className="qj-delete-pending" role="status">删除中…</span>
                     ) : null}
                   </div>
                 </div>

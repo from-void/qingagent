@@ -1,2 +1,6 @@
 
-export type SessionStatus = { "kind": "Active" } | { "kind": "Archived" } | { "kind": "Deleted" };
+export type SessionStatus =
+  | { "kind": "Active" }
+  | { "kind": "Archived" }
+  | { "kind": "Deleting" }
+  | { "kind": "Deleted" };

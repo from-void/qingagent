@@ -38,6 +38,7 @@ import {
   beginSessionDeletion,
   completeSessionDeletion,
   deleteSessionDocumentsAndAdvance,
+  getTombstonedSessionIds,
   type SessionDeletionPhase,
 } from "@qingagent/db";
 import {
@@ -2167,7 +2168,9 @@ export async function listHomeSessionThreads(opts: {
     }
   }
 
+  const tombstonedSessionIds = await getTombstonedSessionIds([...threadsById.keys()]);
   const sorted = Array.from(threadsById.values())
+    .filter((thread) => !tombstonedSessionIds.has(thread.id))
     .map(parsedHomeThread)
     .sort((a, b) => {
       const contentOrder = b.contentEditedAtMs - a.contentEditedAtMs;

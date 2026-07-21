@@ -13,6 +13,7 @@ import type { QingagentThreadMetadata } from "../session/threadPersistence.js";
 import { documentDraftRepo } from "@qingagent/db";
 import { documentRepo } from "@qingagent/db";
 import { insertVersion, listVersions } from "@qingagent/db";
+import { beginSessionDeletion } from "@qingagent/db";
 import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
@@ -1931,6 +1932,35 @@ describe("thread persistence", () => {
     expect(result.threads[0]?.id).toBe("bulk-59");
     expect(result.total).toBe(60);
     expect(result.hasMore).toBe(true);
+  });
+
+  it("RF1: pending 墓碑会话在首页排序分页前被排除", async () => {
+    const { listHomeSessionThreads } = await import("../session/threadPersistence.js");
+    const tombstoned = {
+      id: "home-pending-delete",
+      title: "删除中的会话",
+      resourceId: "qingagent-user",
+      createdAt: new Date("2026-07-21T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-21T00:00:00.000Z"),
+      metadata: { lastContentEditedAt: "2026-07-21T00:00:00.000Z" },
+    };
+    const visible = {
+      ...tombstoned,
+      id: "home-visible",
+      title: "保留的会话",
+      updatedAt: new Date("2026-07-20T00:00:00.000Z"),
+      metadata: { lastContentEditedAt: "2026-07-20T00:00:00.000Z" },
+    };
+    memory.listThreads
+      .mockResolvedValueOnce({ threads: [tombstoned, visible], total: 2, hasMore: false })
+      .mockResolvedValueOnce({ threads: [], total: 0, hasMore: false });
+    await beginSessionDeletion(tombstoned.id);
+
+    const result = await listHomeSessionThreads({ page: 0, perPage: 1 });
+
+    expect(result.threads.map((thread) => thread.id)).toEqual([visible.id]);
+    expect(result.total).toBe(1);
+    expect(result.hasMore).toBe(false);
   });
 
   it("首页查询 current 优先去重，并用统一有效时间与稳定 tie-break", async () => {

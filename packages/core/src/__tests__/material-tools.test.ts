@@ -67,7 +67,26 @@ async function executeParseFileOnDesktop(input: Record<string, unknown>): Promis
 }
 
 const FILE_ACCESS_DENIED_RESULT = {
+  ok: false,
+  error: "文件不可访问",
+  errorCode: "FILE_ACCESS_DENIED",
   text: "[Error] 文件不可访问",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+const FILE_NOT_REGULAR_RESULT = {
+  ok: false,
+  error: "不是常规文件",
+  errorCode: "FILE_NOT_REGULAR",
+  text: "[Error] 不是常规文件",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+const FILE_TOO_LARGE_RESULT = {
+  ok: false,
+  error: "文件过大（上限 64MiB）",
+  errorCode: "FILE_TOO_LARGE",
+  text: "[Error] 文件过大（上限 64MiB）",
   metadata: { pages: null, wordCount: 0, title: null },
 };
 
@@ -801,7 +820,7 @@ describe("parseFile execute — filePath mode", () => {
           }),
           2_000,
         ),
-      ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);
+      ).resolves.toEqual(FILE_NOT_REGULAR_RESULT);
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
@@ -826,7 +845,7 @@ describe("parseFile execute — filePath mode", () => {
         }),
         2_000,
       ),
-    ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);
+    ).resolves.toEqual(FILE_NOT_REGULAR_RESULT);
     if (devicePath === nonRegularFsMock.path) expect(nonRegularFsMock.read).not.toHaveBeenCalled();
   });
 
@@ -849,6 +868,29 @@ describe("parseFile execute — filePath mode", () => {
         executeParseFileOnDesktop({
           filePath,
           filename: "oversized.txt",
+          mimeType: "text/plain",
+        }),
+      ).resolves.toEqual(FILE_TOO_LARGE_RESULT);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("硬链接继续按模糊的文件不可访问原因拒绝", async () => {
+    const { link, mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = await mkdtemp(join(tmpdir(), "parseFile-hardlink-"));
+    const originalPath = join(tmpDir, "original.txt");
+    const hardLinkPath = join(tmpDir, "alias.txt");
+
+    try {
+      await writeFile(originalPath, "hard-linked content");
+      await link(originalPath, hardLinkPath);
+      await expect(
+        executeParseFileOnDesktop({
+          filePath: hardLinkPath,
+          filename: "alias.txt",
           mimeType: "text/plain",
         }),
       ).resolves.toEqual(FILE_ACCESS_DENIED_RESULT);

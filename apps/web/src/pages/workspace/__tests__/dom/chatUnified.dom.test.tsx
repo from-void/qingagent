@@ -289,6 +289,25 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("1.5K 字");
   });
 
+  it("parseFile 失败态直接显示文件过大原因", () => {
+    renderBar({
+      id: "parse-large",
+      name: "parseFile",
+      render: { kind: "chatInline" },
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "文件过大（上限 64MiB）" },
+      },
+      body: { kind: "generic", data: { argsJson: '{"filePath":"oversized.pdf"}' } },
+      result: {
+        kind: "genericText",
+        data: JSON.stringify({ ok: false, errorCode: "FILE_TOO_LARGE" }),
+      },
+    });
+    expect(host.textContent).toContain("文件过大（上限 64MiB）");
+    expect(host.textContent).not.toContain("0 字");
+  });
+
   it("readMaterial / fetchArticle 显示字数", () => {
     renderBar(doneSpec("readMaterial", { filename: "a.md", wordCount: 642 }));
     expect(host.textContent).toContain("642 字");

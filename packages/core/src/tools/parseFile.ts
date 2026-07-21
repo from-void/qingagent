@@ -47,13 +47,22 @@ export interface ParseFileBufferFailure {
 
 export type ParseFileBufferOutput = ParseFileBufferResult | ParseFileBufferFailure;
 
+type ParseFileToolMetadata = {
+  pages: number | null;
+  wordCount: number;
+  title: string | null;
+};
+
 type ParseFileToolResult = {
+  ok?: true;
   text: string;
-  metadata: {
-    pages: number | null;
-    wordCount: number;
-    title: string | null;
-  };
+  metadata: ParseFileToolMetadata;
+} | {
+  ok: false;
+  error: string;
+  errorCode: "FILE_ACCESS_DENIED" | "FILE_NOT_REGULAR" | "FILE_TOO_LARGE";
+  text: string;
+  metadata: ParseFileToolMetadata;
 };
 
 // Office Open XML 本质是 ZIP。这里的限额必须在 mammoth/JSZip 解压任何 entry 之前生效，
@@ -64,6 +73,7 @@ const MAX_OFFICE_ZIP_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_OFFICE_ZIP_COMPRESSION_RATIO = 200;
 // 64MiB 足以覆盖常见桌面文档素材，同时限制分块汇总缓冲区和后续解析的堆内存占用。
 const MAX_DESKTOP_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_DESKTOP_FILE_LABEL = "64MiB";
 
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE = 0x02014b50;
@@ -72,7 +82,26 @@ const ZIP_MAX_COMMENT_BYTES = 0xffff;
 const ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES = 46;
 
 const FILE_ACCESS_DENIED_RESULT: ParseFileToolResult = {
+  ok: false,
+  error: "文件不可访问",
+  errorCode: "FILE_ACCESS_DENIED",
   text: "[Error] 文件不可访问",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+const FILE_NOT_REGULAR_RESULT: ParseFileToolResult = {
+  ok: false,
+  error: "不是常规文件",
+  errorCode: "FILE_NOT_REGULAR",
+  text: "[Error] 不是常规文件",
+  metadata: { pages: null, wordCount: 0, title: null },
+};
+
+const FILE_TOO_LARGE_RESULT: ParseFileToolResult = {
+  ok: false,
+  error: `文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
+  errorCode: "FILE_TOO_LARGE",
+  text: `[Error] 文件过大（上限 ${MAX_DESKTOP_FILE_LABEL}）`,
   metadata: { pages: null, wordCount: 0, title: null },
 };
 
@@ -273,13 +302,14 @@ function isSensitiveDesktopFilePath(filePath: string): boolean {
   return SENSITIVE_DESKTOP_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-type DesktopFileReadResult = {
-  buffer: Buffer;
-  canonicalPath: string;
-};
+type DesktopFileReadResult =
+  | { status: "ok"; buffer: Buffer; canonicalPath: string }
+  | { status: "denied" }
+  | { status: "not_regular" }
+  | { status: "too_large" };
 
-async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadResult | null> {
-  if (isSensitiveDesktopFilePath(filePath)) return null;
+async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadResult> {
+  if (isSensitiveDesktopFilePath(filePath)) return { status: "denied" };
   let canonicalPath: string;
   try {
     canonicalPath = await realpath(filePath);
@@ -287,7 +317,7 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
     // 保留正常素材原有的 ENOENT/EACCES 语义；后续 open 会抛出对应错误。
     canonicalPath = filePath;
   }
-  if (isSensitiveDesktopFilePath(canonicalPath)) return null;
+  if (isSensitiveDesktopFilePath(canonicalPath)) return { status: "denied" };
 
   const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
   const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
@@ -296,11 +326,11 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
     const stats = await fileHandle.stat();
-    if (!stats.isFile()) return null;
+    if (!stats.isFile()) return { status: "not_regular" };
     // realpath 无法识别硬链接。正常用户素材极少带多个硬链接；宁可拒绝可疑文件，
     // 也不允许攻击者把敏感文件硬链接成无害名称绕过路径黑名单。
-    if (stats.nlink > 1) return null;
-    if (stats.size > MAX_DESKTOP_FILE_BYTES) return null;
+    if (stats.nlink > 1) return { status: "denied" };
+    if (stats.size > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
 
     // 当前桌面 parseFile 调用链没有可用的 AbortSignal；不为此扩散函数签名，读取由总字节上限约束。
     const chunks: Buffer[] = [];
@@ -312,13 +342,13 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
       const { bytesRead } = await fileHandle.read(chunk, 0, chunk.length, null);
       if (bytesRead === 0) break;
       totalBytes += bytesRead;
-      if (totalBytes > MAX_DESKTOP_FILE_BYTES) return null;
+      if (totalBytes > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
       chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
     }
 
     const statsAfterRead = await fileHandle.stat();
-    if (statsAfterRead.size > MAX_DESKTOP_FILE_BYTES) return null;
-    return { buffer: Buffer.concat(chunks, totalBytes), canonicalPath };
+    if (statsAfterRead.size > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
+    return { status: "ok", buffer: Buffer.concat(chunks, totalBytes), canonicalPath };
   } finally {
     await fileHandle.close();
   }
@@ -1511,6 +1541,13 @@ export const parseFileTool = createTool({
     mimeType: z.string().optional().describe("MIME 类型；传 fileId 时可省略，由 resolver 提供"),
   }),
   outputSchema: z.object({
+    ok: z.boolean().optional(),
+    error: z.string().optional(),
+    errorCode: z.enum([
+      "FILE_ACCESS_DENIED",
+      "FILE_NOT_REGULAR",
+      "FILE_TOO_LARGE",
+    ]).optional(),
     text: z.string().describe("提取的纯文本内容"),
     metadata: z.object({
       pages: z.number().nullable(),
@@ -1547,7 +1584,9 @@ export const parseFileTool = createTool({
         mimeType = resolved.mimeType;
       } else if (filePath) {
         const desktopFile = await readDesktopFilePath(filePath);
-        if (desktopFile === null) return FILE_ACCESS_DENIED_RESULT;
+        if (desktopFile.status === "denied") return FILE_ACCESS_DENIED_RESULT;
+        if (desktopFile.status === "not_regular") return FILE_NOT_REGULAR_RESULT;
+        if (desktopFile.status === "too_large") return FILE_TOO_LARGE_RESULT;
         buffer = desktopFile.buffer;
         // 桌面 filePath 来自模型，filename/mimeType 同样不可作为真实格式依据；
         // 用 realpath 后的 basename 固定解析扩展名，避免声明 MIME/文件名改变解析分支。

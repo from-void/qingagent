@@ -367,9 +367,19 @@ export function UToolBar({
     return typeof t === "number" && t > 0 ? Math.round(t / 1000) : null;
   })();
   const runningText = isProcOut ? "等待输出" : "处理中";
+  const failedReason =
+    failed && spec.name === "parseFile" && spec.status.kind === "failed"
+      ? spec.status.data.reason
+      : null;
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
-  const statusText = pending ? "等待中" : running ? runningText : (failed || semanticFailed) ? (customOut ?? "未完成") : (customOut ?? "已完成");
+  const statusText = pending
+    ? "等待中"
+    : running
+      ? runningText
+      : failed || semanticFailed
+        ? (failedReason ?? customOut ?? "未完成")
+        : (customOut ?? "已完成");
   // 设计原则:工具"只要调过了"就不再红色报错。未完成/内部失败仍显对勾图标,状态文案(如"未完成")
   // 走常规灰色,不用红色感叹号——高亮红字用户无法自行解决,只会造成困惑。
   const ico = pending ? <span className="u-dot" />

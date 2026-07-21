@@ -104,6 +104,34 @@ describe("storeMaterial 正文走引用(不传 text)", () => {
     vi.clearAllMocks();
   });
 
+  it("parseFile 文件过大时工具卡进入失败态并保留真实原因", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("parse-file-too-large-card");
+    const frames = await collectFrames(
+      processAgentStream(
+        streamOf(
+          toolCall("parseFile", "p-large", { filePath: "/x/oversized.pdf" }),
+          toolResult("parseFile", "p-large", { filePath: "/x/oversized.pdf" }, {
+            ok: false,
+            error: "文件过大（上限 64MiB）",
+            errorCode: "FILE_TOO_LARGE",
+            text: "[Error] 文件过大（上限 64MiB）",
+            metadata: { pages: null, wordCount: 0, title: null },
+          }),
+        ),
+        { state, agentMessageId: "m", streamId: "s-large", runId: "r" },
+      ),
+    );
+
+    const failed = storeMaterialFailureFor(frames, "p-large");
+    expect(failed?.kind).toBe("toolCallUpdated");
+    if (failed?.kind === "toolCallUpdated" && failed.data.spec.status.kind === "failed") {
+      expect(failed.data.spec.status.data.reason).toBe("文件过大（上限 64MiB）");
+    } else {
+      throw new Error("parseFile 超限结果未进入失败态");
+    }
+  });
+
   it("parseFile→storeMaterial:按 filename 引用 parseFile 全文落库", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("ref-parse");

@@ -43,6 +43,22 @@ import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 
 const logger = mastra.getLogger();
 
+function genericToolFailureReason(
+  toolName: string,
+  toolResult: Record<string, unknown>,
+  rawToolResult: unknown,
+): string {
+  if (toolName === "parseFile") {
+    for (const field of ["error", "text"] as const) {
+      const value = toolResult[field];
+      if (typeof value === "string" && value.trim()) {
+        return value.replace(/^\s*\[(?:Error|Unsupported)\]\s*/i, "").slice(0, 200);
+      }
+    }
+  }
+  return redactedToolResultPreview(rawToolResult);
+}
+
 export async function* handleDraftOrGenericToolResult(
   input: ToolResultContext,
 ): AsyncGenerator<BridgeFrame, void> {
@@ -211,7 +227,10 @@ export async function* handleDraftOrGenericToolResult(
       ? { kind: "done" }
       : {
           kind: "failed",
-          data: { retriable: false, reason: redactedToolResultPreview(rawToolResult) },
+          data: {
+            retriable: false,
+            reason: genericToolFailureReason(toolName, toolResult, rawToolResult),
+          },
         };
   const doneSpec: ToolCallSpec = {
     id: toolCallId,

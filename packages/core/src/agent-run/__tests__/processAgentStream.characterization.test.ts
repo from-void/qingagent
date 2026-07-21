@@ -8,6 +8,14 @@ vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
   STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"] as const,
   getConfirmGrant: vi.fn(async () => null),
+  getConfirmGrantState: vi.fn(async (kind: "install" | "command") => ({
+    kind,
+    present: false,
+    grantId: null,
+    version: 0,
+    revocationEpoch: 0,
+    grant: null,
+  })),
   appendConfirmAuditEvent: vi.fn(async () => undefined),
 }));
 

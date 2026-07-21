@@ -105,6 +105,10 @@ describe("ConfirmUiGrantStore", () => {
     expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "false" })).toBe(false);
     expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1" })).toBe(true);
     expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "true" })).toBe(true);
+    expect(insecureRememberAllowed({
+      QINGAGENT_DESKTOP_PACKAGED: "1",
+      QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1",
+    })).toBe(false);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
     __resetConfirmUiGrantForTest();

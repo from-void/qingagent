@@ -42,10 +42,15 @@ import {
 } from "./update/updater.js";
 import { acquireSingleInstanceLock } from "./singleInstance.js";
 import { assertTrustedRenderer as assertTrustedRendererEvent } from "./ipcTrust.js";
-import { TrustedRememberUiGate } from "./trustedRememberUi.js";
+import {
+  NativeRememberGrantGate,
+  TrustedRememberUiGate,
+  type RememberGrantKind,
+} from "./trustedRememberUi.js";
 
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
+const nativeRememberGrantGate = new NativeRememberGrantGate();
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
@@ -128,7 +133,7 @@ if (!process.env.QINGAGENT_UPLOADS_DIR) {
 }
 
 // 桌面端能力必须在 import server/core 前设好:capabilities、技能导入 gate 都从服务端同进程读取。
-configureDesktopRuntimeEnv(process.env);
+configureDesktopRuntimeEnv(process.env, { isPackaged: app.isPackaged });
 
 // 浏览器类能力(fetchArticle 内置渲染降级 / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
 // 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装
@@ -341,8 +346,6 @@ function installTelemetryProcessErrorHandlers() {
   });
 }
 
-type RememberGrantKind = "install" | "command";
-
 function rememberGrantKind(value: unknown): RememberGrantKind | null {
   return value === "install" || value === "command" ? value : null;
 }
@@ -380,13 +383,22 @@ ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown)
   const kind = rememberGrantKind(record.kind);
   if (!sessionId || !confirmId || !kind || record.trustedGesture !== true) return null;
   if (!consumeTrustedRememberGesture(event)) return null;
-  const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
-  return registerConfirmUiGrant({
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed()) return null;
+  return nativeRememberGrantGate.request({
     purpose: "confirm",
-    sessionId,
-    confirmId,
     kind,
-    ttlMs: 60_000,
+    showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    register: async () => {
+      const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      return registerConfirmUiGrant({
+        purpose: "confirm",
+        sessionId,
+        confirmId,
+        kind,
+        ttlMs: 60_000,
+      });
+    },
   });
 });
 
@@ -397,8 +409,17 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
   const kind = rememberGrantKind(record.kind);
   if (!kind || record.trustedGesture !== true) return null;
   if (!consumeTrustedRememberGesture(event)) return null;
-  const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
-  return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000 });
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed()) return null;
+  return nativeRememberGrantGate.request({
+    purpose: "settings",
+    kind,
+    showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    register: async () => {
+      const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000 });
+    },
+  });
 });
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {

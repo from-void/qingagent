@@ -24,6 +24,13 @@ const secondsSchema = z.preprocess(
 
 export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 
+export function insecureRememberEnvironmentAllowed(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.QINGAGENT_DESKTOP_PACKAGED !== "1"
+    && isEnvEnabled(env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
+}
+
 export const executeCommandInputSchema = z.object({
   command: z.string().min(1).max(MAX_EXECUTE_COMMAND_LENGTH),
   timeout: secondsSchema.nullish(),
@@ -83,8 +90,6 @@ export function buildCommandConfirmSpec(
   const explanation = [reason, verdict.detail]
     .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
     .join("。");
-  const insecureWithoutDesktop = process.env.NODE_ENV === "development" &&
-    isEnvEnabled(process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
   const rememberCategory = kind === "install" || kind === "command"
     ? {
         kind,
@@ -94,7 +99,7 @@ export function buildCommandConfirmSpec(
         ...(platform === "win32" && kind === "install"
           ? { riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。" }
           : {}),
-        ...(insecureWithoutDesktop
+        ...(insecureRememberEnvironmentAllowed()
           ? { insecureWithoutDesktop: true }
           : {}),
       }
@@ -109,7 +114,7 @@ export function buildCommandConfirmSpec(
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     ...(rememberCategory ? { rememberCategory } : {}),
-    footHint: "只授权本次调用 · 10 分钟后自动失效",
+    footHint: "仅对本次调用生效 · 10 分钟后自动失效",
     primaryLabel,
     secondaryLabel: "取消",
   });

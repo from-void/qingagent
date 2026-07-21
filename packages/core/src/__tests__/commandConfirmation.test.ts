@@ -76,7 +76,7 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
 
   it("共同 footHint 与取消按钮保持既有协议", () => {
     const spec = buildCommandConfirmSpec({ command: "git push origin main" }, "将推送代码", "common-id");
-    expect(spec.footHint).toBe("只授权本次调用 · 10 分钟后自动失效");
+    expect(spec.footHint).toBe("仅对本次调用生效 · 10 分钟后自动失效");
     expect(spec.secondaryLabel).toBe("取消");
   });
 
@@ -126,5 +126,33 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       "linux",
     );
     expect(send.rememberCategory).toBeUndefined();
+  });
+
+  it("打包桌面即使注入开发开关也不暴露不安全记忆标记", () => {
+    const savedPackaged = process.env.QINGAGENT_DESKTOP_PACKAGED;
+    const savedInsecure = process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
+    try {
+      process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
+      process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER = "1";
+      const packaged = buildCommandConfirmSpec(
+        { command: "rm old.txt" },
+        "将删除文件",
+        "packaged-command",
+      );
+      expect(packaged.rememberCategory).not.toHaveProperty("insecureWithoutDesktop");
+
+      delete process.env.QINGAGENT_DESKTOP_PACKAGED;
+      const development = buildCommandConfirmSpec(
+        { command: "rm old.txt" },
+        "将删除文件",
+        "development-command",
+      );
+      expect(development.rememberCategory).toMatchObject({ insecureWithoutDesktop: true });
+    } finally {
+      if (savedPackaged === undefined) delete process.env.QINGAGENT_DESKTOP_PACKAGED;
+      else process.env.QINGAGENT_DESKTOP_PACKAGED = savedPackaged;
+      if (savedInsecure === undefined) delete process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
+      else process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER = savedInsecure;
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ConfirmGrantKind } from "@qingagent/db";
-import { isEnvEnabled } from "@qingagent/core/workspace";
+import { insecureRememberEnvironmentAllowed } from "@qingagent/core/confirm";
 
 export const CONFIRM_UI_GRANT_MAX_TTL_MS = 60_000;
 
@@ -123,7 +123,7 @@ let insecureModeLogged = false;
 export function insecureRememberAllowed(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const allowed = isEnvEnabled(env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
+  const allowed = insecureRememberEnvironmentAllowed(env);
   if (allowed && !insecureModeLogged) {
     insecureModeLogged = true;
     console.warn(

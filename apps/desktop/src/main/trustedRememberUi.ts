@@ -12,6 +12,86 @@ interface TrustedInput {
   at: number;
 }
 
+export type RememberGrantKind = "install" | "command";
+export type RememberGrantPurpose = "confirm" | "settings";
+
+export interface RememberMessageBoxOptions {
+  type: "question";
+  title: string;
+  message: string;
+  detail: string;
+  buttons: string[];
+  defaultId: number;
+  cancelId: number;
+  noLink: boolean;
+}
+
+function rememberCategoryCopy(kind: RememberGrantKind): {
+  label: string;
+  futureSubject: string;
+  settingsSubject: string;
+} {
+  return kind === "install"
+    ? {
+        label: "安装指令",
+        futureSubject: "以后的安装指令",
+        settingsSubject: "安装指令",
+      }
+    : {
+        label: "此类命令",
+        futureSubject: "以后的同类命令",
+        settingsSubject: "同类命令",
+      };
+}
+
+export function buildRememberMessageBoxOptions(input: {
+  purpose: RememberGrantPurpose;
+  kind: RememberGrantKind;
+}): RememberMessageBoxOptions {
+  const copy = rememberCategoryCopy(input.kind);
+  return {
+    type: "question",
+    title: "记住这类操作？",
+    message: input.purpose === "confirm"
+      ? `记住${copy.label}？`
+      : `为${copy.label}开启默认同意？`,
+    detail: input.purpose === "confirm"
+      ? `${copy.futureSubject}将不再逐次询问，直接执行。可在 设置 → 安全 里随时改回。`
+      : `开启后，${copy.settingsSubject}将不再逐次询问，直接执行。可在 设置 → 安全 里随时改回。`,
+    buttons: ["记住", "暂不"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+}
+
+/**
+ * 原生确认与 nonce 登记的串行闸门。renderer 即使搭车调用 IPC，也只能唤起一个
+ * 明示类别与后果的主进程 modal；只有用户点「记住」后才会登记 nonce。
+ */
+export class NativeRememberGrantGate {
+  #pending = false;
+
+  async request(input: {
+    purpose: RememberGrantPurpose;
+    kind: RememberGrantKind;
+    showMessageBox: (
+      options: RememberMessageBoxOptions,
+    ) => Promise<{ response: number }>;
+    register: () => Promise<string> | string;
+  }): Promise<string | null> {
+    if (this.#pending) return null;
+    this.#pending = true;
+    try {
+      const result = await input.showMessageBox(buildRememberMessageBoxOptions(input));
+      if (result.response !== 0) return null;
+      return await input.register();
+    } finally {
+      this.#pending = false;
+    }
+  }
+}
+
 /**
  * 主进程持有的真实输入闸门。renderer 只能请求消费，不能自行登记输入。
  * 每次物理输入至多签发一个 remember nonce，失焦、devtools 或过期均拒绝。

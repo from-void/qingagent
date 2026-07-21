@@ -108,6 +108,8 @@ import {
   turnRetryDelayMs,
 } from "./streamErrors.js";
 import { formatTurnLog, processAgentStream } from "./processAgentStream.js";
+import { resumeConfirmDecision } from "./confirmResume.js";
+import { confirmService } from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
 
@@ -733,6 +735,18 @@ export async function* runAgentTurn(
         }),
       );
       turnWasUserAborted ||= outcome.streamWasUserAborted;
+      for (const stored of outcome.storedGrantApprovals) {
+        yield* resumeConfirmDecision({
+          session: state,
+          pending: stored.pending,
+          decisionId: stored.decisionId,
+          accepted: true,
+          resolution: "accepted",
+          service: confirmService,
+          agent: qingagentAgent,
+          emitResolvedFrame: false,
+        });
+      }
       if (outcome.streamWasUserAborted) turnOutcome = "cancelled";
       const retryableIdleTimeout = outcome.retryableIdleTimeoutChunk !== undefined;
       const shouldRetry =

@@ -179,7 +179,7 @@ export function sandboxExtraReadOnlyPaths(): string[] {
 /** 安全开关口径:仅显式真值(1/true/yes/on,忽略大小写与空白)才视为开启;
  *  未设 / 空 / 0 / false / off / no / 其它一律关闭。用于高危能力默认安全。 */
 const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
-function isEnvEnabled(raw: string | undefined): boolean {
+export function isEnvEnabled(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   return TRUTHY_ENV_VALUES.has(raw.trim().toLowerCase());
 }

@@ -12,7 +12,8 @@
     "./src/app": "./src/app.ts",
     "./desktopFolderSelection": "./src/lib/desktopFolderSelection.ts",
     "./externalInstance": "./src/lib/externalInstance.ts",
-    "./httpDispatcher": "./src/lib/httpDispatcher.ts"
+    "./httpDispatcher": "./src/lib/httpDispatcher.ts",
+    "./confirmUiGrant": "./src/lib/confirmUiGrant.ts"
   },
   "scripts": {
     "dev": "NODE_OPTIONS='--use-env-proxy' tsx watch src/index.ts",

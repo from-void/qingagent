@@ -3,6 +3,8 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import { createSession } from "../session/sessionState.js";
 import { ConfirmService } from "../confirm/confirmService.js";
 import { processAgentStream } from "../agent-run/processAgentStream.js";
+import { resumeConfirmDecision } from "../agent-run/confirmResume.js";
+import type { ProcessOutcome } from "../agent-run/agentStreamTurnContext.js";
 
 async function* events(...items: unknown[]): AsyncGenerator<unknown> {
   for (const item of items) yield item;
@@ -12,6 +14,17 @@ async function collect(generator: AsyncGenerator<BridgeFrame>): Promise<BridgeFr
   const frames: BridgeFrame[] = [];
   for await (const frame of generator) frames.push(frame);
   return frames;
+}
+
+async function collectWithOutcome(
+  generator: AsyncGenerator<BridgeFrame, ProcessOutcome>,
+): Promise<{ frames: BridgeFrame[]; outcome: ProcessOutcome }> {
+  const frames: BridgeFrame[] = [];
+  for (;;) {
+    const next = await generator.next();
+    if (next.done) return { frames, outcome: next.value };
+    frames.push(next.value);
+  }
 }
 
 function approval(toolCallId: string, command: string, toolName = "mastra_workspace_execute_command") {
@@ -100,5 +113,67 @@ describe("processAgentStream tool-call-approval", () => {
     expect(frames.some(
       (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
     )).toBe(true);
+  });
+
+  it("stored grant 无确认卡帧，仍从 running commandCard 进入完成态", async () => {
+    const state = createSession("approval-stream-stored");
+    const service = new ConfirmService({
+      createId: () => "stored-confirm",
+      persist: async () => undefined,
+      loadGrant: async () => ({
+        grantId: "grant-command",
+        kind: "command",
+        createdAt: "2026-07-21T00:00:00.000Z",
+        source: "settings",
+      }),
+      appendAudit: async () => undefined,
+    });
+    const initial = await collectWithOutcome(processAgentStream(
+      events(approval("tool-stored", "mv a.txt b.txt")),
+      {
+        state,
+        agentMessageId: "agent-message",
+        streamId: "stream-stored",
+        runId: "run-confirm",
+        confirmService: service,
+      },
+    ));
+    expect(initial.frames.some((frame) => frame.kind === "confirmRequested")).toBe(false);
+    expect(initial.outcome.storedGrantApprovals).toHaveLength(1);
+    const stored = initial.outcome.storedGrantApprovals[0]!;
+    const agent = {
+      approveToolCall: async () => ({
+        runId: "run-confirm",
+        fullStream: events({
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "tool-stored",
+            args: { command: "mv a.txt b.txt" },
+            result: "ok",
+          },
+        }),
+      }),
+      declineToolCall: async () => ({ runId: "run-confirm", fullStream: events() }),
+    };
+    const resumed = await collect(resumeConfirmDecision({
+      session: state,
+      pending: stored.pending,
+      decisionId: stored.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service,
+      agent: agent as never,
+      emitResolvedFrame: false,
+    }));
+    expect(resumed.some((frame) => frame.kind === "confirmRequested")).toBe(false);
+    expect(resumed.some((frame) => frame.kind === "confirmResolved")).toBe(false);
+    const commandPhases = resumed.flatMap((frame) => {
+      if (frame.kind !== "toolCallUpdated" || frame.data.spec.body.kind !== "commandCard") return [];
+      return [frame.data.spec.body.data.phase];
+    });
+    expect(commandPhases).toContain("running");
+    expect(commandPhases).toContain("done");
+    expect(state.pendingConfirms.size).toBe(0);
   });
 });

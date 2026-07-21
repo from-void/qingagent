@@ -1,9 +1,10 @@
 import { Hono, type Context } from "hono";
-import type { SubmitConfirmDecision } from "@qingagent/contract-ts";
+import type { BridgeFrame, SubmitConfirmDecision } from "@qingagent/contract-ts";
 import { submitConfirmDecisionSchema } from "@qingagent/contract-ts/schemas";
 import {
   ConfirmDecisionError,
   confirmService,
+  type ConfirmService,
   type SafeSubmitConfirmDecision,
 } from "@qingagent/core/confirm";
 import {
@@ -13,6 +14,11 @@ import {
 import { handleConfirmDecision } from "../gateway/confirmRuntime";
 import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
+import { createConfirmGrant, type ConfirmGrant } from "@qingagent/db";
+import {
+  consumeConfirmUiGrant,
+  insecureRememberAllowed,
+} from "../lib/confirmUiGrant";
 
 const MAX_CONFIRM_BODY_BYTES = 16 * 1024;
 
@@ -51,7 +57,12 @@ async function readBoundedJson(c: Context): Promise<unknown> {
 function safeSubmission(
   input: SubmitConfirmDecision,
 ): SafeSubmitConfirmDecision {
-  const { secretValue: _secretValue, ...decision } = input.decision;
+  const {
+    secretValue: _secretValue,
+    remember: _remember,
+    uiGrantNonce: _uiGrantNonce,
+    ...decision
+  } = input.decision;
   return {
     sessionId: input.sessionId,
     toolCallId: input.toolCallId,
@@ -82,9 +93,37 @@ function errorStatus(code: ConfirmDecisionError["code"]): 400 | 404 | 409 | 410 
   return 400;
 }
 
-export const confirmRoutes = new Hono();
+interface ConfirmRoutesDependencies {
+  getSession?: typeof getOrRestoreSession;
+  runExclusive?: (
+    sessionId: string,
+    task: () => AsyncGenerator<BridgeFrame>,
+  ) => Promise<unknown>;
+  handleDecision?: typeof handleConfirmDecision;
+  service?: ConfirmService;
+  consumeUiGrant?: typeof consumeConfirmUiGrant;
+  insecureRememberAllowed?: () => boolean;
+  createGrant?: (input: {
+    kind: "install" | "command";
+    source: "card";
+  }) => Promise<ConfirmGrant>;
+}
 
-confirmRoutes.post("/confirms/decision", async (c) => {
+export function createConfirmRoutes(
+  dependencies: ConfirmRoutesDependencies = {},
+): Hono {
+  const routes = new Hono();
+  const getSession = dependencies.getSession ?? getOrRestoreSession;
+  const runExclusive = dependencies.runExclusive
+    ?? ((sessionId, task) => sessionManager.runExclusive(sessionId, task));
+  const decide = dependencies.handleDecision ?? handleConfirmDecision;
+  const service = dependencies.service ?? confirmService;
+  const consumeUiGrant = dependencies.consumeUiGrant ?? consumeConfirmUiGrant;
+  const allowInsecureRemember = dependencies.insecureRememberAllowed
+    ?? insecureRememberAllowed;
+  const createGrant = dependencies.createGrant ?? createConfirmGrant;
+
+  routes.post("/confirms/decision", async (c) => {
   const originError = requireTrustedOrigin(c);
   if (originError) return originError;
 
@@ -101,10 +140,54 @@ confirmRoutes.post("/confirms/decision", async (c) => {
     return c.json({ error: known?.message ?? "确认请求无效" }, known ? errorStatus(known.code) : 400);
   }
 
-  const session = await getOrRestoreSession(parsed.sessionId);
+  const session = await getSession(parsed.sessionId);
   if (!session) return c.json({ error: "没有可处理的确认请求" }, 404);
+  const pending = session.pendingConfirms.get(parsed.toolCallId);
+  const rememberRequested = parsed.decision.remember === true;
+  let rememberAuthorized = false;
+  if (rememberRequested && pending?.confirmId === parsed.decision.id) {
+    if (pending.spec.kind === "send" || pending.spec.kind === "connect") {
+      await service.recordRememberRejected(
+        session,
+        pending,
+        parsed.decision.accepted,
+        "forbidden-kind",
+      );
+      return c.json({ error: "该类别始终需要确认" }, 400);
+    }
+    if (pending.spec.kind === "install" || pending.spec.kind === "command") {
+      if (pending.spec.rememberCategory?.kind !== pending.spec.kind) {
+        await service.recordRememberRejected(
+          session,
+          pending,
+          parsed.decision.accepted,
+          "undeclared-category",
+        );
+      } else {
+        const consumed = consumeUiGrant({
+          purpose: "confirm",
+          nonce: parsed.decision.uiGrantNonce,
+          sessionId: parsed.sessionId,
+          confirmId: parsed.decision.id,
+          kind: pending.spec.kind,
+        });
+        rememberAuthorized = (
+          process.env.NODE_ENV === "development" &&
+          allowInsecureRemember()
+        ) || consumed.ok;
+        if (!rememberAuthorized) {
+          await service.recordRememberRejected(
+            session,
+            pending,
+            parsed.decision.accepted,
+            consumed.reason ?? "invalid",
+          );
+        }
+      }
+    }
+  }
   if (parsed.decision.secretValue !== undefined) {
-    confirmService.stageSecret(session, {
+    service.stageSecret(session, {
       confirmId: parsed.decision.id,
       toolCallId: parsed.toolCallId,
       value: parsed.decision.secretValue,
@@ -113,10 +196,20 @@ confirmRoutes.post("/confirms/decision", async (c) => {
   const safe = safeSubmission(parsed);
 
   try {
-    await sessionManager.runExclusive(parsed.sessionId, () => handleConfirmDecision(safe));
-    return c.json({ accepted: true });
+    await runExclusive(parsed.sessionId, () => decide(safe, {
+      ...(rememberRequested && rememberAuthorized
+        ? {
+            onAccepted: async (current) => {
+              if (current.spec.kind !== "install" && current.spec.kind !== "command") return null;
+              if (current.spec.rememberCategory?.kind !== current.spec.kind) return null;
+              return createGrant({ kind: current.spec.kind, source: "card" });
+            },
+          }
+        : {}),
+    }));
+    return c.json({ accepted: true, remembered: rememberRequested && rememberAuthorized });
   } catch (error) {
-    confirmService.discardSecret(session, parsed.decision.id);
+    service.discardSecret(session, parsed.decision.id);
     if (error instanceof SessionActorQueueFullError) {
       return c.json({ error: "会话命令队列已满" }, 429);
     }
@@ -124,4 +217,9 @@ confirmRoutes.post("/confirms/decision", async (c) => {
     if (known) return c.json({ error: known.message }, errorStatus(known.code));
     return c.json({ error: "确认处理失败，命令未执行" }, 500);
   }
-});
+  });
+
+  return routes;
+}
+
+export const confirmRoutes = createConfirmRoutes();

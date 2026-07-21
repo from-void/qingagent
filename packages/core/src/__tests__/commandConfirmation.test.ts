@@ -96,4 +96,35 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     );
     expect(spec.sub).not.toContain("默认 TTL");
   });
+
+  it("记忆部件只由后端 spec 声明，Windows 安装类附带如实风险提示", () => {
+    const install = buildCommandConfirmSpec(
+      { command: "npm install zod" },
+      "将修改运行环境",
+      "install-win",
+      "win32",
+    );
+    expect(install.rememberCategory).toEqual({
+      kind: "install",
+      label: "后续的安装指令都默认同意",
+      riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。",
+    });
+    const command = buildCommandConfirmSpec(
+      { command: "rm old.txt" },
+      "将删除文件",
+      "command-linux",
+      "linux",
+    );
+    expect(command.rememberCategory).toEqual({
+      kind: "command",
+      label: "后续此类命令都默认同意",
+    });
+    const send = buildCommandConfirmSpec(
+      { command: "git push origin main" },
+      "将推送代码",
+      "send-linux",
+      "linux",
+    );
+    expect(send.rememberCategory).toBeUndefined();
+  });
 });

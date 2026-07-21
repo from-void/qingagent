@@ -642,6 +642,11 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
       expiresAt: pending.expiresAt,
       status: pending.status,
       ...(pending.decisionId ? { decisionId: pending.decisionId } : {}),
+      ...(pending.decisionSource ? { decisionSource: pending.decisionSource } : {}),
+      ...(pending.decisionAccepted !== undefined
+        ? { decisionAccepted: pending.decisionAccepted }
+        : {}),
+      ...(pending.decisionGrantId ? { decisionGrantId: pending.decisionGrantId } : {}),
     })),
     threadSummary,
     lastPersistedAt: new Date().toISOString(),
@@ -693,6 +698,15 @@ function deserializePendingConfirms(
       expiresAt,
       status: item.status,
       ...(isNonEmptyString(item.decisionId) ? { decisionId: item.decisionId } : {}),
+      ...(item.decisionSource === "ui" || item.decisionSource === "stored-grant"
+        ? { decisionSource: item.decisionSource }
+        : {}),
+      ...(typeof item.decisionAccepted === "boolean"
+        ? { decisionAccepted: item.decisionAccepted }
+        : {}),
+      ...(isNonEmptyString(item.decisionGrantId)
+        ? { decisionGrantId: item.decisionGrantId }
+        : {}),
     });
   }
   return restored;

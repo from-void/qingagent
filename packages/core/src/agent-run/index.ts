@@ -25,6 +25,12 @@ export {
   processAgentStream,
 } from "./processAgentStream.js";
 
+export {
+  failConfirmedToolCall,
+  resumeConfirmDecision,
+} from "./confirmResume.js";
+export type { ApprovalAgent } from "./confirmResume.js";
+
 export type {
   ProcessAgentStreamOptions,
   ProcessOutcome,

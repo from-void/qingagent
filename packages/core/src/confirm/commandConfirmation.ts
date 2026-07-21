@@ -5,11 +5,14 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { redactSensitiveText } from "../agent-run/redaction.js";
 import { assessCommand } from "../workspace/commandRisk.js";
-import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import {
   effectiveBackgroundTimeoutMs,
   formatCommandDuration,
 } from "../workspace/backgroundCommandLimits.js";
+import {
+  isEnvEnabled,
+  sessionWorkspaceDir,
+} from "../workspace/sessionWorkspace.js";
 
 const secondsSchema = z.preprocess(
   (value) => {
@@ -54,6 +57,7 @@ export function buildCommandConfirmSpec(
   input: ExecuteCommandInput,
   reason: string,
   id: string = randomUUID(),
+  platform: NodeJS.Platform = process.platform,
 ): ConfirmSpec {
   const verdict = assessCommand(input.command);
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
@@ -79,6 +83,22 @@ export function buildCommandConfirmSpec(
   const explanation = [reason, verdict.detail]
     .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
     .join("。");
+  const insecureWithoutDesktop = process.env.NODE_ENV === "development" &&
+    isEnvEnabled(process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
+  const rememberCategory = kind === "install" || kind === "command"
+    ? {
+        kind,
+        label: kind === "install"
+          ? "后续的安装指令都默认同意"
+          : "后续此类命令都默认同意",
+        ...(platform === "win32" && kind === "install"
+          ? { riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。" }
+          : {}),
+        ...(insecureWithoutDesktop
+          ? { insecureWithoutDesktop: true }
+          : {}),
+      }
+    : undefined;
   return confirmSpecSchema.parse({
     id,
     kind,
@@ -88,6 +108,7 @@ export function buildCommandConfirmSpec(
     sub,
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
+    ...(rememberCategory ? { rememberCategory } : {}),
     footHint: "只授权本次调用 · 10 分钟后自动失效",
     primaryLabel,
     secondaryLabel: "取消",

@@ -98,6 +98,9 @@ export interface PendingConfirm {
   expiresAt: string;
   status: "pending" | "resuming";
   decisionId?: string;
+  decisionSource?: "ui" | "stored-grant";
+  decisionAccepted?: boolean;
+  decisionGrantId?: string;
 }
 
 /** Mutable server-side session state. One per active session. */

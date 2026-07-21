@@ -1,8 +1,8 @@
 import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import type { ConfirmGrant } from "@qingagent/db";
+import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
-import type { ToolsInput } from "@mastra/core/agent";
-import crypto from "node:crypto";
 import {
   AGENT_MAX_STEPS,
   ConfirmDecisionError,
@@ -16,17 +16,14 @@ import {
   finalizeLingeringRunningToolCalls,
   processAgentStream,
   qingagentAgent,
+  resumeConfirmDecision,
   schedulePersist,
+  type ApprovalAgent,
   type ConfirmService,
   type PendingConfirm,
   type SafeSubmitConfirmDecision,
   type SessionState,
 } from "./bridgeCore";
-
-type ApprovalAgent = Pick<
-  typeof qingagentAgent,
-  "approveToolCall" | "declineToolCall"
->;
 
 export interface ConfirmRuntimeDependencies {
   agent?: ApprovalAgent;
@@ -36,6 +33,8 @@ export interface ConfirmRuntimeDependencies {
   expiryTimeoutMs?: number;
   resumeTimeoutMs?: number;
   persistTimeoutMs?: number;
+  /** 决策完成上下文校验后执行；失败只放弃记忆，不能吞掉用户本次决策。 */
+  onAccepted?: (pending: PendingConfirm) => Promise<ConfirmGrant | null>;
 }
 
 const CONFIRM_EXPIRY_WALL_TIMEOUT_MS = 5_000;
@@ -215,12 +214,12 @@ async function consumeFullStreamWithTimeout(
   }
 }
 
-async function* forwardWithWallClockTimeout<T>(
-  iterable: AsyncIterable<T>,
+async function* forwardWithWallClockTimeout<T, TReturn>(
+  iterable: { [Symbol.asyncIterator](): AsyncIterator<T, TReturn> },
   controller: AbortController,
   timeoutMs: number,
   label: string,
-): AsyncGenerator<T> {
+): AsyncGenerator<T, TReturn> {
   const iterator = iterable[Symbol.asyncIterator]();
   const deadline = Date.now() + timeoutMs;
   try {
@@ -232,7 +231,7 @@ async function* forwardWithWallClockTimeout<T>(
         remainingMs,
         label,
       );
-      if (next.done) return;
+      if (next.done) return next.value;
       yield next.value;
     }
   } catch (error) {
@@ -333,6 +332,21 @@ async function persistWithDeadline(
   }
 }
 
+async function settleOnceWithDeadline(
+  operation: () => Promise<void>,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  try {
+    await withNonAbortableTimeout(
+      Promise.resolve().then(operation),
+      timeoutMs,
+      label,
+    );
+  } catch {
+    // 审计写入本身已记录错误；超时后原 promise 仍继续，只是不阻塞 SessionActor。
+  }
+}
 /** 同一 SessionActor 内运行；绝不 fresh-turn，也不把决策拼成 prompt/resumeData。 */
 export async function* handleConfirmDecision(
   submission: SafeSubmitConfirmDecision,
@@ -351,6 +365,22 @@ export async function* handleConfirmDecision(
   const begun = await service.beginDecision(session, submission);
   if (begun.idempotent) return;
   const { pending, resolution } = begun;
+  if (resolution !== "accepted" && resolution !== "rejected") {
+    throw new ConfirmDecisionError("invalid", "确认决策结果无效");
+  }
+  if (submission.decision.accepted && dependencies.onAccepted) {
+    try {
+      const grant = await dependencies.onAccepted(pending);
+      if (grant) service.attachRememberedGrant(pending, grant);
+    } catch (error) {
+      console.error("[confirm] remember grant persistence failed; decision continues", {
+        sessionId: session.sessionId,
+        confirmId: pending.confirmId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const streamId = crypto.randomUUID();
   const abortController = new AbortController();
   const previousStreamId = session.streamId;
@@ -360,12 +390,19 @@ export async function* handleConfirmDecision(
   const agentMessageId = findToolCallMessageId(session, pending.toolCallId);
   if (!agentMessageId) {
     service.failDecisionInMemory(session, pending);
-    await persistWithDeadline(
-      session,
-      "confirm:failed:missing_tool_card",
-      () => service.persistDecisionState(session, "confirm:failed"),
-      persistTimeoutMs,
-    );
+    await Promise.all([
+      persistWithDeadline(
+        session,
+        "confirm:failed:missing_tool_card",
+        () => service.persistDecisionState(session, "confirm:failed"),
+        persistTimeoutMs,
+      ),
+      settleOnceWithDeadline(
+        () => service.recordDecisionFailed(session, pending),
+        persistTimeoutMs,
+        "confirm:audit:failed:missing_tool_card",
+      ),
+    ]);
     yield service.resolvedFrame(pending, "failed", "确认恢复失败，命令未执行");
     return;
   }
@@ -378,7 +415,14 @@ export async function* handleConfirmDecision(
   session._abortController = abortController;
   session._activeTurnPromise = completion.promise;
   let resolvedEmitted = false;
+  let storedGrantApprovals: Array<{
+    pending: PendingConfirm;
+    decisionId: string;
+  }> = [];
   let terminalPersistence:
+    | { key: string; operation: () => Promise<void> }
+    | null = null;
+  let terminalAudit:
     | { key: string; operation: () => Promise<void> }
     | null = null;
 
@@ -453,7 +497,7 @@ export async function* handleConfirmDecision(
         },
       };
     }
-    yield* forwardWithWallClockTimeout(
+    const outcome = yield* forwardWithWallClockTimeout(
       processAgentStream(result.fullStream, {
         state: session,
         agentMessageId,
@@ -461,11 +505,13 @@ export async function* handleConfirmDecision(
         runId: result.runId,
         requestContext,
         abortController,
+        confirmService: service,
       }),
       abortController,
       resumeTimeoutMs,
       "confirm resume fullStream",
     );
+    storedGrantApprovals = outcome.storedGrantApprovals;
     // 执行已结束后 proof 必已消费/清除；终态持久化失败也不能重放命令。
     service.finishDecisionInMemory(
       session,
@@ -480,12 +526,20 @@ export async function* handleConfirmDecision(
         `confirm:${resolution}`,
       ),
     };
+    terminalAudit = {
+      key: `confirm:audit:${resolution}`,
+      operation: () => service.recordDecisionFinished(session, pending, resolution),
+    };
   } catch {
     // snapshot/恢复/工具链任一错误都只关闭卡并拒绝；绝不走 askUser 的 fresh-turn。
     service.failDecisionInMemory(session, pending);
     terminalPersistence = {
       key: "confirm:failed",
       operation: () => service.persistDecisionState(session, "confirm:failed"),
+    };
+    terminalAudit = {
+      key: "confirm:audit:failed",
+      operation: () => service.recordDecisionFailed(session, pending),
     };
     const reason = resolvedEmitted
       ? "确认恢复异常，执行结果未知且未自动重试"
@@ -533,6 +587,13 @@ export async function* handleConfirmDecision(
             persistTimeoutMs,
           )]
         : []),
+      ...(terminalAudit
+        ? [settleOnceWithDeadline(
+            terminalAudit.operation,
+            persistTimeoutMs,
+            terminalAudit.key,
+          )]
+        : []),
       persistWithDeadline(
         session,
         "confirm:runtime_finally",
@@ -540,6 +601,19 @@ export async function* handleConfirmDecision(
         persistTimeoutMs,
       ),
     ]);
+  }
+
+  for (const stored of storedGrantApprovals) {
+    yield* resumeConfirmDecision({
+      session,
+      pending: stored.pending,
+      decisionId: stored.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service,
+      agent,
+      emitResolvedFrame: false,
+    });
   }
 }
 
@@ -619,12 +693,19 @@ export async function* handleConfirmExpiry(
       session._activeTurnPromise = previousActiveTurnPromise;
     }
     if (expiryTerminalized) {
-      await persistWithDeadline(
-        session,
-        "confirm:expired",
-        () => service.persistDecisionState(session, "confirm:expired"),
-        persistTimeoutMs,
-      );
+      await Promise.all([
+        persistWithDeadline(
+          session,
+          "confirm:expired",
+          () => service.persistDecisionState(session, "confirm:expired"),
+          persistTimeoutMs,
+        ),
+        settleOnceWithDeadline(
+          () => service.recordDecisionExpired(session, pending),
+          persistTimeoutMs,
+          "confirm:audit:expired",
+        ),
+      ]);
     }
   }
 }

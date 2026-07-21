@@ -4,6 +4,13 @@ import type {
   ConfirmResolved,
 } from "@qingagent/contract-ts";
 import { confirmDecisionForSpecSchema } from "@qingagent/contract-ts/schemas";
+import {
+  appendConfirmAuditEvent,
+  getConfirmGrant,
+  type ConfirmAuditEvent,
+  type ConfirmGrant,
+  type ConfirmGrantKind,
+} from "@qingagent/db";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
 import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
@@ -46,10 +53,20 @@ export interface ConfirmServiceOptions {
   createId?: () => string;
   persist?: (state: SessionState, reason: string) => Promise<void>;
   secrets?: SecretLeaseStore;
+  loadGrant?: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
+  appendAudit?: (
+    event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
+  ) => Promise<unknown>;
 }
 
 export type RequestCommandConfirmResult =
-  | { ok: true; pending: PendingConfirm; frame: BridgeFrame }
+  | { ok: true; pending: PendingConfirm; frame: BridgeFrame; storedGrantApproval?: undefined }
+  | {
+      ok: true;
+      pending: PendingConfirm;
+      frame?: undefined;
+      storedGrantApproval: { decisionId: string; grant: ConfirmGrant };
+    }
   | { ok: false; reason: string };
 
 interface DecisionReceipt {
@@ -65,6 +82,10 @@ export class ConfirmService {
   readonly #createId: () => string;
   readonly #persist: (state: SessionState, reason: string) => Promise<void>;
   readonly #secrets: SecretLeaseStore;
+  readonly #loadGrant: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
+  readonly #appendAudit: (
+    event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
+  ) => Promise<unknown>;
   readonly #receipts = new WeakMap<SessionState, Map<string, DecisionReceipt>>();
 
   constructor(options: ConfirmServiceOptions = {}) {
@@ -73,6 +94,8 @@ export class ConfirmService {
     // main 已把 persistSessionMetadata 改为失败无条件抛,无需再显式要求 rethrow
     this.#persist = options.persist ?? ((state, reason) => persistSessionMetadata(state, reason));
     this.#secrets = options.secrets ?? secretLeaseStore;
+    this.#loadGrant = options.loadGrant ?? getConfirmGrant;
+    this.#appendAudit = options.appendAudit ?? appendConfirmAuditEvent;
   }
 
   async requestCommandConfirm(input: {
@@ -138,7 +161,80 @@ export class ConfirmService {
       input.state.pendingConfirms.delete(input.toolCallId);
       return { ok: false, reason: "确认请求无法安全持久化" };
     }
+    if (pending.spec.kind === "install" || pending.spec.kind === "command") {
+      try {
+        const grant = await this.#loadGrant(pending.spec.kind);
+        if (grant) {
+          const decisionId = await this.approveFromStoredGrant(input.state, pending, grant);
+          return {
+            ok: true,
+            pending,
+            storedGrantApproval: { decisionId, grant },
+          };
+        }
+      } catch (error) {
+        console.error("[confirm-audit] stored grant lookup/approval failed; showing confirm card", {
+          sessionId: input.state.sessionId,
+          confirmId: pending.confirmId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return { ok: true, pending, frame: this.requestedFrame(pending) };
+  }
+
+  /**
+   * 仅供服务端确认流水线内部调用。它不进入 HTTP route、agent toolset 或模型上下文；
+   * 每次命中都按当前 pending 的精确 digest 签发一张新的短时 proof。
+   */
+  async approveFromStoredGrant(
+    state: SessionState,
+    pending: PendingConfirm,
+    grant: ConfirmGrant,
+  ): Promise<string> {
+    const pendingExpiresAt = Date.parse(pending.expiresAt);
+    if (
+      state.pendingConfirms.get(pending.toolCallId) !== pending ||
+      pending.status !== "pending" ||
+      pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
+      pending.spec.kind !== grant.kind ||
+      (grant.kind !== "install" && grant.kind !== "command") ||
+      !Number.isFinite(pendingExpiresAt) ||
+      pendingExpiresAt <= this.#now()
+    ) {
+      throw new ConfirmDecisionError("conflict", "存量授权与确认请求不匹配");
+    }
+    const decisionId = `stored-${this.#createId()}`.slice(0, 128);
+    pending.status = "resuming";
+    pending.decisionId = decisionId;
+    pending.decisionSource = "stored-grant";
+    pending.decisionAccepted = true;
+    pending.decisionGrantId = grant.grantId;
+    try {
+      await this.#persist(state, "confirm:stored-grant-resuming");
+    } catch (error) {
+      pending.status = "pending";
+      delete pending.decisionId;
+      delete pending.decisionSource;
+      delete pending.decisionAccepted;
+      delete pending.decisionGrantId;
+      throw error;
+    }
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: pending.runId,
+      toolCallId: pending.toolCallId,
+      commandDigest: pending.commandDigest,
+      expiresAt: Math.min(pendingExpiresAt, this.#now() + 60_000),
+    });
+    await this.#safeAppendAudit(state, pending, {
+      eventType: "decision_started",
+      decision: "accepted",
+      source: "stored-grant",
+      grantId: grant.grantId,
+      result: "stored-grant-approved",
+    });
+    return decisionId;
   }
 
   stageSecret(
@@ -258,11 +354,15 @@ export class ConfirmService {
 
     pending.status = "resuming";
     pending.decisionId = submission.decisionId;
+    pending.decisionSource = "ui";
+    pending.decisionAccepted = submission.decision.accepted;
     try {
       await this.#persist(state, "confirm:resuming");
     } catch {
       pending.status = "pending";
       delete pending.decisionId;
+      delete pending.decisionSource;
+      delete pending.decisionAccepted;
       this.#secrets.delete(state, pending.confirmId);
       throw new ConfirmDecisionError("conflict", "确认状态无法安全持久化");
     }
@@ -278,11 +378,39 @@ export class ConfirmService {
     } else {
       clearApprovalProof(state, pending.toolCallId);
     }
+    await this.#safeAppendAudit(state, pending, {
+      eventType: "decision_started",
+      decision: submission.decision.accepted ? "accepted" : "rejected",
+      source: "ui",
+      grantId: null,
+      result: "decision-validated",
+    });
     return {
       pending,
       idempotent: false,
       resolution: submission.decision.accepted ? "accepted" : "rejected",
     };
+  }
+
+  attachRememberedGrant(pending: PendingConfirm, grant: ConfirmGrant): void {
+    if (pending.decisionSource !== "ui" || pending.decisionAccepted !== true) return;
+    if (pending.spec.kind !== grant.kind) return;
+    pending.decisionGrantId = grant.grantId;
+  }
+
+  async recordRememberRejected(
+    state: SessionState,
+    pending: PendingConfirm,
+    accepted: boolean,
+    reason: string,
+  ): Promise<void> {
+    await this.#safeAppendAudit(state, pending, {
+      eventType: "remember_rejected",
+      decision: accepted ? "accepted" : "rejected",
+      source: "ui",
+      grantId: null,
+      result: `remember-rejected:${reason}`,
+    });
   }
 
   async finishDecision(
@@ -292,7 +420,11 @@ export class ConfirmService {
     resolution: ConfirmResolved["resolution"],
   ): Promise<void> {
     this.finishDecisionInMemory(state, pending, decisionId, resolution);
-    await this.persistDecisionState(state, `confirm:${resolution}`);
+    try {
+      await this.persistDecisionState(state, `confirm:${resolution}`);
+    } finally {
+      await this.recordDecisionFinished(state, pending, resolution);
+    }
   }
 
   finishDecisionInMemory(
@@ -320,7 +452,11 @@ export class ConfirmService {
 
   async failDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
     this.failDecisionInMemory(state, pending);
-    await this.persistDecisionState(state, "confirm:failed");
+    try {
+      await this.persistDecisionState(state, "confirm:failed");
+    } finally {
+      await this.recordDecisionFailed(state, pending);
+    }
   }
 
   failDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
@@ -331,7 +467,11 @@ export class ConfirmService {
 
   async expireDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
     this.expireDecisionInMemory(state, pending);
-    await this.persistDecisionState(state, "confirm:expired");
+    try {
+      await this.persistDecisionState(state, "confirm:expired");
+    } finally {
+      await this.recordDecisionExpired(state, pending);
+    }
   }
 
   expireDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
@@ -348,6 +488,46 @@ export class ConfirmService {
       | "confirm:expired",
   ): Promise<void> {
     return this.#persist(state, reason);
+  }
+
+  recordDecisionFinished(
+    state: SessionState,
+    pending: PendingConfirm,
+    resolution: ConfirmResolved["resolution"],
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_finished",
+      decision: resolution === "accepted" ? "accepted" : "rejected",
+      source: pending.decisionSource ?? "ui",
+      grantId: pending.decisionGrantId ?? null,
+      result: resolution,
+    });
+  }
+
+  recordDecisionFailed(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_failed",
+      decision: "failed",
+      source: pending.decisionSource ?? "ui",
+      grantId: pending.decisionGrantId ?? null,
+      result: "failed",
+    });
+  }
+
+  recordDecisionExpired(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_expired",
+      decision: "expired",
+      source: "expired",
+      grantId: null,
+      result: "expired",
+    });
   }
 
   clearSession(state: SessionState): void {
@@ -393,6 +573,38 @@ export class ConfirmService {
       if (receipt.expiresAt <= now) receipts.delete(id);
     }
     if (receipts.size === 0) this.#receipts.delete(state);
+  }
+
+  async #safeAppendAudit(
+    state: SessionState,
+    pending: PendingConfirm,
+    input: Pick<
+      ConfirmAuditEvent,
+      "eventType" | "decision" | "source" | "grantId" | "result"
+    >,
+  ): Promise<void> {
+    try {
+      await this.#appendAudit({
+        ...input,
+        sessionId: state.sessionId,
+        runId: pending.runId,
+        toolCallId: pending.toolCallId,
+        confirmId: pending.confirmId,
+        kind: pending.spec.kind,
+        commandDigest: pending.commandDigest,
+        commandPreview: pending.spec.commandPreview ?? "",
+        policyVersion: "command-policy-v1",
+        isolationEpoch: null,
+        configHash: null,
+      });
+    } catch (error) {
+      console.error("[confirm-audit] append failed", {
+        sessionId: state.sessionId,
+        confirmId: pending.confirmId,
+        eventType: input.eventType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 

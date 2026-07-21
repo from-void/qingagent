@@ -8,6 +8,7 @@ import type { Span } from "@mastra/core/observability";
 import { basename } from "node:path";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
+import type { PendingConfirm } from "../session/sessionState.js";
 import {
   AGENT_FIRST_CHUNK_TIMEOUT_MS,
   AGENT_IDLE_TIMEOUT_MS,
@@ -61,6 +62,7 @@ export interface ProcessOutcome {
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
   retryableIdleTimeoutChunk?: unknown;
+  storedGrantApprovals: Array<{ pending: PendingConfirm; decisionId: string }>;
 }
 
 export interface ExtractedTextEntry {
@@ -192,6 +194,7 @@ export async function createAgentStreamTurnContext(
       sawToolCall: false,
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
+      storedGrantApprovals: [],
     },
     previousStreamId,
     restoreStreamIdOnExit,

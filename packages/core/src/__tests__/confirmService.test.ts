@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConfirmSpec } from "@qingagent/contract-ts";
+import type { ConfirmGrant } from "@qingagent/db";
 import { createSession } from "../session/sessionState.js";
 import { ConfirmDecisionError, ConfirmService } from "../confirm/confirmService.js";
 import { SecretLeaseStore } from "../confirm/secretLeaseStore.js";
+import { consumeApprovalProof } from "../confirm/approvalProof.js";
 
 const secretSpec: ConfirmSpec = {
   id: "confirm-secret",
@@ -184,5 +186,234 @@ describe("ConfirmService", () => {
       confirmId: pending.confirmId,
       toolCallId: pending.toolCallId,
     })).toBeNull();
+  });
+
+  it("stored grant 保持 confirm 分类并为本次 digest 签发 fresh 一次性 proof", async () => {
+    const state = createSession("confirm-stored-grant");
+    const audits: Array<Record<string, unknown>> = [];
+    const service = new ConfirmService({
+      createId: () => "confirm-stored",
+      persist: async () => undefined,
+      loadGrant: async () => ({
+        grantId: "grant-command",
+        kind: "command",
+        createdAt: "2026-07-21T00:00:00.000Z",
+        source: "settings",
+      }),
+      appendAudit: async (event) => { audits.push(event); },
+    });
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-stored",
+      toolCallId: "tool-stored",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv draft.txt final.txt" },
+      aborted: false,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      storedGrantApproval: {
+        decisionId: "stored-confirm-stored",
+        grant: { grantId: "grant-command", kind: "command" },
+      },
+    });
+    if (!result.ok || !result.storedGrantApproval) return;
+    expect(result.frame).toBeUndefined();
+    expect(result.pending).toMatchObject({
+      status: "resuming",
+      decisionSource: "stored-grant",
+      decisionGrantId: "grant-command",
+    });
+    expect(consumeApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-stored",
+      toolCallId: "tool-stored",
+      commandDigest: "wrong-digest",
+    })).toBe(false);
+    expect(consumeApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-stored",
+      toolCallId: "tool-stored",
+      commandDigest: result.pending.commandDigest,
+    })).toBe(false);
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "decision_started",
+      source: "stored-grant",
+      grantId: "grant-command",
+      commandDigest: result.pending.commandDigest,
+    }));
+
+    const secondState = createSession("confirm-stored-grant-second");
+    const second = await service.requestCommandConfirm({
+      state: secondState,
+      runId: "run-second",
+      toolCallId: "tool-second",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv draft.txt final.txt" },
+      aborted: false,
+    });
+    if (!second.ok || !second.storedGrantApproval) return;
+    const proofInput = {
+      sessionId: secondState.sessionId,
+      runId: "run-second",
+      toolCallId: "tool-second",
+      commandDigest: second.pending.commandDigest,
+    };
+    expect(consumeApprovalProof(secondState, proofInput)).toBe(true);
+    expect(consumeApprovalProof(secondState, proofInput)).toBe(false);
+  });
+
+  it("grant 撤销后下一条同类命令重新发确认卡", async () => {
+    let activeGrant: ConfirmGrant | null = {
+      grantId: "grant-before-revoke",
+      kind: "command" as const,
+      createdAt: "2026-07-21T00:00:00.000Z",
+      source: "settings" as const,
+    };
+    const service = new ConfirmService({
+      createId: (() => {
+        let sequence = 0;
+        return () => `confirm-${++sequence}`;
+      })(),
+      persist: async () => undefined,
+      loadGrant: async () => activeGrant,
+      appendAudit: async () => undefined,
+    });
+    const beforeRevoke = await service.requestCommandConfirm({
+      state: createSession("grant-before-revoke"),
+      runId: "run-before",
+      toolCallId: "tool-before",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv before.txt after.txt" },
+      aborted: false,
+    });
+    expect(beforeRevoke).toMatchObject({
+      ok: true,
+      storedGrantApproval: { grant: { grantId: "grant-before-revoke" } },
+    });
+
+    activeGrant = null;
+    const afterRevoke = await service.requestCommandConfirm({
+      state: createSession("grant-after-revoke"),
+      runId: "run-after",
+      toolCallId: "tool-after",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv next.txt final.txt" },
+      aborted: false,
+    });
+    expect(afterRevoke).toMatchObject({
+      ok: true,
+      frame: { kind: "confirmRequested", data: { toolCallId: "tool-after" } },
+    });
+    if (afterRevoke.ok) expect(afterRevoke.storedGrantApproval).toBeUndefined();
+  });
+
+  it("UI、stored grant 与过期路径审计都保留来源、grantId 和 digest", async () => {
+    const audits: Array<Record<string, unknown>> = [];
+    const service = new ConfirmService({
+      persist: async () => undefined,
+      appendAudit: async (event) => { audits.push(event); },
+    });
+    const state = createSession("confirm-audit-lifecycle");
+    const pending = {
+      confirmId: "confirm-ui",
+      runId: "run-ui",
+      toolCallId: "tool-ui",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-ui",
+      spec: {
+        id: "confirm-ui",
+        kind: "command" as const,
+        title: "执行命令",
+        say: "需要确认",
+        commandPreview: "mv a.txt b.txt",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const begun = await service.beginDecision(state, {
+      sessionId: state.sessionId,
+      toolCallId: pending.toolCallId,
+      decisionId: "decision-ui",
+      decision: { id: pending.confirmId, accepted: true },
+      hasSecretValue: false,
+    });
+    service.attachRememberedGrant(begun.pending, {
+      grantId: "grant-ui",
+      kind: "command",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      source: "card",
+    });
+    await service.finishDecision(state, begun.pending, "decision-ui", "accepted");
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "decision_finished",
+      source: "ui",
+      grantId: "grant-ui",
+      commandDigest: "digest-ui",
+    }));
+
+    const expiredState = createSession("confirm-audit-expired");
+    const expired = {
+      ...pending,
+      confirmId: "confirm-expired",
+      toolCallId: "tool-expired",
+      commandDigest: "digest-expired",
+      spec: { ...pending.spec, id: "confirm-expired" },
+      status: "pending" as const,
+    };
+    expiredState.pendingConfirms.set(expired.toolCallId, expired);
+    await service.expireDecision(expiredState, expired);
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "decision_expired",
+      source: "expired",
+      grantId: null,
+      commandDigest: "digest-expired",
+    }));
+  });
+
+  it("审计写失败只记错，不阻断 UI 决策流", async () => {
+    const state = createSession("confirm-audit-failure");
+    const service = new ConfirmService({
+      persist: async () => undefined,
+      appendAudit: async () => { throw new Error("audit unavailable"); },
+    });
+    const pending = {
+      confirmId: "confirm-audit-failure",
+      runId: "run-audit",
+      toolCallId: "tool-audit",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-audit",
+      spec: {
+        id: "confirm-audit-failure",
+        kind: "command" as const,
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending" as const,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(service.beginDecision(state, {
+      sessionId: state.sessionId,
+      toolCallId: pending.toolCallId,
+      decisionId: "decision-audit",
+      decision: { id: pending.confirmId, accepted: true },
+      hasSecretValue: false,
+    })).resolves.toMatchObject({ resolution: "accepted" });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[confirm-audit] append failed",
+      expect.objectContaining({ eventType: "decision_started" }),
+    );
+    errorSpy.mockRestore();
   });
 });

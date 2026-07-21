@@ -79,6 +79,14 @@ export async function* handleApprovalEvent(
   context.wasSuspended = true;
   markToolIoSpanSuspended(context.toolIoSpans.get(toolCallId));
   context.toolIoSpans.delete(toolCallId);
+  if (result.storedGrantApproval) {
+    context.outcome.storedGrantApprovals.push({
+      pending: result.pending,
+      decisionId: result.storedGrantApproval.decisionId,
+    });
+    context.outcome.producedVisibleFrame = true;
+    return "handled";
+  }
   yield result.frame;
   yield* emitProjectedDocState(context.state, "confirm_requested");
   context.outcome.producedVisibleFrame = true;

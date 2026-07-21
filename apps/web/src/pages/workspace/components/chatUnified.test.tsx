@@ -68,4 +68,34 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(text).toContain("删除风格模板");
     expect(text).not.toContain("工具调用");
   });
+
+  it("命令卡以 status 为唯一权威，failed 加载旧 running body 也不再转圈", async () => {
+    const contradictory: ToolCallSpec = {
+      id: "command-cancelled",
+      name: "mastra_workspace_execute_command",
+      render: { kind: "chatInline" },
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "本轮生成已中断" },
+      },
+      body: {
+        kind: "commandCard",
+        data: {
+          title: "运行命令",
+          icon: "⚙️",
+          command: "sleep 20",
+          exitCode: 0,
+          outputTail: "",
+          phase: "running",
+        },
+      },
+      result: null,
+    };
+
+    await render([contradictory]);
+
+    expect(host?.textContent).toContain("未完成");
+    expect(host?.textContent).not.toContain("处理中");
+    expect(host?.querySelector(".u-spin")).toBeNull();
+  });
 });

@@ -184,4 +184,76 @@ describe("processAgentStream tool-call-approval", () => {
       result: "accepted",
     }));
   });
+
+  it("确认所属消息缺失且 failDecision 持久化失败时仍补失败工具卡与 resolved", async () => {
+    const state = createSession("approval-missing-message");
+    const pending = {
+      confirmId: "confirm-missing-message",
+      runId: "run-missing-message",
+      toolCallId: "tool-missing-message",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-missing-message",
+      spec: {
+        id: "confirm-missing-message",
+        kind: "command" as const,
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "sleep 20",
+        footHint: "仅本次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming" as const,
+      decisionId: "decision-missing-message",
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const service = new ConfirmService({
+      persist: async (_current, reason) => {
+        if (reason === "confirm:failed") throw new Error("persist unavailable");
+      },
+    });
+
+    const frames = await collect(resumeConfirmDecision({
+      session: state,
+      pending,
+      decisionId: pending.decisionId,
+      accepted: true,
+      resolution: "accepted",
+      service,
+      agent: {
+        approveToolCall: async () => { throw new Error("must not resume"); },
+        declineToolCall: async () => { throw new Error("must not resume"); },
+      } as never,
+    }));
+
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "chatMessageAdded",
+      data: {
+        message: expect.objectContaining({
+          parts: [expect.objectContaining({
+            kind: "toolCall",
+            data: expect.objectContaining({
+              id: pending.toolCallId,
+              status: expect.objectContaining({ kind: "failed" }),
+              body: expect.objectContaining({
+                kind: "commandCard",
+                data: expect.objectContaining({ phase: "failed" }),
+              }),
+            }),
+          })],
+        }),
+      },
+    }));
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({
+        id: pending.confirmId,
+        toolCallId: pending.toolCallId,
+        resolution: "failed",
+      }),
+    }));
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+  });
 });

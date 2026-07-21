@@ -57,6 +57,7 @@ export interface ConfirmServiceOptions {
   appendAudit?: (
     event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
   ) => Promise<unknown>;
+  issueProof?: typeof issueApprovalProof;
 }
 
 export type RequestCommandConfirmResult =
@@ -86,6 +87,7 @@ export class ConfirmService {
   readonly #appendAudit: (
     event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
   ) => Promise<unknown>;
+  readonly #issueProof: typeof issueApprovalProof;
   readonly #receipts = new WeakMap<SessionState, Map<string, DecisionReceipt>>();
 
   constructor(options: ConfirmServiceOptions = {}) {
@@ -96,6 +98,7 @@ export class ConfirmService {
     this.#secrets = options.secrets ?? secretLeaseStore;
     this.#loadGrant = options.loadGrant ?? getConfirmGrant;
     this.#appendAudit = options.appendAudit ?? appendConfirmAuditEvent;
+    this.#issueProof = options.issueProof ?? issueApprovalProof;
   }
 
   async requestCommandConfirm(input: {
@@ -178,6 +181,12 @@ export class ConfirmService {
           confirmId: pending.confirmId,
           error: error instanceof Error ? error.message : String(error),
         });
+        if (
+          input.state.pendingConfirms.get(pending.toolCallId) !== pending ||
+          pending.status !== "pending"
+        ) {
+          return { ok: false, reason: "确认恢复失败，命令未执行" };
+        }
       }
     }
     return { ok: true, pending, frame: this.requestedFrame(pending) };
@@ -216,13 +225,32 @@ export class ConfirmService {
       this.#resetStoredGrantDecision(pending);
       throw error;
     }
-    let currentGrant: ConfirmGrant | null;
     try {
-      currentGrant = await this.#loadGrant(grant.kind);
+      const currentGrant = await this.#loadGrant(grant.kind);
+      if (!currentGrant || currentGrant.grantId !== grant.grantId) {
+        throw new ConfirmDecisionError("conflict", "存量确认已撤销");
+      }
+      this.#issueProof(state, {
+        sessionId: state.sessionId,
+        runId: pending.runId,
+        toolCallId: pending.toolCallId,
+        commandDigest: pending.commandDigest,
+        expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+      });
+      await this.#safeAppendAudit(state, pending, {
+        eventType: "decision_started",
+        decision: "accepted",
+        source: "stored-grant",
+        grantId: grant.grantId,
+        result: "stored-grant-approved",
+      });
+      return decisionId;
     } catch (error) {
+      clearApprovalProof(state, pending.toolCallId);
       await this.#rollbackStoredGrantDecision(state, pending);
       throw error;
     }
+<<<<<<< HEAD
     if (!currentGrant || currentGrant.grantId !== grant.grantId) {
       await this.#rollbackStoredGrantDecision(state, pending);
       throw new ConfirmDecisionError("conflict", "存量确认已撤销");
@@ -242,6 +270,8 @@ export class ConfirmService {
       result: "stored-grant-approved",
     });
     return decisionId;
+=======
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   }
 
   #resetStoredGrantDecision(pending: PendingConfirm): void {
@@ -256,8 +286,25 @@ export class ConfirmService {
     state: SessionState,
     pending: PendingConfirm,
   ): Promise<void> {
+    const decision = {
+      status: pending.status,
+      decisionId: pending.decisionId,
+      decisionSource: pending.decisionSource,
+      decisionAccepted: pending.decisionAccepted,
+      decisionGrantId: pending.decisionGrantId,
+    };
     this.#resetStoredGrantDecision(pending);
-    await this.#persist(state, "confirm:stored-grant-rollback");
+    try {
+      await this.#persist(state, "confirm:stored-grant-rollback");
+    } catch (error) {
+      // durable snapshot 仍是 resuming；内存也恢复同态，交给恢复路径 fail-closed 收口。
+      pending.status = decision.status;
+      pending.decisionId = decision.decisionId;
+      pending.decisionSource = decision.decisionSource;
+      pending.decisionAccepted = decision.decisionAccepted;
+      pending.decisionGrantId = decision.decisionGrantId;
+      throw error;
+    }
   }
 
   stageSecret(
@@ -393,13 +440,23 @@ export class ConfirmService {
     }
 
     if (submission.decision.accepted && pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) {
-      issueApprovalProof(state, {
-        sessionId: state.sessionId,
-        runId: pending.runId,
-        toolCallId: pending.toolCallId,
-        commandDigest: pending.commandDigest,
-        expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
-      });
+      try {
+        this.#issueProof(state, {
+          sessionId: state.sessionId,
+          runId: pending.runId,
+          toolCallId: pending.toolCallId,
+          commandDigest: pending.commandDigest,
+          expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+        });
+      } catch {
+        clearApprovalProof(state, pending.toolCallId);
+        try {
+          await this.#rollbackStoredGrantDecision(state, pending);
+        } catch {
+          throw new ConfirmDecisionError("conflict", "确认授权签发失败，状态等待恢复");
+        }
+        throw new ConfirmDecisionError("conflict", "确认授权签发失败，请重试");
+      }
     } else {
       clearApprovalProof(state, pending.toolCallId);
     }

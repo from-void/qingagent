@@ -1,5 +1,9 @@
 import { createTool } from "@mastra/core/tools";
-import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
+import {
+  SandboxTimeoutError,
+  WORKSPACE_TOOLS,
+  type Workspace,
+} from "@mastra/core/workspace";
 import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
@@ -64,7 +68,15 @@ function tailLines(output: string, tail?: number | null): string {
   return lines.slice(-tail).join("\n");
 }
 
-function formatCommandResult(result: {
+export interface GatedCommandResult {
+  success: boolean;
+  exitCode: number;
+  cancelled: boolean;
+  timedOut: boolean;
+  output: string;
+}
+
+function formatCommandOutput(result: {
   success: boolean;
   exitCode: number;
   stdout: string;
@@ -74,6 +86,35 @@ function formatCommandResult(result: {
   if (result.success) return stdout || "(no output)";
   const stderr = tailLines(result.stderr, tail).trimEnd();
   return [stdout, stderr, `Exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+}
+
+function commandResult(input: {
+  success: boolean;
+  exitCode: number;
+  output: string;
+  cancelled?: boolean;
+  timedOut?: boolean;
+}): GatedCommandResult {
+  return {
+    success: input.success,
+    exitCode: input.exitCode,
+    cancelled: input.cancelled ?? false,
+    timedOut: input.timedOut ?? false,
+    output: input.output,
+  };
+}
+
+function rejectedCommandResult(reason: string): GatedCommandResult {
+  return commandResult({ success: false, exitCode: -1, output: reason });
+}
+
+function cancelledCommandResult(reason: string): GatedCommandResult {
+  return commandResult({
+    success: false,
+    exitCode: -1,
+    cancelled: true,
+    output: reason,
+  });
 }
 
 function normalizeForCompare(path: string): string {
@@ -171,7 +212,7 @@ export function createGatedExecuteCommandTool({
       // 与 run_js/run_python 的预取消检查一致(底层 Mastra executeCommand 在 signal 已 aborted
       // 时仍会先 spawn 再 kill,对有副作用命令不是严格取消;本工具是模型唯一入口,在此兜住)。
       if (context?.abortSignal?.aborted) {
-        return "命令已取消: 调用前请求已被取消";
+        return cancelledCommandResult("命令已取消: 调用前请求已被取消");
       }
       const stopHeartbeat = startToolHeartbeat(context, {
         tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
@@ -180,10 +221,10 @@ export function createGatedExecuteCommandTool({
       const sessionDir = sessionWorkspaceDir(sessionId);
       const cwd = resolveExecutionCwd(sessionDir, input.cwd);
       if (!cwd) {
-        return commandPolicyDenyMessage({
+        return rejectedCommandResult(commandPolicyDenyMessage({
           action: "deny",
           reason: "cwd 必须位于当前会话工作目录内",
-        });
+        }));
       }
 
       const decision = evaluateCommandPolicy(input.command, {
@@ -192,7 +233,7 @@ export function createGatedExecuteCommandTool({
         sandboxBinDir,
       });
       if (decision.action === "deny") {
-        return commandPolicyDenyMessage(decision);
+        return rejectedCommandResult(commandPolicyDenyMessage(decision));
       }
 
       let proofConsumed = false;
@@ -210,19 +251,19 @@ export function createGatedExecuteCommandTool({
             commandDigest: commandConfirmationDigest(sessionId, input),
           });
         if (!hasProof) {
-          return "命令已被拒绝: 缺少有效的用户确认";
+          return rejectedCommandResult("命令已被拒绝: 缺少有效的用户确认");
         }
         proofConsumed = true;
       }
 
       const workspace = await getWorkspace();
       const sandbox = workspace.sandbox;
-      if (!sandbox) return "命令已被拒绝: 当前会话没有可用沙箱";
+      if (!sandbox) return rejectedCommandResult("命令已被拒绝: 当前会话没有可用沙箱");
       if (
         UNHEALTHY_WORKSPACE_STATUSES.has(workspace.status) ||
         UNHEALTHY_SANDBOX_STATUSES.has(sandbox.status)
       ) {
-        return "命令已被拒绝: 当前会话沙箱状态异常";
+        return rejectedCommandResult("命令已被拒绝: 当前会话沙箱状态异常");
       }
       // LocalSandbox 基础 env 永不含托管凭据。只有策略已确认的受信 node skill 脚本，
       // 且部署开关显式开启时，才通过 Mastra 的 per-call env 向这个进程发放。
@@ -237,7 +278,7 @@ export function createGatedExecuteCommandTool({
         ? { env: credentialEnv }
         : {};
       if (context?.abortSignal?.aborted) {
-        return "命令已取消: 执行前请求已被取消";
+        return cancelledCommandResult("命令已取消: 执行前请求已被取消");
       }
       const timeoutSeconds = typeof input.timeout === "number" ? input.timeout : undefined;
       const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
@@ -250,6 +291,7 @@ export function createGatedExecuteCommandTool({
       const toolCallId = context?.agent?.toolCallId;
 
       if (input.background) {
+<<<<<<< HEAD
         if (!sandbox.processes) return "命令已被拒绝: 当前沙箱不支持后台进程";
         return await withBackgroundSpawnLock(sessionId, async () => {
           const processes = await sandbox.processes!.list();
@@ -273,9 +315,28 @@ export function createGatedExecuteCommandTool({
             formatCommandDuration(backgroundTimeout)
           }${clampedLabel})`;
         });
+=======
+        if (!sandbox.processes) {
+          return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持后台进程");
+        }
+        const handle = await sandbox.processes.spawn(input.command, {
+          cwd,
+          ...perCallCredentialEnv,
+          timeout: explicitTimeout,
+          maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
+          abortSignal: context?.abortSignal,
+        });
+        return commandResult({
+          success: true,
+          exitCode: 0,
+          output: `Started background process (PID: ${handle.pid})`,
+        });
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
       }
 
-      if (!sandbox.executeCommand) return "命令已被拒绝: 当前沙箱不支持命令执行";
+      if (!sandbox.executeCommand) {
+        return rejectedCommandResult("命令已被拒绝: 当前沙箱不支持命令执行");
+      }
       const stopHeartbeat = startToolHeartbeat(context, {
         tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
       });
@@ -311,8 +372,21 @@ export function createGatedExecuteCommandTool({
             toolCallId,
           },
         });
-        return formatCommandResult(result, input.tail);
+        const timedOut = result.timedOut === true;
+        const cancelled = !timedOut && (
+          context?.abortSignal?.aborted === true || result.killed === true
+        );
+        return commandResult({
+          success: result.success && result.exitCode === 0 && !cancelled && !timedOut,
+          exitCode: result.exitCode,
+          cancelled,
+          timedOut,
+          output: formatCommandOutput(result, input.tail),
+        });
       } catch (error) {
+        const timedOut = error instanceof SandboxTimeoutError;
+        const cancelled = !timedOut && context?.abortSignal?.aborted === true;
+        const reason = error instanceof Error ? error.message : String(error);
         await context?.writer?.custom({
           type: "data-sandbox-exit",
           data: {
@@ -322,7 +396,17 @@ export function createGatedExecuteCommandTool({
             toolCallId,
           },
         });
-        return `Error: ${error instanceof Error ? error.message : String(error)}`;
+        return commandResult({
+          success: false,
+          exitCode: -1,
+          cancelled,
+          timedOut,
+          output: timedOut
+            ? `命令执行超时: ${reason}`
+            : cancelled
+              ? `命令已取消: ${reason}`
+              : `Error: ${reason}`,
+        });
       } finally {
         stopHeartbeat();
       }

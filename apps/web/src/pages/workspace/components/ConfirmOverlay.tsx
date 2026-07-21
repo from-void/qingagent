@@ -14,7 +14,10 @@ export interface ConfirmOverlayProps {
   sessionId: string | null;
   spec: ConfirmSpec;
   inputBoxRef?: InputBoxRef;
-  onDecision: (decision: ConfirmDecision) => void;
+  onDecision: (
+    decision: ConfirmDecision,
+    context?: { componentMounted: false },
+  ) => void;
 }
 
 export interface ConfirmRecord {
@@ -125,7 +128,10 @@ export function ConfirmOverlay({
       }
     }
 
-    const finish = () => onDecision(decision);
+    const finish = () => {
+      if (mountedRef.current) onDecision(decision);
+      else onDecision(decision, { componentMounted: false });
+    };
     const panel = panelRef.current;
     const inputBox = findInputBox(inputBoxRef);
     if (!panel) {

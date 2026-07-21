@@ -277,8 +277,12 @@ export class ServerStream {
   }
 
   /** secret 专用上行：不经过 Command/client_event 摘要，也不读取或回显请求体。 */
-  async resolveConfirm(submission: SubmitConfirmDecision): Promise<void> {
-    this.connectEvents(submission.sessionId);
+  async resolveConfirm(
+    submission: SubmitConfirmDecision,
+    options: { activateSession?: boolean } = {},
+  ): Promise<void> {
+    // 旧组件的决策仍必须送达原 session，但不得把当前共享 EventSource 拉回旧会话。
+    if (options.activateSession !== false) this.connectEvents(submission.sessionId);
     const controller = new AbortController();
     this.activeControllers.add(controller);
     try {

@@ -98,6 +98,41 @@ describe("ConfirmUiGrantStore", () => {
     })).toEqual({ ok: false, reason: "mismatch" });
   });
 
+  it("窗口 scope 清理只撤销该窗口尚未消费的 nonce", () => {
+    let sequence = 0;
+    const store = new ConfirmUiGrantStore({ createNonce: () => `nonce-${++sequence}` });
+    const oldNonce = store.register({
+      purpose: "confirm",
+      sessionId: "old-session",
+      confirmId: "old-confirm",
+      kind: "command",
+      scope: "desktop-window:1",
+    });
+    const newNonce = store.register({
+      purpose: "confirm",
+      sessionId: "new-session",
+      confirmId: "new-confirm",
+      kind: "command",
+      scope: "desktop-window:2",
+    });
+
+    expect(store.clearScope("desktop-window:1")).toBe(1);
+    expect(store.consume({
+      purpose: "confirm",
+      nonce: oldNonce,
+      sessionId: "old-session",
+      confirmId: "old-confirm",
+      kind: "command",
+    })).toEqual({ ok: false, reason: "unknown-or-replayed" });
+    expect(store.consume({
+      purpose: "confirm",
+      nonce: newNonce,
+      sessionId: "new-session",
+      confirmId: "new-confirm",
+      kind: "command",
+    })).toEqual({ ok: true });
+  });
+
   it("仅显式真值开启不安全开发模式，并只警告一次", () => {
     __resetConfirmUiGrantForTest();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

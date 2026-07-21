@@ -35,11 +35,16 @@ export interface ConfirmRuntimeDependencies {
   persistTimeoutMs?: number;
   /** 决策完成上下文校验后执行；失败只放弃记忆，不能吞掉用户本次决策。 */
   onAccepted?: (pending: PendingConfirm) => Promise<ConfirmGrant | null>;
+  declineTimeoutMs?: number;
 }
 
+<<<<<<< HEAD
 const CONFIRM_EXPIRY_WALL_TIMEOUT_MS = 5_000;
 const CONFIRM_RESUME_WALL_TIMEOUT_MS = 120_000;
 const CONFIRM_PERSIST_TIMEOUT_MS = 5_000;
+=======
+export const CONFIRM_DECLINE_CLEANUP_TIMEOUT_MS = 1_500;
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
 
 type ConfirmSessionResolver = (sessionId: string) => Promise<SessionState | undefined>;
 
@@ -629,6 +634,7 @@ export async function* handleConfirmExpiry(
   if (!session || !pending || pending.status !== "pending") return;
   if (Date.parse(pending.expiresAt) > Date.now()) return;
 
+<<<<<<< HEAD
   const timeoutMs = dependencies.expiryTimeoutMs ??
     CONFIRM_EXPIRY_WALL_TIMEOUT_MS;
   const persistTimeoutMs = dependencies.persistTimeoutMs ??
@@ -707,5 +713,57 @@ export async function* handleConfirmExpiry(
         ),
       ]);
     }
+=======
+  const cleanupAbort = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const cleanup = (async (): Promise<"cleaned" | "failed"> => {
+    try {
+      const result = await agent.declineToolCall({
+        runId: pending.runId,
+        toolCallId: pending.toolCallId,
+        maxSteps: 1,
+        abortSignal: cleanupAbort.signal,
+      });
+      for await (const _chunk of result.fullStream) {
+        // 消费流以完成 Mastra snapshot 清理；不把其输出写入 qingagent 会话。
+      }
+      return "cleaned";
+    } catch {
+      return "failed";
+    }
+  })();
+  const cleanupOutcome = await Promise.race([
+    cleanup,
+    new Promise<"timeout">((resolve) => {
+      timeout = setTimeout(() => {
+        cleanupAbort.abort(new Error("confirm decline cleanup timed out"));
+        resolve("timeout");
+      }, dependencies.declineTimeoutMs ?? CONFIRM_DECLINE_CLEANUP_TIMEOUT_MS);
+      timeout.unref?.();
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  // race 超时后 cleanup 可能稍后才响应 abort；显式接住，不能产生未处理拒绝。
+  void cleanup.catch(() => undefined);
+
+  const cleanupIncomplete = cleanupOutcome !== "cleaned";
+  const reason = cleanupIncomplete
+    ? "确认已过期，命令未执行；确认状态清理未完成，可重试"
+    : "确认已过期，命令未执行";
+  const failed = failConfirmedToolCall(session, pending.toolCallId, reason, {
+    retriable: cleanupIncomplete,
+  });
+  // 先把 commandCard 同步落终态，再由 expireDecision 持久化整份会话快照。
+  await service.expireDecision(session, pending).catch(() => undefined);
+  if (failed) {
+    yield {
+      kind: "toolCallUpdated",
+      data: {
+        messageId: failed.messageId,
+        toolCallId: pending.toolCallId,
+        spec: failed.spec,
+      },
+    };
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   }
 }

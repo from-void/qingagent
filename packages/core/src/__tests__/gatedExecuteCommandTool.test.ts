@@ -9,6 +9,7 @@ import {
   SANDBOX_BACKGROUND_TTL_MS,
   SANDBOX_MAX_BACKGROUND_PROCESSES,
   createGatedExecuteCommandTool,
+  type GatedCommandResult,
 } from "../workspace/gatedExecuteCommandTool.js";
 import { formatCommandDuration } from "../workspace/backgroundCommandLimits.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
@@ -76,13 +77,29 @@ function createToolHarness(
     state?: SessionState;
     workspaceStatus?: "pending" | "initializing" | "ready" | "paused" | "error" | "destroying" | "destroyed";
     sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
+<<<<<<< HEAD
     runningProcesses?: number;
     simulateBackgroundTimeout?: boolean;
+=======
+    commandResult?: {
+      success: boolean;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      executionTimeMs: number;
+      timedOut?: boolean;
+      killed?: boolean;
+    };
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
+<<<<<<< HEAD
   let spawnedRunning = 0;
+=======
+  const mockedCommandResult = options.commandResult;
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   const workspace = {
     ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
     sandbox: {
@@ -93,7 +110,7 @@ function createToolHarness(
         options: SandboxExecuteOptions,
       ) => {
         executeCalls.push(options);
-        return {
+        return mockedCommandResult ?? {
           success: true,
           exitCode: 0,
           stdout: "ok\n",
@@ -145,8 +162,16 @@ async function executeTool(
   input: GatedExecuteInput,
   context = toolInvocationOptions,
 ): Promise<string> {
+  return (await executeToolResult(tool, input, context)).output;
+}
+
+async function executeToolResult(
+  tool: ReturnType<typeof createGatedExecuteCommandTool>,
+  input: GatedExecuteInput,
+  context = toolInvocationOptions,
+): Promise<GatedCommandResult> {
   if (!tool.execute) throw new Error("execute_command execute missing");
-  return await tool.execute(input, context) as string;
+  return await tool.execute(input, context) as GatedCommandResult;
 }
 
 function approvalContext(runId: string, toolCallId: string) {
@@ -337,11 +362,13 @@ describe("gated execute_command tool cwd 约束", () => {
     controller.abort();
     const ctx = { toolCallId: "t", messages: [], abortSignal: controller.signal } as never;
 
-    const fg = (await tool.execute({ command: allowedFileCommand }, ctx)) as string;
-    const bg = (await tool.execute({ command: allowedFileCommand, background: true }, ctx)) as string;
+    const fg = (await tool.execute({ command: allowedFileCommand }, ctx)) as GatedCommandResult;
+    const bg = (await tool.execute({ command: allowedFileCommand, background: true }, ctx)) as GatedCommandResult;
 
-    expect(fg).toContain("命令已取消");
-    expect(bg).toContain("命令已取消");
+    expect(fg).toMatchObject({ success: false, exitCode: -1, cancelled: true, timedOut: false });
+    expect(bg).toMatchObject({ success: false, exitCode: -1, cancelled: true, timedOut: false });
+    expect(fg.output).toContain("命令已取消");
+    expect(bg.output).toContain("命令已取消");
     expect(executeCalls).toHaveLength(0);
     expect(spawnCalls).toHaveLength(0);
   });
@@ -493,17 +520,59 @@ describe("gated execute_command tool cwd 约束", () => {
           writer,
           agent: { toolCallId: "gated-heartbeat-test" },
         } as never,
-      ) as Promise<string>;
+      ) as Promise<GatedCommandResult>;
 
       await vi.advanceTimersByTimeAsync(120_000);
 
-      expect(await execution).toBe("ok");
+      expect(await execution).toMatchObject({ success: true, exitCode: 0, output: "ok" });
       expect(controller.signal.aborted).toBe(false);
       expect(writer.write).toHaveBeenCalled();
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
       vi.useRealTimers();
     }
+  });
+
+  it("非零退出保留结构化失败信号，供命令卡直接落 failed", async () => {
+    const { tool } = createToolHarness("gated-nonzero-result", {
+      commandResult: {
+        success: false,
+        exitCode: 17,
+        stdout: "partial output\n",
+        stderr: "command failed\n",
+        executionTimeMs: 5,
+      },
+    });
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand })).resolves.toEqual({
+      success: false,
+      exitCode: 17,
+      cancelled: false,
+      timedOut: false,
+      output: "partial output\ncommand failed\nExit code: 17",
+    });
+  });
+
+  it("沙箱超时结果保留 timedOut，不以输出字符串猜测", async () => {
+    const { tool } = createToolHarness("gated-timeout-result", {
+      commandResult: {
+        success: false,
+        exitCode: -1,
+        stdout: "",
+        stderr: "",
+        executionTimeMs: 7_000,
+        timedOut: true,
+        killed: true,
+      },
+    });
+
+    await expect(executeToolResult(tool, { command: allowedFileCommand })).resolves.toEqual({
+      success: false,
+      exitCode: -1,
+      cancelled: false,
+      timedOut: true,
+      output: "Exit code: -1",
+    });
   });
 
   it("Gap4 回归:前台 executeCommand 显式设置输出保留上限", async () => {

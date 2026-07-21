@@ -70,7 +70,20 @@ export function buildRememberMessageBoxOptions(input: {
  * 明示类别与后果的主进程 modal；只有用户点「记住」后才会登记 nonce。
  */
 export class NativeRememberGrantGate {
-  #pending = false;
+  #pendingToken: symbol | null = null;
+  #generation = 0;
+
+  reset(): number {
+    this.#generation += 1;
+    this.#pendingToken = null;
+    return this.#generation;
+  }
+
+  cancel(generation = this.#generation): void {
+    if (generation !== this.#generation) return;
+    this.#generation += 1;
+    this.#pendingToken = null;
+  }
 
   async request(input: {
     purpose: RememberGrantPurpose;
@@ -79,15 +92,24 @@ export class NativeRememberGrantGate {
       options: RememberMessageBoxOptions,
     ) => Promise<{ response: number }>;
     register: () => Promise<string> | string;
+    revoke?: (nonce: string) => Promise<unknown> | unknown;
+    generation?: number;
   }): Promise<string | null> {
-    if (this.#pending) return null;
-    this.#pending = true;
+    const generation = input.generation ?? this.#generation;
+    if (generation !== this.#generation || this.#pendingToken) return null;
+    const token = Symbol("native-remember-request");
+    this.#pendingToken = token;
     try {
       const result = await input.showMessageBox(buildRememberMessageBoxOptions(input));
-      if (result.response !== 0) return null;
-      return await input.register();
+      if (result.response !== 0 || generation !== this.#generation) return null;
+      const nonce = await input.register();
+      if (generation !== this.#generation) {
+        await input.revoke?.(nonce);
+        return null;
+      }
+      return nonce;
     } finally {
-      this.#pending = false;
+      if (this.#pendingToken === token) this.#pendingToken = null;
     }
   }
 }

@@ -323,10 +323,13 @@ describe("ConfirmOverlay", () => {
       await Promise.resolve();
     });
 
-    expect(onDecision).toHaveBeenCalledWith({
-      id: rememberSpec.id,
-      accepted: true,
-    });
+    expect(onDecision).toHaveBeenCalledWith(
+      {
+        id: rememberSpec.id,
+        accepted: true,
+      },
+      { componentMounted: false },
+    );
   });
 
   it("日志脱敏同时剥掉 secret 与 UI grant nonce", () => {
@@ -486,12 +489,15 @@ describe("ConfirmOverlay", () => {
     expect(host?.querySelector(".cf-title")?.textContent).toBe("先到确认");
 
     await click(findButton("安装并继续"));
-    expect(resolveConfirm).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "live-session",
-      toolCallId: "tool-live-first",
-      decisionId: expect.any(String),
-      decision: { id: "confirm-live-first", accepted: true },
-    }));
+    expect(resolveConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "live-session",
+        toolCallId: "tool-live-first",
+        decisionId: expect.any(String),
+        decision: { id: "confirm-live-first", accepted: true },
+      }),
+      { activateSession: true },
+    );
     expect(host?.querySelector(".cf-overlay")).not.toBeNull();
 
     await act(async () => {
@@ -505,6 +511,67 @@ describe("ConfirmOverlay", () => {
       });
     });
     expect(host?.querySelector(".cf-title")?.textContent).toBe("后到确认");
+  });
+
+  it("等待原生 nonce 时切会话仍提交旧决策，但不把共享 SSE 拉回旧会话", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    let resolveGrant!: (nonce: string | null) => void;
+    const resolveConfirm = vi.fn(async () => undefined);
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm,
+    } as unknown as ServerStream;
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(() => new Promise<string | null>((resolve) => {
+        resolveGrant = resolve;
+      })),
+    };
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      id: "confirm-old-session",
+      rememberCategory: { kind: "install", label: "后续的安装指令都默认同意" },
+    };
+
+    await render(<SwitchableLiveConfirmHarness sessionId="old-session" stream={stream} />);
+    await act(async () => {
+      listener?.({
+        kind: "confirmRequested",
+        data: {
+          toolCallId: "tool-old-session",
+          spec: rememberSpec,
+          requestedAt: "2026-07-22T10:00:00.000Z",
+          expiresAt: "2026-07-22T10:10:00.000Z",
+        },
+      });
+    });
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+
+    await act(async () => {
+      root?.render(<SwitchableLiveConfirmHarness sessionId="new-session" stream={stream} />);
+    });
+    await act(async () => {
+      resolveGrant("nonce-for-old-session");
+      await Promise.resolve();
+    });
+
+    expect(resolveConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "old-session",
+        toolCallId: "tool-old-session",
+        decision: expect.objectContaining({
+          id: "confirm-old-session",
+          accepted: true,
+          uiGrantNonce: "nonce-for-old-session",
+        }),
+      }),
+      { activateSession: false },
+    );
   });
 });
 
@@ -550,6 +617,23 @@ function LiveConfirmHarness({ stream }: { stream: ServerStream }) {
   });
   return inlineConfirm
     ? <ConfirmOverlay sessionId="live-session" spec={inlineConfirm} onDecision={handleConfirmDecision} />
+    : null;
+}
+
+function SwitchableLiveConfirmHarness({
+  sessionId,
+  stream,
+}: {
+  sessionId: string;
+  stream: ServerStream;
+}) {
+  const { handleConfirmDecision, inlineConfirm } = useConfirmCard({
+    debugMode: false,
+    sessionId,
+    stream,
+  });
+  return inlineConfirm
+    ? <ConfirmOverlay sessionId={sessionId} spec={inlineConfirm} onDecision={handleConfirmDecision} />
     : null;
 }
 

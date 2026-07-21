@@ -11,11 +11,13 @@ export type ConfirmUiGrantRegistration =
       confirmId: string;
       kind: ConfirmGrantKind;
       ttlMs?: number;
+      scope?: string;
     }
   | {
       purpose: "settings";
       kind: ConfirmGrantKind;
       ttlMs?: number;
+      scope?: string;
     };
 
 export type ConfirmUiGrantConsumption =
@@ -38,6 +40,7 @@ interface StoredUiGrant {
   kind: ConfirmGrantKind;
   sessionId?: string;
   confirmId?: string;
+  scope?: string;
   expiresAt: number;
 }
 
@@ -70,6 +73,7 @@ export class ConfirmUiGrantStore {
       ...(input.purpose === "confirm"
         ? { sessionId: input.sessionId, confirmId: input.confirmId }
         : {}),
+      ...(input.scope ? { scope: input.scope } : {}),
       expiresAt: this.#now() + ttlMs,
     });
     return nonce;
@@ -98,6 +102,20 @@ export class ConfirmUiGrantStore {
     this.#grants.clear();
   }
 
+  revoke(nonce: string): boolean {
+    return this.#grants.delete(nonce);
+  }
+
+  clearScope(scope: string): number {
+    let cleared = 0;
+    for (const [nonce, grant] of this.#grants) {
+      if (grant.scope !== scope) continue;
+      this.#grants.delete(nonce);
+      cleared += 1;
+    }
+    return cleared;
+  }
+
   #prune(): void {
     const now = this.#now();
     for (const [nonce, grant] of this.#grants) {
@@ -116,6 +134,14 @@ export function consumeConfirmUiGrant(
   input: ConfirmUiGrantConsumption,
 ): ConsumeConfirmUiGrantResult {
   return confirmUiGrantStore.consume(input);
+}
+
+export function revokeConfirmUiGrant(nonce: string): boolean {
+  return confirmUiGrantStore.revoke(nonce);
+}
+
+export function clearConfirmUiGrantsForScope(scope: string): number {
+  return confirmUiGrantStore.clearScope(scope);
 }
 
 let insecureModeLogged = false;

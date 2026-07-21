@@ -289,6 +289,30 @@ describe("ServerStream", () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it("旧确认走 session-scoped 上行时不重绑当前共享 EventSource", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    } as Response);
+    const stream = new ServerStream();
+
+    await stream.resolveConfirm({
+      sessionId: "old-session",
+      toolCallId: "old-tool",
+      decisionId: "old-decision",
+      decision: { id: "old-confirm", accepted: true },
+    }, { activateSession: false });
+
+    expect(MockEventSource.instances).toHaveLength(0);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/v1/confirms/decision",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"sessionId":"old-session"'),
+      }),
+    );
+  });
+
   it("draftTemplate 将调用方 abortSignal 传给请求并立即拒绝", async () => {
     let requestSignal: AbortSignal | undefined;
     globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {

@@ -51,6 +51,8 @@ import {
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
 const nativeRememberGrantGate = new NativeRememberGrantGate();
+let mainWindowRememberGeneration = 0;
+let mainWindowRememberScope: string | null = null;
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
@@ -385,10 +387,14 @@ ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown)
   if (!consumeTrustedRememberGesture(event)) return null;
   const owner = mainWindow;
   if (!owner || owner.isDestroyed()) return null;
+  const generation = mainWindowRememberGeneration;
+  const scope = mainWindowRememberScope;
+  if (!scope) return null;
   return nativeRememberGrantGate.request({
     purpose: "confirm",
     kind,
     showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    generation,
     register: async () => {
       const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
       return registerConfirmUiGrant({
@@ -397,7 +403,12 @@ ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown)
         confirmId,
         kind,
         ttlMs: 60_000,
+        scope,
       });
+    },
+    revoke: async (nonce) => {
+      const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      revokeConfirmUiGrant(nonce);
     },
   });
 });
@@ -411,13 +422,21 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
   if (!consumeTrustedRememberGesture(event)) return null;
   const owner = mainWindow;
   if (!owner || owner.isDestroyed()) return null;
+  const generation = mainWindowRememberGeneration;
+  const scope = mainWindowRememberScope;
+  if (!scope) return null;
   return nativeRememberGrantGate.request({
     purpose: "settings",
     kind,
     showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    generation,
     register: async () => {
       const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
-      return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000 });
+      return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000, scope });
+    },
+    revoke: async (nonce) => {
+      const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      revokeConfirmUiGrant(nonce);
     },
   });
 });
@@ -821,10 +840,24 @@ async function createWindowOnce() {
       backgroundThrottling: false,
     },
   });
+<<<<<<< HEAD
   const contentWindow = mainWindow;
   contentWindow.once("closed", () => {
     trustedRememberUiGate.clear();
     if (mainWindow === contentWindow) mainWindow = null;
+=======
+  const ownerWindow = mainWindow;
+  const rememberGeneration = nativeRememberGrantGate.reset();
+  const rememberScope = `desktop-window:${rememberGeneration}`;
+  mainWindowRememberGeneration = rememberGeneration;
+  mainWindowRememberScope = rememberScope;
+
+  mainWindow.webContents.on("before-input-event", (_event, input) => {
+    trustedRememberUiGate.record(mainWindow?.webContents.id ?? -1, input.type);
+  });
+  mainWindow.webContents.on("before-mouse-event", (_event, input) => {
+    trustedRememberUiGate.record(mainWindow?.webContents.id ?? -1, input.type);
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   });
 
   contentWindow.webContents.on("before-input-event", (_event, input) => {
@@ -914,12 +947,27 @@ async function createWindowOnce() {
     // 打包态由内置 Hono 同时提供 API 与静态文件。
     : `http://localhost:${port}`;
 
+<<<<<<< HEAD
   const contentLoad = contentWindow.loadURL(contentUrl);
   if (isDev || process.env.QINGAGENT_DEVTOOLS === "1") {
     contentWindow.webContents.openDevTools({ mode: "detach" });
   }
   void contentLoad.catch((error) => {
     console.error("[startup] 内容页加载失败:", error);
+=======
+  ownerWindow.on("closed", () => {
+    trustedRememberUiGate.clear();
+    nativeRememberGrantGate.cancel(rememberGeneration);
+    void import("@qingagent/server/confirmUiGrant")
+      .then(({ clearConfirmUiGrantsForScope }) => {
+        clearConfirmUiGrantsForScope(rememberScope);
+      })
+      .catch(() => undefined);
+    if (mainWindow === ownerWindow) {
+      mainWindow = null;
+      mainWindowRememberScope = null;
+    }
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
   });
 }
 

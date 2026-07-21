@@ -205,8 +205,27 @@ export function useConfirmCard({
 
   const liveConfirm = pendingConfirms[0] ?? null;
   const inlineConfirm = liveConfirm?.spec ?? demoConfirm;
+  const activeBindingRef = useRef({
+    sessionId,
+    confirmId: liveConfirm?.spec.id ?? null,
+    generation: 0,
+  });
+  if (
+    activeBindingRef.current.sessionId !== sessionId ||
+    activeBindingRef.current.confirmId !== (liveConfirm?.spec.id ?? null)
+  ) {
+    activeBindingRef.current = {
+      sessionId,
+      confirmId: liveConfirm?.spec.id ?? null,
+      generation: activeBindingRef.current.generation + 1,
+    };
+  }
+  const componentGeneration = activeBindingRef.current.generation;
 
-  const handleConfirmDecision = useCallback(async (decision: ConfirmDecision) => {
+  const handleConfirmDecision = useCallback(async (
+    decision: ConfirmDecision,
+    componentContext?: { componentMounted: false },
+  ) => {
     if (liveConfirm && stream && sessionId) {
       if (submittingRef.current.has(decision.id)) return;
       submittingRef.current.add(decision.id);
@@ -216,12 +235,20 @@ export function useConfirmCard({
         decisionId: crypto.randomUUID(),
         decision,
       };
+      const isCurrentBinding = () =>
+        componentContext?.componentMounted !== false &&
+        activeBindingRef.current.generation === componentGeneration &&
+        activeBindingRef.current.sessionId === sessionId &&
+        activeBindingRef.current.confirmId === liveConfirm.spec.id;
       try {
-        await stream.resolveConfirm(submission);
+        await stream.resolveConfirm(submission, {
+          activateSession: isCurrentBinding(),
+        });
+        if (!isCurrentBinding()) submittingRef.current.delete(decision.id);
       } catch {
         submittingRef.current.delete(decision.id);
         // Overlay 内部为一次关闭动画；失败时换 key 重挂同一安全卡，允许用户重试。
-        setConfirmAttempt((value) => value + 1);
+        if (isCurrentBinding()) setConfirmAttempt((value) => value + 1);
       }
       return;
     }
@@ -235,7 +262,7 @@ export function useConfirmCard({
       if (demo) setConfirmRecord(demo.record);
     }
     setDemoConfirm(null);
-  }, [debugMode, liveConfirm, sessionId, stream]);
+  }, [componentGeneration, debugMode, liveConfirm, sessionId, stream]);
 
   return {
     confirmRecord,

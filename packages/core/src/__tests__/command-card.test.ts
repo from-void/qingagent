@@ -62,6 +62,46 @@ describe("沙箱命令终端卡", () => {
     expect(final.command).toBe("node calc.mjs sum");
   });
 
+  it("结构化 exit 非零结果定格 failed 卡且原因直接进入主状态", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("cmd-card-nonzero");
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "mastra_workspace_execute_command",
+              toolCallId: "nonzero",
+              args: { command: "node fail.mjs" },
+            },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "mastra_workspace_execute_command",
+              toolCallId: "nonzero",
+              args: { command: "node fail.mjs" },
+              result: {
+                success: false,
+                exitCode: 9,
+                cancelled: false,
+                timedOut: false,
+                output: "boom",
+              },
+            },
+          },
+        ),
+        { state, agentMessageId: "m", streamId: "s-nonzero", runId: "r" },
+      ),
+    );
+
+    const finalSpec = specs(frames).filter((spec) => spec.id === "nonzero").pop()!;
+    const finalCard = cards(frames).pop()!;
+    expect(finalSpec.status).toMatchObject({ kind: "failed" });
+    expect(finalCard).toMatchObject({ phase: "failed", exitCode: 9, outputTail: "boom" });
+  });
+
   it("Round6 回归:gated 拒绝文本定格为未执行失败卡", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("cmd-card-deny");

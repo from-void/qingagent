@@ -565,10 +565,24 @@ function ScrollBox({ lines, variant, children }: {
   );
 }
 
-export function UCommand({ body }: { body: CommandCardBody }) {
-  const done = body.phase === "done";
-  const failed = body.phase === "failed";
-  const running = body.phase === "running";
+export function UCommand({
+  body,
+  status,
+}: {
+  body: CommandCardBody;
+  status?: ToolCallSpec["status"]["kind"];
+}) {
+  // status 是单一权威；body.phase 只兼容尚未带终态 status 的旧帧。
+  const phase = status === "failed"
+    ? "failed"
+    : status === "done"
+      ? "done"
+      : status === "pending" || status === "running"
+        ? "running"
+        : body.phase;
+  const done = phase === "done";
+  const failed = phase === "failed";
+  const running = phase === "running";
   const meta = done ? "已完成" : failed ? "未完成" : "处理中";
   const expandable = Boolean(body.command || body.outputTail);
   return (
@@ -647,7 +661,7 @@ export function UnifiedToolCall({
   if (b.kind === "researchCard") return <UResearch body={b.data} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
-  if (b.kind === "commandCard") return <UCommand body={b.data} />;
+  if (b.kind === "commandCard") return <UCommand body={b.data} status={spec.status.kind} />;
   // generic / 旧死 body.kind / askUser overlay → 统一一行
   return <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
 }

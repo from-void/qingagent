@@ -51,14 +51,28 @@ export function commandCardFromResult(
 ): CommandCardBody {
   const rawCommand = typeof args.command === "string" ? args.command : "";
   const command = redactSensitiveText(rawCommand);
-  // 结果可能是字符串(stdout)或 {output}/对象;取文本并脱敏
-  const outRaw = redactedJsonText(toolResult ?? "");
-  // 退出码:原版失败时结果含 "Exit code: N"
+  const structured =
+    toolResult !== null && typeof toolResult === "object" && !Array.isArray(toolResult)
+      ? toolResult as Record<string, unknown>
+      : null;
+  // 新链路直接读取结构化执行信号；字符串解析只兼容旧快照/旧 provider。
+  const outRaw = redactedJsonText(
+    typeof structured?.output === "string" ? structured.output : toolResult ?? "",
+  );
   const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
-  // 工具 catch 路径返回 "Error: <msg>"(无 Exit code 行),不能因为没退出码就当成功
-  // (R10-3:Error 前缀无 Exit code 被误渲完成态)。
   const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
-  const exitCode = exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1;
+  const structuredExitCode = typeof structured?.exitCode === "number"
+    ? structured.exitCode
+    : null;
+  const exitCode = structuredExitCode ?? (
+    exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1
+  );
+  const cancelled = structured?.cancelled === true;
+  const timedOut = structured?.timedOut === true;
+  const structuredFailed = structured !== null && (
+    structured.success === false || exitCode !== 0 || cancelled || timedOut
+  );
+  const legacyNonZeroExit = structured === null && exitMatch !== null && exitCode !== 0;
   const policyBlock = commandPolicyBlockFromOutput(outRaw);
   if (policyBlock) {
     return {
@@ -82,10 +96,39 @@ export function commandCardFromResult(
     command,
     exitCode,
     outputTail: outRaw.slice(-600),
-    // "完成"的定义 = 命令真的跑起来并有产出,而非退出码为 0(用户口径)。退出码非零但有输出
-    // (如校验类命令)仍算已完成,退出码进详情区显示;只有 catch 路径(Error 前缀、根本没跑起来)
-    // 才算未完成。policy 拦截已在上面提前 return failed。
-    phase: looksLikeError ? "failed" : "done",
+    phase: structuredFailed || legacyNonZeroExit || looksLikeError || !ok ? "failed" : "done",
+  };
+}
+
+/** commandCard 的 status 是唯一权威；任何终态改写都同步收敛 body，避免恢复后永久转圈。 */
+export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
+  if (spec.body.kind !== "commandCard") return spec;
+  const status = spec.status;
+  const phase = status.kind === "failed"
+    ? "failed"
+    : status.kind === "done"
+      ? "done"
+      : status.kind === "pending" || status.kind === "running"
+        ? "running"
+        : spec.body.data.phase;
+  const reason = status.kind === "failed" ? status.data.reason : "";
+  const outputTail = reason && !spec.body.data.outputTail.includes(reason)
+    ? [spec.body.data.outputTail, reason].filter(Boolean).join("\n")
+    : spec.body.data.outputTail;
+  return {
+    ...spec,
+    body: {
+      kind: "commandCard",
+      data: {
+        ...spec.body.data,
+        phase,
+        exitCode:
+          phase === "failed" && spec.body.data.exitCode === 0
+            ? -1
+            : spec.body.data.exitCode,
+        outputTail,
+      },
+    },
   };
 }
 

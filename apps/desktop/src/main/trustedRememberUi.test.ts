@@ -135,3 +135,56 @@ test("原生确认未决期间拒绝重复请求且不叠框", async () => {
   assert.equal(await first, "first-nonce");
   assert.equal(registered, 1);
 });
+
+test("窗口关闭取消旧 modal，重开后可请求且旧回调不得登记 nonce", async () => {
+  const gate = new NativeRememberGrantGate();
+  const oldGeneration = gate.reset();
+  let resolveOldDialog!: (result: { response: number }) => void;
+  let oldRegistered = 0;
+  const oldRequest = gate.request({
+    purpose: "confirm",
+    kind: "command",
+    generation: oldGeneration,
+    showMessageBox: () => new Promise((resolve) => { resolveOldDialog = resolve; }),
+    register: () => {
+      oldRegistered += 1;
+      return "old-nonce";
+    },
+  });
+
+  gate.cancel(oldGeneration);
+  const newGeneration = gate.reset();
+  const newRequest = gate.request({
+    purpose: "confirm",
+    kind: "install",
+    generation: newGeneration,
+    showMessageBox: async () => ({ response: 0 }),
+    register: () => "new-nonce",
+  });
+  resolveOldDialog({ response: 0 });
+
+  assert.equal(await oldRequest, null);
+  assert.equal(oldRegistered, 0);
+  assert.equal(await newRequest, "new-nonce");
+});
+
+test("窗口在 nonce 登记过程中关闭会撤销刚签发的旧 nonce", async () => {
+  const gate = new NativeRememberGrantGate();
+  const generation = gate.reset();
+  let resolveRegister!: (nonce: string) => void;
+  const revoked: string[] = [];
+  const request = gate.request({
+    purpose: "settings",
+    kind: "command",
+    generation,
+    showMessageBox: async () => ({ response: 0 }),
+    register: () => new Promise((resolve) => { resolveRegister = resolve; }),
+    revoke: (nonce) => { revoked.push(nonce); },
+  });
+  await Promise.resolve();
+  gate.cancel(generation);
+  resolveRegister("stale-nonce");
+
+  assert.equal(await request, null);
+  assert.deepEqual(revoked, ["stale-nonce"]);
+});

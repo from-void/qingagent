@@ -360,6 +360,85 @@ describe("ConfirmService", () => {
     errorSpy.mockRestore();
   });
 
+  it("stored grant 签发 proof 失败时回滚为可重新确认的 pending", async () => {
+    const state = createSession("grant-proof-failure");
+    const persistReasons: string[] = [];
+    const grant: ConfirmGrant = {
+      grantId: "grant-proof-failure",
+      kind: "command",
+      createdAt: "2026-07-22T00:00:00.000Z",
+      source: "settings",
+    };
+    const service = new ConfirmService({
+      createId: () => "proof-failure",
+      persist: async (_current, reason) => { persistReasons.push(reason); },
+      loadGrant: async () => grant,
+      issueProof: () => { throw new Error("signer unavailable"); },
+      appendAudit: async () => undefined,
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-proof-failure",
+      toolCallId: "tool-proof-failure",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv draft.txt final.txt" },
+      aborted: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      pending: { status: "pending" },
+      frame: { kind: "confirmRequested" },
+    });
+    expect(persistReasons).toEqual([
+      "confirm:requested",
+      "confirm:stored-grant-resuming",
+      "confirm:stored-grant-rollback",
+    ]);
+    errorSpy.mockRestore();
+  });
+
+  it("stored grant proof 回滚持久化失败时保留 resuming 恢复标记且不发可点击卡", async () => {
+    const state = createSession("grant-proof-rollback-failure");
+    const grant: ConfirmGrant = {
+      grantId: "grant-proof-rollback-failure",
+      kind: "command",
+      createdAt: "2026-07-22T00:00:00.000Z",
+      source: "settings",
+    };
+    const service = new ConfirmService({
+      createId: () => "proof-rollback-failure",
+      persist: async (_current, reason) => {
+        if (reason === "confirm:stored-grant-rollback") {
+          throw new Error("snapshot unavailable");
+        }
+      },
+      loadGrant: async () => grant,
+      issueProof: () => { throw new Error("signer unavailable"); },
+      appendAudit: async () => undefined,
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-proof-rollback-failure",
+      toolCallId: "tool-proof-rollback-failure",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv draft.txt final.txt" },
+      aborted: false,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "确认恢复失败，命令未执行" });
+    expect(state.pendingConfirms.get("tool-proof-rollback-failure")).toMatchObject({
+      status: "resuming",
+      decisionSource: "stored-grant",
+    });
+    expect(result).not.toHaveProperty("frame");
+    errorSpy.mockRestore();
+  });
+
   it("UI、stored grant 与过期路径审计都保留来源、grantId 和 digest", async () => {
     const audits: Array<Record<string, unknown>> = [];
     const service = new ConfirmService({

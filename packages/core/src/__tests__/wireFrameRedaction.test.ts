@@ -99,11 +99,22 @@ describe("bridge redaction", () => {
 });
 
 describe("commandCardFromResult 状态映射(Round10)", () => {
-  it("含 Exit code 非 0 但有产出 → done(命令真跑过即完成,退出码进详情;用户口径)", () => {
-    // 完成的定义 = 命令跑起来并有输出,而非退出码为 0。退出码非零仍算完成,退出码进详情区。
+  it("旧字符串结果里的非零退出也 fail-closed，不再显示已完成", () => {
     const card = commandCardFromResult({ command: "node x" }, "boom\nExit code: 2", true);
     expect(card.exitCode).toBe(2);
-    expect(card.phase).toBe("done");
+    expect(card.phase).toBe("failed");
+  });
+
+  it("结构化非零退出直接落 failed，不靠文本前缀推断", () => {
+    const card = commandCardFromResult({ command: "node x" }, {
+      success: false,
+      exitCode: 2,
+      cancelled: false,
+      timedOut: false,
+      output: "boom",
+    }, false);
+    expect(card.exitCode).toBe(2);
+    expect(card.phase).toBe("failed");
   });
 
   it("catch 路径 'Error: ...'(无 Exit code)→ failed,不再误渲完成", () => {

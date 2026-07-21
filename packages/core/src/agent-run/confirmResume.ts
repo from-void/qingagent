@@ -1,4 +1,4 @@
-import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import type { BridgeFrame, ChatMessage, ToolCallSpec } from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
@@ -12,6 +12,8 @@ import { schedulePersist } from "../session/threadPersistence.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { processAgentStream } from "./processAgentStream.js";
 import { finalizeLingeringRunningToolCalls } from "./turnCleanup.js";
+import { alignCommandCardWithStatus } from "./toolCards.js";
+import { chatMessageAdded } from "./frames.js";
 
 export type ApprovalAgent = Pick<
   typeof qingagentAgent,
@@ -22,6 +24,7 @@ export function failConfirmedToolCall(
   session: SessionState,
   toolCallId: string,
   reason: string,
+  options: { retriable?: boolean } = {},
 ): { messageId: string; spec: ToolCallSpec } | null {
   for (const message of session.chatHistory) {
     const index = message.parts.findIndex(
@@ -29,11 +32,11 @@ export function failConfirmedToolCall(
     );
     const part = message.parts[index];
     if (index < 0 || part?.kind !== "toolCall") continue;
-    const spec: ToolCallSpec = {
+    const spec = alignCommandCardWithStatus({
       ...part.data,
-      status: { kind: "failed", data: { retriable: false, reason } },
+      status: { kind: "failed", data: { retriable: options.retriable ?? false, reason } },
       result: part.data.result ?? { kind: "genericText", data: reason },
-    };
+    });
     message.parts[index] = { kind: "toolCall", data: spec };
     return { messageId: message.id, spec };
   }
@@ -44,6 +47,42 @@ function findToolCallMessageId(session: SessionState, toolCallId: string): strin
   return session.chatHistory.find((message) => message.parts.some(
     (part) => part.kind === "toolCall" && part.data.id === toolCallId,
   ))?.id ?? null;
+}
+
+function appendMissingFailedToolCall(
+  session: SessionState,
+  pending: PendingConfirm,
+  reason: string,
+): ChatMessage {
+  const spec: ToolCallSpec = {
+    id: pending.toolCallId,
+    name: pending.toolName,
+    render: { kind: "chatInline" },
+    status: { kind: "failed", data: { retriable: false, reason } },
+    body: pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
+      ? {
+          kind: "commandCard",
+          data: {
+            title: pending.spec.title,
+            icon: pending.spec.kind === "install" ? "📦" : "⚙️",
+            command: pending.spec.commandPreview ?? "",
+            exitCode: -1,
+            outputTail: reason,
+            phase: "failed",
+          },
+        }
+      : { kind: "generic", data: { argsJson: "" } },
+    result: { kind: "genericText", data: reason },
+  };
+  const message: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: { kind: "agent" },
+    ts: new Date().toISOString(),
+    parts: [{ kind: "toolCall", data: spec }],
+    chips: null,
+  };
+  session.chatHistory.push(message);
+  return message;
 }
 
 function buildResumeTools(session: SessionState): Promise<{
@@ -115,10 +154,15 @@ export async function* resumeConfirmDecision(input: {
   const previousAbortController = session._abortController;
   const agentMessageId = findToolCallMessageId(session, pending.toolCallId);
   if (!agentMessageId) {
-    await service.failDecision(session, pending);
+    const reason = "确认恢复失败，命令未执行";
+    const failedMessage = appendMissingFailedToolCall(session, pending, reason);
+    await service.failDecision(session, pending).catch(() => undefined);
+    yield chatMessageAdded(failedMessage);
     if (input.emitResolvedFrame !== false) {
-      yield service.resolvedFrame(pending, "failed", "确认恢复失败，命令未执行");
+      yield service.resolvedFrame(pending, "failed", reason);
     }
+    yield* emitProjectedDocState(session, "confirm_resume_missing_message");
+    await schedulePersist(session, "confirm:missing_message_failed").catch(() => undefined);
     return;
   }
 

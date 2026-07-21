@@ -11,7 +11,11 @@ import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { USER_ABORT_REASON } from "./streamErrors.js";
+<<<<<<< HEAD
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
+=======
+import { alignCommandCardWithStatus } from "./toolCards.js";
+>>>>>>> 1525d56f (fix(confirm): 收口确认异常与命令终态)
 
 const logger = mastra.getLogger();
 
@@ -39,13 +43,14 @@ function terminalizeInFlightToolCalls(
         continue;
       }
 
-      const spec: ToolCallSpec = {
+      const spec = alignCommandCardWithStatus({
         ...part.data,
         status: {
           kind: "failed",
           data: { retriable: false, reason: "本轮生成已中断" },
         },
-      };
+        result: part.data.result ?? { kind: "genericText", data: "本轮生成已中断" },
+      });
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
     }
@@ -86,15 +91,18 @@ export function finalizeLingeringRunningToolCalls(
         part.data.result === null &&
         part.data.body.kind === "generic" &&
         part.data.body.data.argsJson === "";
-      const spec: ToolCallSpec = {
+      const isCommandWithoutResult =
+        part.data.result === null && part.data.body.kind === "commandCard";
+      const failedReason = isCommandWithoutResult ? "命令未返回结果" : "本轮未产出结果";
+      const spec = alignCommandCardWithStatus({
         ...part.data,
-        status: isUnexecutedStreamingPlaceholder
-          ? { kind: "failed", data: { retriable: true, reason: "本轮未产出结果" } }
+        status: isUnexecutedStreamingPlaceholder || isCommandWithoutResult
+          ? { kind: "failed", data: { retriable: true, reason: failedReason } }
           : { kind: "done" },
-        result: isUnexecutedStreamingPlaceholder
-          ? { kind: "genericText", data: "本轮未产出结果" }
+        result: isUnexecutedStreamingPlaceholder || isCommandWithoutResult
+          ? { kind: "genericText", data: failedReason }
           : part.data.result,
-      };
+      });
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
     }

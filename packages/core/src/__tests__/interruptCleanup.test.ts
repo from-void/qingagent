@@ -65,6 +65,27 @@ function runningWriteDraft(id: string): ToolCallSpec {
   });
 }
 
+function runningCommand(id: string): ToolCallSpec {
+  return {
+    id,
+    name: "mastra_workspace_execute_command",
+    render: { kind: "chatInline" },
+    status: { kind: "running", data: { progressPct: null, etaSec: null } },
+    body: {
+      kind: "commandCard",
+      data: {
+        title: "运行命令",
+        icon: "⚙️",
+        command: "sleep 20",
+        exitCode: 0,
+        outputTail: "",
+        phase: "running",
+      },
+    },
+    result: null,
+  };
+}
+
 function setSingleToolCall(
   state: import("../bridge/index.js").SessionState,
   spec: ToolCallSpec,
@@ -224,6 +245,45 @@ describe("abortAndCleanupTurn", () => {
         data: { streamId: "hung-stream", reason: { kind: "cancelled" } },
       },
     });
+  });
+
+  it("运行命令取消并切回会话时 status 与 commandCard 都持久收敛为 failed", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("abort-running-command-card");
+    state.streamId = "stream-running-command";
+    state._abortController = new AbortController();
+    setSingleToolCall(state, runningCommand("command-sleep"));
+
+    const frames = await collectFrames(abortAndCleanupTurn(state));
+    const persisted = findToolCallSpec(state, "command-sleep");
+
+    expect(persisted).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "本轮生成已中断" },
+      },
+      body: {
+        kind: "commandCard",
+        data: expect.objectContaining({
+          phase: "failed",
+          exitCode: -1,
+          outputTail: expect.stringContaining("本轮生成已中断"),
+        }),
+      },
+    });
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "toolCallUpdated",
+      data: expect.objectContaining({
+        toolCallId: "command-sleep",
+        spec: expect.objectContaining({
+          status: expect.objectContaining({ kind: "failed" }),
+          body: expect.objectContaining({
+            kind: "commandCard",
+            data: expect.objectContaining({ phase: "failed" }),
+          }),
+        }),
+      }),
+    }));
   });
 
   it("真实 runAgentTurn 中止路径不会先把 running 工具卡补成 done", async () => {

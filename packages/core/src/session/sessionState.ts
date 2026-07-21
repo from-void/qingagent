@@ -96,13 +96,23 @@ export interface PendingConfirm {
   spec: ConfirmSpec;
   requestedAt: string;
   expiresAt: string;
-  status: "pending" | "resuming";
+  status: "pending" | "resuming" | "terminal";
+  /** 两阶段终态持久化的墓碑；恢复时只用于判定不可复活，不重建 pending。 */
+  terminalResolution?: "accepted" | "rejected" | "expired" | "aborted" | "failed";
   decisionId?: string;
   decisionSource?: "ui" | "stored-grant";
   decisionAccepted?: boolean;
   decisionGrantId?: string;
   /** 确认卡生成时观察到的每类撤销生效线；card create 必须与当前值一致。 */
   rememberRevocationEpoch?: number;
+}
+
+/** 审计写失败时持久化的降级记账；不含命令正文或凭据。 */
+export interface ConfirmAuditDegradedMarker {
+  failureCount: number;
+  lastFailedAt: string;
+  lastEventType: string;
+  lastConfirmId: string;
 }
 
 /** Mutable server-side session state. One per active session. */
@@ -244,6 +254,8 @@ export interface SessionState {
   pendingConfirms: Map<string, PendingConfirm>;
   /** Runtime-only：有界确认持久化超时后保留的 dirty reason，后台补写成功才清除。 */
   _confirmPersistenceDirtyReasons: Set<string>;
+  /** 审计库不可用时的持久化记账，供后续巡检与补偿；正常决策流不被阻断。 */
+  confirmAuditDegraded: ConfirmAuditDegradedMarker | null;
   /** Rich chat history (ChatMessage[]) for session restore.
    *  Captures full parts (text, thinking, toolCall) so tool bubbles survive restore. */
   chatHistory: ChatMessage[];
@@ -373,6 +385,7 @@ export function createSession(
     _suspensionOwner: null,
     pendingConfirms: new Map(),
     _confirmPersistenceDirtyReasons: new Set(),
+    confirmAuditDegraded: null,
     chatHistory: [],
   };
 }

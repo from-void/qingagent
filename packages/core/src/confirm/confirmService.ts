@@ -17,7 +17,7 @@ import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
 import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import type { PendingConfirm, SessionState } from "../session/sessionState.js";
-import { persistSessionMetadata } from "../session/threadPersistence.js";
+import { persistSessionMetadata, schedulePersist } from "../session/threadPersistence.js";
 import { clearApprovalProof, clearAllApprovalProofs, issueApprovalProof } from "./approvalProof.js";
 import {
   buildCommandConfirmSpec,
@@ -53,6 +53,7 @@ export interface ConfirmServiceOptions {
   now?: () => number;
   createId?: () => string;
   persist?: (state: SessionState, reason: string) => Promise<void>;
+  retryPersist?: (state: SessionState, reason: string) => Promise<void>;
   secrets?: SecretLeaseStore;
   loadGrant?: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
   loadGrantState?: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
@@ -80,10 +81,18 @@ interface DecisionReceipt {
   expiresAt: number;
 }
 
+type ConfirmTerminalPersistReason = `confirm:${ConfirmResolved["resolution"]}`;
+
+interface TerminalTombstone {
+  pending: PendingConfirm;
+  reason: ConfirmTerminalPersistReason;
+}
+
 export class ConfirmService {
   readonly #now: () => number;
   readonly #createId: () => string;
   readonly #persist: (state: SessionState, reason: string) => Promise<void>;
+  readonly #retryPersist: (state: SessionState, reason: string) => Promise<void>;
   readonly #secrets: SecretLeaseStore;
   readonly #loadGrantState: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
   readonly #appendAudit: (
@@ -91,12 +100,18 @@ export class ConfirmService {
   ) => Promise<unknown>;
   readonly #issueProof: typeof issueApprovalProof;
   readonly #receipts = new WeakMap<SessionState, Map<string, DecisionReceipt>>();
+  readonly #terminalTombstones = new WeakMap<
+    SessionState,
+    Map<string, TerminalTombstone>
+  >();
 
   constructor(options: ConfirmServiceOptions = {}) {
     this.#now = options.now ?? Date.now;
     this.#createId = options.createId ?? (() => crypto.randomUUID());
     // main 已把 persistSessionMetadata 改为失败无条件抛,无需再显式要求 rethrow
     this.#persist = options.persist ?? ((state, reason) => persistSessionMetadata(state, reason));
+    // 生产走自带退避与 dirty 记账的 schedulePersist；注入 persist 的单测默认沿用同一替身。
+    this.#retryPersist = options.retryPersist ?? options.persist ?? schedulePersist;
     this.#secrets = options.secrets ?? secretLeaseStore;
     this.#loadGrantState = options.loadGrantState
       ?? (options.loadGrant
@@ -412,6 +427,10 @@ export class ConfirmService {
       this.#secrets.delete(state, pending.confirmId);
       throw new ConfirmDecisionError("conflict", "确认请求已经被处理");
     }
+    if (pending.status === "terminal") {
+      this.#secrets.delete(state, pending.confirmId);
+      throw new ConfirmDecisionError("conflict", "确认请求已经被处理");
+    }
     if (Date.parse(pending.expiresAt) <= this.#now()) {
       this.#secrets.delete(state, pending.confirmId);
       throw new ConfirmDecisionError(
@@ -541,7 +560,15 @@ export class ConfirmService {
   ): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        resolution,
+        `confirm:${resolution}`,
+      );
+    }
     let receipts = this.#receipts.get(state);
     if (!receipts) {
       receipts = new Map();
@@ -568,7 +595,15 @@ export class ConfirmService {
   failDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        "failed",
+        "confirm:failed",
+      );
+    }
   }
 
   async expireDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
@@ -583,17 +618,22 @@ export class ConfirmService {
   expireDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        "expired",
+        "confirm:expired",
+      );
+    }
   }
 
   persistDecisionState(
     state: SessionState,
-    reason:
-      | `confirm:${ConfirmResolved["resolution"]}`
-      | "confirm:failed"
-      | "confirm:expired",
+    reason: ConfirmTerminalPersistReason,
   ): Promise<void> {
-    return this.#persist(state, reason);
+    return this.#persistTerminalDecisionState(state, reason);
   }
 
   recordDecisionFinished(
@@ -640,6 +680,7 @@ export class ConfirmService {
     clearAllApprovalProofs(state);
     this.#secrets.clear(state);
     this.#receipts.delete(state);
+    this.#terminalTombstones.delete(state);
     state.pendingConfirms.clear();
   }
 
@@ -681,6 +722,114 @@ export class ConfirmService {
     if (receipts.size === 0) this.#receipts.delete(state);
   }
 
+  #rememberTerminalTombstone(
+    state: SessionState,
+    pending: PendingConfirm,
+    resolution: ConfirmResolved["resolution"],
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    let tombstones = this.#terminalTombstones.get(state);
+    if (!tombstones) {
+      tombstones = new Map();
+      this.#terminalTombstones.set(state, tombstones);
+    }
+    tombstones.set(pending.toolCallId, {
+      pending: {
+        ...pending,
+        status: "terminal",
+        terminalResolution: resolution,
+      },
+      reason,
+    });
+  }
+
+  async #persistTerminalDecisionState(
+    state: SessionState,
+    reason: ConfirmTerminalPersistReason,
+  ): Promise<void> {
+    const tombstones = Array.from(
+      this.#terminalTombstones.get(state)?.values() ?? [],
+    ).filter((item) => item.reason === reason);
+    if (tombstones.length === 0) {
+      await this.#persist(state, reason);
+      return;
+    }
+
+    // main 要求先把 live pending 从内存移除，避免慢存储阻塞会话清理；墓碑只放进
+    // 独立快照落盘，既保留分支的防复活语义，也不会让已结束确认重新暴露为活状态。
+    const terminalState: SessionState = {
+      ...state,
+      pendingConfirms: new Map(state.pendingConfirms),
+    };
+    for (const tombstone of tombstones) {
+      terminalState.pendingConfirms.set(
+        tombstone.pending.toolCallId,
+        tombstone.pending,
+      );
+    }
+
+    try {
+      await this.#persist(terminalState, `${reason}:terminal`);
+    } catch (error) {
+      this.#queueTerminalPersistRetry(state, terminalState, tombstones, reason);
+      throw error;
+    }
+
+    this.#forgetTerminalTombstones(state, tombstones);
+    try {
+      await this.#persist(state, reason);
+    } catch (error) {
+      this.#queueCleanupPersistRetry(state, reason);
+      throw error;
+    }
+  }
+
+  #queueTerminalPersistRetry(
+    state: SessionState,
+    terminalState: SessionState,
+    tombstones: TerminalTombstone[],
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    void this.#retryPersist(terminalState, `${reason}:terminal-retry`).then(async () => {
+      this.#forgetTerminalTombstones(state, tombstones);
+      await this.#retryPersist(state, `${reason}:cleanup-retry`);
+    }).catch((error) => {
+      console.error("[confirm-persist] terminal retry failed; session remains dirty", {
+        sessionId: state.sessionId,
+        confirmIds: tombstones.map((item) => item.pending.confirmId),
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  #forgetTerminalTombstones(
+    state: SessionState,
+    tombstones: TerminalTombstone[],
+  ): void {
+    const current = this.#terminalTombstones.get(state);
+    if (!current) return;
+    for (const tombstone of tombstones) {
+      if (current.get(tombstone.pending.toolCallId) === tombstone) {
+        current.delete(tombstone.pending.toolCallId);
+      }
+    }
+    if (current.size === 0) this.#terminalTombstones.delete(state);
+  }
+
+  #queueCleanupPersistRetry(
+    state: SessionState,
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    void this.#retryPersist(state, `${reason}:cleanup-retry`).catch((error) => {
+      console.error("[confirm-persist] cleanup retry failed; terminal tombstone remains durable", {
+        sessionId: state.sessionId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   async #safeAppendAudit(
     state: SessionState,
     pending: PendingConfirm,
@@ -705,12 +854,29 @@ export class ConfirmService {
         configHash: null,
       });
     } catch (error) {
+      const previous = state.confirmAuditDegraded;
+      state.confirmAuditDegraded = {
+        failureCount: (previous?.failureCount ?? 0) + 1,
+        lastFailedAt: new Date(this.#now()).toISOString(),
+        lastEventType: input.eventType,
+        lastConfirmId: pending.confirmId,
+      };
       console.error("[confirm-audit] append failed", {
         sessionId: state.sessionId,
         confirmId: pending.confirmId,
         eventType: input.eventType,
         error: error instanceof Error ? error.message : String(error),
       });
+      try {
+        await this.#retryPersist(state, "confirm:audit-degraded");
+      } catch (persistError) {
+        console.error("[confirm-audit] degraded marker persist failed; session remains dirty", {
+          sessionId: state.sessionId,
+          confirmId: pending.confirmId,
+          eventType: input.eventType,
+          error: persistError instanceof Error ? persistError.message : String(persistError),
+        });
+      }
     }
   }
 }

@@ -1107,6 +1107,57 @@ describe("thread persistence", () => {
     expectRestoredStableFields(restored, state);
   });
 
+  it("恢复时消费终态墓碑且保留审计降级记账，不复活已结束确认", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import(
+      "../session/threadPersistence.js"
+    );
+    const state = createSession("confirm-terminal-tombstone");
+    const tool = toolCall(
+      "mastra_workspace_execute_command",
+      { kind: "pending" },
+      "tool-terminal-tombstone",
+    );
+    state.chatHistory = [toolMessage(tool)];
+    state.pendingConfirms.set(tool.id, {
+      confirmId: "confirm-terminal-tombstone",
+      runId: "run-terminal-tombstone",
+      toolCallId: tool.id,
+      toolName: tool.name,
+      commandDigest: "digest-terminal-tombstone",
+      spec: {
+        id: "confirm-terminal-tombstone",
+        kind: "command",
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: "2026-07-22T01:00:00.000Z",
+      expiresAt: "2026-07-22T01:10:00.000Z",
+      status: "terminal",
+      terminalResolution: "failed",
+    });
+    state.confirmAuditDegraded = {
+      failureCount: 2,
+      lastFailedAt: "2026-07-22T01:02:00.000Z",
+      lastEventType: "decision_failed",
+      lastConfirmId: "confirm-terminal-tombstone",
+    };
+
+    await persistSessionMetadata(state, "test:confirm-terminal-tombstone");
+    const persisted = threads.get(state.sessionId)?.metadata as QingagentThreadMetadata;
+    expect(persisted.pendingConfirms).toEqual([
+      expect.objectContaining({ status: "terminal", terminalResolution: "failed" }),
+    ]);
+    expect(persisted.confirmAuditDegraded).toEqual(state.confirmAuditDegraded);
+
+    const restored = await loadSessionFromThread(state.sessionId);
+    expect(restored?.pendingConfirms.size).toBe(0);
+    expect(restored?.confirmAuditDegraded).toEqual(state.confirmAuditDegraded);
+  });
+
   it("恢复仲裁场景1: documents 无行时继续使用 metadata", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-only";

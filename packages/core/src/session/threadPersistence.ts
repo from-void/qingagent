@@ -20,6 +20,7 @@ import type {
   SuggestionRecord,
   SessionState,
   PendingConfirm,
+  ConfirmAuditDegradedMarker,
   PersistAuditSnapshot,
   SuspensionOwner,
   OmSidecarCursor,
@@ -199,13 +200,16 @@ export interface QingagentThreadMetadata {
     spec: ConfirmSpec;
     requestedAt: string;
     expiresAt: string;
-    status: "pending" | "resuming";
+    status: "pending" | "resuming" | "terminal";
+    terminalResolution?: "accepted" | "rejected" | "expired" | "aborted" | "failed";
     decisionId?: string;
     decisionSource?: "ui" | "stored-grant";
     decisionAccepted?: boolean;
     decisionGrantId?: string;
     rememberRevocationEpoch?: number;
   }>;
+  /** confirm 审计写失败时的非敏感降级记账。 */
+  confirmAuditDegraded?: ConfirmAuditDegradedMarker | null;
   /** Lightweight summary for home page listing — avoids parsing full legacySections. */
   threadSummary?: {
     sectionCount: number;
@@ -254,6 +258,25 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function deserializeConfirmAuditDegraded(value: unknown): ConfirmAuditDegradedMarker | null {
+  if (
+    !isRecord(value) ||
+    !Number.isSafeInteger(value.failureCount) ||
+    (value.failureCount as number) < 1 ||
+    !parseValidTimestamp(value.lastFailedAt) ||
+    !isNonEmptyString(value.lastEventType) ||
+    !isNonEmptyString(value.lastConfirmId)
+  ) {
+    return null;
+  }
+  return {
+    failureCount: value.failureCount as number,
+    lastFailedAt: value.lastFailedAt as string,
+    lastEventType: value.lastEventType,
+    lastConfirmId: value.lastConfirmId,
+  };
 }
 
 function normalizeParseState(value: unknown): "ready" | "error" {
@@ -645,6 +668,9 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
       requestedAt: pending.requestedAt,
       expiresAt: pending.expiresAt,
       status: pending.status,
+      ...(pending.terminalResolution
+        ? { terminalResolution: pending.terminalResolution }
+        : {}),
       ...(pending.decisionId ? { decisionId: pending.decisionId } : {}),
       ...(pending.decisionSource ? { decisionSource: pending.decisionSource } : {}),
       ...(pending.decisionAccepted !== undefined
@@ -655,6 +681,7 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
         ? { rememberRevocationEpoch: pending.rememberRevocationEpoch }
         : {}),
     })),
+    confirmAuditDegraded: state.confirmAuditDegraded,
     threadSummary,
     lastPersistedAt: new Date().toISOString(),
   };
@@ -676,6 +703,8 @@ function deserializePendingConfirms(
   );
   for (const item of value) {
     if (!isRecord(item)) continue;
+    // 已落盘的终态墓碑只证明该确认不可再恢复；绝不重建为 pending。
+    if (item.status === "terminal") continue;
     const spec = confirmSpecSchema.safeParse(item.spec);
     const requestedAt = parseValidTimestamp(item.requestedAt);
     const expiresAt = parseValidTimestamp(item.expiresAt);
@@ -2027,6 +2056,7 @@ export async function loadSessionFromThread(
     _suspensionOwner: restoredSuspensionOwner,
     pendingConfirms,
     _confirmPersistenceDirtyReasons: new Set(),
+    confirmAuditDegraded: deserializeConfirmAuditDegraded(meta.confirmAuditDegraded),
     chatHistory,
     // 阶段4 follow-up — 用「当前已持久化的状态」初始化 db_write 审计基线快照，
     // 使恢复后第一条 db_write span 的 before 反映真实已存状态，而非把恢复当成首次写

@@ -5,6 +5,7 @@ import { createSession } from "../session/sessionState.js";
 import { ConfirmDecisionError, ConfirmService } from "../confirm/confirmService.js";
 import { SecretLeaseStore } from "../confirm/secretLeaseStore.js";
 import { consumeApprovalProof } from "../confirm/approvalProof.js";
+import type { PendingConfirm } from "../session/sessionState.js";
 
 const secretSpec: ConfirmSpec = {
   id: "confirm-secret",
@@ -545,10 +546,127 @@ describe("ConfirmService", () => {
     }));
   });
 
-  it("审计写失败只记错，不阻断 UI 决策流", async () => {
-    const state = createSession("confirm-audit-failure");
+  it.each([
+    {
+      name: "finish",
+      terminalReason: "confirm:accepted:terminal",
+      cleanupReason: "confirm:accepted",
+      resolution: "accepted" as const,
+      settle: (service: ConfirmService, state: ReturnType<typeof createSession>, pending: PendingConfirm) =>
+        service.finishDecision(state, pending, "decision-terminal", "accepted"),
+    },
+    {
+      name: "fail",
+      terminalReason: "confirm:failed:terminal",
+      cleanupReason: "confirm:failed",
+      resolution: "failed" as const,
+      settle: (service: ConfirmService, state: ReturnType<typeof createSession>, pending: PendingConfirm) =>
+        service.failDecision(state, pending),
+    },
+    {
+      name: "expire",
+      terminalReason: "confirm:expired:terminal",
+      cleanupReason: "confirm:expired",
+      resolution: "expired" as const,
+      settle: (service: ConfirmService, state: ReturnType<typeof createSession>, pending: PendingConfirm) =>
+        service.expireDecision(state, pending),
+    },
+  ])("$name 先持久化幂等终态墓碑，再清理 pending", async ({
+    terminalReason,
+    cleanupReason,
+    resolution,
+    settle,
+  }) => {
+    const state = createSession(`confirm-terminal-${resolution}`);
+    const pending: PendingConfirm = {
+      confirmId: `confirm-${resolution}`,
+      runId: `run-${resolution}`,
+      toolCallId: `tool-${resolution}`,
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: `digest-${resolution}`,
+      spec: {
+        id: `confirm-${resolution}`,
+        kind: "command",
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming",
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const writes: Array<{ reason: string; pending: PendingConfirm[] }> = [];
     const service = new ConfirmService({
-      persist: async () => undefined,
+      persist: async (current, reason) => {
+        writes.push({
+          reason,
+          pending: structuredClone([...current.pendingConfirms.values()]),
+        });
+      },
+      appendAudit: async () => undefined,
+    });
+
+    await settle(service, state, pending);
+
+    expect(writes.map((write) => write.reason)).toEqual([terminalReason, cleanupReason]);
+    expect(writes[0]?.pending).toEqual([
+      expect.objectContaining({ status: "terminal", terminalResolution: resolution }),
+    ]);
+    expect(writes[1]?.pending).toEqual([]);
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+  });
+
+  it("终态首次落盘失败时保留墓碑，并通过重试队列落盘后清理", async () => {
+    const state = createSession("confirm-terminal-first-write-failure");
+    const pending: PendingConfirm = {
+      confirmId: "confirm-terminal-retry",
+      runId: "run-terminal-retry",
+      toolCallId: "tool-terminal-retry",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-terminal-retry",
+      spec: {
+        id: "confirm-terminal-retry",
+        kind: "command",
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming",
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    const retryWrites: Array<{ reason: string; pendingCount: number }> = [];
+    const service = new ConfirmService({
+      persist: async (_current, reason) => {
+        if (reason === "confirm:failed:terminal") throw new Error("primary unavailable");
+      },
+      retryPersist: async (current, reason) => {
+        retryWrites.push({ reason, pendingCount: current.pendingConfirms.size });
+      },
+      appendAudit: async () => undefined,
+    });
+
+    await expect(service.failDecision(state, pending)).rejects.toThrow("primary unavailable");
+    await vi.waitFor(() => expect(retryWrites).toHaveLength(2));
+
+    expect(retryWrites).toEqual([
+      { reason: "confirm:failed:terminal-retry", pendingCount: 1 },
+      { reason: "confirm:failed:cleanup-retry", pendingCount: 0 },
+    ]);
+    expect(state.pendingConfirms.has(pending.toolCallId)).toBe(false);
+  });
+
+  it("审计写失败持久化降级记账，且不阻断 UI 决策流", async () => {
+    const state = createSession("confirm-audit-failure");
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      persist: async (_current, reason) => { persistReasons.push(reason); },
       appendAudit: async () => { throw new Error("audit unavailable"); },
     });
     const pending = {
@@ -583,6 +701,13 @@ describe("ConfirmService", () => {
       "[confirm-audit] append failed",
       expect.objectContaining({ eventType: "decision_started" }),
     );
+    expect(state.confirmAuditDegraded).toEqual({
+      failureCount: 1,
+      lastFailedAt: expect.any(String),
+      lastEventType: "decision_started",
+      lastConfirmId: pending.confirmId,
+    });
+    expect(persistReasons).toContain("confirm:audit-degraded");
     errorSpy.mockRestore();
   });
 });

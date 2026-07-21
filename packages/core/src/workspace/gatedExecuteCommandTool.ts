@@ -2,37 +2,40 @@ import { createTool } from "@mastra/core/tools";
 import { WORKSPACE_TOOLS, type Workspace } from "@mastra/core/workspace";
 import { mkdirSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { z } from "zod";
 import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 import { commandPolicyDenyMessage, evaluateCommandPolicy } from "./commandPolicy.js";
+import { consumeApprovalProof, type ApprovalProofSession } from "../confirm/approvalProof.js";
+import {
+  commandConfirmationDigest,
+  executeCommandInputSchema,
+} from "../confirm/commandConfirmation.js";
 import {
   SANDBOX_TIMEOUT_MS,
   sessionWorkspaceDir,
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
 
-const secondsSchema = z.preprocess(
-  (value) => {
-    if (value === null || value === undefined || value === "") return undefined;
-    return typeof value === "string" ? Number(value) : value;
-  },
-  z.number().positive().optional(),
-);
-
-const MAX_EXECUTE_COMMAND_LENGTH = 8192;
 export const EXECUTE_COMMAND_MAX_RETAINED_BYTES =
   Number(process.env.QINGAGENT_SANDBOX_MAX_RETAINED_BYTES) || 1_048_576;
 
-const executeCommandInputSchema = z.object({
-  command: z.string().min(1).max(MAX_EXECUTE_COMMAND_LENGTH),
-  timeout: secondsSchema.nullish(),
-  cwd: z.string().nullish(),
-  tail: z.number().nullish(),
-  background: z.boolean().optional(),
-});
+const UNHEALTHY_WORKSPACE_STATUSES = new Set<Workspace["status"]>([
+  "error",
+  "destroying",
+  "destroyed",
+  "paused",
+]);
+const UNHEALTHY_SANDBOX_STATUSES = new Set<NonNullable<Workspace["sandbox"]>["status"]>([
+  "error",
+  "stopping",
+  "stopped",
+  "destroying",
+  "destroyed",
+]);
 
 export interface GatedExecuteCommandToolOptions {
   sessionId: string;
+  /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
+  state?: ApprovalProofSession;
   getWorkspace: () => Promise<Workspace>;
   /** 仅供受信 node skill 脚本按次获取托管凭据；其它命令不会调用。 */
   resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
@@ -100,6 +103,7 @@ async function resolveManagedCredentialEnv(): Promise<Record<string, string>> {
 
 export function createGatedExecuteCommandTool({
   sessionId,
+  state,
   getWorkspace,
   resolveCredentialEnv = resolveManagedCredentialEnv,
   sandboxBinDir,
@@ -107,9 +111,24 @@ export function createGatedExecuteCommandTool({
   return createTool({
     id: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
     description:
-      "Execute an allowlisted shell command in the workspace sandbox. " +
-      "Only trusted packaged skill scripts and explicitly allowed read-only CLI commands can run.",
+      "Execute a shell command in the workspace sandbox. " +
+      "Install, external-send, and destructive effects require explicit user approval. " +
+      "Commands that block waiting for user authorization (QR-scan / login / init flows that " +
+      "print an auth link then wait) MUST run with background:true; then poll " +
+      "mastra_workspace_get_process_output for the auth URL and present it via show_qr.",
     inputSchema: executeCommandInputSchema,
+    requireApproval: (input) => {
+      try {
+        return evaluateCommandPolicy(input.command, {
+          workspaceCwd: sessionWorkspaceDir(sessionId),
+          background: input.background === true,
+          sandboxBinDir,
+        }).action === "confirm";
+      } catch {
+        // Mastra 也将 predicate 异常按需审批处理；这里显式保持 fail-safe。
+        return true;
+      }
+    },
     execute: async (input, context) => {
       // 已取消则立即短路,不解析 cwd / 不装配 workspace / 不 spawn 子进程——
       // 与 run_js/run_python 的预取消检查一致(底层 Mastra executeCommand 在 signal 已 aborted
@@ -117,6 +136,10 @@ export function createGatedExecuteCommandTool({
       if (context?.abortSignal?.aborted) {
         return "命令已取消: 调用前请求已被取消";
       }
+      const stopHeartbeat = startToolHeartbeat(context, {
+        tool: WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND,
+      });
+      try {
       const sessionDir = sessionWorkspaceDir(sessionId);
       const cwd = resolveExecutionCwd(sessionDir, input.cwd);
       if (!cwd) {
@@ -131,22 +154,54 @@ export function createGatedExecuteCommandTool({
         background: input.background === true,
         sandboxBinDir,
       });
-      if (decision.action !== "allow") {
+      if (decision.action === "deny") {
         return commandPolicyDenyMessage(decision);
+      }
+
+      let proofConsumed = false;
+      if (decision.action === "confirm") {
+        const runId = context?.requestContext?.get("runId");
+        const toolCallId = context?.agent?.toolCallId;
+        const hasProof =
+          state !== undefined &&
+          typeof runId === "string" && runId.length > 0 &&
+          typeof toolCallId === "string" && toolCallId.length > 0 &&
+          consumeApprovalProof(state, {
+            sessionId,
+            runId,
+            toolCallId,
+            commandDigest: commandConfirmationDigest(sessionId, input),
+          });
+        if (!hasProof) {
+          return "命令已被拒绝: 缺少有效的用户确认";
+        }
+        proofConsumed = true;
       }
 
       const workspace = await getWorkspace();
       const sandbox = workspace.sandbox;
       if (!sandbox) return "命令已被拒绝: 当前会话没有可用沙箱";
+      if (
+        UNHEALTHY_WORKSPACE_STATUSES.has(workspace.status) ||
+        UNHEALTHY_SANDBOX_STATUSES.has(sandbox.status)
+      ) {
+        return "命令已被拒绝: 当前会话沙箱状态异常";
+      }
       // LocalSandbox 基础 env 永不含托管凭据。只有策略已确认的受信 node skill 脚本，
       // 且部署开关显式开启时，才通过 Mastra 的 per-call env 向这个进程发放。
-      const credentialEnv = decision.credentialConsumer === "trusted-node-skill" &&
-          shouldInjectCredentials() && resolveCredentialEnv
-        ? await resolveCredentialEnv()
-        : undefined;
+      const credentialEnv =
+        decision.credentialConsumer === "trusted-node-skill" &&
+        (decision.action === "allow" || proofConsumed) &&
+        shouldInjectCredentials() &&
+        resolveCredentialEnv
+          ? await resolveCredentialEnv()
+          : undefined;
       const perCallCredentialEnv = credentialEnv && Object.keys(credentialEnv).length > 0
         ? { env: credentialEnv }
         : {};
+      if (context?.abortSignal?.aborted) {
+        return "命令已取消: 执行前请求已被取消";
+      }
       const timeoutSeconds = typeof input.timeout === "number" ? input.timeout : undefined;
       const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
       // 前台命令套默认超时挡 runaway;后台进程是有意长跑的(dev server 等),只用模型显式值、不强加默认。
@@ -213,6 +268,9 @@ export function createGatedExecuteCommandTool({
           },
         });
         return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        stopHeartbeat();
+      }
       } finally {
         stopHeartbeat();
       }

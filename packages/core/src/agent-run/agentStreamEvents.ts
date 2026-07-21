@@ -95,6 +95,17 @@ export type AgentStreamToolSuspendedEvent = StreamEvent<
   }
 >;
 
+export type AgentStreamToolApprovalEvent = StreamEvent<
+  "tool-call-approval",
+  {
+    toolCallId?: unknown;
+    toolName?: unknown;
+    args?: unknown;
+    resumeSchema?: unknown;
+    [key: string]: unknown;
+  }
+>;
+
 export type AgentStreamToolInputEvent =
   | StreamEvent<
       "tool-call-input-streaming-start",
@@ -155,7 +166,6 @@ type IgnoredPayloadEvent = StreamEvent<
   | "redacted-reasoning"
   | "source"
   | "file"
-  | "tool-call-approval"
   | "finish"
   | "raw"
   | "start"
@@ -180,6 +190,7 @@ export type AgentStreamEvent =
   | AgentStreamTextEvent
   | AgentStreamReasoningEvent
   | AgentStreamToolSuspendedEvent
+  | AgentStreamToolApprovalEvent
   | AgentStreamToolInputEvent
   | AgentStreamToolCallEvent
   | AgentStreamToolErrorEvent

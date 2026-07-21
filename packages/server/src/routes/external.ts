@@ -14,6 +14,7 @@ import {
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
+import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
@@ -102,7 +103,9 @@ externalRoutes.post("/sessions", async (c) => {
     kind: "startSession",
     data: { mode: { kind: "new", data: { template: null, sessionId } } },
   };
-  const frames = await sessionManager.submit(sessionId, { command, origin: "external" });
+  // 外部调用无浏览器 header,模型 key 取 app 全局设置(global-db)+env 兜底,与桌面 UI 同源。
+  const modelOverrides = await resolveRequestModelOverrides({});
+  const frames = await sessionManager.submit(sessionId, { command, origin: "external", modelOverrides });
   await saveEmptySessionDocument(sessionId).catch((error) => {
     console.warn("[external] evt=sessions result=empty_shadow_failed", {
       sessionId,
@@ -236,7 +239,12 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
     externalLog("propose", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION", hunks: 0 });
     return externalError(c, 400, "VALIDATION", "提案不合法");
   }
-  const frames = await sessionManager.submit(sessionId, { command: parsed.data, origin: "external", client });
+  const frames = await sessionManager.submit(sessionId, {
+    command: parsed.data,
+    origin: "external",
+    client,
+    modelOverrides: await resolveRequestModelOverrides({}),
+  });
   const summary = proposalSummary(frames);
   externalLog("propose", { sessionId, ms: elapsed(startedAt), result: summary.logResult, hunks: summary.hunks });
   return proposalResponse(c, summary);
@@ -274,7 +282,8 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
       clientMessageId: `external-${client}-${crypto.randomUUID()}`,
     },
   };
-  void sessionManager.submit(sessionId, { command, origin: "external" }).catch(() => {
+  const modelOverrides = await resolveRequestModelOverrides({});
+  void sessionManager.submit(sessionId, { command, origin: "external", modelOverrides }).catch(() => {
     console.warn(`[external] evt=chat session=${sessionId} result=async_failed`);
   });
   externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "queued" });

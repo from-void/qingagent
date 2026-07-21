@@ -71,6 +71,13 @@ mkdir -p "$NAPI_RS_DIR/canvas-win32-x64-msvc"
 cp -r "$TMP"/canvas/package/* "$NAPI_RS_DIR/canvas-win32-x64-msvc/"
 echo "    @napi-rs 现有平台: $(find "$NAPI_RS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f ')"
 
+# 运行时硬依赖自检:Mastra LocalProcessManager 运行期动态 import("execa"),
+# 打包漏掉不会在构建期报错,只会在用户跑命令时炸(execa is required...)。缺了直接构建失败。
+if [ ! -d "$UNPACKED/resources/app/node_modules/execa" ]; then
+  echo "!! win-unpacked 缺 execa(命令执行运行时硬依赖),构建中止" >&2
+  exit 1
+fi
+
 echo "==> [4/4] 复制到 Windows 本地盘 $WIN_DEST"
 if [ -d /mnt/c ]; then
   rm -rf "$WIN_DEST/win-unpacked"

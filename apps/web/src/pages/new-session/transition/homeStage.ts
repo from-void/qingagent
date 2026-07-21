@@ -50,6 +50,7 @@ export interface HomeTransitionStage {
 
 const EASE_CUBIC = (p: number) =>
   p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const INK_HANDOFF_MS = 180;
 
 /**
  * 在 host(首页根容器)内挂出固定覆盖层(space/dust/ink/morph),返回过渡控制器。
@@ -145,13 +146,34 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     requestAnimationFrame(tick);
   }
 
-  function darkOn() {
+  function darkOn(animate = false) {
+    host.classList.toggle("is-dark-anim", animate);
     host.classList.add("is-dark");
     dust?.start();
   }
   function darkOff() {
-    host.classList.remove("is-dark");
+    host.classList.remove("is-dark", "is-dark-anim");
     dust?.stop();
+  }
+
+  function fadeOutForwardInk(): Promise<void> {
+    const renderedInk = inkCanvas.nextElementSibling;
+    if (!(renderedInk instanceof HTMLCanvasElement) || !renderedInk.classList.contains("ccx-ink")) {
+      ink?.hide();
+      return Promise.resolve();
+    }
+
+    // 共享引擎把真实 WebGL canvas 接在占位 canvas 后；仅去程在同色 CSS 桌面上淡出交接。
+    renderedInk.style.transition = `opacity ${INK_HANDOFF_MS}ms ease`;
+    void renderedInk.offsetWidth;
+    renderedInk.classList.remove("active");
+    return new Promise((resolve) => {
+      window.setTimeout(() => {
+        ink?.hide();
+        renderedInk.style.transition = "";
+        resolve();
+      }, INK_HANDOFF_MS);
+    });
   }
 
   function playForward(
@@ -183,20 +205,21 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
         host.classList.add("is-ink-wipe");
         inkHandle
           .play([ox, oy], 1100, false, (e) => {
-            if (e > 0.82) darkOn();
+            if (e > 0.82) darkOn(true);
           })
-          .then(() => {
-            darkOn();
+          .then(async () => {
+            darkOn(true);
+            await fadeOutForwardInk();
             inkDone = true;
             tryResolve();
           });
       } else {
         // WebGL 不可用:直接置深背景(无墨)
-        darkOn();
+        darkOn(true);
         inkDone = true;
       }
 
-      tweenMorph(from, to, 1000, () => {
+      tweenMorph(from, to, 1100, () => {
         morphDone = true;
         tryResolve();
       });
@@ -207,6 +230,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     // 返回到达态首帧(必须在 paint 前调):背景瞬时已深(is-ink-wipe 让 .ccx-space 无慢渐显,
     // is-dark 令其 opacity:1 立即满深,纯 CSS 渐变即可,无需 WebGL 墨层)、卡静停落点。
     // 这一帧 = 新建页返回前的最后一帧(卡同 rect + 深背景)→ 切换瞬间不跳、不闪、不漏白。
+    host.classList.remove("is-dark-anim");
     host.classList.add("is-ink-wipe");
     host.classList.add("is-dark");
     dust?.start();
@@ -254,7 +278,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   function dispose() {
     ink?.dispose();
     dust?.dispose();
-    host.classList.remove("ccx-stage-host", "is-dark", "is-ink-wipe");
+    host.classList.remove("ccx-stage-host", "is-dark", "is-dark-anim", "is-ink-wipe");
     space.remove();
     dustCanvas.remove();
     inkCanvas.remove();

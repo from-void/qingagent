@@ -16,6 +16,12 @@ export const showQrTool = createTool({
     "在对话里渲染一个二维码卡片给用户扫码/点击(授权登录、配对、分享通用)。" +
     "典型场景:平台 OAuth device flow —— 先用对应 CLI 拿到 verification URL(如 lark-cli auth login --no-wait --json)," +
     "再调本工具把该 URL 渲染成二维码 + 可点链接交给用户。" +
+    "若 CLI 会阻塞等待扫码(init/login 类,打印字符画二维码后停在「等待扫码」不退出):" +
+    "用 execute_command 的 background:true 后台跑,再用 mastra_workspace_get_process_output 轮询输出、" +
+    "从中提取授权 URL 来调本工具;不要前台死等,也绝不要把字符画二维码原样贴进聊天(渲染不出来)。" +
+    "content 必须是扫码后直达授权的 URL:CLI 打印的文字链接可能只是「出码展示页」(打开又是一张二维码,扫了套娃)," +
+    "出码前先 curl -s 拉该链接的页面正文搜 auth_url/redirect_uri 等字段(只探 http 状态码不算)," +
+    "正文里嵌着真实授权 URL 就改用嵌的那个。" +
     "传入:content(要编码的 URL/字符串)、title、可选 code(配对码,没有就不传)、" +
     "expiresInSec(有效期秒数,用 device flow 的 expires_in;服务端会换算成绝对过期时间)、" +
     "note(说明文案,支持 markdown,可把说明和可点授权链接写在一起,如 用飞书 App 扫码,或 [点此授权](URL))、" +

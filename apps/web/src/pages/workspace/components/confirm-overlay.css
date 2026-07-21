@@ -1,0 +1,408 @@
+#view-workspace .cf-overlay {
+  --mark: #b59a63;
+  --ink-1: #ece3d0;
+  --ink-2: rgba(236, 227, 208, 0.64);
+  --ink-3: rgba(236, 227, 208, 0.44);
+  --ink-4: rgba(236, 227, 208, 0.3);
+  --line-1: rgba(184, 169, 140, 0.16);
+  --line-2: rgba(184, 169, 140, 0.28);
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  position: absolute;
+  right: 9px;
+  bottom: 18px;
+  left: 9px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  max-height: calc(100dvh - 24px);
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  border-radius: 0;
+  background: var(--fx-workspace-input-glass-bg);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.3);
+  color: var(--ink-1);
+  font-family: var(--font-zh-serif);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+  contain: layout paint;
+}
+
+/* 确认卡从输入框接管几何后，输入框保留布局矩形但不参与绘制。 */
+#view-workspace .ws-input-morph.is-confirm-hidden {
+  visibility: hidden;
+}
+
+#view-workspace .cf-overlay > * {
+  transition: opacity 0.16s ease;
+}
+
+#view-workspace .cf-overlay[data-closing="true"] > * {
+  opacity: 0;
+}
+
+#view-workspace .cf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 15px 6px;
+}
+
+#view-workspace .cf-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+#view-workspace .cf-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mark);
+  box-shadow: 0 0 0 3px rgba(181, 154, 99, 0.18);
+  animation: cf-pulse 1.4s ease-in-out infinite;
+}
+
+#view-workspace .cf-overlay[data-kind="send"] .cf-dot {
+  background: var(--ws-red);
+  box-shadow: 0 0 0 3px rgba(216, 56, 43, 0.18);
+}
+
+#view-workspace .cf-title {
+  flex: 0 0 auto;
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+#view-workspace .cf-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#view-workspace .cf-sub::before {
+  margin-right: 7px;
+  color: var(--ink-4);
+  content: "·";
+}
+
+#view-workspace .cf-close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font: 18px/1 var(--font-zh-serif);
+  cursor: pointer;
+}
+
+#view-workspace .cf-close:hover {
+  background: var(--bg-hover);
+  color: var(--ink-1);
+}
+
+#view-workspace .cf-close:focus-visible,
+#view-workspace .cf-button:focus-visible,
+#view-workspace .cf-secret:focus-visible,
+#view-workspace .cf-option:has(input:focus-visible) {
+  outline: 1px solid var(--mark);
+  outline-offset: 2px;
+}
+
+#view-workspace .cf-overlay[data-kind="send"] .cf-close:focus-visible,
+#view-workspace .cf-overlay[data-kind="send"] .cf-button:focus-visible {
+  outline-color: var(--ws-red-lite);
+}
+
+#view-workspace .cf-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  min-height: 0;
+  padding: 7px 15px 4px;
+  overflow-y: auto;
+}
+
+#view-workspace .cf-say {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.65;
+}
+
+#view-workspace .cf-command-preview {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  padding: 8px 10px;
+  border: 1px solid var(--line-1);
+  border-radius: 0;
+  background: var(--ink-surface);
+  color: var(--ink-2);
+  font: 11px/1.6 var(--font-mono);
+  white-space: pre;
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar {
+  height: 8px;
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+}
+
+#view-workspace .cf-command-preview::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#view-workspace .cf-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+#view-workspace .cf-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  padding: 8px 32px 8px 10px;
+  border: 1px solid var(--line-1);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+#view-workspace .cf-option:hover,
+#view-workspace .cf-option[data-checked="true"] {
+  border-color: var(--mark);
+  background: rgba(181, 154, 99, 0.12);
+  color: var(--ink-1);
+}
+
+#view-workspace .cf-option[data-checked="true"] {
+  background: rgba(181, 154, 99, 0.18);
+}
+
+#view-workspace .cf-option input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+}
+
+#view-workspace .cf-option-title {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+#view-workspace .cf-recommended {
+  align-self: start;
+  padding: 1px 5px;
+  border: 1px solid rgba(181, 154, 99, 0.34);
+  border-radius: 0;
+  color: var(--mark);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+#view-workspace .cf-option-description {
+  grid-column: 1 / -1;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+#view-workspace .cf-option-check {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mark);
+}
+
+#view-workspace .cf-secret {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  outline: none;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-1);
+  font: 12.5px/1.4 var(--font-zh-serif);
+}
+
+#view-workspace .cf-secret:focus {
+  border-color: var(--mark);
+}
+
+#view-workspace .cf-secret::placeholder {
+  color: var(--ink-4);
+}
+
+#view-workspace .cf-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 15px 13px;
+}
+
+#view-workspace .cf-foot-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-4);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+#view-workspace .cf-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+#view-workspace .cf-button {
+  padding: 6px 15px;
+  border-radius: 0;
+  font: 600 12px/1.4 var(--font-zh-serif);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+#view-workspace .cf-secondary {
+  border: 1px solid rgba(184, 169, 140, 0.28);
+  background: transparent;
+  color: #cdbf9f;
+}
+
+#view-workspace .cf-secondary:hover {
+  border-color: rgba(184, 169, 140, 0.42);
+  background: rgba(184, 169, 140, 0.12);
+  color: #f3ecdb;
+}
+
+#view-workspace .cf-primary {
+  border: 1px solid var(--mark);
+  background: var(--mark);
+  color: var(--ink-surface);
+}
+
+#view-workspace .cf-primary:hover:not(:disabled) {
+  border-color: #c7af78;
+  background: #c7af78;
+}
+
+#view-workspace .cf-overlay[data-kind="send"] .cf-primary {
+  border-color: var(--ws-red-lite);
+  background: transparent;
+  color: var(--ws-red-lite);
+}
+
+#view-workspace .cf-overlay[data-kind="send"] .cf-primary:hover:not(:disabled) {
+  border-color: var(--ws-red-lite);
+  background: rgba(216, 56, 43, 0.16);
+  color: #fdf3ea;
+}
+
+#view-workspace .cf-button:disabled {
+  border-color: var(--line-1);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ink-4);
+  cursor: not-allowed;
+}
+
+#view-workspace .cf-record {
+  flex: 0 0 auto;
+  margin: 0 0 4px;
+  animation: cf-record-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#view-workspace .cf-record .u-bar {
+  margin: 0;
+  background: var(--fx-workspace-input-glass-bg);
+  backdrop-filter: var(--fx-workspace-backdrop-filter);
+  -webkit-backdrop-filter: var(--fx-workspace-backdrop-filter);
+}
+
+#view-workspace .cf-record-check {
+  color: var(--mark);
+  font-family: var(--font-zh-serif);
+  font-weight: 700;
+}
+
+@keyframes cf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes cf-record-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 520px) {
+  #view-workspace .cf-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #view-workspace .cf-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #view-workspace .cf-overlay > *,
+  #view-workspace .cf-dot,
+  #view-workspace .cf-record {
+    animation: none;
+    transition-duration: 0.01ms;
+  }
+}

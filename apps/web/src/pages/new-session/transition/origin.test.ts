@@ -18,4 +18,11 @@ describe("computeWorkspaceDocRect", () => {
       expect(rect.left).toBe(40 + 400 + 48);
     }
   });
+
+  it("viewport 异常时返回屏幕中央的有限值纸面", () => {
+    const rect = computeWorkspaceDocRect(Number.NaN, 0);
+
+    expect(rect).toEqual({ left: 240, top: 52, width: 800, height: 668 });
+    expect(Object.values(rect).every(Number.isFinite)).toBe(true);
+  });
 });

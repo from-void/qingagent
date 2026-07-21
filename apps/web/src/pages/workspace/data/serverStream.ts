@@ -1,4 +1,4 @@
-import type { Command, BridgeFrame, AskUserQuestion, ReviewType } from "@qingagent/contract-ts";
+import type { Command, BridgeFrame, AskUserQuestion, ReviewType, SubmitConfirmDecision } from "@qingagent/contract-ts";
 import { validateBridgeFrame } from "../../../system/validators";
 import { visitorKeyHeaders } from "../../../overlays/settings/visitorKeyStore";
 import type { AskUserAnswer, StreamError, WorkspaceLocalAction } from "./protocol";
@@ -197,6 +197,26 @@ export class ServerStream {
 
   async sendCommand(command: Command): Promise<unknown> {
     return this.sendCommandInternal(command);
+  }
+
+  /** secret 专用上行：不经过 Command/client_event 摘要，也不读取或回显请求体。 */
+  async resolveConfirm(submission: SubmitConfirmDecision): Promise<void> {
+    this.connectEvents(submission.sessionId);
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    try {
+      const response = await fetch("/api/v1/confirms/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submission),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`确认请求失败：${response.status}`);
+      }
+    } finally {
+      this.activeControllers.delete(controller);
+    }
   }
 
   async ignoreAnnotationGroups(

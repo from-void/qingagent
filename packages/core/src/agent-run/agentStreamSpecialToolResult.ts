@@ -16,6 +16,7 @@ import {
   toolCallUpdated,
 } from "./frames.js";
 import { isExtractionFailureText } from "../session/sessionTools.js";
+import { resolveQrContent } from "./qrContentResolver.js";
 import {
   appendPartToChatHistory,
   nextSeq,
@@ -74,7 +75,14 @@ export async function* handleSpecialToolResult(
       updateToolCallInChatHistory(state, originalMessage.id, toolCallId, doneSpec);
       yield toolCallUpdated(originalMessage.id, toolCallId, doneSpec);
     } else {
-      const spec = qrCardToolCallSpec(toolCallId, rawArgs, { kind: "done" });
+      // 罕见路径:流中没渲染过这张卡,从 rawArgs 重建——同样要做出码前验真(见 qrContentResolver)
+      const qrRaw = rawArgs as Record<string, unknown>;
+      const resolved = qrRaw.imageDataUri ? null : await resolveQrContent(qrRaw.content);
+      const spec = qrCardToolCallSpec(
+        toolCallId,
+        resolved ? { ...qrRaw, content: resolved } : rawArgs,
+        { kind: "done" },
+      );
       const seq = nextSeq(state, agentMessageId);
       const toolCallPart: MessagePart = { kind: "toolCall", data: spec };
       yield chatMessageAppended(agentMessageId, seq, toolCallPart);

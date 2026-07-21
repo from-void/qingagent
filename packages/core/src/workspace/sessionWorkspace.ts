@@ -41,6 +41,11 @@ import {
 } from "../folderSources/runtime.js";
 import { BrowserBridgeFilesystem } from "./browserBridgeFilesystem.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
+import {
+  prepareReadWall,
+  ReadWallLocalSandbox,
+  type PreparedReadWall,
+} from "./readWallSandbox.js";
 import { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
 export { QINGAGENT_DATA_DIR, SANDBOX_BIN_DIR, SANDBOX_SESSIONS_BASE } from "./sandboxPaths.js";
 
@@ -122,7 +127,7 @@ function shouldBypassProxyForFeishu(): boolean {
 
 /** 沙箱进程 env:最小化——只带必需系统变量(按平台)+代理,绝不继承宿主全量环境或托管凭据。
  *  PATH 前置产品级 SANDBOX_BIN_DIR,让沙箱优先用产品自带/锁版本的 CLI(lark-cli 等)。 */
-export function buildSandboxEnv(): NodeJS.ProcessEnv {
+export function buildSandboxEnv(effectiveHome?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const systemKeys = process.platform === "win32" ? SYSTEM_ENV_KEYS_WIN : SYSTEM_ENV_KEYS_POSIX;
   for (const key of [...systemKeys, ...PROXY_ENV_KEYS]) {
@@ -134,6 +139,7 @@ export function buildSandboxEnv(): NodeJS.ProcessEnv {
   const prefixedPath = basePath ? `${SANDBOX_BIN_DIR}${sep}${basePath}` : SANDBOX_BIN_DIR;
   env.PATH = prefixedPath;
   if (process.platform === "win32") env.Path = prefixedPath;
+  if (effectiveHome && process.platform !== "win32") env.HOME = effectiveHome;
   // 飞书域名并入 NO_PROXY:lark-cli 走代理连飞书会被不稳定的翻墙上游间歇 reset(实测),直连飞书稳定。
   // 仅在确实设了代理时才需要,可被 QINGAGENT_SANDBOX_FEISHU_NO_PROXY=0 关闭(给"飞书必须经代理"的环境)。
   const hasProxy = !!(
@@ -389,7 +395,39 @@ async function buildSessionWorkspace(
   const extraReadOnlyPaths = sandboxExtraReadOnlyPaths();
   // 无文件系统隔离(none)且未显式允许时:不装 sandbox(不暴露命令执行),
   // 只留文件工具+技能发现。多租户服务器靠此强制要求真隔离。
-  const commandsEnabled = isolation !== "none" || allowUnisolatedCommands();
+  const isolationCommandsAllowed = isolation !== "none" || allowUnisolatedCommands();
+  let readWall: PreparedReadWall | null = null;
+  if (isolation === "seatbelt" || isolation === "bwrap") {
+    try {
+      readWall = await prepareReadWall({
+        platform: isolation === "seatbelt" ? "darwin" : "linux",
+        env: process.env,
+        sandboxEnv: buildSandboxEnv(),
+        dataDir: QINGAGENT_DATA_DIR,
+        sessionDir,
+        sandboxBinDir: SANDBOX_BIN_DIR,
+        builtinSkillsDir: BUILTIN_SKILLS_DIR,
+        userSkillsDir: USER_SKILLS_DIR,
+        extraReadOnlyPaths,
+        nodeExecutable: process.execPath,
+      });
+      console.info("[sessionWorkspace] read-wall ready", {
+        version: "v1",
+        mode: readWall.mode,
+        ruleCount: readWall.ruleCount,
+        policyHash: readWall.policyHash,
+        warnings: readWall.warnings,
+      });
+    } catch (error) {
+      // 路径可能含宿主用户名/目录，日志只记错误类型，不输出原始 message/path。
+      console.error("[sessionWorkspace] read-wall fail-closed", {
+        isolation,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+  // Windows/显式 none 维持原有开关语义；Mac/Linux 真隔离必须先通过读墙全套预检。
+  let commandsEnabled = isolationCommandsAllowed && (isolation === "none" || readWall !== null);
   const rawFolderSources = Array.from(
     (await opts.resolveFolderSources?.(sessionId)) ??
     getSessionFolderSources(sessionId),
@@ -471,6 +509,42 @@ async function buildSessionWorkspace(
     }
   }
 
+  let sandbox: LocalSandbox | ReadWallLocalSandbox | undefined;
+  if (commandsEnabled) {
+    try {
+      sandbox = readWall
+        ? new ReadWallLocalSandbox({
+            workingDirectory: sessionDir,
+            isolation,
+            nativeSandbox: readWall.nativeSandbox,
+            // 托管凭据不得进入 LocalSandbox 基础 env；仅由 gatedExecuteCommandTool
+            // 对受信 node skill 脚本按次发放，generic CLI 与 lark-cli 始终看不到。
+            env: buildSandboxEnv(readWall.effectiveHome),
+            timeout: SANDBOX_TIMEOUT_MS,
+            verifyReadWallIntegrity: readWall.verifyIntegrity,
+          })
+        : new LocalSandbox({
+            workingDirectory: sessionDir,
+            isolation,
+            nativeSandbox: {
+              // CLI skill 要调开放 API,必须放网;文件面仍然兜死
+              allowNetwork: true,
+              // 技能目录 + 产品级 CLI 目录只读可执行(bwrap/seatbelt 隔离下访问 lark-cli 等)
+              readOnlyPaths: [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
+              readWritePaths: [sessionDir],
+            },
+            env: buildSandboxEnv(),
+            timeout: SANDBOX_TIMEOUT_MS,
+          });
+    } catch (error) {
+      commandsEnabled = false;
+      console.error("[sessionWorkspace] sandbox construction fail-closed", {
+        isolation,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+
   const toolsConfig: Record<string, { enabled: boolean }> = {};
   if (commandsEnabled) {
     toolsConfig[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = { enabled: false };
@@ -495,25 +569,7 @@ async function buildSessionWorkspace(
     // 显式传 LocalSkillSource(按宿主 fs 解析绝对路径)把技能发现与命令 cwd 解耦。
     skillSource: new LocalSkillSource(),
     ...(Object.keys(toolsConfig).length > 0 ? { tools: toolsConfig } : {}),
-    ...(commandsEnabled
-      ? {
-          sandbox: new LocalSandbox({
-            workingDirectory: sessionDir,
-            isolation,
-            nativeSandbox: {
-              // CLI skill 要调开放 API,必须放网;文件面仍然兜死
-              allowNetwork: true,
-              // 技能目录 + 产品级 CLI 目录只读可执行(bwrap/seatbelt 隔离下访问 lark-cli 等)
-              readOnlyPaths: [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, SANDBOX_BIN_DIR, ...extraReadOnlyPaths],
-              readWritePaths: [sessionDir],
-            },
-            // 托管凭据不得进入 LocalSandbox 基础 env；仅由 gatedExecuteCommandTool
-            // 对受信 node skill 脚本按次发放，generic CLI 与 lark-cli 始终看不到。
-            env: buildSandboxEnv(),
-            timeout: SANDBOX_TIMEOUT_MS,
-          }),
-        }
-      : {}),
+    ...(sandbox ? { sandbox } : {}),
     skills: opts.resolveSkillDirs,
   });
 

@@ -8,6 +8,7 @@ import {
 import { finalizeAgentStream } from "./agentStreamFinalize.js";
 import { handleLifecycleEvent } from "./agentStreamLifecycle.js";
 import { handleSuspensionEvent } from "./agentStreamSuspension.js";
+import { handleApprovalEvent } from "./agentStreamApproval.js";
 import { handleTextAndReasoningEvent } from "./agentStreamText.js";
 import { handleToolCallEvent } from "./agentStreamToolCall.js";
 import { handleToolOutputEvent } from "./agentStreamToolOutput.js";
@@ -98,6 +99,9 @@ export async function* processAgentStream(
       if (lifecycleResult === "handled") continue;
       if (yield* handleToolOutputEvent(context, chunk)) continue;
       if (yield* handleTextAndReasoningEvent(context, chunk)) continue;
+
+      const approvalResult = yield* handleApprovalEvent(context, chunk);
+      if (approvalResult === "handled") continue;
 
       const suspensionResult = yield* handleSuspensionEvent(context, chunk);
       if (suspensionResult === "terminal") {

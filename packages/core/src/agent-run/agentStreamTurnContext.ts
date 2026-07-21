@@ -27,6 +27,7 @@ import type {
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
 import { AnnotationPreviewState } from "./annotationPreview.js";
 import { currentPmDoc } from "../doc-engine/draftScratch.js";
+import { confirmService, type ConfirmService } from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
 
@@ -43,6 +44,8 @@ export interface ProcessAgentStreamOptions {
   /** 连续只有 tool-heartbeat、没有真实流事件时的硬收口窗口。 */
   toolHeartbeatTimeoutMs?: number;
   abortController?: AbortController;
+  /** 仅测试注入；生产统一使用模块级 ConfirmService。 */
+  confirmService?: ConfirmService;
 }
 
 export interface ProcessOutcome {
@@ -75,6 +78,7 @@ export interface AgentStreamTurnContext {
   readonly streamStartTime: number;
   readonly timeoutMs: number;
   readonly toolHeartbeatTimeoutMs: number;
+  readonly confirmService: ConfirmService;
 
   firstChunkLogged: boolean;
   accumulatedText: string;
@@ -186,6 +190,7 @@ export async function createAgentStreamTurnContext(
     timeoutMs: opts.idleTimeoutMs ?? AGENT_IDLE_TIMEOUT_MS,
     toolHeartbeatTimeoutMs:
       opts.toolHeartbeatTimeoutMs ?? AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
+    confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
     accumulatedText: "",
     reasoningId: null,

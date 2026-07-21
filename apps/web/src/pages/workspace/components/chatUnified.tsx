@@ -330,8 +330,11 @@ export function UToolBar({
   const label = bodyKindLabel(spec);
   // 只针对「流式还没输出完」的占位态:刚建占位卡(generic body 且参数 JSON 还没到,argsJson 为空)。
   // 参数到位/工具执行中/完成/失败 一律不改,仍走下面原有的条/卡。
+  // 例外:确认命令批准后的执行期,后端把工具卡换成 running commandCard;若时序上仍是空 generic,
+  // 也不能误显「正在准备」(慢命令会看似卡死),排除 execute_command 走下面的运行中卡/条。
   const isStreamingPlaceholder =
-    running && spec.body.kind === "generic" && (spec.body.data.argsJson ?? "") === "";
+    running && spec.body.kind === "generic" && (spec.body.data.argsJson ?? "") === "" &&
+    spec.name !== "mastra_workspace_execute_command";
   if (isStreamingPlaceholder) {
     return (
       <div className="u-prep" data-wf="ToolPrep">

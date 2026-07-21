@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 export type RouteName = "home" | "new-session" | "workspace" | "debug" | "gallery" | "spec" | "uikit";
@@ -58,7 +58,11 @@ export function useRoute(): RouteName {
     if (window.location.hash === "" || window.location.hash === "#") {
       window.history.replaceState(null, "", "#/");
     }
-    const onChange = () => setRoute(parseRoute(window.location.hash));
+    const onChange = () => {
+      startTransition(() => {
+        setRoute(parseRoute(window.location.hash));
+      });
+    };
     window.addEventListener("hashchange", onChange);
     window.addEventListener("popstate", onChange);
     return () => {

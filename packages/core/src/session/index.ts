@@ -13,7 +13,7 @@ export {
   updateToolCallInChatHistory,
 } from "./sessionState.js";
 
-export type { SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "./sessionState.js";
+export type { PendingConfirm, SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "./sessionState.js";
 
 export {
   buildCapabilityTools,

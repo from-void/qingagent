@@ -5,6 +5,7 @@ export {
   qingagentAgent,
 } from "./agents/qingagent.js";
 export type {
+  PendingConfirm,
   QingagentThreadMetadata,
   SessionState,
 } from "./bridge/index.js";
@@ -92,6 +93,19 @@ export {
   upsertMaterialByFileId,
 } from "./bridge/index.js";
 export type { ConnectorInfoDto } from "./connectors/index.js";
+export {
+  CONFIRM_TTL_MS,
+  ConfirmDecisionError,
+  ConfirmService,
+  clearAllApprovalProofs,
+  clearApprovalProof,
+  commandConfirmationDigest,
+  confirmService,
+  consumeApprovalProof,
+  issueApprovalProof,
+  secretLeaseStore,
+} from "./confirm/index.js";
+export type { SafeSubmitConfirmDecision } from "./confirm/index.js";
 export {
   ConnectorService,
   createConnectorStatus,

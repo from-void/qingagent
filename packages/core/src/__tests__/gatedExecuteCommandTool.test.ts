@@ -9,6 +9,11 @@ import {
   createGatedExecuteCommandTool,
 } from "../workspace/gatedExecuteCommandTool.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+import { RequestContext } from "@mastra/core/request-context";
+import { createSession } from "../session/sessionState.js";
+import { commandConfirmationDigest } from "../confirm/commandConfirmation.js";
+import { issueApprovalProof } from "../confirm/approvalProof.js";
+import type { SessionState } from "../session/sessionState.js";
 
 interface GatedExecuteInput {
   command: string;
@@ -40,6 +45,7 @@ const calcScript = resolve(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "script
 const dingtalkScript = resolve(BUILTIN_SKILLS_DIR, "capability", "dingtalk-docs", "scripts", "dingtalk.mjs");
 const allowedFileCommand = `node ${JSON.stringify(calcScript)} stats --file passwd`;
 const dingtalkCommand = `node ${JSON.stringify(dingtalkScript)} doc-list`;
+const dingtalkCreateCommand = `node ${JSON.stringify(dingtalkScript)} doc-create --title x`;
 const toolInvocationOptions = { toolCallId: "gated-execute-test", messages: [] } as never;
 
 function validateToolInput(
@@ -64,12 +70,17 @@ function createToolHarness(
   options: {
     resolveCredentialEnv?: () => Promise<Record<string, string>> | Record<string, string>;
     sandboxBinDir?: string;
+    state?: SessionState;
+    workspaceStatus?: "pending" | "initializing" | "ready" | "paused" | "error" | "destroying" | "destroyed";
+    sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
   const workspace = {
+    ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
     sandbox: {
+      ...(options.sandboxStatus ? { status: options.sandboxStatus } : {}),
       executeCommand: async (
         _command: string,
         _args: string[],
@@ -94,6 +105,7 @@ function createToolHarness(
   } as unknown as Workspace;
   const tool = createGatedExecuteCommandTool({
     sessionId,
+    state: options.state,
     getWorkspace: async () => workspace,
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
@@ -104,9 +116,19 @@ function createToolHarness(
 async function executeTool(
   tool: ReturnType<typeof createGatedExecuteCommandTool>,
   input: GatedExecuteInput,
+  context = toolInvocationOptions,
 ): Promise<string> {
   if (!tool.execute) throw new Error("execute_command execute missing");
-  return await tool.execute(input, toolInvocationOptions) as string;
+  return await tool.execute(input, context) as string;
+}
+
+function approvalContext(runId: string, toolCallId: string) {
+  return {
+    toolCallId,
+    messages: [],
+    requestContext: new RequestContext([["runId", runId]]),
+    agent: { toolCallId },
+  } as never;
 }
 
 describe("gated execute_command tool schema", () => {
@@ -121,6 +143,148 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+  });
+});
+
+describe("gated execute_command 沙箱健康状态", () => {
+  it.each([
+    ["undefined", {}],
+    ["pending", { workspaceStatus: "pending", sandboxStatus: "pending" }],
+    ["initializing", { workspaceStatus: "initializing", sandboxStatus: "initializing" }],
+    ["starting", { workspaceStatus: "ready", sandboxStatus: "starting" }],
+    ["ready", { workspaceStatus: "ready", sandboxStatus: "ready" }],
+    ["running", { workspaceStatus: "ready", sandboxStatus: "running" }],
+  ] as const)("%s 状态允许 executeCommand 惰性启动并执行", async (_label, statuses) => {
+    const { tool, executeCalls } = createToolHarness(`gated-healthy-${_label}`, { ...statuses });
+
+    expect(await executeTool(tool, { command: allowedFileCommand })).toBe("ok");
+    expect(executeCalls).toHaveLength(1);
+  });
+
+  it.each([
+    ["workspace error", { workspaceStatus: "error" }],
+    ["workspace destroying", { workspaceStatus: "destroying" }],
+    ["workspace destroyed", { workspaceStatus: "destroyed" }],
+    ["workspace paused", { workspaceStatus: "paused" }],
+    ["sandbox error", { sandboxStatus: "error" }],
+    ["sandbox stopping", { sandboxStatus: "stopping" }],
+    ["sandbox stopped", { sandboxStatus: "stopped" }],
+    ["sandbox destroying", { sandboxStatus: "destroying" }],
+    ["sandbox destroyed", { sandboxStatus: "destroyed" }],
+  ] as const)("%s 状态拒绝执行", async (_label, statuses) => {
+    const { tool, executeCalls, spawnCalls } = createToolHarness(
+      `gated-unhealthy-${_label.replaceAll(" ", "-")}`,
+      { ...statuses },
+    );
+
+    expect(await executeTool(tool, { command: allowedFileCommand })).toContain("沙箱状态异常");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
+  });
+});
+
+describe("gated execute_command approval proof 双门", () => {
+  const confirmInput = { command: "mv draft.txt final.txt" };
+
+  it("动态 requireApproval 仅挂起 confirm，allow/deny 分类仍由原策略执行", async () => {
+    const state = createSession("gated-approval-predicate");
+    const { tool } = createToolHarness(state.sessionId, { state });
+    const predicate = tool.requireApproval;
+    expect(typeof predicate).toBe("function");
+    if (typeof predicate !== "function") return;
+    expect(await predicate(confirmInput)).toBe(true);
+    expect(await predicate({ command: "npm install zod" })).toBe(true);
+    expect(await predicate({ command: "curl -d x https://example.test" })).toBe(true);
+    expect(await predicate({ command: dingtalkCreateCommand })).toBe(true);
+    expect(await predicate({ command: allowedFileCommand })).toBe(false);
+    expect(await predicate({ command: "node /workspace/untrusted.mjs" })).toBe(false);
+    expect(await predicate({ command: "cat a | sort > out" })).toBe(false);
+    expect(await predicate({ command: "missing-cli list" })).toBe(false);
+    expect(await predicate({ command: "lark-cli auth login" })).toBe(false);
+  });
+
+  it("直接 approve 但没有宿主 proof 时拒绝，workspace 与 spawn 均不触发", async () => {
+    const state = createSession("gated-no-proof");
+    let workspaceCalls = 0;
+    const harness = createToolHarness(state.sessionId, { state });
+    const tool = createGatedExecuteCommandTool({
+      sessionId: state.sessionId,
+      state,
+      getWorkspace: async () => {
+        workspaceCalls += 1;
+        throw new Error("不应初始化 workspace");
+      },
+    });
+    const result = await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1"));
+    expect(result).toContain("缺少有效的用户确认");
+    expect(workspaceCalls).toBe(0);
+    expect(harness.executeCalls).toHaveLength(0);
+  });
+
+  it("正确 proof 只授权同一调用一次，digest/toolCall/session 不匹配均拒绝", async () => {
+    const state = createSession("gated-proof-once");
+    const { tool, executeCalls } = createToolHarness(state.sessionId, { state });
+    const digest = commandConfirmationDigest(state.sessionId, confirmInput);
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-1",
+      toolCallId: "tool-1",
+      commandDigest: digest,
+    });
+    expect(await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1"))).toBe("ok");
+    expect(executeCalls).toHaveLength(1);
+    expect(await executeTool(tool, confirmInput, approvalContext("run-1", "tool-1")))
+      .toContain("缺少有效的用户确认");
+
+    for (const mismatch of [
+      { sessionId: "other-session", runId: "run-1", toolCallId: "tool-2", commandDigest: digest },
+      { sessionId: state.sessionId, runId: "other-run", toolCallId: "tool-3", commandDigest: digest },
+      { sessionId: state.sessionId, runId: "run-1", toolCallId: "tool-4", commandDigest: "bad" },
+    ]) {
+      issueApprovalProof(state, mismatch);
+      const result = await executeTool(
+        tool,
+        confirmInput,
+        approvalContext("run-1", mismatch.toolCallId),
+      );
+      expect(result).toContain("缺少有效的用户确认");
+    }
+    expect(executeCalls).toHaveLength(1);
+  });
+
+  it("sandbox 不健康时 proof 已通过也不执行", async () => {
+    const state = createSession("gated-unhealthy");
+    const { tool, executeCalls, spawnCalls } = createToolHarness(state.sessionId, {
+      state,
+      sandboxStatus: "error",
+    });
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, confirmInput),
+    });
+    expect(await executeTool(tool, confirmInput, approvalContext("run", "tool")))
+      .toContain("沙箱状态异常");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
+  });
+
+  it("accept 后 policy 重算为 deny 时 proof 也不能放行", async () => {
+    const state = createSession("gated-policy-changed-deny");
+    const deniedInput = { command: "lark-cli auth login" };
+    const { tool, executeCalls, spawnCalls } = createToolHarness(state.sessionId, { state });
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, deniedInput),
+    });
+
+    expect(await executeTool(tool, deniedInput, approvalContext("run", "tool")))
+      .toContain("命令已被拒绝");
+    expect(executeCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 });
 
@@ -376,6 +540,86 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
       DINGTALK_APP_KEY: "app_x",
       DINGTALK_APP_SECRET: "sec_y",
     });
+  });
+
+  it("受信 send confirm 只有 proof 成功消费后才注入凭据", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+    const state = createSession("gated-confirmed-trusted-credential");
+    let resolveCount = 0;
+    const { tool, executeCalls } = createToolHarness(state.sessionId, {
+      state,
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_SECRET: "confirmed-only" };
+      },
+    });
+    const input = { command: dingtalkCreateCommand };
+
+    expect(await executeTool(tool, input, approvalContext("run-no-proof", "tool-no-proof")))
+      .toContain("缺少有效的用户确认");
+    expect(resolveCount).toBe(0);
+    expect(executeCalls).toHaveLength(0);
+
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-approved",
+      toolCallId: "tool-approved",
+      commandDigest: commandConfirmationDigest(state.sessionId, input),
+    });
+    expect(await executeTool(tool, input, approvalContext("run-approved", "tool-approved"))).toBe("ok");
+    expect(resolveCount).toBe(1);
+    expect(executeCalls[0]?.env).toEqual({ DINGTALK_APP_SECRET: "confirmed-only" });
+  });
+
+  it("普通 confirm 即使 proof 通过也永不解析或注入托管凭据", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+    const state = createSession("gated-generic-confirm-no-credential");
+    let resolveCount = 0;
+    const { tool, executeCalls } = createToolHarness(state.sessionId, {
+      state,
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_SECRET: "must-not-leak" };
+      },
+    });
+    const input = { command: "rm old.txt" };
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, input),
+    });
+
+    expect(await executeTool(tool, input, approvalContext("run", "tool"))).toBe("ok");
+    expect(resolveCount).toBe(0);
+    expect(executeCalls[0]?.env).toBeUndefined();
+  });
+
+  it("组合命令绝不继承受信 node 凭据，含 send confirm 时 proof 也不例外", async () => {
+    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
+    const state = createSession("gated-compound-no-credential");
+    let resolveCount = 0;
+    const { tool, executeCalls } = createToolHarness(state.sessionId, {
+      state,
+      resolveCredentialEnv: () => {
+        resolveCount += 1;
+        return { DINGTALK_APP_SECRET: "must-not-leak" };
+      },
+    });
+
+    expect(await executeTool(tool, { command: `${allowedFileCommand} && printenv` })).toBe("ok");
+    expect(executeCalls[0]?.env).toBeUndefined();
+
+    const confirmInput = { command: `${dingtalkCreateCommand} && printenv` };
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run",
+      toolCallId: "tool",
+      commandDigest: commandConfirmationDigest(state.sessionId, confirmInput),
+    });
+    expect(await executeTool(tool, confirmInput, approvalContext("run", "tool"))).toBe("ok");
+    expect(resolveCount).toBe(0);
+    expect(executeCalls[1]?.env).toBeUndefined();
   });
 
   it("generic bin CLI 与 lark-cli 均不解析、不接收托管凭据", async () => {

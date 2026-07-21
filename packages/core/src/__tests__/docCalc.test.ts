@@ -162,7 +162,7 @@ describe("doc-calc 喂数(gate 兼容)", () => {
     });
   });
 
-  it("gate 放行 --json / --file 调用,拒绝管道喂数", () => {
+  it("gate 放行 --json / --file / 管道；越界 file 与组合调用只取消凭据资格", () => {
     const dir = mkdtempSync(join(tmpdir(), "calc-policy-"));
     const q = JSON.stringify(calc);
     try {
@@ -170,11 +170,10 @@ describe("doc-calc 喂数(gate 兼容)", () => {
       expect(evaluateCommandPolicy(`node ${q} sumcol 1 --file data/table.csv`, { workspaceCwd: dir }).action).toBe(
         "allow",
       );
-      expect(evaluateCommandPolicy(`node ${q} sumcol 1 --file /etc/passwd`, { workspaceCwd: dir }).action).toBe(
-        "deny",
-      );
-      // 旧的管道喂数会被 gate 拒绝——这是本次给 calc.mjs 加 --json/--file 的根因
-      expect(evaluateCommandPolicy(`echo '[1,2,3]' | node ${q} sum`, { workspaceCwd: dir }).action).toBe("deny");
+      expect(evaluateCommandPolicy(`node ${q} sumcol 1 --file /etc/passwd`, { workspaceCwd: dir }))
+        .toEqual({ action: "allow" });
+      expect(evaluateCommandPolicy(`echo '[1,2,3]' | node ${q} sum`, { workspaceCwd: dir }))
+        .toEqual({ action: "allow" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

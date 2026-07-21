@@ -44,6 +44,7 @@ export type WorkspaceToolState =
   | "none"
   | "agentBusy"
   | "askUser"
+  | "confirm"
   | "imageProgress";
 
 export interface WorkspaceDataAttrs {

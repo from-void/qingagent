@@ -36,7 +36,8 @@ export class SessionActorCommandError extends Error {
 }
 
 interface QueueItem {
-  input: ActorCommand;
+  input: ActorCommand | null;
+  task?: () => AsyncGenerator<BridgeFrame>;
   resolve: (frames: LoggedFrame[]) => void;
   reject: (error: unknown) => void;
 }
@@ -46,6 +47,7 @@ export interface SessionActorOptions {
   frameLog: FrameLog;
   handleCommand: HandleCommandFn;
   abortSession: (sessionId: string) => void;
+  afterRun?: (sessionId: string) => void;
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
@@ -75,6 +77,15 @@ export class SessionActor {
 
     return new Promise<LoggedFrame[]>((resolve, reject) => {
       this.queue.push({ input, resolve, reject });
+      this.startDrainLoop();
+    });
+  }
+
+  /** 专用上行通道进入同一会话串行队列，避免把 secret/决策塞进通用 Command。 */
+  enqueueTask(task: () => AsyncGenerator<BridgeFrame>): Promise<LoggedFrame[]> {
+    if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    return new Promise<LoggedFrame[]>((resolve, reject) => {
+      this.queue.push({ input: null, task, resolve, reject });
       this.startDrainLoop();
     });
   }
@@ -136,15 +147,17 @@ export class SessionActor {
       this.stateValue = "running";
 
       try {
-        const frames = this.options.handleCommand(
-          item.input.command,
-          item.input.clientTraceId,
-          item.input.origin ?? "manual",
-          item.input.modelOverrides,
-          item.input.client,
-          this.options.sessionId,
-          item.input.abortSignal,
-        );
+        const frames = item.task
+          ? item.task()
+          : this.options.handleCommand(
+              item.input!.command,
+              item.input!.clientTraceId,
+              item.input!.origin ?? "manual",
+              item.input!.modelOverrides,
+              item.input!.client,
+              this.options.sessionId,
+              item.input!.abortSignal,
+            );
         for await (const frame of frames) {
           // dispose 后立即停泵(0702 review):manager 已 frameLog.evict,此处再 append
           // 会经 ensure() 重建一条僵尸状态条目(帧虽被 generation 过滤,条目本身泄漏)。
@@ -168,7 +181,7 @@ export class SessionActor {
       } catch (error) {
         // disposed 后不再落错误帧:frameLog 已 evict,append 会重建僵尸条目;
         // item 也已被 dispose() reject 过(重复 reject 对已 settle 的 promise 是 no-op)。
-        if ((this.stateValue as SessionActorState) !== "disposed") {
+        if ((this.stateValue as SessionActorState) !== "disposed" && item.input) {
           const errorFrame = commandErrorFrame(item.input.command.kind);
           const seq = this.options.frameLog.append(
             this.options.sessionId,
@@ -193,6 +206,7 @@ export class SessionActor {
           this.options.frameLog.setActiveRunner(this.options.sessionId, false);
           this.stateValue = this.queue.length > 0 ? "running" : "idle";
         }
+        this.options.afterRun?.(this.options.sessionId);
       }
     }
   }

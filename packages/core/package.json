@@ -10,6 +10,7 @@
     "./agent-run": "./src/agent-run/index.ts",
     "./bridge": "./src/bridge/index.ts",
     "./connectors": "./src/connectors/index.ts",
+    "./confirm": "./src/confirm/index.ts",
     "./credentials": "./src/credentials/index.ts",
     "./debug": "./src/debug/index.ts",
     "./diagnostics": "./src/diagnostics/index.ts",

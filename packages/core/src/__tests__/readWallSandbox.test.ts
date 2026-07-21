@@ -1,0 +1,71 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  __resetIsolationCacheForTest,
+  __resetSessionWorkspaceCacheForTest,
+  getSessionWorkspace,
+  sessionWorkspaceDir,
+} from "../workspace/sessionWorkspace.js";
+import { ReadWallLocalSandbox } from "../workspace/readWallSandbox.js";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  delete process.env.QINGAGENT_SANDBOX_ISOLATION;
+  delete process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS;
+  __resetIsolationCacheForTest();
+  __resetSessionWorkspaceCacheForTest();
+  await rm(sessionWorkspaceDir("read-wall-fail-closed"), { recursive: true, force: true });
+  await rm(sessionWorkspaceDir("read-wall-seatbelt-fail-closed"), { recursive: true, force: true });
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  vi.restoreAllMocks();
+});
+
+describe("read-wall fail-closed 与 mount 升级锁", () => {
+  it("策略完整性变化后当前与后续命令均熔断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-sandbox-"));
+    roots.push(root);
+    await mkdir(join(root, "workspace"), { recursive: true });
+    let intact = true;
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: join(root, "workspace"),
+      isolation: "none",
+      env: { PATH: process.env.PATH },
+      verifyReadWallIntegrity: async () => {
+        if (!intact) throw new Error("profile hash changed");
+      },
+    });
+    await expect(sandbox.executeCommand!("printf ok")).resolves.toMatchObject({ exitCode: 0 });
+    intact = false;
+    await expect(sandbox.executeCommand!("printf leaked")).rejects.toThrow(/hash changed/);
+    expect(sandbox.isReadWallHealthy()).toBe(false);
+    await expect(sandbox.executeCommand!("printf retry")).rejects.toThrow(/commands are disabled/);
+  });
+
+  it("read-wall 模式硬禁 sandbox.mount()，调用即永久熔断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-read-wall-mount-"));
+    roots.push(root);
+    const sandbox = new ReadWallLocalSandbox({
+      workingDirectory: root,
+      isolation: "none",
+      verifyReadWallIntegrity: async () => undefined,
+    });
+    await expect(sandbox.mount({} as never, "/forbidden")).rejects.toThrow(/forbids sandbox\.mount/);
+    expect(sandbox.isReadWallHealthy()).toBe(false);
+  });
+
+  it("Linux 被强制为 bwrap 但当前二进制/预检不可用时不装 sandbox、不暴露命令", async () => {
+    process.env.QINGAGENT_SANDBOX_ISOLATION = "bwrap";
+    process.env.QINGAGENT_ALLOW_UNISOLATED_COMMANDS = "1";
+    const workspace = await getSessionWorkspace("read-wall-fail-closed", { resolveSkillDirs: () => [] });
+    expect(workspace.sandbox).toBeUndefined();
+  });
+
+  it("Mac profile 构造/预检失败时不退回 Mastra 默认宽松 Seatbelt", async () => {
+    process.env.QINGAGENT_SANDBOX_ISOLATION = "seatbelt";
+    const workspace = await getSessionWorkspace("read-wall-seatbelt-fail-closed", { resolveSkillDirs: () => [] });
+    expect(workspace.sandbox).toBeUndefined();
+  });
+});

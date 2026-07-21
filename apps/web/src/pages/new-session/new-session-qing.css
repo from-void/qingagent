@@ -9,9 +9,6 @@
 :root {
   --ccx-serif: "Noto Serif SC", "Songti SC", "STSong", serif;
   --ccx-sans: "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
-  --ccx-d-bg0: #11151a;
-  --ccx-d-bg1: #1a232a;
-  --ccx-d-bg2: #0a0d10;
   --ccx-d-ink: #ece3d0;
   --ccx-d-ink-soft: #b9ad94;
   --ccx-d-gray: #8ea0a0;
@@ -37,22 +34,12 @@
   z-index: 40;
   pointer-events: none;
   opacity: 0;
-  background:
-    radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.11), transparent 50%),
-    radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.1), transparent 55%),
-    radial-gradient(150% 130% at 50% 42%, var(--ccx-d-bg1) 0%, var(--ccx-d-bg0) 46%, var(--ccx-d-bg2) 100%);
+  background-color: var(--desk-base);
+  background-image:
+    var(--desk-cinnabar-glow),
+    var(--desk-teal-glow),
+    var(--desk-vignette);
   transition: opacity 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.ccx-space::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-  background:
-    repeating-linear-gradient(6deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 10px),
-    repeating-linear-gradient(94deg, rgba(160, 200, 200, 0.05) 0 1px, transparent 1px 14px);
-  -webkit-mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
-  mask: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
 }
 .ccx-page.is-dark .ccx-space {
   opacity: 1;
@@ -61,6 +48,10 @@
 在不透明墨层底下无缝交接 */
 .ccx-page.is-ink-wipe .ccx-space {
   transition: none;
+}
+/* 仅去程墨渗中段让底层桌面柔和置深；到达静帧不加 is-dark-anim，仍由上一条瞬时就位。 */
+.ccx-page.is-ink-wipe.is-dark-anim .ccx-space {
+  transition: opacity 0.32s ease;
 }
 /* 墨尘粒子 canvas */
 .ccx-dust {
@@ -930,4 +921,3 @@
   font-family: inherit;
   font-size: 12px;
 }
-

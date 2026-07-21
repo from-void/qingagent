@@ -1,7 +1,8 @@
 import type { ContentDocState, EditorState } from "./protocol";
 import type { WorkspaceState } from "./workspaceState";
+import type { WireActiveOverlay } from "@qingagent/contract-ts";
 
-export type ActiveOverlay = "askUser" | "imageProgress" | null;
+export type ActiveOverlay = WireActiveOverlay;
 
 export interface DocDimensions {
   content: ContentDocState;

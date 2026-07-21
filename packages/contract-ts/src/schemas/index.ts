@@ -8,6 +8,7 @@
  */
 export * from "./common";
 export * from "./command";
+export * from "./confirm";
 export * from "./draftMutation";
 export * from "./todo";
 export type { Equal, Expect } from "./typeAssert";

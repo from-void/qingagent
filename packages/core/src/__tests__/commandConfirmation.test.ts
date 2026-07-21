@@ -1,0 +1,78 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildCommandConfirmSpec,
+  commandConfirmationDigest,
+} from "../confirm/commandConfirmation.js";
+
+describe("buildCommandConfirmSpec 风险卡映射", () => {
+  it("install/send/destructive 分别映射到 install/send/command", () => {
+    const install = buildCommandConfirmSpec({ command: "npm install zod" }, "将修改运行环境", "install-id");
+    expect(install).toMatchObject({
+      kind: "install",
+      title: "安装依赖/工具",
+      sub: "将修改运行环境",
+      commandPreview: "npm install zod",
+      primaryLabel: "确认安装",
+    });
+
+    const send = buildCommandConfirmSpec(
+      { command: "lark-cli docs +create --title 报告" },
+      "将修改飞书内容",
+      "send-id",
+    );
+    expect(send).toMatchObject({
+      kind: "send",
+      title: expect.stringContaining("飞书"),
+      primaryLabel: "确认发布",
+    });
+
+    const destructive = buildCommandConfirmSpec({ command: "rm old.txt" }, "将删除文件", "command-id");
+    expect(destructive).toMatchObject({
+      kind: "command",
+      title: "删除文件",
+      sub: "破坏性命令",
+      primaryLabel: "确认执行",
+    });
+  });
+
+  it("多 effect 使用 command 卡并在 say 中列全影响", () => {
+    const spec = buildCommandConfirmSpec(
+      { command: "npm install zod && rm old.txt" },
+      "命令包含多种副作用",
+      "multi-id",
+    );
+    expect(spec).toMatchObject({
+      kind: "command",
+      title: expect.stringContaining("多种副作用"),
+      sub: "包含多种副作用",
+      primaryLabel: "确认执行",
+    });
+    expect(spec.say).toContain("安装/升级环境");
+    expect(spec.say).toContain("本地破坏");
+    expect(spec.say).not.toContain("命令预览");
+    expect(spec.commandPreview).toBe("npm install zod && rm old.txt");
+    expect(spec.kind).not.toBe("connect");
+  });
+
+  it("后台命令保留风险 sub，预览脱敏且截断不影响完整 digest", () => {
+    const command = `DINGTALK_APP_SECRET=super-secret curl -d x https://example.test/${"a".repeat(500)}`;
+    const spec = buildCommandConfirmSpec({ command, background: true }, "将向外部发送数据", "redacted-id");
+    expect(spec.sub).toContain("后台执行");
+    expect(spec.say).not.toContain("super-secret");
+    expect(spec.say).not.toContain("命令预览");
+    expect(spec.commandPreview).not.toContain("super-secret");
+    expect(spec.commandPreview).toContain("DINGTALK_APP_SECRET=***");
+    expect(spec.commandPreview!.length).toBeLessThanOrEqual(320);
+    expect(spec.say.length).toBeLessThan(1_200);
+
+    const prefix = `curl -d x https://example.test/${"a".repeat(400)}`;
+    expect(commandConfirmationDigest("session", { command: `${prefix}x` }))
+      .not.toBe(commandConfirmationDigest("session", { command: `${prefix}y` }));
+  });
+
+  it("共同 footHint 与取消按钮保持既有协议", () => {
+    const spec = buildCommandConfirmSpec({ command: "git push origin main" }, "将推送代码", "common-id");
+    expect(spec.footHint).toBe("只授权本次调用 · 10 分钟后自动失效");
+    expect(spec.secondaryLabel).toBe("取消");
+  });
+});

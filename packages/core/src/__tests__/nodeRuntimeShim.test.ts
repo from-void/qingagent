@@ -43,8 +43,38 @@ describe("nodeRuntimeShim", () => {
     expect(rendered.filename).toBe("node.cmd");
     expect(lines[0]).toBe("@echo off");
     expect(rendered.content).toContain('set "ELECTRON_RUN_AS_NODE=1"');
-    expect(rendered.content).toContain('set "NODE_OPTIONS="');
+    expect(rendered.content).toContain(
+      'set NODE_OPTIONS=--require "%~dp0hide-console.cjs"',
+    );
     expect(rendered.content).toContain('"C:\\Program Files\\青简 100%%\\青简.exe" %*');
+  });
+
+  it("win32+electron 时写出 hide-console.cjs 预载,补丁 child_process windowsHide", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "node-shim-hide-"));
+    ensureNodeRuntimeShim({
+      execPath: "C:\\app\\qingagent.exe",
+      electron: true,
+      binDir: dir,
+      platform: "win32",
+    });
+    const preload = await readFile(join(dir, "hide-console.cjs"), "utf8");
+    expect(preload).toContain("windowsHide");
+    expect(preload).toContain("execFileSync");
+    // 预载在本平台 node 里可直接执行且不报错(win32 之外为空操作)
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(process.execPath, ["--require", join(dir, "hide-console.cjs"), "-e", "0"], {
+      stdio: "ignore",
+    });
+  });
+
+  it("非 electron 的 win32 shim 不注入 NODE_OPTIONS 预载", () => {
+    const rendered = renderNodeRuntimeShim({
+      execPath: "D:\\nodejs\\node.exe",
+      electron: false,
+      platform: "win32",
+    });
+    expect(rendered.content).not.toContain("NODE_OPTIONS");
+    expect(rendered.content).not.toContain("hide-console");
   });
 
   it("writeIfChanged 幂等,内容变化才重写", async () => {

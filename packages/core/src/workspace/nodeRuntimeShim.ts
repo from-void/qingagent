@@ -23,12 +23,54 @@ export function posixSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+export const WINDOWS_HIDE_PRELOAD_FILENAME = "hide-console.cjs";
+
+/**
+ * Windows + Electron-as-node 专用预载:GUI 子系统进程没有控制台,它的 node 脚本再拉起
+ * 控制台子进程(npm CLI 包装器普遍用裸 child_process,windowsHide 默认 false)时,
+ * Windows 会分配**新的可见终端窗**(默认终端是 Windows Terminal 时尤其明显,每跑一条命令
+ * 弹一个黑窗)。此预载给 child_process 全部入口强制 windowsHide(CREATE_NO_WINDOW),
+ * 调用方显式传 false 时不覆盖。经 NODE_OPTIONS --require 注入,随环境变量传染整条子进程链。
+ */
+export function renderWindowsHidePreload(): string {
+  return [
+    '"use strict";',
+    'if (process.platform === "win32") {',
+    '  const cp = require("node:child_process");',
+    '  const isOptions = (v) => v !== null && typeof v === "object" && !Array.isArray(v);',
+    "  const withHide = (args) => {",
+    "    const out = Array.prototype.slice.call(args);",
+    "    for (let i = out.length - 1; i >= 0; i--) {",
+    "      if (isOptions(out[i])) {",
+    "        if (out[i].windowsHide === undefined) out[i] = Object.assign({}, out[i], { windowsHide: true });",
+    "        return out;",
+    "      }",
+    "    }",
+    '    const cb = out.findIndex((v) => typeof v === "function");',
+    "    const opts = { windowsHide: true };",
+    "    if (cb >= 0) out.splice(cb, 0, opts); else out.push(opts);",
+    "    return out;",
+    "  };",
+    '  for (const name of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync"]) {',
+    "    const original = cp[name];",
+    '    if (typeof original !== "function") continue;',
+    "    cp[name] = function () { return original.apply(this, withHide(arguments)); };",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+
 export function renderNodeRuntimeShim(options: NodeRuntimeShimOptions): RenderedNodeRuntimeShim {
   const platform = options.platform ?? process.platform;
   if (platform === "win32") {
     const lines = ["@echo off"];
     if (options.electron) {
-      lines.push('set "ELECTRON_RUN_AS_NODE=1"', 'set "NODE_OPTIONS="');
+      lines.push(
+        'set "ELECTRON_RUN_AS_NODE=1"',
+        // set 不带外层引号:让路径两侧的引号进入变量值,cmd 对引号内的 & 等特殊字符按字面处理
+        `set NODE_OPTIONS=--require "%~dp0${WINDOWS_HIDE_PRELOAD_FILENAME}"`,
+      );
     }
     lines.push(`"${options.execPath.replace(/%/g, "%%")}" %*`);
     return { filename: "node.cmd", content: `${lines.join("\r\n")}\r\n` };
@@ -55,6 +97,10 @@ export function writeIfChanged(path: string, content: string): boolean {
 export function ensureNodeRuntimeShim(options: NodeRuntimeShimOptions): string {
   const binDir = options.binDir ?? SANDBOX_BIN_DIR;
   mkdirSync(binDir, { recursive: true });
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32" && options.electron) {
+    writeIfChanged(join(binDir, WINDOWS_HIDE_PRELOAD_FILENAME), renderWindowsHidePreload());
+  }
   const rendered = renderNodeRuntimeShim(options);
   const shimPath = join(binDir, rendered.filename);
   writeIfChanged(shimPath, rendered.content);

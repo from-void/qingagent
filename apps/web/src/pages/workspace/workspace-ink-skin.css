@@ -21,15 +21,14 @@
   /* 玄青桌面基色 = 纹理槽:整块背景的最底层。以后要在"整个后边"铺纹理,
      就把纹理作为 background-image 的最后一层(压在色斑/暗角之下)叠到这里即可。
      深墨蓝、非纯黑(旧渐变外圈 #0a0d10 近黑已弃)。 */
-  --ws-desk-base: #16212c;
-  background-color: var(--ws-desk-base);
+  background-color: var(--desk-base);
   /* 色斑与暗角都用**半透明**叠在基色上 → 背后的基色/未来纹理能透出来("打穿")。
      暗角:中心完全透明(不提亮、不发灰)、只往四周压一层浅半透明深墨,
      底部因此读作深蓝而非死黑(旧的不透明近黑 #0a0d10 已弃)。 */
   background-image:
-    radial-gradient(130% 100% at 72% 8%, rgba(207, 90, 79, 0.1), transparent 50%),
-    radial-gradient(120% 120% at 16% 90%, rgba(70, 120, 120, 0.09), transparent 55%),
-    radial-gradient(150% 130% at 50% 42%, transparent 0%, transparent 48%, rgba(8, 13, 19, 0.42) 100%);
+    var(--desk-cinnabar-glow),
+    var(--desk-teal-glow),
+    var(--desk-vignette);
   /* 字体统一 Noto Serif SC(只改 family,字号沿用现有);大红同新建页 */
   --font-sans: "Noto Serif SC", "Songti SC", "STSong", serif;
   --font-display: "Noto Serif SC", "Songti SC", "STSong", serif;

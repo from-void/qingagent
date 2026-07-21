@@ -1,6 +1,7 @@
 import type { CoreMessage } from "ai";
 import type {
   ChatMessage,
+  ConfirmSpec,
   DocSuggestion,
   FolderSourceRecord,
   LegacySection,
@@ -8,6 +9,7 @@ import type {
   MessagePart,
   ToolCallSpec,
 } from "@qingagent/contract-ts";
+import { confirmSpecSchema } from "@qingagent/contract-ts/schemas";
 import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 import type { StorageThreadType } from "@mastra/core/memory";
 import { SpanType } from "@mastra/core/observability";
@@ -17,6 +19,7 @@ import { mastra, getObservability } from "../mastra.js";
 import type {
   SuggestionRecord,
   SessionState,
+  PendingConfirm,
   PersistAuditSnapshot,
   SuspensionOwner,
   OmSidecarCursor,
@@ -185,6 +188,19 @@ export interface QingagentThreadMetadata {
   /** Rich chat history with full parts (text, thinking, toolCall) for session restore.
    *  Thinking content is stripped to word counts to save space. */
   chatHistory?: ChatMessage[];
+  /** confirm 独立挂起安全元数据；绝不含 secret/proof/原始参数。 */
+  pendingConfirms?: Array<{
+    confirmId: string;
+    runId: string;
+    toolCallId: string;
+    toolName: string;
+    commandDigest: string;
+    spec: ConfirmSpec;
+    requestedAt: string;
+    expiresAt: string;
+    status: "pending" | "resuming";
+    decisionId?: string;
+  }>;
   /** Lightweight summary for home page listing — avoids parsing full legacySections. */
   threadSummary?: {
     sectionCount: number;
@@ -509,7 +525,10 @@ function scanRestoreToolCallFacts(messages: ChatMessage[]): RestoreToolCallFacts
 
 function staleRestoreStatus(
   spec: ToolCallSpec,
-  opts: { preserveOpenAskUserToolCallId?: string | null } = {},
+  opts: {
+    preserveOpenAskUserToolCallId?: string | null;
+    preservePendingConfirmToolCallIds?: ReadonlySet<string>;
+  } = {},
 ): ToolCallSpec["status"] | null {
   if (isOpenAskUserToolCall(spec)) {
     if (spec.id === opts.preserveOpenAskUserToolCallId) {
@@ -519,6 +538,10 @@ function staleRestoreStatus(
       kind: "failed",
       data: { retriable: false, reason: "上次的确认已结束，请重新发起。" },
     };
+  }
+
+  if (opts.preservePendingConfirmToolCallIds?.has(spec.id)) {
+    return null;
   }
 
   // 兜底自愈:持久化里仍停在 running/pending 的非 askUser 工具——进程早结束了不可能还在跑
@@ -532,7 +555,10 @@ function staleRestoreStatus(
 
 function terminalizeStaleRestoreToolCalls(
   messages: ChatMessage[],
-  opts: { preserveOpenAskUserToolCallId?: string | null } = {},
+  opts: {
+    preserveOpenAskUserToolCallId?: string | null;
+    preservePendingConfirmToolCallIds?: ReadonlySet<string>;
+  } = {},
 ): ChatMessage[] {
   let changed = false;
   const next = messages.map((message) => {
@@ -604,9 +630,71 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
       state._workingMemorySnapshotLoaded === true &&
       state._workingMemorySnapshotPersistable === true,
     chatHistory: serializeChatHistory(state.chatHistory),
+    pendingConfirms: Array.from(state.pendingConfirms.values()).map((pending) => ({
+      confirmId: pending.confirmId,
+      runId: pending.runId,
+      toolCallId: pending.toolCallId,
+      toolName: pending.toolName,
+      commandDigest: pending.commandDigest,
+      spec: pending.spec,
+      requestedAt: pending.requestedAt,
+      expiresAt: pending.expiresAt,
+      status: pending.status,
+      ...(pending.decisionId ? { decisionId: pending.decisionId } : {}),
+    })),
     threadSummary,
     lastPersistedAt: new Date().toISOString(),
   };
+}
+
+function deserializePendingConfirms(
+  value: unknown,
+  chatHistory: ChatMessage[],
+): Map<string, PendingConfirm> {
+  const restored = new Map<string, PendingConfirm>();
+  if (!Array.isArray(value)) return restored;
+  const openToolCalls = new Set(
+    chatHistory.flatMap((message) => message.parts.flatMap((part) =>
+      part.kind === "toolCall" &&
+        (part.data.status.kind === "pending" || part.data.status.kind === "running")
+        ? [part.data.id]
+        : [],
+    )),
+  );
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const spec = confirmSpecSchema.safeParse(item.spec);
+    const requestedAt = parseValidTimestamp(item.requestedAt);
+    const expiresAt = parseValidTimestamp(item.expiresAt);
+    if (
+      !spec.success ||
+      !isNonEmptyString(item.confirmId) ||
+      !isNonEmptyString(item.runId) ||
+      !isNonEmptyString(item.toolCallId) ||
+      !isNonEmptyString(item.toolName) ||
+      !isNonEmptyString(item.commandDigest) ||
+      !requestedAt ||
+      !expiresAt ||
+      (item.status !== "pending" && item.status !== "resuming") ||
+      !openToolCalls.has(item.toolCallId) ||
+      restored.has(item.toolCallId)
+    ) {
+      continue;
+    }
+    restored.set(item.toolCallId, {
+      confirmId: item.confirmId,
+      runId: item.runId,
+      toolCallId: item.toolCallId,
+      toolName: item.toolName,
+      commandDigest: item.commandDigest,
+      spec: spec.data,
+      requestedAt,
+      expiresAt,
+      status: item.status,
+      ...(isNonEmptyString(item.decisionId) ? { decisionId: item.decisionId } : {}),
+    });
+  }
+  return restored;
 }
 
 function deserializeFolderSources(value: unknown): FolderSourceRecord[] {
@@ -1765,6 +1853,7 @@ export async function loadSessionFromThread(
     }
   }
   let chatHistory = deserializeChatHistory(meta.chatHistory);
+  const pendingConfirms = deserializePendingConfirms(meta.pendingConfirms, chatHistory);
   const toolCallFacts = scanRestoreToolCallFacts(chatHistory);
   const preferredAskUserToolCallId =
     typeof options.preferredAskUserToolCallId === "string" &&
@@ -1792,11 +1881,17 @@ export async function loadSessionFromThread(
     hasRestorableSuspension: hasRestorableAskUserSuspension,
   });
 
-  if (toolCallFacts.hasOpenAskUserToolCall) {
+  const pendingConfirmToolCallIds = new Set(
+    Array.from(pendingConfirms.values())
+      .filter((pending) => pending.status === "pending")
+      .map((pending) => pending.toolCallId),
+  );
+  if (toolCallFacts.hasOpenAskUserToolCall || pendingConfirms.size > 0) {
     chatHistory = terminalizeStaleRestoreToolCalls(chatHistory, {
       preserveOpenAskUserToolCallId: hasRestorableAskUserSuspension
         ? restorableAskUserToolCallId
         : null,
+      preservePendingConfirmToolCallIds: pendingConfirmToolCallIds,
     });
   }
 
@@ -1899,6 +1994,7 @@ export async function loadSessionFromThread(
     _directionChangeAskedSinceLastWrite: meta.directionChangeAskedSinceLastWrite ?? false,
     _suspendedThisTurn: restoredSuspensionOwner !== null,
     _suspensionOwner: restoredSuspensionOwner,
+    pendingConfirms,
     chatHistory,
     // 阶段4 follow-up — 用「当前已持久化的状态」初始化 db_write 审计基线快照，
     // 使恢复后第一条 db_write span 的 before 反映真实已存状态，而非把恢复当成首次写

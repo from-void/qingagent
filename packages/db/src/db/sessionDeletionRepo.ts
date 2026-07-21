@@ -57,7 +57,9 @@ export async function listSessionDeletions(): Promise<SessionDeletionRecord[]> {
   await ensureMigrated();
   const result = await getDocumentsClient().execute(
     `SELECT session_id, phase, created_at, updated_at, completed_at
-      FROM deleted_sessions ORDER BY created_at, session_id`,
+      FROM deleted_sessions
+      WHERE phase != 'completed'
+      ORDER BY created_at, session_id`,
   );
   return result.rows.map(mapRecord);
 }

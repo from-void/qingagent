@@ -57,6 +57,7 @@ describe("deleted_sessions 持久化删除阶段", () => {
     expect(await getSessionDeletion("persisted-delete")).toMatchObject({
       phase: "completed",
     });
+    expect(await listSessionDeletions()).toEqual([]);
   });
 
   it("documents 删除与阶段推进任一步失败时整笔回滚，不留下半删中间态", async () => {

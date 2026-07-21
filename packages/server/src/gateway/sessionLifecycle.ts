@@ -15,6 +15,7 @@ import { SessionManager } from "./sessionManager";
 import {
   beginSessionDeletion,
   listSessionDeletions,
+  getSessionDeletion,
 } from "@qingagent/db";
 import { emitRestoreFrames } from "./restoreFrames";
 import { sessions } from "./sessionRegistry";
@@ -197,6 +198,7 @@ export const sessionManager = new SessionManager({
   deletionStore: {
     begin: beginSessionDeletion,
     list: listSessionDeletions,
+    get: getSessionDeletion,
   },
   afterRun: (sessionId) => {
     const session = sessions.get(sessionId);

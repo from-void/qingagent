@@ -26,6 +26,7 @@ export interface SessionManagerOptions {
   drainSessionPersistence?: (sessionId: string, timeoutMs: number) => Promise<void>;
   deleteSessionThread?: (sessionId: string) => Promise<SessionDeletionPhase | void>;
   deletionRetryDelayMs?: number;
+  deletionLookupCacheSize?: number;
   deletionStore?: SessionDeletionStore;
 }
 
@@ -37,6 +38,7 @@ export interface SessionDeletionStoreRecord {
 export interface SessionDeletionStore {
   begin(sessionId: string): Promise<SessionDeletionStoreRecord>;
   list(): Promise<SessionDeletionStoreRecord[]>;
+  get(sessionId: string): Promise<SessionDeletionStoreRecord | null>;
 }
 
 export type DestroySessionResult =
@@ -61,34 +63,35 @@ export class SessionManager {
   readonly frameLog: FrameLog;
   private readonly actors = new Map<string, ActorEntry>();
   private readonly deletingSessions = new Set<string>();
-  private readonly destroyedSessions = new Set<string>();
   private readonly backgroundDeletionJobs = new Map<string, Promise<void>>();
   private readonly maxActors: number;
   private readonly deletionStore: SessionDeletionStore;
+  private readonly deletionLookupCache = new Map<string, SessionDeletionPhase | null>();
+  private readonly deletionLookupCacheSize: number;
   private deletionInitialization: Promise<void> | null = null;
 
   constructor(private readonly options: SessionManagerOptions) {
     this.frameLog = options.frameLog ?? new InMemoryFrameLog();
     this.maxActors = options.maxActors ?? 256;
+    this.deletionLookupCacheSize = Math.max(1, Math.floor(options.deletionLookupCacheSize ?? 1_024));
     this.deletionStore = options.deletionStore ?? createEphemeralDeletionStore();
   }
 
   async submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
     await this.ensureDeletionStateRestored();
-    if (this.deletingSessions.has(sessionId)) {
-      throw new Error("Session deletion is in progress");
-    }
-    if (this.destroyedSessions.has(sessionId)) {
-      throw new Error("Session has been deleted");
-    }
+    await this.restoreDeletionStateForSession(sessionId);
+    this.assertSessionAcceptsCommands(sessionId);
     const actor = this.getOrCreateActor(sessionId);
     return actor.enqueue(input);
   }
 
-  runExclusive(
+  async runExclusive(
     sessionId: string,
     task: () => AsyncGenerator<import("@qingagent/contract-ts").BridgeFrame>,
   ): Promise<LoggedFrame[]> {
+    await this.ensureDeletionStateRestored();
+    await this.restoreDeletionStateForSession(sessionId);
+    this.assertSessionAcceptsCommands(sessionId);
     const actor = this.getOrCreateActor(sessionId);
     return actor.enqueueTask(task);
   }
@@ -118,7 +121,8 @@ export class SessionManager {
     timeoutMs = 5_000,
   ): Promise<DestroySessionResult> {
     await this.ensureDeletionStateRestored();
-    if (this.destroyedSessions.has(sessionId)) {
+    await this.restoreDeletionStateForSession(sessionId);
+    if (this.deletionLookupCache.get(sessionId) === "completed") {
       return { deleted: true, status: "completed" };
     }
     if (this.deletingSessions.has(sessionId)) {
@@ -128,6 +132,7 @@ export class SessionManager {
     try {
       docId = await (this.options.resolveSessionDocumentId?.(sessionId) ?? Promise.resolve(sessionId));
       const tombstone = await this.deletionStore.begin(sessionId);
+      this.cacheDeletionPhase(sessionId, tombstone.phase);
       if (tombstone.phase === "completed") {
         this.completeDeletion(sessionId);
         return { deleted: true, status: "completed" };
@@ -230,7 +235,7 @@ export class SessionManager {
 
   private completeDeletion(sessionId: string): void {
     this.deletingSessions.delete(sessionId);
-    this.destroyedSessions.add(sessionId);
+    this.cacheDeletionPhase(sessionId, "completed");
   }
 
   private scheduleDeletionRetry(
@@ -287,13 +292,50 @@ export class SessionManager {
   private async restoreDeletionState(): Promise<void> {
     const records = await this.deletionStore.list();
     for (const record of records) {
-      if (record.phase === "completed") {
-        this.destroyedSessions.add(record.sessionId);
-        continue;
-      }
+      if (record.phase === "completed") continue;
+      this.cacheDeletionPhase(record.sessionId, record.phase);
       this.deletingSessions.add(record.sessionId);
       (this.options.markSessionDeleted ?? markSessionDeleted)(record.sessionId);
       this.scheduleDeletionRetry(record.sessionId, Promise.resolve(), 5_000);
+    }
+  }
+
+  private cacheDeletionPhase(sessionId: string, phase: SessionDeletionPhase | null): void {
+    this.deletionLookupCache.delete(sessionId);
+    this.deletionLookupCache.set(sessionId, phase);
+    while (this.deletionLookupCache.size > this.deletionLookupCacheSize) {
+      const oldest = this.deletionLookupCache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.deletionLookupCache.delete(oldest);
+    }
+  }
+
+  private async restoreDeletionStateForSession(sessionId: string): Promise<void> {
+    if (this.deletingSessions.has(sessionId)) return;
+    let phase: SessionDeletionPhase | null;
+    if (this.deletionLookupCache.has(sessionId)) {
+      phase = this.deletionLookupCache.get(sessionId) ?? null;
+      this.cacheDeletionPhase(sessionId, phase);
+    } else {
+      phase = (await this.deletionStore.get(sessionId))?.phase ?? null;
+      this.cacheDeletionPhase(sessionId, phase);
+    }
+    if (phase === "completed") {
+      return;
+    }
+    if (phase) {
+      this.deletingSessions.add(sessionId);
+      (this.options.markSessionDeleted ?? markSessionDeleted)(sessionId);
+      this.scheduleDeletionRetry(sessionId, Promise.resolve(), 5_000);
+    }
+  }
+
+  private assertSessionAcceptsCommands(sessionId: string): void {
+    if (this.deletingSessions.has(sessionId)) {
+      throw new Error("Session deletion is in progress");
+    }
+    if (this.deletionLookupCache.get(sessionId) === "completed") {
+      throw new Error("Session has been deleted");
     }
   }
 
@@ -361,7 +403,10 @@ function createEphemeralDeletionStore(): SessionDeletionStore {
       return record;
     },
     async list() {
-      return [...records.values()];
+      return [...records.values()].filter((record) => record.phase !== "completed");
+    },
+    async get(sessionId) {
+      return records.get(sessionId) ?? null;
     },
   };
 }

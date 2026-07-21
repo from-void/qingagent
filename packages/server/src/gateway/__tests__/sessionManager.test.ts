@@ -16,6 +16,81 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
+  it("RF5: 启动只加载 pending，completed 首次命令按主键惰性查询并缓存", async () => {
+    const get = vi.fn(async (sessionId: string) => {
+      if (sessionId === "completed-lazy") {
+        return { sessionId, phase: "completed" as const };
+      }
+      return null;
+    });
+    const deletionStore = {
+      begin: vi.fn(async (sessionId: string) => ({
+        sessionId,
+        phase: "draining" as const,
+      })),
+      list: vi.fn(async () => [{ sessionId: "pending-startup", phase: "draining" as const }]),
+      get,
+    };
+    const manager = new SessionManager({
+      handleCommand: async function* (command) {
+        if (command.kind === "startSession" && command.data.mode.kind === "existing") {
+          yield frame(command.data.mode.data.id);
+        }
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      markSessionDeleted: vi.fn(),
+      drainSessionPersistence: vi.fn(async () => undefined),
+      deleteSessionThread: vi.fn(async () => undefined),
+      deletionRetryDelayMs: 60_000,
+      deletionStore,
+    });
+
+    await manager.resumePendingDeletions();
+    expect(deletionStore.list).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
+    await expect(manager.submit("pending-startup", {
+      command: startExisting("pending-startup"),
+    })).rejects.toThrow("Session deletion is in progress");
+
+    await expect(manager.submit("completed-lazy", {
+      command: startExisting("completed-lazy"),
+    })).rejects.toThrow("Session has been deleted");
+    await expect(manager.submit("completed-lazy", {
+      command: startExisting("completed-lazy"),
+    })).rejects.toThrow("Session has been deleted");
+    expect(get).toHaveBeenCalledTimes(1);
+
+    await expect(manager.submit("active-cached", {
+      command: startExisting("active-cached"),
+    })).resolves.toHaveLength(1);
+    await expect(manager.submit("active-cached", {
+      command: startExisting("active-cached"),
+    })).resolves.toHaveLength(1);
+    expect(get.mock.calls.filter(([sessionId]) => sessionId === "active-cached")).toHaveLength(1);
+
+    const boundedGet = vi.fn(async (_sessionId: string) => null);
+    const boundedManager = new SessionManager({
+      handleCommand: async function* (command) {
+        if (command.kind === "startSession" && command.data.mode.kind === "existing") {
+          yield frame(command.data.mode.data.id);
+        }
+      },
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+      deletionLookupCacheSize: 2,
+      deletionStore: {
+        begin: vi.fn(async (sessionId: string) => ({ sessionId, phase: "draining" as const })),
+        list: vi.fn(async () => []),
+        get: boundedGet,
+      },
+    });
+    for (const sessionId of ["cache-a", "cache-b", "cache-c", "cache-a"]) {
+      await boundedManager.submit(sessionId, { command: startExisting(sessionId) });
+    }
+    expect(boundedGet.mock.calls.filter(([sessionId]) => sessionId === "cache-a")).toHaveLength(2);
+  });
+
   it("F1-R: 删除恢复按需初始化，失败后下一次调用可重试", async () => {
     const list = vi.fn(async () => []);
     list.mockRejectedValueOnce(new Error("restore failed"));
@@ -25,6 +100,7 @@ describe("SessionManager", () => {
         phase: "draining" as const,
       })),
       list,
+      get: vi.fn(async () => null),
     };
     const manager = new SessionManager({
       handleCommand: async function* () {
@@ -55,6 +131,7 @@ describe("SessionManager", () => {
         phase: "draining" as const,
       })),
       list: destroyList,
+      get: vi.fn(async () => null),
     };
     const destroyManager = new SessionManager({
       handleCommand: async function* () {
@@ -85,7 +162,8 @@ describe("SessionManager", () => {
         records.set(sessionId, record);
         return record;
       }),
-      list: vi.fn(async () => [...records.values()]),
+      list: vi.fn(async () => [...records.values()].filter((record) => record.phase !== "completed")),
+      get: vi.fn(async (sessionId: string) => records.get(sessionId) ?? null),
     };
     const firstManager = new SessionManager({
       handleCommand: async function* () {

@@ -89,7 +89,15 @@ export const confirmSpecSchema = z.object({
   footHint: boundedNonEmptyString(300),
   primaryLabel: boundedNonEmptyString(64),
   secondaryLabel: boundedNonEmptyString(64),
-}).strict() satisfies z.ZodType<ConfirmSpec>;
+}).strict().superRefine((spec, ctx) => {
+  if (spec.rememberCategory && spec.rememberCategory.kind !== spec.kind) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["rememberCategory", "kind"],
+      message: "rememberCategory kind must match confirm kind",
+    });
+  }
+}) satisfies z.ZodType<ConfirmSpec>;
 type _ConfirmSpecExact = Expect<Equal<z.infer<typeof confirmSpecSchema>, ConfirmSpec>>;
 
 export const confirmDecisionSchema = z.object({

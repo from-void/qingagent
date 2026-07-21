@@ -65,6 +65,11 @@ describe("confirm contract schemas", () => {
       kind: "send",
       rememberCategory: { kind: "send", label: "错误" },
     }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      kind: "install",
+      rememberCategory: { kind: "command", label: "错误类别" },
+    }).success).toBe(false);
   });
 
   it("拒绝态与无 remember 请求均不能携带 UI grant nonce", () => {

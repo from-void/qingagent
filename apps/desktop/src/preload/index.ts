@@ -68,6 +68,16 @@ contextBridge.exposeInMainWorld("electron", {
   getModelTier: () => readDesktopConfigValue("qingagent.model_tier"),
   setModelTier: (value: string | null) =>
     writeDesktopConfigValue("qingagent.model_tier", value),
+  requestConfirmRememberGrant: (input: {
+    sessionId: string;
+    confirmId: string;
+    kind: "install" | "command";
+    trustedGesture: boolean;
+  }) => ipcRenderer.invoke("qingagent:confirm-remember-grant", input) as Promise<string | null>,
+  requestSettingsRememberGrant: (input: {
+    kind: "install" | "command";
+    trustedGesture: boolean;
+  }) => ipcRenderer.invoke("qingagent:settings-remember-grant", input) as Promise<string | null>,
   onUpdateStatus: (cb: (payload: UpdateStatusPayload) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: UpdateStatusPayload) => cb(payload);
     ipcRenderer.on("qingagent:update-status", listener);

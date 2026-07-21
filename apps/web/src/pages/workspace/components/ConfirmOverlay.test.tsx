@@ -10,7 +10,7 @@ import {
   type ConfirmDecision,
   type ConfirmSpec,
 } from "./ConfirmOverlay";
-import { useConfirmCard } from "../hooks/useConfirmCard";
+import { stripSecretFromDecision, useConfirmCard } from "../hooks/useConfirmCard";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
 import type { ServerStream } from "../data/serverStream";
 
@@ -99,6 +99,7 @@ describe("ConfirmOverlay", () => {
     host = null;
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    delete window.electron;
   });
 
   it.each([
@@ -157,7 +158,7 @@ describe("ConfirmOverlay", () => {
     expect(preview?.getAttribute("aria-label")).toBe("命令预览");
 
     await act(async () => {
-      root?.render(<ConfirmOverlay spec={installSpec} onDecision={vi.fn()} />);
+      root?.render(<ConfirmOverlay sessionId="test-session" spec={installSpec} onDecision={vi.fn()} />);
     });
     expect(host!.querySelector(".cf-command-preview")).toBeNull();
   });
@@ -176,6 +177,69 @@ describe("ConfirmOverlay", () => {
       accepted,
     });
     expect(magicMoveToRect).toHaveBeenCalledOnce();
+  });
+
+  it("桌面能力存在时渲染通用 remember checkbox，缺失时隐藏", async () => {
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      rememberCategory: {
+        kind: "install",
+        label: "后续的安装指令都默认同意",
+        riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。",
+      },
+    };
+    await renderOverlay(rememberSpec);
+    expect(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')).toBeNull();
+
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(async () => "trusted-nonce"),
+    };
+    await act(async () => {
+      root?.render(
+        <ConfirmOverlay
+          sessionId="test-session"
+          spec={rememberSpec}
+          onDecision={vi.fn()}
+        />,
+      );
+    });
+    const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]');
+    expect(checkbox).not.toBeNull();
+    expect(host!.querySelector(".cf-remember")?.textContent).toContain(rememberSpec.rememberCategory?.label);
+    expect(host!.querySelector(".cf-remember-risk")?.textContent).toContain("修改这台电脑的运行环境");
+  });
+
+  it("显式不安全开发标记允许纯 web 渲染，程序化 click 不取得 nonce", async () => {
+    const onDecision = vi.fn();
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      rememberCategory: {
+        kind: "install",
+        label: "后续的安装指令都默认同意",
+        insecureWithoutDesktop: true,
+      },
+    };
+    await renderOverlay(rememberSpec, onDecision);
+    const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!;
+    await click(checkbox);
+    await click(findButton("安装并继续"));
+    expect(onDecision).toHaveBeenCalledWith({
+      id: installSpec.id,
+      accepted: true,
+      remember: true,
+    });
+  });
+
+  it("日志脱敏同时剥掉 secret 与 UI grant nonce", () => {
+    expect(stripSecretFromDecision({
+      id: "confirm-sensitive",
+      accepted: true,
+      secretValue: "secret-sentinel",
+      remember: true,
+      uiGrantNonce: "nonce-sentinel",
+    })).toEqual({ id: "confirm-sensitive", accepted: true, remember: true });
   });
 
   it("关闭按钮按拒绝语义回调", async () => {
@@ -368,6 +432,7 @@ function ConfirmHarness({
       {inlineConfirm && (
         <ConfirmOverlay
           key={inlineConfirm.id}
+          sessionId="test-session"
           spec={inlineConfirm}
           inputBoxRef={inputBoxRef}
           onDecision={(decision) => {
@@ -387,7 +452,7 @@ function LiveConfirmHarness({ stream }: { stream: ServerStream }) {
     stream,
   });
   return inlineConfirm
-    ? <ConfirmOverlay spec={inlineConfirm} onDecision={handleConfirmDecision} />
+    ? <ConfirmOverlay sessionId="live-session" spec={inlineConfirm} onDecision={handleConfirmDecision} />
     : null;
 }
 
@@ -395,7 +460,7 @@ async function renderOverlay(
   spec: ConfirmSpec,
   onDecision: (decision: ConfirmDecision) => void = vi.fn(),
 ): Promise<void> {
-  await render(<ConfirmOverlay spec={spec} onDecision={onDecision} />);
+  await render(<ConfirmOverlay sessionId="test-session" spec={spec} onDecision={onDecision} />);
 }
 
 async function render(element: ReactNode): Promise<void> {

@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { ConfirmUiGrantStore } from "../lib/confirmUiGrant";
+import { describe, expect, it, vi } from "vitest";
+import {
+  __resetConfirmUiGrantForTest,
+  ConfirmUiGrantStore,
+  insecureRememberAllowed,
+} from "../lib/confirmUiGrant";
 
 describe("ConfirmUiGrantStore", () => {
   it("nonce 只可消费一次", () => {
@@ -92,5 +96,17 @@ describe("ConfirmUiGrantStore", () => {
       confirmId: "confirm-a",
       kind: "command",
     })).toEqual({ ok: false, reason: "mismatch" });
+  });
+
+  it("仅显式真值开启不安全开发模式，并只警告一次", () => {
+    __resetConfirmUiGrantForTest();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "0" })).toBe(false);
+    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "false" })).toBe(false);
+    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1" })).toBe(true);
+    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "true" })).toBe(true);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+    __resetConfirmUiGrantForTest();
   });
 });

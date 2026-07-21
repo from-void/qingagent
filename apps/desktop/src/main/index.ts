@@ -42,8 +42,10 @@ import {
 } from "./update/updater.js";
 import { acquireSingleInstanceLock } from "./singleInstance.js";
 import { assertTrustedRenderer as assertTrustedRendererEvent } from "./ipcTrust.js";
+import { TrustedRememberUiGate } from "./trustedRememberUi.js";
 
 let mainWindow: BrowserWindow | null = null;
+const trustedRememberUiGate = new TrustedRememberUiGate();
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
 function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
@@ -338,6 +340,66 @@ function installTelemetryProcessErrorHandlers() {
     }
   });
 }
+
+type RememberGrantKind = "install" | "command";
+
+function rememberGrantKind(value: unknown): RememberGrantKind | null {
+  return value === "install" || value === "command" ? value : null;
+}
+
+function boundedRememberId(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : null;
+}
+
+function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): boolean {
+  const window = mainWindow;
+  const senderIsDevtools = Boolean(
+    window?.webContents.devToolsWebContents
+      && event.sender.id === window.webContents.devToolsWebContents.id,
+  );
+  const mainFrame = event.sender.mainFrame;
+  const isMainFrame = event.senderFrame !== null
+    && event.frameId === mainFrame.routingId
+    && event.processId === mainFrame.processId;
+  return isMainFrame && trustedRememberUiGate.consume({
+    senderId: event.sender.id,
+    mainWindowSenderId: window && !window.isDestroyed() ? window.webContents.id : null,
+    windowFocused: Boolean(window && !window.isDestroyed() && window.isFocused()),
+    senderIsDevtools,
+  });
+}
+
+ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown) => {
+  assertTrustedRenderer(event);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const sessionId = boundedRememberId(record.sessionId);
+  const confirmId = boundedRememberId(record.confirmId);
+  const kind = rememberGrantKind(record.kind);
+  if (!sessionId || !confirmId || !kind || record.trustedGesture !== true) return null;
+  if (!consumeTrustedRememberGesture(event)) return null;
+  const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+  return registerConfirmUiGrant({
+    purpose: "confirm",
+    sessionId,
+    confirmId,
+    kind,
+    ttlMs: 60_000,
+  });
+});
+
+ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown) => {
+  assertTrustedRenderer(event);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const kind = rememberGrantKind(record.kind);
+  if (!kind || record.trustedGesture !== true) return null;
+  if (!consumeTrustedRememberGesture(event)) return null;
+  const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+  return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000 });
+});
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {
   assertTrustedRenderer(event);
@@ -740,7 +802,15 @@ async function createWindowOnce() {
   });
   const contentWindow = mainWindow;
   contentWindow.once("closed", () => {
+    trustedRememberUiGate.clear();
     if (mainWindow === contentWindow) mainWindow = null;
+  });
+
+  contentWindow.webContents.on("before-input-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
+  });
+  contentWindow.webContents.on("before-mouse-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
   });
 
   attachRendererDiagnostics(contentWindow.webContents, desktopLogDir);

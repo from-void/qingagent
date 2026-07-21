@@ -11,6 +11,7 @@ interface InputBoxRef {
 }
 
 export interface ConfirmOverlayProps {
+  sessionId: string | null;
   spec: ConfirmSpec;
   inputBoxRef?: InputBoxRef;
   onDecision: (decision: ConfirmDecision) => void;
@@ -36,6 +37,7 @@ function findInputBox(inputBoxRef: InputBoxRef | undefined): HTMLElement | null 
 }
 
 export function ConfirmOverlay({
+  sessionId,
   spec,
   inputBoxRef,
   onDecision,
@@ -53,6 +55,12 @@ export function ConfirmOverlay({
     spec.widget?.type !== "secretInput",
   );
   const [closing, setClosing] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const rememberCapability = window.electron?.requestConfirmRememberGrant;
+  const showRemember = Boolean(
+    sessionId && spec.rememberCategory
+      && (rememberCapability || spec.rememberCategory.insecureWithoutDesktop),
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -81,7 +89,7 @@ export function ConfirmOverlay({
     magicMoveFromRect(panel, inputBox?.getBoundingClientRect() ?? null);
   }, [inputBoxRef]);
 
-  const decide = (accepted: boolean) => {
+  const decide = async (accepted: boolean, trustedGesture = false) => {
     if (closingRef.current) return;
     closingRef.current = true;
     setClosing(true);
@@ -92,6 +100,22 @@ export function ConfirmOverlay({
     }
     if (accepted && spec.widget?.type === "secretInput") {
       decision.secretValue = secretInputRef.current?.value ?? "";
+    }
+    if (accepted && remember && showRemember && spec.rememberCategory) {
+      decision.remember = true;
+      if (rememberCapability && trustedGesture && sessionId) {
+        try {
+          const nonce = await rememberCapability({
+            sessionId,
+            confirmId: spec.id,
+            kind: spec.rememberCategory.kind,
+            trustedGesture,
+          });
+          if (nonce) decision.uiGrantNonce = nonce;
+        } catch {
+          // nonce 申请失败只放弃记忆；本次同意仍由服务端照常处理。
+        }
+      }
     }
 
     const finish = () => {
@@ -123,7 +147,7 @@ export function ConfirmOverlay({
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
-          decide(false);
+          void decide(false);
         }
       }}
     >
@@ -137,7 +161,7 @@ export function ConfirmOverlay({
           type="button"
           className="cf-close"
           aria-label="关闭"
-          onClick={() => decide(false)}
+          onClick={() => void decide(false)}
         >
           ×
         </button>
@@ -202,6 +226,25 @@ export function ConfirmOverlay({
             }
           />
         )}
+
+        {showRemember && spec.rememberCategory && (
+          <label className="cf-remember">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(event) => setRemember(event.currentTarget.checked)}
+            />
+            <span className="cf-remember-box" aria-hidden="true">
+              {remember && <CheckIcon size={11} />}
+            </span>
+            <span className="cf-remember-copy">
+              <span>{spec.rememberCategory.label}</span>
+              {spec.rememberCategory.riskHint && (
+                <span className="cf-remember-risk">{spec.rememberCategory.riskHint}</span>
+              )}
+            </span>
+          </label>
+        )}
       </div>
 
       <div className="cf-foot">
@@ -210,7 +253,7 @@ export function ConfirmOverlay({
           <button
             type="button"
             className="cf-button cf-secondary"
-            onClick={() => decide(false)}
+            onClick={() => void decide(false)}
           >
             {spec.secondaryLabel}
           </button>
@@ -218,7 +261,7 @@ export function ConfirmOverlay({
             type="button"
             className="cf-button cf-primary"
             disabled={!secretReady}
-            onClick={() => decide(true)}
+            onClick={(event) => void decide(true, event.isTrusted)}
           >
             {spec.primaryLabel}
           </button>

@@ -165,7 +165,7 @@ export class ConfirmService {
       try {
         const grant = await this.#loadGrant(pending.spec.kind);
         if (grant) {
-          const decisionId = await this.approveFromStoredGrant(input.state, pending, grant);
+          const decisionId = await this.#approveFromStoredGrant(input.state, pending, grant);
           return {
             ok: true,
             pending,
@@ -187,7 +187,7 @@ export class ConfirmService {
    * 仅供服务端确认流水线内部调用。它不进入 HTTP route、agent toolset 或模型上下文；
    * 每次命中都按当前 pending 的精确 digest 签发一张新的短时 proof。
    */
-  async approveFromStoredGrant(
+  async #approveFromStoredGrant(
     state: SessionState,
     pending: PendingConfirm,
     grant: ConfirmGrant,

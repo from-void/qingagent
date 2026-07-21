@@ -108,8 +108,12 @@ export const CONFIRM_CARD_DEMOS: readonly ConfirmDemo[] = [
 
 export function stripSecretFromDecision(
   decision: ConfirmDecision,
-): Omit<ConfirmDecision, "secretValue"> {
-  const { secretValue: _secretValue, ...safeDecision } = decision;
+): Omit<ConfirmDecision, "secretValue" | "uiGrantNonce"> {
+  const {
+    secretValue: _secretValue,
+    uiGrantNonce: _uiGrantNonce,
+    ...safeDecision
+  } = decision;
   return safeDecision;
 }
 

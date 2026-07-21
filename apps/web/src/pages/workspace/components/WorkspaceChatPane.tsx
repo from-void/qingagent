@@ -125,6 +125,7 @@ export function WorkspaceChatPane({
         {inlineConfirm && (
           <ConfirmOverlay
             key={`${inlineConfirm.id}:${confirmAttempt}`}
+            sessionId={state.sessionId}
             spec={inlineConfirm}
             inputBoxRef={inputMorphRef}
             onDecision={handleConfirmDecision}

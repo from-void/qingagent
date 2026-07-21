@@ -270,6 +270,61 @@
   color: var(--ink-4);
 }
 
+#view-workspace .cf-remember {
+  position: relative;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding-top: 2px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+#view-workspace .cf-remember input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+#view-workspace .cf-remember-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  color: var(--mark);
+}
+
+#view-workspace .cf-remember:hover .cf-remember-box,
+#view-workspace .cf-remember:has(input:checked) .cf-remember-box {
+  border-color: var(--mark);
+  background: rgba(181, 154, 99, 0.12);
+}
+
+#view-workspace .cf-remember:has(input:focus-visible) .cf-remember-box {
+  outline: 1px solid var(--mark);
+  outline-offset: 2px;
+}
+
+#view-workspace .cf-remember-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+#view-workspace .cf-remember-risk {
+  color: var(--ink-4);
+  font-size: 10.5px;
+}
+
 #view-workspace .cf-foot {
   display: flex;
   align-items: flex-end;

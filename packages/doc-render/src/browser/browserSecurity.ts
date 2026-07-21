@@ -57,12 +57,18 @@ interface PinnedBrowserResponse {
   body: Buffer;
 }
 
+interface PinnedBrowserResponseLease {
+  response: PinnedBrowserResponse;
+  release: () => void;
+}
+
 interface PinnedResponseBudget {
   usedBytes: number;
 }
 
 const contextPolicyInstallations = new WeakMap<BrowserContext, Promise<void>>();
 const contextPinnedResponseBudgets = new WeakMap<BrowserContext, PinnedResponseBudget>();
+const contextLifecycleControllers = new WeakMap<BrowserContext, AbortController>();
 
 function getPinnedResponseBudget(context: BrowserContext): PinnedResponseBudget {
   const existing = contextPinnedResponseBudgets.get(context);
@@ -70,6 +76,18 @@ function getPinnedResponseBudget(context: BrowserContext): PinnedResponseBudget 
   const budget = { usedBytes: 0 };
   contextPinnedResponseBudgets.set(context, budget);
   return budget;
+}
+
+function getContextLifecycleController(context: BrowserContext): AbortController {
+  const existing = contextLifecycleControllers.get(context);
+  if (existing) return existing;
+  const controller = new AbortController();
+  contextLifecycleControllers.set(context, controller);
+  context.once("close", () => {
+    controller.abort(new Error("Browser context closed"));
+    contextLifecycleControllers.delete(context);
+  });
+  return controller;
 }
 
 function reservePinnedResponseBytes(budget: PinnedResponseBudget, bytes: number): boolean {
@@ -128,23 +146,39 @@ async function requestPinnedBrowserUrl(
   target: PinnedFetchUrl,
   browserRequest: PlaywrightRequest,
   budget: PinnedResponseBudget,
-): Promise<PinnedBrowserResponse> {
+  lifecycleSignal: AbortSignal,
+): Promise<PinnedBrowserResponseLease> {
   const requestHeaders = await browserRequest.allHeaders();
   for (const name of HOP_BY_HOP_HEADERS) delete requestHeaders[name];
   const method = browserRequest.method();
   const postData = browserRequest.postDataBuffer() ?? undefined;
 
   let reservedBytes = 0;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    releasePinnedResponseBytes(budget, reservedBytes);
+  };
   try {
-    return await new Promise<PinnedBrowserResponse>((resolve, reject) => {
-      const signal = AbortSignal.timeout(PINNED_REQUEST_TIMEOUT_MS);
+    const response = await new Promise<PinnedBrowserResponse>((resolve, reject) => {
+      const signal = AbortSignal.any([
+        lifecycleSignal,
+        AbortSignal.timeout(PINNED_REQUEST_TIMEOUT_MS),
+      ]);
       let settled = false;
       let incomingResponse: IncomingMessage | undefined;
+      const cleanup = () => signal.removeEventListener("abort", abortRequest);
       const rejectOnce = (error: Error) => {
         if (settled) return;
         settled = true;
         if (incomingResponse && !incomingResponse.destroyed) incomingResponse.destroy();
+        cleanup();
         reject(error);
+      };
+      const abortRequest = () => {
+        const reason = signal.reason;
+        rejectOnce(reason instanceof Error ? reason : new Error("Pinned browser request aborted"));
       };
       const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(
         target.url,
@@ -171,7 +205,10 @@ async function requestPinnedBrowserUrl(
               rejectOnce(error);
               return;
             }
-            if (!reservePinnedResponseBytes(budget, buffer.length)) {
+            // Playwright fulfill 会把 Buffer 转成 base64 字符串；context 总额按该阶段的
+            // ceil(rawBytes * 4 / 3) 表示成本计费，单响应 32MiB 上限仍按原始字节判断。
+            const billedBytes = Math.ceil((buffer.length * 4) / 3);
+            if (!reservePinnedResponseBytes(budget, billedBytes)) {
               const error = new Error(
                 `Pinned browser context responses exceed ${PINNED_CONTEXT_RESPONSE_BUDGET_BYTES} bytes`,
               );
@@ -179,7 +216,7 @@ async function requestPinnedBrowserUrl(
               rejectOnce(error);
               return;
             }
-            reservedBytes += buffer.length;
+            reservedBytes += billedBytes;
             size += buffer.length;
             chunks.push(buffer);
           });
@@ -187,6 +224,7 @@ async function requestPinnedBrowserUrl(
           incoming.once("end", () => {
             if (settled) return;
             settled = true;
+            cleanup();
             resolve({
               status: incoming.statusCode ?? 500,
               headers: responseHeaders(incoming.rawHeaders),
@@ -195,11 +233,15 @@ async function requestPinnedBrowserUrl(
           });
         },
       );
+      signal.addEventListener("abort", abortRequest, { once: true });
+      if (signal.aborted) abortRequest();
       request.once("error", rejectOnce);
-      request.end(postData);
+      if (!settled) request.end(postData);
     });
-  } finally {
-    releasePinnedResponseBytes(budget, reservedBytes);
+    return { response, release };
+  } catch (error) {
+    release();
+    throw error;
   }
 }
 
@@ -211,6 +253,7 @@ async function handleBrowserRoute(
   route: Route,
   options: BrowserRequestPolicyOptions,
   budget: PinnedResponseBudget,
+  lifecycleSignal: AbortSignal | undefined,
 ): Promise<void> {
   const request = route.request();
   const requestUrl = request.url();
@@ -242,8 +285,19 @@ async function handleBrowserRoute(
       return;
     }
 
-    const response = await requestPinnedBrowserUrl(target, request, budget);
-    await route.fulfill(response);
+    if (!lifecycleSignal) throw new Error("Pinned browser request has no context lifecycle signal");
+
+    const { response, release } = await requestPinnedBrowserUrl(
+      target,
+      request,
+      budget,
+      lifecycleSignal,
+    );
+    try {
+      await route.fulfill(response);
+    } finally {
+      release();
+    }
   } catch {
     await route.abort("blockedbyclient").catch(() => undefined);
   }
@@ -339,8 +393,14 @@ export async function installBrowserRequestPolicy(
 
   const installation = (async () => {
     const budget = getPinnedResponseBudget(context);
+    // 只有固定 IP 回填会启动独立 Node 请求；交互式非 pin context 不需要取消控制器。
+    const lifecycleController = options.pinHttpRequests
+      ? getContextLifecycleController(context)
+      : undefined;
     await installServiceWorkerBlock(context);
-    await context.route("**/*", (route) => handleBrowserRoute(route, options, budget));
+    await context.route("**/*", (route) =>
+      handleBrowserRoute(route, options, budget, lifecycleController?.signal),
+    );
     await context.routeWebSocket("**/*", (route) => handleBrowserWebSocketRoute(route, options));
   })();
   contextPolicyInstallations.set(context, installation);

@@ -47,6 +47,7 @@ function mockHttpResponses(incomings: MockIncoming[]): void {
 }
 
 function mockContext() {
+  const events = new EventEmitter();
   const route = vi.fn<
     (url: string, handler: (route: unknown) => Promise<void>) => Promise<void>
   >(async () => undefined);
@@ -54,10 +55,48 @@ function mockContext() {
     (url: string, handler: (route: unknown) => Promise<void>) => Promise<void>
   >(async () => undefined);
   return {
-    context: { route, routeWebSocket } as unknown as BrowserContext,
+    context: {
+      route,
+      routeWebSocket,
+      on: events.on.bind(events),
+      once: events.once.bind(events),
+      off: events.off.bind(events),
+    } as unknown as BrowserContext,
     route,
     routeWebSocket,
+    close: () => events.emit("close"),
   };
+}
+
+function createRoute(fulfill: () => Promise<void> = async () => undefined) {
+  const state = { abortReason: undefined as string | undefined, fulfilled: false };
+  return {
+    route: {
+      request: () => ({
+        url: () => "http://1.1.1.1/large.bin",
+        resourceType: () => "fetch",
+        allHeaders: async () => ({}),
+        method: () => "GET",
+        postDataBuffer: () => null,
+      }),
+      fulfill: async () => {
+        state.fulfilled = true;
+        await fulfill();
+      },
+      abort: async (reason: string) => {
+        state.abortReason = reason;
+      },
+    },
+    state,
+  };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 describe("浏览器请求安全策略", () => {
@@ -137,62 +176,94 @@ describe("浏览器请求安全策略", () => {
     expect(websocketRoute.close).not.toHaveBeenCalled();
   });
 
-  it("同一 context 的并发固定 IP 回填受总内存预算约束，并在请求结束后归零", async () => {
+  it("固定 IP 回填在 fulfill 完成前持续持有预算租约", async () => {
     const mocked = mockContext();
     await installBrowserRequestPolicy(mocked.context, { pinHttpRequests: true });
     const handler = mocked.route.mock.calls[0]?.[1] as (route: unknown) => Promise<void>;
-    const fullResponseChunk = Buffer.alloc(32 * 1024 * 1024);
+    const fulfillGate = deferred();
+    const incomings = Array.from({ length: 6 }, createIncoming);
+    mockHttpResponses(incomings);
+    const heldRoutes = Array.from({ length: 4 }, () => createRoute(() => fulfillGate.promise));
+    const heldCompletions = heldRoutes.map(({ route }) => handler(route));
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(4));
+    for (const incoming of incomings.slice(0, 4)) incoming.end(Buffer.alloc(24 * 1024 * 1024));
+    await vi.waitFor(() =>
+      expect(heldRoutes.every(({ state }) => state.fulfilled)).toBe(true),
+    );
 
-    const runBudgetWave = async () => {
-      const incomings = Array.from({ length: 5 }, createIncoming);
-      const overflowDestroy = vi.spyOn(incomings[4]!, "destroy");
-      mockHttpResponses(incomings);
-      const routes = incomings.map(() => {
-        const state = { abortReason: undefined as string | undefined, fulfilled: false };
-        const completion = handler({
-          request: () => ({
-            url: () => "http://1.1.1.1/large.bin",
-            resourceType: () => "fetch",
-            allHeaders: async () => ({}),
-            method: () => "GET",
-            postDataBuffer: () => null,
-          }),
-          fulfill: async () => {
-            state.fulfilled = true;
-          },
-          abort: async (reason: string) => {
-            state.abortReason = reason;
-          },
-        });
-        return { completion, state };
-      });
-      await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(5));
+    const rejected = createRoute();
+    const rejectedCompletion = handler(rejected.route);
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(5));
+    incomings[4]!.end(Buffer.from([1]));
+    await rejectedCompletion;
+    expect(rejected.state).toEqual({ abortReason: "blockedbyclient", fulfilled: false });
 
-      for (const incoming of incomings.slice(0, 4)) incoming.write(fullResponseChunk);
-      incomings[4]!.end(Buffer.from([1]));
-      await routes[4]!.completion;
+    fulfillGate.resolve();
+    await Promise.all(heldCompletions);
+    const recovered = createRoute();
+    const recoveredCompletion = handler(recovered.route);
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(6));
+    incomings[5]!.end(Buffer.from([1]));
+    await recoveredCompletion;
+    expect(recovered.state).toEqual({ abortReason: undefined, fulfilled: true });
+  });
 
-      for (let index = 0; index < 4; index += 1) {
-        incomings[index]!.end();
-        await routes[index]!.completion;
-      }
-      return {
-        routes: routes.map(({ state }) => state),
-        overflowDestroyedWithError: overflowDestroy.mock.calls.some(
-          ([error]) => error instanceof Error,
-        ),
-      };
-    };
+  it("context 总预算按响应体 base64 化后的 4/3 成本计费", async () => {
+    const mocked = mockContext();
+    await installBrowserRequestPolicy(mocked.context, { pinHttpRequests: true });
+    const handler = mocked.route.mock.calls[0]?.[1] as (route: unknown) => Promise<void>;
+    const fulfillGate = deferred();
+    const incomings = Array.from({ length: 4 }, createIncoming);
+    mockHttpResponses(incomings);
+    const heldRoutes = Array.from({ length: 3 }, () => createRoute(() => fulfillGate.promise));
+    const heldCompletions = heldRoutes.map(({ route }) => handler(route));
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(3));
+    for (const incoming of incomings.slice(0, 3)) {
+      incoming.end(Buffer.alloc(32 * 1024 * 1024 - 1));
+    }
+    await vi.waitFor(() =>
+      expect(heldRoutes.every(({ state }) => state.fulfilled)).toBe(true),
+    );
 
-    const firstWave = await runBudgetWave();
-    expect(firstWave.routes.slice(0, 4).every(({ fulfilled }) => fulfilled)).toBe(true);
-    expect(firstWave.routes[4]).toEqual({ abortReason: "blockedbyclient", fulfilled: false });
-    expect(firstWave.overflowDestroyedWithError).toBe(true);
+    const overflow = createRoute();
+    const overflowCompletion = handler(overflow.route);
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledTimes(4));
+    // 前三份按 4/3 计费后只剩 2 字节；2 原始字节会计为 3 字节，必须被拒。
+    incomings[3]!.end(Buffer.from([1, 2]));
+    await overflowCompletion;
+    expect(overflow.state).toEqual({ abortReason: "blockedbyclient", fulfilled: false });
+    fulfillGate.resolve();
+    await Promise.all(heldCompletions);
+  });
 
-    // 第二轮仍能完整占满同一预算，证明第一轮无论成功或越界都已释放全部额度。
-    const secondWave = await runBudgetWave();
-    expect(secondWave.routes.slice(0, 4).every(({ fulfilled }) => fulfilled)).toBe(true);
-    expect(secondWave.routes[4]).toEqual({ abortReason: "blockedbyclient", fulfilled: false });
-    expect(secondWave.overflowDestroyedWithError).toBe(true);
+  it("context 关闭会中止未结束的固定 IP 请求并销毁响应流", async () => {
+    const mocked = mockContext();
+    await installBrowserRequestPolicy(mocked.context, { pinHttpRequests: true });
+    const handler = mocked.route.mock.calls[0]?.[1] as (route: unknown) => Promise<void>;
+    const incoming = createIncoming();
+    const destroy = vi.spyOn(incoming, "destroy");
+    mockHttpResponses([incoming]);
+    const pending = createRoute();
+    const completion = handler(pending.route);
+    await vi.waitFor(() => expect(requestMocks.httpRequest).toHaveBeenCalledOnce());
+    incoming.write(Buffer.alloc(1024));
+
+    mocked.close();
+
+    await completion;
+    expect(destroy).toHaveBeenCalled();
+    expect(incoming.destroyed).toBe(true);
+    expect(pending.state).toEqual({ abortReason: "blockedbyclient", fulfilled: false });
+
+    const fresh = mockContext();
+    await installBrowserRequestPolicy(fresh.context, { pinHttpRequests: true });
+    const freshHandler = fresh.route.mock.calls[0]?.[1] as (route: unknown) => Promise<void>;
+    const freshIncoming = createIncoming();
+    mockHttpResponses([freshIncoming]);
+    const freshRoute = createRoute();
+    const freshCompletion = freshHandler(freshRoute.route);
+    freshIncoming.end(Buffer.alloc(32 * 1024 * 1024));
+    await freshCompletion;
+    expect(freshRoute.state.fulfilled).toBe(true);
   });
 });

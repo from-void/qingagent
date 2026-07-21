@@ -84,6 +84,7 @@ export const confirmSpecSchema = z.object({
   title: boundedNonEmptyString(120),
   sub: boundedNonEmptyString(200).optional(),
   say: boundedNonEmptyString(1_200),
+  notice: boundedNonEmptyString(300).optional(),
   commandPreview: boundedNonEmptyString(2_000).optional(),
   widget: confirmWidgetSchema.optional(),
   rememberCategory: rememberCategorySchema.optional(),

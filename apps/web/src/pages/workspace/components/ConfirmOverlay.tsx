@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ConfirmDecision, ConfirmSpec } from "@qingagent/contract-ts";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
 import { CheckIcon } from "./icons";
+import { useToast } from "../../../system";
 import "./confirm-overlay.css";
 
 export type { ConfirmDecision, ConfirmSpec } from "@qingagent/contract-ts";
@@ -50,6 +51,7 @@ export function ConfirmOverlay({
   submissionError = null,
   waitForResolution = false,
 }: ConfirmOverlayProps) {
+  const toast = useToast();
   const panelRef = useRef<HTMLDivElement>(null);
   const secretInputRef = useRef<HTMLInputElement>(null);
   const closingRef = useRef(false);
@@ -149,9 +151,21 @@ export function ConfirmOverlay({
             decision.uiGrantNonce = nonce;
           } else if (mountedRef.current) {
             setRemember(false);
+            toast.show({
+              message: "本次操作会继续，但没有记住这次选择；下次同类操作仍会询问。",
+              tone: "warn",
+              dedupeKey: `confirm-remember-not-saved:${spec.id}`,
+            });
           }
         } catch {
-          if (mountedRef.current) setRemember(false);
+          if (mountedRef.current) {
+            setRemember(false);
+            toast.show({
+              message: "本次操作会继续，但没有记住这次选择；下次同类操作仍会询问。",
+              tone: "warn",
+              dedupeKey: `confirm-remember-not-saved:${spec.id}`,
+            });
+          }
           // 原生确认未完成只放弃记忆；本次同意仍由服务端照常处理。
         }
       } else if (spec.rememberCategory.insecureWithoutDesktop) {
@@ -232,6 +246,10 @@ export function ConfirmOverlay({
         <p className="cf-say" id={sayId}>
           {spec.say}
         </p>
+
+        {spec.notice && (
+          <p className="cf-notice" role="status">{spec.notice}</p>
+        )}
 
         {spec.commandPreview && (
           <pre className="cf-command-preview" aria-label="命令预览">

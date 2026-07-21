@@ -340,7 +340,10 @@ describe("ConfirmService", () => {
     expect(result).toMatchObject({
       ok: true,
       frame: { kind: "confirmRequested", data: { toolCallId: "tool-race" } },
-      pending: { status: "pending" },
+      pending: {
+        status: "pending",
+        spec: { notice: "设置刚刚发生变化，这次操作需要重新确认。" },
+      },
     });
     if (!result.ok) return;
     expect(result.storedGrantApproval).toBeUndefined();
@@ -350,6 +353,7 @@ describe("ConfirmService", () => {
       "confirm:requested",
       "confirm:stored-grant-resuming",
       "confirm:stored-grant-rollback",
+      "confirm:revocation-race-notice",
     ]);
     expect(consumeApprovalProof(state, {
       sessionId: state.sessionId,
@@ -430,7 +434,10 @@ describe("ConfirmService", () => {
       aborted: false,
     });
 
-    expect(result).toEqual({ ok: false, reason: "确认恢复失败，命令未执行" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "确认没有完成，命令没有执行。请重新确认后再试。",
+    });
     expect(state.pendingConfirms.get("tool-proof-rollback-failure")).toMatchObject({
       status: "resuming",
       decisionSource: "stored-grant",

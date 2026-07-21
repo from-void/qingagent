@@ -13,6 +13,7 @@ import {
   createSessionScopedTools,
   emitProjectedDocState,
   endTurnOwnership,
+  failConfirmedToolCall,
   finalizeLingeringRunningToolCalls,
   processAgentStream,
   qingagentAgent,
@@ -61,32 +62,6 @@ function findToolCallMessageId(session: SessionState, toolCallId: string): strin
   return session.chatHistory.find((message) => message.parts.some(
     (part) => part.kind === "toolCall" && part.data.id === toolCallId,
   ))?.id ?? null;
-}
-
-function failToolCall(
-  session: SessionState,
-  toolCallId: string,
-  reason: string,
-  options: { retriable?: boolean } = {},
-): {
-  messageId: string;
-  spec: ToolCallSpec;
-} | null {
-  for (const message of session.chatHistory) {
-    const index = message.parts.findIndex(
-      (part) => part.kind === "toolCall" && part.data.id === toolCallId,
-    );
-    const part = message.parts[index];
-    if (index < 0 || part?.kind !== "toolCall") continue;
-    const spec: ToolCallSpec = {
-      ...part.data,
-      status: { kind: "failed", data: { retriable: options.retriable ?? false, reason } },
-      result: part.data.result ?? { kind: "genericText", data: reason },
-    };
-    message.parts[index] = { kind: "toolCall", data: spec };
-    return { messageId: message.id, spec };
-  }
-  return null;
 }
 
 function buildResumeTools(session: SessionState): Promise<{
@@ -551,7 +526,7 @@ export async function* handleConfirmDecision(
     const reason = resolvedEmitted
       ? "确认恢复异常，执行结果未知且未自动重试"
       : "确认恢复失败，命令未执行";
-    const failed = failToolCall(session, pending.toolCallId, reason);
+    const failed = failConfirmedToolCall(session, pending.toolCallId, reason);
     if (failed) {
       yield {
         kind: "toolCallUpdated",
@@ -677,14 +652,13 @@ export async function* handleConfirmExpiry(
       cleanupIncomplete = true;
     }
 
-    const reason = cleanupIncomplete
-      ? "确认已过期，命令未执行；确认状态清理未完成，可重试"
-      : "确认已过期，命令未执行";
-    service.expireDecisionInMemory(session, pending);
-    expiryTerminalized = true;
-    const failed = failToolCall(session, pending.toolCallId, reason, {
+    const reason = "这张确认卡已过期，命令没有执行。请重新确认。";
+    const failed = failConfirmedToolCall(session, pending.toolCallId, reason, {
       retriable: cleanupIncomplete,
     });
+    // 先把 commandCard 同步落终态，再持久化整份会话快照。
+    service.expireDecisionInMemory(session, pending);
+    expiryTerminalized = true;
     if (failed) {
       yield {
         kind: "toolCallUpdated",

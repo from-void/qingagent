@@ -182,7 +182,7 @@ export async function* resumeConfirmDecision(input: {
   const previousActiveConfirmedToolCallId = session._activeConfirmedToolCallId;
   const agentMessageId = findToolCallMessageId(session, pending.toolCallId);
   if (!agentMessageId) {
-    const reason = "确认恢复失败，命令未执行";
+    const reason = "确认没有完成，命令没有执行。请重新确认后再试。";
     const failedMessage = appendMissingFailedToolCall(session, pending, reason);
     await service.failDecision(session, pending).catch(() => undefined);
     yield chatMessageAdded(failedMessage);
@@ -275,8 +275,8 @@ export async function* resumeConfirmDecision(input: {
     const reason = targetedCancellation
       ? "已中止，结果可能未知"
       : resolvedEmitted
-        ? "确认恢复异常，执行结果未知且未自动重试"
-        : "确认恢复失败，命令未执行";
+        ? "确认已提交，但还没有收到命令结果。为避免重复操作，系统没有自动重试；请先查看命令输出，再决定是否重新执行。"
+        : "确认没有完成，命令没有执行。请重新确认后再试。";
     const failed = failConfirmedToolCall(session, pending.toolCallId, reason);
     if (failed) {
       yield {

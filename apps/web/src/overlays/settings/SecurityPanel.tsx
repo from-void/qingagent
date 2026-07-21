@@ -198,7 +198,9 @@ export function SecurityPanel() {
         applyCanonical(canonical);
         publishRememberGrantState(canonical);
         toast.show({
-          message: needConfirmation ? `${category.label}已恢复逐次确认` : `${category.label}已默认同意`,
+          message: needConfirmation
+            ? `${category.label}已恢复逐次确认；已在执行的不受影响。`
+            : `${category.label}已默认同意`,
           tone: "success",
         });
       } finally {

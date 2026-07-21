@@ -204,6 +204,18 @@ export class ConfirmService {
           storedGrantApproval: { decisionId, grant },
         };
       } catch (error) {
+        if (
+          error instanceof ConfirmDecisionError &&
+          error.message === "存量确认已撤销" &&
+          input.state.pendingConfirms.get(pending.toolCallId) === pending &&
+          pending.status === "pending"
+        ) {
+          pending.spec = {
+            ...pending.spec,
+            notice: "设置刚刚发生变化，这次操作需要重新确认。",
+          };
+          await this.#persist(input.state, "confirm:revocation-race-notice").catch(() => undefined);
+        }
         console.error("[confirm-audit] stored grant lookup/approval failed; showing confirm card", {
           sessionId: input.state.sessionId,
           confirmId: pending.confirmId,
@@ -213,7 +225,10 @@ export class ConfirmService {
           input.state.pendingConfirms.get(pending.toolCallId) !== pending ||
           pending.status !== "pending"
         ) {
-          return { ok: false, reason: "确认恢复失败，命令未执行" };
+          return {
+            ok: false,
+            reason: "确认没有完成，命令没有执行。请重新确认后再试。",
+          };
         }
       }
     }
@@ -399,7 +414,10 @@ export class ConfirmService {
     }
     if (Date.parse(pending.expiresAt) <= this.#now()) {
       this.#secrets.delete(state, pending.confirmId);
-      throw new ConfirmDecisionError("expired", "确认请求已过期");
+      throw new ConfirmDecisionError(
+        "expired",
+        "这张确认卡已过期，命令没有执行。请重新确认。",
+      );
     }
 
     const secretPresent = this.#secrets.has(state, {

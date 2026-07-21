@@ -107,7 +107,10 @@ describe("SecurityPanel", () => {
       expect.objectContaining({ body: JSON.stringify({ needConfirmation: true }) }),
     );
     expect(command.getAttribute("aria-pressed")).toBe("true");
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ tone: "success" }));
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "success",
+      message: "此类命令已恢复逐次确认；已在执行的不受影响。",
+    }));
   });
 
   it("纯 web 生产把记忆设置收敛为只读并解释桌面条件", async () => {

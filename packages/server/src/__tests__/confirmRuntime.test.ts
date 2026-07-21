@@ -235,6 +235,12 @@ describe("confirm runtime", () => {
       kind: "confirmResolved",
       data: expect.objectContaining({ resolution: "expired", toolCallId }),
     }));
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({
+        message: "这张确认卡已过期，命令没有执行。请重新确认。",
+      }),
+    }));
   });
 
   it("过期 decline 永不 resolve 时，停止可中止局部 controller，后续 send/cancel 不被 Actor 永久堵塞", async () => {
@@ -720,7 +726,7 @@ describe("confirm runtime", () => {
       kind: "confirmResolved",
       data: expect.objectContaining({
         resolution: "expired",
-        message: expect.stringContaining("清理未完成"),
+        message: "这张确认卡已过期，命令没有执行。请重新确认。",
       }),
     }));
   });

@@ -285,7 +285,11 @@ describe("ConfirmOverlay", () => {
         label: "后续的安装指令都默认同意",
       },
     };
-    await renderOverlay(rememberSpec, onDecision);
+    await render(
+      <ToastProvider>
+        <ConfirmOverlay sessionId="test-session" spec={rememberSpec} onDecision={onDecision} />
+      </ToastProvider>,
+    );
     const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!;
 
     await click(checkbox);
@@ -297,6 +301,9 @@ describe("ConfirmOverlay", () => {
       id: rememberSpec.id,
       accepted: true,
     });
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "本次操作会继续，但没有记住这次选择；下次同类操作仍会询问。",
+    );
   });
 
   it("等待桌面 nonce 时组件卸载仍提交普通同意", async () => {
@@ -600,6 +607,91 @@ describe("ConfirmOverlay", () => {
     expect(host!.querySelectorAll(".qa-toast")).toHaveLength(2);
     expect(host?.textContent).toContain("本次操作已经开始执行。");
     unsubscribe();
+  });
+
+  it("服务端未保存记忆时解释本次继续与下次仍询问", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm: vi.fn(async () => ({
+        accepted: true as const,
+        remembered: false,
+        rememberFailure: "settings-changed" as const,
+        grantState: { present: false, grantId: null, version: 5 },
+      })),
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      id: "confirm-remember-stale",
+      rememberCategory: {
+        kind: "install",
+        label: "以后安装时不再询问",
+        insecureWithoutDesktop: true,
+      },
+    };
+    await act(async () => {
+      listener?.({
+        kind: "confirmRequested",
+        data: {
+          toolCallId: "tool-remember-stale",
+          spec: rememberSpec,
+          requestedAt: "2026-07-22T10:00:00.000Z",
+          expiresAt: "2026-07-22T10:10:00.000Z",
+        },
+      });
+    });
+
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "本次操作会继续，但设置刚刚发生变化，没有记住这次选择；下次同类操作仍会询问。",
+    );
+  });
+
+  it("撤销竞态提示渲染在确认卡正文中", async () => {
+    await renderOverlay({
+      ...installSpec,
+      notice: "设置刚刚发生变化，这次操作需要重新确认。",
+    });
+
+    expect(host?.querySelector(".cf-notice")?.textContent).toBe(
+      "设置刚刚发生变化，这次操作需要重新确认。",
+    );
+  });
+
+  it("确认过期 toast 提供重新确认入口", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm: vi.fn(),
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+
+    await act(async () => {
+      listener?.({
+        kind: "confirmResolved",
+        data: {
+          id: "confirm-expired-visible",
+          toolCallId: "tool-expired-visible",
+          resolution: "expired",
+          message: "这张确认卡已过期，命令没有执行。请重新确认。",
+        },
+      });
+    });
+
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "这张确认卡已过期，命令没有执行。请重新确认。",
+    );
+    expect(findButton("重新确认")).not.toBeNull();
   });
 
   it("命令确认脚注按记忆勾选是否可见分为两版", async () => {

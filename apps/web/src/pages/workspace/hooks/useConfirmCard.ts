@@ -211,6 +211,16 @@ export function useConfirmCard({
             message: frame.data.message,
             tone: frame.data.resolution === "accepted" ? "info" : "warn",
             dedupeKey: `confirm-resolved:${frame.data.id}`,
+            ...(frame.data.resolution === "expired"
+              ? {
+                  action: {
+                    label: "重新确认",
+                    onClick: () => {
+                      document.querySelector<HTMLElement>(".wf-input")?.focus();
+                    },
+                  },
+                }
+              : {}),
           });
         }
       }
@@ -272,6 +282,14 @@ export function useConfirmCard({
             message,
             tone: "success",
             dedupeKey: `confirm-remembered:${decision.id}`,
+          });
+        } else if (result.rememberFailure) {
+          toast.show({
+            message: result.rememberFailure === "settings-changed"
+              ? "本次操作会继续，但设置刚刚发生变化，没有记住这次选择；下次同类操作仍会询问。"
+              : "本次操作会继续，但没有记住这次选择；下次同类操作仍会询问。",
+            tone: "warn",
+            dedupeKey: `confirm-remember-not-saved:${decision.id}`,
           });
         }
         if (!isCurrentBinding()) submittingRef.current.delete(decision.id);

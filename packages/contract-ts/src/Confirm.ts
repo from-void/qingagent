@@ -32,6 +32,8 @@ export interface ConfirmSpec {
   title: string;
   sub?: string;
   say: string;
+  /** 状态变化后的非阻断解释；不得承载内部机制词。 */
+  notice?: string;
   commandPreview?: string;
   widget?: ConfirmWidget;
   rememberCategory?: RememberCategory;

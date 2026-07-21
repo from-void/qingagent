@@ -138,6 +138,15 @@
   line-height: 1.65;
 }
 
+#view-workspace .cf-notice {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 1px solid var(--mark);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 #view-workspace .cf-progress {
   display: flex;
   align-items: center;

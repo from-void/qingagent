@@ -312,7 +312,7 @@ export function createConfirmRoutes(
     }
     const known = decisionError(error);
     if (known) return c.json({ error: known.message }, errorStatus(known.code));
-    return c.json({ error: "确认处理失败，命令未执行" }, 500);
+    return c.json({ error: "确认没有完成，命令没有执行。请稍后再试。" }, 500);
   }
   });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendConfirmAuditEvent,
   createConfirmGrant,
+  createConfirmGrantWithResult,
   getConfirmGrant,
   listConfirmAuditEvents,
   listConfirmGrantEvents,
@@ -31,6 +32,12 @@ describe("confirm grant 与不可变审计仓储", () => {
       grantId: "must-not-replace",
     });
     expect(duplicate).toEqual(created);
+
+    expect(await createConfirmGrantWithResult({
+      kind: "install",
+      source: "settings",
+      grantId: "still-must-not-replace",
+    })).toEqual({ grant: created, created: false });
     expect(await listConfirmGrantEvents()).toMatchObject([
       {
         grantId: "grant-install",

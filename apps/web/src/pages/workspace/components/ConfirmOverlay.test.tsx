@@ -13,6 +13,7 @@ import {
 import { stripSecretFromDecision, useConfirmCard } from "../hooks/useConfirmCard";
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
 import type { ServerStream } from "../data/serverStream";
+import { ToastProvider } from "../../../system";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -445,9 +446,178 @@ describe("ConfirmOverlay", () => {
     expect(host?.textContent).not.toContain(secret);
   });
 
+  it("点执行后立即禁用全部动作并在原生确认与提交阶段保留标题和 loading", async () => {
+    let resolveGrant!: (nonce: string | null) => void;
+    const onDecision = vi.fn();
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(() => new Promise<string | null>((resolve) => {
+        resolveGrant = resolve;
+      })),
+    };
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      commandPreview: "npm install ffmpeg",
+      rememberCategory: { kind: "install", label: "以后安装时不再询问" },
+    };
+    await render(
+      <ConfirmOverlay
+        sessionId="test-session"
+        spec={rememberSpec}
+        onDecision={onDecision}
+        waitForResolution
+      />,
+    );
+
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+
+    expect(host?.querySelector(".cf-title")?.textContent).toBe("安装工具");
+    expect(host?.querySelector(".cf-progress")?.textContent).toContain("正在确认…");
+    expect(host?.querySelector(".cf-button-spinner")).not.toBeNull();
+    expect(Array.from(host!.querySelectorAll<HTMLButtonElement>("button"))
+      .every((button) => button.disabled)).toBe(true);
+    expect(onDecision).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveGrant("trusted-nonce");
+      await Promise.resolve();
+    });
+
+    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({
+      id: rememberSpec.id,
+      accepted: true,
+      remember: true,
+      uiGrantNonce: "trusted-nonce",
+    }));
+    expect(host?.querySelector(".cf-progress")?.textContent).toContain("正在执行…");
+    expect(host?.querySelector(".cf-overlay")).not.toBeNull();
+  });
+
+  it("确认提交失败原卡显示原因并恢复按钮，不再换 key 静默重挂", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const resolveConfirm = vi.fn(async () => {
+      throw new Error("确认没有提交成功，请再试一次。");
+    });
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm,
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+    await act(async () => {
+      listener?.({
+        kind: "confirmRequested",
+        data: {
+          toolCallId: "tool-failed-post",
+          spec: { ...installSpec, id: "confirm-failed-post" },
+          requestedAt: "2026-07-22T10:00:00.000Z",
+          expiresAt: "2026-07-22T10:10:00.000Z",
+        },
+      });
+    });
+
+    const overlayBefore = host!.querySelector(".cf-overlay");
+    await click(findButton("安装并继续"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host!.querySelector(".cf-overlay")).toBe(overlayBefore);
+    expect(host?.querySelector('[role="alert"]')?.textContent)
+      .toContain("确认没有提交成功，请再试一次。");
+    expect(findButton("安装并继续").disabled).toBe(false);
+  });
+
+  it("仅首次成功创建记忆显示一次安全设置 toast，并消费 resolved message", async () => {
+    let listener: ((frame: BridgeFrame) => void) | null = null;
+    const resolveConfirm = vi.fn(async () => ({ accepted: true as const, remembered: true }));
+    const stream = {
+      subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
+        listener = next;
+        return () => { listener = null; };
+      }),
+      resolveConfirm,
+    } as unknown as ServerStream;
+    await render(<LiveConfirmHarness stream={stream} />);
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      id: "confirm-remember-toast",
+      rememberCategory: {
+        kind: "install",
+        label: "以后安装时不再询问",
+        insecureWithoutDesktop: true,
+      },
+    };
+    await act(async () => {
+      listener?.({
+        kind: "confirmRequested",
+        data: {
+          toolCallId: "tool-remember-toast",
+          spec: rememberSpec,
+          requestedAt: "2026-07-22T10:00:00.000Z",
+          expiresAt: "2026-07-22T10:10:00.000Z",
+        },
+      });
+    });
+    await click(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')!);
+    await click(findButton("安装并继续"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host!.querySelectorAll(".qa-toast")).toHaveLength(1);
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "已记住：以后安装时不再询问。可在 设置 → 安全 中恢复每次询问。",
+    );
+
+    await act(async () => {
+      listener?.({
+        kind: "confirmResolved",
+        data: {
+          id: rememberSpec.id,
+          toolCallId: "tool-remember-toast",
+          resolution: "accepted",
+          message: "本次操作已经开始执行。",
+        },
+      });
+    });
+    expect(host!.querySelectorAll(".qa-toast")).toHaveLength(2);
+    expect(host?.textContent).toContain("本次操作已经开始执行。");
+  });
+
+  it("命令确认脚注按记忆勾选是否可见分为两版", async () => {
+    const rememberSpec: ConfirmSpec = {
+      ...installSpec,
+      commandPreview: "npm install ffmpeg",
+      rememberCategory: { kind: "install", label: "以后安装时不再询问" },
+    };
+    await renderOverlay(rememberSpec);
+    expect(host?.querySelector(".cf-foot-hint")?.textContent).toBe(
+      "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
+    );
+
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestConfirmRememberGrant: vi.fn(async () => "trusted-nonce"),
+    };
+    await act(async () => {
+      root?.render(
+        <ConfirmOverlay
+          sessionId="test-session"
+          spec={rememberSpec}
+          onDecision={vi.fn()}
+        />,
+      );
+    });
+    expect(host?.querySelector(".cf-foot-hint")?.textContent).toBe(
+      "不勾选上方选项时，本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
+    );
+  });
+
   it("真实 SSE 确认按 FIFO 展示，决策走专用上行且仅由 resolved 关闭", async () => {
     let listener: ((frame: BridgeFrame) => void) | null = null;
-    const resolveConfirm = vi.fn(async () => undefined);
+    const resolveConfirm = vi.fn(async () => ({ accepted: true as const, remembered: false }));
     const stream = {
       subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
         listener = next;
@@ -516,7 +686,7 @@ describe("ConfirmOverlay", () => {
   it("等待原生 nonce 时切会话仍提交旧决策，但不把共享 SSE 拉回旧会话", async () => {
     let listener: ((frame: BridgeFrame) => void) | null = null;
     let resolveGrant!: (nonce: string | null) => void;
-    const resolveConfirm = vi.fn(async () => undefined);
+    const resolveConfirm = vi.fn(async () => ({ accepted: true as const, remembered: false }));
     const stream = {
       subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
         listener = next;
@@ -610,13 +780,34 @@ function ConfirmHarness({
 }
 
 function LiveConfirmHarness({ stream }: { stream: ServerStream }) {
-  const { handleConfirmDecision, inlineConfirm } = useConfirmCard({
+  return (
+    <ToastProvider>
+      <LiveConfirmContent stream={stream} />
+    </ToastProvider>
+  );
+}
+
+function LiveConfirmContent({ stream }: { stream: ServerStream }) {
+  const {
+    handleConfirmDecision,
+    inlineConfirm,
+    decisionError,
+    isLiveConfirm,
+  } = useConfirmCard({
     debugMode: false,
     sessionId: "live-session",
     stream,
   });
   return inlineConfirm
-    ? <ConfirmOverlay sessionId="live-session" spec={inlineConfirm} onDecision={handleConfirmDecision} />
+    ? (
+      <ConfirmOverlay
+        sessionId="live-session"
+        spec={inlineConfirm}
+        onDecision={handleConfirmDecision}
+        submissionError={decisionError}
+        waitForResolution={isLiveConfirm}
+      />
+    )
     : null;
 }
 
@@ -627,13 +818,26 @@ function SwitchableLiveConfirmHarness({
   sessionId: string;
   stream: ServerStream;
 }) {
-  const { handleConfirmDecision, inlineConfirm } = useConfirmCard({
+  const {
+    handleConfirmDecision,
+    inlineConfirm,
+    decisionError,
+    isLiveConfirm,
+  } = useConfirmCard({
     debugMode: false,
     sessionId,
     stream,
   });
   return inlineConfirm
-    ? <ConfirmOverlay sessionId={sessionId} spec={inlineConfirm} onDecision={handleConfirmDecision} />
+    ? (
+      <ConfirmOverlay
+        sessionId={sessionId}
+        spec={inlineConfirm}
+        onDecision={handleConfirmDecision}
+        submissionError={decisionError}
+        waitForResolution={isLiveConfirm}
+      />
+    )
     : null;
 }
 

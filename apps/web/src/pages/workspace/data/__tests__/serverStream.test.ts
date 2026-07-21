@@ -293,6 +293,7 @@ describe("ServerStream", () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      json: () => Promise.resolve({ accepted: true, remembered: false }),
     } as Response);
     const stream = new ServerStream();
 
@@ -309,6 +310,47 @@ describe("ServerStream", () => {
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"sessionId":"old-session"'),
+      }),
+    );
+  });
+
+  it("确认提交读取 remembered，错误只显示服务端人话而不泄漏 HTTP 状态码", async () => {
+    globalThis.fetch = commandResponse({ accepted: true, remembered: true });
+    const stream = new ServerStream();
+
+    await expect(stream.resolveConfirm({
+      sessionId: "session-confirm",
+      toolCallId: "tool-confirm",
+      decisionId: "decision-confirm",
+      decision: { id: "confirm-id", accepted: true },
+    })).resolves.toEqual({ accepted: true, remembered: true });
+
+    globalThis.fetch = commandResponse({ error: "这张确认已处理，请查看命令结果。" }, 409);
+    await expect(stream.resolveConfirm({
+      sessionId: "session-confirm",
+      toolCallId: "tool-confirm",
+      decisionId: "decision-confirm-2",
+      decision: { id: "confirm-id", accepted: true },
+    })).rejects.toThrow("这张确认已处理，请查看命令结果。");
+  });
+
+  it("卡级停止使用独立 toolCallId 上行", async () => {
+    globalThis.fetch = commandResponse({ accepted: true }, 202);
+    const stream = new ServerStream();
+
+    await stream.cancelConfirmedCommand({
+      sessionId: "session-confirm",
+      toolCallId: "tool-exact",
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/v1/confirms/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "session-confirm",
+          toolCallId: "tool-exact",
+        }),
       }),
     );
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cancelConfirmedCommandSchema,
   confirmDecisionForSpecSchema,
   confirmSpecSchema,
   submitConfirmDecisionSchema,
@@ -220,5 +221,16 @@ describe("confirm contract schemas", () => {
     });
     expect(tooLong.success).toBe(false);
     expect(tooLong.success ? "" : tooLong.error.message).not.toContain(sentinel);
+  });
+
+  it("卡级停止必须同时携带非空 sessionId 与 toolCallId", () => {
+    expect(cancelConfirmedCommandSchema.parse({
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+    })).toEqual({ sessionId: "session-1", toolCallId: "tool-1" });
+    expect(cancelConfirmedCommandSchema.safeParse({
+      sessionId: "session-1",
+      toolCallId: "",
+    }).success).toBe(false);
   });
 });

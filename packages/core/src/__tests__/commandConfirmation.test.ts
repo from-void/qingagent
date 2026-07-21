@@ -74,9 +74,9 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       .not.toBe(commandConfirmationDigest("session", { command: `${prefix}y` }));
   });
 
-  it("共同 footHint 与取消按钮保持既有协议", () => {
+  it("无记忆勾选时使用仅本次确认脚注", () => {
     const spec = buildCommandConfirmSpec({ command: "git push origin main" }, "将推送代码", "common-id");
-    expect(spec.footHint).toBe("仅对本次调用生效 · 10 分钟后自动失效");
+    expect(spec.footHint).toBe("本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭");
     expect(spec.secondaryLabel).toBe("取消");
   });
 

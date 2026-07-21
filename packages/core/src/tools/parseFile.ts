@@ -319,7 +319,15 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   }
   if (isSensitiveDesktopFilePath(canonicalPath)) return { status: "denied" };
 
-  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  // Windows 没有 O_NOFOLLOW：该平台仅靠 realpath 前后两次敏感路径检查兜底，
+  // 打开阶段的 symlink/junction/reparse point 交换竞态未覆盖。这是已评估接受的残留风险：
+  // 利用前提是攻击者已能在本地单用户桌面环境中并发改写目标路径。
+  const noFollow =
+    process.platform === "win32"
+      ? 0
+      : typeof fsConstants.O_NOFOLLOW === "number"
+        ? fsConstants.O_NOFOLLOW
+        : 0;
   const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
   // O_NOFOLLOW 只约束打开时的最终路径组件；父目录中间组件的替换窗口仍由 realpath
   // 前后两次黑名单检查兜底，并未被完全消除。

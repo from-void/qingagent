@@ -43,9 +43,13 @@ import {
 import { acquireSingleInstanceLock } from "./singleInstance.js";
 import { assertTrustedRenderer as assertTrustedRendererEvent } from "./ipcTrust.js";
 import {
+  buildRememberPromptHtml,
   NativeRememberGrantGate,
+  REMEMBER_PROMPT_DECISION_CHANNEL,
   TrustedRememberUiGate,
   type RememberGrantKind,
+  type RememberPromptCopy,
+  type RememberPromptDecision,
 } from "./trustedRememberUi.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -376,6 +380,88 @@ function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): bool
   });
 }
 
+function showTrustedRememberPrompt(
+  owner: BrowserWindow,
+  copy: RememberPromptCopy,
+): Promise<RememberPromptDecision> {
+  const promptWindow = new BrowserWindow({
+    width: 480,
+    height: 316,
+    useContentSize: true,
+    parent: owner,
+    modal: true,
+    center: true,
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    title: copy.title,
+    backgroundColor: "#10191d",
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/rememberPrompt.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: false,
+      spellcheck: false,
+    },
+  });
+  const promptInputGate = new TrustedRememberUiGate();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (decision: RememberPromptDecision) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener(REMEMBER_PROMPT_DECISION_CHANNEL, handleDecision);
+      if (!promptWindow.isDestroyed()) promptWindow.close();
+      resolve(decision);
+    };
+    const handleDecision = (
+      event: Electron.IpcMainEvent,
+      decision: unknown,
+    ) => {
+      if (
+        event.sender !== promptWindow.webContents ||
+        (decision !== "remember" && decision !== "cancel")
+      ) return;
+      if (decision === "remember" && !promptInputGate.consume({
+        senderId: event.sender.id,
+        mainWindowSenderId: promptWindow.webContents.id,
+        windowFocused: promptWindow.isFocused(),
+        senderIsDevtools: Boolean(
+          promptWindow.webContents.devToolsWebContents &&
+          event.sender.id === promptWindow.webContents.devToolsWebContents.id,
+        ),
+      })) return;
+      settle(decision);
+    };
+
+    ipcMain.on(REMEMBER_PROMPT_DECISION_CHANNEL, handleDecision);
+    promptWindow.webContents.on("before-input-event", (_event, input) => {
+      promptInputGate.record(promptWindow.webContents.id, input.type);
+    });
+    promptWindow.webContents.on("before-mouse-event", (_event, input) => {
+      promptInputGate.record(promptWindow.webContents.id, input.type);
+    });
+    promptWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    promptWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    promptWindow.webContents.once("render-process-gone", () => settle("cancel"));
+    promptWindow.once("closed", () => settle("cancel"));
+    promptWindow.once("ready-to-show", () => {
+      if (!settled && !promptWindow.isDestroyed()) promptWindow.show();
+    });
+
+    const html = buildRememberPromptHtml(copy);
+    void promptWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      .catch(() => settle("cancel"));
+  });
+}
+
 ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown) => {
   assertTrustedRenderer(event);
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
@@ -393,7 +479,7 @@ ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown)
   return nativeRememberGrantGate.request({
     purpose: "confirm",
     kind,
-    showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
     generation,
     register: async () => {
       const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
@@ -428,7 +514,7 @@ ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown
   return nativeRememberGrantGate.request({
     purpose: "settings",
     kind,
-    showMessageBox: (options) => dialog.showMessageBox(owner, options),
+    showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
     generation,
     register: async () => {
       const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildRememberPromptCopy,
+  buildRememberPromptHtml,
   NativeRememberGrantGate,
   TrustedRememberUiGate,
 } from "./trustedRememberUi.js";
@@ -52,20 +54,41 @@ test("过期输入、keyup 和时间倒退均拒绝", () => {
   assert.equal(gate.consume(validInput()), false);
 });
 
-test("原生确认取消时返回 null 且不登记 nonce", async () => {
+test("自绘确认窗使用统一三层文案与产品皮肤", () => {
+  const install = buildRememberPromptCopy({ kind: "install" });
+  assert.deepEqual(install, {
+    title: "要记住这次选择吗？",
+    message: "以后安装时不再询问",
+    detail: "开启后，之后的安装会直接进行。安装内容可能会改变这台电脑上的软件或设置。可在 设置 → 安全 中恢复每次询问。",
+    rememberLabel: "记住",
+    cancelLabel: "暂不",
+  });
+  const command = buildRememberPromptCopy({ kind: "command" });
+  assert.equal(command.message, "以后遇到同类操作不再询问");
+  assert.match(command.detail, /同类操作会直接进行/);
+
+  const html = buildRememberPromptHtml(install);
+  assert.match(html, /--night:#10191d/);
+  assert.match(html, /--paper:#faf6ec/);
+  assert.match(html, /font-family:"Noto Serif SC","Songti SC","STSong",serif/);
+  assert.match(html, /id="prompt-remember"/);
+  assert.match(html, /id="prompt-cancel"/);
+  assert.doesNotMatch(html, /默认同意|逐次|安装指令|运行环境/);
+});
+
+test("自绘确认取消时返回 null 且不登记 nonce", async () => {
   const gate = new NativeRememberGrantGate();
   let registered = 0;
   const nonce = await gate.request({
     purpose: "confirm",
     kind: "install",
-    showMessageBox: async (options) => {
-      assert.equal(options.title, "记住这类操作？");
-      assert.match(options.message, /安装指令/);
-      assert.match(options.detail, /直接执行/);
-      assert.deepEqual(options.buttons, ["记住", "暂不"]);
-      assert.equal(options.defaultId, 1);
-      assert.equal(options.cancelId, 1);
-      return { response: 1 };
+    showPrompt: async (copy) => {
+      assert.equal(copy.title, "要记住这次选择吗？");
+      assert.equal(copy.message, "以后安装时不再询问");
+      assert.match(copy.detail, /这台电脑上的软件或设置/);
+      assert.equal(copy.rememberLabel, "记住");
+      assert.equal(copy.cancelLabel, "暂不");
+      return "cancel";
     },
     register: () => {
       registered += 1;
@@ -77,16 +100,16 @@ test("原生确认取消时返回 null 且不登记 nonce", async () => {
   assert.equal(registered, 0);
 });
 
-test("原生确认同意后只登记一次 nonce", async () => {
+test("自绘确认同意后只登记一次 nonce", async () => {
   const gate = new NativeRememberGrantGate();
   let registered = 0;
   const nonce = await gate.request({
     purpose: "settings",
     kind: "command",
-    showMessageBox: async (options) => {
-      assert.match(options.message, /此类命令/);
-      assert.match(options.detail, /开启后，同类命令/);
-      return { response: 0 };
+    showPrompt: async (copy) => {
+      assert.equal(copy.message, "以后遇到同类操作不再询问");
+      assert.match(copy.detail, /开启后，之后的同类操作/);
+      return "remember";
     },
     register: () => {
       registered += 1;
@@ -98,19 +121,19 @@ test("原生确认同意后只登记一次 nonce", async () => {
   assert.equal(registered, 1);
 });
 
-test("原生确认未决期间拒绝重复请求且不叠框", async () => {
+test("自绘确认未决期间拒绝重复请求且不叠窗", async () => {
   const gate = new NativeRememberGrantGate();
-  let resolveDialog!: (result: { response: number }) => void;
+  let resolvePrompt!: (result: "remember" | "cancel") => void;
   let shown = 0;
   let registered = 0;
   const first = gate.request({
     purpose: "confirm",
     kind: "command",
-    showMessageBox: (options) => {
+    showPrompt: (copy) => {
       shown += 1;
-      assert.match(options.detail, /以后的同类命令/);
+      assert.match(copy.detail, /之后的同类操作/);
       return new Promise((resolve) => {
-        resolveDialog = resolve;
+        resolvePrompt = resolve;
       });
     },
     register: () => {
@@ -121,9 +144,9 @@ test("原生确认未决期间拒绝重复请求且不叠框", async () => {
   const second = await gate.request({
     purpose: "settings",
     kind: "install",
-    showMessageBox: async () => {
+    showPrompt: async () => {
       shown += 1;
-      return { response: 0 };
+      return "remember";
     },
     register: () => "second-nonce",
   });
@@ -131,7 +154,7 @@ test("原生确认未决期间拒绝重复请求且不叠框", async () => {
   assert.equal(second, null);
   assert.equal(shown, 1);
   assert.equal(registered, 0);
-  resolveDialog({ response: 0 });
+  resolvePrompt("remember");
   assert.equal(await first, "first-nonce");
   assert.equal(registered, 1);
 });
@@ -139,13 +162,13 @@ test("原生确认未决期间拒绝重复请求且不叠框", async () => {
 test("窗口关闭取消旧 modal，重开后可请求且旧回调不得登记 nonce", async () => {
   const gate = new NativeRememberGrantGate();
   const oldGeneration = gate.reset();
-  let resolveOldDialog!: (result: { response: number }) => void;
+  let resolveOldPrompt!: (result: "remember" | "cancel") => void;
   let oldRegistered = 0;
   const oldRequest = gate.request({
     purpose: "confirm",
     kind: "command",
     generation: oldGeneration,
-    showMessageBox: () => new Promise((resolve) => { resolveOldDialog = resolve; }),
+    showPrompt: () => new Promise((resolve) => { resolveOldPrompt = resolve; }),
     register: () => {
       oldRegistered += 1;
       return "old-nonce";
@@ -158,10 +181,10 @@ test("窗口关闭取消旧 modal，重开后可请求且旧回调不得登记 n
     purpose: "confirm",
     kind: "install",
     generation: newGeneration,
-    showMessageBox: async () => ({ response: 0 }),
+    showPrompt: async () => "remember",
     register: () => "new-nonce",
   });
-  resolveOldDialog({ response: 0 });
+  resolveOldPrompt("remember");
 
   assert.equal(await oldRequest, null);
   assert.equal(oldRegistered, 0);
@@ -177,7 +200,7 @@ test("窗口在 nonce 登记过程中关闭会撤销刚签发的旧 nonce", asyn
     purpose: "settings",
     kind: "command",
     generation,
-    showMessageBox: async () => ({ response: 0 }),
+    showPrompt: async () => "remember",
     register: () => new Promise((resolve) => { resolveRegister = resolve; }),
     revoke: (nonce) => { revoked.push(nonce); },
   });

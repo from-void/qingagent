@@ -1,4 +1,5 @@
 export * from "./db/appSettingsRepo.js";
+export * from "./db/confirmGrantRepo.js";
 export * from "./db/documentDraftRepo.js";
 export * from "./db/documentDerivativesRepo.js";
 export * from "./db/documentFamilyRepo.js";

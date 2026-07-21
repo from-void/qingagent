@@ -67,6 +67,9 @@ const APP_TABLES = [
   "review_template_selections",
   "review_dismissal_signals",
   "deleted_sessions",
+  "confirm_grants",
+  "confirm_audit_events",
+  "confirm_grant_events",
 ];
 
 interface ColumnInfo {

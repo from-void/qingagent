@@ -41,6 +41,56 @@ describe("confirm contract schemas", () => {
     }).success).toBe(false);
   });
 
+  it("rememberCategory 仅允许 install/command，且拒绝未声明卡片的 remember", () => {
+    const remembered = confirmSpecSchema.parse({
+      ...plainSpec,
+      rememberCategory: {
+        kind: "command",
+        label: "后续此类命令都默认同意",
+      },
+    });
+    expect(confirmDecisionForSpecSchema(remembered).safeParse({
+      id: remembered.id,
+      accepted: true,
+      remember: true,
+      uiGrantNonce: "nonce-1",
+    }).success).toBe(true);
+    expect(confirmDecisionForSpecSchema(plainSpec).safeParse({
+      id: plainSpec.id,
+      accepted: true,
+      remember: true,
+    }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      kind: "send",
+      rememberCategory: { kind: "send", label: "错误" },
+    }).success).toBe(false);
+  });
+
+  it("拒绝态与无 remember 请求均不能携带 UI grant nonce", () => {
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: false,
+        remember: true,
+        uiGrantNonce: "nonce",
+      },
+    }).success).toBe(false);
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: true,
+        uiGrantNonce: "nonce",
+      },
+    }).success).toBe(false);
+  });
+
   it("解析 options 与 secretInput，并按当前 spec 校验接受字段", () => {
     const optionsSpec = confirmSpecSchema.parse({
       ...plainSpec,

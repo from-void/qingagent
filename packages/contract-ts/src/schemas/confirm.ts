@@ -4,6 +4,7 @@ import type {
   ConfirmKind,
   ConfirmOption,
   ConfirmRequested,
+  RememberCategory,
   ConfirmResolved,
   ConfirmSpec,
   ConfirmWidget,
@@ -14,6 +15,7 @@ import type { Equal, Expect } from "./typeAssert";
 
 const ID_MAX = 128;
 const SECRET_MAX = 8_192;
+const UI_GRANT_NONCE_MAX = 256;
 
 export const confirmKindSchema = z.enum([
   "install",
@@ -68,6 +70,13 @@ export const confirmWidgetSchema = z.discriminatedUnion("type", [
 ]) satisfies z.ZodType<ConfirmWidget>;
 type _ConfirmWidgetExact = Expect<Equal<z.infer<typeof confirmWidgetSchema>, ConfirmWidget>>;
 
+export const rememberCategorySchema = z.object({
+  kind: z.enum(["install", "command"]),
+  label: boundedNonEmptyString(160),
+  riskHint: boundedNonEmptyString(300).optional(),
+  insecureWithoutDesktop: z.boolean().optional(),
+}).strict() satisfies z.ZodType<RememberCategory>;
+
 export const confirmSpecSchema = z.object({
   id: boundedNonEmptyString(ID_MAX),
   kind: confirmKindSchema,
@@ -76,6 +85,7 @@ export const confirmSpecSchema = z.object({
   say: boundedNonEmptyString(1_200),
   commandPreview: boundedNonEmptyString(2_000).optional(),
   widget: confirmWidgetSchema.optional(),
+  rememberCategory: rememberCategorySchema.optional(),
   footHint: boundedNonEmptyString(300),
   primaryLabel: boundedNonEmptyString(64),
   secondaryLabel: boundedNonEmptyString(64),
@@ -87,6 +97,8 @@ export const confirmDecisionSchema = z.object({
   accepted: z.boolean(),
   optionValue: boundedNonEmptyString(128).optional(),
   secretValue: z.string().max(SECRET_MAX).optional(),
+  remember: z.boolean().optional(),
+  uiGrantNonce: boundedNonEmptyString(UI_GRANT_NONCE_MAX).optional(),
 }).strict().superRefine((decision, ctx) => {
   if (!decision.accepted && decision.optionValue !== undefined) {
     ctx.addIssue({
@@ -100,6 +112,27 @@ export const confirmDecisionSchema = z.object({
       code: "custom",
       path: ["secretValue"],
       message: "secretValue is forbidden when accepted is false",
+    });
+  }
+  if (!decision.accepted && decision.remember !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["remember"],
+      message: "remember is forbidden when accepted is false",
+    });
+  }
+  if (!decision.accepted && decision.uiGrantNonce !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["uiGrantNonce"],
+      message: "uiGrantNonce is forbidden when accepted is false",
+    });
+  }
+  if (decision.uiGrantNonce !== undefined && decision.remember !== true) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["uiGrantNonce"],
+      message: "uiGrantNonce requires remember=true",
     });
   }
 }) satisfies z.ZodType<ConfirmDecision>;
@@ -148,6 +181,16 @@ export function confirmDecisionForSpecSchema(
       return;
     }
     if (!decision.accepted) return;
+
+    if (decision.remember === true) {
+      if (!spec.rememberCategory || spec.rememberCategory.kind !== spec.kind) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["remember"],
+          message: "remember is forbidden for this confirm spec",
+        });
+      }
+    }
 
     if (spec.widget?.type === "options") {
       if (

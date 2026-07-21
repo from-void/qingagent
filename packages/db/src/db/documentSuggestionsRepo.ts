@@ -39,13 +39,17 @@ function annotationInsertStatements(
       summary, conflict_json, kind, note, origin, group_id, group_meta_json,
       severity, created_at, updated_at
     ) SELECT ?, ?, ?, 'reviewing', ?, NULL, NULL, ?, NULL, 'annotation', ?, ?, ?, ?, ?, ?, ?
-    WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ?)`,
+    WHERE NOT EXISTS (
+      SELECT 1 FROM deleted_sessions
+      WHERE session_id = ?
+        OR session_id = (SELECT thread_id FROM documents WHERE id = ?)
+    )`,
     args: [
       `${group.id}:${index + 1}`, docId, baseVersion, JSON.stringify(anchor), group.summary,
       group.note, group.origin, group.id,
       JSON.stringify({ summary: group.summary, suggestion: group.suggestion, hitCount: group.anchors.length, severity: group.severity }),
       group.severity ?? null,
-      now, now, docId,
+      now, now, docId, docId,
     ],
   })));
 }
@@ -68,8 +72,11 @@ async function assertSuggestionNotTombstoned(
   target: DocumentWriteTarget,
 ): Promise<void> {
   const result = await client.execute({
-    sql: "SELECT 1 FROM deleted_sessions WHERE session_id = ? LIMIT 1",
-    args: [target.docId],
+    sql: `SELECT 1 FROM deleted_sessions
+      WHERE session_id = ?
+        OR session_id = (SELECT thread_id FROM documents WHERE id = ?)
+      LIMIT 1`,
+    args: [target.docId, target.docId],
   });
   if (result.rows.length > 0) throw new DocumentWriteBlockedError(target);
 }
@@ -188,7 +195,11 @@ export async function upsertDocumentSuggestion(
           preview_json, summary, conflict_json, created_at, updated_at
           , severity
         ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (SELECT 1 FROM deleted_sessions WHERE session_id = ?)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM deleted_sessions
+          WHERE session_id = ?
+            OR session_id = (SELECT thread_id FROM documents WHERE id = ?)
+        )
         ON CONFLICT(doc_id, base_version, batch_id, id) DO UPDATE SET
           status = excluded.status,
           anchor_json = excluded.anchor_json,
@@ -212,6 +223,7 @@ export async function upsertDocumentSuggestion(
         now,
         now,
         suggestion.severity ?? null,
+        suggestion.docId,
         suggestion.docId,
       ],
     });

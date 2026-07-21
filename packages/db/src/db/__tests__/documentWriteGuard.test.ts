@@ -117,9 +117,9 @@ describe("document write guard", () => {
       status: "reviewing" as const,
       anchors: [{ blockId: "p", pmFrom: 1, pmTo: 2, quote: "旧", textHash: "hash" }],
     };
+    await documentRepo.save(documentInput(docId, { threadId }));
     await insertAnnotationGroups(docId, 1, [oldGroup]);
     setDocumentWriteGuard(null);
-    await beginSessionDeletion(docId);
     await beginSessionDeletion(threadId);
 
     await expect(documentDraftRepo.savePending(draftInput))

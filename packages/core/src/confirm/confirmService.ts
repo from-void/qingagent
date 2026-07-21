@@ -213,12 +213,19 @@ export class ConfirmService {
     try {
       await this.#persist(state, "confirm:stored-grant-resuming");
     } catch (error) {
-      pending.status = "pending";
-      delete pending.decisionId;
-      delete pending.decisionSource;
-      delete pending.decisionAccepted;
-      delete pending.decisionGrantId;
+      this.#resetStoredGrantDecision(pending);
       throw error;
+    }
+    let currentGrant: ConfirmGrant | null;
+    try {
+      currentGrant = await this.#loadGrant(grant.kind);
+    } catch (error) {
+      await this.#rollbackStoredGrantDecision(state, pending);
+      throw error;
+    }
+    if (!currentGrant || currentGrant.grantId !== grant.grantId) {
+      await this.#rollbackStoredGrantDecision(state, pending);
+      throw new ConfirmDecisionError("conflict", "存量确认已撤销");
     }
     issueApprovalProof(state, {
       sessionId: state.sessionId,
@@ -235,6 +242,22 @@ export class ConfirmService {
       result: "stored-grant-approved",
     });
     return decisionId;
+  }
+
+  #resetStoredGrantDecision(pending: PendingConfirm): void {
+    pending.status = "pending";
+    delete pending.decisionId;
+    delete pending.decisionSource;
+    delete pending.decisionAccepted;
+    delete pending.decisionGrantId;
+  }
+
+  async #rollbackStoredGrantDecision(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    this.#resetStoredGrantDecision(pending);
+    await this.#persist(state, "confirm:stored-grant-rollback");
   }
 
   stageSecret(

@@ -308,6 +308,58 @@ describe("ConfirmService", () => {
     if (afterRevoke.ok) expect(afterRevoke.storedGrantApproval).toBeUndefined();
   });
 
+  it("grant 在首次读取后撤销时回滚 pending 并重新发确认卡", async () => {
+    const state = createSession("grant-revoked-during-resume");
+    const grant: ConfirmGrant = {
+      grantId: "grant-race",
+      kind: "command",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      source: "settings",
+    };
+    const persistReasons: string[] = [];
+    let reads = 0;
+    const service = new ConfirmService({
+      createId: () => "confirm-race",
+      persist: async (_current, reason) => {
+        persistReasons.push(reason);
+      },
+      loadGrant: async () => (++reads === 1 ? grant : null),
+      appendAudit: async () => undefined,
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-race",
+      toolCallId: "tool-race",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "mv race.txt safe.txt" },
+      aborted: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      frame: { kind: "confirmRequested", data: { toolCallId: "tool-race" } },
+      pending: { status: "pending" },
+    });
+    if (!result.ok) return;
+    expect(result.storedGrantApproval).toBeUndefined();
+    expect(result.pending).not.toHaveProperty("decisionId");
+    expect(result.pending).not.toHaveProperty("decisionGrantId");
+    expect(persistReasons).toEqual([
+      "confirm:requested",
+      "confirm:stored-grant-resuming",
+      "confirm:stored-grant-rollback",
+    ]);
+    expect(consumeApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-race",
+      toolCallId: "tool-race",
+      commandDigest: result.pending.commandDigest,
+    })).toBe(false);
+    errorSpy.mockRestore();
+  });
+
   it("UI、stored grant 与过期路径审计都保留来源、grantId 和 digest", async () => {
     const audits: Array<Record<string, unknown>> = [];
     const service = new ConfirmService({

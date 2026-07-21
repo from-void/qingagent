@@ -72,7 +72,17 @@ describe("confirm contract schemas", () => {
     }).success).toBe(false);
   });
 
-  it("拒绝态与无 remember 请求均不能携带 UI grant nonce", () => {
+  it("拒绝态 remember 合法但仍不能携带 UI grant nonce", () => {
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: false,
+        remember: true,
+      },
+    }).success).toBe(true);
     expect(submitConfirmDecisionSchema.safeParse({
       sessionId: "s",
       toolCallId: "t",

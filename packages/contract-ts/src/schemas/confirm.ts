@@ -122,13 +122,6 @@ export const confirmDecisionSchema = z.object({
       message: "secretValue is forbidden when accepted is false",
     });
   }
-  if (!decision.accepted && decision.remember !== undefined) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["remember"],
-      message: "remember is forbidden when accepted is false",
-    });
-  }
   if (!decision.accepted && decision.uiGrantNonce !== undefined) {
     ctx.addIssue({
       code: "custom",

@@ -143,8 +143,25 @@ export function createConfirmRoutes(
   const session = await getSession(parsed.sessionId);
   if (!session) return c.json({ error: "没有可处理的确认请求" }, 404);
   const pending = session.pendingConfirms.get(parsed.toolCallId);
-  const rememberRequested = parsed.decision.remember === true;
+  const rememberRequested = parsed.decision.accepted && parsed.decision.remember === true;
   let rememberAuthorized = false;
+  if (rememberRequested && pending?.confirmId !== parsed.decision.id) {
+    const relatedPending = pending
+      ?? Array.from(session.pendingConfirms.values()).find(
+        (item) => item.confirmId === parsed.decision.id,
+      )
+      ?? (session.pendingConfirms.size === 1
+        ? session.pendingConfirms.values().next().value
+        : undefined);
+    if (relatedPending) {
+      await service.recordRememberRejected(
+        session,
+        relatedPending,
+        parsed.decision.accepted,
+        "stale-confirm",
+      );
+    }
+  }
   if (rememberRequested && pending?.confirmId === parsed.decision.id) {
     if (pending.spec.kind === "send" || pending.spec.kind === "connect") {
       await service.recordRememberRejected(

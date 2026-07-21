@@ -248,4 +248,50 @@ describe("确认记忆路由", () => {
     expect(declined.decisions).toHaveLength(1);
     expect(declined.created).toHaveLength(0);
   });
+
+  it.each([
+    ["confirmId 不匹配", { id: "confirm-stale" }],
+    ["pending 标识缺失", { toolCallId: "tool-stale" }],
+  ])("%s 的 remember 先审计 stale-confirm，decision 仍照常处理", async (_label, mismatch) => {
+    const harness = makeHarness();
+    const body = {
+      ...decisionBody(harness),
+      ...("toolCallId" in mismatch ? { toolCallId: mismatch.toolCallId } : {}),
+      decision: {
+        ...decisionBody(harness).decision,
+        ...("id" in mismatch ? { id: mismatch.id } : {}),
+      },
+    };
+
+    const response = await postDecision(harness, body);
+
+    expect(response.status).toBe(200);
+    expect(harness.decisions).toHaveLength(1);
+    expect(harness.created).toHaveLength(0);
+    expect(harness.audits).toContainEqual(expect.objectContaining({
+      eventType: "remember_rejected",
+      result: "remember-rejected:stale-confirm",
+      commandDigest: "digest-a",
+    }));
+  });
+
+  it("decline 携带 remember 时忽略记忆并正常处理拒绝", async () => {
+    const harness = makeHarness();
+    const response = await postDecision(harness, {
+      ...decisionBody(harness),
+      decision: {
+        id: harness.pendingSpec.id,
+        accepted: false,
+        remember: true,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: true, remembered: false });
+    expect(harness.decisions).toContainEqual(expect.objectContaining({
+      decision: { id: harness.pendingSpec.id, accepted: false },
+    }));
+    expect(harness.created).toHaveLength(0);
+    expect(harness.audits).toHaveLength(0);
+  });
 });

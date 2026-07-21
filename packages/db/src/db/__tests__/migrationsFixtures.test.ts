@@ -70,6 +70,7 @@ const APP_TABLES = [
   "confirm_grants",
   "confirm_audit_events",
   "confirm_grant_events",
+  "confirm_grant_states",
 ];
 
 interface ColumnInfo {

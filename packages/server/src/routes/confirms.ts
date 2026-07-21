@@ -23,9 +23,9 @@ import { handleConfirmDecision } from "../gateway/confirmRuntime";
 import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import {
-  createConfirmGrantWithResult,
-  type ConfirmGrant,
-  type ConfirmGrantCreation,
+  createConfirmGrantCanonical,
+  type ConfirmGrantCanonical,
+  type ConfirmGrantMutation,
 } from "@qingagent/db";
 import {
   consumeConfirmUiGrant,
@@ -118,7 +118,8 @@ interface ConfirmRoutesDependencies {
   createGrant?: (input: {
     kind: "install" | "command";
     source: "card";
-  }) => Promise<ConfirmGrantCreation | ConfirmGrant>;
+    expectedRevocationEpoch: number;
+  }) => Promise<ConfirmGrantMutation>;
   cancelCommand?: typeof cancelConfirmedCommand;
 }
 
@@ -134,7 +135,7 @@ export function createConfirmRoutes(
   const consumeUiGrant = dependencies.consumeUiGrant ?? consumeConfirmUiGrant;
   const allowInsecureRemember = dependencies.insecureRememberAllowed
     ?? insecureRememberAllowed;
-  const createGrant = dependencies.createGrant ?? createConfirmGrantWithResult;
+  const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
   const cancelCommand = dependencies.cancelCommand ?? cancelConfirmedCommand;
 
   routes.post("/confirms/cancel", async (c) => {
@@ -184,6 +185,8 @@ export function createConfirmRoutes(
   const rememberRequested = parsed.decision.accepted && parsed.decision.remember === true;
   let rememberAuthorized = false;
   let rememberCreated = false;
+  let rememberFailure: "not-saved" | "settings-changed" | undefined;
+  let canonicalGrantState: ConfirmGrantCanonical | undefined;
   if (rememberRequested && pending?.confirmId !== parsed.decision.id) {
     const relatedPending = pending
       ?? Array.from(session.pendingConfirms.values()).find(
@@ -213,6 +216,7 @@ export function createConfirmRoutes(
     }
     if (pending.spec.kind === "install" || pending.spec.kind === "command") {
       if (pending.spec.rememberCategory?.kind !== pending.spec.kind) {
+        rememberFailure = "not-saved";
         await service.recordRememberRejected(
           session,
           pending,
@@ -232,6 +236,7 @@ export function createConfirmRoutes(
           allowInsecureRemember()
         ) || consumed.ok;
         if (!rememberAuthorized) {
+          rememberFailure = "not-saved";
           await service.recordRememberRejected(
             session,
             pending,
@@ -258,19 +263,48 @@ export function createConfirmRoutes(
             onAccepted: async (current) => {
               if (current.spec.kind !== "install" && current.spec.kind !== "command") return null;
               if (current.spec.rememberCategory?.kind !== current.spec.kind) return null;
-              const creation = await createGrant({ kind: current.spec.kind, source: "card" });
-              if ("grant" in creation) {
-                rememberCreated = creation.created;
-                return creation.grant;
+              if (current.rememberRevocationEpoch === undefined) {
+                rememberFailure = "settings-changed";
+                await service.recordRememberRejected(
+                  session,
+                  current,
+                  true,
+                  "missing-revocation-line",
+                );
+                return null;
               }
-              // 兼容注入旧式 createGrant 的调用方；该接口每次调用都表示新建成功。
-              rememberCreated = true;
-              return creation;
+              const creation = await createGrant({
+                kind: current.spec.kind,
+                source: "card",
+                expectedRevocationEpoch: current.rememberRevocationEpoch,
+              });
+              canonicalGrantState = {
+                present: creation.state.present,
+                grantId: creation.state.grantId,
+                version: creation.state.version,
+              };
+              if (creation.stale) {
+                rememberFailure = "settings-changed";
+                await service.recordRememberRejected(
+                  session,
+                  current,
+                  true,
+                  "revocation-line-advanced",
+                );
+                return null;
+              }
+              rememberCreated = creation.created;
+              return creation.grant;
             },
           }
         : {}),
     }));
-    return c.json({ accepted: true, remembered: rememberCreated });
+    return c.json({
+      accepted: true,
+      remembered: rememberCreated,
+      ...(canonicalGrantState ?? {}),
+      ...(rememberFailure ? { rememberFailure } : {}),
+    });
   } catch (error) {
     service.discardSecret(session, parsed.decision.id);
     if (error instanceof SessionActorQueueFullError) {

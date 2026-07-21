@@ -6,10 +6,11 @@ import type {
 import { confirmDecisionForSpecSchema } from "@qingagent/contract-ts/schemas";
 import {
   appendConfirmAuditEvent,
-  getConfirmGrant,
+  getConfirmGrantState,
   type ConfirmAuditEvent,
   type ConfirmGrant,
   type ConfirmGrantKind,
+  type ConfirmGrantState,
 } from "@qingagent/db";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
@@ -54,6 +55,7 @@ export interface ConfirmServiceOptions {
   persist?: (state: SessionState, reason: string) => Promise<void>;
   secrets?: SecretLeaseStore;
   loadGrant?: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
+  loadGrantState?: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
   appendAudit?: (
     event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
   ) => Promise<unknown>;
@@ -83,7 +85,7 @@ export class ConfirmService {
   readonly #createId: () => string;
   readonly #persist: (state: SessionState, reason: string) => Promise<void>;
   readonly #secrets: SecretLeaseStore;
-  readonly #loadGrant: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
+  readonly #loadGrantState: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
   readonly #appendAudit: (
     event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
   ) => Promise<unknown>;
@@ -96,7 +98,20 @@ export class ConfirmService {
     // main 已把 persistSessionMetadata 改为失败无条件抛,无需再显式要求 rethrow
     this.#persist = options.persist ?? ((state, reason) => persistSessionMetadata(state, reason));
     this.#secrets = options.secrets ?? secretLeaseStore;
-    this.#loadGrant = options.loadGrant ?? getConfirmGrant;
+    this.#loadGrantState = options.loadGrantState
+      ?? (options.loadGrant
+        ? async (kind) => {
+            const grant = await options.loadGrant!(kind);
+            return {
+              kind,
+              present: grant !== null,
+              grantId: grant?.grantId ?? null,
+              version: grant ? 1 : 0,
+              revocationEpoch: 0,
+              grant,
+            };
+          }
+        : getConfirmGrantState);
     this.#appendAudit = options.appendAudit ?? appendConfirmAuditEvent;
     this.#issueProof = options.issueProof ?? issueApprovalProof;
   }
@@ -146,6 +161,18 @@ export class ConfirmService {
     } catch {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
+    let grantState: ConfirmGrantState | null = null;
+    if (spec.kind === "install" || spec.kind === "command") {
+      try {
+        grantState = await this.#loadGrantState(spec.kind);
+      } catch (error) {
+        console.error("[confirm-audit] grant state lookup failed; showing confirm card", {
+          sessionId: input.state.sessionId,
+          confirmId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const pending: PendingConfirm = {
       confirmId,
       runId: input.runId,
@@ -156,6 +183,9 @@ export class ConfirmService {
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CONFIRM_TTL_MS).toISOString(),
       status: "pending",
+      ...(grantState
+        ? { rememberRevocationEpoch: grantState.revocationEpoch }
+        : {}),
     };
     input.state.pendingConfirms.set(input.toolCallId, pending);
     try {
@@ -164,17 +194,15 @@ export class ConfirmService {
       input.state.pendingConfirms.delete(input.toolCallId);
       return { ok: false, reason: "确认请求无法安全持久化" };
     }
-    if (pending.spec.kind === "install" || pending.spec.kind === "command") {
+    if (grantState?.grant) {
       try {
-        const grant = await this.#loadGrant(pending.spec.kind);
-        if (grant) {
-          const decisionId = await this.#approveFromStoredGrant(input.state, pending, grant);
-          return {
-            ok: true,
-            pending,
-            storedGrantApproval: { decisionId, grant },
-          };
-        }
+        const grant = grantState.grant;
+        const decisionId = await this.#approveFromStoredGrant(input.state, pending, grant);
+        return {
+          ok: true,
+          pending,
+          storedGrantApproval: { decisionId, grant },
+        };
       } catch (error) {
         console.error("[confirm-audit] stored grant lookup/approval failed; showing confirm card", {
           sessionId: input.state.sessionId,
@@ -226,8 +254,8 @@ export class ConfirmService {
       throw error;
     }
     try {
-      const currentGrant = await this.#loadGrant(grant.kind);
-      if (!currentGrant || currentGrant.grantId !== grant.grantId) {
+      const currentState = await this.#loadGrantState(grant.kind);
+      if (!currentState.grant || currentState.grant.grantId !== grant.grantId) {
         throw new ConfirmDecisionError("conflict", "存量确认已撤销");
       }
       this.#issueProof(state, {

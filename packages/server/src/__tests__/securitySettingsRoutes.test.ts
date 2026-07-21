@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import type { ConfirmGrant, ConfirmGrantKind, ConfirmGrantSource } from "@qingagent/db";
+import type {
+  ConfirmGrant,
+  ConfirmGrantKind,
+  ConfirmGrantSource,
+  ConfirmGrantState,
+} from "@qingagent/db";
 import { ConfirmUiGrantStore } from "../lib/confirmUiGrant";
 import { createSecuritySettingsRoutes } from "../routes/securitySettings";
 
@@ -8,11 +13,22 @@ function makeHarness(initial: ConfirmGrant[] = []) {
   const stored = new Map<ConfirmGrantKind, ConfirmGrant>(initial.map((grant) => [grant.kind, grant]));
   const created: ConfirmGrantKind[] = [];
   const revoked: ConfirmGrantKind[] = [];
+  const versions = new Map<ConfirmGrantKind, number>([["install", 0], ["command", 0]]);
   let sequence = 0;
   const nonces = new ConfirmUiGrantStore({ createNonce: () => `settings-nonce-${sequence++}` });
   const app = new Hono();
   app.route("/api/v1", createSecuritySettingsRoutes({
-    listGrants: async () => [...stored.values()],
+    listGrantStates: async () => (["install", "command"] as const).map((kind): ConfirmGrantState => {
+      const grant = stored.get(kind) ?? null;
+      return {
+        kind,
+        present: grant !== null,
+        grantId: grant?.grantId ?? null,
+        version: versions.get(kind) ?? 0,
+        revocationEpoch: 0,
+        grant,
+      };
+    }),
     createGrant: async ({ kind, source }) => {
       created.push(kind);
       const grant = {
@@ -22,13 +38,39 @@ function makeHarness(initial: ConfirmGrant[] = []) {
         createdAt: new Date().toISOString(),
       };
       stored.set(kind, grant);
-      return grant;
+      const version = (versions.get(kind) ?? 0) + 1;
+      versions.set(kind, version);
+      return {
+        grant,
+        created: true,
+        stale: false,
+        state: {
+          kind,
+          present: true,
+          grantId: grant.grantId,
+          version,
+          revocationEpoch: 0,
+          grant,
+        },
+      };
     },
     revokeGrant: async (kind) => {
       revoked.push(kind);
       const grant = stored.get(kind) ?? null;
       stored.delete(kind);
-      return grant;
+      const version = (versions.get(kind) ?? 0) + 1;
+      versions.set(kind, version);
+      return {
+        revokedGrant: grant,
+        state: {
+          kind,
+          present: false,
+          grantId: null,
+          version,
+          revocationEpoch: version,
+          grant: null,
+        },
+      };
     },
     consumeUiGrant: (input) => nonces.consume(input),
     insecureRememberAllowed: () => false,
@@ -112,8 +154,30 @@ describe("安全设置路由", () => {
     }) => ({ grantId: "dev-grant", kind, source, createdAt: new Date().toISOString() }));
     const app = new Hono();
     app.route("/api/v1", createSecuritySettingsRoutes({
-      listGrants: async () => [],
-      createGrant,
+      listGrantStates: async () => (["install", "command"] as const).map((kind) => ({
+        kind,
+        present: false,
+        grantId: null,
+        version: 0,
+        revocationEpoch: 0,
+        grant: null,
+      })),
+      createGrant: async (input) => {
+        const grant = await createGrant(input);
+        return {
+          grant,
+          created: true,
+          stale: false,
+          state: {
+            kind: input.kind,
+            present: true,
+            grantId: grant.grantId,
+            version: 1,
+            revocationEpoch: 0,
+            grant,
+          },
+        };
+      },
       insecureRememberAllowed: () => true,
     }));
     expect((await post(app, "command", { needConfirmation: false })).status).toBe(200);

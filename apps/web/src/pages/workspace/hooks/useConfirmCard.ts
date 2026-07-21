@@ -10,6 +10,7 @@ import type {
 } from "../components/ConfirmOverlay";
 import type { ServerStream } from "../data/serverStream";
 import { useToast } from "../../../system";
+import { publishRememberGrantState } from "../../../system/confirmGrantState";
 
 interface ConfirmDemo {
   spec: ConfirmSpec;
@@ -257,6 +258,12 @@ export function useConfirmCard({
       void stream.resolveConfirm(submission, {
         activateSession: isCurrentBinding(),
       }).then((result) => {
+        if (result.grantState && liveConfirm.spec.rememberCategory) {
+          publishRememberGrantState({
+            kind: liveConfirm.spec.rememberCategory.kind,
+            ...result.grantState,
+          });
+        }
         if (result.remembered) {
           const message = liveConfirm.spec.kind === "install"
             ? "已记住：以后安装时不再询问。可在 设置 → 安全 中恢复每次询问。"

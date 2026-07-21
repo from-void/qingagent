@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendConfirmAuditEvent,
   createConfirmGrant,
+  createConfirmGrantCanonical,
   createConfirmGrantWithResult,
   getConfirmGrant,
+  getConfirmGrantState,
   listConfirmAuditEvents,
   listConfirmGrantEvents,
   listConfirmGrants,
   revokeConfirmGrant,
+  revokeConfirmGrantWithState,
 } from "../confirmGrantRepo.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
@@ -107,5 +110,67 @@ describe("confirm grant 与不可变审计仓储", () => {
       isolationEpoch: null,
       configHash: null,
     }]);
+  });
+
+  it("并发 create→revoke 以撤销后的 canonical 终态收敛", async () => {
+    const observed = await getConfirmGrantState("install");
+    const [created, revoked] = await Promise.all([
+      createConfirmGrantCanonical({
+        kind: "install",
+        source: "card",
+        grantId: "grant-create-first",
+        expectedRevocationEpoch: observed.revocationEpoch,
+      }),
+      revokeConfirmGrantWithState("install"),
+    ]);
+
+    expect(created.state).toMatchObject({ present: true, version: 1 });
+    expect(revoked.state).toMatchObject({ present: false, grantId: null, version: 2 });
+    expect(await getConfirmGrantState("install")).toMatchObject({
+      present: false,
+      grantId: null,
+      version: 2,
+      revocationEpoch: 2,
+    });
+  });
+
+  it("并发 revoke→create 以较新的设置创建收敛", async () => {
+    const [revoked, created] = await Promise.all([
+      revokeConfirmGrantWithState("command"),
+      createConfirmGrantCanonical({
+        kind: "command",
+        source: "settings",
+        grantId: "grant-create-after-revoke",
+      }),
+    ]);
+
+    expect(revoked.state).toMatchObject({ present: false, version: 1, revocationEpoch: 1 });
+    expect(created).toMatchObject({ created: true, stale: false });
+    expect(await getConfirmGrantState("command")).toMatchObject({
+      present: true,
+      grantId: "grant-create-after-revoke",
+      version: 2,
+      revocationEpoch: 1,
+    });
+  });
+
+  it("撤销后到达的旧卡 callback 不能复活 grant", async () => {
+    const oldCardState = await getConfirmGrantState("command");
+    await revokeConfirmGrantWithState("command");
+
+    const stale = await createConfirmGrantCanonical({
+      kind: "command",
+      source: "card",
+      grantId: "must-not-revive",
+      expectedRevocationEpoch: oldCardState.revocationEpoch,
+    });
+
+    expect(stale).toMatchObject({
+      grant: null,
+      created: false,
+      stale: true,
+      state: { present: false, grantId: null, version: 1, revocationEpoch: 1 },
+    });
+    expect(await getConfirmGrant("command")).toBeNull();
   });
 });

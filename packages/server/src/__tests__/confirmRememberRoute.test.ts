@@ -26,7 +26,11 @@ function spec(kind: ConfirmKind, id = "confirm-a"): ConfirmSpec {
   };
 }
 
-function makeHarness(kind: ConfirmKind = "command", grantCreated = true) {
+function makeHarness(
+  kind: ConfirmKind = "command",
+  grantCreated = true,
+  grantStale = false,
+) {
   const session = createSession("session-a");
   const toolCallId = "tool-a";
   const pendingSpec = spec(kind);
@@ -40,6 +44,7 @@ function makeHarness(kind: ConfirmKind = "command", grantCreated = true) {
     requestedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     status: "pending",
+    rememberRevocationEpoch: 0,
   });
   const audits: AuditInput[] = [];
   const decisions: SafeSubmitConfirmDecision[] = [];
@@ -79,14 +84,39 @@ function makeHarness(kind: ConfirmKind = "command", grantCreated = true) {
     cancelCommand,
     createGrant: async (input) => {
       created.push(input);
+      if (grantStale) {
+        return {
+          grant: null,
+          created: false,
+          stale: true,
+          state: {
+            kind: input.kind,
+            present: false,
+            grantId: null,
+            version: 2,
+            revocationEpoch: input.expectedRevocationEpoch + 1,
+            grant: null,
+          },
+        };
+      }
+      const grant = {
+        grantId: `grant-${created.length}`,
+        kind: input.kind,
+        source: input.source,
+        createdAt: new Date().toISOString(),
+      };
       return {
-        grant: {
-          grantId: `grant-${created.length}`,
-          kind: input.kind,
-          source: input.source,
-          createdAt: new Date().toISOString(),
-        },
+        grant,
         created: grantCreated,
+        stale: false,
+        state: {
+          kind: input.kind,
+          present: true,
+          grantId: grant.grantId,
+          version: 1,
+          revocationEpoch: input.expectedRevocationEpoch,
+          grant,
+        },
       };
     },
   }));
@@ -138,7 +168,11 @@ describe("确认记忆路由", () => {
     const response = await postDecision(harness, decisionBody(harness), headers);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ accepted: true, remembered: false });
+    expect(await response.json()).toEqual({
+      accepted: true,
+      remembered: false,
+      rememberFailure: "not-saved",
+    });
     expect(harness.decisions).toHaveLength(1);
     expect(harness.created).toHaveLength(0);
     expect(harness.audits).toContainEqual(expect.objectContaining({
@@ -199,15 +233,27 @@ describe("确认记忆路由", () => {
         }),
         consumeUiGrant: (input) => grants.consume(input),
         insecureRememberAllowed: () => false,
-        createGrant: async (input) => ({
-          grant: {
+        createGrant: async (input) => {
+          const grant = {
             grantId: "must-not-create",
             kind: input.kind,
             source: input.source,
             createdAt: new Date().toISOString(),
-          },
-          created: true,
-        }),
+          };
+          return {
+            grant,
+            created: true,
+            stale: false,
+            state: {
+              kind: input.kind,
+              present: true,
+              grantId: grant.grantId,
+              version: 1,
+              revocationEpoch: input.expectedRevocationEpoch,
+              grant,
+            },
+          };
+        },
       }));
       harness.app = routeApp;
 
@@ -255,8 +301,18 @@ describe("确认记忆路由", () => {
       decisionBody(accepted, { uiGrantNonce: nonce }),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ accepted: true, remembered: true });
-    expect(accepted.created).toEqual([{ kind: "command", source: "card" }]);
+    expect(await response.json()).toEqual({
+      accepted: true,
+      remembered: true,
+      present: true,
+      grantId: "grant-1",
+      version: 1,
+    });
+    expect(accepted.created).toEqual([{
+      kind: "command",
+      source: "card",
+      expectedRevocationEpoch: 0,
+    }]);
 
     const declined = makeHarness();
     const declineResponse = await postDecision(declined, {
@@ -282,8 +338,44 @@ describe("确认记忆路由", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ accepted: true, remembered: false });
+    expect(await response.json()).toEqual({
+      accepted: true,
+      remembered: false,
+      present: true,
+      grantId: "grant-1",
+      version: 1,
+    });
     expect(harness.created).toHaveLength(1);
+  });
+
+  it("撤销线推进后到达的旧 callback 只执行本次且不复活记忆", async () => {
+    const harness = makeHarness("command", false, true);
+    const nonce = harness.grants.register({
+      purpose: "confirm",
+      sessionId: harness.session.sessionId,
+      confirmId: harness.pendingSpec.id,
+      kind: "command",
+    });
+
+    const response = await postDecision(
+      harness,
+      decisionBody(harness, { uiGrantNonce: nonce }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      accepted: true,
+      remembered: false,
+      present: false,
+      grantId: null,
+      version: 2,
+      rememberFailure: "settings-changed",
+    });
+    expect(harness.decisions).toHaveLength(1);
+    expect(harness.audits).toContainEqual(expect.objectContaining({
+      eventType: "remember_rejected",
+      result: "remember-rejected:revocation-line-advanced",
+    }));
   });
 
   it("卡级停止把 sessionId 与 toolCallId 精确交给当前执行者", async () => {

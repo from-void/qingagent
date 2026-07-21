@@ -30,14 +30,20 @@ describe("HomeSettingsSheet 安全页", () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         categories: [
-          { kind: "install", label: "安装指令", needConfirmation: true, mutable: true },
-          { kind: "command", label: "此类命令", needConfirmation: false, mutable: true },
-          { kind: "send", label: "外发指令", needConfirmation: true, mutable: false },
-          { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false },
+          { kind: "install", label: "安装指令", needConfirmation: true, mutable: true, present: false, grantId: null, version: 0 },
+          { kind: "command", label: "此类命令", needConfirmation: false, mutable: true, present: true, grantId: "grant-command", version: 1 },
+          { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+          { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
         ],
         insecureRememberAllowed: false,
       }), { status: 200 }))
-      .mockResolvedValue(new Response("{}", { status: 200 }));
+      .mockResolvedValue(new Response(JSON.stringify({
+        kind: "command",
+        needConfirmation: true,
+        present: false,
+        grantId: null,
+        version: 2,
+      }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     host = document.createElement("div");
     document.body.appendChild(host);

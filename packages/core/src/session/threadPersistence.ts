@@ -201,6 +201,10 @@ export interface QingagentThreadMetadata {
     expiresAt: string;
     status: "pending" | "resuming";
     decisionId?: string;
+    decisionSource?: "ui" | "stored-grant";
+    decisionAccepted?: boolean;
+    decisionGrantId?: string;
+    rememberRevocationEpoch?: number;
   }>;
   /** Lightweight summary for home page listing — avoids parsing full legacySections. */
   threadSummary?: {
@@ -647,6 +651,9 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
         ? { decisionAccepted: pending.decisionAccepted }
         : {}),
       ...(pending.decisionGrantId ? { decisionGrantId: pending.decisionGrantId } : {}),
+      ...(pending.rememberRevocationEpoch !== undefined
+        ? { rememberRevocationEpoch: pending.rememberRevocationEpoch }
+        : {}),
     })),
     threadSummary,
     lastPersistedAt: new Date().toISOString(),
@@ -706,6 +713,11 @@ function deserializePendingConfirms(
         : {}),
       ...(isNonEmptyString(item.decisionGrantId)
         ? { decisionGrantId: item.decisionGrantId }
+        : {}),
+      ...(typeof item.rememberRevocationEpoch === "number" &&
+        Number.isSafeInteger(item.rememberRevocationEpoch) &&
+        item.rememberRevocationEpoch >= 0
+        ? { rememberRevocationEpoch: item.rememberRevocationEpoch }
         : {}),
     });
   }

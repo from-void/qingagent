@@ -1,13 +1,22 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { useToast } from "../../system/ToastProvider";
+import {
+  publishRememberGrantState,
+  subscribeRememberGrantState,
+  type RememberGrantCanonical,
+} from "../../system/confirmGrantState";
 
 type SecurityKind = "install" | "command" | "send" | "connect";
+type UpdatePhase = "idle" | "updating" | "settled";
 
 interface SecurityCategory {
   kind: SecurityKind;
   label: string;
   needConfirmation: boolean;
   mutable: boolean;
+  present: boolean;
+  grantId: string | null;
+  version: number;
 }
 
 interface SecuritySettingsResponse {
@@ -15,75 +24,182 @@ interface SecuritySettingsResponse {
   insecureRememberAllowed: boolean;
 }
 
+const POST_TIMEOUT_MS = 8_000;
+
+function isCategory(value: unknown): value is SecurityCategory {
+  if (!value || typeof value !== "object") return false;
+  const input = value as Record<string, unknown>;
+  return (
+    (input.kind === "install" || input.kind === "command" || input.kind === "send" || input.kind === "connect") &&
+    typeof input.label === "string" &&
+    typeof input.needConfirmation === "boolean" &&
+    typeof input.mutable === "boolean" &&
+    typeof input.present === "boolean" &&
+    (input.grantId === null || typeof input.grantId === "string") &&
+    Number.isSafeInteger(input.version) &&
+    Number(input.version) >= 0
+  );
+}
+
+function parseSettings(value: unknown): SecuritySettingsResponse {
+  if (!value || typeof value !== "object") throw new Error("invalid security settings");
+  const input = value as Record<string, unknown>;
+  if (!Array.isArray(input.categories) || !input.categories.every(isCategory)) {
+    throw new Error("invalid security settings");
+  }
+  if (typeof input.insecureRememberAllowed !== "boolean") {
+    throw new Error("invalid security settings");
+  }
+  return {
+    categories: input.categories,
+    insecureRememberAllowed: input.insecureRememberAllowed,
+  };
+}
+
+function parseCanonical(kind: SecurityKind, value: unknown): RememberGrantCanonical {
+  if (kind !== "install" && kind !== "command") throw new Error("invalid grant kind");
+  if (!value || typeof value !== "object") throw new Error("invalid grant state");
+  const input = value as Record<string, unknown>;
+  if (
+    input.present === undefined || typeof input.present !== "boolean" ||
+    (input.grantId !== null && typeof input.grantId !== "string") ||
+    !Number.isSafeInteger(input.version) || Number(input.version) < 0
+  ) {
+    throw new Error("invalid grant state");
+  }
+  return {
+    kind,
+    present: input.present,
+    grantId: input.grantId as string | null,
+    version: Number(input.version),
+  };
+}
+
+function mergeSettings(
+  current: SecuritySettingsResponse | null,
+  incoming: SecuritySettingsResponse,
+): SecuritySettingsResponse {
+  if (!current) return incoming;
+  const currentByKind = new Map(current.categories.map((item) => [item.kind, item]));
+  return {
+    ...incoming,
+    categories: incoming.categories.map((item) => {
+      const previous = currentByKind.get(item.kind);
+      return previous && previous.version > item.version ? previous : item;
+    }),
+  };
+}
+
 export function SecurityPanel() {
   const toast = useToast();
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
-  const [busy, setBusy] = useState<SecurityKind | null>(null);
+  const [updatePhases, setUpdatePhases] = useState<Partial<Record<SecurityKind, UpdatePhase>>>({});
+
+  const applyCanonical = useCallback((state: RememberGrantCanonical) => {
+    setSettings((current) => current ? {
+      ...current,
+      categories: current.categories.map((item) => {
+        if (item.kind !== state.kind || item.version > state.version) return item;
+        return {
+          ...item,
+          needConfirmation: !state.present,
+          present: state.present,
+          grantId: state.grantId,
+          version: state.version,
+        };
+      }),
+    } : current);
+  }, []);
+
+  const readSettings = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch("/api/v1/settings/security", { signal });
+    if (!response.ok) throw new Error(String(response.status));
+    const body = parseSettings(await response.json());
+    setSettings((current) => mergeSettings(current, body));
+    return body;
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch("/api/v1/settings/security", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(String(response.status));
-        const body = await response.json() as Partial<SecuritySettingsResponse>;
-        if (!Array.isArray(body.categories)) throw new Error("invalid security settings");
-        return body as SecuritySettingsResponse;
-      })
-      .then((body) => setSettings(body))
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        toast.show({ message: "安全设置加载失败，请稍后重试", tone: "error" });
-      });
+    void readSettings(controller.signal).catch(() => {
+      if (controller.signal.aborted) return;
+      toast.show({ message: "安全设置加载失败，请稍后重试", tone: "error" });
+    });
     return () => controller.abort();
-  }, [toast]);
+  }, [readSettings, toast]);
+
+  useEffect(() => subscribeRememberGrantState(applyCanonical), [applyCanonical]);
+
+  useEffect(() => {
+    const revalidate = () => {
+      void readSettings().catch(() => {
+        toast.show({
+          message: "安全设置加载失败，请稍后重试",
+          tone: "error",
+          dedupeKey: "security-settings-focus-refresh",
+        });
+      });
+    };
+    window.addEventListener("focus", revalidate);
+    return () => window.removeEventListener("focus", revalidate);
+  }, [readSettings, toast]);
+
+  const setUpdatePhase = (kind: SecurityKind, phase: UpdatePhase) => {
+    setUpdatePhases((current) => ({ ...current, [kind]: phase }));
+  };
 
   const toggle = async (
     category: SecurityCategory,
     event: MouseEvent<HTMLButtonElement>,
   ) => {
-    if (!category.mutable || busy) return;
+    if (!category.mutable || updatePhases[category.kind] === "updating") return;
+    setUpdatePhase(category.kind, "updating");
     const needConfirmation = !category.needConfirmation;
     let uiGrantNonce: string | undefined;
-    if (!needConfirmation && !settings?.insecureRememberAllowed) {
-      const requestGrant = window.electron?.requestSettingsRememberGrant;
-      if (!requestGrant) {
-        toast.show({ message: "仅可在桌面端通过真实操作关闭确认", tone: "warn" });
-        return;
-      }
-      try {
-        uiGrantNonce = await requestGrant({
-          kind: category.kind as "install" | "command",
-          trustedGesture: event.isTrusted,
-        }) ?? undefined;
-      } catch {
-        toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
-        return;
-      }
-      if (!uiGrantNonce) return;
-    }
-
-    setBusy(category.kind);
     try {
-      const response = await fetch(`/api/v1/settings/security/${category.kind}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ needConfirmation, ...(uiGrantNonce ? { uiGrantNonce } : {}) }),
-      });
-      if (!response.ok) throw new Error(String(response.status));
-      setSettings((current) => current ? {
-        ...current,
-        categories: current.categories.map((item) => item.kind === category.kind
-          ? { ...item, needConfirmation }
-          : item),
-      } : current);
-      toast.show({
-        message: needConfirmation ? `${category.label}已恢复逐次确认` : `${category.label}已默认同意`,
-        tone: "success",
-      });
+      if (!needConfirmation && !settings?.insecureRememberAllowed) {
+        const requestGrant = window.electron?.requestSettingsRememberGrant;
+        if (!requestGrant) {
+          toast.show({ message: "仅可在桌面端通过真实操作关闭确认", tone: "warn" });
+          return;
+        }
+        try {
+          uiGrantNonce = await requestGrant({
+            kind: category.kind as "install" | "command",
+            trustedGesture: event.isTrusted,
+          }) ?? undefined;
+        } catch {
+          toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
+          return;
+        }
+        if (!uiGrantNonce) return;
+      }
+
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
+      try {
+        const response = await fetch(`/api/v1/settings/security/${category.kind}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ needConfirmation, ...(uiGrantNonce ? { uiGrantNonce } : {}) }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        const canonical = parseCanonical(category.kind, await response.json());
+        applyCanonical(canonical);
+        publishRememberGrantState(canonical);
+        toast.show({
+          message: needConfirmation ? `${category.label}已恢复逐次确认` : `${category.label}已默认同意`,
+          tone: "success",
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
     } catch {
       toast.show({ message: "安全设置更新失败，请重试", tone: "error" });
+      await readSettings().catch(() => undefined);
     } finally {
-      setBusy(null);
+      setUpdatePhase(category.kind, "settled");
     }
   };
 
@@ -94,29 +210,35 @@ export function SecurityPanel() {
         <p>关闭后，同类指令会直接执行；可随时重新开启确认。</p>
       </header>
       <div className="security-list" aria-busy={settings === null}>
-        {settings?.categories.map((category) => (
-          <div className="security-row" key={category.kind}>
-            <div className="security-copy">
-              <span className="security-label">{category.label}</span>
-              <span className="security-meta">
-                {category.mutable
-                  ? category.needConfirmation ? "每次执行前询问" : "已默认同意"
-                  : "始终需要确认"}
-              </span>
+        {settings?.categories.map((category) => {
+          const phase = updatePhases[category.kind] ?? "idle";
+          return (
+            <div className="security-row" key={category.kind} data-update-state={phase}>
+              <div className="security-copy">
+                <span className="security-label">{category.label}</span>
+                <span className="security-meta">
+                  {phase === "updating"
+                    ? "正在更新…"
+                    : category.mutable
+                      ? category.needConfirmation ? "每次执行前询问" : "已默认同意"
+                      : "始终需要确认"}
+                </span>
+              </div>
+              <button
+                type="button"
+                className={`security-toggle${category.needConfirmation ? " is-on" : ""}`}
+                aria-label={`${category.label}需要确认`}
+                aria-pressed={category.needConfirmation}
+                aria-busy={phase === "updating"}
+                disabled={!category.mutable || phase === "updating"}
+                onClick={(event) => void toggle(category, event)}
+              >
+                <span className="security-toggle-dot" aria-hidden="true" />
+                {category.mutable ? category.needConfirmation ? "需要确认" : "默认同意" : "始终确认"}
+              </button>
             </div>
-            <button
-              type="button"
-              className={`security-toggle${category.needConfirmation ? " is-on" : ""}`}
-              aria-label={`${category.label}需要确认`}
-              aria-pressed={category.needConfirmation}
-              disabled={!category.mutable || busy !== null}
-              onClick={(event) => void toggle(category, event)}
-            >
-              <span className="security-toggle-dot" aria-hidden="true" />
-              {category.mutable ? category.needConfirmation ? "需要确认" : "默认同意" : "始终确认"}
-            </button>
-          </div>
-        )) ?? <p className="security-loading">正在读取安全设置…</p>}
+          );
+        }) ?? <p className="security-loading">正在读取安全设置…</p>}
       </div>
       {settings?.insecureRememberAllowed && (
         <p className="security-dev-note">本地开发的不安全记忆模式已开启。</p>

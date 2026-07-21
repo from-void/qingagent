@@ -101,6 +101,8 @@ export interface PendingConfirm {
   decisionSource?: "ui" | "stored-grant";
   decisionAccepted?: boolean;
   decisionGrantId?: string;
+  /** 确认卡生成时观察到的每类撤销生效线；card create 必须与当前值一致。 */
+  rememberRevocationEpoch?: number;
 }
 
 /** Mutable server-side session state. One per active session. */

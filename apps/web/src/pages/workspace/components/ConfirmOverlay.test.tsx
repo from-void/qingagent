@@ -14,6 +14,7 @@ import { stripSecretFromDecision, useConfirmCard } from "../hooks/useConfirmCard
 import { magicMoveFromRect, magicMoveToRect } from "../data/barMorph";
 import type { ServerStream } from "../data/serverStream";
 import { ToastProvider } from "../../../system";
+import { subscribeRememberGrantState } from "../../../system/confirmGrantState";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -532,7 +533,13 @@ describe("ConfirmOverlay", () => {
 
   it("仅首次成功创建记忆显示一次安全设置 toast，并消费 resolved message", async () => {
     let listener: ((frame: BridgeFrame) => void) | null = null;
-    const resolveConfirm = vi.fn(async () => ({ accepted: true as const, remembered: true }));
+    const grantEvents = vi.fn();
+    const unsubscribe = subscribeRememberGrantState(grantEvents);
+    const resolveConfirm = vi.fn(async () => ({
+      accepted: true as const,
+      remembered: true,
+      grantState: { present: true, grantId: "grant-from-card", version: 4 },
+    }));
     const stream = {
       subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
         listener = next;
@@ -569,6 +576,12 @@ describe("ConfirmOverlay", () => {
     expect(host?.querySelector(".qa-toast")?.textContent).toContain(
       "已记住：以后安装时不再询问。可在 设置 → 安全 中恢复每次询问。",
     );
+    expect(grantEvents).toHaveBeenCalledWith({
+      kind: "install",
+      present: true,
+      grantId: "grant-from-card",
+      version: 4,
+    });
 
     await act(async () => {
       listener?.({
@@ -583,6 +596,7 @@ describe("ConfirmOverlay", () => {
     });
     expect(host!.querySelectorAll(".qa-toast")).toHaveLength(2);
     expect(host?.textContent).toContain("本次操作已经开始执行。");
+    unsubscribe();
   });
 
   it("命令确认脚注按记忆勾选是否可见分为两版", async () => {

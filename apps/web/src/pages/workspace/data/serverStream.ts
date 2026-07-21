@@ -287,7 +287,12 @@ export class ServerStream {
   async resolveConfirm(
     submission: SubmitConfirmDecision,
     options: { activateSession?: boolean } = {},
-  ): Promise<{ accepted: true; remembered: boolean }> {
+  ): Promise<{
+    accepted: true;
+    remembered: boolean;
+    grantState?: { present: boolean; grantId: string | null; version: number };
+    rememberFailure?: "not-saved" | "settings-changed";
+  }> {
     // 旧组件的决策仍必须送达原 session，但不得把当前共享 EventSource 拉回旧会话。
     if (options.activateSession !== false) this.connectEvents(submission.sessionId);
     const controller = new AbortController();
@@ -310,11 +315,37 @@ export class ServerStream {
       const body = await response.json().catch(() => null) as {
         accepted?: unknown;
         remembered?: unknown;
+        present?: unknown;
+        grantId?: unknown;
+        version?: unknown;
+        rememberFailure?: unknown;
       } | null;
       if (body?.accepted !== true || typeof body.remembered !== "boolean") {
         throw new Error("确认没有提交成功，请再试一次。");
       }
-      return { accepted: true, remembered: body.remembered };
+      const hasGrantState =
+        typeof body.present === "boolean" &&
+        (body.grantId === null || typeof body.grantId === "string") &&
+        Number.isSafeInteger(body.version) &&
+        Number(body.version) >= 0;
+      const rememberFailure = body.rememberFailure === "not-saved" ||
+        body.rememberFailure === "settings-changed"
+        ? body.rememberFailure
+        : undefined;
+      return {
+        accepted: true,
+        remembered: body.remembered,
+        ...(hasGrantState
+          ? {
+              grantState: {
+                present: body.present as boolean,
+                grantId: body.grantId as string | null,
+                version: Number(body.version),
+              },
+            }
+          : {}),
+        ...(rememberFailure ? { rememberFailure } : {}),
+      };
     } finally {
       this.activeControllers.delete(controller);
     }

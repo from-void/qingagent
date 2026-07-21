@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SecurityPanel } from "./SecurityPanel";
+import { publishRememberGrantState } from "../../system/confirmGrantState";
 
 const toast = vi.fn();
 const toastApi = { show: toast, dismiss: vi.fn() };
@@ -25,16 +26,34 @@ function response(body: unknown, status = 200): Response {
 }
 
 const categories = [
-  { kind: "install", label: "安装指令", needConfirmation: true, mutable: true },
-  { kind: "command", label: "此类命令", needConfirmation: false, mutable: true },
-  { kind: "send", label: "外发指令", needConfirmation: true, mutable: false },
-  { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false },
+  { kind: "install", label: "安装指令", needConfirmation: true, mutable: true, present: false, grantId: null, version: 0 },
+  { kind: "command", label: "此类命令", needConfirmation: false, mutable: true, present: true, grantId: "grant-command", version: 1 },
+  { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+  { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
 ];
 
 async function renderPanel(insecureRememberAllowed = false) {
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(response({ categories, insecureRememberAllowed }))
-    .mockResolvedValue(response({}));
+    .mockImplementation(async (input, init) => {
+      if (!init?.method || init.method === "GET") {
+        return response({ categories, insecureRememberAllowed });
+      }
+      const kind = String(input).split("/").at(-1) as "install" | "command";
+      const body = JSON.parse(String(init?.body)) as { needConfirmation: boolean };
+      return response({
+        kind,
+        needConfirmation: body.needConfirmation,
+        present: !body.needConfirmation,
+        grantId: body.needConfirmation ? null : `grant-${kind}`,
+        version: kind === "command" ? 2 : 1,
+      });
+    });
+  await renderWithFetch(fetchMock);
+  return fetchMock;
+}
+
+async function renderWithFetch(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
   vi.stubGlobal("fetch", fetchMock);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -42,7 +61,6 @@ async function renderPanel(insecureRememberAllowed = false) {
   await act(async () => {
     root?.render(<SecurityPanel />);
   });
-  return fetchMock;
 }
 
 async function click(element: HTMLElement) {
@@ -144,5 +162,75 @@ describe("SecurityPanel", () => {
       message: "桌面端确认未完成，设置未更改",
       tone: "warn",
     });
+  });
+
+  it("卡侧记忆状态事件让已打开设置页按版本立即更新", async () => {
+    await renderPanel();
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+    expect(install.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      publishRememberGrantState({
+        kind: "install",
+        present: true,
+        grantId: "grant-from-card",
+        version: 3,
+      });
+    });
+
+    expect(install.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("窗口重获焦点时 GET 重读并采用更新的 canonical 状态", async () => {
+    const focusedCategories = categories.map((item) => item.kind === "install"
+      ? { ...item, needConfirmation: false, present: true, grantId: "grant-focus", version: 4 }
+      : item);
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ categories, insecureRememberAllowed: false }))
+      .mockResolvedValueOnce(response({ categories: focusedCategories, insecureRememberAllowed: false }));
+    await renderWithFetch(fetchMock);
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(install.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("POST 失败后 GET 重校准，且旧 callback 不能覆盖较新版本", async () => {
+    const canonicalAfterFailure = categories.map((item) => item.kind === "install"
+      ? { ...item, needConfirmation: false, present: true, grantId: "grant-server", version: 5 }
+      : item);
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ categories, insecureRememberAllowed: true }))
+      .mockResolvedValueOnce(response({ error: "timeout" }, 504))
+      .mockResolvedValueOnce(response({ categories: canonicalAfterFailure, insecureRememberAllowed: true }));
+    await renderWithFetch(fetchMock);
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+
+    await click(install);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(install.closest(".security-row")?.getAttribute("data-update-state")).toBe("settled");
+    expect(install.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => {
+      publishRememberGrantState({
+        kind: "install",
+        present: false,
+        grantId: null,
+        version: 7,
+      });
+      publishRememberGrantState({
+        kind: "install",
+        present: true,
+        grantId: "stale-callback",
+        version: 6,
+      });
+    });
+    expect(install.getAttribute("aria-pressed")).toBe("true");
   });
 });

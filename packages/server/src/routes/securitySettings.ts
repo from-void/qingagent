@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
-  createConfirmGrant,
-  listConfirmGrants,
-  revokeConfirmGrant,
+  createConfirmGrantCanonical,
+  listConfirmGrantStates,
+  revokeConfirmGrantWithState,
   type ConfirmGrantKind,
 } from "@qingagent/db";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
@@ -20,9 +20,9 @@ const updateSecuritySchema = z.object({
 const rememberableKinds = new Set<ConfirmGrantKind>(["install", "command"]);
 
 interface SecuritySettingsRoutesDependencies {
-  listGrants?: typeof listConfirmGrants;
-  createGrant?: typeof createConfirmGrant;
-  revokeGrant?: typeof revokeConfirmGrant;
+  listGrantStates?: typeof listConfirmGrantStates;
+  createGrant?: typeof createConfirmGrantCanonical;
+  revokeGrant?: typeof revokeConfirmGrantWithState;
   consumeUiGrant?: typeof consumeConfirmUiGrant;
   insecureRememberAllowed?: () => boolean;
 }
@@ -31,22 +31,35 @@ export function createSecuritySettingsRoutes(
   dependencies: SecuritySettingsRoutesDependencies = {},
 ): Hono {
   const routes = new Hono();
-  const listGrants = dependencies.listGrants ?? listConfirmGrants;
-  const createGrant = dependencies.createGrant ?? createConfirmGrant;
-  const revokeGrant = dependencies.revokeGrant ?? revokeConfirmGrant;
+  const listGrantStates = dependencies.listGrantStates ?? listConfirmGrantStates;
+  const createGrant = dependencies.createGrant ?? createConfirmGrantCanonical;
+  const revokeGrant = dependencies.revokeGrant ?? revokeConfirmGrantWithState;
   const consumeUiGrant = dependencies.consumeUiGrant ?? consumeConfirmUiGrant;
   const allowInsecureRemember = dependencies.insecureRememberAllowed
     ?? insecureRememberAllowed;
 
   routes.get("/settings/security", async (c) => {
-  const grants = await listGrants();
-  const granted = new Set(grants.map((grant) => grant.kind));
+  const states = await listGrantStates();
+  const stateByKind = new Map(states.map((state) => [state.kind, state]));
+  const category = (kind: ConfirmGrantKind, label: string) => {
+    const state = stateByKind.get(kind);
+    if (!state) throw new Error(`confirm grant state missing for ${kind}`);
+    return {
+      kind,
+      label,
+      needConfirmation: !state.present,
+      mutable: true,
+      present: state.present,
+      grantId: state.grantId,
+      version: state.version,
+    };
+  };
   return c.json({
     categories: [
-      { kind: "install", label: "安装指令", needConfirmation: !granted.has("install"), mutable: true },
-      { kind: "command", label: "此类命令", needConfirmation: !granted.has("command"), mutable: true },
-      { kind: "send", label: "外发指令", needConfirmation: true, mutable: false },
-      { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false },
+      category("install", "安装指令"),
+      category("command", "此类命令"),
+      { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+      { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
     ],
     insecureRememberAllowed: allowInsecureRemember(),
   });
@@ -64,8 +77,14 @@ export function createSecuritySettingsRoutes(
   const grantKind = kind as ConfirmGrantKind;
 
   if (parsed.data.needConfirmation) {
-    await revokeGrant(grantKind, "settings");
-    return c.json({ kind: grantKind, needConfirmation: true });
+    const result = await revokeGrant(grantKind, "settings");
+    return c.json({
+      kind: grantKind,
+      needConfirmation: true,
+      present: result.state.present,
+      grantId: result.state.grantId,
+      version: result.state.version,
+    });
   }
 
   const authorized = allowInsecureRemember() || consumeUiGrant({
@@ -74,8 +93,14 @@ export function createSecuritySettingsRoutes(
     kind: grantKind,
   }).ok;
   if (!authorized) return c.json({ error: "缺少有效的桌面设置授权" }, 403);
-  const grant = await createGrant({ kind: grantKind, source: "settings" });
-  return c.json({ kind: grantKind, needConfirmation: false, grantId: grant.grantId });
+  const result = await createGrant({ kind: grantKind, source: "settings" });
+  return c.json({
+    kind: grantKind,
+    needConfirmation: !result.state.present,
+    present: result.state.present,
+    grantId: result.state.grantId,
+    version: result.state.version,
+  });
   });
 
   return routes;

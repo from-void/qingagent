@@ -32,7 +32,13 @@ describe("confirm grant 与不可变审计仓储", () => {
     });
     expect(duplicate).toEqual(created);
     expect(await listConfirmGrantEvents()).toMatchObject([
-      { grantId: "grant-install", kind: "install", action: "created", source: "card" },
+      {
+        grantId: "grant-install",
+        kind: "install",
+        action: "created",
+        source: "card",
+        subjectId: "local-user",
+      },
     ]);
 
     expect(await revokeConfirmGrant(
@@ -43,7 +49,12 @@ describe("confirm grant 与不可变审计仓储", () => {
     expect(await getConfirmGrant("install")).toBeNull();
     expect(await listConfirmGrantEvents()).toMatchObject([
       { grantId: "grant-install", action: "created", source: "card" },
-      { grantId: "grant-install", action: "revoked", source: "settings" },
+      {
+        grantId: "grant-install",
+        action: "revoked",
+        source: "settings",
+        subjectId: "local-user",
+      },
     ]);
   });
 
@@ -52,6 +63,7 @@ describe("confirm grant 与不可变审计仓储", () => {
       eventId: "audit-1",
       ts: "2026-07-21T03:00:00.000Z",
       eventType: "decision_finished",
+      subjectId: "local-user",
       sessionId: "session-1",
       runId: "run-1",
       toolCallId: "tool-1",
@@ -72,6 +84,7 @@ describe("confirm grant 与不可变审计仓储", () => {
       eventId: "audit-1",
       ts: "2026-07-21T03:00:00.000Z",
       eventType: "decision_finished",
+      subjectId: "local-user",
       sessionId: "session-1",
       runId: "run-1",
       toolCallId: "tool-1",

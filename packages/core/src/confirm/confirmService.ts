@@ -588,6 +588,7 @@ export class ConfirmService {
     try {
       await this.#appendAudit({
         ...input,
+        subjectId: "local-user",
         sessionId: state.sessionId,
         runId: pending.runId,
         toolCallId: pending.toolCallId,

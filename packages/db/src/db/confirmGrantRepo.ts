@@ -30,6 +30,7 @@ export interface ConfirmAuditEvent {
   eventId: string;
   ts: string;
   eventType: ConfirmAuditEventType;
+  subjectId: string;
   sessionId: string;
   runId: string;
   toolCallId: string;
@@ -53,6 +54,7 @@ export interface ConfirmGrantEvent {
   kind: ConfirmGrantKind;
   action: "created" | "revoked";
   source: ConfirmGrantSource;
+  subjectId: string;
 }
 
 function mapGrant(row: Record<string, unknown>): ConfirmGrant {
@@ -69,6 +71,7 @@ function mapAuditEvent(row: Record<string, unknown>): ConfirmAuditEvent {
     eventId: String(row.event_id),
     ts: String(row.ts),
     eventType: String(row.event_type) as ConfirmAuditEventType,
+    subjectId: String(row.subject_id),
     sessionId: String(row.session_id),
     runId: String(row.run_id),
     toolCallId: String(row.tool_call_id),
@@ -94,6 +97,7 @@ function mapGrantEvent(row: Record<string, unknown>): ConfirmGrantEvent {
     kind: String(row.kind) as ConfirmGrantKind,
     action: String(row.action) as ConfirmGrantEvent["action"],
     source: String(row.source) as ConfirmGrantSource,
+    subjectId: String(row.subject_id),
   };
 }
 
@@ -120,6 +124,7 @@ export async function createConfirmGrant(input: {
   source: ConfirmGrantSource;
   grantId?: string;
   now?: string;
+  subjectId?: string;
 }): Promise<ConfirmGrant> {
   await ensureMigrated();
   return withTransaction(async (client) => {
@@ -142,9 +147,16 @@ export async function createConfirmGrant(input: {
     });
     await client.execute({
       sql: `INSERT INTO confirm_grant_events (
-        event_id, ts, grant_id, kind, action, source
-      ) VALUES (?, ?, ?, ?, 'created', ?)`,
-      args: [randomUUID(), grant.createdAt, grant.grantId, grant.kind, grant.source],
+        event_id, ts, grant_id, kind, action, source, subject_id
+      ) VALUES (?, ?, ?, ?, 'created', ?, ?)`,
+      args: [
+        randomUUID(),
+        grant.createdAt,
+        grant.grantId,
+        grant.kind,
+        grant.source,
+        input.subjectId ?? "local-user",
+      ],
     });
     return commitTransaction(grant);
   });
@@ -154,6 +166,7 @@ export async function revokeConfirmGrant(
   kind: ConfirmGrantKind,
   source: ConfirmGrantSource = "settings",
   now = new Date().toISOString(),
+  subjectId = "local-user",
 ): Promise<ConfirmGrant | null> {
   await ensureMigrated();
   return withTransaction(async (client) => {
@@ -167,9 +180,9 @@ export async function revokeConfirmGrant(
     await client.execute({ sql: `DELETE FROM confirm_grants WHERE kind = ?`, args: [kind] });
     await client.execute({
       sql: `INSERT INTO confirm_grant_events (
-        event_id, ts, grant_id, kind, action, source
-      ) VALUES (?, ?, ?, ?, 'revoked', ?)`,
-      args: [randomUUID(), now, grant.grantId, grant.kind, source],
+        event_id, ts, grant_id, kind, action, source, subject_id
+      ) VALUES (?, ?, ?, ?, 'revoked', ?, ?)`,
+      args: [randomUUID(), now, grant.grantId, grant.kind, source, subjectId],
     });
     return commitTransaction(grant);
   });
@@ -186,14 +199,15 @@ export async function appendConfirmAuditEvent(
   };
   await withWriteRetry(() => getDocumentsClient().execute({
     sql: `INSERT INTO confirm_audit_events (
-      event_id, ts, event_type, session_id, run_id, tool_call_id, confirm_id,
+      event_id, ts, event_type, subject_id, session_id, run_id, tool_call_id, confirm_id,
       kind, command_digest, command_preview, decision, source, grant_id,
       result, policy_version, isolation_epoch, config_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       event.eventId,
       event.ts,
       event.eventType,
+      event.subjectId,
       event.sessionId,
       event.runId,
       event.toolCallId,

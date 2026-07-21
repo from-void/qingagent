@@ -15,6 +15,7 @@ async function up(client: Parameters<Migration["up"]>[0]): Promise<void> {
         'decision_started','decision_finished','decision_failed',
         'decision_expired','remember_rejected'
       )),
+      subject_id       TEXT NOT NULL,
       session_id       TEXT NOT NULL,
       run_id           TEXT NOT NULL,
       tool_call_id     TEXT NOT NULL,
@@ -40,7 +41,8 @@ async function up(client: Parameters<Migration["up"]>[0]): Promise<void> {
       grant_id    TEXT NOT NULL,
       kind        TEXT NOT NULL CHECK(kind IN ('install','command')),
       action      TEXT NOT NULL CHECK(action IN ('created','revoked')),
-      source      TEXT NOT NULL CHECK(source IN ('card','settings'))
+      source      TEXT NOT NULL CHECK(source IN ('card','settings')),
+      subject_id  TEXT NOT NULL
     )`,
     `CREATE INDEX idx_confirm_grant_events_grant
       ON confirm_grant_events(grant_id, ts, event_id)`,

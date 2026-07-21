@@ -2,7 +2,7 @@ import type { BridgeFrame, LegacySection, MessagePart } from "@qingagent/contrac
 import type { RequestContext } from "@mastra/core/request-context";
 import { mastra } from "../mastra.js";
 import { documentDraftRepo } from "@qingagent/db";
-import { persistMappedAnnotationGroups, upsertDocumentSuggestion } from "@qingagent/db";
+import { persistMappedAnnotationGroups, saveInitialReviewBatch } from "@qingagent/db";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { cloneLegacySections } from "./docDiff.js";
@@ -115,18 +115,18 @@ export async function* settleDraftCandidate(opts: {
           }),
         );
         try {
-          for (const suggestion of suggestions) {
-            await upsertDocumentSuggestion(suggestion);
-          }
-          await documentDraftRepo.savePending({
-            docId: state.docId,
-            threadId: state.threadId ?? state.sessionId,
-            baseVersion,
-            baseHash: getPmContentHash(baseDoc),
-            draftPmDoc: draftDoc,
-            batchId,
-            reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
-            groupMode: suggestions[0]?.groupMode ?? null,
+          await saveInitialReviewBatch({
+            draft: {
+              docId: state.docId,
+              threadId: state.threadId ?? state.sessionId,
+              baseVersion,
+              baseHash: getPmContentHash(baseDoc),
+              draftPmDoc: draftDoc,
+              batchId,
+              reviewBatchId: suggestions[0]?.reviewBatchId ?? null,
+              groupMode: suggestions[0]?.groupMode ?? null,
+            },
+            suggestions,
           });
         } catch (err) {
           logger.error("Failed to persist candidate-diff review state", {

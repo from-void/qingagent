@@ -21,6 +21,33 @@ export interface ReplaceRebasedReviewInput {
   previousSuggestions: readonly RebasedPreviousSuggestions[];
 }
 
+export interface SaveInitialReviewBatchInput {
+  draft: SavePendingDraftInput & { batchId: string };
+  suggestions: readonly DocSuggestion[];
+}
+
+/** 首次进入审阅时原子保存草稿与整批建议，禁止暴露半批次。 */
+export async function saveInitialReviewBatch(input: SaveInitialReviewBatchInput): Promise<void> {
+  await ensureMigrated();
+  for (const suggestion of input.suggestions) {
+    if (
+      suggestion.docId !== input.draft.docId
+      || suggestion.baseVersion !== input.draft.baseVersion
+      || suggestion.batchId !== input.draft.batchId
+    ) {
+      throw new Error(`Initial review suggestion batch mismatch: ${suggestion.id}`);
+    }
+  }
+  const now = new Date().toISOString();
+  await withTransaction(async (client) => {
+    await savePendingDocumentDraft(input.draft, client, now);
+    for (const suggestion of input.suggestions) {
+      await upsertDocumentSuggestion(suggestion, client, now);
+    }
+    return commitTransaction(undefined);
+  });
+}
+
 /** 原子替换 rebase 审阅：草稿、新建议与旧批次失效要么全部提交，要么全部回滚。 */
 export async function replaceRebasedReview(input: ReplaceRebasedReviewInput): Promise<void> {
   await ensureMigrated();

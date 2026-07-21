@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DocSuggestion } from "@qingagent/contract-ts";
 import { getPmContentHash } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "../documentDraftRepo.js";
-import { replaceRebasedReview } from "../documentReviewRepo.js";
+import {
+  replaceRebasedReview,
+  saveInitialReviewBatch,
+} from "../documentReviewRepo.js";
 import {
   listDocumentSuggestionStatuses,
   listDocumentSuggestionStatusesInBatch,
@@ -10,6 +13,7 @@ import {
   upsertDocumentSuggestion,
 } from "../documentSuggestionsRepo.js";
 import { getDocumentsClient } from "../documentsClient.js";
+import { ensureMigrated } from "../migrations.js";
 import {
   pmDocFromText,
   prepareTempDocumentsDb,
@@ -93,5 +97,47 @@ describe("replaceRebasedReview", () => {
         { id: "old-reviewing", status: "reviewing", conflict: undefined },
       ]),
     );
+  });
+});
+
+describe("saveInitialReviewBatch", () => {
+  let db: TempDocumentsDb;
+
+  beforeEach(() => { db = prepareTempDocumentsDb("qa-initial-review-"); });
+  afterEach(() => db.cleanup());
+
+  it("RF6: 第 N 条建议写入失败时草稿与整批建议均不残留", async () => {
+    const docId = "doc-atomic-initial-review";
+    const draft = pmDocFromText("首次待审草稿");
+    await ensureMigrated();
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_second_initial_suggestion
+      BEFORE INSERT ON document_suggestions
+      WHEN NEW.doc_id = '${docId}' AND NEW.id = 'initial-2'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected second initial suggestion failure');
+      END`);
+
+    await expect(saveInitialReviewBatch({
+      draft: {
+        docId,
+        threadId: "thread-atomic-initial-review",
+        baseVersion: 1,
+        baseHash: getPmContentHash(pmDocFromText("正文")),
+        draftPmDoc: draft,
+        batchId: "initial-batch",
+      },
+      suggestions: [
+        { ...suggestion("initial-1", docId, 1), batchId: "initial-batch" },
+        { ...suggestion("initial-2", docId, 1), batchId: "initial-batch" },
+        { ...suggestion("initial-3", docId, 1), batchId: "initial-batch" },
+      ],
+    })).rejects.toThrow("injected second initial suggestion failure");
+
+    await expect(documentDraftRepo.load(docId)).resolves.toBeNull();
+    await expect(listDocumentSuggestionStatusesInBatch(
+      docId,
+      1,
+      "initial-batch",
+    )).resolves.toEqual([]);
   });
 });

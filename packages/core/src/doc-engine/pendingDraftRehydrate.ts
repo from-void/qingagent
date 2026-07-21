@@ -7,14 +7,21 @@ import {
 } from "@qingagent/pm-schema";
 import {
   documentDraftRepo,
+  findOpByDocumentVersion,
+  getVersionSnapshotByDocumentSnapshot,
   listDocumentSuggestionStatusesInBatch,
+  replaceRebasedReview,
   upsertDocumentSuggestion,
   type DocumentDraftRow,
 } from "@qingagent/db";
 import { mastra } from "../mastra.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { buildDraftDiff } from "./proposalDiff.js";
-import { createSuggestionFromDiffHunk } from "./draftReviewSuggestions.js";
+import {
+  createSuggestionBatchId,
+  createSuggestionFromDiffHunk,
+} from "./draftReviewSuggestions.js";
+import { rebaseRemainingPendingDraft } from "./pendingDraftRebase.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 
 const logger = mastra.getLogger();
@@ -69,6 +76,144 @@ function clearReviewDraftRuntime(state: SessionState): void {
   state.docDraftBaseVersion = null;
   state.docDraftCandidateDoc = null;
   state.docDraftCandidateSections = null;
+}
+
+function hunkContentKey(hunk: DiffHunk): string {
+  return JSON.stringify([hunk.op, hunk.beforeText ?? "", hunk.afterText ?? ""]);
+}
+
+/**
+ * RF3 崩溃恢复：canonical patch 已落库、旧批次结算完成，但 rebase 批次事务失败时，
+ * document_ops.steps 是不会随进程丢失的恢复凭据。只有 op 精确承接草稿 baseVersion，
+ * 且 suggestionId 命中旧批次时才重放，避免把普通并发编辑误判成可恢复 rebase。
+ */
+async function replayInterruptedReviewRebase(
+  state: SessionState,
+  row: DocumentDraftRow,
+  currentDoc: PmDoc,
+): Promise<boolean> {
+  if (state.docVersion !== row.baseVersion + 1) return false;
+  const op = await findOpByDocumentVersion(state.docId, state.docVersion);
+  if (!op || op.opKind !== "patch_steps" || op.fromVersion !== row.baseVersion) return false;
+
+  const oldVersion = await getVersionSnapshotByDocumentSnapshot(state.docId, row.baseVersion);
+  if (!oldVersion || getPmContentHash(oldVersion.snapshotPm) !== row.baseHash) return false;
+
+  const oldBaseDoc = oldVersion.snapshotPm;
+  const oldDraftDoc = materializeDraftBlockIds(row.draftPmDoc, {
+    namespace: "draft.rehydrate.rebase-old",
+  });
+  const oldHunks = buildDraftDiff(oldBaseDoc, oldDraftDoc, { baseVersion: row.baseVersion });
+  const oldSuggestions = oldHunks.map((hunk) => createSuggestionFromDiffHunk({
+    hunk,
+    docId: state.docId,
+    baseVersion: row.baseVersion,
+    baseSchemaVersion: oldBaseDoc.attrs.schemaVersion,
+    batchId: row.batchId,
+  }));
+  const oldSuggestionIds = new Set(oldSuggestions.map((suggestion) => suggestion.id));
+  const appliedIds = new Set(
+    (op.steps ?? [])
+      .map((step) => step.suggestionId)
+      .filter((id): id is string => typeof id === "string" && oldSuggestionIds.has(id)),
+  );
+  if (appliedIds.size === 0) return false;
+
+  const statusRows = await listDocumentSuggestionStatusesInBatch(
+    state.docId,
+    row.baseVersion,
+    row.batchId,
+    oldSuggestions.map((suggestion) => suggestion.id),
+  );
+  const statuses = new Map(statusRows.map((status) => [status.id, status.status] as const));
+  const messageId = `recovered-pending-review:${state.docId}:${state.docVersion}`;
+  const remainingRecords: SuggestionRecord[] = [];
+  oldSuggestions.forEach((suggestion, index) => {
+    const status = statuses.get(suggestion.id) ?? suggestion.status;
+    if (appliedIds.has(suggestion.id) || status === "committed" || status === "conflict" || status === "ignored") {
+      return;
+    }
+    const hunk = oldHunks[index]!;
+    remainingRecords.push({
+      messageId,
+      toolCallId: suggestion.id,
+      before: hunk.beforeText ?? "",
+      after: hunk.afterText ?? "",
+      blockIndex: hunk.blockPath[0] ?? 0,
+      suggestion: status === "accepted" || status === "rejected"
+        ? { ...suggestion, status }
+        : suggestion,
+      diffHunk: hunk,
+    });
+  });
+  if (remainingRecords.length === 0) return false;
+
+  const rebased = await rebaseRemainingPendingDraft({
+    docId: state.docId,
+    threadId: state.threadId ?? state.sessionId,
+    oldBaseDoc,
+    oldDraftDoc,
+    committedDoc: currentDoc,
+    committedVersion: state.docVersion,
+    remainingRecords,
+    persist: false,
+  });
+  if (rebased.status !== "pending") return false;
+
+  const batchId = createSuggestionBatchId(state.docVersion, rebased.nextDraftDoc);
+  const available = [...remainingRecords];
+  const rebasedSuggestions = rebased.hunks.map((hunk) => {
+    const exactIndex = available.findIndex((record) => record.diffHunk?.hunkId === hunk.hunkId);
+    const contentKey = hunkContentKey(hunk);
+    const fallbackIndexes = available
+      .map((record, index) => ({ record, index }))
+      .filter(({ record }) => record.diffHunk
+        && hunkContentKey(record.diffHunk) === contentKey
+        && (record.diffHunk.anchor.blockId ?? "") === (hunk.anchor.blockId ?? ""))
+      .map(({ index }) => index);
+    const matchedIndex = exactIndex >= 0
+      ? exactIndex
+      : fallbackIndexes.length === 1 ? fallbackIndexes[0]! : -1;
+    const previous = matchedIndex >= 0 ? available.splice(matchedIndex, 1)[0] : undefined;
+    const suggestion = createSuggestionFromDiffHunk({
+      hunk,
+      docId: state.docId,
+      baseVersion: state.docVersion,
+      baseSchemaVersion: currentDoc.attrs.schemaVersion,
+      batchId,
+    });
+    const status = previous?.suggestion.status;
+    return status === "accepted" || status === "rejected"
+      ? { ...suggestion, status }
+      : suggestion;
+  });
+
+  await replaceRebasedReview({
+    draft: {
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: state.docVersion,
+      baseHash: getPmContentHash(currentDoc),
+      draftPmDoc: rebased.nextDraftDoc,
+      batchId,
+      reviewBatchId: rebasedSuggestions[0]?.reviewBatchId ?? null,
+      groupMode: rebasedSuggestions[0]?.groupMode ?? null,
+    },
+    suggestions: rebasedSuggestions,
+    previousSuggestions: [{
+      baseVersion: row.baseVersion,
+      batchId: row.batchId,
+      suggestionIds: oldSuggestions.map((suggestion) => suggestion.id),
+    }],
+  });
+  logger.warn("Replayed interrupted pending-review rebase from document op", {
+    sessionId: state.sessionId,
+    docId: state.docId,
+    fromVersion: row.baseVersion,
+    toVersion: state.docVersion,
+    recoveredSuggestionCount: rebasedSuggestions.length,
+  });
+  return true;
 }
 
 async function rehydrateFirstDraftCandidate(
@@ -172,6 +317,9 @@ export async function rehydratePendingDraft(
 
   const currentHash = getPmContentHash(currentDoc);
   if (row.baseHash !== currentHash) {
+    if (!options.readOnly && await replayInterruptedReviewRebase(state, row, currentDoc)) {
+      return rehydratePendingDraft(state, options);
+    }
     if (!options.readOnly) {
       await documentDraftRepo.markConflict({
         docId: state.docId,

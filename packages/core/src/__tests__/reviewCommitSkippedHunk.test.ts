@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import {
+  getPmContentHash,
   pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
@@ -10,10 +11,16 @@ import type { LegacySection } from "@qingagent/contract-ts";
 import {
   commitPatches,
   createSession,
+  rehydratePendingDraft,
   type SessionState,
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
-import { documentRepo, upsertDocumentSuggestion } from "@qingagent/db";
+import {
+  documentDraftRepo,
+  documentRepo,
+  insertVersion,
+  upsertDocumentSuggestion,
+} from "@qingagent/db";
 import { getDocumentsClient } from "@qingagent/db";
 import {
   documentInput,
@@ -187,6 +194,64 @@ afterEach(() => {
 });
 
 describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示", () => {
+  it("RF3: canonical 已提交但 rebase 批次写库失败后，冷恢复可重放保留项", async () => {
+    const sessionId = "commit-rebase-recovery";
+    const state = createSession(sessionId);
+    const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
+    const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
+    const [hunkA, hunkB] = await seedReviewState(state, base, draft);
+    if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
+    await seedCanonical(state, base);
+    await insertVersion({
+      versionId: `${sessionId}:v1`,
+      docId: sessionId,
+      docVersion: 1,
+      contentHash: getPmContentHash(base),
+      schemaVersion: 1,
+      actorType: "agent",
+      summary: "测试基线",
+      snapshotPm: base,
+      parentVersion: 0,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    await documentDraftRepo.savePending({
+      docId: state.docId,
+      threadId: state.threadId ?? state.sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(base),
+      draftPmDoc: draft,
+    });
+
+    await getDocumentsClient().execute(`CREATE TRIGGER fail_rf3_rebased_suggestion
+      BEFORE INSERT ON document_suggestions
+      WHEN NEW.doc_id = '${sessionId}' AND NEW.base_version = 2
+      BEGIN
+        SELECT RAISE(ABORT, 'injected RF3 rebase persistence failure');
+      END`);
+
+    await expect(collectFrames(commitPatches(state, [hunkA.hunkId])))
+      .rejects.toThrow("injected RF3 rebase persistence failure");
+    await getDocumentsClient().execute("DROP TRIGGER fail_rf3_rebased_suggestion");
+
+    const canonical = await documentRepo.load(sessionId);
+    expect(canonical?.docVersion).toBe(2);
+    expect(canonical?.pmDoc?.content.map(blockText)).toEqual(["甲新文", "乙原文"]);
+    expect((await documentDraftRepo.load(sessionId))?.baseVersion).toBe(1);
+
+    const restarted = createSession(sessionId);
+    restarted.doc = canonical!.pmDoc!;
+    restarted.legacySections = pmToLegacySections(canonical!.pmDoc!) as unknown as LegacySection[];
+    restarted.docVersion = canonical!.docVersion;
+    const restored = await rehydratePendingDraft(restarted);
+
+    expect(restored.kind).toBe("restored");
+    expect(restarted.docState).toEqual({ kind: "pendingReview" });
+    expect([...restarted.suggestions.values()]).toHaveLength(1);
+    expect([...restarted.suggestions.values()][0]?.diffHunk?.anchor.blockId).toBe("blk-b");
+    expect(restarted.docDraftCandidateDoc?.content.map(blockText)).toEqual(["甲新文", "乙新文"]);
+    expect((await documentDraftRepo.load(sessionId))?.baseVersion).toBe(2);
+  });
+
   it("rebase 失锚的剩余 suggestion 落 conflict 并发 failed 终态帧", async () => {
     const state = createSession("commit-rebase-dropped-hunk");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);

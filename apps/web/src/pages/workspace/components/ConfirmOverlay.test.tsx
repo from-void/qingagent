@@ -186,8 +186,8 @@ describe("ConfirmOverlay", () => {
       ...installSpec,
       rememberCategory: {
         kind: "install",
-        label: "后续的安装指令都默认同意",
-        riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。",
+        label: "以后安装时不再询问",
+        riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。",
       },
     };
     await renderOverlay(rememberSpec);
@@ -213,7 +213,7 @@ describe("ConfirmOverlay", () => {
     const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]');
     expect(checkbox).not.toBeNull();
     expect(host!.querySelector(".cf-remember")?.textContent).toContain(rememberSpec.rememberCategory?.label);
-    expect(host!.querySelector(".cf-remember-risk")?.textContent).toContain("修改这台电脑的运行环境");
+    expect(host!.querySelector(".cf-remember-risk")?.textContent).toContain("这台电脑上的软件或设置");
   });
 
   it("显式不安全开发标记允许纯 web 渲染，程序化 click 不取得 nonce", async () => {
@@ -222,7 +222,7 @@ describe("ConfirmOverlay", () => {
       ...installSpec,
       rememberCategory: {
         kind: "install",
-        label: "后续的安装指令都默认同意",
+        label: "以后安装时不再询问",
         insecureWithoutDesktop: true,
       },
     };
@@ -249,7 +249,7 @@ describe("ConfirmOverlay", () => {
       ...installSpec,
       rememberCategory: {
         kind: "install",
-        label: "后续的安装指令都默认同意",
+        label: "以后安装时不再询问",
       },
     };
     await renderOverlay(rememberSpec, onDecision);
@@ -282,7 +282,7 @@ describe("ConfirmOverlay", () => {
       ...installSpec,
       rememberCategory: {
         kind: "install",
-        label: "后续的安装指令都默认同意",
+        label: "以后安装时不再询问",
       },
     };
     await render(
@@ -320,7 +320,7 @@ describe("ConfirmOverlay", () => {
       ...installSpec,
       rememberCategory: {
         kind: "install",
-        label: "后续的安装指令都默认同意",
+        label: "以后安装时不再询问",
       },
     };
     await renderOverlay(rememberSpec, onDecision);
@@ -509,7 +509,7 @@ describe("ConfirmOverlay", () => {
   it("确认提交失败原卡显示原因并恢复按钮，不再换 key 静默重挂", async () => {
     let listener: ((frame: BridgeFrame) => void) | null = null;
     const resolveConfirm = vi.fn(async () => {
-      throw new Error("确认没有提交成功，请再试一次。");
+      throw new Error("确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。");
     });
     const stream = {
       subscribe: vi.fn((next: (frame: BridgeFrame) => void) => {
@@ -537,7 +537,7 @@ describe("ConfirmOverlay", () => {
 
     expect(host!.querySelector(".cf-overlay")).toBe(overlayBefore);
     expect(host?.querySelector('[role="alert"]')?.textContent)
-      .toContain("确认没有提交成功，请再试一次。");
+      .toContain("确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。");
     expect(findButton("安装并继续").disabled).toBe(false);
   });
 
@@ -813,7 +813,7 @@ describe("ConfirmOverlay", () => {
     const rememberSpec: ConfirmSpec = {
       ...installSpec,
       id: "confirm-old-session",
-      rememberCategory: { kind: "install", label: "后续的安装指令都默认同意" },
+      rememberCategory: { kind: "install", label: "以后安装时不再询问" },
     };
 
     await render(<SwitchableLiveConfirmHarness sessionId="old-session" stream={stream} />);

@@ -309,7 +309,7 @@ export class ServerStream {
         throw new Error(
           typeof body?.error === "string" && body.error.trim()
             ? body.error
-            : "确认没有提交成功，请再试一次。",
+            : "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
         );
       }
       const body = await response.json().catch(() => null) as {
@@ -321,7 +321,7 @@ export class ServerStream {
         rememberFailure?: unknown;
       } | null;
       if (body?.accepted !== true || typeof body.remembered !== "boolean") {
-        throw new Error("确认没有提交成功，请再试一次。");
+        throw new Error("确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。");
       }
       const hasGrantState =
         typeof body.present === "boolean" &&

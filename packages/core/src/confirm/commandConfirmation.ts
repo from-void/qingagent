@@ -79,7 +79,7 @@ export function buildCommandConfirmSpec(
   const riskSub = verdict.risk === "safe"
     ? "资源受限后台命令"
     : kind === "install"
-      ? "将修改运行环境"
+      ? "可能会改动这台电脑上的软件或设置"
       : kind === "send"
         ? "将向外部发送或写入数据"
         : isMultiEffect
@@ -100,10 +100,10 @@ export function buildCommandConfirmSpec(
     ? {
         kind,
         label: kind === "install"
-          ? "后续的安装指令都默认同意"
-          : "后续此类命令都默认同意",
+          ? "以后安装时不再询问"
+          : "以后遇到同类操作不再询问",
         ...(platform === "win32" && kind === "install"
-          ? { riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。" }
+          ? { riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。" }
           : {}),
         ...(insecureRememberEnvironmentAllowed()
           ? { insecureWithoutDesktop: true }

@@ -299,7 +299,7 @@ export function useConfirmCard({
           setDecisionError(
             error instanceof Error && error.message.trim()
               ? error.message
-              : "确认没有提交成功，请再试一次。",
+              : "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
           );
         }
       });

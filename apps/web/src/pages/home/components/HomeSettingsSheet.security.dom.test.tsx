@@ -26,13 +26,13 @@ describe("HomeSettingsSheet 安全页", () => {
     vi.clearAllMocks();
   });
 
-  it("安全 Tab 接入真实开关面板，撤销默认同意不要求 nonce", async () => {
+  it("安全 Tab 接入真实开关面板，恢复每次询问不要求 nonce", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         categories: [
-          { kind: "install", label: "安装指令", needConfirmation: true, mutable: true, present: false, grantId: null, version: 0 },
-          { kind: "command", label: "此类命令", needConfirmation: false, mutable: true, present: true, grantId: "grant-command", version: 1 },
-          { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+          { kind: "install", label: "安装", needConfirmation: true, mutable: true, present: false, grantId: null, version: 0 },
+          { kind: "command", label: "同类操作", needConfirmation: false, mutable: true, present: true, grantId: "grant-command", version: 1 },
+          { kind: "send", label: "向外发送内容", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
           { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
         ],
         insecureRememberAllowed: true,
@@ -78,7 +78,7 @@ describe("HomeSettingsSheet 安全页", () => {
     expect(securityTab?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-wf="SecurityPanel"]')).not.toBeNull();
 
-    const command = host.querySelector<HTMLButtonElement>('[aria-label="此类命令需要确认"]')!;
+    const command = host.querySelector<HTMLButtonElement>('button[aria-label^="同类操作："]')!;
     await act(async () => {
       command.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });

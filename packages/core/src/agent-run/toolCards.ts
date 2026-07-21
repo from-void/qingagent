@@ -94,6 +94,7 @@ export function commandCardFromResult(
     typeof structured?.output === "string" ? structured.output : toolResult ?? "",
   );
   const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
+  const outputForDisplay = outRaw.replace(/\n?Exit code:?\s*\d+\s*$/i, "").trimEnd();
   const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
   const structuredExitCode = typeof structured?.exitCode === "number"
     ? structured.exitCode
@@ -129,7 +130,7 @@ export function commandCardFromResult(
     icon: verdict.icon,
     command,
     exitCode,
-    outputTail: outRaw.slice(-600),
+    outputTail: outputForDisplay.slice(-600),
     phase: structuredFailed || legacyNonZeroExit || looksLikeError || !ok ? "failed" : "done",
   };
 }

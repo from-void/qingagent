@@ -91,7 +91,7 @@ async function post(
 }
 
 describe("安全设置路由", () => {
-  it("读取四类开关，send/connect 固定为始终确认", async () => {
+  it("读取统一类别文案，send/connect 固定为每次询问", async () => {
     const harness = makeHarness([{
       grantId: "grant-command",
       kind: "command",
@@ -102,17 +102,21 @@ describe("安全设置路由", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       categories: [
-        { kind: "install", needConfirmation: true, mutable: true },
-        { kind: "command", needConfirmation: false, mutable: true },
-        { kind: "send", needConfirmation: true, mutable: false },
-        { kind: "connect", needConfirmation: true, mutable: false },
+        { kind: "install", label: "安装", needConfirmation: true, mutable: true },
+        { kind: "command", label: "同类操作", needConfirmation: false, mutable: true },
+        { kind: "send", label: "向外发送内容", needConfirmation: true, mutable: false },
+        { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false },
       ],
     });
   });
 
   it("关闭确认必须消费 settings+kind 绑定 nonce，重放拒绝", async () => {
     const harness = makeHarness();
-    expect((await post(harness.app, "command", { needConfirmation: false })).status).toBe(403);
+    const missingDesktopConfirmation = await post(harness.app, "command", { needConfirmation: false });
+    expect(missingDesktopConfirmation.status).toBe(403);
+    expect(await missingDesktopConfirmation.json()).toEqual({
+      error: "开启记忆需要在桌面应用中完成确认。",
+    });
     const nonce = harness.nonces.register({ purpose: "settings", kind: "command" });
     const response = await post(harness.app, "command", {
       needConfirmation: false,
@@ -143,8 +147,24 @@ describe("安全设置路由", () => {
     const harness = makeHarness();
     const response = await post(harness.app, kind, { needConfirmation: false });
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "这类操作只能每次询问，不能改为自动进行。",
+    });
     expect(harness.created).toHaveLength(0);
     expect(harness.revoked).toHaveLength(0);
+  });
+
+  it("设置内容不完整时返回可行动说明", async () => {
+    const harness = makeHarness();
+    const response = await harness.app.request("/api/v1/settings/security/install", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "设置内容不完整，请再试一次。",
+    });
   });
 
   it("不安全开发开关显式开启时才允许无 nonce 创建", async () => {

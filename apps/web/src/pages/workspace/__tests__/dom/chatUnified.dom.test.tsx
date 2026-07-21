@@ -396,9 +396,11 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("12 块");
   });
 
-  it("未识别工具 + 无可提炼字段 → 回退「已完成」", () => {
+  it("未识别工具不暴露内部称呼，结果回退为已完成", () => {
     renderBar(doneSpec("someUnknownTool", { ok: true }));
+    expect(host.textContent).toContain("执行操作");
     expect(host.textContent).toContain("已完成");
+    expect(host.textContent).not.toContain("工具调用");
   });
 
   it("askUser overlay 兜底成「确认方向」而非裸「工具调用」", () => {

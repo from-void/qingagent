@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { confirmRoutes } from "../routes/confirms";
+import { createSession } from "@qingagent/core";
+import { ConfirmDecisionError } from "@qingagent/core/confirm";
+import { confirmRoutes, createConfirmRoutes } from "../routes/confirms";
 
 const app = new Hono();
 app.route("/api/v1", confirmRoutes);
@@ -19,7 +21,11 @@ describe("confirm decision route 入站防护", () => {
       }),
     });
     expect(response.status).toBe(400);
-    expect(await response.text()).not.toContain(sentinel);
+    const body = await response.text();
+    expect(body).not.toContain(sentinel);
+    expect(body).toContain(
+      "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
+    );
   });
 
   it("超限 body 拒绝，恶意 Origin 返回 403", async () => {
@@ -29,6 +35,9 @@ describe("confirm decision route 入站防护", () => {
       body: "x".repeat(16 * 1024 + 1),
     });
     expect(oversized.status).toBe(400);
+    expect(await oversized.json()).toEqual({
+      error: "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
+    });
 
     const crossSite = await app.request("/api/v1/confirms/decision", {
       method: "POST",
@@ -40,5 +49,76 @@ describe("confirm decision route 入站防护", () => {
       body: "{}",
     });
     expect(crossSite.status).toBe(403);
+  });
+
+  it("确认已处理或失效时返回可行动说明", async () => {
+    const unavailableApp = new Hono();
+    unavailableApp.route("/api/v1", createConfirmRoutes({
+      getSession: async () => undefined,
+    }));
+    const response = await unavailableApp.request("/api/v1/confirms/decision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "session-gone",
+        toolCallId: "tool-gone",
+        decisionId: "decision-gone",
+        decision: { id: "confirm-gone", accepted: true },
+      }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "这张确认已处理或已失效，请查看命令结果。",
+    });
+  });
+
+  it("确认冲突不泄漏内部状态，提示先查看命令卡", async () => {
+    const session = createSession("session-conflict");
+    session.pendingConfirms.set("tool-conflict", {
+      confirmId: "confirm-conflict",
+      runId: "run-conflict",
+      toolCallId: "tool-conflict",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-conflict",
+      spec: {
+        id: "confirm-conflict",
+        kind: "command",
+        title: "运行命令",
+        say: "需要确认",
+        commandPreview: "echo safe",
+        footHint: "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
+        primaryLabel: "确认执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "pending",
+    });
+    const conflictApp = new Hono();
+    conflictApp.route("/api/v1", createConfirmRoutes({
+      getSession: async () => session,
+      runExclusive: async (_sessionId, task) => {
+        for await (const _frame of task()) { /* 完整消费 */ }
+      },
+      handleDecision: async function* () {
+        throw new ConfirmDecisionError("conflict", "内部确认状态冲突");
+      },
+    }));
+    const response = await conflictApp.request("/api/v1/confirms/decision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.sessionId,
+        toolCallId: "tool-conflict",
+        decisionId: "decision-conflict",
+        decision: { id: "confirm-conflict", accepted: true },
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
+    });
   });
 });

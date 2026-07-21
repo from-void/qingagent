@@ -325,13 +325,23 @@ describe("ServerStream", () => {
       decision: { id: "confirm-id", accepted: true },
     })).resolves.toEqual({ accepted: true, remembered: true });
 
-    globalThis.fetch = commandResponse({ error: "这张确认已处理，请查看命令结果。" }, 409);
+    globalThis.fetch = commandResponse({ error: "这张确认已处理或已失效，请查看命令结果。" }, 409);
     await expect(stream.resolveConfirm({
       sessionId: "session-confirm",
       toolCallId: "tool-confirm",
       decisionId: "decision-confirm-2",
       decision: { id: "confirm-id", accepted: true },
-    })).rejects.toThrow("这张确认已处理，请查看命令结果。");
+    })).rejects.toThrow("这张确认已处理或已失效，请查看命令结果。");
+
+    globalThis.fetch = commandResponse({}, 500);
+    await expect(stream.resolveConfirm({
+      sessionId: "session-confirm",
+      toolCallId: "tool-confirm",
+      decisionId: "decision-confirm-3",
+      decision: { id: "confirm-id", accepted: true },
+    })).rejects.toThrow(
+      "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
+    );
   });
 
   it("卡级停止使用独立 toolCallId 上行", async () => {

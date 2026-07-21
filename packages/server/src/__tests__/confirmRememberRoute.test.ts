@@ -18,7 +18,7 @@ function spec(kind: ConfirmKind, id = "confirm-a"): ConfirmSpec {
     say: "将执行命令",
     commandPreview: "pnpm test",
     ...(kind === "install" || kind === "command"
-      ? { rememberCategory: { kind, label: "后续同类命令都默认同意" } }
+      ? { rememberCategory: { kind, label: "以后遇到同类操作不再询问" } }
       : {}),
     footHint: "仅执行本次",
     primaryLabel: "执行",
@@ -277,6 +277,9 @@ describe("确认记忆路由", () => {
     const response = await postDecision(harness, decisionBody(harness));
 
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "这类操作只能每次询问，不能改为自动进行。",
+    });
     expect(harness.decisions).toHaveLength(0);
     expect(harness.created).toHaveLength(0);
     expect(harness.audits).toContainEqual(expect.objectContaining({

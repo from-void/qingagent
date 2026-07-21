@@ -54,7 +54,7 @@ export async function* handleApprovalEvent(
     aborted: context.abortController.signal.aborted,
   });
   if (!result.ok) {
-    const safeReason = "命令确认请求无效，已拒绝执行";
+    const safeReason = "确认没有完成，命令没有执行。请稍后再试。";
     yield* emitOrUpdateToolCall(
       context,
       failedApprovalSpec(toolCallId, toolName, safeReason),

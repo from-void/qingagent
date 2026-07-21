@@ -116,6 +116,9 @@ describe("processAgentStream tool-call-approval", () => {
     expect(frames.some(
       (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
     )).toBe(true);
+    expect(JSON.stringify(frames)).toContain(
+      "确认没有完成，命令没有执行。请稍后再试。",
+    );
   });
 
   it("stored grant 跳过参数流 generic 占位，首帧为排队 commandCard 并恢复到完成态", async () => {

@@ -25,6 +25,10 @@ interface SecuritySettingsResponse {
 }
 
 const POST_TIMEOUT_MS = 8_000;
+const fixedCategoryReasons: Partial<Record<SecurityKind, string>> = {
+  send: "发出后不能撤回，所以每次都会询问。",
+  connect: "连接会改变可访问的内容，所以每次连接前都会询问。",
+};
 
 function isCategory(value: unknown): value is SecurityCategory {
   if (!value || typeof value !== "object") return false;
@@ -126,7 +130,7 @@ export function SecurityPanel() {
     const controller = new AbortController();
     void readSettings(controller.signal).catch(() => {
       if (controller.signal.aborted) return;
-      toast.show({ message: "安全设置加载失败，请稍后重试", tone: "error" });
+      toast.show({ message: "设置加载失败，请稍后再试", tone: "error" });
     });
     return () => controller.abort();
   }, [readSettings, toast]);
@@ -137,7 +141,7 @@ export function SecurityPanel() {
     const revalidate = () => {
       void readSettings().catch(() => {
         toast.show({
-          message: "安全设置加载失败，请稍后重试",
+          message: "设置加载失败，请稍后再试",
           tone: "error",
           dedupeKey: "security-settings-focus-refresh",
         });
@@ -174,10 +178,13 @@ export function SecurityPanel() {
               trustedGesture: event.isTrusted,
             }) ?? undefined;
           } catch {
-            toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
+            toast.show({ message: "没有完成确认，设置未更改。", tone: "warn" });
             return;
           }
-          if (!uiGrantNonce) return;
+          if (!uiGrantNonce) {
+            toast.show({ message: "没有完成确认，设置未更改。", tone: "warn" });
+            return;
+          }
         } else if (!settings?.insecureRememberAllowed) {
           toast.show({ message: "开启记忆需要在桌面应用中完成确认。", tone: "warn" });
           return;
@@ -199,15 +206,15 @@ export function SecurityPanel() {
         publishRememberGrantState(canonical);
         toast.show({
           message: needConfirmation
-            ? `${category.label}已恢复逐次确认；已在执行的不受影响。`
-            : `${category.label}已默认同意`,
+            ? `${category.label}已恢复每次询问。已在执行的不受影响。`
+            : `${category.label}之后不再询问。`,
           tone: "success",
         });
       } finally {
         window.clearTimeout(timeout);
       }
     } catch {
-      toast.show({ message: "安全设置更新失败，请重试", tone: "error" });
+      toast.show({ message: "设置保存失败，请再试一次", tone: "error" });
       await readSettings().catch(() => undefined);
     } finally {
       setUpdatePhase(category.kind, "settled");
@@ -217,8 +224,9 @@ export function SecurityPanel() {
   return (
     <div className="security-panel" data-wf="SecurityPanel">
       <header className="security-head">
-        <h2>指令确认</h2>
-        <p>关闭后，同类指令会直接执行；可随时重新开启确认。</p>
+        <h2>操作确认</h2>
+        <p>这里可以选择哪些操作需要每次询问。记住后，之后会直接进行；随时可以恢复每次询问。</p>
+        <p className="security-scope-note">按操作类别分别生效，改一类不影响其他。</p>
       </header>
       <div className="security-list" aria-busy={settings === null}>
         {settings?.categories.map((category) => {
@@ -227,6 +235,17 @@ export function SecurityPanel() {
           const clientMutable = category.mutable && (
             !rememberable || rememberConfigurationAvailable
           );
+          const fixedReason = fixedCategoryReasons[category.kind];
+          const reasonId = fixedReason ? `security-${category.kind}-reason` : undefined;
+          const commandScopeId = category.kind === "command" ? "security-command-scope" : undefined;
+          const describedBy = [
+            reasonId,
+            commandScopeId,
+            rememberable && !clientMutable ? "security-desktop-note" : undefined,
+          ].filter((value): value is string => Boolean(value)).join(" ") || undefined;
+          const toggleLabel = category.needConfirmation
+            ? `${category.label}：每次询问，点击后改为之后不再询问`
+            : `${category.label}：之后不再询问，点击后恢复每次询问`;
           return (
             <div
               className="security-row"
@@ -238,28 +257,50 @@ export function SecurityPanel() {
                 <span className="security-label">{category.label}</span>
                 <span className="security-meta">
                   {phase === "updating"
-                    ? "正在更新…"
-                    : category.mutable
-                      ? category.needConfirmation ? "每次执行前询问" : "已默认同意"
-                      : "始终需要确认"}
+                    ? "正在保存…"
+                    : category.needConfirmation ? "每次询问" : "之后不再询问"}
                 </span>
+                {commandScopeId && (
+                  <span className="security-reason" id={commandScopeId}>
+                    仅影响会删除、移动或产生多种影响的操作，普通命令不受影响。
+                  </span>
+                )}
+                {fixedReason && (
+                  <span className="security-reason" id={reasonId}>
+                    {fixedReason}
+                  </span>
+                )}
               </div>
-              <button
-                type="button"
-                className={`security-toggle${category.needConfirmation ? " is-on" : ""}`}
-                aria-label={`${category.label}需要确认`}
-                aria-pressed={category.needConfirmation}
-                aria-busy={phase === "updating"}
-                aria-describedby={rememberable && !clientMutable ? "security-desktop-note" : undefined}
-                disabled={!clientMutable || phase === "updating"}
-                onClick={(event) => void toggle(category, event)}
-              >
-                <span className="security-toggle-dot" aria-hidden="true" />
-                {category.mutable ? category.needConfirmation ? "需要确认" : "默认同意" : "始终确认"}
-              </button>
+              {category.mutable ? (
+                <button
+                  type="button"
+                  className={`security-toggle${category.needConfirmation ? " is-on" : ""}`}
+                  aria-label={toggleLabel}
+                  aria-pressed={category.needConfirmation}
+                  aria-busy={phase === "updating"}
+                  aria-describedby={describedBy}
+                  disabled={!clientMutable || phase === "updating"}
+                  onClick={(event) => void toggle(category, event)}
+                >
+                  <span className="security-toggle-dot" aria-hidden="true" />
+                  {phase === "updating"
+                    ? "正在保存…"
+                    : category.needConfirmation ? "每次询问" : "之后不再询问"}
+                </button>
+              ) : (
+                <span
+                  className="security-fixed-state"
+                  role="status"
+                  aria-label={`${category.label}：每次询问`}
+                  aria-describedby={describedBy}
+                >
+                  <span aria-hidden="true" />
+                  每次询问
+                </span>
+              )}
             </div>
           );
-        }) ?? <p className="security-loading">正在读取安全设置…</p>}
+        }) ?? <p className="security-loading">正在加载…</p>}
       </div>
       {settings && !rememberConfigurationAvailable && (
         <p className="security-capability-note" id="security-desktop-note">

@@ -1183,7 +1183,7 @@ function verdictFromEffects(
       effects: ["install"],
       confirmKind: "install",
       title: "安装依赖/工具",
-      detail: "将下载或执行新代码，并修改运行环境",
+      detail: "将下载或执行新代码，并可能改动这台电脑上的软件或设置",
       icon: "📦",
     };
   }

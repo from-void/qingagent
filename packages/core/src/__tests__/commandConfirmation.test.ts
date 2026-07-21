@@ -10,11 +10,11 @@ import {
 
 describe("buildCommandConfirmSpec 风险卡映射", () => {
   it("install/send/destructive 分别映射到 install/send/command", () => {
-    const install = buildCommandConfirmSpec({ command: "npm install zod" }, "将修改运行环境", "install-id");
+    const install = buildCommandConfirmSpec({ command: "npm install zod" }, "将改动这台电脑上的软件或设置", "install-id");
     expect(install).toMatchObject({
       kind: "install",
       title: "安装依赖/工具",
-      sub: "将修改运行环境",
+      sub: "可能会改动这台电脑上的软件或设置",
       commandPreview: "npm install zod",
       primaryLabel: "确认安装",
     });
@@ -100,14 +100,14 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
   it("记忆部件只由后端 spec 声明，Windows 安装类附带如实风险提示", () => {
     const install = buildCommandConfirmSpec(
       { command: "npm install zod" },
-      "将修改运行环境",
+      "将改动这台电脑上的软件或设置",
       "install-win",
       "win32",
     );
     expect(install.rememberCategory).toEqual({
       kind: "install",
-      label: "后续的安装指令都默认同意",
-      riskHint: "默认同意后，后续安装可能修改这台电脑的运行环境。",
+      label: "以后安装时不再询问",
+      riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。",
     });
     const command = buildCommandConfirmSpec(
       { command: "rm old.txt" },
@@ -117,7 +117,7 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     );
     expect(command.rememberCategory).toEqual({
       kind: "command",
-      label: "后续此类命令都默认同意",
+      label: "以后遇到同类操作不再询问",
     });
     const send = buildCommandConfirmSpec(
       { command: "git push origin main" },

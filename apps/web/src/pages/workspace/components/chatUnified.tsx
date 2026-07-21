@@ -57,7 +57,7 @@ export const TOOL_LABELS: Record<string, string> = {
   parseFile: "解析文件", storeMaterial: "存储素材", summarizeMaterial: "更新素材", readMaterial: "读取素材",
   readDraft: "读取草稿", editDraft: "修改草稿", readDiff: "核对修改",
   webSearch: "联网搜索", fetchArticle: "网页抓取",
-  skill: "调用技能", skill_read: "读取技能", skill_search: "搜索技能",
+  skill: "使用技能", skill_read: "读取技能", skill_search: "搜索技能",
   browser_goto: "打开网页", browser_snapshot: "网页浏览", browser_click: "网页点击",
   browser_type: "网页输入", browser_press: "按键", browser_wait: "等待", browser_scroll: "滚动", browser_back: "返回",
   browser_close: "关闭浏览器", browser_hover: "悬停", browser_select: "选择", browser_dialog: "处理弹窗",
@@ -76,8 +76,8 @@ export const TOOL_LABELS: Record<string, string> = {
   show_qr: "生成二维码",
   // askUser 仅为老会话持久化兼容保留，待老会话数据迁移或过期后删除。
   askUser: "确认方向", planDraft: "确认方向", askUserQuestion: "有问题待确认",
-  // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body,不加映射会裸显"工具调用"。
-  wechat_auth_status: "检查微信授权状态", wechat_auth_start: "生成二维码",
+  // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body，显式补上映射。
+  wechat_auth_status: "检查微信登录状态", wechat_auth_start: "生成二维码",
   wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
   github_list_repos: "列出 GitHub 仓库", github_repo_tree: "读取 GitHub 文件树",
   github_read_file: "读取 GitHub 文件",
@@ -94,13 +94,13 @@ export const TOOL_LABELS: Record<string, string> = {
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。
 const anonToolReported = new Set<string>();
-// 未映射工具 = 会裸显示成"工具调用",属 TOOL_LABELS 配置遗漏。首次遇到即 console.error 报警,
+// 未映射工具会回退为通用操作，仍属 TOOL_LABELS 配置遗漏。首次遇到即 console.error 报警，
 // 便于开发在控制台一眼揪出并回补中文名(用户诉求:一旦出现匿名工具就报错,后续去修)。
 function reportAnonTool(name: string, spec: ToolCallSpec): void {
   if (anonToolReported.has(name)) return;
   anonToolReported.add(name);
   console.error(
-    `[anon-tool] 工具「${name}」未在 TOOL_LABELS 映射,前端裸显示成"工具调用"。请在 chatUnified.tsx 的 TOOL_LABELS 补中文名。`,
+    `[anon-tool] 工具「${name}」未在 TOOL_LABELS 映射，前端已回退为通用操作。请在 chatUnified.tsx 的 TOOL_LABELS 补中文名。`,
     { toolName: name, bodyKind: spec.body.kind },
   );
 }
@@ -126,7 +126,7 @@ function bodyKindLabel(spec: ToolCallSpec): string {
       // 兜底:任何未显式映射的 browser_* 工具,统一成"浏览器操作",不裸"工具调用"。
       if (spec.name.startsWith("browser_")) return "浏览器操作";
       reportAnonTool(spec.name, spec);
-      return "工具调用";
+      return "执行操作";
   }
 }
 
@@ -246,7 +246,7 @@ function pickOutputSummary(result: ToolCallResult | null, toolName?: string): st
       const applied = cnt("applied");
       if (applied != null && applied > 0) return `改 ${applied} 处`;
       if (bool("changed") === false) return "未改动";
-      if (bool("ok") === false) return "未完成";
+      if (bool("ok") === false) return "修改失败";
       return null;
     }
     case "readDiff": {
@@ -485,7 +485,7 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
   const done = status === "done" || stage === "done";
   const failed = status === "failed" || stage === "failed";
   const running = !done && !failed;
-  const meta = done ? "已完成" : failed ? "未完成" : "生成中";
+  const meta = done ? "已完成" : failed ? "生成失败" : "生成中";
   const src = body.progress?.src ?? null;
   const partial = running ? body.progress?.partialSvg ?? null : null;
   return (
@@ -518,7 +518,7 @@ type ReadImageBody = { prompt: string; thumbnailSrc: string | null; excerpt: str
 export function UReadImage({ body, status }: { body: ReadImageBody; status: string }) {
   const done = status === "done" || status === "failed";
   const running = !done;
-  const meta = status === "failed" ? "未完成" : done ? "已完成" : "处理中";
+  const meta = status === "failed" ? "识别失败" : done ? "已完成" : "处理中";
   return (
     <UCard icon={ICO.image} title="识别图片" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
       <div className="u-card-bd">
@@ -592,10 +592,14 @@ export function UCommand({
   const queued = statusKind === "pending";
   const stoppedWithUnknownResult =
     status?.kind === "failed" && status.data.reason.includes("已中止");
+  const commandDidNotRun =
+    status?.kind === "failed" && status.data.reason.includes("命令没有执行");
   const meta = done
     ? "已完成"
     : failed
-      ? stoppedWithUnknownResult ? "已中止 / 结果可能未知" : "未完成"
+      ? stoppedWithUnknownResult
+        ? "已中止 / 结果可能未知"
+        : commandDidNotRun ? "命令没有执行" : "命令执行失败"
       : queued
         ? "已确认，排队执行"
         : "处理中";
@@ -608,7 +612,7 @@ export function UCommand({
             <ScrollBox lines={4} variant="code">{body.command.includes("\n") ? body.command : `$ ${body.command}`}</ScrollBox>
           )}
           {body.outputTail && (
-            <ScrollBox lines={3} variant="output">{body.outputTail}{body.exitCode !== 0 ? `\n(退出码 ${body.exitCode})` : ""}</ScrollBox>
+            <ScrollBox lines={3} variant="output">{body.outputTail}</ScrollBox>
           )}
           {statusKind === "running" && body.cancellable === true && onStop && toolCallId && (
             <div className="u-command-actions">

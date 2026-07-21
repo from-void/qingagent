@@ -33,6 +33,8 @@ import {
 } from "../lib/confirmUiGrant";
 
 const MAX_CONFIRM_BODY_BYTES = 16 * 1024;
+const CONFIRM_NOT_AVAILABLE_MESSAGE = "这张确认已处理或已失效，请查看命令结果。";
+const CONFIRM_SUBMISSION_UNKNOWN_MESSAGE = "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。";
 
 async function readBoundedJson(c: Context): Promise<unknown> {
   const declared = Number(c.req.header("content-length"));
@@ -105,6 +107,12 @@ function errorStatus(code: ConfirmDecisionError["code"]): 400 | 404 | 409 | 410 
   return 400;
 }
 
+function presentDecisionError(error: ConfirmDecisionError): string {
+  if (error.code === "expired") return error.message;
+  if (error.code === "not_found") return CONFIRM_NOT_AVAILABLE_MESSAGE;
+  return CONFIRM_SUBMISSION_UNKNOWN_MESSAGE;
+}
+
 interface ConfirmRoutesDependencies {
   getSession?: typeof getOrRestoreSession;
   runExclusive?: (
@@ -171,16 +179,19 @@ export function createConfirmRoutes(
     const raw = await readBoundedJson(c);
     const result = submitConfirmDecisionSchema.safeParse(raw);
     if (!result.success) {
-      return c.json({ error: "确认请求无效" }, 400);
+      return c.json({ error: CONFIRM_SUBMISSION_UNKNOWN_MESSAGE }, 400);
     }
     parsed = result.data;
   } catch (error) {
     const known = decisionError(error);
-    return c.json({ error: known?.message ?? "确认请求无效" }, known ? errorStatus(known.code) : 400);
+    return c.json(
+      { error: known ? presentDecisionError(known) : CONFIRM_SUBMISSION_UNKNOWN_MESSAGE },
+      known ? errorStatus(known.code) : 400,
+    );
   }
 
   const session = await getSession(parsed.sessionId);
-  if (!session) return c.json({ error: "没有可处理的确认请求" }, 404);
+  if (!session) return c.json({ error: CONFIRM_NOT_AVAILABLE_MESSAGE }, 404);
   const pending = session.pendingConfirms.get(parsed.toolCallId);
   const rememberRequested = parsed.decision.accepted && parsed.decision.remember === true;
   let rememberAuthorized = false;
@@ -212,7 +223,7 @@ export function createConfirmRoutes(
         parsed.decision.accepted,
         "forbidden-kind",
       );
-      return c.json({ error: "该类别始终需要确认" }, 400);
+      return c.json({ error: "这类操作只能每次询问，不能改为自动进行。" }, 400);
     }
     if (pending.spec.kind === "install" || pending.spec.kind === "command") {
       if (pending.spec.rememberCategory?.kind !== pending.spec.kind) {
@@ -311,7 +322,7 @@ export function createConfirmRoutes(
       return c.json({ error: "会话命令队列已满" }, 429);
     }
     const known = decisionError(error);
-    if (known) return c.json({ error: known.message }, errorStatus(known.code));
+    if (known) return c.json({ error: presentDecisionError(known) }, errorStatus(known.code));
     return c.json({ error: "确认没有完成，命令没有执行。请稍后再试。" }, 500);
   }
   });

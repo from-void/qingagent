@@ -56,9 +56,9 @@ export function createSecuritySettingsRoutes(
   };
   return c.json({
     categories: [
-      category("install", "安装指令"),
-      category("command", "此类命令"),
-      { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+      category("install", "安装"),
+      category("command", "同类操作"),
+      { kind: "send", label: "向外发送内容", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
       { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
     ],
     insecureRememberAllowed: allowInsecureRemember(),
@@ -70,10 +70,10 @@ export function createSecuritySettingsRoutes(
   if (originError) return originError;
   const kind = c.req.param("kind");
   if (!rememberableKinds.has(kind as ConfirmGrantKind)) {
-    return c.json({ error: "该类别始终需要确认" }, 400);
+    return c.json({ error: "这类操作只能每次询问，不能改为自动进行。" }, 400);
   }
   const parsed = updateSecuritySchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "安全设置请求无效" }, 400);
+  if (!parsed.success) return c.json({ error: "设置内容不完整，请再试一次。" }, 400);
   const grantKind = kind as ConfirmGrantKind;
 
   if (parsed.data.needConfirmation) {
@@ -92,7 +92,7 @@ export function createSecuritySettingsRoutes(
     nonce: parsed.data.uiGrantNonce,
     kind: grantKind,
   }).ok;
-  if (!authorized) return c.json({ error: "缺少有效的桌面设置授权" }, 403);
+  if (!authorized) return c.json({ error: "开启记忆需要在桌面应用中完成确认。" }, 403);
   const result = await createGrant({ kind: grantKind, source: "settings" });
   return c.json({
     kind: grantKind,

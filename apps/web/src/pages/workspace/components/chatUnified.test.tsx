@@ -45,7 +45,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     host = null;
   });
 
-  it("生成期占位 generic body 使用真实工具中文名,不显示裸工具调用", async () => {
+  it("生成期占位 generic body 使用真实工具中文名，不显示匿名兜底", async () => {
     await render([
       genericTool("writeDraft"),
       genericTool("generateSvg"),
@@ -93,8 +93,8 @@ describe("UnifiedToolCall generic placeholder labels", () => {
           title: "运行命令",
           icon: "⚙️",
           command: "sleep 20",
-          exitCode: 0,
-          outputTail: "",
+          exitCode: 9,
+          outputTail: "boom",
           phase: "running",
         },
       },
@@ -103,9 +103,40 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([contradictory]);
 
-    expect(host?.textContent).toContain("未完成");
+    expect(host?.textContent).toContain("命令执行失败");
     expect(host?.textContent).not.toContain("处理中");
+    expect(host?.textContent).not.toContain("退出码");
+    expect(host?.textContent).not.toContain("9");
     expect(host?.querySelector(".u-spin")).toBeNull();
+  });
+
+  it("确认未启动命令时主状态明确显示命令没有执行", async () => {
+    const notStarted: ToolCallSpec = {
+      id: "command-not-started",
+      name: "mastra_workspace_execute_command",
+      render: { kind: "chatInline" },
+      status: {
+        kind: "failed",
+        data: { retriable: true, reason: "确认没有完成，命令没有执行。请稍后再试。" },
+      },
+      body: {
+        kind: "commandCard",
+        data: {
+          title: "运行命令",
+          icon: "⚙️",
+          command: "echo safe",
+          exitCode: -1,
+          outputTail: "确认没有完成，命令没有执行。请稍后再试。",
+          phase: "failed",
+        },
+      },
+      result: null,
+    };
+
+    await render([notStarted]);
+
+    expect(host?.textContent).toContain("命令没有执行");
+    expect(host?.textContent).not.toContain("命令执行失败");
   });
 
   it("排队命令卡显示已确认进度，running 卡可按 toolCallId 定向停止", async () => {

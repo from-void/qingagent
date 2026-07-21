@@ -103,6 +103,7 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     const card = commandCardFromResult({ command: "node x" }, "boom\nExit code: 2", true);
     expect(card.exitCode).toBe(2);
     expect(card.phase).toBe("failed");
+    expect(card.outputTail).toBe("boom");
   });
 
   it("结构化非零退出直接落 failed，不靠文本前缀推断", () => {

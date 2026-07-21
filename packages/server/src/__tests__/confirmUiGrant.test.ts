@@ -136,11 +136,21 @@ describe("ConfirmUiGrantStore", () => {
   it("仅显式真值开启不安全开发模式，并只警告一次", () => {
     __resetConfirmUiGrantForTest();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "0" })).toBe(false);
-    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "false" })).toBe(false);
-    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1" })).toBe(true);
-    expect(insecureRememberAllowed({ QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "true" })).toBe(true);
+    expect(insecureRememberAllowed({ NODE_ENV: "development", QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "0" })).toBe(false);
+    expect(insecureRememberAllowed({ NODE_ENV: "development", QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "false" })).toBe(false);
+    expect(insecureRememberAllowed({ NODE_ENV: "development", QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1" })).toBe(true);
+    expect(insecureRememberAllowed({ NODE_ENV: "development", QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "true" })).toBe(true);
     expect(insecureRememberAllowed({
+      NODE_ENV: "production",
+      QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1",
+    })).toBe(false);
+    expect(insecureRememberAllowed({
+      NODE_ENV: "development",
+      QINGAGENT_PUBLIC_DEPLOYMENT: "1",
+      QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1",
+    })).toBe(false);
+    expect(insecureRememberAllowed({
+      NODE_ENV: "development",
       QINGAGENT_DESKTOP_PACKAGED: "1",
       QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER: "1",
     })).toBe(false);

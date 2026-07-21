@@ -187,7 +187,7 @@
 .security-row{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:58px;border-bottom:1px solid var(--qj-switch-border)}
 .security-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
 .security-label{color:var(--qj-ink);font-size:13px;font-weight:700}
-.security-meta,.security-loading,.security-dev-note{color:var(--qj-header-sub);font-size:10.5px;line-height:1.5}
+.security-meta,.security-loading,.security-dev-note,.security-capability-note{color:var(--qj-header-sub);font-size:10.5px;line-height:1.5}
 .security-toggle{display:inline-flex;flex:0 0 auto;align-items:center;gap:6px;height:26px;padding:0 11px;border:1px solid var(--qj-switch-border);border-radius:0;background:rgba(236,227,208,.06);color:var(--qj-header-sub);font:700 10.5px/1 var(--font-zh-serif);cursor:pointer}
 .security-toggle:hover:not(:disabled),.security-toggle:focus-visible{border-color:var(--qj-cinnabar);outline:none}
 .security-toggle.is-on{border-color:var(--qj-cinnabar);background:var(--qj-switch-active-bg);color:var(--qj-ink)}
@@ -196,6 +196,7 @@
 .security-toggle:disabled{cursor:default;opacity:.5}
 .security-loading{margin:0;padding:14px 0}
 .security-dev-note{margin:0;color:var(--qj-cinnabar-lite)}
+.security-capability-note{margin:0;padding-left:9px;border-left:1px solid var(--qj-switch-border)}
 
 /* —— 外观 tab:明暗 / 字体 / 进场 / 动效 / 入口 纵向分组 —— */
 .qj-appear{display:flex;flex-direction:column;gap:16px;padding:2px 6px 6px 0}

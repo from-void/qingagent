@@ -35,7 +35,7 @@ describe("HomeSettingsSheet 安全页", () => {
           { kind: "send", label: "外发指令", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
           { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
         ],
-        insecureRememberAllowed: false,
+        insecureRememberAllowed: true,
       }), { status: 200 }))
       .mockResolvedValue(new Response(JSON.stringify({
         kind: "command",

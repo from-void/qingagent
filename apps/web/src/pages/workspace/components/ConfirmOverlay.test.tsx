@@ -192,6 +192,9 @@ describe("ConfirmOverlay", () => {
     };
     await renderOverlay(rememberSpec);
     expect(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')).toBeNull();
+    expect(host?.querySelector(".cf-remember-unavailable")?.textContent).toContain(
+      "开启记忆需要在桌面应用中完成确认。",
+    );
 
     window.electron = {
       platform: "win32",

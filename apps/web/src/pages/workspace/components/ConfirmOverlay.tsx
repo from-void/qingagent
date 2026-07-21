@@ -309,6 +309,11 @@ export function ConfirmOverlay({
             </span>
           </label>
         )}
+        {!showRemember && sessionId && spec.rememberCategory && (
+          <p className="cf-remember-unavailable">
+            开启记忆需要在桌面应用中完成确认。
+          </p>
+        )}
       </div>
 
       <div className="cf-foot">

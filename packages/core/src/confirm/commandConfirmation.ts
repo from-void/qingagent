@@ -27,8 +27,14 @@ export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 export function insecureRememberEnvironmentAllowed(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.QINGAGENT_DESKTOP_PACKAGED !== "1"
-    && isEnvEnabled(env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
+  const explicitDevelopmentRuntime = env.NODE_ENV === "development" || (
+    env.QINGAGENT_RUNTIME === "desktop" &&
+    env.QINGAGENT_DESKTOP_PACKAGED !== "1"
+  );
+  return explicitDevelopmentRuntime &&
+    env.QINGAGENT_PUBLIC_DEPLOYMENT !== "1" &&
+    env.QINGAGENT_DESKTOP_PACKAGED !== "1" &&
+    isEnvEnabled(env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER);
 }
 
 export const executeCommandInputSchema = z.object({

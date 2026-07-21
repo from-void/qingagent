@@ -131,7 +131,9 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
   it("打包桌面即使注入开发开关也不暴露不安全记忆标记", () => {
     const savedPackaged = process.env.QINGAGENT_DESKTOP_PACKAGED;
     const savedInsecure = process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
+    const savedNodeEnv = process.env.NODE_ENV;
     try {
+      process.env.NODE_ENV = "development";
       process.env.QINGAGENT_DESKTOP_PACKAGED = "1";
       process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER = "1";
       const packaged = buildCommandConfirmSpec(
@@ -153,6 +155,29 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       else process.env.QINGAGENT_DESKTOP_PACKAGED = savedPackaged;
       if (savedInsecure === undefined) delete process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER;
       else process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER = savedInsecure;
+      if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = savedNodeEnv;
+    }
+  });
+
+  it("纯 web 生产即使误注入 insecure 环境变量也不暴露记忆能力", () => {
+    const previous = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      delete process.env.QINGAGENT_RUNTIME;
+      delete process.env.QINGAGENT_DESKTOP_PACKAGED;
+      process.env.QINGAGENT_DEV_ALLOW_INSECURE_REMEMBER = "1";
+      const spec = buildCommandConfirmSpec(
+        { command: "rm old.txt" },
+        "将删除文件",
+        "production-web-command",
+      );
+      expect(spec.rememberCategory).not.toHaveProperty("insecureWithoutDesktop");
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in previous)) delete process.env[key];
+      }
+      Object.assign(process.env, previous);
     }
   });
 });

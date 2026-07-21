@@ -94,6 +94,9 @@ export function SecurityPanel() {
   const toast = useToast();
   const [settings, setSettings] = useState<SecuritySettingsResponse | null>(null);
   const [updatePhases, setUpdatePhases] = useState<Partial<Record<SecurityKind, UpdatePhase>>>({});
+  const desktopRememberAvailable = Boolean(window.electron?.requestSettingsRememberGrant);
+  const insecureWebRememberAvailable = settings?.insecureRememberAllowed === true;
+  const rememberConfigurationAvailable = desktopRememberAvailable || insecureWebRememberAvailable;
 
   const applyCanonical = useCallback((state: RememberGrantCanonical) => {
     setSettings((current) => current ? {
@@ -152,27 +155,33 @@ export function SecurityPanel() {
     category: SecurityCategory,
     event: MouseEvent<HTMLButtonElement>,
   ) => {
-    if (!category.mutable || updatePhases[category.kind] === "updating") return;
+    const rememberable = category.kind === "install" || category.kind === "command";
+    if (
+      !category.mutable ||
+      (rememberable && !rememberConfigurationAvailable) ||
+      updatePhases[category.kind] === "updating"
+    ) return;
     setUpdatePhase(category.kind, "updating");
     const needConfirmation = !category.needConfirmation;
     let uiGrantNonce: string | undefined;
     try {
-      if (!needConfirmation && !settings?.insecureRememberAllowed) {
+      if (!needConfirmation) {
         const requestGrant = window.electron?.requestSettingsRememberGrant;
-        if (!requestGrant) {
-          toast.show({ message: "仅可在桌面端通过真实操作关闭确认", tone: "warn" });
+        if (requestGrant) {
+          try {
+            uiGrantNonce = await requestGrant({
+              kind: category.kind as "install" | "command",
+              trustedGesture: event.isTrusted,
+            }) ?? undefined;
+          } catch {
+            toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
+            return;
+          }
+          if (!uiGrantNonce) return;
+        } else if (!settings?.insecureRememberAllowed) {
+          toast.show({ message: "开启记忆需要在桌面应用中完成确认。", tone: "warn" });
           return;
         }
-        try {
-          uiGrantNonce = await requestGrant({
-            kind: category.kind as "install" | "command",
-            trustedGesture: event.isTrusted,
-          }) ?? undefined;
-        } catch {
-          toast.show({ message: "桌面端确认未完成，设置未更改", tone: "warn" });
-          return;
-        }
-        if (!uiGrantNonce) return;
       }
 
       const controller = new AbortController();
@@ -212,8 +221,17 @@ export function SecurityPanel() {
       <div className="security-list" aria-busy={settings === null}>
         {settings?.categories.map((category) => {
           const phase = updatePhases[category.kind] ?? "idle";
+          const rememberable = category.kind === "install" || category.kind === "command";
+          const clientMutable = category.mutable && (
+            !rememberable || rememberConfigurationAvailable
+          );
           return (
-            <div className="security-row" key={category.kind} data-update-state={phase}>
+            <div
+              className="security-row"
+              key={category.kind}
+              data-update-state={phase}
+              data-capability={clientMutable ? "mutable" : "readonly"}
+            >
               <div className="security-copy">
                 <span className="security-label">{category.label}</span>
                 <span className="security-meta">
@@ -230,7 +248,8 @@ export function SecurityPanel() {
                 aria-label={`${category.label}需要确认`}
                 aria-pressed={category.needConfirmation}
                 aria-busy={phase === "updating"}
-                disabled={!category.mutable || phase === "updating"}
+                aria-describedby={rememberable && !clientMutable ? "security-desktop-note" : undefined}
+                disabled={!clientMutable || phase === "updating"}
                 onClick={(event) => void toggle(category, event)}
               >
                 <span className="security-toggle-dot" aria-hidden="true" />
@@ -240,8 +259,10 @@ export function SecurityPanel() {
           );
         }) ?? <p className="security-loading">正在读取安全设置…</p>}
       </div>
-      {settings?.insecureRememberAllowed && (
-        <p className="security-dev-note">本地开发的不安全记忆模式已开启。</p>
+      {settings && !rememberConfigurationAvailable && (
+        <p className="security-capability-note" id="security-desktop-note">
+          开启记忆需要在桌面应用中完成确认。
+        </p>
       )}
     </div>
   );

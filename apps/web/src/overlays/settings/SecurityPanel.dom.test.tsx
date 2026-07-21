@@ -93,6 +93,11 @@ describe("SecurityPanel", () => {
   });
 
   it("恢复 command 确认无需可信 UI nonce，并更新开关", async () => {
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestSettingsRememberGrant: vi.fn(async () => "unused-for-revoke"),
+    };
     const fetchMock = await renderPanel();
     const command = host!.querySelector<HTMLButtonElement>('[aria-label="此类命令需要确认"]')!;
     await click(command);
@@ -105,13 +110,17 @@ describe("SecurityPanel", () => {
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ tone: "success" }));
   });
 
-  it("纯 web 安全模式下拒绝关闭确认，不发设置写请求", async () => {
+  it("纯 web 生产把记忆设置收敛为只读并解释桌面条件", async () => {
     const fetchMock = await renderPanel();
     const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
     await click(install);
 
+    expect(install.disabled).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ tone: "warn" }));
+    expect(host?.querySelector("#security-desktop-note")?.textContent).toContain(
+      "开启记忆需要在桌面应用中完成确认。",
+    );
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it("显式不安全开发模式允许预配置默认同意", async () => {
@@ -127,13 +136,13 @@ describe("SecurityPanel", () => {
   });
 
   it("桌面原生确认取消时静默保留逐次确认", async () => {
-    const fetchMock = await renderPanel();
     const requestGrant = vi.fn(async () => null);
     window.electron = {
       platform: "win32",
       isDesktop: true,
       requestSettingsRememberGrant: requestGrant,
     };
+    const fetchMock = await renderPanel();
     const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
 
     await click(install);
@@ -145,7 +154,6 @@ describe("SecurityPanel", () => {
   });
 
   it("桌面原生确认调用失败时使用非术语化提示", async () => {
-    const fetchMock = await renderPanel();
     window.electron = {
       platform: "win32",
       isDesktop: true,
@@ -153,6 +161,7 @@ describe("SecurityPanel", () => {
         throw new Error("desktop unavailable");
       }),
     };
+    const fetchMock = await renderPanel();
     const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
 
     await click(install);
@@ -162,6 +171,30 @@ describe("SecurityPanel", () => {
       message: "桌面端确认未完成，设置未更改",
       tone: "warn",
     });
+  });
+
+  it("桌面能力与 insecure 同时存在时仍优先请求一次性 nonce", async () => {
+    const requestGrant = vi.fn(async () => "desktop-first-nonce");
+    window.electron = {
+      platform: "win32",
+      isDesktop: true,
+      requestSettingsRememberGrant: requestGrant,
+    };
+    const fetchMock = await renderPanel(true);
+    const install = host!.querySelector<HTMLButtonElement>('[aria-label="安装指令需要确认"]')!;
+
+    await click(install);
+
+    expect(requestGrant).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/settings/security/install",
+      expect.objectContaining({
+        body: JSON.stringify({
+          needConfirmation: false,
+          uiGrantNonce: "desktop-first-nonce",
+        }),
+      }),
+    );
   });
 
   it("卡侧记忆状态事件让已打开设置页按版本立即更新", async () => {

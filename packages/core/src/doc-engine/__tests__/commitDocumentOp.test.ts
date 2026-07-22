@@ -370,7 +370,7 @@ describe("commitDocumentOp", () => {
     expect(frames).toEqual(["documentSnapshotWritten"]);
   });
 
-  it("persists undo A→B→A, redo, and undo-to-empty inside a coalesce window", async () => {
+  it("单标签快速连续手打在 coalesce 窗口内仍合并，并持久化撤销/重做", async () => {
     await seedDocument("doc-coalesce", "before", 1);
 
     const first = await commitDocumentOp(
@@ -522,6 +522,46 @@ describe("commitDocumentOp", () => {
       docVersion: 3,
       pmDoc: emptyDoc,
     });
+  });
+
+  it("coalesce 窗口内两份同基线并发整篇写入时，后写冲突且不覆盖先写", async () => {
+    await seedDocument("doc-coalesce-concurrent", "共同基线", 1);
+
+    const first = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-concurrent",
+        threadId: "thread-doc-coalesce-concurrent",
+        clientMutationId: "tab-1-write",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("标签一独有内容") }),
+      }),
+      { now: () => "2026-01-02T00:00:00.000Z" },
+    );
+    const second = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-concurrent",
+        threadId: "thread-doc-coalesce-concurrent",
+        expectedDocumentSnapshot: 1,
+        clientMutationId: "tab-2-write",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("标签二旧基线整篇覆盖") }),
+      }),
+      { now: () => "2026-01-02T00:00:10.000Z" },
+    );
+
+    expect(first).toMatchObject({ status: "committed", docVersion: 2 });
+    expect(second).toMatchObject({ status: "conflict", currentVersion: 2 });
+    await expect(documentRepo.load("doc-coalesce-concurrent")).resolves.toMatchObject({
+      docVersion: 2,
+      pmDoc: pmDocFromText("标签一独有内容"),
+    });
+    await expect(listVersions("doc-coalesce-concurrent")).resolves.toMatchObject([
+      { docVersion: 2, snapshotPm: pmDocFromText("标签一独有内容") },
+    ]);
+    await expect(findOpByIdempotencyKey({
+      docId: "doc-coalesce-concurrent",
+      clientMutationId: "tab-2-write",
+    })).resolves.toBeNull();
   });
 
   it("inserts a new user version when the coalesce window has expired", async () => {

@@ -36,8 +36,18 @@ function annotationGroupIdsAtTarget(
 export function buildAnnotationInstruction(group: AnnotationGroup, editedSuggestion?: string): string {
   const quoteChars = Array.from(group.anchors[0]?.quote.trim() ?? "");
   const quote = quoteChars.length > 30 ? `${quoteChars.slice(0, 30).join("")}…` : quoteChars.join("");
-  const suggestion = editedSuggestion?.trim() || group.suggestion?.trim() || "请结合批注原因修改原文";
+  const suggestion = resolveAnnotationSuggestion(group, editedSuggestion);
   return `按批注修改:「${quote}」——${suggestion}（批注:${group.summary}；原因:${group.note}）\n`;
+}
+
+export function resolveAnnotationSuggestion(
+  group: AnnotationGroup,
+  editedSuggestion?: string,
+): string {
+  if (editedSuggestion !== undefined) {
+    return editedSuggestion.trim() || group.note.trim();
+  }
+  return group.suggestion?.trim() || group.note.trim();
 }
 
 const SEVERITY_LABELS = { error: "严重", warn: "建议", info: "提示" } as const;
@@ -164,7 +174,9 @@ export function AnnotationCarousel(props: {
     .filter((item): item is AnnotationGroup => item !== undefined);
   const hitIndex = hitGroups.findIndex((item) => item.id === group.id);
   const hasOverlap = hitGroups.length > 1;
-  const suggestion = suggestions[group.id] ?? group.suggestion?.trim() ?? "请结合批注原因修改原文";
+  const suggestion = suggestions[group.id]
+    ?? (group.suggestion?.trim() || group.note.trim());
+  const resolvedSuggestion = resolveAnnotationSuggestion(group, suggestion);
   const severitySummary = buildAnnotationSeveritySummary(reviewingGroups);
 
   const keepOpen = () => cancelHide();
@@ -250,7 +262,12 @@ export function AnnotationCarousel(props: {
         <button className="ahc-ignore" type="button" onClick={() => { props.onIgnore(group, false); hideNow(); }}>忽略</button>
         <button className="ahc-ignore-remember" type="button" onClick={() => { props.onIgnore(group, true); hideNow(); }}>下次不再提示</button>
       </div>
-      <button className="ahc-accept" type="button" onClick={() => { if (props.onAccept(group, suggestion)) hideNow(); }}>确认修改</button>
+      <button
+        className="ahc-accept"
+        type="button"
+        disabled={!resolvedSuggestion}
+        onClick={() => { if (resolvedSuggestion && props.onAccept(group, resolvedSuggestion)) hideNow(); }}
+      >确认修改</button>
     </footer>
   </article>;
 }

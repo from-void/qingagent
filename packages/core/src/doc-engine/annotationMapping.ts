@@ -4,6 +4,7 @@ import type {
 } from "@qingagent/contract-ts";
 import type { PmDoc, PmStep } from "@qingagent/pm-schema";
 import { Mapping, StepMap } from "@tiptap/pm/transform";
+import { normalizeAnnotationQuote } from "./textEditOps.js";
 
 function nodeSize(node: unknown): number {
   if (!node || typeof node !== "object") return 0;
@@ -63,7 +64,19 @@ export function mappingFromPmSteps(steps: readonly PmStep[]): Mapping {
 export type MappedAnnotationGroups = {
   groups: AnnotationGroup[];
   survivingAnchorIndexes: Map<string, number[]>;
+  invalidatedAnchorIndexes: Map<string, number[]>;
+  unlocatedGroupCount: number;
 };
+
+export function buildAnnotationMappingNotice(
+  survivingGroupCount: number,
+  unlocatedGroupCount: number,
+): string {
+  const located = `批注落地结果：${survivingGroupCount}处已定位`;
+  return unlocatedGroupCount > 0
+    ? `${located}；${unlocatedGroupCount}处因文档已改动未能定位。`
+    : `${located}。`;
+}
 
 export function mapAnnotationGroupsThroughSteps(
   groups: readonly AnnotationGroup[],
@@ -74,10 +87,12 @@ export function mapAnnotationGroupsThroughSteps(
     ? new StepMap([step.from, step.to - step.from, insertedSize(step)])
     : StepMap.empty);
   const survivingAnchorIndexes = new Map<string, number[]>();
+  const invalidatedAnchorIndexes = new Map<string, number[]>();
+  let unlocatedGroupCount = 0;
   const mapped = groups.flatMap((group) => {
     const anchors: SuggestionAnchor[] = [];
     const indexes: number[] = [];
-    let groupInvalid = false;
+    const invalidIndexes: number[] = [];
     group.anchors.forEach((anchor, index) => {
       let from = anchor.pmFrom;
       let to = anchor.pmTo;
@@ -96,20 +111,31 @@ export function mapAnnotationGroupsThroughSteps(
         from = map.map(from, 1);
         to = map.map(to, -1);
       });
-      const textChanged = finalDoc && (touched || fallbackValidation)
-        ? textBetweenPmDoc(finalDoc, from, to) !== anchor.quote
-        : false;
+      const mappedQuote = finalDoc && (touched || fallbackValidation)
+        ? textBetweenPmDoc(finalDoc, from, to)
+        : anchor.quote;
+      const textChanged = mappedQuote !== anchor.quote
+        && normalizeAnnotationQuote(mappedQuote) !== normalizeAnnotationQuote(anchor.quote);
       if (from >= to || textChanged) {
-        groupInvalid = true;
+        invalidIndexes.push(index);
         return;
       }
       anchors.push({ ...anchor, pmFrom: from, pmTo: to });
       indexes.push(index);
     });
-    // 组是问题的原子单位：任一锚点死亡，整组退出，不保留残余锚点。
-    if (groupInvalid || anchors.length !== group.anchors.length) return [];
+    if (invalidIndexes.length > 0) invalidatedAnchorIndexes.set(group.id, invalidIndexes);
+    // 同一问题的多个落点可以独立漂移：只忽略失效锚点，至少一个落点仍在就保留该组。
+    if (anchors.length === 0) {
+      unlocatedGroupCount += 1;
+      return [];
+    }
     survivingAnchorIndexes.set(group.id, indexes);
     return [{ ...group, anchors }];
   });
-  return { groups: mapped, survivingAnchorIndexes };
+  return {
+    groups: mapped,
+    survivingAnchorIndexes,
+    invalidatedAnchorIndexes,
+    unlocatedGroupCount,
+  };
 }

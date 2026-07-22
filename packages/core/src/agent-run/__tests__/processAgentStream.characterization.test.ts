@@ -92,6 +92,31 @@ function parallelFetchChunks(results: unknown[]) {
   ];
 }
 
+async function* annotationResultStream(
+  state: ReturnType<typeof createSession>,
+): AsyncGenerator<unknown> {
+  state.annotationGroups = [
+    {
+      id: "annotation-1",
+      summary: "问题一",
+      note: "说明一",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{ blockId: "p", pmFrom: 1, pmTo: 3, quote: "甲组", textHash: "h1" }],
+    },
+    {
+      id: "annotation-2",
+      summary: "问题二",
+      note: "说明二",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{ blockId: "p", pmFrom: 3, pmTo: 5, quote: "乙组", textHash: "h2" }],
+    },
+  ];
+  state._annotationOriginsReplacedThisTurn?.add("consistency");
+  yield { type: "text-delta", payload: { id: "text-1", text: "审查完成，已写入3处批注。" } };
+}
+
 describe("processAgentStream 行为特征", () => {
   beforeEach(() => {
     recordUsageEventMock.mockClear();
@@ -166,6 +191,51 @@ describe("processAgentStream 行为特征", () => {
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
     });
+  });
+
+  it("审查总结追加实际存活组数，不沿用模型自报计数", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("characterize-annotation-count");
+    state.chatHistory.push({
+      id: "agent-message",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [],
+      chips: null,
+    });
+
+    const { frames } = await collectFramesAndReturn(
+      processAgentStream(
+        annotationResultStream(state),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-annotation-count",
+          runId: "run-annotation-count",
+        },
+      ),
+    );
+
+    expect(frames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: state.annotationGroups,
+        replacedOrigins: ["consistency"],
+      },
+    });
+    expect(frames).toContainEqual({
+      kind: "chatMessageAppended",
+      data: {
+        messageId: "agent-message",
+        seq: 2,
+        part: {
+          kind: "text",
+          data: { body: "\n\n批注落地结果：2处已定位。" },
+        },
+      },
+    });
+    expect(state.messages.at(-1)?.content)
+      .toBe("审查完成，已写入3处批注。\n\n批注落地结果：2处已定位。");
   });
 
   it("step-finish 把 usage 与同级 providerMetadata 合并后记入 agent 账本", async () => {

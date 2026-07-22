@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AnnotationGroup, PmStep } from "@qingagent/contract-ts";
-import { mapAnnotationGroupsThroughSteps } from "../doc-engine/annotationMapping.js";
+import {
+  buildAnnotationMappingNotice,
+  mapAnnotationGroupsThroughSteps,
+} from "../doc-engine/annotationMapping.js";
 import { getDocumentsClient, insertAnnotationGroups, persistMappedAnnotationGroups } from "@qingagent/db";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 
@@ -45,7 +48,7 @@ describe("annotation StepMap", () => {
     ]);
   });
 
-  it("多锚组任一锚内文本被改后整组失效", () => {
+  it("多锚组漂移一字时只标记失效锚点并保留存活锚点", async () => {
     const groups: AnnotationGroup[] = [{
       id: "g-multi",
       summary: "多处同类问题",
@@ -66,6 +69,56 @@ describe("annotation StepMap", () => {
       content: [{ type: "paragraph" as const, attrs: { blockId: "p" }, content: [{ type: "text" as const, text: "甲新组中间乙组" }] }],
     };
 
-    expect(mapAnnotationGroupsThroughSteps(groups, [step], finalDoc).groups).toEqual([]);
+    const mapped = mapAnnotationGroupsThroughSteps(groups, [step], finalDoc);
+    expect(mapped.groups).toEqual([expect.objectContaining({
+      id: "g-multi",
+      anchors: [expect.objectContaining({ quote: "乙组", pmFrom: 6, pmTo: 8 })],
+    })]);
+    expect(mapped.survivingAnchorIndexes.get("g-multi")).toEqual([1]);
+    expect(mapped.invalidatedAnchorIndexes.get("g-multi")).toEqual([0]);
+    expect(mapped.unlocatedGroupCount).toBe(0);
+
+    await insertAnnotationGroups("doc-map-partial", 1, groups);
+    await persistMappedAnnotationGroups(
+      "doc-map-partial",
+      mapped.groups,
+      mapped.survivingAnchorIndexes,
+    );
+    const rows = await getDocumentsClient().execute(
+      "SELECT id,status FROM document_suggestions WHERE doc_id='doc-map-partial' ORDER BY id",
+    );
+    expect(rows.rows).toMatchObject([
+      { id: "g-multi:1", status: "ignored" },
+      { id: "g-multi:2", status: "accepted" },
+    ]);
+  });
+
+  it("单锚组全丢时给出诚实计数与显式未定位提示", () => {
+    const groups: AnnotationGroup[] = [{
+      id: "g-only",
+      summary: "唯一锚点",
+      note: "说明",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [anchor("p", 1, 3, "甲组")],
+    }];
+    const step: PmStep = {
+      stepType: "replace",
+      from: 2,
+      to: 2,
+      slice: { content: [{ type: "text", text: "新" }], openStart: 0, openEnd: 0 },
+    };
+    const finalDoc = {
+      type: "doc" as const,
+      attrs: { schemaVersion: 1 as const },
+      content: [{ type: "paragraph" as const, attrs: { blockId: "p" }, content: [{ type: "text" as const, text: "甲新组" }] }],
+    };
+
+    const mapped = mapAnnotationGroupsThroughSteps(groups, [step], finalDoc);
+    expect(mapped.groups).toEqual([]);
+    expect(mapped.invalidatedAnchorIndexes.get("g-only")).toEqual([0]);
+    expect(mapped.unlocatedGroupCount).toBe(1);
+    expect(buildAnnotationMappingNotice(mapped.groups.length, mapped.unlocatedGroupCount))
+      .toBe("批注落地结果：0处已定位；1处因文档已改动未能定位。");
   });
 });

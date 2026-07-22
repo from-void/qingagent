@@ -61,37 +61,71 @@ interface LiteralRange {
   end: number;
 }
 
-/**
- * 素材引文存在性校验的规范化口径：兼容空白差异与全/半角差异。
- * 范围映射只供布尔校验使用，不能用于正文编辑或批注锚点。
- */
-function findNormalizedLiteralRanges(text: string, find: string): LiteralRange[] {
-  const normalizeWithOffsets = (value: string) => {
-    let normalized = "";
-    const starts: number[] = [];
-    const ends: number[] = [];
+type WhitespaceNormalization = "remove" | "collapse";
 
-    for (let offset = 0; offset < value.length;) {
-      const codePoint = value.codePointAt(offset);
-      if (codePoint === undefined) break;
-      const raw = String.fromCodePoint(codePoint);
-      const nextOffset = offset + raw.length;
-      for (const part of raw.normalize("NFKC")) {
-        if (/\s/u.test(part)) continue;
-        normalized += part;
-        for (let unit = 0; unit < part.length; unit += 1) {
+function normalizeQuoteVariant(value: string): string {
+  if (/[「」『』“”]/u.test(value)) return '"';
+  if (/[‘’]/u.test(value)) return "'";
+  return value;
+}
+
+function normalizeLiteralWithOffsets(
+  value: string,
+  whitespace: WhitespaceNormalization,
+): { normalized: string; starts: number[]; ends: number[] } {
+  let normalized = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+
+  for (let offset = 0; offset < value.length;) {
+    const codePoint = value.codePointAt(offset);
+    if (codePoint === undefined) break;
+    const raw = String.fromCodePoint(codePoint);
+    const nextOffset = offset + raw.length;
+    for (const normalizedCodePoint of raw.normalize("NFKC")) {
+      const part = normalizeQuoteVariant(normalizedCodePoint);
+      if (/\s/u.test(part)) {
+        if (whitespace === "collapse" && normalized && !normalized.endsWith(" ")) {
+          normalized += " ";
           starts.push(offset);
           ends.push(nextOffset);
+        } else if (whitespace === "collapse" && normalized.endsWith(" ")) {
+          ends[ends.length - 1] = nextOffset;
         }
+        continue;
       }
-      offset = nextOffset;
+      normalized += part;
+      for (let unit = 0; unit < part.length; unit += 1) {
+        starts.push(offset);
+        ends.push(nextOffset);
+      }
     }
+    offset = nextOffset;
+  }
 
-    return { normalized, starts, ends };
-  };
+  if (whitespace === "collapse" && normalized.endsWith(" ")) {
+    normalized = normalized.slice(0, -1);
+    starts.pop();
+    ends.pop();
+  }
+  return { normalized, starts, ends };
+}
 
-  const haystack = normalizeWithOffsets(text);
-  const needle = normalizeWithOffsets(find).normalized;
+export function normalizeAnnotationQuote(value: string): string {
+  return normalizeLiteralWithOffsets(value, "collapse").normalized;
+}
+
+/**
+ * 素材引文存在性校验的规范化口径：兼容空白差异与全/半角差异。
+ * 范围映射只供只读校验与批注定位使用，不能用于正文编辑。
+ */
+function findNormalizedLiteralRanges(
+  text: string,
+  find: string,
+  whitespace: WhitespaceNormalization,
+): LiteralRange[] {
+  const haystack = normalizeLiteralWithOffsets(text, whitespace);
+  const needle = normalizeLiteralWithOffsets(find, whitespace).normalized;
   if (!needle) return [];
 
   const ranges: LiteralRange[] = [];
@@ -107,15 +141,10 @@ function findNormalizedLiteralRanges(text: string, find: string): LiteralRange[]
 }
 
 export function containsLiteralMatch(text: string, find: string): boolean {
-  return findNormalizedLiteralRanges(text, find).length > 0;
+  return findNormalizedLiteralRanges(text, find, "remove").length > 0;
 }
 
-export function findLiteralMatches(
-  blocks: TextBlockRef[],
-  find: string,
-  all: boolean,
-): QuoteMatch[] {
-  if (!find) return [];
+function exactLiteralMatches(blocks: TextBlockRef[], find: string): QuoteMatch[] {
   const matches: QuoteMatch[] = [];
   for (const block of blocks) {
     let index = block.text.indexOf(find);
@@ -125,7 +154,43 @@ export function findLiteralMatches(
       index = block.text.indexOf(find, index + Math.max(1, find.length));
     }
   }
-  return applyAllPolicy(matches, all);
+  return matches;
+}
+
+export function findLiteralMatches(
+  blocks: TextBlockRef[],
+  find: string,
+  all: boolean,
+): QuoteMatch[] {
+  if (!find) return [];
+  return applyAllPolicy(exactLiteralMatches(blocks, find), all);
+}
+
+/**
+ * 批注锚点先走逐字匹配；只有完全没有逐字候选时，才按 trim、连续空白、
+ * 全/半角与中英文引号变体做二次定位。这样不会把原本的唯一性失败放宽成猜测。
+ */
+export function findAnnotationQuoteMatches(
+  blocks: TextBlockRef[],
+  find: string,
+  all: boolean,
+): QuoteMatch[] {
+  if (!find) return [];
+  const exact = exactLiteralMatches(blocks, find);
+  if (exact.length > 0) return applyAllPolicy(exact, all);
+
+  const normalized: QuoteMatch[] = [];
+  for (const block of blocks) {
+    for (const range of findNormalizedLiteralRanges(block.text, find, "collapse")) {
+      normalized.push(toQuoteMatch(
+        block,
+        range.start,
+        range.end,
+        block.text.slice(range.start, range.end),
+      ));
+    }
+  }
+  return applyAllPolicy(normalized, all);
 }
 
 export async function findSafeRegexMatches(

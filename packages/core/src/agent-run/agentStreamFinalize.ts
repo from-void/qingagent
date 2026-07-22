@@ -14,6 +14,7 @@ import {
 import { DRAFT_TOOL_JSON_RETRY_NOTICE } from "../doc-engine/draftToolArgs.js";
 import { chatMessageAppended, toolCallUpdated } from "./frames.js";
 import { settleDraftCandidate } from "../doc-engine/settleDraftCandidate.js";
+import { buildAnnotationMappingNotice } from "../doc-engine/annotationMapping.js";
 import {
   appendPartToChatHistory,
   clearSuspension,
@@ -75,6 +76,18 @@ export async function* finalizeAgentStream(
   yield* context.annotationPreview.clear();
   context.docJustGenerated = false;
   for (const frame of context.materialFrames) yield frame;
+  const replacedAnnotationOrigins = [
+    ...(state._annotationOriginsReplacedThisTurn ?? []),
+  ];
+  const replacedAnnotationOriginSet = new Set(replacedAnnotationOrigins);
+  const annotationGroupIdsBeforeSettle = new Set(
+    state.annotationGroups.map((group) => group.id),
+  );
+  const replacedAnnotationGroupIdsBeforeSettle = new Set(
+    state.annotationGroups
+      .filter((group) => replacedAnnotationOriginSet.has(group.origin))
+      .map((group) => group.id),
+  );
 
   if (!context.wasSuspended && context.generateSvgPreviousDocState) {
     yield* transitionAndProjectDocState(
@@ -138,21 +151,17 @@ export async function* finalizeAgentStream(
     yield* syncContentAndProjectDocState(state, "agent_turn_finally_idle");
   }
 
-  const replacedAnnotationOrigins = [
-    ...(state._annotationOriginsReplacedThisTurn ?? []),
-  ];
   if (
     !context.wasSuspended &&
     !abortController.signal.aborted &&
     replacedAnnotationOrigins.length > 0
   ) {
-    const replacedOriginSet = new Set(replacedAnnotationOrigins);
     yield { kind: "annotationPreviewCleared", data: {} };
     yield {
       kind: "annotationGroupsReady",
       data: {
         groups: state.annotationGroups.filter((group) =>
-          replacedOriginSet.has(group.origin)
+          replacedAnnotationOriginSet.has(group.origin)
         ),
         replacedOrigins: replacedAnnotationOrigins,
       },
@@ -325,6 +334,36 @@ export async function* finalizeAgentStream(
       maxSteps: AGENT_MAX_STEPS,
     });
     yield draftingFailedFrame(streamId, stepNotice);
+  }
+
+  const annotationGroupIdsAfterSettle = new Set(
+    state.annotationGroups.map((group) => group.id),
+  );
+  const allUnlocatedGroupCount = [...annotationGroupIdsBeforeSettle]
+    .filter((groupId) => !annotationGroupIdsAfterSettle.has(groupId))
+    .length;
+  const createdUnlocatedGroupCount = [...replacedAnnotationGroupIdsBeforeSettle]
+    .filter((groupId) => !annotationGroupIdsAfterSettle.has(groupId))
+    .length;
+  if (
+    !context.wasSuspended
+    && !streamWasUserAborted
+    && (replacedAnnotationOrigins.length > 0 || allUnlocatedGroupCount > 0)
+  ) {
+    const survivingGroupCount = replacedAnnotationOrigins.length > 0
+      ? state.annotationGroups.filter((group) => replacedAnnotationOriginSet.has(group.origin)).length
+      : state.annotationGroups.length;
+    const unlocatedGroupCount = replacedAnnotationOrigins.length > 0
+      ? createdUnlocatedGroupCount
+      : allUnlocatedGroupCount;
+    const notice = buildAnnotationMappingNotice(survivingGroupCount, unlocatedGroupCount);
+    const visibleText = context.accumulatedText ? `\n\n${notice}` : notice;
+    const seq = nextSeq(state, agentMessageId);
+    const textPart: MessagePart = { kind: "text", data: { body: visibleText } };
+    yield chatMessageAppended(agentMessageId, seq, textPart);
+    outcome.producedVisibleFrame = true;
+    appendPartToChatHistory(state, agentMessageId, textPart);
+    context.accumulatedText += visibleText;
   }
 
   if (context.accumulatedText) {

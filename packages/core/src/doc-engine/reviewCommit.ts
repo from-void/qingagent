@@ -46,11 +46,11 @@ import {
   currentPmDoc,
 } from "./draftScratch.js";
 import { transitionAndProjectDocState } from "./docStateSync.js";
-import { docDiffReady, toolCallUpdated } from "../agent-run/frames.js";
+import { chatMessageAdded, docDiffReady, newId, nowIso, toolCallUpdated } from "../agent-run/frames.js";
 import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
-import { mapAnnotationGroupsThroughSteps } from "./annotationMapping.js";
+import { buildAnnotationMappingNotice, mapAnnotationGroupsThroughSteps } from "./annotationMapping.js";
 
 const logger = mastra.getLogger();
 
@@ -928,6 +928,22 @@ export async function* commitPatches(
       kind: "annotationGroupsReady",
       data: { groups: mapped.groups, replacedOrigins },
     };
+    if (mapped.unlocatedGroupCount > 0) {
+      const notice = buildAnnotationMappingNotice(
+        mapped.groups.length,
+        mapped.unlocatedGroupCount,
+      );
+      const message = {
+        id: newId(),
+        role: { kind: "agent" as const },
+        ts: nowIso(),
+        parts: [{ kind: "text" as const, data: { body: notice } }],
+        chips: null,
+      };
+      state.chatHistory.push(message);
+      state.messages.push({ role: "assistant", content: notice });
+      yield chatMessageAdded(message);
+    }
   }
   if (shouldCommitDiffHunks) {
     const nextTitle = state.titlePinned ? null : deriveTitleFromSections(state.legacySections);

@@ -11,6 +11,7 @@ import { buildDraftDiff } from "../proposalDiff.js";
 import {
   collectTopLevelTextBlocks,
   containsLiteralMatch,
+  findAnnotationQuoteMatches,
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
@@ -71,6 +72,33 @@ function listItemTexts(docValue: PmDoc): string[] {
 describe("textEditOps", () => {
   it("tx-contains-literal-normalize: 素材引文校验兼容空白和全半角差异", () => {
     expect(containsLiteralMatch("收入为１２０\n亿元", "收入为 120亿元")).toBe(true);
+  });
+
+  it("批注锚点精确失败后按空白与引号变体二次匹配", () => {
+    const base = doc([paragraph("block-a", "  他说：“别   相信她”。  ")]);
+    const matches = findAnnotationQuoteMatches(
+      collectTopLevelTextBlocks(base),
+      "「别 相信她」",
+      false,
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({
+      blockId: "block-a",
+      matchText: "“别   相信她”",
+    });
+  });
+
+  it("批注锚点有精确候选时不进入归一化回退", () => {
+    const base = doc([paragraph("block-a", "“原句”与「原句」")]);
+    const matches = findAnnotationQuoteMatches(
+      collectTopLevelTextBlocks(base),
+      "「原句」",
+      false,
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.matchText).toBe("「原句」");
   });
 
   it("tx-replaceText-keepMarks: 替换文本继承命中处 marks", () => {

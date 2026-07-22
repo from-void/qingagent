@@ -63,6 +63,7 @@ import {
 import {
   collectTopLevelTextBlocks,
   containsLiteralMatch,
+  findAnnotationQuoteMatches,
   findLiteralMatches,
   findSafeRegexMatches,
   markTextRuns,
@@ -73,6 +74,7 @@ import { editDraftInputSchema } from "../tools/draftMutationSchemas.js";
 import {
   createAnnotationGroupsInputSchema,
   reviewOrigin,
+  truncateAnnotationSummary,
   type AnnotationGroupInput,
 } from "../tools/annotationGroups.js";
 import { replaceAnnotationGroupsByOrigin } from "@qingagent/db";
@@ -685,7 +687,13 @@ export function createSessionScopedTools(
       const currentReviewContext = context?.requestContext?.get("reviewContext") as ReviewContext | null | undefined;
       const forcedOrigin = reviewOrigin(currentReviewContext);
       const groups = input.groups.flatMap((modelSource, groupIndex) => {
-        const source = forcedOrigin ? { ...modelSource, origin: forcedOrigin } : modelSource;
+        const normalizedModelSource = {
+          ...modelSource,
+          summary: truncateAnnotationSummary(modelSource.summary),
+        };
+        const source = forcedOrigin
+          ? { ...normalizedModelSource, origin: forcedOrigin }
+          : normalizedModelSource;
         if (forcedOrigin && modelSource.origin !== forcedOrigin) {
           logger.warn("[review] 覆写模型填写的批注 origin", {
             reviewType: currentReviewContext?.type,
@@ -716,7 +724,7 @@ export function createSessionScopedTools(
           return [];
         }
         const anchors = source.anchors.flatMap((spec, anchorIndex) => {
-          const matches = findLiteralMatches(blocks, spec.find, spec.all === true);
+          const matches = findAnnotationQuoteMatches(blocks, spec.find, spec.all === true);
           if (matches.length === 0) errors.push(`第 ${groupIndex + 1} 组 anchors.${anchorIndex}.find 字段无效：当前文档中未找到精确文本「${spec.find}」`);
           return matches.map((match) => ({
             blockId: match.blockId,

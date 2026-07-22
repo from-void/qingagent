@@ -77,12 +77,44 @@ function group(overrides: Partial<GroupInput> = {}): GroupInput {
 describe("create_annotation_groups 来源引句校验", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("summary schema 向模型声明短标题口径，细节归入 note", () => {
+  it("summary schema 只提示短标题，不再用 15 字硬校验触发工具重试", () => {
     const { tool } = setup();
     const jsonSchema = z.toJSONSchema(tool.inputSchema as z.ZodType);
     expect(JSON.stringify(jsonSchema)).toContain("变更类型短标题");
-    expect(JSON.stringify(jsonSchema)).toContain("≤15字");
+    expect(JSON.stringify(jsonSchema)).toContain("建议≤15字");
     expect(JSON.stringify(jsonSchema)).toContain("细节解释一律写进 note");
+    expect(JSON.stringify(jsonSchema)).not.toContain('"maxLength":15');
+  });
+
+  it("超长 summary 通过工具校验并由服务端按 15 字截断", async () => {
+    const { state, tool } = setup();
+    const summary = "这是一个明显超过十五个字但内容本身完全有效的批注摘要";
+
+    const result = await tool.execute!({
+      groups: [group({ origin: "privacy", summary })],
+    }, ctx);
+
+    expect(result).toMatchObject({ ok: true, groupCount: 1, errors: [] });
+    expect(state.annotationGroups[0]?.summary).toBe(Array.from(summary).slice(0, 15).join(""));
+  });
+
+  it("全角引号锚句在精确失败后经归一化二次匹配命中", async () => {
+    const { state, tool } = setup();
+    state.doc!.content = [{
+      type: "paragraph",
+      attrs: { blockId: "p-quote" },
+      content: [{ type: "text", text: "她只说：“别相信她”。" }],
+    }];
+
+    const result = await tool.execute!({
+      groups: [group({
+        origin: "privacy",
+        anchors: [{ find: "「别相信她」" }],
+      })],
+    }, ctx);
+
+    expect(result).toMatchObject({ ok: true, groupCount: 1, anchorCount: 1, errors: [] });
+    expect(state.annotationGroups[0]?.anchors[0]?.quote).toBe("“别相信她”");
   });
 
   it("引文命中任一素材原文时通过并拼入 note", async () => {

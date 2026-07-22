@@ -117,7 +117,7 @@ describe("ConfirmOverlay", () => {
     expect(overlay.querySelectorAll(".cf-foot-hint")).toHaveLength(1);
     expect(overlay.textContent).toContain(spec.title);
     expect(overlay.textContent).toContain(spec.say);
-    expect(overlay.textContent).toContain(spec.footHint);
+    expect(overlay.textContent).toContain(spec.footHint!);
   });
 
   it("自动焦点落在主按钮，不落在关闭按钮", async () => {
@@ -187,7 +187,7 @@ describe("ConfirmOverlay", () => {
       rememberCategory: {
         kind: "install",
         label: "以后安装时不再询问",
-        riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。",
+        riskHint: "请确认安装内容和影响范围。",
       },
     };
     await renderOverlay(rememberSpec);
@@ -213,7 +213,7 @@ describe("ConfirmOverlay", () => {
     const checkbox = host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]');
     expect(checkbox).not.toBeNull();
     expect(host!.querySelector(".cf-remember")?.textContent).toContain(rememberSpec.rememberCategory?.label);
-    expect(host!.querySelector(".cf-remember-risk")?.textContent).toContain("这台电脑上的软件或设置");
+    expect(host!.querySelector(".cf-remember-risk")?.textContent).toBe("请确认安装内容和影响范围。");
   });
 
   it("显式不安全开发标记允许纯 web 渲染，程序化 click 不取得 nonce", async () => {
@@ -694,16 +694,16 @@ describe("ConfirmOverlay", () => {
     expect(findButton("重新确认")).not.toBeNull();
   });
 
-  it("命令确认脚注按记忆勾选是否可见分为两版", async () => {
+  it("命令确认未提供脚注时不渲染脚注且保留按钮区", async () => {
     const rememberSpec: ConfirmSpec = {
       ...installSpec,
       commandPreview: "npm install ffmpeg",
       rememberCategory: { kind: "install", label: "以后安装时不再询问" },
+      footHint: undefined,
     };
     await renderOverlay(rememberSpec);
-    expect(host?.querySelector(".cf-foot-hint")?.textContent).toBe(
-      "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
-    );
+    expect(host?.querySelector(".cf-foot-hint")).toBeNull();
+    expect(host?.querySelector(".cf-foot .cf-actions")).not.toBeNull();
 
     window.electron = {
       platform: "win32",
@@ -719,9 +719,8 @@ describe("ConfirmOverlay", () => {
         />,
       );
     });
-    expect(host?.querySelector(".cf-foot-hint")?.textContent).toBe(
-      "不勾选上方选项时，本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
-    );
+    expect(host?.querySelector(".cf-foot-hint")).toBeNull();
+    expect(host?.querySelector(".cf-foot .cf-actions")).not.toBeNull();
   });
 
   it("真实 SSE 确认按 FIFO 展示，决策走专用上行且仅由 resolved 关闭", async () => {

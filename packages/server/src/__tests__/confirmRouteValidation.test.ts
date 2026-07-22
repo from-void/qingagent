@@ -87,7 +87,6 @@ describe("confirm decision route 入站防护", () => {
         title: "运行命令",
         say: "需要确认",
         commandPreview: "echo safe",
-        footHint: "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
         primaryLabel: "确认执行",
         secondaryLabel: "取消",
       },

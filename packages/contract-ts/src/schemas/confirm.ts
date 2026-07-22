@@ -88,7 +88,7 @@ export const confirmSpecSchema = z.object({
   commandPreview: boundedNonEmptyString(2_000).optional(),
   widget: confirmWidgetSchema.optional(),
   rememberCategory: rememberCategorySchema.optional(),
-  footHint: boundedNonEmptyString(300),
+  footHint: boundedNonEmptyString(300).optional(),
   primaryLabel: boundedNonEmptyString(64),
   secondaryLabel: boundedNonEmptyString(64),
 }).strict().superRefine((spec, ctx) => {

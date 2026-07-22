@@ -37,7 +37,7 @@ export interface ConfirmSpec {
   commandPreview?: string;
   widget?: ConfirmWidget;
   rememberCategory?: RememberCategory;
-  footHint: string;
+  footHint?: string;
   primaryLabel: string;
   secondaryLabel: string;
 }

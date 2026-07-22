@@ -12,7 +12,6 @@ const plainSpec: ConfirmSpec = {
   kind: "command",
   title: "执行命令",
   say: "将执行一次需要确认的命令",
-  footHint: "只授权本次调用",
   primaryLabel: "确认执行",
   secondaryLabel: "取消",
 };
@@ -24,6 +23,13 @@ describe("confirm contract schemas", () => {
       expect(confirmSpecSchema.parse({ ...plainSpec, kind }).kind).toBe(kind);
     },
   );
+
+  it("footHint 可选，提供时仍校验非空与长度", () => {
+    expect(confirmSpecSchema.parse(plainSpec).footHint).toBeUndefined();
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "只授权本次调用" }).success).toBe(true);
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "" }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "x".repeat(301) }).success).toBe(false);
+  });
 
   it("commandPreview 是通用可选字段且最多 2000 字符", () => {
     const commandPreview = "npx skills add ffmpeg";

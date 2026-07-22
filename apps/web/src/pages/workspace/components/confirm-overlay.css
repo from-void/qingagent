@@ -391,6 +391,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
 #view-workspace .cf-button {

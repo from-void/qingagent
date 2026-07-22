@@ -70,7 +70,6 @@ export function buildCommandConfirmSpec(
   input: ExecuteCommandInput,
   reason: string,
   id: string = randomUUID(),
-  platform: NodeJS.Platform = process.platform,
 ): ConfirmSpec {
   const verdict = assessCommand(input.command);
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
@@ -102,9 +101,6 @@ export function buildCommandConfirmSpec(
         label: kind === "install"
           ? "以后安装时不再询问"
           : "以后遇到同类操作不再询问",
-        ...(platform === "win32" && kind === "install"
-          ? { riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。" }
-          : {}),
         ...(insecureRememberEnvironmentAllowed()
           ? { insecureWithoutDesktop: true }
           : {}),
@@ -120,7 +116,6 @@ export function buildCommandConfirmSpec(
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     ...(rememberCategory ? { rememberCategory } : {}),
-    footHint: "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭",
     primaryLabel,
     secondaryLabel: "取消",
   });

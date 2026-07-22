@@ -79,12 +79,6 @@ export function ConfirmOverlay({
     : pendingState?.accepted === false
       ? "正在取消…"
       : "正在执行…";
-  const footHint = spec.commandPreview
-    ? showRemember && spec.rememberCategory
-      ? "不勾选上方选项时，本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭"
-      : "本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭"
-    : spec.footHint;
-
   useEffect(() => {
     mountedRef.current = true;
     const previousActiveElement =
@@ -335,7 +329,7 @@ export function ConfirmOverlay({
       </div>
 
       <div className="cf-foot">
-        <span className="cf-foot-hint">{footHint}</span>
+        {spec.footHint && <span className="cf-foot-hint">{spec.footHint}</span>}
         <div className="cf-actions">
           <button
             type="button"

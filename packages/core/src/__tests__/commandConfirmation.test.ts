@@ -74,9 +74,9 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       .not.toBe(commandConfirmationDigest("session", { command: `${prefix}y` }));
   });
 
-  it("无记忆勾选时使用仅本次确认脚注", () => {
+  it("命令确认卡不设置脚注", () => {
     const spec = buildCommandConfirmSpec({ command: "git push origin main" }, "将推送代码", "common-id");
-    expect(spec.footHint).toBe("本次确认只对这次操作有效 · 10 分钟内未处理会自动关闭");
+    expect(spec.footHint).toBeUndefined();
     expect(spec.secondaryLabel).toBe("取消");
   });
 
@@ -97,23 +97,20 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     expect(spec.sub).not.toContain("默认 TTL");
   });
 
-  it("记忆部件只由后端 spec 声明，Windows 安装类附带如实风险提示", () => {
+  it("记忆部件只由后端 spec 声明，安装类沿用如实风险提示且不重复设置", () => {
     const install = buildCommandConfirmSpec(
       { command: "npm install zod" },
       "将改动这台电脑上的软件或设置",
       "install-win",
-      "win32",
     );
     expect(install.rememberCategory).toEqual({
       kind: "install",
       label: "以后安装时不再询问",
-      riskHint: "勾选后，之后的安装会直接进行；安装内容可能会改变这台电脑上的软件或设置。",
     });
     const command = buildCommandConfirmSpec(
       { command: "rm old.txt" },
       "将删除文件",
       "command-linux",
-      "linux",
     );
     expect(command.rememberCategory).toEqual({
       kind: "command",
@@ -123,7 +120,6 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
       { command: "git push origin main" },
       "将推送代码",
       "send-linux",
-      "linux",
     );
     expect(send.rememberCategory).toBeUndefined();
   });

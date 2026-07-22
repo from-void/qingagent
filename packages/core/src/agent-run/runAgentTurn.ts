@@ -96,6 +96,7 @@ import {
   appendVisibleStreamErrorText,
   delayMs,
   draftingFailedFrame,
+  IDLE_TIMEOUT_ABORT_REASON,
   isUserAbortSignal,
   streamErrorDetails,
   streamErrorMessage,
@@ -104,6 +105,15 @@ import {
 import { formatTurnLog, processAgentStream } from "./processAgentStream.js";
 
 const logger = mastra.getLogger();
+
+export interface RunAgentTurnRuntimeOptions {
+  /** idle-timeout 自动重试上限；只供已消费一次额度的恢复链路收紧为 0。 */
+  idleTimeoutRetryLimit?: number;
+  /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
+  idleTimeoutMs?: number;
+  /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
+  firstChunkTimeoutMs?: number;
+}
 
 // ---------------------------------------------------------------------------
 // runAgentTurn — unified entry point for all user interactions
@@ -121,6 +131,7 @@ export async function* runAgentTurn(
   clientMessageId?: string,
   richText?: string,
   reviewContext?: ReviewContext,
+  runtimeOptions: RunAgentTurnRuntimeOptions = {},
 ): AsyncGenerator<BridgeFrame> {
   const turnStartedAt = Date.now();
   const streamId = newId();
@@ -139,7 +150,7 @@ export async function* runAgentTurn(
   }
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
-  const abortController = new AbortController();
+  let abortController = new AbortController();
   const turnCompletion = createTurnCompletion();
   let turnWasUserAborted = false;
   const omSidecarEnabled = isOmSidecarEnabled();
@@ -631,6 +642,11 @@ export async function* runAgentTurn(
       sessionScopedTools.updateWorkingMemory = sessionTools.updateWorkingMemory;
     }
     const maxTurnRetries = TURN_RETRY_LIMIT;
+    const idleTimeoutRetryLimit = Math.min(
+      1,
+      Math.max(0, runtimeOptions.idleTimeoutRetryLimit ?? 1),
+    );
+    let idleTimeoutRetryCount = 0;
     const makeStream = async (
       attempt: number,
       scopedPrefixGuardContext: typeof prefixGuardContext,
@@ -702,24 +718,41 @@ export async function* runAgentTurn(
           fileIds,
           requestContext,
           abortController,
+          idleTimeoutMs: runtimeOptions.idleTimeoutMs,
+          firstChunkTimeoutMs: runtimeOptions.firstChunkTimeoutMs,
+          deferRetryableIdleTimeout:
+            idleTimeoutRetryCount < idleTimeoutRetryLimit && attempt < maxTurnRetries,
         }),
       );
       turnWasUserAborted ||= outcome.streamWasUserAborted;
       if (outcome.streamWasUserAborted) turnOutcome = "cancelled";
+      const retryableIdleTimeout = outcome.retryableIdleTimeoutChunk !== undefined;
       const shouldRetry =
-        outcome.transientErrorChunk !== undefined &&
+        (outcome.transientErrorChunk !== undefined || retryableIdleTimeout) &&
         !outcome.producedVisibleFrame &&
         // p04:问卷(askUser)的重放/出题不算副作用,瞬断后允许安全重试。
         !outcome.sawSideEffectToolCall;
       if (shouldRetry && attempt < maxTurnRetries) {
         const retryDelayMs = turnRetryDelayMs(attempt);
-        logger.warn("Retrying agent turn after transient zero-output stream error", {
+        if (retryableIdleTimeout) {
+          idleTimeoutRetryCount += 1;
+          // idle 看门狗已经 abort 当前控制器；自动重试必须换一支新 signal，且立即
+          // 挂到 session 上，保证退避期间用户仍能取消下一次尝试。
+          if (abortController.signal.reason === IDLE_TIMEOUT_ABORT_REASON) {
+            abortController = new AbortController();
+            state._abortController = abortController;
+            requestContext.set("abortSignal", abortController.signal);
+          }
+        }
+        const retryChunk = outcome.retryableIdleTimeoutChunk ?? outcome.transientErrorChunk;
+        logger.warn("Retrying agent turn after zero-output stream error", {
           sessionId: state.sessionId,
           streamId,
+          category: retryableIdleTimeout ? "idle_timeout" : "transient",
           attempt,
           nextAttempt: attempt + 1,
           retryDelayMs,
-          error: streamErrorMessage(outcome.transientErrorChunk),
+          error: streamErrorMessage(retryChunk),
         });
         await delayMs(retryDelayMs, abortController.signal);
         abortController.signal.throwIfAborted();
@@ -727,7 +760,8 @@ export async function* runAgentTurn(
       }
       if (shouldRetry) {
         turnOutcome = "error";
-        const errorDetails = streamErrorDetails(outcome.transientErrorChunk);
+        const retryChunk = outcome.retryableIdleTimeoutChunk ?? outcome.transientErrorChunk;
+        const errorDetails = streamErrorDetails(retryChunk);
         yield appendVisibleStreamErrorText(state, agentMessageId, errorDetails.userMessage);
         state.messages.push({ role: "assistant", content: errorDetails.userMessage });
         yield draftingFailedFrame(streamId, errorDetails);

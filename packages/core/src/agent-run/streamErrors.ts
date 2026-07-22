@@ -8,6 +8,8 @@ export const USER_ABORT_REASON = "user_abort";
 export const IDLE_TIMEOUT_ABORT_REASON = "idle_timeout";
 
 export interface IdleTimeoutOptions<T> {
+  /** 首个非 heartbeat chunk 到达前允许等待的时间；默认沿用常规 idle。 */
+  firstChunkTimeoutMs?: number;
   /** 连续只有 heartbeat 时允许维持主流的最长时间。 */
   heartbeatOnlyTimeoutMs?: number;
   isHeartbeat?: (chunk: T) => boolean;
@@ -27,6 +29,7 @@ export async function* withIdleTimeout<T>(
 ): AsyncGenerator<T | AgentStreamErrorEvent> {
   const iterator = source[Symbol.asyncIterator]();
   let timedOut = false;
+  let sawFirstRealChunk = false;
   let heartbeatOnlySince: number | null = null;
   const idleTimeoutSignal = Symbol("idle-timeout");
   const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
@@ -36,8 +39,11 @@ export async function* withIdleTimeout<T>(
     for (;;) {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+      const activeIdleTimeoutMs = sawFirstRealChunk
+        ? timeoutMs
+        : options.firstChunkTimeoutMs ?? timeoutMs;
       const idleTimeout = new Promise<typeof idleTimeoutSignal>((resolve) => {
-        idleTimer = setTimeout(() => resolve(idleTimeoutSignal), timeoutMs);
+        idleTimer = setTimeout(() => resolve(idleTimeoutSignal), activeIdleTimeoutMs);
       });
       const next = iterator.next();
       const races: Array<
@@ -108,6 +114,7 @@ export async function* withIdleTimeout<T>(
       if (options.isHeartbeat?.(raced.value)) {
         heartbeatOnlySince ??= Date.now();
       } else {
+        sawFirstRealChunk = true;
         heartbeatOnlySince = null;
       }
       yield raced.value;

@@ -14,6 +14,13 @@ export const AGENT_IDLE_TIMEOUT_MS = Math.max(
   Number(process.env.QINGAGENT_AGENT_IDLE_TIMEOUT_MS) || 90_000,
 );
 
+// 纯写作 turn 在模型首个真实 chunk 前没有工具心跳可喂活主流；慢后端/并发下 TTFT
+// 可能超过常规 90s idle。首 chunk 单独放宽到 180s，一旦开始产出立即恢复严格 idle。
+export const AGENT_FIRST_CHUNK_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.QINGAGENT_AGENT_FIRST_CHUNK_TIMEOUT_MS) || 180_000,
+);
+
 // 心跳只能证明工具 execute 仍有定时器在跑，不能证明工具取得了真实进展。
 // 若主流连续只有 tool-heartbeat、没有 result/error/progress 等真实事件，最终必须有界收口，
 // 否则卡死的工具会用心跳永久喂活上面的 idle watchdog。默认 5 分钟，显著高于常规工具

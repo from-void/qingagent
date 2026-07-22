@@ -72,6 +72,15 @@ export async function* handleLifecycleEvent(
       sawToolCall: outcome.sawToolCall,
       error: apiError instanceof Error ? apiError.message : String(apiError),
     });
+    if (
+      idleTimeout &&
+      context.deferRetryableIdleTimeout &&
+      !outcome.producedVisibleFrame &&
+      !outcome.sawSideEffectToolCall
+    ) {
+      outcome.retryableIdleTimeoutChunk = chunk;
+      return "terminal";
+    }
     if (transient && !outcome.producedVisibleFrame && !outcome.sawSideEffectToolCall) {
       outcome.transientErrorChunk = chunk;
       return "terminal";

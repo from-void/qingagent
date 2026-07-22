@@ -397,7 +397,7 @@ describe("handleResume askUser fresh-turn fallback", () => {
     }
   });
 
-  it("resumeStream 看门狗与 session 共用取消控制器", async () => {
+  it("resumeStream 首帧宽限超时后复用同一取消控制器并只转 fresh turn 一次", async () => {
     let persistedSessionId: string | null = null;
     vi.useFakeTimers();
     try {
@@ -429,12 +429,21 @@ describe("handleResume askUser fresh-turn fallback", () => {
       }));
       await vi.waitFor(() => expect(mockState.resumeStream).toHaveBeenCalledTimes(1));
       await vi.advanceTimersByTimeAsync(90_001);
+      expect(observed.controller?.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(90_000);
       const frames = await framesPromise;
 
       expect(observed.controller?.signal.aborted).toBe(true);
+      expect(mockState.runAgentTurn).toHaveBeenCalledTimes(1);
+      const runAgentTurnCalls = mockState.runAgentTurn.mock.calls as unknown as Array<
+        unknown[]
+      >;
+      expect(runAgentTurnCalls[0]?.[9]).toEqual({
+        idleTimeoutRetryLimit: 0,
+      });
       expect(frames.some(
         (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
-      )).toBe(true);
+      )).toBe(false);
     } finally {
       vi.useRealTimers();
       if (persistedSessionId) {

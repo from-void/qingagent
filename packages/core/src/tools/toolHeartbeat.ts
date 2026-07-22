@@ -29,6 +29,37 @@ type HeartbeatWriter = {
   write: (chunk: Record<string, unknown>) => Promise<unknown> | unknown;
 };
 
+type HeartbeatObserve = {
+  log: (
+    level: "debug" | "info" | "warn" | "error" | "fatal",
+    message: string,
+    data?: Record<string, unknown>,
+  ) => void;
+};
+
+const writerWriteQueues = new WeakMap<HeartbeatWriter, Promise<void>>();
+
+/**
+ * Mastra ToolStream 要求 write() 被 await。所有工具进度与心跳共用同一 writer 时，
+ * 必须在 writer 维度串行，否则两条独立 fire-and-forget 链会互相抢占流写锁并静默丢帧。
+ */
+export function writeToolStreamChunk(
+  writer: HeartbeatWriter,
+  chunk: Record<string, unknown>,
+  shouldWrite: () => boolean = () => true,
+): Promise<boolean> {
+  const previous = writerWriteQueues.get(writer) ?? Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      if (!shouldWrite()) return false;
+      await writer.write(chunk);
+      return true;
+    });
+  writerWriteQueues.set(writer, current.then(() => undefined, () => undefined));
+  return current;
+}
+
 export interface ToolHeartbeatOptions {
   /** 工具名,仅用于调试/可观测,不影响行为 */
   tool: string;
@@ -48,7 +79,10 @@ export function startToolHeartbeat(
   context: unknown,
   opts: ToolHeartbeatOptions,
 ): () => void {
-  const writer = (context as { writer?: HeartbeatWriter } | undefined)?.writer;
+  const heartbeatContext = context as
+    | { writer?: HeartbeatWriter; observe?: HeartbeatObserve }
+    | undefined;
+  const writer = heartbeatContext?.writer;
   if (!writer || typeof writer.write !== "function") return () => {};
 
   const intervalMs = Math.min(
@@ -57,18 +91,41 @@ export function startToolHeartbeat(
   );
   let seq = 0;
   let stopped = false;
+  let writePending = false;
+  let firstEmitLogged = false;
+  let firstFailureLogged = false;
 
   const emit = () => {
-    if (stopped) return;
-    try {
-      const r = writer.write({ type: "tool-heartbeat", tool: opts.tool, seq: (seq += 1) });
-      // 吞掉异步写失败,不让 unhandled rejection 冒出来影响主链
-      if (r && typeof (r as Promise<unknown>).then === "function") {
-        void (r as Promise<unknown>).catch(() => {});
+    if (stopped || writePending) return;
+    writePending = true;
+    const heartbeatSeq = (seq += 1);
+    void writeToolStreamChunk(
+      writer,
+      { type: "tool-heartbeat", tool: opts.tool, seq: heartbeatSeq },
+      () => !stopped,
+    ).then((written) => {
+      if (!written) return;
+      if (!firstEmitLogged) {
+        firstEmitLogged = true;
+        heartbeatContext?.observe?.log("debug", "Tool heartbeat emitted", {
+          tool: opts.tool,
+          seq: heartbeatSeq,
+          emittedCount: 1,
+          intervalMs,
+        });
       }
-    } catch {
-      // 同步写失败也静默:心跳是装饰
-    }
+    }).catch((error) => {
+      if (!firstFailureLogged) {
+        firstFailureLogged = true;
+        heartbeatContext?.observe?.log("debug", "Tool heartbeat write failed", {
+          tool: opts.tool,
+          seq: heartbeatSeq,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }).finally(() => {
+      writePending = false;
+    });
   };
 
   const timer = setInterval(emit, intervalMs);

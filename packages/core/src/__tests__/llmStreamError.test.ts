@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import { RequestContext } from "@mastra/core/request-context";
+import type { BridgeFrame, LegacySection, ToolCallSpec } from "@qingagent/contract-ts";
+import { deleteDocumentFamily, documentDraftRepo } from "@qingagent/db";
+import { legacySectionsToPm, pmToLegacySections } from "@qingagent/pm-schema";
 
 // 回归:上游 LLM 调用最终失败(网络/超时/服务异常,重试耗尽)时,Mastra 把错误作为
 // type:"error" 的 chunk(deferredErrorChunk)推上来。零产出瞬态错误由 runAgentTurn
@@ -37,6 +40,23 @@ async function* neverStream(): AsyncGenerator<unknown> {
 async function* delayedReasoningThenHang(delayMs: number): AsyncGenerator<unknown> {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   yield { type: "reasoning-delta", payload: { text: "仍在思考" } };
+  await new Promise(() => undefined);
+}
+
+async function* heartbeatThenDelayedText(delayMs: number): AsyncGenerator<unknown> {
+  yield {
+    type: "tool-output",
+    payload: {
+      toolCallId: "heartbeat-before-first-chunk",
+      output: { type: "tool-heartbeat", tool: "writeDraft", seq: 1 },
+    },
+  };
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  yield { type: "text-delta", payload: { text: "首个真实内容" } };
+}
+
+async function* textThenHang(): AsyncGenerator<unknown> {
+  yield { type: "text-delta", payload: { text: "已经开始输出" } };
   await new Promise(() => undefined);
 }
 
@@ -213,6 +233,92 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(firstOptions.memory).toBeTruthy();
     expect(secondOptions.memory).toBeUndefined();
     expect(firstOptions.abortSignal).toBe(secondOptions.abortSignal);
+  });
+
+  it("idle-timeout 零产出只自动重试 1 次，并为已 abort 的尝试更换 signal", async () => {
+    vi.useFakeTimers();
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    const state = createSession("idle-retry-once");
+
+    streamMock
+      .mockResolvedValueOnce({ runId: "run-idle-retry-0", fullStream: neverStream() } as never)
+      .mockResolvedValueOnce({ runId: "run-idle-retry-1", fullStream: neverStream() } as never);
+
+    const framesPromise = collectFrames(runAgentTurn(
+      state,
+      "请写稿",
+      [],
+      [],
+      [],
+      null,
+      undefined,
+      undefined,
+      undefined,
+      { idleTimeoutMs: 10, firstChunkTimeoutMs: 20 },
+    ));
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(401);
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(20);
+    const frames = await framesPromise;
+
+    expect(streamMock).toHaveBeenCalledTimes(2);
+    const calls = streamMock.mock.calls as unknown as Array<
+      [unknown, { abortSignal?: AbortSignal }]
+    >;
+    expect(calls[0]?.[1].abortSignal).not.toBe(calls[1]?.[1].abortSignal);
+    expect(draftingFailures(frames)).toHaveLength(1);
+    expect(textBodies(frames).filter((body) => body.includes("长时间无响应"))).toHaveLength(1);
+  });
+
+  it("idle-timeout 已有部分正文时不自动重试", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    streamMock.mockResolvedValueOnce({
+      runId: "run-idle-partial",
+      fullStream: streamOf(
+        { type: "text-delta", payload: { text: "已生成一部分" } },
+        idleTimeoutChunk(),
+      ),
+    } as never);
+
+    const frames = await collectFrames(runAgentTurn(createSession("idle-partial-no-retry"), "请写稿"));
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(textBodies(frames)).toContain("已生成一部分");
+    expect(draftingFailures(frames)).toHaveLength(1);
+  });
+
+  it("idle-timeout 已执行副作用工具时不自动重试", async () => {
+    const { createSession, runAgentTurn } = await import("../bridge/index.js");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const streamMock = vi.mocked(qingagentAgent.stream);
+    streamMock.mockResolvedValueOnce({
+      runId: "run-idle-side-effect",
+      fullStream: streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "parseFile",
+            toolCallId: "tc-idle-side-effect",
+            args: {},
+          },
+        },
+        idleTimeoutChunk(),
+      ),
+    } as never);
+
+    const frames = await collectFrames(runAgentTurn(
+      createSession("idle-side-effect-no-retry"),
+      "请解析文件",
+    ));
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(draftingFailures(frames)).toHaveLength(1);
   });
 
   it("runAgentTurn 退避中取消后不再发起下一次 stream", async () => {
@@ -658,10 +764,40 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(bodies.some((b) => b.includes("没有返回任何内容"))).toBe(false);
   });
 
-  it("无任何 chunk 超过 idle timeout 时自动失败并解锁为可重试", async () => {
+  it("首个非心跳 chunk 在宽限内到达时不按常规 idle 提前超时", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("first-chunk-within-grace");
+    let done = false;
+
+    const framesPromise = collectFrames(
+      processAgentStream(heartbeatThenDelayedText(15), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-first-chunk-within-grace",
+        runId: "run-first-chunk-within-grace",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    ).then((frames) => {
+      done = true;
+      return frames;
+    });
+
+    await vi.advanceTimersByTimeAsync(11);
+    expect(done).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5);
+    const frames = await framesPromise;
+    expect(draftingFailures(frames)).toHaveLength(0);
+    expect(textBodies(frames)).toContain("首个真实内容");
+  });
+
+  it("无任何 chunk 时超过首 chunk 宽限才自动失败并解锁为可重试", async () => {
     vi.useFakeTimers();
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("err-idle");
+    let done = false;
 
     const framesPromise = collectFrames(
       processAgentStream(neverStream(), {
@@ -670,43 +806,220 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
         streamId: "stream-idle",
         runId: "run-idle",
         idleTimeoutMs: 10,
-      }),
-    );
-
-    await vi.advanceTimersByTimeAsync(11);
-    const frames = await framesPromise;
-    const failed = draftingFailures(frames);
-
-    expect(failed).toHaveLength(1);
-    expect(textBodies(frames).some((body) => body.includes("长时间无响应"))).toBe(true);
-  });
-
-  it("reasoning-delta 会刷新 idle 计时器,避免慢推理被按初始阈值误杀", async () => {
-    vi.useFakeTimers();
-    const { createSession, processAgentStream } = await import("../bridge/index.js");
-    const state = createSession("err-reasoning");
-    let done = false;
-
-    const framesPromise = collectFrames(
-      processAgentStream(delayedReasoningThenHang(8), {
-        state,
-        agentMessageId: "agent-msg",
-        streamId: "stream-reasoning",
-        runId: "run-reasoning",
-        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
       }),
     ).then((frames) => {
       done = true;
       return frames;
     });
 
-    await vi.advanceTimersByTimeAsync(11);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(19);
     expect(done).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(8);
+    await vi.advanceTimersByTimeAsync(2);
+    const frames = await framesPromise;
+
+    expect(draftingFailures(frames)).toHaveLength(1);
+    expect(textBodies(frames).some((body) => body.includes("长时间无响应"))).toBe(true);
+  });
+
+  it("默认 180s 首帧宽限被 processAgentStream 主链路实际接线", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const {
+      AGENT_FIRST_CHUNK_TIMEOUT_MS,
+      AGENT_IDLE_TIMEOUT_MS,
+    } = await import("../agent-run/agentLimits.js");
+    expect(AGENT_FIRST_CHUNK_TIMEOUT_MS).toBe(180_000);
+    expect(AGENT_IDLE_TIMEOUT_MS).toBe(90_000);
+    let done = false;
+
+    const resultPromise = collectFramesAndReturn(
+      processAgentStream(neverStream(), {
+        state: createSession("default-first-chunk-wiring"),
+        agentMessageId: "agent-msg",
+        streamId: "stream-default-first-chunk-wiring",
+        runId: "run-default-first-chunk-wiring",
+        deferRetryableIdleTimeout: true,
+      }),
+    ).then((result) => {
+      done = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(AGENT_IDLE_TIMEOUT_MS + 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(
+      AGENT_FIRST_CHUNK_TIMEOUT_MS - AGENT_IDLE_TIMEOUT_MS - 2,
+    );
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    const { frames, result } = await resultPromise;
+
+    expect(frames).toEqual([]);
+    expect(result.retryableIdleTimeoutChunk).toBeDefined();
+  });
+
+  it("首个真实 chunk 到达后中途停顿仍按常规 idle 超时", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("idle-after-first-chunk");
+    let done = false;
+
+    const framesPromise = collectFrames(
+      processAgentStream(textThenHang(), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-idle-after-first-chunk",
+        runId: "run-idle-after-first-chunk",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    ).then((frames) => {
+      done = true;
+      return frames;
+    });
+
+    await vi.advanceTimersByTimeAsync(9);
+    expect(done).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2);
     const frames = await framesPromise;
     expect(draftingFailures(frames)).toHaveLength(1);
-    expect(frames.some((frame) => frame.kind === "chatMessageAppended" && frame.data.part.kind === "thinking")).toBe(true);
+    expect(textBodies(frames)).toContain("已经开始输出");
+  });
+
+  it("reasoning-delta 会刷新 idle 计时器,避免慢推理被按初始阈值误杀", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const framesPromise = collectFrames(
+      processAgentStream(delayedReasoningThenHang(8), {
+        state: createSession("err-reasoning"),
+        agentMessageId: "agent-msg",
+        streamId: "stream-reasoning",
+        runId: "run-reasoning",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(19);
+    const frames = await framesPromise;
+    expect(draftingFailures(frames)).toHaveLength(1);
+    expect(frames.some((frame) =>
+      frame.kind === "chatMessageAppended" && frame.data.part.kind === "thinking"
+    )).toBe(true);
+  });
+
+  it("writeDraft 已产出候选、后续 step idle 超时时保留 last-good 草稿而不 clear", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { IDLE_TIMEOUT_ABORT_REASON } = await import("../agent-run/streamErrors.js");
+    const sessionId = "idle-after-draft-checkpoint";
+    await deleteDocumentFamily(sessionId);
+    const state = createSession(sessionId);
+    const abortController = new AbortController();
+    const requestContext = new RequestContext([
+      ["abortSignal", abortController.signal],
+    ] as never);
+    const sections: LegacySection[] = [{ kind: "p", data: { text: "已生成的候选正文" } }];
+    const candidate = legacySectionsToPm(sections as never);
+    state.docDraftCandidateDoc = candidate;
+    state.docDraftCandidateSections = pmToLegacySections(candidate) as unknown as LegacySection[];
+    const clearSpy = vi.spyOn(documentDraftRepo, "clear");
+
+    async function* writeDraftThenTimeout(): AsyncGenerator<unknown> {
+      const args = { title: "测试", outline: "大纲" };
+      yield {
+        type: "tool-call",
+        payload: { toolName: "writeDraft", toolCallId: "wd-timeout", args },
+      };
+      yield {
+        type: "tool-result",
+        payload: {
+          toolName: "writeDraft",
+          toolCallId: "wd-timeout",
+          args,
+          result: { ok: true, blockCount: 1, wordCount: 8 },
+        },
+      };
+      yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+      yield idleTimeoutChunk();
+      abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
+    }
+
+    try {
+      const frames = await collectFrames(
+        processAgentStream(writeDraftThenTimeout(), {
+          state,
+          agentMessageId: "agent-msg",
+          streamId: "stream-idle-after-draft-checkpoint",
+          runId: "run-idle-after-draft-checkpoint",
+          requestContext,
+          abortController,
+        }),
+      );
+      const bodies = textBodies(frames);
+      const checkpoint = await documentDraftRepo.load(state.docId);
+
+      expect(state.docVersion).toBe(1);
+      expect(frames.some((frame) =>
+        frame.kind === "documentSnapshotWritten" ||
+        (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
+      )).toBe(true);
+      expect(state.docDraftCandidateDoc).toEqual(candidate);
+      expect(checkpoint).toMatchObject({
+        docId: state.docId,
+        status: "draft_candidate",
+        sourceStreamId: "stream-idle-after-draft-checkpoint",
+        draftPmDoc: candidate,
+      });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(bodies.some((body) => body.includes("已保留本轮生成的部分草稿"))).toBe(true);
+      expect(bodies.some((body) => body.includes("未产出可用草稿"))).toBe(false);
+    } finally {
+      clearSpy.mockRestore();
+      await deleteDocumentFamily(sessionId);
+    }
+  });
+
+  it("writeDraft 零候选便 idle 超时时仍 clear 并明确提示未产出可用草稿", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { IDLE_TIMEOUT_ABORT_REASON } = await import("../agent-run/streamErrors.js");
+    const state = createSession("idle-without-draft-candidate");
+    const abortController = new AbortController();
+
+    async function* writeDraftThenTimeout(): AsyncGenerator<unknown> {
+      yield {
+        type: "tool-call",
+        payload: {
+          toolName: "writeDraft",
+          toolCallId: "wd-no-candidate",
+          args: { title: "测试", outline: "大纲" },
+        },
+      };
+      yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+      yield idleTimeoutChunk();
+      abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
+    }
+
+    const frames = await collectFrames(
+      processAgentStream(writeDraftThenTimeout(), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-idle-without-draft-candidate",
+        runId: "run-idle-without-draft-candidate",
+        abortController,
+      }),
+    );
+    const bodies = textBodies(frames);
+
+    expect(state.docVersion).toBe(0);
+    expect(state.docDraftCandidateDoc).toBeNull();
+    expect(frames.some((frame) =>
+      frame.kind === "documentSnapshotWritten" ||
+      (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
+    )).toBe(false);
+    expect(bodies.some((body) => body.includes("未产出可用草稿"))).toBe(true);
+    expect(bodies.some((body) => body.includes("已保留本轮生成的部分草稿"))).toBe(false);
   });
 });

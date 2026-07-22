@@ -321,6 +321,7 @@ async function* handleResume(
   // session.clientTraceId，本轮 resume 的框架 span 仍归属本动作而非后续动作。
   const resumeClientTraceId = session.clientTraceId ?? null;
   let freshTurnPrompt: string | null = null;
+  let freshTurnAfterIdleTimeout = false;
   let resumeRequestContext: RequestContext | undefined;
 
   yield { kind: "stream", data: { kind: "start", data: { streamId } } };
@@ -567,6 +568,7 @@ async function* handleResume(
         runId: result.runId,
         requestContext,
         abortController,
+        deferRetryableIdleTimeout: true,
       }),
     );
     // 诊断 p04:问卷确认后的首次生成最易撞上 DeepSeek 流式瞬断(ECONNRESET)。
@@ -574,17 +576,21 @@ async function* handleResume(
     // 问卷就看到"生成失败,请手动重试"。这里对"瞬断 + 无可见产出 + 无真副作用
     // 工具调用"的安全场景,用既有的 fresh-turn 兜底机制自动续跑(runAgentTurn
     // 自带瞬断重试)。
+    const retryableIdleTimeout =
+      resumeOutcome.retryableIdleTimeoutChunk !== undefined;
     if (
-      resumeOutcome.transientErrorChunk !== undefined &&
+      (resumeOutcome.transientErrorChunk !== undefined || retryableIdleTimeout) &&
       !resumeOutcome.producedVisibleFrame &&
       !resumeOutcome.sawSideEffectToolCall
     ) {
       const askUserSpecForRetry = findAskUserToolCallSpec(session, toolCallId);
       if (askUserSpecForRetry) {
-        console.warn(
-          "[handleResume] transient zero-output stream error after resume; auto-retrying as fresh turn",
-          { sessionId: session.sessionId, streamId },
-        );
+        console.warn("[handleResume] zero-output stream error after resume; auto-retrying as fresh turn", {
+          sessionId: session.sessionId,
+          streamId,
+          category: retryableIdleTimeout ? "idle_timeout" : "transient",
+        });
+        freshTurnAfterIdleTimeout = retryableIdleTimeout;
         freshTurnPrompt = buildFreshAskUserResumePrompt(
           session,
           askUserSpecForRetry,
@@ -593,7 +599,9 @@ async function* handleResume(
         const terminalized = terminalizeAskUserToolCall(
           session,
           askUserSpecForRetry.id,
-          "网络刚才中断，已用你的答案自动重试。",
+          retryableIdleTimeout
+            ? "生成刚才长时间无响应，已用你的答案自动重试。"
+            : "网络刚才中断，已用你的答案自动重试。",
         );
         if (terminalized) {
           yield {
@@ -735,8 +743,22 @@ async function* handleResume(
     }
   }
 
-  if (freshTurnPrompt !== null && !abortController.signal.aborted) {
-    yield* runAgentTurn(session, freshTurnPrompt);
+  if (
+    freshTurnPrompt !== null &&
+    (!abortController.signal.aborted || freshTurnAfterIdleTimeout)
+  ) {
+    yield* runAgentTurn(
+      session,
+      freshTurnPrompt,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      freshTurnAfterIdleTimeout ? { idleTimeoutRetryLimit: 0 } : {},
+    );
   }
 }
 

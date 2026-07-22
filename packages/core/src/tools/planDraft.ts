@@ -3,7 +3,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { z } from "zod";
 import { extractFirstBalancedArray, extractJsonArray } from "../utils/extractJsonArray.js";
 import { generateQuestions } from "../services/genService.js";
-import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 import { recordQuestionnaireEventSpan } from "./questionnaireObservability.js";
 import { questionnaireRejectedResultSchema } from "./askUserQuestionAdapter.js";
 
@@ -534,7 +534,10 @@ export const planDraftTool = createTool({
         topic: input.topic,
         onProgress: async (questions) => {
           if (context?.writer) {
-            await context.writer.write({ type: "askuser-progress", questions });
+            await writeToolStreamChunk(context.writer, {
+              type: "askuser-progress",
+              questions,
+            });
           }
         },
       });

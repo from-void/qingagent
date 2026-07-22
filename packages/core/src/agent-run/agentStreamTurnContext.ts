@@ -9,6 +9,7 @@ import { basename } from "node:path";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
+  AGENT_FIRST_CHUNK_TIMEOUT_MS,
   AGENT_IDLE_TIMEOUT_MS,
   AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
 } from "./agentLimits.js";
@@ -41,8 +42,12 @@ export interface ProcessAgentStreamOptions {
   fileIds?: string[];
   requestContext?: RequestContext;
   idleTimeoutMs?: number;
+  /** 首个非 heartbeat chunk 到达前的宽限窗口。 */
+  firstChunkTimeoutMs?: number;
   /** 连续只有 tool-heartbeat、没有真实流事件时的硬收口窗口。 */
   toolHeartbeatTimeoutMs?: number;
+  /** 调用方能安全自动重试时，零产出 idle-timeout 先只返回 outcome，不在本层展示失败。 */
+  deferRetryableIdleTimeout?: boolean;
   abortController?: AbortController;
   /** 仅测试注入；生产统一使用模块级 ConfirmService。 */
   confirmService?: ConfirmService;
@@ -55,6 +60,7 @@ export interface ProcessOutcome {
   /** askUser 重放不算副作用，供瞬态错误重试守卫区分。 */
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
+  retryableIdleTimeoutChunk?: unknown;
 }
 
 export interface ExtractedTextEntry {
@@ -76,8 +82,11 @@ export interface AgentStreamTurnContext {
   readonly previousStreamId: string | null;
   readonly restoreStreamIdOnExit: boolean;
   readonly streamStartTime: number;
+  readonly docVersionBeforeStream: number;
   readonly timeoutMs: number;
+  readonly firstChunkTimeoutMs: number;
   readonly toolHeartbeatTimeoutMs: number;
+  readonly deferRetryableIdleTimeout: boolean;
   readonly confirmService: ConfirmService;
 
   firstChunkLogged: boolean;
@@ -187,9 +196,13 @@ export async function createAgentStreamTurnContext(
     previousStreamId,
     restoreStreamIdOnExit,
     streamStartTime,
+    docVersionBeforeStream: state.docVersion,
     timeoutMs: opts.idleTimeoutMs ?? AGENT_IDLE_TIMEOUT_MS,
+    firstChunkTimeoutMs:
+      opts.firstChunkTimeoutMs ?? AGENT_FIRST_CHUNK_TIMEOUT_MS,
     toolHeartbeatTimeoutMs:
       opts.toolHeartbeatTimeoutMs ?? AGENT_TOOL_HEARTBEAT_TIMEOUT_MS,
+    deferRetryableIdleTimeout: opts.deferRetryableIdleTimeout === true,
     confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
     accumulatedText: "",

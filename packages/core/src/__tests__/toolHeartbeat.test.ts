@@ -214,7 +214,7 @@ describe("startToolHeartbeat", () => {
     expect(onUnhandled).not.toHaveBeenCalled();
   });
 
-  it("心跳与工具进度共用 writer 时串行写入，且首个成功发送只记一次 debug", async () => {
+  it("心跳与工具进度共用 writer 时串行写入，且首个成功发送只记一次 info", async () => {
     let releaseProgress!: () => void;
     const progressGate = new Promise<void>((resolve) => {
       releaseProgress = resolve;
@@ -248,7 +248,7 @@ describe("startToolHeartbeat", () => {
     expect(maxActiveWrites).toBe(1);
     expect(observe.log).toHaveBeenCalledTimes(1);
     expect(observe.log).toHaveBeenCalledWith(
-      "debug",
+      "info",
       "Tool heartbeat emitted",
       expect.objectContaining({ tool: "writeDraft", emittedCount: 1 }),
     );

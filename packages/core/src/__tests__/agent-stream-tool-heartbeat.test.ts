@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ToolStream } from "@mastra/core/tools";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 
 // 桥层回归:工具心跳只负责清零 idle 看门狗,不应变成聊天可见帧,
 // 也不能被重试守卫当成真实副作用工具活动。
@@ -46,6 +48,38 @@ type ToolCallUpdatedFrame = Extract<BridgeFrame, { kind: "toolCallUpdated" }>;
 
 function isToolCallUpdatedFrame(frame: BridgeFrame): frame is ToolCallUpdatedFrame {
   return frame.kind === "toolCallUpdated";
+}
+
+class AsyncEventQueue<T> implements AsyncIterable<T> {
+  private values: T[] = [];
+  private waiters: Array<(value: IteratorResult<T>) => void> = [];
+  private ended = false;
+
+  push(value: T): void {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ done: false, value });
+    else this.values.push(value);
+  }
+
+  end(): void {
+    this.ended = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter({ done: true, value: undefined });
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: async () => {
+        const value = this.values.shift();
+        if (value !== undefined) return { done: false, value };
+        if (this.ended) return { done: true, value: undefined };
+        return await new Promise<IteratorResult<T>>((resolve) => {
+          this.waiters.push(resolve);
+        });
+      },
+    };
+  }
 }
 
 async function* parallelCallsWithHeartbeatOnly(): AsyncGenerator<unknown> {
@@ -154,14 +188,88 @@ describe("processAgentStream tool-heartbeat", () => {
     expect(result.producedVisibleFrame).toBe(false);
     expect(result.sawSideEffectToolCall).toBe(false);
     expect(state.messages).toHaveLength(0);
-    expect(logger.debug).toHaveBeenCalledWith(
-      "Tool heartbeat reached agent stream watchdog",
+    expect(logger.info).toHaveBeenCalledWith(
+      "Tool heartbeat consumed by agent stream watchdog",
       expect.objectContaining({
         streamId: "stream-heartbeat",
         tool: "generateSvg",
         receivedCount: 1,
+        resetsIdleTimer: true,
       }),
     );
+  });
+
+  it("Mastra ToolStream 实发心跳会进入 fullStream 形态并被 idle 计时器消费", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const queue = new AsyncEventQueue<unknown>();
+    const observe = { log: vi.fn() };
+    const state = createSession("tool-heartbeat-mastra-writer");
+    queue.push({
+      type: "tool-call",
+      payload: { toolCallId: "mastra-writer-1", toolName: "slowTool", args: {} },
+    });
+    const writer = new ToolStream(
+      {
+        prefix: "tool",
+        callId: "mastra-writer-1",
+        name: "slowTool",
+        runId: "run-heartbeat-mastra-writer",
+      },
+      async (chunk) => queue.push(chunk),
+    );
+    const stop = startToolHeartbeat(
+      { writer, observe },
+      { tool: "slowTool", intervalMs: 1_000 },
+    );
+    let done = false;
+    const collected = collectFramesAndReturn(
+      processAgentStream(queue, {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-heartbeat-mastra-writer",
+        runId: "run-heartbeat-mastra-writer",
+        idleTimeoutMs: 1_500,
+        firstChunkTimeoutMs: 1_500,
+        toolHeartbeatTimeoutMs: 5_000,
+      }),
+    ).then((result) => {
+      done = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(3_500);
+    expect(done).toBe(false);
+    expect(observe.log).toHaveBeenCalledWith(
+      "info",
+      "Tool heartbeat emitted",
+      expect.objectContaining({ tool: "slowTool", emittedCount: 1 }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "Tool heartbeat consumed by agent stream watchdog",
+      expect.objectContaining({
+        streamId: "stream-heartbeat-mastra-writer",
+        tool: "slowTool",
+        resetsIdleTimer: true,
+      }),
+    );
+
+    stop();
+    queue.push({
+      type: "tool-result",
+      payload: {
+        toolCallId: "mastra-writer-1",
+        toolName: "slowTool",
+        args: {},
+        result: { ok: true },
+      },
+    });
+    queue.push({ type: "text-delta", payload: { text: "心跳后正常收尾" } });
+    queue.end();
+    const { frames } = await collected;
+
+    expect(JSON.stringify(frames)).not.toContain("draftingFailed");
+    expect(state.messages.at(-1)).toEqual({ role: "assistant", content: "心跳后正常收尾" });
   });
 
   it("三个工具只有心跳却始终无结果时会有界失败并按 toolCallId 收口卡片", async () => {

@@ -42,7 +42,7 @@ export interface ProcessAgentStreamOptions {
   fileIds?: string[];
   requestContext?: RequestContext;
   idleTimeoutMs?: number;
-  /** 首个非 heartbeat chunk 到达前的宽限窗口。 */
+  /** 每个模型段首个内容性 chunk 到达前的宽限窗口。 */
   firstChunkTimeoutMs?: number;
   /** 连续只有 tool-heartbeat、没有真实流事件时的硬收口窗口。 */
   toolHeartbeatTimeoutMs?: number;

@@ -81,6 +81,24 @@ export async function* handleLifecycleEvent(
       outcome.retryableIdleTimeoutChunk = chunk;
       return "terminal";
     }
+    const hasDraftArtifactToSettle =
+      context.sawValidDraftMutation ||
+      context.docGeneratedThisTurn ||
+      context.validPatchCount > 0;
+    if (idleTimeout && hasDraftArtifactToSettle) {
+      // 工具已经产出可审候选/完整草稿时，idle 只代表外层模型收尾缺席。
+      // 不先发 draftingFailed（它会让前端进入错误态）；统一交给 finalize
+      // 落候选并发出明确的部分成功收口。
+      logger.info("Idle timeout deferred to draft artifact settle", {
+        sessionId: state.sessionId,
+        streamId,
+        sawValidDraftMutation: context.sawValidDraftMutation,
+        docGeneratedThisTurn: context.docGeneratedThisTurn,
+        validPatchCount: context.validPatchCount,
+        pendingSuggestionCount: state.suggestions.size,
+      });
+      return "handled";
+    }
     if (transient && !outcome.producedVisibleFrame && !outcome.sawSideEffectToolCall) {
       outcome.transientErrorChunk = chunk;
       return "terminal";

@@ -8,11 +8,15 @@ export const USER_ABORT_REASON = "user_abort";
 export const IDLE_TIMEOUT_ABORT_REASON = "idle_timeout";
 
 export interface IdleTimeoutOptions<T> {
-  /** 首个非 heartbeat chunk 到达前允许等待的时间；默认沿用常规 idle。 */
+  /** 每个模型段首个内容性 chunk 到达前允许等待的时间；默认沿用常规 idle。 */
   firstChunkTimeoutMs?: number;
   /** 连续只有 heartbeat 时允许维持主流的最长时间。 */
   heartbeatOnlyTimeoutMs?: number;
   isHeartbeat?: (chunk: T) => boolean;
+  /** 只有实际产出才结束段首宽限；start/step-start 等元数据不算。 */
+  isContentful?: (chunk: T) => boolean;
+  /** 工具结果等边界会开启下一模型段的首内容宽限。 */
+  startsContentSegment?: (chunk: T) => boolean;
   /** 外部取消时提前结束等待，并走底层迭代器收尾。 */
   abortSignal?: AbortSignal;
 }
@@ -29,7 +33,7 @@ export async function* withIdleTimeout<T>(
 ): AsyncGenerator<T | AgentStreamErrorEvent> {
   const iterator = source[Symbol.asyncIterator]();
   let timedOut = false;
-  let sawFirstRealChunk = false;
+  let waitingForSegmentContent = true;
   let heartbeatOnlySince: number | null = null;
   const idleTimeoutSignal = Symbol("idle-timeout");
   const heartbeatTimeoutSignal = Symbol("heartbeat-only-timeout");
@@ -39,9 +43,9 @@ export async function* withIdleTimeout<T>(
     for (;;) {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
-      const activeIdleTimeoutMs = sawFirstRealChunk
-        ? timeoutMs
-        : options.firstChunkTimeoutMs ?? timeoutMs;
+      const activeIdleTimeoutMs = waitingForSegmentContent
+        ? options.firstChunkTimeoutMs ?? timeoutMs
+        : timeoutMs;
       const idleTimeout = new Promise<typeof idleTimeoutSignal>((resolve) => {
         idleTimer = setTimeout(() => resolve(idleTimeoutSignal), activeIdleTimeoutMs);
       });
@@ -114,8 +118,12 @@ export async function* withIdleTimeout<T>(
       if (options.isHeartbeat?.(raced.value)) {
         heartbeatOnlySince ??= Date.now();
       } else {
-        sawFirstRealChunk = true;
         heartbeatOnlySince = null;
+        if (options.startsContentSegment?.(raced.value)) {
+          waitingForSegmentContent = true;
+        } else if (options.isContentful?.(raced.value) ?? true) {
+          waitingForSegmentContent = false;
+        }
       }
       yield raced.value;
     }

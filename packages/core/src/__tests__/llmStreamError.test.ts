@@ -55,6 +55,53 @@ async function* heartbeatThenDelayedText(delayMs: number): AsyncGenerator<unknow
   yield { type: "text-delta", payload: { text: "首个真实内容" } };
 }
 
+async function* metadataThenDelayedText(delayMs: number): AsyncGenerator<unknown> {
+  yield { type: "start", payload: {} };
+  yield { type: "step-start", payload: {} };
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  yield { type: "text-delta", payload: { text: "首个真实内容" } };
+}
+
+async function* postToolSegmentThenDelayedText(delayMs: number): AsyncGenerator<unknown> {
+  yield { type: "text-delta", payload: { text: "前一模型段" } };
+  yield {
+    type: "tool-call",
+    payload: { toolCallId: "post-tool-1", toolName: "slowTool", args: {} },
+  };
+  yield {
+    type: "tool-result",
+    payload: {
+      toolCallId: "post-tool-1",
+      toolName: "slowTool",
+      args: {},
+      result: { ok: true },
+    },
+  };
+  yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+  yield { type: "step-start", payload: {} };
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  yield { type: "text-delta", payload: { text: "工具后的模型收尾" } };
+}
+
+async function* postToolSegmentThenHang(): AsyncGenerator<unknown> {
+  yield { type: "text-delta", payload: { text: "前一模型段" } };
+  yield {
+    type: "tool-call",
+    payload: { toolCallId: "post-tool-dead-1", toolName: "slowTool", args: {} },
+  };
+  yield {
+    type: "tool-result",
+    payload: {
+      toolCallId: "post-tool-dead-1",
+      toolName: "slowTool",
+      args: {},
+      result: { ok: true },
+    },
+  };
+  yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+  await new Promise(() => undefined);
+}
+
 async function* textThenHang(): AsyncGenerator<unknown> {
   yield { type: "text-delta", payload: { text: "已经开始输出" } };
   await new Promise(() => undefined);
@@ -791,6 +838,87 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     const frames = await framesPromise;
     expect(draftingFailures(frames)).toHaveLength(0);
     expect(textBodies(frames)).toContain("首个真实内容");
+  });
+
+  it("start 与 step-start 元数据不关闭段首内容宽限", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    let done = false;
+    const framesPromise = collectFrames(
+      processAgentStream(metadataThenDelayedText(15), {
+        state: createSession("metadata-keeps-segment-grace"),
+        agentMessageId: "agent-msg",
+        streamId: "stream-metadata-keeps-segment-grace",
+        runId: "run-metadata-keeps-segment-grace",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    ).then((frames) => {
+      done = true;
+      return frames;
+    });
+
+    await vi.advanceTimersByTimeAsync(11);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(5);
+    const frames = await framesPromise;
+    expect(draftingFailures(frames)).toHaveLength(0);
+    expect(textBodies(frames)).toContain("首个真实内容");
+  });
+
+  it("tool-result 后重新进入段首宽限，慢于常规 idle 的模型收尾仍可到达", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    let done = false;
+    const framesPromise = collectFrames(
+      processAgentStream(postToolSegmentThenDelayedText(15), {
+        state: createSession("post-tool-segment-grace"),
+        agentMessageId: "agent-msg",
+        streamId: "stream-post-tool-segment-grace",
+        runId: "run-post-tool-segment-grace",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    ).then((frames) => {
+      done = true;
+      return frames;
+    });
+
+    await vi.advanceTimersByTimeAsync(11);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(5);
+    const frames = await framesPromise;
+    expect(draftingFailures(frames)).toHaveLength(0);
+    expect(textBodies(frames)).toEqual(expect.arrayContaining([
+      "前一模型段",
+      "工具后的模型收尾",
+    ]));
+  });
+
+  it("tool-result 后真正死流只获得一次段首宽限，超过后仍会失败收口", async () => {
+    vi.useFakeTimers();
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    let done = false;
+    const framesPromise = collectFrames(
+      processAgentStream(postToolSegmentThenHang(), {
+        state: createSession("post-tool-dead-stream"),
+        agentMessageId: "agent-msg",
+        streamId: "stream-post-tool-dead-stream",
+        runId: "run-post-tool-dead-stream",
+        idleTimeoutMs: 10,
+        firstChunkTimeoutMs: 20,
+      }),
+    ).then((frames) => {
+      done = true;
+      return frames;
+    });
+
+    await vi.advanceTimersByTimeAsync(19);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    const frames = await framesPromise;
+    expect(draftingFailures(frames)).toHaveLength(1);
+    expect(textBodies(frames)).toContain("前一模型段");
   });
 
   it("无任何 chunk 时超过首 chunk 宽限才自动失败并解锁为可重试", async () => {

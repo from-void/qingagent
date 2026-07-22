@@ -359,25 +359,30 @@ export function useWorkspacePageController() {
   docVersionRef.current = state.version;
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
-  useEffect(() => {
-    if (!tiptapEditor || tiptapEditor.isDestroyed) return;
-    return installAnnotationGroupDecorations(
-      tiptapEditor,
-      state.docState.kind === "pendingReview" ? [] : state.annotationGroups,
-      (groups) => dispatch({ kind: "annotationGroupsChanged", groups }),
-      state.previewGroups,
-    );
-  }, [state.annotationGroups, state.docState.kind, state.previewGroups, tiptapEditor]);
-  const dispatchAnnotationGroups = useCallback((groups: AnnotationGroup[]) => {
-    dispatch({ kind: "annotationGroupsChanged", groups });
-  }, []);
-  tiptapEditorRef.current = tiptapEditor;
   const toast = useToast();
   const confirm = useConfirm();
   const showToast = useCallback(
     (msg: string, durationMs?: number) => toast.show(msg, durationMs),
     [toast],
   );
+  useEffect(() => {
+    if (!tiptapEditor || tiptapEditor.isDestroyed) return;
+    return installAnnotationGroupDecorations(
+      tiptapEditor,
+      state.docState.kind === "pendingReview" ? [] : state.annotationGroups,
+      (groups, unlocatedGroupCount) => {
+        dispatch({ kind: "annotationGroupsChanged", groups });
+        if (unlocatedGroupCount > 0) {
+          showToast(`${unlocatedGroupCount}处因文档已改动未能定位`);
+        }
+      },
+      state.previewGroups,
+    );
+  }, [showToast, state.annotationGroups, state.docState.kind, state.previewGroups, tiptapEditor]);
+  const dispatchAnnotationGroups = useCallback((groups: AnnotationGroup[]) => {
+    dispatch({ kind: "annotationGroupsChanged", groups });
+  }, []);
+  tiptapEditorRef.current = tiptapEditor;
   useEffect(() => {
     workspaceMountedRef.current = true;
     return () => {

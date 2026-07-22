@@ -106,7 +106,7 @@ describe("AnnotationCarousel hover card", () => {
     }
   });
 
-  it("锚内插字使整组静默消失，多锚组不保留残余锚", async () => {
+  it("锚内漂移一字时多锚组保留未受影响的存活锚点", async () => {
     createEditor();
     const onGroupsChange = vi.fn();
     const multiAnchorGroup: AnnotationGroup = {
@@ -123,8 +123,13 @@ describe("AnnotationCarousel hover card", () => {
       await Promise.resolve();
     });
 
-    expect(onGroupsChange).toHaveBeenLastCalledWith([]);
-    expect(editorHost!.querySelector("[data-annotation-group]")).toBeNull();
+    expect(onGroupsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        id: "g1",
+        anchors: [expect.objectContaining({ quote: "乙组", pmFrom: 4, pmTo: 6 })],
+      }),
+    ], 0);
+    expect(editorHost!.querySelector('[data-annotation-group="g1"]')?.textContent).toBe("乙组");
     uninstall();
   });
 
@@ -142,7 +147,7 @@ describe("AnnotationCarousel hover card", () => {
       await Promise.resolve();
     });
 
-    expect(onGroupsChange).toHaveBeenLastCalledWith([]);
+    expect(onGroupsChange).toHaveBeenLastCalledWith([], 1);
     uninstall();
   });
 
@@ -275,6 +280,11 @@ describe("AnnotationCarousel hover card", () => {
     const longQuote = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一";
     expect(buildAnnotationInstruction({ ...groups[0]!, anchors: [{ ...groups[0]!.anchors[0]!, quote: longQuote }] }))
       .toBe("按批注修改:「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」——改为四月发布（批注:事实有误；原因:时间与资料不一致）\n");
+  });
+
+  it("空修改意见回退为批注原因自身，不生成静默空指令", () => {
+    expect(buildAnnotationInstruction({ ...groups[0]!, suggestion: undefined }, "   "))
+      .toBe("按批注修改:「甲组原句」——时间与资料不一致（批注:事实有误；原因:时间与资料不一致）\n");
   });
 
   it("严重度计数只在模板输出分级后显示，缺省项按建议档计数", () => {

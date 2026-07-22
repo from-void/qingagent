@@ -18,8 +18,14 @@ export function reviewOrigin(context: ReviewContext | null | undefined): string 
   return REVIEW_ORIGIN_MATRIX[context.type];
 }
 
+export const ANNOTATION_SUMMARY_MAX_CHARS = 15;
+
+export function truncateAnnotationSummary(summary: string): string {
+  return Array.from(summary.trim()).slice(0, ANNOTATION_SUMMARY_MAX_CHARS).join("");
+}
+
 export const annotationGroupInputSchema = z.object({
-  summary: z.string().min(1).max(15).describe("变更类型短标题，≤15字，如『履历时间与素材不符』『金额口径漂移』；细节解释一律写进 note"),
+  summary: z.string().min(1).describe("变更类型短标题，建议≤15字，如『履历时间与素材不符』『金额口径漂移』；超出时服务端截断，细节解释一律写进 note"),
   note: z.string().min(1),
   origin: z.string().min(1).describe("模型侧审查来源；菜单审查会由工具依据本轮 reviewContext 强制覆写"),
   suggestion: z.string().optional(),

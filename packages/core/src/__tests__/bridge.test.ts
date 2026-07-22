@@ -13,6 +13,10 @@ import type { SessionState } from "../bridge/index.js";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import { legacySectionsToPm } from "@qingagent/pm-schema";
 import { compileSuggestionFromBeforeAfter } from "../doc-engine/pmPatch.js";
+import {
+  collectTopLevelTextBlocks,
+  findLiteralMatches,
+} from "../doc-engine/textEditOps.js";
 import { documentRepo, upsertDocumentSuggestion } from "@qingagent/db";
 import {
   documentInput,
@@ -339,6 +343,54 @@ describe("commitPatches", () => {
       deriveAgentBusy(state),
       deriveActiveOverlay(state),
     )).toBe("editable");
+  });
+
+  it("提交改写导致批注组全丢时通过现有消息通道显式提示", async () => {
+    const state = createSession("test-annotation-remap");
+    seedStateWithDoc(state);
+    await addPatch(state, "patch-1");
+    state.patchVerdicts.set("patch-1", "accepted");
+    state.patchValidationResults.set("patch-1", { ok: true, applied: true });
+    const [match] = findLiteralMatches(
+      collectTopLevelTextBlocks(state.doc!),
+      "三月的阳光",
+      false,
+    );
+    expect(match).toBeDefined();
+    state.annotationGroups = [{
+      id: "annotation-stale",
+      summary: "月份表述过时",
+      note: "请核对月份",
+      origin: "consistency",
+      status: "reviewing",
+      anchors: [{
+        blockId: match!.blockId,
+        pmFrom: match!.pmFrom,
+        pmTo: match!.pmTo,
+        quote: match!.matchText,
+        textHash: "hash-stale",
+      }],
+    }];
+    await seedDocumentRow(state);
+
+    const frames = await collectAsyncFrames(commitPatches(state, ["patch-1"]));
+
+    expect(frames).toContainEqual({
+      kind: "annotationGroupsReady",
+      data: { groups: [], replacedOrigins: ["consistency"] },
+    });
+    const noticeFrame = frames.find((frame) => frame.kind === "chatMessageAdded");
+    expect(noticeFrame?.kind).toBe("chatMessageAdded");
+    if (noticeFrame?.kind === "chatMessageAdded") {
+      expect(noticeFrame.data.message.parts).toEqual([{ kind: "text", data: {
+        body: "批注落地结果：0处已定位；1处因文档已改动未能定位。",
+      } }]);
+    }
+    expect(state.annotationGroups).toEqual([]);
+    expect(state.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: "批注落地结果：0处已定位；1处因文档已改动未能定位。",
+    });
   });
 
   it("提交后清理已提交项，并将缺少 diffHunk 的剩余项结算为失败", async () => {

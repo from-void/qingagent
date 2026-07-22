@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { collectTopLevelTextBlocks, findLiteralMatches } from "../doc-engine/textEditOps.js";
+import { collectTopLevelTextBlocks, findAnnotationQuoteMatches } from "../doc-engine/textEditOps.js";
+import { truncateAnnotationSummary } from "../tools/annotationGroups.js";
 
 export const MAX_ANNOTATION_PREVIEW_GROUPS = 64;
 export const MAX_ANNOTATION_PREVIEW_ARGS_BYTES = 512 * 1_024;
@@ -206,14 +207,14 @@ export function buildAnnotationPreviewData(
   previewId: string,
   source: Record<string, unknown>,
 ): Extract<BridgeFrame, { kind: "annotationPreview" }>["data"] | null {
-  const summary = typeof source.summary === "string" ? source.summary.trim() : "";
+  const summary = typeof source.summary === "string" ? truncateAnnotationSummary(source.summary) : "";
   if (!summary || !Array.isArray(source.anchors)) return null;
   const blocks = collectTopLevelTextBlocks(doc);
   const anchors = source.anchors.flatMap((candidate) => {
     const spec = asRecord(candidate);
     const find = typeof spec?.find === "string" ? spec.find : "";
     if (!find) return [];
-    return findLiteralMatches(blocks, find, spec?.all === true).map((match) => ({
+    return findAnnotationQuoteMatches(blocks, find, spec?.all === true).map((match) => ({
       blockId: match.blockId,
       pmFrom: match.pmFrom,
       pmTo: match.pmTo,

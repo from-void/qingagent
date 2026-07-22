@@ -130,15 +130,17 @@ describe("rich formats HTTP bridge E2E", () => {
     }
   });
 
-  it("POST /api/v1/stream updateDoc reports expectedDocumentSnapshot conflict on stale version", async () => {
+  it("双标签 coalesce 窗口内整篇写入走 conflict 提示且不覆盖先写内容", async () => {
     const sessionId = await seedRestoredSession("版本冲突桥接", baseDoc("bridge-conflict-base"));
+    const firstDoc = richPmDoc("conflict-first");
+    const staleDoc = richPmDoc("conflict-stale");
 
     const firstMutationId = `mutation-${randomUUID()}`;
     const first = await postStream(updateDocCommand({
       sessionId,
       expectedDocumentSnapshot: 1,
       clientMutationId: firstMutationId,
-      doc: richPmDoc("conflict-first"),
+      doc: firstDoc,
     }));
     expect(first.res.status).toBe(200);
     expect(findDocWriteFrame(first.frames, firstMutationId).data).toEqual({
@@ -152,7 +154,7 @@ describe("rich formats HTTP bridge E2E", () => {
       sessionId,
       expectedDocumentSnapshot: 1,
       clientMutationId: staleMutationId,
-      doc: richPmDoc("conflict-stale"),
+      doc: staleDoc,
     }));
 
     expect(stale.res.status).toBe(200);
@@ -164,6 +166,13 @@ describe("rich formats HTTP bridge E2E", () => {
         actualDocumentSnapshot: 2,
       },
     });
+    await expect(core.documentRepo.load(sessionId)).resolves.toMatchObject({
+      docVersion: 2,
+      pmDoc: firstDoc,
+    });
+    await expect(core.listVersions(sessionId)).resolves.toMatchObject([
+      { docVersion: 2, snapshotPm: firstDoc },
+    ]);
   });
 
   it("POST /api/v1/stream persists A→B→A undo with distinct mutation ids", async () => {

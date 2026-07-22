@@ -89,6 +89,7 @@ import {
   docWriteResultMessage,
   type PendingDocSaveWaiter,
 } from "../data/pendingDocSave";
+import { shouldHandleDocWriteResult } from "../data/docWriteResultOwnership";
 import type {
   BlockPatchInput,
   PatchOverlayInput,
@@ -1468,6 +1469,12 @@ export function useWorkspacePageController() {
         const isLatestOwnMutation =
           frame.data.clientMutationId === latestDocMutationIdRef.current;
         const ack = docWriteAckRef.current.get(frame.data.clientMutationId);
+        if (!shouldHandleDocWriteResult({
+          isLatestOwnMutation,
+          hasMatchingWaiter: ack !== undefined,
+        })) {
+          return;
+        }
         docWriteAckRef.current.delete(frame.data.clientMutationId);
         if (isLatestOwnMutation) {
           pendingDocWriteRef.current = false;

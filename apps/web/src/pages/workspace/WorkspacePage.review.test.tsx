@@ -828,6 +828,185 @@ describe("WorkspacePage review controls", () => {
     expect(window.location.hash).toBe("#/");
   }, 60_000);
 
+  it("dirty 外标签收到 snapshotWritten 广播时冻结旧版本，下次保存以旧基线触发 conflict", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const staleDoc = pmDoc([pmParagraph("p-concurrent", "旧正文")]);
+    const dirtyDoc = pmDoc([
+      pmParagraph("p-concurrent", "旧正文"),
+      pmParagraph("p-local", "外标签本地未保存句"),
+    ]);
+    const remoteDoc = pmDoc([
+      pmParagraph("p-concurrent", "先写标签已保存的新正文"),
+    ]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "并发保存" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(staleDoc, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: false,
+          clientMutationId: command.data.clientMutationId,
+          conflict: {
+            expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
+            actualDocumentSnapshot: 8,
+          },
+        },
+      });
+    });
+    vi.useFakeTimers();
+    act(() => {
+      editor!.commands.setContent(dirtyDoc);
+    });
+    expect(updateDocCommands(stream)).toHaveLength(0);
+
+    await emitFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(remoteDoc, 8) },
+      },
+    ]);
+
+    expect(captured.current?.state.version).toBe(7);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(staleDoc);
+    expect(JSON.stringify(editor!.getJSON())).toContain("外标签本地未保存句");
+    expect(JSON.stringify(editor!.getJSON())).not.toContain("先写标签已保存的新正文");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    await flushMicrotasks(5);
+
+    const save = updateDocCommands(stream)[0];
+    expect(save?.data.expectedDocumentSnapshot).toBe(7);
+    expect(JSON.stringify(save?.data.doc)).toContain("外标签本地未保存句");
+    expect(captured.current?.state.streamError).toMatchObject({
+      kind: "docWriteConflict",
+      actualDocumentSnapshot: 8,
+    });
+
+    // conflict 已清空防抖/在途标志，但编辑器里的未保存正文仍然是 dirty；后续广播也不能覆盖。
+    await emitFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(remoteDoc, 8) },
+      },
+    ]);
+    expect(captured.current?.state.version).toBe(7);
+    expect(JSON.stringify(editor!.getJSON())).toContain("外标签本地未保存句");
+  }, 60_000);
+
+  it("干净外标签照常同步 snapshotWritten 的版本与正文", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] =
+      await Promise.all([
+        import("./WorkspacePage"),
+        import("./components/WorkspaceDocumentPane"),
+      ]);
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      const controller = useWorkspacePageController();
+      captured.current = controller;
+      return <WorkspaceDocumentPane controller={controller} />;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-clean", "旧正文")]);
+    const remoteDoc = pmDoc([pmParagraph("p-clean", "另一标签的新正文")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "干净同步" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+    await flushMicrotasks(5);
+    const editor = captured.current?.tiptapEditor;
+    expect(editor).not.toBeNull();
+
+    await emitFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(remoteDoc, 8) },
+      },
+    ]);
+    await flushMicrotasks(5);
+
+    expect(captured.current?.state.version).toBe(8);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(remoteDoc);
+    expect(JSON.stringify(editor!.getJSON())).toContain("另一标签的新正文");
+  }, 60_000);
+
+  it("单标签保存仍由本标签 docWriteResult 正常推进版本", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-own", "保存前")]);
+    const savedDoc = pmDoc([pmParagraph("p-own", "本标签保存后")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "单标签保存" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+
+    await act(async () => {
+      await captured.current!.handleEditorChange(savedDoc);
+    });
+    await flushMicrotasks(3);
+
+    expect(updateDocCommands(stream)[0]?.data.expectedDocumentSnapshot).toBe(7);
+    expect(captured.current?.state.version).toBe(8);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
+  }, 60_000);
+
   it("O1: 会话切换 flush 超时后用旧 session 的 beacon 保存当前编辑器正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] = await Promise.all([

@@ -142,6 +142,7 @@ export { resolveWorkspaceFloatingPortalTarget } from "./doc/TableControls";
 export interface DocumentSnapshotViewHandle {
   getInnerHtml: () => string;
   getLastPresentationRun: () => NativePresentationRun | null;
+  hasLocalDocumentChanges: () => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -239,6 +240,9 @@ export const DocumentSnapshotView = forwardRef<
           ? cloneNativePresentationRun(lastPresentationRunRef.current)
           : null;
       },
+      hasLocalDocumentChanges() {
+        return tiptapRef.current?.hasLocalDocumentChanges() ?? false;
+      },
       flushPendingDocSave() {
         return tiptapRef.current?.flushPendingDocSave() ?? Promise.resolve();
       },
@@ -329,6 +333,7 @@ export const DocumentSnapshotView = forwardRef<
 
 /** 公式点击事件:扩展在模块级创建拿不到 React 状态,经 window 事件转发给 TipTapDoc 弹编辑浮层。 */
 interface TipTapDocHandle {
+  hasLocalDocumentChanges: () => boolean;
   flushPendingDocSave: () => Promise<void>;
 }
 
@@ -412,6 +417,11 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     resolve: (time: number) => void;
   } | null>(null);
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestCanonicalDocRef = useRef(doc);
+  const lastVersionRef = useRef(doc.version);
+  const latestDocVersionRef = useRef(doc.version);
+  latestCanonicalDocRef.current = doc;
+  latestDocVersionRef.current = doc.version;
   const beginApplyingRemote = useCallback(() => {
     remoteApplyDepthRef.current += 1;
     isApplyingRemoteRef.current = true;
@@ -557,6 +567,21 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
   useImperativeHandle(
     ref,
     (): TipTapDocHandle => ({
+      hasLocalDocumentChanges() {
+        if (!editor || editor.isDestroyed) return false;
+        // canonical 已更新、TipTap 的远端 setContent microtask 尚未执行时，不是本地 dirty。
+        if (latestDocVersionRef.current !== lastVersionRef.current) return false;
+        try {
+          const live = JSON.stringify(normalizePmDoc(editor.getJSON()));
+          const canonical = JSON.stringify(
+            normalizePmDoc(viewDocToPm(latestCanonicalDocRef.current)),
+          );
+          return live !== canonical;
+        } catch {
+          // 无法可靠比较时 fail closed，宁可触发显式冲突也不静默覆盖。
+          return true;
+        }
+      },
       async flushPendingDocSave() {
         if (!updateTimerRef.current) return;
         clearTimeout(updateTimerRef.current);
@@ -671,15 +696,12 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
     };
   }, [editor, forwardCurrentEditorDoc, onEditorChange]);
 
-  const lastVersionRef = useRef(doc.version);
-  const latestDocVersionRef = useRef(doc.version);
   const latestPresentationDocVersionRef = useRef<number | null>(
     presentationRun?.docVersion ?? null,
   );
   const deferBlockIdNormalizationRef = useRef(deferBlockIdNormalization);
   const interactiveEditableRef = useRef(interactiveEditable);
   const repairedBlockIdVersionRef = useRef<string | null>(null);
-  latestDocVersionRef.current = doc.version;
   latestPresentationDocVersionRef.current = presentationRun?.docVersion ?? null;
   deferBlockIdNormalizationRef.current = deferBlockIdNormalization;
   interactiveEditableRef.current = interactiveEditable;

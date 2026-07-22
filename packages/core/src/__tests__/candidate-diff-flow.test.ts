@@ -766,6 +766,74 @@ describe("candidate-diff backend flow", () => {
     await expect(documentDraftRepo.load(state.docId)).resolves.toBeNull();
   });
 
+  it("已有两处候选后 idle timeout 以成功提示收口，不发 draftingFailed", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const { IDLE_TIMEOUT_ABORT_REASON } = await import("../agent-run/streamErrors.js");
+    const state = createSession("candidate-idle-partial-success");
+    const baseDoc = pmDoc([
+      paragraph("block-a", "第一段旧文"),
+      paragraph("block-b", "第二段旧文"),
+    ]);
+    const candidateDoc = pmDoc([
+      paragraph("block-a", "第一段新文"),
+      paragraph("block-b", "第二段新文"),
+    ]);
+    state.doc = baseDoc;
+    state.legacySections = pmToLegacySections(baseDoc) as unknown as LegacySection[];
+    state.docVersion = 1;
+    state.docState = { kind: "editing" };
+    state.docDraftCandidateDoc = candidateDoc;
+    state.docDraftCandidateSections = pmToLegacySections(candidateDoc) as unknown as LegacySection[];
+    await seedDocument({
+      docId: state.docId,
+      sessionId: state.sessionId,
+      threadId: state.threadId,
+      docVersion: state.docVersion,
+      doc: baseDoc,
+    });
+    const abortController = new AbortController();
+
+    async function* partialSuccessThenIdle(): AsyncGenerator<unknown> {
+      yield writeDraftCall("wd-idle-partial");
+      yield writeDraftResult("wd-idle-partial");
+      yield { type: "step-finish", payload: { finishReason: "tool-calls" } };
+      yield {
+        type: "error",
+        payload: {
+          idleTimeout: true,
+          error: new Error("agent stream idle timeout"),
+        },
+      };
+      abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
+    }
+
+    const frames = await collectFrames(
+      processAgentStream(partialSuccessThenIdle(), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-idle-partial-success",
+        runId: "run-idle-partial-success",
+        abortController,
+      }),
+    );
+    const textBodies = frames.flatMap((frame) =>
+      frame.kind === "chatMessageAppended" && frame.data.part.kind === "text"
+        ? [frame.data.part.data.body]
+        : [],
+    );
+
+    expect(state.suggestions.size).toBe(2);
+    expect(frames.some((frame) =>
+      frame.kind === "chatMessageAppended" &&
+      frame.data.part.kind === "patchSummary" &&
+      frame.data.part.data.count === 2
+    )).toBe(true);
+    expect(textBodies).toContain("已生成2处修改，请查看。");
+    expect(frames.some(
+      (frame) => frame.kind === "stream" && frame.data.kind === "draftingFailed",
+    )).toBe(false);
+  });
+
   it("editDraft table incremental candidate enters pendingReview and can be accepted", async () => {
     const { createSession, commitPatches, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("candidate-table-accept");

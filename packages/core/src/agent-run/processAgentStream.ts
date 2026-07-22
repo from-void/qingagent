@@ -41,6 +41,35 @@ function isToolHeartbeatEvent(chunk: AgentStreamEvent): boolean {
   return chunk.type === "tool-output" && chunk.payload.output?.type === "tool-heartbeat";
 }
 
+/**
+ * Mastra 会先发送 start/step-start 等生命周期元数据；它们不代表模型已经开始产出。
+ * 段首宽限只在文本、推理增量或真实工具调用参数抵达后结束。
+ */
+function isContentfulStreamEvent(chunk: AgentStreamEvent): boolean {
+  switch (chunk.type) {
+    case "text-delta":
+    case "reasoning-delta":
+      return typeof chunk.payload.text === "string" && chunk.payload.text.length > 0;
+    case "tool-call-delta":
+      return typeof chunk.payload.argsTextDelta === "string" && chunk.payload.argsTextDelta.length > 0;
+    case "tool-call":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** 工具执行完后外层模型会开启新 step；下一段首内容需重新获得 TTFT 宽限。 */
+function startsContentSegment(chunk: AgentStreamEvent): boolean {
+  if (chunk.type === "tool-result" || chunk.type === "tool-error") return true;
+  if (chunk.type !== "step-finish") return false;
+  const payload = chunk.payload as Record<string, unknown>;
+  const stepResult = payload.stepResult && typeof payload.stepResult === "object"
+    ? payload.stepResult as Record<string, unknown>
+    : null;
+  return (stepResult?.reason ?? payload.finishReason ?? payload.reason) === "tool-calls";
+}
+
 // ---------------------------------------------------------------------------
 // processAgentStream — shared stream processor for initial and resumed streams
 // ---------------------------------------------------------------------------
@@ -76,19 +105,22 @@ export async function* processAgentStream(
       {
         firstChunkTimeoutMs: context.firstChunkTimeoutMs,
         heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,
+        isContentful: isContentfulStreamEvent,
+        startsContentSegment,
         isHeartbeat: (chunk) => {
           const heartbeat = isToolHeartbeatEvent(chunk);
           if (heartbeat && heartbeatReceivedCount++ === 0) {
             const heartbeatOutput = chunk.type === "tool-output"
               ? chunk.payload.output
               : undefined;
-            logger.debug("Tool heartbeat reached agent stream watchdog", {
+            logger.info("Tool heartbeat consumed by agent stream watchdog", {
               sessionId: context.state.sessionId,
               streamId: context.streamId,
               runId: context.runId,
               tool: heartbeatOutput?.tool ?? null,
               seq: heartbeatOutput?.seq ?? null,
               receivedCount: heartbeatReceivedCount,
+              resetsIdleTimer: true,
             });
           }
           return heartbeat;
@@ -100,7 +132,7 @@ export async function* processAgentStream(
       // 上游在 abort 前已排队的 chunk 仍可能继续抵达。用户取消后禁止再把这些
       // 文本/工具事件写入会话；跳出循环仍会经过 finalize/finally 完成必要收尾。
       if (isUserAbortSignal(context.abortController.signal)) break;
-      if (!context.firstChunkLogged && !isToolHeartbeatEvent(chunk)) {
+      if (!context.firstChunkLogged && isContentfulStreamEvent(chunk)) {
         context.firstChunkLogged = true;
         console.info(
           formatTurnLog("firstChunk", {

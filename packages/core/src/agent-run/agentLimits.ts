@@ -14,8 +14,9 @@ export const AGENT_IDLE_TIMEOUT_MS = Math.max(
   Number(process.env.QINGAGENT_AGENT_IDLE_TIMEOUT_MS) || 90_000,
 );
 
-// 纯写作 turn 在模型首个真实 chunk 前没有工具心跳可喂活主流；慢后端/并发下 TTFT
-// 可能超过常规 90s idle。首 chunk 单独放宽到 180s，一旦开始产出立即恢复严格 idle。
+// 模型每一段（整轮初始段、工具结果后的续写段）首个真实 chunk 前都可能没有心跳；
+// 慢后端/并发下 TTFT 可能超过常规 90s idle。段首单独放宽到 180s，开始产出后
+// 立即恢复严格 idle。环境变量名保留 first chunk 以兼容既有部署配置。
 export const AGENT_FIRST_CHUNK_TIMEOUT_MS = Math.max(
   1_000,
   Number(process.env.QINGAGENT_AGENT_FIRST_CHUNK_TIMEOUT_MS) || 180_000,

@@ -107,7 +107,7 @@ export function startToolHeartbeat(
       if (!written) return;
       if (!firstEmitLogged) {
         firstEmitLogged = true;
-        heartbeatContext?.observe?.log("debug", "Tool heartbeat emitted", {
+        heartbeatContext?.observe?.log("info", "Tool heartbeat emitted", {
           tool: opts.tool,
           seq: heartbeatSeq,
           emittedCount: 1,
@@ -117,7 +117,7 @@ export function startToolHeartbeat(
     }).catch((error) => {
       if (!firstFailureLogged) {
         firstFailureLogged = true;
-        heartbeatContext?.observe?.log("debug", "Tool heartbeat write failed", {
+        heartbeatContext?.observe?.log("info", "Tool heartbeat write failed", {
           tool: opts.tool,
           seq: heartbeatSeq,
           error: error instanceof Error ? error.message : String(error),

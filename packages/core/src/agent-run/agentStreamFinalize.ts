@@ -224,7 +224,28 @@ export async function* finalizeAgentStream(
     context.finalDocumentSnapshotEmitted ||
     state.docVersion > context.docVersionBeforeStream ||
     context.validPatchCount > 0;
-  if (
+  const timedOutWithSettledSuggestions =
+    context.sawIdleTimeout &&
+    context.sawValidDraftMutation &&
+    context.validPatchCount > 0;
+  if (timedOutWithSettledSuggestions) {
+    const settleNotice = `已生成${context.validPatchCount}处修改，请查看。`;
+    const visibleText = context.accumulatedText
+      ? `\n\n${settleNotice}`
+      : settleNotice;
+    const seq = nextSeq(state, agentMessageId);
+    const textPart: MessagePart = { kind: "text", data: { body: visibleText } };
+    yield chatMessageAppended(agentMessageId, seq, textPart);
+    outcome.producedVisibleFrame = true;
+    appendPartToChatHistory(state, agentMessageId, textPart);
+    context.accumulatedText += visibleText;
+    logger.info("Idle-timeout turn settled with draft suggestions", {
+      sessionId: state.sessionId,
+      streamId,
+      validPatchCount: context.validPatchCount,
+      pendingSuggestionCount: state.suggestions.size,
+    });
+  } else if (
     endedAfterToolCallsWithoutText &&
     (context.accumulatedText ||
       context.sawValidDraftMutation ||

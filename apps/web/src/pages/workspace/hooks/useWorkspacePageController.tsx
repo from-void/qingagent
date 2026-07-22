@@ -89,7 +89,11 @@ import {
   docWriteResultMessage,
   type PendingDocSaveWaiter,
 } from "../data/pendingDocSave";
-import { shouldHandleDocWriteResult } from "../data/docWriteResultOwnership";
+import {
+  broadcastContentFrameWritesDocumentVersion,
+  shouldHandleBroadcastDocumentFrame,
+  shouldHandleDocWriteResult,
+} from "../data/docWriteResultOwnership";
 import type {
   BlockPatchInput,
   PatchOverlayInput,
@@ -1392,6 +1396,20 @@ export function useWorkspacePageController() {
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
         sessionIdRef.current = frame.data.sessionId;
+      }
+      // 只在确实会写版本的低频帧上比较整篇正文，避免聊天 delta 高频流反复序列化 PM 树。
+      if (broadcastContentFrameWritesDocumentVersion(frame)) {
+        const hasLocalDocumentChanges =
+          docViewRef.current?.hasLocalDocumentChanges() === true ||
+          pendingDocWriteRef.current ||
+          queuedPmDocRef.current !== null ||
+          scheduledDocWriteRef.current;
+        if (!shouldHandleBroadcastDocumentFrame({
+          frame,
+          hasLocalDocumentChanges,
+        })) {
+          return;
+        }
       }
       if (frame.kind === "documentSnapshotWritten") {
         stagePresentationRunForDocFrame(frame.data.doc);

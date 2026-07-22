@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { shouldHandleDocWriteResult } from "./docWriteResultOwnership";
+import type { BridgeFrame } from "@qingagent/contract-ts";
+import {
+  broadcastContentFrameWritesDocumentVersion,
+  shouldHandleBroadcastDocumentFrame,
+  shouldHandleDocWriteResult,
+} from "./docWriteResultOwnership";
+
+const pmDoc = {
+  type: "doc" as const,
+  attrs: { schemaVersion: 1 as const },
+  content: [],
+};
 
 describe("shouldHandleDocWriteResult", () => {
   it("忽略外标签广播的成功/冲突回执，不推进本标签旧正文的版本基线", () => {
@@ -18,5 +29,78 @@ describe("shouldHandleDocWriteResult", () => {
       isLatestOwnMutation: false,
       hasMatchingWaiter: true,
     })).toBe(true);
+  });
+});
+
+describe("shouldHandleBroadcastDocumentFrame", () => {
+  const versionWritingFrames: BridgeFrame[] = [
+    {
+      kind: "documentSnapshotWritten",
+      data: { doc: { version: 2, ts: "t", doc: pmDoc } },
+    },
+    {
+      kind: "docDiffReady",
+      data: { baseVersion: 2, suggestions: [], previewDoc: pmDoc },
+    },
+    {
+      kind: "docGenerationEvent",
+      data: {
+        kind: "generation_finished",
+        data: {
+          generationId: "g-1",
+          seq: 2,
+          prevSeq: 1,
+          doc: pmDoc,
+          finalVersion: 2,
+          contentHash: "hash",
+        },
+      },
+    },
+  ];
+
+  it("dirty 时冻结全部广播版本写入路径", () => {
+    for (const frame of versionWritingFrames) {
+      expect(broadcastContentFrameWritesDocumentVersion(frame)).toBe(true);
+      expect(shouldHandleBroadcastDocumentFrame({
+        frame,
+        hasLocalDocumentChanges: true,
+      })).toBe(false);
+    }
+  });
+
+  it("干净标签照常消费版本帧，非终态帧不受 dirty 守卫影响", () => {
+    for (const frame of versionWritingFrames) {
+      expect(shouldHandleBroadcastDocumentFrame({
+        frame,
+        hasLocalDocumentChanges: false,
+      })).toBe(true);
+    }
+
+    const nonVersionFrames: BridgeFrame[] = [
+      {
+        kind: "docDiffReady",
+        data: { baseVersion: 2, suggestions: [] },
+      },
+      {
+        kind: "docGenerationEvent",
+        data: {
+          kind: "generation_started",
+          data: {
+            generationId: "g-1",
+            seq: 1,
+            prevSeq: null,
+            sessionId: "s-1",
+            baseVersion: 1,
+          },
+        },
+      },
+    ];
+    for (const frame of nonVersionFrames) {
+      expect(broadcastContentFrameWritesDocumentVersion(frame)).toBe(false);
+      expect(shouldHandleBroadcastDocumentFrame({
+        frame,
+        hasLocalDocumentChanges: true,
+      })).toBe(true);
+    }
   });
 });

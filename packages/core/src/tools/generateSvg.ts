@@ -10,7 +10,7 @@ import {
   resolveModelParams,
 } from "../llm/modelConfig.js";
 import { streamInnerModel } from "../llm/innerModelStream.js";
-import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 import { uploadsBaseDir } from "@qingagent/doc-render/paths";
 import { SVG_TEMPLATES } from "@qingagent/doc-render/svg-templates";
 
@@ -227,7 +227,7 @@ export const generateSvgTool = createTool({
       }
       lastEmitAt = now;
       try {
-        await writer.write({
+        await writeToolStreamChunk(writer, {
           type: "generatesvg-progress",
           progress: {
             stage,

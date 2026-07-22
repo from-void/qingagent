@@ -35,7 +35,7 @@ import {
 } from "../llm/modelConfig.js";
 import { streamInnerModel } from "../llm/innerModelStream.js";
 import { writeDraftInputSchema } from "../llm/draftToolSchemas.js";
-import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 
 export { writeDraftInputSchema };
 
@@ -334,15 +334,10 @@ export function createWriteDraftTool(opts: {
       let progressWriteChain: Promise<unknown> = Promise.resolve();
       const writeProgress = (progress: Record<string, unknown>) => {
         if (!writer) return Promise.resolve();
-        progressWriteChain = progressWriteChain
-          .catch(() => undefined)
-          .then(async () => {
-            try {
-              await writer.write({ type: "writedraft-progress", progress });
-            } catch {
-              // 进度推送失败不影响生成
-            }
-          });
+        progressWriteChain = writeToolStreamChunk(writer, {
+          type: "writedraft-progress",
+          progress,
+        }).catch(() => undefined);
         return progressWriteChain;
       };
       const laneState = (laneKey: number): LaneProgressState => {

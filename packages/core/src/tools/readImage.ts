@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getVisionModel } from "../llm/modelConfig.js";
 import { streamText } from "../llm/streamTextCompat.js";
 import { ImageInputError, resolveImageInput } from "./imageInput.js";
-import { startToolHeartbeat } from "./toolHeartbeat.js";
+import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 
 export const READ_IMAGE_TIMEOUT_MS = 60_000;
 export const READ_IMAGE_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -205,7 +205,7 @@ export const readImageTool = createTool({
       const { imageRef, materialId } = resolveMaterialRef(requestContext, input.image.trim());
       const image = await resolveImageInput(imageRef);
       // 工具流式进度:副基模(GLM-4.6V 等推理模型 + 免费档限流)识图常耗数十秒,期间若主流
-      // 无 chunk 会触发 agent 空闲看门狗(默认 45s)abort 整轮,且 UI 看着卡住像没响应。
+      // 无 chunk 会触发 agent 空闲看门狗(默认 90s)abort 整轮,且 UI 看着卡住像没响应。
       // 把副基模流式吐出的文字(推理或正文,谁先来展示谁)经 context.writer 推成 tool-output
       // (readimage-progress),桥层据此刷新识别卡的文案区(前端用思考中同款滚动展示),
       // 同时每个 chunk 重置看门狗保活。对齐 writeDraft/askUser 既有 writer 进度范式。
@@ -221,7 +221,7 @@ export const readImageTool = createTool({
         if (!force && now - lastEmitAt < 300) return; // 节流,避免刷帧过密
         lastEmitAt = now;
         try {
-          const result = writer.write({
+          const result = writeToolStreamChunk(writer, {
             type: "readimage-progress",
             progress: { excerpt: display.slice(-DISPLAY_CAP) },
           });

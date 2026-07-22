@@ -1,4 +1,5 @@
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { mastra } from "../mastra.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
 import {
   createAgentStreamTurnContext,
@@ -22,6 +23,7 @@ import {
 // usageCoverageMatrix 以原模块为稳定调用点索引；真实记账实现已下沉到 lifecycle handler。
 const AGENT_USAGE_CALL_SITE = "agent";
 void AGENT_USAGE_CALL_SITE;
+const logger = mastra.getLogger();
 
 export function formatTurnLog(evt: string, fields: Record<string, string | number>): string {
   const parts = [`[turn] evt=${safeTurnLogValue(evt)}`];
@@ -65,14 +67,32 @@ export async function* processAgentStream(
   opts: ProcessAgentStreamOptions,
 ): AsyncGenerator<BridgeFrame, ProcessOutcome> {
   const context = await createAgentStreamTurnContext(opts);
+  let heartbeatReceivedCount = 0;
   try {
     const monitoredStream = withIdleTimeout(
       fullStream as AsyncIterable<AgentStreamEvent>,
       context.timeoutMs,
       () => context.abortController.abort(IDLE_TIMEOUT_ABORT_REASON),
       {
+        firstChunkTimeoutMs: context.firstChunkTimeoutMs,
         heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,
-        isHeartbeat: isToolHeartbeatEvent,
+        isHeartbeat: (chunk) => {
+          const heartbeat = isToolHeartbeatEvent(chunk);
+          if (heartbeat && heartbeatReceivedCount++ === 0) {
+            const heartbeatOutput = chunk.type === "tool-output"
+              ? chunk.payload.output
+              : undefined;
+            logger.debug("Tool heartbeat reached agent stream watchdog", {
+              sessionId: context.state.sessionId,
+              streamId: context.streamId,
+              runId: context.runId,
+              tool: heartbeatOutput?.tool ?? null,
+              seq: heartbeatOutput?.seq ?? null,
+              receivedCount: heartbeatReceivedCount,
+            });
+          }
+          return heartbeat;
+        },
         abortSignal: context.abortController.signal,
       },
     );
@@ -80,7 +100,7 @@ export async function* processAgentStream(
       // 上游在 abort 前已排队的 chunk 仍可能继续抵达。用户取消后禁止再把这些
       // 文本/工具事件写入会话；跳出循环仍会经过 finalize/finally 完成必要收尾。
       if (isUserAbortSignal(context.abortController.signal)) break;
-      if (!context.firstChunkLogged) {
+      if (!context.firstChunkLogged && !isToolHeartbeatEvent(chunk)) {
         context.firstChunkLogged = true;
         console.info(
           formatTurnLog("firstChunk", {

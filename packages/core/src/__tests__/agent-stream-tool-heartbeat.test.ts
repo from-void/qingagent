@@ -4,9 +4,16 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 // 桥层回归:工具心跳只负责清零 idle 看门狗,不应变成聊天可见帧,
 // 也不能被重试守卫当成真实副作用工具活动。
 
+const logger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock("../mastra.js", () => ({
   mastra: {
-    getLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+    getLogger: () => logger,
     getMemory: () => null,
   },
   getObservability: () => null,
@@ -147,6 +154,14 @@ describe("processAgentStream tool-heartbeat", () => {
     expect(result.producedVisibleFrame).toBe(false);
     expect(result.sawSideEffectToolCall).toBe(false);
     expect(state.messages).toHaveLength(0);
+    expect(logger.debug).toHaveBeenCalledWith(
+      "Tool heartbeat reached agent stream watchdog",
+      expect.objectContaining({
+        streamId: "stream-heartbeat",
+        tool: "generateSvg",
+        receivedCount: 1,
+      }),
+    );
   });
 
   it("三个工具只有心跳却始终无结果时会有界失败并按 toolCallId 收口卡片", async () => {

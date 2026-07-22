@@ -1,5 +1,6 @@
 import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
 import { documentDraftRepo } from "@qingagent/db";
+import { pmToPlainText } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import { AGENT_MAX_STEPS } from "./agentLimits.js";
 import { recordLlmResponseSpan } from "./agentSpans.js";
@@ -98,7 +99,15 @@ export async function* finalizeAgentStream(
     });
   }
 
-  if (!context.wasSuspended && !abortController.signal.aborted) {
+  const hasUsableDraftCandidateFromThisTurn =
+    !!state.docDraftCandidateDoc &&
+    pmToPlainText(state.docDraftCandidateDoc).trim().length > 0 &&
+    (context.sawValidDraftMutation || context.docGeneratedThisTurn);
+
+  if (
+    !context.wasSuspended &&
+    (!abortController.signal.aborted || hasUsableDraftCandidateFromThisTurn)
+  ) {
     const settled = yield* settleDraftCandidate({
       state,
       agentMessageId,
@@ -211,6 +220,10 @@ export async function* finalizeAgentStream(
     context.sawAnyToolCall &&
     context.lastStepFinishReason === "tool-calls" &&
     !context.sawTextAfterLastTool;
+  const draftPreservedThisTurn =
+    context.finalDocumentSnapshotEmitted ||
+    state.docVersion > context.docVersionBeforeStream ||
+    context.validPatchCount > 0;
   if (
     endedAfterToolCallsWithoutText &&
     (context.accumulatedText ||
@@ -219,9 +232,9 @@ export async function* finalizeAgentStream(
       state.suggestions.size > 0)
   ) {
     const stepNotice = context.sawIdleTimeout
-      ? context.docGeneratedThisTurn || context.finalDocumentSnapshotEmitted
-        ? "草稿已生成，但最后一步被中断，还没收尾。回复“继续”我接着处理。"
-        : "本轮有一步长时间无响应被中断，尚未完成最后收尾，回复“继续”我接着处理。"
+      ? draftPreservedThisTurn
+        ? "已保留本轮生成的部分草稿，但最后一步被中断，还没收尾。回复“继续”我接着处理。"
+        : "草稿生成长时间无响应并已超时，未产出可用草稿，请重试或稍后再试。"
       : context.docGeneratedThisTurn || context.finalDocumentSnapshotEmitted
         ? "草稿已生成，本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。"
         : "本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。";
@@ -239,6 +252,8 @@ export async function* finalizeAgentStream(
       lastStepFinishReason: context.lastStepFinishReason,
       docGeneratedThisTurn: context.docGeneratedThisTurn,
       finalDocumentSnapshotEmitted: context.finalDocumentSnapshotEmitted,
+      docVersionBeforeStream: context.docVersionBeforeStream,
+      docVersionAfterStream: state.docVersion,
       sawValidDraftMutation: context.sawValidDraftMutation,
     });
   } else if (

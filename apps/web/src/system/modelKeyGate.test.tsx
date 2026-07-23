@@ -4,6 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetClientPersistCacheForTests } from "../overlays/settings/clientPersist";
+import {
+  setSelectedModelProvider,
+  setVisitorModelKey,
+} from "../overlays/settings/visitorKeyStore";
 import { NoKeyTip, useModelKeyConfigured } from "./modelKeyGate";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -57,6 +61,18 @@ describe("modelKeyGate", () => {
     await renderGate();
 
     expectGate(true);
+  });
+
+  it("当前 provider 为 Kimi 时读取 Kimi 本地 key，不误用 DeepSeek 槽位", async () => {
+    setSelectedModelProvider("kimi");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderGate();
+
+    expectGate(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

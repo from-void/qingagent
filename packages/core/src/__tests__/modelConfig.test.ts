@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import {
   DEEPSEEK_MODEL_IDS,
+  KIMI_BASE_URL,
+  KIMI_MODEL_IDS,
   resolveDeepseekAuth,
+  resolveBaseUrl,
   resolveModelId,
+  resolveModelProvider,
   resolveModelParams,
   resolveProtocol,
   resolveVisionConfig,
@@ -12,7 +16,13 @@ import {
 } from "../llm/modelConfig.js";
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
-const ENV_KEYS = ["QINGAGENT_MODEL_PROTOCOL", "QINGAGENT_MODEL_FLASH", "QINGAGENT_MODEL_PRO"] as const;
+const ENV_KEYS = [
+  "KIMI_API_KEY",
+  "QINGAGENT_MODEL_PROVIDER",
+  "QINGAGENT_MODEL_PROTOCOL",
+  "QINGAGENT_MODEL_FLASH",
+  "QINGAGENT_MODEL_PRO",
+] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 function requestContext(entries: Array<[string, unknown]> = []): RequestContext {
@@ -58,6 +68,55 @@ describe("modelConfig", () => {
       apiKey: "",
       origin: "none",
     });
+  });
+
+  it("provider 按 visitor > env > 默认解析，Kimi key 同样保持 visitor > db > env", () => {
+    process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
+    process.env.KIMI_API_KEY = "kimi-env-key";
+    expect(resolveModelProvider(requestContext())).toBe("kimi");
+    expect(resolveDeepseekAuth(requestContext())).toEqual({
+      apiKey: "kimi-env-key",
+      origin: "env",
+    });
+
+    const fromDb = requestContext([
+      ["modelOverrides", { provider: "kimi", globalApiKey: "kimi-db-key" }],
+    ]);
+    expect(resolveDeepseekAuth(fromDb)).toEqual({
+      apiKey: "kimi-db-key",
+      origin: "global-db",
+    });
+
+    const fromVisitor = requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "deepseek",
+          visitorApiKey: "deepseek-visitor-key",
+          globalApiKey: "deepseek-db-key",
+        },
+      ],
+    ]);
+    expect(resolveModelProvider(fromVisitor)).toBe("deepseek");
+    expect(resolveDeepseekAuth(fromVisitor)).toEqual({
+      apiKey: "deepseek-visitor-key",
+      origin: "visitor",
+    });
+
+    delete process.env.QINGAGENT_MODEL_PROVIDER;
+    expect(resolveModelProvider(requestContext())).toBe("deepseek");
+  });
+
+  it("Kimi 官方 base 与档位固定映射为 Flash→K2.7 Code、Pro→K3", () => {
+    const flash = requestContext([["modelOverrides", { provider: "kimi" }]]);
+    const pro = requestContext([["modelOverrides", { provider: "kimi", tier: "pro" }]]);
+    expect(resolveBaseUrl(flash)).toBe(KIMI_BASE_URL);
+    expect(resolveModelId(flash, "flash")).toBe(KIMI_MODEL_IDS.flash);
+    expect(resolveModelId(flash, "pro")).toBe(KIMI_MODEL_IDS.pro);
+    expect(resolveModelId(pro, "flash")).toBe(KIMI_MODEL_IDS.pro);
+    expect(resolveProtocol(requestContext([
+      ["modelOverrides", { provider: "kimi", protocol: "anthropic" }],
+    ]))).toBe("openai");
   });
 
   it("env 层(QINGAGENT_MODEL_PROTOCOL/_FLASH)在无访客覆盖时生效(GLM 共享 .env 场景)", () => {
@@ -151,6 +210,64 @@ describe("modelConfig", () => {
     await expect(resolveVisionConfig(rc)).resolves.toBeNull();
   });
 
+  it("Kimi 无独立 vision 配置时复用当前主模型；显式 vision 仍优先", async () => {
+    const reused = requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "kimi",
+          visitorApiKey: "kimi-visitor-key",
+          tier: "pro",
+          baseUrl: "https://kimi-proxy.example.com/v1",
+          modelIds: { pro: "proxy-k3" },
+        },
+      ],
+    ]);
+    await expect(resolveVisionConfig(reused)).resolves.toEqual({
+      apiKey: "kimi-visitor-key",
+      baseUrl: "https://kimi-proxy.example.com/v1",
+      model: "proxy-k3",
+      protocol: "openai",
+      keyOrigin: "visitor",
+      reuseMainModel: true,
+    });
+
+    const explicit = requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "kimi",
+          visitorApiKey: "kimi-visitor-key",
+          vision: {
+            apiKey: "explicit-vision-key",
+            baseUrl: "https://1.1.1.1/v1",
+            model: "explicit-vision",
+          },
+        },
+      ],
+    ]);
+    await expect(resolveVisionConfig(explicit)).resolves.toEqual({
+      apiKey: "explicit-vision-key",
+      baseUrl: "https://1.1.1.1/v1",
+      model: "explicit-vision",
+      protocol: "openai",
+      keyOrigin: "vision",
+      reuseMainModel: false,
+    });
+
+    const explicitInvalid = requestContext([
+      [
+        "modelOverrides",
+        {
+          provider: "kimi",
+          visitorApiKey: "kimi-visitor-key",
+          vision: { model: "explicit-vision" },
+        },
+      ],
+    ]);
+    await expect(resolveVisionConfig(explicitInvalid)).resolves.toBeNull();
+  });
+
   it("resolveVisionConfig 对 vision baseUrl 执行 SSRF 拦截", async () => {
     const rc = requestContext([
       [
@@ -218,5 +335,41 @@ describe("modelConfig", () => {
       "branch_stream_buffer_exceeded",
     );
     expect(cancel).toHaveBeenCalledWith("branch_stream_buffer_exceeded");
+  });
+
+  it("Kimi mock transport:K2.7 不传思考开关/effort，K3 固定 reasoning_effort=high", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }));
+    const options = {
+      mode: { type: "regular" },
+      inputFormat: "prompt",
+      prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      temperature: 0.4,
+    } as never;
+    const flashContext = requestContext([
+      ["modelOverrides", { provider: "kimi", visitorApiKey: "mock-kimi-key" }],
+    ]);
+    const proContext = requestContext([
+      ["modelOverrides", { provider: "kimi", visitorApiKey: "mock-kimi-key", tier: "pro" }],
+    ]);
+
+    await getDeepseekModel(flashContext, "flash", { thinking: false }).doStream(options);
+    await getDeepseekModel(proContext, "flash", { thinking: false }).doStream(options);
+
+    expect(bodies[0]).toMatchObject({ model: KIMI_MODEL_IDS.flash });
+    expect(bodies[0]).not.toHaveProperty("thinking");
+    expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    expect(bodies[1]).toMatchObject({
+      model: KIMI_MODEL_IDS.pro,
+      reasoning_effort: "high",
+    });
+    expect(bodies[1]).not.toHaveProperty("thinking");
+    expect(bodies[1]).not.toHaveProperty("enable_thinking");
   });
 });

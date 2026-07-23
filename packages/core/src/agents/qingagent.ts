@@ -16,7 +16,6 @@ import { readDisabledSet } from "../skills/enabledStore.js";
 import { beforeSkillToolCall } from "../skills/toolGate.js";
 import {
   wrapToolCallRepairingModel,
-  qingagentModelConfig,
 } from "../llm/repairingModel.js";
 import type { RepairableLanguageModel } from "../llm/repairingModel.js";
 import {
@@ -64,7 +63,7 @@ function getRepairingModelFor(requestContext?: RequestContext) {
   const docVersionAwarenessSource =
     docVersionAwarenessSourceFromRequestContext(requestContext);
   const { apiKey } = resolveDeepseekAuth(requestContext);
-  const effectiveKey = apiKey || qingagentModelConfig.apiKey;
+  const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
   const evict = () => {
     if (modelCache.size >= MODEL_CACHE_LIMIT) {

@@ -190,7 +190,8 @@ async function readCommandRequestContext(c: Context): Promise<CommandRequestCont
   const clientTraceId = c.req.header("x-client-trace-id");
   const origin = parseOrigin(c.req.header("x-origin"));
   const modelOverrides = await resolveRequestModelOverrides({
-    visitorKey: c.req.header("x-deepseek-key"),
+    provider: c.req.header("x-model-provider"),
+    visitorKey: c.req.header("x-model-key") ?? c.req.header("x-deepseek-key"),
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),

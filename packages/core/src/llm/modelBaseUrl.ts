@@ -4,6 +4,12 @@
 export const DEEPSEEK_BASE_URL =
   process.env.QINGAGENT_DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/v1";
 
+/** Kimi Coding 官方 OpenAI 兼容端点。 */
+export const KIMI_BASE_URL =
+  process.env.QINGAGENT_KIMI_BASE_URL?.trim() || "https://api.kimi.com/coding/v1";
+
+export type ModelProvider = "deepseek" | "kimi";
+
 export const MODEL_OVERRIDES_CONTEXT_KEY = "modelOverrides";
 
 export interface RequestContextLike {
@@ -40,9 +46,22 @@ export function sanitizeBaseUrl(raw: string | undefined): string | undefined {
   return url.toString().replace(/\/+$/, "");
 }
 
-/** 本请求生效的 baseURL:自定义中转/厂商 > 官方默认。 */
+/** provider 选择:请求覆盖(DB 选择也由 server 注入这里) > env > DeepSeek 默认。 */
+export function resolveModelProvider(requestContext?: RequestContextLike): ModelProvider {
+  const value = requestContext?.get(MODEL_OVERRIDES_CONTEXT_KEY);
+  if (value && typeof value === "object") {
+    const provider = (value as { provider?: unknown }).provider;
+    if (provider === "kimi" || provider === "deepseek") return provider;
+  }
+  return process.env.QINGAGENT_MODEL_PROVIDER?.trim().toLowerCase() === "kimi"
+    ? "kimi"
+    : "deepseek";
+}
+
+/** 本请求生效的 baseURL:自定义中转/厂商 > 当前 provider 官方默认。 */
 export function resolveBaseUrl(requestContext?: RequestContextLike): string {
-  return sanitizeBaseUrl(readBaseUrlOverride(requestContext)) ?? DEEPSEEK_BASE_URL;
+  return sanitizeBaseUrl(readBaseUrlOverride(requestContext)) ??
+    (resolveModelProvider(requestContext) === "kimi" ? KIMI_BASE_URL : DEEPSEEK_BASE_URL);
 }
 
 function readBaseUrlOverride(requestContext?: RequestContextLike): string | undefined {

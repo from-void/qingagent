@@ -151,6 +151,7 @@ export {
 export { pmToHomeArticleMeta } from "./home/index.js";
 export type {
   DeepseekTier,
+  ModelProvider,
   ModelOverrides,
   ModelParamOverrides,
   ModelProtocol,
@@ -158,17 +159,21 @@ export type {
 export {
   DEEPSEEK_CONTEXT_WINDOWS,
   DEEPSEEK_MODEL_IDS,
+  KIMI_BASE_URL,
+  KIMI_MODEL_IDS,
   QINGAGENT_OM_OBSERVATIONS_REQUEST_CONTEXT_KEY,
   QINGAGENT_WORKING_MEMORY_REQUEST_CONTEXT_KEY,
   VISION_TEST_TIMEOUT_MS,
   beginSessionSnapshotTurn,
   clearSessionSnapshot,
   estimateCostCny,
+  hasDeepseekPricing,
   guardContext,
   guardReset,
   installNetProbe,
   modelFetch,
   resolveBaseUrl,
+  resolveModelProvider,
   resolveModelParams,
   sanitizeBaseUrl,
   sanitizeModelId,
@@ -260,6 +265,8 @@ export {
 } from "./workspace/index.js";
 export {
   SETTING_DEEPSEEK_GLOBAL_KEY,
+  SETTING_KIMI_GLOBAL_KEY,
+  SETTING_MODEL_PROVIDER,
   SETTING_MODEL_PARAMS,
   SETTING_SEARCH_PRIMARY,
   SETTING_SEARCH_PROVIDER_CONFIG,

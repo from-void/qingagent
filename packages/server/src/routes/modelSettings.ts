@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import {
+  DEEPSEEK_MODEL_IDS,
+  KIMI_BASE_URL,
+  KIMI_MODEL_IDS,
   SETTING_DEEPSEEK_GLOBAL_KEY,
+  SETTING_KIMI_GLOBAL_KEY,
+  SETTING_MODEL_PROVIDER,
   SETTING_MODEL_PARAMS,
   deleteAppSetting,
   getAppSetting,
@@ -13,6 +18,7 @@ import {
   validateModelFetchUrl,
   VISION_TEST_TIMEOUT_MS,
   type ModelProtocol,
+  type ModelProvider,
   type ModelParamOverrides,
 } from "@qingagent/core";
 import { z } from "zod";
@@ -27,6 +33,7 @@ const modelSettingsBodySchema = z.record(z.string(), z.unknown());
 
 /** POST /settings/model/test-custom 请求体(字段沿用旧内联形状,均可选字符串)。 */
 const testCustomBodySchema = z.object({
+  provider: z.string().optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   protocol: z.string().optional(),
@@ -56,6 +63,10 @@ type VisionTestBody = {
 function maskTail(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.slice(-4);
+}
+
+function parseModelProvider(raw: unknown): ModelProvider | null {
+  return raw === "deepseek" || raw === "kimi" ? raw : null;
 }
 
 function sanitizeApiKey(raw: unknown): { ok: true; value: string } | { ok: false; error: string } {
@@ -214,17 +225,36 @@ function classifyVisionTestError(error: unknown): { kind: VisionTestErrorKind; m
 }
 
 async function readModelSettingsResponse() {
-  const [dbKey, paramsRaw] = await Promise.all([
+  const [providerRaw, deepseekDbKey, kimiDbKey, paramsRaw] = await Promise.all([
+    getAppSetting(SETTING_MODEL_PROVIDER),
     getAppSetting(SETTING_DEEPSEEK_GLOBAL_KEY),
+    getAppSetting(SETTING_KIMI_GLOBAL_KEY),
     getAppSetting(SETTING_MODEL_PARAMS),
   ]);
-  const envKey = process.env.DEEPSEEK_API_KEY ?? "";
-  const effectiveKey = dbKey || envKey || "";
-  const source = dbKey ? "db" : envKey ? "env" : "none";
+  const provider =
+    parseModelProvider(providerRaw) ??
+    parseModelProvider(process.env.QINGAGENT_MODEL_PROVIDER) ??
+    "deepseek";
+  const providerState = (target: ModelProvider) => {
+    const dbKey = target === "kimi" ? kimiDbKey : deepseekDbKey;
+    const envKey = target === "kimi"
+      ? process.env.KIMI_API_KEY ?? ""
+      : process.env.DEEPSEEK_API_KEY ?? "";
+    const effectiveKey = dbKey || envKey || "";
+    return {
+      apiKeyConfigured: Boolean(effectiveKey),
+      maskedTail: maskTail(effectiveKey),
+      source: dbKey ? "db" as const : envKey ? "env" as const : "none" as const,
+    };
+  };
+  const active = providerState(provider);
   return {
-    apiKeyConfigured: Boolean(effectiveKey),
-    maskedTail: maskTail(effectiveKey),
-    source,
+    provider,
+    ...active,
+    providers: {
+      deepseek: providerState("deepseek"),
+      kimi: providerState("kimi"),
+    },
     params: parseStoredParams(paramsRaw),
   };
 }
@@ -243,20 +273,35 @@ modelSettingsRoutes.put("/settings/model", async (c) => {
   });
   if (!parsed.ok) return parsed.response;
   const record = parsed.data;
+  const currentSettings = await readModelSettingsResponse();
+  const requestedProvider = "provider" in record
+    ? parseModelProvider(record.provider)
+    : currentSettings.provider;
+  if (!requestedProvider) {
+    return c.json({ error: "provider must be deepseek or kimi" }, 400);
+  }
 
-  if ("apiKey" in record) {
-    const parsedKey = sanitizeApiKey(record.apiKey);
-    if (!parsedKey.ok) return c.json({ error: parsedKey.error }, 400);
+  const parsedKey = "apiKey" in record ? sanitizeApiKey(record.apiKey) : null;
+  if (parsedKey && !parsedKey.ok) return c.json({ error: parsedKey.error }, 400);
+  const parsedParams = "params" in record ? validateParams(record.params) : null;
+  if (parsedParams && !parsedParams.ok) return c.json({ error: parsedParams.error }, 400);
+
+  if ("provider" in record) {
+    await setAppSetting(SETTING_MODEL_PROVIDER, requestedProvider);
+  }
+
+  if (parsedKey?.ok) {
+    const settingKey = requestedProvider === "kimi"
+      ? SETTING_KIMI_GLOBAL_KEY
+      : SETTING_DEEPSEEK_GLOBAL_KEY;
     if (parsedKey.value) {
-      await setAppSetting(SETTING_DEEPSEEK_GLOBAL_KEY, parsedKey.value);
+      await setAppSetting(settingKey, parsedKey.value);
     } else {
-      await deleteAppSetting(SETTING_DEEPSEEK_GLOBAL_KEY);
+      await deleteAppSetting(settingKey);
     }
   }
 
-  if ("params" in record) {
-    const parsedParams = validateParams(record.params);
-    if (!parsedParams.ok) return c.json({ error: parsedParams.error }, 400);
+  if (parsedParams?.ok) {
     await setAppSetting(SETTING_MODEL_PARAMS, JSON.stringify(parsedParams.value));
   }
 
@@ -265,8 +310,8 @@ modelSettingsRoutes.put("/settings/model", async (c) => {
 });
 
 
-// DeepSeek 账户余额(官方 GET https://api.deepseek.com/user/balance,Bearer 认证)。
-// 双用途:① 设置页展示余额;② 「测试 key」——401 即 key 无效,给出明确指引(R5 发现
+// DeepSeek 走官方余额接口；Kimi 无余额接口，显式触发时改走一次最短文本连接测试。
+// 双用途:① DeepSeek 设置页展示余额;② 「测试 key」——DeepSeek 401 即 key 无效,给出明确指引(R5 发现
 // 无效 key 被归为"网络异常"误导用户,这里在源头给准确反馈)。
 // key 解析与对话同一优先级:visitor header > global-db > env;响应绝不回传 key。
 modelSettingsRoutes.get("/settings/model/balance", async (c) => {
@@ -274,7 +319,8 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
   if (rejected) return rejected;
 
   const overrides = await resolveRequestModelOverrides({
-    visitorKey: c.req.header("x-deepseek-key"),
+    provider: c.req.header("x-model-provider"),
+    visitorKey: c.req.header("x-model-key") ?? c.req.header("x-deepseek-key"),
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),
@@ -285,7 +331,11 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     visionModel: c.req.header("x-vision-model"),
     visionProtocol: c.req.header("x-vision-protocol"),
   });
-  const apiKey = overrides.visitorApiKey ?? overrides.globalApiKey ?? process.env.DEEPSEEK_API_KEY ?? "";
+  const provider = overrides.provider ?? "deepseek";
+  const envKey = provider === "kimi"
+    ? process.env.KIMI_API_KEY ?? ""
+    : process.env.DEEPSEEK_API_KEY ?? "";
+  const apiKey = overrides.visitorApiKey ?? overrides.globalApiKey ?? envKey;
   const keySource = overrides.visitorApiKey ? "visitor" : overrides.globalApiKey ? "db" : apiKey ? "env" : "none";
   if (!apiKey) {
     return c.json({ ok: false, keySource, error: "尚未配置 API Key" }, 400);
@@ -294,6 +344,41 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), BALANCE_FETCH_TIMEOUT_MS);
     try {
+      if (provider === "kimi") {
+        const baseUrl = overrides.baseUrl ?? KIMI_BASE_URL;
+        try {
+          await testTextModelConnection({
+            provider,
+            apiKey,
+            baseUrl,
+            model: overrides.modelIds?.[
+              overrides.tier === "pro" ? "pro" : "flash"
+            ] ?? KIMI_MODEL_IDS[overrides.tier === "pro" ? "pro" : "flash"],
+            protocol: "openai",
+            timeoutMs: BALANCE_FETCH_TIMEOUT_MS,
+          });
+        } catch (error) {
+          const status = typeof error === "object" && error && "statusCode" in error
+            ? Number((error as { statusCode?: unknown }).statusCode)
+            : typeof error === "object" && error && "status" in error
+              ? Number((error as { status?: unknown }).status)
+              : 0;
+          if (status !== 401 && status !== 403) throw error;
+          return c.json({
+            ok: false,
+            keySource,
+            permissionDenied: true,
+            error: "Kimi 返回权限不足；401/403 也可能是套餐权限限制，请核对套餐与模型权限",
+          }, 200);
+        }
+        return c.json({
+          ok: true,
+          keySource,
+          provider,
+          balanceUnsupported: true,
+          balances: [],
+        });
+      }
       const res = await fetch("https://api.deepseek.com/user/balance", {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
@@ -326,7 +411,9 @@ modelSettingsRoutes.get("/settings/model/balance", async (c) => {
     return c.json({
       ok: false,
       keySource,
-      error: err instanceof Error && err.name === "AbortError" ? "查询超时,请稍后重试" : "无法连接 DeepSeek,请检查网络",
+      error: err instanceof Error && err.name === "AbortError"
+        ? "查询超时,请稍后重试"
+        : `无法连接 ${provider === "kimi" ? "Kimi" : "DeepSeek"},请检查网络`,
     }, 200);
   }
 });
@@ -343,6 +430,7 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
   });
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.data;
+  const provider = parseModelProvider(body.provider) ?? "deepseek";
   const rawBaseUrl = (body.baseUrl ?? "").trim();
   const apiKey = (body.apiKey ?? "").trim();
   if (!rawBaseUrl || !apiKey) {
@@ -362,8 +450,11 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
         "内网、链路本地和云元数据地址默认禁止",
     }, 400);
   }
-  const isAnthropic = body.protocol === "anthropic";
-  const model = (body.model ?? "").trim() || (isAnthropic ? "glm-4.6" : "deepseek-v4-flash");
+  const isAnthropic = provider === "deepseek" && body.protocol === "anthropic";
+  const model = (body.model ?? "").trim() ||
+    (provider === "kimi"
+      ? KIMI_MODEL_IDS.flash
+      : isAnthropic ? "glm-4.6" : DEEPSEEK_MODEL_IDS.flash);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
@@ -377,6 +468,33 @@ modelSettingsRoutes.post("/settings/model/test-custom", async (c) => {
           ? Number((error as { statusCode?: unknown }).statusCode)
           : 0;
         if (status === 401 || status === 403) return c.json({ ok: false, keyInvalid: true });
+        throw error;
+      }
+    }
+    if (provider === "kimi") {
+      try {
+        await testTextModelConnection({
+          provider,
+          apiKey,
+          baseUrl,
+          model,
+          protocol: "openai",
+          timeoutMs: 12_000,
+        });
+        return c.json({ ok: true, normalizedBaseUrl: baseUrl });
+      } catch (error) {
+        const status = typeof error === "object" && error && "statusCode" in error
+          ? Number((error as { statusCode?: unknown }).statusCode)
+          : typeof error === "object" && error && "status" in error
+            ? Number((error as { status?: unknown }).status)
+            : 0;
+        if (status === 401 || status === 403) {
+          return c.json({
+            ok: false,
+            permissionDenied: true,
+            error: "Kimi 401/403 可能是套餐权限不足",
+          });
+        }
         throw error;
       }
     }

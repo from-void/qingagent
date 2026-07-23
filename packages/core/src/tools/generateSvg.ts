@@ -149,7 +149,7 @@ export const generateSvgTool = createTool({
   description: "【触发限制：仅当用户在本轮或对话中明确要求配图/插图/SVG/矢量图/示意图时才调用；" +
     "用户没要求配图就绝不主动配图，也不要因为‘文章可以更有画面感’之类理由自作主张生成】" +
     "生成一张安全、可消毒的 SVG 矢量插图。传入对插图内容的中文描述，可选 style/aspect。" +
-    "适合：装饰性插画/图标/自由构图/氛围配图/数据示意卡。流程图、结构示意、关系图、时序图、组织架构、常规对比图一律改用文档的 diagram(mermaid)块表达,不要调本工具——mermaid 可编辑、可主题化且更省;只有 mermaid 表达不了的自由视觉构图才用本工具。不要用于照片级写实图。" +
+    "适合：装饰性插画/图标/自由构图/氛围配图/数据示意卡。流程/时序/状态/常规关系优先用 diagram(mermaid)；工程架构、网络拓扑、部署与精确布局用 diagram(drawio)。两者都可反复编辑且能离线渲染，只有确定性图表表达不了的自由视觉构图才用本工具。不要用于照片级写实图。" +
     "【本工具只负责生成图片资产，不会把图插进文档】返回 imageId 与 src（形如 /api/v1/files/<id>/illustration.svg）。" +
     "要把图放进文档，请在本工具返回后【另调 editDraft 的 insertBlock】插入一个 image QingML 片段来放置，例如 " +
     'editDraft({ops:[{action:"insertBlock",position:"after",ref:"<目标块 blockId>",blocks:"<img src=\\"<本工具返回的 src>\\" alt=\\"<简短说明>\\" width=\\"<本工具返回的 width>\\" height=\\"<本工具返回的 height>\\"/>"}]})。' +

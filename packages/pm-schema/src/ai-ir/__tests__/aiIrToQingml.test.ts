@@ -148,6 +148,11 @@ describe("aiIrToQingml", () => {
       },
       { type: "blockMath", latex: "a &< b" },
       { type: "diagram", lang: "mermaid", source: "flowchart TD\n  A[\"x < y\"] --> B" },
+      {
+        type: "diagram",
+        lang: "drawio",
+        source: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
+      },
     ];
 
     const qingml = aiBlocksToQingml(blocks);
@@ -155,6 +160,7 @@ describe("aiIrToQingml", () => {
     expect(qingml).toContain("<br/>");
     expect(qingml).toContain("value &lt; 10 &amp;&amp; ready");
     expect(qingml).toContain("A[\"x &lt; y\"]");
+    expect(qingml).toContain("<drawio>&lt;mxGraphModel>");
     expect(qingml).toContain('<td colspan="2" rowspan="3" bg="sand"><p>a1</p><ul><li>补充</li></ul></td>');
     expect(qingml).toContain("<th><p>列B</p></th>");
     const parsed = qingmlParse(qingml);

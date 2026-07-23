@@ -26,7 +26,8 @@
 | `<table><tr><th>/<td>` | table | `<th>`=表头单元格;整行全 `<th>` ⇒ row.header=true;`bg` 可选;无 colspan/rowspan |
 | `<callout emoji tone>` | callout | 行内 only;tone 枚举 |
 | `<columns><column ratio>` | columnList | ≥2 `<column>`,column 内放块级 |
-| `<mermaid>` | diagram(lang="mermaid") | 内文按 §4 转义(未来其它图表语言另开标签) |
+| `<mermaid>` | diagram(lang="mermaid") | Mermaid 源码，内文按 §4 转义 |
+| `<drawio>` | diagram(lang="drawio") | 未压缩 mxGraphModel/mxfile XML，内文按 §4 转义 |
 | `<math-block>` | blockMath | 内文=LaTeX,按 §4 转义(`&` 多按字面) |
 | `<img src …/>` | image | src 必填过白名单,自闭合 |
 | `<file id filename …/>` | fileAttachment | 自闭合 |
@@ -38,9 +39,9 @@
 `<math>LaTeX</math>`→math(整 run 转 inlineMath,不与他 mark 组合)。嵌套 marks 解析器归一。
 **`<br>` / `<br/>`** → 当前 run 文本内的换行(soft break),不产生新块。
 
-## 4. 转义与空白（评审修正:pre/math/mermaid 内文**也要转义**,非 rawtext）
+## 4. 转义与空白（评审修正:pre/math/mermaid/drawio 内文**也要转义**,非 rawtext）
 仅 `&lt;`(<)、`&amp;`(&) 需转义;`&gt;`/引号/换行无需转义,裸 `&`(非实体名)容错按字面。
-- **关键**:`<pre>`/`<math-block>`/`<mermaid>` 内文**同样只转义 `&lt;`/`&amp;`**,解析后 htmlparser2 自动
+- **关键**:`<pre>`/`<math-block>`/`<mermaid>`/`<drawio>` 内文**同样只转义 `&lt;`/`&amp;`**,解析后 htmlparser2 自动
   实体还原为字面 `<`/`&`。**不得当 rawtext 原样写 `<`**——htmlparser2 不把这些自定义标签当 rawtext
   (只有 script/style/title/textarea 是),原样写会把 `#include <stdio.h>`、`std::vector<int>`、`() => {}`
   里的 `<…>` 当标签吃掉,静默产出残缺代码(不报错、不重试)。裸 `&`(如 LaTeX `a &= b`)因实体不匹配
@@ -70,7 +71,7 @@
 **有害降级(视同坏块 → 走既有坏块重试链,warning 进遥测)**:
 - 非白名单标签剥壳导致**结构丢失**(不是纯行内包裹);
 - §5 块级边界降级(单元格/callout 里塞了块级被拍平);
-- **`<pre>`/`<math-block>`/`<mermaid>` 出现子元素**——即模型没转义 `<` 把代码里的 `<tag>` 写成了真标签
+- **`<pre>`/`<math-block>`/`<mermaid>`/`<drawio>` 出现子元素**——即模型没转义 `<` 把源码里的 `<tag>` 写成了真标签
   (检测:该元素 children 含 tag 节点),内文已被吃,判坏块重试(**这是 §4 违背的运行时兜底**)。
 
 流式截断:半截 markup 剥标签出纯文本预览(C1 aiIrStreamPreview markup 版);定稿帧仍发编译后 PmDoc。

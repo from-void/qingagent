@@ -81,6 +81,7 @@ const BLOCK_TAGS = new Set([
   "callout",
   "columns",
   "mermaid",
+  "drawio",
   "math-block",
   "img",
   "file",
@@ -281,6 +282,8 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
       return { type: "columnList", columns: parseColumns(element, ctx) };
     case "mermaid":
       return { type: "diagram", lang: "mermaid", source: rawTextElementText(element, ctx).trim() };
+    case "drawio":
+      return { type: "diagram", lang: "drawio", source: rawTextElementText(element, ctx).trim() };
     case "math-block":
       return { type: "blockMath", latex: rawTextElementText(element, ctx).trim() };
     case "img": {

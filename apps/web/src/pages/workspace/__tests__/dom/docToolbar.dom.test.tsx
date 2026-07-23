@@ -55,6 +55,8 @@ describe("DocToolbar round-1 regressions", () => {
 
     expect(host?.textContent).toContain("插入表格");
     expect(host?.textContent).toContain("插入分栏");
+    expect(host?.textContent).toContain("插入 Mermaid 图表");
+    expect(host?.textContent).toContain("插入 drawio 工程图");
     expect(host?.textContent).toContain("代码块");
     expect(host?.textContent).toContain("分隔线");
   });

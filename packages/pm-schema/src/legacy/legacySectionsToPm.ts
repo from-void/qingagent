@@ -1,10 +1,11 @@
 import { getDeterministicId } from "../hash";
 import { PM_SCHEMA_VERSION } from "../schemaVersion";
 import { normalizePmDoc } from "../validators";
-import { detectMermaidSource } from "../ai-ir/aiIrToPm";
+import { detectDrawioSource, detectMermaidSource } from "../ai-ir/aiIrToPm";
 import type {
   PmBlockNode,
   PmDoc,
+  PmDiagramLang,
   PmInlineNode,
   PmParagraphNode,
   PmTableCellNode,
@@ -58,7 +59,7 @@ export type LegacyLegacySection =
 	        align?: "left" | "center" | "right" | null;
 	      };
 	    }
-  | { kind: "diagram"; data: { lang: string; source: string; svg?: string | null } };
+  | { kind: "diagram"; data: { lang: PmDiagramLang; source: string; svg?: string | null } };
 
 export function legacySectionsToPm(sections: readonly LegacyLegacySection[]): PmDoc {
   const content = sections.map((section, index) => sectionToPmBlock(section, index));
@@ -99,10 +100,14 @@ function sectionToPmBlock(section: LegacyLegacySection, index: number): PmBlockN
     case "table":
       return table(blockId, section.data.head, section.data.rows);
     case "code": {
-      // 安全网:模型把 mermaid 图写成代码块时,转成 diagram 块(同 aiIrToPm)。
+      // 安全网:模型把 Mermaid/drawio 图写成代码块时,转成 diagram 块(同 aiIrToPm)。
       const mermaidSource = detectMermaidSource(section.data.language, section.data.body);
       if (mermaidSource) {
         return { type: "diagram", attrs: { blockId, lang: "mermaid", source: mermaidSource, svg: null } };
+      }
+      const drawioSource = detectDrawioSource(section.data.language, section.data.body);
+      if (drawioSource) {
+        return { type: "diagram", attrs: { blockId, lang: "drawio", source: drawioSource, svg: null } };
       }
       return {
         type: "codeBlock",
@@ -137,7 +142,7 @@ function sectionToPmBlock(section: LegacyLegacySection, index: number): PmBlockN
           lang: section.data.lang,
           source: section.data.source,
           // 安全:不信任 legacy section(常来自模型生成)里的 svg,一律 null,
-          // 只让前端 mermaid 渲染回写可信 svg。防存储型 XSS(同 aiIrToPm)。
+          // 只让前端渲染并加固后回写可信 svg。防存储型 XSS(同 aiIrToPm)。
           svg: null,
         },
       };

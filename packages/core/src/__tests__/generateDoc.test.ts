@@ -315,6 +315,7 @@ describe("generateDoc QingML helpers", () => {
     expect(retryPrompt).toContain("上一轮输出未通过 QingML 解析或校验");
     expect(retryPrompt).toContain("完整、闭合的 QingML");
     expect(retryPrompt).toContain("&lt; / &amp;");
+    expect(retryPrompt).toContain("<drawio>");
     expect(retryPrompt).toContain("不要输出 markdown fence");
   });
 });

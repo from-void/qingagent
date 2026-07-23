@@ -15,6 +15,7 @@
     "visual:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "@maxgraph/core": "^0.23.0",
     "@qingagent/contract-ts": "workspace:*",
     "@qingagent/diagram-engine": "workspace:*",
     "@qingagent/pm-schema": "workspace:*",

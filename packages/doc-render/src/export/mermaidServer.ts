@@ -311,6 +311,7 @@ async function renderDiagramSvgsInSlot(
 }
 
 interface DiagramRef {
+  lang: "mermaid" | "drawio";
   source: string;
   overlay?: DiagramOverlay | null;
   assign: (svg: string) => void;
@@ -326,7 +327,12 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const attrs = obj.attrs as Record<string, unknown>;
     const source = typeof attrs.source === "string" ? attrs.source : "";
     if (source.trim() && !isRenderableSvg(attrs.svg as string | null)) {
-      acc.push({ source, overlay: readOverlay(attrs.overlay), assign: (svg) => { attrs.svg = svg; } });
+      acc.push({
+        lang: attrs.lang === "drawio" ? "drawio" : "mermaid",
+        source,
+        overlay: readOverlay(attrs.overlay),
+        assign: (svg) => { attrs.svg = svg; },
+      });
     }
   }
   // Legacy 段:{ kind: "diagram", data: { source, svg } }
@@ -334,7 +340,11 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
     const data = obj.data as Record<string, unknown>;
     const source = typeof data.source === "string" ? data.source : "";
     if (source.trim() && !isRenderableSvg(data.svg as string | null)) {
-      acc.push({ source, assign: (svg) => { data.svg = svg; } });
+      acc.push({
+        lang: data.lang === "drawio" ? "drawio" : "mermaid",
+        source,
+        assign: (svg) => { data.svg = svg; },
+      });
     }
   }
 
@@ -348,19 +358,30 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
 }
 
 /**
- * 导出前预处理:把文档里所有图表块的 mermaid 源码服务端渲染成 SVG 并回填(深拷贝,不改入参)。
+ * 导出前预处理:Mermaid 缺缓存时服务端补渲染；drawio 使用客户端安全 SVG 缓存。
  * PDF / HTML 导出在序列化前调用,确保图表以真实渲染样子导出,而非回退源码。
- * 渲染失败的图表保持 svg=null,toHtml 自然回退源码代码块。
+ * drawio 无缓存时不在 Node/Chromium 重复打包渲染器，保持 svg=null 并回退源码；用户在
+ * 编辑器打开一次图表即可生成经加固并持久化的缓存。这样导出路径不执行不可信 mxGraph XML。
  */
 export async function withRenderedDiagrams(document: ExportDocument): Promise<ExportDocument> {
   const clone = structuredClone(document) as ExportDocument;
   const refs: DiagramRef[] = [];
   collectDiagrams(clone, refs);
   if (refs.length === 0) return clone;
-  // overlay 只负责布局/样式，不能替代 Mermaid 的语法判定。所有源码先经过与前端同版本的
-  // Mermaid parse+render；失败项保持 svg=null，让 toHtml 走既有源码+错误态回退。
-  const mermaidSvgs = await renderDiagramSvgs(refs.map((ref) => ref.source));
-  refs.forEach((ref, index) => {
+  const mermaidRefs: DiagramRef[] = [];
+  for (const ref of refs) {
+    if (ref.lang === "drawio") {
+      getDocRenderLogger().warn("Drawio export cache missing; open the diagram in the client before exporting", {
+        sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+      });
+      continue;
+    }
+    mermaidRefs.push(ref);
+  }
+  // overlay 只负责布局/样式，不能替代 Mermaid 的语法判定。所有 Mermaid 源码先经过
+  // 与前端同版本的 parse+render；drawio 则绝不送进 Mermaid 解析器。
+  const mermaidSvgs = await renderDiagramSvgs(mermaidRefs.map((ref) => ref.source));
+  mermaidRefs.forEach((ref, index) => {
     const mermaidSvg = mermaidSvgs[index];
     if (!mermaidSvg) return;
     if (hasOverlay(ref.overlay)) {

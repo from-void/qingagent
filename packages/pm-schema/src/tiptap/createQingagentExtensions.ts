@@ -31,7 +31,7 @@ export function createQingagentExtensions(options: {
 	  codeBlockExtension?: AnyExtension;
 	  /** 前端注入带 NodeView(对齐 / resize / 全屏)的 image 扩展;不传则用 base 节点(静态)。 */
 	  imageExtension?: AnyExtension;
-	  /** 前端注入带 NodeView(mermaid 实时渲染 + 源码编辑)的 diagram 扩展;不传则用 base 节点(静态)。 */
+	  /** 前端注入带 NodeView(图表实时渲染 + 源码编辑)的 diagram 扩展;不传则用 base 节点(静态)。 */
 	  diagramExtension?: AnyExtension;
   /** 前端注入带 NodeView(emoji 选择器 + 主题切换 chrome)的 callout 扩展;不传则用 base 节点(静态 renderHTML)。 */
   calloutExtension?: AnyExtension;
@@ -691,9 +691,9 @@ export const ColumnListNode = Node.create({
 });
 
 /**
- * 图表块(diagram):承载 lang(mermaid)+ source 源码 + svg 渲染缓存的原子块。
+ * 图表块(diagram):承载 lang(mermaid|drawio)+ source 源码 + svg 渲染缓存的原子块。
  * 这是 base 节点(静态:渲染 svg 缓存或源码降级);前端通过 createQingagentExtensions 的
- * diagramExtension 注入带 NodeView 的版本做 mermaid 实时渲染 + 源码编辑。
+ * diagramExtension 注入带 NodeView 的版本做离线实时渲染 + 源码编辑。
  * svg 只存 PM JSON(客户端重渲),不进 HTML 序列化(避免 clipboard 巨大)。
  */
 const DiagramNode = Node.create({

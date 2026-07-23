@@ -75,6 +75,7 @@ export function toolbarCommandGroup(cmd: string, val?: string | null): ToolbarCo
     cmd === "insertInlineMath" ||
     cmd === "insertBlockMath" ||
     cmd === "insertDiagram" ||
+    cmd === "insertDrawio" ||
     cmd === "insertTable" ||
     cmd === "insertColumns" ||
     cmd === "codeBlock" ||

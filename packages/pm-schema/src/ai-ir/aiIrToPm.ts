@@ -1,5 +1,6 @@
 import { getDeterministicId } from "../hash";
 import { PM_SCHEMA_VERSION } from "../schemaVersion";
+import { normalizeDrawioSource } from "../drawio/drawioXml";
 import {
   isAllowedThemeColor,
   normalizePmDoc,
@@ -63,13 +64,29 @@ export function detectMermaidSource(language: string | null | undefined, text: s
 }
 
 /**
- * 把已经是 PM 文档(已落盘 / 待装载)里"伪装成代码块的 mermaid 图"就地升级回 diagram 块。
+ * 识别被模型写进 codeBlock 的 drawio XML，并在返回前完成解压与安全校验。
+ */
+export function detectDrawioSource(language: string | null | undefined, text: string | null | undefined): string | null {
+  const source = (text ?? "").trim();
+  if (!source) return null;
+  const lang = (language ?? "").trim().toLowerCase();
+  const looksDrawio = lang === "drawio" || /^<(?:mxGraphModel|mxfile)\b/.test(source);
+  if (!looksDrawio) return null;
+  try {
+    return normalizeDrawioSource(source);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 把已经是 PM 文档(已落盘 / 待装载)里"伪装成代码块的 Mermaid/drawio 图"升级回 diagram 块。
  *
  * 背景:本项目铁律是「mermaid 永远是活图,绝不是死代码块」——aiIrToPm 与 legacySectionsToPm 都已
  * 在各自入口做这个升级。但当一个 `codeBlock(language=mermaid)` 通过【其它路径】混进已存文档(例如
  * 历史脏数据 / 某次编辑把 diagram 退化成 codeBlock)时,装载到编辑器里就会渲染成一段死代码、没有
  * 可视化编辑入口(用户报的"Mermaid 退回代码格式")。本函数是装载侧的同一张安全网:任何 detectMermaidSource
- * 命中的 codeBlock 一律换成 diagram 块,保留其 blockId(块身份稳定)。非 mermaid 代码块原样保留。
+ * 命中的 codeBlock 一律换成 diagram 块,保留其 blockId(块身份稳定)。其它代码块原样保留。
  *
  * 纯函数、不可变:返回一份升级后的克隆,命中 0 处时返回结构等价的克隆(调用方可放心 setContent)。
  */
@@ -88,6 +105,11 @@ export function upgradeMermaidCodeBlocksToDiagram<T>(doc: T): T {
       if (mermaidSource) {
         const blockId = typeof attrs.blockId === "string" && attrs.blockId.length > 0 ? attrs.blockId : undefined;
         return { type: "diagram", attrs: { ...(blockId ? { blockId } : {}), lang: "mermaid", source: mermaidSource, svg: null } };
+      }
+      const drawioSource = detectDrawioSource(language, text);
+      if (drawioSource) {
+        const blockId = typeof attrs.blockId === "string" && attrs.blockId.length > 0 ? attrs.blockId : undefined;
+        return { type: "diagram", attrs: { ...(blockId ? { blockId } : {}), lang: "drawio", source: drawioSource, svg: null } };
       }
     }
     const output: Record<string, unknown> = {};
@@ -627,6 +649,10 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
       if (mermaidSource) {
         return { type: "diagram", attrs: { blockId, lang: "mermaid", source: mermaidSource, svg: null } };
       }
+      const drawioSource = detectDrawioSource(block.language, block.text);
+      if (drawioSource) {
+        return { type: "diagram", attrs: { blockId, lang: "drawio", source: drawioSource, svg: null } };
+      }
       return { type: "codeBlock", attrs: { blockId, language: block.language ?? "plaintext" }, content: block.text ? [{ type: "text", text: block.text }] : [] };
     }
     case "bulletList":
@@ -663,8 +689,16 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
       return { type: "image", attrs: { blockId, src: block.src, alt: block.alt ?? null, title: block.title ?? null, caption: block.caption ?? null, width: block.width ?? null, height: block.height ?? null, align: block.align ?? "center" } };
     case "diagram":
       // 安全:绝不信任模型给的 svg(会被 dangerouslySetInnerHTML 注入 + 内嵌导出 → 存储型 XSS)。
-      // svg 一律置 null,只允许前端 mermaid(securityLevel:strict)渲染后回写的可信缓存。
-      return { type: "diagram", attrs: { blockId, lang: block.lang, source: block.source, svg: null } };
+      // svg 一律置 null,只允许前端渲染并经统一 hardenInlineSvg 加固后回写可信缓存。
+      return {
+        type: "diagram",
+        attrs: {
+          blockId,
+          lang: block.lang,
+          source: block.lang === "drawio" ? normalizeDrawioSource(block.source) : block.source,
+          svg: null,
+        },
+      };
     case "fileAttachment":
       return {
         type: "fileAttachment",

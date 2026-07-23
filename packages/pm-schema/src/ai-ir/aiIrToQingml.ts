@@ -78,7 +78,7 @@ export function aiBlockToQingml(block: AiBlock): string {
     case "diagram":
       return block.lang === "mermaid"
         ? tag("mermaid", escapeText(block.source))
-        : tag("mermaid", escapeText(block.source));
+        : tag("drawio", escapeText(block.source));
   }
 }
 

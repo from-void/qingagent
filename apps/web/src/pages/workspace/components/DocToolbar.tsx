@@ -2,6 +2,7 @@ import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useR
 import type { Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
+import { DEFAULT_DRAWIO_SOURCE } from "@qingagent/pm-schema";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
 import { pickFile } from "./doc/pickFile";
@@ -764,6 +765,11 @@ export function DocToolbar({
           run("插入图表", () => chain.insertDiagram(source ? { source } : undefined).run());
           break;
         }
+        case "insertDrawio":
+          run("插入 drawio 工程图", () =>
+            chain.insertDiagram({ lang: "drawio", source: DEFAULT_DRAWIO_SOURCE }).run(),
+          );
+          break;
         case "insertTable":
           run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: false }).run());
           break;
@@ -1164,7 +1170,8 @@ export function DocToolbar({
           <MenuItem onPick={handleInsertFile} disabled={!editorEditable || !toolbarUnlock.resourceRef}><MenuIcon name="file" />插入文件</MenuItem>
           <MenuItem onPick={() => runCommand("insertInlineMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="inlineMath" />行内公式</MenuItem>
           <MenuItem onPick={() => runCommand("insertBlockMath")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="blockMath" />公式块</MenuItem>
-          <MenuItem onPick={() => runCommand("insertDiagram")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="diagram" />插入图表</MenuItem>
+          <MenuItem onPick={() => runCommand("insertDiagram")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="diagram" />插入 Mermaid 图表</MenuItem>
+          <MenuItem onPick={() => runCommand("insertDrawio")} disabled={!editorEditable || !toolbarUnlock.blocks}><MenuIcon name="diagram" />插入 drawio 工程图</MenuItem>
           <MenuItem
             onPreview={(anchor, autoFocus) => setTablePicker({ anchor, autoFocus })}
             disabled={!editorEditable || !toolbarUnlock.blocks}

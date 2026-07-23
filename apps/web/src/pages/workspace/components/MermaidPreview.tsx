@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { renderMermaid } from "./mermaidRender";
+import { renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import "./DiagramView.css";
 
@@ -209,7 +210,7 @@ export function DiagramSvgView({
 }
 
 /**
- * 只读/审阅态的 mermaid 预览:有缓存 svg 用缓存,否则客户端渲染 source。
+ * 只读/审阅态图表预览:有缓存 svg 用缓存,否则按 lang 在客户端渲染 source。
  * 用于审阅/历史/聊天快照等"非可编辑"场景,确保审核态也看到可视化的图而不是源码字符。
  */
 export function MermaidPreview({
@@ -252,12 +253,13 @@ export function MermaidPreview({
       setError(null);
       return;
     }
-    if (lang !== "mermaid") {
+    if (lang !== "mermaid" && lang !== "drawio") {
       setError(`暂不支持的图表语言:${lang}`);
       return;
     }
     const token = ++tokenRef.current;
-    void renderMermaid(trimmed)
+    const render = lang === "drawio" ? renderDrawio : renderMermaid;
+    void render(trimmed)
       .then((out) => {
         if (!mountedRef.current || token !== tokenRef.current) return;
         setSvg(out);

@@ -275,7 +275,7 @@ function diagramToHtml(source: string, svg: string | null): string {
   if (svg && svgExceedsExportByteLimit(svg)) {
     return `<div class="pm-diagram"><div class="doc-file-attach">[图过大未导出]</div></div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
   }
-  // 缓存 mermaid SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
+  // 缓存图表 SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
   // 加固后仍是可信 SVG,直接内联不转义;加固失败(解析坏/含 XXE)则回退源码。
   const safe = isRenderableSvg(svg) ? hardenInlineSvg(svg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safe) {

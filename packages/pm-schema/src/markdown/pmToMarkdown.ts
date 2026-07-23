@@ -62,7 +62,7 @@ function blockToMarkdown(node: PmBlockNode, options: PmToMarkdownOptions): strin
     case "blockMath":
       return `$$\n${node.attrs.latex}\n$$`;
     case "diagram":
-      // 图表块 → 代码围栏(lang=mermaid),markdown 往返 + 飞书画板都吃这个形态。
+      // 图表块 → 对应语言的安全动态围栏，保留 Mermaid/drawio 源码以便 Markdown 往返。
       return fencedCodeBlock(node.attrs.lang, node.attrs.source);
   }
 }

@@ -117,10 +117,12 @@ export type PmDiagramOverlay = {
   edgeHandles?: Record<string, PmDiagramEdgeHandleOverride> | null;
 };
 
+export type PmDiagramLang = "mermaid" | "drawio";
+
 export type PmDiagramNode = {
   type: "diagram";
   attrs: PmBlockAttrs & {
-    lang: string;
+    lang: PmDiagramLang;
     source: string;
     svg: string | null;
     /** 用户拖拽改的高度(px);仅编辑器持久化,agent/legacy 不设。 */

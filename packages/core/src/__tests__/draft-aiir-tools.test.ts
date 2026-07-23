@@ -244,6 +244,42 @@ describe("QingML draft tools", () => {
     });
   });
 
+  it("drawio source 可被 readDraft 全文读取、editDraft 反复修改并进入审查 diff", async () => {
+    const oldSource = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="api" value="旧 API" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel>';
+    const nextSource = oldSource.replace("旧 API", "新 API");
+    const state = createSession("s-drawio-read-edit");
+    bindDoc(state, doc([{
+      type: "diagram",
+      attrs: { blockId: "drawio-1", lang: "drawio", source: oldSource, svg: null },
+    }]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+
+    const read = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
+    expect(read.blocks[0]).toMatchObject({ ref: "drawio-1", type: "diagram" });
+    expect(read.blocks[0].qingml).toContain("<drawio>&lt;mxGraphModel>");
+    expect(read.blocks[0].qingml).toContain("旧 API");
+    expect(read.blocks[0].text).toContain(oldSource);
+
+    const edited = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "drawio-1",
+        block: qingmlBlock({ type: "diagram", lang: "drawio", source: nextSource }),
+      }],
+    }, ctx) as any;
+    expect(edited.ok).toBe(true);
+    const candidate = state.docDraftCandidateDoc!;
+    expect(candidate.content[0]).toMatchObject({
+      type: "diagram",
+      attrs: { blockId: "drawio-1", lang: "drawio", source: nextSource, svg: null },
+    });
+
+    const serializedDiff = JSON.stringify(buildDraftDiff(state.doc!, candidate));
+    expect(serializedDiff).toContain("旧 API");
+    expect(serializedDiff).toContain("新 API");
+    expect(serializedDiff).not.toContain("<svg");
+  });
+
   it("editDraft insertBlock 接受一段含多个块的 QingML", async () => {
     const state = createSession("s-edit-envelope-insert");
     bindDoc(state, doc([paragraph("block-a", "基准")]));

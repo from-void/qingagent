@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { PM_CALLOUT_TONES, PM_HIGHLIGHT_COLORS, PM_IMAGE_ALIGN_VALUES, PM_ORDERED_LIST_STYLES, PM_TEXT_ALIGN_VALUES, PM_TEXT_COLORS } from "../spec";
+import { PM_CALLOUT_TONES, PM_DIAGRAM_LANGS, PM_HIGHLIGHT_COLORS, PM_IMAGE_ALIGN_VALUES, PM_ORDERED_LIST_STYLES, PM_TEXT_ALIGN_VALUES, PM_TEXT_COLORS } from "../spec";
+import type { PmDiagramLang } from "../types";
 import { isAllowedImageSrc } from "../validators";
 
 const linkHrefSchema = z
@@ -100,7 +101,7 @@ export type AiBlock = {
     } & AiContainerContent)
   | { type: "columnList"; columns: AiColumn[] }
   | { type: "blockMath"; latex: string }
-  | { type: "diagram"; lang: string; source: string; svg?: string | null }
+  | { type: "diagram"; lang: PmDiagramLang; source: string; svg?: string | null }
 );
 
 function aiBlockContainsTable(block: AiBlock): boolean {
@@ -217,11 +218,11 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
     }),
     z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("columnList"), columns: z.array(aiColumnSchema).min(2) }),
     z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("blockMath"), latex: z.string().min(1) }),
-    // 图表块:lang(目前 mermaid)+ source 源码;svg 客户端渲染缓存,agent 生成时可缺省/null。
+    // 图表块:Mermaid 源码或未压缩 mxGraph XML;svg 客户端渲染缓存,agent 生成时可缺省/null。
     z.object({
       ...aiBlockIdentitySchemaShape,
       type: z.literal("diagram"),
-      lang: z.string().min(1),
+      lang: z.enum(PM_DIAGRAM_LANGS),
       source: z.string().min(1),
       svg: z.string().nullable().optional(),
     }),

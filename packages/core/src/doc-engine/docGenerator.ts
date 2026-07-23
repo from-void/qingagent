@@ -52,7 +52,7 @@ const docSectionSchema: z.ZodType<LegacySection> = z.discriminatedUnion("kind", 
   z.object({
     kind: z.literal("diagram"),
     data: z.object({
-      lang: z.string().default("mermaid"),
+      lang: z.enum(["mermaid", "drawio"]).default("mermaid"),
       source: z.string().min(1),
       svg: z.string().nullable().default(null),
     }),

@@ -9,7 +9,7 @@ import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent } from "@tiptap/react";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
 
@@ -216,13 +216,14 @@ async function waitForSelector(selector: string, root: ParentNode = document.bod
   throw new Error(`selector not found: ${selector}`);
 }
 
-function firstDiagramAttrs(editor: Editor): { source: string; svg: string | null } | null {
+function firstDiagramAttrs(editor: Editor): { lang: string; source: string; svg: string | null } | null {
   const doc = editor.getJSON() as {
     content?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
   };
   const block = doc.content?.find((node) => node.type === "diagram");
   if (!block?.attrs) return null;
   return {
+    lang: String(block.attrs.lang ?? ""),
     source: String(block.attrs.source ?? ""),
     svg: typeof block.attrs.svg === "string" ? block.attrs.svg : null,
   };
@@ -701,6 +702,52 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(attrs).not.toBeNull();
       expect(attrs!.source).toContain("flowchart TD");
       expect(editor.view.dom.querySelector(".graph-diagram")).not.toBeNull();
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("insertDiagram(drawio) 插入最小 XML，离线渲染并可反复编辑源码", async () => {
+    const editor = await mountEditor({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{ type: "paragraph", attrs: { blockId: "p-1" }, content: [{ type: "text", text: "正文" }] }],
+    } as unknown as PmDoc);
+    try {
+      await act(async () => {
+        editor.chain().focus().insertDiagram({ lang: "drawio" }).run();
+      });
+      const rendered = await waitForSelector(".pm-diagram-svg svg", editor.view.dom);
+      const inserted = firstDiagramAttrs(editor);
+      expect(inserted).toMatchObject({ lang: "drawio", source: DEFAULT_DRAWIO_SOURCE });
+      expect(rendered.outerHTML).not.toMatch(/foreignObject|script|onload/i);
+
+      const buttons = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).map((button) => button.textContent?.trim());
+      expect(buttons).toEqual(["编辑 drawio XML"]);
+      const editButton = editor.view.dom.querySelector<HTMLButtonElement>(".pm-diagram-view-actions button")!;
+      await act(async () => {
+        editButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      const textarea = await waitForSelector(".pm-diagram-source", editor.view.dom) as HTMLTextAreaElement;
+      const nextSource = textarea.value.replace('value="开始"', 'value="入口"');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      await act(async () => {
+        setter?.call(textarea, nextSource);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const complete = Array.from(editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-actions button"))
+        .find((button) => button.textContent?.trim() === "完成")!;
+      await act(async () => {
+        complete.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      });
+      await flush(20);
+      expect(firstDiagramAttrs(editor)?.source).toContain('value="入口"');
+      expect(firstDiagramAttrs(editor)?.svg).toMatch(/^<svg\b/);
+      const persisted = normalizePmDoc(editor.getJSON());
+      const persistedBlock = persisted.content.find((block) => block.type === "diagram");
+      expect(persistedBlock?.type === "diagram" ? persistedBlock.attrs.svg : null).toMatch(/^<svg\b/);
     } finally {
       await unmount(editor);
     }

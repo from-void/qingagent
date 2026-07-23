@@ -41,6 +41,7 @@ export const PM_SCHEMA_MARK_NAMES = [
 ] as const satisfies readonly PmMarkName[];
 
 export const PM_HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const;
+export const PM_DIAGRAM_LANGS = ["mermaid", "drawio"] as const;
 // 高亮块主题槽:前 5 个为历史语义色,后 5 个为扩充的暖墨主题(赭石/绯霞/藕荷/黛青/青碧)。
 // 仅作主题键用,样式在前端 .pm-callout--{tone} 承载;改这里会经 z.enum 自动传导到 validators/aiIrSchema。
 export const PM_CALLOUT_TONES = [

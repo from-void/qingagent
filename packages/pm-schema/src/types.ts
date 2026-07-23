@@ -200,10 +200,12 @@ export type PmDiagramOverlay = {
   edgeHandles?: Record<string, PmDiagramEdgeHandleOverride> | null;
 };
 
-/** 图表块(确定性图):lang 目前仅 "mermaid";source 是图表源码;svg 是客户端渲染缓存(导出用),
+export type PmDiagramLang = "mermaid" | "drawio";
+
+/** 图表块(确定性图):source 是 Mermaid 源码或未压缩 mxGraph XML;svg 是客户端渲染缓存(导出用),
  *  agent 生成时为 null,编辑器渲染后回填。 */
 export type PmDiagramAttrs = PmBlockAttrs & {
-  lang: string;
+  lang: PmDiagramLang;
   source: string;
   svg: string | null;
   /** 用户拖拽改的高度(px);仅编辑器持久化,agent/legacy 不设。 */

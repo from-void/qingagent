@@ -271,7 +271,7 @@ describe("handleCommand updateDoc", () => {
     expect(persistSessionMetadata).toHaveBeenCalledWith(session);
   });
 
-  it("strips diagram.svg from PM updateDoc before committing", async () => {
+  it("sanitizes diagram.svg from PM updateDoc before committing", async () => {
     const { bridge, commitDocumentOp } = await loadBridge();
     const session = await createDraftSession(bridge);
     const evilDoc: PmDoc = {
@@ -305,7 +305,10 @@ describe("handleCommand updateDoc", () => {
     const committed = commitDocumentOp.mock.calls[0]?.[0].apply().nextDoc as PmDoc;
     const block = committed.content[0];
     expect(block?.type).toBe("diagram");
-    expect(block?.type === "diagram" ? block.attrs.svg : "x").toBeNull();
+    const svg = block?.type === "diagram" ? block.attrs.svg : null;
+    expect(svg).toMatch(/^<svg\b/);
+    expect(svg).not.toContain("<script");
+    expect(svg).not.toContain("onload");
     expect(session.doc).toEqual(committed);
   });
 

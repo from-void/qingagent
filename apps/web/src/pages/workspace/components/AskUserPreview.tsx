@@ -83,7 +83,7 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
         setFullscreen(true);
       }}
     >
-      <MermaidPreview source={node.attrs.source} lang="mermaid" readOnly />
+      <MermaidPreview source={node.attrs.source} lang={node.attrs.lang} readOnly />
     </button>
   ) : <PmBlockView key={node.attrs.blockId ?? index} node={node} />);
 

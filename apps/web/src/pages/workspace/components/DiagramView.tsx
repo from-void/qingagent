@@ -5,20 +5,26 @@ import type { NodeViewProps } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { detectType, type DiagramType } from "@qingagent/diagram-engine";
+import {
+  DEFAULT_DRAWIO_SOURCE,
+  normalizeDrawioSource,
+  type PmDiagramLang,
+} from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
+import { renderDrawio } from "./drawioRender";
 import { DiagramSvgView } from "./MermaidPreview";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
 import "./DiagramView.css";
 
 // 图表块(diagram)的 Tiptap 节点 + 节点视图:
-// - 承载 { lang:"mermaid", source, svg };mermaid 在客户端渲染成 svg 并回写 node.attrs.svg(供导出)。
+// - 承载 { lang:"mermaid"|"drawio", source, svg };客户端离线渲染并回写安全 svg(供导出)。
 // - 用户可双击进入源码编辑(textarea + 实时预览),"完成"后持久化 source+svg。
 // - 渲染失败显示错误 + 源码,绝不让坏图表把编辑器搞崩。
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
 function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected, getPos }: NodeViewProps) {
   const attrSource = (node.attrs.source as string) ?? "";
-  const lang = (node.attrs.lang as string) ?? "mermaid";
+  const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
   const overlay = (node.attrs.overlay as Parameters<typeof DiagramRenderer>[0]["overlay"]) ?? null;
   const align: "left" | "center" | "right" =
@@ -96,13 +102,8 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
         setError(null);
         return;
       }
-      // 目前只支持 mermaid;其它 lang 不渲染,走错误回退(下方会连源码一起展示)。
-      if (lang !== "mermaid") {
-        setError(`暂不支持这种图表：${lang}`);
-        return;
-      }
       try {
-        const out = await renderMermaid(trimmed);
+        const out = await (lang === "drawio" ? renderDrawio(trimmed) : renderMermaid(trimmed));
         if (!mountedRef.current || token !== renderTokenRef.current) return;
         setSvg(out);
         setError(null);
@@ -152,16 +153,27 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   };
 
   const commit = () => {
-    setEditing(false);
     // 空源码不能留:PM 校验要求 diagram.source 非空,留空会让随后的 normalizePmDoc 抛错、
     // 阻断保存流。源码被清空 = 用户想删掉这个图表,直接删节点。
     if (!draft.trim()) {
+      setEditing(false);
       deleteNode?.();
       return;
     }
-    if (draft !== source) {
-      setSource(draft);
-      updateAttributes({ source: draft, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
+    let nextSource = draft;
+    if (lang === "drawio") {
+      try {
+        nextSource = normalizeDrawioSource(draft);
+      } catch (commitError) {
+        setError(commitError instanceof Error ? commitError.message : String(commitError));
+        return;
+      }
+    }
+    setEditing(false);
+    if (nextSource !== source) {
+      setDraft(nextSource);
+      setSource(nextSource);
+      updateAttributes({ source: nextSource, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
     }
   };
 
@@ -246,7 +258,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
             ) : svg ? (
               <DiagramSvgView svg={svg} />
             ) : (
-              <div className="pm-diagram-empty">输入 Mermaid 源码以预览…</div>
+              <div className="pm-diagram-empty">
+                {lang === "drawio" ? "输入 mxGraph XML 以预览…" : "输入 Mermaid 源码以预览…"}
+              </div>
             )}
           </div>
           <textarea
@@ -266,7 +280,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 commit();
               }
             }}
-            placeholder="flowchart TD&#10;  A[开始] --> B[结束]"
+            placeholder={lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE}
           />
           <div className="pm-diagram-actions">
             <button type="button" className="pm-diagram-btn" onMouseDown={(e) => { e.preventDefault(); commit(); }}>
@@ -337,7 +351,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={startEdit}
               >
-                编辑 Mermaid
+                {lang === "drawio" ? "编辑 drawio XML" : "编辑 Mermaid"}
               </button>
             </div>
           )}
@@ -386,12 +400,12 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     diagram: {
       /** 在当前位置插入一个图表块(默认 mermaid 流程图模板)。 */
-      insertDiagram: (attrs?: { lang?: string; source?: string }) => ReturnType;
+      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string }) => ReturnType;
     };
   }
 }
 
-const DEFAULT_DIAGRAM_SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
+export const DEFAULT_MERMAID_SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
 
 export const DiagramCM = Node.create({
   name: "diagram",
@@ -488,10 +502,14 @@ export const DiagramCM = Node.create({
       insertDiagram:
         (attrs) =>
         ({ commands }) =>
-          commands.insertContent({
-            type: "diagram",
-            attrs: { lang: attrs?.lang ?? "mermaid", source: attrs?.source ?? DEFAULT_DIAGRAM_SOURCE, svg: null },
-          }),
+          {
+            const lang = attrs?.lang ?? "mermaid";
+            const source = attrs?.source ?? (lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE);
+            return commands.insertContent({
+              type: "diagram",
+              attrs: { lang, source, svg: null },
+            });
+          },
     };
   },
 

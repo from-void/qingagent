@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { isAllowedLinkHref } from "@qingagent/contract-ts";
 import { getDeterministicId } from "./hash";
+import { normalizeDrawioSource, validateDrawioSource } from "./drawio/drawioXml";
 import { PM_SCHEMA_VERSION } from "./schemaVersion";
+import { hardenInlineSvg } from "./svg/hardenInlineSvg";
 import {
   PM_CALLOUT_TONES,
+  PM_DIAGRAM_LANGS,
   PM_HEADING_LEVELS,
   PM_HIGHLIGHT_COLORS,
   PM_IMAGE_ALIGN_VALUES,
@@ -228,7 +231,7 @@ const diagramOverlaySchema = z.object({
 }).nullable().optional();
 
 const diagramAttrsSchema = blockIdSchema.extend({
-  lang: nonEmpty,
+  lang: z.enum(PM_DIAGRAM_LANGS),
   source: nonEmpty,
   // svg 是客户端渲染缓存:agent 生成时为 null,编辑器渲染后回填;允许缺省/null。
   svg: z.string().nullable().optional(),
@@ -240,6 +243,16 @@ const diagramAttrsSchema = blockIdSchema.extend({
   align: z.enum(PM_IMAGE_ALIGN_VALUES).nullable().optional(),
   // 用户域 overlay:位置+样式持久化,但不进 AI-IR。
   overlay: diagramOverlaySchema,
+}).superRefine((attrs, context) => {
+  if (attrs.lang !== "drawio") return;
+  const result = validateDrawioSource(attrs.source);
+  if (!result.ok) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["source"],
+      message: result.error,
+    });
+  }
 });
 
 type LazyNode = z.ZodType;
@@ -699,8 +712,18 @@ function normalizeAttrsShape(type: unknown, value: unknown, path: number[]): Rec
     attrs.blockId = getDeterministicId("block", { type, path });
   }
   if (type === "diagram") {
-    // diagram.svg 是前端可再生的渲染缓存,不信任任何直写落盘入口传入的 SVG。
-    attrs.svg = null;
+    // diagram.svg 是前端可再生缓存：AI-IR / legacy 转换入口会先强制置空；
+    // PM 写回只有通过既有严格 SVG 加固与 200KB 上限才允许持久化，供离线导出复用。
+    attrs.svg = typeof attrs.svg === "string" ? hardenInlineSvg(attrs.svg) : null;
+    if (attrs.lang === "drawio" && typeof attrs.source === "string") {
+      // draw.io 允许 base64+deflate；入库前展开成可读 XML，供 AI 读取、修改与 diff。
+      // 非法 XML 留给 schema 形成带 path 的校验错误，避免 safeParse 入口直接抛异常。
+      try {
+        attrs.source = normalizeDrawioSource(attrs.source);
+      } catch {
+        // 由 diagramAttrsSchema.superRefine 报告具体错误。
+      }
+    }
   }
   if (type === "orderedList" && "listStyle" in attrs && !isAllowedOrderedListStyle(attrs.listStyle)) {
     attrs.listStyle = "decimal";

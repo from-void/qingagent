@@ -6,6 +6,7 @@ export * from "./hash";
 export * from "./pmToPlainText";
 export * from "./tableSelection";
 export * from "./charCount";
+export * from "./documentIntegrity";
 export * from "./repairNestedTables";
 export * from "./clipboard/pmToClipboardHtml";
 export * from "./legacy/legacySectionsToPm";

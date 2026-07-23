@@ -137,6 +137,12 @@ function checkDocStateChanged(frame: Extract<BridgeFrame, { kind: "docStateChang
   if (typeof frame.data.agentBusy !== "boolean") {
     fail("DocStateChanged.agentBusy must be a boolean");
   }
+  if (
+    frame.data.reviewCompletion !== undefined &&
+    frame.data.reviewCompletion !== "noop"
+  ) {
+    fail("DocStateChanged.reviewCompletion must be noop when present");
+  }
 }
 
 function checkCitation(c: Citation): void {

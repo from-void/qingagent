@@ -87,7 +87,12 @@ describe("POST /api/v1/commit", () => {
         seq: 1,
         frame: {
           kind: "docStateChanged",
-          data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+          data: {
+            state: { kind: "empty" },
+            activeOverlay: null,
+            agentBusy: false,
+            reviewCompletion: "noop",
+          },
         },
       },
     ]);

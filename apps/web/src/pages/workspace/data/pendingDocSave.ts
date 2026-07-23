@@ -41,12 +41,25 @@ export function docSaveFailureToastMessage(error: unknown): string {
 }
 
 export function reviewCommitFramesLeavePendingReview(frames: BridgeFrame[]): boolean {
-  return frames.some((frame) => {
-    if (frame.kind === "documentSnapshotWritten" || frame.kind === "docCommitted") {
-      return true;
-    }
-    return frame.kind === "docStateChanged" && frame.data.state.kind !== "pendingReview";
-  });
+  return frames.some(
+    (frame) =>
+      frame.kind === "docStateChanged" &&
+      frame.data.state.kind !== "pendingReview",
+  );
+}
+
+/** canonical snapshot 只表示客户端已同步服务端正文；只有 docCommitted 才是写入成功终态。 */
+export function reviewCommitFramesCommitted(frames: BridgeFrame[]): boolean {
+  return frames.some((frame) => frame.kind === "docCommitted");
+}
+
+/** 服务端显式确认该审阅命令已被其它请求/帧幂等结算，并非本次写入成功。 */
+export function reviewCommitFramesNoop(frames: BridgeFrame[]): boolean {
+  return frames.some(
+    (frame) =>
+      frame.kind === "docStateChanged" &&
+      frame.data.reviewCompletion === "noop",
+  );
 }
 
 export async function runAfterPendingDocSave<T>(input: {

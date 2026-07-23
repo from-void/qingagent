@@ -111,16 +111,6 @@ function toolStatusesFor(frames: readonly BridgeFrame[], suggestionId: string): 
     .map((frame) => frame.kind === "toolCallUpdated" ? frame.data.spec.status.kind : "");
 }
 
-function failedReasonsFor(frames: readonly BridgeFrame[], suggestionId: string): string[] {
-  const reasons: string[] = [];
-  for (const frame of frames) {
-    if (frame.kind !== "toolCallUpdated" || frame.data.toolCallId !== suggestionId) continue;
-    const status = frame.data.spec.status;
-    if (status.kind === "failed") reasons.push(status.data.reason);
-  }
-  return reasons;
-}
-
 function makePatchConflict(suggestionId: string, blockId: string): PatchConflict {
   return {
     kind: "target_text_changed",
@@ -141,7 +131,7 @@ afterEach(() => {
   tempDb.cleanup();
 });
 
-describe("commitReviewGroups 失败 settle", () => {
+describe("commitReviewGroups 写入失败保留候选", () => {
   it.each([
     [
       "conflict",
@@ -175,7 +165,7 @@ describe("commitReviewGroups 失败 settle", () => {
       (): CommitDocumentOpResult => ({ status: "not_found" }),
       "文档不存在，本次修改未写入。",
     ],
-  ])("%s 后本次接受项进入 failed 终态并解锁编辑", async (_name, makeResult, reason) => {
+  ])("%s 后本次接受项仍在待审态，可原地重试", async (_name, makeResult) => {
     const state = createSession(`failure-${_name}`);
     const base = doc([paragraph("block-a", "A 旧")]);
     const draft = doc([paragraph("block-a", "A 新")]);
@@ -187,13 +177,16 @@ describe("commitReviewGroups 失败 settle", () => {
       acceptReviewBatchIds: [hunk.reviewBatchId ?? hunk.hunkId],
     }));
 
-    expect(state.suggestions.size).toBe(0);
-    expect(deriveContentState(state)).toEqual({ kind: "editing" });
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
-    expect(failedReasonsFor(frames, hunk.hunkId)).toContain(reason);
+    expect(state.suggestions.size).toBe(1);
+    expect(state.suggestions.has(hunk.hunkId)).toBe(true);
+    expect(deriveContentState(state)).toEqual({ kind: "pendingReview" });
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("accepted");
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
+    expect(frames).not.toContainEqual(expect.objectContaining({ kind: "documentSnapshotWritten" }));
+    expect(frames).not.toContainEqual(expect.objectContaining({ kind: "docCommitted" }));
   });
 
-  it("commitDocumentOp 抛异常后也只 settle 本次 records", async () => {
+  it("commitDocumentOp 抛异常后也保留本次候选", async () => {
     const state = createSession("failure-exception");
     const base = doc([paragraph("block-a", "A 旧")]);
     const draft = doc([paragraph("block-a", "A 新")]);
@@ -205,10 +198,10 @@ describe("commitReviewGroups 失败 settle", () => {
       acceptReviewBatchIds: [hunk.reviewBatchId ?? hunk.hunkId],
     }));
 
-    expect(state.suggestions.size).toBe(0);
-    expect(deriveContentState(state)).toEqual({ kind: "editing" });
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
-    expect(failedReasonsFor(frames, hunk.hunkId)).toContain("db timeout");
+    expect(state.suggestions.size).toBe(1);
+    expect(deriveContentState(state)).toEqual({ kind: "pendingReview" });
+    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("accepted");
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
   });
 
   it("部分提交失败时保留 keepPending 和提交期间新增的 suggestion", async () => {
@@ -252,10 +245,11 @@ describe("commitReviewGroups 失败 settle", () => {
       keepPendingReviewBatchIds: [hunkB.reviewBatchId ?? hunkB.hunkId],
     }));
 
-    expect(state.suggestions.has(hunkA.hunkId)).toBe(false);
+    expect(state.suggestions.has(hunkA.hunkId)).toBe(true);
     expect(state.suggestions.has(hunkB.hunkId)).toBe(true);
     expect(state.suggestions.has("late-suggestion")).toBe(true);
     expect(deriveContentState(state)).toEqual({ kind: "pendingReview" });
-    expect(toolStatusesFor(frames, hunkA.hunkId)).toContain("failed");
+    expect(toolStatusesFor(frames, hunkA.hunkId)).toContain("accepted");
+    expect(toolStatusesFor(frames, hunkA.hunkId)).not.toContain("failed");
   });
 });

@@ -166,10 +166,6 @@ function failedReasonsFor(frames: readonly BridgeFrame[], suggestionId: string):
   return reasons;
 }
 
-function firstFrameIndex(frames: readonly BridgeFrame[], kind: BridgeFrame["kind"]): number {
-  return frames.findIndex((frame) => frame.kind === kind);
-}
-
 async function patchStepCounts(docId: string): Promise<number[]> {
   const client = getDocumentsClient();
   const result = await client.execute({
@@ -193,7 +189,7 @@ afterEach(() => {
   tempDb.cleanup();
 });
 
-describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示", () => {
+describe("审核提交：部分采纳重放与整批候选事务门", () => {
   it("RF3: canonical 已提交但 rebase 批次写库失败后，冷恢复可重放保留项", async () => {
     const sessionId = "commit-rebase-recovery";
     const state = createSession(sessionId);
@@ -284,37 +280,32 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     expect(state.suggestions.size).toBe(0);
   });
 
-  it("只应用/记账存活块;失效 hunk 不进 steps,suggestion 按未应用结算并带失效提示", async () => {
+  it("整批应用遇到同版本基线哈希漂移时不部分落库并保留全部候选", async () => {
     const state = createSession("commit-skip-deleted-block");
     const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
     const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
     const [hunkA, hunkB] = await seedReviewState(state, base, draft);
     if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
 
-    // 并发删除 blk-b:canonical 只剩 blk-a(仍是版本 1,CAS 通过)。
-    await seedCanonical(state, doc([paragraph("blk-a", "甲原文")]));
+    // 并发删除 blk-b:canonical 只剩 blk-a，版本号未变但内容哈希已漂移。
+    const canonical = doc([paragraph("blk-a", "甲原文")]);
+    await seedCanonical(state, canonical);
 
     const frames = await collectFrames(
       commitPatches(state, [hunkA.hunkId, hunkB.hunkId]),
     );
 
-    // 1) 文档只应用存活块 blk-a。
-    expect(state.doc?.content.map(blockText)).toEqual(["甲新文"]);
-
-    // 2) document_ops.steps 只含 1 条(blk-a),失效的 blk-b 不记假账。
-    expect(await patchStepCounts(state.docId)).toEqual([1]);
-
-    // 3) 存活项按已提交结算,失效项按未应用(failed)结算并带失效文案。
+    expect((await documentRepo.load(state.docId))?.pmDoc).toEqual(canonical);
+    expect(state.doc?.content.map(blockText)).toEqual(["甲原文", "乙原文"]);
+    expect(await patchStepCounts(state.docId)).toEqual([]);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
     expect(toolStatusesFor(frames, hunkA.hunkId)).not.toContain("failed");
-    expect(toolStatusesFor(frames, hunkB.hunkId)).toContain("failed");
-    expect(failedReasonsFor(frames, hunkB.hunkId).join("")).toContain("失效");
-
-    // 4) 两项都已结算收尾,回到 editing。
-    expect(state.suggestions.size).toBe(0);
-    expect(state.docState).toEqual({ kind: "editing" });
+    expect(toolStatusesFor(frames, hunkB.hunkId)).not.toContain("failed");
+    expect(state.suggestions.size).toBe(2);
+    expect(state.docState).toEqual({ kind: "pendingReview" });
   });
 
-  it("同 blockId 正文已漂移时整批 fail-closed，并回发当前 canonical 快照", async () => {
+  it("同 blockId 正文已漂移时整批 fail-closed，并保留候选供用户处理", async () => {
     const state = createSession("commit-fail-closed-changed-block");
     const base = doc([paragraph("blk-a", "用户原文")]);
     const draft = doc([paragraph("blk-a", "AI 修改")]);
@@ -328,14 +319,13 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const stored = await documentRepo.load(state.docId);
 
     expect(stored?.pmDoc?.content.map(blockText)).toEqual(["用户提交前又手动修改"]);
-    expect(state.doc?.content.map(blockText)).toEqual(["用户提交前又手动修改"]);
+    expect(state.doc?.content.map(blockText)).toEqual(["用户原文"]);
     expect(await patchStepCounts(state.docId)).toEqual([]);
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
-    expect(failedReasonsFor(frames, hunk.hunkId).join("")).toContain("正文已变化");
-    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeGreaterThanOrEqual(0);
-    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
-      firstFrameIndex(frames, "toolCallUpdated"),
-    );
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
+    expect(state.suggestions.has(hunk.hunkId)).toBe(true);
+    expect(state.docState).toEqual({ kind: "pendingReview" });
   });
 
   it("表格整块 hunk 的 canonical 已被用户改动时 fail-closed，不覆盖未选中单元格", async () => {
@@ -352,16 +342,16 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const stored = await documentRepo.load(state.docId);
 
     expect(stored?.pmDoc).toEqual(userEdited);
-    expect(state.doc).toEqual(userEdited);
+    expect(state.doc).toEqual(base);
     expect(await patchStepCounts(state.docId)).toEqual([]);
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
-    expect(failedReasonsFor(frames, hunk.hunkId).join("")).toContain("正文已变化");
-    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
-      firstFrameIndex(frames, "toolCallUpdated"),
-    );
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
+    expect(state.suggestions.has(hunk.hunkId)).toBe(true);
+    expect(state.docState).toEqual({ kind: "pendingReview" });
   });
 
-  it("全部 hunk 的目标均已删除时不写空 patch 版本，并按冲突收尾", async () => {
+  it("全部 hunk 的目标均已删除时不写空 patch 版本，并保留候选", async () => {
     const state = createSession("commit-all-targets-deleted");
     const survivor = paragraph("blk-survivor", "未涉及正文");
     const base = doc([paragraph("blk-a", "原文"), survivor]);
@@ -377,13 +367,13 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     expect(stored?.docVersion).toBe(1);
     expect(stored?.pmDoc).toEqual(canonical);
     expect(await patchStepCounts(state.docId)).toEqual([]);
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
-    expect(firstFrameIndex(frames, "documentSnapshotWritten")).toBeLessThan(
-      firstFrameIndex(frames, "toolCallUpdated"),
-    );
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
+    expect(state.suggestions.has(hunk.hunkId)).toBe(true);
+    expect(state.docState).toEqual({ kind: "pendingReview" });
   });
 
-  it("损坏的空 insert hunk 不写空 patch 版本", async () => {
+  it("hunk 载荷损坏但权威候选完整时仍按候选可靠落库", async () => {
     const state = createSession("commit-empty-insert-hunk");
     const base = doc([paragraph("blk-a", "原文")]);
     const draft = doc([paragraph("blk-a", "原文"), paragraph("blk-new", "AI 新增")]);
@@ -398,9 +388,10 @@ describe("审核提交:目标块被并发删除的 hunk 跳过 + 记账 + 提示
     const frames = await collectFrames(commitPatches(state, [hunk.hunkId]));
     const stored = await documentRepo.load(state.docId);
 
-    expect(stored?.docVersion).toBe(1);
-    expect(stored?.pmDoc).toEqual(base);
-    expect(await patchStepCounts(state.docId)).toEqual([]);
-    expect(toolStatusesFor(frames, hunk.hunkId)).toContain("failed");
+    expect(stored?.docVersion).toBe(2);
+    expect(stored?.pmDoc).toEqual(draft);
+    expect(await patchStepCounts(state.docId)).toEqual([1]);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+    expect(toolStatusesFor(frames, hunk.hunkId)).not.toContain("failed");
   });
 });

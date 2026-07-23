@@ -82,6 +82,16 @@ describe("documentIntegrity", () => {
     ]);
     expect(isAbnormalDocumentCollapse(multiBefore, condensed)).toBe(false);
   });
+
+  it("拦截多块正文坍缩为空文档", () => {
+    const baseline = doc([
+      paragraph("p1", "第一段包含足够多的有效正文内容"),
+      paragraph("p2", "第二段也包含足够多的有效正文内容"),
+      paragraph("p3", "第三段继续保留完整的文章结构"),
+    ]);
+
+    expect(isAbnormalDocumentCollapse(baseline, doc([]))).toBe(true);
+  });
 });
 
 function tableCell(blockId: string, text: string) {

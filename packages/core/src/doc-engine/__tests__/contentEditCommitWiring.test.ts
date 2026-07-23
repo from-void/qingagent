@@ -231,7 +231,7 @@ describe("用户手打块的候选审阅提交", () => {
     )).toBe(false);
   });
 
-  it("部分目标失效时只为成功项落版本，summary 与 docCommitted 计数必须如实", async () => {
+  it("整批目标的基线哈希漂移时不部分落库并保留候选", async () => {
     const state = createSession("typed-block-partial-conflict");
     const base = doc(
       paragraph("typed-survivor", "甲原文"),
@@ -242,7 +242,7 @@ describe("用户手打块的候选审阅提交", () => {
     state.docVersion = 1;
     state.docState = { kind: "editing" };
 
-    // 模拟审阅期间 canonical 的第二个目标已被并发删除，但版本 CAS 仍可进入 hunk 级结算。
+    // 模拟审阅期间 canonical 的第二个目标已被并发删除：版本号未变但基线哈希已漂移。
     const canonical = doc(paragraph("typed-survivor", "甲原文"));
     await documentRepo.save(documentInput(state.docId, {
       threadId: state.threadId ?? state.sessionId,
@@ -271,24 +271,13 @@ describe("用户手打块的候选审阅提交", () => {
     expect(ids).toHaveLength(2);
 
     const frames = await collectFrames(commitPatches(state, ids));
-    const versions = await listVersions(state.docId);
-    const committed = frames.find((frame) => frame.kind === "docCommitted");
-
-    expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("甲修订");
-    expect(versions).toHaveLength(1);
-    expect(versions[0]?.summary).toBe("提交 1 处局部修改，1 处因文档变化失效");
-    expect(committed).toEqual({
-      kind: "docCommitted",
-      data: {
-        sessionId: state.sessionId,
-        version: 2,
-        appliedCount: 1,
-        conflictCount: 1,
-      },
-    });
-    expect((await suggestionRows(state.docId)).map((row) => row.status).sort()).toEqual([
-      "committed",
-      "conflict",
+    expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("甲原文");
+    expect(await listVersions(state.docId)).toEqual([]);
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
+    expect(state.suggestions.size).toBe(2);
+    expect((await suggestionRows(state.docId)).map((row) => row.status)).toEqual([
+      "reviewing",
+      "reviewing",
     ]);
   });
 
@@ -486,8 +475,9 @@ describe("用户手打块的候选审阅提交", () => {
     expect(await listVersions(state.docId)).toEqual([]);
     expect(pmToPlainText((await documentRepo.load(state.docId))!.pmDoc!)).toBe("无关正文");
     expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
+    expect(state.suggestions.size).toBe(1);
     expect(await suggestionRows(state.docId)).toEqual([
-      expect.objectContaining({ status: "conflict" }),
+      expect.objectContaining({ status: "reviewing" }),
     ]);
   });
 

@@ -7,7 +7,13 @@ import type {
   PatchConflict,
   ToolCallStatus,
 } from "@qingagent/contract-ts";
-import { getPmContentHash, pmToLegacySections, type PmDoc, type PmStep } from "@qingagent/pm-schema";
+import {
+  getPmContentHash,
+  isAbnormalDocumentCollapse,
+  pmToLegacySections,
+  type PmDoc,
+  type PmStep,
+} from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
 import { updateToolCallInChatHistory } from "../session/sessionState.js";
@@ -31,7 +37,6 @@ import {
   updateDocumentSuggestionStatusInBatch,
 } from "@qingagent/db";
 import { documentDraftRepo } from "@qingagent/db";
-import { documentRepo } from "@qingagent/db";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
@@ -50,30 +55,13 @@ import { chatMessageAdded, docDiffReady, newId, nowIso, toolCallUpdated } from "
 import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
-import { buildAnnotationMappingNotice, mapAnnotationGroupsThroughSteps } from "./annotationMapping.js";
+import {
+  buildAnnotationMappingNotice,
+  mapAnnotationGroupsThroughSteps,
+  pmDocContentSize,
+} from "./annotationMapping.js";
 
 const logger = mastra.getLogger();
-
-async function canonicalSnapshotAfterReviewConflict(state: SessionState): Promise<BridgeFrame | null> {
-  const current = await documentRepo.load(state.docId).catch((error) => {
-    logger.error("Failed to reload canonical document after review conflict", {
-      sessionId: state.sessionId,
-      docId: state.docId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  });
-  if (!current?.pmDoc) return null;
-  state.doc = current.pmDoc;
-  state.legacySections = current.legacySections;
-  state.docVersion = current.docVersion;
-  return {
-    kind: "documentSnapshotWritten",
-    data: {
-      doc: buildDocumentSnapshot(state.legacySections, state.docVersion, state.doc),
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // updatePatchVerdict — accept or reject a single patch
@@ -133,7 +121,12 @@ function reviewNoopCompletionFrame(state: SessionState, command: ReviewCommandNa
   });
   return {
     kind: "docStateChanged",
-    data: { state: stateForWire, activeOverlay, agentBusy },
+    data: {
+      state: stateForWire,
+      activeOverlay,
+      agentBusy,
+      reviewCompletion: "noop",
+    },
   };
 }
 
@@ -384,6 +377,32 @@ async function* finishSettledReviewState(
   );
 }
 
+/**
+ * 写入失败时保留候选及其 verdict，用户可原地重试。失败不能沿成功结算通路清 draft，
+ * 也不能回发 canonical snapshot 覆盖 preview；后者会让前端 reducer 清掉 docDiff。
+ */
+function reviewCommitFailedFrame(
+  state: SessionState,
+  reason: string,
+): BridgeFrame {
+  const stateForWire = deriveContentState(state);
+  const activeOverlay = deriveActiveOverlay(state);
+  const agentBusy = deriveAgentBusy(state);
+  state._lastEmittedWireKind =
+    `${stateForWire.kind}:${activeOverlay ?? "none"}:${agentBusy ? "busy" : "idle"}`;
+  logger.warn("Review commit failed; keeping candidates for retry", {
+    sessionId: state.sessionId,
+    docId: state.docId,
+    docVersion: state.docVersion,
+    suggestionCount: state.suggestions.size,
+    reason,
+  });
+  return {
+    kind: "docStateChanged",
+    data: { state: stateForWire, activeOverlay, agentBusy },
+  };
+}
+
 function reviewToolCallStatus(suggestion: DocSuggestion): ToolCallStatus {
   if (suggestion.status === "accepted" || suggestion.status === "rejected") {
     return { kind: suggestion.status };
@@ -598,10 +617,31 @@ export async function* commitPatches(
     .filter((record) => state.patchVerdicts.get(record.suggestion.id) !== "rejected");
   const accepted = acceptedRecords.map((record) => record.suggestion);
   const acceptedDiffHunks = acceptedRecords
-    .map((record) => record.diffHunk)
+    .map((record) => record.diffHunk ?? record.suggestion.diffHunk)
     .filter((hunk): hunk is DiffHunk => hunk !== undefined);
+  const modernDiffPayloadRequired =
+    state.docDraftCandidateDoc != null ||
+    state.docDraftBaseDoc != null ||
+    acceptedRecords.some(
+      (record) =>
+        record.diffHunk !== undefined ||
+        record.suggestion.diffHunk !== undefined,
+    );
+  const modernDiffPayloadIncomplete =
+    modernDiffPayloadRequired &&
+    acceptedDiffHunks.length !== acceptedRecords.length;
   const shouldCommitDiffHunks =
-    acceptedRecords.length > 0 && acceptedDiffHunks.length === acceptedRecords.length;
+    acceptedRecords.length > 0 &&
+    !modernDiffPayloadIncomplete &&
+    acceptedDiffHunks.length === acceptedRecords.length;
+  const wholeCandidateDoc = state.docDraftCandidateDoc
+    ? clonePmDoc(state.docDraftCandidateDoc)
+    : null;
+  const wholeCandidateAccepted =
+    wholeCandidateDoc !== null &&
+    records.length === state.suggestions.size &&
+    acceptedRecords.length === records.length;
+  const candidateBaseContentHash = getPmContentHash(oldBaseDoc);
 
   if (accepted.length === 0) {
     const recordsSettled = yield* settleResolvedReviewRecords(state, records);
@@ -721,6 +761,9 @@ export async function* commitPatches(
       threadId: state.threadId ?? state.sessionId,
       resourceId: state.resourceId,
       expectedDocumentSnapshot: state.docVersion,
+      ...(wholeCandidateAccepted
+        ? { baseContentHash: candidateBaseContentHash }
+        : {}),
       opId: `patch:${state.sessionId}:${expandedIds.join(",")}:${state.docVersion}`,
       opKind: "patch_steps",
       actorType: "agent",
@@ -740,7 +783,69 @@ export async function* commitPatches(
           }
         : {}),
       apply: (currentDoc) => {
+        // modern candidate-diff 批次不得因单条记录损坏/恢复缺失 diffHunk 而静默
+        // 降级到 legacy quote patch；两条路径语义不同，降级可能写出非候选终稿。
+        if (modernDiffPayloadIncomplete) {
+          return {
+            nextDoc: currentDoc,
+            conflicts: acceptedRecords.map((record): PatchConflict => ({
+              kind: "target_text_changed",
+              message: "待审修改数据不完整，本次修改未写入，请重试。",
+              suggestionId: record.suggestion.id,
+              blockId: record.suggestion.anchor.blockId,
+              currentVersion: state.docVersion,
+            })),
+          };
+        }
         if (shouldCommitDiffHunks) {
+          // 整批采纳时，候选文档是本轮审阅的权威终稿。版本号与 baseContentHash
+          // 已共同证明 currentDoc 仍是候选生成时的基线，因此直接整体落库；
+          // 逐 hunk 回放仅用于部分采纳，避免大批次因一条内部定位偏差整批回滚。
+          if (wholeCandidateAccepted && wholeCandidateDoc) {
+            if (isAbnormalDocumentCollapse(currentDoc, wholeCandidateDoc)) {
+              return {
+                nextDoc: currentDoc,
+                conflicts: acceptedRecords.map((record): PatchConflict => ({
+                  kind: "schema_invalid",
+                  message: "候选文档异常坍缩，本次修改未写入，候选已保留。",
+                  suggestionId: record.suggestion.id,
+                  blockId: record.suggestion.anchor.blockId,
+                  currentVersion: state.docVersion,
+                })),
+              };
+            }
+            if (
+              getPmContentHash(wholeCandidateDoc) ===
+              getPmContentHash(currentDoc)
+            ) {
+              return {
+                nextDoc: currentDoc,
+                conflicts: acceptedRecords.map((record): PatchConflict => ({
+                  kind: "target_text_changed",
+                  message: "候选与当前正文相同，本次未创建空版本，候选已保留。",
+                  suggestionId: record.suggestion.id,
+                  blockId: record.suggestion.anchor.blockId,
+                  currentVersion: state.docVersion,
+                })),
+              };
+            }
+            appliedHunkCount = acceptedDiffHunks.length;
+            skippedHunks = [];
+            return {
+              nextDoc: clonePmDoc(wholeCandidateDoc),
+              steps: [{
+                stepType: "replace",
+                from: 0,
+                to: pmDocContentSize(currentDoc),
+                slice: {
+                  content: clonePmDoc(wholeCandidateDoc).content,
+                  openStart: 0,
+                  openEnd: 0,
+                },
+                suggestionIds: acceptedDiffHunks.map((hunk) => hunk.hunkId),
+              }],
+            };
+          }
           const applyResult = applyDiffHunks(currentDoc, acceptedDiffHunks, {
             oldBaseDoc,
             anchorByBlockId: true,
@@ -823,68 +928,41 @@ export async function* commitPatches(
       suggestionIds: records.map((record) => record.suggestion.id),
       error: reason,
     });
-    yield* settleUnappliedReviewRecords(state, records, [], reason);
-    yield* finishSettledReviewState(state, "commitPatches:exception");
+    yield reviewCommitFailedFrame(state, reason);
     return;
   }
 
   if (result.status === "patch_conflict") {
-    // canonical 快照必须先于 failed/解锁帧发出；否则客户端先移除 review overlay 时，
-    // 会短暂露出内存里的旧 preview，形成一次可见的正文回退。
-    const canonicalFrame = await canonicalSnapshotAfterReviewConflict(state);
-    if (canonicalFrame) yield canonicalFrame;
-    yield* settleUnappliedReviewRecords(
-      state,
-      records,
-      result.conflicts,
-      "修改和当前文档冲突，本次修改未写入。",
-    );
-    yield* finishSettledReviewState(state, "commitPatches:conflict");
+    const reason =
+      result.conflicts[0]?.message ??
+      "修改和当前文档冲突，本次修改未写入。";
+    yield reviewCommitFailedFrame(state, reason);
     return;
   }
   if (result.status === "conflict") {
-    const canonicalFrame = await canonicalSnapshotAfterReviewConflict(state);
-    if (canonicalFrame) yield canonicalFrame;
-    yield* settleUnappliedReviewRecords(
+    yield reviewCommitFailedFrame(
       state,
-      records,
-      accepted.map((suggestion): PatchConflict => ({
-        kind: "version_conflict",
-        message: `文档已被更新，本次修改未写入。`,
-        suggestionId: suggestion.id,
-        blockId: suggestion.anchor.blockId,
-        currentVersion: result.currentVersion,
-      })),
-      "文档已被更新，本次修改未写入。",
+      `文档已更新到 v${result.currentVersion}，本次修改未写入。`,
     );
-    yield* finishSettledReviewState(state, "commitPatches:conflict");
     return;
   }
   if (result.status === "validation_error" || result.status === "not_found") {
-    yield* settleUnappliedReviewRecords(
+    yield reviewCommitFailedFrame(
       state,
-      records,
-      accepted.map((suggestion): PatchConflict => ({
-        kind: result.status === "validation_error" ? "schema_invalid" : "version_conflict",
-        message:
-          result.status === "validation_error"
-            ? "修改后的文档格式有问题，未写入。"
-            : "文档不存在，本次修改未写入。",
-        suggestionId: suggestion.id,
-        blockId: suggestion.anchor.blockId,
-      })),
       result.status === "validation_error"
         ? "修改后的文档格式有问题，未写入。"
         : "文档不存在，本次修改未写入。",
     );
-    yield* finishSettledReviewState(state, "commitPatches:conflict");
     return;
   }
 
   if (shouldCommitDiffHunks) {
     const persistedAppliedIds = new Set(
       (result.steps ?? [])
-        .map((step) => step.suggestionId)
+        .flatMap((step) => [
+          ...(step.suggestionId ? [step.suggestionId] : []),
+          ...(step.suggestionIds ?? []),
+        ])
         .filter((id): id is string => typeof id === "string" && id.length > 0),
     );
     if (persistedAppliedIds.size > 0) {

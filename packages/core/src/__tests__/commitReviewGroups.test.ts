@@ -117,12 +117,50 @@ async function seedDiffState(state: SessionState, base: PmDoc, draft: PmDoc): Pr
   state.docState = { kind: "pendingReview" };
   state.suggestionBaseDoc = base;
   state.suggestionBaseVersion = state.docVersion;
+  state.docDraftBaseDoc = base;
+  state.docDraftBaseVersion = state.docVersion;
+  state.docDraftBaseSections = state.legacySections;
+  state.docDraftCandidateDoc = draft;
+  state.docDraftCandidateSections = pmToLegacySections(draft) as never;
 
   const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
   for (const hunk of hunks) {
     const suggestion = suggestionFromHunk(state, hunk);
     state.suggestions.set(suggestion.id, {
       messageId: "msg-review",
+      toolCallId: suggestion.id,
+      before: hunk.beforeText ?? "",
+      after: hunk.afterText ?? "",
+      blockIndex: hunk.blockPath[0] ?? 0,
+      suggestion,
+      diffHunk: hunk,
+    });
+    await upsertDocumentSuggestion(suggestion);
+  }
+  return hunks;
+}
+
+async function seedReviewRound(
+  state: SessionState,
+  base: PmDoc,
+  draft: PmDoc,
+): Promise<DiffHunk[]> {
+  state.doc = base;
+  state.legacySections = pmToLegacySections(base) as never;
+  state.docState = { kind: "pendingReview" };
+  state.suggestionBaseDoc = base;
+  state.suggestionBaseVersion = state.docVersion;
+  state.docDraftBaseDoc = base;
+  state.docDraftBaseVersion = state.docVersion;
+  state.docDraftBaseSections = state.legacySections;
+  state.docDraftCandidateDoc = draft;
+  state.docDraftCandidateSections = pmToLegacySections(draft) as never;
+
+  const hunks = buildDraftDiff(base, draft, { baseVersion: state.docVersion });
+  for (const hunk of hunks) {
+    const suggestion = suggestionFromHunk(state, hunk);
+    state.suggestions.set(suggestion.id, {
+      messageId: `msg-review-v${state.docVersion}`,
       toolCallId: suggestion.id,
       before: hunk.beforeText ?? "",
       after: hunk.afterText ?? "",
@@ -219,6 +257,74 @@ afterEach(() => {
 });
 
 describe("commitReviewGroups", () => {
+  it("连续三轮大候选全部应用均基于最新落库版本写入权威候选", async () => {
+    const state = createSession("three-large-apply-all-rounds");
+    const initial = doc(
+      Array.from({ length: 80 }, (_, index) =>
+        paragraph(`block-${index}`, `第 ${index + 1} 段初始正文，包含稳定的审阅基线。`),
+      ),
+    );
+    state.doc = initial;
+    state.legacySections = pmToLegacySections(initial) as never;
+    state.docVersion = 1;
+    await seedDocumentRow(state);
+
+    let base = initial;
+    for (let round = 1; round <= 3; round += 1) {
+      const draft = doc(
+        Array.from({ length: 80 }, (_, index) =>
+          paragraph(
+            `block-${index}`,
+            `第 ${index + 1} 段第 ${round} 轮完整改写，必须全部可靠落库。`,
+          ),
+        ),
+      );
+      const hunks = await seedReviewRound(state, base, draft);
+      expect(hunks.length).toBeGreaterThanOrEqual(70);
+
+      const frames = await collectFrames(commitReviewGroups(state, {
+        acceptReviewBatchIds: [
+          ...new Set(hunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId)),
+        ],
+      }));
+
+      expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(true);
+      expect(state.docVersion).toBe(round + 1);
+      expect(state.doc).toEqual(draft);
+      expect(state.suggestions.size).toBe(0);
+      expect((await documentRepo.load(state.docId))?.pmDoc).toEqual(draft);
+      base = draft;
+    }
+  });
+
+  it("全部应用遇到空候选坍缩时不落库且保留候选", async () => {
+    const state = createSession("apply-all-empty-collapse");
+    const base = doc([
+      paragraph("p-1", "第一段包含足够多的有效正文内容。"),
+      paragraph("p-2", "第二段包含足够多的有效正文内容。"),
+      paragraph("p-3", "第三段继续维持完整文章结构。"),
+    ]);
+    state.doc = base;
+    state.legacySections = pmToLegacySections(base) as never;
+    state.docVersion = 1;
+    await seedDocumentRow(state);
+    const hunks = await seedReviewRound(state, base, doc([]));
+
+    const frames = await collectFrames(commitReviewGroups(state, {
+      acceptReviewBatchIds: [
+        ...new Set(hunks.map((hunk) => hunk.reviewBatchId ?? hunk.hunkId)),
+      ],
+    }));
+
+    expect(frames.some((frame) => frame.kind === "docCommitted")).toBe(false);
+    expect(frames.some((frame) => frame.kind === "documentSnapshotWritten")).toBe(false);
+    expect(state.docVersion).toBe(1);
+    expect(state.doc).toEqual(base);
+    expect(state.suggestions.size).toBe(hunks.length);
+    expect(deriveContentState(state)).toEqual({ kind: "pendingReview" });
+    expect((await documentRepo.load(state.docId))?.pmDoc).toEqual(base);
+  });
+
   it("acceptPatch 对已解决 reviewBatchId 做成功 no-op 并记录 warn", async () => {
     const state = createSession("noop-verdict");
     const base = doc([paragraph("block-a", "正文")]);
@@ -238,7 +344,12 @@ describe("commitReviewGroups", () => {
     expect(frames).toEqual([
       {
         kind: "docStateChanged",
-        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
       },
     ]);
     expect(warn).toHaveBeenCalledWith(
@@ -272,7 +383,12 @@ describe("commitReviewGroups", () => {
     expect(frames).toEqual([
       {
         kind: "docStateChanged",
-        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
       },
     ]);
     expect(warn).toHaveBeenCalledWith(

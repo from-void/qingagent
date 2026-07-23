@@ -13,11 +13,15 @@ import {
   type UploadedAsset,
 } from "./useMaterialParseTracker";
 
-function uploaded(fileId: string, filename = `${fileId}.pdf`): UploadedAsset {
+function uploaded(
+  fileId: string,
+  filename = `${fileId}.pdf`,
+  mime = "application/pdf",
+): UploadedAsset {
   return {
     fileId,
     filename,
-    mime: "application/pdf",
+    mime,
     size: 12,
   };
 }
@@ -59,6 +63,43 @@ function reduce(
 }
 
 describe("useMaterialParseTracker state machine", () => {
+  it("图片上传插入后跳过 material parse tracker，不会在文件条误报失败", () => {
+    let state = reduce(initialMaterialParseTrackerState, {
+      type: "markParsing",
+      assets: [uploaded("image-1", "figure.png", "image/png")],
+      agentActive: false,
+      turnKey: 1,
+      resources: [],
+    });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: true });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: false });
+
+    expect(state.entries).toEqual([]);
+    expect(buildMaterialParseRows(state, [])).toEqual([]);
+  });
+
+  it("文档类文件仍进入 parse tracker，解析未完成时正确标记失败", () => {
+    let state = reduce(initialMaterialParseTrackerState, {
+      type: "markParsing",
+      assets: [uploaded("doc-1", "notes.md", "text/markdown")],
+      agentActive: false,
+      turnKey: 1,
+      resources: [],
+    });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: true });
+    state = reduce(state, { type: "agentActiveChanged", agentActive: false });
+
+    expect(buildMaterialParseRows(state, [])).toMatchObject([
+      {
+        fileId: "doc-1",
+        filename: "notes.md",
+        state: "error",
+        parseError: MATERIAL_PARSE_INCOMPLETE_REASON,
+        source: "local",
+      },
+    ]);
+  });
+
   it("markParsing 后 ready resource 到达会清掉本地 parsing", () => {
     const ready = resource({ id: "mat-1", displayName: "server.pdf", fileId: "file-1" });
     let state = reduce(initialMaterialParseTrackerState, {

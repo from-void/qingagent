@@ -175,6 +175,35 @@ describe("system prompt S3", () => {
     }
   });
 
+  it("来源归因与完成声明受无条件诚实性红线约束", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const sourceGuardIndex = prompt.indexOf("### 来源诚实性红线（无条件）");
+    const outcomeGuardIndex = prompt.indexOf("### 叙述—实际一致性红线（无条件）");
+    const conditionalCitationIndex = prompt.indexOf("### 检索来源引用纪律（用了 webSearch 必看）");
+
+    expect(sourceGuardIndex).toBeGreaterThan(-1);
+    expect(outcomeGuardIndex).toBeGreaterThan(sourceGuardIndex);
+    expect(conditionalCitationIndex).toBeGreaterThan(outcomeGuardIndex);
+    for (const keyword of [
+      "本轮实际调用 webSearch 或 fetchArticle",
+      "禁止输出任何具体 URL、域名或可点击链接",
+      "无法提供可核验的具体链接或逐字原文",
+      "禁止用纯文本机构名冒充引用",
+      "宁可不挂链接",
+      "不得挂猜测或编造的 href",
+      "一字不差",
+      "引自《X》",
+      "凭记忆，未逐字核验",
+      "叙述—实际一致性红线（无条件）",
+      "完成摘要只能陈述工具实际返回的结果",
+      "已替换 / 已应用 / 已创建 N 处批注 / 已落库",
+      "必须如实说明未生效",
+      "禁止输出模板化成功文案",
+    ]) {
+      expect(prompt).toContain(keyword);
+    }
+  });
+
   it("公众号路由范本整段逐字稳定，adapter 保留完整题目与选项顺序", () => {
     expect(WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL)
       .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);

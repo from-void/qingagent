@@ -13,11 +13,17 @@ import { VisionPanel } from "./VisionPanel";
 import { readVisionProvider, writeVisionProvider } from "./visionProviderStore";
 import { resetSettingsDialogA11yForTest, ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
+  getSelectedModelProvider,
+  getStoredModelProvider,
   getSelectedModelTier,
+  getVisitorModelKey,
   getVisitorDeepseekKey,
   readCustomProvider,
+  setSelectedModelProvider,
   setVisitorDeepseekKey,
+  setVisitorModelKey,
   visitorKeyHeaders,
+  writeCustomProvider,
 } from "./visitorKeyStore";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -166,6 +172,121 @@ describe("Settings Track B", () => {
     await click(getButtonByWf("ModelTierFlash"));
     expect(getSelectedModelTier()).toBe("flash");
     expect(visitorKeyHeaders()["x-model-tier"]).toBeUndefined();
+  });
+
+  it("provider 切换保留 DeepSeek/Kimi 各自 key，并透传 Kimi 双档 header", async () => {
+    await setVisitorDeepseekKey("deepseek-local-key");
+    await setVisitorModelKey("kimi", "kimi-local-key");
+    setSelectedModelProvider("deepseek");
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
+    await click(getButtonByWf("ProviderKimi"));
+    expect(getSelectedModelProvider()).toBe("kimi");
+    expect(getVisitorModelKey("deepseek")).toBe("deepseek-local-key");
+    expect(getVisitorModelKey("kimi")).toBe("kimi-local-key");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "kimi",
+      "x-model-key": "kimi-local-key",
+    });
+    expect(visitorKeyHeaders()["x-deepseek-key"]).toBeUndefined();
+    expect(host?.textContent).toContain("K2.7 / K3");
+
+    await click(getButtonByWf("ProviderDeepSeek"));
+    expect(getSelectedModelProvider()).toBe("deepseek");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "deepseek",
+      "x-model-key": "deepseek-local-key",
+      "x-deepseek-key": "deepseek-local-key",
+    });
+  });
+
+  it("未显式选择且无本地配置时保留 server 优先级；旧 DeepSeek key 仍锁定 DeepSeek", async () => {
+    expect(getStoredModelProvider()).toBeNull();
+    expect(getSelectedModelProvider()).toBe("deepseek");
+    expect(visitorKeyHeaders()["x-model-provider"]).toBeUndefined();
+
+    await setVisitorDeepseekKey("legacy-deepseek-key");
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "deepseek",
+      "x-model-key": "legacy-deepseek-key",
+      "x-deepseek-key": "legacy-deepseek-key",
+    });
+  });
+
+  it("DeepSeek/Kimi 各自记忆第三方 baseUrl、key 与模型别名", async () => {
+    await writeCustomProvider({
+      protocol: "anthropic",
+      baseUrl: "https://deepseek-proxy.example/v1",
+      apiKey: "deepseek-proxy-key",
+      modelFlash: "glm-flash",
+      modelPro: "glm-pro",
+    }, "deepseek");
+    await writeCustomProvider({
+      protocol: "anthropic",
+      baseUrl: "https://kimi-proxy.example/v1",
+      apiKey: "kimi-proxy-key",
+      modelFlash: "proxy-k2.7",
+      modelPro: "proxy-k3",
+    }, "kimi");
+
+    setSelectedModelProvider("kimi");
+    expect(readCustomProvider("kimi")).toMatchObject({
+      protocol: "openai",
+      baseUrl: "https://kimi-proxy.example/v1",
+      modelFlash: "proxy-k2.7",
+      modelPro: "proxy-k3",
+    });
+    expect(visitorKeyHeaders()).toMatchObject({
+      "x-model-provider": "kimi",
+      "x-model-base-url": "https://kimi-proxy.example/v1",
+      "x-model-flash": "proxy-k2.7",
+      "x-model-pro": "proxy-k3",
+    });
+
+    setSelectedModelProvider("deepseek");
+    expect(readCustomProvider("deepseek")).toMatchObject({
+      protocol: "anthropic",
+      baseUrl: "https://deepseek-proxy.example/v1",
+      modelFlash: "glm-flash",
+      modelPro: "glm-pro",
+    });
+  });
+
+  it("Kimi key 不做输入自动调用，只在用户显式点测试连接时发一条请求", async () => {
+    setSelectedModelProvider("kimi");
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+
+    setInput(getInputByWf("ModelKeyInput"), "kimi-explicit-test-key");
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
+    });
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("/api/v1/settings/model/balance")).length,
+    ).toBe(0);
+
+    await click(getButtonByText("测试连接"));
+    const testCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/api/v1/settings/model/balance"));
+    expect(testCalls).toHaveLength(1);
+    expect(testCalls[0]?.[1]).toMatchObject({
+      headers: {
+        "x-model-provider": "kimi",
+        "x-model-key": "kimi-explicit-test-key",
+      },
+    });
+    expect(host?.textContent).toContain("Kimi 短对话测试已连通");
   });
 
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {
@@ -684,7 +805,7 @@ async function render(element: ReactNode): Promise<void> {
 }
 
 function makeFetchMock() {
-  return vi.fn(async (input: RequestInfo | URL) => {
+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/v1/settings/model/test-custom")) return json({ ok: true });
     if (url.includes("/api/v1/settings/vision/test")) return json({ ok: true });
@@ -836,7 +957,9 @@ async function waitForA11yState(predicate: () => boolean, label: string): Promis
 }
 
 async function waitForCondition(predicate: () => boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  // 全量并发测试时 worker 可能长时间被其他包抢占；这里还覆盖 600ms 防抖链路，
+  // 放宽失败窗口以避免把调度抖动误判成产品回归。
+  const deadline = Date.now() + 5_000;
   while (Date.now() <= deadline) {
     await flush();
     if (predicate()) return;

@@ -4,6 +4,7 @@ import {
   aggregateUsageBySession,
   aggregateUsageTotal,
   estimateCostCny,
+  hasDeepseekPricing,
   listSessionThreads,
 } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
@@ -43,12 +44,16 @@ usageRoutes.get("/usage/summary", async (c) => {
     rows: rows.map((row) => ({
       ...row,
       ...(titleMap ? { label: titleMap.get(row.bucket) || undefined } : {}),
-      costCny: estimateCostCny(row.modelId, {
-        input: row.inputTokens,
-        output: row.outputTokens,
-        cacheHit: row.cacheHitTokens,
-        cacheMiss: row.cacheMissTokens,
-      }),
+      ...(hasDeepseekPricing(row.modelId)
+        ? {
+            costCny: estimateCostCny(row.modelId, {
+              input: row.inputTokens,
+              output: row.outputTokens,
+              cacheHit: row.cacheHitTokens,
+              cacheMiss: row.cacheMissTokens,
+            }),
+          }
+        : {}),
     })),
   });
 });

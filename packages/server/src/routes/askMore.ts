@@ -183,7 +183,8 @@ askMoreRoutes.post("/ask-more", async (c) => {
   }
   const targetToolCallId = toolCallId;
   const modelOverrides = await resolveRequestModelOverrides({
-    visitorKey: c.req.header("x-deepseek-key"),
+    provider: c.req.header("x-model-provider"),
+    visitorKey: c.req.header("x-model-key") ?? c.req.header("x-deepseek-key"),
     baseUrl: c.req.header("x-model-base-url"),
     modelFlash: c.req.header("x-model-flash"),
     modelPro: c.req.header("x-model-pro"),

@@ -9,6 +9,7 @@ import {
   writeVisionProvider,
   type VisionProvider,
 } from "./visionProviderStore";
+import { getSelectedModelProvider } from "./visitorKeyStore";
 
 // 设置·技能·图像识别:副基模(多模态)配置面板。
 // 顶部 DeepSeek 原生项先 disable 占位(暂不支持多模态,开通后复用主模型 key);
@@ -59,6 +60,8 @@ function visionPersistFailureMessage(): string {
 }
 
 export function VisionPanel() {
+  const modelProvider = getSelectedModelProvider();
+  const kimiNativeVision = modelProvider === "kimi";
   const toast = useToast();
   const confirm = useConfirm();
   const [saved, setSaved] = useState<VisionProvider | null>(() => readVisionProvider());
@@ -219,23 +222,35 @@ export function VisionPanel() {
   return (
     <div className="settings-vision" data-wf="VisionPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>
-        主模型 DeepSeek 暂不支持图片识别,需要单独接入一个视觉模型。配置保存在
-        {typeof window !== "undefined" && window.electron?.isDesktop ? "本机" : "本浏览器"}
-        ,使用识图时会随请求发送给该模型。
+        {kimiNativeVision
+          ? "当前 Kimi 主模型原生支持图片识别，默认复用当前档位、API 地址与 key。"
+          : "主模型 DeepSeek 暂不支持图片识别,需要单独接入一个视觉模型。"}
+        {" "}下方独立视觉配置保存在
+        {typeof window !== "undefined" && window.electron?.isDesktop ? "本机" : "本浏览器"}，
+        启用后会优先于主模型复用配置。
       </p>
 
-      {/* DeepSeek 原生多模态:暂不可用,占位 disable;待官方支持后复用主模型 key */}
-      <section className="ss-card sm-disabled">
+      <section className={`ss-card${kimiNativeVision ? "" : " sm-disabled"}`}>
         <div className="ss-head">
           <div className="ss-titleline">
-            <h3 className="sm-title">DeepSeek 原生图像识别</h3>
-            <span className="ss-badge ss-quota">暂未支持</span>
+            <h3 className="sm-title">
+              {kimiNativeVision ? "Kimi 原生图像识别" : "DeepSeek 原生图像识别"}
+            </h3>
+            <span className={`ss-badge ${kimiNativeVision ? "ss-ok" : "ss-quota"}`}>
+              {kimiNativeVision ? "自动启用" : "暂未支持"}
+            </span>
           </div>
-          <button type="button" className="sm-btn" disabled aria-disabled="true">
-            即将支持
-          </button>
+          {!kimiNativeVision && (
+            <button type="button" className="sm-btn" disabled aria-disabled="true">
+              即将支持
+            </button>
+          )}
         </div>
-        <p className="ss-meta">DeepSeek 暂不支持多模态;开通后将自动复用主模型 key,无需在此重复配置。</p>
+        <p className="ss-meta">
+          {kimiNativeVision
+            ? "识图请求直接走当前 K2.7 Code / K3 主模型，无需重复配置；下方显式配置仍可覆盖。"
+            : "DeepSeek 暂不支持多模态;开通后将自动复用主模型 key,无需在此重复配置。"}
+        </p>
       </section>
 
       {/* 接入第三方多模态模型 */}

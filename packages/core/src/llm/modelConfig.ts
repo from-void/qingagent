@@ -1,16 +1,18 @@
-// F1 统一模型配置层:所有 DeepSeek 调用(主 Agent + 工具内层 streamText)从这里取
+// F1 统一模型配置层:所有主模型调用(DeepSeek/Kimi，含主 Agent + 工具内层 streamText)从这里取
 // baseURL / model / apiKey / 采样参数,不再各自读 env。
 //
 // key 解析采用两层模型(产品决策):
 //   visitor   —— 访客在浏览器里填的 key,存前端 localStorage,随请求 header 透传,
 //                服务端不落盘;经 RequestContext("modelOverrides") 进入本层。
 //   global-db —— 站点管理员在设置页保存的全局兜底 key(app_settings 表)。
-//   env       —— DEEPSEEK_API_KEY 环境变量,最终兜底(空输入走默认,不改默认值)。
+//   env       —— 当前 provider 的 DEEPSEEK_API_KEY / KIMI_API_KEY,最终兜底。
 // 优先级:visitor > global-db > env。
 //
 // env 层不止 key:整套"默认模型 endpoint"都可由 env 兜底配置(给共享 .env / 多 worktree 用)——
 //   DEEPSEEK_API_KEY        —— key
 //   QINGAGENT_DEEPSEEK_BASE_URL —— baseURL(其他厂商/中转,如 GLM)
+//   KIMI_API_KEY / QINGAGENT_KIMI_BASE_URL —— Kimi key / 官方或中转 baseURL
+//   QINGAGENT_MODEL_PROVIDER —— deepseek | kimi
 //   QINGAGENT_MODEL_PROTOCOL —— anthropic | openai(GLM Coding 走 anthropic)
 //   QINGAGENT_MODEL_FLASH / QINGAGENT_MODEL_PRO —— 模型名(GLM 用 glm-* 而非 deepseek-*)
 // 这样把 GLM 配置只写进共享 .env,新建 worktree 即自动生效;访客在浏览器里的自定义 endpoint
@@ -24,11 +26,20 @@ import { Buffer } from "node:buffer";
 import { validateFetchUrl } from "@qingagent/doc-render/browser";
 export {
   DEEPSEEK_BASE_URL,
+  KIMI_BASE_URL,
   MODEL_OVERRIDES_CONTEXT_KEY,
   resolveBaseUrl,
+  resolveModelProvider,
   sanitizeBaseUrl,
+  type ModelProvider,
 } from "./modelBaseUrl.js";
-import { MODEL_OVERRIDES_CONTEXT_KEY, resolveBaseUrl, sanitizeBaseUrl } from "./modelBaseUrl.js";
+import {
+  MODEL_OVERRIDES_CONTEXT_KEY,
+  resolveBaseUrl,
+  resolveModelProvider,
+  sanitizeBaseUrl,
+  type ModelProvider,
+} from "./modelBaseUrl.js";
 import { createUsageMiddleware, recordUsageOutcome } from "./usageMiddleware.js";
 import { observeCacheOutcome } from "./cacheEfficiencySentinel.js";
 import { modelFetch } from "./modelTransport.js";
@@ -64,16 +75,21 @@ export const DEFAULT_BRANCH_STREAM_BUFFER_BYTES = 4 * 1024 * 1024;
 export function createSnapshottingQingagentModel(
   requestContext?: RequestContext,
 ): InnerLanguageModel {
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey } = resolveModelAuth(requestContext);
+  const modelProvider = resolveModelProvider(requestContext);
   // 不强加 includeUsage：实测主链原始 body 没有 stream_options，DeepSeek 仍会在尾帧返回 usage；
   // 这里改变 body 会破坏已经验证过的 provider wire 前缀一致性。
   const provider = createOpenAICompatible({
-    name: "deepseek",
+    name: modelProvider,
     baseURL: resolveBaseUrl(requestContext),
     apiKey,
     fetch: createBranchSnapshotFetch(requestContext, apiKey, validateWireMessages),
     // deepseek-v4-flash 拒绝 json_schema；schema 请求降为 json_object + 项目侧解析。
     supportsStructuredOutputs: false,
+    ...(modelProvider === "kimi"
+      ? { transformRequestBody: (body: Record<string, unknown>) =>
+          transformKimiRequestBody(body, requestContext) }
+      : {}),
   });
   return provider.chatModel(resolveModelId(requestContext, "flash"));
 }
@@ -435,7 +451,7 @@ async function recordBranchUsage(
   attempt: number,
   reason: string | null,
 ): Promise<void> {
-  const { origin } = resolveDeepseekAuth(input.requestContext);
+  const { origin } = resolveModelAuth(input.requestContext);
   const normalized = normalizeLlmUsageCounts(usage);
   const hitTokens = normalized?.promptCacheHitTokens;
   const missTokens = normalized?.promptCacheMissTokens;
@@ -464,7 +480,7 @@ async function recordBranchUsage(
  * 原始 body 回放器。保留主链 tools/tool_choice，规范化历史 tool 消息后 append 尾部。
  */
 export async function branchCall(input: BranchCallInput): Promise<BranchCallResult> {
-  const { apiKey } = resolveDeepseekAuth(input.requestContext);
+  const { apiKey } = resolveModelAuth(input.requestContext);
   const contextGeneration = input.requestContext?.get(BRANCH_SNAPSHOT_GENERATION_CONTEXT_KEY);
   const contextEpoch = input.requestContext?.get(BRANCH_SNAPSHOT_EPOCH_CONTEXT_KEY);
   const contextLeaseId = input.requestContext?.get(BRANCH_SNAPSHOT_LEASE_CONTEXT_KEY);
@@ -519,6 +535,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
         return { ok: false, reason: "preflight_failed", attempts: retry, toolCallRetries: retry, error: violation };
       }
     }
+    const isKimi = resolveModelProvider(input.requestContext) === "kimi";
     const body = {
       ...baseBody,
       messages: replayMessages,
@@ -528,15 +545,21 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       // 其后全部 messages 前缀错位 miss;工具抑制靠尾部指令(实测10/10),偶发 tool_call
       // 由 toolCalled 分支降级兜底。
       ...(typeof input.maxTokens === "number" ? { max_tokens: input.maxTokens } : {}),
-      ...(input.thinking === undefined
+      ...(isKimi || input.thinking === undefined
         ? {}
         : { thinking: { type: input.thinking ? "enabled" : "disabled" } }),
-      ...(!input.thinking && typeof input.temperature === "number"
+      ...((isKimi || !input.thinking) && typeof input.temperature === "number"
         ? { temperature: input.temperature }
         : {}),
       ...(typeof input.topP === "number" ? { top_p: input.topP } : {}),
     };
-    if (input.thinking) delete body.temperature;
+    if (!isKimi && input.thinking) delete body.temperature;
+    if (isKimi) {
+      Object.assign(body, transformKimiRequestBody(body, input.requestContext));
+      delete body.thinking;
+      delete (body as Record<string, unknown>).enable_thinking;
+      delete (body as Record<string, unknown>).thinking_budget;
+    }
     // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。
     const t0 = Date.now();
     let tFirstDelta = 0;
@@ -714,6 +737,12 @@ export const DEEPSEEK_MODEL_IDS: Record<DeepseekTier, string> = {
   pro: "deepseek-v4-pro",
 };
 
+/** Kimi 只开放两档:Flash → K2.7 Code,Pro → K3。 */
+export const KIMI_MODEL_IDS: Record<DeepseekTier, string> = {
+  flash: "kimi-for-coding",
+  pro: "k3",
+};
+
 /** 上下文窗口(tokens)。DeepSeek flash/pro 当前按 1M 估算口径展示,UI 标注"约"。 */
 export const DEEPSEEK_CONTEXT_WINDOWS: Record<string, number> = {
   [DEEPSEEK_MODEL_IDS.flash]: 1_000_000,
@@ -733,15 +762,17 @@ export interface UsageTrackedModelOptions {
 
 /** 随 RequestContext 传入的本请求模型覆盖(由 server 在入口解析好)。 */
 export interface ModelOverrides {
+  /** 模型厂商;老请求缺省视为 DeepSeek。 */
+  provider?: ModelProvider;
   /** 访客自带 key(visitor 层);为空表示本请求没有访客覆盖。 */
   visitorApiKey?: string;
   /** 设置页保存的全局兜底 key(global-db 层);server 入口从 app_settings 读出注入。 */
   globalApiKey?: string;
   /** 采样参数覆盖;字段缺省 = 不覆盖(走调用点各自默认)。 */
   params?: ModelParamOverrides;
-  /** 自定义 baseURL(其他厂商/中转);缺省走 DEEPSEEK_BASE_URL。 */
+  /** 当前 provider 的自定义 baseURL(第三方中转);缺省走该厂商官方地址。 */
   baseUrl?: string;
-  /** 自定义模型别名(flash/pro);缺省走 DEEPSEEK_MODEL_IDS。 */
+  /** 当前 provider 的自定义模型别名(flash/pro);缺省走该厂商官方模型。 */
   modelIds?: { flash?: string; pro?: string };
   /** 当前模型档位;缺省 flash。只影响默认 flash 出口,显式请求 pro 仍走 pro。 */
   tier?: DeepseekTier;
@@ -762,10 +793,13 @@ export interface ModelParamOverrides {
   maxOutputTokens?: number;
 }
 
-export interface ResolvedDeepseekAuth {
+export interface ResolvedModelAuth {
   apiKey: string;
   origin: ApiKeyOrigin;
 }
+
+/** 兼容仓内旧命名；语义已提升为“当前 provider 的认证”。 */
+export type ResolvedDeepseekAuth = ResolvedModelAuth;
 
 function readOverrides(requestContext?: RequestContext): ModelOverrides | undefined {
   const value = requestContext?.get(MODEL_OVERRIDES_CONTEXT_KEY);
@@ -773,8 +807,8 @@ function readOverrides(requestContext?: RequestContext): ModelOverrides | undefi
   return undefined;
 }
 
-/** 按 visitor > global-db > env 解析本请求实际使用的 key。 */
-export function resolveDeepseekAuth(requestContext?: RequestContext): ResolvedDeepseekAuth {
+/** 按 visitor > 当前 provider 的 global-db > 当前 provider 的 env 解析实际 key。 */
+export function resolveModelAuth(requestContext?: RequestContext): ResolvedModelAuth {
   const overrides = readOverrides(requestContext);
   if (overrides?.visitorApiKey) {
     return { apiKey: overrides.visitorApiKey, origin: "visitor" };
@@ -782,9 +816,14 @@ export function resolveDeepseekAuth(requestContext?: RequestContext): ResolvedDe
   if (overrides?.globalApiKey) {
     return { apiKey: overrides.globalApiKey, origin: "global-db" };
   }
-  const envKey = process.env.DEEPSEEK_API_KEY ?? "";
+  const envKey = resolveModelProvider(requestContext) === "kimi"
+    ? process.env.KIMI_API_KEY ?? ""
+    : process.env.DEEPSEEK_API_KEY ?? "";
   return { apiKey: envKey, origin: envKey ? "env" : "none" };
 }
+
+/** @deprecated 新代码用 resolveModelAuth；保留旧出口避免破坏仓外消费者。 */
+export const resolveDeepseekAuth = resolveModelAuth;
 
 /** 本请求的采样参数覆盖;无覆盖时返回空对象,调用点用展开语法合并即可。 */
 export function resolveModelParams(requestContext?: RequestContext): ModelParamOverrides {
@@ -833,31 +872,63 @@ export function resolveModelId(requestContext?: RequestContext, tier: DeepseekTi
   const effectiveTier = tier === "flash" ? resolveModelTier(requestContext, tier) : tier;
   const visitor = sanitizeModelId(overrides?.modelIds?.[effectiveTier]);
   if (visitor) return visitor;
-  if (!overrides?.baseUrl) {
+  const provider = resolveModelProvider(requestContext);
+  if (provider === "deepseek" && !overrides?.baseUrl) {
     const envId = sanitizeModelId(
       effectiveTier === "flash" ? process.env.QINGAGENT_MODEL_FLASH : process.env.QINGAGENT_MODEL_PRO,
     );
     if (envId) return envId;
   }
-  return DEEPSEEK_MODEL_IDS[effectiveTier];
+  return provider === "kimi"
+    ? KIMI_MODEL_IDS[effectiveTier]
+    : DEEPSEEK_MODEL_IDS[effectiveTier];
 }
 
-/** Mastra ModelRouter 用模型 id(DeepSeek provider 前缀 + 当前档位模型名)。 */
+/** Mastra OpenAI-compatible config 用模型 id(当前 provider 前缀 + 当前档位模型名)。 */
+export function resolveRouterModelId(
+  requestContext?: RequestContext,
+  tier: DeepseekTier = "flash",
+): `${string}/${string}` {
+  return `${resolveModelProvider(requestContext)}/${resolveModelId(requestContext, tier)}`;
+}
+
+/** @deprecated 新代码用 resolveRouterModelId；保留旧出口避免破坏仓外消费者。 */
 export function resolveDeepseekRouterModelId(
   requestContext?: RequestContext,
   tier: DeepseekTier = "flash",
 ): `${string}/${string}` {
-  return `deepseek/${resolveModelId(requestContext, tier)}` as `${string}/${string}`;
+  return resolveRouterModelId(requestContext, tier);
 }
 
 /** 本请求 API 协议:访客覆盖 > env 默认(QINGAGENT_MODEL_PROTOCOL) > openai。
  *  访客自带 endpoint(baseUrl) 时协议由访客决定(默认 openai),env 不介入,避免把 env 的
  *  anthropic 误套到访客的 openai endpoint 上。 */
 export function resolveProtocol(requestContext?: RequestContext): ModelProtocol {
+  if (resolveModelProvider(requestContext) === "kimi") return "openai";
   const overrides = readOverrides(requestContext);
   if (overrides?.protocol === "anthropic") return "anthropic";
   if (overrides?.baseUrl) return "openai";
   return envModelProtocol() ?? "openai";
+}
+
+/**
+ * Kimi K2.7/K3 都保持思考开启:不下发任何开关思考字段；K3 的 effort 固定 high。
+ * 这里接在 AI SDK serializer 之后，确保主链、工具内层和识图共享同一 wire 规则。
+ */
+export function transformKimiRequestBody(
+  body: Record<string, unknown>,
+  requestContext?: RequestContext,
+): Record<string, unknown> {
+  const transformed = { ...body };
+  delete transformed.thinking;
+  delete transformed.enable_thinking;
+  delete transformed.thinking_budget;
+  if (body.model === resolveModelId(requestContext, "pro")) {
+    transformed.reasoning_effort = "high";
+  } else {
+    delete transformed.reasoning_effort;
+  }
+  return transformed;
 }
 
 export interface ResolvedVisionConfig {
@@ -865,23 +936,41 @@ export interface ResolvedVisionConfig {
   baseUrl: string;
   model: string;
   protocol: ModelProtocol;
+  keyOrigin: ApiKeyOrigin;
+  /** true 表示 Kimi 原生多模态直接复用当前主模型。 */
+  reuseMainModel: boolean;
 }
 
 export async function resolveVisionConfig(
   requestContext?: RequestContext,
 ): Promise<ResolvedVisionConfig | null> {
   const vision = readOverrides(requestContext)?.vision;
-  const apiKey = vision?.apiKey?.trim();
+  if (vision) {
+    const apiKey = vision.apiKey?.trim();
+    const baseUrl = sanitizeBaseUrl(vision.baseUrl);
+    const model = sanitizeModelId(vision.model);
+    if (!apiKey || !baseUrl || !model) return null;
+    const checkedUrl = await validateFetchUrl(baseUrl);
+    return {
+      apiKey,
+      baseUrl: checkedUrl.toString().replace(/\/+$/, ""),
+      model,
+      protocol: vision.protocol === "anthropic" ? "anthropic" : "openai",
+      keyOrigin: "vision",
+      reuseMainModel: false,
+    };
+  }
+  if (resolveModelProvider(requestContext) !== "kimi") return null;
+  const { apiKey, origin } = resolveModelAuth(requestContext);
   if (!apiKey) return null;
-  const baseUrl = sanitizeBaseUrl(vision?.baseUrl);
-  const model = sanitizeModelId(vision?.model);
-  if (!baseUrl || !model) return null;
-  const checkedUrl = await validateFetchUrl(baseUrl);
   return {
     apiKey,
-    baseUrl: checkedUrl.toString().replace(/\/+$/, ""),
-    model,
-    protocol: vision?.protocol === "anthropic" ? "anthropic" : "openai",
+    // 主模型自定义地址已由 server 的 validateModelFetchUrl 验过；env/官方地址属于部署者配置。
+    baseUrl: resolveBaseUrl(requestContext).replace(/\/+$/, ""),
+    model: resolveModelId(requestContext, "flash"),
+    protocol: "openai",
+    keyOrigin: origin,
+    reuseMainModel: true,
   };
 }
 
@@ -897,9 +986,10 @@ export function createDeepseekProvider(
   requestContext?: RequestContext,
   options: UsageTrackedModelOptions = {},
 ): (modelId: string) => InnerLanguageModel {
-  const { apiKey } = resolveDeepseekAuth(requestContext);
+  const { apiKey, origin } = resolveModelAuth(requestContext);
   const baseUrl = resolveBaseUrl(requestContext);
-  const requestFetch = options.thinking === undefined
+  const modelProvider = resolveModelProvider(requestContext);
+  const requestFetch = modelProvider === "kimi" || options.thinking === undefined
     ? undefined
     : async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         if (typeof init?.body !== "string") return modelFetch(url, init);
@@ -918,7 +1008,7 @@ export function createDeepseekProvider(
       requestContext,
       callSite: options.callSite ?? "unknown",
       modelId,
-      keyOrigin: resolveDeepseekAuth(requestContext).origin,
+      keyOrigin: origin,
       lane: options.lane,
       attempt: options.attempt,
     }),
@@ -928,13 +1018,17 @@ export function createDeepseekProvider(
     return (modelId) => wrapModel(provider(modelId), modelId);
   }
   const provider = createOpenAICompatible({
-    name: "deepseek",
+    name: modelProvider,
     baseURL: baseUrl,
     apiKey,
     includeUsage: true,
     // deepseek-v4-flash 拒绝 json_schema；schema 请求降为 json_object + 项目侧解析。
     supportsStructuredOutputs: false,
     fetch: requestFetch ?? modelFetch,
+    ...(modelProvider === "kimi"
+      ? { transformRequestBody: (body: Record<string, unknown>) =>
+          transformKimiRequestBody(body, requestContext) }
+      : {}),
   });
   return (modelId) => wrapModel(provider.chatModel(modelId), modelId);
 }
@@ -960,7 +1054,7 @@ export async function getVisionModel(
       requestContext,
       callSite: options.callSite ?? "unknown",
       modelId: config.model,
-      keyOrigin: "vision",
+      keyOrigin: config.keyOrigin,
       lane: options.lane,
       attempt: options.attempt,
     }),
@@ -973,10 +1067,14 @@ export async function getVisionModel(
     })(config.model));
   }
   return wrapModel(createOpenAICompatible({
-    name: "vision",
+    name: config.reuseMainModel ? "kimi" : "vision",
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
     includeUsage: true,
     fetch: modelFetch,
+    ...(config.reuseMainModel
+      ? { transformRequestBody: (body: Record<string, unknown>) =>
+          transformKimiRequestBody(body, requestContext) }
+      : {}),
   }).chatModel(config.model));
 }

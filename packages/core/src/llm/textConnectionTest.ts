@@ -3,10 +3,12 @@ import { streamText } from "./streamTextCompat.js";
 import {
   getDeepseekModel,
   MODEL_OVERRIDES_CONTEXT_KEY,
+  type ModelProvider,
   type ModelProtocol,
 } from "./modelConfig.js";
 
 export interface TextConnectionTestInput {
+  provider?: ModelProvider;
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -18,6 +20,7 @@ export interface TextConnectionTestInput {
 export async function testTextModelConnection(input: TextConnectionTestInput): Promise<void> {
   const requestContext = new RequestContext([
     [MODEL_OVERRIDES_CONTEXT_KEY, {
+      provider: input.provider ?? "deepseek",
       visitorApiKey: input.apiKey,
       baseUrl: input.baseUrl,
       protocol: input.protocol,
@@ -30,6 +33,7 @@ export async function testTextModelConnection(input: TextConnectionTestInput): P
   const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 12_000);
   try {
     const result = streamText({
+      // 保留既有 callSite，避免 DeepSeek usage 维度和覆盖矩阵发生兼容性变化。
       model: getDeepseekModel(requestContext, "flash", { callSite: "anthropicConnectionTest" }),
       prompt: "hi",
       maxOutputTokens: 4,

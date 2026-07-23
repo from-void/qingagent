@@ -77,6 +77,14 @@ export function getDeepseekPricingTable(env: NodeJS.ProcessEnv = process.env): D
   }
 }
 
+/** 未收录的模型（例如 Kimi）只展示 token，不展示为 ¥0 的伪价格。 */
+export function hasDeepseekPricing(
+  modelId: string,
+  pricingTable: DeepseekPricingTable = getDeepseekPricingTable(),
+): boolean {
+  return Object.prototype.hasOwnProperty.call(pricingTable, modelId);
+}
+
 function count(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }

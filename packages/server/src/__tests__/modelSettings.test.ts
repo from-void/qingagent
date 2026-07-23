@@ -4,7 +4,12 @@ const mockCore = vi.hoisted(() => {
   const store = new Map<string, string>();
   return {
     store,
+    DEEPSEEK_MODEL_IDS: { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" },
+    KIMI_BASE_URL: "https://api.kimi.com/coding/v1",
+    KIMI_MODEL_IDS: { flash: "kimi-for-coding", pro: "k3" },
     SETTING_DEEPSEEK_GLOBAL_KEY: "deepseek_global_api_key",
+    SETTING_KIMI_GLOBAL_KEY: "kimi_global_api_key",
+    SETTING_MODEL_PROVIDER: "model_provider",
     SETTING_MODEL_PARAMS: "model_param_overrides",
     MODEL_OVERRIDES_CONTEXT_KEY: "modelOverrides",
     VISION_TEST_TIMEOUT_MS: 12_000,
@@ -53,6 +58,8 @@ const mockCore = vi.hoisted(() => {
 vi.mock("@qingagent/core", () => mockCore);
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
+const originalKimiApiKey = process.env.KIMI_API_KEY;
+const originalProvider = process.env.QINGAGENT_MODEL_PROVIDER;
 
 async function loadApp() {
   const { Hono } = await import("hono");
@@ -67,6 +74,8 @@ describe("modelSettingsRoutes", () => {
     mockCore.store.clear();
     vi.clearAllMocks();
     delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.KIMI_API_KEY;
+    delete process.env.QINGAGENT_MODEL_PROVIDER;
   });
 
   afterEach(() => {
@@ -76,6 +85,10 @@ describe("modelSettingsRoutes", () => {
     } else {
       process.env.DEEPSEEK_API_KEY = originalDeepseekApiKey;
     }
+    if (originalKimiApiKey === undefined) delete process.env.KIMI_API_KEY;
+    else process.env.KIMI_API_KEY = originalKimiApiKey;
+    if (originalProvider === undefined) delete process.env.QINGAGENT_MODEL_PROVIDER;
+    else process.env.QINGAGENT_MODEL_PROVIDER = originalProvider;
   });
 
   it("PUT/GET 都不回传明文 DeepSeek key", async () => {
@@ -93,7 +106,8 @@ describe("modelSettingsRoutes", () => {
 
     expect(put.status).toBe(200);
     const putJson = await put.json();
-    expect(putJson).toEqual({
+    expect(putJson).toMatchObject({
+      provider: "deepseek",
       apiKeyConfigured: true,
       maskedTail: "3456",
       source: "db",
@@ -107,6 +121,60 @@ describe("modelSettingsRoutes", () => {
     expect(getJson.maskedTail).toBe("3456");
     expect(getJson.source).toBe("db");
     expect(JSON.stringify(getJson)).not.toContain(apiKey);
+  });
+
+  it("老数据无 provider 视为 DeepSeek；切换 Kimi 后两家 key 分开保留", async () => {
+    const app = await loadApp();
+    mockCore.store.set(mockCore.SETTING_DEEPSEEK_GLOBAL_KEY, "deepseek-secret-1111");
+
+    const legacy = await app.request("/api/v1/settings/model");
+    await expect(legacy.json()).resolves.toMatchObject({
+      provider: "deepseek",
+      maskedTail: "1111",
+      providers: {
+        deepseek: { apiKeyConfigured: true, maskedTail: "1111", source: "db" },
+        kimi: { apiKeyConfigured: false, maskedTail: null, source: "none" },
+      },
+    });
+
+    const kimiPut = await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "kimi", apiKey: "kimi-secret-2222" }),
+    });
+    expect(kimiPut.status).toBe(200);
+    await expect(kimiPut.json()).resolves.toMatchObject({
+      provider: "kimi",
+      maskedTail: "2222",
+      providers: {
+        deepseek: { maskedTail: "1111" },
+        kimi: { maskedTail: "2222" },
+      },
+    });
+    expect(mockCore.store.get(mockCore.SETTING_DEEPSEEK_GLOBAL_KEY)).toBe("deepseek-secret-1111");
+    expect(mockCore.store.get(mockCore.SETTING_KIMI_GLOBAL_KEY)).toBe("kimi-secret-2222");
+
+    const switchBack = await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "deepseek" }),
+    });
+    await expect(switchBack.json()).resolves.toMatchObject({
+      provider: "deepseek",
+      maskedTail: "1111",
+      providers: { kimi: { maskedTail: "2222" } },
+    });
+  });
+
+  it("非法 provider 返回 400，不改写现有设置", async () => {
+    const app = await loadApp();
+    const res = await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "other", apiKey: "must-not-save" }),
+    });
+    expect(res.status).toBe(400);
+    expect(mockCore.setAppSetting).not.toHaveBeenCalled();
   });
 
   it("params 未知字段返回 400 并点名字段(R5-B 回归)", async () => {
@@ -286,6 +354,59 @@ describe("modelSettingsRoutes", () => {
       protocol: "anthropic",
       timeoutMs: 12_000,
     });
+  });
+
+  it("Kimi test-custom 的 401/403 按套餐权限提示，不误报 keyInvalid", async () => {
+    const app = await loadApp();
+    const permissionError = Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+    mockCore.testTextModelConnection.mockRejectedValueOnce(permissionError);
+    const res = await app.request("/api/v1/settings/model/test-custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "kimi",
+        baseUrl: "https://api.kimi.com/coding/v1",
+        apiKey: "kimi-test-key",
+      }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      permissionDenied: true,
+    });
+    expect(mockCore.testTextModelConnection).toHaveBeenCalledWith({
+      provider: "kimi",
+      apiKey: "kimi-test-key",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      model: "kimi-for-coding",
+      protocol: "openai",
+      timeoutMs: 12_000,
+    });
+  });
+
+  it("Kimi 测连接复用当前 provider 配置走最短对话，不探测未验证的 /models", async () => {
+    const app = await loadApp();
+    await app.request("/api/v1/settings/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "kimi", apiKey: "kimi-db-key" }),
+    });
+    const res = await app.request("/api/v1/settings/model/balance");
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      provider: "kimi",
+      balanceUnsupported: true,
+    });
+    expect(mockCore.testTextModelConnection).toHaveBeenCalledWith({
+      provider: "kimi",
+      apiKey: "kimi-db-key",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      model: "kimi-for-coding",
+      protocol: "openai",
+      timeoutMs: 10_000,
+    });
+    expect(mockCore.modelFetch).not.toHaveBeenCalled();
   });
 
   it.each([

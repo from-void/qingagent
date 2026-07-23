@@ -8,7 +8,12 @@ import {
   getManagedSearchProvider,
   getPrimarySearchConfig,
 } from "../search/managedSearch.js";
-import { DEEPSEEK_MODEL_IDS, resolveDeepseekAuth, resolveModelId } from "../llm/modelConfig.js";
+import {
+  DEEPSEEK_MODEL_IDS,
+  resolveDeepseekAuth,
+  resolveModelId,
+  resolveModelProvider,
+} from "../llm/modelConfig.js";
 import {
   fetchDeepseekSearchLinks,
   type DeepseekSearchUsageContext,
@@ -481,9 +486,15 @@ export const webSearchTool = createTool({
       }
 
       // 本请求 agent 用的 DeepSeek key(桌面端=visitor 层 header,只能从 requestContext 取)。
-      const requestAuth = resolveDeepseekAuth(context?.requestContext);
+      const activeProvider = resolveModelProvider(context?.requestContext);
+      // Kimi 主 key 不能发往 DeepSeek 专属 web_search 端点；Kimi 下仅用搜索专配 key或多源兜底。
+      const requestAuth = activeProvider === "deepseek"
+        ? resolveDeepseekAuth(context?.requestContext)
+        : { apiKey: "", origin: "none" as const };
       const requestDeepseekKey = requestAuth.apiKey;
-      const deepseekModel = resolveModelId(context?.requestContext, "flash");
+      const deepseekModel = activeProvider === "deepseek"
+        ? resolveModelId(context?.requestContext, "flash")
+        : DEEPSEEK_MODEL_IDS.flash;
       const results = (await searchLinks(
         query,
         keywords,

@@ -27,7 +27,8 @@ describe("round1 editor source contract", () => {
 
   it("keeps block handle collapse toggle wired through the PM collapse plugin", () => {
     const text = source("apps/web/src/pages/workspace/components/doc/BlockHandle.tsx");
-    expect(text).toContain("getBlockCollapseInfo(editor.state, handle.blockPos)");
+    expect(text).toContain("getBlockCollapseInfo(editor.state, liveHandle.blockPos)");
+    expect(text).toContain("getCurrentHandleNode(editor.state.doc, handle)");
     expect(text).toContain('className={`fold-toggle${foldInfo.collapsed ? " is-collapsed" : ""}`}');
     expect(text).toContain("toggleBlockCollapse(editor, foldInfo.blockId)");
   });

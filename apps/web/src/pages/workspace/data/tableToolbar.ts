@@ -22,6 +22,15 @@ export const tableAxisSelectionKey = new PluginKey<TableAxisSelectionState | nul
 /** 1×1 整表的 CellSelection 无几何方向，用事务 meta 在 editor state 内保留来源轴。 */
 export const TableAxisSelectionExtension = Extension.create({
   name: "qingagentTableAxisSelection",
+  priority: 1_000,
+
+  addKeyboardShortcuts() {
+    return {
+      // contenteditable 的默认 Mod-a 会把格内光标提升成整篇 AllSelection；紧接着输入会把
+      // 表格、图片等全部替换掉。格内文本态始终把全选约束在当前 cell，多次 Mod-a 也不逃逸。
+      "Mod-a": () => selectCurrentTableCellText(this.editor),
+    };
+  },
 
   addProseMirrorPlugins() {
     return [
@@ -48,6 +57,40 @@ export const TableAxisSelectionExtension = Extension.create({
     ];
   },
 });
+
+export function selectCurrentTableCellText(editor: Editor): boolean {
+  const { doc, selection } = editor.state;
+  if (!(selection instanceof TextSelection)) return false;
+
+  const fromCell = findTableCellAncestor(selection.$from);
+  const toCell = findTableCellAncestor(selection.$to);
+  if (
+    !fromCell ||
+    !toCell ||
+    fromCell.pos !== toCell.pos ||
+    fromCell.node !== toCell.node
+  ) {
+    return false;
+  }
+
+  // cellPos + 1 是 cell content 起点（paragraph 边界），再进一层才是合法文本位置；
+  // 尾端对称地避开 cell 与末块边界。TextSelection.between 可兼容 cell 内多段落。
+  const from = fromCell.pos + 2;
+  const to = fromCell.pos + fromCell.node.nodeSize - 2;
+  if (from > to || to > doc.content.size) return false;
+  try {
+    const cellSelection = TextSelection.between(
+      doc.resolve(from),
+      doc.resolve(to),
+    );
+    editor.view.dispatch(
+      editor.state.tr.setSelection(cellSelection).scrollIntoView(),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type TableToolbarFormatCommand =
   | "bold"

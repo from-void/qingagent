@@ -9,7 +9,11 @@ import type {
   HistorySnapshot,
   ReviewContext,
 } from "@qingagent/contract-ts";
-import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
+import {
+  getPmContentHash,
+  isAbnormalDocumentCollapse,
+  type PmDoc,
+} from "@qingagent/pm-schema";
 import type { Editor } from "@tiptap/react";
 import {
   useCallback,
@@ -1423,13 +1427,47 @@ export function useWorkspacePageController() {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
         sessionIdRef.current = frame.data.sessionId;
       }
+      // 本地发起的审阅请求若返回 no-op，说明服务端目标已被其它请求结算；
+      // 不能让这个“成功响应”清掉本地仍可见的候选，交由请求完成回调明确提示。
+      if (
+        frame.kind === "docStateChanged" &&
+        frame.data.reviewCompletion === "noop" &&
+        reviewCloseInFlightRef.current !== null &&
+        selectPatches(stateRef.current).length > 0
+      ) {
+        return;
+      }
+      // 服务端与编辑器两侧共用同一个完整性门。即使旧服务端或异常恢复回放了空正文，
+      // 客户端也保留上一有效文档，禁止编辑器坍缩为空。
+      if (
+        frame.kind === "documentSnapshotWritten" &&
+        stateRef.current.doc?.pmDoc &&
+        isAbnormalDocumentCollapse(
+          stateRef.current.doc.pmDoc,
+          frame.data.doc.doc,
+        )
+      ) {
+        console.error("[workspace] blocked collapsed document snapshot", {
+          sessionId: stateRef.current.sessionId,
+          previousVersion: stateRef.current.doc.version,
+          incomingVersion: frame.data.doc.version,
+        });
+        showToast("检测到文档异常坍缩，已保留上一版正文");
+        return;
+      }
       // 只在确实会写版本的低频帧上比较整篇正文，避免聊天 delta 高频流反复序列化 PM 树。
       if (broadcastContentFrameWritesDocumentVersion(frame)) {
+        const locallyOwnedReviewSnapshot =
+          frame.kind === "documentSnapshotWritten" &&
+          reviewCloseInFlightRef.current !== null;
         const hasLocalDocumentChanges =
-          docViewRef.current?.hasLocalDocumentChanges() === true ||
-          pendingDocWriteRef.current ||
-          queuedPmDocRef.current !== null ||
-          scheduledDocWriteRef.current;
+          !locallyOwnedReviewSnapshot &&
+          (
+            docViewRef.current?.hasLocalDocumentChanges() === true ||
+            pendingDocWriteRef.current ||
+            queuedPmDocRef.current !== null ||
+            scheduledDocWriteRef.current
+          );
         if (!shouldHandleBroadcastDocumentFrame({
           frame,
           hasLocalDocumentChanges,

@@ -223,7 +223,12 @@ describe("updatePatchVerdict", () => {
     expect(frames).toEqual([
       {
         kind: "docStateChanged",
-        data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
+        data: {
+          state: { kind: "empty" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
       },
     ]);
     expect(warn).toHaveBeenCalledWith(
@@ -538,7 +543,12 @@ describe("commitPatches", () => {
     expect(frames).toEqual([
       {
         kind: "docStateChanged",
-        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+          reviewCompletion: "noop",
+        },
       },
     ]);
     expect(warn).toHaveBeenCalledWith(

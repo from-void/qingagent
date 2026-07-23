@@ -67,7 +67,16 @@ export type BridgeFrame =
       | { ok: true; clientMutationId: string; docVersion: number }
       | { ok: false; clientMutationId: string; reason: "agent_busy" | "not_editable" | "not_found" | "validation_error" }
       | { ok: false; clientMutationId: string; conflict: { expectedDocumentSnapshot: number; actualDocumentSnapshot: number } } }
-  | { kind: "docStateChanged"; data: { state: WireDocState; activeOverlay: WireActiveOverlay; agentBusy: boolean } }
+  | {
+      kind: "docStateChanged";
+      data: {
+        state: WireDocState;
+        activeOverlay: WireActiveOverlay;
+        agentBusy: boolean;
+        /** 审阅目标已由其它请求结算；调用方不得把它当成本次写入成功。 */
+        reviewCompletion?: "noop";
+      };
+    }
   | { kind: "todosChanged"; data: { todos: TodoItem[] } }
   | { kind: "resourceUpserted"; data: { resource: Resource } }
   | { kind: "resourceUpdated"; data: { resourceRef: ResourceRef; summary: string | null; metadata: unknown | null } }

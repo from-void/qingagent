@@ -2152,9 +2152,15 @@ describe("WorkspacePage review controls", () => {
     expect(stream.commitReviewGroups).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      // 响应里只有仍处 pendingReview 的帧,没有 documentSnapshotWritten / docCommitted /
-      // 离开 pendingReview 的 docStateChanged → 必须触发兜底解锁
-      pendingCommit.resolve([docStateFrame("pendingReview")]);
+      // 服务端已用 docCommitted 明确确认落库，但响应缺少离开 pendingReview 的
+      // docStateChanged → 成功提交仍必须触发兜底解锁。
+      pendingCommit.resolve([
+        {
+          kind: "docCommitted",
+          data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+        },
+        docStateFrame("pendingReview"),
+      ]);
       await pendingCommit.promise;
     });
     await flushMicrotasks();
@@ -3000,6 +3006,10 @@ describe("WorkspacePage review controls", () => {
         data: { doc: wireSnapshotFromPmDoc(editedDoc, 2) },
       },
       {
+        kind: "docCommitted",
+        data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+      },
+      {
         kind: "docStateChanged",
         data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
       },
@@ -3037,11 +3047,63 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("已成功落库的新版正文");
   });
 
+  it("全部应用写入失败时明确提示并保留候选", async () => {
+    const stream = await renderWorkspaceWithReview([
+      textReviewToolCall("p-keep-1", "batch-keep-1", 0),
+      textReviewToolCall("p-keep-2", "batch-keep-2", 1),
+    ]);
+    stream.commitReviewGroups.mockRejectedValueOnce(new Error("db timeout"));
+
+    await clickButton("全部应用");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
+      acceptReviewBatchIds: ["batch-keep-1", "batch-keep-2"],
+    });
+    expect(document.body.dataset.content).toBe("pendingReview");
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+    expect(host?.textContent).toContain("剩余 · 2 处");
+    expect(document.body.textContent).toContain("提交失败 · 候选已保留，请重试");
+  });
+
+  it("异常空快照不会让已有正文坍缩为空编辑器", async () => {
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    const stableDoc = pmDoc([
+      pmParagraph("stable-1", "第一段包含足够多的有效正文内容。"),
+      pmParagraph("stable-2", "第二段包含足够多的有效正文内容。"),
+      pmParagraph("stable-3", "第三段继续维持完整文章结构。"),
+    ]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "完整性门" } },
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(stableDoc, 1) } },
+      docStateFrame("editing"),
+    ]);
+
+    await emitFrames(stream, [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(pmDoc([]), 2) },
+      },
+    ]);
+
+    expect(host?.textContent).toContain("第一段包含足够多的有效正文内容");
+    expect(host?.querySelector('[data-wf="StarterPanel"]')).toBeNull();
+    expect(document.body.textContent).toContain("检测到文档异常坍缩，已保留上一版正文");
+  });
+
   it("A3 单处候选点击提交后整体提交一次并解锁输入", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-1", "batch-a", 0),
     ]);
-    mockCommitWithFrames(stream, [docStateFrame("editing")]);
+    mockCommitWithFrames(stream, [
+      {
+        kind: "docCommitted",
+        data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+      },
+      docStateFrame("editing"),
+    ]);
 
     await clickButton("提交 ↵");
     await flushMicrotasks(5);

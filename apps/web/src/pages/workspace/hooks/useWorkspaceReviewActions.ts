@@ -24,7 +24,11 @@ import {
   reviewBatchIdFromPatch,
   sendReviewOutcomeFollowup,
 } from "../data/reviewActions";
-import { reviewCommitFramesLeavePendingReview } from "../data/pendingDocSave";
+import {
+  reviewCommitFramesCommitted,
+  reviewCommitFramesLeavePendingReview,
+  reviewCommitFramesNoop,
+} from "../data/pendingDocSave";
 import { stepReviewTargetId } from "../data/reviewNavigation";
 import type {
   AskUserAnswers,
@@ -98,6 +102,19 @@ export function useWorkspaceReviewActions(input: {
         });
       reviewSettlementInFlightRef.current = settlement;
       return settlement;
+    },
+    [],
+  );
+
+  const trackReviewClose = useCallback(
+    (closePromise: Promise<void>): Promise<void> => {
+      const trackedClosePromise = closePromise.finally(() => {
+        if (reviewCloseInFlightRef.current === trackedClosePromise) {
+          reviewCloseInFlightRef.current = null;
+        }
+      });
+      reviewCloseInFlightRef.current = trackedClosePromise;
+      return trackedClosePromise;
     },
     [],
   );
@@ -186,13 +203,21 @@ export function useWorkspaceReviewActions(input: {
     const acceptReviewBatchIds = [
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
-    return runReviewSettlement(async () => {
+    const closePromise = runReviewSettlement(async () => {
       // commitReviewGroups 已走独立 REST，并会自行保持当前 session 的 EventSource。
       // 这里不能 stop：stop 会终止同一工作区的在途保存/恢复并清本地流状态，导致
       // commit 已落库后界面误回空白起稿态，随后把被中断请求的失败冒充成提交失败。
       await stream
         .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
         .then((frames) => {
+          if (!reviewCommitFramesCommitted(frames)) {
+            showToast(
+              reviewCommitFramesNoop(frames)
+                ? "候选已失效，本次未写入；当前候选已保留"
+                : "提交未完成 · 候选已保留，请重试",
+            );
+            return;
+          }
           if (!reviewCommitFramesLeavePendingReview(frames)) {
             dispatch({ kind: "forceUnlockReview" });
             showToast("审阅状态未自动退出，已恢复编辑");
@@ -200,11 +225,11 @@ export function useWorkspaceReviewActions(input: {
         })
         .catch((e) => {
           console.error("[workspace] acceptAll commitReviewGroups failed", e);
-          dispatch({ kind: "forceUnlockReview" });
-          showToast("提交失败 · 请重试");
+          showToast("提交失败 · 候选已保留，请重试");
         });
     });
-  }, [runReviewSettlement, showToast]);
+    return trackReviewClose(closePromise);
+  }, [runReviewSettlement, showToast, trackReviewClose]);
 
   const handleJumpNext = useCallback(() => {
     const allPatchIds = visibleReviewTargetIds;
@@ -294,13 +319,21 @@ export function useWorkspaceReviewActions(input: {
     // 提交成功后,若非全量采纳则以用户名义回流给模型。
     const reviewOutcome = buildReviewOutcome(currentPatches);
 
-    return runReviewSettlement(async () => {
+    const closePromise = runReviewSettlement(async () => {
       await stream
         .commitReviewGroups(currentSessionId, {
           acceptReviewBatchIds,
           rejectReviewBatchIds,
         })
         .then((frames) => {
+          if (!reviewCommitFramesCommitted(frames)) {
+            showToast(
+              reviewCommitFramesNoop(frames)
+                ? "候选已失效，本次未写入；当前候选已保留"
+                : "提交未完成 · 候选已保留，请重试",
+            );
+            return;
+          }
           // 与 handleAcceptAll / handleRejectAll 对称的兜底(review-loop-0702 lane-B):
           // commit 响应若缺状态转移帧(stale pendingReview),不兜底就永久锁输入。
           // 逐条处理完的 auto-commit 也汇入本路径,该洞影响面比手动提交更大。
@@ -312,11 +345,11 @@ export function useWorkspaceReviewActions(input: {
         })
         .catch((e) => {
           console.error("[workspace] commitReviewGroups failed", e);
-          dispatch({ kind: "forceUnlockReview" });
-          showToast("提交失败 · 请重试");
+          showToast("提交失败 · 候选已保留，请重试");
         });
     });
-  }, [runReviewSettlement, showToast]);
+    return trackReviewClose(closePromise);
+  }, [runReviewSettlement, showToast, trackReviewClose]);
 
   /**
    * 问卷作答统一提交(BigPlan 全页问卷 + 内联反问卡共用):先乐观把 askUser 卡置 done

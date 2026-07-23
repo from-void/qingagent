@@ -153,6 +153,10 @@ function resourceByFileId(resources: readonly Resource[]): Map<string, Resource>
   return byFileId;
 }
 
+function requiresMaterialParseTracking(asset: UploadedAsset): boolean {
+  return !asset.mime?.toLowerCase().startsWith("image/");
+}
+
 function withMarkedAssets(
   prev: MaterialParseTrackerState,
   assets: readonly UploadedAsset[],
@@ -166,7 +170,7 @@ function withMarkedAssets(
   const byFileId = new Map(prev.entries.map((entry) => [entry.fileId, entry]));
   const currentResources = resourceByFileId(input.resources);
   for (const asset of assets) {
-    if (!asset.fileId) continue;
+    if (!asset.fileId || !requiresMaterialParseTracking(asset)) continue;
     const currentResource = currentResources.get(asset.fileId) ?? null;
     byFileId.set(asset.fileId, {
       fileId: asset.fileId,

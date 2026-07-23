@@ -113,6 +113,8 @@ describe("QingML draft tools", () => {
     expect(description).toContain("逐块保留 readDraft 返回的 cell 内容");
     expect(description).toContain("colspan/rowspan 属性照抄");
     expect(description).toContain("列宽由系统自动保留");
+    expect(description).toContain("原文每个空行必须在原位产出一个空 <p></p>");
+    expect(description).toContain("诗词、歌词和剧本不得改用 <pre> 代码块承载");
     expect(description).not.toContain("items+depth");
     expect(description).not.toContain("必须用扁平");
   });

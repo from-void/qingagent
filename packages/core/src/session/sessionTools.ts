@@ -939,6 +939,7 @@ export function createSessionScopedTools(
     id: "editDraft",
     description:
       "对候选草稿执行原子编辑,支持 ops: replaceBlock/insertBlock/deleteBlock/replaceListItem/insertListItem/deleteListItem/insertTableRow/insertTableColumn/deleteTableRow/deleteTableColumn/replaceText/markText。\n" +
+      "逐行拆分或改写诗词、歌词、剧本时,原文每个空行必须在原位产出一个空 <p></p>,不得吞并、挪走或合并相邻段落;诗词、歌词和剧本不得改用 <pre> 代码块承载。\n" +
       "把已有正文整理/重构成嵌套列表、或改成章>条>款层级时,先 readDraft 取目标块,再用 replaceBlock 把这些块重写成带层级的嵌套列表,尽量逐字保留原文,只动用户指定的范围。" +
       "多级列表统一用 QingML 嵌套标签表达:父 <li>/<task> 内放子 <ul>/<ol>/<tasks>,子列表的 <li>/<task> 才是下一层。3 级及以上也继续使用同一套嵌套 QingML,不要改成扁平中间格式,不要用 1.1/①/缩进文本假装层级。\n" +
       "只替换、插入或删除列表中的整行时,优先用行级 op: replaceListItem {ref,item} 保留目标行 ref; insertListItem {parentRef,at,ref?,item}; deleteListItem {ref}。item 是一个 <li>/<task> QingML 片段或裸行内片段;子层级放在该 <li>/<task> 内的子列表标签里,不要把 1.1/① 写成正文假装层级。taskList 行未传 checked 时 replaceListItem 保留原勾选状态。\n" +

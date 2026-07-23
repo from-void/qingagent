@@ -235,10 +235,12 @@ function buildWriteDraftFinalInstruction(
           `- ${describeLengthSpec(lengthSpec)}`,
           `- 优先级: 硬约束;与章节结构或素材覆盖冲突时字数优先,合并/概述低优先级内容`,
           `- 写作时先按节分配字数预算再写`,
+          `- 剧本同样必须服从该范围;超限时先压缩重复动作、说明与台词,不得以排版或情节完整为由突破上限`,
         ].join("\n")
       : "",
     input.styleHint ? `风格: ${input.styleHint}` : "",
     `请充分吸收以上对话中用户提出的所有具体要求。`,
+    `逐行拆分或改写用户给出的诗词、歌词、剧本时,原文每个空行必须在原位输出为空 <p></p>,不得吞并。`,
     `现在进入文档生成模式:只输出完整闭合的 QingML 标记。首字符必须是 <。不要输出确认、解释、markdown fence 或收尾总结。`,
   ].filter(Boolean).join("\n");
 }

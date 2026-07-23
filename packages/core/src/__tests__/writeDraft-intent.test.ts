@@ -182,6 +182,9 @@ describe("writeDraft intent 调度", () => {
       "首字符必须是 <",
     );
     expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain("标题: t");
+    expect(String((firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content)).toContain(
+      "原文每个空行必须在原位输出为空 <p></p>",
+    );
     expect(firstCall.branchSteeringTail).toContain("不要调用任何工具");
     expect(firstCall.branchSteeringTail).toContain("标题: t");
     expect(firstCall.branchSteeringTail).not.toContain("允许的块级标签与基础形状");

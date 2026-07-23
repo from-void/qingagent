@@ -664,14 +664,33 @@ export class ServerStream {
     this.activeControllers.clear();
   }
 
-  async cancel(): Promise<void> {
-    const streamIds = [...this.openStreamIds];
-    if (streamIds.length === 0) return;
-    this.dispatchStreamTerminated("stop", streamIds);
-    await Promise.all(
-      streamIds.map((streamId) =>
-        this.sendCommand({ kind: "cancelStream", data: { streamId } }),
+  async cancel(
+    commands?: readonly Extract<Command, { kind: "cancelStream" }>[],
+  ): Promise<void> {
+    const resolvedCommands = commands?.length
+      ? [...commands]
+      : [...this.openStreamIds].map(
+          (streamId): Extract<Command, { kind: "cancelStream" }> => ({
+            kind: "cancelStream",
+            data: { streamId },
+          }),
+        );
+    if (resolvedCommands.length === 0) return;
+
+    const streamIds = [
+      ...new Set(
+        resolvedCommands.flatMap((command) =>
+          command.data.streamId ? [command.data.streamId] : [],
+        ),
       ),
+    ];
+    this.dispatchStreamTerminated(
+      "stop",
+      streamIds.length > 0 ? streamIds : undefined,
+    );
+    for (const streamId of streamIds) this.openStreamIds.delete(streamId);
+    await Promise.all(
+      resolvedCommands.map((command) => this.sendCommand(command)),
     );
   }
 

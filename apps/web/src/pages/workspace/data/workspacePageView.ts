@@ -2,6 +2,8 @@ import type { Command, ToolCallSpec, ViewDocumentSnapshot } from "./protocol";
 import type { DocDimensions } from "./docDimensions";
 import type { NativePresentationRun } from "./nativeDiffAnimation";
 
+type CancelStreamCommand = Extract<Command, { kind: "cancelStream" }>;
+
 /** 一个生成草稿是否真有内容(sections 非空)。generation_started 刚建出的占位草稿 sections=[]。 */
 export function generationDraftHasContent(
   draft: ViewDocumentSnapshot | null,
@@ -115,11 +117,20 @@ export function canUseDocumentEditing(
   return canEditDocument(dim, viewingVersion) && !presentationRun;
 }
 
-export function buildCancelStreamCommands(streamIds: readonly string[]): Command[] {
-  return streamIds.map((streamId) => ({
-    kind: "cancelStream",
-    data: { streamId },
-  }));
+export function buildCancelStreamCommands(
+  sessionId: string | null,
+  streamIds: readonly string[],
+): CancelStreamCommand[] {
+  const uniqueStreamIds = [...new Set(streamIds.filter(Boolean))];
+  if (uniqueStreamIds.length > 0) {
+    return uniqueStreamIds.map((streamId) => ({
+      kind: "cancelStream",
+      data: { ...(sessionId ? { sessionId } : {}), streamId },
+    }));
+  }
+  return sessionId
+    ? [{ kind: "cancelStream", data: { sessionId } }]
+    : [];
 }
 
 export function workspaceViewingVersionFromHash(hash: string): number | null {

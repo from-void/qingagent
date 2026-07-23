@@ -225,6 +225,67 @@ describe("ServerStream", () => {
     });
   });
 
+  it("规划期 cancel() 会把 session 级取消实际 POST 到服务端并复位本地流状态", async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = init.body as string;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ accepted: true }),
+      } as unknown as Response);
+    });
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await stream.cancel([{
+      kind: "cancelStream",
+      data: { sessionId: "session-planning" },
+    }]);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/v1/commands",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(JSON.parse(capturedBody!)).toEqual({
+      kind: "cancelStream",
+      data: { sessionId: "session-planning" },
+    });
+    expect(localActions).toContainEqual({
+      kind: "streamTerminated",
+      reason: "stop",
+    });
+  });
+
+  it("写作期 cancel() 保留 streamId 定向取消和局部状态复位", async () => {
+    let capturedBody: string | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = init.body as string;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ accepted: true }),
+      } as unknown as Response);
+    });
+    const localActions: WorkspaceLocalAction[] = [];
+    const stream = new ServerStream((action) => localActions.push(action));
+
+    await stream.cancel([{
+      kind: "cancelStream",
+      data: { sessionId: "session-writing", streamId: "stream-writing" },
+    }]);
+
+    expect(JSON.parse(capturedBody!)).toEqual({
+      kind: "cancelStream",
+      data: { sessionId: "session-writing", streamId: "stream-writing" },
+    });
+    expect(localActions).toContainEqual({
+      kind: "streamTerminated",
+      reason: "stop",
+      streamIds: ["stream-writing"],
+    });
+  });
+
   it("dispose() detaches EventSource and clears listeners", async () => {
     globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
     const stream = new ServerStream();

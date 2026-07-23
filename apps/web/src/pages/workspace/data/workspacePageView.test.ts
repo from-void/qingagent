@@ -176,10 +176,16 @@ describe("workspace page R3 view derivations", () => {
     expect(canEditDocument(dim({ content: { kind: "pendingReview" }, editor: "pendingReview" }), null)).toBe(false);
   });
 
-  it("builds one cancelStream command per active stream id", () => {
-    expect(buildCancelStreamCommands(["s-1", "s-2"])).toEqual([
-      { kind: "cancelStream", data: { streamId: "s-1" } },
-      { kind: "cancelStream", data: { streamId: "s-2" } },
+  it("规划期还没有 streamId 时按 sessionId 构造取消命令", () => {
+    expect(buildCancelStreamCommands("session-1", [])).toEqual([
+      { kind: "cancelStream", data: { sessionId: "session-1" } },
+    ]);
+  });
+
+  it("写作期为每个 active streamId 构造同一会话的定向取消命令", () => {
+    expect(buildCancelStreamCommands("session-1", ["s-1", "s-2", "s-1"])).toEqual([
+      { kind: "cancelStream", data: { sessionId: "session-1", streamId: "s-1" } },
+      { kind: "cancelStream", data: { sessionId: "session-1", streamId: "s-2" } },
     ]);
   });
 

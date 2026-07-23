@@ -37,6 +37,46 @@ import type { AssetSource } from "../data/sources";
 
 const STREAM_ERROR_TOAST_KEY = "workspace-stream-error";
 
+export async function cancelWorkspaceGeneration(input: {
+  stream: Pick<ServerStream, "cancel"> | null;
+  sessionId: string | null;
+  streamIds: readonly string[];
+  setSendPending: Dispatch<SetStateAction<boolean>>;
+  showToast: (message: string, durationMs?: number) => void;
+}): Promise<void> {
+  const { stream, sessionId, streamIds, setSendPending, showToast } = input;
+  // 停止按钮可能由 sendPending 提前点亮；无论 start 帧是否已到，都先恢复输入态。
+  setSendPending(false);
+  if (!stream) {
+    showToast("连接还没准备好");
+    return;
+  }
+
+  const commands = buildCancelStreamCommands(sessionId, streamIds);
+  if (commands.length === 0) {
+    showToast("当前没有正在生成的任务");
+    return;
+  }
+  for (const command of commands) {
+    try {
+      validateCommand(command);
+    } catch (error) {
+      console.error("[workspace] cancelStream validation failed", error);
+      showToast("操作失败，请重试");
+      return;
+    }
+  }
+
+  try {
+    // 统一由 ServerStream 完成本地终止投影和服务端命令下发，避免两个阶段分叉。
+    await stream.cancel(commands);
+    showToast("已中断");
+  } catch (error) {
+    console.error("[workspace] cancelStream failed", error);
+    showToast("停止失败 · 请重试");
+  }
+}
+
 export function useWorkspaceChatActions(input: {
   dim: DocDimensions;
   askUserInputDisabled: boolean;
@@ -332,40 +372,14 @@ export function useWorkspaceChatActions(input: {
   ]);
 
   const handleCancelActiveStream = useCallback(() => {
-    const streamIds = stateRef.current.activeStreamIds.slice();
-    if (streamIds.length === 0) {
-      showToast("当前没有正在生成的任务");
-      return;
-    }
-    const stream = streamRef.current;
-    if (!stream) {
-      showToast("连接还没准备好");
-      return;
-    }
-
-    const commands = buildCancelStreamCommands(streamIds);
-    for (const command of commands) {
-      try {
-        validateCommand(command);
-      } catch (e) {
-        console.error("[workspace] cancelStream validation failed", e);
-        showToast("操作失败，请重试");
-        return;
-      }
-    }
-
-    dispatch({
-      kind: "streamTerminated",
-      reason: "stop",
-      streamIds,
+    const current = stateRef.current;
+    void cancelWorkspaceGeneration({
+      stream: streamRef.current,
+      sessionId: current.sessionId,
+      streamIds: current.activeStreamIds.slice(),
+      setSendPending,
+      showToast,
     });
-    showToast("已中断");
-    for (const command of commands) {
-      stream.sendCommand(command).catch((e) => {
-        console.error("[workspace] cancelStream failed", e);
-        showToast("停止失败 · 请重试");
-      });
-    }
   }, [showToast]);
   return { handleCancelActiveStream, handleSubmitChat };
 }

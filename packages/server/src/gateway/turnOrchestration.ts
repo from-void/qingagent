@@ -957,8 +957,18 @@ export async function* handleTurnCommand(
       return;
     }
     case "cancelStream": {
-      const session = findSessionByStream(command.data.streamId);
+      const session = command.data.sessionId
+        ? await getOrRestoreSession(command.data.sessionId)
+        : command.data.streamId
+          ? findSessionByStream(command.data.streamId)
+          : undefined;
       if (session) {
+        if (
+          command.data.streamId &&
+          session.streamId !== command.data.streamId
+        ) {
+          return;
+        }
         bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
         yield* abortAndCleanupTurn(session);
       }

@@ -180,12 +180,36 @@ describe("handleCommand interrupt-and-resteer", () => {
     const frames = await collectFrames(
       bridge.handleCommand({
         kind: "cancelStream",
-        data: { streamId: "stream-cancel" },
+        data: { sessionId: session.sessionId, streamId: "stream-cancel" },
       }),
     );
 
     expect(controller.signal.aborted).toBe(true);
     expect(mockState.abortAndCleanupTurn).toHaveBeenCalledTimes(1);
+    expect(frames).toEqual([{
+      kind: "docStateChanged",
+      data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+    }]);
+  });
+
+  it("规划期尚无前端 streamId 时按 sessionId 中止活动流程，不再继续产出问卷", async () => {
+    const bridge = await loadBridge();
+    const session = await createSession(bridge);
+    const controller = new AbortController();
+    session.streamId = "planning-before-start-frame";
+    session._abortController = controller;
+    session._activeTurnPromise = Promise.resolve();
+
+    const frames = await collectFrames(
+      bridge.handleCommand({
+        kind: "cancelStream",
+        data: { sessionId: session.sessionId },
+      }),
+    );
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(mockState.abortAndCleanupTurn).toHaveBeenCalledTimes(1);
+    expect(mockState.runAgentTurn).not.toHaveBeenCalled();
     expect(frames).toEqual([{
       kind: "docStateChanged",
       data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },

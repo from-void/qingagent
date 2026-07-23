@@ -58,8 +58,9 @@ const WARM_THEME_VARS = {
   cScaleLabel4: "#2f2a22",
   cScaleLabel5: "#2f2a22",
 };
-// 文档纸内字体是宋体(水墨皮肤把 --font-sans 映射成 serif),图表文字对齐之。
-const DIAGRAM_FONT = '"Noto Serif SC","Songti SC","STSong",serif';
+// 导出 SVG 会脱离宿主文档单独栅格化；与已验证的 generateSvg 路径一致，交给系统
+// sans-serif 做中文字体回退，避免依赖 Google Fonts 的家族名。
+const DIAGRAM_FONT = "sans-serif";
 interface MermaidRenderInput {
   source: string;
   normalizedSource: string;
@@ -161,6 +162,10 @@ export async function renderDiagramSvgs(sources: readonly string[]): Promise<(st
           theme: "base",
           themeVariables: theme,
           fontFamily,
+          // Mermaid 11 默认把流程图节点标签写成 foreignObject + HTML span；
+          // 导出安全净化必须删除 foreignObject，旧链路因而只剩框线。强制生成原生
+          // SVG text/tspan，让标签既能通过 hardenInlineSvg，也能被 Chromium 栅格化。
+          htmlLabels: false,
         });
         const parseMermaid = async (source: string): Promise<{ ok: boolean; reason?: string }> => {
           try {

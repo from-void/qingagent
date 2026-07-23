@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { toContractChip } from "./sessionFrameGuards";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Command } from "@qingagent/contract-ts";
+import { ServerStream } from "./serverStream";
+import { toContractChip, uploadFiles } from "./sessionFrameGuards";
+
+afterEach(() => {
+  MockUploadRequest.instances.length = 0;
+  vi.unstubAllGlobals();
+});
 
 describe("toContractChip", () => {
   it("透传表格选区到乐观气泡与 wire 共用的 contract chip", () => {
@@ -37,3 +45,125 @@ describe("toContractChip", () => {
     });
   });
 });
+
+describe("uploadFiles", () => {
+  it("逐个上传一次选择的全部文件，并将完整 fileIds 随消息发送", async () => {
+    vi.stubGlobal("XMLHttpRequest", MockUploadRequest);
+    const files = [
+      new File(["alpha"], "alpha.txt", { type: "text/plain" }),
+      new File(["beta"], "beta.txt", { type: "text/plain" }),
+    ];
+
+    const pendingUploads = uploadFiles(files);
+    const firstRequest = await waitForUploadRequest(0);
+    firstRequest.resolve({
+      fileId: "file-alpha",
+      filename: "alpha.txt",
+      mimeType: "text/plain",
+      size: 5,
+    });
+    const secondRequest = await waitForUploadRequest(1);
+    secondRequest.resolve({
+      fileId: "file-beta",
+      filename: "beta.txt",
+      mimeType: "text/plain",
+      size: 4,
+    });
+    const uploadedAssets = await pendingUploads;
+
+    expect(MockUploadRequest.instances.map((request) => request.filename())).toEqual([
+      "alpha.txt",
+      "beta.txt",
+    ]);
+    expect(uploadedAssets.map((asset) => asset.fileId)).toEqual([
+      "file-alpha",
+      "file-beta",
+    ]);
+
+    let sentCommand: Command | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      sentCommand = JSON.parse(String(init?.body)) as Command;
+      return new Response(
+        JSON.stringify({ accepted: true, sessionId: "session-multifile", epoch: 1 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }));
+    vi.stubGlobal("EventSource", MockEventSource);
+    const stream = new ServerStream();
+    await stream.sendCommand({
+      kind: "sendMessage",
+      data: {
+        sessionId: "session-multifile",
+        text: "请分别读取两个文件",
+        mentions: [],
+        skills: [],
+        chips: [],
+        fileIds: uploadedAssets.map((asset) => asset.fileId),
+      },
+    });
+
+    expect(sentCommand).toMatchObject({
+      kind: "sendMessage",
+      data: { fileIds: ["file-alpha", "file-beta"] },
+    });
+    stream.dispose();
+  });
+});
+
+class MockEventSource extends EventTarget {
+  onerror: ((event: Event) => void) | null = null;
+
+  constructor(readonly url: string) {
+    super();
+  }
+
+  close(): void {}
+}
+
+class MockUploadRequest {
+  static instances: MockUploadRequest[] = [];
+
+  upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
+  method = "";
+  url = "";
+  headers: Record<string, string> = {};
+  body = "";
+  status = 0;
+  responseText = "";
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor() {
+    MockUploadRequest.instances.push(this);
+  }
+
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string): void {
+    this.headers[name] = value;
+  }
+
+  send(body: string): void {
+    this.body = body;
+  }
+
+  resolve(body: unknown): void {
+    this.status = 200;
+    this.responseText = JSON.stringify(body);
+    this.onload?.();
+  }
+
+  filename(): string | undefined {
+    return (JSON.parse(this.body) as { filename?: string }).filename;
+  }
+}
+
+async function waitForUploadRequest(index: number): Promise<MockUploadRequest> {
+  await vi.waitFor(() => {
+    expect(MockUploadRequest.instances.length).toBeGreaterThan(index);
+  });
+  return MockUploadRequest.instances[index]!;
+}

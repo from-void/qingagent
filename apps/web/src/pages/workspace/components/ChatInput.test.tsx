@@ -96,6 +96,29 @@ describe("ChatInput", () => {
     expect(onChange).toHaveBeenLastCalledWith("hello", 0);
   });
 
+  it("会话内文件 input 启用多选，一次选择的文件全部生成 attach chip", async () => {
+    const ref = createRef<ChatInputHandle>();
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        ref={ref}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const alpha = new File(["alpha"], "alpha.txt", { type: "text/plain" });
+    const beta = new File(["beta"], "beta.txt", { type: "text/plain" });
+
+    expect(getFileInput().multiple).toBe(true);
+    await selectFiles([alpha, beta]);
+
+    expect(ref.current?.snapshot().files.map((file) => file.name)).toEqual([
+      "alpha.txt",
+      "beta.txt",
+    ]);
+    expect(attachChipLabels()).toEqual(["alpha.txt", "beta.txt"]);
+  });
+
   it("同名重复选择复用现有 attach chip,不新增幽灵 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
@@ -972,10 +995,14 @@ function attachChipLabels(): string[] {
 }
 
 async function selectFile(file: File): Promise<void> {
+  await selectFiles([file]);
+}
+
+async function selectFiles(files: File[]): Promise<void> {
   const input = getFileInput();
   Object.defineProperty(input, "files", {
     configurable: true,
-    value: [file],
+    value: files,
   });
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));

@@ -633,6 +633,9 @@ export async function* runAgentTurn(
     if (sessionTools.executeCommand) {
       sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
     }
+    if (sessionTools.getProcessOutput) {
+      sessionScopedTools[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
+    }
     if (sessionTools.workspaceReadFile) {
       sessionScopedTools[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE] = sessionTools.workspaceReadFile;
     }

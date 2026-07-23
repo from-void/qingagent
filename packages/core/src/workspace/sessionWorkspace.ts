@@ -548,6 +548,9 @@ async function buildSessionWorkspace(
   const toolsConfig: Record<string, { enabled: boolean }> = {};
   if (commandsEnabled) {
     toolsConfig[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = { enabled: false };
+    // 与 execute_command 一样禁用 Mastra 原生实现，再由 sessionScoped 注入有界等待版本。
+    // 否则 workspace 原生工具优先于同名 toolset，bounded 覆盖不会实际生效。
+    toolsConfig[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = { enabled: false };
   }
   if (folderSources.length > 0) {
     // /sources 正文只能经 readDocument/searchDocuments 的受控契约进入模型。

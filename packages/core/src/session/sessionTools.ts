@@ -10,6 +10,7 @@ import {
   type QingagentToolSearchTools,
 } from "../agents/toolSearch.js";
 import { createGatedExecuteCommandTool } from "../workspace/gatedExecuteCommandTool.js";
+import { createBoundedGetProcessOutputTool } from "../workspace/boundedGetProcessOutputTool.js";
 import {
   createProtectedFolderSourceEditFileTool,
   createProtectedFolderSourceGrepTool,
@@ -1304,6 +1305,11 @@ export function createSessionScopedTools(
         getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
       })
     : null;
+  const getProcessOutput = state
+    ? createBoundedGetProcessOutputTool({
+        getWorkspace: () => getQingagentSessionWorkspace(state.sessionId),
+      })
+    : null;
   // 文件夹资料库 agent 工具:仅当会话连了文件夹源时注入(读文档/检索 + 受保护的工作区文件操作)。
   const hasFolderSources = state ? state.folderSources.size > 0 : false;
   const readDocument = state && hasFolderSources
@@ -1351,6 +1357,7 @@ export function createSessionScopedTools(
     createAnnotationGroups,
     readDiff,
     executeCommand,
+    getProcessOutput,
     readDocument,
     searchDocuments,
     workspaceReadFile,

@@ -127,6 +127,9 @@ function buildResumeTools(session: SessionState): Promise<{
   if (sessionTools.executeCommand) {
     sessionScoped[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = sessionTools.executeCommand;
   }
+  if (sessionTools.getProcessOutput) {
+    sessionScoped[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = sessionTools.getProcessOutput;
+  }
   if (sessionTools.writeDraft) sessionScoped.writeDraft = sessionTools.writeDraft;
   if (sessionTools.updateWorkingMemory) {
     sessionScoped.updateWorkingMemory = sessionTools.updateWorkingMemory;

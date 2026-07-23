@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Command, LegacySection, BridgeFrame } from "@qingagent/contract-ts";
-import { legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
 const originalUserVersionWindowMs = process.env.QINGAGENT_USER_VERSION_WINDOW_MS;
 
@@ -198,6 +198,39 @@ describe("handleCommand updateDoc", () => {
     })));
 
     expect(session.docVersion).toBe(2);
+    expect(session.lastContentEditedAt).toBe(originalContentTime);
+  });
+
+  it("no-op 保存向客户端确认当前版本，不虚增 session 基线", async () => {
+    const { bridge, commitDocumentOp } = await loadBridge();
+    const session = await createDraftSession(bridge);
+    const originalDoc = session.doc!;
+    const originalContentTime = session.lastContentEditedAt;
+    commitDocumentOp.mockResolvedValue({
+      status: "committed",
+      docVersion: 1,
+      contentHash: getPmContentHash(originalDoc),
+      doc: originalDoc,
+      versionId: "version-current",
+      createdNewVersion: false,
+      committedAt: "2026-03-04T05:06:07.000Z",
+    });
+
+    const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
+      baseContentHash: getPmContentHash(originalDoc),
+      doc: originalDoc as never,
+      legacySections: [section("old")],
+      clientMutationId: "mutation-noop",
+    })));
+
+    expect(frames).toEqual([
+      {
+        kind: "docWriteResult",
+        data: { ok: true, clientMutationId: "mutation-noop", docVersion: 1 },
+      },
+    ]);
+    expect(session.docVersion).toBe(1);
+    expect(session.doc).toEqual(originalDoc);
     expect(session.lastContentEditedAt).toBe(originalContentTime);
   });
 

@@ -187,7 +187,9 @@ export function useWorkspaceReviewActions(input: {
       ...new Set(currentPatches.map(reviewBatchIdFromPatch)),
     ];
     return runReviewSettlement(async () => {
-      stream.stop();
+      // commitReviewGroups 已走独立 REST，并会自行保持当前 session 的 EventSource。
+      // 这里不能 stop：stop 会终止同一工作区的在途保存/恢复并清本地流状态，导致
+      // commit 已落库后界面误回空白起稿态，随后把被中断请求的失败冒充成提交失败。
       await stream
         .commitReviewGroups(currentSessionId, { acceptReviewBatchIds })
         .then((frames) => {

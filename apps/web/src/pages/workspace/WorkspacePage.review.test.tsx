@@ -1371,6 +1371,41 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(7);
   });
 
+  it("低于 70% 的整篇改写落入逐处审阅时仍可全部应用", async () => {
+    const { deriveReviewRenderMode, RightPane } = await import("./WorkspacePage");
+    const mode = deriveReviewRenderMode({
+      effectiveReview: true,
+      editedNewDoc: multiGroupDoc(7),
+      changeRatio: 0.69,
+      wholeDocReviewThreshold: 0.7,
+    });
+    const onAcceptAll = vi.fn();
+    const onCommit = vi.fn();
+
+    await render(
+      <section id="view-workspace">
+        <RightPane
+          {...rightPaneProps({
+            wholeDocReview: mode.wholeDocReview,
+            effectiveReview: mode.inlinePatchReview,
+            editedNewDoc: multiGroupDoc(7),
+            onAcceptAll,
+            onCommit,
+          })}
+        />
+      </section>,
+    );
+
+    expect(mode.wholeDocReview).toBe(false);
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).toBeNull();
+    expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
+
+    await clickButton("全部应用");
+
+    expect(onAcceptAll).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
   it("历史快照未加载时不回退渲染当前正文", async () => {
     const { RightPane } = await import("./WorkspacePage");
     const currentDoc = pmDocToViewDocumentSnapshot(
@@ -2820,6 +2855,7 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("剩余 · 2 处");
     expect(host?.textContent).not.toContain("采纳此处");
     expect(host?.textContent).not.toContain("拒绝此处");
+    expect(host?.textContent).toContain("全部应用");
 
     await clickButton("提交 ↵");
 
@@ -2828,6 +2864,69 @@ describe("WorkspacePage review controls", () => {
       acceptReviewBatchIds: ["batch-a", "batch-b"],
       rejectReviewBatchIds: [],
     });
+  });
+
+  it("应用新版成功后保留当前文档与会话，不终止工作区流", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { WorkspacePage } = await import("./WorkspacePage");
+    await render(<WorkspacePage />);
+    const stream = latestServerStream();
+    const baseDoc = pmDoc([pmParagraph("rewrite-base", "旧文")]);
+    const editedDoc = pmDoc([
+      pmHeading("rewrite-title", "新版标题"),
+      pmParagraph("rewrite-body", "这是彻底改写后并已成功落库的新版正文。"),
+    ]);
+    const suggestion = docSuggestionFromToolCall(reviewToolCall(
+      "rewrite-hunk",
+      "batch-rewrite",
+      "reviewing",
+      {
+        blockId: "rewrite-base",
+        before: "旧文",
+        after: "新版标题\n这是彻底改写后并已成功落库的新版正文。",
+      },
+    ));
+    const commitFrames: BridgeFrame[] = [
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(editedDoc, 2) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ];
+    mockCommitWithFrames(stream, commitFrames);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "整篇改写收尾" } },
+      { kind: "documentSnapshotWritten", data: { doc: wireSnapshotFromPmDoc(baseDoc, 1) } },
+      {
+        kind: "docDiffReady",
+        data: {
+          baseVersion: 1,
+          suggestions: [suggestion],
+          previewDoc: baseDoc,
+          editedDoc,
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+
+    expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).not.toBeNull();
+    await clickButton("应用新版");
+    await flushMicrotasks(5);
+
+    expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
+      acceptReviewBatchIds: ["batch-rewrite"],
+    });
+    expect(stream.stop).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#/workspace?session=s-1");
+    expect(document.body.dataset.content).toBe("editing");
+    expect(host?.querySelector('[data-wf="StarterPanel"]')).toBeNull();
+    expect(host?.textContent).toContain("已成功落库的新版正文");
   });
 
   it("A3 单处候选点击提交后整体提交一次并解锁输入", async () => {

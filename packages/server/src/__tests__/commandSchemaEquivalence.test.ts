@@ -71,6 +71,7 @@ const sharedAccept: CommandFixture[] = [
   { name: "resumeAskUser/numeric", body: { kind: "resumeAskUser", data: { sessionId: "s", answers: { q1: { chosen: [], freeText: null, numericValue: 3 } } } } },
   { name: "cancelAskUser", body: { kind: "cancelAskUser", data: { sessionId: "s", toolCallId: "t" } } },
   { name: "updateDoc/legacySections", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, clientMutationId: "m", legacySections: [{ kind: "p", data: { text: "正文" } }] } } },
+  { name: "updateDoc/baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "pmv1-base", clientMutationId: "m", legacySections: [] } } },
   { name: "updateMaterialSummary/empty-summary", body: { kind: "updateMaterialSummary", data: { sessionId: "s", materialId: "m", summary: "" } } },
   { name: "removeMaterial", body: { kind: "removeMaterial", data: { sessionId: "s", materialId: "m" } } },
   { name: "attachFolder/desktop", body: { kind: "attachFolder", data: { sessionId: "s", source: { provider: "desktop-local", selectionToken: "tok" } } } },
@@ -129,6 +130,7 @@ const newStricter: CommandFixture[] = [
   { name: "acceptPatch/garbage-reviewBatchId", body: { kind: "acceptPatch", data: { id: "p1", reviewBatchId: 42 } } },
   { name: "commitPatches/reviewBatchIds-only", body: { kind: "commitPatches", data: { reviewBatchIds: ["b1"] } } },
   { name: "resumeAskUser/garbage-answer-value", body: { kind: "resumeAskUser", data: { sessionId: "s", answers: { q1: "garbage" } } } },
+  { name: "updateDoc/empty-baseContentHash", body: { kind: "updateDoc", data: { sessionId: "s", expectedDocumentSnapshot: 1, baseContentHash: "", clientMutationId: "m", legacySections: [] } } },
 ];
 
 describe("D6 命令校验等价回归矩阵", () => {

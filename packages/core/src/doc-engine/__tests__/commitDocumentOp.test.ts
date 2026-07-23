@@ -750,7 +750,7 @@ describe("commitDocumentOp", () => {
     expect(versions.map((version) => version.docVersion)).toEqual([3, 2]);
   });
 
-  it("returns conflict for stale doc_version or mismatched baseContentHash", async () => {
+  it("returns conflict for stale doc_version", async () => {
     await seedDocument("doc-conflict", "current", 3);
     const current = await documentRepo.load("doc-conflict");
 
@@ -767,13 +767,18 @@ describe("commitDocumentOp", () => {
       currentVersion: 3,
       currentHash: current?.contentHash,
     });
+  });
+
+  it("同版本号但 baseContentHash 对应不同正文时拒绝 conflict", async () => {
+    await seedDocument("doc-same-version-hash-conflict", "current", 3);
+    const current = await documentRepo.load("doc-same-version-hash-conflict");
 
     const hashConflict = await commitDocumentOp(
       commitInput({
-        docId: "doc-conflict",
-        threadId: "thread-doc-conflict",
+        docId: "doc-same-version-hash-conflict",
+        threadId: "thread-doc-same-version-hash-conflict",
         expectedDocumentSnapshot: 3,
-        baseContentHash: "pmv1-wrong",
+        baseContentHash: getPmContentHash(pmDocFromText("different baseline")),
         clientMutationId: "client-hash",
       }),
     );
@@ -781,6 +786,30 @@ describe("commitDocumentOp", () => {
       status: "conflict",
       currentVersion: 3,
       currentHash: current?.contentHash,
+    });
+  });
+
+  it("同版本号且 baseContentHash 匹配时正常提交", async () => {
+    await seedDocument("doc-matching-base-hash", "current", 3);
+    const current = await documentRepo.load("doc-matching-base-hash");
+    if (!current) throw new Error("missing seeded document");
+    const nextDoc = pmDocFromText("saved normally");
+
+    const result = await commitDocumentOp(
+      commitInput({
+        docId: "doc-matching-base-hash",
+        threadId: "thread-doc-matching-base-hash",
+        expectedDocumentSnapshot: 3,
+        baseContentHash: current.contentHash,
+        clientMutationId: "client-matching-hash",
+        apply: () => ({ nextDoc }),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      status: "committed",
+      docVersion: 4,
+      doc: nextDoc,
     });
   });
 

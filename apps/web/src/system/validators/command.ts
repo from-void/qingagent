@@ -219,6 +219,12 @@ export function validateCommand(cmd: Command): void {
       if (!cmd.data.sessionId) fail(`UpdateDoc.sessionId must be non-empty`);
       if (!Number.isInteger(cmd.data.expectedDocumentSnapshot))
         fail(`UpdateDoc.expectedDocumentSnapshot must be an integer`);
+      if (
+        cmd.data.baseContentHash !== undefined &&
+        !nonEmptyString(cmd.data.baseContentHash)
+      ) {
+        fail(`UpdateDoc.baseContentHash must be non-empty`);
+      }
       if (!cmd.data.clientMutationId)
         fail(`UpdateDoc.clientMutationId must be non-empty`);
       if (cmd.data.doc) checkPmDoc(cmd.data.doc);

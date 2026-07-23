@@ -59,11 +59,13 @@ export function shouldFlushDocSaveOnPageExit(input: {
 export function pageExitDocSaveFingerprint(input: {
   sessionId: string;
   expectedDocumentSnapshot: number;
+  baseContentHash: string;
   pmDoc: PmDoc;
 }): string {
   return JSON.stringify({
     sessionId: input.sessionId,
     expectedDocumentSnapshot: input.expectedDocumentSnapshot,
+    baseContentHash: input.baseContentHash,
     doc: input.pmDoc,
   });
 }
@@ -71,6 +73,7 @@ export function pageExitDocSaveFingerprint(input: {
 export function buildPageExitDocSaveCommand(input: {
   sessionId: string | null;
   expectedDocumentSnapshot: number;
+  baseContentHash: string;
   pmDoc: PmDoc | null;
   baselineDoc?: PmDoc | null;
   hasPendingDocSave: boolean;
@@ -96,6 +99,7 @@ export function buildPageExitDocSaveCommand(input: {
     data: {
       sessionId: input.sessionId,
       expectedDocumentSnapshot: input.expectedDocumentSnapshot,
+      baseContentHash: input.baseContentHash,
       doc: pmDoc,
       legacySections: pmToLegacySections(pmDoc) as unknown as LegacySection[],
       clientMutationId: (input.createMutationId ?? createClientMutationId)(),
@@ -108,6 +112,7 @@ export function buildPageExitDocSaveCommand(input: {
 export function flushDocSaveOnPageExit(input: {
   sessionId: string | null;
   expectedDocumentSnapshot: number;
+  baseContentHash: string;
   pmDoc: PmDoc | null;
   baselineDoc?: PmDoc | null;
   hasPendingDocSave: boolean;

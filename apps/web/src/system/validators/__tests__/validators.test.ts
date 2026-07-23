@@ -275,6 +275,7 @@ describe("validateCommand", () => {
       data: {
         sessionId: "s",
         expectedDocumentSnapshot: 1,
+        baseContentHash: "pmv1-base",
         legacySections: [{ kind: "p", data: { text: "正文" } }],
         clientMutationId: "mutation-1",
       },
@@ -329,6 +330,20 @@ describe("validateCommand", () => {
         expectedDocumentSnapshot: 1,
         legacySections: [{ kind: "p", data: { text: "正文" } }],
         clientMutationId: "",
+      },
+    };
+    expect(() => validateCommand(cmd)).toThrow(CommandValidationError);
+  });
+
+  it("rejects updateDoc with empty baseContentHash", () => {
+    const cmd: Command = {
+      kind: "updateDoc",
+      data: {
+        sessionId: "s",
+        expectedDocumentSnapshot: 1,
+        baseContentHash: "",
+        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        clientMutationId: "mutation-1",
       },
     };
     expect(() => validateCommand(cmd)).toThrow(CommandValidationError);

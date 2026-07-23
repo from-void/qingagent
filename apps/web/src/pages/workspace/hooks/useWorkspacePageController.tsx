@@ -9,7 +9,7 @@ import type {
   HistorySnapshot,
   ReviewContext,
 } from "@qingagent/contract-ts";
-import type { PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import type { Editor } from "@tiptap/react";
 import {
   useCallback,
@@ -202,6 +202,12 @@ export {
   submitImmediateChatInputSend,
 } from "../data/sessionFrameGuards";
 
+const EMPTY_PM_DOC_CONTENT_HASH = getPmContentHash({
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content: [],
+} satisfies PmDoc);
+
 // 历史版本入口特性开关:后端(版本快照/操作流水/读取 API)已就绪,前端列表/查看 UI 尚未迭代,
 // 暂时隐藏文档纸右上角的"历史"按钮(及其"即将上线"toast)。功能做完翻为 true 即可恢复入口。
 export const HISTORY_ENTRY_ENABLED = false;
@@ -328,6 +334,9 @@ export function useWorkspacePageController() {
     Map<string, { sessionId: string; folderId: string }>
   >(new Map());
   const docVersionRef = useRef(state.version);
+  // 与 docVersionRef 组成同一 canonical 保存基线；排队保存时 state.doc 可能为保护
+  // 编辑器而暂未回灌成功稿，故哈希必须在私有成功回执处独立推进。
+  const baseContentHashRef = useRef(EMPTY_PM_DOC_CONTENT_HASH);
   const pendingDocWriteRef = useRef(false);
   const queuedPmDocRef = useRef<QueuedDocWrite | null>(null);
   const scheduledDocWriteRef = useRef(false);
@@ -362,6 +371,14 @@ export function useWorkspacePageController() {
   stateRef.current = state;
   sessionIdRef.current = state.sessionId ?? sessionIdRef.current;
   docVersionRef.current = state.version;
+  if (state.version === 0) {
+    baseContentHashRef.current = EMPTY_PM_DOC_CONTENT_HASH;
+  } else if (
+    state.doc?.pmDoc &&
+    state.doc.version === state.version
+  ) {
+    baseContentHashRef.current = getPmContentHash(state.doc.pmDoc);
+  }
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
   const toast = useToast();
@@ -1487,6 +1504,7 @@ export function useWorkspacePageController() {
         const isLatestOwnMutation =
           frame.data.clientMutationId === latestDocMutationIdRef.current;
         const ack = docWriteAckRef.current.get(frame.data.clientMutationId);
+        const savedPmDoc = lastSentPmDocRef.current;
         if (!shouldHandleDocWriteResult({
           isLatestOwnMutation,
           hasMatchingWaiter: ack !== undefined,
@@ -1499,6 +1517,9 @@ export function useWorkspacePageController() {
           latestDocMutationIdRef.current = null;
           if (frame.data.ok) {
             docVersionRef.current = frame.data.docVersion;
+            if (savedPmDoc) {
+              baseContentHashRef.current = getPmContentHash(savedPmDoc);
+            }
           } else {
             queuedPmDocRef.current = null;
           }
@@ -1506,7 +1527,6 @@ export function useWorkspacePageController() {
         dispatch(frame);
         // 诊断 p01:手动保存成功后把已保存文档同步进 canonical state.doc——
         // 此前只更新版本号,审阅/拒绝从陈旧 state.doc 重渲染时手动内容会"消失"。
-        const savedPmDoc = lastSentPmDocRef.current;
         const hasQueuedPmDoc = queuedPmDocRef.current !== null;
         const shouldDispatchManualDocSaved =
           shouldDispatchManualDocSavedForWriteResult({
@@ -2165,6 +2185,7 @@ export function useWorkspacePageController() {
     sessionIdRef,
     startNewSessionPromiseRef,
     docVersionRef,
+    baseContentHashRef,
     pendingDocWriteRef,
     queuedPmDocRef,
     scheduledDocWriteRef,

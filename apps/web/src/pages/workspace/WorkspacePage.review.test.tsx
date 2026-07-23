@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AnnotationGroup, BridgeFrame, Command, DiffHunk, DocSuggestion, DocumentSnapshot, Resource, ToolCallSpec } from "@qingagent/contract-ts";
-import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmBlockNode, type PmDoc } from "@qingagent/pm-schema";
 import type { ChatInputSnapshot } from "./data/chatInputTypes";
 import type { DocDimensions } from "./data/docDimensions";
 import {
@@ -821,6 +821,9 @@ describe("WorkspacePage review controls", () => {
 
     expect(updateDocCommands(stream)).toHaveLength(1);
     expect(updateDocCommands(stream)[0]?.data.sessionId).toBe("s-1");
+    expect(updateDocCommands(stream)[0]?.data.baseContentHash).toBe(
+      getPmContentHash(pmDoc([pmParagraph("p-home-save", "初始正文")])),
+    );
     expect(JSON.stringify(updateDocCommands(stream)[0]?.data.doc)).toContain(
       "返回首页前的新正文",
     );
@@ -907,6 +910,7 @@ describe("WorkspacePage review controls", () => {
 
     const save = updateDocCommands(stream)[0];
     expect(save?.data.expectedDocumentSnapshot).toBe(7);
+    expect(save?.data.baseContentHash).toBe(getPmContentHash(staleDoc));
     expect(JSON.stringify(save?.data.doc)).toContain("外标签本地未保存句");
     expect(captured.current?.state.streamError).toMatchObject({
       kind: "docWriteConflict",
@@ -969,6 +973,14 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.version).toBe(8);
     expect(captured.current?.state.doc?.pmDoc).toEqual(remoteDoc);
     expect(JSON.stringify(editor!.getJSON())).toContain("另一标签的新正文");
+
+    const afterSyncDoc = pmDoc([pmParagraph("p-clean", "同步后继续编辑")]);
+    await act(async () => {
+      await captured.current!.handleEditorChange(afterSyncDoc);
+    });
+    const saveAfterSync = updateDocCommands(stream)[0];
+    expect(saveAfterSync?.data.expectedDocumentSnapshot).toBe(8);
+    expect(saveAfterSync?.data.baseContentHash).toBe(getPmContentHash(remoteDoc));
   }, 60_000);
 
   it("单标签保存仍由本标签 docWriteResult 正常推进版本", async () => {
@@ -1003,6 +1015,9 @@ describe("WorkspacePage review controls", () => {
     await flushMicrotasks(3);
 
     expect(updateDocCommands(stream)[0]?.data.expectedDocumentSnapshot).toBe(7);
+    expect(updateDocCommands(stream)[0]?.data.baseContentHash).toBe(
+      getPmContentHash(initialDoc),
+    );
     expect(captured.current?.state.version).toBe(8);
     expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
   }, 60_000);
@@ -2694,6 +2709,9 @@ describe("WorkspacePage review controls", () => {
 
     vi.useFakeTimers();
     const firstCommand = updateDocCommands(oldStream)[0]!;
+    expect(firstCommand.data.baseContentHash).toBe(
+      getPmContentHash(pmDoc([pmParagraph("p-queue", "初始正文")])),
+    );
     act(() => {
       oldStream.emit({
         kind: "docWriteResult",
@@ -2729,6 +2747,9 @@ describe("WorkspacePage review controls", () => {
     ]);
     expect(JSON.stringify(updateDocCommands(oldStream)[1]?.data.doc)).toContain(
       "排队正文 B",
+    );
+    expect(updateDocCommands(oldStream)[1]?.data.baseContentHash).toBe(
+      getPmContentHash(pmDoc([pmParagraph("p-queue", "在途正文 A")])),
     );
     expect(updateDocCommands(nextStream)).toHaveLength(0);
   }, 60_000);
@@ -3200,6 +3221,7 @@ describe("WorkspacePage page-exit doc save", () => {
     } = await import("./WorkspacePage");
     const baseline = pmDoc([pmParagraph("p-1", "旧正文")]);
     const edited = pmDoc([pmParagraph("p-1", "新正文")]);
+    const baseContentHash = getPmContentHash(baseline);
 
     expect(shouldFlushDocSaveOnPageExit({
       pmDoc: baseline,
@@ -3215,6 +3237,7 @@ describe("WorkspacePage page-exit doc save", () => {
     expect(buildPageExitDocSaveCommand({
       sessionId: "session-1",
       expectedDocumentSnapshot: 7,
+      baseContentHash,
       pmDoc: baseline,
       baselineDoc: baseline,
       hasPendingDocSave: false,
@@ -3224,6 +3247,7 @@ describe("WorkspacePage page-exit doc save", () => {
     const command = buildPageExitDocSaveCommand({
       sessionId: "session-1",
       expectedDocumentSnapshot: 7,
+      baseContentHash,
       pmDoc: edited,
       baselineDoc: baseline,
       hasPendingDocSave: false,
@@ -3235,6 +3259,7 @@ describe("WorkspacePage page-exit doc save", () => {
       data: {
         sessionId: "session-1",
         expectedDocumentSnapshot: 7,
+        baseContentHash,
         clientMutationId: "exit-1",
         legacySections: [{ kind: "p", data: { text: "新正文" } }],
       },
@@ -3245,11 +3270,13 @@ describe("WorkspacePage page-exit doc save", () => {
     const { flushDocSaveOnPageExit } = await import("./WorkspacePage");
     const baseline = pmDoc([pmParagraph("p-1", "旧正文")]);
     const edited = pmDoc([pmParagraph("p-1", "新正文")]);
+    const baseContentHash = getPmContentHash(baseline);
     const sendBeacon = vi.fn((_url: string, _data?: BodyInit | null) => true);
 
     expect(flushDocSaveOnPageExit({
       sessionId: "session-1",
       expectedDocumentSnapshot: 7,
+      baseContentHash,
       pmDoc: edited,
       baselineDoc: baseline,
       hasPendingDocSave: false,
@@ -3265,6 +3292,7 @@ describe("WorkspacePage page-exit doc save", () => {
       data: {
         sessionId: "session-1",
         expectedDocumentSnapshot: 7,
+        baseContentHash,
         clientMutationId: "exit-beacon",
       },
     });
@@ -3273,6 +3301,7 @@ describe("WorkspacePage page-exit doc save", () => {
     expect(flushDocSaveOnPageExit({
       sessionId: "session-1",
       expectedDocumentSnapshot: 8,
+      baseContentHash,
       pmDoc: edited,
       baselineDoc: baseline,
       hasPendingDocSave: false,
@@ -3292,6 +3321,7 @@ describe("WorkspacePage page-exit doc save", () => {
       data: {
         sessionId: "session-1",
         expectedDocumentSnapshot: 8,
+        baseContentHash,
         clientMutationId: "exit-fetch",
       },
     });

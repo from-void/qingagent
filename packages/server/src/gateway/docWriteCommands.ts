@@ -154,6 +154,7 @@ export async function* handleDocWriteCommand(
         threadId: session.threadId ?? session.sessionId,
         resourceId: session.resourceId,
         expectedDocumentSnapshot: command.data.expectedDocumentSnapshot,
+        baseContentHash: command.data.baseContentHash,
         clientMutationId: command.data.clientMutationId,
         opKind: "replace_doc",
         actorType: "user",

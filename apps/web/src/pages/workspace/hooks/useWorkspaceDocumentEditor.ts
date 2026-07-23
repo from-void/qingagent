@@ -97,6 +97,7 @@ export function useWorkspaceDocumentEditor(input: {
   sessionIdRef: MutableRefObject<string | null>;
   startNewSessionPromiseRef: MutableRefObject<Promise<string> | null>;
   docVersionRef: MutableRefObject<number>;
+  baseContentHashRef: MutableRefObject<string>;
   pendingDocWriteRef: MutableRefObject<boolean>;
   queuedPmDocRef: MutableRefObject<QueuedDocWrite | null>;
   scheduledDocWriteRef: MutableRefObject<boolean>;
@@ -127,6 +128,7 @@ export function useWorkspaceDocumentEditor(input: {
     sessionIdRef,
     startNewSessionPromiseRef,
     docVersionRef,
+    baseContentHashRef,
     pendingDocWriteRef,
     queuedPmDocRef,
     scheduledDocWriteRef,
@@ -167,11 +169,14 @@ export function useWorkspaceDocumentEditor(input: {
         pmDoc,
       ) as unknown as LegacySection[];
       const clientMutationId = createClientMutationId();
+      const expectedDocumentSnapshot = docVersionRef.current;
+      const baseContentHash = baseContentHashRef.current;
       const command: Command = {
         kind: "updateDoc",
         data: {
           sessionId,
-          expectedDocumentSnapshot: docVersionRef.current,
+          expectedDocumentSnapshot,
+          baseContentHash,
           doc: pmDoc,
           legacySections,
           clientMutationId,
@@ -474,6 +479,7 @@ export function useWorkspaceDocumentEditor(input: {
     }
 
     const expectedDocumentSnapshot = docVersionRef.current;
+    const baseContentHash = baseContentHashRef.current;
     const baselineDoc = current.doc.pmDoc ?? null;
     const hasPendingDocSave =
       pendingDocWriteRef.current ||
@@ -493,6 +499,7 @@ export function useWorkspaceDocumentEditor(input: {
     const fingerprint = pageExitDocSaveFingerprint({
       sessionId,
       expectedDocumentSnapshot,
+      baseContentHash,
       pmDoc,
     });
     return () => {
@@ -501,6 +508,7 @@ export function useWorkspaceDocumentEditor(input: {
         const result = flushDocSaveOnPageExit({
           sessionId,
           expectedDocumentSnapshot,
+          baseContentHash,
           pmDoc,
           baselineDoc,
           hasPendingDocSave,

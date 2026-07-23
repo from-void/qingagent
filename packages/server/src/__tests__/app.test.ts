@@ -682,6 +682,7 @@ describe("POST /api/v1/stream", () => {
       data: {
         sessionId: "nonexistent",
         expectedDocumentSnapshot: 1,
+        baseContentHash: "pmv1-base",
         legacySections: [{ kind: "p", data: { text: "正文" } }],
         clientMutationId: "mutation-1",
       },
@@ -704,6 +705,23 @@ describe("POST /api/v1/stream", () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error).toContain("sessionId");
+  });
+
+  it("rejects updateDoc with empty baseContentHash", async () => {
+    const command = {
+      kind: "updateDoc",
+      data: {
+        sessionId: "s-1",
+        expectedDocumentSnapshot: 1,
+        baseContentHash: "",
+        legacySections: [{ kind: "p", data: { text: "正文" } }],
+        clientMutationId: "mutation-1",
+      },
+    };
+    const res = await request("POST", "/api/v1/stream", command);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain("baseContentHash");
   });
 
   it("rejects updateDoc with non-integer expectedDocumentSnapshot", async () => {

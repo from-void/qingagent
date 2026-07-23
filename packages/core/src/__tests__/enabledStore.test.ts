@@ -47,6 +47,7 @@ describe("enabledStore", () => {
     const tools = await buildCapabilityTools();
 
     expect(tools).not.toHaveProperty("webSearch");
+    expect(tools).not.toHaveProperty("fetchArticle");
     expect(tools).toHaveProperty("generateSvg");
     expect(tools).toHaveProperty("run_js");
   });

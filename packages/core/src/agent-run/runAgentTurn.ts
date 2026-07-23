@@ -167,7 +167,8 @@ export async function* runAgentTurn(
 
   // Resolve workspace skills defensively: skill discovery / maybeRefresh must
   // never abort the turn. On any failure we log and fall back to the default
-  // capability toolset so static tools (fetchArticle, parseFile, …) and the
+  // capability toolset so static tools (parseFile, …), gated capability tools
+  // (fetchArticle, webSearch, …) and the
   // normal stream error-frame path still work.
   let selectedSkillNames: string[] = [];
   let workspaceSkills: Awaited<ReturnType<typeof getQingagentSkills>> | null = null;

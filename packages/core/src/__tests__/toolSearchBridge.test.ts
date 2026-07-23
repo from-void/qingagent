@@ -50,11 +50,7 @@ describe("ToolSearch bridge", () => {
     ]));
     expect(Object.keys(bridge.searchableTools)).not.toContain("show_qr");
     expect(Object.keys(bridge.searchableTools)).not.toContain("updateTodos");
-    expect(bridge.preloadToolNames.sort()).toEqual([
-      "fetchArticle",
-      "generateSvg",
-      "parseFile",
-    ]);
+    expect(bridge.preloadToolNames.sort()).toEqual(["generateSvg", "parseFile"]);
   });
 
   it("doc-calc 点召预加载 run_js,停用 doc-calc 后 run_js 仍作为通用计算工具可搜索", async () => {
@@ -68,6 +64,87 @@ describe("ToolSearch bridge", () => {
     const disabledBridge = await buildCapabilityToolSearchBridge([]);
     expect(Object.keys(disabledBridge.searchableTools)).toContain("run_js");
     expect(disabledBridge.preloadToolNames).toEqual([]);
+  });
+
+  it("关闭 web-search 后 schema 同时移除 webSearch 与间接联网 fetchArticle", async () => {
+    h.disabledSkills.add("web-search");
+    const {
+      buildCapabilityToolSearchBridge,
+      buildCapabilityTools,
+    } = await import("../session/sessionTools.js");
+
+    const tools = await buildCapabilityTools();
+    expect(Object.keys(tools)).not.toContain("webSearch");
+    expect(Object.keys(tools)).not.toContain("fetchArticle");
+    expect(Object.keys(tools)).toContain("generateSvg");
+    expect(Object.keys(tools)).toContain("run_js");
+
+    const bridge = await buildCapabilityToolSearchBridge([
+      "web-search",
+      "wechat-official-account",
+      "gzh-style",
+    ]);
+    expect(Object.keys(bridge.searchableTools)).not.toContain("webSearch");
+    expect(Object.keys(bridge.searchableTools)).not.toContain("fetchArticle");
+    expect(bridge.preloadToolNames).not.toContain("webSearch");
+    expect(bridge.preloadToolNames).not.toContain("fetchArticle");
+    expect(Object.keys(bridge.searchableTools)).toContain("wechat_auth_status");
+    expect(Object.keys(bridge.searchableTools)).toContain("style_template_list");
+  });
+
+  it("关闭 web-search 后硬调联网工具会在 Agent dispatch 前 fail-closed", async () => {
+    h.disabledSkills.add("web-search");
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
+    expect(beforeToolCall).toBeTypeOf("function");
+
+    const execute = vi.fn();
+    for (const [toolName, input] of [
+      ["webSearch", { query: "今天的新闻" }],
+      ["fetchArticle", { url: "https://example.com/news" }],
+    ] as const) {
+      const decision = await beforeToolCall!({
+        toolName,
+        input,
+        context: {},
+      });
+      const output = decision?.proceed === false
+        ? decision.output
+        : await execute();
+
+      expect(output).toMatchObject({
+        ok: false,
+        blocked: true,
+        code: "SKILL_DISABLED",
+        skillName: "web-search",
+        toolName,
+      });
+      expect(output).toHaveProperty(
+        "message",
+        expect.stringContaining("“联网搜”技能已停用"),
+      );
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("ToolSearch 工具签名变化时替换旧 processor,不保留关闭前 schema", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const {
+      buildCapabilityToolSearchBridge,
+      ensureSessionToolSearchProcessor,
+    } = await import("../session/sessionTools.js");
+    const state = createSession("tool-search-toggle-session");
+    const enabledBridge = await buildCapabilityToolSearchBridge([]);
+    const enabledProcessor = ensureSessionToolSearchProcessor(state, enabledBridge);
+
+    h.disabledSkills.add("web-search");
+    const disabledBridge = await buildCapabilityToolSearchBridge([]);
+    const disabledProcessor = ensureSessionToolSearchProcessor(state, disabledBridge);
+
+    expect(disabledProcessor).not.toBe(enabledProcessor);
+    expect(state._toolSearchToolSignature).toBe(disabledBridge.signature);
+    expect(disabledBridge.signature).not.toContain("webSearch");
+    expect(disabledBridge.signature).not.toContain("fetchArticle");
   });
 
   it("processor 按会话复用,selected skill 预加载写入 loaded state", async () => {

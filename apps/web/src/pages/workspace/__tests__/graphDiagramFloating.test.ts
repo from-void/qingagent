@@ -59,16 +59,23 @@ describe("graphNodePositionKey", () => {
 
 describe("computePreviewFitViewport", () => {
   const padding = 0.15;
-  it("宽图缩小铺满并居中(zoom<1,全部落在画布内)", () => {
+  it("正常宽图保持原有 fit 比例并居中", () => {
     // 940×84 的宽图铺进 652×260 画布
     const vp = computePreviewFitViewport({ x: 12, y: 12, width: 940, height: 84 }, 652, 260, padding);
     expect(vp).not.toBeNull();
-    expect(vp!.zoom).toBeLessThan(1);
+    expect(vp!.zoom).toBeCloseTo((652 * (1 - padding * 2)) / 940, 5);
     // 缩放后的内容宽度 <= 可用宽度
     expect(940 * vp!.zoom).toBeLessThanOrEqual(652 * (1 - padding * 2) + 0.001);
     // 包围盒中心被平移到画布中心
     expect(vp!.x + (12 + 940 / 2) * vp!.zoom).toBeCloseTo(652 / 2, 5);
     expect(vp!.y + (12 + 84 / 2) * vp!.zoom).toBeCloseTo(260 / 2, 5);
+  });
+  it("超大图钳制到预览下限并保持居中以供平移浏览", () => {
+    const vp = computePreviewFitViewport({ x: 12, y: 12, width: 30_000, height: 10_000 }, 652, 260, padding);
+    expect(vp).not.toBeNull();
+    expect(vp!.zoom).toBe(0.1);
+    expect(vp!.x + (12 + 30_000 / 2) * vp!.zoom).toBeCloseTo(652 / 2, 5);
+    expect(vp!.y + (12 + 10_000 / 2) * vp!.zoom).toBeCloseTo(260 / 2, 5);
   });
   it("小图不放大(zoom 封顶到 1)", () => {
     const vp = computePreviewFitViewport({ x: 40, y: 40, width: 160, height: 72 }, 652, 260, padding);

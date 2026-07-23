@@ -661,6 +661,11 @@ describe("diagram-engine", () => {
     expect(flowSvg).toContain('x="99"');
     expect(flowSvg).toContain('fill="#d7e7f6"');
     expect(flowSvg).toContain("&lt;危险&gt;");
+    // server Chromium 与 generateSvg 的已验证路径统一走系统 sans-serif；不要再写只在
+    // Google Fonts 存在、VPS fonts-noto-cjk 未注册的 Noto Serif SC / Songti SC。
+    expect(flowSvg).toContain('font-family="sans-serif"');
+    expect(flowSvg).not.toContain("Noto Serif SC");
+    expect(flowSvg).not.toContain("Songti SC");
   });
 
   it("graphToSvg 的 viewBox 覆盖负坐标 overlay", () => {

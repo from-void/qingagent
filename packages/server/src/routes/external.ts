@@ -2,17 +2,25 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type {
+  AnnotationGroup,
   BridgeFrame,
   ChatMessage,
   Command,
   ContentDocState,
+  DocSuggestion,
   FolderSourceRecord,
   MessagePart,
+  ReviewOutcome,
 } from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
 import type {
+  ExternalAnnotation,
   ExternalBridgeFrame,
-  ExternalErrorCode,
+  ExternalReviewCommitRequest,
+  ExternalReviewDiff,
+  ExternalReviewPatchDetail,
+  ExternalReviewPatchSummary,
+  ExternalReviewVerdictRequest,
 } from "../../../contract-ts/src/ExternalApi";
 import {
   deriveActiveOverlay,
@@ -151,6 +159,387 @@ externalRoutes.get("/sessions/:id/doc", async (c) => {
     agentBusy: deriveAgentBusy(session),
     markdown,
     ...(c.req.query("lines") === "1" ? { markdownWithLineNumbers: withLineNumbers(markdown) } : {}),
+  });
+});
+
+externalRoutes.get("/sessions/:id/review", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) {
+    externalLog("review_list", {
+      sessionId: c.req.param("id"),
+      ms: elapsed(startedAt),
+      result: "rejected:RATE_LIMITED",
+    });
+    return limited;
+  }
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSessionReadOnly(sessionId);
+  if (!session) {
+    externalLog("review_list", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:SESSION_NOT_FOUND",
+    });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const patches = [...session.suggestions.values()].map((record) =>
+    reviewPatchSummary(record.suggestion)
+  );
+  const annotations = session.annotationGroups.map(annotationForExternal);
+  externalLog("review_list", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "ok",
+    patches: patches.length,
+    annotations: annotations.length,
+  });
+  return c.json({
+    sessionId,
+    docVersion: session.docVersion,
+    state: deriveContentState(session).kind,
+    agentBusy: deriveAgentBusy(session),
+    patches,
+    annotations,
+  });
+});
+
+externalRoutes.get("/sessions/:id/review/patches/:patchId", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) return limited;
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSessionReadOnly(sessionId);
+  if (!session) {
+    externalLog("review_show", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:SESSION_NOT_FOUND",
+    });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const record = session.suggestions.get(c.req.param("patchId"));
+  if (!record) {
+    externalLog("review_show", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:NOT_FOUND",
+    });
+    return externalError(
+      c,
+      404,
+      "NOT_FOUND",
+      "待审修改不存在",
+      "用 `qa review list -s <id>` 重读待审修改列表",
+    );
+  }
+  externalLog("review_show", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "ok",
+  });
+  return c.json({ sessionId, patch: reviewPatchDetail(record.suggestion) });
+});
+
+externalRoutes.get("/sessions/:id/review/annotations/:annotationId", async (c) => {
+  const startedAt = Date.now();
+  const limited = rateLimit(c);
+  if (limited) return limited;
+  const sessionId = c.req.param("id");
+  const session = await getOrRestoreSessionReadOnly(sessionId);
+  if (!session) {
+    externalLog("annotation_show", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:SESSION_NOT_FOUND",
+    });
+    return externalError(c, 404, "SESSION_NOT_FOUND");
+  }
+  const annotation = session.annotationGroups.find(
+    (group) => group.id === c.req.param("annotationId"),
+  );
+  if (!annotation) {
+    externalLog("annotation_show", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:NOT_FOUND",
+    });
+    return externalError(
+      c,
+      404,
+      "NOT_FOUND",
+      "批注不存在",
+      "用 `qa review list -s <id>` 重读批注列表",
+    );
+  }
+  externalLog("annotation_show", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "ok",
+  });
+  return c.json({ sessionId, annotation: annotationForExternal(annotation) });
+});
+
+externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Partial<ExternalReviewVerdictRequest> | null;
+  if (
+    !body ||
+    !isDocumentVersion(body.expectedDocVersion) ||
+    typeof body.patchId !== "string" ||
+    body.patchId.length === 0 ||
+    (body.verdict !== "accepted" && body.verdict !== "rejected")
+  ) {
+    externalLog("review_verdict", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(c, 400, "VALIDATION", "expectedDocVersion、patchId、verdict 不合法");
+  }
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
+  if (session.docVersion !== body.expectedDocVersion) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
+  }
+  if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+    return externalError(
+      c,
+      409,
+      "VALIDATION",
+      "当前没有待审查修改",
+      "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
+    );
+  }
+  if (!session.suggestions.has(body.patchId)) {
+    return externalError(
+      c,
+      404,
+      "NOT_FOUND",
+      "待审修改不存在",
+      "用 `qa review list -s <id>` 重读待审修改列表",
+    );
+  }
+  const command: Command = body.verdict === "accepted"
+    ? { kind: "acceptPatch", data: { id: body.patchId } }
+    : { kind: "rejectPatch", data: { id: body.patchId } };
+  const frames = await sessionManager.submit(sessionId, {
+    command,
+    origin: "external",
+    client: parseExternalClient(c.req.header("x-qa-client")),
+    modelOverrides: await resolveRequestModelOverrides({}),
+  });
+  if (session.docVersion !== body.expectedDocVersion) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
+  }
+  const updated = session.suggestions.get(body.patchId);
+  if (!updated || updated.suggestion.status !== body.verdict) {
+    return externalError(
+      c,
+      409,
+      "VALIDATION",
+      "审查标记未保存，候选已保留",
+      "用 `qa review show -s <id> --patch <patchId>` 对账后重试一次",
+    );
+  }
+  const seq = maxSeq(frames);
+  externalLog("review_verdict", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "marked",
+    verdict: body.verdict,
+  });
+  return c.json({
+    status: "marked" as const,
+    docVersion: session.docVersion,
+    patchIds: [body.patchId],
+    verdict: body.verdict,
+    reviewingCount: countReviewingPatches(session.suggestions.values()),
+    seq,
+  });
+});
+
+externalRoutes.post("/sessions/:id/review/commit", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as Partial<ExternalReviewCommitRequest> | null;
+  if (
+    !body ||
+    !isDocumentVersion(body.expectedDocVersion) ||
+    (body.action !== "commit" &&
+      body.action !== "accept_all" &&
+      body.action !== "reject_all")
+  ) {
+    externalLog("review_commit", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(c, 400, "VALIDATION", "expectedDocVersion 或 action 不合法");
+  }
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
+  if (session.docVersion !== body.expectedDocVersion) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
+  }
+  if (deriveContentState(session).kind !== "pendingReview" || session.suggestions.size === 0) {
+    return externalError(
+      c,
+      409,
+      "VALIDATION",
+      "当前没有待审查修改",
+      "用 `qa review list -s <id>` 对账；如已离开 pendingReview，直接继续后续工作",
+    );
+  }
+
+  const suggestions = [...session.suggestions.values()].map((record) => record.suggestion);
+  const decisions = reviewDecisions(suggestions, body.action);
+  const outcome = reviewOutcome(suggestions, decisions.rejectedBatchIds);
+  const command: Command = {
+    kind: "commitReviewGroups",
+    data: {
+      acceptReviewBatchIds: decisions.acceptedBatchIds,
+      rejectReviewBatchIds: decisions.rejectedBatchIds,
+      keepPendingReviewBatchIds: [],
+    },
+  };
+  const modelOverrides = await resolveRequestModelOverrides({});
+  const client = parseExternalClient(c.req.header("x-qa-client"));
+  const frames = await sessionManager.submit(sessionId, {
+    command,
+    origin: "external",
+    client,
+    modelOverrides,
+  });
+  const seq = maxSeq(frames);
+  if (session.docVersion !== body.expectedDocVersion && !hasFrame(frames, "docCommitted")) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, seq);
+  }
+  if (session.suggestions.size > 0) {
+    return externalError(
+      c,
+      409,
+      "VALIDATION",
+      "审查提交未完成，候选已保留",
+      "用 `qa review list -s <id>` 查看冲突详情，重读文档后再决定",
+    );
+  }
+
+  const outcomeQueued = outcome.rejectedCount > 0;
+  if (outcomeQueued) {
+    const outcomeCommand: Command = {
+      kind: "submitReviewOutcome",
+      data: { sessionId, outcome },
+    };
+    void sessionManager.submit(sessionId, {
+      command: outcomeCommand,
+      origin: "external",
+      client,
+      modelOverrides,
+    }).catch((error) => {
+      console.warn("[external] evt=review_outcome result=async_failed", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+  externalLog("review_commit", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "reviewed",
+    accepted: outcome.acceptedCount,
+    rejected: outcome.rejectedCount,
+  });
+  return c.json({
+    status: "reviewed" as const,
+    docVersion: session.docVersion,
+    acceptedCount: outcome.acceptedCount,
+    rejectedCount: outcome.rejectedCount,
+    remainingCount: session.suggestions.size,
+    outcomeQueued,
+    outcome,
+    seq,
+  });
+});
+
+externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
+  const startedAt = Date.now();
+  const sessionId = c.req.param("id");
+  const body = await c.req.json().catch(() => null) as {
+    expectedDocVersion?: unknown;
+    annotationIds?: unknown;
+    rememberDismissal?: unknown;
+  } | null;
+  if (
+    !body ||
+    !isDocumentVersion(body.expectedDocVersion) ||
+    !Array.isArray(body.annotationIds) ||
+    body.annotationIds.length === 0 ||
+    body.annotationIds.some((id) => typeof id !== "string" || id.length === 0) ||
+    (body.rememberDismissal !== undefined && typeof body.rememberDismissal !== "boolean")
+  ) {
+    externalLog("annotation_ignore", {
+      sessionId,
+      ms: elapsed(startedAt),
+      result: "rejected:VALIDATION",
+    });
+    return externalError(c, 400, "VALIDATION", "expectedDocVersion 或 annotationIds 不合法");
+  }
+  const session = await getOrRestoreSession(sessionId);
+  if (!session) return externalError(c, 404, "SESSION_NOT_FOUND");
+  if (deriveAgentBusy(session)) return externalError(c, 409, "AGENT_BUSY");
+  if (session.docVersion !== body.expectedDocVersion) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion);
+  }
+  const annotationIds = [...new Set(body.annotationIds as string[])];
+  const existingIds = new Set(session.annotationGroups.map((group) => group.id));
+  if (annotationIds.some((id) => !existingIds.has(id))) {
+    return externalError(
+      c,
+      404,
+      "NOT_FOUND",
+      "批注不存在",
+      "用 `qa review list -s <id>` 重读批注列表",
+    );
+  }
+  const parsed = commandSchema.safeParse({
+    kind: "ignoreAnnotationGroups",
+    data: {
+      sessionId,
+      reason: "item_ignored",
+      groupIds: annotationIds,
+      ...(body.rememberDismissal === true ? { rememberDismissal: true } : {}),
+    },
+  });
+  if (!parsed.success || parsed.data.kind !== "ignoreAnnotationGroups") {
+    return externalError(c, 400, "VALIDATION", "批注忽略请求不合法");
+  }
+  const frames = await sessionManager.submit(sessionId, {
+    command: parsed.data,
+    origin: "external",
+    client: parseExternalClient(c.req.header("x-qa-client")),
+    modelOverrides: await resolveRequestModelOverrides({}),
+  });
+  if (session.docVersion !== body.expectedDocVersion) {
+    return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
+  }
+  const seq = maxSeq(frames);
+  externalLog("annotation_ignore", {
+    sessionId,
+    ms: elapsed(startedAt),
+    result: "ignored",
+    count: annotationIds.length,
+  });
+  return c.json({
+    status: "ignored" as const,
+    annotationIds,
+    remainingAnnotationCount: session.annotationGroups.filter(
+      (group) => group.status === "reviewing",
+    ).length,
+    seq,
   });
 });
 
@@ -402,6 +791,190 @@ externalRoutes.get("/sessions/:id/events", (c) => {
   });
 });
 
+function reviewBatchId(suggestion: DocSuggestion): string {
+  return suggestion.reviewBatchId ?? suggestion.diffHunk?.reviewBatchId ?? suggestion.id;
+}
+
+function reviewPatchSummary(suggestion: DocSuggestion): ExternalReviewPatchSummary {
+  const hunk = suggestion.diffHunk;
+  const conflict = suggestion.conflict
+    ? {
+        kind: suggestion.conflict.kind,
+        message: suggestion.conflict.message,
+        ...("suggestionId" in suggestion.conflict
+          ? { suggestionId: suggestion.conflict.suggestionId }
+          : {}),
+        ...("blockId" in suggestion.conflict
+          ? { blockId: suggestion.conflict.blockId }
+          : {}),
+        ...("currentVersion" in suggestion.conflict
+          ? { currentVersion: suggestion.conflict.currentVersion }
+          : {}),
+      }
+    : null;
+  return {
+    id: suggestion.id,
+    reviewBatchId: reviewBatchId(suggestion),
+    groupMode: suggestion.groupMode ?? hunk?.groupMode ?? null,
+    status: suggestion.status,
+    baseVersion: suggestion.baseVersion,
+    summary: suggestion.summary,
+    beforeText: hunk?.beforeText ?? suggestion.preview.deleteText,
+    afterText: hunk?.afterText ?? suggestion.preview.insertText,
+    conflict,
+  };
+}
+
+function reviewPatchDetail(suggestion: DocSuggestion): ExternalReviewPatchDetail {
+  const hunk = suggestion.diffHunk;
+  const diff: ExternalReviewDiff | null = hunk
+    ? {
+        op: hunk.op,
+        blockPath: hunk.blockPath,
+        summary: hunk.summary,
+        beforeText: hunk.beforeText ?? suggestion.preview.deleteText,
+        afterText: hunk.afterText ?? suggestion.preview.insertText,
+        anchor: hunk.anchor,
+      }
+    : null;
+  return {
+    ...reviewPatchSummary(suggestion),
+    anchor: {
+      blockId: suggestion.anchor.blockId,
+      pmFrom: suggestion.anchor.pmFrom,
+      pmTo: suggestion.anchor.pmTo,
+      quote: suggestion.anchor.quote,
+      ...(suggestion.anchor.prefix !== undefined
+        ? { prefix: suggestion.anchor.prefix }
+        : {}),
+      ...(suggestion.anchor.suffix !== undefined
+        ? { suffix: suggestion.anchor.suffix }
+        : {}),
+    },
+    diff,
+  };
+}
+
+function annotationForExternal(group: AnnotationGroup): ExternalAnnotation {
+  return {
+    id: group.id,
+    summary: group.summary,
+    note: group.note,
+    origin: group.origin,
+    ...(group.suggestion !== undefined ? { suggestion: group.suggestion } : {}),
+    ...(group.severity !== undefined ? { severity: group.severity } : {}),
+    status: group.status,
+    anchors: group.anchors.map((anchor) => ({
+      blockId: anchor.blockId,
+      pmFrom: anchor.pmFrom,
+      pmTo: anchor.pmTo,
+      quote: anchor.quote,
+      ...(anchor.prefix !== undefined ? { prefix: anchor.prefix } : {}),
+      ...(anchor.suffix !== undefined ? { suffix: anchor.suffix } : {}),
+    })),
+  };
+}
+
+function isDocumentVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function countReviewingPatches(
+  records: Iterable<{ suggestion: DocSuggestion }>,
+): number {
+  let count = 0;
+  for (const record of records) {
+    if (record.suggestion.status === "reviewing") count += 1;
+  }
+  return count;
+}
+
+function reviewDecisions(
+  suggestions: readonly DocSuggestion[],
+  action: ExternalReviewCommitRequest["action"],
+): { acceptedBatchIds: string[]; rejectedBatchIds: string[] } {
+  const rejectedByBatch = new Map<string, boolean>();
+  for (const suggestion of suggestions) {
+    const batchId = reviewBatchId(suggestion);
+    const rejected = action === "reject_all" ||
+      (action === "commit" && suggestion.status === "rejected");
+    rejectedByBatch.set(batchId, (rejectedByBatch.get(batchId) ?? false) || rejected);
+  }
+  return {
+    acceptedBatchIds: [...rejectedByBatch.entries()]
+      .filter(([, rejected]) => action !== "reject_all" && !rejected)
+      .map(([batchId]) => batchId),
+    rejectedBatchIds: [...rejectedByBatch.entries()]
+      .filter(([, rejected]) => rejected)
+      .map(([batchId]) => batchId),
+  };
+}
+
+const REVIEW_OUTCOME_TEXT_CAP = 4_000;
+const REVIEW_OUTCOME_SUMMARY_CAP = 60;
+
+function clipReviewOutcomeText(value: string): string {
+  return value.length > REVIEW_OUTCOME_TEXT_CAP
+    ? `${value.slice(0, REVIEW_OUTCOME_TEXT_CAP)}…`
+    : value;
+}
+
+function reviewOutcome(
+  suggestions: readonly DocSuggestion[],
+  rejectedBatchIds: readonly string[],
+): ReviewOutcome {
+  const rejected = new Set(rejectedBatchIds);
+  const hunks = suggestions.map((suggestion) => {
+    const beforeText = clipReviewOutcomeText(
+      suggestion.diffHunk?.beforeText ?? suggestion.preview.deleteText,
+    );
+    const afterText = clipReviewOutcomeText(
+      suggestion.diffHunk?.afterText ?? suggestion.preview.insertText,
+    );
+    const summaryBase = (
+      suggestion.anchor.quote ||
+      beforeText ||
+      afterText ||
+      suggestion.diffHunk?.summary ||
+      suggestion.summary
+    ).split("\n")[0]!.trim();
+    const blockSummary = summaryBase.length > REVIEW_OUTCOME_SUMMARY_CAP
+      ? `${summaryBase.slice(0, REVIEW_OUTCOME_SUMMARY_CAP)}…`
+      : summaryBase;
+    return {
+      verdict: rejected.has(reviewBatchId(suggestion))
+        ? "rejected" as const
+        : "accepted" as const,
+      blockSummary,
+      beforeText,
+      afterText,
+    };
+  });
+  return {
+    acceptedCount: hunks.filter((hunk) => hunk.verdict === "accepted").length,
+    rejectedCount: hunks.filter((hunk) => hunk.verdict === "rejected").length,
+    hunks,
+  };
+}
+
+function hasFrame(entries: LoggedFrame[], kind: BridgeFrame["kind"]): boolean {
+  return entries.some((entry) => entry.frame.kind === kind);
+}
+
+function reviewVersionConflict(
+  c: Context,
+  expected: number,
+  actual: number,
+  seq: number | null = null,
+) {
+  return c.json(withSeq({
+    code: "VERSION_CONFLICT" as const,
+    expected,
+    actual,
+    nextStep: EXTERNAL_NEXT_STEP.VERSION_CONFLICT,
+  }, seq), 409);
+}
+
 interface ProposalSummary {
   status: 200 | 400 | 404 | 409;
   body: unknown;
@@ -502,6 +1075,7 @@ const EXTERNAL_FRAME_KIND_ALLOWLIST = {
   resourceRemoved: true,
   folderSourcesChanged: true,
   folderSourceOperationResult: true,
+  annotationGroupsReady: true,
   stream: true,
 } as const satisfies Record<ExternalBridgeFrame["kind"], true>;
 
@@ -665,8 +1239,32 @@ function elapsed(startedAt: number): number {
 }
 
 function externalLog(
-  evt: "propose" | "chat" | "chatlog" | "files" | "read" | "health" | "sessions",
-  fields: { sessionId?: string; ms: number; result: string; hunks?: number; count?: number },
+  evt:
+    | "propose"
+    | "chat"
+    | "chatlog"
+    | "files"
+    | "read"
+    | "health"
+    | "sessions"
+    | "review_list"
+    | "review_show"
+    | "review_verdict"
+    | "review_commit"
+    | "annotation_show"
+    | "annotation_ignore",
+  fields: {
+    sessionId?: string;
+    ms: number;
+    result: string;
+    hunks?: number;
+    count?: number;
+    patches?: number;
+    annotations?: number;
+    verdict?: "accepted" | "rejected";
+    accepted?: number;
+    rejected?: number;
+  },
 ): void {
   const parts = [
     "[external]",
@@ -677,5 +1275,10 @@ function externalLog(
   ];
   if (fields.hunks !== undefined) parts.push(`hunks=${fields.hunks}`);
   if (fields.count !== undefined) parts.push(`count=${fields.count}`);
+  if (fields.patches !== undefined) parts.push(`patches=${fields.patches}`);
+  if (fields.annotations !== undefined) parts.push(`annotations=${fields.annotations}`);
+  if (fields.verdict !== undefined) parts.push(`verdict=${fields.verdict}`);
+  if (fields.accepted !== undefined) parts.push(`accepted=${fields.accepted}`);
+  if (fields.rejected !== undefined) parts.push(`rejected=${fields.rejected}`);
   console.info(parts.join(" "));
 }

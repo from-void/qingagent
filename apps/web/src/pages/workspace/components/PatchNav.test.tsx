@@ -23,6 +23,7 @@ function baseProps(overrides: Partial<PatchNavProps> = {}): PatchNavProps {
     onJumpNext: vi.fn(),
     onRejectAll: vi.fn(),
     onCommit: vi.fn(),
+    onApplyAll: vi.fn(),
     ...overrides,
   };
 }
@@ -60,7 +61,21 @@ describe("PatchNav", () => {
     expect(host?.textContent).toContain("上一处");
     expect(host?.textContent).toContain("下一处");
     expect(host?.textContent).toContain("提交 ↵");
+    expect(host?.textContent).toContain("全部应用");
     expect(host?.textContent).toContain("放弃全部");
+  });
+
+  it("全部应用使用独立入口，不覆盖逐处提交语义", async () => {
+    const onCommit = vi.fn();
+    const onApplyAll = vi.fn();
+    await renderPatchNav(baseProps({ onCommit, onApplyAll }));
+
+    act(() => {
+      buttonByText("全部应用").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onApplyAll).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
   });
 
   it("用剩余口径展示待处理处数", async () => {
@@ -89,6 +104,7 @@ describe("PatchNav", () => {
     await renderPatchNav(baseProps({ isSubmitting: true }));
 
     expect(buttonByText("提交 ↵").disabled).toBe(true);
+    expect(buttonByText("全部应用").disabled).toBe(true);
     expect(buttonByText("放弃全部").disabled).toBe(true);
     expect(host?.querySelector('[data-wf="PatchNav"]')?.getAttribute("aria-busy")).toBe("true");
   });

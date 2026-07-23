@@ -39,6 +39,7 @@ type MockServerStreamInstance = {
   getDerivativeDoc: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
   ignoreAnnotationGroups: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   emit: (frame: BridgeFrame) => void;
@@ -73,6 +74,9 @@ vi.mock("./data/serverStream", () => {
     getDerivativeDoc = vi.fn(async () => null);
     commitReviewGroups = vi.fn(async () => []);
     ignoreAnnotationGroups = vi.fn(async () => undefined);
+    cancel = vi.fn(async () => {
+      this.dispatchLocal?.({ kind: "streamTerminated", reason: "stop" });
+    });
     stop = vi.fn(() => {
       this.dispatchLocal?.({ kind: "streamTerminated", reason: "stop" });
     });
@@ -2495,6 +2499,44 @@ describe("WorkspacePage review controls", () => {
       expect(send.data.text).toContain("雨夜的最后一班公交");
       expect(send.data.sessionId).toBe("s-9");
       expect(send.data.clientMessageId).toBeTruthy();
+    } finally {
+      serverStreamMock.startSessionImpl = null;
+    }
+  });
+
+  it("e2e-0723 停止门二轮:建会话中的规划 turn 停止后不再晚发 sendMessage/问卷", async () => {
+    let resolveStart: ((sessionId: string) => void) | null = null;
+    serverStreamMock.startSessionImpl = () =>
+      new Promise<string>((resolve) => {
+        resolveStart = resolve;
+      });
+    try {
+      const { WorkspacePage } = await import("./WorkspacePage");
+      await render(<WorkspacePage />);
+      const stream = latestServerStream();
+      const editor = getChatEditor();
+      bindInnerText(editor);
+      await act(async () => {
+        editor.innerText = "帮我写点东西";
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      await clickButton("发送 →");
+      expect(sendMessageCommands(stream)).toHaveLength(0);
+      await clickButton("停止");
+
+      await act(async () => {
+        resolveStart?.("s-stop-planning");
+      });
+      await flushMicrotasks(5);
+
+      expect(sendMessageCommands(stream)).toHaveLength(0);
+      expect(host?.textContent).not.toContain("确认方向");
+      expect(
+        Array.from(host?.querySelectorAll("button") ?? []).some(
+          (button) => button.textContent === "停止",
+        ),
+      ).toBe(false);
     } finally {
       serverStreamMock.startSessionImpl = null;
     }

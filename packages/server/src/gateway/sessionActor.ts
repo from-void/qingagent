@@ -71,6 +71,12 @@ export class SessionActor {
 
   enqueue(input: ActorCommand): Promise<LoggedFrame[]> {
     if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    if (input.command.kind === "cancelStream") {
+      // cancel 是当前用户 turn 的终止屏障：除 abort 正在跑的项外，还要丢弃在它之前
+      // 已排队的模型续轮/重复派发。否则队列会按 old → queued send → cancel 执行，
+      // queued send 先重新发 start/问卷，用户只能再点一次停止。
+      this.cancelQueuedTurnDispatches();
+    }
     if (this.isBusy && isPreemptiveCommand(input.command)) {
       this.abortCurrent();
     }
@@ -100,6 +106,17 @@ export class SessionActor {
         sessionId: this.options.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private cancelQueuedTurnDispatches(): void {
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const item = this.queue[index];
+      if (!item?.input || !isAgentTurnDispatchCommand(item.input.command)) continue;
+      this.queue.splice(index, 1);
+      // /commands 对模型命令本就是 accepted 后台语义；被同 turn 的停止屏障消费是
+      // 正常取消，不制造伪错误帧，也不影响排在 cancel 之后的新用户 turn。
+      item.resolve([]);
     }
   }
 
@@ -214,6 +231,15 @@ export class SessionActor {
 
 export function isPreemptiveCommand(command: Command): boolean {
   return command.kind === "cancelStream" || command.kind === "sendMessage";
+}
+
+/** 会启动或续跑 agent 的命令；cancelStream 必须清掉其前方尚未执行的同 turn 派发。 */
+export function isAgentTurnDispatchCommand(command: Command): boolean {
+  return (
+    command.kind === "sendMessage" ||
+    command.kind === "resumeAskUser" ||
+    command.kind === "submitReviewOutcome"
+  );
 }
 
 /**

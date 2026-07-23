@@ -155,7 +155,13 @@ import { useAutoScroll } from "../useAutoScroll";
 import { useAssetPreviewState } from "./useAssetPreviewState";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 import { useReviewReveal } from "./useReviewReveal";
-import { useWorkspaceChatActions } from "./useWorkspaceChatActions";
+import {
+  beginWorkspaceTurnDispatch,
+  isWorkspaceTurnDispatchCurrent,
+  prepareAndDispatchWorkspaceTurn,
+  useWorkspaceChatActions,
+  type WorkspaceTurnDispatchGate,
+} from "./useWorkspaceChatActions";
 import { useWorkspaceChrome } from "./useWorkspaceChrome";
 import { useWorkspaceDebugControls } from "./useWorkspaceDebugControls";
 import {
@@ -325,6 +331,9 @@ export function useWorkspacePageController() {
     Command,
     { kind: "sendMessage" }
   > | null>(null);
+  // 所有 sendMessage 入口共用同一 turn 闸门：首页 pending-message、输入框发送、
+  // 衍生稿指令都必须能被一次停止持续作废，不能各自保留会晚到的异步派发链。
+  const turnDispatchGateRef = useRef<WorkspaceTurnDispatchGate>({ generation: 0 });
   const reviewCloseInFlightRef = useRef<Promise<void> | null>(null);
   const pendingBrowserAttachRef = useRef<{
     sessionId: string;
@@ -1725,6 +1734,9 @@ export function useWorkspacePageController() {
       (pending != null || files.length > 0 || pendingFolder !== null)
     ) {
       const messageText = pending ?? "";
+      const dispatchGeneration = beginWorkspaceTurnDispatch(
+        turnDispatchGateRef.current,
+      );
 
       const sendPending = async () => {
         // 乐观气泡与服务端直播 user 帧共用同一 id(clientMessageId),按 id 去重合一。
@@ -1751,49 +1763,58 @@ export function useWorkspacePageController() {
             },
           });
         }
-        const sessionPromise = startNewSessionOnce(
-          stream,
-          sessionIdRef,
-          startNewSessionPromiseRef,
-          replaceWorkspaceSessionHash,
-        );
-        const [uploadedAssets, sessionId] = await Promise.all([
-          uploadFiles(files),
-          sessionPromise,
-        ]);
-        const fileIds = uploadedAssets.map((asset) => asset.fileId);
-        markMaterialParsing(uploadedAssets);
-        if (pendingFolder) {
-          await sendAttachFolderSelection(
-            stream,
-            sessionId,
-            folderAttachSelectionFromPending(pendingFolder),
-            {
-              awaitBrowserBridge:
-                pendingFolder.provider === "browser-fs-access",
-            },
-          );
-          if (peekPendingFolderSource() === pendingFolder)
-            clearPendingFolderSource();
-        }
-        const command: Extract<Command, { kind: "sendMessage" }> = {
-          kind: "sendMessage",
-          data: {
-            sessionId,
-            text: messageText,
-            mentions: [],
-            skills: pendingSkills,
-            chips: pendingChips,
-            fileIds,
-            clientMessageId,
-            // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
-            ...(pendingChips.length > 0 && pendingRichText
-              ? { richText: pendingRichText }
-              : {}),
+        const outcome = await prepareAndDispatchWorkspaceTurn({
+          gate: turnDispatchGateRef.current,
+          generation: dispatchGeneration,
+          prepare: async () => {
+            const sessionPromise = startNewSessionOnce(
+              stream,
+              sessionIdRef,
+              startNewSessionPromiseRef,
+              replaceWorkspaceSessionHash,
+            );
+            const [uploadedAssets, sessionId] = await Promise.all([
+              uploadFiles(files),
+              sessionPromise,
+            ]);
+            const fileIds = uploadedAssets.map((asset) => asset.fileId);
+            markMaterialParsing(uploadedAssets);
+            if (pendingFolder) {
+              await sendAttachFolderSelection(
+                stream,
+                sessionId,
+                folderAttachSelectionFromPending(pendingFolder),
+                {
+                  awaitBrowserBridge:
+                    pendingFolder.provider === "browser-fs-access",
+                },
+              );
+              if (peekPendingFolderSource() === pendingFolder)
+                clearPendingFolderSource();
+            }
+            return {
+              kind: "sendMessage",
+              data: {
+                sessionId,
+                text: messageText,
+                mentions: [],
+                skills: pendingSkills,
+                chips: pendingChips,
+                fileIds,
+                clientMessageId,
+                // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
+                ...(pendingChips.length > 0 && pendingRichText
+                  ? { richText: pendingRichText }
+                  : {}),
+              },
+            } satisfies Extract<Command, { kind: "sendMessage" }>;
           },
-        };
-        lastRetriableSendRef.current = command;
-        await stream.sendCommand(command);
+          dispatch: async (command) => {
+            lastRetriableSendRef.current = command;
+            await stream.sendCommand(command);
+          },
+        });
+        if (outcome === "cancelled") return;
         if (sessionStorage.getItem("qingagent:pending-message") === pending) {
           sessionStorage.removeItem("qingagent:pending-message");
         }
@@ -1804,6 +1825,15 @@ export function useWorkspacePageController() {
       };
 
       sendPending().catch((e) => {
+        // 用户已经停止这一 turn 时，晚到的上传/建会话失败不再冒充新的发送失败。
+        if (
+          !isWorkspaceTurnDispatchCurrent(
+            turnDispatchGateRef.current,
+            dispatchGeneration,
+          )
+        ) {
+          return;
+        }
         console.error("[workspace] pending-message send failed", e);
         const message = e instanceof Error ? e.message : "";
         showToast(
@@ -2456,6 +2486,7 @@ export function useWorkspacePageController() {
       lastRetriableSendRef,
       reviewCloseInFlightRef,
       restoreExistingSessionIdRef,
+      turnDispatchGateRef,
       dispatch,
       setPreviewSource,
       setSendPending,
@@ -2479,6 +2510,9 @@ export function useWorkspacePageController() {
         showToast("连接还没准备好");
         return;
       }
+      const dispatchGeneration = beginWorkspaceTurnDispatch(
+        turnDispatchGateRef.current,
+      );
       const clientMessageId = `m-user-${Date.now()}`;
       dispatch({
         kind: "chatMessageAdded",
@@ -2492,23 +2526,39 @@ export function useWorkspacePageController() {
           },
         },
       });
-      void (async () => {
-        const sessionId = await ensureSessionId(stream);
-        await stream.sendCommand({
-          kind: "sendMessage",
-          data: {
-            sessionId,
-            text,
-            mentions: [],
-            skills: [],
-            chips: [],
-            fileIds: [],
-            clientMessageId,
-            displayCard,
-            ...(reviewContext ? { reviewContext } : {}),
-          },
-        });
-      })().catch((error) => {
+      void prepareAndDispatchWorkspaceTurn({
+        gate: turnDispatchGateRef.current,
+        generation: dispatchGeneration,
+        prepare: async () => {
+          const sessionId = await ensureSessionId(stream);
+          return {
+            kind: "sendMessage",
+            data: {
+              sessionId,
+              text,
+              mentions: [],
+              skills: [],
+              chips: [],
+              fileIds: [],
+              clientMessageId,
+              displayCard,
+              ...(reviewContext ? { reviewContext } : {}),
+            },
+          } satisfies Extract<Command, { kind: "sendMessage" }>;
+        },
+        dispatch: async (command) => {
+          lastRetriableSendRef.current = command;
+          await stream.sendCommand(command);
+        },
+      }).catch((error) => {
+        if (
+          !isWorkspaceTurnDispatchCurrent(
+            turnDispatchGateRef.current,
+            dispatchGeneration,
+          )
+        ) {
+          return;
+        }
         console.error("[workspace] derivative query send failed", error);
         showToast("生成指令发送失败,请重试");
       });

@@ -774,6 +774,45 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(findToolCallSpec(state.chatHistory, "tc-abort-tool")).toBeNull();
   });
 
+  it("规划首步后用户 abort 会终止同一 agent turn，不再消费下一步 planDraft 问卷", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("planning-abort-before-questionnaire");
+    const abortController = new AbortController();
+    async function* planningSteps(): AsyncGenerator<unknown> {
+      yield { type: "reasoning-delta", payload: { text: "正在判断是否需要问卷" } };
+      abortController.abort("user_abort");
+      yield {
+        type: "tool-call",
+        payload: {
+          toolName: "planDraft",
+          toolCallId: "plan-after-user-stop",
+          args: { questions: [{ id: "topic", label: "想写什么？" }] },
+        },
+      };
+    }
+
+    const { frames, result } = await collectFramesAndReturn(
+      processAgentStream(planningSteps(), {
+        state,
+        agentMessageId: "agent-msg",
+        streamId: "stream-planning-aborted",
+        runId: "run-planning-aborted",
+        abortController,
+      }),
+    );
+
+    expect(result.streamWasUserAborted).toBe(true);
+    expect(findToolCallSpec(state.chatHistory, "plan-after-user-stop")).toBeNull();
+    expect(
+      frames.some(
+        (frame) =>
+          frame.kind === "toolCallUpdated" &&
+          frame.data.toolCallId === "plan-after-user-stop",
+      ),
+    ).toBe(false);
+    expect(draftingFailures(frames)).toHaveLength(0);
+  });
+
   it("内部 idle timeout 仍保留工具调用后的长时间无响应收口提示", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("err-tool-idle-timeout");

@@ -96,9 +96,9 @@ describe("审阅态 PM patch decorations", () => {
   });
 
   it("只读 PM 上屏补丁 decoration 时不改 editor.state.doc", async () => {
-    const baselineDoc = paragraphDoc("abcdef");
-    const suggestion = docSuggestion("patch-1", 2, 4, "bc", "XY");
-    const applied = appliedPatch("patch-1", 1, "replace", "bc", "XY");
+    const baselineDoc = paragraphDoc("1.8万");
+    const suggestion = docSuggestion("patch-1", 1, 4, "1.8", "2.1");
+    const applied = appliedPatch("patch-1", 1, "replace", "1.8", "2.1");
     let editor: Editor | null = null;
 
     act(() => {
@@ -113,7 +113,7 @@ describe("审阅态 PM patch decorations", () => {
           reviewSuggestions={[suggestion]}
           reviewAppliedPatches={[applied]}
           patchMeta={new Map([
-            ["patch-1", { before: "bc", after: "XY", kind: "replace", index: 1 }],
+            ["patch-1", { before: "1.8", after: "2.1", kind: "replace", index: 1 }],
           ])}
           onEditorReady={(ed) => {
             editor = ed;
@@ -130,9 +130,14 @@ describe("审阅态 PM patch decorations", () => {
     expect(host.querySelector(".wf-patch-ins")).not.toBeNull();
     expect(host.querySelector(".wf-patch-del")).not.toBeNull();
     expect(host.querySelector(".wf-patch-replace-wrap")).not.toBeNull();
-    // 替换处不叠加红删除光标球(原文进 hover 卡),只留绿色新文本作唯一标记
+    expect(host.querySelector(".wf-patch-replace-separator")?.textContent).toBe("→");
+    // 替换处用删除线旧值 + 箭头 + 绿色新值，不再叠加纯删除专用的红色光标球。
     expect(host.querySelector(".patch-del-cursor")).toBeNull();
     expect(host.querySelector('[data-patch-id="patch-1"]')).not.toBeNull();
+    expect(host.querySelector(".wf-doc p")?.textContent).toBe("1.8→2.1万");
+    expect(host.querySelector(".wf-doc p")?.innerHTML).toMatchInlineSnapshot(
+      `"<span data-patch-id="patch-1" data-patch-index="1" data-patch-state="delete" class="wf-patch-del wf-patch-replace-old">1.8</span><span class="wf-patch-replace-wrap ProseMirror-widget" data-patch-state="replace" data-patch-id="patch-1" data-patch-index="1"><span class="wf-patch-replace-separator" aria-label="替换为">→</span><span class="wf-patch-ins">2.1</span></span>万"`,
+    );
   });
 
   it("只读 PM 上屏块级新增 decoration 时渲出待接受块且不改 editor.state.doc", async () => {

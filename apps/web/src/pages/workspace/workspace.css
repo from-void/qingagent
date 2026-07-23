@@ -3273,7 +3273,8 @@
     background:rgba(220, 80, 70, 0.6);
     transform:translateX(-50%);
   }
-  /* 删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。 */
+  /* 纯删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。
+     行内替换的旧值由下方 .wf-patch-replace-old 例外解折叠。 */
   #view-workspace .wf-doc .wf-patch-del{
     display:inline-block;
     width:0;
@@ -3284,6 +3285,31 @@
     line-height:0;
     color:transparent;
     vertical-align:baseline;
+  }
+  /* 行内替换按「旧值 → 新值」展示：只解折叠替换的旧半，纯删除仍维持紧凑红光标。 */
+  #view-workspace .wf-doc .wf-patch-del.wf-patch-replace-old{
+    display:inline;
+    width:auto;
+    max-width:none;
+    overflow:visible;
+    white-space:inherit;
+    font-size:inherit;
+    line-height:inherit;
+    color:var(--diff-del-ink);
+    opacity:.64;
+    vertical-align:baseline;
+    text-decoration:line-through;
+    text-decoration-color:var(--diff-del-bd);
+    text-decoration-thickness:1.5px;
+    text-decoration-skip-ink:none;
+  }
+  #view-workspace .wf-patch-replace-separator{
+    display:inline-block;
+    margin:0 .32em;
+    color:var(--ink-4);
+    font-size:.88em;
+    line-height:1;
+    vertical-align:.04em;
   }
   #view-workspace .wf-patch-del-marker{
     position:relative;
@@ -3314,6 +3340,9 @@
   }
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-ins-wrap,
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-replace-wrap{
+    pointer-events:auto;
+  }
+  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-replace-old{
     pointer-events:auto;
   }
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-blockmark,

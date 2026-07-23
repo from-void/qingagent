@@ -166,6 +166,20 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toMatch(
       /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-del-marker\s*\{\s*pointer-events:auto;\s*\}/,
     );
+    expect(workspaceCss).toMatch(
+      /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-replace-old\s*\{\s*pointer-events:auto;\s*\}/,
+    );
+  });
+
+  it("keeps inline replacements readable as struck old value, separator, then inserted value", () => {
+    const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
+
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.wf-doc \.wf-patch-del\.wf-patch-replace-old\{[\s\S]*?text-decoration:line-through;[\s\S]*?\}/,
+    );
+    expect(workspaceCss).toMatch(
+      /#view-workspace \.wf-patch-replace-separator\{[\s\S]*?margin:0 \.32em;[\s\S]*?\}/,
+    );
   });
 
   it("keeps streaming text decoration from covering workspace controls", () => {

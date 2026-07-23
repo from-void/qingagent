@@ -169,21 +169,88 @@ export interface SelfContainedSvg {
   width: number;
 }
 
+export interface ExportLayoutBounds {
+  height: number;
+  visualHeight: number;
+  visualWidth: number;
+  width: number;
+}
+
+function cssPixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function computedBorderBoxSize(computed: CSSStyleDeclaration, axis: "height" | "width"): number {
+  const size = cssPixelValue(computed[axis]);
+  if (size <= 0 || computed.boxSizing === "border-box") return size;
+  if (axis === "width") {
+    return size
+      + cssPixelValue(computed.paddingLeft)
+      + cssPixelValue(computed.paddingRight)
+      + cssPixelValue(computed.borderLeftWidth)
+      + cssPixelValue(computed.borderRightWidth);
+  }
+  return size
+    + cssPixelValue(computed.paddingTop)
+    + cssPixelValue(computed.paddingBottom)
+    + cssPixelValue(computed.borderTopWidth)
+    + cssPixelValue(computed.borderBottomWidth);
+}
+
+function clipsOverflow(value: string): boolean {
+  return value === "hidden" || value === "clip";
+}
+
+/**
+ * 导出使用元素自身的布局坐标系，而不是包含祖先 transform 后的视觉 rect。
+ * PhoneShell / DesktopShell 会整体缩放预览；混用缩放后的 rect 与缩放前的计算样式，
+ * 会让 clone 的标题和页脚落到固定画布之外。
+ */
+export function measureExportLayoutBounds(element: HTMLElement): ExportLayoutBounds {
+  const computed = getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  const borderWidth = cssPixelValue(computed.borderLeftWidth) + cssPixelValue(computed.borderRightWidth);
+  const borderHeight = cssPixelValue(computed.borderTopWidth) + cssPixelValue(computed.borderBottomWidth);
+  const borderBoxWidth = Math.max(
+    element.offsetWidth,
+    element.clientWidth + borderWidth,
+    computedBorderBoxSize(computed, "width"),
+  );
+  const borderBoxHeight = Math.max(
+    element.offsetHeight,
+    element.clientHeight + borderHeight,
+    computedBorderBoxSize(computed, "height"),
+  );
+  const contentWidth = clipsOverflow(computed.overflowX) ? 0 : element.scrollWidth + borderWidth;
+  const contentHeight = clipsOverflow(computed.overflowY) ? 0 : element.scrollHeight + borderHeight;
+  const layoutWidth = Math.max(borderBoxWidth, contentWidth);
+  const layoutHeight = Math.max(borderBoxHeight, contentHeight);
+  return {
+    width: Math.max(1, Math.ceil(layoutWidth || rect.width)),
+    height: Math.max(1, Math.ceil(layoutHeight || rect.height)),
+    visualWidth: Math.max(0, rect.width),
+    visualHeight: Math.max(0, rect.height),
+  };
+}
+
 export async function serializeElementAsSelfContainedSvg(element: HTMLElement): Promise<SelfContainedSvg> {
   await document.fonts?.ready;
-  const rect = element.getBoundingClientRect();
-  const width = Math.max(1, Math.ceil(rect.width || element.scrollWidth));
-  const height = Math.max(1, Math.ceil(rect.height || element.scrollHeight));
+  const { width, height } = measureExportLayoutBounds(element);
   const clone = element.cloneNode(true) as HTMLElement;
   const usedFontFamilies = new Set<string>();
   collectComputedStyles(element, clone, usedFontFamilies);
-  clone.style.margin = "0";
-  clone.style.width = `${width}px`;
-  clone.style.height = `${height}px`;
+  // width / height 是 border-box 布局边界；显式固定根盒，避免 foreignObject
+  // 缺少原祖先宽度时重新触发百分比、容器单位或 flex/grid 收缩。
+  clone.style.setProperty("box-sizing", "border-box");
+  clone.style.setProperty("margin", "0");
+  clone.style.setProperty("width", `${width}px`);
+  clone.style.setProperty("height", `${height}px`);
   await inlineElementResources(element, clone);
   const fontCss = await embeddedFontCss(usedFontFamilies);
   const markup = new XMLSerializer().serializeToString(clone);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${fontCss ? `<style>${fontCss}</style>` : ""}${markup}</div></foreignObject></svg>`;
+  const layoutContext = `box-sizing:border-box;width:${width}px;height:${height}px;margin:0;padding:0`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject width="${width}" height="${height}"><div xmlns="http://www.w3.org/1999/xhtml" style="${layoutContext}">${fontCss ? `<style>${fontCss}</style>` : ""}${markup}</div></foreignObject></svg>`;
   return { dataUrl: svgMarkupToDataUrl(svg), height, svg, width };
 }
 

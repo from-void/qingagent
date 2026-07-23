@@ -827,59 +827,72 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (disabled) {
-        e.target.value = "";
-        return;
-      }
-      if (!file) return;
-      // Reset input so the same file can be re-selected
+      const files = Array.from(e.target.files ?? []);
+      // 先复制 FileList 再清空 input，允许用户原样重选同一批文件。
       e.target.value = "";
-
-      const sizeError = uploadFileSizeError(file);
-      if (sizeError) {
-        onToast?.(uploadFailureMessage(sizeError, "文件上传失败，请重试"));
+      if (disabled) {
         return;
       }
+      if (files.length === 0) return;
 
-      if (!isAcceptedUploadFile(file)) {
+      const acceptedFiles: File[] = [];
+      let hasUnsupportedFile = false;
+      for (const file of files) {
+        const sizeError = uploadFileSizeError(file);
+        if (sizeError) {
+          onToast?.(uploadFailureMessage(sizeError, "文件上传失败，请重试"));
+          continue;
+        }
+        if (!isAcceptedUploadFile(file)) {
+          hasUnsupportedFile = true;
+          continue;
+        }
+        acceptedFiles.push(file);
+      }
+      if (hasUnsupportedFile) {
         window.alert(
           `暂不支持这种文件，可以试试 PDF、Word、Excel、PPT、TXT、Markdown 或图片。`,
         );
-        return;
       }
+      if (acceptedFiles.length === 0) return;
 
-      const key = attachmentFileKey(file);
-
-      // Store native File object — upload deferred to submit time。未发送文件只作为输入框 chip 存在,
+      // 保存整批原生 File 对象，延迟到提交时上传。未发送文件只作为输入框 chip 存在,
       // 发送后解析 tracker/resource 才会让它进入「已关联文件」面板。
-      setAttachedFiles((prev) => (prev.some((f) => attachmentFileKey(f) === key) ? prev : [...prev, file]));
+      setAttachedFiles((prev) => {
+        const next = [...prev];
+        for (const file of acceptedFiles) {
+          const key = attachmentFileKey(file);
+          if (!next.some((existing) => attachmentFileKey(existing) === key)) {
+            next.push(file);
+          }
+        }
+        return next;
+      });
 
-      // Insert an attach chip showing the filename(面板上传与按钮上传一致,都自动引用)
+      // 每个文件插入一个 attach chip（面板上传与按钮上传一致，都自动引用）。
       const edit = editRef.current;
       if (!edit) return;
-      if (hasAttachChip(edit, key)) {
-        edit.focus();
-        reportChange();
-        return;
-      }
       edit.focus();
-      const r = restoreOrEndRange();
-      r.deleteContents();
-      const chip = makeChatChipNode({ kind: "attach", label: key });
-      r.insertNode(chip);
-      const space = document.createTextNode(" ");
-      chip.after(space);
-      const r2 = document.createRange();
-      r2.setStartAfter(space);
-      r2.collapse(true);
-      const sel = window.getSelection()!;
-      sel.removeAllRanges();
-      sel.addRange(r2);
-      savedRangeRef.current = r2.cloneRange();
+      for (const file of acceptedFiles) {
+        const key = attachmentFileKey(file);
+        if (hasAttachChip(edit, key)) continue;
+        const r = restoreOrEndRange();
+        r.deleteContents();
+        const chip = makeChatChipNode({ kind: "attach", label: key });
+        r.insertNode(chip);
+        const space = document.createTextNode(" ");
+        chip.after(space);
+        const r2 = document.createRange();
+        r2.setStartAfter(space);
+        r2.collapse(true);
+        const sel = window.getSelection()!;
+        sel.removeAllRanges();
+        sel.addRange(r2);
+        savedRangeRef.current = r2.cloneRange();
+      }
       reportChange();
     },
-    [attachedFiles, disabled, onToast, restoreOrEndRange, reportChange],
+    [disabled, onToast, restoreOrEndRange, reportChange],
   );
 
   // 引用:把素材作为下一条消息上下文,在编辑器末尾插入 attach chip(文件名)。
@@ -974,6 +987,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         accept={ACCEPTED_UPLOAD_ACCEPT_ATTR}
         disabled={disabled}
         style={{ display: "none" }}

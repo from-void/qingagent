@@ -263,9 +263,12 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.querySelector('[data-wf="SearchPanelMock"]')).not.toBeNull();
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).toContain("联网搜索");
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).not.toContain("---");
+    expect(q('[data-wf="SkillLabelEdit"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelInput"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelSave"]')).toBeNull();
   });
 
-  it("详情页可保存超长中文显示名，底层 slug 不变且不截断", async () => {
+  it("自定义技能可从 hero 标题进入编辑并保存超长中文显示名，底层 slug 不变", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [
       {
@@ -301,6 +304,11 @@ describe("SkillsPanel 导入门控", () => {
       card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
     });
+    const edit = q('[data-wf="SkillLabelEdit"]') as HTMLButtonElement;
+    expect(edit.textContent).toContain("研资料");
+    await act(async () => {
+      edit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     const input = q('[data-wf="SkillLabelInput"]') as HTMLInputElement;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -318,6 +326,49 @@ describe("SkillsPanel 导入门控", () => {
     expect(h.setSkillLabel).toHaveBeenCalledWith("custom-research", longLabel);
     expect(host?.textContent).toContain("标识：custom-research");
     expect(host?.textContent).toContain(longLabel);
+  });
+
+  it("自定义技能行内编辑按 Escape 取消且不保存", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "custom-research",
+        description: "自装研究技能",
+        label: "研资料",
+        summary: "整理用户资料",
+        icon: "star",
+        source: "installed",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+    ];
+    h.details.set("custom-research", {
+      ...h.skills[0]!,
+      body: "# 研资料",
+    });
+    await render();
+
+    const card = q(".sk-card");
+    if (!card) throw new Error("custom skill card not found");
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      q('[data-wf="SkillLabelEdit"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q('[data-wf="SkillLabelInput"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "临时名字");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(h.setSkillLabel).not.toHaveBeenCalled();
+    expect(q('[data-wf="SkillLabelInput"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelEdit"]')?.textContent).toContain("研资料");
   });
 
   it("点击开关只启停，不进入详情页", async () => {

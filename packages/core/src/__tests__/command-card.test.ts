@@ -430,6 +430,93 @@ describe("沙箱命令终端卡", () => {
     },
   );
 
+  it("读取输出的 stdout 通过既有卡片更新通道投影轻量活动时间", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("process-output-activity");
+    const activityAt = Date.now();
+    const frames = await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "read-activity",
+            args: { pid: "4242", wait: true },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "read-activity",
+            output: {
+              type: "data-sandbox-stdout",
+              data: {
+                output: "still working\n",
+                timestamp: activityAt,
+                toolCallId: "read-activity",
+              },
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-activity",
+        streamId: "stream-activity",
+        runId: "run-activity",
+      },
+    ));
+
+    const activitySpec = specs(frames)
+      .filter((spec) => spec.id === "read-activity" && spec.result?.kind === "genericText")
+      .at(-1);
+    expect(activitySpec?.status.kind).toBe("running");
+    expect(activitySpec?.result).toEqual({
+      kind: "genericText",
+      data: JSON.stringify({ outputActivityAt: activityAt }),
+    });
+    expect(findSpec(state, "read-activity")?.result).toEqual(activitySpec?.result);
+  });
+
+  it("有界等待返回时保留进程仍在运行的结构化卡片摘要，不受长 stdout 截断影响", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("process-output-bounded-return");
+    const frames = await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "read-bounded",
+            args: { pid: "4242", wait: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "read-bounded",
+            args: { pid: "4242", wait: true },
+            result: `${"长输出".repeat(200)}\n\n进程仍在运行（等待 60s 未退出）。`,
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-bounded",
+        streamId: "stream-bounded",
+        runId: "run-bounded",
+      },
+    ));
+
+    expect(specs(frames).filter((spec) => spec.id === "read-bounded").at(-1)?.result)
+      .toEqual({
+        kind: "genericText",
+        data: JSON.stringify({ processStillRunning: true }),
+      });
+  });
+
   it("kill 按 PID 收口 owner 为 killed，迟到退出事件不能覆盖终态", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("background-killed");

@@ -139,7 +139,7 @@ describe("QrCard — validation loop 3", () => {
       // 过期后,刷新按钮应显示且框架带 is-expired 类
       const refreshBtn = document.querySelector(".qr-card__refresh");
       expect(refreshBtn).toBeTruthy();
-      expect(refreshBtn?.textContent).toContain("二维码已过期");
+      expect(refreshBtn?.textContent).toContain("二维码已失效");
       expect(document.querySelector(".qr-card__frame.is-expired")).toBeTruthy();
     });
   });
@@ -259,6 +259,31 @@ describe("QrCard — validation loop 3", () => {
       const paragraphs = noteContent?.querySelectorAll("p");
       expect(paragraphs?.length).toBe(3);
     });
+
+    it("restores literal newline escape sequences without breaking markdown", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "请扫码登录。\\r\\n也可 [点此打开](https://example.com)\\n**完成后返回**",
+      };
+      render(<QrCard data={data} />);
+      const paragraphs = document.querySelectorAll(".qr-card__note-line");
+      expect(paragraphs).toHaveLength(3);
+      expect(paragraphs[1]?.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+      expect(paragraphs[2]?.querySelector("strong")?.textContent).toBe("完成后返回");
+      expect(document.querySelector(".qr-card__note")?.textContent).not.toContain("\\n");
+    });
+
+    it("preserves deliberate backslashes that are not clear newline escapes", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: String.raw`路径 C:\new 与字面量 \\n 保持不变`,
+      };
+      render(<QrCard data={data} />);
+      const text = document.querySelector(".qr-card__note")?.textContent ?? "";
+      expect(document.querySelectorAll(".qr-card__note-line")).toHaveLength(1);
+      expect(text).toContain(String.raw`C:\new`);
+      expect(text).toContain(String.raw`\\n`);
+    });
   });
 
   // ──────────────── 补充:过期倒计时停止 ────────────────
@@ -277,9 +302,9 @@ describe("QrCard — validation loop 3", () => {
 
       render(<QrCard data={data} />);
 
-      // 已过期应该显示"已过期"
+      // 已失效应该使用中性文案
       const expiry = document.querySelector(".qr-card__expiry");
-      expect(expiry?.textContent).toBe("已过期");
+      expect(expiry?.textContent).toBe("二维码已失效");
     });
   });
 
@@ -451,7 +476,7 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={data} />);
 
       const refreshButton = document.querySelector(".qr-card__refresh") as HTMLButtonElement | null;
-      expect(refreshButton?.getAttribute("aria-label")).toBe("刷新已过期二维码");
+      expect(refreshButton?.getAttribute("aria-label")).toBe("重新获取已失效二维码");
     });
 
     it("adds an accessible label to the confirm button", async () => {
@@ -554,6 +579,30 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={{ ...connectorCard(), connectorId: undefined, pendingId: undefined }} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("(h) explicit completion state", () => {
+    it("completed state wins over expiry and removes every refresh entry", () => {
+      const data: QrCardBody = {
+        title: "扫码授权",
+        content: "https://test.qr",
+        expiresAt: Date.now() - 60_000,
+        code: null,
+        refreshQuery: "refresh",
+        confirmQuery: "confirm",
+        note: null,
+        success: { account: null, message: "企业微信登录成功" },
+      };
+
+      render(<QrCard data={data} />);
+
+      expect(document.querySelector(".qr-card__success")?.textContent)
+        .toContain("✓ 企业微信登录成功");
+      expect(document.querySelector(".qr-card__refresh")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
+      expect(document.querySelector(".qr-card__confirm")).toBeNull();
+      expect(document.body.textContent).not.toContain("失效");
     });
   });
 });

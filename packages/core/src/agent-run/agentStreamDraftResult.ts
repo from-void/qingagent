@@ -258,7 +258,16 @@ export async function* handleDraftOrGenericToolResult(
     render: { kind: "chatInline" },
     status: doneStatus,
     body: doneBody,
-    result: { kind: "genericText", data: toolResultCardSummary(rawToolResult) },
+    result: {
+      kind: "genericText",
+      data:
+        toolName === "mastra_workspace_get_process_output" &&
+        typeof rawToolResult === "string" &&
+        rawToolResult.includes("进程仍在运行") &&
+        rawToolResult.includes("未退出")
+          ? JSON.stringify({ processStillRunning: true })
+          : toolResultCardSummary(rawToolResult),
+    },
   };
   updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
   if (toolName === "readDraft") {

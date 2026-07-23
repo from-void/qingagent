@@ -112,6 +112,21 @@ describe("show_qr 二维码卡帧协议", () => {
     vi.clearAllMocks();
   });
 
+  it("show_qr 返回当前卡 id，完成态调用继续返回目标卡 id", async () => {
+    const { showQrTool } = await import("../tools/showQr.js");
+    const initial = await showQrTool.execute!(
+      { content: "https://example.com/auth" },
+      { agent: { toolCallId: "qr-returned-id" } } as never,
+    );
+    const completed = await showQrTool.execute!(
+      { completedCardId: "qr-returned-id", completionMessage: "授权已完成" },
+      { agent: { toolCallId: "qr-update-call" } } as never,
+    );
+
+    expect(initial).toEqual({ ok: true, cardId: "qr-returned-id" });
+    expect(completed).toEqual({ ok: true, cardId: "qr-returned-id" });
+  });
+
   it("tool-result 找不到 running part 时也 append done 二维码卡", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("qr-result-only");
@@ -274,6 +289,70 @@ describe("show_qr 二维码卡帧协议", () => {
     const final = toolSpecs(frames, "qr3").at(-1);
     expect(final?.status.kind).toBe("done");
     expect(final?.body.kind).toBe("qrCard");
+  });
+
+  it("核验成功后复用 show_qr 和 toolCallUpdated 原地完成旧卡，不新增工具卡", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("qr-completion-update");
+    await collect(
+      processAgentStream(
+        streamOf(
+          showQrCall("qr-original", {
+            content: "https://example.com/auth",
+            title: "扫码授权",
+            confirmQuery: "我已完成授权，请检查",
+          }),
+          showQrResult("qr-original", {
+            content: "https://example.com/auth",
+            title: "扫码授权",
+            confirmQuery: "我已完成授权，请检查",
+          }),
+        ),
+        { state, agentMessageId: "m1", streamId: "s1", runId: "r1" },
+      ),
+    );
+
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          {
+            type: "tool-call-input-streaming-start",
+            payload: { toolName: "show_qr", toolCallId: "qr-complete-call" },
+          },
+          showQrCall("qr-complete-call", {
+            completedCardId: "qr-original",
+            completionMessage: "企业微信登录成功",
+          }),
+          showQrResult("qr-complete-call", {
+            completedCardId: "qr-original",
+            completionMessage: "企业微信登录成功",
+          }),
+        ),
+        { state, agentMessageId: "m2", streamId: "s2", runId: "r2" },
+      ),
+    );
+
+    expect(appendedToolCallCount(frames, "qr-complete-call")).toBe(0);
+    const completed = toolSpecs(frames, "qr-original").at(-1);
+    expect(completed?.status.kind).toBe("done");
+    expect(completed?.body).toMatchObject({
+      kind: "qrCard",
+      data: {
+        success: {
+          account: null,
+          message: "企业微信登录成功",
+        },
+      },
+    });
+    expect(
+      state.chatHistory.some((message) =>
+        message.parts.some(
+          (part) =>
+            part.kind === "toolCall" &&
+            part.data.id === "qr-complete-call",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("feishu_auth_start 只用公开 DTO 出卡，device_code 不进入任何消息或 wire 帧", async () => {

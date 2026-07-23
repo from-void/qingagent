@@ -120,6 +120,13 @@
   color: #5eb87d;
 }
 
+.qr-card__success {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-align: center;
+}
+
 .qr-card__expiry {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -127,7 +134,7 @@
 }
 
 .qr-card__expiry.is-expired {
-  color: var(--mark);
+  color: var(--ink-3);
 }
 
 .qr-card__confirm {

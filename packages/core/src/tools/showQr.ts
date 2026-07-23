@@ -5,7 +5,8 @@ import { z } from "zod";
  * show_qr —— 在对话流里渲染一个统一的二维码卡片(UI 指令型工具,无副作用)。
  *
  * 真正的卡片由 bridge 在「工具调用」时映射成 qrCard body 帧并渲染(见 processAgentStream);
- * 本工具的 execute 只回 {ok:true} 标记完成。卡片特点:渲染瞬间按 expiresInSec 起算过期,
+ * 本工具的 execute 回传 cardId，授权核验成功后可复用本工具更新原卡。卡片特点:
+ * 渲染瞬间按 expiresInSec 起算过期,
  * 过期后码被作废,悬停变「刷新」按钮,点击发送 refreshQuery 让 agent 重新生成。
  *
  * 抽象统一:扫码授权(飞书/钉钉/企微 device flow 的 verification URL)、配对、分享链接等都复用它。
@@ -27,6 +28,9 @@ export const showQrTool = createTool({
     "note(说明文案,支持 markdown,可把说明和可点授权链接写在一起,如 用飞书 App 扫码,或 [点此授权](URL))、" +
     "refreshQuery(过期后点刷新发送的话术)、" +
     "confirmQuery(授权场景:点「我已完成授权」发送的话术,卡片渲染 10 秒后才出现该按钮,用于触发 agent 收尾)。" +
+    "首次出卡成功会返回 cardId；用户确认后，只有当你已从 CLI/服务输出核验到授权成功，" +
+    "才再次调用本工具并只传 completedCardId=该 cardId、completionMessage=面向用户的成功文案，" +
+    "原二维码卡会原地切为完成态。用户仅口头声称完成但尚未核验时，禁止标记完成。" +
     "卡片会自动在过期后作废并给出刷新入口。" +
     "【位置】二维码卡片展示在**对话流中、你这条回复的下方**(不在右侧文档面板);向用户说明时务必说『下方/对话中』,**绝不能说『在右侧』**。",
   inputSchema: z.object({
@@ -75,7 +79,21 @@ export const showQrTool = createTool({
         "确认按钮的显示文案(可选,要短、贴场景,如 我已创建好 / 我已完成授权);不传则默认「我已完成授权」。" +
           "与 confirmQuery 解耦:label 给用户看要短,confirmQuery 是点击后发送给 agent 的话术可更明确",
       ),
+    completedCardId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("仅在已核验授权成功后传：首次 show_qr 返回的 cardId，用于把原二维码卡标成完成"),
+    completionMessage: z
+      .string()
+      .min(1)
+      .max(256)
+      .optional()
+      .describe("完成态文案，如「企业微信登录成功」；与 completedCardId 一起传"),
   }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async () => ({ ok: true }),
+  outputSchema: z.object({ ok: z.boolean(), cardId: z.string().nullable() }),
+  execute: async ({ completedCardId }, context) => ({
+    ok: true,
+    cardId: completedCardId ?? context?.agent?.toolCallId ?? null,
+  }),
 });

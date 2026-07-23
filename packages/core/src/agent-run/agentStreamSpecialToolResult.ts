@@ -52,6 +52,55 @@ export async function* handleSpecialToolResult(
   const { state, agentMessageId, outcome } = turn;
 
   if (toolName === "show_qr") {
+    const completedCardId =
+      typeof args.completedCardId === "string" && args.completedCardId.trim()
+        ? args.completedCardId.trim()
+        : null;
+    if (completedCardId) {
+      const targetMessage = state.chatHistory.find((message) =>
+        message.parts.some(
+          (part) =>
+            part.kind === "toolCall" &&
+            part.data.id === completedCardId &&
+            part.data.body.kind === "qrCard",
+        ),
+      );
+      const targetPart = targetMessage?.parts.find(
+        (part) => part.kind === "toolCall" && part.data.id === completedCardId,
+      );
+      if (targetMessage && targetPart?.kind === "toolCall" && targetPart.data.body.kind === "qrCard") {
+        const requestedMessage =
+          typeof args.completionMessage === "string" ? args.completionMessage.trim() : "";
+        const completionMessage = (requestedMessage || "授权已完成").slice(0, 256);
+        const completedSpec: ToolCallSpec = {
+          ...targetPart.data,
+          status: { kind: "done" },
+          body: {
+            kind: "qrCard",
+            data: {
+              ...targetPart.data.body.data,
+              success: { account: null, message: completionMessage },
+            },
+          },
+        };
+        updateToolCallInChatHistory(
+          state,
+          targetMessage.id,
+          completedCardId,
+          completedSpec,
+        );
+        yield toolCallUpdated(targetMessage.id, completedCardId, completedSpec);
+        outcome.producedVisibleFrame = true;
+      } else {
+        logger.warn("show_qr 完成态目标卡不存在", {
+          completedCardId,
+          streamId: turn.streamId,
+          sessionId: state.sessionId,
+        });
+      }
+      return "handled";
+    }
+
     const originalMessage = state.chatHistory.find((message) =>
       message.parts.some(
         (part) => part.kind === "toolCall" && part.data.id === toolCallId,

@@ -22,7 +22,9 @@ export interface AuthCardProps {
 }
 
 export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
-  const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">("polling");
+  const [connectorState, setConnectorState] = useState<"polling" | "connected" | "interrupted">(
+    () => data.success ? "connected" : "polling",
+  );
   const [connectedAccount, setConnectedAccount] = useState<string | null>(data.success?.account ?? null);
   // 微信扫码反馈:server 感知到手机扫到码后,pending 轮询带 reasonCode=WECHAT_SCANNED。
   const [scanned, setScanned] = useState(false);
@@ -37,12 +39,12 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const settledRef = useRef(false);
 
   useEffect(() => {
-    setConnectorState("polling");
+    setConnectorState(data.success ? "connected" : "polling");
     setConnectedAccount(data.success?.account ?? null);
     setScanned(false);
     pollingRef.current = false;
     settledRef.current = false;
-  }, [data.pendingId, data.success?.account]);
+  }, [data.pendingId, data.success?.account, data.success?.message]);
 
   useVisibilityPausedInterval(
     async () => {
@@ -110,6 +112,14 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
   const noteNodes = useMemo(() => renderQrNote(data.note), [data.note]);
   const confirmQuery = data.confirmQuery;
+  const completed = data.success !== undefined || connectorState === "connected";
+  const completionText = data.success?.message ?? (data.connectorId === "wechat-mp"
+    ? `已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
+    : data.connectorId === "feishu"
+      ? `已授权${connectedAccount ? `为 ${connectedAccount}` : "飞书"}`
+      : data.connectorId === "github"
+        ? `已连接为 ${connectedAccount ?? "GitHub 账号"}`
+        : "授权已完成");
   // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
   // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
   const codeFirst = data.connectorId === "github" && !data.imageDataUri;
@@ -148,12 +158,8 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
   return (
     <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
-      {connectorState === "connected" ? (
-        <div className="qr-card__success">{data.connectorId === "wechat-mp"
-          ? `✓ 已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
-          : data.connectorId === "feishu"
-            ? `✓ 已授权${connectedAccount ? `为 ${connectedAccount}` : "飞书"}`
-            : `✓ 已连接为 ${connectedAccount ?? "GitHub 账号"}`}</div>
+      {completed ? (
+        <div className="qr-card__success">✓ {completionText}</div>
       ) : connectorState === "interrupted" ? (
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
       ) : <>
@@ -171,16 +177,16 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
             onClick={sendRefreshOnce}
             disabled={refreshSent}
             title="发送刷新请求,重新生成二维码"
-            aria-label={refreshSent ? "已请求刷新二维码" : "刷新已过期二维码"}
+            aria-label={refreshSent ? "已请求刷新二维码" : "重新获取已失效二维码"}
           >
             <span className="qr-card__refresh-icon">↻</span>
-            <span>{refreshSent ? "已请求刷新" : "二维码已过期,点此刷新"}</span>
+            <span>{refreshSent ? "已请求刷新" : "二维码已失效，可点此重新获取"}</span>
           </button>
         )}
       </div>}
       {codeFirst && expired && (
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>
-          {refreshSent ? "已请求重新发起" : "配对码已过期，重新发起"}
+          {refreshSent ? "已请求重新发起" : "配对码已失效，重新发起"}
         </button>
       )}
       {data.code && !(codeFirst && expired) && (
@@ -199,7 +205,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
       )}
       <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
-        {expired ? "已过期" : `${expiryLabel}后过期`}
+        {expired ? "二维码已失效" : `${expiryLabel}后过期`}
       </div>
       {noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。
@@ -225,8 +231,41 @@ export const QrCard = AuthCard;
 
 // 轻量渲染 note 的富文本:按行分段,inline 支持 markdown 链接 [文字](url) 与 **粗体**。
 // 模型自产的说明 + 可点授权链接合为一段,替代写死的"扫不了码点此打开"。
+export function normalizeQrNoteLineBreaks(note: string): string {
+  let normalized = "";
+  for (let i = 0; i < note.length;) {
+    if (note[i] !== "\\") {
+      normalized += note[i];
+      i += 1;
+      continue;
+    }
+    let slashEnd = i;
+    while (note[slashEnd] === "\\") slashEnd += 1;
+    const slashCount = slashEnd - i;
+    const hasUnescapedSlash = slashCount % 2 === 1;
+    const crlfEscape =
+      hasUnescapedSlash &&
+      note.slice(slashEnd, slashEnd + 3) === "r\\n";
+    const nextAfterNewlineEscape = note[slashEnd + 1] ?? "";
+    const newlineEscape =
+      hasUnescapedSlash &&
+      note[slashEnd] === "n" &&
+      // 避免把 C:\new、正则 \namespace 之类合法反斜杠正文误判成换行。
+      !/[a-z0-9_]/.test(nextAfterNewlineEscape);
+    if (crlfEscape || newlineEscape) {
+      normalized += "\\".repeat(slashCount - 1);
+      normalized += "\n";
+      i = slashEnd + (crlfEscape ? 3 : 1);
+      continue;
+    }
+    normalized += "\\".repeat(slashCount);
+    i = slashEnd;
+  }
+  return normalized;
+}
+
 function renderQrNote(note: string | null): JSX.Element[] | null {
-  const text = note?.trim();
+  const text = note ? normalizeQrNoteLineBreaks(note).trim() : "";
   if (!text) return null;
   return text.split("\n").map((line, li) => (
     <p key={li} className="qr-card__note-line">

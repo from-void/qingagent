@@ -732,7 +732,7 @@ function buildGroups(): Group[] {
         {
           state: "expired",
           code: "now ≥ expiresAt",
-          copy: "二维码已过期,点此刷新 (置灰打码)",
+          copy: "二维码已失效，可点此重新获取（置灰打码）",
           src: ".qr-card__frame.is-expired",
           render: <Cell messages={[toolMsg(tool("show_qr", ST.done, qrBody({ expiresAt: now - 1000 })))]} />,
           improved: <div className="gx-sample u-scope"><div className="wf-msg agent"><URevampPart part={{ kind: "toolCall", data: tool("show_qr", ST.done, qrBody({ expiresAt: now - 1000 })) }} /></div></div>,

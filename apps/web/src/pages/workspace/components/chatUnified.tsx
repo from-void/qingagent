@@ -54,6 +54,28 @@ function Countdown({ seconds }: { seconds: number }) {
   return <>{left > 0 ? `${left} 秒后发起检查` : "正在检查…"}</>;
 }
 
+const OUTPUT_ACTIVITY_VISIBLE_MS = 5_000;
+
+function outputActivityAt(result: ToolCallResult | null): number | null {
+  const parsed = parseGenericResultObject(result);
+  const value = parsed?.outputActivityAt;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** 等待态只做稳定的秒数更新；stdout 活动提示保留 5 秒，不做闪烁动画。 */
+function ProcessWaitMeta({ activityAt }: { activityAt: number | null }) {
+  const startedAtRef = useRef(Date.now());
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const elapsedSec = Math.max(0, Math.floor((now - startedAtRef.current) / 1_000));
+  const hasRecentOutput =
+    activityAt !== null && now >= activityAt && now - activityAt < OUTPUT_ACTIVITY_VISIBLE_MS;
+  return <>{hasRecentOutput ? "仍在输出" : "等待输出"} · 已等待 {elapsedSec} 秒</>;
+}
+
 // —— 工具中文名(= 生产显示名 + renames + 原未映射 3 个) ——
 export const TOOL_LABELS: Record<string, string> = {
   parseFile: "解析文件", storeMaterial: "存储素材", summarizeMaterial: "更新素材", readMaterial: "读取素材",
@@ -361,8 +383,10 @@ export function UToolBar({
   const customOut = !pending && !running && !failed ? pickOutputSummary(spec.result, spec.name) : null;
   const semanticFailed = !pending && !running && !failed && isToolResultFailure(spec.result, spec.name);
   const outputHint = semanticFailed ? pickOutputHint(spec.result, spec.name) : null;
-  // 读取后台进程输出 = 阻塞等待:右侧状态"等待输出",左侧参数位换成倒计时(N 秒后发起检查)。
-  const isProcOut = running && spec.name === "mastra_workspace_get_process_output";
+  // 读取后台进程输出 = 有界等待:左侧保留本次检查倒计时，右侧持续显示已等待时长；
+  // stdout/stderr 流动时短暂切成「仍在输出」，不使用闪烁动画。
+  const isProcOutTool = spec.name === "mastra_workspace_get_process_output";
+  const isProcOut = running && isProcOutTool;
   const aborted =
     spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted";
   const procOutSecs = (() => {
@@ -370,11 +394,20 @@ export function UToolBar({
     const t = parseArgs(spec).timeout;
     return typeof t === "number" && t > 0 ? Math.round(t / 1000) : null;
   })();
-  const runningText = isProcOut ? "等待输出" : "处理中";
   const failedReason =
     failed && spec.status.kind === "failed"
       ? spec.status.data.reason
       : null;
+  const waitReturnedWhileRunning =
+    isProcOutTool &&
+    spec.result?.kind === "genericText" &&
+    (
+      boolField(parseGenericResultObject(spec.result) ?? {}, "processStillRunning") === true ||
+      (spec.result.data.includes("进程仍在运行") && spec.result.data.includes("未退出"))
+    );
+  const runningText = isProcOut
+    ? <ProcessWaitMeta activityAt={outputActivityAt(spec.result)} />
+    : "处理中";
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
   const statusText = aborted
@@ -385,7 +418,11 @@ export function UToolBar({
         ? runningText
         : failed || semanticFailed
           ? (failedReason ?? customOut ?? "未完成")
-          : (customOut ?? "已完成");
+          : isProcOutTool
+            ? waitReturnedWhileRunning
+              ? "本次等待结束，仍在运行"
+              : "已读取输出"
+            : (customOut ?? "已完成");
   // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”；
   // aborted 是更具体的已中止终态，不应沿用普通失败的红色错误态。
   // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。

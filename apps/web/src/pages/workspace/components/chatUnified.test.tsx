@@ -43,6 +43,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     }
     host?.remove();
     host = null;
+    vi.useRealTimers();
   });
 
   it("生成期占位 generic body 使用真实工具中文名，不显示匿名兜底", async () => {
@@ -278,5 +279,83 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     expect(host?.textContent).toContain("已中止，结果可能未知");
     expect(host?.textContent).not.toContain("操作失败");
+  });
+
+  it("读取输出等待态每秒显示已等待时长，并保留本次检查倒计时", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T00:00:00.000Z"));
+    const waiting: ToolCallSpec = {
+      id: "read-output-waiting",
+      name: "mastra_workspace_get_process_output",
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      body: {
+        kind: "generic",
+        data: { argsJson: "{\"pid\":\"4242\",\"wait\":true,\"timeout\":60000}" },
+      },
+      result: null,
+    };
+
+    await render([waiting]);
+    expect(host?.textContent).toContain("等待输出 · 已等待 0 秒");
+    expect(host?.textContent).toContain("60 秒后发起检查");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(42_000);
+    });
+
+    expect(host?.textContent).toContain("等待输出 · 已等待 42 秒");
+    expect(host?.textContent).toContain("18 秒后发起检查");
+  });
+
+  it("读取输出收到 stdout 活动标记时显示仍在输出", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-07-24T00:00:00.000Z");
+    vi.setSystemTime(now);
+    const active: ToolCallSpec = {
+      id: "read-output-active",
+      name: "mastra_workspace_get_process_output",
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      body: {
+        kind: "generic",
+        data: { argsJson: "{\"pid\":\"4242\",\"wait\":true}" },
+      },
+      result: {
+        kind: "genericText",
+        data: JSON.stringify({ outputActivityAt: now.getTime() }),
+      },
+    };
+
+    await render([active]);
+    expect(host?.textContent).toContain("仍在输出 · 已等待 0 秒");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(host?.textContent).toContain("等待输出 · 已等待 5 秒");
+  });
+
+  it("有界等待交还后明确显示仍在运行，不与 waiting 或命令终态混淆", async () => {
+    const returned: ToolCallSpec = {
+      id: "read-output-returned",
+      name: "mastra_workspace_get_process_output",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "generic",
+        data: { argsJson: "{\"pid\":\"4242\",\"wait\":true}" },
+      },
+      result: {
+        kind: "genericText",
+        data: JSON.stringify({ processStillRunning: true }),
+      },
+    };
+
+    await render([returned]);
+
+    expect(host?.textContent).toContain("本次等待结束，仍在运行");
+    expect(host?.textContent).not.toContain("已等待");
+    expect(host?.querySelector(".u-spin")).toBeNull();
   });
 });

@@ -810,6 +810,16 @@ export async function* handleTurnCommand(
         );
       }
       bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
+      const preemptedByNewMessage =
+        context.preemptionReason === "preemptedByNewMessage";
+      if (preemptedByNewMessage) {
+        // Actor 已直接对同一会话的旧 controller 发出 abort。这里按队列顺序、
+        // 用已解析出的 session 对象完成同一条清理链，不再依赖旧 streamId 反查。
+        yield* abortAndCleanupTurn(session, {
+          emitStreamEnd: false,
+          reason: "preemptedByNewMessage",
+        });
+      }
 
       if (session.pendingConfirms.size > 0) {
         yield {
@@ -851,7 +861,7 @@ export async function* handleTurnCommand(
         return;
       }
 
-      if (session.streamId !== null) {
+      if (!preemptedByNewMessage && session.streamId !== null) {
         yield* abortAndCleanupTurn(session);
       }
 
@@ -870,6 +880,7 @@ export async function* handleTurnCommand(
         command.data.clientMessageId,
         command.data.richText,
         command.data.reviewContext,
+        { preemptedByNewMessage },
       );
       return;
     }
@@ -987,20 +998,28 @@ export async function* handleTurnCommand(
       return;
     }
     case "cancelStream": {
-      const session = command.data.sessionId
-        ? await getOrRestoreSession(command.data.sessionId)
-        : command.data.streamId
-          ? findSessionByStream(command.data.streamId)
-          : undefined;
+      const session =
+        context.preemptionReason === "globalStop" && context.sessionId
+          ? await getOrRestoreSession(context.sessionId)
+          : command.data.sessionId
+            ? await getOrRestoreSession(command.data.sessionId)
+            : command.data.streamId
+              ? findSessionByStream(command.data.streamId)
+              : undefined;
       if (session) {
         if (
+          context.preemptionReason !== "globalStop" &&
           command.data.streamId &&
           session.streamId !== command.data.streamId
         ) {
           return;
         }
         bindClientTraceId(session, resolvedClientTraceId, origin, modelOverrides);
-        yield* abortAndCleanupTurn(session);
+        yield* abortAndCleanupTurn(session, {
+          reason: context.preemptionReason === "globalStop"
+            ? "globalStop"
+            : "userAbort",
+        });
       }
       return;
     }

@@ -93,6 +93,10 @@ export interface AgentStreamTurnContext {
 
   firstChunkLogged: boolean;
   accumulatedText: string;
+  /** 仅由桥接层按实际可渲染帧维护；不得用内部 chunk/heartbeat 代替。 */
+  hasUserVisibleOutput: boolean;
+  /** 只记类型与数量，不记录 chunk 正文或工具参数。 */
+  chunkTypeCounts: Map<string, number>;
   reasoningId: string | null;
   materialFrames: BridgeFrame[];
   extractedTexts: Map<string, ExtractedTextEntry>;
@@ -209,6 +213,8 @@ export async function createAgentStreamTurnContext(
     confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
     accumulatedText: "",
+    hasUserVisibleOutput: false,
+    chunkTypeCounts: new Map(),
     reasoningId: null,
     materialFrames: [],
     extractedTexts,

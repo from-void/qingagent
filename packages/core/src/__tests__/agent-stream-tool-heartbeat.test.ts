@@ -162,7 +162,7 @@ describe("processAgentStream tool-heartbeat", () => {
     vi.useRealTimers();
   });
 
-  it("tool-output 心跳不产生可见帧,也不标记副作用工具调用", async () => {
+  it("tool-output 心跳本身不可见,零产出收尾补提示且不标记副作用工具调用", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("tool-heartbeat-no-frame");
 
@@ -184,10 +184,24 @@ describe("processAgentStream tool-heartbeat", () => {
       ),
     );
 
-    expect(frames).toHaveLength(0);
-    expect(result.producedVisibleFrame).toBe(false);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({
+      kind: "chatMessageAppended",
+      data: {
+        part: {
+          kind: "text",
+          data: { body: expect.stringContaining("没有得到可展示的结果") },
+        },
+      },
+    });
+    expect(result.producedVisibleFrame).toBe(true);
     expect(result.sawSideEffectToolCall).toBe(false);
-    expect(state.messages).toHaveLength(0);
+    expect(state.messages).toEqual([
+      {
+        role: "assistant",
+        content: expect.stringContaining("没有得到可展示的结果"),
+      },
+    ]);
     expect(logger.info).toHaveBeenCalledWith(
       "Tool heartbeat consumed by agent stream watchdog",
       expect.objectContaining({

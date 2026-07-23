@@ -113,7 +113,12 @@ import { confirmService } from "../confirm/confirmService.js";
 
 const logger = mastra.getLogger();
 
-export interface RunAgentTurnRuntimeOptions {
+export interface RunAgentTurnControl {
+  /** 当前轮由新消息抢占旧轮而来；只用于注入轮次边界，不改变 FIFO。 */
+  preemptedByNewMessage?: boolean;
+}
+
+export interface RunAgentTurnRuntimeOptions extends RunAgentTurnControl {
   /** idle-timeout 自动重试上限；只供已消费一次额度的恢复链路收紧为 0。 */
   idleTimeoutRetryLimit?: number;
   /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
@@ -121,6 +126,11 @@ export interface RunAgentTurnRuntimeOptions {
   /** 测试/受控调用覆盖，生产默认仍取 agentLimits。 */
   firstChunkTimeoutMs?: number;
 }
+
+export const PREEMPTED_TURN_GUIDANCE =
+  "\n\n[系统·本轮边界]上一轮已因这条新消息被中断。本轮用户输入是最高优先级，必须先处理本轮文本；" +
+  "除非本轮文本明确要求继续等待、查询或终止上一轮后台进程，否则不得自动调用 get_process_output、kill_process 或其他工具续跑旧 PID。" +
+  "抢占本身不会终止后台进程，其当前状态仍待确认。";
 
 // ---------------------------------------------------------------------------
 // runAgentTurn — unified entry point for all user interactions
@@ -347,6 +357,9 @@ export async function* runAgentTurn(
   // 时间锚只进当轮 user message,不写 system prompt；放在靠前位置。
   // 历史上 writeDraft 截断拍平对话上下文时会丢时效信息；现在保留完整 messages,这里仍恒开。
   fullUserText = `${currentDateTimeContext()}${fullUserText}`;
+  if (runtimeOptions.preemptedByNewMessage) {
+    fullUserText += PREEMPTED_TURN_GUIDANCE;
+  }
 
   // 当轮提醒只做状态提示,裁决标准统一留在 system prompt 的「问卷工具触发裁决」。
   // 不在这里重复写默认/例外规则,避免与唯一裁决段再次分叉。
@@ -526,6 +539,7 @@ export async function* runAgentTurn(
   };
   yield chatMessageAdded(agentMessage);
   state.chatHistory.push(agentMessage);
+  state._activeAgentMessageId = agentMessageId;
 
   // 展示层消息必须在进入慢模型/工具链前先耐久化。否则活跃回合中的进程切换或冷恢复
   // 只能从 Mastra 模型消息补建用户气泡,会把 actionCard 等展示 part 退化成机器 query 文本。
@@ -885,6 +899,13 @@ export async function* runAgentTurn(
     }
     if (state._activeTurnPromise === turnCompletion.promise) {
       state._activeTurnPromise = null;
+    }
+    if (
+      state._activeAgentMessageId === agentMessageId &&
+      !turnWasUserAborted &&
+      !isUserAbortSignal(abortController.signal)
+    ) {
+      state._activeAgentMessageId = null;
     }
   }
 }

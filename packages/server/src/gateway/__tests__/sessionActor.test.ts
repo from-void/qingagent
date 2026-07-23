@@ -190,7 +190,7 @@ describe("SessionActor", () => {
     const cancel = actor.enqueue({ command: cancelStream() });
 
     await Promise.all([commit, cancel]);
-    expect(abortSession).toHaveBeenCalledWith("s1");
+    expect(abortSession).toHaveBeenCalledWith("s1", "globalStop");
     expect(order).toEqual(["commit:start", "commit:end", "cancel"]);
   });
 
@@ -296,8 +296,19 @@ describe("SessionActor", () => {
     const releaseReadyPromise = new Promise<void>((resolve) => {
       releaseReady = resolve;
     });
-    const handleCommand: HandleCommandFn = async function* (command) {
+    const preemptionReasons: Array<string | undefined> = [];
+    const handleCommand: HandleCommandFn = async function* (
+      command,
+      _clientTraceId,
+      _origin,
+      _modelOverrides,
+      _client,
+      _routedSessionId,
+      _abortSignal,
+      preemptionReason,
+    ) {
       if (command.kind !== "sendMessage") return;
+      preemptionReasons.push(preemptionReason);
       if (command.data.text === "first") {
         firstStarted();
         yield meta("first-start");
@@ -324,7 +335,8 @@ describe("SessionActor", () => {
     const second = actor.enqueue({ command: sendMessage("second") });
     await Promise.all([first, second]);
 
-    expect(abortSession).toHaveBeenCalledWith("s1");
+    expect(abortSession).toHaveBeenCalledWith("s1", "preemptedByNewMessage");
+    expect(preemptionReasons).toEqual([undefined, "preemptedByNewMessage"]);
     expect(log.readFrom("s1", 0).frames.map((entry) => entry.frame)).toEqual([
       meta("first-start"),
       meta("first-end"),
@@ -428,7 +440,7 @@ describe("SessionActor", () => {
 
     await expect(first).rejects.toThrow("Session actor disposed");
     await expect(second).rejects.toThrow("Session actor disposed");
-    expect(abortSession).toHaveBeenCalledWith("s1");
+    expect(abortSession).toHaveBeenCalledWith("s1", "globalStop");
     expect(actor.state).toBe("disposed");
   });
 

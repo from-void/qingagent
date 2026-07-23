@@ -182,12 +182,6 @@ export async function* finalizeAgentStream(
     });
   }
   context.toolIoSpans.clear();
-  logger.info("Agent stream completed", {
-    streamId,
-    sessionId: state.sessionId,
-    durationMs: Date.now() - context.streamStartTime,
-    validPatchCount: context.validPatchCount,
-  });
   if (context.validPatchCount === 0 && state.suggestions.size === 0) {
     console.warn(`[stream ${streamId}] Stream ended with no accepted patch suggestions.`);
   } else {
@@ -199,9 +193,14 @@ export async function* finalizeAgentStream(
   const streamWasUserAborted =
     isUserAbortSignal(abortController.signal) && !context.sawIdleTimeout;
   outcome.streamWasUserAborted = streamWasUserAborted;
+  const hadUserVisibleOutputBeforeFallbacks = context.hasUserVisibleOutput;
+  const accumulatedTextHadNonWhitespaceBeforeFallbacks =
+    /\S/u.test(context.accumulatedText);
+  let visibilityInvariantFallbackEmitted = false;
   if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
+    !context.hasUserVisibleOutput &&
     context.sawFailedDraftMutationInput &&
     !context.sawValidDraftMutation &&
     context.validPatchCount === 0 &&
@@ -289,9 +288,9 @@ export async function* finalizeAgentStream(
   } else if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
-    !context.accumulatedText &&
     !context.sawAnyToolCall &&
     !context.sawToolHeartbeat &&
+    !context.hasUserVisibleOutput &&
     context.validPatchCount === 0 &&
     state.suggestions.size === 0
   ) {
@@ -311,10 +310,9 @@ export async function* finalizeAgentStream(
   } else if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
-    !context.accumulatedText &&
     context.sawAnyToolCall &&
     context.sawNonUiToolCall &&
-    !outcome.producedVisibleFrame &&
+    !context.hasUserVisibleOutput &&
     !context.sawValidDraftMutation &&
     context.validPatchCount === 0 &&
     state.suggestions.size === 0
@@ -365,6 +363,53 @@ export async function* finalizeAgentStream(
     appendPartToChatHistory(state, agentMessageId, textPart);
     context.accumulatedText += visibleText;
   }
+
+  if (
+    !context.wasSuspended &&
+    !streamWasUserAborted &&
+    !context.hasUserVisibleOutput
+  ) {
+    visibilityInvariantFallbackEmitted = true;
+    const invariantNotice =
+      "本轮没有得到可展示的结果。请重试，或换个说法再发一次。";
+    const seq = nextSeq(state, agentMessageId);
+    const textPart: MessagePart = {
+      kind: "text",
+      data: { body: invariantNotice },
+    };
+    yield chatMessageAppended(agentMessageId, seq, textPart);
+    outcome.producedVisibleFrame = true;
+    appendPartToChatHistory(state, agentMessageId, textPart);
+    context.accumulatedText += invariantNotice;
+    logger.warn("Agent turn visibility invariant emitted fallback notice", {
+      sessionId: state.sessionId,
+      streamId,
+    });
+  }
+
+  logger.info("Agent stream completed", {
+    streamId,
+    sessionId: state.sessionId,
+    durationMs: Date.now() - context.streamStartTime,
+    validPatchCount: context.validPatchCount,
+    wasSuspended: context.wasSuspended,
+    streamWasUserAborted,
+    hasUserVisibleOutput: context.hasUserVisibleOutput,
+    hadUserVisibleOutputBeforeFallbacks,
+    visibilityInvariantFallbackEmitted,
+    producedVisibleFrame: outcome.producedVisibleFrame,
+    accumulatedTextHasNonWhitespace: /\S/u.test(context.accumulatedText),
+    accumulatedTextHadNonWhitespaceBeforeFallbacks,
+    sawAnyToolCall: context.sawAnyToolCall,
+    sawNonUiToolCall: context.sawNonUiToolCall,
+    sawToolHeartbeat: context.sawToolHeartbeat,
+    sawIdleTimeout: context.sawIdleTimeout,
+    chunkTypeCounts: Object.fromEntries(
+      [...context.chunkTypeCounts.entries()].sort(([left], [right]) =>
+        left.localeCompare(right)
+      ),
+    ),
+  });
 
   if (context.accumulatedText) {
     state.messages.push({ role: "assistant", content: context.accumulatedText });

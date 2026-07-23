@@ -137,6 +137,56 @@ beforeEach(() => {
 });
 
 describe("abortAndCleanupTurn", () => {
+  it.each([
+    ["仍有运行卡", true],
+    ["旧进程已退出且无运行卡", false],
+  ])("新消息抢占%s时都给旧轮追加诚实可见收尾", async (_label, withRunningCard) => {
+    const {
+      abortAndCleanupTurn,
+      createSession,
+    } = await import("../bridge/index.js");
+    const {
+      PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+    } = await import("../agent-run/turnCleanup.js");
+    const state = createSession(`preempt-notice-${withRunningCard}`);
+    state._activeAgentMessageId = "old-agent-message";
+    state.chatHistory.push({
+      id: "old-agent-message",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: withRunningCard
+        ? [{ kind: "toolCall", data: runningCommand("old-wait") }]
+        : [],
+      chips: null,
+    });
+
+    const frames = await collectFrames(
+      abortAndCleanupTurn(state, {
+        emitStreamEnd: false,
+        reason: "preemptedByNewMessage",
+      }),
+    );
+
+    expect(frames).toContainEqual({
+      kind: "chatMessageAppended",
+      data: {
+        messageId: "old-agent-message",
+        seq: 1,
+        part: {
+          kind: "text",
+          data: { body: PREEMPTED_BY_NEW_MESSAGE_NOTICE },
+        },
+      },
+    });
+    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("没有被自动终止");
+    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("状态仍待确认");
+    expect(state.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+    });
+    expect(state._activeAgentMessageId).toBeNull();
+  });
+
   it("aborts, waits for the active turn finally, terminalizes in-flight tools, and projects idle", async () => {
     const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
     const state = createSession("abort-cleanup");

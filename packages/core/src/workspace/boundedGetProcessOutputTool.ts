@@ -3,6 +3,7 @@ import {
   SandboxFeatureNotSupportedError,
   SandboxNotAvailableError,
   WORKSPACE_TOOLS,
+  type CommandResult,
   type Workspace,
 } from "@mastra/core/workspace";
 import { z } from "zod";
@@ -72,6 +73,15 @@ function formatOutput(
 
 function formatWaitDuration(waitMaxMs: number): string {
   return waitMaxMs % 1_000 === 0 ? `${waitMaxMs / 1_000}s` : `${waitMaxMs}ms`;
+}
+
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(
+    typeof signal.reason === "string" ? signal.reason : "Process output wait aborted",
+  );
+  error.name = "AbortError";
+  return error;
 }
 
 /**
@@ -155,13 +165,28 @@ Use this after starting a background command with execute_command (background: t
           void waitPromise.catch(() => {});
 
           let timeout: ReturnType<typeof setTimeout> | undefined;
+          const abortSignal = context?.abortSignal;
+          let abortListener: (() => void) | undefined;
           try {
-            const outcome = await Promise.race([
+            const races: Array<Promise<
+              | { kind: "exited"; result: CommandResult }
+              | { kind: "timeout" }
+              | { kind: "aborted" }
+            >> = [
               waitPromise.then((result) => ({ kind: "exited" as const, result })),
               new Promise<{ kind: "timeout" }>((resolve) => {
                 timeout = setTimeout(() => resolve({ kind: "timeout" }), waitMaxMs);
               }),
-            ]);
+            ];
+            if (abortSignal) {
+              races.push(new Promise<{ kind: "aborted" }>((resolve) => {
+                abortListener = () => resolve({ kind: "aborted" });
+                if (abortSignal.aborted) abortListener();
+                else abortSignal.addEventListener("abort", abortListener, { once: true });
+              }));
+            }
+
+            const outcome = await Promise.race(races);
             if (outcome.kind === "exited") {
               await writer?.custom({
                 type: "data-sandbox-exit",
@@ -172,11 +197,17 @@ Use this after starting a background command with execute_command (background: t
                   toolCallId,
                 },
               });
+            } else if (outcome.kind === "aborted") {
+              // 只结束本次有界读取；后台 ProcessHandle 继续存活，绝不在这里隐式 kill。
+              throw abortError(abortSignal!);
             } else {
               waitTimedOut = handle.exitCode === undefined;
             }
           } finally {
             if (timeout) clearTimeout(timeout);
+            if (abortListener) {
+              abortSignal?.removeEventListener("abort", abortListener);
+            }
           }
         }
 

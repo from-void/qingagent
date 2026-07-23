@@ -1,11 +1,25 @@
-import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  ChatMessage,
+  MessagePart,
+  ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { mastra } from "../mastra.js";
 import { ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS } from "./agentLimits.js";
-import { streamEnd, toolCallUpdated } from "./frames.js";
+import {
+  chatMessageAdded,
+  chatMessageAppended,
+  newId,
+  nowIso,
+  streamEnd,
+  toolCallUpdated,
+} from "./frames.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
   clearStaleSuspensionIfInactive,
   getActiveSuspensionOwner,
+  appendPartToChatHistory,
+  nextSeq,
 } from "../session/sessionState.js";
 import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
@@ -15,6 +29,20 @@ import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
 
 const logger = mastra.getLogger();
+
+export type TurnCleanupReason =
+  | "userAbort"
+  | "preemptedByNewMessage"
+  | "globalStop";
+
+export const PREEMPTED_BY_NEW_MESSAGE_NOTICE =
+  "本轮已被新消息中断。若有后台进程，它没有被自动终止，当前状态仍待确认。";
+
+function abortReasonForCleanup(reason: TurnCleanupReason): string {
+  if (reason === "preemptedByNewMessage") return "preemptedByNewMessage";
+  if (reason === "globalStop") return "globalStop";
+  return USER_ABORT_REASON;
+}
 
 export function createTurnCompletion(): {
   promise: Promise<void>;
@@ -132,13 +160,54 @@ async function waitForActiveTurnCleanup(
   }
 }
 
+async function* appendPreemptionNotice(
+  state: SessionState,
+  preferredMessageId: string | null,
+): AsyncGenerator<BridgeFrame> {
+  let messageId = preferredMessageId;
+  let message = messageId
+    ? state.chatHistory.find((item) => item.id === messageId && item.role.kind === "agent")
+    : undefined;
+  if (!message) {
+    messageId = newId();
+    message = {
+      id: messageId,
+      role: { kind: "agent" },
+      ts: nowIso(),
+      parts: [],
+      chips: null,
+    } satisfies ChatMessage;
+    state.chatHistory.push(message);
+    yield chatMessageAdded(message);
+  }
+  if (!messageId) return;
+
+  const textPart: MessagePart = {
+    kind: "text",
+    data: { body: PREEMPTED_BY_NEW_MESSAGE_NOTICE },
+  };
+  const seq = nextSeq(state, messageId);
+  appendPartToChatHistory(state, messageId, textPart);
+  yield chatMessageAppended(messageId, seq, textPart);
+  state.messages.push({
+    role: "assistant",
+    content: PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+  });
+}
+
 export async function* abortAndCleanupTurn(
   state: SessionState,
-  options: { activeTurnTimeoutMs?: number; emitStreamEnd?: boolean } = {},
+  options: {
+    activeTurnTimeoutMs?: number;
+    emitStreamEnd?: boolean;
+    reason?: TurnCleanupReason;
+  } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
-  state._abortController?.abort(USER_ABORT_REASON);
+  const activeAgentMessageId = state._activeAgentMessageId;
+  const reason = options.reason ?? "userAbort";
+  state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);
 
   if (activeTurnPromise) {
@@ -162,6 +231,13 @@ export async function* abortAndCleanupTurn(
   for (const update of updates) {
     yield toolCallUpdated(update.messageId, update.toolCallId, update.spec);
   }
+  if (reason === "preemptedByNewMessage") {
+    yield* appendPreemptionNotice(
+      state,
+      activeAgentMessageId ?? state._activeAgentMessageId,
+    );
+  }
+  state._activeAgentMessageId = null;
   clearStaleSuspensionIfInactive(state);
 
   clearDraftConfirmationState(state);

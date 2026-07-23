@@ -140,6 +140,36 @@ describe("任务清单每轮感知", () => {
     expect(hasTodoAwareness(providerMessagesWithTodoAwareness(agentStreamCalls[0]!))).toBe(false);
   });
 
+  it("新消息抢占轮只在当前 user message 注入旧 PID 禁止自动续跑边界", async () => {
+    const {
+      PREEMPTED_TURN_GUIDANCE,
+      runAgentTurn,
+    } = await import("../agent-run/runAgentTurn.js");
+    const state = createSession("preempted-turn-guidance");
+
+    await collectFrames(
+      runAgentTurn(
+        state,
+        "顺便告诉我 3+5 等于几?",
+        [],
+        [],
+        [],
+        null,
+        undefined,
+        undefined,
+        undefined,
+        { preemptedByNewMessage: true },
+      ),
+    );
+
+    const currentUserMessage = agentStreamCalls[0]!.messages.at(-1);
+    expect(currentUserMessage?.role).toBe("user");
+    const content = messageText(currentUserMessage!);
+    expect(content).toContain("3+5 等于几");
+    expect(content).toContain(PREEMPTED_TURN_GUIDANCE.trim());
+    expect(content).toContain("不得自动调用 get_process_output、kill_process");
+  });
+
   it("清单超过 10 项时最多逐项列出 10 项并汇总剩余数量", () => {
     const todos: TodoItem[] = Array.from({ length: 12 }, (_, index) => ({
       content: `步骤${index + 1}`,

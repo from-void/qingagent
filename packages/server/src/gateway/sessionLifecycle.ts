@@ -187,8 +187,8 @@ registerConfirmSessionResolver(getOrRestoreSession);
 
 export const sessionManager = new SessionManager({
   handleCommand: dispatchBridgeCommand,
-  abortSession: (sessionId) => {
-    sessions.get(sessionId)?._abortController?.abort();
+  abortSession: (sessionId, reason) => {
+    sessions.get(sessionId)?._abortController?.abort(reason);
   },
   cleanupSession: (sessionId) => {
     forgetSession(sessionId);

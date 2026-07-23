@@ -172,6 +172,35 @@ describe("bounded get_process_output", () => {
     expect(write).toHaveBeenCalledTimes(countAfterReturn);
   });
 
+  it("abort 立即停止 wait 工具但不 kill 后台进程，迟到 rejection 被收口", async () => {
+    let rejectWait: ((reason: unknown) => void) | undefined;
+    const handle = neverSettlingHandle();
+    handle.wait = vi.fn(() =>
+      new Promise<CommandResult>((_resolve, reject) => {
+        rejectWait = reject;
+      })
+    );
+    const controller = new AbortController();
+    const { tool } = createHarness(handle, 30_000);
+
+    const result = executeTool(tool, { pid: handle.pid, wait: true }, {
+      ...toolInvocationOptions,
+      abortSignal: controller.signal,
+      writer: { custom: vi.fn(async () => {}), write: vi.fn(async () => {}) },
+    } as never);
+    await vi.waitFor(() => expect(handle.wait).toHaveBeenCalledOnce());
+
+    controller.abort("preemptedByNewMessage");
+    await expect(result).rejects.toMatchObject({
+      name: "AbortError",
+      message: "preemptedByNewMessage",
+    });
+    expect(handle.kill).not.toHaveBeenCalled();
+
+    rejectWait?.(new Error("late wait failure after abort"));
+    await Promise.resolve();
+  });
+
   it("有界返回后悬挂 wait 的迟到回调和 rejection 不产生未捕获异常", async () => {
     let callbacks: WaitOptions | undefined;
     let rejectWait: ((reason: unknown) => void) | undefined;

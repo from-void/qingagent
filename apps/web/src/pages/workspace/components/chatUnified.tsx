@@ -21,6 +21,8 @@ import "./chatUnified.css";
 const ICO = {
   check: "M4 8.5l3 3 5-6.5",
   error: "M8 2.5v6 M8 12.5h.01 M2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0",
+  cancel: "M4 4l8 8 M12 4l-8 8",
+  stop: "M4 4h8v8H4z",
   search: "M7 7m-4 0a4 4 0 108 0 4 4 0 10-8 0 M11 11l3.5 3.5",
   image: "M2.5 3.5h11v9h-11z M2.5 10l3-3 2.5 2.5 3-3.5 2.5 3",
   cmd: "M3 4l3 3-3 3 M8 11h5",
@@ -361,6 +363,8 @@ export function UToolBar({
   const outputHint = semanticFailed ? pickOutputHint(spec.result, spec.name) : null;
   // 读取后台进程输出 = 阻塞等待:右侧状态"等待输出",左侧参数位换成倒计时(N 秒后发起检查)。
   const isProcOut = running && spec.name === "mastra_workspace_get_process_output";
+  const aborted =
+    spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted";
   const procOutSecs = (() => {
     if (!isProcOut) return null;
     const t = parseArgs(spec).timeout;
@@ -373,17 +377,22 @@ export function UToolBar({
       : null;
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
-  const statusText = pending
-    ? "等待中"
-    : running
-      ? runningText
-      : failed || semanticFailed
-        ? (failedReason ?? customOut ?? "未完成")
-        : (customOut ?? "已完成");
-  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”。
+  const statusText = aborted
+    ? "已中止，结果可能未知"
+    : pending
+      ? "等待中"
+      : running
+        ? runningText
+        : failed || semanticFailed
+          ? (failedReason ?? customOut ?? "未完成")
+          : (customOut ?? "已完成");
+  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”；
+  // aborted 是更具体的已中止终态，不应沿用普通失败的红色错误态。
   // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。
+  const visualFailed = failed && !aborted;
   const ico = pending ? <span className="u-dot" />
     : running ? (LONG_RUNNING.has(spec.name) ? <Spin /> : <Dots />)
+    : aborted ? <UIcon d={ICO.stop} />
     : failed ? <UIcon d={ICO.error} />
     : <UIcon d={DONE_ICON_BY_KIND[spec.body.kind] ?? ICO.check} />;
   const seg = isProcOut && procOutSecs
@@ -391,11 +400,11 @@ export function UToolBar({
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className={`u-ico${failed ? " is-error" : ""}`}>{ico}</span>
+      <span className={`u-ico${visualFailed ? " is-error" : ""}`}>{ico}</span>
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span className={`u-meta${failed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
+      <span className={`u-meta${visualFailed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
     </div>
   );
 }
@@ -590,22 +599,38 @@ export function UCommand({
   const failed = phase === "failed";
   const running = phase === "running";
   const queued = statusKind === "pending";
-  const stoppedWithUnknownResult =
-    status?.kind === "failed" && status.data.reason.includes("已中止");
-  const commandDidNotRun =
-    status?.kind === "failed" && status.data.reason.includes("命令没有执行");
-  const meta = done
-    ? "已完成"
-    : failed
-      ? stoppedWithUnknownResult
-        ? "已中止 / 结果可能未知"
-        : commandDidNotRun ? "命令没有执行" : "命令执行失败"
-      : queued
-        ? "已确认，排队执行"
-        : "处理中";
+  const terminalKind = running ? undefined : body.terminalKind;
+  const meta = terminalKind === "rejected"
+    ? "已取消，命令未执行"
+    : terminalKind === "killed"
+      ? body.signal ? `已终止（${body.signal}）` : "已终止"
+      : terminalKind === "aborted"
+        ? "已中止，结果可能未知"
+        : terminalKind === "timedOut"
+          ? "执行超时"
+          : terminalKind === "failed"
+            ? body.exitCode > 0
+              ? `运行失败（退出码 ${body.exitCode}）`
+              : "运行失败"
+            : terminalKind === "succeeded" || done
+              ? "已完成"
+              : failed
+                ? "运行失败"
+                : queued
+                  ? "已确认，排队执行"
+                  : "处理中";
+  const icon = terminalKind === "succeeded"
+    ? ICO.check
+    : terminalKind === "rejected"
+      ? ICO.cancel
+      : terminalKind === "killed" || terminalKind === "aborted"
+        ? ICO.stop
+        : terminalKind === "failed" || terminalKind === "timedOut"
+          ? ICO.error
+          : ICO.cmd;
   const expandable = Boolean(body.command || body.outputTail);
   return (
-    <UCard icon={ICO.cmd} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
+    <UCard icon={icon} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
       {expandable && (
         <div className="u-card-bd u-card-bd--cmd">
           {body.command && (

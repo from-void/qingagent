@@ -110,7 +110,12 @@ describe("bounded get_process_output", () => {
     expect(output).not.toContain("仍在运行");
     expect(custom).toHaveBeenCalledWith(expect.objectContaining({
       type: "data-sandbox-exit",
-      data: expect.objectContaining({ exitCode: 7, success: false, toolCallId: "exit-tool-call" }),
+      data: expect.objectContaining({
+        pid: "short-process",
+        exitCode: 7,
+        success: false,
+        toolCallId: "exit-tool-call",
+      }),
     }));
     expect(handle.kill).not.toHaveBeenCalled();
   });
@@ -120,6 +125,35 @@ describe("bounded get_process_output", () => {
 
     await expect(executeTool(tool, { pid: "missing" }))
       .resolves.toBe("No background process found with PID missing.");
+  });
+
+  it("无 wait 观察到已退出进程时也发送带 PID 的退出事件", async () => {
+    const custom = vi.fn(async () => {});
+    const handle: FakeProcessHandle = {
+      pid: "already-exited",
+      stdout: "done\n",
+      stderr: "",
+      exitCode: 0,
+      kill: vi.fn(async () => true),
+      wait: vi.fn(),
+    };
+    const { tool } = createHarness(handle);
+
+    await expect(executeTool(tool, { pid: handle.pid }, {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "poll-exited" },
+      writer: { custom, write: vi.fn() },
+    } as never)).resolves.toContain("Exit code: 0");
+    expect(custom).toHaveBeenCalledWith({
+      type: "data-sandbox-exit",
+      data: {
+        pid: "already-exited",
+        exitCode: 0,
+        success: true,
+        timedOut: false,
+        toolCallId: "poll-exited",
+      },
+    });
   });
 
   it("tail 默认 200 行、负数取绝对值且 0 不截断，与 Mastra 原版一致", async () => {

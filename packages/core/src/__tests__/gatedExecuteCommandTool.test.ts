@@ -626,14 +626,20 @@ describe("gated execute_command tool cwd 约束", () => {
   it("Gap4 回归:后台 spawn 显式设置输出保留上限", async () => {
     const { tool, spawnCalls } = createToolHarness("gated-retained-background");
 
-    const result = await executeTool(tool, {
+    const result = await executeToolResult(tool, {
       command: allowedFileCommand,
       background: true,
       timeout: 10,
     });
 
-    expect(result).toContain("Started background process (PID: 12345");
-    expect(result).toContain("最长运行: 10 秒");
+    expect(result).toMatchObject({
+      success: true,
+      exitCode: 0,
+      pid: "12345",
+      background: true,
+    });
+    expect(result.output).toContain("Started background process (PID: 12345");
+    expect(result.output).toContain("最长运行: 10 秒");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
   });

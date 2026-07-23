@@ -1743,6 +1743,46 @@ describe("thread persistence", () => {
     }
   });
 
+  it("冷恢复保留带 PID 与 owner 的后台命令运行态", async () => {
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const backgroundOwner: ToolCallSpec = {
+      id: "background-owner",
+      name: "mastra_workspace_execute_command",
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      body: {
+        kind: "commandCard",
+        data: {
+          title: "运行命令",
+          icon: "⚙️",
+          command: "sleep 300",
+          exitCode: 0,
+          outputTail: "后台任务已启动",
+          phase: "running",
+          pid: "4242",
+          ownerToolCallId: "background-owner",
+          background: true,
+        },
+      },
+      result: {
+        kind: "genericText",
+        data: "Started background process (PID: 4242)",
+      },
+    };
+    threads.set("background-owner-restore", storedThread(
+      "background-owner-restore",
+      metadata({ chatHistory: [toolMessage(backgroundOwner)] }),
+    ));
+
+    const restored = await loadSessionFromThread("background-owner-restore");
+    const restoredPart = restored?.chatHistory[0]?.parts[0];
+
+    expect(restoredPart?.kind).toBe("toolCall");
+    if (restoredPart?.kind === "toolCall") {
+      expect(restoredPart.data).toEqual(backgroundOwner);
+    }
+  });
+
   it("cold restore uses submitted askUser toolCallId to recover stale persisted suspension id", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const { hasActiveSuspension } = await import("../session/sessionState.js");

@@ -39,6 +39,18 @@ function genericTextResults(frames: BridgeFrame[], toolName: string): string[] {
     .map((s) => (s.result as { data: string }).data);
 }
 
+function findSpec(
+  state: import("../bridge/index.js").SessionState,
+  toolCallId: string,
+): ToolCallSpec | null {
+  for (const message of state.chatHistory) {
+    for (const part of message.parts) {
+      if (part.kind === "toolCall" && part.data.id === toolCallId) return part.data;
+    }
+  }
+  return null;
+}
+
 describe("沙箱命令终端卡", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -323,5 +335,338 @@ describe("沙箱命令终端卡", () => {
     if (finalSpec.result?.kind === "genericText") {
       expect(finalSpec.result.data).toContain("[Error] file not found");
     }
+  });
+
+  it.each([
+    ["正常退出", 0, true, "done", "succeeded"],
+    ["非零退出", 3, false, "failed", "failed"],
+  ] as const)(
+    "后台启动卡按 PID 收口%s，读取输出结果不覆盖 owner",
+    async (_label, exitCode, success, statusKind, terminalKind) => {
+      const {
+        createSession,
+        processAgentStream,
+      } = await import("../bridge/index.js");
+      const state = createSession(`background-settle-${exitCode}`);
+      const frames = await collect(processAgentStream(
+        streamOf(
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "mastra_workspace_execute_command",
+              toolCallId: "background-owner",
+              args: { command: "node background.mjs", background: true },
+            },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "mastra_workspace_execute_command",
+              toolCallId: "background-owner",
+              args: { command: "node background.mjs", background: true },
+              result: {
+                success: true,
+                exitCode: 0,
+                cancelled: false,
+                timedOut: false,
+                background: true,
+                pid: "4242",
+                output: "Started background process (PID: 4242)",
+              },
+            },
+          },
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "mastra_workspace_get_process_output",
+              toolCallId: "read-output",
+              args: { pid: "4242", wait: true },
+            },
+          },
+          {
+            type: "tool-output",
+            payload: {
+              toolName: "mastra_workspace_get_process_output",
+              toolCallId: "read-output",
+              output: {
+                type: "data-sandbox-exit",
+                data: { pid: "4242", exitCode, success, timedOut: false },
+              },
+            },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "mastra_workspace_get_process_output",
+              toolCallId: "read-output",
+              args: { pid: "4242", wait: true },
+              result: `Exit code: ${exitCode}`,
+            },
+          },
+        ),
+        {
+          state,
+          agentMessageId: "agent-background",
+          streamId: `stream-background-${exitCode}`,
+          runId: "run-background",
+        },
+      ));
+
+      const owner = findSpec(state, "background-owner");
+      expect(owner?.status.kind).toBe(statusKind);
+      expect(owner?.body).toMatchObject({
+        kind: "commandCard",
+        data: {
+          pid: "4242",
+          ownerToolCallId: "background-owner",
+          background: true,
+          exitCode,
+          terminalKind,
+        },
+      });
+      expect(findSpec(state, "read-output")?.status.kind).toBe("done");
+      expect(specs(frames).filter((spec) => spec.id === "background-owner").at(-1))
+        .toMatchObject({ status: { kind: statusKind } });
+    },
+  );
+
+  it("kill 按 PID 收口 owner 为 killed，迟到退出事件不能覆盖终态", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("background-killed");
+    await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "kill-owner",
+            args: { command: "sleep 300", background: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "kill-owner",
+            args: { command: "sleep 300", background: true },
+            result: {
+              success: true,
+              exitCode: 0,
+              cancelled: false,
+              timedOut: false,
+              background: true,
+              pid: "5252",
+              output: "Started background process (PID: 5252)",
+            },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-call",
+            args: { pid: "5252" },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-call",
+            output: {
+              type: "data-sandbox-exit",
+              data: {
+                exitCode: 137,
+                success: false,
+                killed: true,
+                toolCallId: "kill-call",
+              },
+            },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-call",
+            args: { pid: "5252" },
+            result: "Process 5252 has been killed.",
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "late-read",
+            output: {
+              type: "data-sandbox-exit",
+              data: { pid: "5252", exitCode: 143, success: false },
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-kill",
+        streamId: "stream-kill",
+        runId: "run-kill",
+      },
+    ));
+
+    const owner = findSpec(state, "kill-owner");
+    expect(owner?.status).toEqual({
+      kind: "failed",
+      data: { retriable: false, reason: "已终止（SIGTERM）" },
+    });
+    expect(owner?.body).toMatchObject({
+      kind: "commandCard",
+      data: {
+        terminalKind: "killed",
+        signal: "SIGTERM",
+        pid: "5252",
+      },
+    });
+  });
+
+  it("native kill 报告未找到进程时不把 owner 误标为 killed", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("background-kill-miss");
+    await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "kill-miss-owner",
+            args: { command: "sleep 300", background: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "kill-miss-owner",
+            args: { command: "sleep 300", background: true },
+            result: {
+              success: true,
+              exitCode: 0,
+              background: true,
+              pid: "5353",
+              output: "Started background process (PID: 5353)",
+            },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-miss-call",
+            args: { pid: "5353" },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-miss-call",
+            output: {
+              type: "data-sandbox-exit",
+              data: {
+                exitCode: -1,
+                success: false,
+                killed: false,
+                toolCallId: "kill-miss-call",
+              },
+            },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_kill_process",
+            toolCallId: "kill-miss-call",
+            args: { pid: "5353" },
+            result: "Process 5353 was not found or had already exited.",
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-kill-miss",
+        streamId: "stream-kill-miss",
+        runId: "run-kill-miss",
+      },
+    ));
+
+    expect(findSpec(state, "kill-miss-owner")).toMatchObject({
+      status: { kind: "running" },
+      body: {
+        kind: "commandCard",
+        data: {
+          pid: "5353",
+        },
+      },
+    });
+    const owner = findSpec(state, "kill-miss-owner");
+    expect(owner?.body.kind === "commandCard" ? owner.body.data.terminalKind : null)
+      .toBeUndefined();
+  });
+
+  it("后台进程卡跨轮次保持 running，不被 lingering 清理误改", async () => {
+    const {
+      createSession,
+      finalizeLingeringRunningToolCalls,
+      processAgentStream,
+    } = await import("../bridge/index.js");
+    const state = createSession("background-cross-turn");
+    await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "cross-turn-owner",
+            args: { command: "sleep 90", background: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "cross-turn-owner",
+            args: { command: "sleep 90", background: true },
+            result: {
+              success: true,
+              exitCode: 0,
+              cancelled: false,
+              timedOut: false,
+              background: true,
+              pid: "6262",
+              output: "Started background process (PID: 6262)",
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-cross-turn",
+        streamId: "stream-cross-turn",
+        runId: "run-cross-turn",
+      },
+    ));
+
+    expect(finalizeLingeringRunningToolCalls(state)).toEqual([]);
+    expect(findSpec(state, "cross-turn-owner")).toMatchObject({
+      status: { kind: "running" },
+      body: {
+        kind: "commandCard",
+        data: {
+          pid: "6262",
+          ownerToolCallId: "cross-turn-owner",
+          background: true,
+          phase: "running",
+        },
+      },
+    });
   });
 });

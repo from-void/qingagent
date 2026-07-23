@@ -116,6 +116,19 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     }, false);
     expect(card.exitCode).toBe(2);
     expect(card.phase).toBe("failed");
+    expect(card.terminalKind).toBe("failed");
+  });
+
+  it("结构化超时直接落 timedOut，不与普通失败混淆", () => {
+    const card = commandCardFromResult({ command: "node slow.mjs" }, {
+      success: false,
+      exitCode: -1,
+      cancelled: false,
+      timedOut: true,
+      output: "命令执行超时",
+    }, false);
+    expect(card.phase).toBe("failed");
+    expect(card.terminalKind).toBe("timedOut");
   });
 
   it("catch 路径 'Error: ...'(无 Exit code)→ failed,不再误渲完成", () => {
@@ -128,6 +141,7 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     const card = commandCardFromResult({ command: "node calc.mjs sum" }, "{\"sum\":6}", true);
     expect(card.phase).toBe("done");
     expect(card.exitCode).toBe(0);
+    expect(card.terminalKind).toBe("succeeded");
   });
 
   it("命令卡输出脱敏:Bearer token 不外泄", () => {

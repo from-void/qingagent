@@ -27,6 +27,7 @@ import { schedulePersist } from "../session/threadPersistence.js";
 import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 import { alignCommandCardWithStatus } from "./toolCards.js";
+import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
 
 const logger = mastra.getLogger();
 
@@ -57,6 +58,7 @@ export function createTurnCompletion(): {
 
 function terminalizeInFlightToolCalls(
   state: SessionState,
+  reason: TurnCleanupReason,
 ): Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> {
   const updates: Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> = [];
 
@@ -67,14 +69,30 @@ function terminalizeInFlightToolCalls(
       if (part.data.status.kind !== "pending" && part.data.status.kind !== "running") {
         continue;
       }
-
+      const commandAbortedReason = reason === "globalStop"
+        ? "已中止，结果可能未知；进程状态未确认"
+        : "本轮生成已中断";
+      const failedReason =
+        part.data.body.kind === "commandCard" ? commandAbortedReason : "本轮生成已中断";
       const spec = alignCommandCardWithStatus({
         ...part.data,
         status: {
           kind: "failed",
-          data: { retriable: false, reason: "本轮生成已中断" },
+          data: { retriable: false, reason: failedReason },
         },
-        result: part.data.result ?? { kind: "genericText", data: "本轮生成已中断" },
+        body: part.data.body.kind === "commandCard"
+          ? {
+              kind: "commandCard",
+              data: { ...part.data.body.data, terminalKind: "aborted" },
+            }
+          : part.data.body.kind === "generic" &&
+              part.data.name === "mastra_workspace_get_process_output"
+            ? {
+                kind: "generic",
+                data: { ...part.data.body.data, terminalKind: "aborted" },
+              }
+            : part.data.body,
+        result: part.data.result ?? { kind: "genericText", data: failedReason },
       });
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
@@ -109,7 +127,8 @@ export function finalizeLingeringRunningToolCalls(
       const shouldFinalize =
         part.data.status.kind === "running" &&
         !isOwnedSuspensionToolCall &&
-        !activeConfirmToolCallIds.has(part.data.id);
+        !activeConfirmToolCallIds.has(part.data.id) &&
+        !isPersistentBackgroundCommand(part.data);
       if (!shouldFinalize) continue;
 
       const isUnexecutedStreamingPlaceholder =
@@ -227,7 +246,7 @@ export async function* abortAndCleanupTurn(
   state._activeTurnPromise = null;
   state._currentChips = null;
 
-  const updates = terminalizeInFlightToolCalls(state);
+  const updates = terminalizeInFlightToolCalls(state, reason);
   for (const update of updates) {
     yield toolCallUpdated(update.messageId, update.toolCallId, update.spec);
   }

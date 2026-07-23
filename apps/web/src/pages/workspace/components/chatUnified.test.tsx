@@ -103,21 +103,21 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([contradictory]);
 
-    expect(host?.textContent).toContain("命令执行失败");
+    expect(host?.textContent).toContain("运行失败");
     expect(host?.textContent).not.toContain("处理中");
     expect(host?.textContent).not.toContain("退出码");
     expect(host?.textContent).not.toContain("9");
     expect(host?.querySelector(".u-spin")).toBeNull();
   });
 
-  it("确认未启动命令时主状态明确显示命令没有执行", async () => {
+  it("用户拒绝确认时按 terminalKind 显示已取消且不提供重试", async () => {
     const notStarted: ToolCallSpec = {
       id: "command-not-started",
       name: "mastra_workspace_execute_command",
       render: { kind: "chatInline" },
       status: {
         kind: "failed",
-        data: { retriable: true, reason: "确认没有完成，命令没有执行。请稍后再试。" },
+        data: { retriable: false, reason: "已取消，命令未执行" },
       },
       body: {
         kind: "commandCard",
@@ -126,8 +126,9 @@ describe("UnifiedToolCall generic placeholder labels", () => {
           icon: "⚙️",
           command: "echo safe",
           exitCode: -1,
-          outputTail: "确认没有完成，命令没有执行。请稍后再试。",
+          outputTail: "已取消，命令未执行",
           phase: "failed",
+          terminalKind: "rejected",
         },
       },
       result: null,
@@ -135,8 +136,8 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([notStarted]);
 
-    expect(host?.textContent).toContain("命令没有执行");
-    expect(host?.textContent).not.toContain("命令执行失败");
+    expect(host?.textContent).toContain("已取消，命令未执行");
+    expect(host?.textContent).not.toContain("重试");
   });
 
   it("排队命令卡显示已确认进度，running 卡可按 toolCallId 定向停止", async () => {
@@ -197,6 +198,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
           exitCode: 0,
           outputTail: "已中止，结果可能未知",
           phase: "failed",
+          terminalKind: "aborted",
         },
       },
       result: null,
@@ -204,7 +206,77 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([stopped], vi.fn(async () => undefined));
 
-    expect(host?.textContent).toContain("已中止 / 结果可能未知");
+    expect(host?.textContent).toContain("已中止，结果可能未知");
     expect(host?.textContent).not.toContain("停止此命令");
+  });
+
+  it.each([
+    ["rejected", -1, undefined, "已取消，命令未执行"],
+    ["killed", -1, "SIGTERM", "已终止（SIGTERM）"],
+    ["aborted", -1, undefined, "已中止，结果可能未知"],
+    ["failed", 3, undefined, "运行失败（退出码 3）"],
+    ["timedOut", -1, undefined, "执行超时"],
+    ["succeeded", 0, undefined, "已完成"],
+  ] as const)(
+    "命令终态 %s 使用结构化真值表展示",
+    async (terminalKind, exitCode, signal, expected) => {
+      const succeeded = terminalKind === "succeeded";
+      const spec: ToolCallSpec = {
+        id: `terminal-${terminalKind}`,
+        name: "mastra_workspace_execute_command",
+        render: { kind: "chatInline" },
+        status: succeeded
+          ? { kind: "done" }
+          : {
+              kind: "failed",
+              data: { retriable: false, reason: expected },
+            },
+        body: {
+          kind: "commandCard",
+          data: {
+            title: "运行命令",
+            icon: "⚙️",
+            command: "node task.mjs",
+            exitCode,
+            outputTail: "",
+            phase: succeeded ? "done" : "failed",
+            terminalKind,
+            ...(signal ? { signal } : {}),
+          },
+        },
+        result: null,
+      };
+
+      await render([spec]);
+
+      expect(host?.textContent).toContain(expected);
+      expect(host?.textContent).not.toContain("重试");
+      expect(host?.querySelector(".u-spin")).toBeNull();
+    },
+  );
+
+  it("读取输出急停使用结构化 aborted，不显示操作失败", async () => {
+    const readOutput: ToolCallSpec = {
+      id: "read-output-aborted",
+      name: "mastra_workspace_get_process_output",
+      render: { kind: "chatInline" },
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "本轮生成已中断" },
+      },
+      body: {
+        kind: "generic",
+        data: {
+          argsJson: "{\"pid\":\"4242\",\"wait\":true}",
+          terminalKind: "aborted",
+        },
+      },
+      result: null,
+    };
+
+    await render([readOutput]);
+
+    expect(host?.textContent).toContain("已中止，结果可能未知");
+    expect(host?.textContent).not.toContain("操作失败");
   });
 });

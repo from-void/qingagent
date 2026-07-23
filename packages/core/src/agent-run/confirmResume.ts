@@ -1,4 +1,9 @@
-import type { BridgeFrame, ChatMessage, ToolCallSpec } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  ChatMessage,
+  CommandTerminalKind,
+  ToolCallSpec,
+} from "@qingagent/contract-ts";
 import type { ToolsInput } from "@mastra/core/agent";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
@@ -51,7 +56,10 @@ export function failConfirmedToolCall(
   session: SessionState,
   toolCallId: string,
   reason: string,
-  options: { retriable?: boolean } = {},
+  options: {
+    retriable?: boolean;
+    terminalKind?: Exclude<CommandTerminalKind, "succeeded">;
+  } = {},
 ): { messageId: string; spec: ToolCallSpec } | null {
   for (const message of session.chatHistory) {
     const index = message.parts.findIndex(
@@ -62,7 +70,43 @@ export function failConfirmedToolCall(
     const spec = alignCommandCardWithStatus({
       ...part.data,
       status: { kind: "failed", data: { retriable: options.retriable ?? false, reason } },
+      body: part.data.body.kind === "commandCard" && options.terminalKind
+        ? {
+            kind: "commandCard",
+            data: { ...part.data.body.data, terminalKind: options.terminalKind },
+          }
+        : part.data.body,
       result: part.data.result ?? { kind: "genericText", data: reason },
+    });
+    message.parts[index] = { kind: "toolCall", data: spec };
+    return { messageId: message.id, spec };
+  }
+  return null;
+}
+
+function rejectConfirmedToolCall(
+  session: SessionState,
+  pending: PendingConfirm,
+): { messageId: string; spec: ToolCallSpec } | null {
+  const reason = "已取消，命令未执行";
+  for (const message of session.chatHistory) {
+    const index = message.parts.findIndex(
+      (part) => part.kind === "toolCall" && part.data.id === pending.toolCallId,
+    );
+    if (index < 0) continue;
+    const base = confirmedCommandCardSpec(pending, "running");
+    if (base.body.kind !== "commandCard") continue;
+    const spec = alignCommandCardWithStatus({
+      ...base,
+      status: { kind: "failed", data: { retriable: false, reason } },
+      body: {
+        kind: "commandCard",
+        data: {
+          ...base.body.data,
+          terminalKind: "rejected",
+        },
+      },
+      result: { kind: "genericText", data: reason },
     });
     message.parts[index] = { kind: "toolCall", data: spec };
     return { messageId: message.id, spec };
@@ -96,6 +140,7 @@ function appendMissingFailedToolCall(
             exitCode: -1,
             outputTail: reason,
             phase: "failed",
+            terminalKind: "failed",
           },
         }
       : { kind: "generic", data: { argsJson: "" } },
@@ -204,6 +249,19 @@ export async function* resumeConfirmDecision(input: {
   yield { kind: "stream", data: { kind: "start", data: { streamId } } };
 
   try {
+    if (!input.accepted) {
+      const rejected = rejectConfirmedToolCall(session, pending);
+      if (rejected) {
+        yield {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: rejected.messageId,
+            toolCallId: pending.toolCallId,
+            spec: rejected.spec,
+          },
+        };
+      }
+    }
     if (
       input.accepted &&
       pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND
@@ -280,7 +338,9 @@ export async function* resumeConfirmDecision(input: {
       : resolvedEmitted
         ? "确认已提交，但还没有收到命令结果。为避免重复操作，系统没有自动重试；请先查看命令输出，再决定是否重新执行。"
         : "确认没有完成，命令没有执行。请重新确认后再试。";
-    const failed = failConfirmedToolCall(session, pending.toolCallId, reason);
+    const failed = failConfirmedToolCall(session, pending.toolCallId, reason, {
+      terminalKind: targetedCancellation ? "aborted" : "failed",
+    });
     if (failed) {
       yield {
         kind: "toolCallUpdated",

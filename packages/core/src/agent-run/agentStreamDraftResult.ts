@@ -35,6 +35,7 @@ import { schedulePersist } from "../session/threadPersistence.js";
 import {
   commandCardFromResult,
   commandCardStatusFromCard,
+  isTerminalCommandCard,
   scriptCardFromResult,
   writeDraftCardFromResult,
 } from "./toolCards.js";
@@ -57,6 +58,16 @@ function genericToolFailureReason(
     }
   }
   return redactedToolResultPreview(rawToolResult);
+function hasTerminalCommandCard(
+  state: ToolResultContext["turn"]["state"],
+  toolCallId: string,
+): boolean {
+  return state.chatHistory.some((message) => message.parts.some(
+    (part) =>
+      part.kind === "toolCall" &&
+      part.data.id === toolCallId &&
+      isTerminalCommandCard(part.data),
+  ));
 }
 
 export async function* handleDraftOrGenericToolResult(
@@ -212,9 +223,18 @@ export async function* handleDraftOrGenericToolResult(
     return;
   }
 
+  // 确认拒绝、kill、急停等终态一旦落定，同 toolCallId 的迟到 generic result
+  // 不得把权威终态重新覆盖成普通完成/失败。
+  if (
+    toolName === "mastra_workspace_execute_command" &&
+    hasTerminalCommandCard(state, toolCallId)
+  ) {
+    return;
+  }
+
   const commandCard =
     toolName === "mastra_workspace_execute_command"
-      ? commandCardFromResult(args, rawToolResult, toolResultOk)
+      ? commandCardFromResult(args, rawToolResult, toolResultOk, toolCallId)
       : toolName === "run_js" || toolName === "run_python"
         ? scriptCardFromResult(toolName, args, rawToolResult, toolResultOk)
         : null;

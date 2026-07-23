@@ -86,6 +86,27 @@ function runningCommand(id: string): ToolCallSpec {
   };
 }
 
+function runningBackgroundCommand(id: string, pid = "4242"): ToolCallSpec {
+  return {
+    ...runningCommand(id),
+    body: {
+      kind: "commandCard",
+      data: {
+        title: "运行命令",
+        icon: "⚙️",
+        command: "sleep 300",
+        exitCode: 0,
+        outputTail: `后台任务已启动（PID ${pid}）`,
+        phase: "running",
+        pid,
+        ownerToolCallId: id,
+        background: true,
+      },
+    },
+    result: { kind: "genericText", data: `Started background process (PID: ${pid})` },
+  };
+}
+
 function setSingleToolCall(
   state: import("../bridge/index.js").SessionState,
   spec: ToolCallSpec,
@@ -334,6 +355,62 @@ describe("abortAndCleanupTurn", () => {
         }),
       }),
     }));
+  });
+
+  it("全局急停把后台 owner 与读取输出卡收成 aborted，不误报 killed", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("global-stop-background");
+    state.streamId = "stream-global-stop";
+    state._abortController = new AbortController();
+    state.chatHistory = [{
+      id: "agent-global-stop",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      chips: null,
+      parts: [
+        { kind: "toolCall", data: runningBackgroundCommand("background-owner", "7373") },
+        {
+          kind: "toolCall",
+          data: {
+            id: "background-read",
+            name: "mastra_workspace_get_process_output",
+            render: { kind: "chatInline" },
+            status: { kind: "running", data: { progressPct: null, etaSec: null } },
+            body: { kind: "generic", data: { argsJson: "{\"pid\":\"7373\",\"wait\":true}" } },
+            result: null,
+          },
+        },
+      ],
+    }];
+
+    await collectFrames(abortAndCleanupTurn(state, {
+      emitStreamEnd: false,
+      reason: "globalStop",
+    }));
+
+    const owner = findToolCallSpec(state, "background-owner");
+    expect(owner?.status).toEqual({
+      kind: "failed",
+      data: {
+        retriable: false,
+        reason: "已中止，结果可能未知；进程状态未确认",
+      },
+    });
+    expect(owner?.body).toMatchObject({
+      kind: "commandCard",
+      data: { terminalKind: "aborted", pid: "7373" },
+    });
+    expect(JSON.stringify(owner)).not.toContain("killed");
+    expect(findToolCallSpec(state, "background-read")).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false },
+      },
+      body: {
+        kind: "generic",
+        data: { terminalKind: "aborted" },
+      },
+    });
   });
 
   it("真实 runAgentTurn 中止路径不会先把 running 工具卡补成 done", async () => {

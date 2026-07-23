@@ -11,6 +11,14 @@ export {
   abortAndCleanupTurn,
   finalizeLingeringRunningToolCalls,
 } from "./turnCleanup.js";
+export {
+  isPersistentBackgroundCommand,
+  settleBackgroundCommand,
+} from "./backgroundCommandSettlement.js";
+export type {
+  BackgroundCommandSettlement,
+  BackgroundCommandTerminal,
+} from "./backgroundCommandSettlement.js";
 
 export {
   runAgentTurn,

@@ -84,6 +84,8 @@ export interface GatedCommandResult {
   cancelled: boolean;
   timedOut: boolean;
   output: string;
+  pid?: string;
+  background?: true;
 }
 
 function formatCommandOutput(result: {
@@ -116,6 +118,8 @@ function commandResult(input: {
   output: string;
   cancelled?: boolean;
   timedOut?: boolean;
+  pid?: string;
+  background?: true;
 }): GatedCommandResult {
   return {
     success: input.success,
@@ -123,6 +127,8 @@ function commandResult(input: {
     cancelled: input.cancelled ?? false,
     timedOut: input.timedOut ?? false,
     output: input.output,
+    ...(input.pid ? { pid: input.pid } : {}),
+    ...(input.background ? { background: true as const } : {}),
   };
 }
 
@@ -342,6 +348,8 @@ export function createGatedExecuteCommandTool({
             output: `Started background process (PID: ${handle.pid}; 最长运行: ${
               formatCommandDuration(backgroundTimeout)
             }${clampedLabel})`,
+            pid: String(handle.pid),
+            background: true,
           });
         });
       }

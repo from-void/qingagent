@@ -72,6 +72,7 @@ import {
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
 } from "../agent-run/questionnaireTools.js";
+import { isPersistentBackgroundCommand } from "./backgroundCommand.js";
 import { clearSessionSnapshot } from "../llm/modelConfig.js";
 import { clearQuestionBranch } from "../services/genService.js";
 
@@ -572,8 +573,13 @@ function staleRestoreStatus(
     return null;
   }
 
-  // 兜底自愈:持久化里仍停在 running/pending 的非 askUser 工具——进程早结束了不可能还在跑
-  // (典型成因:tool-error 没收口留下的卡死 spec)。恢复时切 done,旧会话重开 spinner 不再永久转。
+  if (isPersistentBackgroundCommand(spec)) {
+    return null;
+  }
+
+  // 兜底自愈:除持久后台进程外，持久化里仍停在 running/pending 的非 askUser 工具
+  // 已不可能继续运行(典型成因:tool-error 没收口留下的卡死 spec)。恢复时切 done，
+  // 避免旧会话重开后 spinner 永久转动。
   if (spec.status.kind === "running" || spec.status.kind === "pending") {
     return { kind: "done" };
   }

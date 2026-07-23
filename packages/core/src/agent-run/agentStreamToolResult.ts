@@ -14,6 +14,7 @@ import { buildToolIoEndMetadata, endToolIoSpan } from "./toolIoSpans.js";
 import { SESSION_STATE_TOOL_NAMES } from "./agentStreamToolCall.js";
 import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 import { isRecord } from "./redaction.js";
+import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
 
 export async function* handleToolResultEvent(
   turn: AgentStreamTurnContext,
@@ -113,6 +114,35 @@ export async function* handleToolResultEvent(
     toolResult,
     toolResultOk,
   };
+  if (toolName === "mastra_workspace_kill_process") {
+    const pidValue = toolResult.pid ?? args.pid;
+    const pid = typeof pidValue === "string" || typeof pidValue === "number"
+      ? String(pidValue)
+      : null;
+    const success = toolResult.success === true || toolResult.killed === true;
+    if (pid && success) {
+      const signalValue = toolResult.signal ?? args.signal;
+      const signal =
+        typeof signalValue === "string" && signalValue.trim()
+          ? signalValue.trim()
+          : "SIGTERM";
+      const settled = settleBackgroundCommand(state, pid, {
+        kind: "killed",
+        signal,
+      });
+      if (settled) {
+        yield {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: settled.messageId,
+            toolCallId: settled.toolCallId,
+            spec: settled.spec,
+          },
+        };
+        outcome.producedVisibleFrame = true;
+      }
+    }
+  }
   const questionnaireResult = yield* handleQuestionnaireToolResult(input);
   if (questionnaireResult === "short-circuit") return true;
   if (questionnaireResult === "unhandled") {

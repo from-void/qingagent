@@ -2,6 +2,7 @@ import type {
   AskUserQuestionKind,
   AskUserSliderSpec,
   CommandCardBody,
+  CommandTerminalKind,
   DiffHunk,
   DocSuggestion,
   ResearchCardBody,
@@ -35,6 +36,9 @@ function commandPolicyBlockFromOutput(output: string): { title: string; icon: st
 
 export function commandCardStatusFromCard(card: CommandCardBody): ToolCallStatus {
   if (card.phase === "done") return { kind: "done" };
+  if (card.phase === "running") {
+    return { kind: "running", data: { progressPct: null, etaSec: null } };
+  }
   return {
     kind: "failed",
     data: {
@@ -82,6 +86,7 @@ export function commandCardFromResult(
   args: Record<string, unknown>,
   toolResult: unknown,
   ok: boolean,
+  ownerToolCallId?: string,
 ): CommandCardBody {
   const rawCommand = typeof args.command === "string" ? args.command : "";
   const command = redactSensitiveText(rawCommand);
@@ -104,6 +109,11 @@ export function commandCardFromResult(
   );
   const cancelled = structured?.cancelled === true;
   const timedOut = structured?.timedOut === true;
+  const pid = typeof structured?.pid === "string" || typeof structured?.pid === "number"
+    ? String(structured.pid)
+    : null;
+  const background =
+    structured?.background === true && pid !== null && structured?.success === true;
   const structuredFailed = structured !== null && (
     structured.success === false || exitCode !== 0 || cancelled || timedOut
   );
@@ -117,6 +127,7 @@ export function commandCardFromResult(
       exitCode: 1,
       outputTail: policyBlock.reason.slice(-600),
       phase: "failed",
+      terminalKind: "failed",
     };
   }
   const verdict = assessCommand(rawCommand);
@@ -125,13 +136,32 @@ export function commandCardFromResult(
     verdict.risk === "deny" || (verdict.risk === "safe" && verdict.title === "执行操作")
       ? "运行命令"
       : verdict.title.replace(/^AI 想/, "");
+  const failed =
+    structuredFailed || legacyNonZeroExit || looksLikeError || !ok;
+  const terminalKind: CommandTerminalKind | undefined = background
+    ? undefined
+    : timedOut
+      ? "timedOut"
+      : cancelled
+        ? "aborted"
+        : failed
+          ? "failed"
+          : "succeeded";
   return {
     title: cardTitle,
     icon: verdict.icon,
     command,
     exitCode,
     outputTail: outputForDisplay.slice(-600),
-    phase: structuredFailed || legacyNonZeroExit || looksLikeError || !ok ? "failed" : "done",
+    phase: background ? "running" : failed ? "failed" : "done",
+    ...(terminalKind ? { terminalKind } : {}),
+    ...(background && pid
+      ? {
+          pid,
+          ownerToolCallId: ownerToolCallId ?? "",
+          background: true,
+        }
+      : {}),
   };
 }
 
@@ -147,6 +177,14 @@ export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
         ? "running"
         : spec.body.data.phase;
   const reason = status.kind === "failed" ? status.data.reason : "";
+  const existingTerminalKind = spec.body.data.terminalKind;
+  const terminalKind: CommandTerminalKind | undefined = phase === "running"
+    ? undefined
+    : phase === "done"
+      ? "succeeded"
+      : existingTerminalKind && existingTerminalKind !== "succeeded"
+        ? existingTerminalKind
+        : "failed";
   const outputTail = reason && !spec.body.data.outputTail.includes(reason)
     ? [spec.body.data.outputTail, reason].filter(Boolean).join("\n")
     : spec.body.data.outputTail;
@@ -157,6 +195,7 @@ export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
       data: {
         ...spec.body.data,
         phase,
+        terminalKind,
         exitCode:
           phase === "failed" && spec.body.data.exitCode === 0
             ? -1
@@ -165,6 +204,14 @@ export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
       },
     },
   };
+}
+
+export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
+  return (
+    spec.body.kind === "commandCard" &&
+    spec.body.data.terminalKind !== undefined &&
+    (spec.status.kind === "done" || spec.status.kind === "failed")
+  );
 }
 
 /** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,
@@ -200,6 +247,7 @@ export function scriptCardFromResult(
     exitCode: failed ? 1 : 0,
     outputTail: output.slice(-600),
     phase: failed ? "failed" : "done",
+    terminalKind: failed ? "failed" : "succeeded",
   };
 }
 

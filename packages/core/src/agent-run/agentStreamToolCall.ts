@@ -36,6 +36,7 @@ import {
   PURE_UI_TOOL_NAMES,
   buildAskUserToolCallSpec,
   generateSvgToolCallSpec,
+  isTerminalCommandCard,
   qrCardToolCallSpec,
   readImageToolCallSpec,
   researchCardToolCallSpec,
@@ -396,6 +397,13 @@ export async function* handleToolCallEvent(
   const originalPart = originalMessage?.parts.find(
     (part) => part.kind === "toolCall" && part.data.id === toolCallId,
   );
+  if (
+    originalPart?.kind === "toolCall" &&
+    isTerminalCommandCard(originalPart.data)
+  ) {
+    context.streamingPlaceholders.delete(toolCallId);
+    return true;
+  }
   if (originalMessage && originalPart?.kind === "toolCall") {
     const failedSpec: ToolCallSpec = {
       ...originalPart.data,

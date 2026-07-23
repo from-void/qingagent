@@ -143,6 +143,7 @@ Use this after starting a background command with execute_command (background: t
         }
 
         let waitTimedOut = false;
+        let exitEventEmitted = false;
         if (shouldWait && handle.exitCode === undefined) {
           const waitPromise = handle.wait({
             onStdout: writer
@@ -191,12 +192,15 @@ Use this after starting a background command with execute_command (background: t
               await writer?.custom({
                 type: "data-sandbox-exit",
                 data: {
+                  pid,
                   exitCode: outcome.result.exitCode,
                   success: outcome.result.success,
+                  timedOut: outcome.result.timedOut === true,
                   executionTimeMs: outcome.result.executionTimeMs,
                   toolCallId,
                 },
               });
+              exitEventEmitted = true;
             } else if (outcome.kind === "aborted") {
               // 只结束本次有界读取；后台 ProcessHandle 继续存活，绝不在这里隐式 kill。
               throw abortError(abortSignal!);
@@ -209,6 +213,19 @@ Use this after starting a background command with execute_command (background: t
               abortSignal?.removeEventListener("abort", abortListener);
             }
           }
+        }
+
+        if (!exitEventEmitted && handle.exitCode !== undefined) {
+          await safeCustom(writer, {
+            type: "data-sandbox-exit",
+            data: {
+              pid,
+              exitCode: handle.exitCode,
+              success: handle.exitCode === 0,
+              timedOut: false,
+              toolCallId,
+            },
+          });
         }
 
         const stdout = applyTail(handle.stdout, tail);

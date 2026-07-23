@@ -98,6 +98,116 @@ describe("processAgentStream tool-call-approval", () => {
       .not.toBe(state.pendingConfirms.get("tool-b")?.commandDigest);
   });
 
+  it("用户拒绝确认时直接收成 rejected 且不可重试，迟到 decline result 不覆盖", async () => {
+    const state = createSession("approval-rejected");
+    const pending = {
+      confirmId: "confirm-rejected",
+      runId: "run-rejected",
+      toolCallId: "tool-rejected",
+      toolName: "mastra_workspace_execute_command",
+      commandDigest: "digest-rejected",
+      spec: {
+        id: "confirm-rejected",
+        kind: "install" as const,
+        title: "安装依赖",
+        say: "将安装依赖",
+        commandPreview: "npm install is-number",
+        footHint: "仅本次",
+        primaryLabel: "确认安装",
+        secondaryLabel: "取消",
+      },
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: "resuming" as const,
+      decisionId: "decision-rejected",
+      decisionSource: "ui" as const,
+      decisionAccepted: false,
+    };
+    state.pendingConfirms.set(pending.toolCallId, pending);
+    state.chatHistory.push({
+      id: "agent-rejected",
+      role: { kind: "agent" },
+      ts: new Date().toISOString(),
+      parts: [{
+        kind: "toolCall",
+        data: {
+          id: pending.toolCallId,
+          name: pending.toolName,
+          render: { kind: "chatInline" },
+          status: { kind: "running", data: { progressPct: null, etaSec: null } },
+          body: { kind: "generic", data: { argsJson: "" } },
+          result: null,
+        },
+      }],
+      chips: null,
+    });
+    const service = new ConfirmService({ persist: async () => undefined });
+    const frames = await collect(resumeConfirmDecision({
+      session: state,
+      pending,
+      decisionId: pending.decisionId,
+      accepted: false,
+      resolution: "rejected",
+      service,
+      agent: {
+        approveToolCall: async () => { throw new Error("must not approve"); },
+        declineToolCall: async () => ({
+          runId: pending.runId,
+          fullStream: events(
+            {
+              type: "tool-result",
+              payload: {
+                toolName: pending.toolName,
+                toolCallId: pending.toolCallId,
+                args: { command: pending.spec.commandPreview },
+                result: "Tool call declined",
+              },
+            },
+            {
+              type: "text-delta",
+              payload: { text: "已取消，命令未执行。" },
+            },
+            {
+              type: "tool-error",
+              payload: {
+                toolName: pending.toolName,
+                toolCallId: pending.toolCallId,
+                error: "Tool call declined",
+              },
+            },
+          ),
+        }),
+      } as never,
+    }));
+
+    const rejected = state.chatHistory.flatMap((message) => message.parts)
+      .find((part) => part.kind === "toolCall" && part.data.id === pending.toolCallId);
+    expect(rejected?.kind === "toolCall" ? rejected.data : null).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "已取消，命令未执行" },
+      },
+      body: {
+        kind: "commandCard",
+        data: {
+          phase: "failed",
+          terminalKind: "rejected",
+          command: "npm install is-number",
+        },
+      },
+    });
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ resolution: "rejected" }),
+    }));
+    expect(frames.some((frame) =>
+      frame.kind === "toolCallUpdated" &&
+      frame.data.toolCallId === pending.toolCallId &&
+      frame.data.spec.body.kind === "commandCard" &&
+      frame.data.spec.body.data.terminalKind === "rejected"
+    )).toBe(true);
+  });
+
   it("malformed/未知 approval 无卡、可见失败、绝不创建 pending", async () => {
     const state = createSession("approval-stream-invalid");
     const service = new ConfirmService({ persist: async () => undefined });

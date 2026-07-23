@@ -90,7 +90,6 @@ describe("QingML draft tools", () => {
     const tools = await qingagentAgent.listTools();
     expect(Object.keys(tools).sort()).toEqual([
       "askUserQuestion",
-      "fetchArticle",
       "parseFile",
       "planDraft",
       "storeMaterial",

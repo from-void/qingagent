@@ -8,7 +8,7 @@ license: MIT
 user-invocable: true
 placeholder: 搜索主题
 config: search-provider
-tools: [webSearch]
+tools: [webSearch, fetchArticle]
 metadata:
   category: capability
 ---

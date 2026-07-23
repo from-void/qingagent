@@ -285,7 +285,7 @@ describe("GET /api/v1/skills", () => {
       icon: "search",
       userInvocable: true,
       config: "search-provider",
-      tools: ["webSearch"],
+      tools: ["webSearch", "fetchArticle"],
     });
     expect(byName.get("materials")).toMatchObject({
       label: "读资料",
@@ -322,7 +322,7 @@ describe("GET /api/v1/skills/:name", () => {
       name: "web-search",
       label: "联网搜",
       config: "search-provider",
-      tools: ["webSearch"],
+      tools: ["webSearch", "fetchArticle"],
     });
     expect(json.body).toContain("# 联网搜索");
     expect(json.body.trimStart().startsWith("---")).toBe(false);

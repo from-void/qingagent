@@ -7,13 +7,13 @@ import { planDraftTool } from "../tools/planDraft.js";
 import { askUserQuestionTool } from "../tools/askUserQuestion.js";
 import { parseFileTool } from "../tools/parseFile.js";
 import { storeMaterialTool } from "../tools/storeMaterial.js";
-import { fetchArticleTool } from "../tools/fetchArticle.js";
 import { buildSystemPrompt } from "../prompts/system.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import { getSessionWorkspace } from "../workspace/sessionWorkspace.js";
 import { getSessionFolderSources } from "../folderSources/runtime.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
+import { beforeSkillToolCall } from "../skills/toolGate.js";
 import {
   wrapToolCallRepairingModel,
   qingagentModelConfig,
@@ -271,6 +271,9 @@ export const qingagentAgent = new Agent({
   outputProcessors: buildQingagentOutputProcessors,
   instructions: () => buildSystemPrompt(),
   tools: (): ToolsInput => buildQingagentStaticTools(),
+  hooks: {
+    beforeToolCall: beforeSkillToolCall,
+  },
   workspace: resolveWorkspaceForRequest,
 });
 
@@ -289,7 +292,6 @@ export function buildQingagentStaticTools(): ToolsInput {
     askUserQuestion: askUserQuestionTool,
     parseFile: parseFileTool,
     storeMaterial: storeMaterialTool,
-    fetchArticle: fetchArticleTool,
   };
 }
 

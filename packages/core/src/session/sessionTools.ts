@@ -18,6 +18,10 @@ import {
 } from "../workspace/protectedFolderSourceTools.js";
 import { createReadDocumentTool, createSearchDocumentsTool } from "../tools/folderDocuments.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
+import {
+  filterDisabledSkillTools,
+  isSkillDisabledToolResult,
+} from "../skills/toolGate.js";
 import { getAgentBrowserTools } from "@qingagent/doc-render/browser";
 import { parseFileTool } from "../tools/parseFile.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
@@ -169,7 +173,8 @@ const CAPABILITY_TOOLS = {
   },
   "gzh-style": { style_template_list: styleTemplateListTool, style_template_get: styleTemplateGetTool, style_template_save: styleTemplateSaveTool, style_template_delete: styleTemplateDeleteTool },
   "browser-ops": {},
-  "web-search": { webSearch: webSearchTool },
+  // fetchArticle 是 webSearch 的间接联网路径，也受同一个隐私开关约束。
+  "web-search": { webSearch: webSearchTool, fetchArticle: fetchArticleTool },
   "image-gen": { generateSvg: generateSvgTool },
   "image-reading": { readImage: readImageTool },
   "wechat-official-account": {
@@ -194,22 +199,21 @@ const CAPABILITY_TOOLS = {
   "deai-review": { style_template_get: styleTemplateGetTool },
 } as const;
 
-// run_js 是系统提示长期承诺的通用精确计算工具。doc-calc 技能只负责点召/preload 与方法论说明,
-// 停用技能不能让提示里推荐的底层计算工具消失。
+// CORE 常驻语义：run_js 是系统提示长期承诺的通用精确计算能力，不属于可关闭技能的工具。
+// doc-calc 只负责点召/preload 与方法论说明；停用 doc-calc 不会移除 run_js。
 const CORE_CALC_TOOLS = {
   run_js: runJsTool,
 } as const;
 
 const MATERIAL_TOOL_SEARCH_TOOLS = {
   parseFile: parseFileTool,
-  fetchArticle: fetchArticleTool,
 } as const;
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "web-search": ["webSearch"],
   "image-gen": ["generateSvg"],
   "image-reading": ["readImage"],
-  "materials": ["parseFile", "fetchArticle"],
+  "materials": ["parseFile"],
   "doc-calc": ["run_js"],
   "wechat-official-account": [
     "wechat_auth_status",
@@ -251,6 +255,11 @@ export function missingGenericToolResultFields(
   }
   if (!isRecord(result)) {
     return ["<object>"];
+  }
+  // Agent beforeToolCall 产生的服务端标准拒绝结果无需再按原工具成功 schema 校验；
+  // 保留 ok:false + 诚实 message，让展示层标失败且模型知道能力确实已关闭。
+  if (isSkillDisabledToolResult(result)) {
+    return [];
   }
 
   const missing: string[] = [];
@@ -453,14 +462,14 @@ export async function buildCapabilityTools() {
   // 浏览器自主操作(browser_*):三级抓取的最后一级,登录/付费墙/交互翻页时升级。
   // 默认关闭(空对象),仅 QINGAGENT_AGENT_BROWSER=1 或配了持久 Chrome cdpUrl 时注入,
   // 避免平白给主 agent 增加十几个工具的上下文。与技能选择无关(随时可升级)。
-  return Object.assign(
+  return filterDisabledSkillTools(Object.assign(
     tools,
     CORE_CALC_TOOLS,
     getPyodideTools(),
     // show_qr/updateTodos 始终可用、不走技能门控:前者是 UI 指令,后者是会话状态同步。
     { show_qr: showQrTool, updateTodos: updateTodosTool },
     disabled.has("browser-ops") ? {} : getAgentBrowserTools(),
-  );
+  ), disabled);
 }
 
 export interface CapabilityToolSearchBridge {
@@ -475,14 +484,14 @@ export async function buildCapabilityToolSearchBridge(
 ): Promise<CapabilityToolSearchBridge> {
   const disabled = await readDisabledSet();
   const activeNames = Object.keys(CAPABILITY_TOOLS).filter((name) => !disabled.has(name));
-  const searchableTools = Object.assign(
+  const searchableTools = filterDisabledSkillTools(Object.assign(
     {},
     MATERIAL_TOOL_SEARCH_TOOLS,
     ...activeNames.map((name) => CAPABILITY_TOOLS[name as keyof typeof CAPABILITY_TOOLS] ?? {}),
     CORE_CALC_TOOLS,
     getPyodideTools(),
     disabled.has("browser-ops") ? {} : getAgentBrowserTools(),
-  ) as QingagentToolSearchTools;
+  ), disabled) as QingagentToolSearchTools;
   const alwaysTools: ToolsInput = {
     show_qr: showQrTool,
     updateTodos: updateTodosTool,
@@ -512,11 +521,13 @@ export function ensureSessionToolSearchProcessor(
     return state._toolSearchProcessor;
   }
   if (state._toolSearchToolSignature !== bridge.signature) {
-    logger.warn("[toolSearch] searchable tool snapshot changed after session processor creation; keeping existing processor", {
+    logger.warn("[toolSearch] searchable tool snapshot changed; replacing session processor", {
       sessionId: state.sessionId,
       initialSignature: state._toolSearchToolSignature,
       currentSignature: bridge.signature,
     });
+    state._toolSearchProcessor = createQingagentToolSearchProcessor(bridge.searchableTools);
+    state._toolSearchToolSignature = bridge.signature;
   }
   return state._toolSearchProcessor;
 }

@@ -46,7 +46,6 @@ describe("qingagent processors", () => {
       "askUserQuestion",
       "parseFile",
       "storeMaterial",
-      "fetchArticle",
     ]);
   });
 
@@ -72,6 +71,19 @@ describe("qingagent processors", () => {
       "unicode-normalizer",
       "tool-search",
     ]);
+  });
+
+  it("联网工具不进入 Agent 静态 schema,统一由 capability 开关装配", () => {
+    resetProcessorEnv();
+
+    expect(Object.keys(buildQingagentStaticTools())).toEqual([
+      "planDraft",
+      "askUserQuestion",
+      "parseFile",
+      "storeMaterial",
+    ]);
+    expect(Object.keys(buildQingagentStaticTools())).not.toContain("fetchArticle");
+    expect(Object.keys(buildQingagentStaticTools())).not.toContain("webSearch");
   });
 
   it("UnicodeNormalizer 会清掉控制字符并折叠空白", async () => {

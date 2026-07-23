@@ -127,6 +127,7 @@ interface CurrentDocumentForCommit {
   docVersion: number;
   contentHash: string;
   pmDoc: PmDoc;
+  updatedAt: string;
 }
 
 function valueAsNumber(value: unknown): number {
@@ -182,6 +183,7 @@ function readCurrentDocument(row: Row): CurrentDocumentForCommit {
     docVersion: valueAsNumber(row.doc_version),
     contentHash: getPmContentHash(pmDoc),
     pmDoc,
+    updatedAt: String(row.updated_at ?? ""),
   };
 }
 
@@ -376,6 +378,7 @@ export async function commitDocumentOp(
         docVersion: 0,
         contentHash: getPmContentHash(pmDoc),
         pmDoc,
+        updatedAt: "",
       };
     }
 
@@ -429,6 +432,36 @@ export async function commitDocumentOp(
 
     const nextDoc = validation.doc;
     const contentHash = getPmContentHash(nextDoc);
+    // 乐观锁必须先于等值判断：旧基线即使提交内容碰巧与当前 canonical 相同，
+    // 也不能伪装成已消费当前版本。基线有效且用户整篇保存的正文未变时直接确认
+    // 当前版本，不写 documents / document_versions / document_ops，也不滚动
+    // coalesce 窗口。patch/生成保留既有结算与幂等语义，不在这里扩大 no-op 范围。
+    if (
+      !creating &&
+      providedClientMutationId &&
+      input.opKind === "replace_doc" &&
+      input.actorType === "user" &&
+      contentHash === current.contentHash
+    ) {
+      const currentVersion = await getVersionSnapshotByDocumentSnapshot(
+        input.docId,
+        current.docVersion,
+        client,
+      );
+      return rollbackTransaction({
+        status: "committed",
+        docVersion: current.docVersion,
+        contentHash: current.contentHash,
+        doc: current.pmDoc,
+        versionId: currentVersion?.versionId ?? defaultVersionId({
+          docId: input.docId,
+          docVersion: current.docVersion,
+          contentHash: current.contentHash,
+        }),
+        createdNewVersion: false,
+        committedAt: currentVersion?.createdAt || current.updatedAt || now(),
+      } satisfies CommitDocumentOpResult);
+    }
     const opId = providedOpId
       ?? (providedClientMutationId
         ? deriveClientMutationOpId(input.docId, providedClientMutationId)

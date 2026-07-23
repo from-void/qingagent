@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   beginSessionDeletion,
+  createDerivativeDoc,
   DocumentWriteBlockedError,
   findOpByIdempotencyKey,
+  listDerivativesByThread,
+  stampGenerated,
 } from "@qingagent/db";
 import {
   commitTransaction,
@@ -79,6 +82,7 @@ async function seedDocumentVersion(
   text: string,
   parentVersion: number | null,
   createdAt: string,
+  actorType: "user" | "agent" = "agent",
 ): Promise<void> {
   const snapshotPm = pmDocFromText(text);
   await insertVersion({
@@ -87,7 +91,7 @@ async function seedDocumentVersion(
     docVersion,
     contentHash: getPmContentHash(snapshotPm),
     schemaVersion: snapshotPm.attrs.schemaVersion,
-    actorType: "agent",
+    actorType,
     summary: `v${docVersion}`,
     snapshotPm,
     parentVersion,
@@ -368,6 +372,122 @@ describe("commitDocumentOp", () => {
     });
     expect(fakeSession.docVersion).toBe(2);
     expect(frames).toEqual(["documentSnapshotWritten"]);
+  });
+
+  it("等值用户保存直接确认 canonical 版本，不涨版本或误标衍生稿 stale；后续真实改动仍正常提交", async () => {
+    const docId = "doc-user-noop";
+    const threadId = "thread-doc-user-noop";
+    const originalDoc = pmDocFromText("未修改正文");
+    await seedDocument(docId, "未修改正文", 4);
+    await seedDocumentVersion(
+      docId,
+      4,
+      "未修改正文",
+      3,
+      "2026-07-23T08:00:00.000Z",
+      "user",
+    );
+    const derivative = await createDerivativeDoc({
+      threadId,
+      sourceDocId: docId,
+      dtype: "gzh",
+      templateId: "gzh-opinion",
+      privatePrompt: "",
+    });
+    await stampGenerated(derivative.docId, 4);
+
+    const noOp = await commitDocumentOp(
+      commitInput({
+        docId,
+        threadId,
+        expectedDocumentSnapshot: 4,
+        baseContentHash: getPmContentHash(originalDoc),
+        clientMutationId: "client-noop",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: originalDoc }),
+      }),
+      { now: () => "2026-07-23T08:00:30.000Z" },
+    );
+
+    expect(noOp).toMatchObject({
+      status: "committed",
+      docVersion: 4,
+      contentHash: getPmContentHash(originalDoc),
+      doc: originalDoc,
+      versionId: `version-${docId}-4`,
+      createdNewVersion: false,
+      committedAt: "2026-07-23T08:00:00.000Z",
+    });
+    await expect(documentRepo.load(docId)).resolves.toMatchObject({
+      docVersion: 4,
+      pmDoc: originalDoc,
+    });
+    expect((await listVersions(docId)).map((version) => version.docVersion)).toEqual([4]);
+    await expect(findOpByIdempotencyKey({
+      docId,
+      clientMutationId: "client-noop",
+    })).resolves.toBeNull();
+    await expect(listDerivativesByThread(threadId)).resolves.toEqual([
+      expect.objectContaining({
+        docId: derivative.docId,
+        sourceVersion: 4,
+        currentSourceVersion: 4,
+        stale: false,
+      }),
+    ]);
+
+    const changedDoc = pmDocFromText("确有修改正文");
+    const changed = await commitDocumentOp(
+      commitInput({
+        docId,
+        threadId,
+        expectedDocumentSnapshot: 4,
+        baseContentHash: getPmContentHash(originalDoc),
+        clientMutationId: "client-real-change",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: changedDoc }),
+      }),
+      { now: () => "2026-07-23T08:00:40.000Z" },
+    );
+
+    expect(changed).toMatchObject({
+      status: "committed",
+      docVersion: 5,
+      contentHash: getPmContentHash(changedDoc),
+      doc: changedDoc,
+      createdNewVersion: true,
+    });
+    await expect(documentRepo.load(docId)).resolves.toMatchObject({
+      docVersion: 5,
+      pmDoc: changedDoc,
+    });
+    expect((await listVersions(docId)).map((version) => version.docVersion)).toEqual([5]);
+    await expect(listDerivativesByThread(threadId)).resolves.toEqual([
+      expect.objectContaining({
+        docId: derivative.docId,
+        sourceVersion: 4,
+        currentSourceVersion: 5,
+        stale: true,
+      }),
+    ]);
+
+    const staleSameContent = await commitDocumentOp(commitInput({
+      docId,
+      threadId,
+      expectedDocumentSnapshot: 4,
+      baseContentHash: getPmContentHash(originalDoc),
+      clientMutationId: "client-stale-same-content",
+      apply: () => ({ nextDoc: changedDoc }),
+    }));
+    expect(staleSameContent).toEqual({
+      status: "conflict",
+      currentVersion: 5,
+      currentHash: getPmContentHash(changedDoc),
+    });
+    await expect(documentRepo.load(docId)).resolves.toMatchObject({
+      docVersion: 5,
+      pmDoc: changedDoc,
+    });
   });
 
   it("单标签快速连续手打在 coalesce 窗口内仍合并，并持久化撤销/重做", async () => {

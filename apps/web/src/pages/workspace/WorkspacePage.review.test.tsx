@@ -1026,6 +1026,70 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
   }, 60_000);
 
+  it("no-op 保存回执保持当前版本，下一次真实编辑沿用一致的版本与哈希基线", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-noop", "未修改正文")]);
+    const changedDoc = pmDoc([pmParagraph("p-noop", "确有修改正文")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "no-op 保存" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+
+    let writeCount = 0;
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      writeCount += 1;
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion:
+            writeCount === 1
+              ? command.data.expectedDocumentSnapshot
+              : command.data.expectedDocumentSnapshot + 1,
+        },
+      });
+    });
+
+    await act(async () => {
+      await captured.current!.handleEditorChange(initialDoc);
+    });
+    await flushMicrotasks(3);
+
+    expect(updateDocCommands(stream)[0]?.data.expectedDocumentSnapshot).toBe(7);
+    expect(captured.current?.state.version).toBe(7);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(initialDoc);
+
+    await act(async () => {
+      await captured.current!.handleEditorChange(changedDoc);
+    });
+    await flushMicrotasks(3);
+
+    const realSave = updateDocCommands(stream)[1];
+    expect(realSave?.data.expectedDocumentSnapshot).toBe(7);
+    expect(realSave?.data.baseContentHash).toBe(getPmContentHash(initialDoc));
+    expect(captured.current?.state.version).toBe(8);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(changedDoc);
+  }, 60_000);
+
   it("O1: 会话切换 flush 超时后用旧 session 的 beacon 保存当前编辑器正文", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const [{ useWorkspacePageController }, { WorkspaceDocumentPane }] = await Promise.all([

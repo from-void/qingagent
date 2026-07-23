@@ -254,6 +254,7 @@ type _CancelAskUserExact = Expect<Equal<z.infer<typeof cancelAskUserDataSchema>,
 const updateDocDataSchema = z.object({
   sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),
   expectedDocumentSnapshot: z.number().int(),
+  baseContentHash: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH).optional(),
   legacySections: legacySectionsPassthroughSchema.optional(),
   doc: pmDocPassthroughSchema.optional(),
   clientMutationId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH),

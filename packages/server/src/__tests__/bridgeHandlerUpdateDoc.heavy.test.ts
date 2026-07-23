@@ -150,12 +150,14 @@ describe("handleCommand updateDoc", () => {
     });
 
     const frames = await collectFrames(bridge.handleCommand(updateCommand(session.sessionId, {
+      baseContentHash: "pmv1-base",
       doc: submittedDoc as never,
     })));
 
     expect(commitDocumentOp).toHaveBeenCalledWith(expect.objectContaining({
       docId: session.docId,
       expectedDocumentSnapshot: 1,
+      baseContentHash: "pmv1-base",
       clientMutationId: "mutation-1",
       opKind: "replace_doc",
       actorType: "user",

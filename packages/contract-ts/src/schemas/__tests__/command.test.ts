@@ -216,6 +216,21 @@ describe("commandSchema", () => {
     expect(commandSchema.safeParse(makeCommand(MAX_COMMAND_ARRAY_LENGTH + 1)).success).toBe(false);
   });
 
+  it("updateDoc.baseContentHash 接受非空哈希并拒绝空串", () => {
+    const makeCommand = (baseContentHash: string) => ({
+      kind: "updateDoc",
+      data: {
+        sessionId: "s",
+        expectedDocumentSnapshot: 1,
+        baseContentHash,
+        legacySections: [],
+        clientMutationId: "m",
+      },
+    });
+    expect(commandSchema.safeParse(makeCommand("pmv1-base")).success).toBe(true);
+    expect(commandSchema.safeParse(makeCommand("")).success).toBe(false);
+  });
+
   it("保留 selection chip 的 tableSelection 字段", () => {
     const tableSelection = {
       axis: "row",

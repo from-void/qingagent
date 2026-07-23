@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BridgeFrame, Command, LegacySection } from "@qingagent/contract-ts";
-import type { PmBlockNode, PmDoc, PmInlineNode } from "@qingagent/pm-schema";
+import { getPmContentHash, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 
@@ -173,6 +173,51 @@ describe("rich formats HTTP bridge E2E", () => {
     await expect(core.listVersions(sessionId)).resolves.toMatchObject([
       { docVersion: 2, snapshotPm: firstDoc },
     ]);
+  });
+
+  it("同版本号但基线正文哈希不同的 updateDoc 被拒绝且不覆盖先写内容", async () => {
+    const baselineDoc = baseDoc("bridge-same-version-base");
+    const sessionId = await seedRestoredSession("同号异容冲突桥接", baselineDoc);
+    const firstDoc = richPmDoc("same-version-first");
+    const linkedButStaleDoc = richPmDoc("same-version-stale");
+
+    const firstMutationId = `mutation-${randomUUID()}`;
+    const first = await postStream(updateDocCommand({
+      sessionId,
+      expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(baselineDoc),
+      clientMutationId: firstMutationId,
+      doc: firstDoc,
+    }));
+    expect(findDocWriteFrame(first.frames, firstMutationId).data).toEqual({
+      ok: true,
+      clientMutationId: firstMutationId,
+      docVersion: 2,
+    });
+
+    const staleMutationId = `mutation-${randomUUID()}`;
+    const stale = await postStream(updateDocCommand({
+      sessionId,
+      // 数字恰好接上版本 2，但正文基线仍是版本 1。
+      expectedDocumentSnapshot: 2,
+      baseContentHash: getPmContentHash(baselineDoc),
+      clientMutationId: staleMutationId,
+      doc: linkedButStaleDoc,
+    }));
+
+    expect(stale.res.status).toBe(200);
+    expect(findDocWriteFrame(stale.frames, staleMutationId).data).toEqual({
+      ok: false,
+      clientMutationId: staleMutationId,
+      conflict: {
+        expectedDocumentSnapshot: 2,
+        actualDocumentSnapshot: 2,
+      },
+    });
+    await expect(core.documentRepo.load(sessionId)).resolves.toMatchObject({
+      docVersion: 2,
+      pmDoc: firstDoc,
+    });
   });
 
   it("POST /api/v1/stream persists A→B→A undo with distinct mutation ids", async () => {
@@ -418,6 +463,7 @@ function findDocWriteFrame(frames: BridgeFrame[], clientMutationId: string): Doc
 function updateDocCommand(input: {
   sessionId: string;
   expectedDocumentSnapshot: number;
+  baseContentHash?: string;
   clientMutationId: string;
   doc: PmDoc;
 }): Command {
@@ -426,6 +472,7 @@ function updateDocCommand(input: {
     data: {
       sessionId: input.sessionId,
       expectedDocumentSnapshot: input.expectedDocumentSnapshot,
+      baseContentHash: input.baseContentHash,
       clientMutationId: input.clientMutationId,
       doc: input.doc,
     },

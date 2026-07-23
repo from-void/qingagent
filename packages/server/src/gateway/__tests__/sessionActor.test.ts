@@ -161,6 +161,97 @@ describe("SessionActor", () => {
     expect(order).toEqual(["commit:start", "commit:end", "cancel"]);
   });
 
+  it("规划期一次取消会清掉此前排队的重复 turn，不再派发后续问卷", async () => {
+    const log = new InMemoryFrameLog();
+    const order: string[] = [];
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstReleasePromise = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handleCommand: HandleCommandFn = async function* (command) {
+      if (command.kind === "cancelStream") {
+        order.push("cancel");
+        yield meta("cancel");
+        return;
+      }
+      if (command.kind !== "sendMessage") return;
+      order.push(`${command.data.text}:start`);
+      if (command.data.text === "first") {
+        firstStarted();
+        await firstReleasePromise;
+        order.push("first:end");
+        return;
+      }
+      // 若旧实现继续派发这个 queued turn，就会产生问卷帧。
+      yield meta("questionnaire");
+    };
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand,
+      abortSession: vi.fn(() => releaseFirst()),
+    });
+
+    const first = actor.enqueue({ command: sendMessage("first") });
+    await firstStartedPromise;
+    const queuedQuestionnaire = actor.enqueue({ command: sendMessage("questionnaire") });
+    const cancel = actor.enqueue({ command: cancelStream() });
+
+    await Promise.all([first, queuedQuestionnaire, cancel]);
+    expect(order).toEqual(["first:start", "first:end", "cancel"]);
+    expect(
+      log.readFrom("s1", 0).frames.some(
+        (entry) => entry.frame.kind === "sessionMeta" && entry.frame.data.title === "questionnaire",
+      ),
+    ).toBe(false);
+  });
+
+  it("取消屏障对 cancel 前的多步排队持续有效，且不吞掉 cancel 后的新 turn", async () => {
+    const log = new InMemoryFrameLog();
+    const order: string[] = [];
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstReleasePromise = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handleCommand: HandleCommandFn = async function* (command) {
+      if (command.kind === "cancelStream") {
+        order.push("cancel");
+        return;
+      }
+      if (command.kind !== "sendMessage") return;
+      order.push(command.data.text);
+      if (command.data.text === "first") {
+        firstStarted();
+        await firstReleasePromise;
+      }
+      yield meta(command.data.text);
+    };
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      handleCommand,
+      abortSession: vi.fn(() => releaseFirst()),
+    });
+
+    const first = actor.enqueue({ command: sendMessage("first") });
+    await firstStartedPromise;
+    const queuedSecond = actor.enqueue({ command: sendMessage("queued-second") });
+    const queuedThird = actor.enqueue({ command: sendMessage("queued-third") });
+    const cancel = actor.enqueue({ command: cancelStream() });
+    const nextTurn = actor.enqueue({ command: sendMessage("new-user-turn") });
+
+    await Promise.all([first, queuedSecond, queuedThird, cancel, nextTurn]);
+    expect(order).toEqual(["first", "cancel", "new-user-turn"]);
+  });
+
   it("sendMessage 抢占正在运行的命令并触发 abort", async () => {
     const log = new InMemoryFrameLog();
     let releaseFirst!: () => void;

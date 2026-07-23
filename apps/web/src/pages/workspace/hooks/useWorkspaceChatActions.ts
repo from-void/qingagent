@@ -37,6 +37,45 @@ import type { AssetSource } from "../data/sources";
 
 const STREAM_ERROR_TOAST_KEY = "workspace-stream-error";
 
+/**
+ * 一次输入提交从点亮 sendPending 到真正 POST sendMessage 之间会跨越保存、上传、建会话等
+ * 多个异步步骤。generation 是这条编排链的 turn 级闸门：停止时递增一次即可让旧链在
+ * 最终派发前失效，避免 cancel 已完成后旧链又启动一个新的 agent turn。
+ */
+export interface WorkspaceTurnDispatchGate {
+  generation: number;
+}
+
+export function beginWorkspaceTurnDispatch(gate: WorkspaceTurnDispatchGate): number {
+  gate.generation += 1;
+  return gate.generation;
+}
+
+export function cancelWorkspaceTurnDispatch(gate: WorkspaceTurnDispatchGate): void {
+  gate.generation += 1;
+}
+
+export function isWorkspaceTurnDispatchCurrent(
+  gate: WorkspaceTurnDispatchGate,
+  generation: number,
+): boolean {
+  return gate.generation === generation;
+}
+
+export async function prepareAndDispatchWorkspaceTurn<T>(input: {
+  gate: WorkspaceTurnDispatchGate;
+  generation: number;
+  prepare: () => Promise<T>;
+  dispatch: (prepared: T) => Promise<unknown>;
+}): Promise<"sent" | "cancelled"> {
+  const prepared = await input.prepare();
+  if (!isWorkspaceTurnDispatchCurrent(input.gate, input.generation)) {
+    return "cancelled";
+  }
+  await input.dispatch(prepared);
+  return "sent";
+}
+
 export async function cancelWorkspaceGeneration(input: {
   stream: Pick<ServerStream, "cancel"> | null;
   sessionId: string | null;
@@ -54,7 +93,9 @@ export async function cancelWorkspaceGeneration(input: {
 
   const commands = buildCancelStreamCommands(sessionId, streamIds);
   if (commands.length === 0) {
-    showToast("当前没有正在生成的任务");
+    // 新会话的异步准备链可能尚未拿到 sessionId；上层 turn 闸门已经完成本地终止，
+    // 此时没有服务端命令可发也是成功停止，不能误报“没有任务”。
+    showToast("已中断");
     return;
   }
   for (const command of commands) {
@@ -93,6 +134,7 @@ export function useWorkspaceChatActions(input: {
   > | null>;
   reviewCloseInFlightRef: MutableRefObject<Promise<void> | null>;
   restoreExistingSessionIdRef: MutableRefObject<string | null>;
+  turnDispatchGateRef: MutableRefObject<WorkspaceTurnDispatchGate>;
   dispatch: Dispatch<WorkspaceAction>;
   setPreviewSource: Dispatch<SetStateAction<AssetSource | null>>;
   setSendPending: Dispatch<SetStateAction<boolean>>;
@@ -117,6 +159,7 @@ export function useWorkspaceChatActions(input: {
     lastRetriableSendRef,
     reviewCloseInFlightRef,
     restoreExistingSessionIdRef,
+    turnDispatchGateRef,
     dispatch,
     setPreviewSource,
     setSendPending,
@@ -175,6 +218,9 @@ export function useWorkspaceChatActions(input: {
     }
 
     const keepMessageCount = stateRef.current.messages.length;
+    const dispatchGeneration = beginWorkspaceTurnDispatch(
+      turnDispatchGateRef.current,
+    );
 
     // Optimistic UI: add user message bubble to chat.
     // When chips are present, use richText (which includes {{chip:N}}
@@ -221,46 +267,65 @@ export function useWorkspaceChatActions(input: {
     setSendPending(true);
 
     const send = async () => {
-      // 模板填充在途时先等它落定(成败都等,失败自身已 toast):否则 sendMessage 可能先被服务端
-      // 处理并置 streamId,骨架 updateDoc 随后被拒、模板内容永久丢失(review #6)。
-      if (fillTemplatePromiseRef.current) {
-        await fillTemplatePromiseRef.current.catch(() => {});
-      }
-      await runAfterPendingDocSave({
-        flushPendingDocSave,
-        run: async () => {
-          // 先上传文件，再把 fileIds 随消息发给后端解析。
-          const uploadedAssets = await uploadFiles(filesToUpload);
-          const fileIds = uploadedAssets.map((asset) => asset.fileId);
-          markMaterialParsing(uploadedAssets);
+      await prepareAndDispatchWorkspaceTurn({
+        gate: turnDispatchGateRef.current,
+        generation: dispatchGeneration,
+        prepare: async () => {
+          // 模板填充在途时先等它落定(成败都等,失败自身已 toast):否则 sendMessage 可能先被服务端
+          // 处理并置 streamId,骨架 updateDoc 随后被拒、模板内容永久丢失(review #6)。
+          if (fillTemplatePromiseRef.current) {
+            await fillTemplatePromiseRef.current.catch(() => {});
+          }
+          return runAfterPendingDocSave({
+            flushPendingDocSave,
+            run: async () => {
+              // 先上传文件，再把 fileIds 随消息发给后端解析。
+              const uploadedAssets = await uploadFiles(filesToUpload);
+              const fileIds = uploadedAssets.map((asset) => asset.fileId);
+              markMaterialParsing(uploadedAssets);
 
-          const contractChips = snap.chips.map(toContractChip);
+              const contractChips = snap.chips.map(toContractChip);
 
-          const sessionId = await ensureSessionId(stream);
-          const command: Extract<Command, { kind: "sendMessage" }> = {
-            kind: "sendMessage",
-            data: {
-              sessionId,
-              text: snap.text,
-              mentions: [],
-              skills: snap.skills,
-              chips: contractChips,
-              fileIds,
-              clientMessageId,
-              // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
-              ...(snap.chips.length > 0 && snap.richText
-                ? { richText: snap.richText }
-                : {}),
+              const sessionId = await ensureSessionId(stream);
+              const command: Extract<Command, { kind: "sendMessage" }> = {
+                kind: "sendMessage",
+                data: {
+                  sessionId,
+                  text: snap.text,
+                  mentions: [],
+                  skills: snap.skills,
+                  chips: contractChips,
+                  fileIds,
+                  clientMessageId,
+                  // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
+                  ...(snap.chips.length > 0 && snap.richText
+                    ? { richText: snap.richText }
+                    : {}),
+                },
+              };
+              await reviewCloseInFlightRef.current;
+              return command;
             },
-          };
+          });
+        },
+        dispatch: async (command) => {
+          // 只有仍属当前 turn 的链路才进入服务端；被停止的旧链不会在稍后重新点亮 start。
           lastRetriableSendRef.current = command;
-          await reviewCloseInFlightRef.current;
           await stream.sendCommand(command);
         },
       });
     };
 
     send().catch((e) => {
+      // 停止后的旧准备链即使晚到失败，也不应回滚已恢复的输入态或弹伪失败。
+      if (
+        !isWorkspaceTurnDispatchCurrent(
+          turnDispatchGateRef.current,
+          dispatchGeneration,
+        )
+      ) {
+        return;
+      }
       console.error("[workspace] sendMessage failed", e);
       rollbackOptimisticChatSend({
         dispatch,
@@ -291,6 +356,7 @@ export function useWorkspaceChatActions(input: {
       showToast("没有可重试的上一条消息");
       return;
     }
+    beginWorkspaceTurnDispatch(turnDispatchGateRef.current);
     dispatch({ kind: "retryDrafting", streamId: "last" });
     setSendPending(true);
     stream.sendCommand(command).catch((e) => {
@@ -372,6 +438,9 @@ export function useWorkspaceChatActions(input: {
   ]);
 
   const handleCancelActiveStream = useCallback(() => {
+    // 先封住本地尚在保存/上传/建会话的旧 turn，再下发服务端 cancel；标记会持续到下一次
+    // beginWorkspaceTurnDispatch，不能只 abort 当前一个 await 步骤。
+    cancelWorkspaceTurnDispatch(turnDispatchGateRef.current);
     const current = stateRef.current;
     void cancelWorkspaceGeneration({
       stream: streamRef.current,

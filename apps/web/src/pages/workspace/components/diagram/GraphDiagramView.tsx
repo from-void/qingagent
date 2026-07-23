@@ -652,9 +652,11 @@ export function graphNodePositionKey(nodes: readonly GraphNodePosition[]): strin
     .join("|");
 }
 
+const MIN_PREVIEW_ZOOM = 0.1;
+
 /**
  * 把一组节点包围盒居中铺进给定画布,返回 setViewport 用的 {x,y,zoom}。
- * zoom 封顶到 1(宽/高图缩小铺满,小图不放大);padding 为容器两侧留白比例。
+ * zoom 钳制在 0.1~1(超大图保持可读并可平移浏览,小图不放大);padding 为容器两侧留白比例。
  * 纯几何,不依赖 React Flow 的 node.measured,故可绕开 fitView 的测量竞态。
  */
 export function computePreviewFitViewport(
@@ -666,7 +668,8 @@ export function computePreviewFitViewport(
   if (bounds.width <= 0 || bounds.height <= 0 || containerWidth <= 0 || containerHeight <= 0) return null;
   const usableW = containerWidth * (1 - padding * 2);
   const usableH = containerHeight * (1 - padding * 2);
-  const zoom = Math.min(1, usableW / bounds.width, usableH / bounds.height);
+  const computedZoom = Math.min(1, usableW / bounds.width, usableH / bounds.height);
+  const zoom = Math.max(computedZoom, MIN_PREVIEW_ZOOM);
   const x = containerWidth / 2 - (bounds.x + bounds.width / 2) * zoom;
   const y = containerHeight / 2 - (bounds.y + bounds.height / 2) * zoom;
   return { x, y, zoom };
@@ -2017,7 +2020,7 @@ export function GraphDiagramView({
           edgeTypes={graphEdgeTypes}
           connectionMode={ConnectionMode.Loose}
           fitView
-          minZoom={0.1}
+          minZoom={MIN_PREVIEW_ZOOM}
           onInit={previewFit.onInit}
           nodesDraggable={false}
           nodesConnectable={false}

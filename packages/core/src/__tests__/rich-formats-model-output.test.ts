@@ -149,6 +149,34 @@ describe("C3 QingML 富格式文档管线", () => {
     expectQingmlExample(AIIR_SYSTEM_PROMPT, "<math>E=mc^2</math>");
   });
 
+  it("system.ts 文学排版契约:诗词分节、歌词标签与剧本台词均使用真实段落", () => {
+    expect(AIIR_SYSTEM_PROMPT).toContain("### 文学排版约定");
+    expect(AIIR_SYSTEM_PROMPT).toContain("节与节之间必须插入一个空 <p></p>");
+    expect(AIIR_SYSTEM_PROMPT).toContain("原文每个空行都必须在原位产出一个空 <p></p>");
+    expect(AIIR_SYSTEM_PROMPT).toContain("<p><b>［副歌］</b></p>");
+    expect(AIIR_SYSTEM_PROMPT).toContain("<p><b>人物名</b>：台词……</p>");
+    expect(AIIR_SYSTEM_PROMPT).toContain("剧本也必须在范围内");
+    expect(AIIR_SYSTEM_PROMPT).toContain("严禁把诗词、歌词或剧本整篇塞进 <pre> 代码块");
+
+    const literaryQingml = [
+      "<p>第一行<br/>第二行</p>",
+      "<p></p>",
+      "<p><b>［副歌］</b></p>",
+      "<p><b>人物名</b>：台词……</p>",
+    ].join("");
+    const parsed = qingmlParse(literaryQingml);
+    expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
+    expect(parsed.blocks).toMatchObject([
+      { type: "paragraph", runs: [{ text: "第一行\n第二行" }] },
+      { type: "paragraph", runs: [] },
+      { type: "paragraph" },
+      { type: "paragraph" },
+    ]);
+
+    const doc = compileOk({ blocks: parsed.blocks });
+    expect(doc.content[1]).toMatchObject({ type: "paragraph", content: [] });
+  });
+
   it("端到端:完整富格式 QingML 输出解析、PM 校验和回转", () => {
     const raw = [
       "<h1>上线前核对</h1>",

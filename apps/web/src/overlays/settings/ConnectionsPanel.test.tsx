@@ -12,9 +12,13 @@ const h = vi.hoisted(() => ({
   start: vi.fn(),
   refresh: vi.fn(),
   toast: vi.fn(),
+  confirm: vi.fn(),
 }));
 
-vi.mock("../../system", () => ({ useClientCapabilities: () => h.capabilities }));
+vi.mock("../../system", () => ({
+  useClientCapabilities: () => h.capabilities,
+  useConfirm: () => h.confirm,
+}));
 vi.mock("../../system/ToastProvider", () => ({ useToast: () => ({ show: h.toast }) }));
 vi.mock("./useConnectors", () => ({
   useConnectors: () => ({
@@ -53,6 +57,8 @@ beforeEach(() => {
   h.connectors = [];
   h.start.mockReset();
   h.refresh.mockReset();
+  h.disconnect.mockReset();
+  h.confirm.mockReset();
 });
 
 afterEach(() => {
@@ -162,6 +168,75 @@ describe("ConnectionsPanel", () => {
     expect(host.querySelector('[data-wf="ConnectionsUnavailable"]')).toBeTruthy();
     expect(host.textContent).toContain("此环境不可用");
     expect(host.textContent).not.toContain("飞书");
+  });
+
+  it("点击断开先弹二次确认，不会直接执行 disconnect", async () => {
+    let resolveConfirm!: (value: boolean) => void;
+    h.confirm.mockReturnValue(new Promise<boolean>((resolve) => {
+      resolveConfirm = resolve;
+    }));
+    h.connectors = [connector("connected")];
+    await act(async () => {
+      root.render(<ConnectionsPanel selectedId="feishu" />);
+    });
+
+    const disconnectButton = Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent === "断开连接")!;
+    act(() => {
+      disconnectButton.click();
+    });
+
+    expect(h.confirm).toHaveBeenCalledWith({
+      title: "断开「飞书」连接？",
+      message: "断开后需重新授权连接，青简才能再次访问飞书。",
+      confirmLabel: "断开连接",
+    });
+    expect(h.disconnect).not.toHaveBeenCalled();
+    expect(disconnectButton.disabled).toBe(true);
+
+    await act(async () => {
+      resolveConfirm(false);
+      await Promise.resolve();
+    });
+  });
+
+  it("取消断开确认后连接保持不变", async () => {
+    h.confirm.mockResolvedValue(false);
+    h.connectors = [connector("connected")];
+    await act(async () => {
+      root.render(<ConnectionsPanel selectedId="feishu" />);
+    });
+
+    const disconnectButton = Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent === "断开连接")!;
+    await act(async () => {
+      disconnectButton.click();
+    });
+
+    expect(h.confirm).toHaveBeenCalledTimes(1);
+    expect(h.disconnect).not.toHaveBeenCalled();
+    expect(h.toast).not.toHaveBeenCalledWith({ message: "已断开连接", tone: "success" });
+    expect(disconnectButton.disabled).toBe(false);
+  });
+
+  it("确认断开后才执行 disconnect", async () => {
+    h.confirm.mockResolvedValue(true);
+    h.disconnect.mockResolvedValue(undefined);
+    h.connectors = [connector("connected")];
+    await act(async () => {
+      root.render(<ConnectionsPanel selectedId="feishu" />);
+    });
+
+    const disconnectButton = Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent === "断开连接")!;
+    await act(async () => {
+      disconnectButton.click();
+    });
+
+    expect(h.disconnect).toHaveBeenCalledTimes(1);
+    expect(h.disconnect).toHaveBeenCalledWith("feishu");
+    expect(h.confirm.mock.invocationCallOrder[0]).toBeLessThan(h.disconnect.mock.invocationCallOrder[0]!);
+    expect(h.toast).toHaveBeenCalledWith({ message: "已断开连接", tone: "success" });
   });
 
   it("GitHub 已连接态账号句在底部断开区,不摆 scope 档位", () => {

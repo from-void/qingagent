@@ -155,6 +155,22 @@ describe("validateCommand", () => {
     expect(() => validateCommand(cmd)).toThrow(CommandValidationError);
   });
 
+  it("accepts planning cancelStream with sessionId before streamId exists", () => {
+    const cmd: Command = {
+      kind: "cancelStream",
+      data: { sessionId: "session-planning" },
+    };
+    expect(() => validateCommand(cmd)).not.toThrow();
+  });
+
+  it("accepts targeted cancelStream with sessionId and streamId", () => {
+    const cmd: Command = {
+      kind: "cancelStream",
+      data: { sessionId: "session-writing", streamId: "stream-writing" },
+    };
+    expect(() => validateCommand(cmd)).not.toThrow();
+  });
+
   it("accepts valid sendMessage", () => {
     const cmd: Command = {
       kind: "sendMessage",

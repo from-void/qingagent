@@ -158,9 +158,20 @@ export function validateCommand(cmd: Command): void {
     case "sendMessage":
       checkSendMessage(cmd.data);
       return;
-    case "cancelStream":
-      if (!cmd.data.streamId) fail(`${cmd.kind}.streamId must be non-empty`);
+    case "cancelStream": {
+      const hasSessionId = cmd.data.sessionId !== undefined;
+      const hasStreamId = cmd.data.streamId !== undefined;
+      if (!hasSessionId && !hasStreamId) {
+        fail(`${cmd.kind} must include sessionId or streamId`);
+      }
+      if (hasSessionId && !cmd.data.sessionId) {
+        fail(`${cmd.kind}.sessionId must be non-empty`);
+      }
+      if (hasStreamId && !cmd.data.streamId) {
+        fail(`${cmd.kind}.streamId must be non-empty`);
+      }
       return;
+    }
     case "acceptPatch":
     case "rejectPatch":
       if (!cmd.data.id && !cmd.data.reviewBatchId) {

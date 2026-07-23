@@ -29,7 +29,7 @@ function commitReviewGroups(batchId = "batch-1"): Command {
 }
 
 function cancelStream(): Command {
-  return { kind: "cancelStream", data: { streamId: "stream-1" } };
+  return { kind: "cancelStream", data: { sessionId: "s1" } };
 }
 
 function meta(title: string): BridgeFrame {
@@ -119,7 +119,7 @@ describe("SessionActor", () => {
     expect(routedSessionIds).toEqual(["s1", "s1"]);
   });
 
-  it("cancelStream 与运行中的 commit 交错时先 abort、再安全串行处理 cancel", async () => {
+  it("规划期 session 级 cancelStream 会先 abort 当前流程、再安全串行清理", async () => {
     const log = new InMemoryFrameLog();
     const order: string[] = [];
     let started!: () => void;

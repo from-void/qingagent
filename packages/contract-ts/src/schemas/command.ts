@@ -146,9 +146,15 @@ const sendMessageDataSchema = z.object({
 }) satisfies z.ZodType<SendMessage>;
 type _SendMessageExact = Expect<Equal<z.infer<typeof sendMessageDataSchema>, SendMessage>>;
 
-const cancelStreamDataSchema = z.object({
-  streamId: z.string().min(1),
-}) satisfies z.ZodType<CancelStream>;
+const cancelStreamDataSchema = z
+  .object({
+    sessionId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH).optional(),
+    streamId: boundedNonEmptyString(MAX_COMMAND_STRING_LENGTH).optional(),
+  })
+  .refine(
+    (data) => data.sessionId !== undefined || data.streamId !== undefined,
+    "must include sessionId or streamId",
+  ) satisfies z.ZodType<CancelStream>;
 type _CancelStreamExact = Expect<Equal<z.infer<typeof cancelStreamDataSchema>, CancelStream>>;
 
 // acceptPatch / rejectPatch:id 或 reviewBatchId 至少一个非空(跨字段约束)。

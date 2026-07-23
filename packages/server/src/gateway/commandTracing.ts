@@ -40,7 +40,17 @@ export function resolveCommandSessionId(command: Command): string | undefined {
       // 该命令没有内嵌 sessionId；/commit 必须把 REST body.sessionId 作为 actor 路由键传入。
       return undefined;
     case "cancelStream":
-      return findSessionByStream(command.data.streamId)?.sessionId;
+      if (command.data.streamId) {
+        const streamSession = findSessionByStream(command.data.streamId);
+        if (
+          command.data.sessionId &&
+          streamSession?.sessionId !== command.data.sessionId
+        ) {
+          return undefined;
+        }
+        return streamSession?.sessionId;
+      }
+      return command.data.sessionId;
     default: {
       const data = command.data as Record<string, unknown> | undefined;
       const sid = data?.sessionId;

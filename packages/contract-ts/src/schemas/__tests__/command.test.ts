@@ -336,6 +336,14 @@ describe("commandSchema", () => {
     expect(r.success).toBe(true);
   });
 
+  it.each([
+    { sessionId: "session-planning" },
+    { streamId: "stream-writing" },
+    { sessionId: "session-writing", streamId: "stream-writing" },
+  ])("接受规划期或写作期 cancelStream 载荷:%j", (data) => {
+    expect(commandSchema.safeParse({ kind: "cancelStream", data }).success).toBe(true);
+  });
+
   it("接受 commitReviewGroups 的 accept/reject/keep-pending 原子载荷", () => {
     const r = commandSchema.safeParse({
       kind: "commitReviewGroups",
@@ -380,6 +388,8 @@ describe("commandSchema", () => {
     ["sendMessage sessionId 空", { kind: "sendMessage", data: { sessionId: "", text: "x", mentions: [], skills: [], chips: [], fileIds: [] } }],
     ["fileIds 含非 UUID", { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: ["nope"] } }],
     ["fileIds 含非字符串", { kind: "sendMessage", data: { sessionId: "s", text: "x", mentions: [], skills: [], chips: [], fileIds: [1] } }],
+    ["cancelStream 缺 sessionId/streamId", { kind: "cancelStream", data: {} }],
+    ["cancelStream sessionId 空", { kind: "cancelStream", data: { sessionId: "" } }],
     ["acceptPatch 两者皆空", { kind: "acceptPatch", data: {} }],
     ["commitPatches 空 ids", { kind: "commitPatches", data: { ids: [] } }],
     ["commitReviewGroups accept 含空 id", { kind: "commitReviewGroups", data: { acceptReviewBatchIds: [""] } }],

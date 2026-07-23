@@ -32,4 +32,13 @@ describe("bridgeHandler facade", () => {
     }
     expect(Object.keys(bridge).sort()).toEqual([...expectedExports].sort());
   });
+
+  it("规划期 cancelStream 可在 streamId 出现前按 sessionId 路由", () => {
+    expect(
+      bridge.resolveCommandSessionId({
+        kind: "cancelStream",
+        data: { sessionId: "session-planning" },
+      }),
+    ).toBe("session-planning");
+  });
 });

@@ -133,6 +133,235 @@ describe("qa cli", () => {
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] material truncated id=mat-1 byteLen=6");
   });
 
+  it("review list 打印修改 diff 摘要、冲突和批注", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async (input) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:45678/api/v1/external/sessions/s1/review",
+      );
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        docVersion: 3,
+        state: "pendingReview",
+        agentBusy: false,
+        patches: [{
+          id: "patch-1",
+          reviewBatchId: "batch-1",
+          groupMode: "independent",
+          status: "conflict",
+          baseVersion: 3,
+          summary: "替换口径",
+          beforeText: "旧口径",
+          afterText: "新口径",
+          conflict: { kind: "target_text_changed", message: "正文已变化" },
+        }],
+        annotations: [{
+          id: "annotation-1",
+          summary: "核对数字",
+          note: "与材料不一致",
+          origin: "source-check",
+          severity: "error",
+          status: "reviewing",
+          anchors: [],
+        }],
+      }));
+    }) as typeof fetch;
+
+    await main(["review", "list", "-s", "s1"]);
+
+    const rendered = stdout.mock.calls.map((call) => call[0]).join("");
+    expect(rendered).toContain("审查 session=s1 v3 state=pendingReview");
+    expect(rendered).toContain("- patch-1  [conflict] 替换口径");
+    expect(rendered).toContain("旧口径 → 新口径");
+    expect(rendered).toContain("冲突: target_text_changed 正文已变化");
+    expect(rendered).toContain("- annotation-1  [error/reviewing] 核对数字");
+  });
+
+  it("review show --patch 请求详情并打印完整 diff", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async (input) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:45678/api/v1/external/sessions/s1/review/patches/patch%2F1",
+      );
+      return new Response(JSON.stringify({
+        sessionId: "s1",
+        patch: {
+          id: "patch/1",
+          reviewBatchId: "batch-1",
+          groupMode: "independent",
+          status: "reviewing",
+          baseVersion: 3,
+          summary: "替换口径",
+          beforeText: "完整旧文",
+          afterText: "完整新文",
+          conflict: null,
+          anchor: {
+            blockId: "block-1",
+            pmFrom: 1,
+            pmTo: 5,
+            quote: "完整旧文",
+          },
+          diff: {
+            op: "replace",
+            blockPath: [0, 1],
+            summary: "替换口径",
+            beforeText: "完整旧文",
+            afterText: "完整新文",
+            anchor: {},
+          },
+        },
+      }));
+    }) as typeof fetch;
+
+    await main(["review", "show", "-s", "s1", "--patch", "patch/1"]);
+
+    const rendered = stdout.mock.calls.map((call) => call[0]).join("");
+    expect(rendered).toContain("修改建议 patch/1 [reviewing]");
+    expect(rendered).toContain("原文:\n完整旧文");
+    expect(rendered).toContain("改为:\n完整新文");
+    expect(rendered).toContain("diff: replace blockPath=0.1");
+  });
+
+  it("review accept --patch 发送版本保护的逐条裁决", async () => {
+    const { main } = await import("../cli.js");
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async (input, init) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:45678/api/v1/external/sessions/s1/review/verdicts",
+      );
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expectedDocVersion: 3,
+        patchId: "patch-1",
+        verdict: "accepted",
+      });
+      return new Response(JSON.stringify({
+        status: "marked",
+        docVersion: 3,
+        patchIds: ["patch-1"],
+        verdict: "accepted",
+        reviewingCount: 1,
+        seq: 9,
+      }));
+    }) as typeof fetch;
+
+    await main([
+      "review",
+      "accept",
+      "-s",
+      "s1",
+      "--expect-version",
+      "3",
+      "--patch",
+      "patch-1",
+      "--json",
+    ]);
+  });
+
+  it.each([
+    ["accept", "accept_all"],
+    ["reject", "reject_all"],
+    ["commit", "commit"],
+  ] as const)("review %s 全量动作调用 commit action=%s", async (command, action) => {
+    const { main } = await import("../cli.js");
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async (input, init) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:45678/api/v1/external/sessions/s1/review/commit",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expectedDocVersion: 3,
+        action,
+      });
+      return new Response(JSON.stringify({
+        status: "reviewed",
+        docVersion: action === "reject_all" ? 3 : 4,
+        acceptedCount: action === "reject_all" ? 0 : 2,
+        rejectedCount: action === "reject_all" ? 2 : 0,
+        remainingCount: 0,
+        outcomeQueued: action === "reject_all",
+        outcome: { acceptedCount: 0, rejectedCount: 0, hunks: [] },
+        seq: 10,
+      }));
+    }) as typeof fetch;
+
+    await main([
+      "review",
+      command,
+      "-s",
+      "s1",
+      "--expect-version",
+      "3",
+      ...(command === "commit" ? [] : ["--all"]),
+      "--json",
+    ]);
+  });
+
+  it("review annotation ignore 透传 remember 与版本", async () => {
+    const { main } = await import("../cli.js");
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn(async (input, init) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:45678/api/v1/external/sessions/s1/review/annotations/ignore",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expectedDocVersion: 3,
+        annotationIds: ["annotation-1"],
+        rememberDismissal: true,
+      });
+      return new Response(JSON.stringify({
+        status: "ignored",
+        annotationIds: ["annotation-1"],
+        remainingAnnotationCount: 0,
+        seq: 11,
+      }));
+    }) as typeof fetch;
+
+    await main([
+      "review",
+      "annotation",
+      "ignore",
+      "-s",
+      "s1",
+      "--expect-version",
+      "3",
+      "--annotation",
+      "annotation-1",
+      "--remember",
+      "--json",
+    ]);
+  });
+
+  it("review 命令拒绝歧义目标和非法版本", async () => {
+    const { main } = await import("../cli.js");
+
+    await expect(
+      main([
+        "review",
+        "accept",
+        "-s",
+        "s1",
+        "--expect-version",
+        "3",
+        "--patch",
+        "p1",
+        "--all",
+      ]),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(
+      main([
+        "review",
+        "commit",
+        "-s",
+        "s1",
+        "--expect-version",
+        "-1",
+      ]),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
   it("doc events 带 after,连接后打印 ready marker", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);

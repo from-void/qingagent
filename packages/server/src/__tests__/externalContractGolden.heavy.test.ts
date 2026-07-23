@@ -9,6 +9,7 @@ import type {
   ExternalFileTextResponse,
   ExternalHealthResponse,
   ExternalProposalResponse,
+  ExternalReviewListResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
 } from "../../../qa-cli/src/generated/externalApi";
@@ -147,6 +148,29 @@ describe("external API v1 golden contract", () => {
     if (body.status !== "committed") throw new Error("expected committed proposal");
     exactKeys(body, ["status", "docVersion", "seq"]);
     expect(body).toEqual({ status: "committed", docVersion: 1, seq: expect.any(Number) });
+  });
+
+  it("GET /sessions/:id/review", async () => {
+    const { sessionId } = await createSession();
+    const body = await getJson<ExternalReviewListResponse>(
+      `/sessions/${sessionId}/review`,
+    );
+    exactKeys(body, [
+      "sessionId",
+      "docVersion",
+      "state",
+      "agentBusy",
+      "patches",
+      "annotations",
+    ]);
+    expect(body).toEqual({
+      sessionId,
+      docVersion: 0,
+      state: "empty",
+      agentBusy: false,
+      patches: [],
+      annotations: [],
+    });
   });
 
   it("GET /sessions/:id/events", async () => {

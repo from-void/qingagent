@@ -1,11 +1,17 @@
 import { discoverInstance, type InstanceInfo } from "./discovery.js";
 import { QaCliError } from "./errors.js";
 import type {
+  ExternalAnnotationIgnoreRequest,
+  ExternalAnnotationIgnoreResponse,
   ExternalChatSendRequest,
   ExternalChatSendResponse,
   ExternalErrorResponse,
   ExternalProposalRequest,
   ExternalProposalResponse,
+  ExternalReviewCommitRequest,
+  ExternalReviewCommitResponse,
+  ExternalReviewVerdictRequest,
+  ExternalReviewVerdictResponse,
   ExternalSuccessResponse,
 } from "./generated/externalApi.js";
 
@@ -57,6 +63,48 @@ export class ApiClient {
       headers: { "X-QA-Client": detectQaClient(process.env) },
       body: JSON.stringify(body),
     });
+  }
+
+  async reviewVerdict(
+    sessionId: string,
+    body: ExternalReviewVerdictRequest,
+  ): Promise<ExternalReviewVerdictResponse> {
+    return this.request<ExternalReviewVerdictResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/verdicts`,
+      {
+        method: "POST",
+        headers: { "X-QA-Client": detectQaClient(process.env) },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+
+  async reviewCommit(
+    sessionId: string,
+    body: ExternalReviewCommitRequest,
+  ): Promise<ExternalReviewCommitResponse> {
+    return this.request<ExternalReviewCommitResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/commit`,
+      {
+        method: "POST",
+        headers: { "X-QA-Client": detectQaClient(process.env) },
+        body: JSON.stringify(body),
+      },
+    );
+  }
+
+  async ignoreAnnotations(
+    sessionId: string,
+    body: ExternalAnnotationIgnoreRequest,
+  ): Promise<ExternalAnnotationIgnoreResponse> {
+    return this.request<ExternalAnnotationIgnoreResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/annotations/ignore`,
+      {
+        method: "POST",
+        headers: { "X-QA-Client": detectQaClient(process.env) },
+        body: JSON.stringify(body),
+      },
+    );
   }
 
   // chat send 与 propose 一样代用户操作,同样带上调用方身份头,

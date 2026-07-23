@@ -9,6 +9,7 @@ import { NEXT_STEP, QaCliError } from "./errors.js";
 import { hasFlag, optionValue, optionValues, printJson } from "./output.js";
 import { installPointerSkill, writerSkillMarkdown, type SkillInstallTarget } from "./skill.js";
 import type {
+  ExternalAnnotationResponse,
   ExternalChatLogResponse,
   ExternalDocReadResponse,
   ExternalEventsMeta,
@@ -16,6 +17,8 @@ import type {
   ExternalFileTextResponse,
   ExternalProposalResponse,
   ExternalProposeOp,
+  ExternalReviewListResponse,
+  ExternalReviewPatchResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
 } from "./generated/externalApi.js";
@@ -84,6 +87,82 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       timeoutMs: parseDuration(optionValue(args, "--timeout")),
       until,
     });
+  }
+  if (group === "review" && command === "list") {
+    const sessionId = requireOption(args, "-s");
+    const data = await client.request<ExternalReviewListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    printReviewList(data);
+    return;
+  }
+  if (group === "review" && command === "show") {
+    const sessionId = requireOption(args, "-s");
+    const patchId = optionValue(args, "--patch");
+    const annotationId = optionValue(args, "--annotation");
+    requireExactlyOneReviewTarget(patchId, annotationId);
+    if (patchId) {
+      const data = await client.request<ExternalReviewPatchResponse>(
+        `/sessions/${encodeURIComponent(sessionId)}/review/patches/${encodeURIComponent(patchId)}`,
+      );
+      if (hasFlag(args, "--json")) return printJson(data);
+      printReviewPatch(data);
+      return;
+    }
+    const data = await client.request<ExternalAnnotationResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/annotations/${encodeURIComponent(annotationId!)}`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    printAnnotation(data);
+    return;
+  }
+  if (
+    group === "review" &&
+    (command === "accept" || command === "reject")
+  ) {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const patchId = optionValue(args, "--patch");
+    const all = hasFlag(args, "--all");
+    if ((patchId ? 1 : 0) + (all ? 1 : 0) !== 1) {
+      throw new QaCliError("VALIDATION", "review accept/reject 必须且只能指定 --patch <id> 或 --all");
+    }
+    const data = all
+      ? await client.reviewCommit(sessionId, {
+          expectedDocVersion,
+          action: command === "accept" ? "accept_all" : "reject_all",
+        })
+      : await client.reviewVerdict(sessionId, {
+          expectedDocVersion,
+          patchId: patchId!,
+          verdict: command === "accept" ? "accepted" : "rejected",
+        });
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "review" && command === "commit") {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const data = await client.reviewCommit(sessionId, {
+      expectedDocVersion,
+      action: "commit",
+    });
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (
+    group === "review" &&
+    command === "annotation" &&
+    args[2] === "ignore"
+  ) {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const annotationId = requireOption(args, "--annotation");
+    const data = await client.ignoreAnnotations(sessionId, {
+      expectedDocVersion,
+      annotationIds: [annotationId],
+      ...(hasFlag(args, "--remember") ? { rememberDismissal: true } : {}),
+    });
+    return output(data, hasFlag(args, "--json"));
   }
   if (group === "chat" && command === "send") {
     const sessionId = requireOption(args, "-s");
@@ -315,6 +394,27 @@ function requireOption(args: string[], name: string): string {
   return value;
 }
 
+function requireDocumentVersion(args: string[]): number {
+  const raw = requireOption(args, "--expect-version");
+  const version = Number(raw);
+  if (!Number.isInteger(version) || version < 0) {
+    throw new QaCliError("VALIDATION", "--expect-version 必须是非负整数");
+  }
+  return version;
+}
+
+function requireExactlyOneReviewTarget(
+  patchId: string | undefined,
+  annotationId: string | undefined,
+): void {
+  if ((patchId ? 1 : 0) + (annotationId ? 1 : 0) !== 1) {
+    throw new QaCliError(
+      "VALIDATION",
+      "review show 必须且只能指定 --patch <id> 或 --annotation <id>",
+    );
+  }
+}
+
 function chatText(args: string[]): string {
   const parts: string[] = [];
   for (let i = 2; i < args.length; i += 1) {
@@ -397,6 +497,72 @@ function printFilesList(data: ExternalFilesListResponse): void {
   }
 }
 
+function printReviewList(data: ExternalReviewListResponse): void {
+  process.stdout.write(
+    `审查 session=${data.sessionId} v${data.docVersion} state=${data.state}${data.agentBusy ? " busy" : ""}\n`,
+  );
+  process.stdout.write(`修改建议 (${data.patches.length}):\n`);
+  if (data.patches.length === 0) {
+    process.stdout.write("- 无\n");
+  } else {
+    for (const patch of data.patches) {
+      process.stdout.write(
+        `- ${patch.id}  [${patch.status}] ${compactText(patch.summary, 80)}\n`,
+      );
+      process.stdout.write(
+        `  ${compactText(patch.beforeText, 80) || "（空）"} → ${compactText(patch.afterText, 80) || "（空）"}\n`,
+      );
+      if (patch.conflict) {
+        process.stdout.write(
+          `  冲突: ${patch.conflict.kind} ${compactText(patch.conflict.message, 120)}\n`,
+        );
+      }
+    }
+  }
+  process.stdout.write(`批注 (${data.annotations.length}):\n`);
+  if (data.annotations.length === 0) {
+    process.stdout.write("- 无\n");
+  } else {
+    for (const annotation of data.annotations) {
+      process.stdout.write(
+        `- ${annotation.id}  [${annotation.severity ?? "warn"}/${annotation.status}] ${compactText(annotation.summary, 80)}\n`,
+      );
+    }
+  }
+}
+
+function printReviewPatch(data: ExternalReviewPatchResponse): void {
+  const patch = data.patch;
+  process.stdout.write(
+    `修改建议 ${patch.id} [${patch.status}] batch=${patch.reviewBatchId}\n`,
+  );
+  process.stdout.write(`摘要: ${patch.summary}\n`);
+  process.stdout.write(`定位: ${patch.anchor.quote || "（无引用）"}\n`);
+  process.stdout.write(`原文:\n${patch.beforeText || "（空）"}\n`);
+  process.stdout.write(`改为:\n${patch.afterText || "（空）"}\n`);
+  if (patch.diff) {
+    process.stdout.write(
+      `diff: ${patch.diff.op} blockPath=${patch.diff.blockPath.join(".") || "-"}\n`,
+    );
+  }
+  if (patch.conflict) {
+    process.stdout.write(`冲突: ${patch.conflict.kind} ${patch.conflict.message}\n`);
+  }
+}
+
+function printAnnotation(data: ExternalAnnotationResponse): void {
+  const annotation = data.annotation;
+  process.stdout.write(
+    `批注 ${annotation.id} [${annotation.severity ?? "warn"}/${annotation.status}] origin=${annotation.origin}\n`,
+  );
+  process.stdout.write(`问题: ${annotation.summary}\n`);
+  process.stdout.write(`说明: ${annotation.note}\n`);
+  if (annotation.suggestion) process.stdout.write(`建议: ${annotation.suggestion}\n`);
+  for (const [index, anchor] of annotation.anchors.entries()) {
+    process.stdout.write(`定位 ${index + 1}: ${anchor.quote}\n`);
+  }
+}
+
 function compactText(value: string, maxChars: number): string {
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > maxChars ? `${singleLine.slice(0, maxChars)}...` : singleLine;
@@ -412,6 +578,12 @@ qa doc read -s <id> [--lines] [--json]
 qa doc state -s <id>
 qa doc propose -s <id> --expect-version N (--full draft.md | --str-replace <old> <new> | --append section.md | --ops ops.json)
 qa doc events -s <id> [--follow] [--after <seq>] [--until reviewed|committed|review] [--timeout 10m]
+qa review list -s <id> [--json]
+qa review show -s <id> (--patch <id> | --annotation <id>) [--json]
+qa review accept -s <id> --expect-version N (--patch <id> | --all) [--json]
+qa review reject -s <id> --expect-version N (--patch <id> | --all) [--json]
+qa review commit -s <id> --expect-version N [--json]
+qa review annotation ignore -s <id> --expect-version N --annotation <id> [--remember] [--json]
 qa chat send -s <id> "指令"
 qa chat log -s <id> [--limit N] [--json]
 qa chat tail -s <id>
@@ -425,7 +597,13 @@ qa skills install claude|codex
 if (isDirectRun()) {
   main().catch((error) => {
     const err = error instanceof QaCliError ? error : new QaCliError("VALIDATION", error instanceof Error ? error.message : String(error));
-    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${NEXT_STEP[err.code]}\n`);
+    const remoteNextStep = err.details &&
+        typeof err.details === "object" &&
+        "nextStep" in err.details &&
+        typeof err.details.nextStep === "string"
+      ? err.details.nextStep
+      : null;
+    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${remoteNextStep ?? NEXT_STEP[err.code]}\n`);
     process.exitCode = 1;
   });
 }

@@ -197,10 +197,11 @@ export async function* finalizeAgentStream(
   const accumulatedTextHadNonWhitespaceBeforeFallbacks =
     /\S/u.test(context.accumulatedText);
   let visibilityInvariantFallbackEmitted = false;
+  // 破损 draft 参数必须显式报错；失败工具卡或模型谎称已修改的正文虽已可见，
+  // 都不能替代可重试提示与 draftingFailed 终态。
   if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
-    !context.hasUserVisibleOutput &&
     context.sawFailedDraftMutationInput &&
     !context.sawValidDraftMutation &&
     context.validPatchCount === 0 &&

@@ -58,6 +58,8 @@ function genericToolFailureReason(
     }
   }
   return redactedToolResultPreview(rawToolResult);
+}
+
 function hasTerminalCommandCard(
   state: ToolResultContext["turn"]["state"],
   toolCallId: string,

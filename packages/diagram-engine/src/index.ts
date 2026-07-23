@@ -1898,6 +1898,11 @@ function svgDefs(): string {
 const SVG_NODE_WIDTH = 160;
 const SVG_NODE_HEIGHT = 64;
 const SVG_PADDING = 32;
+// 导出会在无网络的 server Chromium 中直接绘制 SVG。VPS 的 fonts-noto-cjk 注册名是
+// "Noto * CJK SC"，并不提供 "Noto Serif SC" / "Songti SC"；旧字体栈最终落到缺少中文
+// 字形的 generic serif，PDF 与 PNG 只剩框线。与 generateSvg 已验证路径一致，交给系统
+// sans-serif 做平台字体回退；作为 presentation attribute 内联到每个 text，不依赖宿主 CSS。
+const SVG_TEXT_FONT_FAMILY = "sans-serif";
 
 type SvgBounds = { minX: number; minY: number; maxX: number; maxY: number };
 
@@ -1992,7 +1997,7 @@ function renderSvgNode(id: string, label: string, pos: { x: number; y: number },
   const lines = wrapNodeLabel(label, fontSize);
   const firstBaseline = pos.y + (lines.length === 1 ? 38 : 28);
   const text = lines.map((line, index) => `<tspan x="${pos.x + SVG_NODE_WIDTH / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
-  return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="${SVG_NODE_WIDTH}" height="${SVG_NODE_HEIGHT}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="Noto Serif SC, Songti SC, serif">${text}</text></g>`;
+  return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="${SVG_NODE_WIDTH}" height="${SVG_NODE_HEIGHT}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
 }
 
 function renderSvgEdge(edge: BaseEdge, from: { x: number; y: number }, to: { x: number; y: number }, style: EdgeStyleOverride | undefined): string {
@@ -2001,7 +2006,7 @@ function renderSvgEdge(edge: BaseEdge, from: { x: number; y: number }, to: { x: 
   const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.4;
   const { x1, y1, x2, y2, c1x, c2x } = edgeGeometry(from, to);
   const label = edge.label
-    ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="Noto Serif SC, Songti SC, serif">${escapeXml(edge.label)}</text>`
+    ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(edge.label)}</text>`
     : "";
   return `<g data-edge-id="${escapeXml(edge.id)}"><path d="M${x1} ${y1} C${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" marker-end="url(#arrow)"/>${label}</g>`;
 }

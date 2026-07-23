@@ -77,6 +77,10 @@ describe("mermaidServer 引号 normalization", () => {
       'flowchart TD\n  A["完成"] --> B["结束"]',
     ]);
     expect(renderedSources).toEqual(['flowchart TD\n  A["完成"] --> B["结束"]']);
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      fontFamily: "sans-serif",
+      htmlLabels: false,
+    }));
   });
 
   it("合法 flowchart/sequence 原文 parse 成功时不改写引号正文", async () => {

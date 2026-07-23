@@ -3,27 +3,28 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import { describe, expect, it } from "vitest";
 import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
 import { loadPdfParseConstructor } from "../browser/pdfParse.js";
-import { rasterizeSvgToPng } from "../export/rasterize.js";
+import { renderDiagramSvgs } from "../export/mermaidServer.js";
+import { prepareSvgForRasterization, rasterizeSvgToPng } from "../export/rasterize.js";
 import { toPdf } from "../export/toPdf.js";
 import { barCardTemplate } from "../svgTemplates/index.js";
 import { hasChromium } from "./browserTestGate.js";
 
 const DIAGRAM_SOURCE = [
-  "flowchart LR",
-  "  A[开始] --> B[提交申请]",
-  "  B --> C[主管审批]",
-  "  C --> D[财务复核]",
-  "  D --> E[完成]",
+  "flowchart TD",
+  "  A[需求分析] --> B[设计]",
+  "  B --> C[编码]",
+  "  C --> D[测试]",
+  "  D --> E[上线]",
   "",
 ].join("\n");
 
-const DIAGRAM_LABELS = ["开始", "提交申请", "主管审批", "财务复核", "完成"] as const;
+const DIAGRAM_LABELS = ["需求分析", "设计", "编码", "测试", "上线"] as const;
 const DIAGRAM_OVERLAY: DiagramOverlay = {
-  // 非空 overlay 才走本轮故障的 graphToSvg 导出分支。
+  // graphToSvg 的独立覆盖；r44 真实文档没有 overlay，服务端导出实际走 renderDiagramSvgs。
   positions: { A: { x: 40, y: 40 } },
 };
 
-function graphDiagramDoc(): PmDoc {
+function mermaidDiagramDoc(): PmDoc {
   return {
     type: "doc",
     attrs: { schemaVersion: 1 },
@@ -34,7 +35,6 @@ function graphDiagramDoc(): PmDoc {
         lang: "mermaid",
         source: DIAGRAM_SOURCE,
         svg: null,
-        overlay: DIAGRAM_OVERLAY,
       },
     }],
   } as unknown as PmDoc;
@@ -154,7 +154,22 @@ async function extractPdfText(pdf: Buffer): Promise<string> {
   }
 }
 
-describe.skipIf(!hasChromium)("Graph SVG 中文文字导出", () => {
+describe.skipIf(!hasChromium)("Mermaid / Graph SVG 中文文字导出", () => {
+  it("无 overlay Mermaid 节点经安全净化与 rasterizeSvgToPng 后保留中文像素", async () => {
+    const [svg] = await renderDiagramSvgs([DIAGRAM_SOURCE]);
+    expect(svg).not.toBeNull();
+    expect(svg).not.toContain("<foreignObject");
+    expect(svg).toContain("<text");
+
+    // r44 真根因：Mermaid 默认 foreignObject 标签会被 hardenInlineSvg 整块删除。
+    // 这里必须验证进入真实栅格化前的净化结果仍保留五个标签，而非只查原始 SVG。
+    const safeSvg = prepareSvgForRasterization(svg!);
+    expect(safeSvg).not.toBeNull();
+    for (const label of DIAGRAM_LABELS) expect(safeSvg).toContain(label);
+
+    await expectRasterizedTextPixels(svg!);
+  });
+
   it("graphToSvg 中文 text 经 rasterizeSvgToPng 后确有字形像素", async () => {
     const svg = graphToSvg(DIAGRAM_SOURCE, DIAGRAM_OVERLAY);
     expect(svg).not.toBeNull();
@@ -162,8 +177,8 @@ describe.skipIf(!hasChromium)("Graph SVG 中文文字导出", () => {
     await expectRasterizedTextPixels(svg!);
   });
 
-  it("toPdf 的 withRenderedDiagrams → Chromium print 路径保留全部节点文字", async () => {
-    const text = await extractPdfText(await toPdf(graphDiagramDoc()));
+  it("toPdf 的无 overlay Mermaid server 路径保留全部节点文字", async () => {
+    const text = await extractPdfText(await toPdf(mermaidDiagramDoc()));
     for (const label of DIAGRAM_LABELS) expect(text).toContain(label);
   });
 

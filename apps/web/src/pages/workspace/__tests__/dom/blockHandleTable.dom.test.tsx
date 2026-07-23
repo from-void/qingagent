@@ -5,14 +5,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { PmDoc } from "@qingagent/pm-schema";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BlockHandle } from "../../components/doc/BlockHandle";
+import { resolveDocumentPositionSafely } from "../../components/doc/blockHandlePosition";
 import {
   readTableBlockMenuState,
   setEvenTableColumnWidths,
   toggleTableHeader,
 } from "../../components/doc/blockHandleTable";
 import { glyphForBlock } from "../../components/doc/blockHandleGeometry";
+import { TableAxisSelectionExtension } from "../../data/tableToolbar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -250,23 +252,98 @@ describe("BlockHandle 表格专属菜单", () => {
     expect(table.child(1).child(0).attrs.colwidth).toEqual([200]);
     expect(glyphForBlock(table)).toBe("table");
   });
+
+  it("格内 Ctrl+A 只替换当前单元格，不提升为整篇选区", () => {
+    editor = createEditor(
+      undefined,
+      valueTable(),
+      [paragraph("tail", "表格后的图表说明必须保留")],
+    );
+    const cellTextPos = findTextPosition(editor, "120");
+    editor.commands.setTextSelection(cellTextPos + 1);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    editor.view.dom.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+
+    editor.commands.insertContent("300");
+    const json = editor.getJSON() as PmDoc;
+    expect(json.content.map((node) => node.type)).toEqual(["table", "paragraph"]);
+    expect(JSON.stringify(json)).toContain('"text":"300"');
+    expect(JSON.stringify(json)).not.toContain('"text":"120"');
+    expect(JSON.stringify(json)).toContain("表格后的图表说明必须保留");
+  });
+
+  it("过期坐标越过当前 fragment 时安全放弃，不再抛 RangeError", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(editorElement, valueTable());
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} />));
+
+    const stalePosition = editor.state.doc.content.size - 1;
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({
+      pos: stalePosition,
+      inside: -1,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "heading",
+        attrs: { blockId: "damaged", level: 1 },
+        content: [{ type: "text", text: "300" }],
+      }],
+    });
+
+    expect(stalePosition).toBeGreaterThan(editor.state.doc.content.size);
+    expect(
+      resolveDocumentPositionSafely(editor.state.doc, stalePosition),
+    ).toBeNull();
+    await act(async () => {
+      expect(() => {
+        editor!.view.dom.dispatchEvent(new MouseEvent("mousemove", {
+          clientX: 0,
+          clientY: 0,
+          bubbles: true,
+        }));
+      }).not.toThrow();
+    });
+  });
 });
 
-function createEditor(element: HTMLElement | undefined, table: Record<string, unknown>): Editor {
+function createEditor(
+  element: HTMLElement | undefined,
+  table: Record<string, unknown>,
+  trailingBlocks: Record<string, unknown>[] = [],
+): Editor {
   const editorElement = element ?? document.body.appendChild(document.createElement("div"));
   return new Editor({
     element: editorElement,
-    extensions: createQingagentExtensions(),
+    extensions: [...createQingagentExtensions(), TableAxisSelectionExtension],
     content: {
       type: "doc",
       attrs: { schemaVersion: 1 },
-      content: [table],
+      content: [table, ...trailingBlocks],
     } as PmDoc,
   });
 }
 
-function paragraph(blockId: string) {
-  return { type: "paragraph", attrs: { blockId } };
+function paragraph(blockId: string, text?: string) {
+  return {
+    type: "paragraph",
+    attrs: { blockId },
+    ...(text ? { content: [{ type: "text", text }] } : {}),
+  };
 }
 
 function cell(blockId: string, attrs?: Record<string, unknown>) {
@@ -282,6 +359,42 @@ function basicTable() {
       { type: "tableRow", content: [cell("c"), cell("d")] },
     ],
   };
+}
+
+function valueTable() {
+  return {
+    type: "table",
+    attrs: { blockId: "table-values" },
+    content: [
+      {
+        type: "tableRow",
+        content: [
+          { type: "tableCell", content: [paragraph("q1", "Q1")] },
+          { type: "tableCell", content: [paragraph("sales", "120")] },
+        ],
+      },
+      {
+        type: "tableRow",
+        content: [
+          { type: "tableCell", content: [paragraph("q2", "Q2")] },
+          { type: "tableCell", content: [paragraph("sales-2", "180")] },
+        ],
+      },
+    ],
+  };
+}
+
+function findTextPosition(instance: Editor, text: string): number {
+  let found = -1;
+  instance.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text === text) {
+      found = pos;
+      return false;
+    }
+    return true;
+  });
+  if (found < 0) throw new Error(`找不到文本：${text}`);
+  return found;
 }
 
 function coloredTable() {

@@ -30,6 +30,10 @@ import {
   type CollapsedCaret,
   type HandleState,
 } from "./blockHandleGeometry";
+import {
+  getCurrentHandleNode,
+  resolveDocumentPositionSafely,
+} from "./blockHandlePosition";
 
 type SubmenuKey = "align" | "insert";
 
@@ -74,7 +78,10 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   }, []);
 
   const refreshFloatingHandle = useCallback(
-    (h: HandleState): HandleState | null => refreshHandleGeometryFromDom(h, editor.view.dom as HTMLElement),
+    (h: HandleState): HandleState | null =>
+      getCurrentHandleNode(editor.state.doc, h)
+        ? refreshHandleGeometryFromDom(h, editor.view.dom as HTMLElement)
+        : null,
     [editor],
   );
 
@@ -155,6 +162,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
     const handleFromBlock = (block: MovableBlock, insertPos: number): HandleState | null => {
       if (!editor.isEditable) return null;
+      const currentDoc = editor.state.doc;
+      if (
+        !resolveDocumentPositionSafely(currentDoc, block.pos) ||
+        !resolveDocumentPositionSafely(currentDoc, insertPos)
+      ) {
+        return null;
+      }
       // 列表(有序/无序/待办)不出整块级拖拽手柄——列表只做行级(listItem)拖拽,
       // 整列表块手柄会和行手柄语义打架且不是用户要的交互。列表项仍通过 li 命中走行手柄。
       if (block.node.type.name === "bulletList" || block.node.type.name === "orderedList" || block.node.type.name === "taskList") {
@@ -188,6 +202,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
     const handleFromListItem = (item: DraggableListItem, insertPos: number): HandleState | null => {
       if (!editor.isEditable) return null;
+      const currentDoc = editor.state.doc;
+      if (
+        !resolveDocumentPositionSafely(currentDoc, item.itemPos) ||
+        !resolveDocumentPositionSafely(currentDoc, insertPos)
+      ) {
+        return null;
+      }
       try {
         const itemDom = editor.view.nodeDOM(item.itemPos);
         if (!(itemDom instanceof HTMLElement)) return null;
@@ -228,7 +249,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       if (targetLi && editor.view.dom.contains(targetLi)) {
         const blockId = targetLi.getAttribute("data-block-id");
         const hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
-        const byPos = hit ? findDraggableListItem(editor.state.doc.resolve(hit.pos)) : null;
+        const currentDoc = editor.state.doc;
+        const $hit = hit
+          ? resolveDocumentPositionSafely(currentDoc, hit.pos)
+          : null;
+        const byPos = $hit ? findDraggableListItem($hit) : null;
         const item = byPos ?? (blockId ? resolveListItemByBlockId(editor.state, blockId) : null);
         if (item) {
           const resolved = handleFromListItem(item, hit?.pos ?? item.itemPos + 1);
@@ -251,7 +276,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           const rect = liDom.getBoundingClientRect();
           if (e.clientY < rect.top || e.clientY > rect.bottom) return true;
           if (e.clientX > rect.right || e.clientX < rect.left - HANDLE_GUTTER_PX) return true;
-          const item = findDraggableListItem(editor.state.doc.resolve(Math.min(pos + 1, editor.state.doc.content.size)));
+          const $item = resolveDocumentPositionSafely(
+            editor.state.doc,
+            Math.min(pos + 1, editor.state.doc.content.size),
+          );
+          const item = $item ? findDraggableListItem($item) : null;
           const resolved = item ? handleFromListItem(item, pos + 1) : null;
           const area = Math.max(1, rect.width * rect.height);
           if (resolved && area < liFallbackArea) {
@@ -265,7 +294,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
       const hit = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
       if (hit) {
-        const block = findDraggableBlock(editor.state.doc.resolve(hit.pos));
+        const $hit = resolveDocumentPositionSafely(editor.state.doc, hit.pos);
+        const block = $hit ? findDraggableBlock($hit) : null;
         const resolved = block ? handleFromBlock(block, hit.pos) : null;
         if (resolved) return resolved;
       }
@@ -282,9 +312,14 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         if (parent.type.name === "column" && (e.clientX < rect.left || e.clientX > rect.right)) return true;
         // 非叶子块从内部位置(pos+1)解析;叶子块(diagram 等)pos+1 落到块后无法命中,
         // 退回用块边界 pos(findDraggableBlock 会经 nodeAfter 命中叶子块)。
+        const $inside = resolveDocumentPositionSafely(
+          editor.state.doc,
+          Math.min(pos + 1, editor.state.doc.content.size),
+        );
+        const $boundary = resolveDocumentPositionSafely(editor.state.doc, pos);
         const block =
-          findDraggableBlock(editor.state.doc.resolve(Math.min(pos + 1, editor.state.doc.content.size))) ??
-          findDraggableBlock(editor.state.doc.resolve(pos));
+          ($inside ? findDraggableBlock($inside) : null) ??
+          ($boundary ? findDraggableBlock($boundary) : null);
         const resolved = block ? handleFromBlock(block, pos + 1) : null;
         const area = Math.max(1, rect.width * rect.height);
         if (resolved && area < fallbackArea) {
@@ -325,7 +360,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           }
           return h;
         }
-        const next = refreshHandleGeometryFromDom(h, dom);
+        const next = getCurrentHandleNode(editor.state.doc, h)
+          ? refreshHandleGeometryFromDom(h, dom)
+          : null;
         if (!next) {
           if (menuOpen) {
             setMenuOpen(false);
@@ -514,10 +551,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   const seedInsertChain = useCallback(
     (h: HandleState) => {
       if (!editor.isEditable) return null;
+      const node = getCurrentHandleNode(editor.state.doc, h);
+      if (!node) return null;
       const chain = editor.chain().focus();
       if (h.isEmpty) return chain.setTextSelection(h.insertPos);
-      const node = editor.state.doc.nodeAt(h.blockPos);
-      const after = h.blockPos + (node?.nodeSize ?? 0);
+      const after = h.blockPos + node.nodeSize;
       return chain.insertContentAt(after, { type: "paragraph" }).setTextSelection(after + 1);
     },
     [editor],
@@ -533,7 +571,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
 
   const insertStructureBlockAfter = useCallback(
     (h: HandleState, node: Record<string, unknown>, label: string) => {
-      const current = editor.state.doc.nodeAt(h.blockPos);
+      const current = getCurrentHandleNode(editor.state.doc, h);
       if (!current) return runHandleCommand(false, label);
       return runHandleCommand(
         insertStructureNodeAfterBlock(editor, h.blockPos, node),
@@ -547,6 +585,12 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     (type: string, opts?: number) => {
       if (!handle || handle.kind !== "block") return;
       if (!editor.isEditable) return;
+      if (!getCurrentHandleNode(editor.state.doc, handle)) {
+        setHandle(null);
+        setMenuOpen(false);
+        resetMenuPlacement();
+        return;
+      }
       setMenuOpen(false);
       const h = handle;
       setHandle(null);
@@ -596,23 +640,35 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           break;
       }
     },
-    [editor, handle, insertStructureBlockAfter, runHandleCommand, seedInsertChain],
+    [editor, handle, insertStructureBlockAfter, resetMenuPlacement, runHandleCommand, seedInsertChain],
   );
 
   const insertTableBlock = useCallback((size: TableSize) => {
     if (!handle || handle.kind !== "block" || !editor.isEditable) return;
+    if (!getCurrentHandleNode(editor.state.doc, handle)) {
+      setHandle(null);
+      setMenuOpen(false);
+      resetMenuPlacement();
+      return;
+    }
     const h = handle;
     setTablePicker(null);
     setMenuOpen(false);
     setHandle(null);
     insertStructureBlockAfter(h, createDefaultTableNode(size.rows, size.cols, false), "插入表格");
-  }, [editor, handle, insertStructureBlockAfter]);
+  }, [editor, handle, insertStructureBlockAfter, resetMenuPlacement]);
 
   // 转换当前块的格式(turn-into,对齐飞书:点徽标把 H1 换成正文/其他)。原地转换,不新建块。
   const convertBlock = useCallback(
     (type: string, opts?: number) => {
       if (!handle || handle.kind !== "block") return;
       if (!editor.isEditable) return;
+      if (!getCurrentHandleNode(editor.state.doc, handle)) {
+        setHandle(null);
+        setMenuOpen(false);
+        resetMenuPlacement();
+        return;
+      }
       setMenuOpen(false);
       const h = handle;
       setHandle(null);
@@ -645,12 +701,18 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           break;
       }
     },
-    [editor, handle, runHandleCommand],
+    [editor, handle, resetMenuPlacement, runHandleCommand],
   );
 
   const doInsertImage = useCallback(() => {
     if (handle?.kind !== "block") return;
     if (!editor.isEditable) return;
+    if (!getCurrentHandleNode(editor.state.doc, handle)) {
+      setHandle(null);
+      setMenuOpen(false);
+      resetMenuPlacement();
+      return;
+    }
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
@@ -665,11 +727,17 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
-  }, [editor, onToast, handle, seedInsertChain]);
+  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain]);
 
   const doInsertFile = useCallback(() => {
     if (handle?.kind !== "block") return;
     if (!editor.isEditable) return;
+    if (!getCurrentHandleNode(editor.state.doc, handle)) {
+      setHandle(null);
+      setMenuOpen(false);
+      resetMenuPlacement();
+      return;
+    }
     setMenuOpen(false);
     const h = handle;
     setHandle(null);
@@ -684,25 +752,31 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
-  }, [editor, onToast, handle, seedInsertChain]);
+  }, [editor, onToast, handle, resetMenuPlacement, seedInsertChain]);
 
   const handleAlign = useCallback(
     (align: "left" | "center" | "right") => {
       if (!handle) return;
       if (!editor.isEditable) return;
+      if (!getCurrentHandleNode(editor.state.doc, handle)) {
+        setHandle(null);
+        setMenuOpen(false);
+        resetMenuPlacement();
+        return;
+      }
       const h = handle;
       setMenuOpen(false);
       setHandle(null);
       editor.chain().focus().setTextSelection(h.insertPos).setTextAlign(align).run();
     },
-    [editor, handle],
+    [editor, handle, resetMenuPlacement],
   );
 
   const deleteCurrentBlock = useCallback(() => {
     if (!handle) return;
     if (!editor.isEditable) return;
     const h = handle;
-    const node = editor.state.doc.nodeAt(h.blockPos);
+    const node = getCurrentHandleNode(editor.state.doc, h);
     if (!node) return;
     setMenuOpen(false);
     setHandle(null);
@@ -718,7 +792,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       if (!handle) return;
       if (isCut && !editor.isEditable) return;
       const h = handle;
-      const node = editor.state.doc.nodeAt(h.blockPos);
+      const node = getCurrentHandleNode(editor.state.doc, h);
       if (!node) return;
       const pmDoc = { type: "doc", content: [node.toJSON()] } as PmDoc;
       const html = pmToClipboardHtml(pmDoc);
@@ -746,12 +820,20 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     [editor, handle, onToast],
   );
 
-  const tableMenuState = handle?.kind === "block" && handle.nodeType === "table"
-    ? readTableBlockMenuState(editor.state.doc.nodeAt(handle.blockPos))
+  const liveHandle =
+    handle && getCurrentHandleNode(editor.state.doc, handle) ? handle : null;
+  const tableMenuState = liveHandle?.kind === "block" && liveHandle.nodeType === "table"
+    ? readTableBlockMenuState(getCurrentHandleNode(editor.state.doc, liveHandle))
     : null;
 
   const runTableMenuCommand = useCallback((command: "headerRow" | "headerColumn" | "evenColumns") => {
     if (!handle || handle.kind !== "block" || handle.nodeType !== "table" || !editor.isEditable) return;
+    if (!getCurrentHandleNode(editor.state.doc, handle)) {
+      setHandle(null);
+      setMenuOpen(false);
+      resetMenuPlacement();
+      return;
+    }
     const ok = command === "headerRow"
       ? toggleTableHeader(editor, handle.blockPos, "row")
       : command === "headerColumn"
@@ -759,7 +841,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         : setEvenTableColumnWidths(editor, handle.blockPos);
     runHandleCommand(ok, command === "headerRow" ? "标题行" : command === "headerColumn" ? "标题列" : "均分列宽");
     if (ok) setHandle((current) => current ? { ...current } : current);
-  }, [editor, handle, runHandleCommand]);
+  }, [editor, handle, resetMenuPlacement, runHandleCommand]);
 
   // 拖拽排序:ProseMirror 原生 NodeSelection + view.dragging(move),drop 由 PM 处理、
   // dropcursor 出落点线。手柄是覆盖层元素,选区/插入位置都来自 hover 时存下的 handle,不依赖实时选区。
@@ -767,6 +849,13 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     (e: React.DragEvent) => {
       if (!handle || !editor.isEditable) {
         e.preventDefault();
+        return;
+      }
+      if (!getCurrentHandleNode(editor.state.doc, handle)) {
+        e.preventDefault();
+        setHandle(null);
+        setMenuOpen(false);
+        resetMenuPlacement();
         return;
       }
       const { view } = editor;
@@ -790,7 +879,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
       draggingRef.current = true;
       setMenuOpen(false);
     },
-    [editor, handle],
+    [editor, handle, resetMenuPlacement],
   );
 
   const onDragEnd = useCallback(() => {
@@ -798,7 +887,9 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     setHandle(null);
   }, []);
 
-  const foldInfo = handle ? getBlockCollapseInfo(editor.state, handle.blockPos) : null;
+  const foldInfo = liveHandle
+    ? getBlockCollapseInfo(editor.state, liveHandle.blockPos)
+    : null;
   const onFoldToggle = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       e.preventDefault();
@@ -812,7 +903,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     [editor, foldInfo?.blockId, foldInfo?.canToggle],
   );
   // 注:不再 early-return,因为折叠常驻三角(collapsedCarets)即使无 hover handle 也要渲染。
-  // menuStyle/子菜单定位(dev 的块菜单)不访问 handle,可无条件计算;菜单 JSX 由 {handle && ...} 守卫。
+  // menuStyle/子菜单定位(dev 的块菜单)不访问 handle,可无条件计算;菜单 JSX 由
+  // {liveHandle && ...} 守卫，transaction 后的旧位置不会进入 render 投影。
   const menuStyle =
     menuPos === null
       ? undefined
@@ -954,17 +1046,17 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
             </svg>
           </button>
         ))}
-      {handle && (
+      {liveHandle && (
         <>
     <div
       ref={wrapRef}
       className="block-handle-wrap"
-      data-node-type={handle.nodeType}
+      data-node-type={liveHandle.nodeType}
       style={{
         position: "fixed",
-        top: handle.top,
+        top: liveHandle.top,
         // 折叠态:常驻三角占住锚点槽位,拖拽 chip 左移让位,二者不重叠
-        left: foldInfo?.collapsed ? handle.left - 18 : handle.left,
+        left: foldInfo?.collapsed ? liveHandle.left - 18 : liveHandle.left,
         zIndex: 100050,
       }}
       onMouseEnter={clearHideTimer}
@@ -978,44 +1070,44 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
     >
       <button
         type="button"
-        className={`block-handle-btn${handle.glyph === "+" ? " is-plus" : " is-chip"}`}
-        aria-label={handle.kind === "listItem" ? "拖拽列表行" : "块操作菜单(转换格式 / 插入)"}
-        aria-haspopup={handle.kind === "block" ? "menu" : undefined}
-        aria-expanded={handle.kind === "block" ? menuOpen : undefined}
-        title={handle.kind === "listItem" ? "拖拽排序" : "点击转换格式 · 拖拽排序"}
+        className={`block-handle-btn${liveHandle.glyph === "+" ? " is-plus" : " is-chip"}`}
+        aria-label={liveHandle.kind === "listItem" ? "拖拽列表行" : "块操作菜单(转换格式 / 插入)"}
+        aria-haspopup={liveHandle.kind === "block" ? "menu" : undefined}
+        aria-expanded={liveHandle.kind === "block" ? menuOpen : undefined}
+        title={liveHandle.kind === "listItem" ? "拖拽排序" : "点击转换格式 · 拖拽排序"}
         draggable={editor.isEditable}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onClick={() => {
           if (!editor.isEditable) return;
-          if (handle.kind !== "block") return;
+          if (liveHandle.kind !== "block") return;
           if (menuOpen) {
             setMenuOpen(false);
             resetMenuPlacement();
             return;
           }
-          openBlockMenu(handle);
+          openBlockMenu(liveHandle);
         }}
         onKeyDown={(e) => {
           if (!editor.isEditable) return;
-          if (handle.kind !== "block") return;
+          if (liveHandle.kind !== "block") return;
           if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
           e.preventDefault();
           if (!menuOpen) {
-            openBlockMenu(handle);
+            openBlockMenu(liveHandle);
             return;
           }
           menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
         }}
       >
-        {handle.glyph === "+" ? (
+        {liveHandle.glyph === "+" ? (
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
             <path d="M6.5 1.8v9.4M1.8 6.5h9.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
         ) : (
           <span className="bh-chip-inner">
             <span className="bh-type">
-              <HandleTypeIcon glyph={handle.glyph} />
+              <HandleTypeIcon glyph={liveHandle.glyph} />
             </span>
             <svg className="bh-grip" width="7" height="13" viewBox="0 0 7 13" aria-hidden="true" focusable="false">
               <circle cx="1.6" cy="2.5" r="1.05" fill="currentColor" />
@@ -1047,7 +1139,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         </button>
       )}
     </div>
-      {menuOpen && handle.kind === "block" && (
+      {menuOpen && liveHandle.kind === "block" && (
         <div
           ref={menuRef}
           className={`block-handle-menu${menuFlipUp ? " flip-up" : ""}`}
@@ -1113,7 +1205,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
                 </button>
               </div>
             </>
-          ) : !handle.isEmpty ? (
+          ) : !liveHandle.isEmpty ? (
             <>
               <div
                 className={`bh-submenu${alignPlacement?.side === "left" ? " is-left" : ""}`}
@@ -1151,7 +1243,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               <div className="bh-divider" />
             </>
           ) : null}
-          {!tableMenuState && handle.isEmpty ? (
+          {!tableMenuState && liveHandle.isEmpty ? (
             <div className="bh-inline-insert">
               <button type="button" role="menuitem" className="block-handle-item" onClick={doInsertImage}>
                 <span className="bh-icon"><BlockHandleIcon name="image" /></span>
@@ -1229,7 +1321,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
           ) : null}
         </div>
       )}
-      {menuOpen && handle.kind === "block" && submenuPortalTarget
+      {menuOpen && liveHandle.kind === "block" && submenuPortalTarget
         ? createPortal(submenuPanels, submenuPortalTarget)
         : null}
       {menuOpen && tablePicker ? (

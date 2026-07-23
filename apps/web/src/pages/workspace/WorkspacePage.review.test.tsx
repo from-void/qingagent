@@ -1026,6 +1026,50 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
   }, 60_000);
 
+  it("异常坍缩态在 updateDoc 前被熔断，不落库也不覆盖有效快照", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const baseline = pmDoc([
+      pmParagraph("p-1", "季度销量与目标对比的完整说明正文"),
+      pmParagraph("p-2", "Q1 到 Q4 的数据表和配图均应保留"),
+      pmParagraph("p-3", "修改单元格时绝不能删除其余文档内容"),
+    ]);
+    const collapsed = pmDoc([pmHeading("damaged-heading", "300")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "坍缩熔断" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(baseline, 7) },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+    ]);
+
+    await act(async () => {
+      await captured.current!.handleEditorChange(collapsed);
+    });
+    await flushMicrotasks(3);
+
+    expect(updateDocCommands(stream)).toHaveLength(0);
+    expect(captured.current?.state.version).toBe(7);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(baseline);
+  }, 60_000);
+
   it("no-op 保存回执保持当前版本，下一次真实编辑沿用一致的版本与哈希基线", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");

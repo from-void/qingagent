@@ -196,7 +196,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           from!,
           to!,
           {
-            class: `wf-patch-del${currentClass}${statusClass}`,
+            class: `wf-patch-del${kind === "replace" ? " wf-patch-replace-old" : ""}${currentClass}${statusClass}`,
             "data-patch-id": source.id,
             "data-patch-index": String(index),
             "data-patch-state": "delete",
@@ -204,9 +204,9 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           spec,
         ),
       );
-      // 替换处已有绿色新文本块作为唯一改动标记,不再叠加红色删除光标球——
-      // 否则"删除标记 + 替换标记"两个视觉指向同一处(原文可在 hover 卡查看);
-      // 仅纯删除(无新增块)保留红球标示删除点。
+      // 替换处已有「删除线旧值 → 绿色新值」，不再叠加红色删除光标球——
+      // 否则"删除光标 + 替换标记"两个视觉指向同一处；仅纯删除(无新增块)
+      // 保留红球标示删除点。
       if (kind === "delete") {
         decorations.push(
           Decoration.widget(
@@ -226,11 +226,14 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
     }
 
     if (kind === "insert" || kind === "replace") {
+      // 替换按自然阅读顺序渲染为「旧值 → 新值」：旧值仍由 from..to 的 inline
+      // decoration 承载，新值 widget 锚到旧值末尾；纯新增仍留在原锚点。
+      const insertAt = kind === "replace" ? to! : from!;
       const insertedText = revealedInsertedText(source.id, after, args.typedByPatch);
       if (insertedText.length > 0) {
         decorations.push(
           Decoration.widget(
-            from!,
+            insertAt,
             () => {
               const dom = renderInsertDOM(
                 insertedText,
@@ -261,7 +264,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
         const lane = args.revealCursors.get(source.id)!;
         decorations.push(
           Decoration.widget(
-            from!,
+            insertAt,
             () => createNativeCursorWidget({ tone: "blue", label: `Agent·${lane}` }),
             {
               ...spec,
@@ -396,6 +399,13 @@ export function renderInsertDOM(
   const outer = document.createElement("span");
   outer.className = state === "replace" ? "wf-patch-replace-wrap" : "wf-patch-ins-wrap";
   outer.dataset.patchState = state;
+  if (state === "replace") {
+    const separator = document.createElement("span");
+    separator.className = "wf-patch-replace-separator";
+    separator.setAttribute("aria-label", "替换为");
+    separator.textContent = "→";
+    outer.appendChild(separator);
+  }
   const inner = document.createElement("span");
   inner.className = "wf-patch-ins";
   inner.appendChild(renderMarkedTextDom(text, marks));

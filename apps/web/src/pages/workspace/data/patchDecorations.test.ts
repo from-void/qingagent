@@ -191,27 +191,30 @@ describe("buildPatchDecorations", () => {
     expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).not.toBeNull();
   });
 
-  it("把替换补丁构建为删除 inline 加新增 widget——替换处不叠加红删除光标球", () => {
+  it("把替换补丁构建为旧值删除线 inline 加末尾新增 widget——替换处不叠加红删除光标球", () => {
     const { decorations } = buildPatchDecorations({
       baselineDoc,
       suggestions: [suggestion("p-replace", 3, 5, "cd", "XY", "replace")],
       applied: [applied("p-replace", 3, "replace", "cd", "XY")],
     });
 
-    // 替换 = 折叠原文 inline + 绿色新文本 widget,共 2 个 decoration;红球只归纯删除。
+    // 替换 = 删除线原文 inline + 末尾绿色新文本 widget，共 2 个 decoration；红球只归纯删除。
     expect(decorations).toHaveLength(2);
     expect(decorations[0]?.from).toBe(3);
     expect(decorations[0]?.to).toBe(5);
     expect(className(decorations[0])).toContain("wf-patch-del");
+    expect(className(decorations[0])).toContain("wf-patch-replace-old");
     expect(attrs(decorations[0]).style).toBeUndefined();
-    expect(decorations[1]?.from).toBe(3);
-    expect(decorations[1]?.to).toBe(3);
+    expect(decorations[1]?.from).toBe(5);
+    expect(decorations[1]?.to).toBe(5);
     expect(spec(decorations[1])).toMatchObject({
       "data-patch-id": "p-replace",
       patchKind: "replace",
     });
     expect(widgetDom(decorations[1]).className).toContain("wf-patch-replace-wrap");
     expect(widgetDom(decorations[1]).querySelector(".wf-patch-ins")).not.toBeNull();
+    expect(widgetDom(decorations[1]).querySelector(".wf-patch-replace-separator")?.textContent).toBe("→");
+    expect(widgetDom(decorations[1]).querySelector(".wf-patch-replace-separator")?.getAttribute("aria-label")).toBe("替换为");
     // 替换处无红删除光标球
     expect(widgetDom(decorations[1]).querySelector(".patch-del-cursor")).toBeNull();
   });

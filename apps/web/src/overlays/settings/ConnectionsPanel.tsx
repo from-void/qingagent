@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ConnectorId, ConnectorInfo, ConnectorState, QrCardBody } from "@qingagent/contract-ts";
-import { useClientCapabilities } from "../../system";
+import { useClientCapabilities, useConfirm } from "../../system";
 import { useToast } from "../../system/ToastProvider";
 import { AuthCard } from "../../pages/workspace/components/QrCard";
 import { useConnectors } from "./useConnectors";
@@ -221,6 +221,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
   const capabilities = useClientCapabilities();
   const { connectors, loading, error, refresh, start, probe, disconnect } = useConnectors();
   const toast = useToast();
+  const confirm = useConfirm();
   // 未提供回调时把 selectedId 当作初始值，避免半受控调用导致返回按钮失效。
   const [localId, setLocalId] = useState<ConnectorId | null>(controlledId ?? null);
   const [busy, setBusy] = useState(false);
@@ -264,6 +265,23 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
         throw cause;
       } finally { setBusy(false); }
+    };
+    const disconnectConnector = async () => {
+      setBusy(true);
+      try {
+        const proceed = await confirm({
+          title: `断开「${selected.name}」连接？`,
+          message: `断开后需重新授权连接，青简才能再次访问${selected.name}。`,
+          confirmLabel: selected.id === "wechat-mp" ? "退出登录" : "断开连接",
+        });
+        if (!proceed) return;
+        await disconnect(selected.id);
+        toast.show({ message: "已断开连接", tone: "success" });
+      } catch (cause) {
+        toast.show({ message: cause instanceof Error ? cause.message : "断开失败", tone: "error" });
+      } finally {
+        setBusy(false);
+      }
     };
     return (
       <div className="cn-detail" data-wf="ConnectionDetail" data-connector-id={selected.id}>
@@ -327,14 +345,8 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
                   ? "断开后青简不再能操作你的飞书；也可以在飞书客户端「设置 → 安全 → 登录设备与授权」里撤销。"
                   : "退出后青简不再能搜索和抓取公众号文章；这只是退出本机登录，对你的公众号没有任何影响。"
             }</span>
-            <button type="button" className="sk-btn-danger" disabled={busy} onClick={async () => {
-              setBusy(true);
-              try {
-                await disconnect(selected.id);
-                toast.show({ message: "已断开连接", tone: "success" });
-              } catch (cause) {
-                toast.show({ message: cause instanceof Error ? cause.message : "断开失败", tone: "error" });
-              } finally { setBusy(false); }
+            <button type="button" className="sk-btn-danger" disabled={busy} onClick={() => {
+              void disconnectConnector();
             }}>{selected.id === "wechat-mp" ? "退出登录" : "断开连接"}</button>
           </div>
         )}

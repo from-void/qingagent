@@ -7,6 +7,7 @@ function ciFlag(): boolean {
 
 const visualPort = Number(process?.env.QINGAGENT_VISUAL_PORT ?? 6174);
 const visualBaseURL = `http://127.0.0.1:${visualPort}`;
+const chromiumExecutablePath = process?.env.QINGAGENT_CHROMIUM_EXECUTABLE_PATH;
 
 /**
  * Visual-diff harness for Stage A. CI does NOT run this — the runner
@@ -37,7 +38,7 @@ export default defineConfig({
       name: "chromium",
       // Inherit the global `use` so the 1440x900 viewport survives.
       // (Re-spreading `devices["Desktop Chrome"]` here would clobber it.)
-      use: {},
+      use: chromiumExecutablePath ? { launchOptions: { executablePath: chromiumExecutablePath } } : {},
     },
   ],
   webServer: {

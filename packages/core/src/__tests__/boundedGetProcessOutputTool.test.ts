@@ -129,14 +129,24 @@ describe("bounded get_process_output", () => {
 
     const defaultTail = await executeTool(tool, { pid: handle.pid });
     expect(defaultTail).toContain("[showing last 200 of 201 lines]");
+    expect(defaultTail).toContain("do not rerun the command");
+    expect(defaultTail).toContain("it may have side effects");
     expect(defaultTail).not.toContain("line-1\n");
     expect(defaultTail).toContain("line-201");
 
     const negativeTail = await executeTool(tool, { pid: handle.pid, tail: -2 });
-    expect(negativeTail).toBe("[showing last 2 of 201 lines]\nline-200\nline-201");
+    expect(negativeTail).toBe(
+      "[showing last 2 of 201 lines]\n" +
+      "[This is the tail of the complete output. To see more, increase tail or use 0 for all output; do not rerun the command to obtain complete output because it may have side effects.]\n" +
+      "line-200\nline-201",
+    );
 
     const unlimited = await executeTool(tool, { pid: handle.pid, tail: 0 });
     expect(unlimited).toBe(allLines);
+
+    const untruncated = await executeTool(tool, { pid: handle.pid, tail: 201 });
+    expect(untruncated).toBe(allLines);
+    expect(untruncated).not.toContain("do not rerun the command");
   });
 
   it("等待期间发送 tool-heartbeat，execute 收尾后停止", async () => {

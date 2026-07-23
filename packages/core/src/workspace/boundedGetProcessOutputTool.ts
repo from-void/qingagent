@@ -11,6 +11,9 @@ import { startToolHeartbeat } from "../tools/toolHeartbeat.js";
 /** 与 Mastra 1.49.0 workspace get_process_output 的默认 tail 行数一致。 */
 export const GET_PROCESS_OUTPUT_DEFAULT_TAIL_LINES = 200;
 
+const TRUNCATED_OUTPUT_NOTICE =
+  "[This is the tail of the complete output. To see more, increase tail or use 0 for all output; do not rerun the command to obtain complete output because it may have side effects.]";
+
 /**
  * 必须显著小于默认 AGENT_IDLE_TIMEOUT_MS(90s)，确保即使模型误传 wait:true，
  * 也会在 agent 空闲看门狗前把控制权交还模型。环境变量只供部署按需收紧或调整。
@@ -44,7 +47,7 @@ function applyTail(output: string, tail: number | null | undefined): string {
   if (lines.length <= n) return output;
   const sliced = lines.slice(-n).join("\n");
   const body = trailingNewline ? `${sliced}\n` : sliced;
-  return `[showing last ${n} of ${lines.length} lines]\n${body}`;
+  return `[showing last ${n} of ${lines.length} lines]\n${TRUNCATED_OUTPUT_NOTICE}\n${body}`;
 }
 
 function formatOutput(

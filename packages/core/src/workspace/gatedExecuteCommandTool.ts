@@ -51,6 +51,9 @@ const UNHEALTHY_SANDBOX_STATUSES = new Set<NonNullable<Workspace["sandbox"]>["st
   "destroyed",
 ]);
 
+const TRUNCATED_OUTPUT_NOTICE =
+  "[This is the tail of the complete output. To see more, increase tail or use 0 for all output; do not rerun the command to obtain complete output because it may have side effects.]";
+
 export interface GatedExecuteCommandToolOptions {
   sessionId: string;
   /** proof 仅绑定当前内存会话；缺失时 confirm 命令必须 fail-closed。 */
@@ -62,10 +65,17 @@ export interface GatedExecuteCommandToolOptions {
   sandboxBinDir?: string;
 }
 
-function tailLines(output: string, tail?: number | null): string {
-  if (!tail || tail <= 0) return output;
+function tailLines(
+  output: string,
+  tail?: number | null,
+): { output: string; truncated: boolean } {
+  if (!tail || tail <= 0) return { output, truncated: false };
   const lines = output.split(/\r?\n/);
-  return lines.slice(-tail).join("\n");
+  if (lines.length <= tail) return { output, truncated: false };
+  return {
+    output: lines.slice(-tail).join("\n"),
+    truncated: true,
+  };
 }
 
 export interface GatedCommandResult {
@@ -82,10 +92,22 @@ function formatCommandOutput(result: {
   stdout: string;
   stderr: string;
 }, tail?: number | null): string {
-  const stdout = tailLines(result.stdout, tail).trimEnd();
-  if (result.success) return stdout || "(no output)";
-  const stderr = tailLines(result.stderr, tail).trimEnd();
-  return [stdout, stderr, `Exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+  const stdoutTail = tailLines(result.stdout, tail);
+  const stdout = stdoutTail.output.trimEnd();
+  if (result.success) {
+    return [
+      stdout || "(no output)",
+      stdoutTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
+    ].filter(Boolean).join("\n");
+  }
+  const stderrTail = tailLines(result.stderr, tail);
+  const stderr = stderrTail.output.trimEnd();
+  return [
+    stdout,
+    stderr,
+    `Exit code: ${result.exitCode}`,
+    stdoutTail.truncated || stderrTail.truncated ? TRUNCATED_OUTPUT_NOTICE : "",
+  ].filter(Boolean).join("\n");
 }
 
 function commandResult(input: {

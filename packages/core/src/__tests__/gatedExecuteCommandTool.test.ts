@@ -547,6 +547,50 @@ describe("gated execute_command tool cwd 约束", () => {
     });
   });
 
+  it("tail 截断时附带禁止重跑提示，未截断时返回逐字不变", async () => {
+    const commandResult = {
+      success: true,
+      exitCode: 0,
+      stdout: "line-1\nline-2\nline-3",
+      stderr: "",
+      executionTimeMs: 5,
+    };
+    const { tool } = createToolHarness("gated-tail-notice", { commandResult });
+
+    const untruncated = await executeTool(tool, {
+      command: allowedFileCommand,
+      tail: 3,
+    });
+    expect(untruncated).toBe("line-1\nline-2\nline-3");
+
+    const truncated = await executeTool(tool, {
+      command: allowedFileCommand,
+      tail: 2,
+    });
+    expect(truncated).toContain("line-2\nline-3");
+    expect(truncated).toContain("do not rerun the command");
+    expect(truncated).toContain("it may have side effects");
+  });
+
+  it("stdout 与 stderr 同时截断时只追加一次禁止重跑提示", async () => {
+    const { tool } = createToolHarness("gated-tail-notice-once", {
+      commandResult: {
+        success: false,
+        exitCode: 9,
+        stdout: "out-1\nout-2",
+        stderr: "err-1\nerr-2",
+        executionTimeMs: 5,
+      },
+    });
+
+    const output = await executeTool(tool, {
+      command: allowedFileCommand,
+      tail: 1,
+    });
+    expect(output).toContain("out-2\nerr-2\nExit code: 9");
+    expect(output.match(/do not rerun the command/g)).toHaveLength(1);
+  });
+
   it("沙箱超时结果保留 timedOut，不以输出字符串猜测", async () => {
     const { tool } = createToolHarness("gated-timeout-result", {
       commandResult: {

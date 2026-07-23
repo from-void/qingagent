@@ -124,6 +124,7 @@ export interface AgentStreamTurnContext {
   readImageMeta: Map<string, { args: Record<string, unknown>; thumbnailSrc: string | null }>;
   generateSvgMeta: Map<string, { args: Record<string, unknown> }>;
   toolCallArgsById: Map<string, Record<string, unknown>>;
+  toolCallNameById: Map<string, string>;
   askUserRenderMode: "fullpage" | "overlay";
   askUserPurpose: AskUserPurposeKind | null;
   questionnaireToolName: QuestionnaireToolName | null;
@@ -242,6 +243,7 @@ export async function createAgentStreamTurnContext(
     readImageMeta: new Map(),
     generateSvgMeta: new Map(),
     toolCallArgsById: new Map(),
+    toolCallNameById: new Map(),
     askUserRenderMode: "fullpage",
     askUserPurpose: null,
     questionnaireToolName: null,

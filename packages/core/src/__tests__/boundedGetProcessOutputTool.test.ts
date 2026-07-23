@@ -156,6 +156,75 @@ describe("bounded get_process_output", () => {
     });
   });
 
+  it("wait 有界返回后进程才退出时补发同一原生退出事件", async () => {
+    vi.useFakeTimers();
+    let resolveWait: ((result: CommandResult) => void) | undefined;
+    const custom = vi.fn(async () => {});
+    const handle = neverSettlingHandle("before\n");
+    handle.wait = vi.fn(() => new Promise<CommandResult>((resolve) => {
+      resolveWait = resolve;
+    }));
+    const { tool } = createHarness(handle, 10);
+
+    const result = executeTool(tool, { pid: handle.pid, wait: true }, {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "late-exit-read" },
+      writer: { custom, write: vi.fn() },
+    } as never);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(result).resolves.toContain("进程仍在运行");
+
+    handle.exitCode = 3;
+    resolveWait?.({
+      success: false,
+      exitCode: 3,
+      stdout: handle.stdout,
+      stderr: handle.stderr,
+      executionTimeMs: 25,
+    });
+    await vi.waitFor(() => expect(custom).toHaveBeenCalledWith({
+      type: "data-sandbox-exit",
+      data: {
+        pid: handle.pid,
+        exitCode: 3,
+        success: false,
+        timedOut: false,
+        executionTimeMs: 25,
+        toolCallId: "late-exit-read",
+      },
+    }));
+  });
+
+  it("首次无 wait 仍在运行，下一次轮询发现已退出时补发退出事件", async () => {
+    const custom = vi.fn(async () => {});
+    const handle = neverSettlingHandle("working\n");
+    const { tool } = createHarness(handle);
+    const context = {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "poll-after-exit" },
+      writer: { custom, write: vi.fn() },
+    } as never;
+
+    await expect(executeTool(tool, { pid: handle.pid }, context))
+      .resolves.toBe("working\n");
+    expect(custom).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: "data-sandbox-exit",
+    }));
+
+    handle.exitCode = 0;
+    handle.stdout = "done\n";
+    await expect(executeTool(tool, { pid: handle.pid }, context))
+      .resolves.toContain("Exit code: 0");
+    expect(custom).toHaveBeenCalledWith(expect.objectContaining({
+      type: "data-sandbox-exit",
+      data: expect.objectContaining({
+        pid: handle.pid,
+        exitCode: 0,
+        success: true,
+      }),
+    }));
+  });
+
   it("tail 默认 200 行、负数取绝对值且 0 不截断，与 Mastra 原版一致", async () => {
     const allLines = Array.from({ length: 201 }, (_, index) => `line-${index + 1}`).join("\n");
     const handle = neverSettlingHandle(allLines);

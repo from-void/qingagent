@@ -189,7 +189,7 @@ Use this after starting a background command with execute_command (background: t
 
             const outcome = await Promise.race(races);
             if (outcome.kind === "exited") {
-              await writer?.custom({
+              await safeCustom(writer, {
                 type: "data-sandbox-exit",
                 data: {
                   pid,
@@ -206,6 +206,25 @@ Use this after starting a background command with execute_command (background: t
               throw abortError(abortSignal!);
             } else {
               waitTimedOut = handle.exitCode === undefined;
+              if (waitTimedOut) {
+                // 有界读取返回后，原 wait 仍掌握真实退出结果。若 agent 流尚存活，
+                // 用同一原生退出帧补发；writer 已关闭时 safeCustom 安静降级到下次轮询。
+                void waitPromise.then(async (result) => {
+                  if (exitEventEmitted) return;
+                  exitEventEmitted = true;
+                  await safeCustom(writer, {
+                    type: "data-sandbox-exit",
+                    data: {
+                      pid,
+                      exitCode: result.exitCode,
+                      success: result.success,
+                      timedOut: result.timedOut === true,
+                      executionTimeMs: result.executionTimeMs,
+                      toolCallId,
+                    },
+                  });
+                }).catch(() => {});
+              }
             }
           } finally {
             if (timeout) clearTimeout(timeout);
@@ -216,6 +235,7 @@ Use this after starting a background command with execute_command (background: t
         }
 
         if (!exitEventEmitted && handle.exitCode !== undefined) {
+          exitEventEmitted = true;
           await safeCustom(writer, {
             type: "data-sandbox-exit",
             data: {

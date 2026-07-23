@@ -72,6 +72,7 @@ export async function* handleToolCallEvent(
     const toolName =
       typeof chunk.payload.toolName === "string" ? chunk.payload.toolName : null;
     if (!toolCallId || !toolName) return true;
+    context.toolCallNameById.set(toolCallId, toolName);
     // 命令工具紧接着会进入审批事件；这里先挂 generic 会让命中记忆时闪一下假卡。
     // 等审批结果后直接产出 confirm 卡或已确认命令卡，参数仍不会泄露进 Frame。
     if (toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) return true;
@@ -139,6 +140,7 @@ export async function* handleToolCallEvent(
       toolName,
       chunk.payload as Record<string, unknown>,
     );
+    context.toolCallNameById.set(toolCallId, toolName);
     context.toolCallArgsById.set(toolCallId, toolArgs);
     if (SESSION_STATE_TOOL_NAMES.has(toolName)) {
       context.sawAnyToolCall = true;

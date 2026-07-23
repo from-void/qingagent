@@ -31,6 +31,7 @@ import {
   nextSeq,
   updateToolCallInChatHistory,
 } from "../session/sessionState.js";
+import { registerBackgroundCommandOwner } from "../session/backgroundCommand.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   commandCardFromResult,
@@ -272,6 +273,13 @@ export async function* handleDraftOrGenericToolResult(
     },
   };
   updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
+  if (
+    commandCard?.background === true &&
+    typeof commandCard.pid === "string" &&
+    commandCard.pid.length > 0
+  ) {
+    registerBackgroundCommandOwner(state, commandCard.pid, toolCallId);
+  }
   if (toolName === "readDraft") {
     schedulePersist(state, "tool_result:readDraft").catch((error) =>
       logger.error("Persist after readDraft result failed", { error: String(error) }),

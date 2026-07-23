@@ -1745,6 +1745,7 @@ describe("thread persistence", () => {
 
   it("冷恢复保留带 PID 与 owner 的后台命令运行态", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const { settleBackgroundCommand } = await import("../agent-run/backgroundCommandSettlement.js");
     const backgroundOwner: ToolCallSpec = {
       id: "background-owner",
       name: "mastra_workspace_execute_command",
@@ -1781,6 +1782,26 @@ describe("thread persistence", () => {
     if (restoredPart?.kind === "toolCall") {
       expect(restoredPart.data).toEqual(backgroundOwner);
     }
+    expect(restored?._backgroundCommandOwnerByPid?.size).toBe(0);
+    if (!restored) throw new Error("后台命令会话恢复失败");
+    expect(settleBackgroundCommand(
+      restored,
+      "4242",
+      { kind: "succeeded", exitCode: 0 },
+      {
+        eventToolCallId: "restored-read",
+        sourceToolName: "mastra_workspace_get_process_output",
+      },
+    )).toMatchObject({
+      toolCallId: "background-owner",
+      spec: {
+        status: { kind: "done" },
+        body: {
+          kind: "commandCard",
+          data: { terminalKind: "succeeded" },
+        },
+      },
+    });
   });
 
   it("cold restore uses submitted askUser toolCallId to recover stale persisted suspension id", async () => {

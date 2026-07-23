@@ -165,6 +165,8 @@ export interface SessionState {
   _abortController: AbortController | null;
   /** Runtime-only:当前通过确认恢复且可由命令卡定向停止的 toolCallId。 */
   _activeConfirmedToolCallId: string | null;
+  /** Runtime-only：后台进程 PID 到启动命令卡 toolCallId 的显式归属索引。 */
+  _backgroundCommandOwnerByPid?: Map<string, string>;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
   _activeTurnPromise: Promise<void> | null;
   /** Runtime-only：当前 agent 尝试产生写入时使用的 owner。 */
@@ -355,6 +357,7 @@ export function createSession(
     _lastEmittedWireKind: null,
     _abortController: null,
     _activeConfirmedToolCallId: null,
+    _backgroundCommandOwnerByPid: new Map(),
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,

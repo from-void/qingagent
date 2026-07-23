@@ -15,6 +15,7 @@ import { SESSION_STATE_TOOL_NAMES } from "./agentStreamToolCall.js";
 import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 import { isRecord } from "./redaction.js";
 import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
+import { normalizeKillProcessResult } from "./backgroundCommandLifecycle.js";
 
 export async function* handleToolResultEvent(
   turn: AgentStreamTurnContext,
@@ -28,6 +29,8 @@ export async function* handleToolResultEvent(
   }
   const rawArgs = (chunk.payload.args ?? {}) as Record<string, unknown>;
   const args = { ...(turn.toolCallArgsById.get(toolCallId) ?? {}), ...rawArgs };
+  turn.toolCallNameById.set(toolCallId, toolName);
+  turn.toolCallArgsById.set(toolCallId, args);
   const payload = chunk.payload as Record<string, unknown>;
   const rawToolResult =
     Object.prototype.hasOwnProperty.call(payload, "result")
@@ -114,33 +117,35 @@ export async function* handleToolResultEvent(
     toolResult,
     toolResultOk,
   };
-  if (toolName === "mastra_workspace_kill_process") {
-    const pidValue = toolResult.pid ?? args.pid;
-    const pid = typeof pidValue === "string" || typeof pidValue === "number"
-      ? String(pidValue)
-      : null;
-    const success = toolResult.success === true || toolResult.killed === true;
-    if (pid && success) {
-      const signalValue = toolResult.signal ?? args.signal;
-      const signal =
-        typeof signalValue === "string" && signalValue.trim()
-          ? signalValue.trim()
-          : "SIGTERM";
-      const settled = settleBackgroundCommand(state, pid, {
-        kind: "killed",
-        signal,
-      });
-      if (settled) {
-        yield {
-          kind: "toolCallUpdated",
-          data: {
-            messageId: settled.messageId,
-            toolCallId: settled.toolCallId,
-            spec: settled.spec,
-          },
-        };
-        outcome.producedVisibleFrame = true;
-      }
+  const killLifecycle = normalizeKillProcessResult({
+    turn,
+    toolCallId,
+    toolName,
+    args,
+    rawToolResult,
+  });
+  if (killLifecycle) {
+    const settled = settleBackgroundCommand(
+      state,
+      killLifecycle.pid,
+      killLifecycle.terminal,
+      {
+        eventToolCallId: killLifecycle.sourceToolCallId,
+        sourceToolName: killLifecycle.sourceToolName,
+        eventPid: killLifecycle.eventPid,
+        argumentPid: killLifecycle.argumentPid,
+      },
+    );
+    if (settled) {
+      yield {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: settled.messageId,
+          toolCallId: settled.toolCallId,
+          spec: settled.spec,
+        },
+      };
+      outcome.producedVisibleFrame = true;
     }
   }
   const questionnaireResult = yield* handleQuestionnaireToolResult(input);

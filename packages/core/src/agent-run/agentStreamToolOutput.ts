@@ -28,6 +28,10 @@ import {
   researchCardToolCallSpec,
 } from "./toolCards.js";
 import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
+import {
+  normalizeSandboxExitEvent,
+  rememberWorkspaceToolMetadata,
+} from "./backgroundCommandLifecycle.js";
 
 const logger = mastra.getLogger();
 
@@ -76,6 +80,9 @@ export async function* handleToolOutputEvent(
   outcome.sawToolCall = true;
   if (output?.type === "doc-generation-event") outcome.sawSideEffectToolCall = true;
   const outputData = isRecord(output?.data) ? output.data : null;
+  if (output && rememberWorkspaceToolMetadata(context, output)) {
+    return true;
+  }
   const toolCallId =
     typeof chunk.payload.toolCallId === "string"
       ? chunk.payload.toolCallId
@@ -131,43 +138,20 @@ export async function* handleToolOutputEvent(
     return true;
   }
 
-  if (output?.type === "data-sandbox-exit" && isRecord(output.data)) {
-    const toolArgs = toolCallId ? context.toolCallArgsById.get(toolCallId) : undefined;
-    const pidValue = output.data.pid ?? toolArgs?.pid;
-    const pid = typeof pidValue === "string" || typeof pidValue === "number"
-      ? String(pidValue)
-      : null;
-    if (!pid) return true;
-    if (chunk.payload.toolName === "mastra_workspace_kill_process") {
-      if (output.data.killed === true) {
-        const signalValue = output.data.signal ?? toolArgs?.signal;
-        const signal =
-          typeof signalValue === "string" && signalValue.trim()
-            ? signalValue.trim()
-            : "SIGTERM";
-        const settled = settleBackgroundCommand(state, pid, {
-          kind: "killed",
-          signal,
-        });
-        if (settled) {
-          yield toolCallUpdated(settled.messageId, settled.toolCallId, settled.spec);
-          outcome.producedVisibleFrame = true;
-        }
-      }
-      return true;
-    }
-    const rawExitCode = output.data.exitCode;
-    const exitCode = typeof rawExitCode === "number" && Number.isFinite(rawExitCode)
-      ? rawExitCode
-      : output.data.success === true
-        ? 0
-        : -1;
-    const terminal = output.data.timedOut === true
-      ? { kind: "timedOut" as const, exitCode }
-      : output.data.success === true && exitCode === 0
-        ? { kind: "succeeded" as const, exitCode: 0 as const }
-        : { kind: "failed" as const, exitCode };
-    const settled = settleBackgroundCommand(state, pid, terminal);
+  if (output?.type === "data-sandbox-exit") {
+    const lifecycle = normalizeSandboxExitEvent(context, chunk);
+    if (!lifecycle) return true;
+    const settled = settleBackgroundCommand(
+      state,
+      lifecycle.pid,
+      lifecycle.terminal,
+      {
+        eventToolCallId: lifecycle.sourceToolCallId,
+        sourceToolName: lifecycle.sourceToolName,
+        eventPid: lifecycle.eventPid,
+        argumentPid: lifecycle.argumentPid,
+      },
+    );
     if (settled) {
       yield toolCallUpdated(settled.messageId, settled.toolCallId, settled.spec);
       outcome.producedVisibleFrame = true;

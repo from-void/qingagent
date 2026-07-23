@@ -3,9 +3,11 @@ import type { BridgeFrame, ToolCallSpec, CommandCardBody } from "@qingagent/cont
 
 // 沙箱命令终端卡:execute_command tool-result 定格成 commandCard(友好标题+脱敏输出+退出码)
 
+const { loggerInfo } = vi.hoisted(() => ({ loggerInfo: vi.fn() }));
+
 vi.mock("../mastra.js", () => ({
   mastra: {
-    getLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+    getLogger: () => ({ debug: vi.fn(), info: loggerInfo, warn: vi.fn(), error: vi.fn() }),
     getMemory: () => null,
   },
   getObservability: () => null,
@@ -386,11 +388,15 @@ describe("沙箱命令终端卡", () => {
           {
             type: "tool-output",
             payload: {
-              toolName: "mastra_workspace_get_process_output",
-              toolCallId: "read-output",
               output: {
                 type: "data-sandbox-exit",
-                data: { pid: "4242", exitCode, success, timedOut: false },
+                data: {
+                  pid: "4242",
+                  exitCode,
+                  success,
+                  timedOut: false,
+                  toolCallId: "read-output",
+                },
               },
             },
           },
@@ -429,6 +435,177 @@ describe("沙箱命令终端卡", () => {
         .toMatchObject({ status: { kind: statusKind } });
     },
   );
+
+  it("生命周期帧 PID 与 get_output 入参不一致时以 toolCall 映射入参定位 owner", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("background-normalized-pid");
+    await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "normalized-owner",
+            args: { command: "node background.mjs", background: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "normalized-owner",
+            result: {
+              success: true,
+              exitCode: 0,
+              cancelled: false,
+              timedOut: false,
+              background: true,
+              pid: "4444",
+              output: "Started background process (PID: 4444)",
+            },
+          },
+        },
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_get_process_output",
+            toolCallId: "normalized-read",
+            args: { pid: "4444", wait: true },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
+            output: {
+              type: "data-sandbox-exit",
+              data: {
+                pid: 9999,
+                exitCode: 3,
+                success: false,
+                timedOut: false,
+                toolCallId: "normalized-read",
+              },
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-normalized-pid",
+        streamId: "stream-normalized-pid",
+        runId: "run-normalized-pid",
+      },
+    ));
+
+    expect(findSpec(state, "normalized-owner")).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { reason: "运行失败（退出码 3）" },
+      },
+      body: {
+        kind: "commandCard",
+        data: { pid: "4444", terminalKind: "failed" },
+      },
+    });
+    const settlementLog = loggerInfo.mock.calls.find(
+      ([message, fields]) =>
+        message === "Background command settlement evaluated" &&
+        (fields as { eventPid?: unknown } | undefined)?.eventPid === "9999",
+    )?.[1];
+    expect(settlementLog).toMatchObject({
+      pid: "4444",
+      eventPid: "9999",
+      argumentPid: "4444",
+      sourceToolName: "mastra_workspace_get_process_output",
+      matchMode: "indexed",
+      settled: "normalized-owner",
+    });
+  });
+
+  it("显式 PID owner 索引可在 ownerToolCallId 谓词失真时收口并记录失败谓词", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("background-owner-index");
+    await collect(processAgentStream(
+      streamOf(
+        {
+          type: "tool-call",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "indexed-owner",
+            args: { command: "node background.mjs", background: true },
+          },
+        },
+        {
+          type: "tool-result",
+          payload: {
+            toolName: "mastra_workspace_execute_command",
+            toolCallId: "indexed-owner",
+            result: {
+              success: true,
+              exitCode: 0,
+              cancelled: false,
+              timedOut: false,
+              background: true,
+              pid: "4343",
+              output: "Started background process (PID: 4343)",
+            },
+          },
+        },
+      ),
+      {
+        state,
+        agentMessageId: "agent-indexed-owner",
+        streamId: "stream-indexed-owner",
+        runId: "run-indexed-owner",
+      },
+    ));
+    const owner = findSpec(state, "indexed-owner");
+    if (!owner || owner.body.kind !== "commandCard") {
+      throw new Error("后台 owner 卡未创建");
+    }
+    owner.body.data.ownerToolCallId = "";
+
+    await collect(processAgentStream(
+      streamOf({
+        type: "tool-output",
+        payload: {
+          output: {
+            type: "data-sandbox-exit",
+            data: {
+              pid: "4343",
+              exitCode: 3,
+              success: false,
+              timedOut: false,
+              toolCallId: "indexed-read",
+            },
+          },
+        },
+      }),
+      {
+        state,
+        agentMessageId: "agent-indexed-read",
+        streamId: "stream-indexed-read",
+        runId: "run-indexed-read",
+      },
+    ));
+
+    expect(findSpec(state, "indexed-owner")).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { reason: "运行失败（退出码 3）" },
+      },
+    });
+    const settlementLog = loggerInfo.mock.calls.find(
+      ([message]) => message === "Background command settlement evaluated",
+    )?.[1] as {
+      matchMode?: unknown;
+      candidates?: Array<{ ownerMatchesSpec?: unknown }>;
+    } | undefined;
+    expect(settlementLog).toMatchObject({
+      matchMode: "indexed",
+      candidates: [expect.objectContaining({ ownerMatchesSpec: false })],
+    });
+  });
 
   it("读取输出的 stdout 通过既有卡片更新通道投影轻量活动时间", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
@@ -558,8 +735,18 @@ describe("沙箱命令终端卡", () => {
         {
           type: "tool-output",
           payload: {
-            toolName: "mastra_workspace_kill_process",
-            toolCallId: "kill-call",
+            output: {
+              type: "data-workspace-metadata",
+              data: {
+                toolName: "mastra_workspace_kill_process",
+                toolCallId: "kill-call",
+              },
+            },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
             output: {
               type: "data-sandbox-exit",
               data: {
@@ -576,7 +763,6 @@ describe("沙箱命令终端卡", () => {
           payload: {
             toolName: "mastra_workspace_kill_process",
             toolCallId: "kill-call",
-            args: { pid: "5252" },
             result: "Process 5252 has been killed.",
           },
         },
@@ -654,8 +840,18 @@ describe("沙箱命令终端卡", () => {
         {
           type: "tool-output",
           payload: {
-            toolName: "mastra_workspace_kill_process",
-            toolCallId: "kill-miss-call",
+            output: {
+              type: "data-workspace-metadata",
+              data: {
+                toolName: "mastra_workspace_kill_process",
+                toolCallId: "kill-miss-call",
+              },
+            },
+          },
+        },
+        {
+          type: "tool-output",
+          payload: {
             output: {
               type: "data-sandbox-exit",
               data: {
@@ -672,7 +868,6 @@ describe("沙箱命令终端卡", () => {
           payload: {
             toolName: "mastra_workspace_kill_process",
             toolCallId: "kill-miss-call",
-            args: { pid: "5353" },
             result: "Process 5353 was not found or had already exited.",
           },
         },

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { XHS_COVER_FONT_FACES, xhsCoverFontFaceCss } from "./xhsCoverFonts";
 
 export const XHS_COVER_TEMPLATES = ["poster", "magazine", "wenkai", "impact", "note"] as const;
 export type XhsCoverTemplate = typeof XHS_COVER_TEMPLATES[number];
@@ -11,28 +12,17 @@ const TEMPLATE_NAMES: Record<XhsCoverTemplate, string> = {
   note: "便签清单",
 };
 
-const FONT_STYLES: Partial<Record<XhsCoverTemplate, { family: string; css: string }>> = {
-  poster: {
-    family: "Qing Smiley Sans",
-    css: '@font-face{font-family:"Qing Smiley Sans";src:url("/fonts/SmileySans-Oblique.woff2") format("woff2");font-style:normal;font-weight:700;font-display:swap}',
-  },
-  wenkai: {
-    family: "Qing LXGW WenKai",
-    css: '@font-face{font-family:"Qing LXGW WenKai";src:url("/fonts/LXGWWenKai-Regular.woff2") format("woff2");font-style:normal;font-weight:400;font-display:swap}',
-  },
-};
-
 const fontLoads = new Map<XhsCoverTemplate, Promise<void>>();
 
 /** 只在对应封面首次出现时注册并请求字体，避免其余模板承担字体下载成本。 */
 export function ensureCoverTemplateFont(template: XhsCoverTemplate): Promise<void> {
-  const font = FONT_STYLES[template];
+  const font = XHS_COVER_FONT_FACES[template as keyof typeof XHS_COVER_FONT_FACES];
   if (!font || typeof document === "undefined") return Promise.resolve();
   const cached = fontLoads.get(template);
   if (cached && document.head.querySelector(`[data-xhs-cover-font="${template}"]`)) return cached;
   const style = document.createElement("style");
   style.dataset.xhsCoverFont = template;
-  style.textContent = font.css;
+  style.textContent = xhsCoverFontFaceCss(font);
   document.head.append(style);
   const fonts = document.fonts;
   const loading = fonts?.load ? fonts.load(`1em "${font.family}"`).then(() => undefined).catch(() => undefined) : Promise.resolve();

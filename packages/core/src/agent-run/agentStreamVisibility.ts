@@ -1,4 +1,8 @@
-import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
+import {
+  sanitizeVisibleText,
+  type BridgeFrame,
+  type MessagePart,
+} from "@qingagent/contract-ts";
 import type { AgentStreamTurnContext } from "./agentStreamTurnContext.js";
 
 function messagePartIsUserVisible(
@@ -7,11 +11,24 @@ function messagePartIsUserVisible(
 ): boolean {
   if (part.kind === "thinking") return false;
   if (part.kind === "text") {
-    // 不丢弃单个空白 delta：空格可能连接相邻分块。只看整轮累计文本是否已经
-    // 出现非空白字符，避免纯空白流被误判为可见回复。
-    return /\S/u.test(context.accumulatedText);
+    // Mastra 的 text-delta 是增量分片。任何单片（包括当下累计前缀）都不足以
+    // 证明合并后的完整文本能通过前端过滤；统一留到 finalize 再复算。
+    return false;
   }
   return true;
+}
+
+/**
+ * 流结束时才用前端同一规则检查完整文本；此前的 true 只可能来自工具卡、
+ * 文档、批注等非文本可见帧，因此用 OR 保留这些既有可见产物。
+ */
+export function recomputeUserVisibleOutput(
+  context: AgentStreamTurnContext,
+): boolean {
+  context.hasUserVisibleOutput =
+    context.hasUserVisibleOutput ||
+    sanitizeVisibleText(context.accumulatedText) !== null;
+  return context.hasUserVisibleOutput;
 }
 
 function frameIsUserVisible(

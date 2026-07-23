@@ -1,4 +1,8 @@
-import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
+import {
+  sanitizeVisibleText,
+  type BridgeFrame,
+  type MessagePart,
+} from "@qingagent/contract-ts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../../session/sessionState.js";
 
@@ -60,11 +64,20 @@ function isToolCallUpdatedFrame(frame: BridgeFrame): frame is ToolCallUpdatedFra
 }
 
 function visibleTextBodies(frames: BridgeFrame[]): string[] {
-  return frames.flatMap((frame) =>
-    frame.kind === "chatMessageAppended" && frame.data.part.kind === "text"
-      ? [frame.data.part.data.body]
-      : []
-  );
+  return frames.flatMap((frame) => {
+    if (frame.kind === "chatMessageAppended" && frame.data.part.kind === "text") {
+      return [frame.data.part.data.body];
+    }
+    if (
+      frame.kind === "chatMessageAdded" &&
+      frame.data.message.role.kind === "agent"
+    ) {
+      return frame.data.message.parts.flatMap((part) =>
+        part.kind === "text" ? [part.data.body] : []
+      );
+    }
+    return [];
+  });
 }
 
 function addEmptyAgentMessage(
@@ -557,6 +570,90 @@ describe("processAgentStream 行为特征", () => {
     expect(
       persistedText?.kind === "text" ? persistedText.data.body : "",
     ).toContain(fallbackBodies[0]);
+  });
+
+  it("拆成多个 delta 的内部文本按合并结果复算，并另起可见兜底消息", async () => {
+    const { processAgentStream } = await import("../processAgentStream.js");
+    const state = createSession("visibility-split-internal-text");
+    addEmptyAgentMessage(state);
+    const internalDeltas = [
+      "[tool-",
+      "result] raw args/result\n",
+      "AI",
+      "-IR draft payload\n",
+      '{"blo',
+      'cks":[{"id":"blo',
+      'ck-a","numeric',
+      'Value":3}]}',
+    ];
+    const mergedInternalText = internalDeltas.join("");
+
+    expect(internalDeltas.every((delta) => sanitizeVisibleText(delta) !== null)).toBe(
+      true,
+    );
+    expect(sanitizeVisibleText(mergedInternalText)).toBeNull();
+
+    const { frames } = await collectFramesAndReturn(
+      processAgentStream(
+        streamOf(
+          ...internalDeltas.map((text) => ({
+            type: "text-delta",
+            payload: { id: "split-internal", text },
+          })),
+        ),
+        {
+          state,
+          agentMessageId: "agent-message",
+          streamId: "stream-split-internal",
+          runId: "run-split-internal",
+        },
+      ),
+    );
+
+    const rawMessage = state.chatHistory.find(
+      (message) => message.id === "agent-message",
+    );
+    const fallbackMessages = state.chatHistory.filter(
+      (message) =>
+        message.id !== "agent-message" &&
+        message.role.kind === "agent" &&
+        message.parts.some(
+          (part) =>
+            part.kind === "text" &&
+            part.data.body.includes("没有返回任何内容"),
+        ),
+    );
+    expect(
+      rawMessage?.parts.find((part) => part.kind === "text"),
+    ).toEqual({
+      kind: "text",
+      data: { body: mergedInternalText },
+    });
+    expect(
+      rawMessage?.parts.some(
+        (part) =>
+          part.kind === "text" &&
+          sanitizeVisibleText(part.data.body) !== null,
+      ),
+    ).toBe(false);
+    expect(fallbackMessages).toHaveLength(1);
+    expect(
+      fallbackMessages[0]?.parts.some(
+        (part) =>
+          part.kind === "text" &&
+          sanitizeVisibleText(part.data.body) !== null,
+      ),
+    ).toBe(true);
+    expect(
+      frames.filter((frame) => frame.kind === "chatMessageAdded"),
+    ).toHaveLength(1);
+    expect(
+      visibleTextBodies(frames).filter(
+        (body) => sanitizeVisibleText(body)?.includes("重试"),
+      ),
+    ).toHaveLength(1);
+    expect(state.messages.at(-1)?.content).toContain("没有返回任何内容");
+    expect(state.messages.at(-1)?.content).not.toContain("[tool-result]");
   });
 
   it("askUser 挂起轮不追加零可见兜底", async () => {

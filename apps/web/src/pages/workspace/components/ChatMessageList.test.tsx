@@ -2,7 +2,13 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage, DocSuggestion, ToolCallSpec } from "../data/protocol";
+import type {
+  ChatMessage,
+  DocSuggestion,
+  ToolCallSpec,
+  WorkspaceAction,
+} from "../data/protocol";
+import { sanitizeVisibleText } from "@qingagent/contract-ts";
 import {
   buildWholeDocReviewKey,
   buildEmptyHintTypewriterPlan,
@@ -13,6 +19,10 @@ import {
   splitStreamingInlineRuns,
 } from "./ChatMessageList";
 import { resources } from "../../../system/resources";
+import {
+  initialWorkspaceState,
+  workspaceReducer,
+} from "../data/workspaceState";
 
 const inkBubbleRenderSpy = vi.hoisted(() => vi.fn());
 
@@ -461,6 +471,80 @@ describe("ChatMessageList", () => {
     expect(text).not.toContain("[tool-result]");
     expect(text).toContain("这是可见回复");
     expect(host?.querySelector('[data-wf="ChatMsg-system"]')).toBeNull();
+  });
+
+  it("内部文本分片经 reducer 合并隐藏后，独立兜底消息仍实际渲染", async () => {
+    const internalDeltas = [
+      "[tool-",
+      "result] raw args/result\n",
+      "AI",
+      "-IR draft payload\n",
+      '{"blo',
+      'cks":[{"id":"blo',
+      'ck-a","numeric',
+      'Value":3}]}',
+    ];
+    const rawMessage: ChatMessage = {
+      id: "m-split-internal",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [],
+      chips: null,
+    };
+    const fallbackMessage: ChatMessage = {
+      id: "m-visibility-fallback",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:01.000Z",
+      parts: [
+        {
+          kind: "text",
+          data: {
+            body:
+              "模型这一轮没有返回任何内容，可能是临时异常。请重试，或换个说法再发一次。",
+          },
+        },
+      ],
+      chips: null,
+    };
+    const actions: WorkspaceAction[] = [
+      { kind: "chatMessageAdded", data: { message: rawMessage } },
+      ...internalDeltas.map(
+        (body, index): WorkspaceAction => ({
+          kind: "chatMessageAppended",
+          data: {
+            messageId: rawMessage.id,
+            seq: index + 1,
+            part: { kind: "text", data: { body } },
+          },
+        }),
+      ),
+      { kind: "chatMessageAdded", data: { message: fallbackMessage } },
+    ];
+    const state = actions.reduce(workspaceReducer, initialWorkspaceState);
+    const mergedRawPart = state.messages[0]?.parts[0];
+
+    expect(state.messages[0]?.parts).toHaveLength(1);
+    expect(
+      mergedRawPart?.kind === "text" ? mergedRawPart.data.body : null,
+    ).toBe(internalDeltas.join(""));
+    expect(
+      mergedRawPart?.kind === "text"
+        ? sanitizeVisibleText(mergedRawPart.data.body)
+        : "unexpected",
+    ).toBeNull();
+
+    await render(
+      <ChatMessageList
+        messages={state.messages}
+        streamActive={false}
+      />,
+    );
+
+    const text = host?.textContent ?? "";
+    expect(text).toContain("模型这一轮没有返回任何内容");
+    expect(text).not.toContain("[tool-result]");
+    expect(text).not.toContain("AI-IR");
+    expect(text).not.toContain("block-a");
   });
 
   it("用户气泡里的 skill chip 仍复用 mention 展示样式", async () => {

@@ -3,6 +3,10 @@ import {
   buildCommandConfirmSpec,
   commandConfirmationDigest,
 } from "../confirm/commandConfirmation.js";
+import {
+  formatCommandDuration,
+  SANDBOX_BACKGROUND_TTL_MS,
+} from "../workspace/backgroundCommandLimits.js";
 
 describe("buildCommandConfirmSpec 风险卡映射", () => {
   it("install/send/destructive 分别映射到 install/send/command", () => {
@@ -76,18 +80,20 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     expect(spec.secondaryLabel).toBe("取消");
   });
 
-  it("P2-6 回归:无显式 timeout 的安全后台命令使用 TTL 专用确认文案", () => {
+  it("P2-6 回归:后台卡片显示钳制后的实际最长运行时长", () => {
     const spec = buildCommandConfirmSpec(
-      { command: "echo ready", background: true },
-      "后台命令将按默认 TTL 回收",
+      { command: "rm old.txt", background: true, timeout: 31_536_000 },
+      "将删除文件",
       "background-ttl-id",
     );
     expect(spec).toMatchObject({
       kind: "command",
-      title: "启动未显式限时的后台命令",
-      sub: "后台执行 · 使用默认 TTL",
+      title: "删除文件",
       primaryLabel: "确认执行",
     });
-    expect(spec.say).toContain("默认 TTL");
+    expect(spec.sub).toBe(
+      `后台执行 · 最长运行 ${formatCommandDuration(SANDBOX_BACKGROUND_TTL_MS)} · 破坏性命令`,
+    );
+    expect(spec.sub).not.toContain("默认 TTL");
   });
 });

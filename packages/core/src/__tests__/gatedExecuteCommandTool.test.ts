@@ -10,6 +10,7 @@ import {
   SANDBOX_MAX_BACKGROUND_PROCESSES,
   createGatedExecuteCommandTool,
 } from "../workspace/gatedExecuteCommandTool.js";
+import { formatCommandDuration } from "../workspace/backgroundCommandLimits.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import { RequestContext } from "@mastra/core/request-context";
 import { createSession } from "../session/sessionState.js";
@@ -524,35 +525,26 @@ describe("gated execute_command tool cwd 约束", () => {
       timeout: 10,
     });
 
-    expect(result).toBe("Started background process (PID: 12345)");
+    expect(result).toContain("Started background process (PID: 12345");
+    expect(result).toContain("最长运行: 10 秒");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
   });
 
-  it("P2-6 回归:无 timeout 后台命令需确认，通过后按默认 TTL 回收", async () => {
+  it("P2-6 回归:无 timeout 后台 dev 命令不确认，静默套用并展示实际 TTL", async () => {
     vi.useFakeTimers();
-    const state = createSession("gated-background-default-ttl");
-    const { tool, spawnCalls, runningProcessCount } = createToolHarness(state.sessionId, {
-      state,
+    const { tool, spawnCalls, runningProcessCount } = createToolHarness("gated-background-default-ttl", {
       simulateBackgroundTimeout: true,
     });
-    const input = { command: allowedFileCommand, background: true };
+    const input = { command: "pnpm dev", background: true };
     const predicate = tool.requireApproval;
     expect(typeof predicate).toBe("function");
     if (typeof predicate !== "function") throw new Error("requireApproval missing");
-    expect(await predicate(input)).toBe(true);
-    expect(await executeTool(tool, input, approvalContext("run-missing", "tool-missing")))
-      .toContain("缺少有效的用户确认");
-
-    issueApprovalProof(state, {
-      sessionId: state.sessionId,
-      runId: "run-approved",
-      toolCallId: "tool-approved",
-      commandDigest: commandConfirmationDigest(state.sessionId, input),
-    });
+    expect(await predicate(input)).toBe(false);
     try {
-      expect(await executeTool(tool, input, approvalContext("run-approved", "tool-approved")))
-        .toBe("Started background process (PID: 12345)");
+      const result = await executeTool(tool, input);
+      expect(result).toContain("Started background process (PID: 12345");
+      expect(result).toContain(`最长运行: ${formatCommandDuration(SANDBOX_BACKGROUND_TTL_MS)}`);
       expect(spawnCalls[0]?.timeout).toBe(SANDBOX_BACKGROUND_TTL_MS);
       expect(runningProcessCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(SANDBOX_BACKGROUND_TTL_MS);
@@ -562,15 +554,29 @@ describe("gated execute_command tool cwd 约束", () => {
     }
   });
 
-  it("P2-6 回归:显式 timeout 后台命令直接执行并覆盖默认 TTL", async () => {
+  it("P2-6 回归:上限内显式 timeout 后台命令直接执行", async () => {
     const { tool, spawnCalls } = createToolHarness("gated-background-explicit-timeout");
 
     expect(await executeTool(tool, {
       command: allowedFileCommand,
       background: true,
       timeout: 7,
-    })).toBe("Started background process (PID: 12345)");
+    })).toContain("Started background process (PID: 12345");
     expect(spawnCalls[0]?.timeout).toBe(7_000);
+  });
+
+  it("P2-6 回归:超大后台 timeout 被硬钳制到 TTL 上限并显示实际时长", async () => {
+    const { tool, spawnCalls } = createToolHarness("gated-background-timeout-clamped");
+
+    const result = await executeTool(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 31_536_000,
+    });
+
+    expect(spawnCalls[0]?.timeout).toBe(SANDBOX_BACKGROUND_TTL_MS);
+    expect(result).toContain(`最长运行: ${formatCommandDuration(SANDBOX_BACKGROUND_TTL_MS)}`);
+    expect(result).toContain("已按后台上限钳制");
   });
 
   it("P2-6 回归:每会话后台进程达到上限时拒绝且不 spawn", async () => {

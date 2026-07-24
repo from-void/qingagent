@@ -14,6 +14,11 @@ import {
   sessionWorkspaceDir,
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
+import {
+  effectiveBackgroundTimeoutMs,
+  formatCommandDuration,
+  SANDBOX_BACKGROUND_TTL_MS,
+} from "./backgroundCommandLimits.js";
 
 function positiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -22,10 +27,9 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 
 export const EXECUTE_COMMAND_MAX_RETAINED_BYTES =
   positiveIntegerEnv("QINGAGENT_SANDBOX_MAX_RETAINED_BYTES", 1_048_576);
-export const SANDBOX_BACKGROUND_TTL_MS =
-  positiveIntegerEnv("QINGAGENT_SANDBOX_BACKGROUND_TTL_MS", 30 * 60 * 1_000);
 export const SANDBOX_MAX_BACKGROUND_PROCESSES =
   positiveIntegerEnv("QINGAGENT_SANDBOX_MAX_BACKGROUND_PROCESSES", 4);
+export { SANDBOX_BACKGROUND_TTL_MS } from "./backgroundCommandLimits.js";
 
 const backgroundSpawnLocks = new Map<string, Promise<void>>();
 
@@ -155,7 +159,6 @@ export function createGatedExecuteCommandTool({
         return evaluateCommandPolicy(input.command, {
           workspaceCwd: sessionWorkspaceDir(sessionId),
           background: input.background === true,
-          backgroundTimeoutExplicit: typeof input.timeout === "number",
           sandboxBinDir,
         }).action === "confirm";
       } catch {
@@ -186,7 +189,6 @@ export function createGatedExecuteCommandTool({
       const decision = evaluateCommandPolicy(input.command, {
         workspaceCwd: sessionDir,
         background: input.background === true,
-        backgroundTimeoutExplicit: typeof input.timeout === "number",
         sandboxBinDir,
       });
       if (decision.action === "deny") {
@@ -241,7 +243,10 @@ export function createGatedExecuteCommandTool({
       const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
       // 前台挡 runaway；后台未显式限时时使用可配置 TTL，避免页面关闭/正常轮次结束后无限存活。
       const foregroundTimeout = explicitTimeout ?? SANDBOX_TIMEOUT_MS;
-      const backgroundTimeout = explicitTimeout ?? SANDBOX_BACKGROUND_TTL_MS;
+      // 后台显式 timeout 与默认值共享同一个硬上限，模型无法靠填写超大秒数绕过 TTL。
+      const backgroundTimeout = effectiveBackgroundTimeoutMs(timeoutSeconds);
+      const backgroundTimeoutClamped =
+        explicitTimeout !== undefined && explicitTimeout > SANDBOX_BACKGROUND_TTL_MS;
       const toolCallId = context?.agent?.toolCallId;
 
       if (input.background) {
@@ -263,7 +268,10 @@ export function createGatedExecuteCommandTool({
             maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
             abortSignal: context?.abortSignal,
           });
-          return `Started background process (PID: ${handle.pid})`;
+          const clampedLabel = backgroundTimeoutClamped ? "，已按后台上限钳制" : "";
+          return `Started background process (PID: ${handle.pid}; 最长运行: ${
+            formatCommandDuration(backgroundTimeout)
+          }${clampedLabel})`;
         });
       }
 

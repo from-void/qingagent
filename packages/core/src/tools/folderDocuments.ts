@@ -27,7 +27,11 @@ import {
 import { isFolderSourceCacheActive, normalizeFolderSourceRecords } from "../folderSources/runtime.js";
 import { parseFileBuffer } from "./parseFile.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
-import { verifyOpenedFilePath } from "./openedFilePath.js";
+import {
+  statOpenedFileIdentity,
+  verifyOpenedFilePath,
+  type OpenedFileIdentity,
+} from "./openedFilePath.js";
 
 const DEFAULT_MAX_CHARS = 40_000;
 const MAX_READ_CHARS = 200_000;
@@ -201,6 +205,7 @@ function mergeHostFileStat(base: FileStat, hostStat: Awaited<ReturnType<typeof s
 interface ResolvedHostReadPath {
   path: string;
   allowedRoot?: string;
+  identity: OpenedFileIdentity;
 }
 
 async function resolveHostReadPath(args: {
@@ -230,7 +235,9 @@ async function resolveHostReadPath(args: {
     const canonical = await realpath(candidate);
     args.signal?.throwIfAborted();
     if (!isPathInside(canonical, root)) throw new Error("invalid_path: symlink escaped folder source");
-    return { path: canonical, allowedRoot: root };
+    const identity = await statOpenedFileIdentity(canonical);
+    args.signal?.throwIfAborted();
+    return { path: canonical, allowedRoot: root, identity };
   }
 
   const resolved = filesystem.resolveAbsolutePath?.(path);
@@ -238,7 +245,9 @@ async function resolveHostReadPath(args: {
   args.signal?.throwIfAborted();
   const canonical = await realpath(resolved);
   args.signal?.throwIfAborted();
-  return { path: canonical };
+  const identity = await statOpenedFileIdentity(canonical);
+  args.signal?.throwIfAborted();
+  return { path: canonical, identity };
 }
 
 async function readHostFileBounded(
@@ -255,6 +264,7 @@ async function readHostFileBounded(
     try {
       await verifyOpenedFilePath(handle, {
         expectedPath: hostReadPath.path,
+        expectedIdentity: hostReadPath.identity,
         allowedRoot: hostReadPath.allowedRoot,
       });
     } catch {

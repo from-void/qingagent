@@ -16,7 +16,7 @@ const secretSpec: ConfirmSpec = {
 };
 
 describe("ConfirmService", () => {
-  it("P2-6 回归:安全后台命令无显式 timeout 时可进入确认通道", async () => {
+  it("P2-6 回归:安全后台命令无显式 timeout 时不生成确认卡", async () => {
     const state = createSession("confirm-background-default-ttl");
     const service = new ConfirmService({
       createId: () => "confirm-background-id",
@@ -30,15 +30,8 @@ describe("ConfirmService", () => {
       args: { command: "echo ready", background: true },
       aborted: false,
     });
-    expect(result).toMatchObject({
-      ok: true,
-      pending: {
-        spec: {
-          title: "启动未显式限时的后台命令",
-          sub: "后台执行 · 使用默认 TTL",
-        },
-      },
-    });
+    expect(result).toEqual({ ok: false, reason: "确认请求与当前命令策略不匹配" });
+    expect(state.pendingConfirms.size).toBe(0);
   });
 
   it("PendingConfirm 持久化失败时不发卡、不保留 pending", async () => {

@@ -5,7 +5,7 @@ import { open, readFile, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { TextDecoder } from "node:util";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
-import { verifyOpenedFilePath } from "./openedFilePath.js";
+import { statOpenedFileIdentity, verifyOpenedFilePath } from "./openedFilePath.js";
 import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { loadPdfParseConstructor } from "@qingagent/doc-render/browser";
 import type { Document as XmlDocument, Element as XmlElement } from "@xmldom/xmldom";
@@ -328,6 +328,9 @@ async function readDesktopFilePath(
     canonicalPath = filePath;
   }
   if (isSensitiveDesktopFilePath(canonicalPath)) return { status: "denied" };
+  signal?.throwIfAborted();
+  const expectedIdentity = await statOpenedFileIdentity(canonicalPath);
+  signal?.throwIfAborted();
 
   // Windows 没有 O_NOFOLLOW，且 Node FileHandle 无安全的最终路径反查 API；
   // 打开后 verifyOpenedFilePath 会明确 fail-closed，不再接受 reparse point 竞态残留。
@@ -345,6 +348,7 @@ async function readDesktopFilePath(
     try {
       canonicalPath = await verifyOpenedFilePath(fileHandle, {
         expectedPath: canonicalPath,
+        expectedIdentity,
         validatePath: (actualPath) => !isSensitiveDesktopFilePath(actualPath),
       });
     } catch {

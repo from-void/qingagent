@@ -25,7 +25,10 @@ export default defineConfig({
     port: devPort,
     strictPort: false,
     proxy: {
-      "/api": apiTarget,
+      "/api": {
+        target: apiTarget,
+        changeOrigin: false,
+      },
     },
   },
   preview: {
@@ -33,7 +36,10 @@ export default defineConfig({
     port: Number(process.env.QINGAGENT_PREVIEW_PORT ?? devPort),
     strictPort: false,
     proxy: {
-      "/api": apiTarget,
+      "/api": {
+        target: apiTarget,
+        changeOrigin: false,
+      },
     },
   },
 });

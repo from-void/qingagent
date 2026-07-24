@@ -38,7 +38,8 @@ function localWebOrigins(): Set<string> {
   const origins = new Set<string>();
   for (const port of ports) {
     for (const host of LOOPBACK_HOSTS) {
-      origins.add(`http://${host}:${port}`);
+      const origin = normalizeExactOrigin(`http://${host}:${port}`);
+      if (origin) origins.add(origin);
     }
   }
   return origins;
@@ -81,10 +82,29 @@ export function isTrustedOrigin(origin: string): boolean {
 export function requireTrustedOrigin(c: Context): Response | null {
   const origin = c.req.header("Origin");
   if (!origin) return null; // 同源/curl 无 Origin
-  if (!isTrustedOrigin(origin)) {
-    return c.json({ error: "跨站请求被拒绝" }, 403);
+  if (isTrustedOrigin(origin)) return null;
+
+  const normalizedOrigin = normalizeExactOrigin(origin);
+  const host = c.req.header("Host");
+  if (normalizedOrigin && host) {
+    try {
+      const hostname = new URL(`http://${host}`).hostname;
+      // 仅给 Vite changeOrigin:false 保留下来的同源 loopback 写请求开窄例外:
+      // - 跨源本地页的 Origin 端口与 Host 不同，无法通过全 Origin 相等检查；
+      // - DNS rebinding / 生产 nginx 的 Host 是公网域名，不是 loopback 字面量；
+      // 因而二者都不走此分支，生产仍须显式配置 QINGAGENT_TRUSTED_ORIGINS。
+      if (
+        LOOPBACK_HOSTS.includes(hostname) &&
+        normalizedOrigin === `http://${host}`
+      ) {
+        return null;
+      }
+    } catch {
+      // 非法 Host 不扩大白名单。
+    }
   }
-  return null;
+
+  return c.json({ error: "跨站请求被拒绝" }, 403);
 }
 
 // 全站写方法(POST/PUT/DELETE/PATCH)统一 CSRF 守卫:挂在 /api/* 上,消灭"逐路由人工挂"的遗漏面

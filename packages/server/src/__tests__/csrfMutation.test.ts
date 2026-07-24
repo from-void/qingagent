@@ -48,6 +48,17 @@ function withOrigin(init: RequestInit, origin: string | null): RequestInit {
   return { ...init, headers };
 }
 
+function withOriginAndHost(
+  init: RequestInit,
+  origin: string,
+  host: string,
+): RequestInit {
+  const requestInit = withOrigin(init, origin);
+  const headers = new Headers(requestInit.headers);
+  headers.set("Host", host);
+  return { ...requestInit, headers };
+}
+
 const protectedWriteEndpoints: Array<{
   name: string;
   path: string;
@@ -214,9 +225,37 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
       body: JSON.stringify({ events: [] }),
     };
 
-    it("拒绝非白名单 localhost 端口", async () => {
+    it(
+      "模拟 Vite changeOrigin:false 时同源 loopback POST/DELETE 放行",
+      async () => {
+        const app = await loadApp();
+        const proxyHeaders = withOriginAndHost(
+          init,
+          "http://localhost:6191",
+          "localhost:6191",
+        );
+        const post = await app.request(path, proxyHeaders);
+        const deletion = await app.request(
+          "/api/v1/skills/__csrf_missing_skill__",
+          withOriginAndHost(
+            { method: "DELETE" },
+            "http://localhost:6191",
+            "localhost:6191",
+          ),
+        );
+
+        expect(post.status).toBe(200);
+        expect(deletion.status).toBe(404);
+      },
+      20_000,
+    );
+
+    it("跨源本地页的 Origin 与 Host 端口不同仍拒绝", async () => {
       const app = await loadApp();
-      const res = await app.request(path, withOrigin(init, "http://localhost:62001"));
+      const res = await app.request(
+        path,
+        withOriginAndHost(init, "http://localhost:6666", "localhost:8091"),
+      );
 
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
@@ -224,10 +263,32 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
 
     it("Origin 与 Host 同值的外部 rebinding 域名仍拒绝", async () => {
       const app = await loadApp();
-      const requestInit = withOrigin(init, "http://rebind.example:8080");
-      const headers = new Headers(requestInit.headers);
-      headers.set("Host", "rebind.example:8080");
-      const res = await app.request(path, { ...requestInit, headers });
+      const res = await app.request(
+        path,
+        withOriginAndHost(init, "http://rb.example:8080", "rb.example:8080"),
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("生产公网 Host 不走 loopback 例外，仍需显式配置 Origin", async () => {
+      const app = await loadApp();
+      const requestInit = withOriginAndHost(
+        init,
+        "https://app.example",
+        "app.example",
+      );
+
+      expect((await app.request(path, requestInit)).status).toBe(403);
+
+      process.env.QINGAGENT_TRUSTED_ORIGINS = "https://app.example";
+      expect((await app.request(path, requestInit)).status).toBe(200);
+    });
+
+    it("直连非白名单 Origin 且无匹配 Host 时拒绝", async () => {
+      const app = await loadApp();
+      const res = await app.request(path, withOrigin(init, "http://localhost:62001"));
 
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
@@ -250,6 +311,15 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
       expect((await app.request(path, withOrigin(init, "http://localhost:62002"))).status).toBe(200);
       expect((await app.request(path, withOrigin(init, "https://app.example"))).status).toBe(200);
       expect((await app.request(path, withOrigin(init, "http://app.example"))).status).toBe(403);
+    });
+
+    it("运行时默认 HTTP 端口 80 按 URL.origin 规范化后放行", async () => {
+      process.env.QINGAGENT_WEB_PORT = "80";
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://127.0.0.1"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://[::1]"))).status).toBe(200);
     });
   });
 

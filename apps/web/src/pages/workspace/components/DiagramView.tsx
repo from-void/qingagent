@@ -46,9 +46,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const renderedSourceRef = useRef<string | null>(cachedSvg ? attrSource.trim() : null);
   const editingRef = useRef(false);
   const viewRef = useRef<HTMLDivElement>(null);
-  // 本次点击手势是否"刚把块选中"(块此前未选中):用于拦"快速点选未选中图表 → 误触双击直接进编辑"。
-  // 冷双击只选中、不进编辑;块已选中时再双击才进编辑。纯状态判据、无定时器,确定可测。
-  const justSelectedRef = useRef(false);
+  // 双击手势第一次按下前,本块是否已经是 NodeSelection。diagram 可拖拽,ProseMirror 会在
+  // mousedown 阶段先完成选中;若等 click 再看当前选区,会丢失"冷双击前未选中"这个事实。
+  const selectedBeforeMouseDownRef = useRef(false);
   const diagramType = lang === "mermaid" ? detectType(source) : null;
   const supportsVisualEdit = editable && (lang === "drawio" || isVisualDiagramType(diagramType));
   const storedHeight =
@@ -295,10 +295,17 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     if (typeof pos !== "number") return;
     const nextSelection = NodeSelection.create(editor.state.doc, pos);
     if (!nextSelection.eq(editor.state.selection)) {
-      // 选区真的变了 = 块此前未被选中 → 标记"本次手势是来选中的",紧随其后的 dblclick 不进编辑。
-      justSelectedRef.current = true;
       editor.view.dispatch(editor.state.tr.setSelection(nextSelection));
     }
+  };
+
+  const captureSelectionBeforeMouseDown = (event: ReactMouseEvent<HTMLElement>) => {
+    // 原生双击的第二次 mousedown detail=2;只在第一次按下时取样,避免被 PM 已更新的选区覆盖。
+    if (event.detail !== 1) return;
+    const pos = typeof getPos === "function" ? getPos() : null;
+    const selection = editor.state.selection;
+    selectedBeforeMouseDownRef.current =
+      typeof pos === "number" && selection instanceof NodeSelection && selection.from === pos;
   };
 
   return (
@@ -307,6 +314,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       data-pm-node="diagram"
       data-lang={node.attrs.lang ?? "mermaid"}
       data-align={align}
+      onMouseDownCapture={captureSelectionBeforeMouseDown}
       onClickCapture={selectDiagramBlock}
     >
       {editing ? (
@@ -372,12 +380,8 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
             ) {
               return;
             }
-            // 若本次手势刚把块选中(冷双击未选中的图表),只选中、不进编辑 —— 清掉标记后返回。
-            // 块此前已选中时 justSelectedRef 为 false,双击照常进编辑。
-            if (justSelectedRef.current) {
-              justSelectedRef.current = false;
-              return;
-            }
+            // 冷双击开始前块未选中时,本次手势只负责选中;已选中的块才允许双击进编辑。
+            if (!selectedBeforeMouseDownRef.current) return;
             event.preventDefault();
             if (supportsVisualEdit) {
               openVisualEdit();

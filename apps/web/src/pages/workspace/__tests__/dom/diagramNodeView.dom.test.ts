@@ -883,7 +883,8 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(diagramViewCss).toContain(".pm-diagram.is-selected .pm-diagram-view-actions");
 
       await act(async () => {
-        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+        diagramView.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
       });
       await flush(20);
       expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
@@ -933,7 +934,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("冷双击未选中的图表只选中、不进编辑;块已选中后再双击才进编辑(防快速点击误触)", async () => {
+  it("PM 在 mousedown 先选中节点时,冷双击仍不开编辑器;已选中双击正常进入编辑", async () => {
     // 段落 + 图表:把选区放在段落,确保图表初始未选中(diagram-only 文档会默认选中图表块)。
     const editor = await mountEditor({
       type: "doc",
@@ -951,22 +952,30 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       });
       await flush(8);
       expect(editor.view.dom.querySelector(".pm-diagram.is-selected")).toBeNull();
-      // 冷双击:浏览器里 dblclick 之前必有 click;首击(detail:1)先选中块。
+      let diagramPos = -1;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "diagram") diagramPos = pos;
+        return true;
+      });
+      expect(diagramPos).toBeGreaterThanOrEqual(0);
+      // 复现真实时序:NodeView capture 先看到"按下前未选中",随后 PM 在同一个
+      // mousedown 阶段把 draggable diagram 改成 NodeSelection,dblclick 到来时选区已相等。
       await act(async () => {
-        graph.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+        graph.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, diagramPos)));
       });
       await flush(8);
       expect(editor.view.dom.querySelector(".pm-diagram.is-selected")).not.toBeNull();
-      // 紧随的 dblclick 不应进编辑(只是来选中的)。
       await act(async () => {
-        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
       });
       await flush(20);
       expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
       expect(editor.view.dom.querySelector(".pm-diagram-source")).toBeNull();
-      // 块已选中后再双击(此次 click 不再改选区 → 不置 justSelected)→ 进编辑。
+      // 下一次双击的第一次按下前,块已经是本节点 NodeSelection,应正常进编辑。
       await act(async () => {
-        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+        diagramView.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
       });
       await flush(20);
       expect(document.body.querySelector(".graph-diagram-editor")).not.toBeNull();
@@ -1225,7 +1234,8 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const diagramView = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-view");
       expect(diagramView).not.toBeNull();
       await act(async () => {
-        diagramView!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        diagramView!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        diagramView!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
       });
       await flush();
       const textarea = editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source");

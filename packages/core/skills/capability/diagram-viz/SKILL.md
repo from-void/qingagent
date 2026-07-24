@@ -59,6 +59,8 @@ write-inject: true
 ## 六、交付纪律
 
 - Mermaid 用 `<mermaid>…</mermaid>`，draw.io 用 `<drawio>…</drawio>`；两者都是文档 `diagram` 块，不放进 `<pre>`。
+- 任何规模的图都必须通过 `writeDraft` / `editDraft` 落入文档；严禁在聊天回复里直接手打整段 XML 或 Mermaid 长源码。
+- 单图节点建议不超过 25 个；更大规模应按层拆成多张图（每层一张），或先出骨架图，再用 `editDraft` 增量补充节点。
 - 保留既有节点、实体、状态、mxCell 与边的稳定 id；只改必要 label、边、样式或结构。
 - 生成后按对应引擎真实语法检查；只有渲染成功的图才能计入完成摘要。
 - 不要把图表职责转给 `generateSvg`；装饰性插画和自由构图另走生图技能。

@@ -141,6 +141,7 @@ openssl rand -hex 32
 QINGAGENT_HOST=127.0.0.1
 QINGAGENT_AUTH_TOKEN=<openssl rand -hex 32 的输出>
 QINGAGENT_TRUSTED_ORIGINS=https://你的域名
+QINGAGENT_PUBLIC_ORIGIN=https://你的域名
 QINGAGENT_PUBLIC_DEPLOYMENT=1
 ```
 
@@ -179,6 +180,8 @@ server {
 |---|---|---|
 | `QINGAGENT_AUTH_TOKEN` | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
 | `QINGAGENT_TRUSTED_ORIGINS` | 空;内置 localhost/127.0.0.1/::1 | 额外可信 Origin,多个值用逗号分隔。公网反代建议设为 `https://你的域名`。 |
+| `QINGAGENT_PUBLIC_ORIGIN` | 未设置 | 导出内容中 `/api/` 链接使用的 canonical origin。公网 HTTPS 反代建议显式设置，优先级高于请求与 forwarded 头。 |
+| `QINGAGENT_TRUST_PROXY` | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |
 | `QINGAGENT_HOST` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
 | `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC` | 未设置 | 高危逃生开关。仅 `=1` 允许无 token 的非回环监听,启动时打印审计告警。 |
 | `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |

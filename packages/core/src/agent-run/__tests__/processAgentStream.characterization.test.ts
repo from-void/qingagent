@@ -6,6 +6,7 @@ const recordUsageEventMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("@qingagent/db", () => ({
   recordUsageEvent: recordUsageEventMock,
+  STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"] as const,
 }));
 
 vi.mock("../../mastra.js", () => ({

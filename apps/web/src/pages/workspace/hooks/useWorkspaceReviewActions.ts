@@ -25,7 +25,9 @@ import {
   sendReviewOutcomeFollowup,
 } from "../data/reviewActions";
 import {
+  reviewCommitFramesAppliedCount,
   reviewCommitFramesCommitted,
+  reviewCommitFramesConflictCount,
   reviewCommitFramesLeavePendingReview,
   reviewCommitFramesNoop,
 } from "../data/pendingDocSave";
@@ -141,11 +143,7 @@ export function useWorkspaceReviewActions(input: {
     setTableTypedByPatch(null);
     dispatch({ kind: "forceUnlockReview" });
     setActiveReviewTargetId(null);
-    showToast(
-      acceptReviewBatchIds.length > 0
-        ? `已保留已采纳的 ${reviewOutcome.acceptedCount} 处 · 撤销其余修改`
-        : "已撤销本轮全部修改",
-    );
+    if (acceptReviewBatchIds.length === 0) showToast("已撤销本轮全部修改");
 
     if (
       !stream ||
@@ -165,11 +163,30 @@ export function useWorkspaceReviewActions(input: {
           rejectReviewBatchIds,
         })
         .then((frames) => {
+          const commitNoop = reviewCommitFramesNoop(frames);
+          const commitSucceeded = reviewCommitFramesCommitted(frames);
+          const appliedCount = reviewCommitFramesAppliedCount(frames);
+          const conflictCount = reviewCommitFramesConflictCount(frames);
+          const commitFailed =
+            acceptReviewBatchIds.length > 0 &&
+            !commitSucceeded &&
+            !commitNoop;
+          if (commitFailed) {
+            showToast("本次修改未写入，正文保持上一版");
+          } else if (acceptReviewBatchIds.length > 0 && !commitNoop) {
+            showToast(
+              conflictCount !== null && conflictCount > 0
+                ? `${appliedCount ?? 0} 处已写入，${conflictCount} 处因文档变化失效 · 撤销其余修改`
+                : `已保留已采纳的 ${appliedCount ?? reviewOutcome.acceptedCount} 处 · 撤销其余修改`,
+            );
+          }
           if (!reviewCommitFramesLeavePendingReview(frames)) {
             dispatch({ kind: "forceUnlockReview" });
             showToast("审阅状态未自动退出，已恢复编辑");
           }
-          sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
+          if (!commitNoop && !commitFailed && (acceptReviewBatchIds.length === 0 || commitSucceeded)) {
+            sendReviewOutcomeFollowup(stream, currentSessionId, reviewOutcome);
+          }
         });
     };
 

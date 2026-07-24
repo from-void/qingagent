@@ -272,7 +272,7 @@ describe("公众号稿生成体验", () => {
     const builtinActions = Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button"));
     expect(builtinActions.map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
     expect(builtinActions[1]?.disabled).toBe(true);
-    expect(builtinActions[1]?.title).toBe("每类至少保留一个模板");
+    expect(builtinActions[1]?.title).toBe("内置模板不可删除");
     const prompt = host.querySelector<HTMLTextAreaElement>(".ws-launch-editor textarea")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "新提示");
@@ -295,12 +295,16 @@ describe("公众号稿生成体验", () => {
       saveStyleTemplate: vi.fn(),
       deleteStyleTemplate: vi.fn(async () => {}),
     };
-    await act(async () => root.render(<DerivativeGenerateModal descriptor={DTYPE_REGISTRY.gzh} sessionId="session-1" stream={stream as never} open initial={{ templateId: user.id, writingStyleId: user.id, layoutStyleId: layout.id, privatePrompt: "" }} onClose={vi.fn()} onGenerate={vi.fn()}/>));
+    await act(async () => root.render(<ConfirmProvider><DerivativeGenerateModal descriptor={DTYPE_REGISTRY.gzh} sessionId="session-1" stream={stream as never} open initial={{ templateId: user.id, writingStyleId: user.id, layoutStyleId: layout.id, privatePrompt: "" }} onClose={vi.fn()} onGenerate={vi.fn()}/></ConfirmProvider>));
     await act(async () => Promise.resolve());
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="编辑我的写法"]')!.click());
     await act(async () => Promise.resolve());
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-launch-actions button")).map((button) => button.textContent)).toEqual(["✦ AI 起草", "删除", "另存新模板", "保存"]);
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "删除")!.click());
+    expect(stream.deleteStyleTemplate).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-wf="GlobalConfirm"]')?.textContent).toContain("删除风格模板「我的写法」？");
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-wf="GlobalConfirm"] .ws-folder-modal-danger')!.click());
+    await act(async () => Promise.resolve());
     expect(stream.deleteStyleTemplate).toHaveBeenCalledWith("session-1", user.id);
     expect(host.textContent).not.toContain("我的写法");
     expect(Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-checked="true"]')).some((button) => button.textContent?.includes("深度观点文"))).toBe(true);

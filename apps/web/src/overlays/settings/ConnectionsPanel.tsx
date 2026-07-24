@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ConnectorId, ConnectorInfo, ConnectorState, QrCardBody } from "@qingagent/contract-ts";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { useToast } from "../../system/ToastProvider";
@@ -10,6 +10,13 @@ type FeishuStartResult =
   | { mode: "authorization"; verification_url: string; user_code: string; expiresAt: string; pendingId: string }
   | { mode: "configuration"; configuration_url: string; expiresAt: string; pendingId: string };
 type WechatStartResult = { imageDataUri: string; expiresInSec: number; pendingId: string };
+
+// 与 core 的 LARK_AUTH_DOMAINS / feishuAuthDomainSchema 保持一致。设置页没有单次任务
+// 上下文可据此裁剪授权范围，因此默认请求连接器实际支持的完整域集。
+const DEFAULT_FEISHU_AUTH_DOMAINS = [
+  "docs", "base", "sheets", "calendar", "im", "drive", "mail", "task",
+  "approval", "contact", "minutes", "wiki",
+] as const;
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value) throw new Error(`授权响应缺少 ${field}`);
@@ -192,10 +199,11 @@ function connectedLine(connector: ConnectorInfo): string | null {
   return `已登录「${name}」公众号`;
 }
 
-function listSubtitle(connector: ConnectorInfo): string {
+function listSubtitle(connector: ConnectorInfo, state = connector.status.state): string {
+  if (state !== connector.status.state) return STATE_COPY[connector.id][state] ?? STATUS_LABELS[state];
   const line = connectedLine(connector);
   if (line) return line;
-  return STATE_COPY[connector.id][connector.status.state] ?? STATUS_LABELS[connector.status.state];
+  return STATE_COPY[connector.id][state] ?? STATUS_LABELS[state];
 }
 
 // 详情页状态行:开场白已介绍用途,这里只讲「当前是什么状态」。
@@ -232,6 +240,14 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
     onSelectedIdChange?.(id);
   };
 
+  useEffect(() => {
+    if (!authCard) return;
+    const connector = connectors.find((item) => item.id === authCard.connectorId);
+    // start() 后列表接口短暂仍可能返回旧的 disconnected；只在轮询确认已连接时收起，
+    // 避免刚拿到二维码/设备码便被陈旧列表回包清掉。
+    if (connector?.status.state === "connected") setAuthCard(null);
+  }, [authCard, connectors]);
+
   if (capabilities?.connectors?.mutationEnabled === false) {
     return (
       <div className="cn-unavailable" data-wf="ConnectionsUnavailable">
@@ -252,6 +268,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
     const canStart = (selected.id === "feishu"
       ? ["unconfigured", "disconnected", "needs_reauth"]
       : ["disconnected", "needs_reauth"]).includes(selected.status.state);
+    const canProbe = selected.status.canProbe && !canStart;
     const canDisconnect = ["connected", "needs_reauth"].includes(selected.status.state);
     const selectedAuthCard = authCard?.connectorId === selected.id ? authCard.data : null;
     const visibleState: ConnectorState = selectedAuthCard ? "pending" : selected.status.state;
@@ -259,7 +276,12 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       setBusy(true);
       try {
         // GitHub 一律请求 repo(含私有仓):对用户就是「授权/没授权」,不区分公私仓档位。
-        const body = selected.id === "github" ? { scope: "repo" } : {};
+        // 飞书设置页没有具体任务意图，默认请求连接器当前支持的完整域集，保证 start 非空。
+        const body = selected.id === "github"
+          ? { scope: "repo" }
+          : selected.id === "feishu"
+            ? { domains: [...DEFAULT_FEISHU_AUTH_DOMAINS] }
+            : {};
         setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id, body)) });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
@@ -304,7 +326,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           <div className="cnd-authcard"><AuthCard data={selectedAuthCard} onRefresh={initiate} onStatusChange={() => {
             void refresh().then(() => setAuthCard(null)).catch(() => undefined);
           }} /></div>
-        ) : (canStart || selected.status.canProbe) ? (
+        ) : (canStart || canProbe) ? (
           <div className="cnd-action">
             {canStart && (
               <button type="button" className="sm-btn big primary" disabled={busy} onClick={() => { void initiate().catch(() => undefined); }}>
@@ -314,7 +336,7 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
             {busy && selected.id === "wechat-mp" && (
               <span className="cnd-wait">正在打开公众平台生成登录二维码，通常需要 5~15 秒…</span>
             )}
-            {selected.status.canProbe && (
+            {canProbe && (
               <button type="button" className="sm-btn" disabled={busy} onClick={async () => {
                 setBusy(true);
                 try {
@@ -360,19 +382,22 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
       {loading && connectors.length === 0 && <p className="sm-empty">加载中…</p>}
       {error && <p className="sm-message">{error}</p>}
       <div className="cn-list">
-        {connectors.map((connector) => (
-          <button key={connector.id} type="button" className="cn-row" onClick={() => select(connector.id)}>
-            <ConnectorIcon connector={connector} />
-            <span className="cn-titleblock">
-              <span className="cn-titleline">
-                <span className="cn-name">{connector.name}</span>
-                <Badge state={connector.status.state} connectorId={connector.id} />
+        {connectors.map((connector) => {
+          const visibleState: ConnectorState = authCard?.connectorId === connector.id ? "pending" : connector.status.state;
+          return (
+            <button key={connector.id} type="button" className="cn-row" onClick={() => select(connector.id)}>
+              <ConnectorIcon connector={connector} />
+              <span className="cn-titleblock">
+                <span className="cn-titleline">
+                  <span className="cn-name">{connector.name}</span>
+                  <Badge state={visibleState} connectorId={connector.id} />
+                </span>
+                <span className="cn-sub">{listSubtitle(connector, visibleState)}</span>
               </span>
-              <span className="cn-sub">{listSubtitle(connector)}</span>
-            </span>
-            <span className="cn-caret" aria-hidden="true">›</span>
-          </button>
-        ))}
+              <span className="cn-caret" aria-hidden="true">›</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

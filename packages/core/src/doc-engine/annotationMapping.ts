@@ -1,16 +1,20 @@
 import type {
   AnnotationGroup,
+  DiffHunk,
   SuggestionAnchor,
 } from "@qingagent/contract-ts";
 import type { PmDoc, PmStep } from "@qingagent/pm-schema";
 import { Mapping, StepMap } from "@tiptap/pm/transform";
+import { diffHunkToStep } from "./draftReviewSuggestions.js";
+import { buildDraftDiff } from "./proposalDiff.js";
 import { normalizeAnnotationQuote } from "./textEditOps.js";
 
 function nodeSize(node: unknown): number {
   if (!node || typeof node !== "object") return 0;
   const value = node as { type?: unknown; text?: unknown; content?: unknown };
   if (value.type === "text") return typeof value.text === "string" ? value.text.length : 0;
-  const content = Array.isArray(value.content) ? value.content : [];
+  if (!Array.isArray(value.content)) return 1;
+  const content = value.content;
   return 2 + content.reduce<number>((sum, child) => sum + nodeSize(child), 0);
 }
 
@@ -59,6 +63,102 @@ export function mappingFromPmSteps(steps: readonly PmStep[]): Mapping {
     }
   }
   return mapping;
+}
+
+const INLINE_NODE_TYPES = new Set(["text", "hardBreak", "inlineMath"]);
+
+function isBlockLevelHunk(hunk: DiffHunk): boolean {
+  if (hunk.op === "markAdd" || hunk.op === "markRemove") return false;
+  const nodes = [...(hunk.before ?? []), ...(hunk.after ?? [])];
+  return nodes.some((node) => !INLINE_NODE_TYPES.has(node.type));
+}
+
+function topLevelBlockStart(doc: PmDoc, index: number): number {
+  return doc.content
+    .slice(0, index)
+    .reduce<number>((sum, block) => sum + nodeSize(block), 0);
+}
+
+function resolveBlockIndex(doc: PmDoc, hunk: DiffHunk): number | null {
+  const blockId = hunk.anchor.blockId;
+  if (blockId) {
+    const anchored = doc.content.findIndex((block) => block.attrs.blockId === blockId);
+    if (anchored >= 0) return anchored;
+  }
+  const pathIndex = hunk.blockPath[0];
+  return pathIndex !== undefined && pathIndex >= 0 && pathIndex <= doc.content.length
+    ? pathIndex
+    : null;
+}
+
+function blockHunkRange(doc: PmDoc, hunk: DiffHunk): { from: number; to: number } | null {
+  const index = resolveBlockIndex(doc, hunk);
+  if (index === null) return null;
+
+  if (hunk.op === "insert") {
+    const anchoredBlock = doc.content[index];
+    if (hunk.anchor.blockId && anchoredBlock?.attrs.blockId === hunk.anchor.blockId) {
+      const from = topLevelBlockStart(doc, index);
+      const boundary = hunk.anchor.gravity === "after" ? from + nodeSize(anchoredBlock) : from;
+      return { from: boundary, to: boundary };
+    }
+    const boundary = topLevelBlockStart(doc, index);
+    return { from: boundary, to: boundary };
+  }
+
+  const beforeBlockCount = Math.max(
+    1,
+    (hunk.before ?? []).filter((node) => !INLINE_NODE_TYPES.has(node.type)).length,
+  );
+  if (index >= doc.content.length || index + beforeBlockCount > doc.content.length) return null;
+  const from = topLevelBlockStart(doc, index);
+  const to = doc.content
+    .slice(index, index + beforeBlockCount)
+    .reduce<number>((sum, block) => sum + nodeSize(block), from);
+  return { from, to };
+}
+
+/**
+ * 将 diff hunk 转成基于真实文档边界的 PM step。
+ *
+ * 块级 hunk 的 anchor.pmFrom/pmTo 是正文文本坐标或根本不存在，不能拿来替代
+ * 顶层块边界；损坏的历史 hunk 若两套锚点都无法定位，则返回非 replace 步，
+ * 让批注映射走原句校验而不是伪造位置 0 的插入。
+ */
+export function diffHunkToPmStep(baseDoc: PmDoc, hunk: DiffHunk): PmStep {
+  if (isBlockLevelHunk(hunk)) {
+    const range = blockHunkRange(baseDoc, hunk);
+    return range
+      ? diffHunkToStep(hunk, range.from, range.to)
+      : { stepType: "annotationMappingUnknown" };
+  }
+  if (hunk.anchor.pmFrom === undefined) return { stepType: "annotationMappingUnknown" };
+  return diffHunkToStep(
+    hunk,
+    hunk.anchor.pmFrom,
+    hunk.anchor.pmTo ?? hunk.anchor.pmFrom,
+  );
+}
+
+/**
+ * 为“权威候选终稿整批落地”生成只供 annotation 锚点迁移使用的细粒度步骤。
+ *
+ * 正文事务仍可用一条全文 replace 原子落地，但该粗步骤不能表达哪些区域实际没改。
+ * 这里从真实 base/final 文档重新求 diff，并按文档位置倒序排列：高位步骤先映射后，
+ * 低位步骤的 base 坐标仍然有效，同时低位改动仍会正确平移高位锚点。
+ */
+export function buildAnnotationMappingSteps(baseDoc: PmDoc, finalDoc: PmDoc): PmStep[] {
+  return buildDraftDiff(baseDoc, finalDoc)
+    .map((hunk) => diffHunkToPmStep(baseDoc, hunk))
+    .sort((left, right) => {
+      const leftFrom = typeof left.from === "number" ? left.from : Number.NEGATIVE_INFINITY;
+      const rightFrom = typeof right.from === "number" ? right.from : Number.NEGATIVE_INFINITY;
+      const fromDelta = rightFrom - leftFrom;
+      if (fromDelta !== 0) return fromDelta;
+      const leftTo = typeof left.to === "number" ? left.to : leftFrom;
+      const rightTo = typeof right.to === "number" ? right.to : rightFrom;
+      return rightTo - leftTo;
+    });
 }
 
 export type MappedAnnotationGroups = {

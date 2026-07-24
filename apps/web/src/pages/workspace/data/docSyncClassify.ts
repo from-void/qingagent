@@ -11,9 +11,10 @@
  * ("abcdef")不等 → 被当外部变更 → setContent("abc") 把"def"吞掉、光标甩走。
  *
  * 修法:记录所有"已 forward 但尚未确认回声"的自我保存内容键(pendingSelfKeys)。
- * incoming 只要命中其一,就是自我回声(哪怕编辑器之后又超前了),仅同步版本号。
+ * incoming 命中其一时仅同步版本号；若正文结构完全一致、只差 blockId，则只用 attrs
+ * 事务同步 canonical id。两种情况都不整篇 setContent。
  */
-export type IncomingDocVerdict = "echo" | "external";
+export type IncomingDocVerdict = "echo" | "block-id-echo" | "external";
 
 export interface ClassifyIncomingDocInput {
   /** JSON.stringify(normalizePmDoc(incoming)) —— canonical 传回的文档键 */
@@ -22,6 +23,9 @@ export interface ClassifyIncomingDocInput {
   liveKey: string;
   /** 已 forward 上去、尚未确认回声的自我保存内容键(按发出顺序) */
   pendingSelfKeys: readonly string[];
+  /** incoming/live 去掉所有 blockId 后的内容键；相等时只需静默同步 id attrs。 */
+  incomingWithoutBlockIdsKey?: string;
+  liveWithoutBlockIdsKey?: string;
 }
 
 export interface ClassifyIncomingDocResult {
@@ -45,8 +49,31 @@ export function classifyIncomingDoc(
   if (idx >= 0) {
     return { verdict: "echo", matchedSelfIndex: idx };
   }
+  // 本地新块可能仍是 blockId=null，而保存/canonical 已补成稳定 id；正文结构完全相同
+  // 时不能当外部改写整篇 setContent。调用方只需用 attrs 事务把 canonical id 写回 live。
+  if (
+    input.incomingWithoutBlockIdsKey !== undefined &&
+    input.incomingWithoutBlockIdsKey === input.liveWithoutBlockIdsKey
+  ) {
+    return { verdict: "block-id-echo", matchedSelfIndex: -1 };
+  }
   // 既不等于当前内容、也不是我方发出的任何在途保存 → 真·外部变更。
   return { verdict: "external", matchedSelfIndex: -1 };
+}
+
+export function docKeyWithoutBlockIds(value: unknown): string {
+  return JSON.stringify(removeBlockIds(value));
+}
+
+function removeBlockIds(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(removeBlockIds);
+  if (!value || typeof value !== "object") return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "blockId") continue;
+    output[key] = removeBlockIds(child);
+  }
+  return output;
 }
 
 /** 在途自我保存键队列上限,防快打字无界增长(单飞 + 队列下实际很小)。 */

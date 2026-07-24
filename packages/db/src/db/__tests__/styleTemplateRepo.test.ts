@@ -7,10 +7,10 @@ beforeEach(() => { db = prepareTempDocumentsDb("qa-style-repo-"); });
 afterEach(() => db.cleanup());
 
 describe("styleTemplateRepo CRUD", () => {
-  it("内置模板可删，同 dtype+slot 每类保底一个", async () => {
+  it("内置模板拒删，用户模板可正常删除", async () => {
     expect(await listStyleTemplates({ dtype: "gzh", slot: "layout" })).toHaveLength(2);
-    expect(await deleteStyleTemplate("gzh-layout-classic")).toBe(true);
-    await expect(deleteStyleTemplate("gzh-layout-minimal")).rejects.toThrow("每类至少保留一个模板");
+    await expect(deleteStyleTemplate("gzh-layout-classic")).rejects.toThrow("内置模板不可删除");
+    expect(await getStyleTemplate("gzh-layout-classic")).not.toBeNull();
 
     const made = await saveStyleTemplate({ dtype: "gzh", slot: "layout", name: "我的排版", prompt: "规则" });
     expect((await getStyleTemplate(made.id))?.builtin).toBe(false);
@@ -35,13 +35,23 @@ describe("styleTemplateRepo CRUD", () => {
   });
 
   it("并发删除同组最后两个模板时仍原子保底一个", async () => {
+    const first = await saveStyleTemplate({ dtype: "xhs", slot: "layout", name: "排版一", prompt: "规则一" });
+    const second = await saveStyleTemplate({ dtype: "xhs", slot: "layout", name: "排版二", prompt: "规则二" });
     const results = await Promise.allSettled([
-      deleteStyleTemplate("gzh-layout-classic"),
-      deleteStyleTemplate("gzh-layout-minimal"),
+      deleteStyleTemplate(first.id),
+      deleteStyleTemplate(second.id),
     ]);
 
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
-    expect(await listStyleTemplates({ dtype: "gzh", slot: "layout" })).toHaveLength(1);
+    expect(await listStyleTemplates({ dtype: "xhs", slot: "layout" })).toHaveLength(1);
+  });
+
+  it("dtype 只接受现有枚举，all 与省略 dtype 都返回全量", async () => {
+    const all = await listStyleTemplates();
+    expect(await listStyleTemplates({ dtype: "all" })).toEqual(all);
+    expect(new Set(all.map((item) => item.dtype))).toEqual(new Set(["deai", "gzh", "translate", "xhs"]));
+    await expect(listStyleTemplates({ dtype: "writing" })).rejects.toThrow("未知的风格模板 dtype");
+    await expect(saveStyleTemplate({ dtype: "三段式", slot: "writing", name: "孤儿", prompt: "规则" })).rejects.toThrow("未知的风格模板 dtype");
   });
 });

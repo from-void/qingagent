@@ -115,6 +115,26 @@ describe("/api/v1/connectors 安全矩阵", () => {
     expect(JSON.parse(raw)).toMatchObject({ user_code: "ABCD-EFGH", pendingId: "pending-safe-id" });
   });
 
+  it("start 失败同时返回机器码和可展示的 message", async () => {
+    const { app, service } = setup({ authOn: false, gateOn: true, publicDeployment: false });
+    service.start.mockRejectedValueOnce(Object.assign(new Error("至少选择一个飞书授权域"), {
+      code: "INVALID_ARGUMENT",
+      status: 400,
+    }));
+
+    const response = await app.request("/api/v1/connectors/feishu/start", {
+      method: "POST",
+      headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "INVALID_ARGUMENT",
+      message: "至少选择一个飞书授权域",
+    });
+  });
+
   it("gate 关闭时 list/detail 只回 unavailable，adapter 零调用", async () => {
     const { app, service } = setup({ authOn: false, gateOn: false, publicDeployment: false });
     const list = await app.request("/api/v1/connectors");

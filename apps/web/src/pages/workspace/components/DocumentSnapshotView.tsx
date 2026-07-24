@@ -13,7 +13,7 @@ import { getMarkRange } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { DOMParser as ProseMirrorDOMParser, Slice } from "@tiptap/pm/model";
-import { NodeSelection } from "@tiptap/pm/state";
+import { NodeSelection, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -73,6 +73,7 @@ import { uploadFailureMessage } from "../data/uploadAsset";
 import type { ReviewTableTypedByPatch } from "../data/tableTypewriter";
 import {
   classifyIncomingDoc,
+  docKeyWithoutBlockIds,
   pushPendingSelfDocKey,
 } from "../data/docSyncClassify";
 import {
@@ -804,15 +805,26 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
             incomingKey,
             liveKey,
             pendingSelfKeys: pendingSelfDocKeysRef.current,
+            incomingWithoutBlockIdsKey: docKeyWithoutBlockIds(normalizedIncoming),
+            liveWithoutBlockIdsKey: docKeyWithoutBlockIds(normalizedLive),
           });
-          if (sync.verdict === "echo") {
+          if (sync.verdict !== "external") {
             // 命中在途自我保存键 → 连同更早的一起丢弃(它们都已落地)。
             if (sync.matchedSelfIndex >= 0) {
               pendingSelfDocKeysRef.current = pendingSelfDocKeysRef.current.slice(
                 sync.matchedSelfIndex + 1,
               );
             }
-            lastValidEditorDocRef.current = normalizedLive;
+            // exact echo 也可能是 live blockId=null、normalize 后才相等；只在结构已证明
+            // 相同的两种回声里同步 attrs。陈旧 pending echo 的 live 可能已继续编辑，不能按位置写 id。
+            if (sync.verdict === "block-id-echo" || sync.matchedSelfIndex === -1) {
+              const blockIdSync = createLocalBlockIdSyncTransaction(
+                editor,
+                normalizedIncoming,
+              );
+              if (blockIdSync) editor.view.dispatch(blockIdSync);
+            }
+            lastValidEditorDocRef.current = normalizePmDoc(editor.getJSON());
             lastVersionRef.current = scheduledVersion;
           } else {
             // 真·外部变更:我方在途编辑已被外部覆盖,清空在途自我键避免后续误判;
@@ -1173,6 +1185,36 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
 
 function setRemoteEditorContent(editor: Editor, content: string | PmDoc): void {
   editor.chain().setMeta(APPLYING_REMOTE_META, true).setContent(content).run();
+}
+
+function createLocalBlockIdSyncTransaction(
+  editor: Editor,
+  normalized: PmDoc,
+): Transaction | null {
+  const normalizedDoc = editor.schema.nodeFromJSON(normalized);
+  const normalizedIdsByPos = new Map<number, string>();
+  normalizedDoc.descendants((node, pos) => {
+    const blockId = node.attrs.blockId;
+    if (typeof blockId === "string" && blockId.length > 0) {
+      normalizedIdsByPos.set(pos, blockId);
+    }
+    return true;
+  });
+
+  const tr = editor.state.tr;
+  editor.state.doc.descendants((node, pos) => {
+    if (!Object.prototype.hasOwnProperty.call(node.attrs, "blockId")) return true;
+    const blockId = normalizedIdsByPos.get(pos);
+    if (!blockId) return true;
+    const currentBlockId = node.attrs.blockId;
+    if (currentBlockId === blockId) return true;
+    tr.setNodeMarkup(pos, undefined, { ...node.attrs, blockId }, node.marks);
+    return true;
+  });
+  if (!tr.docChanged) return null;
+  tr.setMeta(APPLYING_REMOTE_META, true);
+  tr.setMeta("addToHistory", false);
+  return tr;
 }
 
 function useReviewPatchDecorations({

@@ -58,6 +58,24 @@ describe("QrCard — validation loop 3", () => {
   // ──────────────── (a) Stream 中断时倒计时清理与卡片残留 ────────────────
 
   describe("(a) Stream termination — interval cleanup & residual card", () => {
+    it("长倒计时格式化为分秒", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-12T09:00:00.000Z"));
+      const data: QrCardBody = {
+        title: "飞书授权",
+        content: "https://test.qr",
+        expiresAt: Date.now() + 795 * 1000,
+        code: "ABC123",
+        refreshQuery: "refresh",
+        confirmQuery: null,
+        note: null,
+      };
+
+      render(<QrCard data={data} />);
+
+      expect(document.querySelector(".qr-card__expiry")?.textContent).toBe("13分15秒后过期");
+    });
+
     it("unmounts and clears interval when component is destroyed mid-countdown", () => {
       // 安排:卡片距过期还有 30 秒,已在倒计时
       const data: QrCardBody = {

@@ -1,6 +1,7 @@
 import { Button } from "@qingagent/ui-kit";
 import type { StyleTemplateItem } from "@qingagent/contract-ts";
 import { useEffect, useState } from "react";
+import { useConfirm } from "../../../../system";
 import { buildTemplateSummary, DERIVATIVE_STARTER_PRESETS, LaunchModalShell, SupplementField, TemplateEditorPage, TemplateGroup, type TemplateEditorMode } from "../launchModal";
 import type { ServerStream } from "../../data/serverStream";
 import type { DtypeDescriptor } from "./dtypeRegistry";
@@ -20,7 +21,7 @@ export const TRANSLATION_LANGUAGES = [
 export const MAX_TRANSLATION_LANGUAGES = 5;
 
 type StyleSlot = "layout" | "writing";
-type EditorState = { id?: string; slot: StyleSlot; name: string; detail: string; prompt: string };
+type EditorState = { id?: string; slot: StyleSlot; name: string; detail: string; prompt: string; builtin: boolean };
 
 const DERIVATIVE_LAUNCH_META = {
   gzh: {
@@ -63,6 +64,7 @@ export function DerivativeGenerateModal(props: {
   onClose: () => void;
   onGenerate: (params: DerivativeGenerateParams) => void | Promise<void>;
 }) {
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState<StyleTemplateItem[]>([]);
   const [writingStyleId, setWritingStyleId] = useState(props.initial.writingStyleId ?? props.initial.templateId);
   const [layoutStyleId, setLayoutStyleId] = useState<string | null>(props.initial.layoutStyleId ?? null);
@@ -102,7 +104,7 @@ export function DerivativeGenerateModal(props: {
     try {
       const full = await props.stream.getStyleTemplate(props.sessionId, item.id);
       if (full.slot === "instruction") throw new Error("非衍生稿风格模板");
-      setEditor({ id: full.id, slot: full.slot, name: full.name, detail: full.detail, prompt: full.prompt });
+      setEditor({ id: full.id, slot: full.slot, name: full.name, detail: full.detail, prompt: full.prompt, builtin: full.builtin });
     } catch { setError("模板读取失败，请重试"); }
   };
 
@@ -126,7 +128,14 @@ export function DerivativeGenerateModal(props: {
   };
 
   const deleteEditor = async () => {
-    if (!editor?.id) return;
+    if (!editor?.id || editor.builtin) return;
+    const accepted = await confirm({
+      title: `删除风格模板「${editor.name}」？`,
+      message: "删除后无法恢复。",
+      confirmLabel: "删除模板",
+      cancelLabel: "取消",
+    });
+    if (!accepted) return;
     setSaving(true);
     setError("");
     try {
@@ -170,7 +179,8 @@ export function DerivativeGenerateModal(props: {
           placeholders={DERIVATIVE_EDITOR_PLACEHOLDERS[editor.slot]}
           starters={props.descriptor.dtype === "translate" ? [] : DERIVATIVE_STARTER_PRESETS[props.descriptor.dtype][editor.slot] ?? []}
           saving={saving}
-          deleteDisabled={templates.filter((item) => item.slot === editor.slot).length <= 1}
+          deleteDisabled={editor.builtin || templates.filter((item) => item.slot === editor.slot).length <= 1}
+          deleteDisabledReason={editor.builtin ? "内置模板不可删除" : "每类至少保留一个模板"}
           onNameChange={(name) => setEditor((current) => current ? { ...current, name } : current)}
           onPromptChange={(prompt) => setEditor((current) => current ? { ...current, prompt } : current)}
           onStarterSelect={(starter) => setEditor({
@@ -226,7 +236,7 @@ export function DerivativeGenerateModal(props: {
                   const template = slotTemplates.find((candidate) => candidate.id === item.id);
                   if (template) void openTemplate(template);
                 }}
-                onCreate={() => { setError(""); setEditor({ slot, name: "", detail: "", prompt: "" }); }}
+                onCreate={() => { setError(""); setEditor({ slot, name: "", detail: "", prompt: "", builtin: false }); }}
               />
             );
           })}

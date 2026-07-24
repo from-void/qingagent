@@ -36,7 +36,7 @@ function unavailableInfo(reasonCode: string): ConnectorInfoDto[] {
 
 function errorResponse(c: Context, error: unknown) {
   if (error instanceof ConnectorMutationForbiddenError) {
-    return c.json({ error: error.code, reasonCode: error.reasonCode }, 403);
+    return c.json({ error: error.code, message: error.message, reasonCode: error.reasonCode }, 403);
   }
   const status = typeof error === "object" && error !== null && "status" in error
     ? Number((error as { status?: unknown }).status)
@@ -44,8 +44,13 @@ function errorResponse(c: Context, error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
     : "CONNECTOR_OPERATION_FAILED";
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "object" && error !== null && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "连接操作失败，请稍后重试。";
   const responseStatus = status >= 400 && status <= 599 ? status : 500;
-  return c.json({ error: code }, responseStatus as 400);
+  return c.json({ error: code, message }, responseStatus as 400);
 }
 
 export function createConnectorsRoutes(options: ConnectorsRoutesOptions = {}): Hono {

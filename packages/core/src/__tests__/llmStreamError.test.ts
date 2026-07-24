@@ -1078,8 +1078,14 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     )).toBe(true);
   });
 
-  it("writeDraft 已产出候选、后续 step idle 超时时保留 last-good 草稿而不 clear", async () => {
-    const { createSession, processAgentStream } = await import("../bridge/index.js");
+  it("writeDraft 候选提交后遇 abort 仍清理草稿，继续生成不复用旧基底", async () => {
+    const {
+      commitPatches,
+      createSession,
+      processAgentStream,
+      replaceDraftCandidateDoc,
+      settleDraftCandidate,
+    } = await import("../bridge/index.js");
     const { IDLE_TIMEOUT_ABORT_REASON } = await import("../agent-run/streamErrors.js");
     const sessionId = "idle-after-draft-checkpoint";
     await deleteDocumentFamily(sessionId);
@@ -1133,16 +1139,36 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
         frame.kind === "documentSnapshotWritten" ||
         (frame.kind === "docGenerationEvent" && frame.data.kind === "generation_finished")
       )).toBe(true);
-      expect(state.docDraftCandidateDoc).toEqual(candidate);
-      expect(checkpoint).toMatchObject({
-        docId: state.docId,
-        status: "draft_candidate",
-        sourceStreamId: "stream-idle-after-draft-checkpoint",
-        draftPmDoc: candidate,
-      });
-      expect(clearSpy).not.toHaveBeenCalled();
+      expect(state.docDraftBaseDoc).toBeNull();
+      expect(state.docDraftBaseVersion).toBeNull();
+      expect(state.docDraftCandidateDoc).toBeNull();
+      expect(checkpoint).toBeNull();
+      expect(state.docState).toEqual({ kind: "editing" });
+      expect(clearSpy).toHaveBeenCalledWith(state.docId);
       expect(bodies.some((body) => body.includes("已保留本轮生成的部分草稿"))).toBe(true);
       expect(bodies.some((body) => body.includes("未产出可用草稿"))).toBe(false);
+
+      const continuedSections: LegacySection[] = [{ kind: "p", data: { text: "继续后生成的新正文" } }];
+      const continuedCandidate = legacySectionsToPm(continuedSections as never);
+      replaceDraftCandidateDoc(state, continuedCandidate);
+      expect(state.docDraftBaseVersion).toBe(1);
+
+      const continued = await collectFramesAndReturn(settleDraftCandidate({
+        state,
+        agentMessageId: "agent-msg-continued",
+        streamId: "stream-idle-after-draft-continued",
+        runId: "run-idle-after-draft-continued",
+        wholeDocument: true,
+      }));
+      expect(continued.result.hunkCount).toBeGreaterThan(0);
+      expect(continued.result.docWritten).toBe(false);
+      expect(state.docState).toEqual({ kind: "pendingReview" });
+
+      const commitFrames = await collectFrames(commitPatches(state, [...state.suggestions.keys()]));
+      expect(state.docVersion).toBe(2);
+      expect(state.doc).toEqual(continuedCandidate);
+      expect(draftingFailures(continued.frames)).toHaveLength(0);
+      expect(commitFrames.some((frame) => frame.kind === "docCommitted")).toBe(true);
     } finally {
       clearSpy.mockRestore();
       await deleteDocumentFamily(sessionId);

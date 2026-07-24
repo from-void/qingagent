@@ -7,6 +7,7 @@ import { createSessionScopedTools } from "../session/sessionTools.js";
 import { annotationGroupsParseFailureInput } from "../tools/annotationGroups.js";
 
 vi.mock("@qingagent/db", () => ({
+  STYLE_TEMPLATE_DTYPES: ["gzh", "xhs", "translate", "deai"],
   replaceAnnotationGroupsByOrigin: vi.fn(async () => undefined),
 }));
 

@@ -123,7 +123,9 @@ export interface WorkspaceState {
 
 type PatchSummaryPart = Extract<ChatMessage["parts"][number], { kind: "patchSummary" }>;
 type PatchSummaryDataWithReviewOutcome = PatchSummaryPart["data"] & {
-  reviewOutcome?: "abandoned";
+  reviewOutcome?: "abandoned" | "failed" | "committed";
+  appliedCount?: number;
+  conflictCount?: number;
 };
 
 export function normalizeIncomingDocState(state: IncomingDocState): DocState {
@@ -274,6 +276,11 @@ function workspaceReducerMut(
       draft.todos = action.data.todos;
       return;
     case "docCommitted":
+      markLatestPatchSummaryCommittedMut(
+        draft,
+        action.data.appliedCount,
+        action.data.conflictCount,
+      );
       return;
     case "chatMessageAdded": {
       const msg = action.data.message;
@@ -300,6 +307,12 @@ function workspaceReducerMut(
         findToolCallInMessages(draft.messages, action.data.toolCallId);
       if (action.data.spec.status.kind === "committed") {
         markRejectedOnlyPatchSummariesAbandonedMut(draft);
+      }
+      if (
+        action.data.spec.body.kind === "docSuggestion" &&
+        action.data.spec.status.kind === "failed"
+      ) {
+        markPatchSummaryFailedMut(draft, [action.data.toolCallId]);
       }
       draft.toolCalls.set(action.data.toolCallId, action.data.spec);
       // 问卷被作答(askUser → done/failed)时,乐观清掉 askUser overlay:否则问卷卡(用 fullpageAsk)
@@ -598,6 +611,52 @@ function markRejectedOnlyPatchSummariesAbandonedMut(draft: WorkspaceState): void
       if (!hunkIds.every((id) => reviewIds.has(id))) continue;
       if (!hunkIds.every((id) => rejectedIds.has(id))) continue;
       (part.data as PatchSummaryDataWithReviewOutcome).reviewOutcome = "abandoned";
+    }
+  }
+}
+
+function markPatchSummaryFailedMut(
+  draft: WorkspaceState,
+  hunkIds: readonly string[],
+): void {
+  const failedIds = new Set(hunkIds);
+  if (failedIds.size === 0) return;
+  for (let messageIndex = draft.messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = draft.messages[messageIndex]!;
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]!;
+      if (part.kind !== "patchSummary") continue;
+      if (!part.data.hunkIds.some((id) => failedIds.has(id))) continue;
+      const data = part.data as PatchSummaryDataWithReviewOutcome;
+      // 成功是不可逆终态，禁止迟到的失败帧反向覆盖已落库摘要。
+      if (data.reviewOutcome === "committed") return;
+      data.reviewOutcome = "failed";
+      delete data.appliedCount;
+      delete data.conflictCount;
+      return;
+    }
+  }
+}
+
+function markLatestPatchSummaryCommittedMut(
+  draft: WorkspaceState,
+  appliedCount: number | undefined,
+  conflictCount: number | undefined,
+): void {
+  for (let messageIndex = draft.messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = draft.messages[messageIndex]!;
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]!;
+      if (part.kind !== "patchSummary") continue;
+      const data = part.data as PatchSummaryDataWithReviewOutcome;
+      if (data.reviewOutcome === "abandoned") return;
+      // 单项失效帧可能先于部分成功的 docCommitted 到达；仅正数 appliedCount
+      // 可以把整批摘要从 failed 纠正为 committed，旧协议未知计数仍 fail-closed。
+      if (data.reviewOutcome === "failed" && !(appliedCount !== undefined && appliedCount > 0)) return;
+      data.reviewOutcome = "committed";
+      if (appliedCount !== undefined) data.appliedCount = appliedCount;
+      if (conflictCount !== undefined) data.conflictCount = conflictCount;
+      return;
     }
   }
 }

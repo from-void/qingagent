@@ -1,14 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AnnotationGroup, PmStep } from "@qingagent/contract-ts";
 import {
+  buildAnnotationMappingSteps,
   buildAnnotationMappingNotice,
   mapAnnotationGroupsThroughSteps,
 } from "../doc-engine/annotationMapping.js";
+import type { PmBlockNode, PmDoc } from "@qingagent/pm-schema";
 import { getDocumentsClient, insertAnnotationGroups, persistMappedAnnotationGroups } from "@qingagent/db";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "@qingagent/db/testing";
 
 const anchor = (blockId: string, pmFrom: number, pmTo: number, quote: string) => ({
   blockId, pmFrom, pmTo, quote, textHash: `hash-${quote}`,
+});
+
+const paragraph = (blockId: string, value: string): PmBlockNode => ({
+  type: "paragraph",
+  attrs: { blockId },
+  content: [{ type: "text", text: value }],
+});
+
+const codeBlock = (blockId: string, value: string): PmBlockNode => ({
+  type: "codeBlock",
+  attrs: { blockId, language: "text" },
+  content: [{ type: "text", text: value }],
+} as PmBlockNode);
+
+const doc = (content: PmBlockNode[]): PmDoc => ({
+  type: "doc",
+  attrs: { schemaVersion: 1 },
+  content,
 });
 
 describe("annotation StepMap", () => {
@@ -120,5 +140,56 @@ describe("annotation StepMap", () => {
     expect(mapped.unlocatedGroupCount).toBe(1);
     expect(buildAnnotationMappingNotice(mapped.groups.length, mapped.unlocatedGroupCount))
       .toBe("批注落地结果：0处已定位；1处因文档已改动未能定位。");
+  });
+
+  it("块级尾部插入不伪造位置 0 step，前文批注坐标零平移且引句命中", () => {
+    const baseDoc = doc([
+      paragraph("annotated", "未改批注区"),
+      paragraph("tail", "保留尾段"),
+    ]);
+    const finalDoc = doc([
+      paragraph("annotated", "未改批注区"),
+      paragraph("tail", "保留尾段"),
+      paragraph("inserted", "新增块"),
+    ]);
+    const groups: AnnotationGroup[] = [{
+      id: "g-block-insert",
+      summary: "未改区批注",
+      note: "坐标不应移动",
+      origin: "role-review",
+      status: "reviewing",
+      anchors: [anchor("annotated", 1, 6, "未改批注区")],
+    }];
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+    expect(steps).toEqual([
+      expect.objectContaining({ stepType: "replace", from: 13, to: 13 }),
+    ]);
+    expect(mapAnnotationGroupsThroughSteps(groups, steps, finalDoc).groups).toEqual(groups);
+  });
+
+  it("等长整块替换使用顶层块区间，后文批注坐标零平移且引句命中", () => {
+    const baseDoc = doc([
+      codeBlock("code", "旧块"),
+      paragraph("annotated", "未改批注区"),
+    ]);
+    const finalDoc = doc([
+      codeBlock("code", "新块"),
+      paragraph("annotated", "未改批注区"),
+    ]);
+    const groups: AnnotationGroup[] = [{
+      id: "g-block-replace",
+      summary: "未改区批注",
+      note: "块包装大小不能造成漂移",
+      origin: "role-review",
+      status: "reviewing",
+      anchors: [anchor("annotated", 5, 10, "未改批注区")],
+    }];
+
+    const steps = buildAnnotationMappingSteps(baseDoc, finalDoc);
+    expect(steps).toEqual([
+      expect.objectContaining({ stepType: "replace", from: 0, to: 4 }),
+    ]);
+    expect(mapAnnotationGroupsThroughSteps(groups, steps, finalDoc).groups).toEqual(groups);
   });
 });

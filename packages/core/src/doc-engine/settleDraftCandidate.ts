@@ -373,32 +373,7 @@ export async function* settleDraftCandidate(opts: {
       };
     }
 
-    const isFirstSuccessfulDraft = previousDocVersion === 0;
-    const nextTitle = state.titlePinned
-      ? null
-      : isFirstSuccessfulDraft
-        ? await generateTitleAfterFirstDraft(state, requestContext)
-        : deriveTitleFromSections(state.legacySections);
     const abortSignal = requestContext?.get("abortSignal") as AbortSignal | undefined;
-    if (abortSignal?.aborted) {
-      recordSettleResultSpan(state, {
-        branch: "wholeDocument",
-        hunkCount: 0,
-        docWritten: true,
-        finalVersion: state.docVersion,
-        sourceStreamId: streamId,
-        runId,
-      });
-      return { hunkCount: 0, docWritten: true };
-    }
-    if (nextTitle) {
-      state.title = nextTitle;
-      yield {
-        kind: "sessionMeta",
-        data: { sessionId: state.sessionId, title: state.title },
-      };
-    }
-
     await documentDraftRepo.clear(state.docId).catch((err) => {
       logger.warn("Failed to clear pending draft after whole document commit", {
         sessionId: state.sessionId,
@@ -413,6 +388,31 @@ export async function* settleDraftCandidate(opts: {
       { kind: "editing" },
       "draft_candidate_committed",
     );
+    if (abortSignal?.aborted) {
+      recordSettleResultSpan(state, {
+        branch: "wholeDocument",
+        hunkCount: 0,
+        docWritten: true,
+        finalVersion: state.docVersion,
+        sourceStreamId: streamId,
+        runId,
+      });
+      return { hunkCount: 0, docWritten: true };
+    }
+
+    const isFirstSuccessfulDraft = previousDocVersion === 0;
+    const nextTitle = state.titlePinned
+      ? null
+      : isFirstSuccessfulDraft
+        ? await generateTitleAfterFirstDraft(state, requestContext)
+        : deriveTitleFromSections(state.legacySections);
+    if (nextTitle) {
+      state.title = nextTitle;
+      yield {
+        kind: "sessionMeta",
+        data: { sessionId: state.sessionId, title: state.title },
+      };
+    }
     recordSettleResultSpan(state, {
       branch: "wholeDocument",
       hunkCount: 0,

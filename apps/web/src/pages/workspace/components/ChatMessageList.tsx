@@ -211,7 +211,9 @@ type MessageRowProps = {
 type VisibleMessageRole = "user" | "agent" | "system";
 type PatchSummaryPart = Extract<MessagePart, { kind: "patchSummary" }>;
 type PatchSummaryDataWithReviewOutcome = PatchSummaryPart["data"] & {
-  reviewOutcome?: "abandoned";
+  reviewOutcome?: "abandoned" | "failed" | "committed";
+  appliedCount?: number;
+  conflictCount?: number;
 };
 
 function isUserStandaloneCardPart(part: MessagePart): part is Extract<MessagePart, { kind: "reviewOutcome" | "askUserAnswerCard" | "actionCard" }> {
@@ -666,9 +668,13 @@ function getPatchSummaryKey(hunkIds: readonly string[]): string {
   return hunkIds.slice().sort().join(",");
 }
 
-function getPatchSummaryReviewOutcome(part: PatchSummaryPart): "abandoned" | null {
+function getPatchSummaryReviewOutcome(
+  part: PatchSummaryPart,
+): "abandoned" | "failed" | "committed" | null {
   const outcome = (part.data as PatchSummaryDataWithReviewOutcome).reviewOutcome;
-  return outcome === "abandoned" ? outcome : null;
+  return outcome === "abandoned" || outcome === "failed" || outcome === "committed"
+    ? outcome
+    : null;
 }
 
 /**
@@ -1233,8 +1239,14 @@ const PartView = memo(function PartView({
       const partKey = getPatchSummaryKey(part.data.hunkIds);
       const isLive =
         livePatchCount != null && liveHunkKey != null && partKey === liveHunkKey;
-      const count = isLive ? (livePatchCount as number) : part.data.count;
       const reviewOutcome = getPatchSummaryReviewOutcome(part);
+      const committedCount = (part.data as PatchSummaryDataWithReviewOutcome).appliedCount;
+      const conflictCount = (part.data as PatchSummaryDataWithReviewOutcome).conflictCount;
+      const count = reviewOutcome === "committed" && committedCount !== undefined
+        ? committedCount
+        : isLive
+          ? (livePatchCount as number)
+          : part.data.count;
       // 整篇改写(大改):live 由 wholeDocReview 判定;commit 后该轮 live 信号消失,靠 wholeDocReviewKeys 记忆。
       const rememberedWholeDocKey = buildWholeDocReviewKey(sessionId, partKey);
       const isWholeDoc =
@@ -1250,8 +1262,14 @@ const PartView = memo(function PartView({
             className="wf-msg tool"
             style={{ color: "var(--ink-3)", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}
           >
-            {reviewOutcome === "abandoned" ? (
+            {reviewOutcome === "failed" ? (
+              <>本轮修改未写入，正文保持上一版</>
+            ) : reviewOutcome === "abandoned" ? (
               <>本轮候选已放弃，正文保持上一版</>
+            ) : reviewOutcome === "committed" && committedCount !== undefined && conflictCount !== undefined && conflictCount > 0 ? (
+              <>{committedCount} 处已写入，{conflictCount} 处因文档变化失效</>
+            ) : reviewOutcome === "committed" && committedCount === undefined ? (
+              <>本轮修改已写入</>
             ) : isLive && patchRevealing && !isWholeDoc ? (
               <>
                 <span className="chat-loading-dots"><span /><span /><span /></span>

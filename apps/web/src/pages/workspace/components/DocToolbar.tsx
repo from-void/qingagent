@@ -1,6 +1,6 @@
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
-import { NodeSelection } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import type { AiModifyTarget } from "../data/aiModifyTarget";
 import { formatKey } from "../../../overlays/settings/shortcutsRegistry";
@@ -70,6 +70,40 @@ const COMMAND_SHORTCUTS: Record<string, string[]> = {
   blockquote: ["Mod", "Shift", "B"],
   codeBlock: ["Mod", "Alt", "C"],
 };
+
+export type SavedToolbarSelection =
+  | { kind: "text"; anchor: number; head: number }
+  | { kind: "node"; anchor: number };
+
+/** 保存 PM 选区的方向与类型；CellSelection 使用独立表格工具栏，不进入正文工具栏恢复链路。 */
+export function captureToolbarSelection(editor: Pick<Editor, "state">): SavedToolbarSelection | null {
+  const selection = editor.state.selection;
+  if (selection instanceof TextSelection && !selection.empty) {
+    return { kind: "text", anchor: selection.anchor, head: selection.head };
+  }
+  if (selection instanceof NodeSelection) {
+    return { kind: "node", anchor: selection.anchor };
+  }
+  return null;
+}
+
+/** 用当前文档重新 resolve 两端，避免浮层接管焦点后命令落到塌陷光标。 */
+export function restoreToolbarSelection(
+  editor: Pick<Editor, "state" | "view">,
+  saved: SavedToolbarSelection,
+): boolean {
+  const doc = editor.state.doc;
+  const clamp = (pos: number) => Math.max(0, Math.min(pos, doc.content.size));
+  try {
+    const selection = saved.kind === "text"
+      ? TextSelection.between(doc.resolve(clamp(saved.anchor)), doc.resolve(clamp(saved.head)))
+      : NodeSelection.create(doc, clamp(saved.anchor));
+    editor.view.dispatch(editor.state.tr.setSelection(selection));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeOrderedListStyle(value: unknown): OrderedListStyle | null {
   return ORDERED_LIST_STYLE_OPTIONS.some((item) => item.value === value) ? (value as OrderedListStyle) : null;
@@ -359,6 +393,7 @@ export function DocToolbar({
   // wrapper. Saving on every selectionchange guarantees the value is
   // available when handleAiModify runs.
   const savedSelRef = useRef<SavedAiSelection | null>(null);
+  const savedCommandSelRef = useRef<SavedToolbarSelection | null>(null);
   const toolbarPointerDownRef = useRef(false);
   const toolbarPointerDownTimerRef = useRef<number | null>(null);
 
@@ -479,6 +514,7 @@ export function DocToolbar({
     closeLinkEditor();
     setTablePicker(null);
     savedSelRef.current = null;
+    savedCommandSelRef.current = null;
   }, [closeLinkEditor, editorEditable]);
 
   useEffect(() => {
@@ -488,6 +524,7 @@ export function DocToolbar({
       closeLinkEditor();
       setTablePicker(null);
       savedSelRef.current = null;
+      savedCommandSelRef.current = null;
       return;
     }
     const onSel = () => {
@@ -505,6 +542,8 @@ export function DocToolbar({
           savedSelRef.current = null;
           return;
         }
+        // 命令选区与 AI 单块定位分开保存：跨段 TextSelection 对格式命令完全有效。
+        savedCommandSelRef.current = captureToolbarSelection(editor);
         const target = resolveAiModifyLiveSelection(editor);
         if (target.kind === "ready") {
           savedSelRef.current = {
@@ -609,17 +648,39 @@ export function DocToolbar({
     return () => document.removeEventListener("keydown", onKey);
   }, [openDd]);
 
+  const saveCurrentCommandSelection = useCallback(() => {
+    if (!editor || !editor.isEditable) return;
+    const saved = captureToolbarSelection(editor);
+    // 菜单第二次点击时焦点可能已塌陷；不能覆盖第一次按下触发器时保存的正文范围。
+    if (saved) savedCommandSelRef.current = saved;
+  }, [editor]);
+
+  const restoreSavedCommandSelection = useCallback(() => {
+    if (!editor || !savedCommandSelRef.current) return true;
+    return reportToolbarCommandResult(
+      restoreToolbarSelection(editor, savedCommandSelRef.current),
+      "恢复工具栏选区",
+      onToast,
+    );
+  }, [editor, onToast]);
+
   const swallowMouseDown = useCallback((e: React.MouseEvent) => {
+    saveCurrentCommandSelection();
     markToolbarPointerDown();
     e.preventDefault();
-  }, [markToolbarPointerDown]);
+  }, [markToolbarPointerDown, saveCurrentCommandSelection]);
 
   const runCommand = useCallback(
     async (cmd: string, val?: string | null) => {
       if (!editor) return;
       if (!editor.isEditable) return;
       if (!isToolbarCommandEnabled(cmd, val, toolbarUnlock)) return;
-      const chain = editor.chain().focus();
+      if (!restoreSavedCommandSelection()) {
+        setOpenDd(null);
+        return;
+      }
+      // 选区已由 PM transaction 恢复；此处再 chain.focus() 会从下拉菜单读取 DOM 光标并将 range 塌陷。
+      const chain = editor.chain();
       const run = (label: string, action: () => boolean) =>
         reportToolbarCommandResult(action(), label, onToast);
       switch (cmd) {
@@ -762,9 +823,10 @@ export function DocToolbar({
         }
       }
       setOpenDd(null);
+      savedCommandSelRef.current = captureToolbarSelection(editor);
       positionToolbar();
     },
-    [editor, onToast, openLinkEditor, pos, positionToolbar, toolbarUnlock],
+    [editor, onToast, openLinkEditor, pos, positionToolbar, restoreSavedCommandSelection, toolbarUnlock],
   );
 
   const handleInsertImage = useCallback(() => {
@@ -774,6 +836,7 @@ export function DocToolbar({
     void pickFile("image/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!restoreSavedCommandSelection()) return;
       try {
         await insertImageAsset(editor, file);
       } catch (error) {
@@ -781,7 +844,7 @@ export function DocToolbar({
         onToast?.(uploadFailureMessage(error, "图片上传失败，请重试"));
       }
     });
-  }, [editor, onToast]);
+  }, [editor, onToast, restoreSavedCommandSelection]);
 
   const handleInsertFile = useCallback(() => {
     if (!editor) return;
@@ -790,6 +853,7 @@ export function DocToolbar({
     void pickFile("*/*").then(async (file) => {
       if (!file) return;
       if (!editor.isEditable) return;
+      if (!restoreSavedCommandSelection()) return;
       try {
         await insertFileAsset(editor, file);
       } catch (error) {
@@ -797,7 +861,7 @@ export function DocToolbar({
         onToast?.(uploadFailureMessage(error, "文件上传失败，请重试"));
       }
     });
-  }, [editor, onToast]);
+  }, [editor, onToast, restoreSavedCommandSelection]);
 
   const handleAiModify = useCallback(() => {
     if (!editor) return;
@@ -865,15 +929,16 @@ export function DocToolbar({
 
   const insertTableAtSize = useCallback((size: TableSize) => {
     if (!editor || !editor.isEditable || !toolbarUnlock.blocks) return;
+    if (!restoreSavedCommandSelection()) return;
     reportToolbarCommandResult(
-      editor.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: false }).run(),
+      editor.chain().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: false }).run(),
       "插入表格",
       onToast,
     );
     setTablePicker(null);
     setOpenDd(null);
     positionToolbar();
-  }, [editor, onToast, positionToolbar, toolbarUnlock.blocks]);
+  }, [editor, onToast, positionToolbar, restoreSavedCommandSelection, toolbarUnlock.blocks]);
 
   const activeOrderedListStyle = editor?.isActive("orderedList")
     ? normalizeOrderedListStyle(editor.getAttributes("orderedList").listStyle) ?? "decimal"

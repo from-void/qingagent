@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyIncomingDoc,
+  docKeyWithoutBlockIds,
   PENDING_SELF_DOC_KEYS_CAP,
   pushPendingSelfDocKey,
 } from "./docSyncClassify";
@@ -52,6 +53,38 @@ describe("classifyIncomingDoc —— 受控回环回声 vs 外部变更", () => 
         pendingSelfKeys: [ABC, ABCDEF],
       }),
     ).toEqual({ verdict: "echo", matchedSelfIndex: 1 });
+  });
+
+  it("正文结构相同且只差 blockId → block-id-echo，不误判整篇外部改写", () => {
+    const live = {
+      type: "doc",
+      content: [{ type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "新块" }] }],
+    };
+    const incoming = {
+      type: "doc",
+      content: [{ type: "paragraph", attrs: { blockId: "canonical-new" }, content: [{ type: "text", text: "新块" }] }],
+    };
+    expect(
+      classifyIncomingDoc({
+        incomingKey: JSON.stringify(incoming),
+        liveKey: JSON.stringify(live),
+        pendingSelfKeys: [],
+        incomingWithoutBlockIdsKey: docKeyWithoutBlockIds(incoming),
+        liveWithoutBlockIdsKey: docKeyWithoutBlockIds(live),
+      }),
+    ).toEqual({ verdict: "block-id-echo", matchedSelfIndex: -1 });
+  });
+
+  it("去掉 blockId 后正文仍不同 → 保持 external", () => {
+    expect(
+      classifyIncomingDoc({
+        incomingKey: EXTERNAL,
+        liveKey: ABCDEF,
+        pendingSelfKeys: [],
+        incomingWithoutBlockIdsKey: EXTERNAL,
+        liveWithoutBlockIdsKey: ABCDEF,
+      }),
+    ).toEqual({ verdict: "external", matchedSelfIndex: -1 });
   });
 });
 

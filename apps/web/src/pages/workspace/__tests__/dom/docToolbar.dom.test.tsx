@@ -6,15 +6,17 @@ import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NodeSelection } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import { setTableCellSelectionFromDom } from "../../data/tableToolbar";
 import {
   DocToolbar,
+  captureToolbarSelection,
   resolveDiagramSourceForInsert,
   resolveSelectedBlockNode,
   isEditorRangeSingleAtomBlock,
   reportToolbarCommandResult,
+  restoreToolbarSelection,
   toolbarTitle,
 } from "../../components/DocToolbar";
 
@@ -319,6 +321,126 @@ describe("DocToolbar round-1 regressions", () => {
     expect(onToast).toHaveBeenCalledWith("无法执行：插入表格");
   });
 
+  it("块样式下拉在编辑器选区已塌陷时恢复 savedSelRef 后再执行命令", async () => {
+    editor = createTwoParagraphEditor();
+    vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
+      .mockImplementation(() => undefined);
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    await act(async () => {
+      editor!.commands.setTextSelection({ from: 1, to: 5 });
+      document.dispatchEvent(new Event("selectionchange"));
+      // 模拟下拉菜单接管焦点后 PM 选区掉到文档尾段；savedSelRef 仍指向第一段。
+      editor!.commands.setTextSelection(editor!.state.doc.content.size - 1);
+      getButtonByText("标题和块样式").click();
+    });
+    await act(async () => {
+      getButtonByText("引用").click();
+    });
+
+    const doc = normalizePmDoc(editor.getJSON());
+    expect(doc.content.map((block) => block.type)).toEqual(["blockquote", "paragraph"]);
+    expect(doc.content[0]?.type === "blockquote" ? doc.content[0].content[0]?.attrs.blockId : null)
+      .toBe("p-first");
+  });
+
+  it("跨两个段落恢复选区后，加粗、对齐和块类型命令作用于完整范围", async () => {
+    editor = createTwoParagraphEditor();
+    vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
+      .mockImplementation(() => undefined);
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    const selectBothParagraphsThenLoseFocus = async () => {
+      await act(async () => {
+        editor!.commands.setTextSelection({ from: 1, to: 9 });
+        document.dispatchEvent(new Event("selectionchange"));
+        editor!.commands.setTextSelection(editor!.state.doc.content.size - 1);
+      });
+    };
+    const expectFullSelection = () => {
+      expect(editor!.state.selection).toBeInstanceOf(TextSelection);
+      expect(editor!.state.selection).toMatchObject({ anchor: 1, head: 9 });
+    };
+
+    await selectBothParagraphsThenLoseFocus();
+    await act(async () => getButtonByText("加粗").click());
+    expectFullSelection();
+    const boldDoc = normalizePmDoc(editor.getJSON());
+    expect(boldDoc.content.map((block) => block.type)).toEqual(["paragraph", "paragraph"]);
+    expect(boldDoc.content.every((block) =>
+      block.type === "paragraph" && block.content?.every((node) =>
+        node.type !== "text" || node.marks?.some((mark) => mark.type === "bold"),
+      ),
+    )).toBe(true);
+
+    await selectBothParagraphsThenLoseFocus();
+    await act(async () => getButtonByText("对齐方式").click());
+    await act(async () => getButtonByText("居中").click());
+    expectFullSelection();
+    const alignedDoc = normalizePmDoc(editor.getJSON());
+    expect(alignedDoc.content.every((block) =>
+      block.type === "paragraph" && block.attrs.textAlign === "center",
+    )).toBe(true);
+
+    await selectBothParagraphsThenLoseFocus();
+    await act(async () => getButtonByText("标题和块样式").click());
+    await act(async () => getButtonByText("二级标题").click());
+    expectFullSelection();
+    const headingDoc = normalizePmDoc(editor.getJSON());
+    expect(headingDoc.content.every((block) =>
+      block.type === "heading" && block.attrs.level === 2,
+    )).toBe(true);
+  });
+
+  it("工具栏选区快照按 anchor/head 恢复跨块反向 TextSelection", () => {
+    editor = createTwoParagraphEditor();
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 9, 1)));
+
+    const saved = captureToolbarSelection(editor);
+    expect(saved).toEqual({ kind: "text", anchor: 9, head: 1 });
+    editor.commands.setTextSelection(2);
+
+    expect(saved && restoreToolbarSelection(editor, saved)).toBe(true);
+    expect(editor.state.selection).toMatchObject({ anchor: 9, head: 1 });
+  });
+
+  it("块样式命令 run 返回 false 时不静默吞掉，给出 toast", async () => {
+    const onToast = vi.fn();
+    const fakeEditor = createCommandEditor(false);
+    await render(
+      <DocToolbar
+        active
+        editor={fakeEditor}
+        containerSelector="body"
+        onAiModify={async () => true}
+        onToast={onToast}
+      />,
+    );
+
+    await act(async () => {
+      getButtonByText("标题和块样式").click();
+    });
+    await act(async () => {
+      getButtonByText("引用").click();
+    });
+
+    expect(onToast).toHaveBeenCalledWith("无法执行：引用");
+  });
+
   it("工具栏插入分栏会写入 columnList 节点", async () => {
     editor = createTextEditor("正文");
     vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
@@ -496,6 +618,31 @@ function createTextEditor(text: string, blockId = "p-text") {
   });
 }
 
+function createTwoParagraphEditor() {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  return new Editor({
+    element,
+    extensions: createQingagentExtensions(),
+    content: {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "p-first" },
+          content: [{ type: "text", text: "目标段落" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "p-tail" },
+          content: [{ type: "text", text: "尾段" }],
+        },
+      ],
+    } satisfies PmDoc,
+  });
+}
+
 function createTableEditor() {
   const element = document.createElement("div");
   document.body.appendChild(element);
@@ -562,6 +709,7 @@ function createCommandEditor(runResult: boolean): Editor {
   Object.assign(chain, {
     focus: chainMethod,
     insertTable: chainMethod,
+    toggleBlockquote: chainMethod,
     run: vi.fn(() => runResult),
   });
   return {

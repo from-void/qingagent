@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { applyBlockEdits, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
-import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
+import {
+  DocumentSnapshotView,
+  type DocumentSnapshotViewHandle,
+} from "../../components/DocumentSnapshotView";
 import type { NativePresentationRun } from "../../data/nativeDiffAnimation";
 
 vi.mock("mermaid", () => ({
@@ -407,6 +410,104 @@ describe("DocumentSnapshotView setContent 延迟装载", () => {
     expect(JSON.stringify(onEditorChange.mock.calls[0]?.[0])).toContain(
       "卸载前新内容",
     );
+  });
+
+  it("新建块防抖回写后，blockId 自我回声不重投影也不甩走选区", async () => {
+    let editor: Editor | null = null;
+    let savedDoc: PmDoc | null = null;
+    let version = 1;
+    const viewRef = createRef<DocumentSnapshotViewHandle>();
+    const baseDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "p-first" },
+          content: [{ type: "text", text: "前段" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "p-tail" },
+          content: [{ type: "text", text: "尾段" }],
+        },
+      ],
+    } as PmDoc;
+
+    const renderEcho = (doc: PmDoc) => {
+      root.render(
+        <DocumentSnapshotView
+          ref={viewRef}
+          doc={pmDocToViewDocumentSnapshot(doc, version)}
+          docId="session-local-block-id"
+          editable
+          interactiveEditable
+          showPatches={false}
+          acceptedPatches={new Set()}
+          rejectedPatches={new Set()}
+          onEditorReady={(readyEditor) => {
+            editor = readyEditor;
+          }}
+          onEditorChange={async (nextDoc) => {
+            savedDoc = nextDoc;
+            version += 1;
+            renderEcho({
+              ...nextDoc,
+              content: nextDoc.content.map((block, index) =>
+                index === 1
+                  ? { ...block, attrs: { ...block.attrs, blockId: "canonical-new-block" } }
+                  : block,
+              ),
+            } as PmDoc);
+          }}
+        />,
+      );
+    };
+
+    act(() => renderEcho(baseDoc));
+    await flush();
+    expect(editor).not.toBeNull();
+
+    await act(async () => {
+      expect(
+        editor!.chain()
+          .insertContentAt(4, {
+            type: "paragraph",
+            content: [{ type: "text", text: "新块" }],
+          })
+          .setTextSelection(7)
+          .run(),
+      ).toBe(true);
+    });
+    const selectionBeforeSave = {
+      anchor: editor!.state.selection.anchor,
+      head: editor!.state.selection.head,
+    };
+    expect(selectionBeforeSave.anchor).toBeLessThan(editor!.state.doc.content.size);
+    // main 的 dedupeBlockIds 插件已在本地插入事务中补齐临时 ID；这里继续验证
+    // canonical 只替换该 ID 时走 attrs 同步，而不是 setContent。
+    expect(collectBlockIdsByType(editor!.getJSON(), "paragraph")).not.toContain(null);
+
+    const replaceSteps: unknown[] = [];
+    editor!.on("transaction", ({ transaction }) => {
+      for (const step of transaction.steps) {
+        if (step.toJSON().stepType === "replace") replaceSteps.push(step.toJSON());
+      }
+    });
+    await act(async () => {
+      await viewRef.current?.flushPendingDocSave();
+    });
+    await flush();
+
+    expect(savedDoc).not.toBeNull();
+    expect(collectBlockIdsByType(savedDoc, "paragraph")).not.toContain(null);
+    expect(collectBlockIdsByType(editor!.getJSON(), "paragraph")).not.toContain(null);
+    expect(collectBlockIdsByType(editor!.getJSON(), "paragraph")).toContain("canonical-new-block");
+    expect({
+      anchor: editor!.state.selection.anchor,
+      head: editor!.state.selection.head,
+    }).toEqual(selectionBeforeSave);
+    expect(replaceSteps).toHaveLength(0);
   });
 
   it("载入含重复 blockId 的存量 PmDoc 后只自愈并保存一次，随后 AI 编辑可用", async () => {

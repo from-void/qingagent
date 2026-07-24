@@ -74,15 +74,16 @@ export function markdownToPm(markdown: string): PmDoc {
       continue;
     }
 
-    const codeMatch = line.match(/^```(\S+)?\s*$/);
+    const codeMatch = line.match(/^(`{3,})(\S+)?\s*$/);
     if (codeMatch) {
+      const openingFenceLength = codeMatch[1]?.length ?? 3;
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !/^```\s*$/.test(lines[i] ?? "")) {
+      while (i < lines.length && !isClosingBacktickFence(lines[i] ?? "", openingFenceLength)) {
         body.push(lines[i] ?? "");
         i += 1;
       }
-      sections.push({ kind: "code", data: { body: body.join("\n"), language: codeMatch[1] ?? "plaintext" } });
+      sections.push({ kind: "code", data: { body: body.join("\n"), language: codeMatch[2] ?? "plaintext" } });
       continue;
     }
 
@@ -152,6 +153,11 @@ export function markdownToPm(markdown: string): PmDoc {
     }),
   };
   return materializeDraftBlockIds(withParsedMarkdownInlines(replaced), { namespace: "markdown.html-table" });
+}
+
+function isClosingBacktickFence(line: string, openingFenceLength: number): boolean {
+  const match = line.match(/^(`+)\s*$/);
+  return (match?.[1]?.length ?? 0) >= openingFenceLength;
 }
 
 type HtmlNode = {

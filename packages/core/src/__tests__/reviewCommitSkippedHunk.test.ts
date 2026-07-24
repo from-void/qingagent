@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
+import type { BridgeFrame, ChatMessage, DiffHunk, DocSuggestion } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
   pmToLegacySections,
@@ -27,6 +27,7 @@ import {
   prepareTempDocumentsDb,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
+import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 
 // 单①回归:审核提交时,若某 hunk 的目标块已被并发删除(canonical 文档比审阅候选少一块),
 // 该 hunk 必须被跳过——不能记进 document_ops.steps(修记假账),对应 suggestion 按"未应用"
@@ -130,6 +131,23 @@ async function seedReviewState(
     });
     await upsertDocumentSuggestion(suggestion);
   }
+  const reviewMessage: ChatMessage = {
+    id: "msg-review",
+    role: { kind: "agent" },
+    ts: "2026-07-17T00:00:00.000Z",
+    parts: [
+      ...[...state.suggestions.values()].map((record) => ({
+        kind: "toolCall" as const,
+        data: buildSuggestionToolCallSpec(record.suggestion, { kind: "reviewing" }),
+      })),
+      {
+        kind: "patchSummary" as const,
+        data: { count: hunks.length, hunkIds: hunks.map((hunk) => hunk.hunkId) },
+      },
+    ],
+    chips: null,
+  };
+  state.chatHistory.push(reviewMessage);
   return hunks;
 }
 
@@ -278,6 +296,45 @@ describe("审核提交：部分采纳重放与整批候选事务门", () => {
       suggestionId: droppedHunk.hunkId,
     });
     expect(state.suggestions.size).toBe(0);
+  });
+
+  it("无完整候选快照时只应用存活块，并如实结算部分成功摘要", async () => {
+    const state = createSession("commit-partial-skip-deleted-block");
+    const base = doc([paragraph("blk-a", "甲原文"), paragraph("blk-b", "乙原文")]);
+    const draft = doc([paragraph("blk-a", "甲新文"), paragraph("blk-b", "乙新文")]);
+    const [hunkA, hunkB] = await seedReviewState(state, base, draft);
+    if (!hunkA || !hunkB) throw new Error("fixture missing hunks");
+    state.docDraftCandidateDoc = null;
+    state.docDraftCandidateSections = null;
+
+    await seedCanonical(state, doc([paragraph("blk-a", "甲原文")]));
+    const frames = await collectFrames(
+      commitPatches(state, [hunkA.hunkId, hunkB.hunkId]),
+    );
+
+    expect(state.doc?.content.map(blockText)).toEqual(["甲新文"]);
+    expect(await patchStepCounts(state.docId)).toEqual([1]);
+    expect(toolStatusesFor(frames, hunkA.hunkId)).not.toContain("failed");
+    expect(toolStatusesFor(frames, hunkB.hunkId)).toContain("failed");
+    expect(failedReasonsFor(frames, hunkB.hunkId).join("")).toContain("失效");
+    expect(failedReasonsFor(frames, hunkB.hunkId).join("")).not.toContain("未写入");
+
+    const summary = state.chatHistory
+      .flatMap((message) => message.parts)
+      .find((part) => part.kind === "patchSummary");
+    expect(summary).toMatchObject({
+      kind: "patchSummary",
+      data: {
+        reviewOutcome: "committed",
+        appliedCount: 1,
+        conflictCount: 1,
+      },
+    });
+    expect(frames.find((frame) => frame.kind === "docCommitted")).toMatchObject({
+      data: { appliedCount: 1, conflictCount: 1 },
+    });
+    expect(state.suggestions.size).toBe(0);
+    expect(state.docState).toEqual({ kind: "editing" });
   });
 
   it("整批应用遇到同版本基线哈希漂移时不部分落库并保留全部候选", async () => {

@@ -6,6 +6,7 @@ import { createSession } from "../session/sessionState.js";
 import {
   beginTurnOwnership,
   bindTurnOwnershipToRequestContext,
+  invalidateTurnOwnership,
 } from "../session/turnOwnership.js";
 import {
   buildWorkingMemoryPromptMessage,
@@ -245,6 +246,53 @@ describe("Working Memory 冻结快照", () => {
       expect(mockState.memory.updateWorkingMemory).not.toHaveBeenCalled();
       expect(state._workingMemoryUpdatedThisSession).not.toBe(true);
     }
+  });
+
+  it("updateWorkingMemory 越过会话 CAS 写边界后遇到 stop，不产生“失败但已写”", async () => {
+    const { createUpdateWorkingMemoryTool } = await import("../session/workingMemory.js");
+    const state = createSession("wm-stop-at-persist-boundary");
+    const controller = new AbortController();
+    const ownership = beginTurnOwnership(state, "wm-stop-at-persist-boundary:attempt:0");
+    const requestContext = new RequestContext();
+    bindTurnOwnershipToRequestContext(requestContext, ownership);
+    const tool = createUpdateWorkingMemoryTool(state);
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    mockState.memory.updateWorkingMemory.mockImplementationOnce(async (
+      { workingMemory }: { workingMemory: string },
+    ) => {
+      markWriteStarted();
+      await writeGate;
+      mockState.workingMemoryValue = workingMemory;
+    });
+
+    const resultPromise = tool.execute!(
+      {
+        memory: "# 已越过写边界",
+        reason: "模拟 stop 与无 abort 的 Mastra 写并发",
+      },
+      {
+        abortSignal: controller.signal,
+        requestContext,
+      } as never,
+    );
+    await writeStarted;
+    controller.abort(new DOMException("用户停止", "AbortError"));
+    invalidateTurnOwnership(state, ownership);
+    releaseWrite();
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: true,
+      effective: "next_session",
+    });
+    expect(mockState.workingMemoryValue).toBe("# 已越过写边界");
+    expect(state._workingMemoryUpdatedThisSession).toBe(true);
   });
 
   it.each([

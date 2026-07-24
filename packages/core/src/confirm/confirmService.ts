@@ -291,6 +291,16 @@ export class ConfirmService {
     decisionId: string,
     resolution: ConfirmResolved["resolution"],
   ): Promise<void> {
+    this.finishDecisionInMemory(state, pending, decisionId, resolution);
+    await this.persistDecisionState(state, `confirm:${resolution}`);
+  }
+
+  finishDecisionInMemory(
+    state: SessionState,
+    pending: PendingConfirm,
+    decisionId: string,
+    resolution: ConfirmResolved["resolution"],
+  ): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
     state.pendingConfirms.delete(pending.toolCallId);
@@ -306,21 +316,38 @@ export class ConfirmService {
       resolution,
       expiresAt: this.#now() + CONFIRM_TTL_MS,
     });
-    await this.#persist(state, `confirm:${resolution}`);
   }
 
   async failDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
+    this.failDecisionInMemory(state, pending);
+    await this.persistDecisionState(state, "confirm:failed");
+  }
+
+  failDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
     state.pendingConfirms.delete(pending.toolCallId);
-    await this.#persist(state, "confirm:failed");
   }
 
   async expireDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
+    this.expireDecisionInMemory(state, pending);
+    await this.persistDecisionState(state, "confirm:expired");
+  }
+
+  expireDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
     state.pendingConfirms.delete(pending.toolCallId);
-    await this.#persist(state, "confirm:expired");
+  }
+
+  persistDecisionState(
+    state: SessionState,
+    reason:
+      | `confirm:${ConfirmResolved["resolution"]}`
+      | "confirm:failed"
+      | "confirm:expired",
+  ): Promise<void> {
+    return this.#persist(state, reason);
   }
 
   clearSession(state: SessionState): void {

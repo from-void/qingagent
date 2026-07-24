@@ -109,6 +109,9 @@ export function createUpdateWorkingMemoryTool(state: SessionState) {
       const writeGuard = captureTurnWriteGuard(state, context);
       try {
         const nextMemory = normalizeWorkingMemory(input.memory) ?? "";
+        // Mastra 1.22.1 的 updateWorkingMemory 不接 AbortSignal/CAS。这里紧贴
+        // 不可取消的外部写边界做 owner/generation CAS；一旦调用已获准进入，
+        // 后续 stop 不能再把已经落库的结果写后判成失败，也不做危险回滚。
         assertTurnWriteAllowed(state, writeGuard);
         await getMemory().updateWorkingMemory({
           threadId: state.threadId ?? state.sessionId,
@@ -116,7 +119,6 @@ export function createUpdateWorkingMemoryTool(state: SessionState) {
           workingMemory: nextMemory,
           memoryConfig: QINGAGENT_WORKING_MEMORY_CONFIG,
         });
-        assertTurnWriteAllowed(state, writeGuard);
         state._workingMemoryUpdatedThisSession = true;
         logger.info("[workingMemory] updated", {
           sessionId: state.sessionId,

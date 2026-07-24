@@ -144,6 +144,40 @@ describe("safeRegex", () => {
     });
   });
 
+  it("sr-inlineWorker-esm: ESM 父模块无需旁车 worker 产物也能正常执行", () => {
+    const moduleUrl = new URL("../safeRegex.ts", import.meta.url).href;
+    const workspaceRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+    const script = [
+      `import { compileSafeRegex, execSafeRegexAll, terminateSafeRegexWorkersForTest } from ${JSON.stringify(moduleUrl)};`,
+      `const compiled = compileSafeRegex("a\\\\d");`,
+      `if (!compiled.ok) throw new Error(compiled.error);`,
+      `const result = await execSafeRegexAll(compiled.re, "a1 b2 a3");`,
+      `terminateSafeRegexWorkersForTest();`,
+      `process.stdout.write(JSON.stringify({ ok: result.ok, count: result.ok ? result.matches.length : 0, error: result.ok ? null : result.error }));`,
+    ].join("\n");
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          QINGAGENT_SAFE_REGEX_DISABLE_WORKER: "0",
+        },
+        encoding: "utf8",
+        timeout: 8_000,
+      },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({
+      ok: true,
+      count: 2,
+      error: null,
+    });
+  });
+
   it("sr-workerExit: 运行中 worker 异常退出返回稳定不可用错误", async () => {
     const compiled = compileSafeRegex("(?:a|aa)+$");
     expect(compiled.ok).toBe(true);

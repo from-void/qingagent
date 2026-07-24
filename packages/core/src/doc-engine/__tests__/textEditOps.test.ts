@@ -192,13 +192,15 @@ describe("textEditOps", () => {
 
   it("tx-replaceText-captures: 正则捕获组替换正确展开", async () => {
     const base = doc([paragraph("block-a", "中A混B")]);
-    const matches = await findSafeRegexMatches(
+    const result = await findSafeRegexMatches(
       collectTopLevelTextBlocks(base),
       "([一-龥])([A-Za-z])",
       true,
     );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
 
-    const next = replaceTextRuns(base, matches, "$1 $2", true);
+    const next = replaceTextRuns(base, result.matches, "$1 $2", true);
 
     expect(inlineText(next)).toBe("中 A混 B");
   });

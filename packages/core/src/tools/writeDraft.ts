@@ -13,6 +13,11 @@ import {
   captureTurnWriteGuard,
   type TurnWriteGuard,
 } from "../session/turnOwnership.js";
+import {
+  DRAFT_MUTATION_CONFLICT_ERROR,
+  DraftMutationConflictError,
+  currentDraftMutationRevision,
+} from "../doc-engine/draftScratch.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {
@@ -293,6 +298,7 @@ export function createWriteDraftTool(opts: {
     doc: PmDoc,
     legacySections: LegacySection[] | undefined,
     writeGuard: TurnWriteGuard,
+    expectedMutationRevision: number,
   ) => LegacySection[];
 }) {
   return createTool({
@@ -304,6 +310,9 @@ export function createWriteDraftTool(opts: {
     outputSchema: writeDraftOutputSchema,
     execute: async (input, context): Promise<WriteDraftOutput> => {
       const writeGuard = captureTurnWriteGuard(opts.state, context);
+      assertTurnWriteAllowed(opts.state, writeGuard);
+      const expectedMutationRevision =
+        currentDraftMutationRevision(opts.state);
       const stopHeartbeat = startToolHeartbeat(context, { tool: "writeDraft" });
       try {
       const materials = context?.requestContext?.get("materials") as Map<string, Material> | undefined;
@@ -747,13 +756,22 @@ export function createWriteDraftTool(opts: {
         ? ["nested-list"]
         : undefined;
 
-      assertTurnWriteAllowed(opts.state, writeGuard);
-      const candidate = opts.replaceDraftCandidateDoc(
-        opts.state,
-        finalDoc,
-        finalLegacySections,
-        writeGuard,
-      );
+      let candidate: LegacySection[];
+      try {
+        assertTurnWriteAllowed(opts.state, writeGuard);
+        candidate = opts.replaceDraftCandidateDoc(
+          opts.state,
+          finalDoc,
+          finalLegacySections,
+          writeGuard,
+          expectedMutationRevision,
+        );
+      } catch (error) {
+        if (error instanceof DraftMutationConflictError) {
+          return { ok: false, error: DRAFT_MUTATION_CONFLICT_ERROR };
+        }
+        throw error;
+      }
       context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", opts.state.docDraftCandidateDoc ?? finalDoc);
       return {

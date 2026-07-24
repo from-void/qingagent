@@ -57,7 +57,10 @@ import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import {
   clonePmDoc,
   currentDraftMutationStats,
+  currentDraftMutationRevision,
   currentPmDoc,
+  DRAFT_MUTATION_CONFLICT_ERROR,
+  DraftMutationConflictError,
   ensureDraftCandidateDoc,
   replaceDraftCandidateDoc,
   validateCurrentTableSelectionScopes,
@@ -875,12 +878,15 @@ export function createSessionScopedTools(
 
       if (input.query) {
         if (input.isRegex) {
-          const matches = await findSafeRegexMatches(
+          const result = await findSafeRegexMatches(
             collectTopLevelTextBlocks(doc),
             input.query,
             true,
           );
-          const matchedRefs = new Set(matches.map((match) => match.block.topBlockId));
+          if (!result.ok) return { ok: false, error: result.error };
+          const matchedRefs = new Set(
+            result.matches.map((match) => match.block.topBlockId),
+          );
           selected = selected.filter((item) => matchedRefs.has(item.ref));
         } else {
           selected = selected.filter((item) => (textByRef.get(item.ref) ?? "").includes(input.query!));
@@ -978,6 +984,7 @@ export function createSessionScopedTools(
     execute: async (input, context) => {
       if (!state) return { ok: false, applied: [], error: "editDraft is unavailable outside a session" };
       const writeGuard = captureTurnWriteGuard(state, context);
+      assertTurnWriteAllowed(state, writeGuard);
       // BB① 埋点:记录入口快照,便于复现"同一轮多次 editDraft.execute 把单插入叠加成重复 heading"。
       const turnRunId =
         (context?.requestContext?.get("runId") as string | null | undefined) ?? state.runId ?? "no-run";
@@ -985,8 +992,13 @@ export function createSessionScopedTools(
         (context as { agent?: { toolCallId?: string | null } } | undefined)?.agent?.toolCallId ?? null;
       const editDraftExecuteSeq = bumpEditDraftExecuteCount(turnRunId);
       let candidateDoc: PmDoc;
+      let expectedMutationRevision: number;
       try {
-        candidateDoc = ensureDraftCandidateDoc(state);
+        // 首次物化候选也属于 scratch 写入，必须在 turn ownership 守卫之后发生；
+        // 物化完成后再捕获 revision，最终提交用同一 revision 做 CAS。
+        const candidate = ensureDraftCandidateDoc(state);
+        expectedMutationRevision = currentDraftMutationRevision(state);
+        candidateDoc = clonePmDoc(candidate);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // 只把已知可由刷新自愈的重复标识转成模型可行动结果；其余初始化异常维持原抛错语义。
@@ -1081,8 +1093,19 @@ export function createSessionScopedTools(
             blockEdit = { action: "deleteTableColumn", ref: op.ref, columnIndex: op.columnIndex };
           } else {
             const textBlocks = collectTopLevelTextBlocks(workingDoc, op.withinRef);
-            const matches = op.isRegex
+            const regexResult = op.isRegex
               ? await findSafeRegexMatches(textBlocks, op.find, op.all === true)
+              : null;
+            if (regexResult && !regexResult.ok) {
+              return {
+                ok: false,
+                applied: [],
+                error: regexResult.error,
+                failedOpIndex: i,
+              };
+            }
+            const matches = regexResult
+              ? regexResult.matches
               : findLiteralMatches(textBlocks, op.find, op.all === true);
             if (matches.length === 0) {
               return {
@@ -1161,12 +1184,25 @@ export function createSessionScopedTools(
         };
       }
       assertTurnWriteAllowed(state, writeGuard);
-      const candidate = replaceDraftCandidateDoc(
-        state,
-        workingDoc,
-        undefined,
-        writeGuard,
-      );
+      let candidate;
+      try {
+        candidate = replaceDraftCandidateDoc(
+          state,
+          workingDoc,
+          undefined,
+          writeGuard,
+          expectedMutationRevision,
+        );
+      } catch (error) {
+        if (error instanceof DraftMutationConflictError) {
+          return {
+            ok: false,
+            applied: [],
+            error: DRAFT_MUTATION_CONFLICT_ERROR,
+          };
+        }
+        throw error;
+      }
       context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", state.docDraftCandidateDoc ?? workingDoc);
       const stats = currentDraftMutationStats(state);

@@ -369,7 +369,198 @@ describe("confirm runtime", () => {
     }));
   });
 
-  it("关闭期间确认恢复登记 active turn，disposeAll 等终态持久化完成后才清理", async () => {
+  it("确认恢复 approveToolCall 永不 resolve 时，stop 可中止且后续 send 不被 Actor 堵塞", async () => {
+    const spec: ConfirmSpec = {
+      id: "confirm-resume-agent-hang",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(spec);
+    const service = new ConfirmService({ persist: async () => undefined });
+    let approveSignal: AbortSignal | undefined;
+    const agent = {
+      approveToolCall: vi.fn((options: { abortSignal?: AbortSignal }) => {
+        approveSignal = options.abortSignal;
+        return new Promise<never>(() => undefined);
+      }),
+      declineToolCall: vi.fn(),
+    };
+    const executed: Command["kind"][] = [];
+    const manager = new SessionManager({
+      handleCommand: async function* (command) {
+        executed.push(command.kind);
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId: state.sessionId, title: command.kind },
+        };
+      },
+      abortSession: () => state._abortController?.abort("user_abort"),
+      cleanupSession: vi.fn(),
+    });
+
+    const resume = manager.runExclusive(
+      state.sessionId,
+      () => handleConfirmDecision({
+        sessionId: state.sessionId,
+        toolCallId,
+        decisionId: "decision-resume-agent-hang",
+        decision: { id: spec.id, accepted: true },
+        hasSecretValue: false,
+      }, {
+        service,
+        agent: agent as never,
+        getSession: async () => state,
+        persistSession: async () => undefined,
+        resumeTimeoutMs: 10_000,
+      }),
+    );
+    await vi.waitFor(() => expect(agent.approveToolCall).toHaveBeenCalledTimes(1));
+    expect(state._abortController?.signal).toBe(approveSignal);
+
+    const cancel = manager.submit(state.sessionId, {
+      command: {
+        kind: "cancelStream",
+        data: { sessionId: state.sessionId },
+      },
+    });
+    await expect(resume).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        frame: expect.objectContaining({
+          kind: "confirmResolved",
+          data: expect.objectContaining({ resolution: "failed" }),
+        }),
+      }),
+    ]));
+    await expect(cancel).resolves.toHaveLength(1);
+    await expect(manager.submit(state.sessionId, {
+      command: {
+        kind: "sendMessage",
+        data: {
+          sessionId: state.sessionId,
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      },
+    })).resolves.toHaveLength(1);
+
+    expect(approveSignal?.aborted).toBe(true);
+    expect(executed).toEqual(["cancelStream", "sendMessage"]);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    await manager.disposeAll();
+  });
+
+  it("确认过期终态持久化永不 resolve 时，内存先终态化且会话清理不死锁", async () => {
+    const spec: ConfirmSpec = {
+      id: "confirm-expiry-persist-hang",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(spec);
+    state.pendingConfirms.get(toolCallId)!.expiresAt =
+      new Date(Date.now() - 1).toISOString();
+    const never = () => new Promise<void>(() => undefined);
+    const service = new ConfirmService({
+      persist: async (_current, reason) => {
+        if (reason === "confirm:expired") await never();
+      },
+    });
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn(async () => ({
+        fullStream: (async function* () {
+          yield { type: "finish" };
+        })(),
+      })),
+    };
+
+    const startedAt = Date.now();
+    const frames = await collect(handleConfirmExpiry(state.sessionId, toolCallId, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      persistTimeoutMs: 25,
+    }));
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(state._confirmPersistenceDirtyReasons).toContain("confirm:expired");
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ resolution: "expired" }),
+    }));
+  });
+
+  it("确认恢复终态与 finally 持久化都永不 resolve 时，completion/ownership 仍先释放", async () => {
+    const spec: ConfirmSpec = {
+      id: "confirm-resume-persist-hang",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(spec);
+    const never = () => new Promise<void>(() => undefined);
+    const service = new ConfirmService({
+      persist: async (_current, reason) => {
+        if (reason === "confirm:accepted") await never();
+      },
+    });
+    const agent = {
+      approveToolCall: vi.fn(async () => ({
+        runId: "run-confirm-resume-persist-hang",
+        fullStream: modelStream(),
+      })),
+      declineToolCall: vi.fn(),
+    };
+
+    const startedAt = Date.now();
+    const frames = await collect(handleConfirmDecision({
+      sessionId: state.sessionId,
+      toolCallId,
+      decisionId: "decision-resume-persist-hang",
+      decision: { id: spec.id, accepted: true },
+      hasSecretValue: false,
+    }, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      persistSession: never,
+      persistTimeoutMs: 25,
+    }));
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(state._turnOwner).toBeNull();
+    expect(state._confirmPersistenceDirtyReasons).toEqual(new Set([
+      "confirm:accepted",
+      "confirm:runtime_finally",
+    ]));
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ resolution: "accepted" }),
+    }));
+  });
+
+  it("关闭期间确认恢复先内存终态化，再在有界持久化后完成 disposeAll 清理", async () => {
     const closeSpec: ConfirmSpec = {
       id: "confirm-close-resume",
       kind: "command",
@@ -465,7 +656,7 @@ describe("confirm runtime", () => {
 
     expect(streamFinallyRan).toBe(true);
     expect(persistReasons).toContain("confirm:resuming");
-    expect(persistReasons).toContain("confirm:accepted");
+    expect(persistReasons).toContain("confirm:failed");
     expect(terminalPersistSnapshots).toEqual([{
       reason: "confirm:runtime_finally",
       pending: 0,

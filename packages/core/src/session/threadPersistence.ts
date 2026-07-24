@@ -1977,6 +1977,7 @@ export async function loadSessionFromThread(
     docDraftBaseDoc: null,
     docDraftCandidateSections: null,
     docDraftCandidateDoc: null,
+    _draftMutationRevision: 0,
     suggestionBaseDoc: meta.doc ?? null,
     suggestionBaseVersion: meta.docVersion ?? null,
     seqCounters: new Map(),
@@ -1998,6 +1999,7 @@ export async function loadSessionFromThread(
     _suspendedThisTurn: restoredSuspensionOwner !== null,
     _suspensionOwner: restoredSuspensionOwner,
     pendingConfirms,
+    _confirmPersistenceDirtyReasons: new Set(),
     chatHistory,
     // 阶段4 follow-up — 用「当前已持久化的状态」初始化 db_write 审计基线快照，
     // 使恢复后第一条 db_write span 的 before 反映真实已存状态，而非把恢复当成首次写

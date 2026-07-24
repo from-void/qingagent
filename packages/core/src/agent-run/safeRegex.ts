@@ -1,5 +1,4 @@
 import { Worker } from "node:worker_threads";
-import { isTruthyFlag } from "../doc-engine/draftFeatureFlags.js";
 
 export type CompileSafeRegexResult =
   | { ok: true; re: RegExp }
@@ -49,6 +48,7 @@ const RUN_TIMEOUT_MS = 200;
 const TOTAL_TIMEOUT_MS = 500;
 const ALLOWED_FLAGS = new Set(["i", "u", "m"]);
 const EXECUTOR_UNAVAILABLE_ERROR = "安全正则执行器不可用";
+const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 
 let nextTaskId = 1;
 let workerCtor: WorkerCtor | null = Worker;
@@ -56,6 +56,12 @@ let pool: PooledWorker[] = [];
 let queue: SafeRegexTask[] = [];
 let createdWorkers = 0;
 let processExitHookInstalled = false;
+
+function isTruthyFlag(raw: string | undefined): boolean {
+  return raw
+    ? TRUTHY_FLAG_VALUES.has(raw.trim().toLowerCase())
+    : false;
+}
 
 function poolSize(): number {
   const raw = Number(process.env.QINGAGENT_SAFE_REGEX_WORKERS ?? "2");
@@ -131,7 +137,6 @@ function makeRegExpMatchArray(input: string, match: WorkerMatch): RegExpMatchArr
 
 function inlineWorkerSource(): string {
   return `
-    const { parentPort } = require("node:worker_threads");
     function run(input) {
       try {
         const re = new RegExp(input.pattern, input.flags);
@@ -156,6 +161,7 @@ function inlineWorkerSource(): string {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     }
+    const { parentPort } = process.getBuiltinModule("worker_threads");
     parentPort.on("message", (input) => {
       parentPort.postMessage({ id: input.id, ...run(input) });
     });
@@ -168,9 +174,10 @@ function createWorker(): PooledWorker {
     throw new Error("safeRegex worker unavailable");
   }
 
-  const worker = import.meta.url.endsWith(".ts")
-    ? new Ctor(inlineWorkerSource(), { eval: true })
-    : new Ctor(new URL("./safeRegex.worker.js", import.meta.url));
+  // 始终使用内联源码：core 会被 desktop 的 esbuild 打成单文件 bundle，
+  // new URL("./safeRegex.worker.js", import.meta.url) 不会自动产出/携带旁车文件。
+  // eval worker 仍在独立线程内执行并受同一墙钟护栏约束；构造失败继续 fail-closed。
+  const worker = new Ctor(inlineWorkerSource(), { eval: true });
 
   createdWorkers += 1;
   const pooled: PooledWorker = { worker, busy: false, task: null };

@@ -34,6 +34,7 @@ export function DrawioEditorOverlay({
   const pendingSaveIdRef = useRef<number | null>(null);
   const pendingExitRef = useRef(false);
   const latestResultRef = useRef<DrawioEditorResult | null>(null);
+  const highFidelityResultsRef = useRef(new Map<string, DrawioEditorResult>());
   const saveSequenceRef = useRef(0);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -86,8 +87,8 @@ export function DrawioEditorOverlay({
         finish(result);
         return;
       }
-      // keepmodified=1 让 v31 snapshot 能在 save 后看到脏状态；保存落盘后再按原生
-      // status action 复位，下一轮真实编辑会重新把 modified 置为 true。
+      // keepmodified=1 配合保存前显式 status(true)，让 v31 snapshot 能看到脏状态；
+      // 保存落盘后再按原生 status action 复位，下一轮真实编辑会重新置脏。
       postAction(createDrawioStatusAction(false));
       setSaving(false);
       setStatus(result.warning ? "保存完成（已使用降级渲染），可继续编辑" : "保存完成，可继续编辑");
@@ -121,6 +122,11 @@ export function DrawioEditorOverlay({
         ) {
           return;
         }
+        const highFidelityResult = highFidelityResultsRef.current.get(fallbackSource);
+        if (highFidelityResult) {
+          completeSave(highFidelityResult, saveId);
+          return;
+        }
         completeSave({
           source: fallbackSource,
           svg,
@@ -132,6 +138,11 @@ export function DrawioEditorOverlay({
           pendingSourceRef.current !== fallbackSource ||
           pendingSaveIdRef.current !== saveId
         ) {
+          return;
+        }
+        const highFidelityResult = highFidelityResultsRef.current.get(fallbackSource);
+        if (highFidelityResult) {
+          completeSave(highFidelityResult, saveId);
           return;
         }
         completeSave({
@@ -172,10 +183,21 @@ export function DrawioEditorOverlay({
           pendingSourceRef.current = request.source;
           pendingSaveIdRef.current = saveId;
           pendingExitRef.current = message.exit === true;
+          const highFidelityResult = highFidelityResultsRef.current.get(request.source);
+          if (
+            latestResultRef.current?.source === request.source &&
+            highFidelityResult
+          ) {
+            completeSave(highFidelityResult, saveId);
+            return;
+          }
           setSaving(true);
           setStatus("正在生成安全 SVG 缓存…");
           setError(null);
           iframeRef.current?.blur();
+          // v31 的 snapshot 在 modified=false 时会静默不回；先通过原生 status
+          // action 强制置脏，导出完成后 completeSave 再按既有流程复位。
+          postAction(createDrawioStatusAction(true));
           postAction(request.action);
           clearExportTimer();
           exportTimerRef.current = setTimeout(() => {
@@ -195,6 +217,7 @@ export function DrawioEditorOverlay({
         if (!pendingSource || saveId === null) return;
         try {
           const result = finalizeDrawioEdit(pendingSource, message.data);
+          highFidelityResultsRef.current.set(result.source, result);
           completeSave(result, saveId);
         } catch (exportError) {
           clearExportTimer();

@@ -76,6 +76,7 @@ describe("external instance + auth", () => {
     expect(await externalMissingBearer.json()).toEqual({
       error: "unauthorized",
       code: "AUTH_FAILED",
+      nextStep: expect.any(String),
     });
   });
 

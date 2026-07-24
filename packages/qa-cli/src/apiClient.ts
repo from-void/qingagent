@@ -25,16 +25,27 @@ export class ApiClient {
         ...(init.headers ?? {}),
       },
     });
+    await this.assertResponseOk(res);
     const text = await res.text();
     const json = parseJsonResponse(text);
-    if (!res.ok) {
-      const body = json as Partial<ExternalErrorResponse> | null;
-      if (body && typeof body === "object") {
-        throw new QaCliError(body.code ?? "VALIDATION", body.error ?? res.statusText, body);
-      }
-      throw new QaCliError("VALIDATION", compactErrorText(text, res.statusText));
-    }
     return json as T;
+  }
+
+  async openEvents(sessionId: string, after: string | undefined, signal: AbortSignal): Promise<Response> {
+    let response: Response;
+    try {
+      response = await fetch(this.eventsUrl(sessionId, after), {
+        headers: { Authorization: this.authHeader() },
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
+      throw new QaCliError("NO_INSTANCE", `实例不可达${detail}`);
+    }
+    await this.assertResponseOk(response);
+    if (!response.body) throw new QaCliError("NO_INSTANCE", "实例不可达: events 响应缺少数据流");
+    return response;
   }
 
   async propose(sessionId: string, body: ExternalProposalRequest): Promise<ExternalProposalResponse> {
@@ -62,6 +73,22 @@ export class ApiClient {
 
   authHeader(): string {
     return `Bearer ${this.instance.token}`;
+  }
+
+  private async assertResponseOk(response: Response): Promise<void> {
+    if (response.ok) return;
+    const text = await response.text();
+    const json = parseJsonResponse(text);
+    const body = json as Partial<ExternalErrorResponse> | null;
+    const fallbackCode = response.status === 401
+      ? "AUTH_FAILED"
+      : response.status === 404
+        ? "NOT_FOUND"
+        : "VALIDATION";
+    if (body && typeof body === "object") {
+      throw new QaCliError(body.code ?? fallbackCode, body.error ?? response.statusText, body);
+    }
+    throw new QaCliError(fallbackCode, compactErrorText(text, response.statusText));
   }
 }
 

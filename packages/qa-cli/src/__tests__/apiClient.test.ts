@@ -46,6 +46,21 @@ describe("ApiClient", () => {
     } satisfies Partial<QaCliError>);
   });
 
+  it.each([
+    [401, "AUTH_FAILED"],
+    [404, "NOT_FOUND"],
+  ])("非 JSON HTTP %i 按状态归类为 %s", async (status, code) => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response("", { status }),
+    ) as typeof fetch;
+    const client = await ApiClient.create();
+
+    await expect(client.request("/failure")).rejects.toMatchObject({
+      name: "QaCliError",
+      code,
+    });
+  });
+
   it("仅 proposal 请求带上调用方身份", async () => {
     const fetchMock = vi.fn(async () => new Response("{}"));
     globalThis.fetch = fetchMock as typeof fetch;

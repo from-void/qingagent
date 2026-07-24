@@ -3,15 +3,19 @@ import { fileURLToPath } from "node:url";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderDiagramSvgs, withRenderedDiagrams } from "../export/mermaidServer.js";
+import { ExportBusyError, ExportDeadlineExceededError } from "../export/exportSlot.js";
 import { toHtml } from "../export/toHtml.js";
 import { setDocRenderLogger } from "../renderLogger.js";
 import { hasChromium } from "./browserTestGate.js";
 
-const getBrowserMock = vi.hoisted(() => vi.fn());
+const { getBrowserMock, withBrowserContextSlotMock } = vi.hoisted(() => ({
+  getBrowserMock: vi.fn(),
+  withBrowserContextSlotMock: vi.fn(),
+}));
 
 vi.mock("../browser/pool.js", () => ({
   getBrowser: getBrowserMock,
-  withBrowserContextSlot: async (run: () => Promise<unknown>) => run(),
+  withBrowserContextSlot: withBrowserContextSlotMock,
 }));
 
 type FakeMermaid = {
@@ -47,6 +51,10 @@ function installFakeBrowser(mermaid: FakeMermaid): void {
 
 beforeEach(() => {
   getBrowserMock.mockReset();
+  withBrowserContextSlotMock.mockReset();
+  withBrowserContextSlotMock.mockImplementation(
+    async (run: () => Promise<unknown>) => run(),
+  );
   setDocRenderLogger(console);
 });
 
@@ -55,6 +63,54 @@ afterEach(() => {
 });
 
 describe("mermaidServer 引号 normalization", () => {
+  it("排队繁忙不静默回退源码，而是记录并抛出可重试错误", async () => {
+    const warn = vi.fn();
+    setDocRenderLogger({ warn });
+    withBrowserContextSlotMock.mockRejectedValue(new ExportBusyError(20));
+
+    await expect(
+      renderDiagramSvgs(["flowchart TD\n  A --> B"]),
+    ).rejects.toBeInstanceOf(ExportBusyError);
+    expect(warn).toHaveBeenCalledWith(
+      "Mermaid server render aborted; export will return a diagnosable error",
+      expect.objectContaining({
+        code: "EXPORT_BUSY",
+        diagramType: "flowchart",
+      }),
+    );
+  });
+
+  it("整体执行超时不静默回退源码，而是记录并抛出可诊断错误", async () => {
+    const warn = vi.fn();
+    setDocRenderLogger({ warn });
+    const close = vi.fn(async () => undefined);
+    getBrowserMock.mockResolvedValue({
+      newContext: async () => ({
+        addInitScript: vi.fn(),
+        route: vi.fn(),
+        newPage: async () => ({
+          setContent: vi.fn(() => new Promise<void>(() => undefined)),
+        }),
+        close,
+      }),
+    });
+
+    await expect(
+      renderDiagramSvgs(
+        ["flowchart TD\n  A --> B"],
+        { executionTimeoutMs: 20 },
+      ),
+    ).rejects.toBeInstanceOf(ExportDeadlineExceededError);
+    expect(close).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "Mermaid server render aborted; export will return a diagnosable error",
+      expect.objectContaining({
+        code: "EXPORT_DEADLINE_EXCEEDED",
+        diagramType: "flowchart",
+      }),
+    );
+  });
+
   it("原文 parse 失败后用弯/全角引号 normalization 重试并渲染 SVG", async () => {
     const parsedSources: string[] = [];
     const renderedSources: string[] = [];
@@ -179,7 +235,24 @@ describe("mermaid 渲染在 tsx 运行时下的序列化健壮性", () => {
         new URL("../../../server/node_modules/.bin/tsx", import.meta.url),
       );
       const fixture = fileURLToPath(new URL("./fixtures/mermaid-tsx-smoke.ts", import.meta.url));
-      const res = spawnSync(tsxBin, [fixture], { encoding: "utf8", timeout: 120_000 });
+      // fixture 全程自包含且拦截外联，不应继承开发机代理；否则 pool 的代理 ACL 能力门会在
+      // Chromium 启动前主动拒绝，产生与 __name 序列化无关的机器环境假失败。
+      const fixtureEnv = { ...process.env };
+      for (const key of [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+      ]) {
+        delete fixtureEnv[key];
+      }
+      const res = spawnSync(tsxBin, [fixture], {
+        encoding: "utf8",
+        timeout: 120_000,
+        env: fixtureEnv,
+      });
       const lastLine = res.stdout.trim().split("\n").at(-1) ?? "";
       let parsed: unknown;
       try {

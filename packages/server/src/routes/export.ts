@@ -81,6 +81,20 @@ exportRoutes.get("/export/:sessionId", async (c) => {
     ) {
       return browserCapabilityUnavailableResponse(c);
     }
+    if (
+      err &&
+      typeof err === "object" &&
+      (err as { code?: unknown }).code === "EXPORT_BUSY"
+    ) {
+      return exportBusyResponse(c);
+    }
+    if (
+      err &&
+      typeof err === "object" &&
+      (err as { code?: unknown }).code === "EXPORT_DEADLINE_EXCEEDED"
+    ) {
+      return exportDeadlineExceededResponse(c);
+    }
     const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error("[export] render failed", {
       code: "EXPORT_RENDER_FAILED",
@@ -108,6 +122,29 @@ function browserCapabilityUnavailableResponse(c: Context) {
       code: "BROWSER_CAPABILITY_UNAVAILABLE",
     },
     503,
+  );
+}
+
+function exportBusyResponse(c: Context) {
+  c.header("Retry-After", "5");
+  return c.json(
+    {
+      error: "当前导出任务较多，请稍后重试",
+      code: "EXPORT_BUSY",
+      retryable: true,
+    },
+    503,
+  );
+}
+
+function exportDeadlineExceededResponse(c: Context) {
+  return c.json(
+    {
+      error: "导出渲染超时，请重试；若持续失败请减少单次文档中的超大图片或图表",
+      code: "EXPORT_DEADLINE_EXCEEDED",
+      retryable: true,
+    },
+    504,
   );
 }
 

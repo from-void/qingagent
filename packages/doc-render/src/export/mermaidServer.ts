@@ -4,7 +4,13 @@ import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import { normalizeMermaidQuotes } from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
 import { getDocRenderLogger } from "../renderLogger.js";
-import { withExportSlot, type ExportRunContext } from "./exportSlot.js";
+import {
+  ExportBusyError,
+  ExportDeadlineExceededError,
+  withExportSlot,
+  type ExportRunContext,
+  type ExportSlotOptions,
+} from "./exportSlot.js";
 import { isRenderableSvg, type ExportDocument } from "./shared.js";
 
 /**
@@ -113,16 +119,49 @@ function warnMermaidRenderFailure(input: MermaidRenderInput, reason: string): vo
   });
 }
 
+function isExportOperationalError(error: unknown): boolean {
+  return (
+    error instanceof ExportBusyError ||
+    error instanceof ExportDeadlineExceededError ||
+    (typeof error === "object" &&
+      error !== null &&
+      ((error as { code?: unknown }).code === "EXPORT_BUSY" ||
+        (error as { code?: unknown }).code === "EXPORT_DEADLINE_EXCEEDED"))
+  );
+}
+
+function warnMermaidExportAbort(input: MermaidRenderInput, error: unknown): void {
+  getDocRenderLogger().warn("Mermaid server render aborted; export will return a diagnosable error", {
+    code:
+      typeof error === "object" && error !== null
+        ? (error as { code?: unknown }).code
+        : undefined,
+    reason: error instanceof Error ? error.message : String(error),
+    diagramType: input.diagramType,
+    sourceSummary: input.sourceSummary,
+  });
+}
+
 /**
  * 批量把 mermaid 源码渲染成 SVG。返回与输入等长的数组,单个失败处为 null(调用方回退源码)。
  * 一次性在同一个 Chromium 页里渲染所有图,减少开销。
  */
-export async function renderDiagramSvgs(sources: readonly string[]): Promise<(string | null)[]> {
+export async function renderDiagramSvgs(
+  sources: readonly string[],
+  slotOptions: ExportSlotOptions = {},
+): Promise<(string | null)[]> {
   if (sources.length === 0) return [];
   const inputs = sources.map(renderInputForSource);
   try {
-    return await withExportSlot((context) => renderDiagramSvgsInSlot(inputs, context));
+    return await withExportSlot(
+      (context) => renderDiagramSvgsInSlot(inputs, context),
+      slotOptions,
+    );
   } catch (error) {
+    if (isExportOperationalError(error)) {
+      for (const input of inputs) warnMermaidExportAbort(input, error);
+      throw error;
+    }
     for (const input of inputs) {
       warnMermaidRenderFailure(
         input,
@@ -142,6 +181,7 @@ async function renderDiagramSvgsInSlot(
     browser = await getBrowser();
     exportContext.signal.throwIfAborted();
   } catch (error) {
+    if (exportContext.signal.aborted) throw exportContext.signal.reason ?? error;
     // 无 Chromium → 全部回退(调用方据此让图表退回源码),不让 docx/导出整体崩。
     for (const input of inputs) {
       warnMermaidRenderFailure(
@@ -255,6 +295,7 @@ async function renderDiagramSvgsInSlot(
     });
     return results.map((result) => result.svg);
   } catch (error) {
+    if (exportContext.signal.aborted) throw exportContext.signal.reason ?? error;
     // 整体渲染失败(mermaid 加载异常等)→ 全部回退,绝不让图表毁掉导出。
     for (const input of inputs) {
       warnMermaidRenderFailure(

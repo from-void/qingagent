@@ -226,6 +226,25 @@ describe("hardenInlineSvg", () => {
     expect(out).toContain("#frag");
   });
 
+  it("移除可在运行时写入本地或外部资源地址的全部 SMIL 动画节点", () => {
+    const out = hardenInlineSvg(
+      wrap(
+        `<image id="target" width="10" height="10"/>` +
+          `<animate attributeName="href" values="file:///etc/passwd" dur="1s"/>` +
+          `<set attributeName="xlink:href" to="https://evil.example/x" begin="0s"/>` +
+          `<animateTransform attributeName="transform" values="scale(1);scale(2)"/>` +
+          `<animateMotion path="M0 0L10 10"><mpath href="https://evil.example/path.svg#p"/></animateMotion>` +
+          `<rect width="10" height="10"/>`,
+      ),
+    );
+
+    expect(out).toBeTruthy();
+    expect(out).not.toMatch(/<(?:animate|animateTransform|animateMotion|set|mpath)\b/i);
+    expect(out).not.toMatch(/file:/i);
+    expect(out).not.toContain("evil.example");
+    expect(out).toMatch(/<rect/i);
+  });
+
   it("整体移除 <foreignObject> 及其 HTML 活动内容", () => {
     const out = hardenInlineSvg(wrap(`<foreignObject><iframe src="https://evil"></iframe><object data="x"></object></foreignObject>`));
     expect(out).not.toMatch(/<foreignObject/i);

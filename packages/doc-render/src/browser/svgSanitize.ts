@@ -251,7 +251,20 @@ export function buildPartialSvgDraft(
 // href/src 仅允许 #id，CSS url() 仅允许 url(#id)，file:/http:/data: 等本地或外部引用全部删除。
 // 用于把 mermaid 缓存 SVG / data:image/svg+xml 安全内联进导出 HTML(该 HTML 可能被用户在
 // 浏览器里打开,故必须杜绝可执行内容注入和本地文件读取)。
-const REMOVE_ELEMENTS = new Set(["script", "iframe", "object", "embed", "foreignobject"]);
+const REMOVE_ELEMENTS = new Set([
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "foreignobject",
+  // 静态导出不需要 SMIL。动画节点可在运行时改写 href/src/filter 等 URL 属性，
+  // 绕过这里只检查初始属性值的外联门，因此连同 animateMotion 的 mpath 一律删除。
+  "animate",
+  "animatetransform",
+  "animatemotion",
+  "set",
+  "mpath",
+]);
 const HREF_ATTRS = new Set(["href", "xlink:href", "src", "xlink:actuate", "xlink:show"]);
 const LOCAL_FRAGMENT = /^#[^\s"'()<>]+$/;
 const CSS_URL = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;

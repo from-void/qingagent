@@ -1,7 +1,8 @@
 import { decodeSvgDataUrl } from "@qingagent/pm-schema";
-import { getBrowser, withBrowserContextSlot } from "../browser/pool.js";
+import { getBrowser } from "../browser/pool.js";
 import { hardenInlineSvg } from "../browser/svgSanitize.js";
 import { katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
+import { withExportSlot, type ExportSlotOptions } from "./exportSlot.js";
 import { MAX_EXPORT_SVG_BYTES } from "./shared.js";
 
 /**
@@ -51,6 +52,7 @@ export type MathRasterResult = { data: Buffer; width: number; height: number };
  */
 export async function rasterizeMathBatch(
   formulas: Array<{ latex: string; displayMode: boolean }>,
+  slotOptions: ExportSlotOptions = {},
 ): Promise<Array<MathRasterResult | null>> {
   if (formulas.length === 0) return [];
 
@@ -65,14 +67,20 @@ export async function rasterizeMathBatch(
 
   const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{background:#fff;}</style><style>${css}</style></head><body>${items.join("\n")}</body></html>`;
 
-  return withBrowserContextSlot(async () => {
+  return withExportSlot(async ({ signal, remainingMs }) => {
     let browser;
     try {
       browser = await getBrowser();
-    } catch {
+      signal.throwIfAborted();
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
       return formulas.map(() => null);
     }
     const context = await browser.newContext({ deviceScaleFactor: 2 });
+    const closeOnAbort = () => {
+      void context.close().catch(() => undefined);
+    };
+    signal.addEventListener("abort", closeOnAbort, { once: true });
     try {
       await context.route("**/*", (route) => {
         const url = route.request().url();
@@ -80,8 +88,12 @@ export async function rasterizeMathBatch(
         else void route.abort();
       });
       const page = await context.newPage();
-      await page.setContent(pageHtml, { waitUntil: "load", timeout: 30_000 });
+      await page.setContent(pageHtml, {
+        waitUntil: "load",
+        timeout: Math.min(30_000, remainingMs()),
+      });
       await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
+      signal.throwIfAborted();
 
       // 并发截图:先批量拿 ElementHandle,再 Promise.all 并发截图,避免串行 N × RTT 开销。
       const handles = await Promise.all(formulas.map(async (_, i) => {
@@ -101,12 +113,14 @@ export async function rasterizeMathBatch(
         }),
       );
       return results;
-    } catch {
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
       return formulas.map(() => null);
     } finally {
+      signal.removeEventListener("abort", closeOnAbort);
       await context.close().catch(() => undefined);
     }
-  });
+  }, slotOptions);
 }
 
 /**
@@ -116,19 +130,25 @@ export async function rasterizeMathBatch(
  */
 export async function rasterizeSvgToPng(
   svg: string,
-  options: { scale?: number; maxWidth?: number } = {},
+  options: { scale?: number; maxWidth?: number } & ExportSlotOptions = {},
 ): Promise<{ data: Buffer; width: number; height: number } | null> {
   const safeSvg = prepareSvgForRasterization(svg);
   if (!safeSvg) return null;
   const scale = options.scale ?? 2;
-  return withBrowserContextSlot(async () => {
+  return withExportSlot(async ({ signal, remainingMs }) => {
     let browser;
     try {
       browser = await getBrowser();
-    } catch {
+      signal.throwIfAborted();
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
       return null; // 无 Chromium → 调用方回退(svg 图/图表退回源码或占位)
     }
     const context = await browser.newContext({ deviceScaleFactor: scale });
+    const closeOnAbort = () => {
+      void context.close().catch(() => undefined);
+    };
+    signal.addEventListener("abort", closeOnAbort, { once: true });
     try {
       await context.route("**/*", (route) => {
         const url = route.request().url();
@@ -139,19 +159,22 @@ export async function rasterizeSvgToPng(
       // inline-block + 白底:截图只裁到 svg 自身尺寸;DOCX 页面为白,背景用白最自然。
       await page.setContent(
         `<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0}html,body{background:#fff}#wrap{display:inline-block}#wrap svg{display:block}</style></head><body><div id="wrap">${safeSvg}</div></body></html>`,
-        { waitUntil: "load", timeout: 30_000 },
+        { waitUntil: "load", timeout: Math.min(30_000, remainingMs()) },
       );
       await page.evaluate("document.fonts ? document.fonts.ready : null").catch(() => undefined);
+      signal.throwIfAborted();
       const el = await page.$("#wrap svg");
       if (!el) return null;
       const box = await el.boundingBox();
       if (!box || box.width < 1 || box.height < 1) return null;
       const data = Buffer.from(await el.screenshot({ type: "png", omitBackground: false }));
       return { data, width: Math.round(box.width), height: Math.round(box.height) };
-    } catch {
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
       return null;
     } finally {
+      signal.removeEventListener("abort", closeOnAbort);
       await context.close().catch(() => undefined);
     }
-  });
+  }, options);
 }

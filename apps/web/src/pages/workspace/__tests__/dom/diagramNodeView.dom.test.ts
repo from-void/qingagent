@@ -117,6 +117,24 @@ function diagramDoc(source: string, svg: string | null = null): PmDoc {
   } as unknown as PmDoc;
 }
 
+function drawioDoc(svg: string | null = null): PmDoc {
+  return {
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "drawio-1",
+          lang: "drawio",
+          source: DEFAULT_DRAWIO_SOURCE,
+          svg,
+        },
+      },
+    ],
+  } as unknown as PmDoc;
+}
+
 function linkDoc(): PmDoc {
   return {
     type: "doc",
@@ -365,6 +383,27 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(attrs).not.toBeNull();
       expect(attrs!.svg).toContain('data-mmd="1"');
       expect(attrs!.svg).toContain(encodeURIComponent(source));
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("只读生成态已渲染的 drawio 在转为可编辑后会补写 SVG 导出缓存", async () => {
+    const editor = await mountEditor(drawioDoc(), false);
+    try {
+      await waitForSelector(".pm-diagram-svg svg", editor.view.dom);
+      expect(firstDiagramAttrs(editor)?.svg).toBeNull();
+
+      await act(async () => {
+        editor.setEditable(true);
+      });
+
+      const attrs = await waitForFirstDiagramSvg(editor);
+      expect(attrs?.svg).toMatch(/^<svg\b/);
+      expect(normalizePmDoc(editor.getJSON()).content[0]).toMatchObject({
+        type: "diagram",
+        attrs: { lang: "drawio", svg: expect.stringMatching(/^<svg\b/) },
+      });
     } finally {
       await unmount(editor);
     }

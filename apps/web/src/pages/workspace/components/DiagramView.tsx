@@ -10,6 +10,7 @@ import {
   normalizeDrawioSource,
   type PmDiagramLang,
 } from "@qingagent/pm-schema";
+import { useToast } from "../../../system";
 import { renderMermaid } from "./mermaidRender";
 import { renderDrawio } from "./drawioRender";
 import { openDrawioEditor } from "./drawioEditorLauncher";
@@ -24,6 +25,7 @@ import "./DiagramView.css";
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
 function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected, getPos }: NodeViewProps) {
+  const toast = useToast();
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
@@ -37,10 +39,12 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
   const [svg, setSvg] = useState<string | null>(cachedSvg);
   const [error, setError] = useState<string | null>(null);
+  const [editable, setEditable] = useState(editor?.isEditable ?? false);
+  const editableRef = useRef(editable);
   const mountedRef = useRef(true);
   const renderTokenRef = useRef(0);
+  const renderedSourceRef = useRef<string | null>(cachedSvg ? attrSource.trim() : null);
   const editingRef = useRef(false);
-  const editable = editor?.isEditable ?? false;
   const viewRef = useRef<HTMLDivElement>(null);
   // 本次点击手势是否"刚把块选中"(块此前未选中):用于拦"快速点选未选中图表 → 误触双击直接进编辑"。
   // 冷双击只选中、不进编辑;块已选中时再双击才进编辑。纯状态判据、无定时器,确定可测。
@@ -58,6 +62,23 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!editor) return;
+    const syncEditable = () => {
+      const next = editor.isEditable;
+      if (editableRef.current === next) return;
+      editableRef.current = next;
+      setEditable(next);
+    };
+    syncEditable();
+    // TipTap setEditable() 会发 update 而不是 transaction；NodeView 本身不会因这次
+    // options 变化重渲染，所以显式订阅，才能在生成/审阅只读态结束后补写 SVG 缓存。
+    editor.on("update", syncEditable);
+    return () => {
+      editor.off("update", syncEditable);
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editing) setSource(attrSource);
@@ -100,6 +121,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       // 避免把过期 svg setState / 写回 node.attrs(否则新 source 下会缓存旧图)。
       const token = ++renderTokenRef.current;
       if (!trimmed) {
+        renderedSourceRef.current = null;
         setSvg(null);
         setError(null);
         return;
@@ -107,6 +129,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       try {
         const out = await (lang === "drawio" ? renderDrawio(trimmed) : renderMermaid(trimmed));
         if (!mountedRef.current || token !== renderTokenRef.current) return;
+        renderedSourceRef.current = trimmed;
         setSvg(out);
         setError(null);
         // 持久化 svg 到 node(导出 PDF/Word 用);仅在内容真变化且可编辑时写,避免循环。
@@ -122,15 +145,24 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   );
 
   // view 态:source 变了(或首次且无缓存 svg)就渲染并回写缓存。
+  // 生成/审阅期间 editor 常为只读：那时可以显示 SVG，但不能持久化。切回可编辑态后
+  // 必须再跑一次并补写 attrs.svg，否则服务端 HTML/PDF/Word 导出只能拿到 null 并回退源码。
   useEffect(() => {
     if (editing) return;
     if (cachedSvg && source === draft) {
+      renderedSourceRef.current = source.trim();
       setSvg(cachedSvg);
+      return;
+    }
+    // 只读态已经为同一份源码渲染成功时直接复用内存中的安全 SVG；切回可编辑的
+    // 当拍就写 attrs，避免为了持久化再跑一遍 maxGraph，也消除用户立即导出时的竞态。
+    if (editable && svg && renderedSourceRef.current === source.trim()) {
+      if (svg !== node.attrs.svg) updateAttributes({ svg });
       return;
     }
     void renderInto(source, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, editing]);
+  }, [source, editing, editable]);
 
   // edit 态:draft 变化防抖实时预览(不持久化,完成时才写)。
   useEffect(() => {
@@ -161,6 +193,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
           setDraft(result.source);
           setSvg(result.svg);
           updateAttributes({ source: result.source, svg: result.svg });
+          if (result.warning) {
+            toast.show({ message: result.warning, tone: "warn" });
+          }
         })
         .catch((openError) => {
           if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));

@@ -7,12 +7,15 @@ import {
 export const DRAWIO_EMBED_PATH =
   "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&libraries=1&saveAndExit=1&suppressNewWindows=1";
 
+export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
+export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;
 const DRAWIO_EXPORT_MESSAGE_PREFIX = "qingagent-drawio-export:";
 const MAX_SVG_DATA_URI_CHARS = INLINE_SVG_MAX_BYTES * 4 + 256;
 
 export type DrawioEditorResult = {
   source: string;
-  svg: string;
+  svg: string | null;
+  warning?: string;
 };
 
 export type DrawioEmbedEvent =

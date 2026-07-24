@@ -456,12 +456,14 @@ describe("DocToolbar round-1 regressions", () => {
   it("工具栏新建 drawio 保存后插入 source+svg，取消时不写文档", async () => {
     const fakeEditor = createCommandEditor(true);
     const insertDiagram = vi.mocked(fakeEditor.chain().insertDiagram);
+    const onToast = vi.fn();
     await render(
       <DocToolbar
         active
         editor={fakeEditor}
         containerSelector="body"
         onAiModify={async () => true}
+        onToast={onToast}
       />,
     );
 
@@ -475,6 +477,13 @@ describe("DocToolbar round-1 regressions", () => {
     await act(async () => getButtonByText("插入").click());
     await act(async () => getButtonByText("插入 drawio 工程图").click());
     expect(insertDiagram).toHaveBeenCalledWith({ lang: "drawio", source, svg });
+
+    const warning = "drawio 原生 SVG 导出超时，已改用本地渲染保存";
+    vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg: null, warning });
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => getButtonByText("插入 drawio 工程图").click());
+    expect(insertDiagram).toHaveBeenLastCalledWith({ lang: "drawio", source, svg: null });
+    expect(onToast).toHaveBeenCalledWith(warning);
   });
 
   it("工具栏插入分栏会写入 columnList 节点", async () => {

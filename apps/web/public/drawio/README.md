@@ -11,6 +11,11 @@
 压缩包、编辑器 CSS、SVG MathJax 运行时、必要图片，以及英文默认资源
 `resources/dia.txt` 和简体中文 `resources/dia_zh.txt`。
 
+保留 MathJax 而非关闭公式能力；其 `core/input/output/startup/ui/font` 七类
+必需模块均由 `check-drawio-vendor.mjs` 校验。特别是路径名为
+`math4/es5/output/svg.js` 的生产文件必须显式越过仓库通用 `output/`
+忽略规则，避免 fresh checkout 再次出现运行时 404。
+
 移除源码级 JS、服务端 `WEB-INF/META-INF`、云盘/协作集成页、service worker、
 插件、示例、模板、文档、可选扩展 stencil XML、非 zh/en locale、未被离线
 embed 启动路径请求的图片与 MathJax CHTML/扩展字体。核心图形库仍由官方

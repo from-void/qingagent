@@ -779,6 +779,7 @@ export function DocToolbar({
                 .insertDiagram({ lang: "drawio", source: result.source, svg: result.svg })
                 .run(),
             );
+            if (result.warning) onToast?.(result.warning);
           } catch (drawioError) {
             onToast?.(drawioError instanceof Error ? drawioError.message : String(drawioError));
           }

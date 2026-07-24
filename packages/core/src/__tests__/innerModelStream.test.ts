@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const streamTextMock = vi.hoisted(() => vi.fn());
 const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({ modelId: "mock" })));
 const resolveProtocolMock = vi.hoisted(() => vi.fn(() => "openai"));
+const defaultBranchBufferBytes = vi.hoisted(() => 4 * 1024 * 1024);
 const branchCallMock = vi.hoisted(() => vi.fn());
 const getSessionSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("ai", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", () => ({
   branchCall: branchCallMock,
+  DEFAULT_BRANCH_STREAM_BUFFER_BYTES: defaultBranchBufferBytes,
   getDeepseekModel: getDeepseekModelMock,
   getSessionSnapshot: getSessionSnapshotMock,
   resolveProtocol: resolveProtocolMock,
@@ -123,6 +125,7 @@ describe("streamInnerModel", () => {
       thinking: false,
       temperature: 0.4,
       maxTokens: 4096,
+      maxBufferedTextBytes: defaultBranchBufferBytes,
       streamTextDeltas: true,
     }));
     expect(streamTextMock).not.toHaveBeenCalled();

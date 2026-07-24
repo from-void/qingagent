@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { app } from "../app";
 import { getSession, sessionManager } from "../gateway/bridgeHandler";
+import { DEFAULT_SSE_ADMISSION_LIMITS } from "../lib/sseAdmission";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,6 +24,64 @@ async function openEvents(sessionId: string, epoch: number) {
 }
 
 describe("GET /api/v1/events 断连资源回收", () => {
+  it("未知 sessionId 在订阅前返回 404，且不创建 frameLog 条目", async () => {
+    const before = sessionManager.frameLog.listSessionIds?.().length ?? 0;
+    const response = await app.request(
+      "/api/v1/events?sessionId=unknown-sse-subscription&after=0",
+    );
+
+    expect(response.status).toBe(404);
+    expect(sessionManager.frameLog.hasSession("unknown-sse-subscription")).toBe(false);
+    expect(sessionManager.frameLog.listSessionIds?.().length ?? 0).toBe(before);
+  });
+
+  it("同一会话达到连接上限后返回 429，断开后释放准入名额", async () => {
+    const started = await app.request("/api/v1/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "startSession",
+        data: { mode: { kind: "new", data: { template: null } } },
+      }),
+    });
+    const { sessionId, epoch } = await started.json() as {
+      sessionId: string;
+      epoch: number;
+    };
+    const connections: Array<{ controller: AbortController; response: Response }> = [];
+    try {
+      for (let index = 0; index < DEFAULT_SSE_ADMISSION_LIMITS.maxPerSession; index += 1) {
+        const controller = new AbortController();
+        const response = await app.request(
+          `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
+          { signal: controller.signal },
+        );
+        expect(response.status).toBe(200);
+        connections.push({ controller, response });
+      }
+
+      const rejected = await app.request(
+        `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
+      );
+      expect(rejected.status).toBe(429);
+      await expect(rejected.json()).resolves.toMatchObject({ limit: "session" });
+    } finally {
+      for (const connection of connections) {
+        connection.controller.abort();
+        await connection.response.body?.cancel().catch(() => undefined);
+      }
+    }
+
+    const reopened = new AbortController();
+    const response = await app.request(
+      `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
+      { signal: reopened.signal },
+    );
+    expect(response.status).toBe(200);
+    reopened.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
   it("两个客户端并发 epoch 不匹配时只追加一份恢复快照", async () => {
     const started = await app.request("/api/v1/commands", {
       method: "POST",

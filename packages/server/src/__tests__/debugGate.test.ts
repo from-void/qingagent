@@ -54,10 +54,26 @@ describe("assessBindSafety", () => {
     }
   });
 
-  it("PUBLIC 声明不覆盖实际回环 bind 的安全结论", () => {
-    expect(assessBindSafety("127.0.0.1", { QINGAGENT_PUBLIC_DEPLOYMENT: "1" })).toEqual({
-      allowed: true,
+  it("PUBLIC=1 即使回环 bind 也在无 token/无逃生阀时拒绝启动", () => {
+    const result = assessBindSafety("127.0.0.1", {
+      QINGAGENT_PUBLIC_DEPLOYMENT: "1",
     });
+
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.error).toContain("QINGAGENT_PUBLIC_DEPLOYMENT=1");
+      expect(result.error).toContain("QINGAGENT_AUTH_TOKEN");
+    }
+  });
+
+  it("PUBLIC=1 保留显式无鉴权逃生阀语义并发出审计告警", () => {
+    const result = assessBindSafety("127.0.0.1", {
+      QINGAGENT_PUBLIC_DEPLOYMENT: "1",
+      QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC: "1",
+    });
+
+    expect(result.allowed).toBe(true);
+    if (result.allowed) expect(result.auditWarning).toContain("审计告警");
   });
 });
 

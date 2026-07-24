@@ -1,4 +1,4 @@
-import { redactSensitiveText } from "@qingagent/core";
+import { isSensitiveField, redactSensitiveText } from "@qingagent/core";
 
 const HOME_PATH_RE = /\/(?:Users|home)\/[^/\s"'`),]+/g;
 const FILE_URL_RE = /file:\/\/\/[^\s"'`),]+/gi;
@@ -58,7 +58,7 @@ function redactValueDeepInner(v: unknown, seen: WeakMap<object, unknown>): unkno
   const out: Record<string, unknown> = {};
   seen.set(v, out);
   for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
-    out[key] = redactValueDeepInner(value, seen);
+    out[key] = isSensitiveField(key) ? "***" : redactValueDeepInner(value, seen);
   }
   return out;
 }

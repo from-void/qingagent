@@ -57,6 +57,9 @@ export type { ApiKeyOrigin } from "./modelTypes.js";
 
 type InnerLanguageModel = Exclude<LanguageModel, string>;
 
+/** 分支响应在验真前的默认内存上限，同时约束尚未完整分帧的原始 SSE 缓冲。 */
+export const DEFAULT_BRANCH_STREAM_BUFFER_BYTES = 4 * 1024 * 1024;
+
 /** 主 Agent 的 v2 provider：与 Mastra 1.49 内部使用同版 serializer，只注入快照 fetch。 */
 export function createSnapshottingQingagentModel(
   requestContext?: RequestContext,
@@ -97,7 +100,7 @@ export interface BranchCallInput {
   thinking?: boolean;
   temperature?: number;
   maxTokens?: number;
-  /** 分支验真前允许缓存的文本字节数；缺省不限制。 */
+  /** 分支验真前允许缓存的文本字节数；缺省使用安全上限。 */
   maxBufferedTextBytes?: number;
 }
 
@@ -152,10 +155,10 @@ function extractRawChunk(payload: unknown, state: RawBranchResponse): string {
   return textDelta;
 }
 
-async function readRawBranchResponse(
+export async function readRawBranchResponse(
   response: Response,
   onActivity?: BranchCallInput["onActivity"],
-  maxBufferedTextBytes?: number,
+  maxBufferedTextBytes = DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
   onRawContentStart?: BranchCallInput["onRawContentStart"],
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
@@ -172,7 +175,6 @@ async function readRawBranchResponse(
   const recordBufferedText = (delta: string) => {
     bufferedTextBytes += Buffer.byteLength(delta, "utf8");
     if (
-      maxBufferedTextBytes !== undefined &&
       bufferedTextBytes > maxBufferedTextBytes
     ) {
       throw new Error("branch_stream_buffer_exceeded");
@@ -228,6 +230,14 @@ async function readRawBranchResponse(
       const { done, value } = await reader.read();
       if (!done || value) await onActivity?.();
       buffer += decoder.decode(value, { stream: !done });
+      if (Buffer.byteLength(buffer, "utf8") > maxBufferedTextBytes) {
+        try {
+          await reader.cancel("branch_stream_buffer_exceeded");
+        } catch {
+          // 读取器取消失败不能遮蔽稳定的超限错误。
+        }
+        throw new Error("branch_stream_buffer_exceeded");
+      }
       let boundary = buffer.search(/\r?\n\r?\n/);
       while (boundary >= 0) {
         const event = buffer.slice(0, boundary);
@@ -539,7 +549,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       const raw = await readRawBranchResponse(
         response,
         input.onActivity,
-        input.maxBufferedTextBytes,
+        input.maxBufferedTextBytes ?? DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
         input.onRawContentStart,
       );
       if (raw.firstTextAt !== null) {

@@ -20,14 +20,15 @@ export function isLoopbackHost(host: string): boolean {
 }
 
 /**
- * 绑定层 fail-closed：只信任实际传给 serve() 的 host，不从 PUBLIC/HOST 环境变量反推。
- * desktop 固定传 127.0.0.1，因此不会被用户遗留的 QINGAGENT_HOST 误伤。
+ * 绑定层 fail-closed：实际非回环监听，或显式声明 PUBLIC 部署，均必须有 token。
+ * PUBLIC 是部署者主动声明的反代公网形态，即使进程只监听回环也不能降级成告警。
  */
 export function assessBindSafety(
   host: string,
   env: SecurityEnv = process.env,
 ): BindSafetyAssessment {
-  if (isLoopbackHost(host) || Boolean(env.QINGAGENT_AUTH_TOKEN?.trim())) {
+  const publicDeployment = env.QINGAGENT_PUBLIC_DEPLOYMENT === "1";
+  if ((!publicDeployment && isLoopbackHost(host)) || Boolean(env.QINGAGENT_AUTH_TOKEN?.trim())) {
     return { allowed: true };
   }
 
@@ -42,7 +43,10 @@ export function assessBindSafety(
   return {
     allowed: false,
     error:
-      `[security] 拒绝在 ${host} 上公开监听：未设置 QINGAGENT_AUTH_TOKEN。` +
+      (publicDeployment
+        ? "[security] 拒绝启动公开服务(QINGAGENT_PUBLIC_DEPLOYMENT=1)："
+        : `[security] 拒绝在 ${host} 上公开监听：`) +
+      "未设置 QINGAGENT_AUTH_TOKEN。" +
       "无鉴权公开监听会让任何可达者读写文档并消耗模型 key。" +
       "请设置强随机 token，或仅在明确接受风险时设置 QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1。",
   };

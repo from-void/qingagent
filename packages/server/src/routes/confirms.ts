@@ -11,7 +11,7 @@ import {
   sessionManager,
 } from "../gateway/bridgeHandler";
 import { handleConfirmDecision } from "../gateway/confirmRuntime";
-import { SessionActorCommandError } from "../gateway/sessionActor";
+import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 const MAX_CONFIRM_BODY_BYTES = 16 * 1024;
@@ -117,6 +117,9 @@ confirmRoutes.post("/confirms/decision", async (c) => {
     return c.json({ accepted: true });
   } catch (error) {
     confirmService.discardSecret(session, parsed.decision.id);
+    if (error instanceof SessionActorQueueFullError) {
+      return c.json({ error: "会话命令队列已满" }, 429);
+    }
     const known = decisionError(error);
     if (known) return c.json({ error: known.message }, errorStatus(known.code));
     return c.json({ error: "确认处理失败，命令未执行" }, 500);

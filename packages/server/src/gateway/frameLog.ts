@@ -32,6 +32,8 @@ export interface FrameLog {
   getGeneration(sessionId: string): number;
   setActiveRunner(sessionId: string, active: boolean): void;
   getEpoch(sessionId: string): number;
+  /** 会话是否已有帧状态。只读探询，不得惰性创建。 */
+  hasSession(sessionId: string): boolean;
   /** 该会话当前是否有活跃订阅者(SSE listener)。只读探询,不得惰性建条目。 */
   hasSubscribers(sessionId: string): boolean;
   /** 最近持有帧状态的会话。只读探询,不得惰性建条目。 */
@@ -175,6 +177,10 @@ export class InMemoryFrameLog implements FrameLog {
 
   getEpoch(sessionId: string): number {
     return this.ensure(sessionId).epoch;
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
   }
 
   hasSubscribers(sessionId: string): boolean {

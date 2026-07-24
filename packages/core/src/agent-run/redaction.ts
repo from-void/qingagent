@@ -83,7 +83,7 @@ const ENV_SPACE_FIELD_RE = new RegExp(
   "g",
 );
 
-function isSensitiveField(key: string): boolean {
+export function isSensitiveField(key: string): boolean {
   return SENSITIVE_FIELD_RE.test(key) || ENV_SENSITIVE_FIELD_RE.test(key);
 }
 

@@ -58,7 +58,7 @@ export {
 
 export type { AskUserAnswerRecord } from "./askUserAnswerMessage.js";
 
-export { redactSensitiveText } from "./redaction.js";
+export { isSensitiveField, redactSensitiveText } from "./redaction.js";
 
 export {
   isDirectionReset,
@@ -66,4 +66,3 @@ export {
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
 } from "./questionnaireTools.js";
-

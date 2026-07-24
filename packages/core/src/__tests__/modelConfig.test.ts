@@ -8,6 +8,7 @@ import {
   resolveProtocol,
   resolveVisionConfig,
   getDeepseekModel,
+  readRawBranchResponse,
 } from "../llm/modelConfig.js";
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
@@ -197,5 +198,25 @@ describe("modelConfig", () => {
       stream_options: { include_usage: true },
     });
     expect(bodies[1]).not.toHaveProperty("temperature");
+  });
+
+  it("原始 SSE 持续无分帧符时按 UTF-8 字节上限取消 reader", async () => {
+    const encoder = new TextEncoder();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${"甲".repeat(12)}`));
+        controller.enqueue(encoder.encode("x".repeat(40)));
+      },
+      cancel,
+    });
+    const response = new Response(body, {
+      headers: { "content-type": "text/event-stream" },
+    });
+
+    await expect(readRawBranchResponse(response, undefined, 64)).rejects.toThrow(
+      "branch_stream_buffer_exceeded",
+    );
+    expect(cancel).toHaveBeenCalledWith("branch_stream_buffer_exceeded");
   });
 });

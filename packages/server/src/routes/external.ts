@@ -30,14 +30,26 @@ import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
+import { SessionActorQueueFullError } from "../gateway/sessionActor";
+import { BoundedSsePump } from "../lib/boundedSsePump";
 
 export const externalRoutes = new Hono();
 
 type ExternalClient = "claudecode" | "codex" | "agent";
 
 const DEFAULT_MATERIAL_TEXT_MAX_BYTES = 200_000;
+const READ_RATE_LIMIT_PER_SECOND = 5;
+const WRITE_RATE_LIMIT_PER_SECOND = 20;
 
-const readBuckets = new Map<string, { windowStart: number; count: number }>();
+const rateBuckets = new Map<string, { windowStart: number; count: number }>();
+
+externalRoutes.use("*", async (c, next) => {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    const limited = rateLimit(c);
+    if (limited) return limited;
+  }
+  await next();
+});
 
 externalRoutes.get("/health", (c) => {
   const startedAt = Date.now();
@@ -93,7 +105,15 @@ externalRoutes.post("/sessions", async (c) => {
   };
   // 外部调用无浏览器 header,模型 key 取 app 全局设置(global-db)+env 兜底,与桌面 UI 同源。
   const modelOverrides = await resolveRequestModelOverrides({});
-  const frames = await sessionManager.submit(sessionId, { command, origin: "external", modelOverrides });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, { command, origin: "external", modelOverrides });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   await saveEmptySessionDocument(sessionId).catch((error) => {
     console.warn("[external] evt=sessions result=empty_shadow_failed", {
       sessionId,
@@ -227,12 +247,20 @@ externalRoutes.post("/sessions/:id/proposals", async (c) => {
     externalLog("propose", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION", hunks: 0 });
     return externalError(c, 400, "VALIDATION", "提案不合法");
   }
-  const frames = await sessionManager.submit(sessionId, {
-    command: parsed.data,
-    origin: "external",
-    client,
-    modelOverrides: await resolveRequestModelOverrides({}),
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      client,
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   const summary = proposalSummary(frames);
   externalLog("propose", { sessionId, ms: elapsed(startedAt), result: summary.logResult, hunks: summary.hunks });
   return proposalResponse(c, summary);
@@ -258,7 +286,7 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
   }
   // 把调用方身份编进消息 id(与 proposals 同约定),前端据 external-<client>- 前缀展示"代你发送了一条消息"。
   const client = parseExternalClient(c.req.header("x-qa-client"));
-  const command: Command = {
+  const parsed = commandSchema.safeParse({
     kind: "sendMessage",
     data: {
       sessionId,
@@ -269,9 +297,27 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
       fileIds: [],
       clientMessageId: `external-${client}-${crypto.randomUUID()}`,
     },
-  };
+  });
+  if (!parsed.success || parsed.data.kind !== "sendMessage") {
+    externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:VALIDATION" });
+    return externalError(c, 400, "VALIDATION", "text 超过 64KB 上限");
+  }
   const modelOverrides = await resolveRequestModelOverrides({});
-  void sessionManager.submit(sessionId, { command, origin: "external", modelOverrides }).catch(() => {
+  let completion: Promise<LoggedFrame[]>;
+  try {
+    ({ completion } = await sessionManager.submitQueued(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      modelOverrides,
+    }));
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "rejected:RATE_LIMITED" });
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
+  void completion.catch(() => {
     console.warn(`[external] evt=chat session=${sessionId} result=async_failed`);
   });
   externalLog("chat", { sessionId, ms: elapsed(startedAt), result: "queued" });
@@ -285,10 +331,28 @@ externalRoutes.get("/sessions/:id/events", (c) => {
     const afterSeq = afterParam === "tip"
       ? Math.max(0, sessionManager.frameLog.readFrom(sessionId, 0).nextSeq - 1)
       : parseSeq(afterParam);
-    let writeChain = Promise.resolve();
+    let unsubscribe: () => void = () => undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+      settle();
+    };
+    const pump = new BoundedSsePump({
+      write: (message) => stream.writeSSE(message),
+      onClose: () => {
+        stream.abort();
+        cleanup();
+      },
+    });
     const meta = sessionManager.frameLog.readFrom(sessionId, afterSeq);
     const publicMeta = externalEventsMeta(meta, afterSeq);
-    await stream.writeSSE({
+    pump.enqueue({
       event: "meta",
       data: JSON.stringify({
         epoch: publicMeta.epoch,
@@ -297,32 +361,33 @@ externalRoutes.get("/sessions/:id/events", (c) => {
         gap: publicMeta.gap,
       }),
     });
-    const enqueue = (entry: LoggedFrame) => {
+    const enqueue = (entry: LoggedFrame): void => {
       const frame = frameForExternal(entry);
-      if (!frame) return writeChain;
-      writeChain = writeChain.then(() =>
-        stream.writeSSE({
-          id: String(entry.seq),
-          event: "frame",
-          data: JSON.stringify(frame),
-        }),
-      ).catch(() => undefined);
-      return writeChain;
-    };
-    const unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, (entry) => {
-      void enqueue(entry);
-    });
-    await new Promise<void>((resolve) => {
-      const heartbeat = setInterval(() => {
-        void stream.writeSSE({ event: "ping", data: "{}" }).catch(() => undefined);
-      }, 15_000);
-      stream.onAbort(() => {
-        clearInterval(heartbeat);
-        unsubscribe();
-        resolve();
+      if (!frame) return;
+      pump.enqueue({
+        id: String(entry.seq),
+        event: "frame",
+        data: JSON.stringify(frame),
       });
-    });
-    await writeChain;
+    };
+    try {
+      unsubscribe = sessionManager.frameLog.subscribe(sessionId, afterSeq, enqueue);
+      if (cleaned) unsubscribe();
+      if (!cleaned) {
+        heartbeat = setInterval(() => {
+          pump.enqueue({ event: "ping", data: "{}" });
+        }, 15_000);
+      }
+      stream.onAbort(() => {
+        pump.close();
+        cleanup();
+      });
+      await settled;
+      await pump.waitForIdle();
+    } finally {
+      pump.close();
+      cleanup();
+    }
   });
 });
 
@@ -462,20 +527,25 @@ function externalEventsMeta(
 }
 
 function rateLimit(c: Context) {
-  const key = c.req.path;
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",", 1)[0]?.trim();
+  const clientIp = forwardedFor || c.req.header("x-real-ip") || "direct";
+  const key = `${c.req.method}:${clientIp}:${c.req.path}`;
   const now = Date.now();
-  if (readBuckets.size > 1_000) {
-    for (const [bucketKey, bucket] of readBuckets) {
-      if (now - bucket.windowStart >= 1000) readBuckets.delete(bucketKey);
+  if (rateBuckets.size > 1_000) {
+    for (const [bucketKey, bucket] of rateBuckets) {
+      if (now - bucket.windowStart >= 1000) rateBuckets.delete(bucketKey);
     }
   }
-  const bucket = readBuckets.get(key);
+  const bucket = rateBuckets.get(key);
   if (!bucket || now - bucket.windowStart >= 1000) {
-    readBuckets.set(key, { windowStart: now, count: 1 });
+    rateBuckets.set(key, { windowStart: now, count: 1 });
     return null;
   }
   bucket.count += 1;
-  if (bucket.count > 5) return externalError(c, 429, "RATE_LIMITED");
+  const limit = c.req.method === "GET" || c.req.method === "HEAD"
+    ? READ_RATE_LIMIT_PER_SECOND
+    : WRITE_RATE_LIMIT_PER_SECOND;
+  if (bucket.count > limit) return externalError(c, 429, "RATE_LIMITED");
   return null;
 }
 

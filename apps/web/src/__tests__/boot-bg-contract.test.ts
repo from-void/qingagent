@@ -3,22 +3,24 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// boot 底色契约:首页固定浅色后,React 挂载前的 boot 壳层底色(index.html inline <style>+script、
-// App.tsx Suspense 非工作区兜底)必须是首页浅色纸底,绝不能是旧版深色首页遗留的深底——否则懒加载
-// 大 chunk 下载期(VPS 慢网)露深底=生产"中间黑块"(daf414e 修)。工作区直链则必须用真实玄青桌面色。
-// 真值 = #ece4d3(首页 body 暖纸稳态色 rgb(236,228,211)=--bg-window 运行时值,浏览器实测)。
-// 注:主题暖化后旧冷灰 #e9eae6 与两侧暖底不匹配,首帧闪"暖两侧+冷中心",故 boot 兜底同步为暖值。
+// boot 底色契约分两层：React 挂载前的 index.html 继续用暖纸兜底；React 接管后的 Suspense
+// 必须按目标路由匹配页面最底层颜色。页面 CSS 随 lazy chunk 才到，映射值需要与 CSS 副本同步。
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "../..");
 const indexHtml = readFileSync(path.join(webRoot, "index.html"), "utf8");
 const appTsx = readFileSync(path.join(webRoot, "src/App.tsx"), "utf8");
+const appCss = readFileSync(path.join(webRoot, "src/app.css"), "utf8");
+const desktopMain = readFileSync(path.join(webRoot, "../desktop/src/main/index.ts"), "utf8");
+const homeCss = readFileSync(path.join(webRoot, "src/pages/home/components/qingjian.css"), "utf8");
+const newSessionCss = readFileSync(path.join(webRoot, "src/pages/new-session/new-session-qing.css"), "utf8");
+const workspaceCss = readFileSync(path.join(webRoot, "src/pages/workspace/workspace-ink-skin.css"), "utf8");
 
 const BOOT_LIGHT = "#ece4d3";
 // 禁止:旧深色首页遗留的深底(亮度极低,出现即黑块回归)。
 const FORBIDDEN_DARK = ["#14171a", "#0e1114", "#2a2620", "#000000", "#000 "];
 
-describe("boot 底色契约(防黑块回归·跨副本一致)", () => {
+describe("boot 与切页底色契约", () => {
   it("index.html 的 html 兜底底色 = 首页暖纸 #ece4d3", () => {
     expect(indexHtml).toContain("background: var(--app-boot-bg, #ece4d3)");
   });
@@ -27,13 +29,29 @@ describe("boot 底色契约(防黑块回归·跨副本一致)", () => {
     expect(indexHtml).toMatch(/var bg = "#ece4d3"/);
   });
 
-  it("App.tsx Suspense 按目标路由选择玄青工作区或暖纸兜底", () => {
-    expect(appTsx).toContain(
-      'background: route === "workspace" ? "#16212c" : "var(--app-boot-bg, #ece4d3)"',
-    );
+  it("桌面原生底色与自包含启动壳复用同一暖纸 boot 契约", () => {
+    const shellHtml = desktopMain.match(/const STARTUP_SHELL_HTML = `([\s\S]*?)`;/)?.[1] ?? "";
+    expect(desktopMain).toContain('backgroundColor: "#ece4d3"');
+    expect(shellHtml).toMatch(/background:\s*#ece4d3/);
+    expect(shellHtml).toMatch(/color:\s*#2f2a22/);
+    expect(shellHtml).not.toContain("#1a1a1a");
   });
 
-  it("三处 boot 副本都不得出现旧版深色(黑块回归红线)", () => {
+  it("Suspense 按 home/new-session/workspace 的真实底色映射", () => {
+    expect(appTsx).toContain('home: { pageFrameModifier: "web-page-frame--qingjian-home", suspenseBackground: "#1c1915" }');
+    expect(appTsx).toContain('"new-session": { suspenseBackground: "#16212c" }');
+    expect(appTsx).toContain('workspace: { pageFrameModifier: "web-page-frame--workspace", suspenseBackground: "#16212c" }');
+    expect(appTsx).toContain("background: suspenseBackground");
+  });
+
+  it("路由映射值与对应页面 CSS 的底层色一致", () => {
+    expect(homeCss).toMatch(/#view-home\.home-qingjian\s*\{[^}]*background:\s*#1c1915/s);
+    expect(appCss).toContain("--desk-base: #16212c");
+    expect(newSessionCss).toMatch(/\.ccx-space\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
+    expect(workspaceCss).toMatch(/#view-workspace\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
+  });
+
+  it("React 挂载前的 index.html 不得回退到旧版深色", () => {
     for (const dark of FORBIDDEN_DARK) {
       // 注释里允许提及历史深色(说明用),只校验实际 CSS/JS 值行:
       const bootStyleLine = indexHtml
@@ -41,7 +59,6 @@ describe("boot 底色契约(防黑块回归·跨副本一致)", () => {
         .filter((l) => /background|var bg|--app-boot-bg/.test(l) && !l.trim().startsWith("//") && !l.includes("注:"))
         .join("\n");
       expect(bootStyleLine).not.toContain(dark);
-      expect(appTsx).not.toContain(`var(--app-boot-bg, ${dark})`);
     }
   });
 

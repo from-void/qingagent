@@ -51,6 +51,58 @@ describe("diagram-engine", () => {
     expect(parseDiagram("mindmap\n  root\n    child").model.type).toBe("mindmap");
   });
 
+  it("flowchart 按分号切分语句并将链式边展开为相邻边", () => {
+    const source = "graph TD; A-->B-->D";
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes.map((node) => node.id)).toEqual(["A", "B", "D"]);
+    expect(model.edges.map((item) => [item.source, item.target])).toEqual([
+      ["A", "B"],
+      ["B", "D"],
+    ]);
+    expect(model.edges.every((item) => source.slice(item.stmt.start, item.stmt.end).trim() === "A-->B-->D")).toBe(true);
+    expect(graphToSvg(source)).toContain("<svg");
+
+    const semicolonSeparated = parseDiagram("graph TD; A-->B; B-->D").model as FlowGraph;
+    expect(semicolonSeparated.edges.map((item) => [item.source, item.target])).toEqual([
+      ["A", "B"],
+      ["B", "D"],
+    ]);
+
+    const multiline = parseDiagram("graph TD\nA-->B\nB-->D").model as FlowGraph;
+    expect(multiline.nodes.map((node) => node.id)).toEqual(["A", "B", "D"]);
+    expect(multiline.edges.map((item) => [item.source, item.target])).toEqual([
+      ["A", "B"],
+      ["B", "D"],
+    ]);
+  });
+
+  it("flowchart 链式边保留各段标签线型且多目标继续展开", () => {
+    const chain = parseDiagram("flowchart LR; A-->|通过|B-.->C").model as FlowGraph;
+    expect(chain.edges.map((item) => [item.source, item.target, item.label, item.lineStyle])).toEqual([
+      ["A", "B", "通过", "solid"],
+      ["B", "C", undefined, "dotted"],
+    ]);
+
+    const multiTarget = parseDiagram("flowchart TD; A-->|分支|B & C").model as FlowGraph;
+    expect(multiTarget.nodes.map((node) => node.id)).toEqual(["A", "B", "C"]);
+    expect(multiTarget.edges.map((item) => [item.source, item.target, item.label])).toEqual([
+      ["A", "B", "分支"],
+      ["A", "C", "分支"],
+    ]);
+
+    const punctuationInLabel = parseDiagram('flowchart TD; A["分号; 与箭头 --> 都是正文"]-->B').model as FlowGraph;
+    expect(punctuationInLabel.nodes.find((node) => node.id === "A")?.label).toBe("分号; 与箭头 --> 都是正文");
+    expect(punctuationInLabel.edges.map((item) => [item.source, item.target])).toEqual([["A", "B"]]);
+  });
+
+  it("flowchart 未闭合节点仍返回解析错误", () => {
+    const source = "graph TD; A[未闭合 --> B";
+    expect(parseDiagram(source)).toMatchObject({ ok: false, error: "节点 A 的形状未闭合" });
+    expect(graphToSvg(source)).toBeNull();
+  });
+
   it("flowchart rewrite 只改目标 span,保留注释/style/class/subgraph/link 文本", () => {
     const source = [
       "flowchart TD",

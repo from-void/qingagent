@@ -360,6 +360,22 @@ describe("GraphDiagramView", () => {
     expect(graphDiagramCss).toContain(".graph-diagram:hover .graph-diagram-canvas--preview .react-flow__controls");
   });
 
+  it("单行分号声明与链式边渲染出全部 React Flow 节点", async () => {
+    await render(<DiagramRenderer source="graph TD; A-->B-->D" readOnly />);
+    await waitForSelector(".graph-diagram");
+    expect(container?.querySelectorAll(".react-flow__node")).toHaveLength(3);
+    expect(container?.querySelectorAll(".react-flow__edge")).toHaveLength(2);
+    expect(container?.querySelector(".graph-diagram-export svg")).not.toBeNull();
+  });
+
+  it("未闭合 flowchart 节点仍显示解析错误而非空画布", async () => {
+    await render(<DiagramRenderer source="graph TD; A[未闭合 --> B" readOnly />);
+    await waitForSelector(".pm-diagram-error");
+    expect(container?.textContent).toContain("节点 A 的形状未闭合");
+    expect(container?.querySelector(".graph-diagram")).toBeNull();
+    expect(container?.querySelector(".react-flow__node")).toBeNull();
+  });
+
   it("外部信号进入全屏后空选可加节点并回写 source", async () => {
     const onSourceChange = vi.fn();
     await render(

@@ -1,4 +1,9 @@
 import { readDisabledSet } from "./enabledStore.js";
+import {
+  activateDiagramVizSkill,
+  DIAGRAM_VIZ_SKILL_NAME,
+} from "./diagramViz.js";
+import type { RequestContext } from "@mastra/core/request-context";
 
 export const SKILL_DISABLED_TOOL_RESULT_CODE = "SKILL_DISABLED";
 
@@ -43,6 +48,7 @@ const SKILL_LABELS: Record<string, string> = {
   feishu: "连飞书",
   "sensitive-review": "敏感词审查",
   "deai-review": "去AI味",
+  "diagram-viz": "图表可视化",
 };
 
 export interface SkillDisabledToolResult {
@@ -153,15 +159,45 @@ export function isSkillDisabledToolResult(value: unknown): value is SkillDisable
 export async function beforeSkillToolCall({
   toolName,
   input,
+  context,
 }: {
   toolName: string;
   input: unknown;
+  context?: unknown;
 }): Promise<{ proceed: false; output: SkillDisabledToolResult } | undefined> {
   const disabledSkills = await readDisabledSet();
+  const requestedSkillName =
+    toolName === "skill" &&
+    input &&
+    typeof input === "object" &&
+    typeof (input as { name?: unknown }).name === "string"
+      ? (input as { name: string }).name.trim()
+      : null;
+  if (requestedSkillName && disabledSkills.has(requestedSkillName)) {
+    return {
+      proceed: false,
+      output: buildSkillDisabledToolResult(requestedSkillName, toolName, input),
+    };
+  }
   const skillName = disabledSkillForTool(toolName, disabledSkills);
-  if (!skillName) return undefined;
-  return {
-    proceed: false,
-    output: buildSkillDisabledToolResult(skillName, toolName, input),
-  };
+  if (skillName) {
+    return {
+      proceed: false,
+      output: buildSkillDisabledToolResult(skillName, toolName, input),
+    };
+  }
+  if (requestedSkillName === DIAGRAM_VIZ_SKILL_NAME) {
+    const requestContext =
+      context &&
+      typeof context === "object" &&
+      "requestContext" in context
+        ? (context as { requestContext?: RequestContext }).requestContext
+        : undefined;
+    const userText = requestContext?.get("userText");
+    activateDiagramVizSkill(
+      requestContext,
+      typeof userText === "string" ? userText : "",
+    );
+  }
+  return undefined;
 }

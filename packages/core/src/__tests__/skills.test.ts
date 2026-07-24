@@ -32,6 +32,42 @@ function parseFrontmatter(source: string): Record<string, unknown> {
 }
 
 describe("builtin skills", () => {
+  it("发现 diagram-viz 内置技能，并在显式停用后从 Workspace 目录移除", async () => {
+    const categoryRoots = [
+      join(BUILTIN_SKILLS_DIR, "capability"),
+      join(BUILTIN_SKILLS_DIR, "native"),
+      join(BUILTIN_SKILLS_DIR, "style"),
+    ];
+    const enabledDirs = await resolveEnabledSkillDirsFromRoots(categoryRoots, new Set());
+    const diagramDir = enabledDirs.find((dir) => basename(dir) === "diagram-viz");
+    expect(diagramDir).toBeTruthy();
+
+    const skillPath = join(diagramDir!, "SKILL.md");
+    const frontmatter = parseFrontmatter(await readFile(skillPath, "utf8"));
+    expect(frontmatter).toMatchObject({
+      name: "diagram-viz",
+      label: "图表可视化",
+      "user-invocable": "true",
+    });
+
+    const workspace = new Workspace({
+      filesystem: new LocalFilesystem({
+        basePath: BUILTIN_SKILLS_DIR,
+        allowedPaths: [USER_SKILLS_DIR],
+      }),
+      skills: enabledDirs,
+    });
+    const skillsApi = workspace.skills;
+    if (!skillsApi) throw new Error("Workspace skills are not configured");
+    expect(await skillsApi.has("diagram-viz")).toBe(true);
+
+    const disabledDirs = await resolveEnabledSkillDirsFromRoots(
+      categoryRoots,
+      new Set(["diagram-viz"]),
+    );
+    expect(disabledDirs.some((dir) => basename(dir) === "diagram-viz")).toBe(false);
+  });
+
   it("loads browser-ops from the capability category with valid frontmatter", async () => {
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({

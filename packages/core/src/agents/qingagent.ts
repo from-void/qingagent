@@ -31,6 +31,10 @@ import {
   wrapModelWithDocVersionAwareness,
 } from "../llm/docVersionAwarenessPrompt.js";
 import {
+  diagramVizEditingSourceFromRequestContext,
+  wrapModelWithDiagramVizEditing,
+} from "../llm/diagramVizEditingPrompt.js";
+import {
   anthropicBaseUrl,
   createSnapshottingQingagentModel,
   resolveBaseUrl,
@@ -62,6 +66,8 @@ function getRepairingModelFor(requestContext?: RequestContext) {
   const omObservationsSource = omObservationsSourceFromRequestContext(requestContext);
   const docVersionAwarenessSource =
     docVersionAwarenessSourceFromRequestContext(requestContext);
+  const diagramVizEditingSource =
+    diagramVizEditingSourceFromRequestContext(requestContext);
   const { apiKey } = resolveDeepseekAuth(requestContext);
   const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
@@ -92,7 +98,10 @@ function getRepairingModelFor(requestContext?: RequestContext) {
     }
     const contextualModel = wrapModelWithTodoAwareness(
       wrapModelWithOmObservations(
-        wrapModelWithDocVersionAwareness(m, docVersionAwarenessSource),
+        wrapModelWithDocVersionAwareness(
+          wrapModelWithDiagramVizEditing(m, diagramVizEditingSource),
+          docVersionAwarenessSource,
+        ),
         omObservationsSource,
       ),
       todoAwarenessSource,
@@ -108,7 +117,10 @@ function getRepairingModelFor(requestContext?: RequestContext) {
   );
   const contextualModel = wrapModelWithTodoAwareness(
     wrapModelWithOmObservations(
-      wrapModelWithDocVersionAwareness(model, docVersionAwarenessSource),
+      wrapModelWithDocVersionAwareness(
+        wrapModelWithDiagramVizEditing(model, diagramVizEditingSource),
+        docVersionAwarenessSource,
+      ),
       omObservationsSource,
     ),
     todoAwarenessSource,

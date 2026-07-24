@@ -1,10 +1,53 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { qingmlParse } from "@qingagent/pm-schema";
 import { AIIR_SYSTEM_PROMPT } from "../prompts/system.js";
 
-describe("drawio 静态提示词契约", () => {
-  it("主 system 在模型实际编辑上下文提供选型、明文 XML 规范和可解析范本", () => {
+function readSkillFile(relativePath: string): string {
+  return readFileSync(
+    new URL(`../../skills/capability/${relativePath}`, import.meta.url),
+    "utf8",
+  );
+}
+
+function migratedDisciplineHash(source: string, prefix: string): string {
+  const line = source.split("\n").find((value) => value.startsWith(prefix));
+  if (!line) throw new Error(`缺少迁移原文：${prefix}`);
+  return createHash("sha256").update(line).digest("hex");
+}
+
+describe("图表技能静态提示词契约", () => {
+  it("主 system 摘除 Mermaid/draw.io 语法正文，只保留按需路由", () => {
+    expect(AIIR_SYSTEM_PROMPT).toContain('skill({name:"diagram-viz"})');
+    for (const movedDetail of [
+      "Mermaid 语法只认半角",
+      "source **首行必须是合法图型声明**",
+      "工程图/架构图 diagram(drawio)",
+      "必须是**未压缩明文** mxGraph XML",
+      "<drawio>&lt;mxGraphModel",
+    ]) {
+      expect(AIIR_SYSTEM_PROMPT).not.toContain(movedDetail);
+    }
+  });
+
+  it("diagram-viz references 承接两段原语法纪律及可解析 draw.io 范本", () => {
+    const mermaid = readSkillFile("diagram-viz/references/mermaid.md");
+    const drawio = readSkillFile("diagram-viz/references/drawio.md");
+    expect(migratedDisciplineHash(mermaid, "- 图表块 diagram：")).toBe(
+      "ffdab917b253716e439803cb6222aa379c933557edd7161ba2b5622aa5dffd42",
+    );
+    expect(migratedDisciplineHash(drawio, "- 工程图/架构图 diagram(drawio)：")).toBe(
+      "29ecb9206cf347e4fa7e46516d01b465541b7a19c948ac01a769d3f382369055",
+    );
+
+    for (const keyword of [
+      "Mermaid 语法只认半角",
+      "source **首行必须是合法图型声明**",
+      "Mermaid 关键字必须保持英文原样",
+    ]) {
+      expect(mermaid).toContain(keyword);
+    }
     for (const keyword of [
       "工程图/架构图 diagram(drawio)",
       "网络拓扑",
@@ -18,9 +61,10 @@ describe("drawio 静态提示词契约", () => {
       "保留未改节点/边的稳定 mxCell id",
       "不要在 XML 中放 script、链接、外部图片",
     ]) {
-      expect(AIIR_SYSTEM_PROMPT).toContain(keyword);
+      expect(drawio).toContain(keyword);
     }
-    const match = AIIR_SYSTEM_PROMPT.match(/<drawio>&lt;mxGraphModel[\s\S]*?<\/drawio>/);
+
+    const match = drawio.match(/<drawio>&lt;mxGraphModel[\s\S]*?<\/drawio>/);
     expect(match?.[0]).toBeTruthy();
     const parsed = qingmlParse(match![0]);
     expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
@@ -31,16 +75,15 @@ describe("drawio 静态提示词契约", () => {
     });
   });
 
-  it("出图 skill 按四类路由并给出 drawio 最小生成规范", () => {
-    const skill = readFileSync(
-      new URL("../../skills/capability/image-gen/SKILL.md", import.meta.url),
-      "utf8",
-    );
-    expect(skill).toContain("四类");
-    expect(skill).toContain("工程图/架构图(drawio)");
-    expect(skill).toContain("未压缩 mxGraphModel XML");
-    expect(skill).toContain('mxCell vertex="1"');
-    expect(skill).toContain('edge="1"');
-    expect(skill).toContain("禁止脚本、链接、外部图片");
+  it("image-gen 只保留 SVG 配图职责和现行文档工具口径", () => {
+    const skill = readSkillFile("image-gen/SKILL.md");
+    expect(skill).toContain("本技能只负责**生成式 SVG 插画资产**");
+    expect(skill).toContain("writeDraft");
+    expect(skill).toContain("editDraft");
+    expect(skill).toContain("readDiff");
+    expect(skill).not.toContain("## ① Mermaid");
+    expect(skill).not.toContain("## ② drawio");
+    expect(skill).not.toContain("generateDoc");
+    expect(skill).not.toContain("AI-IR");
   });
 });

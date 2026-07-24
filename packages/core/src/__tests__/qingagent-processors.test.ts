@@ -13,6 +13,13 @@ import {
   createQingagentToolSearchProcessor,
 } from "../agents/toolSearch.js";
 import { buildQingagentStaticTools } from "../agents/qingagent.js";
+import {
+  markDiagramVizEditing,
+} from "../skills/diagramViz.js";
+import {
+  diagramVizEditingSourceFromRequestContext,
+  wrapModelWithDiagramVizEditing,
+} from "../llm/diagramVizEditingPrompt.js";
 
 const savedEnv = Object.fromEntries(
   [...Object.values(QINGAGENT_PROCESSOR_ENV), QINGAGENT_TOOL_SEARCH_ENV]
@@ -39,7 +46,9 @@ describe("qingagent processors", () => {
   it("默认只启用非 LLM 型 UnicodeNormalizer 与 BatchPartsProcessor", () => {
     resetProcessorEnv();
 
-    expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
+    expect(processorIds(buildQingagentInputProcessors())).toEqual([
+      "unicode-normalizer",
+    ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
@@ -53,7 +62,9 @@ describe("qingagent processors", () => {
     resetProcessorEnv();
     process.env[QINGAGENT_TOOL_SEARCH_ENV] = "1";
 
-    expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
+    expect(processorIds(buildQingagentInputProcessors())).toEqual([
+      "unicode-normalizer",
+    ]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
       "askUserQuestion",
@@ -153,6 +164,43 @@ describe("qingagent processors", () => {
       "batch-parts",
       "qingagent-output-llm-guardrails",
     ]);
+  });
+
+  it("图表编辑包装器只在 RequestContext 标记后向 provider prompt 尾部注入 user 消息", async () => {
+    resetProcessorEnv();
+    const requestContext = new RequestContext();
+    const seenPrompts: Array<Array<{ role: string; content: unknown }>> = [];
+    const baseModel = {
+      async doGenerate(options: { prompt?: unknown }) {
+        seenPrompts.push(options.prompt as Array<{ role: string; content: unknown }>);
+        return { content: [], finishReason: "stop", usage: {}, warnings: [] };
+      },
+      async doStream(options: { prompt?: unknown }) {
+        seenPrompts.push(options.prompt as Array<{ role: string; content: unknown }>);
+        return { stream: new ReadableStream() };
+      },
+    };
+    const wrapped = wrapModelWithDiagramVizEditing(
+      baseModel,
+      diagramVizEditingSourceFromRequestContext(requestContext),
+    );
+    const originalPrompt = [{ role: "user", content: "请修改图表" }];
+
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    expect(seenPrompts[0]).toBe(originalPrompt);
+
+    markDiagramVizEditing(requestContext, ["mermaid"]);
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    await wrapped.doStream({ prompt: originalPrompt });
+
+    for (const prompt of seenPrompts.slice(1)) {
+      expect(prompt).toHaveLength(2);
+      expect(prompt.at(-1)?.role).toBe("user");
+      const content = JSON.stringify(prompt.at(-1)?.content);
+      expect(content).toContain('purpose=\\"edit\\" languages=\\"mermaid\\"');
+      expect(content).toContain("Mermaid 语法只认半角");
+      expect(content).not.toContain("未压缩明文 mxGraph XML");
+    }
   });
 
   it("LLM detector 默认走当前 flash 解析,并沿用请求级 key/baseURL/模型别名", () => {

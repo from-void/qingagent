@@ -174,7 +174,7 @@ export function summarizeSelectedBlock(doc: PmDoc, block: PmDoc["content"][numbe
 export function resolveSelectionChipBlocks(
   state: SessionState,
   chip: ChatChip,
-): Array<{ ref: string; type: string; summary: string; parentListRef?: string }> {
+): Array<{ ref: string; type: string; summary: string; lang?: "mermaid" | "drawio"; parentListRef?: string }> {
   const refs = chip.selectionRefs && chip.selectionRefs.length > 0
     ? chip.selectionRefs
     : chip.resourceRef?.id
@@ -183,7 +183,13 @@ export function resolveSelectionChipBlocks(
   if (refs.length === 0) return [];
   const doc = state.docDraftCandidateDoc ?? currentPmDoc(state);
   const byRef = new Map(collectReadableDraftRefs(doc).map((entry) => [entry.ref, entry]));
-  const out: Array<{ ref: string; type: string; summary: string; parentListRef?: string }> = [];
+  const out: Array<{
+    ref: string;
+    type: string;
+    summary: string;
+    lang?: "mermaid" | "drawio";
+    parentListRef?: string;
+  }> = [];
   const seen = new Set<string>();
   for (const ref of refs) {
     if (seen.has(ref)) continue;
@@ -194,6 +200,11 @@ export function resolveSelectionChipBlocks(
       ref,
       type: entry.node.type,
       summary: summarizeReadableDraftNode(doc, entry.node),
+      ...(entry.node.type === "diagram" && entry.node.attrs.lang === "drawio"
+        ? { lang: "drawio" as const }
+        : entry.node.type === "diagram"
+          ? { lang: "mermaid" as const }
+          : {}),
       ...(entry.parentListRef ? { parentListRef: entry.parentListRef } : {}),
     });
   }

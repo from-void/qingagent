@@ -289,7 +289,9 @@ export function buildQingagentInputProcessors({
   requestContext?: RequestContext;
 } = {}): InputProcessorOrWorkflow[] {
   const flags = resolveQingagentProcessorFlags();
-  const processors: InputProcessorOrWorkflow[] = [DEFAULT_UNICODE_NORMALIZER];
+  const processors: InputProcessorOrWorkflow[] = [
+    DEFAULT_UNICODE_NORMALIZER,
+  ];
   const toolSearch = toolSearchProcessorFromRequestContext(requestContext);
   if (toolSearch) processors.push(toolSearch);
   if (hasInputLlmGuardrail(flags)) {

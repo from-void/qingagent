@@ -68,6 +68,19 @@ async function* handleCancelAskUser(
   session: SessionState,
   toolCallId: string,
 ): AsyncGenerator<BridgeFrame> {
+  // 幂等：首个取消已经把该问卷持久化为相同 failed 终态时，重复请求直接成功。
+  // 这覆盖浏览器重试、代理重放，以及“响应丢了但服务端已完成”的场景。
+  for (const message of session.chatHistory) {
+    const cancelled = message.parts.some(
+      (part) =>
+        part.kind === "toolCall" &&
+        part.data.id === toolCallId &&
+        isQuestionnaireTool(part.data.name) &&
+        part.data.status.kind === "failed" &&
+        part.data.status.data.reason === "用户已放弃本轮问卷",
+    );
+    if (cancelled) return;
+  }
   const hasSuspension = hasActiveSuspension(session);
   const hasMatchingSuspension = hasSuspension && session.toolCallId === toolCallId;
   if (hasSuspension && !hasMatchingSuspension) {

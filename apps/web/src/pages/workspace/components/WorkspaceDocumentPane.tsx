@@ -23,6 +23,10 @@ import { ReviewIcon, ReviewMenu } from "./ReviewMenu";
 import { ExportIcon } from "./RightPane";
 import { RightPane } from "./RightPane";
 import { canUseDocumentEditing } from "../data/reviewActions";
+import {
+  annotationMutationKey,
+  workspaceMutations,
+} from "../data/revisionedMutation";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
 
@@ -421,19 +425,41 @@ export function WorkspaceDocumentPane({
               return true;
             }}
             onIgnore={(group, rememberDismissal) => {
-              controller.dispatchAnnotationGroups(
-                state.annotationGroups.map((item) =>
-                  item.id === group.id ? { ...item, status: "ignored" } : item,
-                ),
-              );
-              if (state.sessionId) {
-                void streamRef.current
-                  ?.ignoreAnnotationGroups(state.sessionId, "item_ignored", {
-                    groupIds: [group.id],
-                    rememberDismissal,
-                  })
-                  .catch(() => showToast("批注忽略状态保存失败，请重试"));
+              const sessionId = state.sessionId;
+              const stream = streamRef.current;
+              if (!sessionId || !stream) {
+                showToast("连接还没准备好");
+                return;
               }
+              const snapshot = state.annotationGroups;
+              const mutation = workspaceMutations.tryRun(
+                annotationMutationKey(sessionId, group.id),
+                {
+                  capture: () => snapshot,
+                  applyOptimistic: () => {
+                    controller.dispatchAnnotationGroups(
+                      snapshot.map((item) =>
+                        item.id === group.id
+                          ? { ...item, status: "ignored" }
+                          : item,
+                      ),
+                    );
+                  },
+                  commit: () =>
+                    stream.ignoreAnnotationGroups(sessionId, "item_ignored", {
+                      groupIds: [group.id],
+                      rememberDismissal,
+                    }),
+                  rollback: (previous) => {
+                    controller.dispatchAnnotationGroups(previous);
+                  },
+                },
+              );
+              if (!mutation) return;
+              void mutation.promise.catch((error) => {
+                console.error("[workspace] ignoreAnnotationGroups failed", error);
+                showToast("批注忽略状态保存失败，已恢复");
+              });
             }}
           />
         ) : null}

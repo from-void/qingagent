@@ -148,6 +148,101 @@ describe("ServerStream", () => {
     );
   });
 
+  it("素材摘要命令必须等匹配的 resourceUpdated 权威帧后才确认", async () => {
+    globalThis.fetch = commandResponse();
+    const stream = new ServerStream();
+    let settled = false;
+    const pending = stream
+      .updateMaterialSummary("s-1", "mat-1", "新摘要")
+      .then(() => {
+        settled = true;
+      });
+    const source = await waitForEventSource();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    source.emitFrame({
+      kind: "resourceUpdated",
+      data: {
+        resourceRef: { id: "mat-1", domain: { kind: "file" } },
+        summary: "其他摘要",
+        metadata: {},
+      },
+    } satisfies BridgeFrame, "1");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    source.emitFrame({
+      kind: "resourceUpdated",
+      data: {
+        resourceRef: { id: "mat-1", domain: { kind: "file" } },
+        summary: "新摘要",
+        metadata: {},
+      },
+    } satisfies BridgeFrame, "2");
+    await expect(pending).resolves.toBeUndefined();
+    expect(settled).toBe(true);
+    stream.dispose();
+  });
+
+  it("忽略批注命令必须等目标组的 ignored 权威帧后才确认", async () => {
+    globalThis.fetch = commandResponse();
+    const stream = new ServerStream();
+    let settled = false;
+    const pending = stream
+      .ignoreAnnotationGroups("s-1", "item_ignored", {
+        groupIds: ["annotation-1"],
+      })
+      .then(() => {
+        settled = true;
+      });
+    const source = await waitForEventSource();
+    source.emitFrame({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: [{
+          id: "annotation-1",
+          origin: "consistency",
+          status: "reviewing",
+          summary: "待核对",
+          note: "尚未忽略",
+          anchors: [{
+            blockId: "p-1",
+            pmFrom: 1,
+            pmTo: 2,
+            quote: "甲",
+            textHash: "hash-1",
+          }],
+        }],
+      },
+    } satisfies BridgeFrame, "1");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    source.emitFrame({
+      kind: "annotationGroupsReady",
+      data: {
+        groups: [{
+          id: "annotation-1",
+          origin: "consistency",
+          status: "ignored",
+          summary: "待核对",
+          note: "已忽略",
+          anchors: [{
+            blockId: "p-1",
+            pmFrom: 1,
+            pmTo: 2,
+            quote: "甲",
+            textHash: "hash-1",
+          }],
+        }],
+      },
+    } satisfies BridgeFrame, "2");
+    await expect(pending).resolves.toBeUndefined();
+    expect(settled).toBe(true);
+    stream.dispose();
+  });
+
   it("drops invalid frames from EventSource", async () => {
     globalThis.fetch = commandResponse({ accepted: true, sessionId: "s-1", epoch: 1 });
     const stream = new ServerStream();
@@ -626,6 +721,10 @@ describe("ServerStream", () => {
     source.emitFrame({ kind: "restoreReset", data: { epoch: 2, snapshotSeq: 2 } } satisfies BridgeFrame, "2");
 
     expect(frames.at(-1)).toEqual({ kind: "restoreReset", data: { epoch: 2, snapshotSeq: 2 } });
+    expect(source.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]!.url).toContain("after=2");
+    expect(MockEventSource.instances[1]!.url).toContain("epoch=2");
   });
 
   it("restoreReset 的 seq 回退必须被接受并回拨去重游标(服务端日志重置后恢复帧不得丢)", async () => {
@@ -649,14 +748,18 @@ describe("ServerStream", () => {
     const reset: BridgeFrame = { kind: "restoreReset", data: { epoch: 2, snapshotSeq: 3 } };
     source.emitFrame(reset, "3");
     expect(frames.at(-1)).toEqual(reset);
+    const restoredSource = MockEventSource.instances.at(-1)!;
+    expect(restoredSource).not.toBe(source);
+    expect(restoredSource.url).toContain("epoch=2");
+    expect(restoredSource.url).toContain("after=3");
 
     // 其后的恢复帧(seq 继续从小处递增)也必须送达
-    source.emitFrame(VALID_FRAME, "4");
+    restoredSource.emitFrame(VALID_FRAME, "4");
     expect(frames).toHaveLength(4);
     expect(frames.at(-1)).toEqual(VALID_FRAME);
 
     // 去重语义仍在:重复 seq 不重复分发
-    source.emitFrame(VALID_FRAME, "4");
+    restoredSource.emitFrame(VALID_FRAME, "4");
     expect(frames).toHaveLength(4);
   });
 
@@ -768,5 +871,88 @@ describe("ServerStream", () => {
 
     expect(result).toEqual([]);
     expect(progress).not.toHaveBeenCalled();
+  });
+
+  it.each(["stop", "dispose"] as const)(
+    "%s() 会 abort ask-more fetch 并 cancel 在途 reader",
+    async (method) => {
+      let requestSignal: AbortSignal | undefined;
+      let finishRead: ((result: ReadableStreamReadResult<Uint8Array>) => void) | null = null;
+      const reader = {
+        read: vi.fn(
+          () =>
+            new Promise<ReadableStreamReadResult<Uint8Array>>((resolve) => {
+              finishRead = resolve;
+            }),
+        ),
+        cancel: vi.fn(async () => {
+          finishRead?.({ done: true, value: undefined });
+        }),
+      };
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        requestSignal = init?.signal ?? undefined;
+        return {
+          ok: true,
+          status: 200,
+          body: { getReader: () => reader },
+          json: async () => ({}),
+        } as unknown as Response;
+      });
+
+      const stream = new ServerStream();
+      const pending = stream.askMore("s-1", "plan-cancel", [], {});
+      await vi.waitFor(() => expect(reader.read).toHaveBeenCalledOnce());
+
+      stream[method]();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(requestSignal?.aborted).toBe(true);
+      expect(reader.cancel).toHaveBeenCalled();
+    },
+  );
+
+  it("切换会话会取消旧会话 ask-more，不让迟到问题写回新会话", async () => {
+    let finishRead: ((result: ReadableStreamReadResult<Uint8Array>) => void) | null = null;
+    const reader = {
+      read: vi.fn(
+        () =>
+          new Promise<ReadableStreamReadResult<Uint8Array>>((resolve) => {
+            finishRead = resolve;
+          }),
+      ),
+      cancel: vi.fn(async () => {
+        finishRead?.({ done: true, value: undefined });
+      }),
+    };
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).includes("/ask-more")) {
+        return {
+          ok: true,
+          status: 200,
+          body: { getReader: () => reader },
+          json: async () => ({}),
+        } as unknown as Response;
+      }
+      return new Response(JSON.stringify({ accepted: true, epoch: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const stream = new ServerStream();
+    await stream.sendCommand({
+      kind: "renameSession",
+      data: { sessionId: "s-old", title: "旧会话" },
+    });
+    const pending = stream.askMore("s-old", "plan-switch", [], {});
+    await vi.waitFor(() => expect(reader.read).toHaveBeenCalledOnce());
+
+    await stream.sendCommand({
+      kind: "renameSession",
+      data: { sessionId: "s-new", title: "新会话" },
+    });
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(reader.cancel).toHaveBeenCalled();
+    stream.dispose();
   });
 });

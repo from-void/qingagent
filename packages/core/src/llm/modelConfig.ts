@@ -99,6 +99,7 @@ export interface BranchCallInput {
   streamTextDeltas?: boolean;
   thinking?: boolean;
   temperature?: number;
+  topP?: number;
   maxTokens?: number;
   /** 分支验真前允许缓存的文本字节数；缺省使用安全上限。 */
   maxBufferedTextBytes?: number;
@@ -511,6 +512,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       ...(!input.thinking && typeof input.temperature === "number"
         ? { temperature: input.temperature }
         : {}),
+      ...(typeof input.topP === "number" ? { top_p: input.topP } : {}),
     };
     if (input.thinking) delete body.temperature;
     // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。

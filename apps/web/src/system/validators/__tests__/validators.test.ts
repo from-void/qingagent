@@ -3,6 +3,7 @@ import type {
   AskUserSpec,
   Command,
   BridgeFrame,
+  ToolCallBody,
 } from "@qingagent/contract-ts";
 import { validateAskUserSpec, AskUserSpecValidationError } from "../askUserSpec";
 import { validateCommand, CommandValidationError } from "../command";
@@ -454,6 +455,132 @@ describe("validateBridgeFrame", () => {
     },
   });
   const FUTURE_EPOCH_MS = 4102444800000;
+
+  const toolBodyFrame = (body: ToolCallBody): BridgeFrame => ({
+    kind: "toolCallUpdated",
+    data: {
+      messageId: "m-card",
+      toolCallId: "tc-card",
+      spec: {
+        id: "tc-card",
+        name: "card-tool",
+        render: { kind: "chatInline" },
+        status: { kind: "done" },
+        body,
+        result: null,
+      },
+    },
+  });
+
+  it.each([
+    {
+      kind: "writeDraftCard" as const,
+      data: {
+        title: "测试稿",
+        phase: "done" as const,
+        charCount: 120,
+        excerpt: null,
+        targetLength: 100,
+        minLength: 80,
+        maxLength: 140,
+        revisionCount: 1,
+        lengthStatus: "accepted",
+      },
+    },
+    {
+      kind: "commandCard" as const,
+      data: {
+        title: "计算",
+        icon: "🧮",
+        command: "wc -m draft.md",
+        exitCode: 0,
+        outputTail: "120",
+        phase: "done" as const,
+      },
+    },
+    {
+      kind: "researchCard" as const,
+      data: {
+        query: "宋代点茶",
+        phase: "done" as const,
+        items: [{
+          url: "https://example.com",
+          title: "点茶",
+          status: "done" as const,
+          wordCount: 120,
+        }],
+        total: 1,
+        fetchedCount: 1,
+        okCount: 1,
+        skippedCount: 0,
+      },
+    },
+  ])("accepts and validates $kind", (body) => {
+    expect(() => validateBridgeFrame(toolBodyFrame(body))).not.toThrow();
+  });
+
+  it.each([
+    [
+      "writeDraftCard",
+      {
+        kind: "writeDraftCard",
+        data: {
+          title: "测试稿",
+          phase: "done",
+          charCount: -1,
+          excerpt: null,
+          targetLength: null,
+          minLength: null,
+          maxLength: null,
+          revisionCount: 0,
+          lengthStatus: null,
+        },
+      },
+    ],
+    [
+      "commandCard",
+      {
+        kind: "commandCard",
+        data: {
+          title: "计算",
+          icon: "🧮",
+          command: "true",
+          exitCode: 0.5,
+          outputTail: "",
+          phase: "done",
+        },
+      },
+    ],
+    [
+      "researchCard",
+      {
+        kind: "researchCard",
+        data: {
+          query: "测试",
+          phase: "done",
+          items: [{ url: "x", title: "x", status: "done", wordCount: -1 }],
+          total: 1,
+          fetchedCount: 1,
+          okCount: 1,
+          skippedCount: 0,
+        },
+      },
+    ],
+  ])("rejects malformed %s", (_kind, body) => {
+    expect(() =>
+      validateBridgeFrame(toolBodyFrame(body as ToolCallBody)),
+    ).toThrow(BridgeFrameValidationError);
+  });
+
+  it("未知 ToolCallBody kind fail-closed", () => {
+    const frame = toolBodyFrame({
+      kind: "futureCard",
+      data: {},
+    } as unknown as ToolCallBody);
+    expect(() => validateBridgeFrame(frame)).toThrow(
+      /Unknown ToolCallBody\.kind/,
+    );
+  });
 
   it("accepts a valid qrCard", () => {
     expect(() =>

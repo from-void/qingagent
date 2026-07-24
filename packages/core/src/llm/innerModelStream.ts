@@ -6,6 +6,7 @@ import {
   DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
   getDeepseekModel,
   getSessionSnapshot,
+  resolveModelParams,
   resolveProtocol,
   type BranchMessage,
   type DeepseekTier,
@@ -22,6 +23,7 @@ export interface InnerModelStreamCall {
   messages?: Array<{ role: "system" | "user" | "assistant"; content: string }>;
   thinking: boolean;
   temperature: number;
+  topP?: number;
   abortSignal?: AbortSignal;
   maxRetries?: number;
   maxTokens?: number;
@@ -44,6 +46,10 @@ export interface InnerModelStreamResult {
 /** AI SDK 流式适配层：只做文本累积/进度回调，传输、协议、重试、usage 均交给框架与模型工厂。 */
 export async function streamInnerModel(input: InnerModelStreamCall): Promise<InnerModelStreamResult> {
   const startedAt = Date.now();
+  const overrides = resolveModelParams(input.requestContext);
+  const temperature = overrides.temperature ?? input.temperature;
+  const topP = overrides.topP ?? input.topP;
+  const maxTokens = overrides.maxOutputTokens ?? input.maxTokens;
   const snapshot = input.branchSteeringTail ? getSessionSnapshot(input.requestContext) : null;
   let branchAttempts = 0;
   let contentStartMs: number | null = null;
@@ -65,8 +71,9 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       abortSignal: input.abortSignal,
       streamTextDeltas: true,
       thinking: input.thinking,
-      temperature: input.temperature,
-      maxTokens: input.maxTokens,
+      temperature,
+      topP,
+      maxTokens,
       maxBufferedTextBytes: input.maxBufferedTextBytes ?? DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
       onActivity: () => {
         input.onActivity?.();
@@ -104,7 +111,8 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
     ...(input.messages
       ? { messages: input.messages as ModelMessage[] }
       : { system: input.system ?? "", prompt: input.prompt ?? "" }),
-    ...(input.thinking ? {} : { temperature: input.temperature }),
+    ...(input.thinking ? {} : { temperature }),
+    ...(topP === undefined ? {} : { topP }),
     ...(protocol === "anthropic"
       ? { providerOptions: { anthropic: {
           thinking: input.thinking
@@ -114,7 +122,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       : {}),
     abortSignal: input.abortSignal,
     maxRetries: input.maxRetries,
-    maxOutputTokens: input.maxTokens,
+    maxOutputTokens: maxTokens,
   });
 
   let raw = "";

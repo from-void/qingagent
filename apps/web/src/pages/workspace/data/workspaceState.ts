@@ -22,6 +22,11 @@ import {
   type ViewDocumentSnapshot,
 } from "./protocol";
 import { resources } from "../../../system/resources";
+import {
+  annotationMutationKey,
+  resourceMutationKey,
+  workspaceMutations,
+} from "./revisionedMutation";
 import type { AiRun, BridgeFrame, TodoItem } from "@qingagent/contract-ts";
 import type { AnnotationGroup } from "@qingagent/contract-ts";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark } from "@qingagent/pm-schema";
@@ -387,6 +392,13 @@ function workspaceReducerMut(
       return;
     case "annotationGroupsReady":
       draft.previewGroups = [];
+      if (draft.sessionId) {
+        for (const group of action.data.groups) {
+          workspaceMutations.reconcile(
+            annotationMutationKey(draft.sessionId, group.id),
+          );
+        }
+      }
       if (action.data.groups.length === 0 && !action.data.replacedOrigins?.length) {
         draft.annotationGroups = [];
         return;
@@ -395,15 +407,10 @@ function workspaceReducerMut(
         const replacedOrigins = new Set(
           action.data.replacedOrigins ?? action.data.groups.map((group) => group.origin),
         );
-        const existingById = new Map(draft.annotationGroups.map((group) => [group.id, group]));
         const retained = draft.annotationGroups.filter((group) => !replacedOrigins.has(group.origin));
-        const incoming = action.data.groups.map((group) => {
-          const existing = existingById.get(group.id);
-          return existing && existing.origin === group.origin && group.status === "reviewing"
-            ? { ...group, status: existing.status }
-            : group;
-        });
-        draft.annotationGroups = [...retained, ...incoming];
+        // 这是服务端权威状态，不能保留同 id 的本地乐观 accepted/ignored；
+        // 否则命令失败后的 reviewing 回帧无法自愈。
+        draft.annotationGroups = [...retained, ...action.data.groups];
       }
       return;
     case "annotationPreview": {
@@ -488,6 +495,12 @@ function workspaceReducerMut(
     }
     case "resourceUpdated":
       // Side-effect: update the external resource registry (outside immer)
+      workspaceMutations.reconcile(
+        resourceMutationKey(
+          action.data.resourceRef.domain.kind,
+          action.data.resourceRef.id,
+        ),
+      );
       resources.applyUpdate(
         action.data.resourceRef,
         action.data.summary === null ? "" : action.data.summary,

@@ -4,6 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskUserSpec } from "../data/protocol";
+import type { ServerStream } from "../data/serverStream";
 import { BigPlanPanel, isBigPlanQuestionnaireReady } from "./BigPlanPanel";
 
 let root: Root | null = null;
@@ -143,6 +144,56 @@ describe("BigPlanPanel", () => {
     );
 
     expect(host?.querySelector(".bp-head h2")?.textContent).toBe("调整方向");
+  });
+
+  it("ask-more 流式追加后失败会按快照回滚，不残留半截问题", async () => {
+    let rejectAskMore!: (error: unknown) => void;
+    const extraQuestion = {
+      id: "q-extra",
+      label: "还要补充什么？",
+      kind: { kind: "text" as const },
+      options: [],
+      placeholder: null,
+      slider: null,
+    };
+    const askMore = vi.fn(
+      async (
+        _sessionId: string,
+        _toolCallId: string,
+        _questions: unknown,
+        _answers: unknown,
+        onProgress?: (questions: typeof extraQuestion[]) => void,
+      ) => {
+        onProgress?.([extraQuestion]);
+        return await new Promise<typeof extraQuestion[]>((_resolve, reject) => {
+          rejectAskMore = reject;
+        });
+      },
+    );
+    const onToast = vi.fn();
+    await render(
+      <BigPlanPanel
+        toolCallId="test-ask-more-rollback"
+        spec={answerableSpec()}
+        isStreaming={false}
+        onSubmit={vi.fn()}
+        sessionId="s1"
+        stream={{ askMore } as unknown as ServerStream}
+        onToast={onToast}
+      />,
+    );
+
+    await click(buttonByText("问我更多"));
+    expect(host?.textContent).toContain("还要补充什么？");
+
+    await act(async () => {
+      rejectAskMore(new Error("network down"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host?.textContent).not.toContain("还要补充什么？");
+    expect(onToast).toHaveBeenCalledWith("获取更多问题失败，请重试");
   });
 });
 

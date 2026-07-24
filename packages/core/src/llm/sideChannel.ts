@@ -29,6 +29,7 @@ export interface RunSideChannelInput<T> {
   abortSignal?: AbortSignal;
   thinking?: boolean;
   temperature?: number;
+  topP?: number;
   maxTokens?: number;
 }
 
@@ -68,6 +69,7 @@ export async function runSideChannel<T>(
       onActivity: input.onActivity,
       thinking: input.thinking,
       temperature: input.temperature,
+      topP: input.topP,
       maxTokens: input.maxTokens,
     });
     throwIfAborted(input.abortSignal);

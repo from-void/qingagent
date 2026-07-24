@@ -131,6 +131,10 @@ function SummaryEditor({
 }) {
   const [value, setValue] = useState(source.abstract);
   const savedRef = useRef(source.abstract);
+  useEffect(() => {
+    setValue(source.abstract);
+    savedRef.current = source.abstract;
+  }, [source.abstract]);
 
   const save = () => {
     const next = value.trim();

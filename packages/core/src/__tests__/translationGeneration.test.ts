@@ -2,6 +2,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
+  MODEL_OVERRIDES_CONTEXT_KEY,
   beginSessionSnapshotTurn,
   clearSessionSnapshot,
   createSnapshottingQingagentModel,
@@ -195,6 +196,53 @@ describe("generateTranslations 并发旁支", () => {
     expect(failure?.data.reason).not.toMatch(/branch|snapshot|provider|fallback|QingML|commit|内部/i);
     expect((await getDerivativeDocument(english.docId))?.docVersion).toBe(1);
     expect((await getDerivativeDocument(japanese.docId))?.docVersion).toBe(0);
+  });
+
+  it("用户三项采样参数在翻译 branch 与 fallback 的实际请求体一致", async () => {
+    const { english } = await targets();
+    const translationBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      if (!body.stream_options) return emptySse();
+      translationBodies.push(body);
+      if (translationBodies.length === 1) {
+        return Response.json(
+          { error: { message: "force fallback" } },
+          { status: 500 },
+        );
+      }
+      return textSse(["<h1>English</h1>", "<p>QingAgent 42</p>"]);
+    }));
+    const requestContext = new RequestContext([
+      ["sessionId", sessionId],
+      ["streamId", "main-stream"],
+      ["runId", "translate-params-run"],
+      [MODEL_OVERRIDES_CONTEXT_KEY, {
+        params: {
+          temperature: 0.73,
+          topP: 0.82,
+          maxOutputTokens: 3456,
+        },
+      }],
+    ] as never) as RequestContext;
+    await captureMainSnapshot(requestContext);
+
+    const frames = await collectFrames(generateTranslations({
+      sessionId,
+      targets: [{ docId: english.docId, targetLang: "英语" }],
+      requestContext,
+    }));
+
+    expect(frames.some((frame) => frame.kind === "derivativeGenFinished")).toBe(true);
+    expect(translationBodies).toHaveLength(2);
+    expect(translationBodies.map((body) => ({
+      temperature: body.temperature,
+      topP: body.top_p,
+      maxTokens: body.max_tokens,
+    }))).toEqual([
+      { temperature: 0.73, topP: 0.82, maxTokens: 3456 },
+      { temperature: 0.73, topP: 0.82, maxTokens: 3456 },
+    ]);
   });
 
   it("delta batcher 的 200ms 与 2KB 两条门均会 flush", () => {

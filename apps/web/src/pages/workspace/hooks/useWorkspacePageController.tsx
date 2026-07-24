@@ -134,7 +134,11 @@ import {
   replaceWorkspaceSessionHash,
   startNewSessionOnce,
 } from "../data/sessionLifecycle";
-import type { AssetSource } from "../data/sources";
+import { toAssetSource, type AssetSource } from "../data/sources";
+import {
+  resourceMutationKey,
+  workspaceMutations,
+} from "../data/revisionedMutation";
 import {
   MATERIAL_PARSE_BUSY_REASON,
   useMaterialParseTracker,
@@ -632,6 +636,22 @@ export function useWorkspacePageController() {
   // 输入框据此挂环境辉光,覆盖"刚发出→流激活"的空窗,以及生成期间不流式输出的 writeDraft 长憋。
   const agentActive = state.streamActive || dim.agentBusy || sendPending;
   const fileResources = useResourceList({ kind: "file" });
+  useEffect(() => {
+    if (!previewSource || previewSource.preview) return;
+    const current = fileResources.find(
+      (resource) => resource.resourceRef.id === previewSource.id,
+    );
+    if (!current) return;
+    const authoritative = toAssetSource(current);
+    if (
+      authoritative.abstract === previewSource.abstract &&
+      authoritative.fileId === previewSource.fileId &&
+      authoritative.sourceUrl === previewSource.sourceUrl
+    ) {
+      return;
+    }
+    setPreviewSource(authoritative);
+  }, [fileResources, previewSource, setPreviewSource]);
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
@@ -2686,18 +2706,55 @@ export function useWorkspacePageController() {
         showToast("未连接服务 · 请稍后重试");
         return false;
       }
-      // 乐观更新:只传 summary,applyUpdate 保留既有 metadata(含 fileId)。
-      resources.applyUpdate(
-        { id: materialId, domain: { kind: "file" } },
-        summary,
+      const ref = { id: materialId, domain: { kind: "file" } as const };
+      const snapshot = resources.get(ref);
+      if (!snapshot) {
+        showToast("素材已不在");
+        return false;
+      }
+      const mutation = workspaceMutations.tryRun(
+        resourceMutationKey(ref.domain.kind, ref.id),
+        {
+          capture: () => snapshot,
+          applyOptimistic: () => {
+            resources.applyUpdate(ref, summary);
+            setPreviewSource((current) =>
+              current?.id === materialId
+                ? { ...current, abstract: summary, bodyText: summary }
+                : current,
+            );
+          },
+          commit: () =>
+            stream.updateMaterialSummary(
+              command.data.sessionId,
+              command.data.materialId,
+              command.data.summary,
+            ),
+          rollback: (previous) => {
+            resources.upsert(previous);
+            setPreviewSource((current) =>
+              current?.id === materialId
+                ? {
+                    ...current,
+                    abstract: previous.summary ?? "",
+                    bodyText: previous.summary ?? "",
+                  }
+                : current,
+            );
+          },
+        },
       );
-      stream.sendCommand(command).catch((e) => {
+      if (!mutation) {
+        showToast("摘要正在保存，请稍候");
+        return false;
+      }
+      mutation.promise.catch((e) => {
         console.error("[workspace] updateMaterialSummary failed", e);
-        showToast("摘要保存失败 · 请重试");
+        showToast("摘要保存失败 · 已恢复原内容");
       });
       return true;
     },
-    [agentActive, state.sessionId, showToast],
+    [agentActive, setPreviewSource, state.sessionId, showToast],
   );
 
   // 移除已上传到项目里的副本:先弹产品确认框,确认后仍走 removeMaterial 命令链。

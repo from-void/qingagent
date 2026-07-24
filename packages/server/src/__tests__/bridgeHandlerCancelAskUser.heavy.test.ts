@@ -198,4 +198,49 @@ describe("R0 cancelAskUser bridge red tests", () => {
       data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
     });
   });
+
+  it("重复 cancelAskUser 对已取消终态幂等成功，不再报没有待放弃问卷", async () => {
+    const bridge = await loadBridge();
+    const session = await createCachedSession(bridge);
+    const askUser = askUserToolCall("ask-idempotent");
+    session.docState = { kind: "empty" };
+    session.previousDocState = { kind: "empty" };
+    session.chatHistory = [{
+      id: "msg-idempotent",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [{ kind: "toolCall", data: askUser }],
+      chips: null,
+    }];
+    session.runId = "run-idempotent";
+    session.toolCallId = askUser.id;
+    session._suspensionOwner = {
+      streamId: "stream-idempotent",
+      runId: "run-idempotent",
+      toolCallId: askUser.id,
+      toolName: "askUser",
+    };
+
+    const command: Command = {
+      kind: "cancelAskUser",
+      data: { sessionId: session.sessionId, toolCallId: askUser.id },
+    };
+    const first = await collectFrames(bridge.handleCommand(command));
+    const repeated = await collectFrames(bridge.handleCommand(command));
+
+    expect(first.map((frame) => frame.kind)).toEqual([
+      "toolCallUpdated",
+      "docStateChanged",
+    ]);
+    expect(repeated).toEqual([]);
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: {
+        status: {
+          kind: "failed",
+          data: { reason: "用户已放弃本轮问卷" },
+        },
+      },
+    });
+  });
 });

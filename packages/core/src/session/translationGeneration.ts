@@ -171,18 +171,20 @@ async function streamTranslationFallback(input: {
   requestContext?: RequestContext;
   abortSignal: AbortSignal;
   onTextDelta: (delta: string) => void | Promise<void>;
+  temperature: number;
+  topP?: number;
+  maxTokens: number;
 }): Promise<string> {
-  const params = resolveModelParams(input.requestContext);
   const result = streamText({
     model: getDeepseekModel(input.requestContext, "flash", {
       callSite: "translateDerivative",
       lane: input.lane,
       thinking: false,
     }),
-    ...params,
     prompt: input.prompt,
-    temperature: TRANSLATION_TEMPERATURE,
-    maxOutputTokens: TRANSLATION_MAX_TOKENS,
+    temperature: input.temperature,
+    ...(input.topP === undefined ? {} : { topP: input.topP }),
+    maxOutputTokens: input.maxTokens,
     maxRetries: 0,
     toolChoice: "none",
     abortSignal: input.abortSignal,
@@ -216,6 +218,10 @@ export async function generateTranslationDerivative(input: {
 }): Promise<{ generatedAt: string; docVersion: number }> {
   const brief = await loadTranslationBrief(input.sessionId, input.docId);
   const steeringTail = buildTranslationSteeringTail(brief);
+  const overrides = resolveModelParams(input.requestContext);
+  const temperature = overrides.temperature ?? TRANSLATION_TEMPERATURE;
+  const topP = overrides.topP;
+  const maxTokens = overrides.maxOutputTokens ?? TRANSLATION_MAX_TOKENS;
   const result = await runSideChannel({
     callSite: "translateDerivative",
     requestContext: input.requestContext,
@@ -225,8 +231,9 @@ export async function generateTranslationDerivative(input: {
     streamTextDeltas: true,
     onTextDelta: async (delta) => input.onTextDelta(delta),
     thinking: false,
-    temperature: TRANSLATION_TEMPERATURE,
-    maxTokens: TRANSLATION_MAX_TOKENS,
+    temperature,
+    topP,
+    maxTokens,
     parse: (text, context) => parseTranslationQingml(text, context.finishReason),
     fallback: async () => streamTranslationFallback({
       prompt: steeringTail,
@@ -234,6 +241,9 @@ export async function generateTranslationDerivative(input: {
       requestContext: input.requestContext,
       abortSignal: input.abortSignal,
       onTextDelta: input.onTextDelta,
+      temperature,
+      topP,
+      maxTokens,
     }),
   });
   const committed = await commitDerivativeQingml(input.docId, input.sessionId, result.value);

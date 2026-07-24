@@ -370,9 +370,99 @@ function checkToolBody(b: ToolCallBody): void {
         }
       }
       return;
+    case "writeDraftCard": {
+      const data = b.data;
+      if (typeof data.title !== "string") fail("WriteDraftCard.title must be a string");
+      if (
+        data.phase !== "writing" &&
+        data.phase !== "revising" &&
+        data.phase !== "finalizing" &&
+        data.phase !== "done" &&
+        data.phase !== "failed"
+      ) {
+        fail("WriteDraftCard.phase is invalid");
+      }
+      for (const field of ["charCount", "revisionCount"] as const) {
+        if (!Number.isInteger(data[field]) || data[field] < 0) {
+          fail(`WriteDraftCard.${field} must be a non-negative integer`);
+        }
+      }
+      for (const field of ["targetLength", "minLength", "maxLength"] as const) {
+        if (!nullableNonNegativeInteger(data[field])) {
+          fail(`WriteDraftCard.${field} must be a non-negative integer|null`);
+        }
+      }
+      if (!nullableString(data.excerpt)) fail("WriteDraftCard.excerpt must be string|null");
+      if (!nullableString(data.lengthStatus)) {
+        fail("WriteDraftCard.lengthStatus must be string|null");
+      }
+      return;
+    }
+    case "commandCard": {
+      const data = b.data;
+      for (const field of ["title", "icon", "command", "outputTail"] as const) {
+        if (typeof data[field] !== "string") {
+          fail(`CommandCard.${field} must be a string`);
+        }
+      }
+      if (!Number.isInteger(data.exitCode)) fail("CommandCard.exitCode must be an integer");
+      if (
+        data.phase !== "running" &&
+        data.phase !== "done" &&
+        data.phase !== "failed"
+      ) {
+        fail("CommandCard.phase is invalid");
+      }
+      return;
+    }
+    case "researchCard": {
+      const data = b.data;
+      if (typeof data.query !== "string") fail("ResearchCard.query must be a string");
+      if (
+        data.phase !== "searching" &&
+        data.phase !== "fetching" &&
+        data.phase !== "done"
+      ) {
+        fail("ResearchCard.phase is invalid");
+      }
+      if (!Array.isArray(data.items)) fail("ResearchCard.items must be an array");
+      for (let index = 0; index < data.items.length; index += 1) {
+        const item = data.items[index]!;
+        if (typeof item.url !== "string" || typeof item.title !== "string") {
+          fail(`ResearchCard.items[${index}] url/title must be strings`);
+        }
+        if (
+          item.status !== "pending" &&
+          item.status !== "fetching" &&
+          item.status !== "browser" &&
+          item.status !== "done" &&
+          item.status !== "skipped"
+        ) {
+          fail(`ResearchCard.items[${index}].status is invalid`);
+        }
+        if (!nullableNonNegativeInteger(item.wordCount)) {
+          fail(`ResearchCard.items[${index}].wordCount must be a non-negative integer|null`);
+        }
+      }
+      if (!nullableNonNegativeInteger(data.total)) {
+        fail("ResearchCard.total must be a non-negative integer|null");
+      }
+      for (const field of ["fetchedCount", "okCount", "skippedCount"] as const) {
+        if (!Number.isInteger(data[field]) || data[field] < 0) {
+          fail(`ResearchCard.${field} must be a non-negative integer`);
+        }
+      }
+      return;
+    }
     case "browserAct":
     case "generic":
       return;
+    default: {
+      // 编译期穷尽 ToolCallBody 联合；契约新增 kind 时这里会变成非 never，
+      // 强迫校验器同步补 case。运行期伪造未知 kind 则 fail-closed。
+      const exhaustive: never = b;
+      fail(`Unknown ToolCallBody.kind: ${String((exhaustive as { kind?: unknown }).kind)}`);
+    }
   }
 }
 

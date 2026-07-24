@@ -7,6 +7,10 @@ import type {
   AskUserQuestion,
   AskUserSpec,
 } from "../data/protocol";
+import {
+  RevisionedMutationCoordinator,
+  askMoreMutationKey,
+} from "../data/revisionedMutation";
 import type { ServerStream } from "../data/serverStream";
 import { askUserPurposeLabel } from "../data/workspacePageView";
 import { SliderQuestionInput, defaultSliderValue, sliderValueLabel } from "./SliderQuestionInput";
@@ -92,6 +96,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
   const [askingMore, setAskingMore] = useState(false);
   const [extraQuestions, setExtraQuestions] = useState<AskUserQuestion[]>([]);
   const [askMoreRound, setAskMoreRound] = useState(0);
+  const askMoreMutationsRef = useRef(new RevisionedMutationCoordinator());
 
   const allQuestions = useMemo(
     () => [...spec.questions, ...extraQuestions],
@@ -154,8 +159,6 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       onToast("还没准备好，请稍后再试");
       return;
     }
-    setAskingMore(true);
-
     const baseIds = new Set(spec.questions.map((q) => q.id));
 
     const questionsForApi = allQuestions.map((q) => ({
@@ -178,17 +181,43 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       };
     }
 
-    stream
-      .askMore(
-        sessionId,
-        toolCallId,
-        questionsForApi,
-        answersForApi,
-        (progressQuestions) => {
-          if (progressQuestions.length === 0) return;
-          setExtraQuestions((current) => mergeQuestionsById(current, progressQuestions, baseIds));
+    const snapshot = extraQuestions;
+    const mutation = askMoreMutationsRef.current.tryRun(
+      askMoreMutationKey(sessionId, toolCallId),
+      {
+        capture: () => snapshot,
+        applyOptimistic: () => undefined,
+        commit: () =>
+          stream.askMore(
+            sessionId,
+            toolCallId,
+            questionsForApi,
+            answersForApi,
+            (progressQuestions) => {
+              if (progressQuestions.length === 0) return;
+              setExtraQuestions((current) =>
+                mergeQuestionsById(current, progressQuestions, baseIds),
+              );
+            },
+          ),
+        rollback: (previous) => {
+          setExtraQuestions(previous);
+          const retainedIds = new Set([
+            ...spec.questions.map((question) => question.id),
+            ...previous.map((question) => question.id),
+          ]);
+          setAnswers((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(([id]) => retainedIds.has(id)),
+            ),
+          );
         },
-      )
+      },
+    );
+    if (!mutation) return;
+    setAskingMore(true);
+
+    mutation.promise
       .then((finalQuestions) => {
         if (finalQuestions.length === 0) {
           onToast("暂时没有更多问题了");
@@ -205,7 +234,7 @@ export function BigPlanPanel({ toolCallId, spec, isStreaming, isSubmitting = fal
       .finally(() => {
         setAskingMore(false);
       });
-  }, [askMoreRound, sessionId, stream, toolCallId, allQuestions, answers, onToast, spec.questions, withSliderDefaults]);
+  }, [askMoreRound, sessionId, stream, toolCallId, allQuestions, answers, extraQuestions, onToast, spec.questions, withSliderDefaults]);
 
   const rationaleText = spec.rationale ?? "";
 

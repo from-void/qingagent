@@ -169,6 +169,21 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("已完成");
   });
 
+  it("tool-error 的 failed 终态显示失败原因与错误图标，不误显完成对勾", () => {
+    const failed = genericSpec("failed", "{}");
+    failed.status = {
+      kind: "failed",
+      data: { retriable: true, reason: "上游工具连接中断" },
+    };
+
+    renderBar(failed);
+
+    expect(host.textContent).toContain("上游工具连接中断");
+    expect(host.textContent).not.toContain("已完成");
+    expect(host.querySelector(".u-ico.is-error")).not.toBeNull();
+    expect(host.querySelector(".u-meta.is-error")).not.toBeNull();
+  });
+
   it("#27 writeDraft 参数生成期占位显示「酝酿中…」", () => {
     renderBar(genericSpec("running", "", "writeDraft"));
 

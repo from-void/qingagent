@@ -223,6 +223,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       requestContext,
       thinking: false,
       temperature: 0.35,
+      topP: 0.78,
       maxTokens: 4096,
     });
 
@@ -235,6 +236,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(replayBody.messages.at(-1)).toEqual({ role: "user", content: "不要调用任何工具，直接回答。" });
     expect(replayBody.thinking).toEqual({ type: "disabled" });
     expect(replayBody.temperature).toBe(0.35);
+    expect(replayBody.top_p).toBe(0.78);
     expect(replayBody.max_tokens).toBe(4096);
     expect(replayBody.stream).toBe(true);
     expect(replayBody.stream_options).toEqual({ include_usage: true });

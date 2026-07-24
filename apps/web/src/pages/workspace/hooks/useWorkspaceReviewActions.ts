@@ -83,6 +83,7 @@ export function useWorkspaceReviewActions(input: {
   const [submittingAskUserId, setSubmittingAskUserId] = useState<string | null>(
     null,
   );
+  const askUserMutationIdsRef = useRef(new Set<string>());
   const [, setGoalLabel] = useState<string | null>(null);
   const autoCommitReviewKeyRef = useRef<string | null>(null);
   const reviewSettlementInFlightRef = useRef<Promise<void> | null>(null);
@@ -483,8 +484,14 @@ export function useWorkspaceReviewActions(input: {
   const handleCancelAskUser = useCallback(
     (toolCall: ToolCallSpec) => {
       const current = stateRef.current;
+      if (askUserMutationIdsRef.current.has(toolCall.id)) return;
       if (!current.sessionId) {
         showToast("会话未就绪");
+        return;
+      }
+      const originalTc = current.toolCalls.get(toolCall.id);
+      if (!originalTc) {
+        showToast("问卷已不在");
         return;
       }
 
@@ -506,29 +513,60 @@ export function useWorkspaceReviewActions(input: {
         return;
       }
 
-      stream.sendCommand(command).catch((e) => {
-        console.error("[workspace] cancelAskUser failed", e);
-        showToast("放弃失败 · 请重试");
-      });
-
       const ownerMsg = current.messages.find((m) =>
         m.parts.some((p) => p.kind === "toolCall" && p.data.id === toolCall.id),
       );
+      const ownerMsgId = ownerMsg?.id ?? toolCall.id;
+      const originalOverlay = current.activeOverlay;
+      const originalDocState = current.docState;
+      const originalAgentBusy = current.agentBusy;
+      const optimisticTc: ToolCallSpec = {
+        ...originalTc,
+        status: {
+          kind: "failed",
+          data: { retriable: false, reason: "用户已放弃本轮问卷" },
+        },
+      };
+
+      askUserMutationIdsRef.current.add(toolCall.id);
+      setSubmittingAskUserId(toolCall.id);
       dispatch({
         kind: "toolCallUpdated",
         data: {
-          messageId: ownerMsg?.id ?? toolCall.id,
+          messageId: ownerMsgId,
           toolCallId: toolCall.id,
-          spec: {
-            ...toolCall,
-            status: {
-              kind: "failed",
-              data: { retriable: false, reason: "用户已放弃本轮问卷" },
-            },
-          },
+          spec: optimisticTc,
         },
       });
-      showToast("已放弃本轮");
+      stream
+        .sendCommand(command)
+        .then(() => {
+          showToast("已放弃本轮");
+        })
+        .catch((e) => {
+          console.error("[workspace] cancelAskUser failed", e);
+          const latest = stateRef.current.toolCalls.get(toolCall.id);
+          const stillOptimistic =
+            latest?.status.kind === "failed" &&
+            latest.status.data.reason === "用户已放弃本轮问卷";
+          if (stillOptimistic) {
+            dispatch({
+              kind: "restoreAskUser",
+              messageId: ownerMsgId,
+              toolCall: originalTc,
+              overlay: originalOverlay,
+              docState: originalDocState,
+              agentBusy: originalAgentBusy,
+            });
+          }
+          showToast("放弃失败 · 问卷已恢复，请重试");
+        })
+        .finally(() => {
+          askUserMutationIdsRef.current.delete(toolCall.id);
+          setSubmittingAskUserId((currentId) =>
+            currentId === toolCall.id ? null : currentId,
+          );
+        });
     },
     [showToast],
   );

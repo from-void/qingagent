@@ -3,7 +3,7 @@ import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
 
 // 桥层回归:工具 execute() 抛错 → AI SDK v5 / Mastra v3 发 tool-error chunk。
 // 此前主循环没有 tool-error 分支 → 被静默丢弃 → 该工具 spec 永远停在 running →
-// 前端 spinner 不收口。修复后 tool-error 应把对应 spec 收口成 done(前端渲染成完成)。
+// 前端 spinner 不收口。tool-error 必须收口成 failed，且错误不能塞进 result 伪装成功。
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -52,7 +52,7 @@ describe("processAgentStream tool-error", () => {
     vi.clearAllMocks();
   });
 
-  it("tool-error 把已建占位的工具 spec 从 running 收口成 done(spinner 停)", async () => {
+  it("tool-error 把已建占位的工具 spec 从 running 收口成 failed", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("tool-error-collapse");
 
@@ -79,19 +79,24 @@ describe("processAgentStream tool-error", () => {
       ),
     );
 
-    // chatHistory 里的 spec 必须收口成 done(不再 running),否则前端永远转 spinner
+    // chatHistory 里的 spec 必须收口成 failed(不再 running),且 result 不伪装成功。
     const spec = findToolCallSpec(state.chatHistory, "te-1");
     expect(spec).not.toBeNull();
-    expect(spec?.status.kind).toBe("done");
+    expect(spec?.status).toEqual({
+      kind: "failed",
+      data: { retriable: true, reason: "boom" },
+    });
+    expect(spec?.result).toBeNull();
 
-    // 也应发出一帧 toolCallUpdated(done)让前端实时收口
+    // 也应发出一帧 toolCallUpdated(failed)让前端实时收口
     const updated = frames.find(
       (f) => f.kind === "toolCallUpdated" && f.data.toolCallId === "te-1",
     ) as Extract<BridgeFrame, { kind: "toolCallUpdated" }> | undefined;
-    expect(updated?.data.spec.status.kind).toBe("done");
+    expect(updated?.data.spec.status.kind).toBe("failed");
+    expect(updated?.data.spec.result).toBeNull();
   });
 
-  it("tool-error 在没有占位卡时也兜底建一张 done 卡(不丢失收口)", async () => {
+  it("tool-error 在没有占位卡时也兜底建一张 failed 卡(不丢失收口)", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("tool-error-fallback");
 
@@ -112,6 +117,10 @@ describe("processAgentStream tool-error", () => {
 
     const spec = findToolCallSpec(state.chatHistory, "te-2");
     expect(spec).not.toBeNull();
-    expect(spec?.status.kind).toBe("done");
+    expect(spec?.status).toEqual({
+      kind: "failed",
+      data: { retriable: true, reason: "网络中断" },
+    });
+    expect(spec?.result).toBeNull();
   });
 });

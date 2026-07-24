@@ -73,6 +73,7 @@ describe("system prompt S3", () => {
       "editDraft",
       "readDiff",
       "writeDraft",
+      'skill({name:"diagram-viz"})',
       "action",
       "qingml",
       'action:"replaceText"',
@@ -151,9 +152,6 @@ describe("system prompt S3", () => {
       "结构摘要 / 自检纪律",
       "以工具返回为唯一事实来源",
       "核对该块真实的 lang 属性",
-      "工程图/架构图 diagram(drawio)",
-      "未压缩明文",
-      "mxGraphModel",
       "多级待办用 <task> 内嵌子 <tasks>",
       "不要把所有任务平铺到同一级",
       "不能用 \"- [ ]\" 文本或平铺 sibling 假装子任务",
@@ -208,6 +206,22 @@ describe("system prompt S3", () => {
     }
     expect(prompt).not.toMatch(/\baskUser\b/);
     expect(prompt).not.toContain("quickClarification");
+  });
+
+  it("主 system 只保留图表路由与通用保真纪律，不携带引擎语法正文", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    expect(prompt).toContain('必须先调用 skill({name:"diagram-viz"})');
+    expect(prompt).toContain("保留特殊块");
+    expect(prompt).toContain("preview 可含 Mermaid 代码块");
+    for (const movedDetail of [
+      "Mermaid 语法只认半角",
+      "source **首行必须是合法图型声明**",
+      "工程图/架构图 diagram(drawio)",
+      "必须是**未压缩明文** mxGraph XML",
+      "<drawio>&lt;mxGraphModel",
+    ]) {
+      expect(prompt).not.toContain(movedDetail);
+    }
   });
 
   it("QingML prompt 不泄漏旧编辑协议词", () => {

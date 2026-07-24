@@ -222,6 +222,16 @@ describe("writeDraft intent 调度", () => {
     expect(out.ok).toBe(true);
     const firstCall = streamInnerModelMock.mock.calls[0]![0] as InnerModelCall;
     const innerMessages = JSON.stringify(firstCall.messages);
+    const innerSystem = String(
+      (firstCall.messages?.[0] as { content?: unknown } | undefined)?.content,
+    );
+    const innerTail = String(
+      (firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content,
+    );
+    expect(innerSystem).not.toContain("<diagram_viz_instruction");
+    expect(innerSystem).not.toContain("Mermaid 语法只认半角");
+    expect(innerTail).toContain("<diagram_viz_instruction");
+    expect(innerTail).toContain("Mermaid 语法只认半角");
     expect(innerMessages).toContain('<diagram_viz_instruction purpose=\\"write\\" languages=\\"mermaid\\"');
     expect(innerMessages).toContain("Mermaid 语法只认半角");
     expect(innerMessages).not.toContain("未压缩明文 mxGraph XML");

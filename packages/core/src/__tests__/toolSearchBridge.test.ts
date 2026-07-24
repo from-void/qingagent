@@ -132,11 +132,15 @@ describe("ToolSearch bridge", () => {
   });
 
   it("skill 激活 diagram-viz 时把正文与引擎状态落入 RequestContext，停用时 fail-closed", async () => {
-    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const { buildQingagentStaticTools, qingagentAgent } = await import("../agents/qingagent.js");
     const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
     const requestContext = new RequestContext([
       ["userText", "请画一个 Mermaid 流程图"],
     ]) as unknown as RequestContext;
+    const systemBefore = await qingagentAgent.getInstructions({ requestContext });
+    const toolsBefore = Object.entries(buildQingagentStaticTools()).map(
+      ([name, tool]) => [name, (tool as { description?: string }).description],
+    );
 
     await expect(beforeToolCall!({
       toolName: "skill",
@@ -151,6 +155,13 @@ describe("ToolSearch bridge", () => {
       editingLanguages: [],
       skillBody: expect.stringContaining("# 图表可视化"),
     });
+    expect(await qingagentAgent.getInstructions({ requestContext })).toBe(systemBefore);
+    expect(
+      Object.entries(buildQingagentStaticTools()).map(
+        ([name, tool]) => [name, (tool as { description?: string }).description],
+      ),
+    ).toEqual(toolsBefore);
+    expect(systemBefore).not.toContain("Mermaid 语法只认半角");
 
     h.disabledSkills.add("diagram-viz");
     const disabledContext = new RequestContext();

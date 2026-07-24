@@ -286,12 +286,18 @@ describe("GET /api/v1/skills", () => {
     };
 
     const byName = new Map(json.skills.map((skill) => [skill.name, skill]));
-    for (const name of ["browser-ops", "web-search", "image-gen", "materials"]) {
+    for (const name of ["browser-ops", "web-search", "image-gen", "diagram-viz", "materials"]) {
       expect(byName.get(name)).toMatchObject({
         source: "builtin",
         enabled: true,
       });
     }
+    expect(byName.get("diagram-viz")).toMatchObject({
+      label: "图表可视化",
+      summary: "判断是否画图并生成美观、可编辑的 Mermaid 或 draw.io 图表",
+      icon: "diagram",
+      userInvocable: true,
+    });
     expect(byName.get("web-search")).toMatchObject({
       label: "联网搜",
       summary: "搜资料、核事实、找出处",

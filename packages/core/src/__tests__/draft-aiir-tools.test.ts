@@ -19,8 +19,7 @@ import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
 import { RequestContext } from "@mastra/core/request-context";
 import {
-  DIAGRAM_VIZ_REQUEST_CONTEXT_KEY,
-  type DiagramVizRequestState,
+  getDiagramVizEditingLanguages,
 } from "../skills/diagramViz.js";
 import {
   diagramVizEditingSourceFromRequestContext,
@@ -325,12 +324,7 @@ describe("QingML draft tools", () => {
       { requestContext } as never,
     ) as any;
     expect(read.ok).toBe(true);
-    expect(
-      requestContext.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY) as DiagramVizRequestState,
-    ).toMatchObject({
-      activated: false,
-      editingLanguages: ["mermaid"],
-    });
+    expect(getDiagramVizEditingLanguages(requestContext)).toEqual(["mermaid"]);
 
     await wrapped.doGenerate({ prompt: originalPrompt });
 

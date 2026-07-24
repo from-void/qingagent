@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
@@ -116,17 +116,13 @@ describe("doc-calc 喂数(gate 兼容)", () => {
   });
 
   it("--file 读工作目录文件做按列求和", () => {
-    const dir = mkdtempSync(join(tmpdir(), "calc-"));
-    const file = join(dir, "table.csv");
-    writeFileSync(file, "苹果,1280\n香蕉,960\n");
-    const oldCwd = process.cwd();
-    try {
-      process.chdir(dir);
-      expect(runCalc(["sumcol", "1", "--file", "table.csv"])).toEqual({ sum: 2240, count: 2 });
-    } finally {
-      process.chdir(oldCwd);
-      rmSync(dir, { recursive: true, force: true });
-    }
+    // threads worker 不支持 process.chdir；用 cwd 内 fixture 的相对路径覆盖同一安全边界。
+    const file = fileURLToPath(
+      new URL("fixtures/doc-calc-table.csv", import.meta.url),
+    );
+    expect(
+      runCalc(["sumcol", "1", "--file", relative(process.cwd(), file)]),
+    ).toEqual({ sum: 2240, count: 2 });
   });
 
   it("Round2 回归:calc.mjs 自身拒绝 --file 越权路径", () => {

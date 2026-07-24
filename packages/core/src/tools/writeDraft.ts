@@ -48,8 +48,8 @@ import { writeDraftInputSchema } from "../llm/draftToolSchemas.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
 import {
   autoActivateDiagramVizSkillForWrite,
-  buildActivatedDiagramVizInstruction,
 } from "../skills/diagramViz.js";
+import { buildActivatedSkillWriteInject } from "../skills/writeInject.js";
 
 export { writeDraftInputSchema };
 
@@ -340,14 +340,15 @@ export function createWriteDraftTool(opts: {
         diagramActivationHint,
         input.styleHint,
       ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
-      const diagramInstruction = buildActivatedDiagramVizInstruction(
-        context?.requestContext,
-        diagramHint,
-      );
+      // 技能载荷只组装一次，再由四条 lane 共用，避免重复读取与重复付费。
+      const skillWriteInject = await buildActivatedSkillWriteInject({
+        requestContext: context?.requestContext,
+        hintText: diagramHint,
+      });
       const steeringTail = buildQingmlSteeringTail(
         materialContext,
         userPrompt,
-        diagramInstruction,
+        skillWriteInject.content,
       );
       const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
       const runConfig = runConfigForIntent(input.intent ?? "express");
@@ -553,7 +554,7 @@ export function createWriteDraftTool(opts: {
             branchSteeringTail: buildQingmlSteeringTail(
               materialContext,
               params.prompt,
-              diagramInstruction,
+              skillWriteInject.content,
             ),
             // 真流式:delta 只进内存赛道状态 + 整帧替换的展示进度,候选文档仅由完整 result.raw 构建,
             // 判废降级重跑最多表现为进度回退,无落库风险。

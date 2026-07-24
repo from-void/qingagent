@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const originalCwd = process.cwd();
+const originalUploadsDir = process.env.QINGAGENT_UPLOADS_DIR;
 let tmpDir: string;
 
 async function loadResolver() {
@@ -15,12 +15,16 @@ async function loadResolver() {
 describe("uploadFileResolver", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingagent-upload-resolver-"));
-    process.chdir(tmpDir);
+    process.env.QINGAGENT_UPLOADS_DIR = path.join(tmpDir, "uploads");
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(async () => {
-    process.chdir(originalCwd);
+    if (originalUploadsDir === undefined) {
+      delete process.env.QINGAGENT_UPLOADS_DIR;
+    } else {
+      process.env.QINGAGENT_UPLOADS_DIR = originalUploadsDir;
+    }
     vi.restoreAllMocks();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });

@@ -8,6 +8,7 @@ summary: 判断是否画图并生成美观、可编辑的 Mermaid 或 draw.io �
 icon: diagram
 placeholder: 选择内容，让我判断是否适合画图并选用合适风格
 user-invocable: true
+write-inject: true
 ---
 
 # 图表可视化

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const streamTextMock = vi.hoisted(() => vi.fn());
 const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({ modelId: "mock" })));
 const resolveProtocolMock = vi.hoisted(() => vi.fn(() => "openai"));
+const resolveModelParamsMock = vi.hoisted(() => vi.fn(() => ({})));
 const defaultBranchBufferBytes = vi.hoisted(() => 4 * 1024 * 1024);
 const branchCallMock = vi.hoisted(() => vi.fn());
 const getSessionSnapshotMock = vi.hoisted(() => vi.fn());
@@ -13,6 +14,7 @@ vi.mock("../llm/modelConfig.js", () => ({
   DEFAULT_BRANCH_STREAM_BUFFER_BYTES: defaultBranchBufferBytes,
   getDeepseekModel: getDeepseekModelMock,
   getSessionSnapshot: getSessionSnapshotMock,
+  resolveModelParams: resolveModelParamsMock,
   resolveProtocol: resolveProtocolMock,
 }));
 
@@ -31,6 +33,8 @@ describe("streamInnerModel", () => {
     branchCallMock.mockReset();
     getSessionSnapshotMock.mockReset();
     getSessionSnapshotMock.mockReturnValue(null);
+    resolveModelParamsMock.mockReset();
+    resolveModelParamsMock.mockReturnValue({});
     resolveProtocolMock.mockReturnValue("openai");
   });
 
@@ -170,6 +174,46 @@ describe("streamInnerModel", () => {
     expect(streamTextMock).toHaveBeenCalledOnce();
     expect(getDeepseekModelMock).toHaveBeenCalledWith(undefined, "flash", expect.objectContaining({
       attempt: 6,
+    }));
+  });
+
+  it("用户三项采样覆盖在 branch/fallback wire 保持一致", async () => {
+    getSessionSnapshotMock.mockReturnValue({ sessionId: "s" });
+    resolveModelParamsMock.mockReturnValue({
+      temperature: 0.73,
+      topP: 0.82,
+      maxOutputTokens: 3456,
+    });
+    branchCallMock.mockResolvedValueOnce({
+      ok: false,
+      reason: "provider_error",
+      attempts: 1,
+      toolCallRetries: 0,
+    });
+    streamTextMock.mockReturnValue({
+      fullStream: fullStream([{ type: "finish", finishReason: "stop" }]),
+    });
+
+    await streamInnerModel({
+      callSite: "writeDraft",
+      prompt: "fallback",
+      branchSteeringTail: "branch",
+      thinking: false,
+      temperature: 0.4,
+      maxTokens: 8192,
+    });
+
+    expect(branchCallMock).toHaveBeenCalledWith(expect.objectContaining({
+      temperature: 0.73,
+      topP: 0.82,
+      maxTokens: 3456,
+    }));
+    // 测试替身走 legacy AI SDK 4 transport，compat 层会把
+    // maxOutputTokens 映射成实际 wire 字段 maxTokens。
+    expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
+      temperature: 0.73,
+      topP: 0.82,
+      maxTokens: 3456,
     }));
   });
 

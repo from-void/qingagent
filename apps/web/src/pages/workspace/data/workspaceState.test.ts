@@ -240,7 +240,7 @@ describe("annotationGroupsReady 来源增量", () => {
     anchors: [{ blockId: "p-1", pmFrom: 1, pmTo: 2, quote: "甲", textHash: `${id}-hash` }],
   });
 
-  it("同 origin 换代保留其他来源，并保留同 id 的前端 accepted 状态", () => {
+  it("同 origin 换代保留其他来源，并用同 id 权威状态回正前端乐观态", () => {
     const seeded = workspaceReducer(initialWorkspaceState, {
       kind: "annotationGroupsChanged",
       groups: [annotation("source-old", "source-check"), annotation("consistent", "consistency", "accepted")],
@@ -254,7 +254,7 @@ describe("annotationGroupsReady 来源增量", () => {
     });
 
     expect(next.annotationGroups.map((group) => group.id).sort()).toEqual(["consistent", "source-new"]);
-    expect(next.annotationGroups.find((group) => group.id === "consistent")?.status).toBe("accepted");
+    expect(next.annotationGroups.find((group) => group.id === "consistent")?.status).toBe("reviewing");
   });
 });
 

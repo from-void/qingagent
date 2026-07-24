@@ -134,7 +134,11 @@ import {
   replaceWorkspaceSessionHash,
   startNewSessionOnce,
 } from "../data/sessionLifecycle";
-import type { AssetSource } from "../data/sources";
+import { toAssetSource, type AssetSource } from "../data/sources";
+import {
+  resourceMutationKey,
+  workspaceMutations,
+} from "../data/revisionedMutation";
 import {
   MATERIAL_PARSE_BUSY_REASON,
   useMaterialParseTracker,
@@ -174,7 +178,11 @@ import {
   type SendDocWrite,
 } from "./useWorkspaceDocumentEditor";
 import { useWorkspaceFind } from "./useWorkspaceFind";
-import { useWorkspaceReviewActions } from "./useWorkspaceReviewActions";
+import {
+  askUserCancelMutationKey,
+  isAuthoritativeAskUserCancelFrame,
+  useWorkspaceReviewActions,
+} from "./useWorkspaceReviewActions";
 export { RightPane } from "../components/RightPane";
 export {
   buildPageExitDocSaveCommand,
@@ -339,6 +347,11 @@ export function useWorkspacePageController() {
   // 衍生稿指令都必须能被一次停止持续作废，不能各自保留会晚到的异步派发链。
   const turnDispatchGateRef = useRef<WorkspaceTurnDispatchGate>({ generation: 0 });
   const reviewCloseInFlightRef = useRef<Promise<void> | null>(null);
+  // cancelAskUser 的乐观事务 token。收到同 toolCall 的权威取消成功帧即失效；
+  // 之后即使 POST 响应连接迟到失败，也不得把已解锁的服务端状态回滚成旧问卷。
+  const askUserCancelMutationTokensRef = useRef<Map<string, symbol>>(
+    new Map(),
+  );
   const pendingBrowserAttachRef = useRef<{
     sessionId: string;
     picked: PickedBrowserFolderSource;
@@ -632,6 +645,22 @@ export function useWorkspacePageController() {
   // 输入框据此挂环境辉光,覆盖"刚发出→流激活"的空窗,以及生成期间不流式输出的 writeDraft 长憋。
   const agentActive = state.streamActive || dim.agentBusy || sendPending;
   const fileResources = useResourceList({ kind: "file" });
+  useEffect(() => {
+    if (!previewSource || previewSource.preview) return;
+    const current = fileResources.find(
+      (resource) => resource.resourceRef.id === previewSource.id,
+    );
+    if (!current) return;
+    const authoritative = toAssetSource(current);
+    if (
+      authoritative.abstract === previewSource.abstract &&
+      authoritative.fileId === previewSource.fileId &&
+      authoritative.sourceUrl === previewSource.sourceUrl
+    ) {
+      return;
+    }
+    setPreviewSource(authoritative);
+  }, [fileResources, previewSource, setPreviewSource]);
   const sendMaterialParseCommand = useCallback(async (command: Command) => {
     return sendMaterialParseCommandWithStream(streamRef.current, command);
   }, []);
@@ -1426,6 +1455,17 @@ export function useWorkspacePageController() {
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
         sessionIdRef.current = frame.data.sessionId;
+      }
+      if (isAuthoritativeAskUserCancelFrame(frame)) {
+        const sessionId =
+          streamSessionId ??
+          stateRef.current.sessionId ??
+          sessionIdRef.current;
+        if (sessionId) {
+          askUserCancelMutationTokensRef.current.delete(
+            askUserCancelMutationKey(sessionId, frame.data.toolCallId),
+          );
+        }
       }
       // 本地发起的审阅请求若返回 no-op，说明服务端目标已被其它请求结算；
       // 不能让这个“成功响应”清掉本地仍可见的候选，交由请求完成回调明确提示。
@@ -2644,6 +2684,7 @@ export function useWorkspacePageController() {
     state,
     stateRef,
     streamRef,
+    askUserCancelMutationTokensRef,
     reviewCloseInFlightRef,
     dispatch,
     showToast,
@@ -2686,18 +2727,55 @@ export function useWorkspacePageController() {
         showToast("未连接服务 · 请稍后重试");
         return false;
       }
-      // 乐观更新:只传 summary,applyUpdate 保留既有 metadata(含 fileId)。
-      resources.applyUpdate(
-        { id: materialId, domain: { kind: "file" } },
-        summary,
+      const ref = { id: materialId, domain: { kind: "file" } as const };
+      const snapshot = resources.get(ref);
+      if (!snapshot) {
+        showToast("素材已不在");
+        return false;
+      }
+      const mutation = workspaceMutations.tryRun(
+        resourceMutationKey(ref.domain.kind, ref.id),
+        {
+          capture: () => snapshot,
+          applyOptimistic: () => {
+            resources.applyUpdate(ref, summary);
+            setPreviewSource((current) =>
+              current?.id === materialId
+                ? { ...current, abstract: summary, bodyText: summary }
+                : current,
+            );
+          },
+          commit: () =>
+            stream.updateMaterialSummary(
+              command.data.sessionId,
+              command.data.materialId,
+              command.data.summary,
+            ),
+          rollback: (previous) => {
+            resources.upsert(previous);
+            setPreviewSource((current) =>
+              current?.id === materialId
+                ? {
+                    ...current,
+                    abstract: previous.summary ?? "",
+                    bodyText: previous.summary ?? "",
+                  }
+                : current,
+            );
+          },
+        },
       );
-      stream.sendCommand(command).catch((e) => {
+      if (!mutation) {
+        showToast("摘要正在保存，请稍候");
+        return false;
+      }
+      mutation.promise.catch((e) => {
         console.error("[workspace] updateMaterialSummary failed", e);
-        showToast("摘要保存失败 · 请重试");
+        showToast("摘要保存失败 · 已恢复原内容");
       });
       return true;
     },
-    [agentActive, state.sessionId, showToast],
+    [agentActive, setPreviewSource, state.sessionId, showToast],
   );
 
   // 移除已上传到项目里的副本:先弹产品确认框,确认后仍走 removeMaterial 命令链。

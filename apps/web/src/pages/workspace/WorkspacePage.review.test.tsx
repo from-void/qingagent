@@ -39,6 +39,7 @@ type MockServerStreamInstance = {
   getDerivativeDoc: ReturnType<typeof vi.fn>;
   commitReviewGroups: ReturnType<typeof vi.fn>;
   ignoreAnnotationGroups: ReturnType<typeof vi.fn>;
+  updateMaterialSummary: ReturnType<typeof vi.fn>;
   cancel: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
@@ -74,6 +75,18 @@ vi.mock("./data/serverStream", () => {
     getDerivativeDoc = vi.fn(async () => null);
     commitReviewGroups = vi.fn(async () => []);
     ignoreAnnotationGroups = vi.fn(async () => undefined);
+    updateMaterialSummary = vi.fn(
+      async (_sessionId: string, materialId: string, summary: string) => {
+        this.emit({
+          kind: "resourceUpdated",
+          data: {
+            resourceRef: { id: materialId, domain: { kind: "file" } },
+            summary,
+            metadata: { fileId: `file-${materialId}` },
+          },
+        });
+      },
+    );
     cancel = vi.fn(async () => {
       this.dispatchLocal?.({ kind: "streamTerminated", reason: "stop" });
     });
@@ -2353,6 +2366,36 @@ describe("WorkspacePage review controls", () => {
     })]);
   });
 
+  it("P2-20 回归:忽略批注保存失败后按快照恢复，并重新出现操作入口", async () => {
+    const stream = await renderWorkspaceWithAnnotations();
+    let rejectIgnore: (error: unknown) => void = () => undefined;
+    stream.ignoreAnnotationGroups.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectIgnore = reject;
+      }),
+    );
+
+    vi.useFakeTimers();
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[data-annotation-group="annotation-1"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(80);
+    });
+    await clickButton("忽略");
+    await flushMicrotasks(3);
+    expect(stream.ignoreAnnotationGroups).toHaveBeenCalledTimes(1);
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).toBeNull();
+
+    await act(async () => {
+      rejectIgnore(new Error("proxy down"));
+    });
+    await flushMicrotasks(5);
+    vi.useRealTimers();
+
+    expect(host?.querySelector('[data-annotation-group="annotation-1"]')).not.toBeNull();
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain("已恢复");
+  });
+
   it("e2e-loop-0704 P1 回归:2 处候选采纳第 1 处后放弃全部,已采纳 batch 保留提交且反馈计数如实", async () => {
     // 修复前:handleRejectAll 把 batch-a(已采纳)也塞进 rejectReviewBatchIds,
     // server 强制覆盖 verdict → 已采纳改动回滚丢失;outcome 全计 rejected → 卡片误报全拒。
@@ -2501,6 +2544,121 @@ describe("WorkspacePage review controls", () => {
     // 发送失败 → restoreAskUser 回滚:弹层回来,输入仍锁,可重新提交
     expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
     expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("P1-11 回归:cancel POST 被代理阻断时恢复完整问卷，不留下服务端挂起死锁", async () => {
+    const stream = await renderWorkspaceWithInlineAskUser();
+    let rejectCancel: (error: unknown) => void = () => undefined;
+    stream.sendCommand.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCancel = reject;
+      }),
+    );
+
+    const abandon = buttonByText("手动输入");
+    await clickElement(abandon);
+    await flushMicrotasks(3);
+
+    const cancels = stream.sendCommand.mock.calls
+      .map(([command]) => command as Command)
+      .filter((command) => command.kind === "cancelAskUser");
+    expect(cancels).toHaveLength(1);
+    // 乐观收口期间入口消失，且同一 mutation 不可能重复提交。
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
+
+    await act(async () => {
+      rejectCancel(new Error("proxy blocked cancel POST"));
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(exportButton().getAttribute("aria-disabled")).toBe("true");
+    expect(host?.textContent).toContain("为什么放弃这些修改？");
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "问卷已恢复",
+    );
+  });
+
+  it("P1-11 回归:actor 取消失败虽返回 HTTP 200 错误帧，前端仍回滚并保留作答入口", async () => {
+    const stream = await renderWorkspaceWithInlineAskUser();
+    let rejectCancel: (error: unknown) => void = () => undefined;
+    stream.sendCommand.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCancel = reject;
+      }),
+    );
+
+    await clickElement(buttonByText("手动输入"));
+    await flushMicrotasks(3);
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
+
+    await act(async () => {
+      rejectCancel(new Error("cancelAskUser failed: actor error frame"));
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(exportButton().getAttribute("aria-disabled")).toBe("true");
+    expect(host?.textContent).toContain("为什么放弃这些修改？");
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "问卷已恢复",
+    );
+  });
+
+  it("P1-11 回归:权威取消成功帧先到，迟到 fetch 失败不得覆盖回问卷锁态", async () => {
+    const stream = await renderWorkspaceWithInlineAskUser();
+    let rejectCancel: (error: unknown) => void = () => undefined;
+    stream.sendCommand.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCancel = reject;
+      }),
+    );
+
+    await clickElement(buttonByText("手动输入"));
+    await flushMicrotasks(3);
+
+    await emitFrames(stream, [
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-ask",
+          toolCallId: "ask-1",
+          spec: {
+            ...inlineAskUserToolCall("ask-1"),
+            status: {
+              kind: "failed",
+              data: {
+                retriable: false,
+                reason: "用户已放弃本轮问卷",
+              },
+            },
+          },
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+    ]);
+
+    await act(async () => {
+      rejectCancel(new Error("response connection reset after authoritative frames"));
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(exportButton().getAttribute("aria-disabled")).toBeNull();
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain("已放弃本轮");
+    expect(host?.querySelector(".qa-toast")?.textContent).not.toContain(
+      "问卷已恢复",
+    );
   });
 
   it("#25 回归:编辑锁提示 portal 到 body 顶层 fixed,不再留在 .ws-right 滚动流内", async () => {
@@ -2848,6 +3006,44 @@ describe("WorkspacePage review controls", () => {
         data: { sessionId: "s-1", materialId: "mat-1" },
       },
     ]);
+  });
+
+  it("P2-19 回归:素材摘要保存失败回滚完整资源快照", async () => {
+    const stream = await renderWorkspaceWithUploadedMaterial();
+    let rejectSave: (error: unknown) => void = () => undefined;
+    stream.updateMaterialSummary.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectSave = reject;
+      }),
+    );
+    await clickElement(linkedFilesBar());
+    await clickElement(rowByText("合同.pdf"));
+    const textarea = host!.querySelector<HTMLTextAreaElement>(".fd-rp-sum-ta")!;
+    expect(textarea.value).toBe("合同摘要");
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        textarea,
+        "修改后的摘要",
+      );
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(stream.updateMaterialSummary).toHaveBeenCalledWith(
+      "s-1",
+      "mat-1",
+      "修改后的摘要",
+    );
+    expect(textarea.value).toBe("修改后的摘要");
+
+    await act(async () => {
+      rejectSave(new Error("proxy down"));
+    });
+    await flushMicrotasks(5);
+
+    const restored = host!.querySelector<HTMLTextAreaElement>(".fd-rp-sum-ta")!;
+    expect(restored.value).toBe("合同摘要");
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain("已恢复原内容");
   });
 
   it("移除上传素材确认弹窗取消时不发送 removeMaterial", async () => {

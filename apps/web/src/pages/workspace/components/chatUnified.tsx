@@ -368,7 +368,7 @@ export function UToolBar({
   })();
   const runningText = isProcOut ? "等待输出" : "处理中";
   const failedReason =
-    failed && spec.name === "parseFile" && spec.status.kind === "failed"
+    failed && spec.status.kind === "failed"
       ? spec.status.data.reason
       : null;
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
@@ -380,21 +380,22 @@ export function UToolBar({
       : failed || semanticFailed
         ? (failedReason ?? customOut ?? "未完成")
         : (customOut ?? "已完成");
-  // 设计原则:工具"只要调过了"就不再红色报错。未完成/内部失败仍显对勾图标,状态文案(如"未完成")
-  // 走常规灰色,不用红色感叹号——高亮红字用户无法自行解决,只会造成困惑。
+  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”。
+  // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。
   const ico = pending ? <span className="u-dot" />
     : running ? (LONG_RUNNING.has(spec.name) ? <Spin /> : <Dots />)
+    : failed ? <UIcon d={ICO.error} />
     : <UIcon d={DONE_ICON_BY_KIND[spec.body.kind] ?? ICO.check} />;
   const seg = isProcOut && procOutSecs
     ? <span className="u-seg"><Countdown seconds={procOutSecs} /></span>
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className="u-ico">{ico}</span>
+      <span className={`u-ico${failed ? " is-error" : ""}`}>{ico}</span>
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span className="u-meta" title={outputHint ?? undefined}>{statusText}</span>
+      <span className={`u-meta${failed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
     </div>
   );
 }

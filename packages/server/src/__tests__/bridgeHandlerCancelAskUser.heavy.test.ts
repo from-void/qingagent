@@ -43,6 +43,7 @@ function askUserToolCall(
 
 async function loadBridge() {
   vi.resetModules();
+  const schedulePersist = vi.fn(async () => undefined);
 
   vi.doMock("@qingagent/core", async () => {
     const actual = await vi.importActual<typeof import("@qingagent/core")>("@qingagent/core");
@@ -50,11 +51,14 @@ async function loadBridge() {
       ...actual,
       createSessionThread: vi.fn(async () => undefined),
       persistSessionMetadata: vi.fn(async () => undefined),
-      schedulePersist: vi.fn(async () => undefined),
+      schedulePersist,
     };
   });
 
-  return await import("../gateway/bridgeHandler");
+  return {
+    bridge: await import("../gateway/bridgeHandler"),
+    schedulePersist,
+  };
 }
 
 async function createCachedSession(
@@ -81,7 +85,7 @@ describe("R0 cancelAskUser bridge red tests", () => {
   it.each(["askUser", "planDraft", "askUserQuestion"] as const)(
     "OL-1b clears %s suspension state and emits failed tool unlock frames",
     async (toolName) => {
-    const bridge = await loadBridge();
+    const { bridge } = await loadBridge();
     const session = await createCachedSession(bridge);
     const askUser = askUserToolCall("ask-1", toolName);
     session.docState = { kind: "empty" };
@@ -137,7 +141,7 @@ describe("R0 cancelAskUser bridge red tests", () => {
   );
 
   it("aborts active stream when cancelling running askUser before suspension", async () => {
-    const bridge = await loadBridge();
+    const { bridge } = await loadBridge();
     const session = await createCachedSession(bridge);
     const controller = new AbortController();
     const askUser = askUserToolCall("ask-running");
@@ -197,5 +201,91 @@ describe("R0 cancelAskUser bridge red tests", () => {
       kind: "docStateChanged",
       data: { state: { kind: "empty" }, activeOverlay: null, agentBusy: false },
     });
+  });
+
+  it("重复 cancelAskUser 对已取消终态幂等成功，不再报没有待放弃问卷", async () => {
+    const { bridge } = await loadBridge();
+    const session = await createCachedSession(bridge);
+    const askUser = askUserToolCall("ask-idempotent");
+    session.docState = { kind: "empty" };
+    session.previousDocState = { kind: "empty" };
+    session.chatHistory = [{
+      id: "msg-idempotent",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [{ kind: "toolCall", data: askUser }],
+      chips: null,
+    }];
+    session.runId = "run-idempotent";
+    session.toolCallId = askUser.id;
+    session._suspensionOwner = {
+      streamId: "stream-idempotent",
+      runId: "run-idempotent",
+      toolCallId: askUser.id,
+      toolName: "askUser",
+    };
+
+    const command: Command = {
+      kind: "cancelAskUser",
+      data: { sessionId: session.sessionId, toolCallId: askUser.id },
+    };
+    const first = await collectFrames(bridge.handleCommand(command));
+    const repeated = await collectFrames(bridge.handleCommand(command));
+
+    expect(first.map((frame) => frame.kind)).toEqual([
+      "toolCallUpdated",
+      "docStateChanged",
+    ]);
+    expect(repeated).toEqual([]);
+    expect(session.chatHistory[0]?.parts[0]).toMatchObject({
+      kind: "toolCall",
+      data: {
+        status: {
+          kind: "failed",
+          data: { reason: "用户已放弃本轮问卷" },
+        },
+      },
+    });
+  });
+
+  it("P1-11:取消终态持久化失败会向 actor 抛出，不能只记日志后静默成功", async () => {
+    const { bridge, schedulePersist } = await loadBridge();
+    const session = await createCachedSession(bridge);
+    const askUser = askUserToolCall("ask-persist-failure");
+    session.docState = { kind: "editing" };
+    session.previousDocState = { kind: "editing" };
+    session.chatHistory = [{
+      id: "msg-persist-failure",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: [{ kind: "toolCall", data: askUser }],
+      chips: null,
+    }];
+    session.runId = "run-persist-failure";
+    session.toolCallId = askUser.id;
+    session._suspensionOwner = {
+      streamId: "stream-persist-failure",
+      runId: "run-persist-failure",
+      toolCallId: askUser.id,
+      toolName: "askUser",
+    };
+    schedulePersist.mockClear();
+    schedulePersist.mockRejectedValueOnce(new Error("primary persistence unavailable"));
+
+    const generator = bridge.handleCommand({
+      kind: "cancelAskUser",
+      data: { sessionId: session.sessionId, toolCallId: askUser.id },
+    });
+
+    await expect(generator.next()).resolves.toMatchObject({
+      value: { kind: "toolCallUpdated" },
+      done: false,
+    });
+    await expect(generator.next()).resolves.toMatchObject({
+      value: { kind: "docStateChanged" },
+      done: false,
+    });
+    await expect(generator.next()).rejects.toThrow("primary persistence unavailable");
+    expect(schedulePersist).toHaveBeenCalledWith(session, "cancelAskUser");
   });
 });

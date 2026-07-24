@@ -7,6 +7,10 @@ import {
   logClientEvent,
   setClientLogSession,
 } from "./clientLog";
+import {
+  RevisionedMutationCoordinator,
+  askMoreMutationKey,
+} from "./revisionedMutation";
 
 /**
  * 从命令里尽力解析 sessionId（仅用于点击流埋点的关联，不影响请求逻辑）。
@@ -53,6 +57,59 @@ function summarizeCommandForLog(command: Command): Record<string, unknown> {
 interface LoggedBridgeFrame {
   seq: number;
   frame: BridgeFrame;
+}
+
+class CancelAskUserCommandError extends Error {
+  readonly cancelAskUserServerFailure = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CancelAskUserCommandError";
+  }
+}
+
+function assertCancelAskUserResponse(result: unknown): void {
+  if (!Array.isArray(result)) {
+    throw new CancelAskUserCommandError(
+      "cancelAskUser failed: invalid command response",
+    );
+  }
+  for (const value of result) {
+    try {
+      validateBridgeFrame(value as BridgeFrame);
+    } catch {
+      throw new CancelAskUserCommandError(
+        "cancelAskUser failed: invalid response frame",
+      );
+    }
+    const frame = value as BridgeFrame;
+    if (frame.kind !== "stream") continue;
+    const streamFrame = frame.data as {
+      kind?: unknown;
+      data?: unknown;
+    };
+    if (
+      !["start", "end", "draftingFailed"].includes(
+        String(streamFrame.kind),
+      ) ||
+      streamFrame.data === null ||
+      typeof streamFrame.data !== "object"
+    ) {
+      throw new CancelAskUserCommandError(
+        "cancelAskUser failed: invalid response frame",
+      );
+    }
+    if (streamFrame.kind === "draftingFailed") {
+      const failure = streamFrame.data as { reason?: unknown };
+      throw new CancelAskUserCommandError(
+        `cancelAskUser failed: ${
+          typeof failure.reason === "string"
+            ? failure.reason
+            : "invalid failure frame"
+        }`,
+      );
+    }
+  }
 }
 
 function streamErrorForHttpStatus(status: number): StreamError {
@@ -169,8 +226,25 @@ export class ServerStream {
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
+  private waiterByPromise = new WeakMap<
+    Promise<unknown>,
+    {
+      predicate: (frame: BridgeFrame) => boolean;
+      resolve: (frame: BridgeFrame) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   /** Active abort controllers — one per in-flight command submit. */
   private activeControllers = new Set<AbortController>();
+  private askMoreRequests = new Map<
+    AbortController,
+    {
+      sessionId: string;
+      reader: ReadableStreamDefaultReader<Uint8Array> | null;
+    }
+  >();
+  private readonly requestMutations = new RevisionedMutationCoordinator();
   private eventSource: EventSource | null = null;
   private eventReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private eventProbeController: AbortController | null = null;
@@ -227,7 +301,51 @@ export class ServerStream {
     reason: Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"]["reason"],
     options: Pick<Extract<Command, { kind: "ignoreAnnotationGroups" }>["data"], "groupIds" | "rememberDismissal"> = {},
   ): Promise<void> {
-    await this.sendCommand({ kind: "ignoreAnnotationGroups", data: { sessionId, reason, ...options } });
+    const expectedIds = new Set(options.groupIds ?? []);
+    const framePromise = this.waitForFrame(
+      (frame) =>
+        frame.kind === "annotationGroupsReady" &&
+        (expectedIds.size === 0 ||
+          [...expectedIds].every((id) =>
+            frame.data.groups.some((group) => group.id === id && group.status === "ignored"),
+          )),
+      "ignoreAnnotationGroups completed without receiving authoritative annotationGroupsReady frame",
+    );
+    try {
+      await this.sendCommand({
+        kind: "ignoreAnnotationGroups",
+        data: { sessionId, reason, ...options },
+      });
+      await framePromise;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
+  }
+
+  async updateMaterialSummary(
+    sessionId: string,
+    materialId: string,
+    summary: string,
+  ): Promise<void> {
+    const framePromise = this.waitForFrame(
+      (frame) =>
+        frame.kind === "resourceUpdated" &&
+        frame.data.resourceRef.domain.kind === "file" &&
+        frame.data.resourceRef.id === materialId &&
+        (frame.data.summary ?? "") === summary,
+      "updateMaterialSummary completed without receiving authoritative resourceUpdated frame",
+    );
+    try {
+      await this.sendCommand({
+        kind: "updateMaterialSummary",
+        data: { sessionId, materialId, summary },
+      });
+      await framePromise;
+    } catch (error) {
+      this.rejectWaiter(framePromise);
+      throw error;
+    }
   }
 
   async listLexicons(sessionId: string): Promise<Extract<BridgeFrame, { kind: "lexiconsListed" }>["data"]["lexicons"]> {
@@ -463,6 +581,13 @@ export class ServerStream {
         epoch?: number;
       };
 
+      // cancelAskUser 是前台事务命令：actor 抛错时路由为了保留错误帧会返回
+      // HTTP 200 + draftingFailed[]。只看 response.ok 会把失败误报成成功，并让
+      // 前端清掉唯一作答入口、后端却继续持有 suspension。
+      if (command.kind === "cancelAskUser") {
+        assertCancelAskUserResponse(result);
+      }
+
       if (command.kind === "startSession") {
         const sessionId =
           command.data.mode.kind === "existing"
@@ -525,54 +650,78 @@ export class ServerStream {
     currentAnswers: Record<string, AskUserAnswer>,
     onProgress?: (questions: AskUserQuestion[]) => void,
   ): Promise<AskUserQuestion[]> {
-    const response = await fetch("/api/v1/ask-more", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...visitorKeyHeaders() },
-      body: JSON.stringify({ sessionId, toolCallId, currentQuestions, currentAnswers }),
-    });
+    return this.requestMutations.run(
+      askMoreMutationKey(sessionId, toolCallId),
+      async () => {
+        const controller = new AbortController();
+        const request = { sessionId, reader: null as ReadableStreamDefaultReader<Uint8Array> | null };
+        this.activeControllers.add(controller);
+        this.askMoreRequests.set(controller, request);
+        try {
+          const response = await fetch("/api/v1/ask-more", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...visitorKeyHeaders() },
+            body: JSON.stringify({ sessionId, toolCallId, currentQuestions, currentAnswers }),
+            signal: controller.signal,
+          });
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(
-        (body as { error?: string }).error ?? `ask-more failed: ${response.status}`,
-      );
-    }
-
-    // Parse SSE stream for progressive question delivery
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let finalQuestions: AskUserQuestion[] = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const json = line.slice(6).trim();
-          if (!json) continue;
-          try {
-            const parsed = JSON.parse(json) as { questions?: AskUserQuestion[]; error?: string };
-            if (parsed.error) throw new Error(parsed.error);
-            if (Array.isArray(parsed.questions) && parsed.questions.length > 0) {
-              finalQuestions = parsed.questions;
-              onProgress?.(parsed.questions);
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message !== json) throw e;
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(
+              (body as { error?: string }).error ?? `ask-more failed: ${response.status}`,
+            );
           }
-        }
-      }
-    }
 
-    return finalQuestions;
+          // Parse SSE stream for progressive question delivery
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error("No response body");
+          request.reader = reader;
+
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let finalQuestions: AskUserQuestion[] = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const json = line.slice(6).trim();
+                if (!json) continue;
+                try {
+                  const parsed = JSON.parse(json) as { questions?: AskUserQuestion[]; error?: string };
+                  if (parsed.error) throw new Error(parsed.error);
+                  if (Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+                    finalQuestions = parsed.questions;
+                    onProgress?.(parsed.questions);
+                  }
+                } catch (e) {
+                  if (e instanceof Error && e.message !== json) throw e;
+                }
+              }
+            }
+          }
+
+          if (controller.signal.aborted) {
+            throw controller.signal.reason instanceof Error
+              ? controller.signal.reason
+              : new DOMException("ask-more cancelled", "AbortError");
+          }
+          return finalQuestions;
+        } finally {
+          const reader = request.reader;
+          request.reader = null;
+          if (reader) await reader.cancel().catch(() => undefined);
+          this.askMoreRequests.delete(controller);
+          this.activeControllers.delete(controller);
+        }
+      },
+    );
   }
 
   /**
@@ -661,6 +810,7 @@ export class ServerStream {
 
   stop(): void {
     this.dispatchStreamTerminated("stop");
+    this.abortAskMoreRequests();
     for (const controller of this.activeControllers) {
       controller.abort();
     }
@@ -712,6 +862,7 @@ export class ServerStream {
       window.removeEventListener("qa-auth-changed", this.handleAuthChanged);
     }
     this.detach();
+    this.abortAskMoreRequests();
     for (const controller of this.activeControllers) {
       controller.abort();
     }
@@ -762,6 +913,7 @@ export class ServerStream {
     if (frame.kind === "restoreReset") {
       this.lastSeq = normalizedSeq;
       this.emit(frame);
+      this.reconnectAfterRestoreReset();
       return;
     }
     if (normalizedSeq <= this.lastSeq) return;
@@ -791,6 +943,9 @@ export class ServerStream {
     options: { resetCursor?: boolean } = {},
   ): void {
     if (this.eventSource && this.activeSessionId === sessionId) return;
+    if (this.activeSessionId && this.activeSessionId !== sessionId) {
+      this.abortAskMoreRequests(this.activeSessionId);
+    }
     this.detach();
     if (this.activeSessionId !== sessionId || options.resetCursor) {
       this.lastSeq = 0;
@@ -839,6 +994,22 @@ export class ServerStream {
     this.eventSource = source;
   }
 
+  private reconnectAfterRestoreReset(): void {
+    const sessionId = this.activeSessionId;
+    if (!sessionId || !this.eventSource) return;
+    this.eventSource.close();
+    this.eventSource = null;
+    this.openEventSource(sessionId);
+  }
+
+  private abortAskMoreRequests(sessionId?: string): void {
+    for (const [controller, request] of this.askMoreRequests) {
+      if (sessionId && request.sessionId !== sessionId) continue;
+      controller.abort(new DOMException("ask-more cancelled", "AbortError"));
+      void request.reader?.cancel().catch(() => undefined);
+    }
+  }
+
   private async scheduleEventReconnect(sessionId: string, failedUrl: string): Promise<void> {
     if (this.activeSessionId !== sessionId || this.eventReconnectTimer) return;
     this.eventReconnectAttempt += 1;
@@ -879,8 +1050,14 @@ export class ServerStream {
     timeoutMessage: string,
     timeoutMs = 30_000,
   ): Promise<BridgeFrame> {
-    return new Promise<BridgeFrame>((resolve, reject) => {
-      const waiter = {
+    let waiter: {
+      predicate: (frame: BridgeFrame) => boolean;
+      resolve: (frame: BridgeFrame) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    };
+    const promise = new Promise<BridgeFrame>((resolve, reject) => {
+      waiter = {
         predicate,
         resolve,
         reject,
@@ -891,11 +1068,20 @@ export class ServerStream {
       };
       this.waiters.add(waiter);
     });
+    this.waiterByPromise.set(promise, waiter!);
+    return promise;
   }
 
   private rejectWaiter(promise: Promise<unknown> | null): void {
     if (!promise) return;
-    // waiter 自身会在 dispose/timeout 清理；这里避免未 await 的 promise 产生未处理拒绝。
+    const waiter = this.waiterByPromise.get(promise);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      this.waiters.delete(waiter);
+      this.waiterByPromise.delete(promise);
+      waiter.reject(new Error("Frame waiter cancelled"));
+    }
+    // 命令原始错误由调用方抛出；内部 waiter 的取消拒绝只负责及时清理。
     promise.catch(() => undefined);
   }
 

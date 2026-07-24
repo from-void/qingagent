@@ -393,26 +393,34 @@ export async function* handleToolCallEvent(
     (part) => part.kind === "toolCall" && part.data.id === toolCallId,
   );
   if (originalMessage && originalPart?.kind === "toolCall") {
-    const doneSpec: ToolCallSpec = {
+    const failedSpec: ToolCallSpec = {
       ...originalPart.data,
-      status: { kind: "done" },
-      result:
-        originalPart.data.result ?? {
-          kind: "genericText",
-          data: errorText || `工具 ${toolName || originalPart.data.name} 执行失败`,
+      status: {
+        kind: "failed",
+        data: {
+          retriable: true,
+          reason: errorText || `工具 ${toolName || originalPart.data.name} 执行失败`,
         },
+      },
+      result: null,
     };
-    yield toolCallUpdated(originalMessage.id, toolCallId, doneSpec);
-    updateToolCallInChatHistory(state, originalMessage.id, toolCallId, doneSpec);
+    yield toolCallUpdated(originalMessage.id, toolCallId, failedSpec);
+    updateToolCallInChatHistory(state, originalMessage.id, toolCallId, failedSpec);
     outcome.producedVisibleFrame = true;
   } else if (toolCallId) {
     const spec: ToolCallSpec = {
       id: toolCallId,
       name: toolName || "tool",
       render: { kind: "chatInline" },
-      status: { kind: "done" },
+      status: {
+        kind: "failed",
+        data: {
+          retriable: true,
+          reason: errorText || `工具 ${toolName || "tool"} 执行失败`,
+        },
+      },
       body: { kind: "generic", data: { argsJson: "" } },
-      result: { kind: "genericText", data: errorText || "工具执行失败" },
+      result: null,
     };
     const seq = nextSeq(state, agentMessageId);
     const toolCallPart: MessagePart = { kind: "toolCall", data: spec };

@@ -8,7 +8,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { Command } from "@qingagent/contract-ts";
+import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { validateCommand } from "../../../system/validators";
 import type { ServerStream } from "../data/serverStream";
 import {
@@ -46,10 +46,38 @@ const GENRE_LABELS: Record<string, string> = {
   academic: "学术/创作",
 };
 
+export function askUserCancelMutationKey(
+  sessionId: string,
+  toolCallId: string,
+): string {
+  return `${sessionId}\0${toolCallId}`;
+}
+
+export function isAuthoritativeAskUserCancelFrame(
+  frame: BridgeFrame,
+): frame is Extract<BridgeFrame, { kind: "toolCallUpdated" }> {
+  return (
+    frame.kind === "toolCallUpdated" &&
+    frame.data.spec.body.kind === "askUser" &&
+    frame.data.spec.status.kind === "failed" &&
+    frame.data.spec.status.data.reason === "用户已放弃本轮问卷"
+  );
+}
+
+function isServerReportedCancelFailure(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { cancelAskUserServerFailure?: unknown })
+      .cancelAskUserServerFailure === true
+  );
+}
+
 export function useWorkspaceReviewActions(input: {
   state: WorkspaceState;
   stateRef: MutableRefObject<WorkspaceState>;
   streamRef: MutableRefObject<ServerStream | null>;
+  askUserCancelMutationTokensRef: MutableRefObject<Map<string, symbol>>;
   reviewCloseInFlightRef: MutableRefObject<Promise<void> | null>;
   dispatch: Dispatch<WorkspaceAction>;
   showToast: (message: string, durationMs?: number) => void;
@@ -68,6 +96,7 @@ export function useWorkspaceReviewActions(input: {
     state,
     stateRef,
     streamRef,
+    askUserCancelMutationTokensRef,
     reviewCloseInFlightRef,
     dispatch,
     showToast,
@@ -487,6 +516,16 @@ export function useWorkspaceReviewActions(input: {
         showToast("会话未就绪");
         return;
       }
+      const mutationKey = askUserCancelMutationKey(
+        current.sessionId,
+        toolCall.id,
+      );
+      if (askUserCancelMutationTokensRef.current.has(mutationKey)) return;
+      const originalTc = current.toolCalls.get(toolCall.id);
+      if (!originalTc) {
+        showToast("问卷已不在");
+        return;
+      }
 
       const command: Command = {
         kind: "cancelAskUser",
@@ -506,29 +545,77 @@ export function useWorkspaceReviewActions(input: {
         return;
       }
 
-      stream.sendCommand(command).catch((e) => {
-        console.error("[workspace] cancelAskUser failed", e);
-        showToast("放弃失败 · 请重试");
-      });
-
       const ownerMsg = current.messages.find((m) =>
         m.parts.some((p) => p.kind === "toolCall" && p.data.id === toolCall.id),
       );
+      const ownerMsgId = ownerMsg?.id ?? toolCall.id;
+      const originalOverlay = current.activeOverlay;
+      const originalDocState = current.docState;
+      const originalAgentBusy = current.agentBusy;
+      const optimisticTc: ToolCallSpec = {
+        ...originalTc,
+        status: {
+          kind: "failed",
+          data: { retriable: false, reason: "用户已放弃本轮问卷" },
+        },
+      };
+
+      const mutationToken = Symbol(mutationKey);
+      askUserCancelMutationTokensRef.current.set(mutationKey, mutationToken);
+      setSubmittingAskUserId(toolCall.id);
       dispatch({
         kind: "toolCallUpdated",
         data: {
-          messageId: ownerMsg?.id ?? toolCall.id,
+          messageId: ownerMsgId,
           toolCallId: toolCall.id,
-          spec: {
-            ...toolCall,
-            status: {
-              kind: "failed",
-              data: { retriable: false, reason: "用户已放弃本轮问卷" },
-            },
-          },
+          spec: optimisticTc,
         },
       });
-      showToast("已放弃本轮");
+      stream
+        .sendCommand(command)
+        .then(() => {
+          showToast("已放弃本轮");
+        })
+        .catch((e) => {
+          console.error("[workspace] cancelAskUser failed", e);
+          const authoritativeCancellationObserved =
+            askUserCancelMutationTokensRef.current.get(mutationKey) !==
+            mutationToken;
+          if (authoritativeCancellationObserved) {
+            showToast(
+              isServerReportedCancelFailure(e)
+                ? "已放弃，但状态保存失败，请刷新后确认"
+                : "已放弃本轮",
+            );
+            return;
+          }
+          const latest = stateRef.current.toolCalls.get(toolCall.id);
+          const stillOptimistic =
+            latest?.status.kind === "failed" &&
+            latest.status.data.reason === "用户已放弃本轮问卷";
+          if (stillOptimistic) {
+            dispatch({
+              kind: "restoreAskUser",
+              messageId: ownerMsgId,
+              toolCall: originalTc,
+              overlay: originalOverlay,
+              docState: originalDocState,
+              agentBusy: originalAgentBusy,
+            });
+          }
+          showToast("放弃失败 · 问卷已恢复，请重试");
+        })
+        .finally(() => {
+          if (
+            askUserCancelMutationTokensRef.current.get(mutationKey) ===
+            mutationToken
+          ) {
+            askUserCancelMutationTokensRef.current.delete(mutationKey);
+          }
+          setSubmittingAskUserId((currentId) =>
+            currentId === toolCall.id ? null : currentId,
+          );
+        });
     },
     [showToast],
   );

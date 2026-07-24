@@ -150,6 +150,10 @@ export interface SessionState {
   _abortController: AbortController | null;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
   _activeTurnPromise: Promise<void> | null;
+  /** Runtime-only：当前 agent 尝试产生写入时使用的 owner。 */
+  _turnOwner: string | null;
+  /** Runtime-only：用于拦截迟到工具写入的单调递增代次。 */
+  _turnGeneration: number;
   /** Runtime-only creation promise for the backing Mastra thread. Not persisted. */
   threadCreatePromise?: Promise<void>;
   /** PM-native review suggestions keyed by suggestion id. */
@@ -326,6 +330,8 @@ export function createSession(
     _lastEmittedWireKind: null,
     _abortController: null,
     _activeTurnPromise: null,
+    _turnOwner: null,
+    _turnGeneration: 0,
     suggestions: new Map(),
     annotationGroups: [],
     patchVerdicts: new Map(),

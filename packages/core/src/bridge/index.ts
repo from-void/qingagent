@@ -15,6 +15,22 @@ export {
 export type { PendingConfirm, SessionState, SuggestionRecord, SuspensionLiveness, SuspensionToolName } from "../session/sessionState.js";
 
 export {
+  TURN_GENERATION_REQUEST_CONTEXT_KEY,
+  TURN_OWNER_REQUEST_CONTEXT_KEY,
+  assertTurnWriteAllowed,
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
+  captureTurnWriteGuard,
+  endTurnOwnership,
+  invalidateTurnOwnership,
+  turnOwnershipFromRequestContext,
+} from "../session/turnOwnership.js";
+export type {
+  TurnOwnership,
+  TurnWriteGuard,
+} from "../session/turnOwnership.js";
+
+export {
   ConfirmDecisionError,
   ConfirmService,
   confirmService,

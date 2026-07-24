@@ -19,6 +19,11 @@ import {
 } from "../llm/modelConfig.js";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
+import {
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
+  endTurnOwnership,
+} from "../session/turnOwnership.js";
 import { isDirectionReset } from "./questionnaireTools.js";
 import {
   activeSuspensionOwnedBy,
@@ -151,6 +156,7 @@ export async function* runAgentTurn(
   let activeRunId: string | null = null;
   let turnOutcome: "ok" | "error" | "cancelled" = "ok";
   let abortController = new AbortController();
+  let turnOwnership = beginTurnOwnership(state, `${streamId}:attempt:0`);
   const turnCompletion = createTurnCompletion();
   let turnWasUserAborted = false;
   const omSidecarEnabled = isOmSidecarEnabled();
@@ -581,6 +587,7 @@ export async function* runAgentTurn(
       ["isDirectionReset", isDirectionReset(state)],
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
+    bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
     turnRequestContext = requestContext;
     beginSessionSnapshotTurn(requestContext);
     let toolSearchPreloadedToolNames: string[] = [];
@@ -745,6 +752,11 @@ export async function* runAgentTurn(
             requestContext.set("abortSignal", abortController.signal);
           }
         }
+        turnOwnership = beginTurnOwnership(
+          state,
+          `${streamId}:attempt:${attempt + 1}`,
+        );
+        bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
         const retryChunk = outcome.retryableIdleTimeoutChunk ?? outcome.transientErrorChunk;
         logger.warn("Retrying agent turn after zero-output stream error", {
           sessionId: state.sessionId,
@@ -850,6 +862,7 @@ export async function* runAgentTurn(
       });
     }
     turnCompletion.resolve();
+    endTurnOwnership(state, turnOwnership);
     if (state._abortController === abortController) {
       state._abortController = null;
     }

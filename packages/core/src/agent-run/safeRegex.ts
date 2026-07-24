@@ -48,6 +48,7 @@ const DEFAULT_MATCH_LIMIT = 1000;
 const RUN_TIMEOUT_MS = 200;
 const TOTAL_TIMEOUT_MS = 500;
 const ALLOWED_FLAGS = new Set(["i", "u", "m"]);
+const EXECUTOR_UNAVAILABLE_ERROR = "安全正则执行器不可用";
 
 let nextTaskId = 1;
 let workerCtor: WorkerCtor | null = Worker;
@@ -128,26 +129,6 @@ function makeRegExpMatchArray(input: string, match: WorkerMatch): RegExpMatchArr
   return array;
 }
 
-function runInMainThread(re: RegExp, text: string, limit: number): ExecSafeRegexResult {
-  if (text.length > MAX_TEXT_LENGTH) {
-    return { ok: false, error: "unsafe regex (text too long)" };
-  }
-  const matches: RegExpMatchArray[] = [];
-  const local = new RegExp(re.source, re.flags);
-  let match: RegExpExecArray | null;
-  while ((match = local.exec(text)) !== null) {
-    if ((match[0] ?? "").length === 0) {
-      local.lastIndex += 1;
-      continue;
-    }
-    if (matches.length >= limit) {
-      return { ok: false, error: "unsafe regex (too many matches)" };
-    }
-    matches.push(match);
-  }
-  return { ok: true, matches };
-}
-
 function inlineWorkerSource(): string {
   return `
     const { parentPort } = require("node:worker_threads");
@@ -218,11 +199,9 @@ function createWorker(): PooledWorker {
     if (task) {
       clearTimeout(task.totalTimer);
       if (task.runTimer) clearTimeout(task.runTimer);
-      task.resolve(runInMainThread(
-        new RegExp(task.request.pattern, task.request.flags),
-        task.request.text,
-        task.request.limit,
-      ));
+      pooled.busy = false;
+      pooled.task = null;
+      task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
     }
     dispatchQueue();
     if (!task) {
@@ -231,7 +210,15 @@ function createWorker(): PooledWorker {
   });
 
   worker.on("exit", () => {
+    const task = pooled.task;
     dropWorker(pooled);
+    if (task) {
+      clearTimeout(task.totalTimer);
+      if (task.runTimer) clearTimeout(task.runTimer);
+      pooled.busy = false;
+      pooled.task = null;
+      task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
+    }
     dispatchQueue();
   });
 
@@ -268,10 +255,28 @@ function getIdleWorker(): PooledWorker | null {
   }
 }
 
+function failQueuedTasksAsUnavailable(): void {
+  const unavailable = queue;
+  queue = [];
+  for (const task of unavailable) {
+    clearTimeout(task.totalTimer);
+    if (task.runTimer) clearTimeout(task.runTimer);
+    task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
+  }
+}
+
 function dispatchQueue(): void {
+  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
+    failQueuedTasksAsUnavailable();
+    return;
+  }
   while (queue.length > 0) {
     const worker = getIdleWorker();
-    if (!worker) return;
+    if (!worker) {
+      if (pool.length >= poolSize()) return;
+      failQueuedTasksAsUnavailable();
+      return;
+    }
     const task = queue.shift()!;
     worker.busy = true;
     worker.task = task;
@@ -325,15 +330,14 @@ export async function execSafeRegexAll(
   text: string,
   limit = DEFAULT_MATCH_LIMIT,
 ): Promise<ExecSafeRegexResult> {
+  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
+    return { ok: false, error: EXECUTOR_UNAVAILABLE_ERROR };
+  }
   if (text.length > MAX_TEXT_LENGTH) {
     return { ok: false, error: "unsafe regex (text too long)" };
   }
   const maxMatches = Math.min(limit, DEFAULT_MATCH_LIMIT);
   if (maxMatches <= 0) return { ok: true, matches: [] };
-
-  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
-    return runInMainThread(re, text, maxMatches);
-  }
 
   return runInWorkerPool(re, text, maxMatches);
 }

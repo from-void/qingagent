@@ -3,6 +3,10 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { getMemory, mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  captureTurnWriteGuard,
+} from "./turnOwnership.js";
 
 const logger = mastra.getLogger();
 
@@ -101,15 +105,18 @@ export function createUpdateWorkingMemoryTool(state: SessionState) {
       effective: z.literal("next_session").optional(),
       error: z.string().optional(),
     }),
-    execute: async (input) => {
+    execute: async (input, context) => {
+      const writeGuard = captureTurnWriteGuard(state, context);
       try {
         const nextMemory = normalizeWorkingMemory(input.memory) ?? "";
+        assertTurnWriteAllowed(state, writeGuard);
         await getMemory().updateWorkingMemory({
           threadId: state.threadId ?? state.sessionId,
           resourceId: state.resourceId,
           workingMemory: nextMemory,
           memoryConfig: QINGAGENT_WORKING_MEMORY_CONFIG,
         });
+        assertTurnWriteAllowed(state, writeGuard);
         state._workingMemoryUpdatedThisSession = true;
         logger.info("[workingMemory] updated", {
           sessionId: state.sessionId,

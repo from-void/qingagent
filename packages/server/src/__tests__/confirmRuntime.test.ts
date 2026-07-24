@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BridgeFrame, ConfirmSpec, ToolCallSpec } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  Command,
+  ConfirmSpec,
+  ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { ConfirmService, SecretLeaseStore } from "@qingagent/core/confirm";
 import { createSession } from "@qingagent/core";
 import { handleConfirmDecision, handleConfirmExpiry } from "../gateway/confirmRuntime";
 import { InMemoryFrameLog } from "../gateway/frameLog";
+import { SessionManager } from "../gateway/sessionManager";
 
 async function* modelStream(): AsyncGenerator<unknown> {
   yield { type: "text-delta", payload: { id: "text", text: "已处理" } };
@@ -229,6 +235,248 @@ describe("confirm runtime", () => {
       kind: "confirmResolved",
       data: expect.objectContaining({ resolution: "expired", toolCallId }),
     }));
+  });
+
+  it("过期 decline 永不 resolve 时，停止可中止局部 controller，后续 send/cancel 不被 Actor 永久堵塞", async () => {
+    const expiredSpec: ConfirmSpec = {
+      id: "confirm-expiry-hang",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(expiredSpec);
+    state.pendingConfirms.get(toolCallId)!.expiresAt =
+      new Date(Date.now() - 1).toISOString();
+    const service = new ConfirmService({ persist: async () => undefined });
+    let declineSignal: AbortSignal | undefined;
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn((options: { abortSignal?: AbortSignal }) => {
+        declineSignal = options.abortSignal;
+        return new Promise<never>(() => undefined);
+      }),
+    };
+    const executed: Command["kind"][] = [];
+    const manager = new SessionManager({
+      handleCommand: async function* (command) {
+        executed.push(command.kind);
+        yield {
+          kind: "sessionMeta",
+          data: { sessionId: state.sessionId, title: command.kind },
+        };
+      },
+      abortSession: () => state._abortController?.abort("user_abort"),
+      cleanupSession: vi.fn(),
+    });
+
+    const expiry = manager.runExclusive(
+      state.sessionId,
+      () => handleConfirmExpiry(state.sessionId, toolCallId, {
+        service,
+        agent: agent as never,
+        getSession: async () => state,
+        expiryTimeoutMs: 10_000,
+      }),
+    );
+    await vi.waitFor(() => expect(agent.declineToolCall).toHaveBeenCalledTimes(1));
+    expect(state._abortController?.signal).toBe(declineSignal);
+
+    const cancel = manager.submit(state.sessionId, {
+      command: {
+        kind: "cancelStream",
+        data: { sessionId: state.sessionId },
+      },
+    });
+    await expect(expiry).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        frame: expect.objectContaining({ kind: "confirmResolved" }),
+      }),
+    ]));
+    await expect(cancel).resolves.toHaveLength(1);
+    await expect(manager.submit(state.sessionId, {
+      command: {
+        kind: "sendMessage",
+        data: {
+          sessionId: state.sessionId,
+          text: "继续",
+          mentions: [],
+          skills: [],
+          chips: [],
+          fileIds: [],
+        },
+      },
+    })).resolves.toHaveLength(1);
+
+    expect(declineSignal?.aborted).toBe(true);
+    expect(executed).toEqual(["cancelStream", "sendMessage"]);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    await manager.disposeAll();
+  });
+
+  it("过期 decline 已返回但 fullStream 永不结束时，墙钟超时仍 fail-closed 释放会话", async () => {
+    const expiredSpec: ConfirmSpec = {
+      id: "confirm-expiry-stream-hang",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(expiredSpec);
+    state.pendingConfirms.get(toolCallId)!.expiresAt =
+      new Date(Date.now() - 1).toISOString();
+    const service = new ConfirmService({ persist: async () => undefined });
+    let declineSignal: AbortSignal | undefined;
+    const agent = {
+      approveToolCall: vi.fn(),
+      declineToolCall: vi.fn(async (options: { abortSignal?: AbortSignal }) => {
+        declineSignal = options.abortSignal;
+        return {
+          fullStream: {
+            [Symbol.asyncIterator]() {
+              return {
+                next: () => new Promise<IteratorResult<unknown>>(() => undefined),
+                return: async () => ({ done: true, value: undefined }),
+              };
+            },
+          },
+        };
+      }),
+    };
+
+    const startedAt = Date.now();
+    const frames = await collect(handleConfirmExpiry(state.sessionId, toolCallId, {
+      service,
+      agent: agent as never,
+      getSession: async () => state,
+      expiryTimeoutMs: 25,
+    }));
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(declineSignal?.aborted).toBe(true);
+    expect(state.pendingConfirms.has(toolCallId)).toBe(false);
+    expect(state._abortController).toBeNull();
+    expect(state._activeTurnPromise).toBeNull();
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "confirmResolved",
+      data: expect.objectContaining({ resolution: "expired", toolCallId }),
+    }));
+  });
+
+  it("关闭期间确认恢复登记 active turn，disposeAll 等终态持久化完成后才清理", async () => {
+    const closeSpec: ConfirmSpec = {
+      id: "confirm-close-resume",
+      kind: "command",
+      title: "执行命令",
+      say: "将执行一条命令",
+      footHint: "仅本次执行",
+      primaryLabel: "执行",
+      secondaryLabel: "取消",
+    };
+    const { state, toolCallId } = setupPending(closeSpec);
+    const persistReasons: string[] = [];
+    const service = new ConfirmService({
+      persist: async (_current, reason) => {
+        persistReasons.push(reason);
+      },
+    });
+    let streamFinallyRan = false;
+    const agent = {
+      approveToolCall: vi.fn(async (options: { abortSignal: AbortSignal }) => ({
+        runId: "run-confirm-close-resume",
+        fullStream: (async function* () {
+          try {
+            await new Promise<void>((resolve) => {
+              const onAbort = () => resolve();
+              options.abortSignal.addEventListener("abort", onAbort, { once: true });
+              if (options.abortSignal.aborted) onAbort();
+            });
+          } finally {
+            streamFinallyRan = true;
+          }
+        })(),
+      })),
+      declineToolCall: vi.fn(),
+    };
+    const cleanupSnapshots: Array<{
+      pending: number;
+      active: boolean;
+      status: string | undefined;
+    }> = [];
+    const terminalPersistSnapshots: Array<{
+      reason: string;
+      pending: number;
+      status: string | undefined;
+    }> = [];
+    const manager = new SessionManager({
+      handleCommand: async function* () {
+        return;
+      },
+      abortSession: () => state._abortController?.abort("shutdown"),
+      cleanupSession: () => {
+        const part = state.chatHistory[0]?.parts[0];
+        cleanupSnapshots.push({
+          pending: state.pendingConfirms.size,
+          active: state._activeTurnPromise !== null,
+          status: part?.kind === "toolCall" ? part.data.status.kind : undefined,
+        });
+      },
+      disposeWaitTimeoutMs: 1_000,
+    });
+
+    const running = manager.runExclusive(
+      state.sessionId,
+      () => handleConfirmDecision({
+        sessionId: state.sessionId,
+        toolCallId,
+        decisionId: "decision-close-resume",
+        decision: { id: closeSpec.id, accepted: true },
+        hasSecretValue: false,
+      }, {
+        service,
+        agent: agent as never,
+        getSession: async () => state,
+        persistSession: async (current, reason) => {
+          const part = current.chatHistory[0]?.parts[0];
+          terminalPersistSnapshots.push({
+            reason,
+            pending: current.pendingConfirms.size,
+            status: part?.kind === "toolCall"
+              ? part.data.status.kind
+              : undefined,
+          });
+        },
+      }),
+    );
+    void running.catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(agent.approveToolCall).toHaveBeenCalledTimes(1);
+      expect(state._activeTurnPromise).not.toBeNull();
+    });
+
+    await manager.disposeAll();
+    await expect(running).rejects.toThrow("Session actor disposed");
+
+    expect(streamFinallyRan).toBe(true);
+    expect(persistReasons).toContain("confirm:resuming");
+    expect(persistReasons).toContain("confirm:accepted");
+    expect(terminalPersistSnapshots).toEqual([{
+      reason: "confirm:runtime_finally",
+      pending: 0,
+      status: "failed",
+    }]);
+    expect(cleanupSnapshots).toEqual([{
+      pending: 0,
+      active: false,
+      status: "failed",
+    }]);
+    expect(state._activeTurnPromise).toBeNull();
   });
 
   it("重复 decisionId 幂等且不二次执行，冲突 decisionId fail-closed", async () => {

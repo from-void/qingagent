@@ -27,6 +27,7 @@ export interface SessionManagerOptions {
   deleteSessionThread?: (sessionId: string) => Promise<SessionDeletionPhase | void>;
   deletionRetryDelayMs?: number;
   deletionLookupCacheSize?: number;
+  disposeWaitTimeoutMs?: number;
   deletionStore?: SessionDeletionStore;
 }
 
@@ -68,12 +69,17 @@ export class SessionManager {
   private readonly deletionStore: SessionDeletionStore;
   private readonly deletionLookupCache = new Map<string, SessionDeletionPhase | null>();
   private readonly deletionLookupCacheSize: number;
+  private readonly disposeWaitTimeoutMs: number;
   private deletionInitialization: Promise<void> | null = null;
 
   constructor(private readonly options: SessionManagerOptions) {
     this.frameLog = options.frameLog ?? new InMemoryFrameLog();
     this.maxActors = options.maxActors ?? 256;
     this.deletionLookupCacheSize = Math.max(1, Math.floor(options.deletionLookupCacheSize ?? 1_024));
+    this.disposeWaitTimeoutMs = Math.max(
+      1,
+      Math.floor(options.disposeWaitTimeoutMs ?? 5_000),
+    );
     this.deletionStore = options.deletionStore ?? createEphemeralDeletionStore();
   }
 
@@ -112,8 +118,31 @@ export class SessionManager {
   }
 
   async disposeAll(): Promise<void> {
-    const sessionIds = [...this.actors.keys()];
-    await Promise.all(sessionIds.map((sessionId) => this.disposeSession(sessionId)));
+    const entries = [...this.actors.entries()];
+    await Promise.all(entries.map(async ([sessionId, entry]) => {
+      try {
+        await withTimeout(
+          entry.actor.disposeAndWait(),
+          this.disposeWaitTimeoutMs,
+          "active turn shutdown",
+        );
+      } catch (error) {
+        console.warn("[sessionManager] active turn did not settle before shutdown", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      this.actors.delete(sessionId);
+      this.frameLog.evict(sessionId);
+      try {
+        await this.options.cleanupSession(sessionId);
+      } catch (error) {
+        console.error("[sessionManager] cleanupSession failed", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }));
   }
 
   async destroySession(

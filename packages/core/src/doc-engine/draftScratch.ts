@@ -23,6 +23,10 @@ import { hasCanonicalDoc } from "./docFacts.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import { cloneLegacySections } from "./docDiff.js";
 import type { SessionState } from "../session/sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  type TurnWriteGuard,
+} from "../session/turnOwnership.js";
 
 const logger = mastra.getLogger();
 
@@ -122,9 +126,11 @@ export function replaceDraftCandidateDoc(
   state: SessionState,
   doc: PmDoc,
   legacySections?: LegacySection[],
+  writeGuard?: TurnWriteGuard,
 ): LegacySection[] {
   const materializedDoc = materializeDraftBlockIds(doc, { namespace: "draft.replace" });
   const sections = legacySections ?? (pmToLegacySections(materializedDoc) as unknown as LegacySection[]);
+  if (writeGuard) assertTurnWriteAllowed(state, writeGuard);
   if (!state.docDraftBaseSections) {
     state.docDraftBaseSections = cloneLegacySections(state.legacySections);
     state.docDraftBaseVersion = state.docVersion;

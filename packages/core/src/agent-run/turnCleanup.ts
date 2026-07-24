@@ -11,6 +11,7 @@ import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { USER_ABORT_REASON } from "./streamErrors.js";
+import { invalidateTurnOwnership } from "../session/turnOwnership.js";
 
 const logger = mastra.getLogger();
 
@@ -133,6 +134,7 @@ export async function* abortAndCleanupTurn(
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
   state._abortController?.abort(USER_ABORT_REASON);
+  invalidateTurnOwnership(state);
 
   if (activeTurnPromise) {
     const outcome = await waitForActiveTurnCleanup(

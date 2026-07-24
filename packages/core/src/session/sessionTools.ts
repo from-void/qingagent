@@ -46,6 +46,10 @@ import { getPyodideTools } from "../tools/runPython.js";
 import { mastra } from "../mastra.js";
 import { createUpdateWorkingMemoryTool } from "./workingMemory.js";
 import type { SessionState, SuspensionToolName } from "./sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  captureTurnWriteGuard,
+} from "./turnOwnership.js";
 import { isQuestionnaireTool } from "../agent-run/questionnaireTools.js";
 import { isRecord } from "../agent-run/redaction.js";
 import { fillLocalSvgImageDimensions } from "../agent-run/imageDimensionFallback.js";
@@ -973,6 +977,7 @@ export function createSessionScopedTools(
     }),
     execute: async (input, context) => {
       if (!state) return { ok: false, applied: [], error: "editDraft is unavailable outside a session" };
+      const writeGuard = captureTurnWriteGuard(state, context);
       // BB① 埋点:记录入口快照,便于复现"同一轮多次 editDraft.execute 把单插入叠加成重复 heading"。
       const turnRunId =
         (context?.requestContext?.get("runId") as string | null | undefined) ?? state.runId ?? "no-run";
@@ -1155,7 +1160,13 @@ export function createSessionScopedTools(
           ...(failedOpIndex >= 0 ? { failedOpIndex } : {}),
         };
       }
-      const candidate = replaceDraftCandidateDoc(state, workingDoc);
+      assertTurnWriteAllowed(state, writeGuard);
+      const candidate = replaceDraftCandidateDoc(
+        state,
+        workingDoc,
+        undefined,
+        writeGuard,
+      );
       context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", state.docDraftCandidateDoc ?? workingDoc);
       const stats = currentDraftMutationStats(state);

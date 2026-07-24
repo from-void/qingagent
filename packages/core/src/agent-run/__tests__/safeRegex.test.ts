@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import {
   __getSafeRegexPoolStatsForTest,
@@ -95,7 +97,7 @@ describe("safeRegex", () => {
     expect(Date.now() - startedAt).toBeLessThan(5000);
   }, 5000);
 
-  it("sr-workerDowngrade: worker 不可用时主线程长度闸仍 fail-closed", async () => {
+  it("sr-workerDowngrade: worker 不可用时直接 fail-closed，绝不回退主线程", async () => {
     __setSafeRegexWorkerCtorForTest(null);
     const compiled = compileSafeRegex("a");
     expect(compiled.ok).toBe(true);
@@ -105,9 +107,64 @@ describe("safeRegex", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: "unsafe regex (text too long)",
+      error: "安全正则执行器不可用",
     });
   }, 5000);
+
+  it("sr-workerDisabled-child: OS 超时护栏证明灾难回溯不会冻结进程", () => {
+    const moduleUrl = new URL("../safeRegex.ts", import.meta.url).href;
+    const workspaceRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+    const script = [
+      `import { compileSafeRegex, execSafeRegexAll, terminateSafeRegexWorkersForTest } from ${JSON.stringify(moduleUrl)};`,
+      `const compiled = compileSafeRegex("(?:a|aa)+$");`,
+      `if (!compiled.ok) throw new Error(compiled.error);`,
+      `const result = await execSafeRegexAll(compiled.re, "a".repeat(12000) + "!");`,
+      `terminateSafeRegexWorkersForTest();`,
+      `process.stdout.write(JSON.stringify(result));`,
+    ].join("\n");
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          QINGAGENT_SAFE_REGEX_DISABLE_WORKER: "1",
+        },
+        encoding: "utf8",
+        timeout: 8_000,
+      },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({
+      ok: false,
+      error: "安全正则执行器不可用",
+    });
+  });
+
+  it("sr-workerExit: 运行中 worker 异常退出返回稳定不可用错误", async () => {
+    const compiled = compileSafeRegex("(?:a|aa)+$");
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+
+    const pending = execSafeRegexAll(
+      compiled.re,
+      `${"a".repeat(12_000)}!`,
+    );
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (__getSafeRegexPoolStatsForTest().liveWorkers > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(__getSafeRegexPoolStatsForTest().liveWorkers).toBeGreaterThan(0);
+    terminateSafeRegexWorkersForTest();
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      error: "安全正则执行器不可用",
+    });
+  });
 
   it("sr-poolReuse: 并发执行复用固定小池", async () => {
     process.env.QINGAGENT_SAFE_REGEX_WORKERS = "2";

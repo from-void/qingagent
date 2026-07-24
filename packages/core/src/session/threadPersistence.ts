@@ -1965,6 +1965,8 @@ export async function loadSessionFromThread(
     _lastEmittedWireKind: null,
     _abortController: null,
     _activeTurnPromise: null,
+    _turnOwner: null,
+    _turnGeneration: 0,
     suggestions,
     // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
     annotationGroups: [],

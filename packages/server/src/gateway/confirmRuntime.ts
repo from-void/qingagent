@@ -7,9 +7,12 @@ import {
   AGENT_MAX_STEPS,
   ConfirmDecisionError,
   buildCapabilityTools,
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
   confirmService,
   createSessionScopedTools,
   emitProjectedDocState,
+  endTurnOwnership,
   finalizeLingeringRunningToolCalls,
   processAgentStream,
   qingagentAgent,
@@ -29,7 +32,11 @@ export interface ConfirmRuntimeDependencies {
   agent?: ApprovalAgent;
   service?: ConfirmService;
   getSession?: (sessionId: string) => Promise<SessionState | undefined>;
+  persistSession?: (session: SessionState, reason: string) => Promise<void>;
+  expiryTimeoutMs?: number;
 }
+
+const CONFIRM_EXPIRY_WALL_TIMEOUT_MS = 5_000;
 
 type ConfirmSessionResolver = (sessionId: string) => Promise<SessionState | undefined>;
 
@@ -122,6 +129,88 @@ function safeResumeRequestContext(
   ]);
 }
 
+function createCompletion(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(
+    typeof signal.reason === "string" ? signal.reason : "Operation aborted",
+  );
+  error.name = "AbortError";
+  return error;
+}
+
+async function withWallClockTimeout<T>(
+  operation: Promise<T>,
+  controller: AbortController,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const cleanup = () => {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+    };
+    const settleResolved = (value: T) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const settleRejected = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => settleRejected(abortError(controller.signal));
+    timer = setTimeout(() => {
+      const error = new Error(`${label} timed out after ${timeoutMs}ms`);
+      settleRejected(error);
+      controller.abort(error);
+    }, timeoutMs);
+    timer.unref?.();
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(settleResolved, settleRejected);
+    if (controller.signal.aborted) onAbort();
+  });
+}
+
+async function consumeFullStreamWithTimeout(
+  fullStream: AsyncIterable<unknown>,
+  controller: AbortController,
+  timeoutMs: number,
+): Promise<void> {
+  const iterator = fullStream[Symbol.asyncIterator]();
+  const consume = (async () => {
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) return;
+    }
+  })();
+  try {
+    await withWallClockTimeout(
+      consume,
+      controller,
+      timeoutMs,
+      "confirm expiry fullStream",
+    );
+  } catch (error) {
+    void Promise.resolve()
+      .then(() => iterator.return?.())
+      .catch(() => undefined);
+    throw error;
+  }
+}
+
 /** 同一 SessionActor 内运行；绝不 fresh-turn，也不把决策拼成 prompt/resumeData。 */
 export async function* handleConfirmDecision(
   submission: SafeSubmitConfirmDecision,
@@ -129,6 +218,7 @@ export async function* handleConfirmDecision(
 ): AsyncGenerator<BridgeFrame> {
   const service = dependencies.service ?? confirmService;
   const agent = dependencies.agent ?? qingagentAgent;
+  const persistSession = dependencies.persistSession ?? schedulePersist;
   const session = await (dependencies.getSession ?? defaultGetSession)(submission.sessionId);
   if (!session) throw new ConfirmDecisionError("not_found", "没有可处理的确认请求");
 
@@ -139,6 +229,8 @@ export async function* handleConfirmDecision(
   const abortController = new AbortController();
   const previousStreamId = session.streamId;
   const previousAbortController = session._abortController;
+  const previousActiveTurnPromise = session._activeTurnPromise;
+  const completion = createCompletion();
   const agentMessageId = findToolCallMessageId(session, pending.toolCallId);
   if (!agentMessageId) {
     await service.failDecision(session, pending);
@@ -146,12 +238,17 @@ export async function* handleConfirmDecision(
     return;
   }
 
+  const turnOwnership = beginTurnOwnership(
+    session,
+    `${streamId}:confirm:${pending.toolCallId}`,
+  );
   session.streamId = streamId;
   session._abortController = abortController;
+  session._activeTurnPromise = completion.promise;
   let resolvedEmitted = false;
-  yield { kind: "stream", data: { kind: "start", data: { streamId } } };
 
   try {
+    yield { kind: "stream", data: { kind: "start", data: { streamId } } };
     const toolsets = await buildResumeTools(session);
     const requestContext = safeResumeRequestContext(
       session,
@@ -159,6 +256,7 @@ export async function* handleConfirmDecision(
       streamId,
       abortController.signal,
     );
+    bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
     const commonOptions = {
       runId: pending.runId,
       toolCallId: pending.toolCallId,
@@ -259,7 +357,12 @@ export async function* handleConfirmDecision(
     }
     yield* emitProjectedDocState(session, "confirm_resume_finished");
     yield { kind: "stream", data: { kind: "end", data: { streamId, reason: { kind: "done" } } } };
-    await schedulePersist(session, "confirm:runtime_finally").catch(() => undefined);
+    await persistSession(session, "confirm:runtime_finally").catch(() => undefined);
+    endTurnOwnership(session, turnOwnership);
+    completion.resolve();
+    if (session._activeTurnPromise === completion.promise) {
+      session._activeTurnPromise = previousActiveTurnPromise;
+    }
   }
 }
 
@@ -275,32 +378,64 @@ export async function* handleConfirmExpiry(
   if (!session || !pending || pending.status !== "pending") return;
   if (Date.parse(pending.expiresAt) > Date.now()) return;
 
-  try {
-    const result = await agent.declineToolCall({
-      runId: pending.runId,
-      toolCallId: pending.toolCallId,
-      maxSteps: 1,
-    });
-    for await (const _chunk of result.fullStream) {
-      // 消费流以完成 Mastra snapshot 清理；不把其输出写入 qingagent 会话。
-    }
-  } catch {
-    // proof/secret 仍会在下方清理，snapshot 清理失败也绝不放行。
-  }
+  const timeoutMs = dependencies.expiryTimeoutMs ??
+    CONFIRM_EXPIRY_WALL_TIMEOUT_MS;
+  const abortController = new AbortController();
+  const previousAbortController = session._abortController;
+  const previousActiveTurnPromise = session._activeTurnPromise;
+  const completion = createCompletion();
+  const turnOwnership = beginTurnOwnership(
+    session,
+    `confirm-expiry:${pending.toolCallId}`,
+  );
+  session._abortController = abortController;
+  session._activeTurnPromise = completion.promise;
 
-  const reason = "确认已过期，命令未执行";
-  await service.expireDecision(session, pending).catch(() => undefined);
-  const failed = failToolCall(session, pending.toolCallId, reason);
-  if (failed) {
-    yield {
-      kind: "toolCallUpdated",
-      data: {
-        messageId: failed.messageId,
-        toolCallId: pending.toolCallId,
-        spec: failed.spec,
-      },
-    };
+  try {
+    try {
+      const result = await withWallClockTimeout(
+        agent.declineToolCall({
+          runId: pending.runId,
+          toolCallId: pending.toolCallId,
+          maxSteps: 1,
+          abortSignal: abortController.signal,
+        }),
+        abortController,
+        timeoutMs,
+        "confirm expiry declineToolCall",
+      );
+      await consumeFullStreamWithTimeout(
+        result.fullStream,
+        abortController,
+        timeoutMs,
+      );
+    } catch {
+      // proof/secret 仍会在下方清理，snapshot 清理失败也绝不放行。
+    }
+
+    const reason = "确认已过期，命令未执行";
+    await service.expireDecision(session, pending).catch(() => undefined);
+    const failed = failToolCall(session, pending.toolCallId, reason);
+    if (failed) {
+      yield {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: failed.messageId,
+          toolCallId: pending.toolCallId,
+          spec: failed.spec,
+        },
+      };
+    }
+    yield service.resolvedFrame(pending, "expired", reason);
+    yield* emitProjectedDocState(session, "confirm_expired");
+  } finally {
+    endTurnOwnership(session, turnOwnership);
+    completion.resolve();
+    if (session._abortController === abortController) {
+      session._abortController = previousAbortController;
+    }
+    if (session._activeTurnPromise === completion.promise) {
+      session._activeTurnPromise = previousActiveTurnPromise;
+    }
   }
-  yield service.resolvedFrame(pending, "expired", reason);
-  yield* emitProjectedDocState(session, "confirm_expired");
 }

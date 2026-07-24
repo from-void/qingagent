@@ -37,6 +37,18 @@ export async function renderDrawio(rawSource: string): Promise<string> {
   try {
     graph.setEnabled(false);
     graph.setHtmlLabels(false);
+    const getLabel = graph.getLabel.bind(graph);
+    graph.getLabel = (cell) => {
+      const label = getLabel(cell);
+      if (!cell || typeof label !== "string") return label;
+      const style = graph.getCurrentCellStyle(cell) as Record<string, unknown>;
+      // draw.io 的富文本编辑器会把换行保存成 html=1 的 <div>/<br>。本地 SVG
+      // 降级禁止 foreignObject，因此必须先转成纯文本再交给 SvgCanvas2D；
+      // 直接关闭 HTML label 会把标签字面量画进 <text>。
+      return style.html === 1 || style.html === "1"
+        ? drawioHtmlLabelToPlainText(label)
+        : label;
+    };
     // maxGraph 可选支持把未知 edgeStyle/perimeter 字符串当表达式求值；这里显式锁死，
     // XML 中的样式只能命中内置注册表，不能成为代码执行入口。
     graph.getView().setAllowEval(false);
@@ -84,4 +96,73 @@ export async function renderDrawio(rawSource: string): Promise<string> {
     graph.destroy();
     container.remove();
   }
+}
+
+const HTML_LABEL_BLOCKS = new Set([
+  "ADDRESS",
+  "BLOCKQUOTE",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "LI",
+  "OL",
+  "P",
+  "PRE",
+  "TABLE",
+  "TR",
+  "UL",
+]);
+const HTML_LABEL_IGNORED = new Set([
+  "EMBED",
+  "IFRAME",
+  "IMG",
+  "MATH",
+  "NOSCRIPT",
+  "OBJECT",
+  "SCRIPT",
+  "STYLE",
+  "SVG",
+  "TEMPLATE",
+]);
+
+/**
+ * 在 DOMParser 的惰性 HTML 文档里提取 draw.io label 文本，不把任意 HTML 挂进
+ * 页面，也不触发脚本/图片加载。块元素与 br 只贡献换行，尾部编辑占位
+ * `<div><br></div>` 会自然归一为空白并被裁掉。
+ */
+export function drawioHtmlLabelToPlainText(raw: string): string {
+  const document = new DOMParser().parseFromString(raw, "text/html");
+  const chunks: string[] = [];
+  const lineBreak = () => {
+    if (chunks.length > 0 && chunks[chunks.length - 1] !== "\n") chunks.push("\n");
+  };
+  const visit = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) {
+      if (node.nodeValue) chunks.push(node.nodeValue);
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    const tag = node.tagName.toUpperCase();
+    if (HTML_LABEL_IGNORED.has(tag)) return;
+    if (tag === "BR") {
+      lineBreak();
+      return;
+    }
+    const block = HTML_LABEL_BLOCKS.has(tag);
+    if (block) lineBreak();
+    for (const child of Array.from(node.childNodes)) visit(child);
+    if (block) lineBreak();
+  };
+  for (const child of Array.from(document.body.childNodes)) visit(child);
+  return chunks
+    .join("")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

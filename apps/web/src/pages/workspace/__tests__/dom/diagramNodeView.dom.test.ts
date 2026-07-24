@@ -800,7 +800,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("drawio 可视化编辑保存才通过节点更新链回写 source+svg，取消不改文档", async () => {
+  it("drawio 可视化编辑可连续两轮保存并再次取消，且每轮都使用最新 source", async () => {
     const editor = await mountEditor({
       type: "doc",
       attrs: { schemaVersion: 1 },
@@ -824,10 +824,25 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(openDrawioEditor).toHaveBeenCalledWith(DEFAULT_DRAWIO_SOURCE, "drawio 图编辑");
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
 
-      vi.mocked(openDrawioEditor).mockResolvedValueOnce(null);
-      await act(async () => visualButton?.click());
+      const secondSource = nextSource.replace('value="结束"', 'value="第二轮"');
+      const secondSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>第二轮</text></svg>';
+      vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source: secondSource, svg: secondSvg });
+      const secondVisualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      await act(async () => secondVisualButton?.click());
       await flush(4);
-      expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
+      expect(openDrawioEditor).toHaveBeenNthCalledWith(2, nextSource, "drawio 图编辑");
+      expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
+
+      vi.mocked(openDrawioEditor).mockResolvedValueOnce(null);
+      const thirdVisualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      await act(async () => thirdVisualButton?.click());
+      await flush(4);
+      expect(openDrawioEditor).toHaveBeenNthCalledWith(3, secondSource, "drawio 图编辑");
+      expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
     } finally {
       await unmount(editor);
     }
@@ -843,6 +858,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(buttons).toEqual(["可视化编辑", "编辑 Mermaid"]);
       expect(diagramViewCss).toMatch(/\.pm-diagram-view-actions\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s);
       expect(diagramViewCss).toContain(".pm-diagram-view:hover .pm-diagram-view-actions");
+      expect(diagramViewCss).toContain(".pm-diagram.is-selected .pm-diagram-view-actions");
 
       await act(async () => {
         diagramView.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));

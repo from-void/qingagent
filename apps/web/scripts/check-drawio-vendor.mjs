@@ -16,6 +16,13 @@ const requiredFiles = [
   "js/app.min.js",
   "js/shapes-14-6-5.min.js",
   "js/stencils.min.js",
+  "math4/es5/core.js",
+  "math4/es5/fonts/mathjax-tex-font/svg.js",
+  "math4/es5/input/asciimath.js",
+  "math4/es5/input/tex.js",
+  "math4/es5/output/svg.js",
+  "math4/es5/startup.js",
+  "math4/es5/ui/safe.js",
   "resources/dia.txt",
   "resources/dia_zh.txt",
   "styles/grapheditor.css",
@@ -67,6 +74,7 @@ for (const assertion of [
   'urlParams.plugins = "0"',
   'window.DRAWIO_LOG_URL = ""',
   "window.ICON_SERVICE_PATH = null",
+  'window.DRAW_MATH_URL = "math4/es5"',
 ]) {
   if (!preConfig.includes(assertion)) failures.push(`PreConfig 缺少离线断言：${assertion}`);
 }

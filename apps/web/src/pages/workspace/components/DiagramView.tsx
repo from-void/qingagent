@@ -10,6 +10,7 @@ import {
   normalizeDrawioSource,
   type PmDiagramLang,
 } from "@qingagent/pm-schema";
+import { useToast } from "../../../system";
 import { renderMermaid } from "./mermaidRender";
 import { renderDrawio } from "./drawioRender";
 import { openDrawioEditor } from "./drawioEditorLauncher";
@@ -24,6 +25,7 @@ import "./DiagramView.css";
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
 function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected, getPos }: NodeViewProps) {
+  const toast = useToast();
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
@@ -161,6 +163,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
           setDraft(result.source);
           setSvg(result.svg);
           updateAttributes({ source: result.source, svg: result.svg });
+          if (result.warning) {
+            toast.show({ message: result.warning, tone: "warn" });
+          }
         })
         .catch((openError) => {
           if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));

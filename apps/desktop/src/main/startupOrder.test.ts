@@ -143,6 +143,9 @@ test("desktop PDF 导出使用私有临时目录、随机文件名和最小文�
   assert.match(source, /EXPORT_ORPHAN_MAX_AGE_MS = 60 \* 60 \* 1000/);
   assert.match(source, /entry\.isDirectory\(\).*entry\.name\.startsWith\(EXPORT_TEMP_PREFIX\)/);
   assert.match(source, /stat\.mtimeMs > cutoffMs/);
+  assert.match(source, /withExportSlot\(async \(\{ signal \}\) =>/);
+  assert.match(source, /session:\s*exportSession\(tmpDir\)/);
+  assert.match(source, /signal\.addEventListener\("abort", destroyOnAbort/);
   assert.match(mainSource, /cleanupOrphanedPdfExportDirs\(\)/);
 });
 
@@ -165,18 +168,22 @@ test("desktop 模型 key 由 safeStorage 加密，迁移先写密文再清明文
   const plaintextClear = source.indexOf("writeClientConfig(sanitized);", migrationStart);
   assert.ok(encryptedWrite > migrationStart && plaintextClear > encryptedWrite, "迁移必须先落密文再清明文");
 
-  const rendererReadStart = source.indexOf("function readClientConfigForRenderer()");
-  const stripPlaintext = source.indexOf("delete cfg[key]", rendererReadStart);
-  const unavailableReturn = source.indexOf("if (!isDesktopModelEncryptionAvailable()) return cfg;", rendererReadStart);
+  const rendererReadStart = source.indexOf("function readClientConfigValueForRenderer(");
+  const unavailableReturn = source.indexOf("if (!isDesktopModelEncryptionAvailable()) return null;", rendererReadStart);
+  const singleSecretRead = source.indexOf("readEncryptedClientSecrets()[key]", rendererReadStart);
   assert.ok(
-    stripPlaintext > rendererReadStart && unavailableReturn > stripPlaintext,
-    "加密不可用前必须先从 renderer 快照剥离明文 key",
+    unavailableReturn > rendererReadStart && singleSecretRead > unavailableReturn,
+    "加密不可用时必须 fail-closed，且 renderer 只能按单项 key 解密",
   );
-  assert.match(source, /secretPatch\.length > 0 && !encryptionAvailable\) return false/);
-  assert.match(source, /secretEntries\.filter\(\(\[, value\]\) => typeof value === "string" && value !== ""\)/);
-  assert.match(source, /if \(secretEntries\.length > 0\) writeEncryptedClientSecrets\(encrypted\)/);
-  assert.match(source, /delete cfg\[k\]/);
-  assert.match(source, /delete encrypted\[k\]/);
+  assert.doesNotMatch(
+    source.slice(rendererReadStart, source.indexOf("function writeClientConfigValue", rendererReadStart)),
+    /return cfg/,
+    "不得向 renderer 返回整份配置",
+  );
+  assert.match(source, /isSecret && nextValue !== null && !encryptionAvailable\) return false/);
+  assert.match(source, /writeEncryptedClientSecrets\(encrypted\)/);
+  assert.match(source, /delete cfg\[key\]/);
+  assert.match(source, /delete encrypted\[key\]/);
   assert.match(source, /\^client-config\\\.json\\\.\\d\+\\\.tmp\$/);
   assert.match(source, /cleanupClientConfigTempFiles\(\)/);
 });

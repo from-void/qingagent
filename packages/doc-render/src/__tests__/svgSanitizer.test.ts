@@ -248,6 +248,23 @@ describe("hardenInlineSvg", () => {
     expect(out).not.toContain("evil");
   });
 
+  it("所有 SVG URL 只允许本地 url(#id)，file:/http:/data: 从属性和样式中剔除", () => {
+    const out = hardenInlineSvg(wrap(
+      `<defs><filter id="shadow"><feGaussianBlur stdDeviation="2"/></filter></defs>` +
+        `<rect id="safe" fill="url(#paint)" filter="url(#shadow)"/>` +
+        `<rect id="file-fill" fill="url(file:///etc/passwd)"/>` +
+        `<rect id="http-filter" filter="url(https://evil.example/filter.svg#x)"/>` +
+        `<rect id="data-style" style="fill:url(data:image/svg+xml;base64,AAAA)"/>` +
+        `<style>.bad{fill:url(file:///etc/passwd)} .safe{filter:url(#shadow)}</style>`,
+    ));
+
+    expect(out).toContain('fill="url(#paint)"');
+    expect(out).toContain('filter="url(#shadow)"');
+    expect(out).not.toMatch(/file:/i);
+    expect(out).not.toContain("evil.example");
+    expect(out).not.toMatch(/data:image/i);
+  });
+
   it("保留合法 mermaid 风格 SVG 的可视元素(style 颜色 / marker / 渐变 / 文本)", () => {
     const legit = wrap(
       `<defs><marker id="arrow"><path d="M0,0 L6,3 L0,6 Z" fill="#9c8552"/></marker>` +

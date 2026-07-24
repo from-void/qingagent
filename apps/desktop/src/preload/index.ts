@@ -22,16 +22,29 @@ const versions = {
   node: process.versions.node ?? "",
 };
 
-// 启动期同步取一次客户端配置快照(凭证/模型 key 等,落 userData):渲染层需在构造请求
-// header 时同步读 key,故用 sendSync 在 preload 阶段拿到初值,挂到 window.electron.clientConfig。
-let clientConfig: Record<string, string> = {};
-try {
-  const snapshot = ipcRenderer.sendSync("qingagent:client-config-get") as unknown;
-  if (snapshot && typeof snapshot === "object") {
-    clientConfig = snapshot as Record<string, string>;
+type DesktopConfigKey =
+  | "qingagent.deepseek_api_key"
+  | "qingagent.custom_provider"
+  | "qingagent.vision_provider"
+  | "qingagent.official_model"
+  | "qingagent.model_tier";
+
+// 请求 header 仍需同步读取本机配置，因此保留 sendSync，但每次只读取调用方明确请求的一项；
+// contextBridge 不再挂整份已解密配置对象，也不暴露可枚举任意 key 的通用 API。
+function readDesktopConfigValue(key: DesktopConfigKey): string | null {
+  try {
+    const value = ipcRenderer.sendSync("qingagent:client-config-value-get", key) as unknown;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  } catch {
+    return null;
   }
-} catch {
-  // 取不到就给空对象:渲染层据此仍判定为桌面持久化(写入会落 userData)。
+}
+
+async function writeDesktopConfigValue(
+  key: DesktopConfigKey,
+  value: string | null,
+): Promise<boolean> {
+  return ipcRenderer.invoke("qingagent:client-config-value-set", key, value) as Promise<boolean>;
 }
 
 contextBridge.exposeInMainWorld("electron", {
@@ -40,9 +53,21 @@ contextBridge.exposeInMainWorld("electron", {
   selectFolderSource: () => ipcRenderer.invoke("qingagent:select-folder-source"),
   exportDiagnostics: (opts: { privacyLevel: "L1" | "L2"; report?: string; sessionIds?: string[] }) =>
     ipcRenderer.invoke("qingagent:export-diagnostics", opts),
-  clientConfig,
-  setClientConfig: (patch: Record<string, string | null>) =>
-    ipcRenderer.invoke("qingagent:client-config-set", patch),
+  getDeepseekApiKey: () => readDesktopConfigValue("qingagent.deepseek_api_key"),
+  setDeepseekApiKey: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.deepseek_api_key", value),
+  getCustomProvider: () => readDesktopConfigValue("qingagent.custom_provider"),
+  setCustomProvider: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.custom_provider", value),
+  getVisionProvider: () => readDesktopConfigValue("qingagent.vision_provider"),
+  setVisionProvider: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.vision_provider", value),
+  getOfficialModel: () => readDesktopConfigValue("qingagent.official_model"),
+  setOfficialModel: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.official_model", value),
+  getModelTier: () => readDesktopConfigValue("qingagent.model_tier"),
+  setModelTier: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.model_tier", value),
   onUpdateStatus: (cb: (payload: UpdateStatusPayload) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: UpdateStatusPayload) => cb(payload);
     ipcRenderer.on("qingagent:update-status", listener);

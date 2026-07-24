@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import type { PmDoc } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderDiagramSvgs } from "../export/mermaidServer.js";
+import { renderDiagramSvgs, withRenderedDiagrams } from "../export/mermaidServer.js";
+import { toHtml } from "../export/toHtml.js";
 import { setDocRenderLogger } from "../renderLogger.js";
 import { hasChromium } from "./browserTestGate.js";
 
@@ -9,6 +11,7 @@ const getBrowserMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../browser/pool.js", () => ({
   getBrowser: getBrowserMock,
+  withBrowserContextSlot: async (run: () => Promise<unknown>) => run(),
 }));
 
 type FakeMermaid = {
@@ -81,6 +84,41 @@ describe("mermaidServer 引号 normalization", () => {
       fontFamily: "sans-serif",
       htmlLabels: false,
     }));
+  });
+
+  it("非法 Mermaid 即使带 overlay 也保留源码回退，不导出自研布局的残缺 SVG", async () => {
+    const source = "flowchart TD\n  A --> B\n  C[未闭合";
+    const mermaid: FakeMermaid = {
+      initialize: vi.fn(),
+      parse: vi.fn(async () => false),
+      render: vi.fn(),
+    };
+    installFakeBrowser(mermaid);
+    const document = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-invalid-overlay",
+          lang: "mermaid",
+          source,
+          svg: null,
+          overlay: { positions: { A: { x: 120, y: 80 } } },
+        },
+      }],
+    } as unknown as PmDoc;
+
+    const prepared = await withRenderedDiagrams(document) as PmDoc;
+    const diagram = prepared.content[0] as { attrs: { svg: string | null } };
+    expect(diagram.attrs.svg).toBeNull();
+    expect(mermaid.parse).toHaveBeenCalledWith(source, { suppressErrors: true });
+    expect(mermaid.render).not.toHaveBeenCalled();
+
+    const html = toHtml(prepared);
+    expect(html).toContain("code-block");
+    expect(html).toContain("C[未闭合");
+    expect(html).not.toContain('<div class="pm-diagram">');
   });
 
   it("合法 flowchart/sequence 原文 parse 成功时不改写引号正文", async () => {

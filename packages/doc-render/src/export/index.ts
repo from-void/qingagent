@@ -5,6 +5,12 @@ export { toMarkdown } from "./toMarkdown.js";
 export { toPdf } from "./toPdf.js";
 export { toTxt } from "./toTxt.js";
 export {
+  EXPORT_DEADLINE_MS,
+  ExportDeadlineExceededError,
+  withExportSlot,
+} from "./exportSlot.js";
+export type { ExportRunContext, ExportSlotOptions } from "./exportSlot.js";
+export {
   setHtmlToPdfRenderer,
   getHtmlToPdfRenderer,
   hasHtmlToPdfRenderer,

@@ -4,6 +4,7 @@ import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
 import { normalizeMermaidQuotes } from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
 import { getDocRenderLogger } from "../renderLogger.js";
+import { withExportSlot, type ExportRunContext } from "./exportSlot.js";
 import { isRenderableSvg, type ExportDocument } from "./shared.js";
 
 /**
@@ -119,9 +120,27 @@ function warnMermaidRenderFailure(input: MermaidRenderInput, reason: string): vo
 export async function renderDiagramSvgs(sources: readonly string[]): Promise<(string | null)[]> {
   if (sources.length === 0) return [];
   const inputs = sources.map(renderInputForSource);
+  try {
+    return await withExportSlot((context) => renderDiagramSvgsInSlot(inputs, context));
+  } catch (error) {
+    for (const input of inputs) {
+      warnMermaidRenderFailure(
+        input,
+        error instanceof Error ? error.message : "Mermaid server render failed",
+      );
+    }
+    return sources.map(() => null);
+  }
+}
+
+async function renderDiagramSvgsInSlot(
+  inputs: readonly MermaidRenderInput[],
+  exportContext: ExportRunContext,
+): Promise<(string | null)[]> {
   let browser;
   try {
     browser = await getBrowser();
+    exportContext.signal.throwIfAborted();
   } catch (error) {
     // 无 Chromium → 全部回退(调用方据此让图表退回源码),不让 docx/导出整体崩。
     for (const input of inputs) {
@@ -130,29 +149,34 @@ export async function renderDiagramSvgs(sources: readonly string[]): Promise<(st
         error instanceof Error ? `Chromium unavailable: ${error.message}` : "Chromium unavailable",
       );
     }
-    return sources.map(() => null);
+    return inputs.map(() => null);
   }
   const context = await browser.newContext();
-  // tsx/esbuild(keepNames)会把下方 evaluate 回调里的 `const parseMermaid = async …` 包成
-  // __name(fn,"parseMermaid");回调经 toString 序列化进浏览器后 __name helper 不存在 →
-  // ReferenceError → 全部图表静默回退源码(9ab2eeee 引入;dev 与生产都是 tsx 直跑 src,必中)。
-  // 与 scrapeWithBrowser 同款兜底:页面 realm 先补一个恒等 __name。
-  await context.addInitScript(() => {
-    (globalThis as unknown as { __name?: (fn: unknown) => unknown }).__name ||= (fn) => fn;
-  });
-  // 自包含渲染,拦截一切外部请求(防 SSRF + 提速)。
-  await context.route("**/*", (route) => {
-    const url = route.request().url();
-    if (url.startsWith("data:") || url === "about:blank") void route.continue();
-    else void route.abort();
-  });
-  const page = await context.newPage();
+  const closeOnAbort = () => {
+    void context.close().catch(() => undefined);
+  };
+  exportContext.signal.addEventListener("abort", closeOnAbort, { once: true });
   try {
+    // tsx/esbuild(keepNames)会把下方 evaluate 回调里的 `const parseMermaid = async …` 包成
+    // __name(fn,"parseMermaid");回调经 toString 序列化进浏览器后 __name helper 不存在 →
+    // ReferenceError → 全部图表静默回退源码(9ab2eeee 引入;dev 与生产都是 tsx 直跑 src,必中)。
+    // 与 scrapeWithBrowser 同款兜底:页面 realm 先补一个恒等 __name。
+    await context.addInitScript(() => {
+      (globalThis as unknown as { __name?: (fn: unknown) => unknown }).__name ||= (fn) => fn;
+    });
+    // 自包含渲染,拦截一切外部请求(防 SSRF + 提速)。
+    await context.route("**/*", (route) => {
+      const url = route.request().url();
+      if (url.startsWith("data:") || url === "about:blank") void route.continue();
+      else void route.abort();
+    });
+    const page = await context.newPage();
     await page.setContent("<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>", {
       waitUntil: "load",
-      timeout: 30_000,
+      timeout: Math.min(30_000, exportContext.remainingMs()),
     });
     await page.addScriptTag({ content: loadMermaidBundle() });
+    exportContext.signal.throwIfAborted();
     const results = (await page.evaluate(
       async ({ items, theme, fontFamily }) => {
         const mermaid = (globalThis as unknown as { mermaid: any }).mermaid;
@@ -238,8 +262,9 @@ export async function renderDiagramSvgs(sources: readonly string[]): Promise<(st
         error instanceof Error ? error.message : "Mermaid server render failed",
       );
     }
-    return sources.map(() => null);
+    return inputs.map(() => null);
   } finally {
+    exportContext.signal.removeEventListener("abort", closeOnAbort);
     await context.close().catch(() => undefined);
   }
 }
@@ -291,21 +316,20 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
   const refs: DiagramRef[] = [];
   collectDiagrams(clone, refs);
   if (refs.length === 0) return clone;
-  const mermaidRefs: DiagramRef[] = [];
-  for (const ref of refs) {
+  // overlay 只负责布局/样式，不能替代 Mermaid 的语法判定。所有源码先经过与前端同版本的
+  // Mermaid parse+render；失败项保持 svg=null，让 toHtml 走既有源码+错误态回退。
+  const mermaidSvgs = await renderDiagramSvgs(refs.map((ref) => ref.source));
+  refs.forEach((ref, index) => {
+    const mermaidSvg = mermaidSvgs[index];
+    if (!mermaidSvg) return;
     if (hasOverlay(ref.overlay)) {
       const svg = graphToSvg(ref.source, ref.overlay);
       if (svg && isRenderableSvg(svg)) {
         ref.assign(svg);
-        continue;
+        return;
       }
     }
-    mermaidRefs.push(ref);
-  }
-  const svgs = await renderDiagramSvgs(mermaidRefs.map((r) => r.source));
-  mermaidRefs.forEach((ref, i) => {
-    const svg = svgs[i];
-    if (svg) ref.assign(svg);
+    ref.assign(mermaidSvg);
   });
   return clone;
 }

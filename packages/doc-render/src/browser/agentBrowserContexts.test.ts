@@ -32,12 +32,14 @@ vi.mock("@mastra/agent-browser", () => ({
 import { getAgentBrowser, resetAgentBrowserForTest } from "./agentBrowser.js";
 
 const savedCdpUrl = process.env.QINGAGENT_BROWSER_CDP_URL;
+const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
 
 describe("AgentBrowser 多 context 请求策略", () => {
   beforeEach(() => {
     mocks.installPolicy.mockClear();
     mocks.superEnsureReady.mockClear();
     process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/test";
+    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
     resetAgentBrowserForTest();
   });
 
@@ -45,6 +47,8 @@ describe("AgentBrowser 多 context 请求策略", () => {
     resetAgentBrowserForTest();
     if (savedCdpUrl === undefined) delete process.env.QINGAGENT_BROWSER_CDP_URL;
     else process.env.QINGAGENT_BROWSER_CDP_URL = savedCdpUrl;
+    if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+    else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
   });
 
   it("从全部页面反查唯一 context，并为新页面所属的第二个 context 安装策略", async () => {
@@ -62,8 +66,12 @@ describe("AgentBrowser 多 context 请求策略", () => {
 
     expect(mocks.superEnsureReady).toHaveBeenCalledOnce();
     expect(mocks.installPolicy).toHaveBeenCalledTimes(2);
-    expect(mocks.installPolicy).toHaveBeenCalledWith(firstContext);
-    expect(mocks.installPolicy).toHaveBeenCalledWith(secondContext);
+    expect(mocks.installPolicy).toHaveBeenCalledWith(firstContext, {
+      outboundProxyAcl: false,
+    });
+    expect(mocks.installPolicy).toHaveBeenCalledWith(secondContext, {
+      outboundProxyAcl: false,
+    });
   });
 
   it("manager 与页面都没有可用 context 时保持抛错", async () => {

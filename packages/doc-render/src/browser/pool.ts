@@ -74,13 +74,38 @@ export function proxyFromEnv(): { server: string; bypass?: string } | undefined 
     process.env.http_proxy;
   if (!server) return undefined;
 
-  const noProxy = process.env.NO_PROXY || process.env.no_proxy;
-  return {
-    server,
-    ...(noProxy
-      ? { bypass: noProxy.split(",").map((item) => item.trim()).join(", ") }
-      : {}),
-  };
+  // 浏览器代理承担 DNS rebinding 后的最终网络层 ACL，不能继承 NO_PROXY 让目标绕过 ACL。
+  // Node/模型请求仍按各自 transport 处理 NO_PROXY；这里只约束 Playwright/Chromium。
+  return { server };
+}
+
+export const BROWSER_PROXY_ACL_ENV = "QINGAGENT_BROWSER_PROXY_ACL";
+
+/** 代理部署必须显式确认网络层拒绝私网、环回、链路本地与云元数据地址。 */
+export function browserProxyAclEnforced(): boolean {
+  return process.env[BROWSER_PROXY_ACL_ENV]?.trim().toLowerCase() === "deny-private";
+}
+
+export function assertBrowserProxyAclConfigured(): void {
+  if (proxyFromEnv() && !browserProxyAclEnforced()) {
+    throw new Error(
+      `检测到浏览器出站代理，但未设置 ${BROWSER_PROXY_ACL_ENV}=deny-private；` +
+        "无法确认代理会拒绝私网/环回/169.254 目标，已停止浏览器网络访问",
+    );
+  }
+}
+
+/** 抓取、导出和自起交互 Chromium 共用的安全启动参数。 */
+export function browserLaunchArgs(proxyConfigured = Boolean(proxyFromEnv())): string[] {
+  return [
+    "--disable-dev-shm-usage",
+    // 反检测:去掉 navigator.webdriver / AutomationControlled 标记——headless 默认指纹会被
+    // baike/zhihu/smzdm 等识别为爬虫只返回空壳。配合 scrapeWithBrowser 里的 stealth initScript。
+    "--disable-blink-features=AutomationControlled",
+    "--lang=zh-CN",
+    // Chromium 默认可能绕过 loopback；代理 ACL 模式必须让所有 HTTP(S)/WS 出站都经过代理。
+    ...(proxyConfigured ? ["--proxy-bypass-list=<-loopback>"] : []),
+  ];
 }
 
 /**
@@ -100,16 +125,9 @@ export type BrowserLaunchCandidate = {
 
 export function browserLaunchCandidates(): BrowserLaunchCandidate[] {
   const candidates: BrowserLaunchCandidate[] = [];
-  const args = [
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    // 反检测:去掉 navigator.webdriver / AutomationControlled 标记——headless 默认指纹会被
-    // baike/zhihu/smzdm 等识别为爬虫只返回空壳。配合 scrapeWithBrowser 里的 stealth initScript。
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
-    "--lang=zh-CN",
-  ];
   const proxy = proxyFromEnv();
+  if (proxy) assertBrowserProxyAclConfigured();
+  const args = browserLaunchArgs(Boolean(proxy));
   const base = { headless: true, args, proxy };
 
   // 1) 系统浏览器 executablePath(优先;桌面端主力)。

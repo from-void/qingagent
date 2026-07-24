@@ -5,7 +5,13 @@ import {
 } from "./extractor.js";
 import { isSubstantiveContent } from "./contentQuality.js";
 import { extractWechatArticle, isWechatArticleUrl } from "./wechatArticle.js";
-import { getBrowser, proxyFromEnv, withBrowserContextSlot } from "./pool.js";
+import {
+  assertBrowserProxyAclConfigured,
+  browserProxyAclEnforced,
+  getBrowser,
+  proxyFromEnv,
+  withBrowserContextSlot,
+} from "./pool.js";
 import {
   browserErrorMessage,
   formatBrowserUnavailableError,
@@ -71,6 +77,8 @@ export async function scrapeWithBrowserImpl(
     opts?.signal?.addEventListener("abort", closeOnAbort, { once: true });
     try {
       opts?.signal?.throwIfAborted();
+      const proxyConfigured = Boolean(proxyFromEnv());
+      if (proxyConfigured) assertBrowserProxyAclConfigured();
       const browser = await getBrowser();
       opts?.signal?.throwIfAborted();
       // UA 与 sec-ch-ua 客户端提示必须一致、且不能暴露 "HeadlessChrome"——否则知乎等会据此判机器人
@@ -153,11 +161,11 @@ export async function scrapeWithBrowserImpl(
         }
       });
 
-      const proxyConfigured = Boolean(proxyFromEnv());
       await installBrowserRequestPolicy(context, {
         // Node 固定 IP 回填无法继承 Chromium 的外部代理链；代理部署继续由浏览器发请求，
-        // 保留逐请求校验但仍有二次 DNS 的 TOCTOU 窗口。无代理时普通资源全部固定 IP 回填。
+        // 并依赖连接层 deny-private ACL；无代理时普通资源全部固定 IP 回填。
         pinHttpRequests: !proxyConfigured,
+        outboundProxyAcl: proxyConfigured && browserProxyAclEnforced(),
         // 文章抓取只提取静态 DOM；代理部署下同样阻断无需使用的长连接与媒体流。
         blockStreamingResources: true,
       });

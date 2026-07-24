@@ -204,6 +204,34 @@ describe("probeWechatSearchbiz", () => {
     await expect(result).resolves.toMatchObject({ ok: false, kind: "transient" });
   });
 
+  it("探针把父取消与本地 timeout 合并，并保留父取消原因", async () => {
+    const parent = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+        requestSignal = init.signal ?? undefined;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const { probeWechatSearchbiz } = await import("../wechatSearch.js");
+    const reason = new DOMException("用户取消微信请求", "AbortError");
+    const result = probeWechatSearchbiz("TOKEN", "cookie=x", parent.signal);
+    await vi.waitFor(() => expect(requestSignal).toBeInstanceOf(AbortSignal));
+    expect(requestSignal).not.toBe(parent.signal);
+
+    parent.abort(reason);
+
+    await expect(result).rejects.toBe(reason);
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it.each([
     ["HTTP 5xx", reply(503, "temporarily unavailable")],
     ["非 JSON 风控页", reply(200, "<html>verify</html>")],

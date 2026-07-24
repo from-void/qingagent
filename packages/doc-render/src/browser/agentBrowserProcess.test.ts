@@ -44,12 +44,14 @@ function fakeChild(): FakeChild {
 }
 
 const savedProxy = process.env.HTTPS_PROXY;
+const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
 
 describe("代理 Chromium 进程所有权", () => {
   beforeEach(() => {
     mocks.spawn.mockReset();
     mocks.browserConfigs.length = 0;
     process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
     delete process.env.QINGAGENT_BROWSER_CDP_URL;
     process.env.QINGAGENT_AGENT_BROWSER = "1";
   });
@@ -60,6 +62,8 @@ describe("代理 Chromium 进程所有权", () => {
     mod.resetAgentBrowserForTest();
     if (savedProxy === undefined) delete process.env.HTTPS_PROXY;
     else process.env.HTTPS_PROXY = savedProxy;
+    if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+    else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
     delete process.env.QINGAGENT_AGENT_BROWSER;
   });
 
@@ -84,6 +88,11 @@ describe("代理 Chromium 进程所有权", () => {
     await expect(cdpUrl()).resolves.toContain("/owned");
 
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    const launchArgs = mocks.spawn.mock.calls[0]?.[1] as string[];
+    expect(launchArgs).toContain("--disable-dev-shm-usage");
+    expect(launchArgs).toContain("--proxy-bypass-list=<-loopback>");
+    expect(launchArgs).not.toContain("--no-sandbox");
+    expect(launchArgs).not.toContain("--disable-features=IsolateOrigins,site-per-process");
     expect(child.unref).toHaveBeenCalledOnce();
     expect(mod.stopProxiedChromium()).toBe(true);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");

@@ -19,6 +19,7 @@ export interface ParseFileBufferInput {
   buffer: Buffer;
   filename: string;
   mimeType: string;
+  signal?: AbortSignal;
 }
 
 export interface ParseFileBufferResult {
@@ -308,11 +309,16 @@ type DesktopFileReadResult =
   | { status: "not_regular" }
   | { status: "too_large" };
 
-async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadResult> {
+async function readDesktopFilePath(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<DesktopFileReadResult> {
+  signal?.throwIfAborted();
   if (isSensitiveDesktopFilePath(filePath)) return { status: "denied" };
   let canonicalPath: string;
   try {
     canonicalPath = await realpath(filePath);
+    signal?.throwIfAborted();
   } catch {
     // 保留正常素材原有的 ENOENT/EACCES 语义；后续 open 会抛出对应错误。
     canonicalPath = filePath;
@@ -333,6 +339,7 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   // 前后两次黑名单检查兜底，并未被完全消除。
   const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
+    signal?.throwIfAborted();
     const stats = await fileHandle.stat();
     if (!stats.isFile()) return { status: "not_regular" };
     // realpath 无法识别硬链接。正常用户素材极少带多个硬链接；宁可拒绝可疑文件，
@@ -340,14 +347,16 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
     if (stats.nlink > 1) return { status: "denied" };
     if (stats.size > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
 
-    // 当前桌面 parseFile 调用链没有可用的 AbortSignal；不为此扩散函数签名，读取由总字节上限约束。
+    // fileHandle.read 本身没有 signal 参数；每个 64KiB 分块前后检查父 signal，取消后不再继续读。
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     while (totalBytes <= MAX_DESKTOP_FILE_BYTES) {
+      signal?.throwIfAborted();
       // 最多多读 1 字节用于区分“恰好到上限”和“超过上限”，避免竞态增大的文件被整体读入。
       const remainingProbeBytes = MAX_DESKTOP_FILE_BYTES + 1 - totalBytes;
       const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remainingProbeBytes));
       const { bytesRead } = await fileHandle.read(chunk, 0, chunk.length, null);
+      signal?.throwIfAborted();
       if (bytesRead === 0) break;
       totalBytes += bytesRead;
       if (totalBytes > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
@@ -1401,21 +1410,31 @@ function stripPdfPaginationNoise(text: string): string {
     .trim();
 }
 
-async function parsePdfBufferOnce(buffer: Buffer): Promise<ParseFileBufferResult> {
+async function parsePdfBufferOnce(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<ParseFileBufferResult> {
+  signal?.throwIfAborted();
   // 用 interop 安全加载器(#11 桌面打包修复:CJS/ESM 互操作下 PDFParse 不是构造器),
   // 不要退回裸 `import("pdf-parse")`——否则桌面包里 PDFParse2 is not a constructor 复发
   const PDFParse = await loadPdfParseConstructor();
+  signal?.throwIfAborted();
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  let parsed: ParseFileBufferResult;
   try {
     const textResult = await parser.getText();
+    signal?.throwIfAborted();
     const text = stripPdfPaginationNoise(textResult.text);
     const pages = textResult.total;
     const infoResult = await parser.getInfo();
+    signal?.throwIfAborted();
     const title = infoResult.info?.Title ?? null;
-    return successResult(text, pages, title, text.trim().length > 0);
+    parsed = successResult(text, pages, title, text.trim().length > 0);
   } finally {
     await parser.destroy();
   }
+  signal?.throwIfAborted();
+  return parsed;
 }
 
 function shouldRetryEmptyPdfResult(result: ParseFileBufferResult): boolean {
@@ -1451,7 +1470,9 @@ function toParseFileToolResult(result: ParseFileBufferOutput): ParseFileToolResu
 export async function parseFileBuffer({
   buffer,
   filename,
+  signal,
 }: ParseFileBufferInput): Promise<ParseFileBufferOutput> {
+  signal?.throwIfAborted();
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   let text = "";
   let pages: number | null = null;
@@ -1463,14 +1484,16 @@ export async function parseFileBuffer({
     let emptyFallback: ParseFileBufferResult | null = null;
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
+      signal?.throwIfAborted();
       try {
-        const result = await parsePdfBufferOnce(buffer);
+        const result = await parsePdfBufferOnce(buffer, signal);
         if (attempt === 1 && shouldRetryEmptyPdfResult(result)) {
           emptyFallback = result;
           continue;
         }
         return result;
       } catch (error) {
+        signal?.throwIfAborted();
         lastError = error;
         if (attempt === 1) continue;
       }
@@ -1479,13 +1502,19 @@ export async function parseFileBuffer({
     return parseFailure("PDF", lastError);
   } else if (ext === "docx") {
     try {
+      signal?.throwIfAborted();
       // mammoth 内部会再次解压；先用 JSZip 实际流式解压计数，确保自报尺寸无法绕过限额。
       const zip = await loadSafeOfficeZip(buffer);
+      signal?.throwIfAborted();
       const mammoth = await import("mammoth");
+      signal?.throwIfAborted();
       const result = await mammoth.extractRawText({ buffer });
+      signal?.throwIfAborted();
       const auxiliaryText = await extractDocxAuxiliaryText(zip);
+      signal?.throwIfAborted();
       text = [result.value, auxiliaryText].filter((part) => part.trim().length > 0).join("\n\n");
     } catch (error) {
+      signal?.throwIfAborted();
       return parseFailure("DOCX", error);
     }
   } else if (isExcelFile(ext)) {
@@ -1514,6 +1543,7 @@ export async function parseFileBuffer({
     }
   }
 
+  signal?.throwIfAborted();
   return successResult(text, pages, title);
 }
 
@@ -1587,11 +1617,11 @@ export const parseFileTool = createTool({
             metadata: { pages: null, wordCount: 0, title: null },
           };
         }
-        buffer = await readFile(resolved.filePath);
+        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else if (filePath) {
-        const desktopFile = await readDesktopFilePath(filePath);
+        const desktopFile = await readDesktopFilePath(filePath, context?.abortSignal);
         if (desktopFile.status === "denied") return FILE_ACCESS_DENIED_RESULT;
         if (desktopFile.status === "not_regular") return FILE_NOT_REGULAR_RESULT;
         if (desktopFile.status === "too_large") return FILE_TOO_LARGE_RESULT;
@@ -1609,7 +1639,7 @@ export const parseFileTool = createTool({
             metadata: { pages: null, wordCount: 0, title: null },
           };
         }
-        buffer = await readFile(resolved.filePath);
+        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else {
@@ -1626,7 +1656,14 @@ export const parseFileTool = createTool({
         };
       }
 
-      return toParseFileToolResult(await parseFileBuffer({ buffer, filename, mimeType }));
+      return toParseFileToolResult(
+        await parseFileBuffer({
+          buffer,
+          filename,
+          mimeType,
+          signal: context?.abortSignal,
+        }),
+      );
     } finally {
       stopHeartbeat();
     }

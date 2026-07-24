@@ -312,9 +312,9 @@ export class WechatAuthService {
             if (!token) throw new Error("微信登录成功后未找到 token");
 
             // 能力验证:token+cookie 真打一次 searchbiz,通过才算授权成功(不猜 acctclose 语义)。
-            let probe = await probeWechatSearchbiz(token, cookie);
+            let probe = await probeWechatSearchbiz(token, cookie, signal);
             if (!probe.ok && probe.kind === "transient") {
-              probe = await probeWechatSearchbiz(token, cookie); // 瞬时失败重试一次
+              probe = await probeWechatSearchbiz(token, cookie, signal); // 瞬时失败重试一次
             }
             console.info(
               `[wechat-auth] probe ${probe.ok ? "ok" : `fail(${probe.kind}: ${probe.message})`}`,

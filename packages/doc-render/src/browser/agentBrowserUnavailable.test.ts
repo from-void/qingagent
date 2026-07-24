@@ -6,6 +6,7 @@ const ENV_KEYS = [
   "QINGAGENT_BROWSER_STORAGE_STATE",
   "QINGAGENT_BROWSER_HEADFUL",
   "QINGAGENT_BROWSER_ALLOW_DOMAINS",
+  "QINGAGENT_BROWSER_PROXY_ACL",
   "HTTPS_PROXY",
   "https_proxy",
   "HTTP_PROXY",
@@ -38,6 +39,11 @@ async function loadGotoToolWithFailure(error: unknown) {
   delete process.env.QINGAGENT_BROWSER_CDP_URL;
   delete process.env.QINGAGENT_BROWSER_STORAGE_STATE;
   delete process.env.QINGAGENT_BROWSER_ALLOW_DOMAINS;
+  delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.https_proxy;
+  delete process.env.HTTP_PROXY;
+  delete process.env.http_proxy;
   const mod = await import("./agentBrowser.js");
   const tools = mod.getAgentBrowserTools() as Record<string, { execute: (...args: unknown[]) => unknown }>;
   const goto = tools.browser_goto;
@@ -102,6 +108,7 @@ describe("agentBrowser 浏览器启动失败降级", () => {
     vi.resetModules();
     process.env.QINGAGENT_AGENT_BROWSER = "1";
     process.env.HTTPS_PROXY = "http://127.0.0.1:9";
+    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
     delete process.env.https_proxy;
     delete process.env.HTTP_PROXY;
     delete process.env.http_proxy;

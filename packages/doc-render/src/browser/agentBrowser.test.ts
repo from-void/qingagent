@@ -13,6 +13,11 @@ const ENV_KEYS = [
   "QINGAGENT_BROWSER_STORAGE_STATE",
   "QINGAGENT_BROWSER_HEADFUL",
   "QINGAGENT_BROWSER_ALLOW_DOMAINS",
+  "QINGAGENT_BROWSER_PROXY_ACL",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
 ];
 
 describe("agentBrowser 接入", () => {
@@ -177,6 +182,29 @@ describe("agentBrowser 接入", () => {
       expect(privateRoute.close).toHaveBeenCalledWith(
         expect.objectContaining({ code: 1008 }),
       );
+    });
+
+    it("代理模式要求 deny-private ACL，且 WebSocket 继续复用同一网络边界", async () => {
+      process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+      const rejected = mockContext();
+      await expect(installAgentBrowserRequestPolicy(rejected.context)).rejects.toThrow(
+        /QINGAGENT_BROWSER_PROXY_ACL=deny-private/,
+      );
+
+      process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
+      const allowed = mockContext();
+      await installAgentBrowserRequestPolicy(allowed.context);
+      const handler = allowed.routeWebSocket.mock.calls[0]?.[1] as (
+        route: unknown,
+      ) => Promise<void>;
+      const websocketRoute = {
+        url: () => "wss://1.1.1.1/socket",
+        connectToServer: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      await handler(websocketRoute);
+      expect(websocketRoute.connectToServer).toHaveBeenCalledOnce();
+      expect(websocketRoute.close).not.toHaveBeenCalled();
     });
   });
 });

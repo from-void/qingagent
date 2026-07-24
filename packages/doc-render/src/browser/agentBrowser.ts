@@ -5,7 +5,12 @@ import { chromium } from "playwright";
 import type { BrowserContext } from "playwright";
 import { AgentBrowser, type BrowserToolName } from "@mastra/agent-browser";
 import { validateFetchUrl } from "./extractor.js";
-import { proxyFromEnv } from "./pool.js";
+import {
+  assertBrowserProxyAclConfigured,
+  browserLaunchArgs,
+  browserProxyAclEnforced,
+  proxyFromEnv,
+} from "./pool.js";
 import { systemBrowserExecutablePath } from "./systemBrowser.js";
 import { browserUnavailableToolResult } from "./browserErrors.js";
 import { isTruthyFlag } from "./envFlag.js";
@@ -86,11 +91,19 @@ let proxiedCdpUrl: string | null = null;
 let processExitHooksInstalled = false;
 
 /** 在 context 创建后的首个真实导航前安装全请求策略；同一 context 并发调用只安装一次。 */
-export async function installAgentBrowserRequestPolicy(context: BrowserContext): Promise<void> {
-  // 交互式浏览器有意不启用 pinHttpRequests，以保留登录、下载等完整浏览器语义；因此仍有
-  // DNS rebinding / 校验后再解析的 TOCTOU 窗口。当前缓解依赖首跳 origin 白名单与本地
-  // 单用户产品形态；若转为企业网络部署或自动浏览不可信站点，必须重新评估该裁决。
-  await installBrowserRequestPolicy(context);
+export async function installAgentBrowserRequestPolicy(
+  context: BrowserContext,
+  options: { outboundProxyAcl?: boolean } = {},
+): Promise<void> {
+  const outboundProxyAcl =
+    options.outboundProxyAcl ?? Boolean(proxyFromEnv());
+  if (outboundProxyAcl) assertBrowserProxyAclConfigured();
+  // 交互式浏览器不能用 Node 回填固定 IP，否则会破坏登录、下载、流媒体和 WebSocket 语义。
+  // 有代理时，HTTP(S)/WS 的 DNS rebinding 最终由 deny-private 出站 ACL 阻断；无代理时只能在
+  // route/routeWebSocket 每次加载前拒绝当下解析到的私网地址，Chromium 二次解析仍有残留窗口。
+  await installBrowserRequestPolicy(context, {
+    outboundProxyAcl: outboundProxyAcl && browserProxyAclEnforced(),
+  });
 }
 
 /**
@@ -98,6 +111,13 @@ export async function installAgentBrowserRequestPolicy(context: BrowserContext):
  * 可覆盖 goto、重定向、脚本导航、iframe、子资源以及之后新开的 page。
  */
 class SecuredAgentBrowser extends AgentBrowser {
+  constructor(
+    config: ConstructorParameters<typeof AgentBrowser>[0],
+    private readonly outboundProxyAcl: boolean,
+  ) {
+    super(config);
+  }
+
   override async ensureReady(): Promise<void> {
     await super.ensureReady();
     const manager = await this.getManagerForThread();
@@ -110,7 +130,11 @@ class SecuredAgentBrowser extends AgentBrowser {
     }
     // 上游 BrowserConfig 不透传 serviceWorkers 选项；共用 helper 会用注册拦截、注销已有 SW
     // 与 CDP Network.setBypassServiceWorker，为它跟踪页面所属的全部 context 补上等价防线。
-    for (const context of contexts) await installAgentBrowserRequestPolicy(context);
+    for (const context of contexts) {
+      await installAgentBrowserRequestPolicy(context, {
+        outboundProxyAcl: this.outboundProxyAcl,
+      });
+    }
   }
 }
 
@@ -174,8 +198,7 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
     ...(headful ? [] : ["--headless=new"]),
     `--remote-debugging-port=${PROXIED_CDP_PORT}`,
     "--remote-debugging-address=127.0.0.1",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
+    ...browserLaunchArgs(true),
     "--disable-gpu",
     `--user-data-dir=${profileDir}`,
     ...(proxy ? [`--proxy-server=${proxy.server}`] : []),
@@ -255,13 +278,23 @@ export function getAgentBrowser(): AgentBrowser {
   // 2) 有代理 env(本机只能经代理上网)→ 自起带 --proxy-server 的 chromium,经 CDP 连它(不带 executablePath)
   // 3) 否则自启(无代理环境;持久化时 shared,否则库默认 thread 隔离)→ 带 executablePath
   if (explicitCdp) {
-    cached = new SecuredAgentBrowser({ ...base, cdpUrl: explicitCdp, scope: "shared" });
+    cached = new SecuredAgentBrowser(
+      { ...base, cdpUrl: explicitCdp, scope: "shared" },
+      false,
+    );
   } else if (proxy) {
-    cached = new SecuredAgentBrowser({ ...base, cdpUrl: () => ensureProxiedChromiumCdpUrl(), scope: "shared" });
+    assertBrowserProxyAclConfigured();
+    cached = new SecuredAgentBrowser(
+      { ...base, cdpUrl: () => ensureProxiedChromiumCdpUrl(), scope: "shared" },
+      true,
+    );
   } else if (savePath) {
-    cached = new SecuredAgentBrowser({ ...base, ...launchExec, scope: "shared" });
+    cached = new SecuredAgentBrowser(
+      { ...base, ...launchExec, scope: "shared" },
+      false,
+    );
   } else {
-    cached = new SecuredAgentBrowser({ ...base, ...launchExec });
+    cached = new SecuredAgentBrowser({ ...base, ...launchExec }, false);
   }
   return cached;
 }

@@ -681,6 +681,24 @@ function createBlankPdfFixture(): Buffer {
 }
 
 describe("parseFile Office 文本解析", () => {
+  it.each(["pdf", "docx"])("%s 解析在开始前响应父取消信号", async (ext) => {
+    const reason = new DOMException("用户取消文件解析", "AbortError");
+    const controller = new AbortController();
+    controller.abort(reason);
+
+    await expect(
+      parseFileBuffer({
+        buffer: Buffer.from("not parsed"),
+        filename: `cancelled.${ext}`,
+        mimeType:
+          ext === "pdf"
+            ? "application/pdf"
+            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
+  });
+
   it("解压前拒绝高压缩比 Office ZIP，不进入 entry 解压", async () => {
     const zip = new JSZip();
     zip.file("xl/workbook.xml", Buffer.alloc(2 * 1024 * 1024, 0x41));

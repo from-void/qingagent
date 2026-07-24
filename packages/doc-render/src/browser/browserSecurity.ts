@@ -49,6 +49,11 @@ export interface BrowserRequestPolicyOptions {
    * 交互式浏览器不得启用，以免破坏登录、实时交互与媒体播放。
    */
   blockStreamingResources?: boolean;
+  /**
+   * Chromium 无法固定 HTTP(S)/WebSocket 连接 IP 时，确认所有浏览器出站都经过拒绝私网的代理 ACL。
+   * URL 校验仍保留为纵深防御，但不能替代代理在连接时按实际目标地址执行 ACL。
+   */
+  outboundProxyAcl?: boolean;
 }
 
 interface PinnedBrowserResponse {
@@ -271,6 +276,8 @@ async function handleBrowserRoute(
     }
 
     if (!options.pinHttpRequests) {
+      // 代理模式由网络层在实际连接地址上执行 deny-private ACL；无代理模式只能 fail-closed
+      // 拒绝当前解析到的私网/环回/169.254，validate 后 Chromium 再解析仍存在 TOCTOU 残留。
       await validateFetchUrl(requestUrl);
       await route.continue();
       return;
@@ -313,9 +320,8 @@ async function handleBrowserWebSocketRoute(
       return;
     }
     await assertBrowserRequestAllowed(route.url(), true);
-    // 抓取模式已在上方阻断；未启用该模式的交互式浏览器仍需连接。
-    // Playwright 的 WebSocketRoute 不能指定已校验 IP，connectToServer 会由 Chromium
-    // 二次解析，因此残留 DNS TOCTOU 窗口只存在于交互式浏览器。
+    // Playwright WebSocketRoute 不能指定已校验 IP。代理模式依赖同一 deny-private ACL；
+    // 无代理交互模式只拒绝当前解析结果，connectToServer 的二次 DNS 仍是已知残留边界。
     route.connectToServer();
   } catch {
     await route

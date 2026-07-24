@@ -16,9 +16,9 @@ import { isRenderableSvg, type ExportDocument } from "./shared.js";
 /**
  * 服务端渲染 mermaid 源码 → SVG(供导出用)。
  *
- * 背景:图表块的 svg 缓存只存在于前端编辑器(DiagramView 渲染后回填 node.attrs.svg),且该属性
- * 不被序列化持久化(createQingagentExtensions 里 svg 的 renderHTML 返回空),agent 生成时也是 null。
- * 因此服务端导出读到的 svg 永远为空,只能回退源码——这就是"图表导出成源码"的根因。
+ * 背景:图表块的 svg 是可持久化缓存，但 agent 新生成内容、旧数据或异常中断仍可能没有缓存。
+ * Mermaid 可在服务端安全补渲染；drawio 按 W4 设计只消费客户端加固后持久化的 SVG，缺失时
+ * 明确告警并回退源码，不在导出进程里另起一套 mxGraph XML 执行面。
  *
  * 这里复用 browser/pool 的 Chromium,加载与前端同版本的 mermaid bundle,用同款暖墨主题 + strict
  * 安全级,把源码渲染成 SVG,让导出(PDF / HTML)拿到与前端一致的图表。

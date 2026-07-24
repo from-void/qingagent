@@ -124,7 +124,8 @@ export async function toDocx(
   document: ExportDocument,
   options: ExportOptions = {},
 ): Promise<Buffer> {
-  // 先服务端渲染图表(mermaid 源码→svg,因前端 svg 缓存不持久化),DOCX 再把图表栅格成 PNG 嵌入。
+  // 先补渲染缺缓存的 Mermaid；drawio 只消费客户端持久化的安全 SVG 缓存。
+  // DOCX 再把可用 SVG 栅格成 PNG 嵌入，缺失/失败则按 W4 设计回退源码。
   const prepared = await withRenderedDiagrams(document);
   // 批量预渲染文档中所有数学公式(单个 Chromium 上下文,避免逐公式开关上下文)。
   const mathImages = isPmDocDocument(prepared)

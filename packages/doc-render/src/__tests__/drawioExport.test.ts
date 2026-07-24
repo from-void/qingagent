@@ -23,8 +23,9 @@ describe("drawio 导出缓存与服务端兜底", () => {
     setDocRenderLogger(console);
   });
 
-  it("HTML 内联经加固的客户端 SVG 缓存", () => {
-    const html = toHtml(drawioDoc(DRAWIO_SVG));
+  it("HTML 导出预处理链保留并内联经加固的客户端 SVG 缓存", async () => {
+    const prepared = await withRenderedDiagrams(drawioDoc(DRAWIO_SVG));
+    const html = toHtml(prepared);
     expect(html).toContain('<div class="pm-diagram"><svg');
     expect(html).toContain("架构");
     expect(html).not.toContain("&lt;mxGraphModel");

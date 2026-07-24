@@ -95,7 +95,11 @@ describe("drawio 全屏编辑面板", () => {
 
     const source = drawioSource("保存后继续编辑");
     await fake.save(source, false);
-    expect(postedAction(fake.postMessage, 1)).toEqual({ action: "snapshot" });
+    expect(postedAction(fake.postMessage, 1)).toEqual({
+      action: "status",
+      modified: true,
+    });
+    expect(postedAction(fake.postMessage, 2)).toEqual({ action: "snapshot" });
     expect(requireIframe().classList.contains("is-saving")).toBe(true);
 
     await fake.exportSvg(svgDataUri("保存后继续编辑", ' onload="x()"'));
@@ -106,7 +110,7 @@ describe("drawio 全屏编辑面板", () => {
     });
     expect(onSave.mock.calls[0]?.[0]?.svg).not.toContain("onload");
     expect(onClose).not.toHaveBeenCalled();
-    expect(postedAction(fake.postMessage, 2)).toEqual({
+    expect(postedAction(fake.postMessage, 3)).toEqual({
       action: "status",
       modified: false,
     });
@@ -135,8 +139,96 @@ describe("drawio 全屏编辑面板", () => {
     expect(onClose).toHaveBeenCalledWith(expected);
     expect(fake.postedActions()).toEqual([
       expect.objectContaining({ action: "load" }),
+      { action: "status", modified: true },
       { action: "snapshot" },
     ]);
+  });
+
+  it("无改动保存也会先置脏再请求 snapshot，避免 v31 静默不回", async () => {
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    await fake.save(DEFAULT_DRAWIO_SOURCE, false);
+
+    expect(fake.postedActions()).toEqual([
+      expect.objectContaining({ action: "load" }),
+      { action: "status", modified: true },
+      { action: "snapshot" },
+    ]);
+
+    await fake.exportSvg(svgDataUri("无改动保存"));
+
+    expect(onSave).toHaveBeenCalledWith({
+      source: DEFAULT_DRAWIO_SOURCE,
+      svg: expect.stringContaining("无改动保存"),
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(postedAction(fake.postMessage, 3)).toEqual({
+      action: "status",
+      modified: false,
+    });
+  });
+
+  it("保存后立即保存并退出会复用上一轮高保真结果", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    const source = drawioSource("连续保存");
+    await fake.save(source, false);
+    await fake.exportSvg(svgDataUri("连续保存高保真"));
+    const firstResult = onSave.mock.calls[0]?.[0];
+
+    await fake.save(source, true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
+    });
+
+    expect(renderDrawio).not.toHaveBeenCalled();
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[1]?.[0]).toBe(firstResult);
+    expect(onClose).toHaveBeenCalledWith(firstResult);
+    expect(fake.postedActions().map((action) => action.action)).toEqual([
+      "load",
+      "status",
+      "snapshot",
+      "status",
+    ]);
+  });
+
+  it("降级结果不会覆盖本会话同 source 的高保真 SVG", async () => {
+    vi.useFakeTimers();
+    const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>低保真</text></svg>';
+    vi.mocked(renderDrawio).mockResolvedValue(fallbackSvg);
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    const protectedSource = drawioSource("受保护");
+    await fake.save(protectedSource, false);
+    await fake.exportSvg(svgDataUri("受保护高保真"));
+    const protectedResult = onSave.mock.calls[0]?.[0];
+
+    const otherSource = drawioSource("另一版本");
+    await fake.save(otherSource, false);
+    await fake.exportSvg(svgDataUri("另一版本高保真"));
+
+    await fake.save(protectedSource, true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
+    });
+
+    expect(renderDrawio).toHaveBeenCalledWith(protectedSource);
+    expect(onSave).toHaveBeenCalledTimes(3);
+    expect(onSave.mock.calls[2]?.[0]).toBe(protectedResult);
+    expect(onSave.mock.calls[2]?.[0]?.svg).toContain("受保护高保真");
+    expect(onSave.mock.calls[2]?.[0]?.svg).not.toContain("低保真");
+    expect(onClose).toHaveBeenCalledWith(protectedResult);
   });
 
   it("退出且从未保存时不回写", async () => {
@@ -178,7 +270,9 @@ describe("drawio 全屏编辑面板", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(fake.postedActions().map((action) => action.action)).toEqual([
       "load",
+      "status",
       "snapshot",
+      "status",
       "status",
       "snapshot",
       "status",
@@ -210,7 +304,7 @@ describe("drawio 全屏编辑面板", () => {
       warning: "drawio 原生 SVG 导出超时，已改用本地渲染保存",
     });
     expect(onClose).not.toHaveBeenCalled();
-    expect(postedAction(fake.postMessage, 2)).toEqual({
+    expect(postedAction(fake.postMessage, 3)).toEqual({
       action: "status",
       modified: false,
     });

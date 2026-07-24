@@ -506,6 +506,12 @@ describe("commandPolicy P0 gate", () => {
     expect(decisionBg("lark-cli auth login").action).toBe("deny");
   });
 
+  it("P2-6 回归:后台无 timeout 不因资源兜底弹确认，命令原风险保持不变", () => {
+    expect(decisionBg("pnpm dev")).toEqual({ action: "allow" });
+    expect(decisionBg("echo ready")).toEqual({ action: "allow" });
+    expect(decisionBg("rm old.txt").action).toBe("confirm");
+  });
+
   it("Round16 迁移:lark-cli auth login 的 device-code 有无有效值都归 connector,一律 deny", () => {
     expect(decision("lark-cli auth login --device-code").action).toBe("deny");
     expect(decision("lark-cli auth login --device-code=").action).toBe("deny");

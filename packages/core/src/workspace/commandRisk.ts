@@ -912,6 +912,135 @@ function larkWrites(command: AnalyzedSimpleCommand): boolean {
   return apiIndex >= 0 && new Set(["post", "put", "patch", "delete"]).has(args[apiIndex + 1] ?? "");
 }
 
+const CURL_LOCAL_OUTPUT_LONG_OPTIONS = new Set([
+  "--output",
+  "--output-dir",
+  "--trace",
+  "--trace-ascii",
+  "--cookie-jar",
+  "--dump-header",
+]);
+
+const CURL_LOCAL_OUTPUT_SHORT_OPTIONS = ["-o", "-c", "-D"] as const;
+const WGET_LOCAL_OUTPUT_LONG_OPTIONS = new Set([
+  "--append-output",
+  "--directory-prefix",
+  "--output-document",
+  "--output-file",
+]);
+const WGET_LOCAL_OUTPUT_SHORT_OPTIONS = ["-a", "-O", "-o", "-P"] as const;
+const SCP_OPTIONS_WITH_VALUE = new Set([
+  "-c", "-D", "-F", "-i", "-J", "-l", "-o", "-P", "-S", "-X",
+]);
+const RSYNC_OPTIONS_WITH_VALUE = new Set([
+  "-B", "-e", "-f", "-M", "-T",
+  "--address", "--backup-dir", "--block-size", "--bwlimit", "--chown",
+  "--compare-dest", "--compress-choice", "--compress-level", "--contimeout",
+  "--copy-dest", "--exclude", "--exclude-from", "--files-from", "--filter",
+  "--groupmap", "--include", "--include-from", "--link-dest", "--log-file",
+  "--log-file-format", "--max-alloc", "--max-size", "--min-size", "--out-format",
+  "--password-file", "--port", "--rsync-path", "--rsh", "--sockopts", "--suffix",
+  "--temp-dir", "--timeout", "--usermap",
+]);
+const NC_OPTIONS_WITH_VALUE = new Set([
+  "-e", "-I", "-i", "-M", "-m", "-O", "-P", "-p", "-q", "-s", "-T", "-V",
+  "-w", "-X", "-x",
+]);
+
+function optionTakesSeparateValue(value: string, optionsWithValue: Set<string>): boolean {
+  if (optionsWithValue.has(value)) return true;
+  if (!value.startsWith("--") || value.includes("=")) return false;
+  return optionsWithValue.has(value.toLowerCase());
+}
+
+function positionalWords(
+  words: AnalyzedShellWord[],
+  optionsWithValue: Set<string>,
+): AnalyzedShellWord[] {
+  const positional: AnalyzedShellWord[] = [];
+  let optionsEnded = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i]!;
+    const value = word.value;
+    if (!optionsEnded && value === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (!optionsEnded && value.startsWith("-") && value !== "-") {
+      if (optionTakesSeparateValue(value, optionsWithValue)) i += 1;
+      continue;
+    }
+    positional.push(word);
+  }
+  return positional;
+}
+
+function isDynamicLocalOutputWord(
+  words: AnalyzedShellWord[],
+  index: number,
+  shortOptions: readonly string[],
+  longOptions: Set<string>,
+): boolean {
+  const value = words[index]!.value;
+  const previous = words[index - 1]?.value;
+  if (
+    previous &&
+    (shortOptions.includes(previous) || longOptions.has(previous.toLowerCase()))
+  ) {
+    return true;
+  }
+  const equalsIndex = value.indexOf("=");
+  if (equalsIndex > 0 && longOptions.has(value.slice(0, equalsIndex).toLowerCase())) {
+    return true;
+  }
+  return shortOptions.some((option) => value.startsWith(option) && value.length > option.length);
+}
+
+/**
+ * 网络 sink 的静态命令名一旦已识别，运行时才能确定的 URL/header/远端目标/主机
+ * 必须 fail-closed 升级为 send。curl/wget 的本地输出文件名是唯一豁免；它不会进入
+ * 请求，且短参允许 `-oFILE`/`-cFILE`/`-DFILE` 这类附着值。
+ */
+function hasDynamicExternalLocation(command: AnalyzedSimpleCommand): boolean {
+  const name = commandName(command.argv[0] ?? "");
+  const words = command.words.slice(1);
+  if (name === "curl") {
+    return words.some((word, index) =>
+      word.dynamic &&
+      !isDynamicLocalOutputWord(
+        words,
+        index,
+        CURL_LOCAL_OUTPUT_SHORT_OPTIONS,
+        CURL_LOCAL_OUTPUT_LONG_OPTIONS,
+      ));
+  }
+  if (name === "wget") {
+    return words.some((word, index) =>
+      word.dynamic &&
+      !isDynamicLocalOutputWord(
+        words,
+        index,
+        WGET_LOCAL_OUTPUT_SHORT_OPTIONS,
+        WGET_LOCAL_OUTPUT_LONG_OPTIONS,
+      ));
+  }
+  if (name === "scp" || name === "rsync") {
+    const operands = positionalWords(
+      words,
+      name === "scp" ? SCP_OPTIONS_WITH_VALUE : RSYNC_OPTIONS_WITH_VALUE,
+    );
+    return operands.length >= 2 && operands.at(-1)!.dynamic;
+  }
+  if (name === "nc" || name === "ncat" || name === "netcat") {
+    const lowerArgs = command.argv.slice(1).map((arg) => arg.toLowerCase());
+    if (lowerArgs.some((arg) => arg === "-l" || arg === "--listen" || /^-[^-]*l/.test(arg))) {
+      return false;
+    }
+    return positionalWords(words, NC_OPTIONS_WITH_VALUE).some((word) => word.dynamic);
+  }
+  return false;
+}
+
 function curlWrites(command: AnalyzedSimpleCommand): boolean {
   const args = command.argv.slice(1);
   for (let i = 0; i < args.length; i += 1) {
@@ -962,6 +1091,7 @@ function fileTransferWrites(command: AnalyzedSimpleCommand): boolean {
 function isSendCommand(command: AnalyzedSimpleCommand): boolean {
   const name = commandName(command.argv[0] ?? "");
   const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
+  if (hasDynamicExternalLocation(command)) return true;
   if (larkWrites(command)) return true;
   if (name === "node" || name === "nodejs") {
     const script = command.argv[1] ?? "";
@@ -978,6 +1108,12 @@ function isSendCommand(command: AnalyzedSimpleCommand): boolean {
   if (fileTransferWrites(command)) return true;
   if (new Set(["nc", "ncat", "netcat", "socat"]).has(name) && (command.pipeFromPrevious || command.hasInputRedirect)) return true;
   return false;
+}
+
+function dynamicExecutionTitle(command: AnalyzedSimpleCommand): string | null {
+  if (command.words[0]?.dynamic) return "执行动态解析的命令";
+  if (commandName(command.argv[0] ?? "") === "eval") return "执行 eval 命令";
+  return null;
 }
 
 function destructiveTitle(command: AnalyzedSimpleCommand): string | null {
@@ -1084,9 +1220,11 @@ export function assessCommandAnalysis(analysis: CommandAnalysis): RiskVerdict {
   }
   const effects = new Set<CommandEffect>();
   let destructive: string | null = null;
+  let dynamicExecution: string | null = null;
   for (const command of analysis.commands) {
     if (isInstallCommand(command, analysis.commands)) effects.add("install");
     if (isSendCommand(command)) effects.add("send");
+    dynamicExecution ??= dynamicExecutionTitle(command);
     const title = destructiveTitle(command);
     if (title) {
       effects.add("destructive");
@@ -1094,6 +1232,16 @@ export function assessCommandAnalysis(analysis: CommandAnalysis): RiskVerdict {
     }
   }
   if (effects.size > 0) return verdictFromEffects(effects, analysis.commands, destructive);
+  if (dynamicExecution) {
+    return {
+      risk: "confirm",
+      effects: [],
+      confirmKind: "command",
+      title: dynamicExecution,
+      detail: "实际执行内容只能在 shell 展开后确定",
+      icon: "⚠️",
+    };
+  }
   return { risk: "safe", effects: [], title: "执行操作", icon: "⚙️" };
 }
 

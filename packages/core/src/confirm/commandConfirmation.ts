@@ -6,6 +6,10 @@ import { z } from "zod";
 import { redactSensitiveText } from "../agent-run/redaction.js";
 import { assessCommand } from "../workspace/commandRisk.js";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
+import {
+  effectiveBackgroundTimeoutMs,
+  formatCommandDuration,
+} from "../workspace/backgroundCommandLimits.js";
 
 const secondsSchema = z.preprocess(
   (value) => {
@@ -55,13 +59,18 @@ export function buildCommandConfirmSpec(
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
   const kind = verdict.confirmKind ?? "command";
   const isMultiEffect = verdict.effects.length > 1;
-  const sub = kind === "install"
-    ? "将修改运行环境"
-    : kind === "send"
-      ? "将向外部发送或写入数据"
-      : isMultiEffect
-        ? "包含多种副作用"
-        : "破坏性命令";
+  const riskSub = verdict.risk === "safe"
+    ? "资源受限后台命令"
+    : kind === "install"
+      ? "将修改运行环境"
+      : kind === "send"
+        ? "将向外部发送或写入数据"
+        : isMultiEffect
+          ? "包含多种副作用"
+          : "破坏性命令";
+  const sub = input.background
+    ? `后台执行 · 最长运行 ${formatCommandDuration(effectiveBackgroundTimeoutMs(input.timeout))} · ${riskSub}`
+    : riskSub;
   const primaryLabel = kind === "install"
     ? "确认安装"
     : kind === "send"
@@ -73,8 +82,10 @@ export function buildCommandConfirmSpec(
   return confirmSpecSchema.parse({
     id,
     kind,
-    title: verdict.title.replace(/^需要执行：/, ""),
-    sub: input.background ? `后台执行 · ${sub}` : sub,
+    title: input.background && verdict.risk === "safe"
+      ? "启动后台命令"
+      : verdict.title.replace(/^需要执行：/, ""),
+    sub,
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     footHint: "只授权本次调用 · 10 分钟后自动失效",

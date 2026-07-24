@@ -27,6 +27,11 @@ import {
 import { isFolderSourceCacheActive, normalizeFolderSourceRecords } from "../folderSources/runtime.js";
 import { parseFileBuffer } from "./parseFile.js";
 import { startToolHeartbeat } from "./toolHeartbeat.js";
+import {
+  statOpenedFileIdentity,
+  verifyOpenedFilePath,
+  type OpenedFileIdentity,
+} from "./openedFilePath.js";
 
 const DEFAULT_MAX_CHARS = 40_000;
 const MAX_READ_CHARS = 200_000;
@@ -197,13 +202,19 @@ function mergeHostFileStat(base: FileStat, hostStat: Awaited<ReturnType<typeof s
   };
 }
 
+interface ResolvedHostReadPath {
+  path: string;
+  allowedRoot?: string;
+  identity: OpenedFileIdentity;
+}
+
 async function resolveHostReadPath(args: {
   filesystem: WorkspaceFilesystem;
   path: string;
   source?: FolderSourceRecord;
   relPath?: string;
   signal?: AbortSignal;
-}): Promise<string | null> {
+}): Promise<ResolvedHostReadPath | null> {
   const { filesystem, path, source, relPath } = args;
   args.signal?.throwIfAborted();
   if (source?.provider === "desktop-local" && source.desktopRootPath && relPath) {
@@ -224,7 +235,9 @@ async function resolveHostReadPath(args: {
     const canonical = await realpath(candidate);
     args.signal?.throwIfAborted();
     if (!isPathInside(canonical, root)) throw new Error("invalid_path: symlink escaped folder source");
-    return canonical;
+    const identity = await statOpenedFileIdentity(canonical);
+    args.signal?.throwIfAborted();
+    return { path: canonical, allowedRoot: root, identity };
   }
 
   const resolved = filesystem.resolveAbsolutePath?.(path);
@@ -232,20 +245,31 @@ async function resolveHostReadPath(args: {
   args.signal?.throwIfAborted();
   const canonical = await realpath(resolved);
   args.signal?.throwIfAborted();
-  return canonical;
+  const identity = await statOpenedFileIdentity(canonical);
+  args.signal?.throwIfAborted();
+  return { path: canonical, identity };
 }
 
 async function readHostFileBounded(
-  hostPath: string,
+  hostReadPath: ResolvedHostReadPath,
   initialStat: FileStat,
   signal?: AbortSignal,
 ): Promise<{ stat: FileStat; buffer: Buffer }> {
   const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
   const nonBlock = typeof fsConstants.O_NONBLOCK === "number" ? fsConstants.O_NONBLOCK : 0;
   signal?.throwIfAborted();
-  const handle = await open(hostPath, fsConstants.O_RDONLY | noFollow | nonBlock);
-  signal?.throwIfAborted();
+  const handle = await open(hostReadPath.path, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
+    signal?.throwIfAborted();
+    try {
+      await verifyOpenedFilePath(handle, {
+        expectedPath: hostReadPath.path,
+        expectedIdentity: hostReadPath.identity,
+        allowedRoot: hostReadPath.allowedRoot,
+      });
+    } catch {
+      throw new Error("invalid_path: opened file escaped the authorized folder source");
+    }
     signal?.throwIfAborted();
     const statBeforeRead = await handle.stat();
     signal?.throwIfAborted();

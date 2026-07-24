@@ -16,6 +16,24 @@ const secretSpec: ConfirmSpec = {
 };
 
 describe("ConfirmService", () => {
+  it("P2-6 回归:安全后台命令无显式 timeout 时不生成确认卡", async () => {
+    const state = createSession("confirm-background-default-ttl");
+    const service = new ConfirmService({
+      createId: () => "confirm-background-id",
+      persist: async () => undefined,
+    });
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-background",
+      toolCallId: "tool-background",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "echo ready", background: true },
+      aborted: false,
+    });
+    expect(result).toEqual({ ok: false, reason: "确认请求与当前命令策略不匹配" });
+    expect(state.pendingConfirms.size).toBe(0);
+  });
+
   it("PendingConfirm 持久化失败时不发卡、不保留 pending", async () => {
     const state = createSession("confirm-persist-fail");
     const service = new ConfirmService({

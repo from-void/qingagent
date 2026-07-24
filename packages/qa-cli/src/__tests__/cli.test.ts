@@ -232,6 +232,35 @@ describe("qa cli", () => {
     expect(stderr.mock.calls.map((call) => call[0]).join("").trim()).toBe("[qa] events exited reason=timeout received=0");
   });
 
+  it("doc events 连接拒绝归类为实例不可达", async () => {
+    const { main } = await import("../cli.js");
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+
+    await expect(main(["doc", "events", "-s", "s1"])).rejects.toMatchObject({
+      name: "QaCliError",
+      code: "NO_INSTANCE",
+      message: "实例不可达: fetch failed",
+    });
+  });
+
+  it.each([
+    [401, "AUTH_FAILED", "unauthorized"],
+    [404, "SESSION_NOT_FOUND", "SESSION_NOT_FOUND"],
+  ])("doc events HTTP %i 保留服务端错误分类", async (status, code, error) => {
+    const { main } = await import("../cli.js");
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error, code, nextStep: "按服务端指引处理" }), { status }),
+    ) as typeof fetch;
+
+    await expect(main(["doc", "events", "-s", "s1"])).rejects.toMatchObject({
+      name: "QaCliError",
+      code,
+      message: error,
+    });
+  });
+
   it("doc events timeout 到点自退", async () => {
     const { main } = await import("../cli.js");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

@@ -29,7 +29,7 @@ qingagent is a local-first AI writing workbench for Chinese long-form content: c
 - **富内容**:多级列表、表格、Mermaid 图表、AI 生成配图(SVG)
 - **素材区**:本地文件解析(PDF/Word/图片)、网络搜索与网页抓取入稿
 - **技能系统**:飞书文档/多维表格等集成,输入框 chip 一点即用
-- **观察记忆**:长会话跨几十轮不忘早期细节(可选开启)
+- **观察记忆**:长会话跨几十轮不忘早期细节(默认开启,可显式关闭)
 - **高保真导出**:PDF(Chromium 渲染)/ Word / Markdown / HTML
 - **双形态**:桌面客户端(Windows/macOS)为主,开发者也可从源码运行 Web
 
@@ -61,10 +61,10 @@ cp packages/server/.env.example packages/server/.env
 # 编辑 packages/server/.env,填入:DEEPSEEK_API_KEY=sk-...
 
 pnpm dev:server   # 后端 http://127.0.0.1:8080
-pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
+pnpm dev          # 前端 http://localhost:6173(web 代理 /api → :8080)
 ```
 
-打开 `http://localhost:5173`,新建会话即可开写。
+打开 `http://localhost:6173`,新建会话即可开写。
 
 ## 配置参考
 
@@ -75,7 +75,8 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 必填 | DeepSeek API 密钥(也可在应用设置里按访客填) |
-| `PORT` | `8080` | 后端端口 |
+| `PORT` | server 为 `8080`;Web 为 `6173` | server 进程把它用作后端端口;Vite 进程也把它用作 Web 端口兜底。并行启动时不要给两者共用同一个 `PORT`,Web 端优先用 `QINGAGENT_WEB_PORT`。 |
+| `QINGAGENT_WEB_PORT` | `6173` | Vite dev/preview 端口,优先级高于 `PORT` |
 | `QINGAGENT_DEEPSEEK_BASE_URL` | 官方端点 | 自定义模型网关 |
 | `QINGAGENT_ALLOW_PRIVATE_MODEL_HOST` | 关 | 仅 `=1` 放行主模型访问私网/链路本地（含云元数据）；loopback 无需开启 |
 | `QINGAGENT_MODEL_FLASH` / `QINGAGENT_MODEL_PRO` | deepseek 系 | 快/强两档模型 id |
@@ -86,10 +87,10 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `QINGAGENT_AGENT_BROWSER` | 关 | Agent 浏览器抓取;需 `npx playwright install chromium`(缺失时优雅降级) |
-| `QINGAGENT_OM_SIDECAR` | 关 | 观察记忆(长会话) |
-| `QINGAGENT_OM_COMPRESS` | 关 | 超长上下文压缩投影(阈值 `QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS`,默认 160k) |
+| `QINGAGENT_OM_SIDECAR` | 开 | 观察记忆(长会话)。未显式关闭即会产生观察模型调用与费用,不会另行征求授权 |
+| `QINGAGENT_OM_COMPRESS` | 开 | 超长上下文压缩投影(阈值 `QINGAGENT_OM_COMPRESS_THRESHOLD_TOKENS`,默认 500k) |
 | `QINGAGENT_TOOL_SEARCH` | 关 | 低频工具按需检索(省上下文,略增延迟) |
-| `QINGAGENT_PYODIDE_ENABLED` | 开 | Python 沙箱(数据处理技能用) |
+| `QINGAGENT_PYODIDE_ENABLED` | server 关;桌面开 | Python 沙箱(数据处理技能用)。server 需显式 `=1`;桌面主进程缺省补为 `1`,但瘦包未携带 Pyodide 资源时仍不可用 |
 | `QINGAGENT_PROCESSOR_PROMPT_INJECTION` / `_MODERATION` / `_PII` | 关 | LLM 输入护栏三件套 |
 
 **运维进阶**
@@ -105,7 +106,7 @@ pnpm dev          # 前端 http://localhost:5173(web 代理 /api → :8080)
 ## 架构一览
 
 ```
-apps/web        Vite + React SPA(:5173,/api 代理到后端)
+apps/web        Vite + React SPA(:6173,/api 代理到后端)
 packages/server Hono HTTP 服务(:8080,libsql 持久化 + DuckDB 观测)
 packages/core   Mastra agent 大脑:工具/技能/浏览器/导出/记忆
 apps/desktop    Electron 壳(内嵌 server,数据落 userData)
@@ -178,22 +179,24 @@ server {
 
 配置速查:
 
-| 变量 | 默认值 | 作用 |
-|---|---|---|
-| `QINGAGENT_AUTH_TOKEN` | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
-| `QINGAGENT_TRUSTED_ORIGINS` | 空;内置本机 Web 开发端口的精确 loopback Origin | 额外可信完整 Origin（须含协议,不能只写 Host）,多个值用逗号分隔。公网反代须设为 `https://你的域名`。 |
-| `QINGAGENT_PUBLIC_ORIGIN` | 未设置 | 导出内容中 `/api/` 链接使用的 canonical origin。公网 HTTPS 反代建议显式设置，优先级高于请求与 forwarded 头。 |
-| `QINGAGENT_TRUST_PROXY` | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |
-| `QINGAGENT_HOST` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
-| `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC` | 未设置 | 高危逃生开关。仅 `=1` 允许无 token 的非回环监听,启动时打印审计告警。 |
-| `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |
-| `QINGAGENT_BROWSER_PROXY_ACL` | 未设置 | 浏览器配置了 `HTTP_PROXY` / `HTTPS_PROXY` 时必须设为 `deny-private`，确认代理在实际连接层拒绝私网/环回/链路本地/元数据地址；否则代理浏览器 fail-closed。 |
-| `QINGAGENT_ENABLE_DEBUG` | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
-| `QINGAGENT_UPLOAD_MAX_BYTES` | `52428800`（50 MB） | 单个上传文件解码后的最大字节数；服务端同时限制 base64 JSON 请求体，前端按默认 50 MB 预检。 |
-| `DATABASE_URL` | `file:./qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
-| `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启等同扩大 RCE 面。 |
-| `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭 | 高危能力,仅显式 `=1` 开启。公网开启会把凭据注入执行环境,等同扩大 RCE 面。 |
-| `QINGAGENT_ALLOW_SKILL_MUTATION` | 关闭 | 高危能力,仅显式 `=1` 开启。允许安装/删除技能,公网开启等同扩大 RCE 面。 |
+| 变量 | server 形态默认值 | 桌面形态默认值 | 作用 |
+|---|---|---|---|
+| `QINGAGENT_AUTH_TOKEN` | 未设置 | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
+| `QINGAGENT_TRUSTED_ORIGINS` | 空;内置本机 Web 开发端口的精确 loopback Origin | 同 server | 额外可信完整 Origin（须含协议,不能只写 Host）,多个值用逗号分隔。公网反代须设为 `https://你的域名`。 |
+| `QINGAGENT_PUBLIC_ORIGIN` | 未设置 | 未设置 | 导出内容中 `/api/` 链接使用的 canonical origin。公网 HTTPS 反代建议显式设置，优先级高于请求与 forwarded 头。 |
+| `QINGAGENT_TRUST_PROXY` | 未设置 | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |
+| `QINGAGENT_HOST` | `127.0.0.1` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
+| `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC` | 未设置 | 未设置 | 高危逃生开关。仅 `=1` 允许无 token 的非回环监听,启动时打印审计告警。 |
+| `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |
+| `QINGAGENT_BROWSER_PROXY_ACL` | 未设置 | 未设置 | 浏览器配置了 `HTTP_PROXY` / `HTTPS_PROXY` 时必须设为 `deny-private`，确认代理在实际连接层拒绝私网/环回/链路本地/元数据地址；否则代理浏览器 fail-closed。 |
+| `QINGAGENT_ENABLE_DEBUG` | 未设置 | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
+| `QINGAGENT_UPLOAD_MAX_BYTES` | `52428800`（50 MB） | 同 server | 单个上传文件解码后的最大字节数；服务端同时限制 base64 JSON 请求体，前端按默认 50 MB 预检。 |
+| `DATABASE_URL` | `file:./qingagent.db` | Electron `userData/qingagent.db` | libsql 数据库位置。自托管时建议指向可备份的持久卷或绝对路径。 |
+| `QINGAGENT_ALLOW_UNISOLATED_COMMANDS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许 agent 在本机执行未隔离命令;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
+| `QINGAGENT_SANDBOX_INJECT_CREDENTIALS` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。会把凭据注入执行环境;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
+| `QINGAGENT_ALLOW_SKILL_MUTATION` | 关闭;仅显式 `=1` 开启 | 开启;未设置时主进程补 `1` | 高危能力。允许安装/删除技能;公网开启等同扩大 RCE 面。显式 `=0` 可关闭桌面默认。 |
+
+安全建议（本单仅披露现状,不改代码默认值）:`QINGAGENT_OM_SIDECAR` / `QINGAGENT_OM_COMPRESS` 缺省开启会在没有独立授权步骤时产生额外模型调用与费用,建议后续改为显式 opt-in；桌面形态缺省开启三项高危能力虽服务于本机单用户体验,仍建议按最小权限重新评估,尤其不要沿用到外部可达部署。
 
 数据与备份:默认服务端数据库是 `DATABASE_URL` 指向的 libsql 文件,未设置时为 `file:./qingagent.db`;桌面端数据库位于 Electron `userData` 目录下的 `qingagent.db`。备份时复制该数据库文件;如果同目录存在 `qingagent.db-wal` / `qingagent.db-shm`,也一并复制或先停服务再备份。沙箱凭据存放在同库的 `sandbox_credentials` 表中,值加密落库;备份数据库即同时备份这些凭据密文。
 

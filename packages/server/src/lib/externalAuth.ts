@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { tokensMatch } from "./authToken";
+import { externalError } from "./externalError";
 import { getExternalToken } from "./externalInstance";
 
 export const externalTokenMiddleware: MiddlewareHandler = async (c, next) => {
@@ -7,5 +8,5 @@ export const externalTokenMiddleware: MiddlewareHandler = async (c, next) => {
   const auth = c.req.header("Authorization");
   const provided = auth && /^Bearer\s+/i.test(auth) ? auth.replace(/^Bearer\s+/i, "").trim() : null;
   if (expected && provided && tokensMatch(provided, expected)) return next();
-  return c.json({ error: "unauthorized", code: "AUTH_FAILED" }, 401);
+  return externalError(c, 401, "AUTH_FAILED", "unauthorized");
 };

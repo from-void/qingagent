@@ -37,6 +37,18 @@ afterEach(async () => {
 });
 
 describe("external API v1 golden contract", () => {
+  it("401 error 符合公开错误契约", async () => {
+    const response = await app.request("/api/v1/external/health");
+    expect(response.status).toBe(401);
+    const body = await response.json() as ExternalErrorResponse;
+    exactKeys(body, ["error", "code", "nextStep"]);
+    expect(body).toEqual({
+      error: "unauthorized",
+      code: "AUTH_FAILED",
+      nextStep: expect.any(String),
+    });
+  });
+
   it("GET /health", async () => {
     const body = await getJson<ExternalHealthResponse>("/health");
     exactKeys(body, ["ok", "version", "pid", "startedAt"]);

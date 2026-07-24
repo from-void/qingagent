@@ -1,9 +1,19 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import type { BridgeFrame, ChatMessage, Command, ContentDocState, FolderSourceRecord, MessagePart } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  ChatMessage,
+  Command,
+  ContentDocState,
+  FolderSourceRecord,
+  MessagePart,
+} from "@qingagent/contract-ts";
 import { commandSchema } from "@qingagent/contract-ts/schemas";
-import type { ExternalBridgeFrame } from "../../../contract-ts/src/ExternalApi";
+import type {
+  ExternalBridgeFrame,
+  ExternalErrorCode,
+} from "../../../contract-ts/src/ExternalApi";
 import {
   deriveActiveOverlay,
   deriveAgentBusy,
@@ -14,6 +24,7 @@ import {
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
+import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
@@ -24,30 +35,7 @@ export const externalRoutes = new Hono();
 
 type ExternalClient = "claudecode" | "codex" | "agent";
 
-type ExternalErrorCode =
-  | "AUTH_FAILED"
-  | "AGENT_BUSY"
-  | "REVIEW_PENDING"
-  | "VERSION_CONFLICT"
-  | "VALIDATION"
-  | "NOT_FOUND"
-  | "SESSION_NOT_FOUND"
-  | "MATERIAL_NOT_FOUND"
-  | "RATE_LIMITED";
-
 const DEFAULT_MATERIAL_TEXT_MAX_BYTES = 200_000;
-
-const NEXT_STEP: Record<ExternalErrorCode, string> = {
-  REVIEW_PENDING: "青简里有待处理的修改建议,请先采纳或拒绝;然后用 `qa doc events --follow` 等 docCommitted 再继续",
-  AGENT_BUSY: "青简 agent 正在干活,稍等重试一次;仍忙则告知用户并等 events",
-  VERSION_CONFLICT: "文档已被改过,请 `qa doc read` 重读,基于新版本重做提案,绝不原样重发",
-  AUTH_FAILED: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
-  NOT_FOUND: "实例没了/重启了,重新 `qa status` 感应;还不行请告诉用户打开青简",
-  SESSION_NOT_FOUND: "会话不存在,用 `qa sessions list` 重新对号,不要重试原 id",
-  MATERIAL_NOT_FOUND: "材料不存在,用 `qa files list` 重新对号,不要重试原 id",
-  VALIDATION: "提案不合法(空文档只能 fullDraft / 已有文档禁整篇覆写 / 未命中 / 超 50 处),按提示改",
-  RATE_LIMITED: "请求太频繁,请降低读取频率并优先使用 `qa doc events --follow`",
-};
 
 const readBuckets = new Map<string, { windowStart: number; count: number }>();
 
@@ -378,7 +366,7 @@ function proposalSummary(entries: LoggedFrame[]): ProposalSummary {
           code: "VERSION_CONFLICT",
           expected: write.data.conflict.expectedDocumentSnapshot,
           actual: write.data.conflict.actualDocumentSnapshot,
-          nextStep: NEXT_STEP.VERSION_CONFLICT,
+          nextStep: EXTERNAL_NEXT_STEP.VERSION_CONFLICT,
         }, seq),
         logResult: "rejected:VERSION_CONFLICT",
         hunks: 0,
@@ -405,7 +393,7 @@ function errorSummary(
 ): ProposalSummary {
   return {
     status,
-    body: withSeq({ error: message ?? code, code, nextStep: NEXT_STEP[code] }, seq),
+    body: withSeq({ error: message ?? code, code, nextStep: EXTERNAL_NEXT_STEP[code] }, seq),
     logResult: `rejected:${code}`,
     hunks: 0,
     seq,
@@ -471,15 +459,6 @@ function externalEventsMeta(
     nextSeq,
     gap: meta.gap,
   };
-}
-
-function externalError(
-  c: Context,
-  status: 400 | 401 | 404 | 409 | 429,
-  code: ExternalErrorCode,
-  message?: string,
-) {
-  return c.json({ error: message ?? code, code, nextStep: NEXT_STEP[code] }, status);
 }
 
 function rateLimit(c: Context) {

@@ -168,13 +168,9 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   let meta: ExternalEventsMeta | null = null;
   let maxSeq = parseAfterSeq(options.after);
   try {
-    const res = await fetch(client.eventsUrl(sessionId, options.after), {
-      headers: { Authorization: client.authHeader() },
-      signal: controller.signal,
-    });
-    if (!res.ok || !res.body) throw new QaCliError("VALIDATION", "events 连接失败");
+    const res = await client.openEvents(sessionId, options.after, controller.signal);
     process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
-    reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;

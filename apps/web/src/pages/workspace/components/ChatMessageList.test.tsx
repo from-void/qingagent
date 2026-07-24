@@ -804,6 +804,30 @@ describe("ChatMessageList", () => {
     expect(text).not.toContain("已修改 2 处");
   });
 
+  it("部分成功 patchSummary 如实显示已写入与失效计数", async () => {
+    const messages: ChatMessage[] = [{
+      id: "m-partial-review",
+      role: { kind: "agent" },
+      ts: "2026-07-17T00:00:00.000Z",
+      parts: [{
+        kind: "patchSummary",
+        data: {
+          count: 3,
+          hunkIds: ["h-1", "h-2", "h-3"],
+          reviewOutcome: "committed",
+          appliedCount: 2,
+          conflictCount: 1,
+        },
+      }],
+      chips: null,
+    }];
+
+    await render(<ChatMessageList messages={messages} streamActive={false} />);
+
+    expect(host?.textContent ?? "").toContain("2 处已写入，1 处因文档变化失效");
+    expect(host?.textContent ?? "").not.toContain("本轮修改未写入");
+  });
+
   it("整篇审历史记忆必须同时匹配 session 和 hunkKey", async () => {
     const messages: ChatMessage[] = [
       {

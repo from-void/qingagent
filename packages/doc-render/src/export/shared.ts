@@ -7,6 +7,8 @@ import { uploadsBaseDir } from "../paths/uploadsDir.js";
 
 export interface ExportOptions {
   title?: string;
+  /** Markdown 导出时用于绝对化 `/api/` 图片与附件链接的服务 origin/base URL。 */
+  baseUrl?: string;
 }
 
 export type ExportDocument = LegacySection[] | PmDoc;
@@ -50,7 +52,9 @@ export function documentLeadsWithTitle(
 export function stripFormatting(value: string): string {
   return value
     .replace(/\r\n/g, "\n")
-    .replace(/<[^>]*>/g, "")
+    .replace(HTML_TAG, (source, tagName: string) =>
+      KNOWN_HTML_TAGS.has(tagName.toLowerCase()) ? "" : source,
+    )
     .replace(/!\[[^\]]*]\([^)]*\)/g, "")
     .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")
@@ -65,6 +69,22 @@ export function stripFormatting(value: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .trim();
 }
+
+// LegacySection 的 text 是历史富文本字符串，可能混有这些标准 HTML 标签；`<name>`、
+// `<你的名字>` 等用户占位符不是已知标签，必须原样保留。标签属性允许引号内出现 `>`，
+// 避免退回会误截断属性值的 `<[^>]*>` 一类粗正则。
+const KNOWN_HTML_TAGS = new Set(
+  (
+    "a abbr address area article aside audio b base bdi bdo big blockquote body br button canvas " +
+    "caption center cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed " +
+    "fieldset figcaption figure font footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup " +
+    "hr html i iframe img input ins kbd label legend li link main map mark marquee menu meta meter nav " +
+    "nobr noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script " +
+    "search section select slot small source span strike strong style sub summary sup table tbody td " +
+    "template textarea tfoot th thead time title tr track tt u ul var video wbr"
+  ).split(" "),
+);
+const HTML_TAG = /<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?\s*\/?>/g;
 
 export function sectionText(section: LegacySection): string {
   switch (section.kind) {
@@ -95,9 +115,12 @@ export function sectionText(section: LegacySection): string {
 }
 
 export function pmDocToPlainExportText(doc: PmDoc): string {
+  // PM 已是结构化节点，pmToPlainText 直接取 textContent；此处再按字符串猜 HTML/Markdown
+  // 会把用户手打的 `<name>` 等字面内容误删。
   return pmToPlainText(doc)
+    .replace(/\r\n?/g, "\n")
     .split("\n")
-    .map(stripFormatting)
+    .map((line) => line.trim())
     .filter(Boolean)
     .join("\n\n");
 }

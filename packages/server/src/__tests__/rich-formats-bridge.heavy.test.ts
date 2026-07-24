@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command, LegacySection } from "@qingagent/contract-ts";
 import { getPmContentHash, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
 
@@ -263,6 +263,133 @@ describe("rich formats HTTP bridge E2E", () => {
     expect(pdf.status).toBe(200);
     expect(pdf.headers.get("content-type")).toContain("application/pdf");
     expect(bytesStartWith(await responseBytes(pdf), [0x25, 0x50, 0x44, 0x46])).toBe(true);
+  });
+
+  it("R20门:D2 显式信任反代时用 forwarded origin 绝对化 Markdown /api/ 媒体链接", async () => {
+    const sessionId = await seedRestoredSession("Markdown 离线链接", doc([
+      {
+        type: "image",
+        attrs: { blockId: "export-image", src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440000/image.svg", alt: "图", title: null, caption: null },
+      },
+      {
+        type: "fileAttachment",
+        attrs: { blockId: "export-file", fileId: "550e8400-e29b-41d4-a716-446655440001", filename: "附件.pdf", mimeType: "application/pdf", size: 1 },
+      },
+    ]));
+
+    const savedTrustProxy = process.env.QINGAGENT_TRUST_PROXY;
+    const savedPublicOrigin = process.env.QINGAGENT_PUBLIC_ORIGIN;
+    try {
+      process.env.QINGAGENT_TRUST_PROXY = "1";
+      delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      const response = await app.request(
+        `http://internal.local/api/v1/export/${sessionId}?format=markdown`,
+        { headers: { "x-forwarded-host": "qing.example.com", "x-forwarded-proto": "https" } },
+      );
+      expect(response.status).toBe(200);
+      const markdown = await response.text();
+      expect(markdown).toContain("![图](https://qing.example.com/api/v1/files/550e8400-e29b-41d4-a716-446655440000/image.svg)");
+      expect(markdown).toContain("[附件: 附件.pdf](https://qing.example.com/api/v1/files/550e8400-e29b-41d4-a716-446655440001)");
+    } finally {
+      if (savedTrustProxy === undefined) delete process.env.QINGAGENT_TRUST_PROXY;
+      else process.env.QINGAGENT_TRUST_PROXY = savedTrustProxy;
+      if (savedPublicOrigin === undefined) delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      else process.env.QINGAGENT_PUBLIC_ORIGIN = savedPublicOrigin;
+    }
+  });
+
+  it("R20门:D2 未配置信任时忽略伪造 forwarded-host 并使用请求 origin", async () => {
+    const sessionId = await seedRestoredSession("Markdown forwarded-host 加固", doc([
+      {
+        type: "image",
+        attrs: { blockId: "export-image-untrusted", src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440002/image.svg", alt: "安全图", title: null, caption: null },
+      },
+    ]));
+    const savedTrustProxy = process.env.QINGAGENT_TRUST_PROXY;
+    const savedPublicOrigin = process.env.QINGAGENT_PUBLIC_ORIGIN;
+    try {
+      delete process.env.QINGAGENT_TRUST_PROXY;
+      delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      const response = await app.request(
+        `http://internal.local/api/v1/export/${sessionId}?format=markdown`,
+        { headers: { "x-forwarded-host": "attacker.example", "x-forwarded-proto": "https" } },
+      );
+      expect(response.status).toBe(200);
+      const markdown = await response.text();
+      expect(markdown).toContain("![安全图](http://internal.local/api/v1/files/550e8400-e29b-41d4-a716-446655440002/image.svg)");
+      expect(markdown).not.toContain("attacker.example");
+    } finally {
+      if (savedTrustProxy === undefined) delete process.env.QINGAGENT_TRUST_PROXY;
+      else process.env.QINGAGENT_TRUST_PROXY = savedTrustProxy;
+      if (savedPublicOrigin === undefined) delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      else process.env.QINGAGENT_PUBLIC_ORIGIN = savedPublicOrigin;
+    }
+  });
+
+  it("R20门:D2 canonical PUBLIC_ORIGIN 优先于 forwarded 与内部请求 origin", async () => {
+    const sessionId = await seedRestoredSession("Markdown canonical origin", doc([
+      {
+        type: "image",
+        attrs: { blockId: "export-image-canonical", src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440003/image.svg", alt: "站点图", title: null, caption: null },
+      },
+    ]));
+    const savedTrustProxy = process.env.QINGAGENT_TRUST_PROXY;
+    const savedPublicOrigin = process.env.QINGAGENT_PUBLIC_ORIGIN;
+    try {
+      delete process.env.QINGAGENT_TRUST_PROXY;
+      process.env.QINGAGENT_PUBLIC_ORIGIN = "https://canonical.example/deployment-path";
+      const response = await app.request(
+        `http://internal.local/api/v1/export/${sessionId}?format=markdown`,
+        { headers: { "x-forwarded-host": "attacker.example", "x-forwarded-proto": "http" } },
+      );
+      expect(response.status).toBe(200);
+      const markdown = await response.text();
+      expect(markdown).toContain("![站点图](https://canonical.example/api/v1/files/550e8400-e29b-41d4-a716-446655440003/image.svg)");
+      expect(markdown).not.toContain("attacker.example");
+      expect(markdown).not.toContain("internal.local");
+    } finally {
+      if (savedTrustProxy === undefined) delete process.env.QINGAGENT_TRUST_PROXY;
+      else process.env.QINGAGENT_TRUST_PROXY = savedTrustProxy;
+      if (savedPublicOrigin === undefined) delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      else process.env.QINGAGENT_PUBLIC_ORIGIN = savedPublicOrigin;
+    }
+  });
+
+  it("D4-4 非法 PUBLIC_ORIGIN 明确 warn 并保持既有请求 origin 回退", async () => {
+    const sessionId = await seedRestoredSession("Markdown 非法 public origin", doc([
+      {
+        type: "image",
+        attrs: { blockId: "export-image-invalid-origin", src: "/api/v1/files/550e8400-e29b-41d4-a716-446655440004/image.svg", alt: "回退图", title: null, caption: null },
+      },
+    ]));
+    const savedTrustProxy = process.env.QINGAGENT_TRUST_PROXY;
+    const savedPublicOrigin = process.env.QINGAGENT_PUBLIC_ORIGIN;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      delete process.env.QINGAGENT_TRUST_PROXY;
+      process.env.QINGAGENT_PUBLIC_ORIGIN = "htps://typo.example";
+      const response = await app.request(
+        `http://internal.local/api/v1/export/${sessionId}?format=markdown`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain(
+        "![回退图](http://internal.local/api/v1/files/550e8400-e29b-41d4-a716-446655440004/image.svg)",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "Invalid QINGAGENT_PUBLIC_ORIGIN; falling back to request-derived origin",
+        {
+          config: "QINGAGENT_PUBLIC_ORIGIN",
+          value: "htps://typo.example",
+          fallback: "request origin (or trusted proxy origin when enabled)",
+        },
+      );
+    } finally {
+      warn.mockRestore();
+      if (savedTrustProxy === undefined) delete process.env.QINGAGENT_TRUST_PROXY;
+      else process.env.QINGAGENT_TRUST_PROXY = savedTrustProxy;
+      if (savedPublicOrigin === undefined) delete process.env.QINGAGENT_PUBLIC_ORIGIN;
+      else process.env.QINGAGENT_PUBLIC_ORIGIN = savedPublicOrigin;
+    }
   });
 
   it("validateCommandKind covers updateDoc doc and legacySections validation branches", () => {

@@ -16,6 +16,7 @@ export function TemplateEditorPage(props: {
   starters?: readonly TemplateStarterPreset[];
   saving?: boolean;
   deleteDisabled?: boolean;
+  deleteDisabledReason?: string;
   onNameChange: (value: string) => void;
   onPromptChange: (value: string) => void;
   onStarterSelect?: (starter: TemplateStarterPreset) => void;
@@ -73,7 +74,7 @@ export function TemplateEditorPage(props: {
             {props.onAiDraft ? <button type="button" className="ws-launch-ai-draft" disabled={aiDrafting} onClick={() => void runAiDraft()}>{aiDrafting ? "起草中…" : "✦ AI 起草"}</button> : null}
           </div>
         ) : null}
-        {props.mode !== "new" ? <Button type="button" variant="ghost" data-danger="true" disabled={props.saving || props.deleteDisabled} title={props.deleteDisabled ? "每类至少保留一个模板" : undefined} onClick={props.onDelete}>删除</Button> : null}
+        {props.mode !== "new" ? <Button type="button" variant="ghost" data-danger="true" disabled={props.saving || props.deleteDisabled} title={props.deleteDisabled ? props.deleteDisabledReason ?? "每类至少保留一个模板" : undefined} onClick={props.onDelete}>删除</Button> : null}
         {props.mode !== "new" ? <Button type="button" disabled={props.saving || invalid} onClick={props.onDuplicate}>另存新模板</Button> : null}
         <Button type="button" variant="primary" disabled={props.saving || invalid} onClick={props.onSave}>保存</Button>
       </div>

@@ -53,6 +53,27 @@ export function reviewCommitFramesCommitted(frames: BridgeFrame[]): boolean {
   return frames.some((frame) => frame.kind === "docCommitted");
 }
 
+/** 部分成功时以服务端恢复出的真实落地数为准。 */
+export function reviewCommitFramesAppliedCount(frames: BridgeFrame[]): number | null {
+  for (let index = frames.length - 1; index >= 0; index -= 1) {
+    const frame = frames[index];
+    if (frame?.kind === "docCommitted" && frame.data.appliedCount !== undefined) {
+      return frame.data.appliedCount;
+    }
+  }
+  return null;
+}
+
+export function reviewCommitFramesConflictCount(frames: BridgeFrame[]): number | null {
+  for (let index = frames.length - 1; index >= 0; index -= 1) {
+    const frame = frames[index];
+    if (frame?.kind === "docCommitted" && frame.data.conflictCount !== undefined) {
+      return frame.data.conflictCount;
+    }
+  }
+  return null;
+}
+
 /** 服务端显式确认该审阅命令已被其它请求/帧幂等结算，并非本次写入成功。 */
 export function reviewCommitFramesNoop(frames: BridgeFrame[]): boolean {
   return frames.some(

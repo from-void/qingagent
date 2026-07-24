@@ -5,6 +5,36 @@ import type { PmDoc, PmTableCellNode } from "../types";
 import { safeParsePmDoc } from "../validators";
 
 describe("pmMarkdownRoundTrip", () => {
+  it("R20门:代码块与图表内容含三/四反引号时使用更长围栏并完整往返", () => {
+    const code = ["const sample = `ok`;", "```", "````", "return sample;"].join("\n");
+    const diagram = ["flowchart TD", "```", "````", "  A --> B"].join("\n");
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { blockId: "ticks-code", language: "ts" },
+          content: [{ type: "text", text: code }],
+        },
+        {
+          type: "diagram",
+          attrs: { blockId: "ticks-diagram", lang: "mermaid", source: diagram, svg: null },
+        },
+      ],
+    };
+
+    const markdown = pmToMarkdown(source);
+    expect(markdown).toContain(`\`\`\`\`\`ts\n${code}\n\`\`\`\`\``);
+    expect(markdown).toContain(`\`\`\`\`\`mermaid\n${diagram}\n\`\`\`\`\``);
+
+    const roundTrip = markdownToPm(markdown);
+    const codeBlock = roundTrip.content.find((node) => node.type === "codeBlock");
+    const diagramBlock = roundTrip.content.find((node) => node.type === "diagram");
+    expect(codeBlock?.type === "codeBlock" ? codeBlock.content?.map((node) => node.text).join("") : null).toBe(code);
+    expect(diagramBlock?.type === "diagram" ? diagramBlock.attrs.source : null).toBe(diagram);
+  });
+
   it("含 span 表走 HTML，保真 bg/colwidth/多块 cell 并可往返", () => {
     const source: PmDoc = {
       type: "doc", attrs: { schemaVersion: 1 }, content: [{

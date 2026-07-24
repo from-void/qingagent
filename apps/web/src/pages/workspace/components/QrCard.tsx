@@ -113,6 +113,9 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
   // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
   const codeFirst = data.connectorId === "github" && !data.imageDataUri;
+  const expiryLabel = remain >= 60
+    ? `${Math.floor(remain / 60)}分${remain % 60 === 0 ? "" : `${remain % 60}秒`}`
+    : `${remain}秒`;
 
   useEffect(() => {
     refreshSentRef.current = false;
@@ -196,7 +199,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
         <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
       )}
       <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
-        {expired ? "已过期" : `${remain}s 后过期`}
+        {expired ? "已过期" : `${expiryLabel}后过期`}
       </div>
       {noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。

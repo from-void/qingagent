@@ -5,6 +5,7 @@ import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 type ExportFormat = "pdf" | "docx" | "txt" | "markdown" | "html";
+const warnedInvalidPublicOrigins = new Set<string>();
 
 const CONTENT_TYPES: Record<ExportFormat, string> = {
   pdf: "application/pdf",
@@ -49,9 +50,13 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   const title = session.title?.trim() || "青简导出";
   const filename = `${safeFilename(title)}.${FILE_EXTENSIONS[format]}`;
   const document = session.doc ?? session.legacySections;
+  const baseUrl = requestOrigin(c.req.url, {
+    forwardedHost: c.req.header("x-forwarded-host"),
+    forwardedProto: c.req.header("x-forwarded-proto"),
+  });
   let body: BodyInit;
   try {
-    body = await renderExport(format, document, title);
+    body = await renderExport(format, document, title, baseUrl);
   } catch (err) {
     const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error("[export] render failed", {
@@ -84,6 +89,7 @@ async function renderExport(
   format: ExportFormat,
   document: Parameters<typeof toTxt>[0],
   title: string,
+  baseUrl: string,
 ): Promise<BodyInit> {
   switch (format) {
     case "pdf":
@@ -93,11 +99,53 @@ async function renderExport(
     case "txt":
       return toTxt(document);
     case "markdown":
-      return toMarkdown(document, { title });
+      return toMarkdown(document, { title, baseUrl });
     case "html":
       // HTML 导出也先服务端渲染图表(否则图表会回退成源码)。
       return toHtml(await withRenderedDiagrams(document), { title });
   }
+}
+
+function requestOrigin(
+  requestUrl: string,
+  forwarded: { forwardedHost?: string; forwardedProto?: string },
+): string {
+  const parsed = new URL(requestUrl);
+  const publicOrigin = configuredPublicOrigin(process.env.QINGAGENT_PUBLIC_ORIGIN);
+  if (publicOrigin) return publicOrigin;
+  if (process.env.QINGAGENT_TRUST_PROXY !== "1") return parsed.origin;
+
+  const forwardedProto = forwarded.forwardedProto?.split(",", 1)[0]?.trim().toLowerCase();
+  const protocol = forwardedProto === "http" || forwardedProto === "https"
+    ? `${forwardedProto}:`
+    : parsed.protocol;
+  const forwardedHost = forwarded.forwardedHost?.split(",", 1)[0]?.trim();
+  if (!forwardedHost) return `${protocol}//${parsed.host}`;
+  try {
+    return new URL(`${protocol}//${forwardedHost}`).origin;
+  } catch {
+    return `${protocol}//${parsed.host}`;
+  }
+}
+
+function configuredPublicOrigin(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
+  const configured = value.trim();
+  try {
+    const parsed = new URL(configured);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.origin;
+  } catch {
+    // 统一走下面的明确告警与既有回退。
+  }
+  if (!warnedInvalidPublicOrigins.has(configured)) {
+    warnedInvalidPublicOrigins.add(configured);
+    console.warn("Invalid QINGAGENT_PUBLIC_ORIGIN; falling back to request-derived origin", {
+      config: "QINGAGENT_PUBLIC_ORIGIN",
+      value: configured,
+      fallback: "request origin (or trusted proxy origin when enabled)",
+    });
+  }
+  return null;
 }
 
 function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {

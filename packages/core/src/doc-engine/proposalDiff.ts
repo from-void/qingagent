@@ -80,8 +80,8 @@ export function buildDraftDiff(
   const textStarts = collectTopLevelTextStarts(normalizedBase);
   const hunks: DiffHunk[] = [];
   const pairs = lcsPairs(
-    normalizedBase.content.map(blockAlignmentKey),
-    normalizedDraft.content.map(blockAlignmentKey),
+    blockAlignmentKeys(normalizedBase.content),
+    blockAlignmentKeys(normalizedDraft.content),
   );
 
   let baseCursor = 0;
@@ -885,6 +885,17 @@ function blockAlignmentKey(block: PmBlockNode): string {
   const blockId = block.attrs.blockId;
   if (blockId && !blockId.startsWith("ai-block-")) return `id:${blockId}`;
   return `fingerprint:${block.type}:${blockPlainText(block).normalize("NFC")}`;
+}
+
+function blockAlignmentKeys(blocks: readonly PmBlockNode[]): string[] {
+  const occurrences = new Map<string, number>();
+  return blocks.map((block) => {
+    const key = blockAlignmentKey(block);
+    const occurrence = (occurrences.get(key) ?? 0) + 1;
+    occurrences.set(key, occurrence);
+    // 相同块的第 n 次出现只与另一侧第 n 次出现对齐，消除重复块 LCS 多解。
+    return `${key}\u0000occurrence:${occurrence}`;
+  });
 }
 
 function minimizeTextChange(

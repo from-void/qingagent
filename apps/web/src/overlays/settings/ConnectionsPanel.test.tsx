@@ -85,7 +85,32 @@ describe("ConnectionsPanel", () => {
     act(() => root.render(<ConnectionsPanel selectedId="feishu" />));
     expect(host.textContent).toContain("在对话里说「连飞书」发起");
     expect(host.textContent).toContain("扫码授权");
+    expect(host.textContent).not.toContain("立即检查");
     expect(host.textContent).not.toContain("设置页不直接发起授权");
+  });
+
+  it("飞书 start 传完整非空授权域，返回列表后仍显示等待授权", async () => {
+    h.start.mockResolvedValue({
+      mode: "authorization", verification_url: "https://feishu.test/auth", user_code: "LARK-CODE",
+      expiresAt: "2026-07-12T10:00:00.000Z", pendingId: "fs-pending",
+    });
+    h.connectors = [connector("disconnected")];
+    await act(async () => { root.render(<ConnectionsPanel selectedId="feishu" />); });
+
+    const startButton = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "扫码授权")!;
+    await act(async () => { startButton.click(); });
+    expect(h.start).toHaveBeenCalledWith("feishu", {
+      domains: [
+        "docs", "base", "sheets", "calendar", "im", "drive", "mail", "task",
+        "approval", "contact", "minutes", "wiki",
+      ],
+    });
+    expect(host.querySelector('[data-component="AuthCard"]')).toBeTruthy();
+
+    const back = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes("返回连接"));
+    act(() => back?.click());
+    expect(host.querySelector(".cn-badge--pending")?.textContent).toContain("等待授权");
+    expect(host.querySelector(".cn-sub")?.textContent).toContain("扫码验证进行中");
   });
 
   it("点击主按钮显示 loading 并把 GitHub start 结果内嵌为 AuthCard", async () => {
@@ -111,6 +136,24 @@ describe("ConnectionsPanel", () => {
     const button = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "连 接")!;
     await act(async () => { button.click(); });
     expect(h.toast).toHaveBeenCalledWith({ message: "连接操作失败 (403)", tone: "error" });
+  });
+
+  it("断开连接必须二次确认，取消时不撤权", async () => {
+    h.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    h.disconnect.mockResolvedValue(connector("disconnected"));
+    h.connectors = [connector("connected")];
+    await act(async () => { root.render(<ConnectionsPanel selectedId="feishu" />); });
+    const disconnectButton = Array.from(host.querySelectorAll("button")).find((item) => item.textContent === "断开连接")!;
+
+    await act(async () => { disconnectButton.click(); });
+    expect(h.confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "断开「飞书」连接？",
+      confirmLabel: "断开连接",
+    }));
+    expect(h.disconnect).not.toHaveBeenCalled();
+
+    await act(async () => { disconnectButton.click(); });
+    expect(h.disconnect).toHaveBeenCalledWith("feishu");
   });
 
   it("迟到的 start 响应不会显示到另一连接器详情", async () => {

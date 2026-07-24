@@ -1,10 +1,10 @@
 import {
   createDerivativeDoc,
-  deleteStyleTemplate,
   documentRepo,
   getDerivativeDocument,
   getDerivativeMeta,
   getStyleTemplate,
+  listStyleTemplates,
 } from "@qingagent/db";
 import {
   documentInput,
@@ -21,6 +21,7 @@ import {
 } from "../tools/derivatives.js";
 import {
   styleTemplateDeleteTool,
+  styleTemplateListTool,
   styleTemplateSaveTool,
 } from "../tools/styleTemplates.js";
 
@@ -179,25 +180,45 @@ describe("derivative Agent tools", () => {
 });
 
 describe("style template Agent tools", () => {
-  it("删除工具透传保底校验的可读错误", async () => {
-    expect(await deleteStyleTemplate("gzh-layout-classic")).toBe(true);
+  it("删除工具拒删内置模板并透传可读错误", async () => {
     const result = await styleTemplateDeleteTool.execute!(
-      { id: "gzh-layout-minimal" },
+      { id: "gzh-layout-classic" },
       {} as never,
     );
     expect(result).toEqual({
       ok: false,
       deleted: false,
-      error: "每类至少保留一个模板",
+      error: "内置模板不可删除",
     });
+    expect(await getStyleTemplate("gzh-layout-classic")).not.toBeNull();
+  });
+
+  it("dtype 使用合法枚举，list 的 all 与省略 dtype 都返回全量", async () => {
+    const all = await styleTemplateListTool.execute!({ dtype: "all" }, {} as never) as {
+      ok: boolean;
+      templates: Array<{ id: string }>;
+    };
+    const omitted = await styleTemplateListTool.execute!({}, {} as never) as {
+      ok: boolean;
+      templates: Array<{ id: string }>;
+    };
+    expect(all).toEqual(omitted);
+    expect(all.templates).toHaveLength((await listStyleTemplates()).length);
+
+    const invalid = await styleTemplateSaveTool.execute!(
+      { dtype: "writing", slot: "writing", name: "孤儿", prompt: "规则" } as never,
+      {} as never,
+    );
+    expect(invalid).toMatchObject({ error: true, message: expect.stringContaining("dtype 仅支持 gzh/xhs/translate/deai") });
   });
 
   it("保存工具可更新 builtin，并保留未传的 detail", async () => {
     const old = await getStyleTemplate("gzh-story");
+    expect(old?.dtype).toBe("gzh");
     const result = await styleTemplateSaveTool.execute!(
       {
         id: old!.id,
-        dtype: old!.dtype,
+        dtype: "gzh",
         slot: old!.slot,
         name: old!.name,
         prompt: "Agent 自定义提示",

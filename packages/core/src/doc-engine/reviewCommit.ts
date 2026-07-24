@@ -16,7 +16,10 @@ import {
 } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
 import type { SessionState, SuggestionRecord } from "../session/sessionState.js";
-import { updateToolCallInChatHistory } from "../session/sessionState.js";
+import {
+  updatePatchSummaryOutcomeInChatHistory,
+  updateToolCallInChatHistory,
+} from "../session/sessionState.js";
 import { buildDocumentSnapshot } from "./docGenerator.js";
 import { advanceLastContentEditedAt, commitDocumentOp } from "./commitDocumentOp.js";
 import { applySuggestionsToDoc } from "./pmPatch.js";
@@ -24,7 +27,6 @@ import { applyDiffHunks } from "./proposalDiff.js";
 import {
   createSuggestionBatchId,
   createSuggestionFromDiffHunk,
-  diffHunkToStep,
 } from "./draftReviewSuggestions.js";
 import {
   rebaseRemainingPendingDraft,
@@ -56,7 +58,9 @@ import { buildSuggestionToolCallSpec } from "../agent-run/toolCards.js";
 import { deriveTitleFromSections } from "../session/title.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
+  buildAnnotationMappingSteps,
   buildAnnotationMappingNotice,
+  diffHunkToPmStep,
   mapAnnotationGroupsThroughSteps,
   pmDocContentSize,
 } from "./annotationMapping.js";
@@ -899,17 +903,20 @@ export async function* commitPatches(
           return {
             nextDoc: applyResult.doc,
             // steps 只为真正落上的 hunk 生成——被跳过的 hunk 不再写进 document_ops(修记假账)。
-            steps: applyResult.applied.map((hunk) =>
-              ({
-                ...diffHunkToStep(
-                  hunk,
-                  hunk.anchor.pmFrom ?? 0,
-                  hunk.anchor.pmTo ?? hunk.anchor.pmFrom ?? 0,
-                ),
-                // 只作为 document_ops 幂等结算元数据落库，不进入 suggestion wire step。
-                suggestionId: hunk.hunkId,
+            steps: applyResult.applied
+              .map((hunk) =>
+                ({
+                  ...diffHunkToPmStep(currentDoc, hunk),
+                  // 只作为 document_ops 幂等结算元数据落库，不进入 suggestion wire step。
+                  suggestionId: hunk.hunkId,
+                }),
+              )
+              // 与正文应用顺序一致：高位先行，后续 step 仍可使用提交前文档坐标。
+              .sort((left, right) => {
+                const leftFrom = typeof left.from === "number" ? left.from : Number.NEGATIVE_INFINITY;
+                const rightFrom = typeof right.from === "number" ? right.from : Number.NEGATIVE_INFINITY;
+                return rightFrom - leftFrom;
               }),
-            ),
           };
         }
         const applied = applySuggestionsToDoc(currentDoc, accepted, state.docVersion);
@@ -989,11 +996,14 @@ export async function* commitPatches(
   state.docVersion = result.docVersion;
   state._directionChangeAskedSinceLastWrite = false;
   const committedAnnotationSteps = (result.steps ?? []) as PmStep[];
-  if (state.annotationGroups.length > 0 && committedAnnotationSteps.length > 0) {
+  const annotationMappingSteps = wholeCandidateAccepted && wholeCandidateDoc
+    ? buildAnnotationMappingSteps(oldBaseDoc, result.doc)
+    : committedAnnotationSteps;
+  if (state.annotationGroups.length > 0 && annotationMappingSteps.length > 0) {
     const replacedOrigins = [...new Set(state.annotationGroups.map((group) => group.origin))];
     const mapped = mapAnnotationGroupsThroughSteps(
       state.annotationGroups,
-      committedAnnotationSteps,
+      annotationMappingSteps,
       result.doc,
     );
     state.annotationGroups = mapped.groups;
@@ -1052,7 +1062,7 @@ export async function* commitPatches(
   if (skippedRecords.length > 0) {
     const message = legacyReplayUnknown
       ? "升级前的提交记录缺少逐项结果，无法确认这些修改是否写入；已刷新为当前文档，请重新审阅。"
-      : `有 ${skippedRecords.length} 处修改因文档已变化而失效，未写入；其余修改已提交。`;
+      : `${appliedHunkCount} 处已写入，${skippedRecords.length} 处因文档变化失效。`;
     skippedPersisted = yield* settleUnappliedReviewRecords(
       state,
       skippedRecords,
@@ -1129,6 +1139,22 @@ export async function* commitPatches(
     }
   } else {
     clearReviewDiffState(state);
+  }
+
+  if (skippedRecords.length > 0 && (legacyReplayUnknown || appliedHunkCount === 0)) {
+    updatePatchSummaryOutcomeInChatHistory(
+      state,
+      records.map((record) => record.suggestion.id),
+      "failed",
+    );
+  } else {
+    updatePatchSummaryOutcomeInChatHistory(
+      state,
+      records.map((record) => record.suggestion.id),
+      "committed",
+      shouldCommitDiffHunks ? appliedHunkCount : accepted.length,
+      shouldCommitDiffHunks ? skippedRecords.length : 0,
+    );
   }
 
   yield {

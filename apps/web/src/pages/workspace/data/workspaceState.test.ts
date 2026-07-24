@@ -131,10 +131,30 @@ function patchSpec(
   };
 }
 
+function failedPatchSpec(suggestion: DocSuggestion, reason: string): ToolCallSpec {
+  const spec = patchSpec(suggestion, "accepted");
+  return {
+    ...spec,
+    status: { kind: "failed", data: { retriable: false, reason } },
+  };
+}
+
 function patchSummaryReviewOutcome(message: ChatMessage | undefined): string | null {
   const part = message?.parts.find((p) => p.kind === "patchSummary");
   if (!part || part.kind !== "patchSummary") return null;
   return (part.data as typeof part.data & { reviewOutcome?: string }).reviewOutcome ?? null;
+}
+
+function patchSummaryAppliedCount(message: ChatMessage | undefined): number | null {
+  const part = message?.parts.find((p) => p.kind === "patchSummary");
+  if (!part || part.kind !== "patchSummary") return null;
+  return part.data.appliedCount ?? null;
+}
+
+function patchSummaryConflictCount(message: ChatMessage | undefined): number | null {
+  const part = message?.parts.find((p) => p.kind === "patchSummary");
+  if (!part || part.kind !== "patchSummary") return null;
+  return part.data.conflictCount ?? null;
 }
 
 describe("workspaceReducer", () => {
@@ -981,6 +1001,34 @@ describe("annotationGroupsReady 来源增量", () => {
       });
 
       expect(patchSummaryReviewOutcome(committed.messages[0])).toBeNull();
+    });
+
+    it("单项 failed 先到后，部分成功 docCommitted 会纠正摘要并保留冲突计数", () => {
+      const suggestion = reviewSuggestion("h-partial", "batch-partial");
+      const reviewMessage: ChatMessage = {
+        ...baseMessage,
+        id: "m-partial-count",
+        parts: [{ kind: "patchSummary", data: { count: 2, hunkIds: [suggestion.id, "h-applied"] } }],
+      };
+      const next = reduce(
+        { kind: "chatMessageAdded", data: { message: reviewMessage } },
+        {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: reviewMessage.id,
+            toolCallId: suggestion.id,
+            spec: failedPatchSpec(suggestion, "1 处已写入，1 处因文档变化失效。"),
+          },
+        },
+        {
+          kind: "docCommitted",
+          data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 1 },
+        },
+      );
+
+      expect(patchSummaryReviewOutcome(next.messages[0])).toBe("committed");
+      expect(patchSummaryAppliedCount(next.messages[0])).toBe(1);
+      expect(patchSummaryConflictCount(next.messages[0])).toBe(1);
     });
   });
 

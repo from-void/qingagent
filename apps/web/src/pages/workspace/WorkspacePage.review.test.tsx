@@ -2382,7 +2382,13 @@ describe("WorkspacePage review controls", () => {
 
     // commit 返回后回流的审核结果:采纳 1 处 · 拒绝 1 处,而不是全拒
     await act(async () => {
-      pendingCommit.resolve([docStateFrame("editing")]);
+      pendingCommit.resolve([
+        {
+          kind: "docCommitted",
+          data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 0 },
+        },
+        docStateFrame("editing"),
+      ]);
       await pendingCommit.promise;
     });
     await flushMicrotasks(5);
@@ -2396,6 +2402,38 @@ describe("WorkspacePage review controls", () => {
     expect(outcome.acceptedCount).toBe(1);
     expect(outcome.rejectedCount).toBe(1);
     expect(outcome.hunks.map((h) => h.verdict)).toEqual(["accepted", "rejected"]);
+  });
+
+  it("W1c 放弃剩余项时已采纳部分整批冲突，不预报保留成功也不回流伪结果", async () => {
+    const first = textReviewToolCall("p-reject-conflict-1", "batch-a", 0);
+    const second = textReviewToolCall("p-reject-conflict-2", "batch-b", 1);
+    const stream = await renderWorkspaceWithReview([first, second]);
+    await emitFrames(stream, [toolCallUpdatedFrame({
+      ...first,
+      status: { kind: "accepted" },
+    })]);
+    mockCommitWithFrames(stream, [
+      toolCallUpdatedFrame({
+        ...first,
+        status: {
+          kind: "failed",
+          data: { retriable: false, reason: "文档正文已变化，本次修改未写入。" },
+        },
+      }),
+      docStateFrame("editing"),
+    ]);
+
+    await clickButton("放弃全部");
+    await clickButton("确认放弃全部");
+    await flushMicrotasks();
+
+    const toastText = host?.querySelector<HTMLElement>(".qa-toast")?.textContent ?? "";
+    expect(toastText).toContain("本次修改未写入");
+    expect(toastText).not.toContain("已保留已采纳");
+    const outcomeCommands = stream.sendCommand.mock.calls
+      .map(([command]) => command as Command)
+      .filter((command) => command.kind === "submitReviewOutcome");
+    expect(outcomeCommands).toHaveLength(0);
   });
 
   // e2e-loop-0704 R1/R12 回归:审核回流追问(内联 askUser 问卷)提交后弹层滞留,
@@ -3064,6 +3102,47 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
     expect(host?.textContent).toContain("剩余 · 2 处");
     expect(document.body.textContent).toContain("提交失败 · 候选已保留，请重试");
+  });
+
+  it("W1c 部分成功含单项 failed 时不误报整批未写入", async () => {
+    const first = textReviewToolCall("p-partial-1", "batch-partial-1", 0);
+    const second = textReviewToolCall("p-partial-2", "batch-partial-2", 1);
+    const stream = await renderWorkspaceWithReview([first, second]);
+    await emitFrames(stream, [{
+      kind: "chatMessageAdded",
+      data: {
+        message: {
+          id: "m-review-partial",
+          role: { kind: "agent" },
+          ts: "2026-07-17T00:00:00.000Z",
+          parts: [{ kind: "patchSummary", data: { count: 2, hunkIds: [first.id, second.id] } }],
+          chips: null,
+        },
+      },
+    }]);
+    const failedSecond: ToolCallSpec = {
+      ...second,
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "1 处已写入，1 处因文档变化失效。" },
+      },
+    };
+    mockCommitWithFrames(stream, [
+      toolCallUpdatedFrame(failedSecond),
+      {
+        kind: "docCommitted",
+        data: { sessionId: "s-1", version: 2, appliedCount: 1, conflictCount: 1 },
+      },
+      docStateFrame("editing"),
+    ]);
+
+    await clickButton("提交 ↵");
+    await flushMicrotasks();
+
+    expect(host?.querySelector<HTMLElement>(".qa-toast")?.textContent ?? "").not.toContain("本次修改未写入");
+    const summary = host?.querySelector<HTMLElement>('[data-wf="PatchSummary"]');
+    expect(summary?.textContent).toContain("1 处已写入，1 处因文档变化失效");
+    expect(summary?.textContent).not.toContain("本轮修改未写入");
   });
 
   it("异常空快照不会让已有正文坍缩为空编辑器", async () => {

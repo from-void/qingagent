@@ -544,6 +544,47 @@ export function updateToolCallInChatHistory(
   });
 }
 
+/**
+ * 把审阅提交终态写回原 patchSummary，而不是只依赖本次页面内 reducer。
+ * chatHistory 会随 thread metadata 持久化，因此 reload 后仍能区分“已写入”与
+ * “冲突回滚”；同时 fail-closed，迟到的失败结算不得覆盖已确认成功的摘要。
+ */
+export function updatePatchSummaryOutcomeInChatHistory(
+  state: SessionState,
+  hunkIds: readonly string[],
+  reviewOutcome: "failed" | "committed",
+  appliedCount?: number,
+  conflictCount?: number,
+): boolean {
+  const targetIds = new Set(hunkIds);
+  if (targetIds.size === 0) return false;
+
+  for (let messageIndex = state.chatHistory.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = state.chatHistory[messageIndex]!;
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]!;
+      if (part.kind !== "patchSummary") continue;
+      if (!part.data.hunkIds.some((id) => targetIds.has(id))) continue;
+      if (reviewOutcome === "failed" && part.data.reviewOutcome === "committed") {
+        return false;
+      }
+      part.data.reviewOutcome = reviewOutcome;
+      if (reviewOutcome === "committed" && appliedCount !== undefined) {
+        part.data.appliedCount = appliedCount;
+      } else {
+        delete part.data.appliedCount;
+      }
+      if (reviewOutcome === "committed" && conflictCount !== undefined) {
+        part.data.conflictCount = conflictCount;
+      } else {
+        delete part.data.conflictCount;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface ToolCallUpdate {
   messageId: string;
   toolCallId: string;

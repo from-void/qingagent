@@ -13,7 +13,7 @@ export function toMarkdown(
   const doc = isPmDocDocument(document)
     ? document
     : legacySectionsToPm(document as never);
-  const body = pmToMarkdown(doc).trim();
+  const body = pmToMarkdown(doc, { baseUrl: options.baseUrl }).trim();
   const title = options.title?.trim();
   if (!title) return body;
   // 正文开头已是同名 H1 就不再加一遍。用结构层 documentLeadsWithTitle(忽略 bold/italic

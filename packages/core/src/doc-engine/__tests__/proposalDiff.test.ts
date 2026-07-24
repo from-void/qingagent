@@ -240,6 +240,34 @@ describe("proposalDiff shadow engine", () => {
     expect(applyDiffHunks(base, hunks).doc).toEqual(draft);
   });
 
+  it("重复段落按出现序号对齐，部分采纳不会插入幻影重复块", () => {
+    const base = doc([
+      paragraph("ai-block-a-1", "重复段"),
+      paragraph("ai-block-a-2", "重复段"),
+      paragraph("ai-block-b-1", "变化段"),
+    ]);
+    const draft = doc([
+      paragraph("ai-block-b-0", "变化段"),
+      paragraph("ai-block-a-3", "重复段"),
+      paragraph("ai-block-b-2", "变化段"),
+      paragraph("ai-block-a-4", "重复段"),
+    ]);
+
+    const hunks = buildDraftDiff(base, draft);
+    expect(hunks.some((hunk) => hunk.op === "insert" && hunk.afterText === "重复段")).toBe(false);
+    const accepted = hunks.find((hunk) => hunk.op === "insert" && hunk.afterText === "变化段");
+    if (!accepted) throw new Error("fixture missing inserted changed block");
+
+    const partiallyCommitted = applyDiffHunks(base, [accepted]).doc;
+    const duplicateCount = partiallyCommitted.content.filter((block) =>
+      "content" in block && Array.isArray(block.content) && texts(block.content) === "重复段"
+    ).length;
+    expect(duplicateCount).toBe(2);
+    expect(applyDiffHunks(base, hunks).doc.content.map((block) =>
+      "content" in block && Array.isArray(block.content) ? texts(block.content) : ""
+    )).toEqual(["变化段", "重复段", "变化段", "重复段"]);
+  });
+
   it("同块多 hunk 也保持逐 hunk independent review batch", () => {
     const base = doc([paragraph("block-a", "湖边有柳树。他拿着蓝毛巾。")]);
     const draft = doc([paragraph("block-a", "湖边有胡桃树。他拿着黄毛巾。")]);

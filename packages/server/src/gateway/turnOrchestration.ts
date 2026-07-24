@@ -79,7 +79,10 @@ async function* handleCancelAskUser(
         part.data.status.kind === "failed" &&
         part.data.status.data.reason === "用户已放弃本轮问卷",
     );
-    if (cancelled) return;
+    if (cancelled) {
+      await schedulePersist(session, "cancelAskUser");
+      return;
+    }
   }
   const hasSuspension = hasActiveSuspension(session);
   const hasMatchingSuspension = hasSuspension && session.toolCallId === toolCallId;
@@ -113,25 +116,33 @@ async function* handleCancelAskUser(
     // 之后才落地、被错投影成"新问卷"。标记该 toolCallId,让挂起处理处命中即丢弃,回 idle。
     (session._abandonedAskUserToolCallIds ??= new Set()).add(toolCallId);
     yield* abortAndCleanupTurn(session, { emitStreamEnd: false });
-    return;
+  } else {
+    clearSuspension(session);
+    transitionDocState(
+      session,
+      normalizeTargetDocState(
+        session,
+        session.previousDocState ?? deriveContentState(session),
+        "ask_user_abandoned",
+      ),
+      "ask_user_abandoned",
+      { mode: "normalize" },
+    );
+    yield* emitProjectedDocState(session, "ask_user_abandoned");
   }
 
-  clearSuspension(session);
-  transitionDocState(
-    session,
-    normalizeTargetDocState(
-      session,
-      session.previousDocState ?? deriveContentState(session),
-      "ask_user_abandoned",
-    ),
-    "ask_user_abandoned",
-    { mode: "normalize" },
-  );
-  yield* emitProjectedDocState(session, "ask_user_abandoned");
-
-  schedulePersist(session, "cancelAskUser").catch((err) => {
-    console.error("[cancelAskUser] Persist after cancel failed:", err instanceof Error ? err.message : String(err));
-  });
+  // 取消终态必须可恢复。schedulePersist 自身会保留 dirty 并做有界重试；
+  // 重试耗尽后继续向 actor 抛出，让其广播/返回 draftingFailed，不能只打日志
+  // 却把前台命令伪装成成功。
+  try {
+    await schedulePersist(session, "cancelAskUser");
+  } catch (err) {
+    console.error(
+      "[cancelAskUser] Persist after cancel failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    throw err;
+  }
 }
 
 function canAbortRunningAskUser(session: SessionState, toolCallId: string): boolean {

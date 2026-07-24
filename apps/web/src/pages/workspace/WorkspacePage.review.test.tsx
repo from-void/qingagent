@@ -2580,6 +2580,87 @@ describe("WorkspacePage review controls", () => {
     );
   });
 
+  it("P1-11 回归:actor 取消失败虽返回 HTTP 200 错误帧，前端仍回滚并保留作答入口", async () => {
+    const stream = await renderWorkspaceWithInlineAskUser();
+    let rejectCancel: (error: unknown) => void = () => undefined;
+    stream.sendCommand.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCancel = reject;
+      }),
+    );
+
+    await clickElement(buttonByText("手动输入"));
+    await flushMicrotasks(3);
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
+
+    await act(async () => {
+      rejectCancel(new Error("cancelAskUser failed: actor error frame"));
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).not.toBeNull();
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("false");
+    expect(exportButton().getAttribute("aria-disabled")).toBe("true");
+    expect(host?.textContent).toContain("为什么放弃这些修改？");
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain(
+      "问卷已恢复",
+    );
+  });
+
+  it("P1-11 回归:权威取消成功帧先到，迟到 fetch 失败不得覆盖回问卷锁态", async () => {
+    const stream = await renderWorkspaceWithInlineAskUser();
+    let rejectCancel: (error: unknown) => void = () => undefined;
+    stream.sendCommand.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectCancel = reject;
+      }),
+    );
+
+    await clickElement(buttonByText("手动输入"));
+    await flushMicrotasks(3);
+
+    await emitFrames(stream, [
+      {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-ask",
+          toolCallId: "ask-1",
+          spec: {
+            ...inlineAskUserToolCall("ask-1"),
+            status: {
+              kind: "failed",
+              data: {
+                retriable: false,
+                reason: "用户已放弃本轮问卷",
+              },
+            },
+          },
+        },
+      },
+      {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      },
+    ]);
+
+    await act(async () => {
+      rejectCancel(new Error("response connection reset after authoritative frames"));
+    });
+    await flushMicrotasks(5);
+
+    expect(host?.querySelector('[data-wf="AskUserOverlay"]')).toBeNull();
+    expect(getChatEditor().getAttribute("contenteditable")).toBe("true");
+    expect(exportButton().getAttribute("aria-disabled")).toBeNull();
+    expect(host?.querySelector(".qa-toast")?.textContent).toContain("已放弃本轮");
+    expect(host?.querySelector(".qa-toast")?.textContent).not.toContain(
+      "问卷已恢复",
+    );
+  });
+
   it("#25 回归:编辑锁提示 portal 到 body 顶层 fixed,不再留在 .ws-right 滚动流内", async () => {
     const { WorkspacePage } = await import("./WorkspacePage");
     await render(<WorkspacePage />);

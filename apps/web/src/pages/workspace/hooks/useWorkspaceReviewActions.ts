@@ -8,7 +8,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { Command } from "@qingagent/contract-ts";
+import type { BridgeFrame, Command } from "@qingagent/contract-ts";
 import { validateCommand } from "../../../system/validators";
 import type { ServerStream } from "../data/serverStream";
 import {
@@ -46,10 +46,38 @@ const GENRE_LABELS: Record<string, string> = {
   academic: "学术/创作",
 };
 
+export function askUserCancelMutationKey(
+  sessionId: string,
+  toolCallId: string,
+): string {
+  return `${sessionId}\0${toolCallId}`;
+}
+
+export function isAuthoritativeAskUserCancelFrame(
+  frame: BridgeFrame,
+): frame is Extract<BridgeFrame, { kind: "toolCallUpdated" }> {
+  return (
+    frame.kind === "toolCallUpdated" &&
+    frame.data.spec.body.kind === "askUser" &&
+    frame.data.spec.status.kind === "failed" &&
+    frame.data.spec.status.data.reason === "用户已放弃本轮问卷"
+  );
+}
+
+function isServerReportedCancelFailure(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { cancelAskUserServerFailure?: unknown })
+      .cancelAskUserServerFailure === true
+  );
+}
+
 export function useWorkspaceReviewActions(input: {
   state: WorkspaceState;
   stateRef: MutableRefObject<WorkspaceState>;
   streamRef: MutableRefObject<ServerStream | null>;
+  askUserCancelMutationTokensRef: MutableRefObject<Map<string, symbol>>;
   reviewCloseInFlightRef: MutableRefObject<Promise<void> | null>;
   dispatch: Dispatch<WorkspaceAction>;
   showToast: (message: string, durationMs?: number) => void;
@@ -68,6 +96,7 @@ export function useWorkspaceReviewActions(input: {
     state,
     stateRef,
     streamRef,
+    askUserCancelMutationTokensRef,
     reviewCloseInFlightRef,
     dispatch,
     showToast,
@@ -83,7 +112,6 @@ export function useWorkspaceReviewActions(input: {
   const [submittingAskUserId, setSubmittingAskUserId] = useState<string | null>(
     null,
   );
-  const askUserMutationIdsRef = useRef(new Set<string>());
   const [, setGoalLabel] = useState<string | null>(null);
   const autoCommitReviewKeyRef = useRef<string | null>(null);
   const reviewSettlementInFlightRef = useRef<Promise<void> | null>(null);
@@ -484,11 +512,15 @@ export function useWorkspaceReviewActions(input: {
   const handleCancelAskUser = useCallback(
     (toolCall: ToolCallSpec) => {
       const current = stateRef.current;
-      if (askUserMutationIdsRef.current.has(toolCall.id)) return;
       if (!current.sessionId) {
         showToast("会话未就绪");
         return;
       }
+      const mutationKey = askUserCancelMutationKey(
+        current.sessionId,
+        toolCall.id,
+      );
+      if (askUserCancelMutationTokensRef.current.has(mutationKey)) return;
       const originalTc = current.toolCalls.get(toolCall.id);
       if (!originalTc) {
         showToast("问卷已不在");
@@ -528,7 +560,8 @@ export function useWorkspaceReviewActions(input: {
         },
       };
 
-      askUserMutationIdsRef.current.add(toolCall.id);
+      const mutationToken = Symbol(mutationKey);
+      askUserCancelMutationTokensRef.current.set(mutationKey, mutationToken);
       setSubmittingAskUserId(toolCall.id);
       dispatch({
         kind: "toolCallUpdated",
@@ -545,6 +578,17 @@ export function useWorkspaceReviewActions(input: {
         })
         .catch((e) => {
           console.error("[workspace] cancelAskUser failed", e);
+          const authoritativeCancellationObserved =
+            askUserCancelMutationTokensRef.current.get(mutationKey) !==
+            mutationToken;
+          if (authoritativeCancellationObserved) {
+            showToast(
+              isServerReportedCancelFailure(e)
+                ? "已放弃，但状态保存失败，请刷新后确认"
+                : "已放弃本轮",
+            );
+            return;
+          }
           const latest = stateRef.current.toolCalls.get(toolCall.id);
           const stillOptimistic =
             latest?.status.kind === "failed" &&
@@ -562,7 +606,12 @@ export function useWorkspaceReviewActions(input: {
           showToast("放弃失败 · 问卷已恢复，请重试");
         })
         .finally(() => {
-          askUserMutationIdsRef.current.delete(toolCall.id);
+          if (
+            askUserCancelMutationTokensRef.current.get(mutationKey) ===
+            mutationToken
+          ) {
+            askUserCancelMutationTokensRef.current.delete(mutationKey);
+          }
           setSubmittingAskUserId((currentId) =>
             currentId === toolCall.id ? null : currentId,
           );

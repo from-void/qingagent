@@ -515,6 +515,56 @@ describe("ServerStream", () => {
     expect(result).toEqual([busyFrame]);
   });
 
+  it("P1-11: cancelAskUser 即使 HTTP 200，只要响应含 actor 错误帧也必须 reject", async () => {
+    const errorFrame: BridgeFrame = {
+      kind: "stream",
+      data: {
+        kind: "draftingFailed",
+        data: {
+          streamId: "error",
+          reason: "模型服务暂时不可用，请稍后重试",
+          retriable: true,
+        },
+      },
+    };
+    globalThis.fetch = commandResponse([errorFrame]);
+
+    const stream = new ServerStream();
+    await expect(
+      stream.sendCommand({
+        kind: "cancelAskUser",
+        data: { sessionId: "s-1", toolCallId: "ask-1" },
+      }),
+    ).rejects.toThrow("cancelAskUser failed");
+  });
+
+  it.each([
+    { label: "非数组响应", body: { accepted: true } },
+    { label: "非法 frame", body: [{ kind: "stream", data: {} }] },
+  ])("P1-11: cancelAskUser 防御性拒绝$label", async ({ body }) => {
+    globalThis.fetch = commandResponse(body);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.sendCommand({
+        kind: "cancelAskUser",
+        data: { sessionId: "s-1", toolCallId: "ask-1" },
+      }),
+    ).rejects.toThrow("cancelAskUser failed");
+  });
+
+  it("P1-11: cancelAskUser 空帧数组表示幂等成功", async () => {
+    globalThis.fetch = commandResponse([]);
+    const stream = new ServerStream();
+
+    await expect(
+      stream.sendCommand({
+        kind: "cancelAskUser",
+        data: { sessionId: "s-1", toolCallId: "ask-1" },
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("updateDoc waits for the matching docWriteResult frame", async () => {
     let capturedBody: string | undefined;
     globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {

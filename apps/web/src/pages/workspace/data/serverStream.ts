@@ -59,6 +59,59 @@ interface LoggedBridgeFrame {
   frame: BridgeFrame;
 }
 
+class CancelAskUserCommandError extends Error {
+  readonly cancelAskUserServerFailure = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CancelAskUserCommandError";
+  }
+}
+
+function assertCancelAskUserResponse(result: unknown): void {
+  if (!Array.isArray(result)) {
+    throw new CancelAskUserCommandError(
+      "cancelAskUser failed: invalid command response",
+    );
+  }
+  for (const value of result) {
+    try {
+      validateBridgeFrame(value as BridgeFrame);
+    } catch {
+      throw new CancelAskUserCommandError(
+        "cancelAskUser failed: invalid response frame",
+      );
+    }
+    const frame = value as BridgeFrame;
+    if (frame.kind !== "stream") continue;
+    const streamFrame = frame.data as {
+      kind?: unknown;
+      data?: unknown;
+    };
+    if (
+      !["start", "end", "draftingFailed"].includes(
+        String(streamFrame.kind),
+      ) ||
+      streamFrame.data === null ||
+      typeof streamFrame.data !== "object"
+    ) {
+      throw new CancelAskUserCommandError(
+        "cancelAskUser failed: invalid response frame",
+      );
+    }
+    if (streamFrame.kind === "draftingFailed") {
+      const failure = streamFrame.data as { reason?: unknown };
+      throw new CancelAskUserCommandError(
+        `cancelAskUser failed: ${
+          typeof failure.reason === "string"
+            ? failure.reason
+            : "invalid failure frame"
+        }`,
+      );
+    }
+  }
+}
+
 function streamErrorForHttpStatus(status: number): StreamError {
   if (status === 401 || status === 403) {
     return {
@@ -527,6 +580,13 @@ export class ServerStream {
         sessionId?: string;
         epoch?: number;
       };
+
+      // cancelAskUser 是前台事务命令：actor 抛错时路由为了保留错误帧会返回
+      // HTTP 200 + draftingFailed[]。只看 response.ok 会把失败误报成成功，并让
+      // 前端清掉唯一作答入口、后端却继续持有 suspension。
+      if (command.kind === "cancelAskUser") {
+        assertCancelAskUserResponse(result);
+      }
 
       if (command.kind === "startSession") {
         const sessionId =

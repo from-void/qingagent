@@ -96,6 +96,7 @@ export class ConfirmService {
     const decision = evaluateCommandPolicy(parsed.data.command, {
       workspaceCwd: sessionWorkspaceDir(input.state.sessionId),
       background: parsed.data.background === true,
+      backgroundTimeoutExplicit: typeof parsed.data.timeout === "number",
       sandboxBinDir: input.sandboxBinDir ?? SANDBOX_BIN_DIR,
     });
     if (decision.action !== "confirm") {

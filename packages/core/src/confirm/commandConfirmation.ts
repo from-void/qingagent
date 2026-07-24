@@ -55,13 +55,17 @@ export function buildCommandConfirmSpec(
   const preview = redactSensitiveText(input.command).replace(/\s+/g, " ").trim().slice(0, 320);
   const kind = verdict.confirmKind ?? "command";
   const isMultiEffect = verdict.effects.length > 1;
-  const sub = kind === "install"
-    ? "将修改运行环境"
-    : kind === "send"
-      ? "将向外部发送或写入数据"
-      : isMultiEffect
-        ? "包含多种副作用"
-        : "破坏性命令";
+  const backgroundUsesDefaultTtl =
+    input.background === true && input.timeout == null && verdict.risk === "safe";
+  const sub = backgroundUsesDefaultTtl
+    ? "后台执行 · 使用默认 TTL"
+    : kind === "install"
+      ? "将修改运行环境"
+      : kind === "send"
+        ? "将向外部发送或写入数据"
+        : isMultiEffect
+          ? "包含多种副作用"
+          : "破坏性命令";
   const primaryLabel = kind === "install"
     ? "确认安装"
     : kind === "send"
@@ -73,8 +77,10 @@ export function buildCommandConfirmSpec(
   return confirmSpecSchema.parse({
     id,
     kind,
-    title: verdict.title.replace(/^需要执行：/, ""),
-    sub: input.background ? `后台执行 · ${sub}` : sub,
+    title: backgroundUsesDefaultTtl
+      ? "启动未显式限时的后台命令"
+      : verdict.title.replace(/^需要执行：/, ""),
+    sub: input.background && !backgroundUsesDefaultTtl ? `后台执行 · ${sub}` : sub,
     say: explanation,
     commandPreview: preview || "（无可显示内容）",
     footHint: "只授权本次调用 · 10 分钟后自动失效",

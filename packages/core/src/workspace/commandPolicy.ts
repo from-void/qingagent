@@ -22,6 +22,8 @@ export interface CommandPolicyOptions {
   sandboxBinDir?: string;
   /** 是否以后台进程方式执行(execute_command background:true)；硬 deny 不因后台模式放宽。 */
   background?: boolean;
+  /** 后台调用是否显式给出了 timeout；未给出时策略要求一次用户确认。 */
+  backgroundTimeoutExplicit?: boolean;
 }
 
 const NODE_COMMANDS = new Set(["node", "nodejs"]);
@@ -518,6 +520,13 @@ function evaluateCommandPolicyInner(command: string, options: CommandPolicyOptio
   }
   if (verdict.risk === "deny") {
     return { action: "deny", reason: verdict.denyReason ?? "命令被风险策略拒绝" };
+  }
+  if (options.background && !options.backgroundTimeoutExplicit) {
+    return {
+      action: "confirm",
+      reason: "后台命令未显式设置 timeout，将按会话默认 TTL 自动回收",
+      ...(credentialConsumer ? { credentialConsumer } : {}),
+    };
   }
   return credentialConsumer
     ? { action: "allow", credentialConsumer }

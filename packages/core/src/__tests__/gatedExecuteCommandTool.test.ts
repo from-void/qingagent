@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 import { BUILTIN_SKILLS_DIR } from "../skills/paths.js";
 import {
   EXECUTE_COMMAND_MAX_RETAINED_BYTES,
+  SANDBOX_BACKGROUND_TTL_MS,
+  SANDBOX_MAX_BACKGROUND_PROCESSES,
   createGatedExecuteCommandTool,
 } from "../workspace/gatedExecuteCommandTool.js";
 import { SANDBOX_TIMEOUT_MS, sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
@@ -73,10 +75,13 @@ function createToolHarness(
     state?: SessionState;
     workspaceStatus?: "pending" | "initializing" | "ready" | "paused" | "error" | "destroying" | "destroyed";
     sandboxStatus?: "pending" | "initializing" | "ready" | "starting" | "running" | "stopping" | "stopped" | "destroying" | "destroyed" | "error";
+    runningProcesses?: number;
+    simulateBackgroundTimeout?: boolean;
   } = {},
 ) {
   const executeCalls: SandboxExecuteOptions[] = [];
   const spawnCalls: SandboxSpawnOptions[] = [];
+  let spawnedRunning = 0;
   const workspace = {
     ...(options.workspaceStatus ? { status: options.workspaceStatus } : {}),
     sandbox: {
@@ -96,8 +101,24 @@ function createToolHarness(
         };
       },
       processes: {
-        spawn: async (_command: string, options: SandboxSpawnOptions) => {
-          spawnCalls.push(options);
+        list: async () => [
+          ...Array.from({ length: options.runningProcesses ?? 0 }, (_, index) => ({
+            pid: `existing-${index}`,
+            running: true,
+          })),
+          ...Array.from({ length: spawnedRunning }, (_, index) => ({
+            pid: `spawned-${index}`,
+            running: true,
+          })),
+        ],
+        spawn: async (_command: string, spawnOptions: SandboxSpawnOptions) => {
+          spawnCalls.push(spawnOptions);
+          spawnedRunning += 1;
+          if (options.simulateBackgroundTimeout && spawnOptions.timeout) {
+            setTimeout(() => {
+              spawnedRunning = Math.max(0, spawnedRunning - 1);
+            }, spawnOptions.timeout);
+          }
           return { pid: 12345 };
         },
       },
@@ -110,7 +131,12 @@ function createToolHarness(
     resolveCredentialEnv: options.resolveCredentialEnv ?? (() => ({})),
     sandboxBinDir: options.sandboxBinDir,
   });
-  return { tool, executeCalls, spawnCalls };
+  return {
+    tool,
+    executeCalls,
+    spawnCalls,
+    runningProcessCount: () => (options.runningProcesses ?? 0) + spawnedRunning,
+  };
 }
 
 async function executeTool(
@@ -492,22 +518,92 @@ describe("gated execute_command tool cwd 约束", () => {
   it("Gap4 回归:后台 spawn 显式设置输出保留上限", async () => {
     const { tool, spawnCalls } = createToolHarness("gated-retained-background");
 
-    const result = await executeTool(tool, { command: allowedFileCommand, background: true });
+    const result = await executeTool(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    });
 
     expect(result).toBe("Started background process (PID: 12345)");
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.maxRetainedBytes).toBe(EXECUTE_COMMAND_MAX_RETAINED_BYTES);
   });
 
-  it("Gap3 回归:后台进程有意长跑,未传 timeout 时不套前台默认超时", async () => {
-    const { tool, spawnCalls } = createToolHarness("gated-background-no-default-timeout");
+  it("P2-6 回归:无 timeout 后台命令需确认，通过后按默认 TTL 回收", async () => {
+    vi.useFakeTimers();
+    const state = createSession("gated-background-default-ttl");
+    const { tool, spawnCalls, runningProcessCount } = createToolHarness(state.sessionId, {
+      state,
+      simulateBackgroundTimeout: true,
+    });
+    const input = { command: allowedFileCommand, background: true };
+    const predicate = tool.requireApproval;
+    expect(typeof predicate).toBe("function");
+    if (typeof predicate !== "function") throw new Error("requireApproval missing");
+    expect(await predicate(input)).toBe(true);
+    expect(await executeTool(tool, input, approvalContext("run-missing", "tool-missing")))
+      .toContain("缺少有效的用户确认");
 
-    const result = await executeTool(tool, { command: allowedFileCommand, background: true });
+    issueApprovalProof(state, {
+      sessionId: state.sessionId,
+      runId: "run-approved",
+      toolCallId: "tool-approved",
+      commandDigest: commandConfirmationDigest(state.sessionId, input),
+    });
+    try {
+      expect(await executeTool(tool, input, approvalContext("run-approved", "tool-approved")))
+        .toBe("Started background process (PID: 12345)");
+      expect(spawnCalls[0]?.timeout).toBe(SANDBOX_BACKGROUND_TTL_MS);
+      expect(runningProcessCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(SANDBOX_BACKGROUND_TTL_MS);
+      expect(runningProcessCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    expect(result).toBe("Started background process (PID: 12345)");
+  it("P2-6 回归:显式 timeout 后台命令直接执行并覆盖默认 TTL", async () => {
+    const { tool, spawnCalls } = createToolHarness("gated-background-explicit-timeout");
+
+    expect(await executeTool(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 7,
+    })).toBe("Started background process (PID: 12345)");
+    expect(spawnCalls[0]?.timeout).toBe(7_000);
+  });
+
+  it("P2-6 回归:每会话后台进程达到上限时拒绝且不 spawn", async () => {
+    const { tool, spawnCalls } = createToolHarness("gated-background-process-limit", {
+      runningProcesses: SANDBOX_MAX_BACKGROUND_PROCESSES,
+    });
+
+    const result = await executeTool(tool, {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    });
+    expect(result).toContain(`后台进程已达上限 ${SANDBOX_MAX_BACKGROUND_PROCESSES}`);
+    expect(spawnCalls).toHaveLength(0);
+  });
+
+  it("P2-6 回归:并发启动在配额边界串行复核，最多一个成功", async () => {
+    const { tool, spawnCalls } = createToolHarness("gated-background-process-limit-race", {
+      runningProcesses: SANDBOX_MAX_BACKGROUND_PROCESSES - 1,
+    });
+    const input = {
+      command: allowedFileCommand,
+      background: true,
+      timeout: 10,
+    };
+
+    const results = await Promise.all([
+      executeTool(tool, input),
+      executeTool(tool, input),
+    ]);
+    expect(results.filter((result) => result.startsWith("Started background process"))).toHaveLength(1);
+    expect(results.filter((result) => result.includes("后台进程已达上限"))).toHaveLength(1);
     expect(spawnCalls).toHaveLength(1);
-    // 默认超时只对前台;后台不传则保持 undefined(生命周期由 process manager / abortSignal 管理)
-    expect(spawnCalls[0]?.timeout).toBeUndefined();
   });
 });
 
@@ -530,7 +626,11 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
     });
 
     expect(await executeTool(tool, { command: dingtalkCommand })).toBe("ok");
-    expect(await executeTool(tool, { command: dingtalkCommand, background: true })).toContain("Started background process");
+    expect(await executeTool(tool, {
+      command: dingtalkCommand,
+      background: true,
+      timeout: 10,
+    })).toContain("Started background process");
     expect(resolveCount).toBe(2);
     expect(executeCalls[0]?.env).toEqual({
       DINGTALK_APP_KEY: "app_x",

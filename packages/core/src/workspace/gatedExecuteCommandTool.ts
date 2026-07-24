@@ -15,8 +15,19 @@ import {
   shouldInjectCredentials,
 } from "./sessionWorkspace.js";
 
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export const EXECUTE_COMMAND_MAX_RETAINED_BYTES =
-  Number(process.env.QINGAGENT_SANDBOX_MAX_RETAINED_BYTES) || 1_048_576;
+  positiveIntegerEnv("QINGAGENT_SANDBOX_MAX_RETAINED_BYTES", 1_048_576);
+export const SANDBOX_BACKGROUND_TTL_MS =
+  positiveIntegerEnv("QINGAGENT_SANDBOX_BACKGROUND_TTL_MS", 30 * 60 * 1_000);
+export const SANDBOX_MAX_BACKGROUND_PROCESSES =
+  positiveIntegerEnv("QINGAGENT_SANDBOX_MAX_BACKGROUND_PROCESSES", 4);
+
+const backgroundSpawnLocks = new Map<string, Promise<void>>();
 
 const UNHEALTHY_WORKSPACE_STATUSES = new Set<Workspace["status"]>([
   "error",
@@ -101,6 +112,28 @@ async function resolveManagedCredentialEnv(): Promise<Record<string, string>> {
   }
 }
 
+async function withBackgroundSpawnLock<T>(
+  sessionId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const previous = backgroundSpawnLocks.get(sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    release = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  backgroundSpawnLocks.set(sessionId, queued);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (backgroundSpawnLocks.get(sessionId) === queued) {
+      backgroundSpawnLocks.delete(sessionId);
+    }
+  }
+}
+
 export function createGatedExecuteCommandTool({
   sessionId,
   state,
@@ -122,6 +155,7 @@ export function createGatedExecuteCommandTool({
         return evaluateCommandPolicy(input.command, {
           workspaceCwd: sessionWorkspaceDir(sessionId),
           background: input.background === true,
+          backgroundTimeoutExplicit: typeof input.timeout === "number",
           sandboxBinDir,
         }).action === "confirm";
       } catch {
@@ -152,6 +186,7 @@ export function createGatedExecuteCommandTool({
       const decision = evaluateCommandPolicy(input.command, {
         workspaceCwd: sessionDir,
         background: input.background === true,
+        backgroundTimeoutExplicit: typeof input.timeout === "number",
         sandboxBinDir,
       });
       if (decision.action === "deny") {
@@ -204,20 +239,32 @@ export function createGatedExecuteCommandTool({
       }
       const timeoutSeconds = typeof input.timeout === "number" ? input.timeout : undefined;
       const explicitTimeout = timeoutSeconds == null ? undefined : timeoutSeconds * 1_000;
-      // 前台命令套默认超时挡 runaway;后台进程是有意长跑的(dev server 等),只用模型显式值、不强加默认。
+      // 前台挡 runaway；后台未显式限时时使用可配置 TTL，避免页面关闭/正常轮次结束后无限存活。
       const foregroundTimeout = explicitTimeout ?? SANDBOX_TIMEOUT_MS;
+      const backgroundTimeout = explicitTimeout ?? SANDBOX_BACKGROUND_TTL_MS;
       const toolCallId = context?.agent?.toolCallId;
 
       if (input.background) {
         if (!sandbox.processes) return "命令已被拒绝: 当前沙箱不支持后台进程";
-        const handle = await sandbox.processes.spawn(input.command, {
-          cwd,
-          ...perCallCredentialEnv,
-          timeout: explicitTimeout,
-          maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
-          abortSignal: context?.abortSignal,
+        return await withBackgroundSpawnLock(sessionId, async () => {
+          const processes = await sandbox.processes!.list();
+          const runningCount = processes.filter((process) => process.running).length;
+          if (runningCount >= SANDBOX_MAX_BACKGROUND_PROCESSES) {
+            return `命令已被拒绝: 当前会话后台进程已达上限 ${SANDBOX_MAX_BACKGROUND_PROCESSES}`;
+          }
+          // 当前 Mastra SpawnProcessOptions 只暴露 timeout/output/abort/env/cwd，
+          // LocalSandbox/bwrap 没有 per-process cgroup 或 RLIMIT hook；非特权桌面进程也
+          // 不能可靠创建 cgroup。现阶段以 TTL、进程数和输出上限三层有界化，CPU/内存
+          // 硬配额仍是残留边界，待框架提供资源控制接口后接入。
+          const handle = await sandbox.processes!.spawn(input.command, {
+            cwd,
+            ...perCallCredentialEnv,
+            timeout: backgroundTimeout,
+            maxRetainedBytes: EXECUTE_COMMAND_MAX_RETAINED_BYTES,
+            abortSignal: context?.abortSignal,
+          });
+          return `Started background process (PID: ${handle.pid})`;
         });
-        return `Started background process (PID: ${handle.pid})`;
       }
 
       if (!sandbox.executeCommand) return "命令已被拒绝: 当前沙箱不支持命令执行";

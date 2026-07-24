@@ -16,6 +16,31 @@ const secretSpec: ConfirmSpec = {
 };
 
 describe("ConfirmService", () => {
+  it("P2-6 回归:安全后台命令无显式 timeout 时可进入确认通道", async () => {
+    const state = createSession("confirm-background-default-ttl");
+    const service = new ConfirmService({
+      createId: () => "confirm-background-id",
+      persist: async () => undefined,
+    });
+    const result = await service.requestCommandConfirm({
+      state,
+      runId: "run-background",
+      toolCallId: "tool-background",
+      toolName: "mastra_workspace_execute_command",
+      args: { command: "echo ready", background: true },
+      aborted: false,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      pending: {
+        spec: {
+          title: "启动未显式限时的后台命令",
+          sub: "后台执行 · 使用默认 TTL",
+        },
+      },
+    });
+  });
+
   it("PendingConfirm 持久化失败时不发卡、不保留 pending", async () => {
     const state = createSession("confirm-persist-fail");
     const service = new ConfirmService({

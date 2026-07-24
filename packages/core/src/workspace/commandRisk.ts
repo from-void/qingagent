@@ -912,8 +912,38 @@ function larkWrites(command: AnalyzedSimpleCommand): boolean {
   return apiIndex >= 0 && new Set(["post", "put", "patch", "delete"]).has(args[apiIndex + 1] ?? "");
 }
 
+const CURL_LOCAL_OUTPUT_LONG_OPTIONS = new Set([
+  "--output",
+  "--output-dir",
+  "--trace",
+  "--trace-ascii",
+  "--cookie-jar",
+  "--dump-header",
+]);
+
 function curlWrites(command: AnalyzedSimpleCommand): boolean {
   const args = command.argv.slice(1);
+  const words = command.words.slice(1);
+  // curl 的静态 GET 本身是只读网络访问；但 URL、header、认证信息等出站参数若含
+  // shell 动态展开，展开结果会进入请求。尤其 `?d=$(cat secret)` 会在 curl 启动前
+  // 读取本地内容并直接外发，必须沿用词法分析器保留的 dynamic 位升级为 send。
+  //
+  // 下列参数只决定本地输出目的地，动态文件名不会进入网络请求，避免把常见
+  // `curl URL -o "$OUTPUT"` 误判成外发。未知/其它动态参数保持 fail-closed。
+  const isLocalOutputValueOption = (value: string): boolean =>
+    value === "-o" ||
+    value === "-c" ||
+    value === "-D" ||
+    CURL_LOCAL_OUTPUT_LONG_OPTIONS.has(value.toLowerCase());
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i]!;
+    if (!word.dynamic) continue;
+    const previous = words[i - 1]?.value;
+    if (previous && isLocalOutputValueOption(previous)) continue;
+    const equalsIndex = word.value.indexOf("=");
+    if (equalsIndex > 0 && isLocalOutputValueOption(word.value.slice(0, equalsIndex))) continue;
+    return true;
+  }
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     const lower = arg.toLowerCase();

@@ -22,6 +22,14 @@ function decisionBg(command: string) {
   return evaluateCommandPolicy(command, { workspaceCwd, background: true });
 }
 
+function decisionBgWithTimeout(command: string) {
+  return evaluateCommandPolicy(command, {
+    workspaceCwd,
+    background: true,
+    backgroundTimeoutExplicit: true,
+  });
+}
+
 describe("commandPolicy P0 gate", () => {
   it("旧实名白名单迁移：存在性/执行位/路径限定/解释器不再决定策略，均默认 allow", () => {
     const dir = mkdtempSync(join(tmpdir(), "command-policy-bin-cli-"));
@@ -504,6 +512,15 @@ describe("commandPolicy P0 gate", () => {
     expect(decisionBg("lark-cli update").action).toBe("deny");
     expect(decisionBg("lark-cli auth qrcode").action).toBe("deny");
     expect(decisionBg("lark-cli auth login").action).toBe("deny");
+  });
+
+  it("P2-6 回归:后台且无显式 timeout 要求确认，显式 timeout 保持原风险", () => {
+    expect(decisionBg("echo ready")).toMatchObject({
+      action: "confirm",
+      reason: expect.stringContaining("默认 TTL"),
+    });
+    expect(decisionBgWithTimeout("echo ready")).toEqual({ action: "allow" });
+    expect(decisionBgWithTimeout("rm old.txt").action).toBe("confirm");
   });
 
   it("Round16 迁移:lark-cli auth login 的 device-code 有无有效值都归 connector,一律 deny", () => {

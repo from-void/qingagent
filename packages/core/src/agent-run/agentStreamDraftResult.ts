@@ -48,7 +48,7 @@ function genericToolFailureReason(
   toolResult: Record<string, unknown>,
   rawToolResult: unknown,
 ): string {
-  if (toolName === "parseFile") {
+  if (toolName === "parseFile" || toolName === "fetchArticle") {
     for (const field of ["error", "text"] as const) {
       const value = toolResult[field];
       if (typeof value === "string" && value.trim()) {

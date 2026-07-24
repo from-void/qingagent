@@ -76,6 +76,8 @@ describe("fetchArticle fallback signal", () => {
     const outputSchema = fetchArticleTool.outputSchema as z.ZodType;
     expect(() =>
       outputSchema.parse({
+        ok: true,
+        error: null,
         title: "标题",
         text: "这是一段足够长的正文，用于验证输出结构中包含浏览器降级信号字段。",
         wordCount: 42,
@@ -172,17 +174,67 @@ describe("fetchArticle fallback signal", () => {
     expect(result.wordCount).toBe(wordCount(browserText));
     expect(result.screenshotSrc).toBe("/api/v1/files/shot/screenshot.jpg");
     expect(result.via).toBe("browser");
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeNull();
   });
 
-  it("returns via=static on fetch failure instead of rejecting", async () => {
-    mockFetchArticleDeps.extractArticleContent.mockRejectedValueOnce(new Error("blocked"));
+  it("静态抓取成功返回 ok=true,不触发浏览器降级", async () => {
+    const staticText = (
+      "宋代点茶讲究注汤与击拂，茶筅在盏中回旋，使茶汤表面形成细密乳花。" +
+      "文人以汤色洁白、乳花持久为佳，并在茶器、礼法与诗文中留下大量记录。" +
+      "这一技艺既是日常饮茶方式，也是审美活动，反映出宋人对生活意趣的追求。"
+    ).repeat(4);
+    mockFetchArticleDeps.extractArticleContent.mockResolvedValueOnce({
+      title: "宋代点茶",
+      body: staticText,
+      images: [],
+      screenshot: null,
+      ogImageUrl: null,
+    });
     const execute = fetchArticleTool.execute as unknown as (
       input: { url: string },
       context: unknown,
     ) => Promise<Record<string, unknown>>;
+
     const result = await execute({ url: "https://example.com/article" }, {});
-    expect(result.title).toBe("抓取失败");
-    expect(result.via).toBe("static");
-    expect(result.text).toMatch(/^\[Error]/);
+
+    expect(result).toMatchObject({
+      ok: true,
+      error: null,
+      title: "宋代点茶",
+      text: staticText,
+      via: "static",
+    });
+    expect(mockFetchArticleDeps.scrapeWithBrowserImpl).not.toHaveBeenCalled();
+  });
+
+  it("loopback 被拒且浏览器降级也失败时返回 ok=false 与真实原因", async () => {
+    mockFetchArticleDeps.extractArticleContent.mockRejectedValueOnce(
+      new Error("Blocked loopback address"),
+    );
+    mockFetchArticleDeps.scrapeWithBrowserImpl.mockResolvedValueOnce({
+      ok: false,
+      error: "Blocked loopback address",
+      title: "抓取失败",
+      text: "[Error] Blocked loopback address",
+      wordCount: 0,
+      images: [],
+      screenshotSrc: null,
+      ogImageUrl: null,
+    });
+    const execute = fetchArticleTool.execute as unknown as (
+      input: { url: string },
+      context: unknown,
+    ) => Promise<Record<string, unknown>>;
+    const result = await execute({ url: "http://127.0.0.1/private" }, {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Blocked loopback address",
+      title: "抓取失败",
+      text: "[Error] Blocked loopback address",
+      wordCount: 0,
+      via: "static",
+    });
   });
 });

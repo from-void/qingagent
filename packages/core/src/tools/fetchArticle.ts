@@ -39,6 +39,8 @@ export function shouldFallbackToBrowser(extractedBody: string): boolean {
 }
 
 type FetchArticleResult = {
+  ok: true;
+  error: null;
   title: string;
   text: string;
   wordCount: number;
@@ -49,6 +51,27 @@ type FetchArticleResult = {
   materialId: string;
   via: "static" | "browser";
 };
+
+function fetchArticleFailure(
+  sourceUrl: string,
+  materialId: string,
+  error: string,
+  unsupported = false,
+) {
+  return {
+    ok: false,
+    error,
+    title: unsupported ? "不支持的内容类型" : "抓取失败",
+    text: unsupported ? `[Unsupported] ${error}` : `[Error] ${error}`,
+    wordCount: 0,
+    images: [],
+    screenshotSrc: null,
+    ogImageUrl: null,
+    sourceUrl,
+    materialId,
+    via: "static" as const,
+  };
+}
 
 function shouldUseBrowserResult(staticResult: FetchArticleResult, browserResult: ScrapeResult): boolean {
   return (
@@ -67,6 +90,8 @@ export const fetchArticleTool = createTool({
     waitForSelector: z.string().optional().describe("等待特定 CSS 选择器出现后再提取（可选）"),
   }),
   outputSchema: z.object({
+    ok: z.boolean(),
+    error: z.string().nullable(),
     title: z.string(),
     text: z.string(),
     wordCount: z.number(),
@@ -93,6 +118,8 @@ export const fetchArticleTool = createTool({
       signal?.throwIfAborted();
 
       let selected: FetchArticleResult = {
+        ok: true,
+        error: null,
         title: result.title,
         text: result.body,
         wordCount,
@@ -105,6 +132,7 @@ export const fetchArticleTool = createTool({
       };
 
       if (shouldFallbackToBrowser(result.body)) {
+        let fallbackError: string | null = null;
         try {
           const browserResult = await scrapeWithBrowserImpl(input.url, {
             waitForSelector: input.waitForSelector,
@@ -113,6 +141,8 @@ export const fetchArticleTool = createTool({
           signal?.throwIfAborted();
           if (shouldUseBrowserResult(selected, browserResult)) {
             selected = {
+              ok: true,
+              error: null,
               title: browserResult.title,
               text: browserResult.text,
               wordCount: browserResult.wordCount,
@@ -123,10 +153,19 @@ export const fetchArticleTool = createTool({
               materialId,
               via: "browser",
             };
+          } else if (!isSubstantiveContent(selected.text)) {
+            fallbackError =
+              browserResult.error?.trim() || "浏览器降级未提取到有效正文";
           }
         } catch (error) {
           if (signal?.aborted) throw error;
-          // 浏览器降级失败时保留静态最佳结果,不让单一路径失败吞掉可用内容。
+          if (!isSubstantiveContent(selected.text)) {
+            fallbackError = error instanceof Error ? error.message : String(error);
+          }
+          // 浏览器降级失败时仍保留可用的静态最佳结果。
+        }
+        if (fallbackError) {
+          return fetchArticleFailure(input.url, materialId, fallbackError);
         }
       }
 
@@ -141,6 +180,7 @@ export const fetchArticleTool = createTool({
       // stealth 浏览器常能过静态被挡的反爬。等价合并前 needsBrowserFallback=!isUnsupported 的契约:
       // extractor 对 403/非 2xx 是 throw(非返回空壳),故这条降级必须覆盖"静态抛错",
       // 否则反爬站(静态 403、浏览器可过)在 fetchArticle 直调与 webSearch 里都丢掉浏览器恢复路。
+      let finalError = message;
       if (!isUnsupported) {
         try {
           const browserResult = await scrapeWithBrowserImpl(input.url, {
@@ -150,6 +190,8 @@ export const fetchArticleTool = createTool({
           signal?.throwIfAborted();
           if (browserResult.ok && isSubstantiveContent(browserResult.text)) {
             return {
+              ok: true,
+              error: null,
               title: browserResult.title,
               text: browserResult.text,
               wordCount: browserResult.wordCount,
@@ -161,24 +203,19 @@ export const fetchArticleTool = createTool({
               via: "browser" as const,
             };
           }
+          finalError =
+            browserResult.error?.trim() || "浏览器降级未提取到有效正文";
         } catch (browserError) {
           if (signal?.aborted) throw browserError;
+          finalError =
+            browserError instanceof Error ? browserError.message : String(browserError);
           // 浏览器也失败 → 落到下方 [Error] 返回,保持原有失败语义。
         }
       }
-      return {
-        title: isUnsupported ? "不支持的内容类型" : "抓取失败",
-        text: isUnsupported
-          ? `[Unsupported] ${message.slice(UNSUPPORTED_CONTENT_ERROR_PREFIX.length).trim()}`
-          : `[Error] ${message}`,
-        wordCount: 0,
-        images: [],
-        screenshotSrc: null,
-        ogImageUrl: null,
-        sourceUrl: input.url,
-        materialId,
-        via: "static" as const,
-      };
+      const failureReason = isUnsupported
+        ? message.slice(UNSUPPORTED_CONTENT_ERROR_PREFIX.length).trim()
+        : finalError;
+      return fetchArticleFailure(input.url, materialId, failureReason, isUnsupported);
     } finally {
       stop();
     }

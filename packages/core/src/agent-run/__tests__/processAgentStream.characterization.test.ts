@@ -48,6 +48,8 @@ function isToolCallUpdatedFrame(frame: BridgeFrame): frame is ToolCallUpdatedFra
 
 function fetchArticleResult(index: number, overrides: Record<string, unknown> = {}) {
   return {
+    ok: true,
+    error: null,
     title: `文章 ${index}`,
     text: `第 ${index} 篇文章的完整正文，用于验证并行工具结果按各自 toolCallId 收口。`,
     wordCount: 31,
@@ -434,12 +436,18 @@ describe("processAgentStream 行为特征", () => {
     const { processAgentStream } = await import("../processAgentStream.js");
     const state = createSession("characterize-parallel-tools-one-error");
 
-    const { result } = await collectFramesAndReturn(
+    const { frames, result } = await collectFramesAndReturn(
       processAgentStream(
         streamOf(
           ...parallelFetchChunks([
             fetchArticleResult(1),
-            fetchArticleResult(2, { ok: false, text: "[Error] 站点拒绝访问", wordCount: 0 }),
+            fetchArticleResult(2, {
+              ok: false,
+              error: "Blocked loopback address",
+              title: "抓取失败",
+              text: "[Error] Blocked loopback address",
+              wordCount: 0,
+            }),
             fetchArticleResult(3),
           ]),
         ),
@@ -463,6 +471,17 @@ describe("processAgentStream 行为特征", () => {
       ["fetch-2", "failed"],
       ["fetch-3", "done"],
     ]));
+    const failedUpdate = frames
+      .filter(isToolCallUpdatedFrame)
+      .find(
+        (frame) =>
+          frame.data.toolCallId === "fetch-2" &&
+          frame.data.spec.status.kind === "failed",
+      );
+    expect(failedUpdate?.data.spec.status).toEqual({
+      kind: "failed",
+      data: { retriable: false, reason: "Blocked loopback address" },
+    });
     expect(state.messages.at(-1)).toEqual({ role: "assistant", content: "三个来源已处理。" });
     expect(result.streamWasUserAborted).toBe(false);
   });

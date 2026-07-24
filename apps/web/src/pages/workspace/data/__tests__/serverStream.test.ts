@@ -116,6 +116,7 @@ describe("ServerStream", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     globalThis.EventSource = originalEventSource;
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -301,6 +302,45 @@ describe("ServerStream", () => {
     expect(source.closed).toBe(true);
     source.emitFrame({ kind: "restoreReset", data: { epoch: 1, snapshotSeq: 2 } }, "2");
     expect(frames).toHaveLength(1);
+  });
+
+  it("EventSource 429 错误显示应用提示并按游标退避重连", async () => {
+    vi.useFakeTimers();
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal("window", fakeWindow);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ accepted: true, sessionId: "s-1", epoch: 1 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: "SSE connection limit exceeded" }),
+        { status: 429, headers: { "Retry-After": "2" } },
+      ));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const rateLimited = vi.fn();
+    fakeWindow.addEventListener("qa-sse-rate-limited", rateLimited);
+    const stream = new ServerStream();
+    const started = stream.startSession({ mode: { kind: "new", data: { template: null } } });
+    const source = await waitForEventSource();
+    source.emitFrame(VALID_FRAME, "7");
+    await started;
+
+    source.onerror?.(new Event("error"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(rateLimited).toHaveBeenCalledOnce();
+    expect(source.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(MockEventSource.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]!.url).toContain("after=7");
+
+    stream.dispose();
+    fakeWindow.removeEventListener("qa-sse-rate-limited", rateLimited);
   });
 
   it("dispose() aborts active client requests without sending a cancel command", async () => {

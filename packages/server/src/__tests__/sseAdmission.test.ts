@@ -39,4 +39,22 @@ describe("SseAdmissionController", () => {
       reason: "total",
     });
   });
+
+  it("回环来源豁免总量、IP 与会话上限且不占公网账本", () => {
+    const admission = new SseAdmissionController({
+      maxTotal: 1,
+      maxPerIp: 1,
+      maxPerSession: 1,
+    });
+
+    for (let index = 0; index < 300; index += 1) {
+      expect(admission.acquire("127.0.0.1", "same-session", { loopback: true }).accepted).toBe(true);
+    }
+    expect(admission.stats()).toEqual({ total: 0, ips: 0, sessions: 0 });
+    expect(admission.acquire("203.0.113.10", "public-session").accepted).toBe(true);
+    expect(admission.acquire("203.0.113.11", "other-session")).toEqual({
+      accepted: false,
+      reason: "total",
+    });
+  });
 });

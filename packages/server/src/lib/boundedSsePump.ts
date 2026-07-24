@@ -13,12 +13,23 @@ export interface BoundedSsePumpOptions {
   maxBytes?: number;
 }
 
+export interface SseEnqueueOptions {
+  /** FrameLog 同步回放由其 2000 帧窗口约束，不计入 live 慢客户端背压预算。 */
+  delivery?: "live" | "replay";
+  /** 合法快照没有 512 KiB 文档上限；仍受 live 帧数上限约束。 */
+  allowOversized?: boolean;
+  /** 心跳等可丢消息不能成为压垮连接的最后一帧。 */
+  dropOnOverflow?: boolean;
+}
+
 export const DEFAULT_SSE_QUEUE_MAX_FRAMES = 64;
 export const DEFAULT_SSE_QUEUE_MAX_BYTES = 512 * 1024;
 
 interface QueuedMessage {
   message: SseMessage;
   bytes: number;
+  limitedFrames: number;
+  limitedBytes: number;
 }
 
 /**
@@ -30,6 +41,8 @@ export class BoundedSsePump {
   private readonly maxFrames: number;
   private readonly maxBytes: number;
   private queuedBytes = 0;
+  private limitedQueuedFrames = 0;
+  private limitedQueuedBytes = 0;
   private pumping = false;
   private closed = false;
   private idleWaiters: Array<() => void> = [];
@@ -39,15 +52,25 @@ export class BoundedSsePump {
     this.maxBytes = positiveInteger(options.maxBytes, DEFAULT_SSE_QUEUE_MAX_BYTES);
   }
 
-  enqueue(message: SseMessage): boolean {
+  enqueue(message: SseMessage, enqueueOptions: SseEnqueueOptions = {}): boolean {
     if (this.closed) return false;
     const bytes = messageBytes(message);
-    if (bytes > this.maxBytes || this.queue.length >= this.maxFrames || this.queuedBytes + bytes > this.maxBytes) {
+    const isReplay = enqueueOptions.delivery === "replay";
+    const limitedFrames = isReplay ? 0 : 1;
+    const limitedBytes = isReplay || enqueueOptions.allowOversized ? 0 : bytes;
+    const overflow =
+      (!isReplay && !enqueueOptions.allowOversized && bytes > this.maxBytes) ||
+      this.limitedQueuedFrames + limitedFrames > this.maxFrames ||
+      this.limitedQueuedBytes + limitedBytes > this.maxBytes;
+    if (overflow) {
+      if (enqueueOptions.dropOnOverflow) return false;
       this.close("overflow");
       return false;
     }
-    this.queue.push({ message, bytes });
+    this.queue.push({ message, bytes, limitedFrames, limitedBytes });
     this.queuedBytes += bytes;
+    this.limitedQueuedFrames += limitedFrames;
+    this.limitedQueuedBytes += limitedBytes;
     this.startPump();
     return true;
   }
@@ -57,6 +80,8 @@ export class BoundedSsePump {
     this.closed = true;
     this.queue.length = 0;
     this.queuedBytes = 0;
+    this.limitedQueuedFrames = 0;
+    this.limitedQueuedBytes = 0;
     if (reason) this.options.onClose(reason);
     this.resolveIdleIfDone();
   }
@@ -88,6 +113,8 @@ export class BoundedSsePump {
         const queued = this.queue.shift();
         if (!queued) break;
         this.queuedBytes -= queued.bytes;
+        this.limitedQueuedFrames -= queued.limitedFrames;
+        this.limitedQueuedBytes -= queued.limitedBytes;
         await this.options.write(queued.message);
       }
     } catch {

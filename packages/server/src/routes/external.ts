@@ -32,6 +32,7 @@ import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
 import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import { BoundedSsePump } from "../lib/boundedSsePump";
+import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 
 export const externalRoutes = new Hono();
 
@@ -326,7 +327,13 @@ externalRoutes.post("/sessions/:id/chat", async (c) => {
 
 externalRoutes.get("/sessions/:id/events", (c) => {
   const sessionId = c.req.param("id");
-  const afterParam = c.req.query("after");
+  const afterParam = c.req.header("Last-Event-ID") ?? c.req.query("after");
+  const client = requestClientAddress(c);
+  const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
+  if (!admission.accepted) {
+    c.header("Retry-After", "1");
+    return externalError(c, 429, "RATE_LIMITED", "SSE 连接数超过公网准入上限");
+  }
   return streamSSE(c, async (stream) => {
     const afterSeq = afterParam === "tip"
       ? Math.max(0, sessionManager.frameLog.readFrom(sessionId, 0).nextSeq - 1)
@@ -341,6 +348,7 @@ externalRoutes.get("/sessions/:id/events", (c) => {
       cleaned = true;
       if (heartbeat) clearInterval(heartbeat);
       unsubscribe();
+      admission.release();
       settle();
     };
     const pump = new BoundedSsePump({
@@ -361,13 +369,16 @@ externalRoutes.get("/sessions/:id/events", (c) => {
         gap: publicMeta.gap,
       }),
     });
-    const enqueue = (entry: LoggedFrame): void => {
+    const enqueue = (entry: LoggedFrame, delivery: "replay" | "live"): void => {
       const frame = frameForExternal(entry);
       if (!frame) return;
       pump.enqueue({
         id: String(entry.seq),
         event: "frame",
         data: JSON.stringify(frame),
+      }, {
+        delivery,
+        allowOversized: entry.frame.kind === "documentSnapshotWritten",
       });
     };
     try {
@@ -375,7 +386,7 @@ externalRoutes.get("/sessions/:id/events", (c) => {
       if (cleaned) unsubscribe();
       if (!cleaned) {
         heartbeat = setInterval(() => {
-          pump.enqueue({ event: "ping", data: "{}" });
+          pump.enqueue({ event: "ping", data: "{}" }, { dropOnOverflow: true });
         }, 15_000);
       }
       stream.onAbort(() => {
@@ -527,9 +538,9 @@ function externalEventsMeta(
 }
 
 function rateLimit(c: Context) {
-  const forwardedFor = c.req.header("x-forwarded-for")?.split(",", 1)[0]?.trim();
-  const clientIp = forwardedFor || c.req.header("x-real-ip") || "direct";
-  const key = `${c.req.method}:${clientIp}:${c.req.path}`;
+  const client = requestClientAddress(c);
+  if (client.loopback) return null;
+  const key = `${c.req.method}:${client.ip}:${c.req.path}`;
   const now = Date.now();
   if (rateBuckets.size > 1_000) {
     for (const [bucketKey, bucket] of rateBuckets) {

@@ -161,58 +161,104 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
     timedOut = true;
     controller.abort();
   }, options.timeoutMs);
-  let reader: ReadableStreamDefaultReader<string> | null = null;
-  let buffer = "";
   let received = 0;
   let reason: string | null = null;
-  let meta: ExternalEventsMeta | null = null;
   let maxSeq = parseAfterSeq(options.after);
+  let cursor = options.after;
+  let reconnectAttempt = 0;
+  let watchingPrinted = false;
   try {
-    const res = await client.openEvents(sessionId, options.after, controller.signal);
-    process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
-    reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += value;
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() ?? "";
-      for (const chunk of chunks) {
-        const event = parseSseEvent(chunk);
-        if (!event) continue;
-        const data = event.data;
-        if (data === "{}") continue;
-        if (event.event === "meta") {
-          meta = parseEventsMeta(data);
-          if (meta?.gap) {
-            reason = "gap";
+    while (!reason && !timedOut) {
+      const receivedBeforeConnection = received;
+      let reader: ReadableStreamDefaultReader<string> | null = null;
+      let meta: ExternalEventsMeta | null = null;
+      let buffer = "";
+      try {
+        const res = await client.openEvents(sessionId, cursor, controller.signal);
+        if (!watchingPrinted) {
+          process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
+          watchingPrinted = true;
+        }
+        reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() ?? "";
+          for (const chunk of chunks) {
+            const event = parseSseEvent(chunk);
+            if (!event) continue;
+            const data = event.data;
+            if (data === "{}") continue;
+            if (event.event === "meta") {
+              meta = parseEventsMeta(data);
+              if (meta?.gap) {
+                reason = "gap";
+                break;
+              }
+              if (cursor === "tip" && meta) {
+                maxSeq = Math.max(maxSeq, meta.nextSeq - 1);
+                cursor = String(maxSeq);
+              }
+              continue;
+            }
+            process.stdout.write(`${data}\n`);
+            received += 1;
+            maxSeq = Math.max(maxSeq, frameSeq(data));
+            cursor = String(maxSeq);
+            const hit = untilHit(options.until, data);
+            if (hit) {
+              reason = hit;
+              break;
+            }
+          }
+          if (reason) break;
+          if (!options.follow && !options.until && options.timeoutMs === null && meta && maxSeq >= meta.nextSeq - 1) {
+            reason = "limit";
             break;
           }
-          continue;
         }
-        process.stdout.write(`${data}\n`);
-        received += 1;
-        maxSeq = Math.max(maxSeq, frameSeq(data));
-        const hit = untilHit(options.until, data);
-        if (hit) {
-          reason = hit;
-          break;
-        }
+        if (!options.follow || reason || timedOut) break;
+      } catch (error) {
+        if (timedOut || controller.signal.aborted) break;
+        if (error instanceof QaCliError && (!options.follow || error.code !== "NO_INSTANCE")) throw error;
+        if (!options.follow) throw error;
+      } finally {
+        await reader?.cancel().catch(() => undefined);
       }
-      if (reason) break;
-      if (!options.follow && !options.until && options.timeoutMs === null && meta && maxSeq >= meta.nextSeq - 1) {
-        reason = "limit";
-        break;
-      }
+      if (!options.follow || reason || timedOut) break;
+      reconnectAttempt += 1;
+      await abortableReconnectDelay(
+        Math.min(2_000, 100 * 2 ** Math.min(reconnectAttempt - 1, 5)),
+        controller.signal,
+      ).catch(() => undefined);
+      if (controller.signal.aborted) break;
+      // 只要成功收到过帧，下一次 EOF 重新从短退避开始；游标保证不重不漏。
+      if (received > receivedBeforeConnection) reconnectAttempt = 0;
     }
   } catch (error) {
     if (!timedOut) throw error;
   } finally {
     if (timer) clearTimeout(timer);
-    await reader?.cancel().catch(() => undefined);
   }
   if (timedOut && !reason) reason = "timeout";
   if (reason) process.stderr.write(`[qa] events exited reason=${reason} received=${received}\n`);
+}
+
+function abortableReconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function parseSseEvent(chunk: string): { event: string; data: string } | null {

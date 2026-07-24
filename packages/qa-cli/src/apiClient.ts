@@ -17,14 +17,17 @@ export class ApiClient {
   }
 
   async request<T extends ExternalSuccessResponse>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(`http://127.0.0.1:${this.instance.port}/api/v1/external${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.instance.token}`,
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...(init.headers ?? {}),
+    const res = await fetchWithRateLimitRetry(
+      `http://127.0.0.1:${this.instance.port}/api/v1/external${path}`,
+      {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.instance.token}`,
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...(init.headers ?? {}),
+        },
       },
-    });
+    );
     await this.assertResponseOk(res);
     const text = await res.text();
     const json = parseJsonResponse(text);
@@ -34,7 +37,7 @@ export class ApiClient {
   async openEvents(sessionId: string, after: string | undefined, signal: AbortSignal): Promise<Response> {
     let response: Response;
     try {
-      response = await fetch(this.eventsUrl(sessionId, after), {
+      response = await fetchWithRateLimitRetry(this.eventsUrl(sessionId, after), {
         headers: { Authorization: this.authHeader() },
         signal,
       });
@@ -90,6 +93,48 @@ export class ApiClient {
     }
     throw new QaCliError(fallbackCode, compactErrorText(text, response.statusText));
   }
+}
+
+const MAX_RATE_LIMIT_RETRIES = 6;
+const INITIAL_RETRY_DELAY_MS = 250;
+const MAX_RETRY_DELAY_MS = 4_000;
+
+export async function fetchWithRateLimitRetry(
+  input: string,
+  init: RequestInit,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(input, init);
+    if (response.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) return response;
+
+    const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+    await response.body?.cancel().catch(() => undefined);
+    const exponentialMs = Math.min(MAX_RETRY_DELAY_MS, INITIAL_RETRY_DELAY_MS * 2 ** attempt);
+    await abortableDelay(Math.max(exponentialMs, retryAfterMs ?? 0), init.signal);
+  }
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
+}
+
+function abortableDelay(ms: number, signal: AbortSignal | null | undefined): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function detectQaClient(env: NodeJS.ProcessEnv): "claudecode" | "codex" | "agent" {

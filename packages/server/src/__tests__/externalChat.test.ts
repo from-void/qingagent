@@ -109,7 +109,7 @@ describe("external chat", () => {
     for (let index = 0; index < 21; index += 1) {
       const response = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
         method: "POST",
-        headers: authHeaders(),
+        headers: { ...authHeaders(), "X-Forwarded-For": "203.0.113.20" },
         body: JSON.stringify({ text: `消息 ${index}` }),
       });
       statuses.push(response.status);
@@ -117,6 +117,22 @@ describe("external chat", () => {
 
     expect(statuses.slice(0, 20)).toEqual(Array.from({ length: 20 }, () => 200));
     expect(statuses[20]).toBe(429);
+  });
+
+  it("回环来源批量写不触发公网限流", async () => {
+    const sessionId = await createSession();
+    vi.spyOn(sessionManager, "submitQueued").mockResolvedValue({
+      completion: Promise.resolve([]),
+    });
+
+    for (let index = 0; index < 30; index += 1) {
+      const response = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ text: `本机消息 ${index}` }),
+      });
+      expect(response.status).toBe(200);
+    }
   });
 });
 

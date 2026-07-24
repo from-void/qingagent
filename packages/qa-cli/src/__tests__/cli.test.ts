@@ -151,6 +151,38 @@ describe("qa cli", () => {
     expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"kind\":\"docCommitted\"");
   });
 
+  it("doc events --follow 遇 EOF 后用最后 seq 自动重连补拉", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let call = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      call += 1;
+      if (call === 1) {
+        expect(String(input)).toContain("/events?after=4");
+        return new Response(sseStream([
+          { seq: 5, kind: "sessionMeta", data: { sessionId: "s1", title: "续传前" } },
+        ]));
+      }
+      expect(String(input)).toContain("/events?after=5");
+      return new Response(sseStream([
+        { seq: 6, kind: "docCommitted", data: { version: 2 } },
+      ]));
+    }) as typeof fetch;
+
+    await main([
+      "doc", "events", "-s", "s1", "--after", "4",
+      "--follow", "--until", "reviewed", "--timeout", "2s",
+    ]);
+
+    const output = stdout.mock.calls.map((entry) => entry[0]).join("");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(output).toContain("\"seq\":5");
+    expect(output).toContain("\"seq\":6");
+    expect(stderr.mock.calls.map((entry) => entry[0]).join(""))
+      .toContain("[qa] events exited reason=reviewed received=2");
+  });
+
   it("doc events --until 未显式 after 时从 tip 开始,不从 0 回放旧帧", async () => {
     const { main } = await import("../cli.js");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

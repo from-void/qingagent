@@ -26,7 +26,7 @@ export interface FrameLog {
   subscribe(
     sessionId: string,
     afterSeq: number,
-    onFrame: (frame: LoggedFrame) => void,
+    onFrame: (frame: LoggedFrame, delivery: FrameDelivery) => void,
   ): () => void;
   setGeneration(sessionId: string, generation: number): void;
   getGeneration(sessionId: string): number;
@@ -40,6 +40,8 @@ export interface FrameLog {
   listSessionIds?(limit?: number): string[];
   evict(sessionId: string): void;
 }
+
+export type FrameDelivery = "replay" | "live";
 
 interface SessionFrameLogState {
   frames: LoggedFrame[];
@@ -133,17 +135,17 @@ export class InMemoryFrameLog implements FrameLog {
   subscribe(
     sessionId: string,
     afterSeq: number,
-    onFrame: (frame: LoggedFrame) => void,
+    onFrame: (frame: LoggedFrame, delivery: FrameDelivery) => void,
   ): () => void {
     const state = this.ensure(sessionId);
     let active = true;
     let lastSeq = normalizeSeq(afterSeq);
 
-    const listener = (entry: LoggedFrame) => {
+    const deliver = (entry: LoggedFrame, delivery: FrameDelivery) => {
       if (!active || entry.seq <= lastSeq) return;
       lastSeq = entry.seq;
       try {
-        onFrame(entry);
+        onFrame(entry, delivery);
       } catch (error) {
         console.error("[frameLog] subscriber failed", {
           sessionId,
@@ -151,10 +153,11 @@ export class InMemoryFrameLog implements FrameLog {
         });
       }
     };
+    const listener = (entry: LoggedFrame) => deliver(entry, "live");
 
     state.listeners.add(listener);
     for (const entry of this.readFrom(sessionId, lastSeq).frames) {
-      listener(entry);
+      deliver(entry, "replay");
     }
 
     return () => {

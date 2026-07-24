@@ -1,3 +1,6 @@
+import type { Context } from "hono";
+import { isLoopbackHost } from "./debugGate";
+
 export type SseAdmissionRejection = "total" | "ip" | "session";
 
 export type SseAdmissionResult =
@@ -23,7 +26,9 @@ export class SseAdmissionController {
 
   constructor(private readonly limits: SseAdmissionLimits = DEFAULT_SSE_ADMISSION_LIMITS) {}
 
-  acquire(ip: string, sessionId: string): SseAdmissionResult {
+  acquire(ip: string, sessionId: string, options: { loopback?: boolean } = {}): SseAdmissionResult {
+    // 本机单用户开发/agent-browser 评测可以合法打开大量标签；公网来源才进入 DoS 预算。
+    if (options.loopback) return { accepted: true, release: () => undefined };
     if (this.total >= this.limits.maxTotal) return { accepted: false, reason: "total" };
     if ((this.byIp.get(ip) ?? 0) >= this.limits.maxPerIp) {
       return { accepted: false, reason: "ip" };
@@ -53,9 +58,39 @@ export class SseAdmissionController {
   }
 }
 
-export function requestClientIp(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
-  return forwarded || headers.get("x-real-ip")?.trim() || "direct";
+/** /events、external events 与 folder bridge 共用总量/IP/会话准入账本。 */
+export const sseAdmission = new SseAdmissionController();
+
+export interface RequestClientAddress {
+  ip: string;
+  loopback: boolean;
+}
+
+/**
+ * 非回环直连永不因伪造转发头获得回环豁免；只有连接本身来自回环代理时才采信
+ * X-Forwarded-For/X-Real-IP。app.request 没有 socket，按本机测试调用处理。
+ */
+export function requestClientAddress(c: Context): RequestClientAddress {
+  const incoming = (c.env as {
+    incoming?: { socket?: { remoteAddress?: string | null } };
+  } | undefined)?.incoming;
+  const remote = normalizeIp(incoming?.socket?.remoteAddress);
+  if (remote && !isLoopbackIp(remote)) return { ip: remote, loopback: false };
+
+  const forwarded = normalizeIp(c.req.header("x-forwarded-for")?.split(",", 1)[0]);
+  const real = normalizeIp(c.req.header("x-real-ip"));
+  const ip = forwarded || real || remote || "direct";
+  return { ip, loopback: ip === "direct" || isLoopbackIp(ip) };
+}
+
+function normalizeIp(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("::ffff:")) return normalized.slice(7);
+  return normalized;
+}
+
+function isLoopbackIp(ip: string): boolean {
+  return isLoopbackHost(ip);
 }
 
 function increment(map: Map<string, number>, key: string): void {

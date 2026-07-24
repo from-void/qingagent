@@ -54,7 +54,10 @@ describe("GET /api/v1/events 断连资源回收", () => {
         const controller = new AbortController();
         const response = await app.request(
           `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
-          { signal: controller.signal },
+          {
+            headers: { "X-Forwarded-For": "203.0.113.30" },
+            signal: controller.signal,
+          },
         );
         expect(response.status).toBe(200);
         connections.push({ controller, response });
@@ -62,6 +65,7 @@ describe("GET /api/v1/events 断连资源回收", () => {
 
       const rejected = await app.request(
         `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
+        { headers: { "X-Forwarded-For": "203.0.113.30" } },
       );
       expect(rejected.status).toBe(429);
       await expect(rejected.json()).resolves.toMatchObject({ limit: "session" });
@@ -75,7 +79,10 @@ describe("GET /api/v1/events 断连资源回收", () => {
     const reopened = new AbortController();
     const response = await app.request(
       `/api/v1/events?sessionId=${sessionId}&after=0&epoch=${epoch}`,
-      { signal: reopened.signal },
+      {
+        headers: { "X-Forwarded-For": "203.0.113.30" },
+        signal: reopened.signal,
+      },
     );
     expect(response.status).toBe(200);
     reopened.abort();

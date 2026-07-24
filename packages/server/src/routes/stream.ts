@@ -21,7 +21,7 @@ import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { formatCommandError, parseBody } from "../lib/validation";
 import { BoundedSsePump } from "../lib/boundedSsePump";
-import { requestClientIp, SseAdmissionController } from "../lib/sseAdmission";
+import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 
 const PUBLIC_STREAM_ERROR_REASON = "模型服务暂时不可用，请稍后重试";
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
@@ -35,7 +35,6 @@ interface RestoreInflightState {
 }
 
 const restoreInflight = new Map<string, RestoreInflightState>();
-const sseAdmission = new SseAdmissionController();
 
 export function redactStreamErrorForLog(error: unknown): string {
   const raw = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -294,8 +293,10 @@ streamRoutes.get("/events", async (c) => {
     return c.json({ error: "Session not found" }, 404);
   }
 
-  const admission = sseAdmission.acquire(requestClientIp(c.req.raw.headers), sessionId);
+  const client = requestClientAddress(c);
+  const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
   if (!admission.accepted) {
+    c.header("Retry-After", "1");
     return c.json({ error: "SSE connection limit exceeded", limit: admission.reason }, 429);
   }
 
@@ -334,11 +335,14 @@ streamRoutes.get("/events", async (c) => {
       unsubscribe = sessionManager.frameLog.subscribe(
         sessionId,
         subscribeAfter,
-        (entry) => {
+        (entry, delivery) => {
           pump.enqueue({
             id: String(entry.seq),
             event: "frame",
             data: JSON.stringify(entry.frame),
+          }, {
+            delivery,
+            allowOversized: entry.frame.kind === "documentSnapshotWritten",
           });
         },
       );
@@ -346,7 +350,7 @@ streamRoutes.get("/events", async (c) => {
 
       if (!cleaned) {
         heartbeat = setInterval(() => {
-          pump.enqueue({ event: "ping", data: "{}" });
+          pump.enqueue({ event: "ping", data: "{}" }, { dropOnOverflow: true });
         }, 15_000);
       }
       stream.onAbort(() => {

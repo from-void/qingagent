@@ -1,9 +1,6 @@
 import { readDisabledSet } from "./enabledStore.js";
-import {
-  activateDiagramVizSkill,
-  DIAGRAM_VIZ_SKILL_NAME,
-} from "./diagramViz.js";
 import type { RequestContext } from "@mastra/core/request-context";
+import { activateSkill } from "./writeInject.js";
 
 export const SKILL_DISABLED_TOOL_RESULT_CODE = "SKILL_DISABLED";
 
@@ -186,7 +183,7 @@ export async function beforeSkillToolCall({
       output: buildSkillDisabledToolResult(skillName, toolName, input),
     };
   }
-  if (requestedSkillName === DIAGRAM_VIZ_SKILL_NAME) {
+  if (requestedSkillName) {
     const requestContext =
       context &&
       typeof context === "object" &&
@@ -194,8 +191,9 @@ export async function beforeSkillToolCall({
         ? (context as { requestContext?: RequestContext }).requestContext
         : undefined;
     const userText = requestContext?.get("userText");
-    activateDiagramVizSkill(
+    activateSkill(
       requestContext,
+      requestedSkillName,
       typeof userText === "string" ? userText : "",
     );
   }

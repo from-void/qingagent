@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import type { BridgeFrame } from "@qingagent/contract-ts";
 import {
-  DIAGRAM_VIZ_REQUEST_CONTEXT_KEY,
-  type DiagramVizRequestState,
-} from "../skills/diagramViz.js";
+  getActivatedSkillRegistrations,
+} from "../skills/writeInject.js";
 
 const h = vi.hoisted(() => ({
   disabledSkills: new Set<string>(),
@@ -131,7 +130,7 @@ describe("ToolSearch bridge", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("skill 激活 diagram-viz 时把正文与引擎状态落入 RequestContext，停用时 fail-closed", async () => {
+  it("skill() 按名称登记通用激活状态，diagram-viz 停用时仍 fail-closed", async () => {
     const { buildQingagentStaticTools, qingagentAgent } = await import("../agents/qingagent.js");
     const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
     const requestContext = new RequestContext([
@@ -147,14 +146,18 @@ describe("ToolSearch bridge", () => {
       input: { name: "diagram-viz" },
       context: { requestContext },
     })).resolves.toBeUndefined();
+    expect(getActivatedSkillRegistrations(requestContext)).toEqual([{
+      name: "diagram-viz",
+      hints: ["请画一个 Mermaid 流程图"],
+    }]);
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "image-gen" },
+      context: { requestContext },
+    })).resolves.toBeUndefined();
     expect(
-      requestContext.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY) as DiagramVizRequestState,
-    ).toMatchObject({
-      activated: true,
-      writeLanguages: ["mermaid"],
-      editingLanguages: [],
-      skillBody: expect.stringContaining("# 图表可视化"),
-    });
+      getActivatedSkillRegistrations(requestContext).map((entry) => entry.name),
+    ).toEqual(["diagram-viz", "image-gen"]);
     expect(await qingagentAgent.getInstructions({ requestContext })).toBe(systemBefore);
     expect(
       Object.entries(buildQingagentStaticTools()).map(
@@ -177,7 +180,7 @@ describe("ToolSearch bridge", () => {
         toolName: "skill",
       },
     });
-    expect(disabledContext.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY)).toBeUndefined();
+    expect(getActivatedSkillRegistrations(disabledContext)).toEqual([]);
   });
 
   it("ToolSearch 工具签名变化时替换旧 processor,不保留关闭前 schema", async () => {

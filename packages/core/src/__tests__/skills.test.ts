@@ -48,6 +48,7 @@ describe("builtin skills", () => {
       name: "diagram-viz",
       label: "图表可视化",
       "user-invocable": "true",
+      "write-inject": "true",
     });
 
     const workspace = new Workspace({

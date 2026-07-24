@@ -46,7 +46,10 @@ import {
 import { streamInnerModel } from "../llm/innerModelStream.js";
 import { writeDraftInputSchema } from "../llm/draftToolSchemas.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
-import { buildActivatedDiagramVizInstruction } from "../skills/diagramViz.js";
+import {
+  autoActivateDiagramVizSkillForWrite,
+} from "../skills/diagramViz.js";
+import { buildActivatedSkillWriteInject } from "../skills/writeInject.js";
 
 export { writeDraftInputSchema };
 
@@ -323,20 +326,29 @@ export function createWriteDraftTool(opts: {
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
-      const diagramHint = [
+      const diagramActivationHint = [
         context?.requestContext?.get("userText"),
         input.title,
         input.outline,
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
+      // 外层模型忘调技能时静默补激活；只恢复规范注入，不阻断本次写稿。
+      autoActivateDiagramVizSkillForWrite(
+        context?.requestContext,
+        diagramActivationHint,
+      );
+      const diagramHint = [
+        diagramActivationHint,
         input.styleHint,
       ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
-      const diagramInstruction = buildActivatedDiagramVizInstruction(
-        context?.requestContext,
-        diagramHint,
-      );
+      // 技能载荷只组装一次，再由四条 lane 共用，避免重复读取与重复付费。
+      const skillWriteInject = await buildActivatedSkillWriteInject({
+        requestContext: context?.requestContext,
+        hintText: diagramHint,
+      });
       const steeringTail = buildQingmlSteeringTail(
         materialContext,
         userPrompt,
-        diagramInstruction,
+        skillWriteInject.content,
       );
       const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
       const runConfig = runConfigForIntent(input.intent ?? "express");
@@ -542,7 +554,7 @@ export function createWriteDraftTool(opts: {
             branchSteeringTail: buildQingmlSteeringTail(
               materialContext,
               params.prompt,
-              diagramInstruction,
+              skillWriteInject.content,
             ),
             // 真流式:delta 只进内存赛道状态 + 整帧替换的展示进度,候选文档仅由完整 result.raw 构建,
             // 判废降级重跑最多表现为进度回退,无落库风险。

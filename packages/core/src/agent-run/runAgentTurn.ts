@@ -98,11 +98,10 @@ import {
   finalizeLingeringRunningToolCalls,
 } from "./turnCleanup.js";
 import {
-  activateDiagramVizSkill,
-  DIAGRAM_VIZ_SKILL_NAME,
   markDiagramVizEditing,
   type DiagramVizLanguage,
 } from "../skills/diagramViz.js";
+import { activateSkill } from "../skills/writeInject.js";
 import {
   appendVisibleStreamErrorText,
   delayMs,
@@ -618,8 +617,8 @@ export async function* runAgentTurn(
     if (selectionDiagramLanguages.size > 0) {
       markDiagramVizEditing(requestContext, selectionDiagramLanguages);
     }
-    if (selectedSkillNames.includes(DIAGRAM_VIZ_SKILL_NAME)) {
-      activateDiagramVizSkill(requestContext, userText);
+    for (const skillName of selectedSkillNames) {
+      activateSkill(requestContext, skillName, userText);
     }
     turnRequestContext = requestContext;
     beginSessionSnapshotTurn(requestContext);

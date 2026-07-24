@@ -2,17 +2,21 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILTIN_SKILLS_DIR } from "./paths.js";
+import {
+  activateSkill,
+  isSkillActivated,
+  parseSkillWriteInjectSource,
+  registerSkillWriteInjectResolver,
+} from "./writeInject.js";
 
 export const DIAGRAM_VIZ_SKILL_NAME = "diagram-viz";
-export const DIAGRAM_VIZ_REQUEST_CONTEXT_KEY = "qingagentDiagramViz";
+export const DIAGRAM_VIZ_EDITING_REQUEST_CONTEXT_KEY =
+  "qingagentDiagramVizEditing";
 
 export type DiagramVizLanguage = "mermaid" | "drawio";
 
-export interface DiagramVizRequestState {
-  activated: boolean;
-  skillBody: string;
-  writeLanguages: DiagramVizLanguage[];
-  editingLanguages: DiagramVizLanguage[];
+export interface DiagramVizEditingRequestState {
+  languages: DiagramVizLanguage[];
 }
 
 export interface DiagramVizResources {
@@ -31,10 +35,6 @@ const MERMAID_INTENT_RE =
   /\bmermaid\b|流程图?|时序图?|序列图?|状态图?|类图|ER\s*图?|甘特图?|饼图|脑图|思维导图/iu;
 
 let cachedResources: DiagramVizResources | null = null;
-
-function stripFrontmatter(source: string): string {
-  return source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
-}
 
 function extractMarkedSection(source: string, marker: string): string {
   const start = `<!-- diagram-viz:${marker}:start -->`;
@@ -57,7 +57,7 @@ export function loadDiagramVizResources(): DiagramVizResources {
   const palettes = readFileSync(join(references, "palettes.md"), "utf8");
   const templates = readFileSync(join(references, "templates.md"), "utf8");
   cachedResources = {
-    skillBody: stripFrontmatter(skill),
+    skillBody: parseSkillWriteInjectSource(skill).body,
     mermaid: extractMarkedSection(mermaid, "mermaid"),
     drawio: extractMarkedSection(drawio, "drawio"),
     mermaidPalettes: extractMarkedSection(palettes, "palettes:mermaid"),
@@ -84,23 +84,22 @@ export function normalizeDiagramVizLanguage(value: unknown): DiagramVizLanguage 
   return value === "drawio" ? "drawio" : value === "mermaid" ? "mermaid" : null;
 }
 
-function requestState(requestContext?: RequestContext): DiagramVizRequestState | null {
-  const state = requestContext?.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY);
+function editingRequestState(
+  requestContext?: RequestContext,
+): DiagramVizEditingRequestState | null {
+  const state = requestContext?.get(DIAGRAM_VIZ_EDITING_REQUEST_CONTEXT_KEY);
   if (!state || typeof state !== "object") return null;
-  return state as DiagramVizRequestState;
+  return state as DiagramVizEditingRequestState;
 }
 
-function ensureRequestState(requestContext?: RequestContext): DiagramVizRequestState | null {
+function ensureEditingRequestState(
+  requestContext?: RequestContext,
+): DiagramVizEditingRequestState | null {
   if (!requestContext) return null;
-  const existing = requestState(requestContext);
+  const existing = editingRequestState(requestContext);
   if (existing) return existing;
-  const next: DiagramVizRequestState = {
-    activated: false,
-    skillBody: loadDiagramVizResources().skillBody,
-    writeLanguages: [],
-    editingLanguages: [],
-  };
-  requestContext.set(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY, next);
+  const next: DiagramVizEditingRequestState = { languages: [] };
+  requestContext.set(DIAGRAM_VIZ_EDITING_REQUEST_CONTEXT_KEY, next);
   return next;
 }
 
@@ -108,33 +107,38 @@ export function activateDiagramVizSkill(
   requestContext: RequestContext | undefined,
   hintText = "",
 ): void {
-  const state = ensureRequestState(requestContext);
-  if (!state) return;
-  state.activated = true;
-  state.writeLanguages = uniqueLanguages([
-    ...state.writeLanguages,
-    ...inferDiagramVizLanguages(hintText),
-  ]);
+  activateSkill(requestContext, DIAGRAM_VIZ_SKILL_NAME, hintText);
+}
+
+export function autoActivateDiagramVizSkillForWrite(
+  requestContext: RequestContext | undefined,
+  hintText: string,
+): boolean {
+  if (isSkillActivated(requestContext, DIAGRAM_VIZ_SKILL_NAME)) return false;
+  const languages = inferDiagramVizLanguages(hintText);
+  if (languages.length === 0) return false;
+  return activateSkill(requestContext, DIAGRAM_VIZ_SKILL_NAME, hintText);
 }
 
 export function markDiagramVizEditing(
   requestContext: RequestContext | undefined,
   languages: Iterable<DiagramVizLanguage>,
 ): void {
-  const state = ensureRequestState(requestContext);
+  const state = ensureEditingRequestState(requestContext);
   if (!state) return;
-  state.editingLanguages = uniqueLanguages([
-    ...state.editingLanguages,
+  state.languages = uniqueLanguages([
+    ...state.languages,
     ...languages,
   ]);
 }
 
 function resolveWriteLanguages(
-  state: DiagramVizRequestState,
   hintText: string,
+  activationHints: readonly string[],
 ): DiagramVizLanguage[] {
-  const inferred = inferDiagramVizLanguages(hintText);
-  const resolved = uniqueLanguages([...state.writeLanguages, ...inferred]);
+  const resolved = uniqueLanguages(
+    [hintText, ...activationHints].flatMap(inferDiagramVizLanguages),
+  );
   // 用户只说“画图”时，内层仍需看见双引擎裁决；明确到某一引擎时只注入该段。
   return resolved.length > 0 ? resolved : ["mermaid", "drawio"];
 }
@@ -164,19 +168,25 @@ export function buildDiagramVizInstruction(
   ].join("\n\n");
 }
 
-export function buildActivatedDiagramVizInstruction(
+export function getDiagramVizEditingLanguages(
   requestContext: RequestContext | undefined,
-  hintText: string,
-): string {
-  const state = requestState(requestContext);
-  if (!state?.activated) return "";
-  return buildDiagramVizInstruction(resolveWriteLanguages(state, hintText), "write");
+): DiagramVizLanguage[] {
+  return [...(editingRequestState(requestContext)?.languages ?? [])];
 }
 
 export function buildDiagramVizEditingInstructionFromContext(
   requestContext: RequestContext | undefined,
 ): string {
-  const state = requestState(requestContext);
-  if (!state || state.editingLanguages.length === 0) return "";
-  return buildDiagramVizInstruction(state.editingLanguages, "edit");
+  const languages = getDiagramVizEditingLanguages(requestContext);
+  if (languages.length === 0) return "";
+  return buildDiagramVizInstruction(languages, "edit");
 }
+
+registerSkillWriteInjectResolver(
+  DIAGRAM_VIZ_SKILL_NAME,
+  ({ hintText, activationHints }) =>
+    buildDiagramVizInstruction(
+      resolveWriteLanguages(hintText, activationHints),
+      "write",
+    ),
+);

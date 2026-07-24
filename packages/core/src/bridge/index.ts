@@ -258,7 +258,7 @@ export type {
   MigrationOptions,
   MigrationStats,
 } from "../doc-engine/migrateThreadMetadataToDocuments.js";
-export { redactSensitiveText } from "../agent-run/redaction.js";
+export { isSensitiveField, redactSensitiveText } from "../agent-run/redaction.js";
 export { deriveTitleFromSections } from "../session/title.js";
 export {
   isDirectionReset,

@@ -17,6 +17,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("ApiClient", () => {
@@ -74,5 +75,28 @@ describe("ApiClient", () => {
         headers: expect.objectContaining({ "X-QA-Client": detectQaClient(process.env) }),
       }),
     );
+  });
+
+  it("429 时读取 Retry-After 并指数退避后自动重试成功", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ code: "RATE_LIMITED", error: "稍后重试" }),
+        { status: 429, headers: { "Retry-After": "1" } },
+      ))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ queued: true })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const client = await ApiClient.create();
+
+    const request = client.request("/sessions/s1/chat", {
+      method: "POST",
+      body: JSON.stringify({ text: "批量写" }),
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(request).resolves.toEqual({ queued: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

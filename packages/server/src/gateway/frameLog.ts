@@ -26,18 +26,22 @@ export interface FrameLog {
   subscribe(
     sessionId: string,
     afterSeq: number,
-    onFrame: (frame: LoggedFrame) => void,
+    onFrame: (frame: LoggedFrame, delivery: FrameDelivery) => void,
   ): () => void;
   setGeneration(sessionId: string, generation: number): void;
   getGeneration(sessionId: string): number;
   setActiveRunner(sessionId: string, active: boolean): void;
   getEpoch(sessionId: string): number;
+  /** 会话是否已有帧状态。只读探询，不得惰性创建。 */
+  hasSession(sessionId: string): boolean;
   /** 该会话当前是否有活跃订阅者(SSE listener)。只读探询,不得惰性建条目。 */
   hasSubscribers(sessionId: string): boolean;
   /** 最近持有帧状态的会话。只读探询,不得惰性建条目。 */
   listSessionIds?(limit?: number): string[];
   evict(sessionId: string): void;
 }
+
+export type FrameDelivery = "replay" | "live";
 
 interface SessionFrameLogState {
   frames: LoggedFrame[];
@@ -131,17 +135,17 @@ export class InMemoryFrameLog implements FrameLog {
   subscribe(
     sessionId: string,
     afterSeq: number,
-    onFrame: (frame: LoggedFrame) => void,
+    onFrame: (frame: LoggedFrame, delivery: FrameDelivery) => void,
   ): () => void {
     const state = this.ensure(sessionId);
     let active = true;
     let lastSeq = normalizeSeq(afterSeq);
 
-    const listener = (entry: LoggedFrame) => {
+    const deliver = (entry: LoggedFrame, delivery: FrameDelivery) => {
       if (!active || entry.seq <= lastSeq) return;
       lastSeq = entry.seq;
       try {
-        onFrame(entry);
+        onFrame(entry, delivery);
       } catch (error) {
         console.error("[frameLog] subscriber failed", {
           sessionId,
@@ -149,10 +153,11 @@ export class InMemoryFrameLog implements FrameLog {
         });
       }
     };
+    const listener = (entry: LoggedFrame) => deliver(entry, "live");
 
     state.listeners.add(listener);
     for (const entry of this.readFrom(sessionId, lastSeq).frames) {
-      listener(entry);
+      deliver(entry, "replay");
     }
 
     return () => {
@@ -175,6 +180,10 @@ export class InMemoryFrameLog implements FrameLog {
 
   getEpoch(sessionId: string): number {
     return this.ensure(sessionId).epoch;
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
   }
 
   hasSubscribers(sessionId: string): boolean {

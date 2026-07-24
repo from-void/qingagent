@@ -172,6 +172,9 @@ export class ServerStream {
   /** Active abort controllers — one per in-flight command submit. */
   private activeControllers = new Set<AbortController>();
   private eventSource: EventSource | null = null;
+  private eventReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private eventProbeController: AbortController | null = null;
+  private eventReconnectAttempt = 0;
   private activeSessionId: string | null = null;
   private lastSeq = 0;
   private epoch: number | null = null;
@@ -695,6 +698,11 @@ export class ServerStream {
   }
 
   detach(): void {
+    if (this.eventReconnectTimer) clearTimeout(this.eventReconnectTimer);
+    this.eventReconnectTimer = null;
+    this.eventProbeController?.abort();
+    this.eventProbeController = null;
+    this.eventReconnectAttempt = 0;
     this.eventSource?.close();
     this.eventSource = null;
   }
@@ -796,7 +804,20 @@ export class ServerStream {
       after: String(this.lastSeq),
     });
     if (this.epoch !== null) params.set("epoch", String(this.epoch));
-    const source = new EventSource(`/api/v1/events?${params.toString()}`);
+    this.openEventSource(sessionId, params);
+  }
+
+  private openEventSource(sessionId: string, params?: URLSearchParams): void {
+    const query = params ?? (() => {
+      const next = new URLSearchParams({ sessionId, after: String(this.lastSeq) });
+      if (this.epoch !== null) next.set("epoch", String(this.epoch));
+      return next;
+    })();
+    const url = `/api/v1/events?${query.toString()}`;
+    const source = new EventSource(url);
+    source.addEventListener("open", () => {
+      if (this.eventSource === source) this.eventReconnectAttempt = 0;
+    });
     source.addEventListener("frame", (event) => {
       const message = event as MessageEvent<string>;
       const seq = Number(message.lastEventId);
@@ -810,9 +831,47 @@ export class ServerStream {
       }
     });
     source.onerror = () => {
-      // EventSource 会自动用 Last-Event-ID 重连；这里不把断线等同于停止生成。
+      if (this.eventSource !== source) return;
+      source.close();
+      this.eventSource = null;
+      void this.scheduleEventReconnect(sessionId, url);
     };
     this.eventSource = source;
+  }
+
+  private async scheduleEventReconnect(sessionId: string, failedUrl: string): Promise<void> {
+    if (this.activeSessionId !== sessionId || this.eventReconnectTimer) return;
+    this.eventReconnectAttempt += 1;
+    let retryAfterMs = 0;
+    const probe = new AbortController();
+    this.eventProbeController?.abort();
+    this.eventProbeController = probe;
+    try {
+      const response = await fetch(failedUrl, {
+        headers: { Accept: "text/event-stream" },
+        signal: probe.signal,
+      });
+      retryAfterMs = retryAfterHeaderMs(response.headers.get("retry-after"));
+      if (response.status === 429 && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("qa-sse-rate-limited", {
+          detail: { retryAfterMs },
+        }));
+      }
+      await response.body?.cancel().catch(() => undefined);
+    } catch {
+      // 断网时探测也会失败；仍按应用级指数退避重连。
+    } finally {
+      if (this.eventProbeController === probe) this.eventProbeController = null;
+    }
+    if (probe.signal.aborted || this.activeSessionId !== sessionId) return;
+    const exponentialMs = Math.min(30_000, 1_000 * 2 ** Math.min(this.eventReconnectAttempt - 1, 5));
+    const delayMs = Math.max(exponentialMs, retryAfterMs);
+    this.eventReconnectTimer = setTimeout(() => {
+      this.eventReconnectTimer = null;
+      if (this.activeSessionId === sessionId && !this.eventSource) {
+        this.openEventSource(sessionId);
+      }
+    }, delayMs);
   }
 
   private waitForFrame(
@@ -853,4 +912,12 @@ export class ServerStream {
       ...(streamIds ? { streamIds } : {}),
     });
   }
+}
+
+function retryAfterHeaderMs(value: string | null): number {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
 }

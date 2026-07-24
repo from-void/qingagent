@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
+import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 import {
   browserFolderSourcesEnabled,
   getBrowserFolderBridgeClientFolderIds,
@@ -205,34 +206,46 @@ folderBridgeRoutes.get("/folder-bridge/events", (c) => {
   if (!isBrowserFolderBridgeClientRegistered(sessionId, clientId)) {
     return c.json({ error: "folder bridge client is not registered" }, 404);
   }
+  const client = requestClientAddress(c);
+  const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
+  if (!admission.accepted) {
+    c.header("Retry-After", "1");
+    return c.json({ error: "SSE connection limit exceeded", limit: admission.reason }, 429);
+  }
 
   return streamSSE(c, async (stream) => {
-    await stream.writeSSE({ event: "ready", data: "{}" });
-    const closeConnection = openBrowserFolderBridgeConnection({
-      sessionId,
-      clientId,
-      send: (request) =>
-        stream.writeSSE({
-          event: "folder-request",
-          data: JSON.stringify(request),
-        }),
-    });
-    refreshBrowserFolderSourceFileCountsForBridgeConnection(
-      sessionId,
-      clientId,
-      getBrowserFolderBridgeClientFolderIds(sessionId, clientId),
-    );
-
-    await new Promise<void>((resolve) => {
-      const heartbeat = setInterval(() => {
-        void stream.writeSSE({ event: "ping", data: "{}" }).catch(() => undefined);
-      }, 15_000);
-      stream.onAbort(() => {
-        clearInterval(heartbeat);
-        closeConnection();
-        resolve();
+    let closeConnection: () => void = () => undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    try {
+      await stream.writeSSE({ event: "ready", data: "{}" });
+      closeConnection = openBrowserFolderBridgeConnection({
+        sessionId,
+        clientId,
+        send: (request) =>
+          stream.writeSSE({
+            event: "folder-request",
+            data: JSON.stringify(request),
+          }),
       });
-    });
+      refreshBrowserFolderSourceFileCountsForBridgeConnection(
+        sessionId,
+        clientId,
+        getBrowserFolderBridgeClientFolderIds(sessionId, clientId),
+      );
+
+      await new Promise<void>((resolve) => {
+        heartbeat = setInterval(() => {
+          void stream.writeSSE({ event: "ping", data: "{}" }).catch(() => undefined);
+        }, 15_000);
+        stream.onAbort(resolve);
+      });
+    } finally {
+      if (heartbeat) {
+        clearInterval(heartbeat);
+      }
+      closeConnection();
+      admission.release();
+    }
   });
 });
 

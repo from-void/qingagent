@@ -55,6 +55,10 @@ export interface SubmitCommandInput {
   abortSignal?: AbortSignal;
 }
 
+export interface QueuedSubmission {
+  completion: Promise<LoggedFrame[]>;
+}
+
 interface ActorEntry {
   actor: SessionActor;
   lastAccessAt: number;
@@ -84,11 +88,23 @@ export class SessionManager {
   }
 
   async submit(sessionId: string, input: SubmitCommandInput): Promise<LoggedFrame[]> {
+    const queued = await this.submitQueued(sessionId, input);
+    return queued.completion;
+  }
+
+  /**
+   * 只等待命令完成删除态检查并进入 Actor 有界队列，不等待整轮执行。
+   * HTTP queued 语义端点用它同步感知队列满并返回 429。
+   */
+  async submitQueued(
+    sessionId: string,
+    input: SubmitCommandInput,
+  ): Promise<QueuedSubmission> {
     await this.ensureDeletionStateRestored();
     await this.restoreDeletionStateForSession(sessionId);
     this.assertSessionAcceptsCommands(sessionId);
     const actor = this.getOrCreateActor(sessionId);
-    return actor.enqueue(input);
+    return { completion: actor.enqueue(input) };
   }
 
   async runExclusive(

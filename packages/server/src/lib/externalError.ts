@@ -19,6 +19,7 @@ export function externalError(
   code: ExternalErrorCode,
   message?: string,
 ) {
+  if (status === 429) c.header("Retry-After", "1");
   return c.json(
     { error: message ?? code, code, nextStep: EXTERNAL_NEXT_STEP[code] },
     status,

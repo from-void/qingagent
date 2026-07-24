@@ -130,7 +130,7 @@ packages/ui-kit 设计 token 与基础样式的唯一来源(附少量已消费�
 
 Chromium 安全边界:抓取、PDF 导出与自主浏览器始终启用 Chromium sandbox 和站点隔离，启动参数不会加入 `--no-sandbox` 或关闭 `IsolateOrigins/site-per-process`。容器部署必须提供可用的 user namespace 与 seccomp；运行环境不支持 sandbox 时，浏览器能力会直接启动失败，不会静默降级。浏览器经 `HTTP_PROXY` / `HTTPS_PROXY` 出站时，代理必须在连接层拒绝私网、环回、链路本地（含 `169.254.0.0/16`、IPv6 等价范围）与云元数据目标，并设置 `QINGAGENT_BROWSER_PROXY_ACL=deny-private` 作部署确认；浏览器流量不会继承 `NO_PROXY` 绕过该 ACL。未确认 ACL 时，代理抓取与交互浏览器 fail-closed。
 
-服务端在实际监听地址非回环且未设置 `QINGAGENT_AUTH_TOKEN` 时会拒绝启动。只有显式设置高危逃生开关 `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1` 才会放行并打印审计告警；这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额。如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,风险还会扩大到在你的机器上执行命令。不要这样做。
+服务端只有在实际监听地址非回环，且未设置 `QINGAGENT_AUTH_TOKEN` 时才会拒绝启动；回环监听即使遗留了 `QINGAGENT_PUBLIC_DEPLOYMENT=1` 也不拒启。非回环监听只有显式设置高危逃生开关 `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1` 才会放行并打印审计告警；这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额。如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,风险还会扩大到在你的机器上执行命令。不要这样做。
 
 若你确要将服务暴露到公网,请使用 nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。反向代理透传的 `Host` 不会自动成为可信来源,必须把公网前端的完整 Origin（协议 + 主机 + 端口,默认 HTTPS 端口可省略）显式加入该变量。生成 token 示例:
 
@@ -187,7 +187,7 @@ server {
 | `QINGAGENT_TRUST_PROXY` | 未设置 | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |
 | `QINGAGENT_HOST` | `127.0.0.1` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |
 | `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC` | 未设置 | 未设置 | 高危逃生开关。仅 `=1` 允许无 token 的非回环监听,启动时打印审计告警。 |
-| `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署,用于安全自检和 debug/dataAdmin 分层门。 |
+| `QINGAGENT_PUBLIC_DEPLOYMENT` | 未设置 | 未设置 | 设为 `1` 时显式声明这是公网/外部可达部署，用于 debug/dataAdmin 分层门；启动拒绝仍只由实际非回环绑定决定。 |
 | `QINGAGENT_BROWSER_PROXY_ACL` | 未设置 | 未设置 | 浏览器配置了 `HTTP_PROXY` / `HTTPS_PROXY` 时必须设为 `deny-private`，确认代理在实际连接层拒绝私网/环回/链路本地/元数据地址；否则代理浏览器 fail-closed。 |
 | `QINGAGENT_ENABLE_DEBUG` | 未设置 | 未设置 | debug 与 dataAdmin 路由默认返回 404。仅 `=1` 开启;对外暴露且无 `QINGAGENT_AUTH_TOKEN` 时会被忽略。 |
 | `QINGAGENT_UPLOAD_MAX_BYTES` | `52428800`（50 MB） | 同 server | 单个上传文件解码后的最大字节数；服务端同时限制 base64 JSON 请求体，前端按默认 50 MB 预检。 |

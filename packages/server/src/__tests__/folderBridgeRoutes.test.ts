@@ -9,9 +9,11 @@ import {
   unregisterBrowserFolderSource,
 } from "@qingagent/core";
 import { folderBridgeRoutes } from "../routes/folderBridge";
+import { createJsonBodyLimitMiddleware, DEFAULT_JSON_BODY_LIMIT_BYTES } from "../lib/jsonBodyLimit";
 
 function makeApp(): Hono {
   const app = new Hono();
+  app.use("/api/*", createJsonBodyLimitMiddleware());
   app.route("/api/v1", folderBridgeRoutes);
   return app;
 }
@@ -352,6 +354,49 @@ describe("folderBridgeRoutes", () => {
       error: expect.stringContaining("maxBytes"),
     });
     await expect(pending).rejects.toThrow("browser folder request failed");
+    close();
+  });
+
+  it(">8MiB 且符合 folder 协议上限的二进制回传不被全局 JSON 护栏提前 413", async () => {
+    process.env.QINGAGENT_ENABLE_BROWSER_FOLDER_SOURCES = "1";
+    const app = makeApp();
+    const requests: Array<{ requestId: string }> = [];
+    const byteLength = DEFAULT_JSON_BODY_LIMIT_BYTES + 1024;
+    registerBrowserFolderSource("sess_large", "fld_large", "client_large");
+    const close = openBrowserFolderBridgeConnection({
+      sessionId: "sess_large",
+      clientId: "client_large",
+      send: async (request) => { requests.push(request); },
+    });
+    const pending = requestBrowserFolderBridge({
+      sessionId: "sess_large",
+      folderId: "fld_large",
+      clientId: "client_large",
+      op: "readFile",
+      relPath: "large.bin",
+      maxBytes: byteLength,
+    });
+    await flushPromises();
+
+    const response = await app.request(
+      `/api/v1/folder-bridge/responses/${requests[0]!.requestId}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-qingagent-session-id": "sess_large",
+          "x-qingagent-folder-id": "fld_large",
+          "x-qingagent-client-id": "client_large",
+          "x-qingagent-folder-op": "readFile",
+        },
+        body: new Uint8Array(byteLength),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const resolved = await pending;
+    expect(resolved).toMatchObject({ ok: true, op: "readFile" });
+    if (resolved.op === "readFile") expect(resolved.bytes.byteLength).toBe(byteLength);
     close();
   });
 });

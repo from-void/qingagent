@@ -314,4 +314,83 @@ describe("browser folder handle persistence", () => {
 
     await forgetBrowserFolderSource(source.sessionId, source.id);
   });
+
+  it("二进制回传非 2xx 时立即上报失败响应，不静默等待服务端 30s 超时", async () => {
+    const fetchCalls: Array<{ input: unknown; init?: RequestInit }> = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      fetchCalls.push({ input, init });
+      const matchingResponses = fetchCalls.filter((call) =>
+        String(call.input).includes("/folder-bridge/responses/"),
+      );
+      if (matchingResponses.length === 1) {
+        return { ok: false, status: 413 } as Response;
+      }
+      return { ok: true, status: 200 } as Response;
+    });
+
+    const fileHandle = {
+      kind: "file",
+      name: "large.bin",
+      getFile: async () => ({
+        name: "large.bin",
+        size: 3,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }),
+    } as unknown as FileSystemFileHandle;
+    const rootHandle = {
+      ...makeDirectoryHandle("root-folder"),
+      getFileHandle: async () => fileHandle,
+    } as unknown as FileSystemDirectoryHandle;
+    const picked: PickedBrowserFolderSource = {
+      handle: rootHandle,
+      name: "root-folder",
+      browserHandleKey: `${window.location.origin}:sess-failed-post:handle:root`,
+      clientSourceId: "browser_client_failed_post",
+    };
+    const source: FolderSource = {
+      id: "fld-failed-post",
+      sessionId: "sess-failed-post",
+      provider: "browser-fs-access",
+      name: "Root Folder",
+      pathLabel: "Root Folder",
+      mountName: "source_failed_post",
+      mountPath: "/sources/source_failed_post",
+      readOnly: true,
+      fileCount: null,
+      fileCountCapped: false,
+      status: "connected",
+      error: null,
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+    };
+
+    await rememberAttachedBrowserFolderSource({
+      sessionId: source.sessionId,
+      folderId: source.id,
+      picked,
+    });
+    await ensureBrowserFolderBridge(source);
+    fakeEventSources.at(-1)?.emit("folder-request", {
+      requestId: "req-failed-post",
+      sessionId: source.sessionId,
+      folderId: source.id,
+      clientId: picked.clientSourceId,
+      op: "readFile",
+      relPath: "large.bin",
+      maxBytes: 1024,
+    });
+    await flushBridgeTasks();
+
+    const responseCalls = fetchCalls.filter((call) =>
+      String(call.input).includes("/folder-bridge/responses/req-failed-post"),
+    );
+    expect(responseCalls).toHaveLength(2);
+    expect(responseCalls[0]?.init?.body).toBeInstanceOf(ArrayBuffer);
+    expect(JSON.parse(String(responseCalls[1]?.init?.body))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("413"),
+    });
+
+    await forgetBrowserFolderSource(source.sessionId, source.id);
+  });
 });

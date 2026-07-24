@@ -4,6 +4,7 @@ import { InMemoryFrameLog } from "../frameLog";
 import {
   SessionActor,
   SessionActorCommandError,
+  SessionActorQueueFullError,
   type HandleCommandFn,
 } from "../sessionActor";
 
@@ -37,6 +38,38 @@ function meta(title: string): BridgeFrame {
 }
 
 describe("SessionActor", () => {
+  it("等待队列达到容量后立即拒绝新命令，当前项与既有排队项仍可完成", async () => {
+    const log = new InMemoryFrameLog();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    const actor = new SessionActor({
+      sessionId: "s1",
+      frameLog: log,
+      maxQueueSize: 1,
+      handleCommand: async function* (command) {
+        if (command.kind !== "sendMessage") return;
+        if (command.data.text === "running") {
+          started();
+          await releasePromise;
+        }
+        yield meta(command.data.text);
+      },
+      abortSession: vi.fn(),
+    });
+
+    const running = actor.enqueue({ command: sendMessage("running") });
+    await startedPromise;
+    const queued = actor.enqueue({ command: commitReviewGroups() });
+
+    expect(() => actor.enqueue({ command: commitReviewGroups("overflow") }))
+      .toThrow(SessionActorQueueFullError);
+
+    release();
+    await expect(Promise.all([running, queued])).resolves.toHaveLength(2);
+  });
+
   it("串行 drain 同一会话的命令", async () => {
     const log = new InMemoryFrameLog();
     const order: string[] = [];

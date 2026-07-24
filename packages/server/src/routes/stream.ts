@@ -11,7 +11,7 @@ import {
   sessionExists,
 } from "../gateway/bridgeHandler";
 import type { LoggedFrame } from "../gateway/frameLog";
-import { SessionActorCommandError } from "../gateway/sessionActor";
+import { SessionActorCommandError, SessionActorQueueFullError } from "../gateway/sessionActor";
 import {
   commandSchema,
   MAX_COMMAND_ARRAY_LENGTH,
@@ -20,6 +20,8 @@ import {
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { formatCommandError, parseBody } from "../lib/validation";
+import { BoundedSsePump } from "../lib/boundedSsePump";
+import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 
 const PUBLIC_STREAM_ERROR_REASON = "模型服务暂时不可用，请稍后重试";
 const JSON_SECRET_HEADER_RE = /(["'](?:authorization|x-api-key)["']\s*:\s*["'])(?:Bearer\s+)?[^"']+(["'])/gi;
@@ -239,13 +241,21 @@ async function handleCommandPost(c: Context) {
     return c.json({ error: "Unable to route command to a session" }, 404);
   }
 
-  const promise = sessionManager.submit(prepared.sessionId, {
-    command: prepared.command,
-    clientTraceId: context.clientTraceId,
-    origin: context.origin,
-    modelOverrides: context.modelOverrides,
-    abortSignal: c.req.raw.signal,
-  });
+  let promise: Promise<LoggedFrame[]>;
+  try {
+    ({ completion: promise } = await sessionManager.submitQueued(prepared.sessionId, {
+      command: prepared.command,
+      clientTraceId: context.clientTraceId,
+      origin: context.origin,
+      modelOverrides: context.modelOverrides,
+      abortSignal: c.req.raw.signal,
+    }));
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return c.json({ error: "Session command queue is full" }, 429);
+    }
+    throw error;
+  }
 
   if (isBackgroundCommand(prepared.command)) {
     void promise.catch((error) => {
@@ -273,56 +283,86 @@ async function handleCommandPost(c: Context) {
 streamRoutes.post("/commands", handleCommandPost);
 streamRoutes.post("/stream", handleCommandPost);
 
-streamRoutes.get("/events", (c) => {
+streamRoutes.get("/events", async (c) => {
   const originError = requireTrustedOrigin(c);
   if (originError) return originError;
 
   const sessionId = c.req.query("sessionId");
   if (!sessionId) return c.json({ error: "sessionId is required" }, 400);
+  if (!sessionManager.frameLog.hasSession(sessionId) && !(await sessionExists(sessionId))) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const client = requestClientAddress(c);
+  const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
+  if (!admission.accepted) {
+    c.header("Retry-After", "1");
+    return c.json({ error: "SSE connection limit exceeded", limit: admission.reason }, 429);
+  }
 
   const afterSeq = parseSeq(c.req.header("Last-Event-ID") ?? c.req.query("after"));
   const requestedEpoch = parseOptionalSeq(c.req.query("epoch"));
 
   return streamSSE(c, async (stream) => {
-    let writeChain = Promise.resolve();
-    const enqueueWrite = (entry: LoggedFrame) => {
-      writeChain = writeChain
-        .then(() =>
-          stream.writeSSE({
+    let unsubscribe: () => void = () => undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+      admission.release();
+      settle();
+    };
+    const pump = new BoundedSsePump({
+      write: (message) => stream.writeSSE(message),
+      onClose: () => {
+        stream.abort();
+        cleanup();
+      },
+    });
+
+    try {
+      const read = sessionManager.frameLog.readFrom(sessionId, afterSeq);
+      let subscribeAfter = afterSeq;
+      if ((requestedEpoch !== null && requestedEpoch !== read.epoch) || read.gap) {
+        subscribeAfter = appendRestoreSnapshot(sessionId, read.epoch);
+      }
+
+      unsubscribe = sessionManager.frameLog.subscribe(
+        sessionId,
+        subscribeAfter,
+        (entry, delivery) => {
+          pump.enqueue({
             id: String(entry.seq),
             event: "frame",
             data: JSON.stringify(entry.frame),
-          }),
-        )
-        .catch(() => undefined);
-      return writeChain;
-    };
+          }, {
+            delivery,
+            allowOversized: entry.frame.kind === "documentSnapshotWritten",
+          });
+        },
+      );
+      if (cleaned) unsubscribe();
 
-    const read = sessionManager.frameLog.readFrom(sessionId, afterSeq);
-    let subscribeAfter = afterSeq;
-    if ((requestedEpoch !== null && requestedEpoch !== read.epoch) || read.gap) {
-      subscribeAfter = appendRestoreSnapshot(sessionId, read.epoch);
-    }
-
-    const unsubscribe = sessionManager.frameLog.subscribe(
-      sessionId,
-      subscribeAfter,
-      (entry) => {
-        void enqueueWrite(entry);
-      },
-    );
-
-    await new Promise<void>((resolve) => {
-      const heartbeat = setInterval(() => {
-        void stream.writeSSE({ event: "ping", data: "{}" }).catch(() => undefined);
-      }, 15_000);
+      if (!cleaned) {
+        heartbeat = setInterval(() => {
+          pump.enqueue({ event: "ping", data: "{}" }, { dropOnOverflow: true });
+        }, 15_000);
+      }
       stream.onAbort(() => {
-        clearInterval(heartbeat);
-        unsubscribe();
-        resolve();
+        pump.close();
+        cleanup();
       });
-    });
-    await writeChain;
+      await settled;
+      await pump.waitForIdle();
+    } finally {
+      pump.close();
+      cleanup();
+    }
   });
 });
 
@@ -491,6 +531,9 @@ streamRoutes.post("/commit", async (c) => {
     return c.json(loggedCommandFrames(await promise));
   } catch (error) {
     console.error("[commit] command failed:", redactStreamErrorForLog(error));
+    if (error instanceof SessionActorQueueFullError) {
+      return c.json({ error: "Session command queue is full" }, 429);
+    }
     if (error instanceof SessionActorCommandError && error.frames.length > 0) {
       return c.json(loggedCommandFrames(error.frames));
     }

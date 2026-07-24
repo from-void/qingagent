@@ -318,7 +318,7 @@ function parseBridgeRequest(value: unknown): BrowserBridgeRequest {
 }
 
 async function postJsonResponse(request: BrowserBridgeRequest, body: Record<string, unknown>): Promise<void> {
-  await fetch(`/api/v1/folder-bridge/responses/${encodeURIComponent(request.requestId)}`, {
+  const response = await fetch(`/api/v1/folder-bridge/responses/${encodeURIComponent(request.requestId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -328,10 +328,11 @@ async function postJsonResponse(request: BrowserBridgeRequest, body: Record<stri
       ...body,
     }),
   });
+  if (!response.ok) throw new Error(`folder bridge response failed: ${response.status}`);
 }
 
 async function postBinaryResponse(request: BrowserBridgeRequest, bytes: ArrayBuffer): Promise<void> {
-  await fetch(`/api/v1/folder-bridge/responses/${encodeURIComponent(request.requestId)}`, {
+  const response = await fetch(`/api/v1/folder-bridge/responses/${encodeURIComponent(request.requestId)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
@@ -342,6 +343,7 @@ async function postBinaryResponse(request: BrowserBridgeRequest, bytes: ArrayBuf
     },
     body: bytes,
   });
+  if (!response.ok) throw new Error(`folder bridge binary response failed: ${response.status}`);
 }
 
 function browserBridgeErrorMessage(error: unknown): string {
@@ -381,7 +383,11 @@ async function handleBridgeRequest(bridge: ActiveBrowserBridge, raw: unknown): P
     await postBinaryResponse(request, bytes);
   } catch (error) {
     if (request && !bridge.closed) {
-      await postJsonResponse(request, { ok: false, error: browserBridgeErrorMessage(error) });
+      try {
+        await postJsonResponse(request, { ok: false, error: browserBridgeErrorMessage(error) });
+      } catch (postError) {
+        console.error("[browserFolderBridge] failed to report bridge error", postError);
+      }
       return;
     }
     console.error("[browserFolderBridge] invalid bridge request", error);

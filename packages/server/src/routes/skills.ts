@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import JSZip from "jszip";
 import type { JSZipObject } from "jszip";
 import { existsSync } from "node:fs";
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   BUILTIN_SKILLS_DIR,
@@ -279,7 +279,6 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
     throw new Error("invalid zip file");
   }
 
-  let totalBytes = 0;
   let skillMdPath: string | null = null;
   for (const entry of files) {
     const safe = sanitizeZipPath(entry.name);
@@ -291,7 +290,10 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
   if (!skillMdPath) throw new Error("zip missing SKILL.md");
 
   const skillEntry = zip.file(skillMdPath);
-  const skillMd = await skillEntry?.async("string");
+  const skillMdBytes = skillEntry
+    ? await readZipEntryBounded(skillEntry, MAX_UNZIPPED_BYTES)
+    : null;
+  const skillMd = skillMdBytes?.toString("utf8");
   const parsed = skillMd ? parseSkillFrontmatter(skillMd) : null;
   if (!parsed) throw new Error("SKILL.md missing valid frontmatter");
 
@@ -303,25 +305,112 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
   if (await findSkillOnDisk(parsed.name)) throw new Error("skill already exists");
 
   const rootPrefix = skillMdPath.includes("/") ? `${skillMdPath.split("/")[0]}/` : "";
-  const writes: Array<{ path: string; data: Buffer }> = [];
+  const entries: Array<{ entry: JSZipObject; destRel: string }> = [];
   for (const entry of files) {
     const safe = sanitizeZipPath(entry.name);
     const destRel = rootPrefix && safe.startsWith(rootPrefix) ? safe.slice(rootPrefix.length) : safe;
     if (!destRel) continue;
-    const data = await entry.async("nodebuffer");
-    totalBytes += data.length;
-    if (totalBytes > MAX_UNZIPPED_BYTES) throw new Error("zip is too large");
     const outPath = resolve(dest, destRel);
     if (!isInside(dest, outPath)) throw new Error("invalid zip path");
-    writes.push({ path: outPath, data });
+    entries.push({ entry, destRel });
   }
 
-  await createSkillDirectory(dest);
-  for (const write of writes) {
-    await mkdir(dirname(write.path), { recursive: true });
-    await writeFile(write.path, write.data);
+  await mkdir(SKILLS_INSTALL_DIR, { recursive: true });
+  const staging = await mkdtemp(join(SKILLS_INSTALL_DIR, ".install-"));
+  let totalBytes = 0;
+  try {
+    for (const item of entries) {
+      const outPath = resolve(staging, item.destRel);
+      if (!isInside(staging, outPath)) throw new Error("invalid zip path");
+      await mkdir(dirname(outPath), { recursive: true });
+      const file = await open(outPath, "wx");
+      try {
+        await consumeZipEntry(item.entry, async (chunk) => {
+          totalBytes += chunk.length;
+          if (totalBytes > MAX_UNZIPPED_BYTES) {
+            throw new Error("zip is too large");
+          }
+          await writeAll(file, chunk);
+        });
+      } finally {
+        await file.close();
+      }
+    }
+    await rename(staging, dest);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
   return { name: parsed.name };
+}
+
+async function readZipEntryBounded(entry: JSZipObject, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  await consumeZipEntry(entry, (chunk) => {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      throw new Error("zip is too large");
+    }
+    chunks.push(chunk);
+  });
+  return Buffer.concat(chunks, totalBytes);
+}
+
+function consumeZipEntry(
+  entry: JSZipObject,
+  onChunk: (chunk: Buffer) => void | Promise<void>,
+): Promise<void> {
+  return new Promise<void>((resolveStream, rejectStream) => {
+    const stream = entry.nodeStream("nodebuffer");
+    let settled = false;
+    let processing = Promise.resolve();
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      stream.pause();
+      (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+      rejectStream(error);
+    };
+
+    stream
+      .on("data", (rawChunk: Buffer) => {
+        if (settled) return;
+        stream.pause();
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+        processing = processing
+          .then(() => onChunk(chunk))
+          .then(() => {
+            if (!settled) stream.resume();
+          })
+          .catch(fail);
+      })
+      .on("error", fail)
+      .on("end", () => {
+        void processing.then(() => {
+          if (settled) return;
+          settled = true;
+          resolveStream();
+        }, fail);
+      })
+      .resume();
+  });
+}
+
+async function writeAll(
+  file: Awaited<ReturnType<typeof open>>,
+  chunk: Buffer,
+): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await file.write(
+      chunk,
+      offset,
+      chunk.length - offset,
+    );
+    if (bytesWritten <= 0) throw new Error("zip write failed");
+    offset += bytesWritten;
+  }
 }
 
 async function createSkillDirectory(dest: string): Promise<void> {

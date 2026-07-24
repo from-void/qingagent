@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import JSZip from "jszip";
 
 // 测试安装目录必须留在可写临时区，不能污染/依赖运行用户的 ~/.qingagent/skills。
 // hoisted 保证 paths.ts 首次求值前已注入。
@@ -135,6 +136,38 @@ describe("技能 mutation 开关", () => {
     });
     if (res.status === 200) installedNames.add(skillName);
     expect(res.status).not.toBe(403);
+  });
+
+  it("小压缩包解出超过总上限时流式中止，且不留下半安装目录", async () => {
+    process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
+    const skillName = "zip-bomb-bounded";
+    const zip = new JSZip();
+    zip.file(
+      "SKILL.md",
+      `---\nname: ${skillName}\ndescription: 流式上限回归\n---\n# demo`,
+    );
+    zip.file("assets/repeated.txt", "x".repeat(10 * 1024 * 1024 + 1));
+    const compressed = await zip.generateAsync({
+      type: "arraybuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    });
+    expect(compressed.byteLength).toBeLessThan(256 * 1024);
+    const form = new FormData();
+    form.set("file", new File([compressed], "skill.zip", { type: "application/zip" }));
+
+    const app = await loadApp();
+    const response = await app.request("/api/v1/skills/install", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "zip is too large" });
+    const { access } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    await expect(access(join(SKILLS_INSTALL_DIR, skillName))).rejects.toThrow();
   });
 });
 

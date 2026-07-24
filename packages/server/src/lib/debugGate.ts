@@ -19,10 +19,7 @@ export function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(normalizeHost(host));
 }
 
-/**
- * 绑定层 fail-closed：只信任实际传给 serve() 的 host，不从 PUBLIC/HOST 环境变量反推。
- * desktop 固定传 127.0.0.1，因此不会被用户遗留的 QINGAGENT_HOST 误伤。
- */
+/** 绑定层 fail-closed：只有实际非回环监听且无 token/逃生阀时拒启。 */
 export function assessBindSafety(
   host: string,
   env: SecurityEnv = process.env,
@@ -42,7 +39,8 @@ export function assessBindSafety(
   return {
     allowed: false,
     error:
-      `[security] 拒绝在 ${host} 上公开监听：未设置 QINGAGENT_AUTH_TOKEN。` +
+      `[security] 拒绝在 ${host} 上公开监听：` +
+      "未设置 QINGAGENT_AUTH_TOKEN。" +
       "无鉴权公开监听会让任何可达者读写文档并消耗模型 key。" +
       "请设置强随机 token，或仅在明确接受风险时设置 QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1。",
   };

@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { sessionManager } from "../gateway/bridgeHandler";
+import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
+import { MAX_COMMAND_STRING_LENGTH } from "@qingagent/contract-ts/schemas";
 
 const dirs: string[] = [];
 let token = "";
@@ -26,7 +28,9 @@ afterEach(async () => {
 describe("external chat", () => {
   it("POST chat 立即 queued,并以 origin=external 入队 sendMessage", async () => {
     const sessionId = await createSession();
-    const submit = vi.spyOn(sessionManager, "submit").mockResolvedValueOnce([]);
+    const submit = vi.spyOn(sessionManager, "submitQueued").mockResolvedValueOnce({
+      completion: Promise.resolve([]),
+    });
     const res = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
       method: "POST",
       headers: authHeaders(),
@@ -63,6 +67,72 @@ describe("external chat", () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ code: "SESSION_NOT_FOUND" });
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("复用 commandSchema 拒绝超过 64KB 的 text", async () => {
+    const sessionId = await createSession();
+    const submitQueued = vi.spyOn(sessionManager, "submitQueued");
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ text: "x".repeat(MAX_COMMAND_STRING_LENGTH + 1) }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "VALIDATION" });
+    expect(submitQueued).not.toHaveBeenCalled();
+  });
+
+  it("Actor 队列满时同步返回 429，不伪装成 queued", async () => {
+    const sessionId = await createSession();
+    vi.spyOn(sessionManager, "submitQueued").mockRejectedValueOnce(
+      new SessionActorQueueFullError(64),
+    );
+
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ text: "请排队" }),
+    });
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  it("external 写端点接入限流，超过每秒容量后返回 429", async () => {
+    const sessionId = await createSession();
+    vi.spyOn(sessionManager, "submitQueued").mockResolvedValue({
+      completion: Promise.resolve([]),
+    });
+
+    const statuses: number[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      const response = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
+        method: "POST",
+        headers: { ...authHeaders(), "X-Forwarded-For": "203.0.113.20" },
+        body: JSON.stringify({ text: `消息 ${index}` }),
+      });
+      statuses.push(response.status);
+    }
+
+    expect(statuses.slice(0, 20)).toEqual(Array.from({ length: 20 }, () => 200));
+    expect(statuses[20]).toBe(429);
+  });
+
+  it("回环来源批量写不触发公网限流", async () => {
+    const sessionId = await createSession();
+    vi.spyOn(sessionManager, "submitQueued").mockResolvedValue({
+      completion: Promise.resolve([]),
+    });
+
+    for (let index = 0; index < 30; index += 1) {
+      const response = await app.request(`/api/v1/external/sessions/${sessionId}/chat`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ text: `本机消息 ${index}` }),
+      });
+      expect(response.status).toBe(200);
+    }
   });
 });
 

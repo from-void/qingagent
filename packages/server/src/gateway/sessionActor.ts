@@ -35,6 +35,17 @@ export class SessionActorCommandError extends Error {
   }
 }
 
+export const DEFAULT_SESSION_ACTOR_QUEUE_CAPACITY = 64;
+
+export class SessionActorQueueFullError extends Error {
+  readonly statusCode = 429;
+
+  constructor(readonly capacity: number) {
+    super("Session actor queue is full");
+    this.name = "SessionActorQueueFullError";
+  }
+}
+
 interface QueueItem {
   input: ActorCommand | null;
   task?: () => AsyncGenerator<BridgeFrame>;
@@ -48,6 +59,7 @@ export interface SessionActorOptions {
   handleCommand: HandleCommandFn;
   abortSession: (sessionId: string) => void;
   afterRun?: (sessionId: string) => void;
+  maxQueueSize?: number;
 }
 
 const DISPOSED_ERROR = new Error("Session actor disposed");
@@ -58,8 +70,14 @@ export class SessionActor {
   private drainPromise: Promise<void> | null = null;
   private current: QueueItem | null = null;
   private stateValue: SessionActorState = "idle";
+  private readonly maxQueueSize: number;
 
-  constructor(private readonly options: SessionActorOptions) {}
+  constructor(private readonly options: SessionActorOptions) {
+    this.maxQueueSize = Math.max(
+      1,
+      Math.floor(options.maxQueueSize ?? DEFAULT_SESSION_ACTOR_QUEUE_CAPACITY),
+    );
+  }
 
   get state(): SessionActorState {
     return this.stateValue;
@@ -77,6 +95,7 @@ export class SessionActor {
       // queued send 先重新发 start/问卷，用户只能再点一次停止。
       this.cancelQueuedTurnDispatches();
     }
+    this.assertQueueCapacity();
     if (this.isBusy && isPreemptiveCommand(input.command)) {
       this.abortCurrent();
     }
@@ -90,10 +109,17 @@ export class SessionActor {
   /** 专用上行通道进入同一会话串行队列，避免把 secret/决策塞进通用 Command。 */
   enqueueTask(task: () => AsyncGenerator<BridgeFrame>): Promise<LoggedFrame[]> {
     if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    this.assertQueueCapacity();
     return new Promise<LoggedFrame[]>((resolve, reject) => {
       this.queue.push({ input: null, task, resolve, reject });
       this.startDrainLoop();
     });
+  }
+
+  private assertQueueCapacity(): void {
+    if (this.queue.length >= this.maxQueueSize) {
+      throw new SessionActorQueueFullError(this.maxQueueSize);
+    }
   }
 
   abortCurrent(): void {

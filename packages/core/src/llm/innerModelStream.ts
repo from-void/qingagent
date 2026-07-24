@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai-v5";
 import { streamText } from "./streamTextCompat.js";
 import {
   branchCall,
+  DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
   getDeepseekModel,
   getSessionSnapshot,
   resolveProtocol,
@@ -24,7 +25,7 @@ export interface InnerModelStreamCall {
   abortSignal?: AbortSignal;
   maxRetries?: number;
   maxTokens?: number;
-  /** 分支验真前允许缓存的文本字节数，缺省不限制。 */
+  /** 分支验真前允许缓存的文本字节数，缺省使用安全上限。 */
   maxBufferedTextBytes?: number;
   /** 每次上游流有活动时触发；与只触发一次的内容启动事件分离。 */
   onActivity?: () => void;
@@ -66,7 +67,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       thinking: input.thinking,
       temperature: input.temperature,
       maxTokens: input.maxTokens,
-      maxBufferedTextBytes: input.maxBufferedTextBytes,
+      maxBufferedTextBytes: input.maxBufferedTextBytes ?? DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
       onActivity: () => {
         input.onActivity?.();
       },

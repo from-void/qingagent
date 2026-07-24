@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../app";
 import { sessionManager } from "../gateway/bridgeHandler";
 import { getExternalToken, startExternalInstance, stopExternalInstance } from "../lib/externalInstance";
+import { DEFAULT_SSE_ADMISSION_LIMITS } from "../lib/sseAdmission";
 
 const dirs: string[] = [];
 let token = "";
@@ -66,6 +67,126 @@ describe("external events", () => {
     const events = await readPromise;
     const frames = events.filter((event) => event.event === "frame").map((event) => JSON.parse(event.data) as { seq: number });
     expect(frames.map((frame) => frame.seq)).toEqual([2]);
+  });
+
+  it("70 条同步历史回放完整送达，不被 64 帧 live 队列误杀", async () => {
+    const sessionId = "events-replay-over-64";
+    for (let index = 1; index <= 70; index += 1) {
+      sessionManager.frameLog.append(sessionId, {
+        kind: "sessionMeta",
+        data: { sessionId, title: `历史帧 ${index}` },
+      });
+    }
+
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+    const events = await readSseEvents(res, controller, 71);
+    const frames = events
+      .filter((event) => event.event === "frame")
+      .map((event) => JSON.parse(event.data) as { seq: number });
+
+    expect(frames).toHaveLength(70);
+    expect(frames.map((frame) => frame.seq)).toEqual(
+      Array.from({ length: 70 }, (_, index) => index + 1),
+    );
+  });
+
+  it("超过 512 KiB 的文档快照可在重连回放中恢复", async () => {
+    const sessionId = "events-large-document-snapshot";
+    const largeText = "大".repeat(300 * 1024);
+    sessionManager.frameLog.append(sessionId, {
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          version: 1,
+          ts: "2026-07-25T00:00:00.000Z",
+          doc: {
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [{
+              type: "paragraph",
+              attrs: { blockId: "large-paragraph" },
+              content: [{ type: "text", text: largeText }],
+            }],
+          },
+        },
+      },
+    });
+
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+    const events = await readSseEvents(res, controller, 2);
+    const frame = JSON.parse(events[1]!.data) as {
+      kind: string;
+      data: { doc: { doc: { content: Array<{ content: Array<{ text: string }> }> } } };
+    };
+
+    expect(Buffer.byteLength(events[1]!.data, "utf8")).toBeGreaterThan(512 * 1024);
+    expect(frame.kind).toBe("documentSnapshotWritten");
+    expect(frame.data.doc.doc.content[0]!.content[0]!.text).toBe(largeText);
+  });
+
+  it("Last-Event-ID 可覆盖旧 query after 继续补拉", async () => {
+    const sessionId = "events-last-event-id";
+    for (let index = 1; index <= 5; index += 1) {
+      sessionManager.frameLog.append(sessionId, {
+        kind: "sessionMeta",
+        data: { sessionId, title: `帧 ${index}` },
+      });
+    }
+
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=1`, {
+      headers: { ...authHeaders(), "Last-Event-ID": "3" },
+      signal: controller.signal,
+    });
+    const events = await readSseEvents(res, controller, 3);
+    const seqs = events
+      .filter((event) => event.event === "frame")
+      .map((event) => (JSON.parse(event.data) as { seq: number }).seq);
+
+    expect(seqs).toEqual([4, 5]);
+  });
+
+  it("external SSE 也纳入非回环公网会话准入上限", async () => {
+    const sessionId = "external-events-public-admission";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "sessionMeta",
+      data: { sessionId, title: "公网准入" },
+    });
+    const connections: Array<{ controller: AbortController; response: Response }> = [];
+    try {
+      for (let index = 0; index < DEFAULT_SSE_ADMISSION_LIMITS.maxPerSession; index += 1) {
+        const controller = new AbortController();
+        const response = await app.request(
+          `/api/v1/external/sessions/${sessionId}/events?after=1`,
+          {
+            headers: { ...authHeaders(), "X-Forwarded-For": "203.0.113.40" },
+            signal: controller.signal,
+          },
+        );
+        expect(response.status).toBe(200);
+        connections.push({ controller, response });
+      }
+
+      const rejected = await app.request(
+        `/api/v1/external/sessions/${sessionId}/events?after=1`,
+        { headers: { ...authHeaders(), "X-Forwarded-For": "203.0.113.40" } },
+      );
+      expect(rejected.status).toBe(429);
+      expect(rejected.headers.get("retry-after")).toBe("1");
+    } finally {
+      for (const connection of connections) {
+        connection.controller.abort();
+        await connection.response.body?.cancel().catch(() => undefined);
+      }
+    }
   });
 
   it("after 早于内存窗口时首帧 meta 标记 gap", async () => {

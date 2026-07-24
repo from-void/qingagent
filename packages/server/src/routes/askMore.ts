@@ -8,6 +8,7 @@ import { getSession } from "../gateway/bridgeHandler";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 import { parseBody } from "../lib/validation";
+import { requestClientAddress, sseAdmission } from "../lib/sseAdmission";
 
 export const askMoreRoutes = new Hono();
 
@@ -217,6 +218,12 @@ askMoreRoutes.post("/ask-more", async (c) => {
     })
     .join("\n");
 
+  const client = requestClientAddress(c);
+  const admission = sseAdmission.acquire(client.ip, sessionId, { loopback: client.loopback });
+  if (!admission.accepted) {
+    c.header("Retry-After", "1");
+    return c.json({ error: "SSE connection limit exceeded", limit: admission.reason }, 429);
+  }
   return streamSSE(c, async (stream) => {
     try {
       let lastQuestions: unknown[] = [];
@@ -246,6 +253,8 @@ askMoreRoutes.post("/ask-more", async (c) => {
         event: "error",
         data: JSON.stringify({ error: publicAskMoreErrorMessage(), retriable: true }),
       });
+    } finally {
+      admission.release();
     }
   });
 });

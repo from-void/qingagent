@@ -62,6 +62,7 @@ export {
   hasVisibleAskUserAnswerMessage,
   invalidateDraftStateAfterCanonicalWrite,
   invalidateTurnOwnership,
+  isSensitiveField,
   isDirectionReset,
   isOmSidecarEnabled,
   isPlanDraftTool,

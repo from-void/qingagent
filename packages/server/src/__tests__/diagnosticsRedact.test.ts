@@ -50,6 +50,7 @@ describe("diagnostics redaction", () => {
         stack: "Error at /Users/alice/app.ts with eyJabcdef.eyJghijkl.eyJmnopqr",
       },
       array: ["x-api-key: ghp_nestedsecret", { cookie: "sid=secret" }],
+      apiKey: "普通字符串",
     }) as Record<string, unknown>;
 
     const text = JSON.stringify(redacted);
@@ -58,6 +59,8 @@ describe("diagnostics redaction", () => {
     expect(text).not.toContain("ghp_nestedsecret");
     expect(text).not.toContain("/home/alice");
     expect(text).not.toContain("/Users/alice");
+    expect(text).not.toContain("普通字符串");
+    expect(redacted).toMatchObject({ apiKey: "***" });
     expect(text).toContain("~");
   });
 });

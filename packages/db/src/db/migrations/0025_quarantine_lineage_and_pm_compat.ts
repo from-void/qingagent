@@ -25,6 +25,27 @@ async function createRecoveryTables(client: Client): Promise<void> {
       version_id        TEXT NOT NULL,
       detected_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    `CREATE TABLE IF NOT EXISTS document_recovery_audits (
+      doc_id                  TEXT NOT NULL,
+      version_id              TEXT NOT NULL,
+      reason                  TEXT NOT NULL,
+      source_doc_id           TEXT NOT NULL,
+      source_thread_id        TEXT NOT NULL,
+      current_doc_version     INTEGER,
+      isolated_doc_version    INTEGER NOT NULL,
+      current_content_hash    TEXT,
+      snapshot_content_hash   TEXT,
+      stored_version_hash     TEXT NOT NULL,
+      exact_snapshot_match    INTEGER NOT NULL DEFAULT 0,
+      native_snapshot_match   INTEGER NOT NULL DEFAULT 0,
+      native_op_match         INTEGER NOT NULL DEFAULT 0,
+      review_status           TEXT NOT NULL DEFAULT 'pending'
+        CHECK (review_status IN ('pending', 'confirmed', 'dismissed')),
+      reviewed_at             TEXT,
+      review_note             TEXT,
+      detected_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (doc_id, version_id, reason)
+    )`,
     `CREATE TABLE IF NOT EXISTS document_versions_quarantine_0025 (
       version_id        TEXT PRIMARY KEY,
       doc_id            TEXT NOT NULL,
@@ -104,6 +125,8 @@ async function createRecoveryTables(client: Client): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_document_write_blocks_reason
       ON document_write_blocks (reason, doc_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_document_recovery_audits_status
+      ON document_recovery_audits (review_status, reason, doc_id)`,
     `CREATE INDEX IF NOT EXISTS idx_document_versions_quarantine_0025_source
       ON document_versions_quarantine_0025 (source_doc_id, doc_version)`,
     `CREATE INDEX IF NOT EXISTS idx_document_ops_quarantine_0025_source
@@ -116,37 +139,170 @@ async function createRecoveryTables(client: Client): Promise<void> {
   for (const sql of statements) await client.execute(sql);
 }
 
-async function blockOverwrittenDocuments(client: Client): Promise<void> {
-  await client.execute(`
-    INSERT OR IGNORE INTO document_write_blocks (
-      doc_id, reason, source_doc_id, source_thread_id, version_id
-    )
-    SELECT
-      document.id,
-      'quarantine_0002_foreign_snapshot',
-      origin.source_doc_id,
-      origin.source_thread_id,
-      version.version_id
-    FROM document_version_restore_origins origin
-    INNER JOIN document_versions version
-      ON version.version_id = origin.version_id
-      AND version.doc_id = origin.restored_doc_id
-    INNER JOIN documents document
-      ON document.id = origin.restored_doc_id
-    WHERE origin.source_doc_id <> document.id
-      AND document.doc_version = version.doc_version
-      AND (
-        document.doc_pm = version.snapshot_pm
-        OR (
-          document.content_hash IS NOT NULL
-          AND document.content_hash = version.content_hash
-        )
-      )
-  `);
+interface ForeignVersionIsolationEvidence {
+  versionId: string;
+  restoredDocId: string;
+  docVersion: number;
+  storedContentHash: string;
+  snapshotPm: string;
+  sourceDocId: string;
+  sourceThreadId: string;
 }
 
-async function isolateForeignVersions(client: Client): Promise<void> {
-  if (!(await tableExists(client, "document_versions_quarantine_0002"))) return;
+interface PmEvidence {
+  stableJson: string;
+  contentHash: string;
+}
+
+function getPmEvidence(value: unknown): PmEvidence | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return {
+      stableJson: getStablePmJson(parsed),
+      contentHash: getPmContentHash(parsed),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function classifyRemovedForeignVersions(
+  client: Client,
+  removed: readonly ForeignVersionIsolationEvidence[],
+): Promise<void> {
+  for (const evidence of removed) {
+    const currentResult = await client.execute({
+      sql: `SELECT doc_version, doc_pm
+        FROM documents
+        WHERE id = ?
+        LIMIT 1`,
+      args: [evidence.restoredDocId],
+    });
+    const current = currentResult.rows[0];
+    const currentVersion = current?.doc_version == null
+      ? null
+      : Number(current.doc_version);
+    const currentPm = getPmEvidence(current?.doc_pm);
+    const snapshotPm = getPmEvidence(evidence.snapshotPm);
+    const nativeSnapshots = currentVersion == null
+      ? { rows: [] }
+      : await client.execute({
+          sql: `SELECT native.snapshot_pm
+            FROM document_versions native
+            WHERE native.doc_id = ?
+              AND native.doc_version = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM document_version_restore_origins origin
+                WHERE origin.version_id = native.version_id
+                  AND origin.restored_doc_id = native.doc_id
+                  AND origin.source_doc_id <> native.doc_id
+              )`,
+          args: [evidence.restoredDocId, currentVersion],
+        });
+    const nativeSnapshotMatch = currentPm !== null
+      && nativeSnapshots.rows.some((row) => {
+        const nativePm = getPmEvidence(row.snapshot_pm);
+        return nativePm !== null && nativePm.stableJson === currentPm.stableJson;
+      });
+    const nativeOpMatch = currentVersion != null
+      && (await client.execute({
+        sql: `SELECT 1
+          FROM document_ops
+          WHERE doc_id = ? AND to_version = ?
+          LIMIT 1`,
+        args: [evidence.restoredDocId, currentVersion],
+      })).rows.length > 0;
+    const exactSnapshotMatch = currentPm !== null
+      && snapshotPm !== null
+      && currentPm.stableJson === snapshotPm.stableJson;
+    const computedHashesMatch = currentPm !== null
+      && snapshotPm !== null
+      && currentPm.contentHash === snapshotPm.contentHash
+      && snapshotPm.contentHash === evidence.storedContentHash;
+    const positiveOverwriteEvidence = currentVersion === evidence.docVersion
+      && exactSnapshotMatch
+      && computedHashesMatch
+      && !nativeSnapshotMatch
+      && !nativeOpMatch;
+
+    if (positiveOverwriteEvidence) {
+      await client.execute({
+        sql: `INSERT OR IGNORE INTO document_write_blocks (
+          doc_id, reason, source_doc_id, source_thread_id, version_id
+        ) VALUES (?, 'quarantine_0002_foreign_snapshot', ?, ?, ?)`,
+        args: [
+          evidence.restoredDocId,
+          evidence.sourceDocId,
+          evidence.sourceThreadId,
+          evidence.versionId,
+        ],
+      });
+      continue;
+    }
+
+    // 仅有版本号、旧 content_hash 或相似正文都不足以永久锁写。保留隔离证据，
+    // 交由人工明确确认或驳回；审计本身不参与写门。
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO document_recovery_audits (
+        doc_id, version_id, reason, source_doc_id, source_thread_id,
+        current_doc_version, isolated_doc_version, current_content_hash,
+        snapshot_content_hash, stored_version_hash, exact_snapshot_match,
+        native_snapshot_match, native_op_match
+      ) VALUES (
+        ?, ?, 'quarantine_0002_foreign_version_needs_confirmation', ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?
+      )`,
+      args: [
+        evidence.restoredDocId,
+        evidence.versionId,
+        evidence.sourceDocId,
+        evidence.sourceThreadId,
+        currentVersion,
+        evidence.docVersion,
+        currentPm?.contentHash ?? null,
+        snapshotPm?.contentHash ?? null,
+        evidence.storedContentHash,
+        exactSnapshotMatch ? 1 : 0,
+        nativeSnapshotMatch ? 1 : 0,
+        nativeOpMatch ? 1 : 0,
+      ],
+    });
+  }
+}
+
+async function isolateForeignVersions(
+  client: Client,
+): Promise<ForeignVersionIsolationEvidence[]> {
+  if (!(await tableExists(client, "document_versions_quarantine_0002"))) return [];
+  const candidates = await client.execute(`
+    SELECT
+      active.version_id,
+      active.doc_id AS restored_doc_id,
+      active.doc_version,
+      active.content_hash,
+      active.snapshot_pm,
+      origin.source_doc_id,
+      origin.source_thread_id
+    FROM document_versions active
+    INNER JOIN document_version_restore_origins origin
+      ON origin.version_id = active.version_id
+      AND origin.restored_doc_id = active.doc_id
+      AND origin.recovery_migration = 23
+    INNER JOIN document_versions_quarantine_0002 quarantined
+      ON quarantined.version_id = active.version_id
+      AND quarantined.doc_id = origin.source_doc_id
+      AND quarantined.doc_version = active.doc_version
+      AND quarantined.content_hash = active.content_hash
+      AND quarantined.schema_version = active.schema_version
+      AND quarantined.actor_type = active.actor_type
+      AND quarantined.summary IS active.summary
+      AND quarantined.snapshot_pm = active.snapshot_pm
+      AND quarantined.parent_version IS active.parent_version
+      AND quarantined.created_at = active.created_at
+    WHERE origin.source_doc_id <> active.doc_id
+    ORDER BY active.doc_id, active.doc_version DESC, active.version_id
+  `);
   await client.execute(`
     INSERT OR IGNORE INTO document_versions_quarantine_0025 (
       version_id, doc_id, doc_version, content_hash, schema_version,
@@ -162,9 +318,18 @@ async function isolateForeignVersions(client: Client): Promise<void> {
     INNER JOIN document_version_restore_origins origin
       ON origin.version_id = active.version_id
       AND origin.restored_doc_id = active.doc_id
+      AND origin.recovery_migration = 23
     INNER JOIN document_versions_quarantine_0002 quarantined
       ON quarantined.version_id = active.version_id
       AND quarantined.doc_id = origin.source_doc_id
+      AND quarantined.doc_version = active.doc_version
+      AND quarantined.content_hash = active.content_hash
+      AND quarantined.schema_version = active.schema_version
+      AND quarantined.actor_type = active.actor_type
+      AND quarantined.summary IS active.summary
+      AND quarantined.snapshot_pm = active.snapshot_pm
+      AND quarantined.parent_version IS active.parent_version
+      AND quarantined.created_at = active.created_at
     WHERE origin.source_doc_id <> active.doc_id
   `);
   await client.execute(`
@@ -183,6 +348,45 @@ async function isolateForeignVersions(client: Client): Promise<void> {
         AND quarantined.created_at = document_versions.created_at
     )
   `);
+
+  const removed: ForeignVersionIsolationEvidence[] = [];
+  for (const row of candidates.rows) {
+    const proof = await client.execute({
+      sql: `SELECT 1
+        FROM document_versions_quarantine_0025 quarantined
+        WHERE quarantined.version_id = ?
+          AND quarantined.restored_doc_id = ?
+          AND quarantined.source_doc_id = ?
+          AND quarantined.doc_version = ?
+          AND quarantined.content_hash = ?
+          AND quarantined.snapshot_pm = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM document_versions active
+            WHERE active.version_id = quarantined.version_id
+              AND active.doc_id = quarantined.restored_doc_id
+          )
+        LIMIT 1`,
+      args: [
+        row.version_id as string,
+        row.restored_doc_id as string,
+        row.source_doc_id as string,
+        Number(row.doc_version),
+        row.content_hash as string,
+        row.snapshot_pm as string,
+      ],
+    });
+    if (proof.rows.length === 0) continue;
+    removed.push({
+      versionId: String(row.version_id),
+      restoredDocId: String(row.restored_doc_id),
+      docVersion: Number(row.doc_version),
+      storedContentHash: String(row.content_hash),
+      snapshotPm: String(row.snapshot_pm),
+      sourceDocId: String(row.source_doc_id),
+      sourceThreadId: String(row.source_thread_id),
+    });
+  }
+  return removed;
 }
 
 async function isolateForeignOps(client: Client): Promise<void> {
@@ -359,18 +563,35 @@ async function normalizePmColumn(
   tableName: "documents" | "document_versions" | "document_drafts",
   keyColumn: "id" | "version_id" | "doc_id",
   pmColumn: "doc_pm" | "snapshot_pm" | "draft_pm",
+  baselineHashChanges: BaselineHashChange[],
 ): Promise<void> {
+  const baselineColumns = tableName === "documents"
+    ? ", id AS baseline_doc_id, doc_version AS baseline_version"
+    : tableName === "document_versions"
+      ? ", doc_id AS baseline_doc_id, doc_version AS baseline_version"
+      : "";
   const result = await client.execute(
-    `SELECT ${keyColumn} AS row_key, ${pmColumn} AS pm_json FROM ${tableName}`,
+    `SELECT ${keyColumn} AS row_key, ${pmColumn} AS pm_json${baselineColumns}
+      FROM ${tableName}`,
   );
   for (const row of result.rows) {
     if (typeof row.pm_json !== "string" || row.pm_json.trim().length === 0) continue;
+    const originalPm = JSON.parse(row.pm_json) as unknown;
     const normalized = normalizeLegacyListItemFirstChildPmDoc(
-      JSON.parse(row.pm_json) as unknown,
+      originalPm,
     );
     if (!normalized.changed) continue;
     const pmDoc = normalizeStoredPmDoc(normalized.value);
     const normalizedJson = getStablePmJson(pmDoc);
+    const normalizedHash = getPmContentHash(pmDoc);
+    if (tableName !== "document_drafts") {
+      baselineHashChanges.push({
+        docId: String(row.baseline_doc_id),
+        baseVersion: Number(row.baseline_version),
+        previousHash: getPmContentHash(originalPm),
+        normalizedHash,
+      });
+    }
     if (tableName === "documents") {
       await client.execute({
         sql: `UPDATE documents SET
@@ -379,7 +600,7 @@ async function normalizePmColumn(
         args: [
           normalizedJson,
           pmDoc.attrs.schemaVersion,
-          getPmContentHash(pmDoc),
+          normalizedHash,
           row.row_key as string,
         ],
       });
@@ -391,7 +612,7 @@ async function normalizePmColumn(
         args: [
           normalizedJson,
           pmDoc.attrs.schemaVersion,
-          getPmContentHash(pmDoc),
+          normalizedHash,
           row.row_key as string,
         ],
       });
@@ -404,22 +625,63 @@ async function normalizePmColumn(
   }
 }
 
+interface BaselineHashChange {
+  docId: string;
+  baseVersion: number;
+  previousHash: string;
+  normalizedHash: string;
+}
+
 async function normalizeStoredPmDocuments(client: Client): Promise<void> {
-  await normalizePmColumn(client, "documents", "id", "doc_pm");
+  const baselineHashChanges: BaselineHashChange[] = [];
+  await normalizePmColumn(
+    client,
+    "documents",
+    "id",
+    "doc_pm",
+    baselineHashChanges,
+  );
   await normalizePmColumn(
     client,
     "document_versions",
     "version_id",
     "snapshot_pm",
+    baselineHashChanges,
   );
-  await normalizePmColumn(client, "document_drafts", "doc_id", "draft_pm");
+  const uniqueChanges = new Map<string, BaselineHashChange>();
+  for (const change of baselineHashChanges) {
+    uniqueChanges.set(
+      `${change.docId}\u0000${change.baseVersion}\u0000${change.previousHash}`,
+      change,
+    );
+  }
+  for (const change of uniqueChanges.values()) {
+    await client.execute({
+      sql: `UPDATE document_drafts
+        SET base_hash = ?
+        WHERE doc_id = ? AND base_version = ? AND base_hash = ?`,
+      args: [
+        change.normalizedHash,
+        change.docId,
+        change.baseVersion,
+        change.previousHash,
+      ],
+    });
+  }
+  await normalizePmColumn(
+    client,
+    "document_drafts",
+    "doc_id",
+    "draft_pm",
+    baselineHashChanges,
+  );
 }
 
 async function up(client: Client): Promise<void> {
   await createRecoveryTables(client);
-  await blockOverwrittenDocuments(client);
-  await isolateForeignVersions(client);
+  const removedForeignVersions = await isolateForeignVersions(client);
   await isolateForeignOps(client);
+  await classifyRemovedForeignVersions(client, removedForeignVersions);
   await isolateForeignDrafts(client);
   await isolateForeignSuggestions(client);
   await normalizeStoredPmDocuments(client);

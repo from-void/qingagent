@@ -12,15 +12,21 @@ server / desktop 进程，避免恢复期间产生新写入。
 pnpm db:identify-quarantine-0002-overwrites
 ```
 
-0025 会在启动迁移中自动识别、隔离异源子表，并把确已落在异源快照上的文档写入
-`document_write_blocks`，此后所有正文/草稿/建议写入口均 fail-closed。识别命令
+0025 会在启动迁移中自动识别、隔离异源子表。只有同时满足以下正向证据的文档才写入
+`document_write_blocks`：异源版本确由 0023 从 `document_versions_quarantine_0002`
+映射而来、0025 已将该行从活跃家族移入 `document_versions_quarantine_0025`、当前
+`doc_version` 与该版本一致、当前 `doc_pm` 与隔离快照精确一致，且从两份 PM 现算的
+hash 与版本 hash 三者一致，同时活跃家族中不存在能解释当前 PM 的本家同版本快照。
+当前版本若仍有本家操作记录，同样视为来源不唯一，只进入人工审计。阻断后所有正文/
+草稿/建议写入口均 fail-closed，启动草稿恢复也会跳过并保持草稿/建议原状。识别命令
 不会隐式执行迁移；运行前须确认应用已正常完成 0025。若缺少恢复血缘表，
 命令会直接报错且不改迁移账本。
 
-首次识别要求当前 `documents.doc_version` 与异源隔离版本一致，且 `doc_pm` 完全一致
-（`exact_snapshot`）或 `content_hash` 一致（`matching_hash`）。0025 一旦持久化阻断，
-后续即使兼容迁移规整了 PM 表示，识别仍会以 `persisted_block` 报告该行，直到完成备份
-恢复并显式解除阻断。先保存完整输出；不要仅凭标题或版本号判断。
+仅有同版本、存储列里的同 `content_hash` 或相似正文时不会永久锁写，而会写入
+`document_recovery_audits`，识别结果标记为 `manual_confirmation_required`。这些
+`review_status='pending'` 的记录必须人工对照备份后显式确认或驳回。0025 一旦持久化
+阻断，后续即使兼容迁移规整了 PM 表示，识别仍会以 `persisted_block` 报告该行，直到
+完成备份恢复并显式解除阻断。先保存完整输出；不要仅凭标题、版本号或存储 hash 判断。
 
 ## 2. 定位迁移前备份
 
@@ -53,5 +59,20 @@ pnpm db:identify-quarantine-0002-overwrites
 
 5. 启动新版本后再次运行识别命令，并确认目标文档正文、版本历史、撤销/重做均符合预期。
 
-遇到 `matching_hash` 而非 `exact_snapshot`、备份缺失、同一文档在 0023 后仍有合法编辑，
-或无法确定正确正文时，停止恢复并交由人工逐版本核对。
+遇到 `manual_confirmation_required` 时，先按上述步骤对照 pre-0023 备份。若确认没有
+覆盖，显式驳回审计：
+
+```sql
+UPDATE document_recovery_audits
+SET review_status = 'dismissed',
+    reviewed_at = CURRENT_TIMESTAMP,
+    review_note = '<核验依据>'
+WHERE doc_id = '<currentDocId>'
+  AND version_id = '<versionId>'
+  AND review_status = 'pending';
+```
+
+若人工确认确有覆盖，应在同一事务内按审计证据显式新增 `document_write_blocks` 行并把
+`review_status` 更新为 `confirmed`，再按第 2、3 节恢复；不要让应用从弱证据自动升级为
+永久阻断。备份缺失、同一文档在 0023 后仍有合法编辑，或无法确定正确正文时，停止恢复
+并交由人工逐版本核对。

@@ -54,6 +54,7 @@ const APP_TABLES = [
   "document_drafts",
   "document_drafts_quarantine_0025",
   "document_write_blocks",
+  "document_recovery_audits",
   "llm_usage_events",
   "sandbox_credentials",
   "app_settings",

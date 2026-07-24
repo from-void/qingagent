@@ -261,6 +261,12 @@ export async function markDocumentDraftConflict(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
+    const target = {
+      docId: input.docId,
+      operation: "documentDraft.markConflict" as const,
+    };
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     await c.execute({
       sql: `UPDATE document_drafts
         SET status = 'conflict', conflict_json = ?, updated_at = ?
@@ -276,6 +282,12 @@ export async function clearDocumentDraft(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
+    const target = {
+      docId,
+      operation: "documentDraft.clear" as const,
+    };
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     await c.execute({
       sql: "DELETE FROM document_drafts WHERE doc_id = ?",
       args: [docId],

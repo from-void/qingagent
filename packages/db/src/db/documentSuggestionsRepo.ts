@@ -155,10 +155,15 @@ export async function ignoreAnnotationGroups(
   const c = await readyClient(client);
   const ids = groupIds?.filter(Boolean) ?? [];
   const where = ids.length ? ` AND group_id IN (${ids.map(() => "?").join(",")})` : "";
-  await withWriteRetry(() => c.execute({
-    sql: `UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')${where}`,
-    args: [now, docId, ...ids],
-  }));
+  await withWriteRetry(async () => {
+    const target = writeTarget(docId, "documentSuggestion.ignoreAnnotations");
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
+    await c.execute({
+      sql: `UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')${where}`,
+      args: [now, docId, ...ids],
+    });
+  });
 }
 
 export async function persistMappedAnnotationGroups(
@@ -170,6 +175,12 @@ export async function persistMappedAnnotationGroups(
 ): Promise<void> {
   const c = await readyClient(client);
   await withWriteRetry(async () => {
+    const target = writeTarget(
+      docId,
+      "documentSuggestion.persistMappedAnnotations",
+    );
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     await c.execute({
       sql: "UPDATE document_suggestions SET status='ignored', updated_at=? WHERE doc_id=? AND kind='annotation' AND status IN ('reviewing','accepted')",
       args: [now, docId],
@@ -269,6 +280,9 @@ export async function updateDocumentSuggestionStatusInBatch(
 ): Promise<number> {
   const c = await readyClient(client);
   return withWriteRetry(async () => {
+    const target = writeTarget(docId, "documentSuggestion.updateStatus");
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = ?, conflict_json = ?, updated_at = ?
@@ -317,6 +331,9 @@ export async function ignoreRebasedDocumentSuggestionsInBatch(
   if (ids.length === 0) return 0;
   const c = await readyClient(client);
   return withWriteRetry(async () => {
+    const target = writeTarget(docId, "documentSuggestion.ignoreRebased");
+    assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `UPDATE document_suggestions
         SET status = 'ignored', conflict_json = NULL, updated_at = ?

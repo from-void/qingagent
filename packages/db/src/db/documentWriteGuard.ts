@@ -7,9 +7,15 @@ export type DocumentWriteOperation =
   | "document.derivative.create"
   | "documentDraft.savePending"
   | "documentDraft.saveCandidate"
+  | "documentDraft.markConflict"
+  | "documentDraft.clear"
   | "documentSuggestion.insertAnnotations"
   | "documentSuggestion.replaceAnnotations"
-  | "documentSuggestion.upsert";
+  | "documentSuggestion.ignoreAnnotations"
+  | "documentSuggestion.persistMappedAnnotations"
+  | "documentSuggestion.upsert"
+  | "documentSuggestion.updateStatus"
+  | "documentSuggestion.ignoreRebased";
 
 export interface DocumentWriteTarget {
   docId: string;
@@ -18,6 +24,12 @@ export interface DocumentWriteTarget {
 }
 
 export type DocumentWriteGuard = (target: DocumentWriteTarget) => void;
+
+export interface DocumentRecoveryWriteBlock {
+  sourceDocId: string;
+  sourceThreadId: string;
+  versionId: string;
+}
 
 export class DocumentWriteBlockedError extends Error {
   readonly code = "DOCUMENT_WRITE_BLOCKED";
@@ -61,22 +73,32 @@ export function assertDocumentWriteAllowed(target: DocumentWriteTarget): void {
 }
 
 /** 0025 的持久化 fail-closed 门；必须在写事务内、SQL 落库前调用。 */
-export async function assertDocumentWriteAllowedPersisted(
+export async function getDocumentRecoveryWriteBlock(
   client: Client,
-  target: DocumentWriteTarget,
-): Promise<void> {
+  docId: string,
+): Promise<DocumentRecoveryWriteBlock | null> {
   const result = await client.execute({
     sql: `SELECT source_doc_id, source_thread_id, version_id
       FROM document_write_blocks
       WHERE doc_id = ? AND reason = 'quarantine_0002_foreign_snapshot'
       LIMIT 1`,
-    args: [target.docId],
+    args: [docId],
   });
   const row = result.rows[0];
-  if (!row) return;
-  throw new DocumentRecoveryRequiredError(target, {
+  if (!row) return null;
+  return {
     sourceDocId: String(row.source_doc_id),
     sourceThreadId: String(row.source_thread_id),
     versionId: String(row.version_id),
-  });
+  };
+}
+
+/** 0025 的持久化 fail-closed 门；必须在写事务内、SQL 落库前调用。 */
+export async function assertDocumentWriteAllowedPersisted(
+  client: Client,
+  target: DocumentWriteTarget,
+): Promise<void> {
+  const evidence = await getDocumentRecoveryWriteBlock(client, target.docId);
+  if (!evidence) return;
+  throw new DocumentRecoveryRequiredError(target, evidence);
 }

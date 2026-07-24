@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { safeParsePmDoc } from "@qingagent/pm-schema";
+import { getPmContentHash, safeParsePmDoc } from "@qingagent/pm-schema";
 import { documentDraftRepo } from "../documentDraftRepo.js";
 import {
   documentRepo,
@@ -153,6 +153,90 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     expect(Number(blocks.rows[0]?.n)).toBe(0);
   });
 
+  it("异 docId 合法文档同版本同正文不因陈旧同 hash 误锁，仅留下人工确认审计", async () => {
+    await runMigrations(MIGRATIONS.slice(0, 22));
+    const client = getDocumentsClient();
+    await client.execute("CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute("INSERT INTO mastra_threads(id) VALUES ('coincidental-thread')");
+    await create0002QuarantineTables();
+    const sharedPm = pmJson("恰好相同的正文", "shared-legitimate-block");
+    const sharedHash = getPmContentHash(JSON.parse(sharedPm));
+    await insertDocument("current-legitimate", "coincidental-thread", 7, sharedPm);
+    await client.execute(`
+      UPDATE documents
+      SET content_hash = 'coincidental-stale-hash'
+      WHERE id = 'current-legitimate'
+    `);
+    await client.execute(`
+      INSERT INTO document_ops (
+        op_id, doc_id, op_kind, client_mutation_id, steps, from_version,
+        to_version, actor_type, created_at
+      ) VALUES (
+        'current-legitimate-op', 'current-legitimate', 'replace_doc',
+        'current-legitimate-mutation', NULL, 6, 7, 'user', '${NOW}'
+      )
+    `);
+    await client.execute({
+      sql: `INSERT INTO documents_quarantine_0002 (
+        id, thread_id, resource_id, title, doc_state, doc_version,
+        last_synced_version, doc_pm, doc_schema_version, content_hash,
+        doc_format, version, created_at, updated_at
+      ) VALUES (
+        'source-legitimate', 'coincidental-thread', 'qingagent-user', '合法源文档',
+        'editing', 7, 7, ?, 1, ?, 'pm', 7, ?, ?
+      )`,
+      args: [sharedPm, sharedHash, NOW, NOW],
+    });
+    await client.execute({
+      sql: `INSERT INTO document_versions_quarantine_0002 (
+        version_id, doc_id, doc_version, content_hash, schema_version,
+        actor_type, summary, snapshot_pm, parent_version, created_at
+      ) VALUES (
+        'coincidental-source-version', 'source-legitimate', 7,
+        ?, 1, 'agent', '合法同正文版本', ?, 6, ?
+      )`,
+      args: [sharedHash, sharedPm, NOW],
+    });
+    __resetMigrationsForTest();
+
+    expect((await runMigrations()).appliedIds).toEqual([23, 24, 25]);
+    const blocks = await client.execute(`
+      SELECT COUNT(*) AS n
+      FROM document_write_blocks
+      WHERE doc_id = 'current-legitimate'
+    `);
+    expect(Number(blocks.rows[0]?.n)).toBe(0);
+    const audits = await client.execute(`
+      SELECT reason, review_status, exact_snapshot_match, native_snapshot_match,
+        native_op_match, current_content_hash, snapshot_content_hash,
+        stored_version_hash
+      FROM document_recovery_audits
+      WHERE doc_id = 'current-legitimate'
+    `);
+    expect(audits.rows).toMatchObject([{
+      reason: "quarantine_0002_foreign_version_needs_confirmation",
+      review_status: "pending",
+      exact_snapshot_match: 1,
+      native_snapshot_match: 0,
+      native_op_match: 1,
+      current_content_hash: sharedHash,
+      snapshot_content_hash: sharedHash,
+      stored_version_hash: sharedHash,
+    }]);
+    await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([
+      expect.objectContaining({
+        currentDocId: "current-legitimate",
+        sourceDocId: "source-legitimate",
+        versionId: "coincidental-source-version",
+        confidence: "manual_confirmation_required",
+      }),
+    ]);
+    await expect(documentRepo.save(documentInput("current-legitimate", {
+      threadId: "coincidental-thread",
+      docVersion: 8,
+    }))).resolves.toBeUndefined();
+  });
+
   it("同 docId、异 threadId 仍属同一家族，合法高版本可被巡检回写", async () => {
     await runMigrations(MIGRATIONS.slice(0, 23));
     const client = getDocumentsClient();
@@ -211,6 +295,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     const docPm = legacyListPm("doc", "heading");
     const versionPm = legacyListPm("version", "list");
     const draftPm = legacyListPm("draft", "heading");
+    const originalBaseHash = getPmContentHash(JSON.parse(docPm));
     await insertDocument("legacy-list-doc", "legacy-list-thread", 1, docPm);
     await client.execute({
       sql: `INSERT INTO document_versions (
@@ -226,10 +311,10 @@ describe("0025 quarantine lineage and PM compatibility", () => {
         conflict_json, review_batch_id, group_mode, source_stream_id,
         source_tool_call_id, created_at, updated_at, batch_id
       ) VALUES (
-        'legacy-list-doc', 'legacy-list-thread', 1, 'base-hash', ?,
+        'legacy-list-doc', 'legacy-list-thread', 1, ?, ?,
         'pending_review', NULL, NULL, NULL, NULL, NULL, ?, ?, 'legacy'
       )`,
-      args: [draftPm, NOW, NOW],
+      args: [originalBaseHash, draftPm, NOW, NOW],
     });
     const beforeTexts = [
       collectText(JSON.parse(docPm)),
@@ -256,6 +341,17 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     expect(migrated.map(collectText)).toEqual(beforeTexts);
     expect(JSON.stringify(migrated[0])).toContain('"marks":[{"type":"bold"}]');
     expect(JSON.stringify(migrated[1])).toContain('"type":"bulletList"');
+    const normalizedBaseHash = getPmContentHash(migrated[0]);
+    const migratedDraft = await client.execute(`
+      SELECT base_hash, status
+      FROM document_drafts
+      WHERE doc_id = 'legacy-list-doc'
+    `);
+    expect(migratedDraft.rows).toMatchObject([{
+      base_hash: normalizedBaseHash,
+      status: "pending_review",
+    }]);
+    expect(normalizedBaseHash).not.toBe(originalBaseHash);
     await expect(documentRepo.load("legacy-list-doc")).resolves.not.toBeNull();
     await expect(getVersionSnapshot("legacy-list-version")).resolves.not.toBeNull();
     await expect(documentDraftRepo.load("legacy-list-doc")).resolves.not.toBeNull();
@@ -295,6 +391,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
       args: [pmJson("当前正文", "current-p"), NOW],
     });
     const foreignPm = pmJson("异源隔离正文", "source-p");
+    const foreignHash = getPmContentHash(JSON.parse(foreignPm));
     await client.execute({
       sql: `INSERT INTO documents_quarantine_0002 (
         id, thread_id, resource_id, title, doc_state, doc_version,
@@ -302,19 +399,19 @@ describe("0025 quarantine lineage and PM compatibility", () => {
         doc_format, version, created_at, updated_at
       ) VALUES (
         'source-doc', 'shared-thread', 'qingagent-user', '异源', 'editing', 9,
-        9, ?, 1, 'source-hash', 'pm', 9, ?, ?
+        9, ?, 1, ?, 'pm', 9, ?, ?
       )`,
-      args: [foreignPm, NOW, NOW],
+      args: [foreignPm, foreignHash, NOW, NOW],
     });
     await client.execute({
       sql: `INSERT INTO document_versions_quarantine_0002 (
         version_id, doc_id, doc_version, content_hash, schema_version,
         actor_type, summary, snapshot_pm, parent_version, created_at
       ) VALUES (
-        'source-version', 'source-doc', 9, 'source-hash', 1, 'agent',
+        'source-version', 'source-doc', 9, ?, 1, 'agent',
         '异源版本', ?, 8, ?
       )`,
-      args: [foreignPm, NOW],
+      args: [foreignHash, foreignPm, NOW],
     });
     await client.execute(`
       INSERT INTO document_ops_quarantine_0002 (
@@ -331,10 +428,10 @@ describe("0025 quarantine lineage and PM compatibility", () => {
         conflict_json, review_batch_id, group_mode, source_stream_id,
         source_tool_call_id, created_at, updated_at
       ) VALUES (
-        'source-doc', 'shared-thread', 9, 'source-hash', ?, 'pending_review',
+        'source-doc', 'shared-thread', 9, ?, ?, 'pending_review',
         NULL, NULL, NULL, 'source-stream', 'source-tool', ?, ?
       )`,
-      args: [foreignPm, NOW, NOW],
+      args: [foreignHash, foreignPm, NOW, NOW],
     });
     await client.execute(`
       INSERT INTO document_suggestions_quarantine_0002 (
@@ -381,7 +478,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     await getDocumentsClient().execute({
       sql: `UPDATE documents
         SET doc_version = 9, last_synced_version = 9, doc_pm = ?,
-          content_hash = 'source-hash'
+          content_hash = 'stale-current-content-hash'
         WHERE id = 'current-doc'`,
       args: [pmJson("异源隔离正文", "source-p")],
     });

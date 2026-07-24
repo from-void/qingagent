@@ -8,6 +8,8 @@ import {
 import {
   documentDraftRepo,
   findOpByDocumentVersion,
+  getDocumentRecoveryWriteBlock,
+  getDocumentsClient,
   getVersionSnapshotByDocumentSnapshot,
   listDocumentSuggestionStatusesInBatch,
   replaceRebasedReview,
@@ -289,6 +291,19 @@ export async function rehydratePendingDraft(
 ): Promise<PendingDraftRehydrateResult> {
   const row = await documentDraftRepo.load(state.docId);
   if (!row || row.status === "conflict") {
+    return { kind: "skipped" };
+  }
+  const recoveryBlock = await getDocumentRecoveryWriteBlock(
+    getDocumentsClient(),
+    state.docId,
+  );
+  if (recoveryBlock) {
+    logger.warn("Skipped pending draft rehydrate for recovery-blocked document", {
+      sessionId: state.sessionId,
+      docId: state.docId,
+      sourceDocId: recoveryBlock.sourceDocId,
+      versionId: recoveryBlock.versionId,
+    });
     return { kind: "skipped" };
   }
 

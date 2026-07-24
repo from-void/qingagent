@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, LegacySection } from "@qingagent/contract-ts";
 import {
   getPmContentHash,
+  normalizeStoredPmDoc,
   pmToLegacySections,
   type PmBlockNode,
   type PmDoc,
@@ -13,18 +14,23 @@ import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { createSuggestionFromDiffHunk } from "../doc-engine/draftReviewSuggestions.js";
 import { commitReviewGroups, updatePatchVerdict } from "../doc-engine/reviewCommit.js";
 import { createSession } from "../session/sessionState.js";
-import { documentDraftRepo } from "@qingagent/db";
-import { documentRepo } from "@qingagent/db";
-import { getDocumentsClient } from "@qingagent/db";
-import { findOpByDocumentVersion } from "@qingagent/db";
-import { listDocumentSuggestionStatuses } from "@qingagent/db";
-import { listVersions } from "@qingagent/db";
-import { upsertDocumentSuggestion } from "@qingagent/db";
+import {
+  __resetMigrationsForTest,
+  documentDraftRepo,
+  documentRepo,
+  findOpByDocumentVersion,
+  getDocumentsClient,
+  listDocumentSuggestionStatuses,
+  listVersions,
+  runMigrations,
+  upsertDocumentSuggestion,
+} from "@qingagent/db";
 import {
   documentInput,
   prepareTempDocumentsDb,
   type TempDocumentsDb,
 } from "@qingagent/db/testing";
+import { MIGRATIONS } from "@qingagent/db/migrations/registry";
 
 const { memory, threads } = vi.hoisted(() => {
   const threads = new Map<string, Record<string, unknown>>();
@@ -90,6 +96,26 @@ function paragraph(blockId: string, content: string | PmInlineNode[]): PmBlockNo
 
 function doc(blocks: PmBlockNode[]): PmDoc {
   return { type: "doc", attrs: { schemaVersion: 1 }, content: blocks };
+}
+
+function legacyListBaseJson(): string {
+  return JSON.stringify({
+    type: "doc",
+    attrs: { schemaVersion: 1 },
+    content: [{
+      type: "bulletList",
+      attrs: { blockId: "legacy-list" },
+      content: [{
+        type: "listItem",
+        attrs: { blockId: "legacy-item" },
+        content: [{
+          type: "heading",
+          attrs: { blockId: "legacy-heading", level: 3 },
+          content: [{ type: "text", text: "规整前基线" }],
+        }],
+      }],
+    }],
+  });
 }
 
 function docText(pmDoc: PmDoc | undefined): string {
@@ -183,6 +209,124 @@ describe("pending draft rehydrate", () => {
     expect(result.kind).toBe("restored");
     expect(result.kind === "restored" ? result.frames.some((frame) => frame.kind === "docDiffReady") : false).toBe(true);
     expect(docText(state.doc)).toBe("旧正文");
+    expect(state.docState).toEqual({ kind: "pendingReview" });
+  });
+
+  it("启动恢复命中 0025 阻断时保留草稿与建议原状", async () => {
+    const sessionId = "rehy-recovery-blocked";
+    const persistedBase = doc([paragraph("block-a", "旧基线")]);
+    const current = doc([paragraph("block-a", "已被覆盖的正文")]);
+    const draft = doc([paragraph("block-a", "必须保留的待审草稿")]);
+    await seedDocument(sessionId, current, 9);
+    await documentDraftRepo.savePending({
+      docId: sessionId,
+      threadId: sessionId,
+      baseVersion: 1,
+      baseHash: getPmContentHash(persistedBase),
+      draftPmDoc: draft,
+    });
+    const pendingSuggestion = createSuggestionFromDiffHunk({
+      hunk: buildDraftDiff(persistedBase, draft, { baseVersion: 1 })[0]!,
+      docId: sessionId,
+      baseVersion: 1,
+      baseSchemaVersion: 1,
+    });
+    await upsertDocumentSuggestion(pendingSuggestion);
+    await getDocumentsClient().execute({
+      sql: `INSERT INTO document_write_blocks (
+        doc_id, reason, source_doc_id, source_thread_id, version_id
+      ) VALUES (?, 'quarantine_0002_foreign_snapshot', ?, ?, ?)`,
+      args: [sessionId, "source-doc", sessionId, "source-version"],
+    });
+    const beforeDraft = await documentDraftRepo.load(sessionId);
+    const beforeSuggestions = await getDocumentsClient().execute({
+      sql: `SELECT id, status, conflict_json, updated_at
+        FROM document_suggestions
+        WHERE doc_id = ?
+        ORDER BY id`,
+      args: [sessionId],
+    });
+    const state = createSession(sessionId);
+    state.doc = current;
+    state.legacySections = pmToLegacySections(current) as never;
+    state.docVersion = 9;
+    state.docState = { kind: "editing" };
+
+    const result = await rehydratePendingDraft(state);
+
+    expect(result).toEqual({ kind: "skipped" });
+    await expect(documentDraftRepo.load(sessionId)).resolves.toEqual(beforeDraft);
+    const afterSuggestions = await getDocumentsClient().execute({
+      sql: `SELECT id, status, conflict_json, updated_at
+        FROM document_suggestions
+        WHERE doc_id = ?
+        ORDER BY id`,
+      args: [sessionId],
+    });
+    expect(afterSuggestions.rows).toEqual(beforeSuggestions.rows);
+    expect(state.docState).toEqual({ kind: "editing" });
+    expect(state.suggestions.size).toBe(0);
+  });
+
+  it("0025 规整基线同步 draft base_hash，启动恢复不误报 mismatch", async () => {
+    const sessionId = "rehy-normalized-base-hash";
+    await runMigrations(MIGRATIONS.slice(0, 24));
+    const client = getDocumentsClient();
+    const legacyBaseJson = legacyListBaseJson();
+    const legacyBaseHash = getPmContentHash(JSON.parse(legacyBaseJson));
+    const pendingDraft = doc([paragraph("draft-p", "合法待审草稿")]);
+    await client.execute({
+      sql: `INSERT INTO documents (
+        id, thread_id, resource_id, title, doc_state, doc_version,
+        last_synced_version, doc_pm, doc_schema_version, content_hash,
+        doc_format, version, created_at, updated_at, role
+      ) VALUES (
+        ?, ?, 'qingagent-user', '规整恢复', 'editing', 1, 1, ?, 1, ?,
+        'pm', 1, '2026-07-24T00:00:00.000Z',
+        '2026-07-24T00:00:00.000Z', 'main'
+      )`,
+      args: [sessionId, sessionId, legacyBaseJson, legacyBaseHash],
+    });
+    await client.execute({
+      sql: `INSERT INTO document_drafts (
+        doc_id, thread_id, base_version, base_hash, draft_pm, status,
+        conflict_json, batch_id, review_batch_id, group_mode, source_stream_id,
+        source_tool_call_id, created_at, updated_at
+      ) VALUES (
+        ?, ?, 1, ?, ?, 'pending_review', NULL, 'legacy', NULL, NULL, NULL,
+        NULL, '2026-07-24T00:00:00.000Z', '2026-07-24T00:00:00.000Z'
+      )`,
+      args: [sessionId, sessionId, legacyBaseHash, JSON.stringify(pendingDraft)],
+    });
+    __resetMigrationsForTest();
+    expect((await runMigrations()).appliedIds).toEqual([25]);
+    const normalizedRow = (await client.execute({
+      sql: "SELECT doc_pm, content_hash FROM documents WHERE id = ?",
+      args: [sessionId],
+    })).rows[0]!;
+    const normalizedBase = normalizeStoredPmDoc(
+      JSON.parse(String(normalizedRow.doc_pm)) as unknown,
+    );
+    const normalizedBaseHash = getPmContentHash(normalizedBase);
+    expect(normalizedBaseHash).not.toBe(legacyBaseHash);
+    expect(String(normalizedRow.content_hash)).toBe(normalizedBaseHash);
+    await expect(documentDraftRepo.load(sessionId)).resolves.toMatchObject({
+      baseHash: normalizedBaseHash,
+      status: "pending_review",
+    });
+    const state = createSession(sessionId);
+    state.doc = normalizedBase;
+    state.legacySections = pmToLegacySections(normalizedBase) as never;
+    state.docVersion = 1;
+
+    const result = await rehydratePendingDraft(state);
+
+    expect(result.kind).toBe("restored");
+    await expect(documentDraftRepo.load(sessionId)).resolves.toMatchObject({
+      baseHash: normalizedBaseHash,
+      status: "pending_review",
+      conflict: null,
+    });
     expect(state.docState).toEqual({ kind: "pendingReview" });
   });
 

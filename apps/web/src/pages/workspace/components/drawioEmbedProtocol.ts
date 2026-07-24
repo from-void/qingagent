@@ -5,11 +5,10 @@ import {
 } from "@qingagent/pm-schema";
 
 export const DRAWIO_EMBED_PATH =
-  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&libraries=1&saveAndExit=1&suppressNewWindows=1";
+  "/drawio/index.html?embed=1&proto=json&spin=1&offline=1&lang=zh&saveAndExit=1&keepmodified=1&suppressNewWindows=1";
 
 export const DRAWIO_EXPORT_TIMEOUT_MS = 5_000;
 export const DRAWIO_FALLBACK_TIMEOUT_MS = 5_000;
-const DRAWIO_EXPORT_MESSAGE_PREFIX = "qingagent-drawio-export:";
 const MAX_SVG_DATA_URI_CHARS = INLINE_SVG_MAX_BYTES * 4 + 256;
 
 export type DrawioEditorResult = {
@@ -22,7 +21,7 @@ export type DrawioEmbedEvent =
   | { event: "init" }
   | { event: "load" }
   | { event: "save"; xml: string; exit?: boolean }
-  | { event: "export"; format?: string; data: string; message?: string }
+  | { event: "export"; data: string; exit?: boolean }
   | { event: "exit"; modified?: boolean }
   | { event: "openLink"; href?: string };
 
@@ -33,13 +32,18 @@ export type DrawioLoadAction = {
   saveAndExit: true;
 };
 
-export type DrawioExportAction = {
-  action: "export";
-  format: "svg";
-  xml: string;
-  embedImages: true;
-  embedFonts: true;
-  message: string;
+export type DrawioSnapshotAction = {
+  action: "snapshot";
+};
+
+export type DrawioStatusAction = {
+  action: "status";
+  modified: boolean;
+};
+
+export type DrawioSnapshotRequest = {
+  source: string;
+  action: DrawioSnapshotAction;
 };
 
 export function parseDrawioEmbedMessage(raw: unknown): DrawioEmbedEvent | null {
@@ -66,8 +70,7 @@ export function parseDrawioEmbedMessage(raw: unknown): DrawioEmbedEvent | null {
         ? {
             event: "export",
             data: value.data,
-            ...(typeof value.format === "string" ? { format: value.format } : {}),
-            ...(typeof value.message === "string" ? { message: value.message } : {}),
+            ...(typeof value.exit === "boolean" ? { exit: value.exit } : {}),
           }
         : null;
     case "exit":
@@ -79,7 +82,9 @@ export function parseDrawioEmbedMessage(raw: unknown): DrawioEmbedEvent | null {
   }
 }
 
-export function encodeDrawioAction(action: DrawioLoadAction | DrawioExportAction): string {
+export function encodeDrawioAction(
+  action: DrawioLoadAction | DrawioSnapshotAction | DrawioStatusAction,
+): string {
   return JSON.stringify(action);
 }
 
@@ -92,23 +97,19 @@ export function createDrawioLoadAction(source: string, title: string): DrawioLoa
   };
 }
 
-export function createDrawioExportAction(source: string, nonce: string): DrawioExportAction {
+/**
+ * v31 的 SVG 导出只支持 snapshot action；先在宿主侧校验并固定 save 事件里的 XML，
+ * 再让 iframe 针对同一拍模型回传原生 SVG。
+ */
+export function createDrawioSnapshotRequest(rawSource: string): DrawioSnapshotRequest {
   return {
-    action: "export",
-    format: "svg",
-    xml: normalizeDrawioSource(source),
-    embedImages: true,
-    embedFonts: true,
-    message: drawioExportMessage(nonce),
+    source: normalizeDrawioSource(rawSource),
+    action: { action: "snapshot" },
   };
 }
 
-export function drawioExportMessage(nonce: string): string {
-  return `${DRAWIO_EXPORT_MESSAGE_PREFIX}${nonce}`;
-}
-
-export function isDrawioExportMessage(message: string | undefined, nonce: string): boolean {
-  return message === drawioExportMessage(nonce);
+export function createDrawioStatusAction(modified: boolean): DrawioStatusAction {
+  return { action: "status", modified };
 }
 
 /**

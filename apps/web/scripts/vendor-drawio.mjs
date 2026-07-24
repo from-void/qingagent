@@ -65,7 +65,11 @@ window.ICON_SERVICE_PATH = null;
 window.DRAW_MATH_URL = "math4/es5";
 window.mxLanguageMap = { en: "English", zh: "简体中文" };
 window.mxLanguages = ["zh"];
-window.DRAWIO_CONFIG = null;
+window.DRAWIO_CONFIG = {
+  settingsName: "qingagent-drawio",
+  enableCustomLibraries: false,
+  defaultCustomLibraries: [],
+};
 urlParams.offline = "1";
 urlParams.plugins = "0";
 urlParams.pwa = "0";
@@ -240,6 +244,8 @@ node apps/web/scripts/check-drawio-vendor.mjs
 
 \`PreConfig.js\` / \`PostConfig.js\` 由脚本覆盖为离线配置：强制
 \`offline=1\`、禁用插件/云服务/日志/通知/实时协作/图标搜索，只声明 zh/en locale。
+编辑器设置隔离到 \`.qingagent-drawio-config\`，并关闭离线环境没有可靠来源的自定义图库，
+避免宿主同源下遗留的 draw.io localStorage 在启动时触发图库加载错误。
 官方生产 bundle 内仍含被 \`offline=1\` 分支禁止执行的云服务端点字符串；运行时
 网络审计只允许当前应用同源的 \`/drawio/\` 请求。
 `;

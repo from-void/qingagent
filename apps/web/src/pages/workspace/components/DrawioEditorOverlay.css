@@ -76,6 +76,10 @@
   background: var(--bg-canvas);
 }
 
+.drawio-editor-overlay__frame.is-saving {
+  pointer-events: none;
+}
+
 @media (max-width: 640px) {
   .drawio-editor-overlay__topbar {
     gap: 8px;

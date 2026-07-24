@@ -2,12 +2,12 @@ import { DEFAULT_DRAWIO_SOURCE, INLINE_SVG_MAX_BYTES } from "@qingagent/pm-schem
 import { describe, expect, it } from "vitest";
 import {
   DRAWIO_EMBED_PATH,
-  createDrawioExportAction,
   createDrawioLoadAction,
+  createDrawioSnapshotRequest,
+  createDrawioStatusAction,
   decodeDrawioSvgDataUri,
   encodeDrawioAction,
   finalizeDrawioEdit,
-  isDrawioExportMessage,
   parseDrawioEmbedMessage,
 } from "./drawioEmbedProtocol";
 
@@ -17,6 +17,8 @@ describe("drawio JSON embed 协议", () => {
     expect(DRAWIO_EMBED_PATH).toContain("embed=1");
     expect(DRAWIO_EMBED_PATH).toContain("proto=json");
     expect(DRAWIO_EMBED_PATH).toContain("offline=1");
+    expect(DRAWIO_EMBED_PATH).toContain("keepmodified=1");
+    expect(DRAWIO_EMBED_PATH).not.toContain("libraries=1");
     expect(DRAWIO_EMBED_PATH).not.toMatch(/^https?:/);
   });
 
@@ -30,14 +32,13 @@ describe("drawio JSON embed 协议", () => {
     });
     expect(parseDrawioEmbedMessage({
       event: "export",
-      format: "svg",
+      point: { x: 12, y: 34 },
+      exit: false,
       data: "data:image/svg+xml,%3Csvg%2F%3E",
-      message: "nonce",
     })).toEqual({
       event: "export",
-      format: "svg",
+      exit: false,
       data: "data:image/svg+xml,%3Csvg%2F%3E",
-      message: "nonce",
     });
     expect(parseDrawioEmbedMessage({ event: "exit", modified: false })).toEqual({
       event: "exit",
@@ -48,25 +49,24 @@ describe("drawio JSON embed 协议", () => {
     expect(parseDrawioEmbedMessage({ event: "unknown", xml: DEFAULT_DRAWIO_SOURCE })).toBeNull();
   });
 
-  it("load/export 动作先校验 XML，并用 nonce 绑定导出响应", () => {
+  it("load/snapshot/status 动作符合 v31，并在 snapshot 前校验 XML", () => {
     expect(createDrawioLoadAction(DEFAULT_DRAWIO_SOURCE, "工程图")).toMatchObject({
       action: "load",
       title: "工程图",
       saveAndExit: true,
       xml: DEFAULT_DRAWIO_SOURCE,
     });
-    const action = createDrawioExportAction(DEFAULT_DRAWIO_SOURCE, "nonce-1");
-    expect(action).toMatchObject({
-      action: "export",
-      format: "svg",
-      embedImages: true,
-      embedFonts: true,
-      xml: DEFAULT_DRAWIO_SOURCE,
+    const request = createDrawioSnapshotRequest(DEFAULT_DRAWIO_SOURCE);
+    expect(request).toEqual({
+      source: DEFAULT_DRAWIO_SOURCE,
+      action: { action: "snapshot" },
     });
-    expect(isDrawioExportMessage(action.message, "nonce-1")).toBe(true);
-    expect(isDrawioExportMessage(action.message, "nonce-2")).toBe(false);
-    expect(JSON.parse(encodeDrawioAction(action))).toEqual(action);
-    expect(() => createDrawioExportAction("<not-drawio/>", "nonce-1")).toThrow(/根节点/);
+    expect(JSON.parse(encodeDrawioAction(request.action))).toEqual({ action: "snapshot" });
+    expect(JSON.parse(encodeDrawioAction(createDrawioStatusAction(false)))).toEqual({
+      action: "status",
+      modified: false,
+    });
+    expect(() => createDrawioSnapshotRequest("<not-drawio/>")).toThrow(/根节点/);
   });
 
   it("保存时解码并用统一 hardenInlineSvg 清除脚本、事件和外链", () => {

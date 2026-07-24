@@ -17,6 +17,7 @@ let activeEditorSession: ActiveEditorSession | null = null;
 export function openDrawioEditor(
   rawSource: string,
   title = "drawio 可视化编辑",
+  onSave?: (result: DrawioEditorResult) => void,
 ): Promise<DrawioEditorResult | null> {
   if (typeof document === "undefined") return Promise.reject(new Error("drawio 编辑器只能在浏览器中打开"));
   if (activeEditorSession?.host.isConnected) {
@@ -55,7 +56,9 @@ export function openDrawioEditor(
     session = { host, finish };
     activeEditorSession = session;
     try {
-      root.render(<DrawioEditorOverlay source={source} title={title} onClose={finish} />);
+      root.render(
+        <DrawioEditorOverlay source={source} title={title} onSave={onSave} onClose={finish} />,
+      );
     } catch (renderError) {
       finish(null);
       throw renderError;

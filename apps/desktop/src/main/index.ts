@@ -1,4 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell, type Event } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  safeStorage,
+  screen,
+  shell,
+  type Event,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+} from "electron";
 import path from "node:path";
 import {
   chmodSync,
@@ -29,9 +41,14 @@ import {
   startDesktopUpdater,
 } from "./update/updater.js";
 import { acquireSingleInstanceLock } from "./singleInstance.js";
+import { assertTrustedRenderer as assertTrustedRendererEvent } from "./ipcTrust.js";
 
 let mainWindow: BrowserWindow | null = null;
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
+
+function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
+  assertTrustedRendererEvent(event, mainWindow?.webContents ?? null);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const userDataDir = app.getPath("userData");
@@ -323,6 +340,7 @@ function installTelemetryProcessErrorHandlers() {
 }
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {
+  assertTrustedRenderer(event);
   const owner = BrowserWindow.fromWebContents(event.sender);
   const result = owner
     ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] })
@@ -354,29 +372,39 @@ ipcMain.handle("qingagent:select-folder-source", async (event) => {
   };
 });
 
-ipcMain.handle("qingagent:update-quit-install", async () => quitAndInstallUpdate());
+ipcMain.handle("qingagent:update-quit-install", async (event) => {
+  assertTrustedRenderer(event);
+  return quitAndInstallUpdate();
+});
 
-ipcMain.handle("qingagent:update-status-get", () => getCurrentUpdateStatus());
+ipcMain.handle("qingagent:update-status-get", (event) => {
+  assertTrustedRenderer(event);
+  return getCurrentUpdateStatus();
+});
 
-ipcMain.handle("qingagent:update-open-download", async () => {
+ipcMain.handle("qingagent:update-open-download", async (event) => {
+  assertTrustedRenderer(event);
   await shell.openExternal(RELEASES_URL);
   return true;
 });
 
 // 应用版本号:沿用 client-config-get 的同步 IPC 先例,让 preload 启动期同步注入 window.electron.appVersion。
 ipcMain.on("qingagent:app-version", (event) => {
+  assertTrustedRenderer(event);
   event.returnValue = app.getVersion();
 });
 
 // 手动检查更新(关于页「检查更新」):请求-响应直接返回本次结果(含 error 态),不走推送假象。
 ipcMain.handle("qingagent:update-check", async (event) => {
+  assertTrustedRenderer(event);
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner) return { kind: "none" as const };
   return manualCheckForUpdates({ window: owner });
 });
 
 // 第三方开源声明:读打进安装包根部的 THIRD_PARTY_NOTICES.md;读不到返回 null,前端降级跳 GitHub。
-ipcMain.handle("qingagent:third-party-notices-get", async () => {
+ipcMain.handle("qingagent:third-party-notices-get", async (event) => {
+  assertTrustedRenderer(event);
   try {
     const noticesPath = path.join(process.resourcesPath, "THIRD_PARTY_NOTICES.md");
     return readFileSync(noticesPath, "utf8");
@@ -388,7 +416,8 @@ ipcMain.handle("qingagent:third-party-notices-get", async () => {
 // 客户端凭证/模型配置持久化:落 userData/client-config.json,与端口/origin 解耦。
 // 背景:桌面打包版内置服务随机端口 → 窗口 origin 每次变 → localStorage 按 origin 隔离
 // → 之前 visitor key 等存 localStorage 的配置「每次启动/换版都像丢」。改存 userData 后稳定。
-// 渲染层经 clientPersist.ts 读写:get 走同步 IPC(preload 启动期注入快照),set 走异步 invoke。
+// 渲染层经 clientPersist.ts 读写：preload 只暴露固定用途的具名 getter/setter；主进程内部
+// IPC 仍按单项 key 传递，绝不一次解密并下发整份配置。
 function clientConfigPath(): string {
   return path.join(app.getPath("userData"), "client-config.json");
 }
@@ -413,8 +442,16 @@ function cleanupClientConfigTempFiles(): void {
   }
 }
 
-// 这些值会直接或嵌套携带桌面模型 API Key。为保持现有 renderer/clientPersist 契约，主进程
-// 只在 IPC 边界解密/加密整项；磁盘上的普通 client-config.json 永远不保存这些项。
+const DESKTOP_CLIENT_CONFIG_KEYS = new Set([
+  "qingagent.deepseek_api_key",
+  "qingagent.custom_provider",
+  "qingagent.vision_provider",
+  "qingagent.official_model",
+  "qingagent.model_tier",
+]);
+
+// 这些值会直接或嵌套携带桌面模型 API Key。主进程只在单项 IPC 边界解密/加密；
+// 磁盘上的普通 client-config.json 永远不保存这些项。
 const DESKTOP_MODEL_SECRET_KEYS = new Set([
   "qingagent.deepseek_api_key",
   "qingagent.custom_provider",
@@ -500,66 +537,69 @@ function migratePlaintextClientSecrets(): void {
   writeClientConfig(sanitized);
 }
 
-function readClientConfigForRenderer(): Record<string, string> {
-  const cfg = readClientConfig();
-  // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。
-  for (const key of DESKTOP_MODEL_SECRET_KEYS) delete cfg[key];
-  if (!isDesktopModelEncryptionAvailable()) return cfg;
+function isDesktopClientConfigKey(value: unknown): value is string {
+  return typeof value === "string" && DESKTOP_CLIENT_CONFIG_KEYS.has(value);
+}
 
+function readClientConfigValueForRenderer(key: unknown): string | null {
+  if (!isDesktopClientConfigKey(key)) return null;
+  if (!DESKTOP_MODEL_SECRET_KEYS.has(key)) {
+    const value = readClientConfig()[key];
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+
+  // fail-closed：加密不可用时既不迁移/删除源明文，也绝不把它注入 renderer。
+  if (!isDesktopModelEncryptionAvailable()) return null;
   try {
     migratePlaintextClientSecrets();
-    for (const [key, encrypted] of Object.entries(readEncryptedClientSecrets())) {
-      try {
-        cfg[key] = decryptClientSecret(encrypted);
-      } catch {
-        // 单项密文损坏/OS keychain 变化时只隐藏该 key，不回退任何明文。
-      }
-    }
+    const encrypted = readEncryptedClientSecrets()[key];
+    return encrypted ? decryptClientSecret(encrypted) : null;
   } catch (err) {
-    console.warn("[client-config] 模型 key 迁移/解密失败，已按未配置处理:", err);
+    console.warn(`[client-config] ${key} 迁移/解密失败，已按未配置处理:`, err);
+    return null;
   }
-  return cfg;
 }
-// 同步取整份配置(preload sendSync 调用),供渲染层启动期拿到初值快照。
-ipcMain.on("qingagent:client-config-get", (event) => {
-  event.returnValue = readClientConfigForRenderer();
-});
-// 合并写入(value=null/空 表示删除该项);返回是否落盘成功。
-ipcMain.handle(
-  "qingagent:client-config-set",
-  (_event, patch: Record<string, string | null> | undefined) => {
-    if (!patch || typeof patch !== "object") return false;
-    try {
-      if (Object.values(patch).some((value) =>
-        value !== null && value !== undefined && typeof value !== "string"
-      )) return false;
-      const secretEntries = Object.entries(patch).filter(([key]) => DESKTOP_MODEL_SECRET_KEYS.has(key));
-      const secretPatch = secretEntries.filter(([, value]) => typeof value === "string" && value !== "");
-      const encryptionAvailable = isDesktopModelEncryptionAvailable();
-      // 删除不需要解密/加密能力：即使 Linux 没有 keyring，也必须能清掉旧明文和密文项。
-      if (secretPatch.length > 0 && !encryptionAvailable) return false;
-      if (encryptionAvailable) migratePlaintextClientSecrets();
 
-      const cfg = readClientConfig();
-      const encrypted = readEncryptedClientSecrets();
-      for (const [k, v] of Object.entries(patch)) {
-        if (DESKTOP_MODEL_SECRET_KEYS.has(k)) {
-          delete cfg[k];
-          if (v === null || v === undefined || v === "") delete encrypted[k];
-          else if (typeof v === "string") encrypted[k] = encryptClientSecret(v);
-        } else if (v === null || v === undefined || v === "") delete cfg[k];
-        else if (typeof v === "string") cfg[k] = v;
-      }
-      if (secretEntries.length > 0) writeEncryptedClientSecrets(encrypted);
-      writeClientConfig(cfg);
-      return true;
-    } catch {
-      return false;
+function writeClientConfigValue(key: unknown, value: unknown): boolean {
+  if (!isDesktopClientConfigKey(key) || (value !== null && typeof value !== "string")) return false;
+  const nextValue = typeof value === "string" && value.length > 0 ? value : null;
+  try {
+    const isSecret = DESKTOP_MODEL_SECRET_KEYS.has(key);
+    const encryptionAvailable = isDesktopModelEncryptionAvailable();
+    // 删除不需要解密/加密能力：即使 Linux 没有 keyring，也必须能清掉旧明文和密文项。
+    if (isSecret && nextValue !== null && !encryptionAvailable) return false;
+    if (encryptionAvailable) migratePlaintextClientSecrets();
+
+    const cfg = readClientConfig();
+    const encrypted = readEncryptedClientSecrets();
+    if (isSecret) {
+      delete cfg[key];
+      if (nextValue === null) delete encrypted[key];
+      else encrypted[key] = encryptClientSecret(nextValue);
+      writeEncryptedClientSecrets(encrypted);
+    } else if (nextValue === null) {
+      delete cfg[key];
+    } else {
+      cfg[key] = nextValue;
     }
-  },
-);
+    writeClientConfig(cfg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.on("qingagent:client-config-value-get", (event, key: unknown) => {
+  assertTrustedRenderer(event);
+  event.returnValue = readClientConfigValueForRenderer(key);
+});
+ipcMain.handle("qingagent:client-config-value-set", (event, key: unknown, value: unknown) => {
+  assertTrustedRenderer(event);
+  return writeClientConfigValue(key, value);
+});
 
 ipcMain.handle("qingagent:export-diagnostics", async (event, opts: unknown) => {
+  assertTrustedRenderer(event);
   if (!embeddedServerPort) throw new Error("embedded server is not ready");
   const privacyLevel = readPrivacyLevel(opts);
   const report = readReport(opts);

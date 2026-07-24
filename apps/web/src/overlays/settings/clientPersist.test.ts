@@ -9,9 +9,41 @@ import {
 } from "./clientPersist";
 
 type ElectronBridge = {
-  clientConfig?: Record<string, string>;
-  setClientConfig?: (patch: Record<string, string | null>) => Promise<boolean>;
+  isDesktop?: boolean;
+  getDeepseekApiKey?: () => string | null;
+  setDeepseekApiKey?: (value: string | null) => Promise<boolean>;
+  getCustomProvider?: () => string | null;
+  setCustomProvider?: (value: string | null) => Promise<boolean>;
+  getVisionProvider?: () => string | null;
+  setVisionProvider?: (value: string | null) => Promise<boolean>;
+  getOfficialModel?: () => string | null;
+  setOfficialModel?: (value: string | null) => Promise<boolean>;
+  getModelTier?: () => string | null;
+  setModelTier?: (value: string | null) => Promise<boolean>;
 };
+const DEEPSEEK_KEY = "qingagent.deepseek_api_key";
+const OFFICIAL_MODEL_KEY = "qingagent.official_model";
+const MODEL_TIER_KEY = "qingagent.model_tier";
+
+function desktopBridge(
+  initial: Record<string, string> = {},
+  write: (key: string, value: string | null) => Promise<boolean> = async () => true,
+): ElectronBridge {
+  return {
+    isDesktop: true,
+    getDeepseekApiKey: () => initial[DEEPSEEK_KEY] ?? null,
+    setDeepseekApiKey: (value) => write(DEEPSEEK_KEY, value),
+    getCustomProvider: () => initial["qingagent.custom_provider"] ?? null,
+    setCustomProvider: (value) => write("qingagent.custom_provider", value),
+    getVisionProvider: () => initial["qingagent.vision_provider"] ?? null,
+    setVisionProvider: (value) => write("qingagent.vision_provider", value),
+    getOfficialModel: () => initial[OFFICIAL_MODEL_KEY] ?? null,
+    setOfficialModel: (value) => write(OFFICIAL_MODEL_KEY, value),
+    getModelTier: () => initial[MODEL_TIER_KEY] ?? null,
+    setModelTier: (value) => write(MODEL_TIER_KEY, value),
+  };
+}
+
 function setElectron(bridge: ElectronBridge | undefined): void {
   (window as unknown as { electron?: ElectronBridge }).electron = bridge;
   __resetClientPersistCacheForTests();
@@ -37,59 +69,58 @@ describe("clientPersist", () => {
     });
   });
 
-  describe("桌面(window.electron.clientConfig)走 userData", () => {
-    it("读初值快照 / 写更新内存镜像并落盘(setClientConfig) / 删除", () => {
-      const setClientConfig = vi.fn(async () => true);
-      setElectron({ clientConfig: { existing: "snap" }, setClientConfig });
+  describe("桌面具名单项 API 走 userData", () => {
+    it("按需读单项 / 写更新内存镜像并落盘 / 删除", () => {
+      const write = vi.fn(async () => true);
+      setElectron(desktopBridge({ [OFFICIAL_MODEL_KEY]: "snap" }, write));
       expect(isDesktopPersist()).toBe(true);
-      // 读 preload 注入的快照
-      expect(readPersisted("existing")).toBe("snap");
+      expect(readPersisted(OFFICIAL_MODEL_KEY)).toBe("snap");
 
-      writePersisted("k", "v1");
-      expect(setClientConfig).toHaveBeenCalledWith({ k: "v1" });
+      writePersisted(OFFICIAL_MODEL_KEY, "v1");
+      expect(write).toHaveBeenCalledWith(OFFICIAL_MODEL_KEY, "v1");
       // 同步从内存镜像读到最新值(不依赖异步落盘)
-      expect(readPersisted("k")).toBe("v1");
+      expect(readPersisted(OFFICIAL_MODEL_KEY)).toBe("v1");
       // 桌面路径不写 localStorage
-      expect(window.localStorage.getItem("k")).toBeNull();
+      expect(window.localStorage.getItem(OFFICIAL_MODEL_KEY)).toBeNull();
 
-      writePersisted("k", null);
-      expect(setClientConfig).toHaveBeenLastCalledWith({ k: null });
-      expect(readPersisted("k")).toBeNull();
+      writePersisted(OFFICIAL_MODEL_KEY, null);
+      expect(write).toHaveBeenLastCalledWith(OFFICIAL_MODEL_KEY, null);
+      expect(readPersisted(OFFICIAL_MODEL_KEY)).toBeNull();
     });
 
-    it("clientConfig 为空对象时仍判定为桌面持久化", () => {
-      setElectron({ clientConfig: {}, setClientConfig: vi.fn(async () => true) });
+    it("没有已保存值时仍判定为桌面持久化", () => {
+      setElectron(desktopBridge());
       expect(isDesktopPersist()).toBe(true);
     });
 
     it("敏感写入可等待，IPC 失败后恢复写入前的内存镜像", async () => {
       let finishWrite: ((ok: boolean) => void) | undefined;
-      const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+      const write = vi.fn(() => new Promise<boolean>((resolve) => {
         finishWrite = resolve;
       }));
-      setElectron({ clientConfig: { k: "old" }, setClientConfig });
+      setElectron(desktopBridge({ [DEEPSEEK_KEY]: "old" }, write));
 
-      const pending = writePersistedAwaited("k", "new");
+      const pending = writePersistedAwaited(DEEPSEEK_KEY, "new");
       // IPC 等待期间仍满足 visitorKeyHeaders 一类调用方的同步读取约束。
-      expect(readPersisted("k")).toBe("new");
+      expect(readPersisted(DEEPSEEK_KEY)).toBe("new");
       finishWrite?.(false);
 
       await expect(pending).resolves.toBe(false);
-      expect(readPersisted("k")).toBe("old");
+      expect(readPersisted(DEEPSEEK_KEY)).toBe("old");
     });
 
     it("敏感删除失败时恢复原值，不能制造已清除假象", async () => {
-      setElectron({ clientConfig: { k: "secret" }, setClientConfig: vi.fn(async () => false) });
+      setElectron(desktopBridge({ [DEEPSEEK_KEY]: "secret" }, async () => false));
 
-      await expect(writePersistedAwaited("k", null)).resolves.toBe(false);
-      expect(readPersisted("k")).toBe("secret");
+      await expect(writePersistedAwaited(DEEPSEEK_KEY, null)).resolves.toBe(false);
+      expect(readPersisted(DEEPSEEK_KEY)).toBe("secret");
     });
 
-    it("缺 clientConfig(旧 preload)时回退 localStorage", () => {
-      setElectron({ setClientConfig: vi.fn(async () => true) });
+    it("旧 preload 缺具名配置 API 时回退 localStorage", () => {
+      setElectron({ isDesktop: true });
       expect(isDesktopPersist()).toBe(false);
-      writePersisted("k", "v");
-      expect(window.localStorage.getItem("k")).toBe("v");
+      writePersisted(DEEPSEEK_KEY, "v");
+      expect(window.localStorage.getItem(DEEPSEEK_KEY)).toBe("v");
     });
   });
 });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ExportDeadlineExceededError } from "../export/exportSlot.js";
 
 const poolMocks = vi.hoisted(() => ({
   getBrowser: vi.fn(),
@@ -64,5 +65,31 @@ describe("rasterizeSvgToPng", () => {
     await expect(rasterizeMathBatch([{ latex: "x^2", displayMode: false }]))
       .resolves.toEqual([null]);
     expect(context.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("DOCX SVG 栅格化接入共享导出槽，并在执行 deadline 时关闭 context", async () => {
+    let rejectSetContent: ((reason?: unknown) => void) | undefined;
+    const close = vi.fn(async () => {
+      rejectSetContent?.(new Error("context closed"));
+    });
+    const context = {
+      route: vi.fn().mockResolvedValue(undefined),
+      newPage: vi.fn().mockResolvedValue({
+        setContent: vi.fn(() => new Promise<void>((_resolve, reject) => {
+          rejectSetContent = reject;
+        })),
+      }),
+      close,
+    };
+    poolMocks.getBrowser.mockResolvedValue({ newContext: vi.fn().mockResolvedValue(context) });
+
+    await expect(
+      rasterizeSvgToPng(
+        '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>',
+        { executionTimeoutMs: 20 },
+      ),
+    ).rejects.toBeInstanceOf(ExportDeadlineExceededError);
+    expect(poolMocks.withBrowserContextSlot).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalled();
   });
 });

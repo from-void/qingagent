@@ -247,13 +247,44 @@ export function buildPartialSvgDraft(
 }
 
 // 导出内联用的「保真加固」:与上面的白名单 sanitizeSvg 不同——白名单会删掉 mermaid 依赖的
-// <style>/<marker>/渐变,毁掉图表观感。这里改用黑名单:只剔除会执行脚本/外联的
-// 危险面(<script>/<iframe>/<object>/<embed>/<foreignObject>、on* 事件属性、非 #local 的 href/src、<style> 里的
-// @import/外部 url()),保留一切可视元素。用于把 mermaid 缓存 SVG / data:image/svg+xml 安全内联进
-// 导出 HTML(该 HTML 可能被用户在浏览器里打开,故必须杜绝可执行内容注入)。
-const REMOVE_ELEMENTS = new Set(["script", "iframe", "object", "embed", "foreignobject"]);
+// <style>/<marker>/渐变,毁掉图表观感。元素仍按危险面黑名单剔除；URL 则严格走白名单：
+// href/src 仅允许 #id，CSS url() 仅允许 url(#id)，file:/http:/data: 等本地或外部引用全部删除。
+// 用于把 mermaid 缓存 SVG / data:image/svg+xml 安全内联进导出 HTML(该 HTML 可能被用户在
+// 浏览器里打开,故必须杜绝可执行内容注入和本地文件读取)。
+const REMOVE_ELEMENTS = new Set([
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "foreignobject",
+  // 静态导出不需要 SMIL。动画节点可在运行时改写 href/src/filter 等 URL 属性，
+  // 绕过这里只检查初始属性值的外联门，因此连同 animateMotion 的 mpath 一律删除。
+  "animate",
+  "animatetransform",
+  "animatemotion",
+  "set",
+  "mpath",
+]);
 const HREF_ATTRS = new Set(["href", "xlink:href", "src", "xlink:actuate", "xlink:show"]);
-const BAD_STYLE_TEXT = /@import|url\(\s*['"]?\s*(?:https?:|\/\/|data:|javascript:)/i;
+const LOCAL_FRAGMENT = /^#[^\s"'()<>]+$/;
+const CSS_URL = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
+
+function hasOnlyLocalFragmentUrls(value: string): boolean {
+  const openings = value.match(/url\s*\(/gi)?.length ?? 0;
+  if (openings === 0) return true;
+  let count = 0;
+  CSS_URL.lastIndex = 0;
+  for (const match of value.matchAll(CSS_URL)) {
+    count += 1;
+    if (!LOCAL_FRAGMENT.test(match[2]?.trim() ?? "")) return false;
+  }
+  // 出现 url( 却没有完整匹配，按畸形外联表达式拒绝。
+  return count === openings;
+}
+
+function isSafeStyleText(value: string): boolean {
+  return !/@import|javascript:/i.test(value) && hasOnlyLocalFragmentUrls(value);
+}
 
 /**
  * 把一段 SVG 加固成「可安全内联进导出 HTML」的形态:保留可视内容,移除脚本/事件/外联等可执行面。
@@ -298,21 +329,25 @@ export function hardenInlineSvg(raw: string, options: { maxBytes?: number } = {}
           el.removeAttribute(attr.name);
           continue;
         }
-        // href/src 类:只保留本地 #引用(mermaid 箭头 marker 用 #id);其余(javascript:/外链/data:)全删
-        if (HREF_ATTRS.has(attrName) && !value.startsWith("#")) {
+        // href/src 类:只保留精确本地 #id 引用；其余(javascript:/file:/外链/data:)全删。
+        if (HREF_ATTRS.has(attrName) && !LOCAL_FRAGMENT.test(value)) {
           el.removeAttribute(attr.name);
           continue;
         }
-        // style 内联属性里的 @import / 外部 url() / javascript:
-        if (attrName === "style" && BAD_STYLE_TEXT.test(value)) {
+        // fill/filter/clip-path/marker/style 等任意属性一旦带 url()，只允许 url(#id)。
+        if (!hasOnlyLocalFragmentUrls(value)) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        if (attrName === "style" && !isSafeStyleText(value)) {
           el.removeAttribute(attr.name);
         }
       }
 
-      // <style> 元素文本:剔除 @import / 外部 url() —— 直接清空整段(mermaid 主题 style 不需要它们)
+      // <style> 元素文本同样只允许本地片段 url(#id)；命中外联或畸形 URL 时整段清空。
       if (name === "style") {
         const text = el.textContent ?? "";
-        if (BAD_STYLE_TEXT.test(normalizeCssEscapes(text))) {
+        if (!isSafeStyleText(normalizeCssEscapes(text))) {
           el.textContent = "";
         }
       }

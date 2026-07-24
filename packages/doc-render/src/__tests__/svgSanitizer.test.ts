@@ -226,6 +226,25 @@ describe("hardenInlineSvg", () => {
     expect(out).toContain("#frag");
   });
 
+  it("移除可在运行时写入本地或外部资源地址的全部 SMIL 动画节点", () => {
+    const out = hardenInlineSvg(
+      wrap(
+        `<image id="target" width="10" height="10"/>` +
+          `<animate attributeName="href" values="file:///etc/passwd" dur="1s"/>` +
+          `<set attributeName="xlink:href" to="https://evil.example/x" begin="0s"/>` +
+          `<animateTransform attributeName="transform" values="scale(1);scale(2)"/>` +
+          `<animateMotion path="M0 0L10 10"><mpath href="https://evil.example/path.svg#p"/></animateMotion>` +
+          `<rect width="10" height="10"/>`,
+      ),
+    );
+
+    expect(out).toBeTruthy();
+    expect(out).not.toMatch(/<(?:animate|animateTransform|animateMotion|set|mpath)\b/i);
+    expect(out).not.toMatch(/file:/i);
+    expect(out).not.toContain("evil.example");
+    expect(out).toMatch(/<rect/i);
+  });
+
   it("整体移除 <foreignObject> 及其 HTML 活动内容", () => {
     const out = hardenInlineSvg(wrap(`<foreignObject><iframe src="https://evil"></iframe><object data="x"></object></foreignObject>`));
     expect(out).not.toMatch(/<foreignObject/i);
@@ -246,6 +265,23 @@ describe("hardenInlineSvg", () => {
     const out = hardenInlineSvg(wrap(`<style>@import url(https://evil/x.css); .a{fill:#efe3cc}</style><rect/>`));
     expect(out).not.toMatch(/@import/i);
     expect(out).not.toContain("evil");
+  });
+
+  it("所有 SVG URL 只允许本地 url(#id)，file:/http:/data: 从属性和样式中剔除", () => {
+    const out = hardenInlineSvg(wrap(
+      `<defs><filter id="shadow"><feGaussianBlur stdDeviation="2"/></filter></defs>` +
+        `<rect id="safe" fill="url(#paint)" filter="url(#shadow)"/>` +
+        `<rect id="file-fill" fill="url(file:///etc/passwd)"/>` +
+        `<rect id="http-filter" filter="url(https://evil.example/filter.svg#x)"/>` +
+        `<rect id="data-style" style="fill:url(data:image/svg+xml;base64,AAAA)"/>` +
+        `<style>.bad{fill:url(file:///etc/passwd)} .safe{filter:url(#shadow)}</style>`,
+    ));
+
+    expect(out).toContain('fill="url(#paint)"');
+    expect(out).toContain('filter="url(#shadow)"');
+    expect(out).not.toMatch(/file:/i);
+    expect(out).not.toContain("evil.example");
+    expect(out).not.toMatch(/data:image/i);
   });
 
   it("保留合法 mermaid 风格 SVG 的可视元素(style 颜色 / marker / 渐变 / 文本)", () => {

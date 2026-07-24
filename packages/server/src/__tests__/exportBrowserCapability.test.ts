@@ -53,4 +53,38 @@ describe("PDF 导出浏览器能力门", () => {
     expect(mocks.loadSessionFromThread).not.toHaveBeenCalled();
     expect(mocks.toPdf).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      code: "EXPORT_BUSY",
+      status: 503,
+      expected: { code: "EXPORT_BUSY", retryable: true },
+    },
+    {
+      code: "EXPORT_DEADLINE_EXCEEDED",
+      status: 504,
+      expected: { code: "EXPORT_DEADLINE_EXCEEDED", retryable: true },
+    },
+  ])("PDF 的 $code 返回可区分错误而非泛化 500", async ({ code, status, expected }) => {
+    mocks.browserState.mockReturnValue({
+      status: "available",
+      sandbox: "required",
+      reason: null,
+    });
+    mocks.loadSessionFromThread.mockResolvedValue({
+      sessionId: "session-1",
+      title: "导出测试",
+      doc: null,
+      legacySections: [{ kind: "p", data: { text: "正文" } }],
+    });
+    mocks.toPdf.mockRejectedValue(Object.assign(new Error(code), { code }));
+    const { exportRoutes } = await import("../routes/export.js");
+    const app = new Hono().route("/api/v1", exportRoutes);
+
+    const response = await app.request("/api/v1/export/session-1?format=pdf");
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toMatchObject(expected);
+    if (code === "EXPORT_BUSY") expect(response.headers.get("Retry-After")).toBe("5");
+  });
 });

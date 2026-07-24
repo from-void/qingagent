@@ -270,12 +270,12 @@ describe("Settings Track B", () => {
 
   it("F3: Vision 落盘期间输入变更后不提交旧配置或假成功", async () => {
     let resolvePersist!: (ok: boolean) => void;
-    const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+    const setVisionProvider = vi.fn(() => new Promise<boolean>((resolve) => {
       resolvePersist = resolve;
     }));
     Object.defineProperty(window, "electron", {
       configurable: true,
-      value: { isDesktop: true, clientConfig: {}, setClientConfig },
+      value: { isDesktop: true, getVisionProvider: () => null, setVisionProvider },
     });
     __resetClientPersistCacheForTests();
 
@@ -289,7 +289,7 @@ describe("Settings Track B", () => {
     setInput(getInputByPlaceholder("sk-…"), "sk-old");
     setInput(getInputByPlaceholder("如 qwen-vl-max / gpt-4o / claude-3-5-sonnet"), "vision-old");
     await click(getButtonByText("测试并保存"));
-    await waitForCondition(() => setClientConfig.mock.calls.length === 1, "Vision 开始落盘");
+    await waitForCondition(() => setVisionProvider.mock.calls.length === 1, "Vision 开始落盘");
 
     expect(baseInput.disabled).toBe(true);
     baseInput.disabled = false;
@@ -303,12 +303,12 @@ describe("Settings Track B", () => {
 
   it("F3: Model 落盘期间输入变更后不关编辑态或报假成功", async () => {
     let resolvePersist!: (ok: boolean) => void;
-    const setClientConfig = vi.fn(() => new Promise<boolean>((resolve) => {
+    const setCustomProvider = vi.fn(() => new Promise<boolean>((resolve) => {
       resolvePersist = resolve;
     }));
     Object.defineProperty(window, "electron", {
       configurable: true,
-      value: { isDesktop: true, clientConfig: {}, setClientConfig },
+      value: { isDesktop: true, getCustomProvider: () => null, setCustomProvider },
     });
     __resetClientPersistCacheForTests();
 
@@ -322,7 +322,7 @@ describe("Settings Track B", () => {
     setInput(baseInput, "https://old.example/v1");
     setInput(getInputByPlaceholder("sk-…"), "sk-old");
     await click(getButtonByText("测试并保存"));
-    await waitForCondition(() => setClientConfig.mock.calls.length === 1, "Model 开始落盘");
+    await waitForCondition(() => setCustomProvider.mock.calls.length === 1, "Model 开始落盘");
 
     expect(baseInput.disabled).toBe(true);
     baseInput.disabled = false;

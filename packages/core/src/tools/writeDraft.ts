@@ -8,6 +8,16 @@ import {
 import { z } from "zod";
 import type { LegacySection } from "@qingagent/contract-ts";
 import type { SessionState } from "../session/sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  captureTurnWriteGuard,
+  type TurnWriteGuard,
+} from "../session/turnOwnership.js";
+import {
+  DRAFT_MUTATION_CONFLICT_ERROR,
+  DraftMutationConflictError,
+  currentDraftMutationRevision,
+} from "../doc-engine/draftScratch.js";
 import type { Material } from "../types/material.js";
 import { startInnerLlmSpan } from "../observability/innerLlmSpan.js";
 import {
@@ -283,7 +293,13 @@ function tallyFailureKinds(kinds: readonly string[]): Record<string, number> {
 
 export function createWriteDraftTool(opts: {
   state: SessionState;
-  replaceDraftCandidateDoc: (state: SessionState, doc: PmDoc, legacySections?: LegacySection[]) => LegacySection[];
+  replaceDraftCandidateDoc: (
+    state: SessionState,
+    doc: PmDoc,
+    legacySections: LegacySection[] | undefined,
+    writeGuard: TurnWriteGuard,
+    expectedMutationRevision: number,
+  ) => LegacySection[];
 }) {
   return createTool({
     id: "writeDraft",
@@ -293,6 +309,10 @@ export function createWriteDraftTool(opts: {
     inputSchema: writeDraftInputSchema,
     outputSchema: writeDraftOutputSchema,
     execute: async (input, context): Promise<WriteDraftOutput> => {
+      const writeGuard = captureTurnWriteGuard(opts.state, context);
+      assertTurnWriteAllowed(opts.state, writeGuard);
+      const expectedMutationRevision =
+        currentDraftMutationRevision(opts.state);
       const stopHeartbeat = startToolHeartbeat(context, { tool: "writeDraft" });
       try {
       const materials = context?.requestContext?.get("materials") as Map<string, Material> | undefined;
@@ -736,11 +756,22 @@ export function createWriteDraftTool(opts: {
         ? ["nested-list"]
         : undefined;
 
-      const candidate = opts.replaceDraftCandidateDoc(
-        opts.state,
-        finalDoc,
-        finalLegacySections,
-      );
+      let candidate: LegacySection[];
+      try {
+        assertTurnWriteAllowed(opts.state, writeGuard);
+        candidate = opts.replaceDraftCandidateDoc(
+          opts.state,
+          finalDoc,
+          finalLegacySections,
+          writeGuard,
+          expectedMutationRevision,
+        );
+      } catch (error) {
+        if (error instanceof DraftMutationConflictError) {
+          return { ok: false, error: DRAFT_MUTATION_CONFLICT_ERROR };
+        }
+        throw error;
+      }
       context?.requestContext?.set("legacySections", candidate);
       context?.requestContext?.set("doc", opts.state.docDraftCandidateDoc ?? finalDoc);
       return {

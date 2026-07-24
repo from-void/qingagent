@@ -23,8 +23,32 @@ import { hasCanonicalDoc } from "./docFacts.js";
 import { buildDraftDiff } from "./proposalDiff.js";
 import { cloneLegacySections } from "./docDiff.js";
 import type { SessionState } from "../session/sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  type TurnWriteGuard,
+} from "../session/turnOwnership.js";
 
 const logger = mastra.getLogger();
+
+export const DRAFT_MUTATION_CONFLICT_ERROR =
+  "候选已变化，请基于最新草稿重试";
+
+export class DraftMutationConflictError extends Error {
+  constructor() {
+    super(DRAFT_MUTATION_CONFLICT_ERROR);
+    this.name = "DraftMutationConflictError";
+  }
+}
+
+export function currentDraftMutationRevision(state: SessionState): number {
+  return Number.isSafeInteger(state._draftMutationRevision)
+    ? state._draftMutationRevision
+    : 0;
+}
+
+function advanceDraftMutationRevision(state: SessionState): void {
+  state._draftMutationRevision = currentDraftMutationRevision(state) + 1;
+}
 
 export function clonePmDoc(doc: PmDoc): PmDoc {
   if (typeof globalThis.structuredClone === "function") {
@@ -56,6 +80,7 @@ export function ensureDraftCandidateDoc(state: SessionState): PmDoc {
   if (!state.docDraftCandidateDoc) {
     state.docDraftCandidateDoc = clonePmDoc(state.docDraftBaseDoc);
     state.docDraftCandidateSections = pmToLegacySections(state.docDraftCandidateDoc) as unknown as LegacySection[];
+    advanceDraftMutationRevision(state);
   }
   return state.docDraftCandidateDoc;
 }
@@ -83,6 +108,7 @@ export function clearInMemoryDraftDocs(state: SessionState): void {
   state.docDraftBaseDoc = null;
   state.docDraftCandidateSections = null;
   state.docDraftCandidateDoc = null;
+  advanceDraftMutationRevision(state);
 }
 
 export function clearDraftConfirmationState(state: SessionState): void {
@@ -122,9 +148,18 @@ export function replaceDraftCandidateDoc(
   state: SessionState,
   doc: PmDoc,
   legacySections?: LegacySection[],
+  writeGuard?: TurnWriteGuard,
+  expectedMutationRevision?: number,
 ): LegacySection[] {
   const materializedDoc = materializeDraftBlockIds(doc, { namespace: "draft.replace" });
   const sections = legacySections ?? (pmToLegacySections(materializedDoc) as unknown as LegacySection[]);
+  if (writeGuard) assertTurnWriteAllowed(state, writeGuard);
+  if (
+    expectedMutationRevision !== undefined &&
+    currentDraftMutationRevision(state) !== expectedMutationRevision
+  ) {
+    throw new DraftMutationConflictError();
+  }
   if (!state.docDraftBaseSections) {
     state.docDraftBaseSections = cloneLegacySections(state.legacySections);
     state.docDraftBaseVersion = state.docVersion;
@@ -133,6 +168,7 @@ export function replaceDraftCandidateDoc(
   state.docDraftBaseDoc ??= clonePmDoc(currentPmDoc(state));
   state.docDraftCandidateDoc = materializedDoc;
   state.docDraftCandidateSections = cloneLegacySections(sections);
+  advanceDraftMutationRevision(state);
   return state.docDraftCandidateSections;
 }
 

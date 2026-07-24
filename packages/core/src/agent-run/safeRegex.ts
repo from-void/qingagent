@@ -1,5 +1,4 @@
 import { Worker } from "node:worker_threads";
-import { isTruthyFlag } from "../doc-engine/draftFeatureFlags.js";
 
 export type CompileSafeRegexResult =
   | { ok: true; re: RegExp }
@@ -48,6 +47,8 @@ const DEFAULT_MATCH_LIMIT = 1000;
 const RUN_TIMEOUT_MS = 200;
 const TOTAL_TIMEOUT_MS = 500;
 const ALLOWED_FLAGS = new Set(["i", "u", "m"]);
+const EXECUTOR_UNAVAILABLE_ERROR = "安全正则执行器不可用";
+const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 
 let nextTaskId = 1;
 let workerCtor: WorkerCtor | null = Worker;
@@ -55,6 +56,12 @@ let pool: PooledWorker[] = [];
 let queue: SafeRegexTask[] = [];
 let createdWorkers = 0;
 let processExitHookInstalled = false;
+
+function isTruthyFlag(raw: string | undefined): boolean {
+  return raw
+    ? TRUTHY_FLAG_VALUES.has(raw.trim().toLowerCase())
+    : false;
+}
 
 function poolSize(): number {
   const raw = Number(process.env.QINGAGENT_SAFE_REGEX_WORKERS ?? "2");
@@ -128,29 +135,8 @@ function makeRegExpMatchArray(input: string, match: WorkerMatch): RegExpMatchArr
   return array;
 }
 
-function runInMainThread(re: RegExp, text: string, limit: number): ExecSafeRegexResult {
-  if (text.length > MAX_TEXT_LENGTH) {
-    return { ok: false, error: "unsafe regex (text too long)" };
-  }
-  const matches: RegExpMatchArray[] = [];
-  const local = new RegExp(re.source, re.flags);
-  let match: RegExpExecArray | null;
-  while ((match = local.exec(text)) !== null) {
-    if ((match[0] ?? "").length === 0) {
-      local.lastIndex += 1;
-      continue;
-    }
-    if (matches.length >= limit) {
-      return { ok: false, error: "unsafe regex (too many matches)" };
-    }
-    matches.push(match);
-  }
-  return { ok: true, matches };
-}
-
 function inlineWorkerSource(): string {
   return `
-    const { parentPort } = require("node:worker_threads");
     function run(input) {
       try {
         const re = new RegExp(input.pattern, input.flags);
@@ -175,6 +161,7 @@ function inlineWorkerSource(): string {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     }
+    const { parentPort } = process.getBuiltinModule("worker_threads");
     parentPort.on("message", (input) => {
       parentPort.postMessage({ id: input.id, ...run(input) });
     });
@@ -187,9 +174,10 @@ function createWorker(): PooledWorker {
     throw new Error("safeRegex worker unavailable");
   }
 
-  const worker = import.meta.url.endsWith(".ts")
-    ? new Ctor(inlineWorkerSource(), { eval: true })
-    : new Ctor(new URL("./safeRegex.worker.js", import.meta.url));
+  // 始终使用内联源码：core 会被 desktop 的 esbuild 打成单文件 bundle，
+  // new URL("./safeRegex.worker.js", import.meta.url) 不会自动产出/携带旁车文件。
+  // eval worker 仍在独立线程内执行并受同一墙钟护栏约束；构造失败继续 fail-closed。
+  const worker = new Ctor(inlineWorkerSource(), { eval: true });
 
   createdWorkers += 1;
   const pooled: PooledWorker = { worker, busy: false, task: null };
@@ -218,11 +206,9 @@ function createWorker(): PooledWorker {
     if (task) {
       clearTimeout(task.totalTimer);
       if (task.runTimer) clearTimeout(task.runTimer);
-      task.resolve(runInMainThread(
-        new RegExp(task.request.pattern, task.request.flags),
-        task.request.text,
-        task.request.limit,
-      ));
+      pooled.busy = false;
+      pooled.task = null;
+      task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
     }
     dispatchQueue();
     if (!task) {
@@ -231,7 +217,15 @@ function createWorker(): PooledWorker {
   });
 
   worker.on("exit", () => {
+    const task = pooled.task;
     dropWorker(pooled);
+    if (task) {
+      clearTimeout(task.totalTimer);
+      if (task.runTimer) clearTimeout(task.runTimer);
+      pooled.busy = false;
+      pooled.task = null;
+      task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
+    }
     dispatchQueue();
   });
 
@@ -268,10 +262,28 @@ function getIdleWorker(): PooledWorker | null {
   }
 }
 
+function failQueuedTasksAsUnavailable(): void {
+  const unavailable = queue;
+  queue = [];
+  for (const task of unavailable) {
+    clearTimeout(task.totalTimer);
+    if (task.runTimer) clearTimeout(task.runTimer);
+    task.resolve({ ok: false, error: EXECUTOR_UNAVAILABLE_ERROR });
+  }
+}
+
 function dispatchQueue(): void {
+  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
+    failQueuedTasksAsUnavailable();
+    return;
+  }
   while (queue.length > 0) {
     const worker = getIdleWorker();
-    if (!worker) return;
+    if (!worker) {
+      if (pool.length >= poolSize()) return;
+      failQueuedTasksAsUnavailable();
+      return;
+    }
     const task = queue.shift()!;
     worker.busy = true;
     worker.task = task;
@@ -325,15 +337,14 @@ export async function execSafeRegexAll(
   text: string,
   limit = DEFAULT_MATCH_LIMIT,
 ): Promise<ExecSafeRegexResult> {
+  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
+    return { ok: false, error: EXECUTOR_UNAVAILABLE_ERROR };
+  }
   if (text.length > MAX_TEXT_LENGTH) {
     return { ok: false, error: "unsafe regex (text too long)" };
   }
   const maxMatches = Math.min(limit, DEFAULT_MATCH_LIMIT);
   if (maxMatches <= 0) return { ok: true, matches: [] };
-
-  if (!workerCtor || isTruthyFlag(process.env.QINGAGENT_SAFE_REGEX_DISABLE_WORKER)) {
-    return runInMainThread(re, text, maxMatches);
-  }
 
   return runInWorkerPool(re, text, maxMatches);
 }

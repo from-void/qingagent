@@ -2,6 +2,10 @@ import type { BridgeFrame } from "@qingagent/contract-ts";
 import { mastra } from "../mastra.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
 import {
+  invalidateTurnOwnership,
+  turnOwnershipFromRequestContext,
+} from "../session/turnOwnership.js";
+import {
   createAgentStreamTurnContext,
   type ProcessAgentStreamOptions,
   type ProcessOutcome,
@@ -96,12 +100,16 @@ export async function* processAgentStream(
   opts: ProcessAgentStreamOptions,
 ): AsyncGenerator<BridgeFrame, ProcessOutcome> {
   const context = await createAgentStreamTurnContext(opts);
+  const turnOwnership = turnOwnershipFromRequestContext(context.requestContext);
   let heartbeatReceivedCount = 0;
   try {
     const monitoredStream = withIdleTimeout(
       fullStream as AsyncIterable<AgentStreamEvent>,
       context.timeoutMs,
-      () => context.abortController.abort(IDLE_TIMEOUT_ABORT_REASON),
+      () => {
+        context.abortController.abort(IDLE_TIMEOUT_ABORT_REASON);
+        invalidateTurnOwnership(context.state, turnOwnership);
+      },
       {
         firstChunkTimeoutMs: context.firstChunkTimeoutMs,
         heartbeatOnlyTimeoutMs: context.toolHeartbeatTimeoutMs,

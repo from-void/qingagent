@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import { RequestContext } from "@mastra/core/request-context";
 import type { CoreMessage } from "ai";
 import { createSession } from "../session/sessionState.js";
+import {
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
+  invalidateTurnOwnership,
+} from "../session/turnOwnership.js";
 import {
   buildWorkingMemoryPromptMessage,
   ensureWorkingMemoryPromptMessage,
@@ -207,6 +213,86 @@ describe("Working Memory 冻结快照", () => {
       persistable: false,
     });
     expect(mockState.memory.getWorkingMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it("updateWorkingMemory 在提交前拒绝已 abort 或失去代次所有权的真实工具调用", async () => {
+    const { createUpdateWorkingMemoryTool } = await import("../session/workingMemory.js");
+
+    for (const mode of ["abort", "generation"] as const) {
+      mockState.memory.updateWorkingMemory.mockClear();
+      const state = createSession(`wm-late-${mode}`);
+      const controller = new AbortController();
+      const ownership = beginTurnOwnership(state, `wm-late-${mode}:attempt:0`);
+      const requestContext = new RequestContext();
+      bindTurnOwnershipToRequestContext(requestContext, ownership);
+      const tool = createUpdateWorkingMemoryTool(state);
+
+      if (mode === "abort") {
+        controller.abort(new DOMException("idle timeout", "AbortError"));
+      } else {
+        beginTurnOwnership(state, "wm-late-generation:attempt:1");
+      }
+
+      await expect(tool.execute!(
+        {
+          memory: "# 不应落库",
+          reason: "模拟迟到副作用",
+        },
+        {
+          abortSignal: controller.signal,
+          requestContext,
+        } as never,
+      )).resolves.toMatchObject({ ok: false });
+      expect(mockState.memory.updateWorkingMemory).not.toHaveBeenCalled();
+      expect(state._workingMemoryUpdatedThisSession).not.toBe(true);
+    }
+  });
+
+  it("updateWorkingMemory 越过会话 CAS 写边界后遇到 stop，不产生“失败但已写”", async () => {
+    const { createUpdateWorkingMemoryTool } = await import("../session/workingMemory.js");
+    const state = createSession("wm-stop-at-persist-boundary");
+    const controller = new AbortController();
+    const ownership = beginTurnOwnership(state, "wm-stop-at-persist-boundary:attempt:0");
+    const requestContext = new RequestContext();
+    bindTurnOwnershipToRequestContext(requestContext, ownership);
+    const tool = createUpdateWorkingMemoryTool(state);
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    mockState.memory.updateWorkingMemory.mockImplementationOnce(async (
+      { workingMemory }: { workingMemory: string },
+    ) => {
+      markWriteStarted();
+      await writeGate;
+      mockState.workingMemoryValue = workingMemory;
+    });
+
+    const resultPromise = tool.execute!(
+      {
+        memory: "# 已越过写边界",
+        reason: "模拟 stop 与无 abort 的 Mastra 写并发",
+      },
+      {
+        abortSignal: controller.signal,
+        requestContext,
+      } as never,
+    );
+    await writeStarted;
+    controller.abort(new DOMException("用户停止", "AbortError"));
+    invalidateTurnOwnership(state, ownership);
+    releaseWrite();
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: true,
+      effective: "next_session",
+    });
+    expect(mockState.workingMemoryValue).toBe("# 已越过写边界");
+    expect(state._workingMemoryUpdatedThisSession).toBe(true);
   });
 
   it.each([

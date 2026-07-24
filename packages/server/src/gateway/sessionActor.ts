@@ -176,10 +176,10 @@ export class SessionActor {
               item.input!.abortSignal,
             );
         for await (const frame of frames) {
-          // dispose 后立即停泵(0702 review):manager 已 frameLog.evict,此处再 append
-          // 会经 ensure() 重建一条僵尸状态条目(帧虽被 generation 过滤,条目本身泄漏)。
-          // break 触发 generator.return(),让 handleCommand 的 finally 正常收尾。
-          if ((this.stateValue as SessionActorState) === "disposed") break;
+          // dispose 后继续消费 generator 到 done，但绝不 append。只调用一次 return()
+          // 会在 generator 的 finally 仍含 yield 时把它挂在首个终态帧，后续持久化与
+          // _activeTurnPromise resolve 都无法执行；disposeAndWait 必须等完整收尾。
+          if ((this.stateValue as SessionActorState) === "disposed") continue;
           const seq = this.options.frameLog.append(
             this.options.sessionId,
             frame,

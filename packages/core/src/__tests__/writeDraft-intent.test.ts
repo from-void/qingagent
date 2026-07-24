@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import {
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
+} from "../session/turnOwnership.js";
+import {
   pmDocHasNestedList,
   pmToLegacySections,
   pmToPlainText,
@@ -556,5 +560,51 @@ describe("writeDraft intent 调度", () => {
       totalMs: 25_000,
       thinkEffectiveMs: 15_000,
     });
+  });
+
+  it("真实 Mastra writeDraft 工具拒绝 idle-timeout 后迟到的 abort/旧代次写入", async () => {
+    const runLateTool = async (mode: "abort" | "generation") => {
+      const { tool, state } = await makeTool();
+      const controller = new AbortController();
+      const ownership = beginTurnOwnership(state, `late-${mode}:attempt:0`);
+      const requestContext = new RequestContext([["abortSignal", controller.signal]]);
+      bindTurnOwnershipToRequestContext(requestContext, ownership);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const calls: InnerModelCall[] = [];
+      streamInnerModelMock.mockImplementation(async (input: InnerModelCall) => {
+        calls.push(input);
+        await gate;
+        return {
+          raw: qingmlParagraph(`不应落库-${mode}`),
+          contentStartMs: 0,
+          finishReason: "stop",
+        };
+      });
+
+      const pending = run(
+        tool,
+        { title: "迟到写入", outline: "模拟流帧已被 idle timeout 挡住" },
+        { abortSignal: controller.signal, requestContext },
+      );
+      await waitForCalls(calls, 4);
+      expect(calls).toHaveLength(4);
+      if (mode === "abort") {
+        controller.abort(new DOMException("idle timeout", "AbortError"));
+      } else {
+        beginTurnOwnership(state, "late-generation:attempt:1");
+      }
+      release();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(state.docDraftCandidateDoc).toBeNull();
+      expect(state.docDraftCandidateSections).toBeNull();
+    };
+
+    await runLateTool("abort");
+    streamInnerModelMock.mockReset();
+    await runLateTool("generation");
   });
 });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Worker } from "node:worker_threads";
 import type { DraftTextMark } from "@qingagent/contract-ts";
 import {
   aiBlockToQingml,
@@ -17,6 +18,10 @@ import {
   createSession,
   createSessionScopedTools,
 } from "../bridge/index.js";
+import {
+  __setSafeRegexWorkerCtorForTest,
+  terminateSafeRegexWorkersForTest,
+} from "../agent-run/safeRegex.js";
 
 const streamTextMock = vi.hoisted(() => vi.fn());
 
@@ -354,6 +359,110 @@ describe("draft rich formats session-scoped tools", () => {
     expect(diff.stats.wordsAdded).toBeGreaterThan(0);
     // totalWords 用文档可见字符口径(countDocVisibleChars:去空白/跳过媒体),与右下角落款同尺
     expect(diff.stats.totalWords).toBe(countDocVisibleChars(state.docDraftCandidateDoc!));
+  });
+
+  it("safeRegex worker 不可用时 readDraft/editDraft 明确报错，不伪装为空匹配", async () => {
+    const state = createSession("rich-tools-regex-worker-unavailable");
+    bindDoc(state, doc([paragraph("block-a", "待匹配正文")]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+    __setSafeRegexWorkerCtorForTest(null);
+
+    try {
+      await expect(readDraftAiIr.execute!({
+        query: "待匹配",
+        isRegex: true,
+      }, ctx)).resolves.toEqual({
+        ok: false,
+        error: "安全正则执行器不可用",
+      });
+      await expect(editDraft.execute!({
+        ops: [{
+          action: "replaceText",
+          find: "待匹配",
+          replace: "已匹配",
+          isRegex: true,
+        }],
+      }, ctx)).resolves.toMatchObject({
+        ok: false,
+        applied: [],
+        error: "安全正则执行器不可用",
+        failedOpIndex: 0,
+      });
+    expect(pmToPlainText(state.docDraftCandidateDoc!)).toBe("待匹配正文");
+    } finally {
+      __setSafeRegexWorkerCtorForTest(Worker);
+      terminateSafeRegexWorkersForTest();
+    }
+  });
+
+  it("同 generation 并发 editDraft 用候选 revision CAS 拒绝后提交者，不静默覆盖", async () => {
+    const state = createSession("rich-tools-concurrent-edit-cas");
+    bindDoc(state, doc([paragraph("block-a", "原文")]));
+    const { editDraft } = createSessionScopedTools(state);
+
+    // 正则路径会先让出事件循环给 worker；字面量路径可在同一 revision 上先提交。
+    const delayedRegexEdit = editDraft.execute!({
+      ops: [{
+        action: "replaceText",
+        find: "原文",
+        replace: "迟到版本",
+        isRegex: true,
+      }],
+    }, ctx) as Promise<any>;
+    const winningEdit = await editDraft.execute!({
+      ops: [{
+        action: "replaceText",
+        find: "原文",
+        replace: "先提交版本",
+      }],
+    }, ctx) as any;
+    const rejectedEdit = await delayedRegexEdit;
+
+    expect(winningEdit).toMatchObject({ ok: true });
+    expect(rejectedEdit).toEqual({
+      ok: false,
+      applied: [],
+      error: "候选已变化，请基于最新草稿重试",
+    });
+    expect(pmToPlainText(state.docDraftCandidateDoc!)).toBe("先提交版本");
+  });
+
+  it("同 generation 并发 writeDraft/editDraft 时，迟到 writeDraft CAS 失败且不覆盖新候选", async () => {
+    let releaseGeneration!: () => void;
+    const generationGate = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    streamInnerModelMock.mockImplementation(async () => {
+      await generationGate;
+      return { raw: "<p>迟到整稿</p>", contentStartMs: 0 };
+    });
+    const state = createSession("rich-tools-concurrent-write-edit-cas");
+    bindDoc(state, doc([paragraph("block-a", "原文")]));
+    const tools = createSessionScopedTools(state);
+
+    const delayedWrite = tools.writeDraft!.execute!({
+      title: "并发整稿",
+      outline: "生成迟到整稿",
+      intent: "express",
+    }, ctx) as Promise<any>;
+    await vi.waitFor(() => expect(streamInnerModelMock).toHaveBeenCalled());
+
+    const winningEdit = await tools.editDraft.execute!({
+      ops: [{
+        action: "replaceText",
+        find: "原文",
+        replace: "先提交编辑",
+      }],
+    }, ctx) as any;
+    releaseGeneration();
+    const rejectedWrite = await delayedWrite;
+
+    expect(winningEdit).toMatchObject({ ok: true });
+    expect(rejectedWrite).toEqual({
+      ok: false,
+      error: "候选已变化，请基于最新草稿重试",
+    });
+    expect(pmToPlainText(state.docDraftCandidateDoc!)).toBe("先提交编辑");
   });
 
   it("writeDraft 风格产出富文档后,两轮 editDraft/readDiff 闭环每步都保持 PM doc 合法", async () => {

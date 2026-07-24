@@ -150,6 +150,10 @@ export interface SessionState {
   _abortController: AbortController | null;
   /** Runtime-only completion promise for the active turn's finally block. Not persisted. */
   _activeTurnPromise: Promise<void> | null;
+  /** Runtime-only：当前 agent 尝试产生写入时使用的 owner。 */
+  _turnOwner: string | null;
+  /** Runtime-only：用于拦截迟到工具写入的单调递增代次。 */
+  _turnGeneration: number;
   /** Runtime-only creation promise for the backing Mastra thread. Not persisted. */
   threadCreatePromise?: Promise<void>;
   /** PM-native review suggestions keyed by suggestion id. */
@@ -171,6 +175,8 @@ export interface SessionState {
   docDraftCandidateSections: LegacySection[] | null;
   /** PM canonical for the turn-scoped whole-document candidate. */
   docDraftCandidateDoc: PmDoc | null;
+  /** Runtime-only：候选草稿每次替换/清理都推进，用于并发写工具提交时 CAS。 */
+  _draftMutationRevision: number;
   /** PM-native review-cycle baseline for suggestion restore/debugging. */
   suggestionBaseDoc: PmDoc | null;
   suggestionBaseVersion: number | null;
@@ -229,6 +235,8 @@ export interface SessionState {
   _suspensionOwner?: SuspensionOwner | null;
   /** 独立 confirm 通道，以 toolCallId 为键；绝不参与 askUser suspension owner。 */
   pendingConfirms: Map<string, PendingConfirm>;
+  /** Runtime-only：有界确认持久化超时后保留的 dirty reason，后台补写成功才清除。 */
+  _confirmPersistenceDirtyReasons: Set<string>;
   /** Rich chat history (ChatMessage[]) for session restore.
    *  Captures full parts (text, thinking, toolCall) so tool bubbles survive restore. */
   chatHistory: ChatMessage[];
@@ -326,6 +334,8 @@ export function createSession(
     _lastEmittedWireKind: null,
     _abortController: null,
     _activeTurnPromise: null,
+    _turnOwner: null,
+    _turnGeneration: 0,
     suggestions: new Map(),
     annotationGroups: [],
     patchVerdicts: new Map(),
@@ -335,6 +345,7 @@ export function createSession(
     docDraftBaseDoc: null,
     docDraftCandidateSections: null,
     docDraftCandidateDoc: null,
+    _draftMutationRevision: 0,
     suggestionBaseDoc: null,
     suggestionBaseVersion: null,
     seqCounters: new Map(),
@@ -353,6 +364,7 @@ export function createSession(
     _suspendedThisTurn: false,
     _suspensionOwner: null,
     pendingConfirms: new Map(),
+    _confirmPersistenceDirtyReasons: new Set(),
     chatHistory: [],
   };
 }

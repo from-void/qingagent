@@ -3,6 +3,10 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { getMemory, mastra } from "../mastra.js";
 import type { SessionState } from "./sessionState.js";
+import {
+  assertTurnWriteAllowed,
+  captureTurnWriteGuard,
+} from "./turnOwnership.js";
 
 const logger = mastra.getLogger();
 
@@ -101,9 +105,14 @@ export function createUpdateWorkingMemoryTool(state: SessionState) {
       effective: z.literal("next_session").optional(),
       error: z.string().optional(),
     }),
-    execute: async (input) => {
+    execute: async (input, context) => {
+      const writeGuard = captureTurnWriteGuard(state, context);
       try {
         const nextMemory = normalizeWorkingMemory(input.memory) ?? "";
+        // Mastra 1.22.1 的 updateWorkingMemory 不接 AbortSignal/CAS。这里紧贴
+        // 不可取消的外部写边界做 owner/generation CAS；一旦调用已获准进入，
+        // 后续 stop 不能再把已经落库的结果写后判成失败，也不做危险回滚。
+        assertTurnWriteAllowed(state, writeGuard);
         await getMemory().updateWorkingMemory({
           threadId: state.threadId ?? state.sessionId,
           resourceId: state.resourceId,

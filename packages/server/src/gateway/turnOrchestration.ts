@@ -15,6 +15,8 @@ import {
   appendAskUserAnswerMessageIfMissing,
   askUserTool,
   beginSessionSnapshotTurn,
+  beginTurnOwnership,
+  bindTurnOwnershipToRequestContext,
   buildAgentTracingMetadata,
   buildCapabilityTools,
   buildTodoAwarenessContent,
@@ -26,6 +28,7 @@ import {
   emitProjectedDocState,
   enrichAskUserResumeAnswersWithLabels,
   ensureWorkingMemorySnapshot,
+  endTurnOwnership,
   finalizeLingeringRunningToolCalls,
   guardContext,
   guardReset,
@@ -303,6 +306,7 @@ async function* handleResume(
   const { runId, toolCallId } = session;
   const streamId = crypto.randomUUID();
   const abortController = new AbortController();
+  const turnOwnership = beginTurnOwnership(session, `${streamId}:resume`);
   let resolveActiveTurn!: () => void;
   const activeTurnPromise = new Promise<void>((resolve) => {
     resolveActiveTurn = resolve;
@@ -434,6 +438,7 @@ async function* handleResume(
       ["isDirectionReset", resumeWasDirectionReset],
       ["directionChangeAskedSinceLastWrite", session._directionChangeAskedSinceLastWrite === true],
     ]);
+    bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
     resumeRequestContext = requestContext;
     beginSessionSnapshotTurn(requestContext);
     // e2e-loop-0704 R13:resume 时模型只看得到 raw 答案(chosen 里是 "v2" 这类选项
@@ -735,6 +740,7 @@ async function* handleResume(
       });
     }
     resolveActiveTurn();
+    endTurnOwnership(session, turnOwnership);
     if (session._abortController === abortController) {
       session._abortController = null;
     }

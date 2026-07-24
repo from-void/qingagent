@@ -197,14 +197,17 @@ export async function findSafeRegexMatches(
   blocks: TextBlockRef[],
   pattern: string,
   all: boolean,
-): Promise<QuoteMatch[]> {
+): Promise<
+  | { ok: true; matches: QuoteMatch[] }
+  | { ok: false; error: string }
+> {
   const compiled = compileSafeRegex(pattern);
-  if (!compiled.ok) return [];
+  if (!compiled.ok) return compiled;
 
   const matches: QuoteMatch[] = [];
   for (const block of blocks) {
     const result = await execSafeRegexAll(compiled.re, block.text, 1000);
-    if (!result.ok) return [];
+    if (!result.ok) return result;
     for (const match of result.matches) {
       const matchedText = match[0] ?? "";
       const index = match.index ?? -1;
@@ -219,7 +222,7 @@ export async function findSafeRegexMatches(
       ));
     }
   }
-  return applyAllPolicy(matches, all);
+  return { ok: true, matches: applyAllPolicy(matches, all) };
 }
 
 function textToInlineNodes(text: string, marks?: readonly PmMark[]): PmInlineNode[] {

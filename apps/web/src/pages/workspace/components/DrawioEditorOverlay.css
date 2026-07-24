@@ -1,0 +1,89 @@
+.drawio-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483100;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-paper-deep);
+  color: var(--ink-1);
+  font-family: var(--font-zh-serif);
+  overscroll-behavior: contain;
+}
+
+.drawio-editor-overlay__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--bg-paper-deep);
+}
+
+.drawio-editor-overlay__heading {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 12px;
+}
+
+.drawio-editor-overlay__heading strong {
+  flex: 0 0 auto;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.drawio-editor-overlay__heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawio-editor-overlay__heading span.is-error {
+  color: var(--mark);
+}
+
+.drawio-editor-overlay__cancel {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-zh-serif);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.drawio-editor-overlay__cancel:hover {
+  border-color: var(--line-3);
+  background: var(--bg-hover);
+  color: var(--ink-1);
+}
+
+.drawio-editor-overlay__frame {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg-canvas);
+}
+
+@media (max-width: 640px) {
+  .drawio-editor-overlay__topbar {
+    gap: 8px;
+    padding-inline: 10px;
+  }
+
+  .drawio-editor-overlay__heading {
+    display: grid;
+    gap: 1px;
+  }
+}

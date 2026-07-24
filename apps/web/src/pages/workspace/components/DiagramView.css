@@ -224,6 +224,10 @@
 .pm-diagram-view-btn:hover {
   background: #243e58;
 }
+.pm-diagram-view-btn:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
 .pm-diagram-view-btn--ghost {
   background: rgba(255, 250, 240, 0.94);
   color: var(--ink-1);

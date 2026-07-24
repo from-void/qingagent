@@ -5,10 +5,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import { setTableCellSelectionFromDom } from "../../data/tableToolbar";
+
+vi.mock("../../components/drawioEditorLauncher", () => ({
+  openDrawioEditor: vi.fn(async () => null),
+}));
+
 import {
   DocToolbar,
   captureToolbarSelection,
@@ -19,6 +24,7 @@ import {
   restoreToolbarSelection,
   toolbarTitle,
 } from "../../components/DocToolbar";
+import { openDrawioEditor } from "../../components/drawioEditorLauncher";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +33,10 @@ let host: HTMLDivElement | null = null;
 let editor: Editor | null = null;
 
 describe("DocToolbar round-1 regressions", () => {
+  beforeEach(() => {
+    vi.mocked(openDrawioEditor).mockReset().mockResolvedValue(null);
+  });
+
   afterEach(() => {
     if (root) {
       act(() => root?.unmount());
@@ -443,6 +453,30 @@ describe("DocToolbar round-1 regressions", () => {
     expect(onToast).toHaveBeenCalledWith("无法执行：引用");
   });
 
+  it("工具栏新建 drawio 保存后插入 source+svg，取消时不写文档", async () => {
+    const fakeEditor = createCommandEditor(true);
+    const insertDiagram = vi.mocked(fakeEditor.chain().insertDiagram);
+    await render(
+      <DocToolbar
+        active
+        editor={fakeEditor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => getButtonByText("插入 drawio 工程图").click());
+    expect(insertDiagram).not.toHaveBeenCalled();
+
+    const source = "<mxGraphModel><root><mxCell id=\"0\"/></root></mxGraphModel>";
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>';
+    vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source, svg });
+    await act(async () => getButtonByText("插入").click());
+    await act(async () => getButtonByText("插入 drawio 工程图").click());
+    expect(insertDiagram).toHaveBeenCalledWith({ lang: "drawio", source, svg });
+  });
+
   it("工具栏插入分栏会写入 columnList 节点", async () => {
     editor = createTextEditor("正文");
     vi.spyOn(editor.view as unknown as { scrollToSelection: () => void }, "scrollToSelection")
@@ -712,6 +746,7 @@ function createCommandEditor(runResult: boolean): Editor {
     focus: chainMethod,
     insertTable: chainMethod,
     toggleBlockquote: chainMethod,
+    insertDiagram: vi.fn(chainMethod),
     run: vi.fn(() => runResult),
   });
   return {

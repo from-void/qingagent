@@ -9,6 +9,7 @@ import { pickFile } from "./doc/pickFile";
 import { insertFileAsset, insertImageAsset } from "../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../data/uploadAsset";
 import { CheckIcon } from "./icons";
+import { openDrawioEditor } from "./drawioEditorLauncher";
 import { TableSizePicker, type TableSize } from "./doc/TableSizePicker";
 import {
   resolveCenteredFloatingPosition,
@@ -765,11 +766,24 @@ export function DocToolbar({
           run("插入图表", () => chain.insertDiagram(source ? { source } : undefined).run());
           break;
         }
-        case "insertDrawio":
-          run("插入 drawio 工程图", () =>
-            chain.insertDiagram({ lang: "drawio", source: DEFAULT_DRAWIO_SOURCE }).run(),
-          );
+        case "insertDrawio": {
+          try {
+            const result = await openDrawioEditor(DEFAULT_DRAWIO_SOURCE, "新建 drawio 工程图");
+            if (!result || !editor.isEditable) break;
+            // 打开编辑器前不落临时节点；保存后才用既有 insertDiagram 命令写 source+svg，
+            // 因而取消不会产生文档更新或审查记录。
+            run("插入 drawio 工程图", () =>
+              editor
+                .chain()
+                .focus()
+                .insertDiagram({ lang: "drawio", source: result.source, svg: result.svg })
+                .run(),
+            );
+          } catch (drawioError) {
+            onToast?.(drawioError instanceof Error ? drawioError.message : String(drawioError));
+          }
           break;
+        }
         case "insertTable":
           run("插入表格", () => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: false }).run());
           break;

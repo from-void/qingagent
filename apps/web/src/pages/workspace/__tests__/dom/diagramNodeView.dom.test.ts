@@ -26,9 +26,14 @@ vi.mock("mermaid", () => ({
   },
 }));
 
+vi.mock("../../components/drawioEditorLauncher", () => ({
+  openDrawioEditor: vi.fn(async () => null),
+}));
+
 // DiagramCM 依赖样式文件;jsdom 下 import css 由 vitest 处理为空。
 import { DiagramCM } from "../../components/DiagramView";
 import { DocumentSnapshotView } from "../../components/DocumentSnapshotView";
+import { openDrawioEditor } from "../../components/drawioEditorLauncher";
 
 const graphDiagramCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/graphDiagram.css"), "utf8");
 const diagramViewCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/DiagramView.css"), "utf8");
@@ -264,6 +269,7 @@ async function waitForFirstDiagramSvg(editor: Editor): Promise<{ source: string;
 describe("diagram 节点视图(mermaid 渲染接缝)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(openDrawioEditor).mockResolvedValue(null);
   });
   afterEach(() => {
     document.body.innerHTML = "";
@@ -725,8 +731,10 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const buttons = Array.from(
         editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
       ).map((button) => button.textContent?.trim());
-      expect(buttons).toEqual(["编辑 drawio XML"]);
-      const editButton = editor.view.dom.querySelector<HTMLButtonElement>(".pm-diagram-view-actions button")!;
+      expect(buttons).toEqual(["可视化编辑", "编辑 drawio XML"]);
+      const editButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "编辑 drawio XML")!;
       await act(async () => {
         editButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
@@ -748,6 +756,39 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       const persisted = normalizePmDoc(editor.getJSON());
       const persistedBlock = persisted.content.find((block) => block.type === "diagram");
       expect(persistedBlock?.type === "diagram" ? persistedBlock.attrs.svg : null).toMatch(/^<svg\b/);
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("drawio 可视化编辑保存才通过节点更新链回写 source+svg，取消不改文档", async () => {
+    const editor = await mountEditor({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{ type: "paragraph", attrs: { blockId: "p-1" }, content: [{ type: "text", text: "正文" }] }],
+    } as unknown as PmDoc);
+    try {
+      await act(async () => {
+        editor.chain().focus().insertDiagram({ lang: "drawio" }).run();
+      });
+      await waitForSelector(".pm-diagram-svg svg", editor.view.dom);
+      const nextSource = DEFAULT_DRAWIO_SOURCE.replace('value="开始"', 'value="画布保存"');
+      const nextSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>画布保存</text></svg>';
+      vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source: nextSource, svg: nextSvg });
+
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(visualButton).not.toBeNull();
+      await act(async () => visualButton?.click());
+      await flush(4);
+      expect(openDrawioEditor).toHaveBeenCalledWith(DEFAULT_DRAWIO_SOURCE, "drawio 图编辑");
+      expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
+
+      vi.mocked(openDrawioEditor).mockResolvedValueOnce(null);
+      await act(async () => visualButton?.click());
+      await flush(4);
+      expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
     } finally {
       await unmount(editor);
     }

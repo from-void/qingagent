@@ -5,6 +5,7 @@ import { DEFAULT_DRAWIO_SOURCE, pmToClipboardHtml, pmToPlainText, type PmDoc } f
 import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
 import { findDraggableListItem, LIST_ITEM_DND_MIME, resolveListItemByBlockId, type DraggableListItem } from "../ListItemDnD";
 import { getBlockCollapseInfo, qingagentCollapseKey, toggleBlockCollapse } from "../BlockCollapse";
+import { openDrawioEditor } from "../drawioEditorLauncher";
 import { insertFileAsset, insertImageAsset } from "../../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../../data/uploadAsset";
 import { pickFile } from "./pickFile";
@@ -582,7 +583,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   );
 
   const insertBlock = useCallback(
-    (type: string, opts?: number) => {
+    async (type: string, opts?: number) => {
       if (!handle || handle.kind !== "block") return;
       if (!editor.isEditable) return;
       if (!getCurrentHandleNode(editor.state.doc, handle)) {
@@ -609,16 +610,23 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
             "插入 Mermaid 图表",
           );
           return;
-        case "drawio":
-          insertStructureBlockAfter(
-            h,
-            {
-              type: "diagram",
-              attrs: { lang: "drawio", source: DEFAULT_DRAWIO_SOURCE, svg: null },
-            },
-            "插入 drawio 工程图",
-          );
+        case "drawio": {
+          try {
+            const result = await openDrawioEditor(DEFAULT_DRAWIO_SOURCE, "新建 drawio 工程图");
+            if (!result || !editor.isEditable) return;
+            insertStructureBlockAfter(
+              h,
+              {
+                type: "diagram",
+                attrs: { lang: "drawio", source: result.source, svg: result.svg },
+              },
+              "插入 drawio 工程图",
+            );
+          } catch {
+            runHandleCommand(false, "插入 drawio 工程图");
+          }
           return;
+        }
         case "horizontalRule":
           insertStructureBlockAfter(h, { type: "horizontalRule" }, "插入分隔线");
           return;

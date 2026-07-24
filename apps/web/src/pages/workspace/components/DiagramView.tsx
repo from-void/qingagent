@@ -12,6 +12,7 @@ import {
 } from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
 import { renderDrawio } from "./drawioRender";
+import { openDrawioEditor } from "./drawioEditorLauncher";
 import { DiagramSvgView } from "./MermaidPreview";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
 import "./DiagramView.css";
@@ -33,6 +34,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source);
   const [visualEditSignal, setVisualEditSignal] = useState(0);
+  const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
   const [svg, setSvg] = useState<string | null>(cachedSvg);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -44,7 +46,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   // 冷双击只选中、不进编辑;块已选中时再双击才进编辑。纯状态判据、无定时器,确定可测。
   const justSelectedRef = useRef(false);
   const diagramType = lang === "mermaid" ? detectType(source) : null;
-  const supportsVisualEdit = editable && isVisualDiagramType(diagramType);
+  const supportsVisualEdit = editable && (lang === "drawio" || isVisualDiagramType(diagramType));
   const storedHeight =
     typeof node.attrs.height === "number" && node.attrs.height > 0 ? Math.round(node.attrs.height) : null;
   const storedWidth =
@@ -145,6 +147,29 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
 
   const openVisualEdit = () => {
     if (!editable) return;
+    if (lang === "drawio") {
+      if (drawioEditorOpening) return;
+      setDrawioEditorOpening(true);
+      setError(null);
+      void openDrawioEditor(source, "drawio 图编辑")
+        .then((result) => {
+          if (!result || !mountedRef.current) return;
+          // 使编辑器导出的 SVG 成为本次 source 的首选缓存；同时更新 source/draft，
+          // 避免 view effect 在新 attrs 到达前用 maxGraph 结果覆盖高保真导出。
+          renderTokenRef.current += 1;
+          setSource(result.source);
+          setDraft(result.source);
+          setSvg(result.svg);
+          updateAttributes({ source: result.source, svg: result.svg });
+        })
+        .catch((openError) => {
+          if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));
+        })
+        .finally(() => {
+          if (mountedRef.current) setDrawioEditorOpening(false);
+        });
+      return;
+    }
     if (!supportsVisualEdit) {
       startEdit();
       return;
@@ -339,10 +364,11 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 <button
                   type="button"
                   className="pm-diagram-view-btn"
+                  disabled={drawioEditorOpening}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openVisualEdit}
                 >
-                  可视化编辑
+                  {drawioEditorOpening ? "正在打开…" : "可视化编辑"}
                 </button>
               )}
               <button
@@ -400,7 +426,7 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     diagram: {
       /** 在当前位置插入一个图表块(默认 mermaid 流程图模板)。 */
-      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string }) => ReturnType;
+      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string; svg?: string | null }) => ReturnType;
     };
   }
 }
@@ -507,7 +533,7 @@ export const DiagramCM = Node.create({
             const source = attrs?.source ?? (lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE);
             return commands.insertContent({
               type: "diagram",
-              attrs: { lang, source, svg: null },
+              attrs: { lang, source, svg: attrs?.svg ?? null },
             });
           },
     };

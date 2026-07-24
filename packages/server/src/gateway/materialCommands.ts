@@ -193,8 +193,11 @@ export async function* handleMaterialCommand(
 
       let buffer: Buffer;
       try {
-        buffer = await readFile(resolved.filePath);
-      } catch {
+        buffer = await readFile(resolved.filePath, {
+          signal: context.commandAbortSignal,
+        });
+      } catch (error) {
+        if (context.commandAbortSignal?.aborted) throw error;
         console.warn("[materials] reparseMaterial read upload failed", {
           sessionId: session.sessionId,
           fileId,
@@ -222,7 +225,12 @@ export async function* handleMaterialCommand(
         mimeType,
         size: buffer.length,
       });
-      const parseResult = await parseFileBuffer({ buffer, filename, mimeType });
+      const parseResult = await parseFileBuffer({
+        buffer,
+        filename,
+        mimeType,
+        signal: context.commandAbortSignal,
+      });
       const { material, frame } = upsertMaterialByFileId(
         session,
         { fileId, filename, mimeType },

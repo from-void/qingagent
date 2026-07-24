@@ -19,6 +19,7 @@ export interface ParseFileBufferInput {
   buffer: Buffer;
   filename: string;
   mimeType: string;
+  signal?: AbortSignal;
 }
 
 export interface ParseFileBufferResult {
@@ -161,13 +162,14 @@ function officeZipSafetyError(message: string): Error {
   return new Error(`Office ZIP 安全校验失败：${message}`);
 }
 
-function findZipEndOfCentralDirectory(buffer: Buffer): number {
+function findZipEndOfCentralDirectory(buffer: Buffer, signal?: AbortSignal): number {
   const firstCandidate = buffer.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES;
   const lastCandidate = Math.max(
     0,
     buffer.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES - ZIP_MAX_COMMENT_BYTES,
   );
   for (let offset = firstCandidate; offset >= lastCandidate; offset -= 1) {
+    if ((firstCandidate - offset) % 1024 === 0) signal?.throwIfAborted();
     if (buffer.readUInt32LE(offset) !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
     const commentLength = buffer.readUInt16LE(offset + 20);
     if (offset + ZIP_END_OF_CENTRAL_DIRECTORY_BYTES + commentLength === buffer.length) {
@@ -178,12 +180,13 @@ function findZipEndOfCentralDirectory(buffer: Buffer): number {
 }
 
 /** 只读 ZIP 中央目录元数据，不解压 entry。 */
-function assertSafeOfficeZip(buffer: Buffer): void {
+function assertSafeOfficeZip(buffer: Buffer, signal?: AbortSignal): void {
+  signal?.throwIfAborted();
   if (!isZipBuffer(buffer) || buffer.length < ZIP_END_OF_CENTRAL_DIRECTORY_BYTES) {
     throw officeZipSafetyError("不是有效的 ZIP 文件");
   }
 
-  const eocdOffset = findZipEndOfCentralDirectory(buffer);
+  const eocdOffset = findZipEndOfCentralDirectory(buffer, signal);
   const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
   const centralDirectoryDisk = buffer.readUInt16LE(eocdOffset + 6);
   const diskEntries = buffer.readUInt16LE(eocdOffset + 8);
@@ -219,6 +222,7 @@ function assertSafeOfficeZip(buffer: Buffer): void {
   let totalCompressedBytes = 0;
   let totalUncompressedBytes = 0;
   for (let index = 0; index < totalEntries; index += 1) {
+    signal?.throwIfAborted();
     if (
       cursor + ZIP_CENTRAL_DIRECTORY_ENTRY_BYTES > centralDirectoryEnd ||
       buffer.readUInt32LE(cursor) !== ZIP_CENTRAL_DIRECTORY_ENTRY_SIGNATURE
@@ -308,11 +312,16 @@ type DesktopFileReadResult =
   | { status: "not_regular" }
   | { status: "too_large" };
 
-async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadResult> {
+async function readDesktopFilePath(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<DesktopFileReadResult> {
+  signal?.throwIfAborted();
   if (isSensitiveDesktopFilePath(filePath)) return { status: "denied" };
   let canonicalPath: string;
   try {
     canonicalPath = await realpath(filePath);
+    signal?.throwIfAborted();
   } catch {
     // 保留正常素材原有的 ENOENT/EACCES 语义；后续 open 会抛出对应错误。
     canonicalPath = filePath;
@@ -333,6 +342,7 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
   // 前后两次黑名单检查兜底，并未被完全消除。
   const fileHandle = await open(canonicalPath, fsConstants.O_RDONLY | noFollow | nonBlock);
   try {
+    signal?.throwIfAborted();
     const stats = await fileHandle.stat();
     if (!stats.isFile()) return { status: "not_regular" };
     // realpath 无法识别硬链接。正常用户素材极少带多个硬链接；宁可拒绝可疑文件，
@@ -340,14 +350,16 @@ async function readDesktopFilePath(filePath: string): Promise<DesktopFileReadRes
     if (stats.nlink > 1) return { status: "denied" };
     if (stats.size > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
 
-    // 当前桌面 parseFile 调用链没有可用的 AbortSignal；不为此扩散函数签名，读取由总字节上限约束。
+    // fileHandle.read 本身没有 signal 参数；每个 64KiB 分块前后检查父 signal，取消后不再继续读。
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     while (totalBytes <= MAX_DESKTOP_FILE_BYTES) {
+      signal?.throwIfAborted();
       // 最多多读 1 字节用于区分“恰好到上限”和“超过上限”，避免竞态增大的文件被整体读入。
       const remainingProbeBytes = MAX_DESKTOP_FILE_BYTES + 1 - totalBytes;
       const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remainingProbeBytes));
       const { bytesRead } = await fileHandle.read(chunk, 0, chunk.length, null);
+      signal?.throwIfAborted();
       if (bytesRead === 0) break;
       totalBytes += bytesRead;
       if (totalBytes > MAX_DESKTOP_FILE_BYTES) return { status: "too_large" };
@@ -586,18 +598,29 @@ type ZipLike = {
   file(path: string): ZipEntryLike | null;
 };
 
-async function readZipText(zip: ZipLike, path: string): Promise<string | null> {
-  return (await zip.file(path)?.async("text")) ?? null;
+async function readZipText(
+  zip: ZipLike,
+  path: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  signal?.throwIfAborted();
+  const text = (await zip.file(path)?.async("text")) ?? null;
+  signal?.throwIfAborted();
+  return text;
 }
 
 /**
  * 逐条目实际解压并按输出 chunk 计数，不能信任 ZIP 中央目录自报的 uncompressed size。
  * internalStream 不聚合完整 entry，超过限额时 pause 可立即停止继续产出。
  */
-async function assertSafeOfficeZipInflation(zip: ZipLike): Promise<void> {
+async function assertSafeOfficeZipInflation(
+  zip: ZipLike,
+  signal?: AbortSignal,
+): Promise<void> {
   let totalUncompressedBytes = 0;
 
   for (const entry of Object.values(zip.files)) {
+    signal?.throwIfAborted();
     if (entry.dir) continue;
 
     await new Promise<void>((resolve, reject) => {
@@ -605,16 +628,28 @@ async function assertSafeOfficeZipInflation(zip: ZipLike): Promise<void> {
       let entryUncompressedBytes = 0;
       let settled = false;
 
-      const fail = (error: Error): void => {
+      const cleanup = () => signal?.removeEventListener("abort", onAbort);
+      const fail = (error: unknown): void => {
         if (settled) return;
         settled = true;
         stream.pause();
+        cleanup();
         reject(error);
       };
+      const onAbort = () => fail(signal?.reason ?? new DOMException("文件解压已取消", "AbortError"));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
 
       stream
         .on("data", (chunk) => {
           if (settled) return;
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
           entryUncompressedBytes += chunk.byteLength;
           totalUncompressedBytes += chunk.byteLength;
 
@@ -638,6 +673,7 @@ async function assertSafeOfficeZipInflation(zip: ZipLike): Promise<void> {
         .on("end", () => {
           if (settled) return;
           settled = true;
+          cleanup();
           resolve();
         })
         .resume();
@@ -645,13 +681,22 @@ async function assertSafeOfficeZipInflation(zip: ZipLike): Promise<void> {
   }
 }
 
-async function loadSafeOfficeZip(buffer: Buffer): Promise<ZipLike> {
+export async function loadSafeOfficeZip(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<ZipLike> {
   // 中央目录预检用于快速失败；真正的解压量保护由下方实际流式计数提供。
-  assertSafeOfficeZip(buffer);
+  assertSafeOfficeZip(buffer, signal);
+  signal?.throwIfAborted();
   const { default: JSZip } = await import("jszip");
+  signal?.throwIfAborted();
   // JSZip 运行时提供 internalStream，但公开类型只声明了 async/nodeStream。
+  // JSZip.loadAsync 本身没有 AbortSignal 接口；调用返回后立即检查。真正的 entry 解压流
+  // 在 assertSafeOfficeZipInflation 内逐块检查 signal 并 pause。
   const zip = (await JSZip.loadAsync(buffer)) as unknown as ZipLike;
-  await assertSafeOfficeZipInflation(zip);
+  signal?.throwIfAborted();
+  await assertSafeOfficeZipInflation(zip, signal);
+  signal?.throwIfAborted();
   return zip;
 }
 
@@ -1068,14 +1113,18 @@ function parseXlsxSheet(
   sharedStrings: string[],
   styles: XlsxCellStyle[],
   date1904: boolean,
+  signal?: AbortSignal,
 ): string {
+  signal?.throwIfAborted();
   const doc = parser.parseFromString(xml, "application/xml");
   const lines: string[] = [];
 
   for (const row of getElementsByLocalName(doc, "row")) {
+    signal?.throwIfAborted();
     if (isHiddenXlsxRow(row)) continue;
     const values: string[] = [];
     for (const cell of getChildElementsByLocalName(row, "c")) {
+      signal?.throwIfAborted();
       const cellText = readXlsxCellText(cell, sharedStrings, styles, date1904);
       const columnIndex = getCellColumnIndex(cell.getAttribute("r"));
       if (columnIndex === null) {
@@ -1094,31 +1143,39 @@ function parseXlsxSheet(
   return lines.join("\n");
 }
 
-async function parseXlsx(buffer: Buffer): Promise<ParsedFileContent> {
+async function parseXlsx(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<ParsedFileContent> {
+  signal?.throwIfAborted();
   if (buffer.length === 0) throw new Error("xlsx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 xlsx zip 包");
 
   const [zip, parser] = await Promise.all([
-    loadSafeOfficeZip(buffer),
+    loadSafeOfficeZip(buffer, signal),
     createXmlParser(),
   ]);
+  signal?.throwIfAborted();
   const workbookFile = zip.file("xl/workbook.xml");
   if (!workbookFile) throw new Error("缺少 xl/workbook.xml");
 
-  const workbookXml = await workbookFile.async("text");
+  const workbookXml = await readZipText(zip, "xl/workbook.xml", signal);
+  if (workbookXml === null) throw new Error("缺少 xl/workbook.xml");
   const workbookDoc = parser.parseFromString(workbookXml, "application/xml");
+  signal?.throwIfAborted();
   const date1904 = workbookUses1904Dates(workbookDoc);
-  const relsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("text");
+  const relsXml = await readZipText(zip, "xl/_rels/workbook.xml.rels", signal);
   const relationships = relsXml ? parseWorkbookRelationships(relsXml, parser) : new Map<string, string>();
-  const sharedStringsXml = await zip.file("xl/sharedStrings.xml")?.async("text");
+  const sharedStringsXml = await readZipText(zip, "xl/sharedStrings.xml", signal);
   const sharedStrings = sharedStringsXml ? parseSharedStrings(sharedStringsXml, parser) : [];
-  const stylesXml = await zip.file("xl/styles.xml")?.async("text");
+  const stylesXml = await readZipText(zip, "xl/styles.xml", signal);
   const styles = stylesXml ? parseXlsxStyles(stylesXml, parser) : [];
 
   const sheetOutputs: string[] = [];
   const sheets = getElementsByLocalName(workbookDoc, "sheet");
   if (sheets.length === 0) throw new Error("缺少有效工作表");
   for (let index = 0; index < sheets.length; index += 1) {
+    signal?.throwIfAborted();
     const sheet = sheets[index];
     if (!sheet) continue;
     if (isHiddenXlsxSheet(sheet)) continue;
@@ -1127,10 +1184,10 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedFileContent> {
     const sheetPath =
       (relationshipId ? relationships.get(relationshipId) : undefined) ??
       `xl/worksheets/sheet${index + 1}.xml`;
-    const sheetXml = await zip.file(sheetPath)?.async("text");
+    const sheetXml = await readZipText(zip, sheetPath, signal);
     if (!sheetXml) continue;
 
-    const body = parseXlsxSheet(sheetXml, parser, sharedStrings, styles, date1904);
+    const body = parseXlsxSheet(sheetXml, parser, sharedStrings, styles, date1904, signal);
     sheetOutputs.push([`# Sheet: ${name}`, body].filter(Boolean).join("\n"));
   }
   if (sheetOutputs.length === 0) {
@@ -1140,20 +1197,36 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedFileContent> {
   return { text: sheetOutputs.join("\n\n"), pages: sheetOutputs.length };
 }
 
-function parseWordTextXml(xml: string, parser: Awaited<ReturnType<typeof createXmlParser>>): string {
+function parseWordTextXml(
+  xml: string,
+  parser: Awaited<ReturnType<typeof createXmlParser>>,
+  signal?: AbortSignal,
+): string {
+  signal?.throwIfAborted();
   const doc = parser.parseFromString(xml, "application/xml");
-  const paragraphs = getElementsByLocalName(doc, "p")
-    .map((paragraph) => collectDescendantText(paragraph, "t").trim())
-    .filter(Boolean);
+  const paragraphs: string[] = [];
+  for (const paragraph of getElementsByLocalName(doc, "p")) {
+    signal?.throwIfAborted();
+    const text = collectDescendantText(paragraph, "t").trim();
+    if (text) paragraphs.push(text);
+  }
   if (paragraphs.length > 0) return paragraphs.join("\n");
-  return getElementsByLocalName(doc, "t")
-    .map((node) => (node.textContent ?? "").trim())
-    .filter(Boolean)
-    .join("\n");
+  const textRuns: string[] = [];
+  for (const node of getElementsByLocalName(doc, "t")) {
+    signal?.throwIfAborted();
+    const text = (node.textContent ?? "").trim();
+    if (text) textRuns.push(text);
+  }
+  return textRuns.join("\n");
 }
 
-async function extractDocxAuxiliaryText(zip: ZipLike): Promise<string> {
+async function extractDocxAuxiliaryText(
+  zip: ZipLike,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
   const parser = await createXmlParser();
+  signal?.throwIfAborted();
   const paths = Object.keys(zip.files);
   const headerPaths = sortOfficePartPaths(paths.filter((path) => /^word\/header\d+\.xml$/i.test(path)));
   const footerPaths = sortOfficePartPaths(paths.filter((path) => /^word\/footer\d+\.xml$/i.test(path)));
@@ -1165,9 +1238,11 @@ async function extractDocxAuxiliaryText(zip: ZipLike): Promise<string> {
   ];
   const chunks: string[] = [];
   for (const path of auxiliaryPaths) {
-    const xml = await readZipText(zip, path);
+    signal?.throwIfAborted();
+    const xml = await readZipText(zip, path, signal);
     if (!xml) continue;
-    const text = parseWordTextXml(xml, parser).trim();
+    const text = parseWordTextXml(xml, parser, signal).trim();
+    signal?.throwIfAborted();
     if (text) chunks.push(text);
   }
   return chunks.join("\n\n");
@@ -1292,8 +1367,10 @@ async function readPptxSlideNotesText(
   zip: ZipLike,
   slidePath: string,
   parser: Awaited<ReturnType<typeof createXmlParser>>,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const relsXml = await readZipText(zip, zipRelsPathForPart(slidePath));
+  signal?.throwIfAborted();
+  const relsXml = await readZipText(zip, zipRelsPathForPart(slidePath), signal);
   if (!relsXml) return "";
   const rels = parseRelationships(relsXml, parser, zipDirName(slidePath));
   const notesPaths = sortOfficePartPaths(
@@ -1301,7 +1378,8 @@ async function readPptxSlideNotesText(
   );
   const chunks: string[] = [];
   for (const notesPath of notesPaths) {
-    const xml = await readZipText(zip, notesPath);
+    signal?.throwIfAborted();
+    const xml = await readZipText(zip, notesPath, signal);
     if (!xml) continue;
     const text = parsePptxSlide(xml, parser).trim();
     if (text) chunks.push(text);
@@ -1309,20 +1387,29 @@ async function readPptxSlideNotesText(
   return chunks.join("\n");
 }
 
-async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
+async function parsePptx(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<ParsedFileContent> {
+  signal?.throwIfAborted();
   if (buffer.length === 0) throw new Error("pptx 文件为空");
   if (!isZipBuffer(buffer)) throw new Error("不是有效的 pptx zip 包");
 
   const [zip, parser] = await Promise.all([
-    loadSafeOfficeZip(buffer),
+    loadSafeOfficeZip(buffer, signal),
     createXmlParser(),
   ]);
+  signal?.throwIfAborted();
   const fallbackSlidePaths = sortPptxSlidePaths(
     Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path)),
   );
   const availableSlidePaths = new Set(fallbackSlidePaths);
-  const presentationXml = await zip.file("ppt/presentation.xml")?.async("text");
-  const presentationRelsXml = await zip.file("ppt/_rels/presentation.xml.rels")?.async("text");
+  const presentationXml = await readZipText(zip, "ppt/presentation.xml", signal);
+  const presentationRelsXml = await readZipText(
+    zip,
+    "ppt/_rels/presentation.xml.rels",
+    signal,
+  );
   const slidePaths =
     presentationXml && presentationRelsXml
       ? parsePptxPresentationOrder(presentationXml, presentationRelsXml, parser, availableSlidePaths) ?? fallbackSlidePaths
@@ -1331,12 +1418,14 @@ async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
 
   const slideOutputs: string[] = [];
   for (let index = 0; index < slidePaths.length; index += 1) {
+    signal?.throwIfAborted();
     const slidePath = slidePaths[index];
     if (!slidePath) continue;
-    const slideXml = await zip.file(slidePath)?.async("text");
+    const slideXml = await readZipText(zip, slidePath, signal);
     if (!slideXml) continue;
     const body = parsePptxSlide(slideXml, parser);
-    const notes = await readPptxSlideNotesText(zip, slidePath, parser);
+    signal?.throwIfAborted();
+    const notes = await readPptxSlideNotesText(zip, slidePath, parser, signal);
     slideOutputs.push([`# Slide ${index + 1}`, body, notes].filter(Boolean).join("\n"));
   }
   if (slideOutputs.length === 0) {
@@ -1346,10 +1435,15 @@ async function parsePptx(buffer: Buffer): Promise<ParsedFileContent> {
   return { text: slideOutputs.join("\n\n"), pages: slidePaths.length };
 }
 
-async function parseExcelBuffer(buffer: Buffer, ext: string): Promise<ParsedFileContent> {
+async function parseExcelBuffer(
+  buffer: Buffer,
+  ext: string,
+  signal?: AbortSignal,
+): Promise<ParsedFileContent> {
+  signal?.throwIfAborted();
   if (isCsvFile(ext)) return { text: decodeTextBuffer(buffer), pages: 1 };
 
-  if (ext === "xlsx") return parseXlsx(buffer);
+  if (ext === "xlsx") return parseXlsx(buffer, signal);
 
   if (looksLikeText(buffer)) return { text: decodeTextBuffer(buffer), pages: 1 };
   throw new UnsupportedParseFileError(
@@ -1357,8 +1451,13 @@ async function parseExcelBuffer(buffer: Buffer, ext: string): Promise<ParsedFile
   );
 }
 
-async function parsePowerPointBuffer(buffer: Buffer, ext: string): Promise<ParsedFileContent> {
-  if (isZipBuffer(buffer) || ext === "pptx") return parsePptx(buffer);
+async function parsePowerPointBuffer(
+  buffer: Buffer,
+  ext: string,
+  signal?: AbortSignal,
+): Promise<ParsedFileContent> {
+  signal?.throwIfAborted();
+  if (isZipBuffer(buffer) || ext === "pptx") return parsePptx(buffer, signal);
   throw new UnsupportedParseFileError(
     "[Unsupported] 旧版 .ppt 二进制格式暂不支持解析，请另存为 .pptx 后上传。",
   );
@@ -1392,30 +1491,45 @@ function parseFailure(kind: "PDF" | "DOCX" | "Excel" | "PPT" | "text", error: un
   };
 }
 
-function stripPdfPaginationNoise(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/.test(line))
+function stripPdfPaginationNoise(text: string, signal?: AbortSignal): string {
+  const lines: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    signal?.throwIfAborted();
+    if (!/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/.test(line)) lines.push(line);
+  }
+  return lines
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
-async function parsePdfBufferOnce(buffer: Buffer): Promise<ParseFileBufferResult> {
+async function parsePdfBufferOnce(
+  buffer: Buffer,
+  signal?: AbortSignal,
+): Promise<ParseFileBufferResult> {
+  signal?.throwIfAborted();
   // 用 interop 安全加载器(#11 桌面打包修复:CJS/ESM 互操作下 PDFParse 不是构造器),
   // 不要退回裸 `import("pdf-parse")`——否则桌面包里 PDFParse2 is not a constructor 复发
   const PDFParse = await loadPdfParseConstructor();
+  signal?.throwIfAborted();
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  let parsed: ParseFileBufferResult;
   try {
+    // pdf-parse/pdf.js 的 CPU 解析目前没有 AbortSignal/terminate 接口；本轮在调用前后与
+    // 自有逐行清洗循环检查。若需硬实时取消，后续必须迁入可 terminate 的 Worker。
     const textResult = await parser.getText();
-    const text = stripPdfPaginationNoise(textResult.text);
+    signal?.throwIfAborted();
+    const text = stripPdfPaginationNoise(textResult.text, signal);
     const pages = textResult.total;
     const infoResult = await parser.getInfo();
+    signal?.throwIfAborted();
     const title = infoResult.info?.Title ?? null;
-    return successResult(text, pages, title, text.trim().length > 0);
+    parsed = successResult(text, pages, title, text.trim().length > 0);
   } finally {
     await parser.destroy();
   }
+  signal?.throwIfAborted();
+  return parsed;
 }
 
 function shouldRetryEmptyPdfResult(result: ParseFileBufferResult): boolean {
@@ -1451,7 +1565,9 @@ function toParseFileToolResult(result: ParseFileBufferOutput): ParseFileToolResu
 export async function parseFileBuffer({
   buffer,
   filename,
+  signal,
 }: ParseFileBufferInput): Promise<ParseFileBufferOutput> {
+  signal?.throwIfAborted();
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   let text = "";
   let pages: number | null = null;
@@ -1463,14 +1579,16 @@ export async function parseFileBuffer({
     let emptyFallback: ParseFileBufferResult | null = null;
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
+      signal?.throwIfAborted();
       try {
-        const result = await parsePdfBufferOnce(buffer);
+        const result = await parsePdfBufferOnce(buffer, signal);
         if (attempt === 1 && shouldRetryEmptyPdfResult(result)) {
           emptyFallback = result;
           continue;
         }
         return result;
       } catch (error) {
+        signal?.throwIfAborted();
         lastError = error;
         if (attempt === 1) continue;
       }
@@ -1479,31 +1597,42 @@ export async function parseFileBuffer({
     return parseFailure("PDF", lastError);
   } else if (ext === "docx") {
     try {
+      signal?.throwIfAborted();
       // mammoth 内部会再次解压；先用 JSZip 实际流式解压计数，确保自报尺寸无法绕过限额。
-      const zip = await loadSafeOfficeZip(buffer);
+      const zip = await loadSafeOfficeZip(buffer, signal);
+      signal?.throwIfAborted();
       const mammoth = await import("mammoth");
+      signal?.throwIfAborted();
+      // mammoth.extractRawText 内部再次解压/遍历且不接受 AbortSignal；自有 ZIP 预检、
+      // 实际解压计数和辅助 XML 遍历均可取消，但 mammoth 这段 CPU 工作仍只能在 await 后响应。
+      // 真正硬终止需迁入 Worker 并在 signal abort 时 terminate。
       const result = await mammoth.extractRawText({ buffer });
-      const auxiliaryText = await extractDocxAuxiliaryText(zip);
+      signal?.throwIfAborted();
+      const auxiliaryText = await extractDocxAuxiliaryText(zip, signal);
+      signal?.throwIfAborted();
       text = [result.value, auxiliaryText].filter((part) => part.trim().length > 0).join("\n\n");
     } catch (error) {
+      signal?.throwIfAborted();
       return parseFailure("DOCX", error);
     }
   } else if (isExcelFile(ext)) {
     try {
-      const result = await parseExcelBuffer(buffer, ext);
+      const result = await parseExcelBuffer(buffer, ext, signal);
       text = result.text;
       pages = result.pages;
       return successResult(text, pages, title, result.indexable ?? true);
     } catch (error) {
+      signal?.throwIfAborted();
       return parseFailure("Excel", error);
     }
   } else if (isPowerPointFile(ext)) {
     try {
-      const result = await parsePowerPointBuffer(buffer, ext);
+      const result = await parsePowerPointBuffer(buffer, ext, signal);
       text = result.text;
       pages = result.pages;
       return successResult(text, pages, title, result.indexable ?? true);
     } catch (error) {
+      signal?.throwIfAborted();
       return parseFailure("PPT", error);
     }
   } else {
@@ -1514,6 +1643,7 @@ export async function parseFileBuffer({
     }
   }
 
+  signal?.throwIfAborted();
   return successResult(text, pages, title);
 }
 
@@ -1587,11 +1717,11 @@ export const parseFileTool = createTool({
             metadata: { pages: null, wordCount: 0, title: null },
           };
         }
-        buffer = await readFile(resolved.filePath);
+        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else if (filePath) {
-        const desktopFile = await readDesktopFilePath(filePath);
+        const desktopFile = await readDesktopFilePath(filePath, context?.abortSignal);
         if (desktopFile.status === "denied") return FILE_ACCESS_DENIED_RESULT;
         if (desktopFile.status === "not_regular") return FILE_NOT_REGULAR_RESULT;
         if (desktopFile.status === "too_large") return FILE_TOO_LARGE_RESULT;
@@ -1609,7 +1739,7 @@ export const parseFileTool = createTool({
             metadata: { pages: null, wordCount: 0, title: null },
           };
         }
-        buffer = await readFile(resolved.filePath);
+        buffer = await readFile(resolved.filePath, { signal: context?.abortSignal });
         filename = resolved.filename;
         mimeType = resolved.mimeType;
       } else {
@@ -1626,7 +1756,14 @@ export const parseFileTool = createTool({
         };
       }
 
-      return toParseFileToolResult(await parseFileBuffer({ buffer, filename, mimeType }));
+      return toParseFileToolResult(
+        await parseFileBuffer({
+          buffer,
+          filename,
+          mimeType,
+          signal: context?.abortSignal,
+        }),
+      );
     } finally {
       stopHeartbeat();
     }

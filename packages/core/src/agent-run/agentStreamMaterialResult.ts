@@ -55,7 +55,10 @@ export async function* handleMaterialToolResultSideEffects(
           const imageDir = join(UPLOADS_BASE, imageId);
           await mkdir(imageDir, { recursive: true });
           const image = {
-            ...(await downloadRemoteImage(toolResult.ogImageUrl as string)),
+            ...(await downloadRemoteImage(
+              toolResult.ogImageUrl as string,
+              turn.abortController.signal,
+            )),
             label: "网页缩略图",
           };
           await writeFile(join(imageDir, image.filename), image.buffer);

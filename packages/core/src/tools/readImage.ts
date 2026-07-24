@@ -203,7 +203,9 @@ export const readImageTool = createTool({
       const prompt = input.prompt.trim() || "请识别并描述这张图片的主要内容。";
       // 先把素材区 materialId 折算成原始上传文件,再统一交给安全 resolver。
       const { imageRef, materialId } = resolveMaterialRef(requestContext, input.image.trim());
-      const image = await resolveImageInput(imageRef);
+      const image = context?.abortSignal
+        ? await resolveImageInput(imageRef, context.abortSignal)
+        : await resolveImageInput(imageRef);
       // 工具流式进度:副基模(GLM-4.6V 等推理模型 + 免费档限流)识图常耗数十秒,期间若主流
       // 无 chunk 会触发 agent 空闲看门狗(默认 90s)abort 整轮,且 UI 看着卡住像没响应。
       // 把副基模流式吐出的文字(推理或正文,谁先来展示谁)经 context.writer 推成 tool-output
@@ -324,6 +326,7 @@ export const readImageTool = createTool({
           try {
             trimmed = await runVisionOnce();
           } catch {
+            parentSignal?.throwIfAborted();
             return { ok: false, text: "", error: READ_IMAGE_RATE_LIMIT_ERROR, materialId: null };
           }
         }
@@ -345,6 +348,9 @@ export const readImageTool = createTool({
         if (heartbeat) clearInterval(heartbeat);
       }
     } catch (error) {
+      if (context?.abortSignal?.aborted) {
+        throw context.abortSignal.reason ?? error;
+      }
       return { ok: false, text: "", error: errorMessageFromUnknown(error), materialId: null };
     } finally {
       stopHeartbeat();

@@ -1,5 +1,9 @@
 import type { Browser } from "playwright";
-import { getBrowser } from "../browser/pool.js";
+import {
+  BrowserCapabilityUnavailableError,
+  getBrowser,
+  getBrowserCapabilityState,
+} from "../browser/pool.js";
 import { getHtmlToPdfRenderer } from "./pdfRenderer.js";
 
 /**
@@ -14,6 +18,9 @@ export async function htmlToPdf(html: string): Promise<Buffer> {
   const custom = getHtmlToPdfRenderer();
   if (custom) return custom(html);
 
+  if (getBrowserCapabilityState().status === "unavailable") {
+    throw new BrowserCapabilityUnavailableError();
+  }
   const browser: Browser = await getBrowser();
   const context = await browser.newContext();
   // 拦截一切对外请求:自包含 HTML 不需要联网,放行只剩风险与延迟。

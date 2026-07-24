@@ -243,6 +243,20 @@ describe("readImage stream error handling", () => {
     expect(streamTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("最外层捕获遇到父取消时重抛原始 reason，不吞成 ok:false", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("用户取消识图", "AbortError");
+    controller.abort(reason);
+    resolveImageInputMock.mockImplementation((_image: string, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      throw new Error("should not reach");
+    });
+
+    await expect(
+      run("img-parent-aborted", { abortSignal: controller.signal }),
+    ).rejects.toBe(reason);
+  });
+
   it("限流等待期间强制 emitProgress 写入保活提示", async () => {
     vi.useFakeTimers();
     const writes: Array<Record<string, unknown>> = [];

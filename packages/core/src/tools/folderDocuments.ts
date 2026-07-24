@@ -671,6 +671,7 @@ async function parseAndCacheDocument(args: {
     buffer,
     filename: basenameOf(resolved.path),
     mimeType,
+    signal: args.signal,
   });
   args.signal?.throwIfAborted();
   if (!parsed.ok) {

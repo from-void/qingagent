@@ -31,20 +31,32 @@ vi.mock("@mastra/agent-browser", () => ({
 
 import { getAgentBrowser, resetAgentBrowserForTest } from "./agentBrowser.js";
 
-const savedCdpUrl = process.env.QINGAGENT_BROWSER_CDP_URL;
+const ENV_KEYS = [
+  "QINGAGENT_BROWSER_CDP_URL",
+  "QINGAGENT_BROWSER_PROXY_ACL",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+] as const;
+const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 describe("AgentBrowser 多 context 请求策略", () => {
   beforeEach(() => {
     mocks.installPolicy.mockClear();
     mocks.superEnsureReady.mockClear();
     process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/test";
+    for (const key of ENV_KEYS.slice(1)) delete process.env[key];
     resetAgentBrowserForTest();
   });
 
   afterEach(() => {
     resetAgentBrowserForTest();
-    if (savedCdpUrl === undefined) delete process.env.QINGAGENT_BROWSER_CDP_URL;
-    else process.env.QINGAGENT_BROWSER_CDP_URL = savedCdpUrl;
+    for (const key of ENV_KEYS) {
+      const value = savedEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   it("从全部页面反查唯一 context，并为新页面所属的第二个 context 安装策略", async () => {
@@ -62,8 +74,12 @@ describe("AgentBrowser 多 context 请求策略", () => {
 
     expect(mocks.superEnsureReady).toHaveBeenCalledOnce();
     expect(mocks.installPolicy).toHaveBeenCalledTimes(2);
-    expect(mocks.installPolicy).toHaveBeenCalledWith(firstContext);
-    expect(mocks.installPolicy).toHaveBeenCalledWith(secondContext);
+    expect(mocks.installPolicy).toHaveBeenCalledWith(firstContext, {
+      outboundProxyAcl: false,
+    });
+    expect(mocks.installPolicy).toHaveBeenCalledWith(secondContext, {
+      outboundProxyAcl: false,
+    });
   });
 
   it("manager 与页面都没有可用 context 时保持抛错", async () => {

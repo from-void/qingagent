@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserContext } from "playwright";
 import {
+  getAgentBrowser,
   getAgentBrowserTools,
   installAgentBrowserRequestPolicy,
   isAgentBrowserEnabled,
@@ -13,6 +14,11 @@ const ENV_KEYS = [
   "QINGAGENT_BROWSER_STORAGE_STATE",
   "QINGAGENT_BROWSER_HEADFUL",
   "QINGAGENT_BROWSER_ALLOW_DOMAINS",
+  "QINGAGENT_BROWSER_PROXY_ACL",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
 ];
 
 describe("agentBrowser 接入", () => {
@@ -45,6 +51,29 @@ describe("agentBrowser 接入", () => {
   it("配了持久 Chrome cdpUrl → 启用", () => {
     process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
     expect(isAgentBrowserEnabled()).toBe(true);
+  });
+
+  it("显式 CDP 标记为外部浏览器并打印 ACL 不可验证审计告警", () => {
+    process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      getAgentBrowser();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/外部浏览器.*ACL 不可验证/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("代理安全模式拒绝显式外部 CDP，避免绕过受控 --proxy-server", () => {
+    process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
+    process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(() => getAgentBrowser()).toThrow(/代理安全模式拒绝.*外部浏览器/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("启用后注入 browser_* 工具:含核心读取/登录工具,排除高风险/无用工具", () => {
@@ -177,6 +206,29 @@ describe("agentBrowser 接入", () => {
       expect(privateRoute.close).toHaveBeenCalledWith(
         expect.objectContaining({ code: 1008 }),
       );
+    });
+
+    it("代理模式要求 deny-private ACL，且 WebSocket 继续复用同一网络边界", async () => {
+      process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+      const rejected = mockContext();
+      await expect(installAgentBrowserRequestPolicy(rejected.context)).rejects.toThrow(
+        /QINGAGENT_BROWSER_PROXY_ACL=deny-private/,
+      );
+
+      process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
+      const allowed = mockContext();
+      await installAgentBrowserRequestPolicy(allowed.context);
+      const handler = allowed.routeWebSocket.mock.calls[0]?.[1] as (
+        route: unknown,
+      ) => Promise<void>;
+      const websocketRoute = {
+        url: () => "wss://1.1.1.1/socket",
+        connectToServer: vi.fn(),
+        close: vi.fn(async () => undefined),
+      };
+      await handler(websocketRoute);
+      expect(websocketRoute.connectToServer).toHaveBeenCalledOnce();
+      expect(websocketRoute.close).not.toHaveBeenCalled();
     });
   });
 });

@@ -22,3 +22,8 @@ export function setHtmlToPdfRenderer(renderer: HtmlToPdfRenderer | null): void {
 export function getHtmlToPdfRenderer(): HtmlToPdfRenderer | null {
   return customRenderer;
 }
+
+/** 桌面端自定义渲染器不依赖 Playwright 公共池，可在服务端浏览器禁用时继续提供 PDF。 */
+export function hasHtmlToPdfRenderer(): boolean {
+  return customRenderer !== null;
+}

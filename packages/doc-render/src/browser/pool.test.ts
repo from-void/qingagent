@@ -1,5 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { browserLaunchCandidates, withBrowserContextSlot } from "./pool.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  browserLaunchArgs,
+  browserLaunchCandidates,
+  proxyFromEnv,
+  withBrowserContextSlot,
+} from "./pool.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -85,15 +90,72 @@ describe("withBrowserContextSlot", () => {
 // 只校验候选的「种类与顺序」(launch 涉及真实 Playwright,不在单测里跑)。
 describe("browserLaunchCandidates", () => {
   const origChannels = process.env.QINGAGENT_BROWSER_CHANNELS;
+  const proxyEnv = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ] as const;
+  const savedProxyEnv = Object.fromEntries(proxyEnv.map((key) => [key, process.env[key]]));
+  const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
+  const savedNoSandbox = process.env.QINGAGENT_ALLOW_NO_SANDBOX;
+  beforeEach(() => {
+    for (const key of proxyEnv) delete process.env[key];
+    delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+    delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
+  });
   afterEach(() => {
     if (origChannels === undefined) delete process.env.QINGAGENT_BROWSER_CHANNELS;
     else process.env.QINGAGENT_BROWSER_CHANNELS = origChannels;
+    for (const key of proxyEnv) {
+      const value = savedProxyEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+    else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
+    if (savedNoSandbox === undefined) delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
+    else process.env.QINGAGENT_ALLOW_NO_SANDBOX = savedNoSandbox;
   });
 
   it("末尾恒有默认兜底候选", () => {
     delete process.env.QINGAGENT_BROWSER_CHANNELS;
     const c = browserLaunchCandidates();
     expect(c.at(-1)?.kind).toBe("default");
+  });
+
+  it("所有 Chromium 启动候选不关闭 sandbox 或站点隔离", () => {
+    const args = browserLaunchArgs(false);
+    expect(args).toContain("--disable-dev-shm-usage");
+    expect(args).not.toContain("--no-sandbox");
+    expect(args).not.toContain("--disable-features=IsolateOrigins,site-per-process");
+  });
+
+  it("只有高危逃生阀精确为 1 时才关闭 sandbox", () => {
+    for (const value of ["true", "yes", "on", "0"]) {
+      process.env.QINGAGENT_ALLOW_NO_SANDBOX = value;
+      expect(browserLaunchArgs(false)).not.toContain("--no-sandbox");
+    }
+    process.env.QINGAGENT_ALLOW_NO_SANDBOX = "1";
+    expect(browserLaunchArgs(false)).toContain("--no-sandbox");
+    expect(browserLaunchArgs(true)).toContain("--no-sandbox");
+  });
+
+  it("代理模式强制 loopback 也经过出站 ACL", () => {
+    expect(browserLaunchArgs(true)).toContain("--proxy-bypass-list=<-loopback>");
+  });
+
+  it("浏览器代理忽略 NO_PROXY，避免绕过 deny-private ACL", () => {
+    process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    process.env.NO_PROXY = "localhost,.example.com";
+    expect(proxyFromEnv()).toEqual({ server: "http://127.0.0.1:8080" });
+  });
+
+  it("配置代理但未确认 deny-private ACL 时拒绝创建启动候选", () => {
+    process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    expect(() => browserLaunchCandidates()).toThrow(/QINGAGENT_BROWSER_PROXY_ACL=deny-private/);
   });
 
   it("channel 按 QINGAGENT_BROWSER_CHANNELS 顺序解析,去重", () => {

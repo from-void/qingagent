@@ -62,11 +62,24 @@ async function readSseUntil(
 // Health
 // -----------------------------------------------------------------------
 describe("GET /health", () => {
-  it("returns 200 with { status: 'ok' }", async () => {
+  it("返回服务状态与浏览器/PDF 能力状态", async () => {
     const res = await request("GET", "/health");
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json).toEqual({ status: "ok" });
+    expect(json).toEqual({
+      status: "ok",
+      capabilities: {
+        browser: {
+          status: expect.stringMatching(/^(unknown|available|unavailable)$/),
+          sandbox: expect.stringMatching(/^(required|disabled-by-explicit-override)$/),
+          reason: null,
+        },
+        pdfExport: {
+          enabled: true,
+          renderer: "playwright",
+        },
+      },
+    });
   });
 });
 

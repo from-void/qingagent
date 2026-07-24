@@ -129,7 +129,7 @@ packages/ui-kit 设计 token 与基础样式的唯一来源(附少量已消费�
 
 服务端在实际监听地址非回环且未设置 `QINGAGENT_AUTH_TOKEN` 时会拒绝启动。只有显式设置高危逃生开关 `QINGAGENT_ALLOW_UNAUTHENTICATED_PUBLIC=1` 才会放行并打印审计告警；这种形态下,任何人都可以读写你的全部文档、消耗模型 key 余额。如果还显式打开 `QINGAGENT_ALLOW_UNISOLATED_COMMANDS`、`QINGAGENT_SANDBOX_INJECT_CREDENTIALS` 或 `QINGAGENT_ALLOW_SKILL_MUTATION`,风险还会扩大到在你的机器上执行命令。不要这样做。
 
-若你确要将服务暴露到公网,请使用 nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。生成 token 示例:
+若你确要将服务暴露到公网,请使用 nginx/caddy 反代 + HTTPS(Let's Encrypt)+ 强随机 `QINGAGENT_AUTH_TOKEN` + 精确的 `QINGAGENT_TRUSTED_ORIGINS`。反向代理透传的 `Host` 不会自动成为可信来源,必须把公网前端的完整 Origin（协议 + 主机 + 端口,默认 HTTPS 端口可省略）显式加入该变量。生成 token 示例:
 
 ```bash
 openssl rand -hex 32
@@ -179,7 +179,7 @@ server {
 | 变量 | 默认值 | 作用 |
 |---|---|---|
 | `QINGAGENT_AUTH_TOKEN` | 未设置 | API token。回环监听未设置时保持本机零配置直通;非回环监听未设置时服务端 fail-closed、拒绝启动。 |
-| `QINGAGENT_TRUSTED_ORIGINS` | 空;内置 localhost/127.0.0.1/::1 | 额外可信 Origin,多个值用逗号分隔。公网反代建议设为 `https://你的域名`。 |
+| `QINGAGENT_TRUSTED_ORIGINS` | 空;内置本机 Web 开发端口的精确 loopback Origin | 额外可信完整 Origin（须含协议,不能只写 Host）,多个值用逗号分隔。公网反代须设为 `https://你的域名`。 |
 | `QINGAGENT_PUBLIC_ORIGIN` | 未设置 | 导出内容中 `/api/` 链接使用的 canonical origin。公网 HTTPS 反代建议显式设置，优先级高于请求与 forwarded 头。 |
 | `QINGAGENT_TRUST_PROXY` | 未设置 | 仅 `=1` 时采信 `X-Forwarded-Host/Proto`。只有入口反代会剥离客户端伪造头并重写可信值时才开启。 |
 | `QINGAGENT_HOST` | `127.0.0.1` | 后端监听地址。公网或容器入口需要显式改为合适地址;默认只监听本机。 |

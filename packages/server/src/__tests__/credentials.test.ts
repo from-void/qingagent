@@ -135,7 +135,7 @@ describe("credentials 路由", () => {
     const app = await loadApp();
     const res = await app.request("/api/v1/credentials", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "http://localhost:6175" },
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:6173" },
       body: JSON.stringify({ platform: "dingtalk", values: { DINGTALK_APP_SECRET: "t" } }),
     });
     expect(res.status).toBe(200);

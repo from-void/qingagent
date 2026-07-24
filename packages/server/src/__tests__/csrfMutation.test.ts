@@ -192,14 +192,65 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
   beforeEach(() => {
     process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
     process.env.QINGAGENT_ENABLE_DEBUG = "1";
+    delete process.env.QINGAGENT_TRUSTED_ORIGINS;
+    delete process.env.QINGAGENT_WEB_PORT;
   });
 
   afterEach(() => {
     delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
     delete process.env.QINGAGENT_ENABLE_DEBUG;
+    delete process.env.QINGAGENT_TRUSTED_ORIGINS;
+    delete process.env.QINGAGENT_WEB_PORT;
     vi.doUnmock("../gateway/bridgeHandler");
     vi.doUnmock("@qingagent/core");
     vi.resetModules();
+  });
+
+  describe("精确 Origin 白名单", () => {
+    const path = "/api/v1/clientlog";
+    const init: RequestInit = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [] }),
+    };
+
+    it("拒绝非白名单 localhost 端口", async () => {
+      const app = await loadApp();
+      const res = await app.request(path, withOrigin(init, "http://localhost:62001"));
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("Origin 与 Host 同值的外部 rebinding 域名仍拒绝", async () => {
+      const app = await loadApp();
+      const requestInit = withOrigin(init, "http://rebind.example:8080");
+      const headers = new Headers(requestInit.headers);
+      headers.set("Host", "rebind.example:8080");
+      const res = await app.request(path, { ...requestInit, headers });
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("内置本机 Web 端口与无 Origin 请求放行", async () => {
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost:6173"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://127.0.0.1:5173"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://[::1]:8091"))).status).toBe(200);
+      expect((await app.request(path, init)).status).toBe(200);
+    });
+
+    it("运行时 Web 端口与显式配置的完整 Origin 放行", async () => {
+      process.env.QINGAGENT_WEB_PORT = "62002";
+      process.env.QINGAGENT_TRUSTED_ORIGINS = "https://app.example";
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost:62002"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "https://app.example"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://app.example"))).status).toBe(403);
+    });
   });
 
   for (const endpoint of protectedWriteEndpoints) {

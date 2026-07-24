@@ -1,38 +1,86 @@
 import type { Context, MiddlewareHandler } from "hono";
 
 // CSRF 防护:敏感写操作挡掉跨站请求(恶意网页向本机后端发 POST/DELETE)。
-// 浏览器跨站请求一定带 Origin 头;受信来源=本机(localhost/127.0.0.1 任意端口)+
-// QINGAGENT_TRUSTED_ORIGINS 配置的生产域。无 Origin(同源/curl)放行。
-export function isTrustedOrigin(origin: string): boolean {
+// 浏览器跨站请求一定带 Origin 头;受信来源=精确的本机 Web Origin+
+// QINGAGENT_TRUSTED_ORIGINS 配置的生产 Origin。无 Origin(同源/curl)放行。
+const DEFAULT_LOCAL_WEB_PORTS = ["5173", "6173", "5191", "8090", "8091"];
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+
+function addPort(ports: Set<string>, value: string | undefined): void {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^\d{1,5}$/.test(trimmed)) return;
+  const port = Number(trimmed);
+  if (port >= 1 && port <= 65_535) ports.add(String(port));
+}
+
+function addUrlPort(ports: Set<string>, value: string | undefined): void {
+  if (!value) return;
   try {
-    const url = new URL(origin);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") {
-      return true;
-    }
-    const trusted = (process.env.QINGAGENT_TRUSTED_ORIGINS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return trusted.includes(origin) || trusted.includes(url.host);
+    const url = new URL(value);
+    if (url.protocol !== "http:") return;
+    addPort(ports, url.port || "80");
   } catch {
-    return false;
+    // 非法开发 URL 不扩大白名单。
   }
+}
+
+function localWebOrigins(): Set<string> {
+  const ports = new Set(DEFAULT_LOCAL_WEB_PORTS);
+  // 端口来源与 Web/Vite 配置保持一致:
+  // - QINGAGENT_WEB_PORT / QINGAGENT_PREVIEW_PORT 是显式 dev/preview 端口;
+  // - Vite 在未设 QINGAGENT_WEB_PORT 时读取 PORT;
+  // - 桌面开发可通过 QINGAGENT_DESKTOP_DEV_URL 指向当前 worktree 的真实 Web 端口。
+  addPort(ports, process.env.QINGAGENT_WEB_PORT);
+  addPort(ports, process.env.QINGAGENT_PREVIEW_PORT);
+  addPort(ports, process.env.PORT);
+  addUrlPort(ports, process.env.QINGAGENT_DESKTOP_DEV_URL);
+
+  const origins = new Set<string>();
+  for (const port of ports) {
+    for (const host of LOOPBACK_HOSTS) {
+      origins.add(`http://${host}:${port}`);
+    }
+  }
+  return origins;
+}
+
+function normalizeExactOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function configuredOrigins(): Set<string> {
+  const origins = new Set<string>();
+  for (const value of (process.env.QINGAGENT_TRUSTED_ORIGINS ?? "").split(",")) {
+    const origin = normalizeExactOrigin(value.trim());
+    if (origin) origins.add(origin);
+  }
+  return origins;
+}
+
+export function isTrustedOrigin(origin: string): boolean {
+  const normalized = normalizeExactOrigin(origin);
+  if (!normalized) return false;
+  return localWebOrigins().has(normalized) || configuredOrigins().has(normalized);
 }
 
 export function requireTrustedOrigin(c: Context): Response | null {
   const origin = c.req.header("Origin");
   if (!origin) return null; // 同源/curl 无 Origin
-  // 同源放行:浏览器同源 POST 也带 Origin,但其 host 必等于请求 Host;恶意跨站的 Origin
-  // host 与后端 Host 不等。这样站点自身请求无需配 QINGAGENT_TRUSTED_ORIGINS 即放行
-  // (生产 nginx 透传 Host=$host,后端 Host 即公网域名,与 Origin 同源)。
-  const host = c.req.header("Host");
-  if (host) {
-    try {
-      if (new URL(origin).host === host) return null;
-    } catch {
-      // origin 非法 URL → 落到下面 isTrustedOrigin 判定/拒绝
-    }
-  }
   if (!isTrustedOrigin(origin)) {
     return c.json({ error: "跨站请求被拒绝" }, 403);
   }

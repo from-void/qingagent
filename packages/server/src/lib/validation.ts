@@ -26,6 +26,7 @@ export interface ValidationErrorBody {
 }
 
 const DEFAULT_MAX_BODY_DEPTH = 64;
+const MUTATION_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
 /** 把 zod issue.path(`["data","fileIds",0]`)渲染成 `data.fileIds[0]`。 */
 export function formatIssuePath(path: ReadonlyArray<PropertyKey>): string {
@@ -149,6 +150,18 @@ export async function parseBody<T>(
   const formatError = options.formatError ?? ((error) => formatZodError(error));
   const makeResponse =
     options.makeErrorResponse ?? ((ctx, errBody) => ctx.json(errBody, 400));
+  if (MUTATION_METHODS.has(c.req.method)) {
+    const contentType = c.req.header("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json") {
+      return {
+        ok: false,
+        response: makeResponse(c, {
+          error: options.invalidJsonMessage ?? "Content-Type must be application/json",
+          issues: [],
+        }),
+      };
+    }
+  }
   let body: unknown;
   try {
     body = await c.req.json();

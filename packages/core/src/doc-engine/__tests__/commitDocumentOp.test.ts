@@ -3,6 +3,7 @@ import { getPmContentHash, type PmDoc } from "@qingagent/pm-schema";
 import {
   beginSessionDeletion,
   createDerivativeDoc,
+  DocumentRecoveryRequiredError,
   DocumentWriteBlockedError,
   findOpByIdempotencyKey,
   listDerivativesByThread,
@@ -115,6 +116,27 @@ async function expectCommittedVersion(
 }
 
 describe("commitDocumentOp", () => {
+  it("0025 检出的正文覆盖文档在主提交链 fail-closed，并明确要求从 pre-0023 备份恢复", async () => {
+    await seedDocument();
+    await getDocumentsClient().execute({
+      sql: `INSERT INTO document_write_blocks (
+        doc_id, reason, source_doc_id, source_thread_id, version_id
+      ) VALUES (
+        'doc-commit', 'quarantine_0002_foreign_snapshot',
+        'foreign-doc', 'thread-doc-commit', 'foreign-version'
+      )`,
+    });
+
+    await expect(commitDocumentOp(commitInput()))
+      .rejects.toBeInstanceOf(DocumentRecoveryRequiredError);
+    await expect(commitDocumentOp(commitInput()))
+      .rejects.toThrow("从运行 0023 前的数据库备份恢复并核验");
+    await expect(documentRepo.load("doc-commit")).resolves.toMatchObject({
+      docVersion: 1,
+      legacySections: [section("before commit")],
+    });
+  });
+
   it("serializes raw withTransaction calls without relying on the commit queue", async () => {
     await seedDocument("doc-raw-collision", "base", 1);
 
@@ -715,6 +737,46 @@ describe("commitDocumentOp", () => {
     const versions = await listVersions("doc-coalesce-expired");
     expect(versions.map((version) => version.docVersion)).toEqual([3, 2]);
     expect(versions[0]).toMatchObject({ parentVersion: 2 });
+  });
+
+  it("系统时钟回拨时开启新版本窗口，不把后续编辑错误折叠进未来版本", async () => {
+    await seedDocument("doc-coalesce-clock-rollback", "before", 1);
+
+    const first = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-clock-rollback",
+        threadId: "thread-doc-coalesce-clock-rollback",
+        clientMutationId: "client-clock-rollback-1",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("first edit") }),
+      }),
+      { now: () => "2026-01-02T00:01:00.000Z" },
+    );
+    expect(first).toMatchObject({ status: "committed", docVersion: 2 });
+
+    const second = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-clock-rollback",
+        threadId: "thread-doc-coalesce-clock-rollback",
+        expectedDocumentSnapshot: 2,
+        clientMutationId: "client-clock-rollback-2",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("second edit after rollback") }),
+      }),
+      { now: () => "2026-01-02T00:00:30.000Z" },
+    );
+
+    expect(second).toMatchObject({ status: "committed", docVersion: 3 });
+    const versions = await listVersions("doc-coalesce-clock-rollback");
+    expect(versions.map((version) => version.docVersion)).toEqual([3, 2]);
+    expect(versions[0]).toMatchObject({
+      parentVersion: 2,
+      createdAt: "2026-01-02T00:00:30.000Z",
+    });
+    expect(versions[1]).toMatchObject({
+      docVersion: 2,
+      createdAt: "2026-01-02T00:01:00.000Z",
+    });
   });
 
   it("starts a new user coalesce window after an agent version", async () => {

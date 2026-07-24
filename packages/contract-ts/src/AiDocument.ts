@@ -46,10 +46,16 @@ export type AiColumn = {
   blocks: Array<AiBlock>;
 };
 
-export type AiBlock =
+type AiContainerContent =
+  | { runs: Array<AiRun>; blocks?: never }
+  | { blocks: Array<AiBlock>; runs?: never };
+
+export type AiBlock = {
+  blockId?: string;
+} & (
   | { type: "paragraph"; runs: Array<AiRun>; textAlign?: "left" | "center" | "right" | "justify" }
   | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; anchor?: string | null; runs: Array<AiRun>; textAlign?: "left" | "center" | "right" | "justify" }
-  | { type: "blockquote"; runs: Array<AiRun> }
+  | ({ type: "blockquote" } & AiContainerContent)
   | { type: "codeBlock"; language?: string | null; text: string }
   | { type: "bulletList"; items: Array<AiListItem> }
   | { type: "orderedList"; items: Array<AiListItem>; start?: number | null; listStyle?: "decimal" | "lower-alpha" | "upper-alpha" | "lower-roman" | "upper-roman" | null }
@@ -59,15 +65,15 @@ export type AiBlock =
   | { type: "fileAttachment"; fileId: string; filename: string; mimeType: string; size: number }
   | { type: "penNote"; runs: Array<AiRun> }
   | { type: "taskList"; items: Array<AiTaskListItem> }
-  | {
+  | ({
       type: "callout";
       emoji?: string | null;
       tone?: "info" | "success" | "warning" | "danger" | "neutral" | "ochre" | "rose" | "mauve" | "indigo" | "teal" | null;
-      runs: Array<AiRun>;
-    }
+    } & AiContainerContent)
   | { type: "columnList"; columns: Array<AiColumn> }
   | { type: "blockMath"; latex: string }
-  | { type: "diagram"; lang: string; source: string; svg?: string | null };
+  | { type: "diagram"; lang: string; source: string; svg?: string | null }
+);
 
 export type AiDocument = {
   title?: string | null;

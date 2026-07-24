@@ -1,4 +1,3 @@
-import { pmToPlainText } from "../pmToPlainText";
 import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmParagraphNode, PmHeadingNode, PmTableCellNode, PmListItemNode, PmTaskItemNode } from "../types";
 import type { AiBlock, AiDocument, AiListItem, AiRun, AiRunMark, AiTaskListItem } from "./aiIrSchema";
 
@@ -23,7 +22,11 @@ export function blockToAi(node: PmBlockNode): AiBlock {
       );
     }
     case "blockquote":
-      return { type: "blockquote", runs: blocksToRuns(node.content) };
+      return {
+        type: "blockquote",
+        blockId: node.attrs.blockId,
+        blocks: node.content.map(blockToAiWithId),
+      };
     case "codeBlock":
       // language 缺省统一为 "plaintext",与 aiIrToPm 的缺省对称(language:null 往返会漂移成 "plaintext")。
       return { type: "codeBlock", language: node.attrs.language ?? "plaintext", text: inlineToRuns(node.content ?? []).map((run) => run.text).join("") };
@@ -68,9 +71,10 @@ export function blockToAi(node: PmBlockNode): AiBlock {
     case "callout":
       return {
         type: "callout",
+        blockId: node.attrs.blockId,
         emoji: node.attrs.emoji ?? null,
         tone: node.attrs.tone ?? null,
-        runs: blocksToRuns(node.content),
+        blocks: node.content.map(blockToAiWithId),
       };
     case "columnList":
       return {
@@ -90,6 +94,13 @@ export function blockToAi(node: PmBlockNode): AiBlock {
         })),
       };
   }
+}
+
+function blockToAiWithId(node: PmBlockNode): AiBlock {
+  return {
+    ...blockToAi(node),
+    blockId: node.attrs.blockId,
+  } as AiBlock;
 }
 
 function listItemToAi(item: PmListItemNode): AiListItem {
@@ -138,29 +149,6 @@ function cellToAi(cell: PmTableCellNode) {
     ...(colspan > 1 ? { colspan } : {}),
     ...(rowspan > 1 ? { rowspan } : {}),
   };
-}
-
-// 抽取一组块(blockquote/listItem/callout 的 content)的行内 runs,保留 marks。
-// 单段(最常见)即等价 inlineToRuns,与 aiIrToPm 反向构造对齐;多块之间插入换行 run 保留断行
-// (AI-IR 的 blockquote/list item 是扁平 runs,多块结构会塌缩,但 marks 不丢——见设计 §5)。
-function blocksToRuns(blocks: readonly PmBlockNode[]): AiRun[] {
-  const runs: AiRun[] = [];
-  blocks.forEach((block, index) => {
-    if (index > 0) runs.push({ text: "\n" });
-    if (block.type === "paragraph" || block.type === "heading" || block.type === "penNote") {
-      runs.push(...inlineToRuns(block.content ?? []));
-    } else {
-      const text = pmToPlainText({ type: "doc", attrs: { schemaVersion: 1 }, content: [block] });
-      // 空块不产出空 run(空 run 会被 runsToInline 跳过→两轮 AI-IR 不一致);
-      // 平文本里的 \n 同样按 hardBreak 语义拆分,保持与 inlineToRuns/runsToInline
-      // 对称(fuzz seed 0x513789ba:单元格内 callout 的拍平文本携带 \n)。
-      text.split("\n").forEach((segment, segIndex) => {
-        if (segIndex > 0) runs.push({ text: "\n" });
-        if (segment.length > 0) runs.push({ text: segment });
-      });
-    }
-  });
-  return mergeAdjacentRuns(runs);
 }
 
 /** AI-IR 规范形:相邻且 marks 相同的文本 run 合并(对称于 runsToInline 的合并),

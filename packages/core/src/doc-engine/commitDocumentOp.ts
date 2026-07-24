@@ -13,6 +13,7 @@ import {
 } from "@qingagent/db";
 import {
   assertDocumentWriteAllowed,
+  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
 } from "@qingagent/db/write-guard";
 import {
@@ -223,7 +224,8 @@ function isWithinCoalesceWindow(input: {
   const nowMs = Date.parse(input.now);
   const createdAtMs = Date.parse(input.createdAt);
   if (!Number.isFinite(nowMs) || !Number.isFinite(createdAtMs)) return false;
-  return nowMs - createdAtMs < input.windowMs;
+  const elapsed = nowMs - createdAtMs;
+  return elapsed >= 0 && elapsed < input.windowMs;
 }
 
 async function committedResultFromOp(
@@ -488,6 +490,11 @@ export async function commitDocumentOp(
     const projection = buildPmProjection({ pmDoc: nextDoc });
 
     assertDocumentWriteAllowed({
+      docId: input.docId,
+      threadId: input.threadId,
+      operation: "document.commit",
+    });
+    await assertDocumentWriteAllowedPersisted(client, {
       docId: input.docId,
       threadId: input.threadId,
       operation: "document.commit",

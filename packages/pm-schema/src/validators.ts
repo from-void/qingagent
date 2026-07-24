@@ -363,7 +363,12 @@ const listItemSchema: LazyNode = z.lazy(() =>
   z.object({
     type: z.literal("listItem"),
     attrs: blockIdSchema,
-    content: z.array(blockNodeSchema).min(1),
+    content: z
+      .array(blockNodeSchema)
+      .min(1)
+      .refine((content) => (content[0] as { type?: unknown } | undefined)?.type === "paragraph", {
+        message: "listItem content must start with paragraph",
+      }),
   }),
 );
 
@@ -530,10 +535,12 @@ export function normalizePmDoc(value: unknown): PmDoc {
   return assertValidPmDoc(value);
 }
 
-// 存量 documents 可能已含旧校验放过的非矩形表。读取时只兼容本次新增的两类网格 issue，
-// 其它结构、安全上限与内容规则仍严格校验；所有写入继续走 normalizePmDoc。
+// 存量 documents 可能已含旧校验放过的非矩形表或非法 listItem 首子。
+// 读取时先做 P2-16 无损规整，再只兼容既有的两类网格 issue；其它结构、
+// 安全上限与内容规则仍严格校验，所有写入继续走 normalizePmDoc。
 export function normalizeStoredPmDoc(value: unknown): PmDoc {
-  const normalized = normalizePmDocShape(value);
+  const legacyListNormalized = normalizeLegacyListItemFirstChildPmDoc(value);
+  const normalized = normalizePmDocShape(legacyListNormalized.value);
   const parsed = pmDocSchema.safeParse(normalized);
   if (parsed.success) return parsed.data as PmDoc;
   const containsOnlyLegacyGridIssues = parsed.error.issues.length > 0 && parsed.error.issues.every(
@@ -578,6 +585,105 @@ function normalizeNodeShape(value: unknown, path: number[]): unknown {
     output.attrs = normalizeAttrsShape(record.type, {}, path);
   }
   return output;
+}
+
+/**
+ * P2-16 存量兼容：旧 validator 曾允许 listItem 以 heading/list 等块开头，
+ * 而 TipTap 的真实约束是 paragraph block*。heading/penNote 的行内内容与
+ * marks 原样转入 paragraph；其它块前补空 paragraph，原块完整保留为后继块。
+ */
+export function normalizeLegacyListItemFirstChildPmDoc(
+  value: unknown,
+): { value: unknown; changed: boolean } {
+  return normalizeLegacyListItemNode(value, []);
+}
+
+function normalizeLegacyListItemNode(
+  value: unknown,
+  path: number[],
+): { value: unknown; changed: boolean } {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const normalized = value.map((child, index) => {
+      const result = normalizeLegacyListItemNode(child, [...path, index]);
+      changed ||= result.changed;
+      return result.value;
+    });
+    return { value: changed ? normalized : value, changed };
+  }
+  if (!value || typeof value !== "object") return { value, changed: false };
+
+  const record = value as Record<string, unknown>;
+  let changed = false;
+  const output: Record<string, unknown> = { ...record };
+  if (Array.isArray(record.content)) {
+    const normalized = normalizeLegacyListItemNode(record.content, path);
+    output.content = normalized.value;
+    changed ||= normalized.changed;
+  }
+  if (record.type !== "listItem" || !Array.isArray(output.content)) {
+    return { value: changed ? output : value, changed };
+  }
+
+  const normalizedContent = normalizeLegacyListItemContent(
+    output.content,
+    record.attrs,
+    path,
+  );
+  if (normalizedContent === output.content) {
+    return { value: changed ? output : value, changed };
+  }
+  output.content = normalizedContent;
+  return { value: output, changed: true };
+}
+
+function normalizeLegacyListItemContent(
+  content: unknown[],
+  listItemAttrs: unknown,
+  path: number[],
+): unknown[] {
+  const first = content[0];
+  if (!first || typeof first !== "object") return content;
+  const firstRecord = first as Record<string, unknown>;
+  if (firstRecord.type === "paragraph") return content;
+
+  if (firstRecord.type === "heading" || firstRecord.type === "penNote") {
+    const firstAttrs = firstRecord.attrs && typeof firstRecord.attrs === "object"
+      ? firstRecord.attrs as Record<string, unknown>
+      : {};
+    const paragraphAttrs = {
+      blockId: typeof firstAttrs.blockId === "string"
+        ? firstAttrs.blockId
+        : getDeterministicId("block", {
+            type: "paragraph",
+            path: [...path, 0],
+            legacyListItemFirstChild: true,
+          }),
+      ...(typeof firstAttrs.textAlign === "string"
+        ? { textAlign: firstAttrs.textAlign }
+        : {}),
+    };
+    return [{
+      ...firstRecord,
+      type: "paragraph",
+      attrs: paragraphAttrs,
+    }, ...content.slice(1)];
+  }
+
+  const itemBlockId = listItemAttrs && typeof listItemAttrs === "object"
+    ? (listItemAttrs as Record<string, unknown>).blockId
+    : undefined;
+  const blockId = typeof itemBlockId === "string" && itemBlockId.length > 0
+    ? `${itemBlockId}-legacy-paragraph`
+    : getDeterministicId("block", {
+        type: "paragraph",
+        path,
+        legacyListItemFirstChild: true,
+      });
+  return [{
+    type: "paragraph",
+    attrs: { blockId },
+  }, ...content];
 }
 
 function normalizeAttrsShape(type: unknown, value: unknown, path: number[]): Record<string, unknown> {

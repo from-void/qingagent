@@ -457,7 +457,7 @@ function randomList(
   const content: PmListItemNode[] = Array.from({ length: rng.int(1, 4) }, () => ({
     type: "listItem",
     attrs: { blockId: nextBlockId(ctx, "listItem") },
-    content: randomNestedBlocks(ctx, rng, depth + 1),
+    content: randomNestedBlocks(ctx, rng, depth + 1, "paragraph"),
   }));
   if (type === "bulletList") return { type, attrs: { blockId: nextBlockId(ctx, type) }, content };
   return {
@@ -689,7 +689,7 @@ function deleteRequiredField(block: Record<string, unknown>, rng: Prng): string 
   const fieldsByType: Record<string, readonly string[]> = {
     paragraph: ["runs"],
     heading: ["level", "runs"],
-    blockquote: ["runs"],
+    blockquote: ["blocks"],
     codeBlock: ["text"],
     bulletList: ["items"],
     orderedList: ["items"],
@@ -698,7 +698,7 @@ function deleteRequiredField(block: Record<string, unknown>, rng: Prng): string 
     fileAttachment: ["fileId", "filename", "mimeType", "size"],
     penNote: ["runs"],
     taskList: ["items"],
-    callout: ["runs"],
+    callout: ["blocks"],
     blockMath: ["latex"],
     horizontalRule: ["type"],
   };
@@ -714,6 +714,7 @@ function writeWrongType(block: Record<string, unknown>): string {
   else if (type === "image") block.src = true;
   else if (type === "fileAttachment") block.size = "large";
   else if ("runs" in block) block.runs = true;
+  else if ("blocks" in block) block.blocks = true;
   else if ("items" in block) block.items = "not-items";
   else if ("rows" in block) block.rows = [{ cells: [] }];
   else block.type = 42;

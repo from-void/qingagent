@@ -1319,9 +1319,12 @@ function incomingBlockContractHints(blocks: readonly unknown[]): string[] {
 function missingAiBlockTopLevelField(block: Record<string, unknown>): string | null {
   switch (block.type) {
     case "paragraph":
-    case "blockquote":
     case "penNote":
       return Array.isArray(block.runs) ? null : `${block.type} 需要的 runs 字段`;
+    case "blockquote":
+      return Array.isArray(block.runs) || Array.isArray(block.blocks)
+        ? null
+        : "blockquote 需要的 runs/blocks 字段";
     case "heading": {
       const missing = [
         Number.isInteger(block.level) ? null : "level",
@@ -1338,7 +1341,9 @@ function missingAiBlockTopLevelField(block: Record<string, unknown>): string | n
     case "columnList":
       return Array.isArray(block.columns) ? null : "columnList 需要的 columns 字段";
     case "callout":
-      return Array.isArray(block.runs) ? null : "callout 需要的 runs 字段";
+      return Array.isArray(block.runs) || Array.isArray(block.blocks)
+        ? null
+        : "callout 需要的 runs/blocks 字段";
     case "blockMath":
       return typeof block.latex === "string" ? null : "blockMath 需要的 latex 字段";
     case "table":

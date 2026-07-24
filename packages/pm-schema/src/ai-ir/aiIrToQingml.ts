@@ -21,7 +21,7 @@ export function aiBlockToQingml(block: AiBlock): string {
         anchor: block.anchor,
       });
     case "blockquote":
-      return tag("blockquote", runsToInline(block.runs));
+      return tag("blockquote", containerContentToQingml(block));
     case "codeBlock":
       return tag("pre", escapeText(block.text), { lang: block.language });
     case "bulletList":
@@ -62,7 +62,7 @@ export function aiBlockToQingml(block: AiBlock): string {
     case "taskList":
       return tag("tasks", block.items.map(taskListItemToQingml).join(""));
     case "callout":
-      return tag("callout", runsToInline(block.runs), {
+      return tag("callout", containerContentToQingml(block), {
         emoji: block.emoji,
         tone: block.tone,
       });
@@ -80,6 +80,14 @@ export function aiBlockToQingml(block: AiBlock): string {
         ? tag("mermaid", escapeText(block.source))
         : tag("mermaid", escapeText(block.source));
   }
+}
+
+function containerContentToQingml(
+  block: Extract<AiBlock, { type: "blockquote" | "callout" }>,
+): string {
+  return block.blocks
+    ? aiBlocksToQingml(block.blocks)
+    : runsToInline(block.runs);
 }
 
 export function aiListItemToQingml(item: AiListItem | AiTaskListItem, ordered?: boolean): string {

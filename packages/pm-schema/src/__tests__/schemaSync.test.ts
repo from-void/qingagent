@@ -230,6 +230,61 @@ describe("p02 回归:TipTap runtime schema 必须真实覆盖全部 PM 节点", 
     expect(node.child(0).child(0).child(1).type.name).toBe("bulletList");
   });
 
+  it("listItem 首子必须是 paragraph，canonical validator 与真实 TipTap schema 同步拒绝非法 heading", async () => {
+    const { getSchema } = await import("@tiptap/core");
+    const { Node: PMNode } = await import("@tiptap/pm/model");
+    const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");
+    const schema = getSchema(createQingagentExtensions());
+    const invalid = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "bulletList",
+        attrs: { blockId: "list-invalid" },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "item-invalid" },
+          content: [{
+            type: "heading",
+            attrs: { blockId: "heading-invalid", level: 2 },
+            content: [{ type: "text", text: "不能作为列表项首子" }],
+          }],
+        }],
+      }],
+    };
+    const valid = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "bulletList",
+        attrs: { blockId: "list-valid" },
+        content: [{
+          type: "listItem",
+          attrs: { blockId: "item-valid" },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "item-valid-p" },
+              content: [{ type: "text", text: "合法首段" }],
+            },
+            {
+              type: "heading",
+              attrs: { blockId: "item-valid-h", level: 3 },
+              content: [{ type: "text", text: "后续块允许标题" }],
+            },
+          ],
+        }],
+      }],
+    };
+
+    expect(pmSchemaSpec.nodes.listItem.content).toBe("paragraph block*");
+    expect(schema.nodes.listItem!.spec.content).toBe("paragraph block*");
+    expect(safeParsePmDoc(invalid).success).toBe(false);
+    expect(() => PMNode.fromJSON(schema, invalid).check()).toThrow();
+    expect(safeParsePmDoc(valid).success).toBe(true);
+    expect(() => PMNode.fromJSON(schema, valid).check()).not.toThrow();
+  });
+
   it("R2-01 taskItem 下沉后生成嵌套 taskList，且 PM validator 接受", async () => {
     const { Editor } = await import("@tiptap/core");
     const { createQingagentExtensions } = await import("../tiptap/createQingagentExtensions");

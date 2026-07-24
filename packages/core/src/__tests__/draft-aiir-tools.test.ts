@@ -277,7 +277,7 @@ describe("QingML draft tools", () => {
         action: "insertBlock",
         position: "after",
         ref: "block-a",
-        blocks: "<callout><p>块级越界</p></callout>",
+        blocks: "<callout><h2>callout 仅允许 paragraph</h2></callout>",
       }],
     }, ctx) as any;
     expect(badFragment.ok).toBe(false);
@@ -337,7 +337,7 @@ describe("QingML draft tools", () => {
     expect(state.docDraftCandidateDoc).toBeNull();
   });
 
-  it("editDraft 服务端 fail-closed 拒绝仍有损的 replaceBlock,但 deleteBlock 放行", async () => {
+  it("editDraft 允许 structured multi-paragraph callout 无损 replaceBlock 与 deleteBlock", async () => {
     const state = createSession("s-lossy");
     const multiParagraphCallout: PmBlockNode = {
       type: "callout",
@@ -350,11 +350,10 @@ describe("QingML draft tools", () => {
     bindDoc(state, doc([multiParagraphCallout]));
     const { editDraft } = createSessionScopedTools(state);
 
-    const rejected = await editDraft.execute!({
+    const replaced = await editDraft.execute!({
       ops: [{ action: "replaceBlock", ref: "block-callout", block: qingmlParagraph("普通段") }],
     }, ctx) as any;
-    expect(rejected.ok).toBe(false);
-    expect(rejected.error).toContain("replaceBlock 拒绝有损块");
+    expect(replaced.ok).toBe(true);
 
     const deleted = await editDraft.execute!({
       ops: [{ action: "deleteBlock", ref: "block-callout" }],

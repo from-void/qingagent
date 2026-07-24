@@ -120,6 +120,61 @@ describe("applyBlockEdits", () => {
     expect(out.content[2]).toEqual(doc.content[2]);
   });
 
+  it("replaceBlock 接受 blockquote/callout 的结构化 blocks，并保留多段边界", () => {
+    const { doc, ref1, ref2 } = makeOriginal();
+    const result = applyBlockEdits(doc, [
+      {
+        action: "replaceBlock",
+        ref: ref1,
+        block: {
+          type: "blockquote",
+          blocks: [
+            { type: "paragraph", blockId: "quote-child-1", runs: [{ text: "引用一" }] },
+            {
+              type: "paragraph",
+              blockId: "quote-child-2",
+              runs: [{ text: "引用二", marks: [{ type: "bold" }] }],
+            },
+          ],
+        },
+      },
+      {
+        action: "replaceBlock",
+        ref: ref2,
+        block: {
+          type: "callout",
+          tone: "warning",
+          blocks: [
+            { type: "paragraph", blockId: "callout-child-1", runs: [{ text: "提示一" }] },
+            { type: "paragraph", blockId: "callout-child-2", runs: [{ text: "提示二" }] },
+          ],
+        },
+      },
+    ]);
+
+    expect(result.ok, result.error).toBe(true);
+    expect(result.doc?.content[1]).toMatchObject({
+      type: "blockquote",
+      attrs: { blockId: ref1 },
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "引用一" }] },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "引用二", marks: [{ type: "bold" }] }],
+        },
+      ],
+    });
+    expect(result.doc?.content[2]).toMatchObject({
+      type: "callout",
+      attrs: { blockId: ref2, tone: "warning" },
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "提示一" }] },
+        { type: "paragraph", content: [{ type: "text", text: "提示二" }] },
+      ],
+    });
+    expect(safeParsePmDoc(result.doc).success).toBe(true);
+  });
+
   it("insertBlock after 给新 ref,其余块不变", () => {
     const { doc, ref1 } = makeOriginal();
     const r = applyBlockEdits(doc, [

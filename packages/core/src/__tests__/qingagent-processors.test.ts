@@ -14,9 +14,12 @@ import {
 } from "../agents/toolSearch.js";
 import { buildQingagentStaticTools } from "../agents/qingagent.js";
 import {
-  DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
   markDiagramVizEditing,
 } from "../skills/diagramViz.js";
+import {
+  diagramVizEditingSourceFromRequestContext,
+  wrapModelWithDiagramVizEditing,
+} from "../llm/diagramVizEditingPrompt.js";
 
 const savedEnv = Object.fromEntries(
   [...Object.values(QINGAGENT_PROCESSOR_ENV), QINGAGENT_TOOL_SEARCH_ENV]
@@ -45,7 +48,6 @@ describe("qingagent processors", () => {
 
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
@@ -62,7 +64,6 @@ describe("qingagent processors", () => {
 
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
     ]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
@@ -79,7 +80,6 @@ describe("qingagent processors", () => {
       requestContext: requestContext as unknown as RequestContext,
     }))).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "tool-search",
     ]);
   });
@@ -139,7 +139,6 @@ describe("qingagent processors", () => {
     expect(resolveQingagentProcessorFlags().promptInjection).toBe(true);
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
@@ -148,7 +147,6 @@ describe("qingagent processors", () => {
     process.env[QINGAGENT_PROCESSOR_ENV.pii] = "true";
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
@@ -160,7 +158,6 @@ describe("qingagent processors", () => {
     process.env[QINGAGENT_PROCESSOR_ENV.moderation] = "on";
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
-      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
@@ -169,35 +166,41 @@ describe("qingagent processors", () => {
     ]);
   });
 
-  it("图表编辑 processor 只在 RequestContext 标记后为下一 step 注入对应引擎 system", async () => {
+  it("图表编辑包装器只在 RequestContext 标记后向 provider prompt 尾部注入 user 消息", async () => {
     resetProcessorEnv();
     const requestContext = new RequestContext();
-    const processor = buildQingagentInputProcessors({ requestContext })
-      .find((item) => (item as { id?: string }).id === DIAGRAM_VIZ_EDITING_PROCESSOR_ID) as unknown as {
-        processInputStep: (args: {
-          requestContext: RequestContext;
-          messageList: { addSystem: (content: string, tag?: string) => unknown };
-        }) => Promise<unknown>;
-      };
-    const added: Array<{ content: string; tag?: string }> = [];
-    const messageList = {
-      addSystem: (content: string, tag?: string) => {
-        added.push({ content, tag });
-        return messageList;
+    const seenPrompts: Array<Array<{ role: string; content: unknown }>> = [];
+    const baseModel = {
+      async doGenerate(options: { prompt?: unknown }) {
+        seenPrompts.push(options.prompt as Array<{ role: string; content: unknown }>);
+        return { content: [], finishReason: "stop", usage: {}, warnings: [] };
+      },
+      async doStream(options: { prompt?: unknown }) {
+        seenPrompts.push(options.prompt as Array<{ role: string; content: unknown }>);
+        return { stream: new ReadableStream() };
       },
     };
+    const wrapped = wrapModelWithDiagramVizEditing(
+      baseModel,
+      diagramVizEditingSourceFromRequestContext(requestContext),
+    );
+    const originalPrompt = [{ role: "user", content: "请修改图表" }];
 
-    await processor.processInputStep({ requestContext, messageList });
-    expect(added).toEqual([]);
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    expect(seenPrompts[0]).toBe(originalPrompt);
 
     markDiagramVizEditing(requestContext, ["mermaid"]);
-    await processor.processInputStep({ requestContext, messageList });
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    await wrapped.doStream({ prompt: originalPrompt });
 
-    expect(added).toHaveLength(1);
-    expect(added[0]).toMatchObject({ tag: DIAGRAM_VIZ_EDITING_PROCESSOR_ID });
-    expect(added[0]!.content).toContain('purpose="edit" languages="mermaid"');
-    expect(added[0]!.content).toContain("Mermaid 语法只认半角");
-    expect(added[0]!.content).not.toContain("未压缩明文 mxGraph XML");
+    for (const prompt of seenPrompts.slice(1)) {
+      expect(prompt).toHaveLength(2);
+      expect(prompt.at(-1)?.role).toBe("user");
+      const content = JSON.stringify(prompt.at(-1)?.content);
+      expect(content).toContain('purpose=\\"edit\\" languages=\\"mermaid\\"');
+      expect(content).toContain("Mermaid 语法只认半角");
+      expect(content).not.toContain("未压缩明文 mxGraph XML");
+    }
   });
 
   it("LLM detector 默认走当前 flash 解析,并沿用请求级 key/baseURL/模型别名", () => {

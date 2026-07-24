@@ -11,6 +11,7 @@ import {
   guardReset,
   withPrefixCacheGuardContext,
 } from "../llm/prefixCacheGuard.js";
+import { wrapModelWithDiagramVizEditing } from "../llm/diagramVizEditingPrompt.js";
 
 type TestMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -415,6 +416,48 @@ describe("prefixCacheGuard", () => {
 
     expect(() => callGuard("session-c", "turn", options(driftPrompt)))
       .toThrow(PrefixCacheGuardError);
+  });
+
+  it("图表编辑请求尾部注入不改变 system 消息集合和前缀快照", async () => {
+    process.env.QINGAGENT_PREFIX_CACHE_GUARD = "strict";
+    const systemMessages: TestMessage[] = [
+      { role: "system", content: "固定主 system" },
+      { role: "system", content: "固定工具规范" },
+    ];
+    const prompt: TestMessage[] = [
+      ...systemMessages,
+      { role: "user", content: [textPart("把图表改暖一点")] },
+    ];
+    const seenOptions: Array<{ prompt: TestMessage[]; tools: unknown[] }> = [];
+    const baseModel = {
+      async doGenerate(callOptions: { prompt: TestMessage[]; tools: unknown[] }) {
+        seenOptions.push(callOptions);
+        return { content: [], finishReason: "stop", usage: {}, warnings: [] };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const wrapped = wrapModelWithDiagramVizEditing(
+      baseModel,
+      '<diagram_viz_instruction purpose="edit" languages="mermaid">规范</diagram_viz_instruction>',
+    );
+
+    expect(callGuard("session-diagram-tail", "turn", options(prompt)).status)
+      .toBe("recorded");
+    await wrapped.doGenerate({
+      prompt,
+      tools: [tool("writeDraft")],
+    });
+
+    const injectedOptions = seenOptions[0]!;
+    expect(injectedOptions.prompt.filter((message) => message.role === "system"))
+      .toEqual(systemMessages);
+    expect(injectedOptions.prompt.at(-1)).toMatchObject({ role: "user" });
+    expect(JSON.stringify(injectedOptions.prompt.at(-1)?.content))
+      .toContain("diagram_viz_instruction");
+    expect(callGuard("session-diagram-tail", "turn", injectedOptions).status)
+      .toBe("passed");
   });
 
   it("strict 模式忽略任务清单请求级临时提醒，不把它当历史前缀漂移", () => {

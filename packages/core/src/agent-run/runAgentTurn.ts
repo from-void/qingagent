@@ -99,8 +99,8 @@ import {
 } from "./turnCleanup.js";
 import {
   activateDiagramVizSkill,
-  buildDiagramVizInstruction,
   DIAGRAM_VIZ_SKILL_NAME,
+  markDiagramVizEditing,
   type DiagramVizLanguage,
 } from "../skills/diagramViz.js";
 import {
@@ -334,17 +334,6 @@ export async function* runAgentTurn(
           })
           .join("\n")}\n\n[选区上下文] 用户选中了以上内容。选中本身不等于要改：若用户这轮要求修改（润色/改写/删/调整格式等），你**必须**调用 readDraft/editDraft 真正提交，不能只用文字声称已改；若用户只是要解释/评价/提问，正常回答即可，不必动文档。\n\n用户针对以上选中内容说：`
       : "";
-  if (selectionDiagramLanguages.size > 0) {
-    const diagramInstruction = buildDiagramVizInstruction(
-      selectionDiagramLanguages,
-      "selection",
-    );
-    selectionCtx = selectionCtx.replace(
-      "\n\n[选区上下文]",
-      `\n\n${diagramInstruction}\n\n[选区上下文]`,
-    );
-  }
-
   // 模型可见的用户正文(0702,对齐业界模式):有 richText(带 {{chip:N}} 占位)时按原位
   // 展开成内联 token(「技能：X」/「文件：X」…),chip 的位置=语义绑定,多 chip 穿插
   // ("A 用[抓网页],B 用[联网搜]")不再串台;无 richText 走纯文本,行为不变。
@@ -626,6 +615,9 @@ export async function* runAgentTurn(
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
     bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
+    if (selectionDiagramLanguages.size > 0) {
+      markDiagramVizEditing(requestContext, selectionDiagramLanguages);
+    }
     if (selectedSkillNames.includes(DIAGRAM_VIZ_SKILL_NAME)) {
       activateDiagramVizSkill(requestContext, userText);
     }

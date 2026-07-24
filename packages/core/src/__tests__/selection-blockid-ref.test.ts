@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../session/sessionState.js";
 import { tableSelectionTextSignature, type BridgeFrame, type PmDoc } from "@qingagent/contract-ts";
+import type { RequestContext } from "@mastra/core/request-context";
+import type { CoreMessage } from "ai";
+import {
+  appendDiagramVizEditingToPromptOptions,
+  diagramVizEditingSourceFromRequestContext,
+  resolveDiagramVizEditingContent,
+} from "../llm/diagramVizEditingPrompt.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -174,12 +181,24 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     expect(content).not.toContain('readDraft(query: "图表")');
     // 没把第11章表格内容错当成被引用内容
     expect(content).not.toContain("第11章");
-    // diagram 选区在第一下模型调用前就拿到按 lang 裁剪的编辑规范。
-    expect(content).toContain(
-      '<diagram_viz_instruction purpose="selection" languages="mermaid"',
+    // 编辑规范不进入线程历史，只在第一下 provider 请求尾部按 lang 裁剪注入。
+    expect(content).not.toContain("<diagram_viz_instruction");
+    const call = agentStreamCalls[0]!;
+    const requestContext = call.options.requestContext as RequestContext;
+    const instruction = resolveDiagramVizEditingContent(
+      diagramVizEditingSourceFromRequestContext(requestContext),
     );
-    expect(content).toContain("Mermaid 语法只认半角");
-    expect(content).not.toContain("未压缩明文 mxGraph XML");
+    const providerMessages = appendDiagramVizEditingToPromptOptions(
+      { prompt: call.messages },
+      instruction,
+    ).prompt as CoreMessage[];
+    expect(providerMessages.at(-1)?.role).toBe("user");
+    const providerTail = JSON.stringify(providerMessages.at(-1)?.content);
+    expect(providerTail).toContain(
+      'purpose=\\"edit\\" languages=\\"mermaid\\"',
+    );
+    expect(providerTail).toContain("Mermaid 语法只认半角");
+    expect(providerTail).not.toContain("未压缩明文 mxGraph XML");
   });
 
   it("文本部分选区:精确锁定所在段落块,同时点名块内具体选中的子串", async () => {

@@ -5,7 +5,6 @@ import { BUILTIN_SKILLS_DIR } from "./paths.js";
 
 export const DIAGRAM_VIZ_SKILL_NAME = "diagram-viz";
 export const DIAGRAM_VIZ_REQUEST_CONTEXT_KEY = "qingagentDiagramViz";
-export const DIAGRAM_VIZ_EDITING_PROCESSOR_ID = "diagram-viz-editing";
 
 export type DiagramVizLanguage = "mermaid" | "drawio";
 
@@ -142,7 +141,7 @@ function resolveWriteLanguages(
 
 export function buildDiagramVizInstruction(
   languages: Iterable<DiagramVizLanguage>,
-  purpose: "write" | "edit" | "selection",
+  purpose: "write" | "edit",
 ): string {
   const resources = loadDiagramVizResources();
   const resolved = uniqueLanguages(languages);
@@ -150,9 +149,7 @@ export function buildDiagramVizInstruction(
   const purposeLabel =
     purpose === "write"
       ? "writeDraft 内层生成"
-      : purpose === "selection"
-        ? "用户直接选中图表后的首步编辑"
-        : "readDraft 读取图表后的下一步编辑";
+      : "readDraft 读取图表后的下一步编辑";
   const sections = resolved.flatMap((language) =>
     language === "mermaid"
       ? [resources.mermaid, resources.mermaidPalettes, resources.mermaidTemplate]

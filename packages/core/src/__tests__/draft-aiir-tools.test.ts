@@ -18,12 +18,14 @@ import {
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
 import { RequestContext } from "@mastra/core/request-context";
-import { buildQingagentInputProcessors } from "../agents/processors.js";
 import {
-  DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
   DIAGRAM_VIZ_REQUEST_CONTEXT_KEY,
   type DiagramVizRequestState,
 } from "../skills/diagramViz.js";
+import {
+  diagramVizEditingSourceFromRequestContext,
+  wrapModelWithDiagramVizEditing,
+} from "../llm/diagramVizEditingPrompt.js";
 
 const ctx = {} as any;
 
@@ -287,7 +289,7 @@ describe("QingML draft tools", () => {
     expect(serializedDiff).not.toContain("<svg");
   });
 
-  it("readDraft 实际读到 diagram 后标记语言，下一 step processor 注入对应编辑规范", async () => {
+  it("readDraft 实际读到 diagram 后标记语言，下一次 provider 调用在尾部注入对应编辑规范", async () => {
     const state = createSession("s-diagram-read-processor");
     bindDoc(state, doc([{
       type: "diagram",
@@ -300,6 +302,23 @@ describe("QingML draft tools", () => {
     }]));
     const requestContext = new RequestContext();
     const { readDraftAiIr } = createSessionScopedTools(state);
+    const seenPrompts: unknown[][] = [];
+    const wrapped = wrapModelWithDiagramVizEditing(
+      {
+        async doGenerate(options: { prompt?: unknown }) {
+          seenPrompts.push(options.prompt as unknown[]);
+          return { content: [], finishReason: "stop", usage: {}, warnings: [] };
+        },
+        async doStream() {
+          return { stream: new ReadableStream() };
+        },
+      },
+      diagramVizEditingSourceFromRequestContext(requestContext),
+    );
+    const originalPrompt = [{ role: "user", content: "先读取图表" }];
+
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    expect(seenPrompts[0]).toBe(originalPrompt);
 
     const read = await readDraftAiIr.execute!(
       { mode: "full" },
@@ -313,26 +332,15 @@ describe("QingML draft tools", () => {
       editingLanguages: ["mermaid"],
     });
 
-    const processor = buildQingagentInputProcessors({ requestContext })
-      .find((item) => (item as { id?: string }).id === DIAGRAM_VIZ_EDITING_PROCESSOR_ID) as unknown as {
-        processInputStep: (args: {
-          requestContext: RequestContext;
-          messageList: { addSystem: (content: string, tag?: string) => unknown };
-        }) => Promise<unknown>;
-      };
-    const systems: string[] = [];
-    const messageList = {
-      addSystem: (content: string) => {
-        systems.push(content);
-        return messageList;
-      },
-    };
-    await processor.processInputStep({ requestContext, messageList });
+    await wrapped.doGenerate({ prompt: originalPrompt });
 
-    expect(systems).toHaveLength(1);
-    expect(systems[0]).toContain("readDraft 读取图表后的下一步编辑");
-    expect(systems[0]).toContain("Mermaid 语法只认半角");
-    expect(systems[0]).not.toContain("未压缩明文 mxGraph XML");
+    const providerPrompt = seenPrompts[1] as Array<{ role?: string; content?: unknown }>;
+    expect(providerPrompt).toHaveLength(2);
+    expect(providerPrompt.at(-1)?.role).toBe("user");
+    const instruction = JSON.stringify(providerPrompt.at(-1)?.content);
+    expect(instruction).toContain("readDraft 读取图表后的下一步编辑");
+    expect(instruction).toContain("Mermaid 语法只认半角");
+    expect(instruction).not.toContain("未压缩明文 mxGraph XML");
   });
 
   it("editDraft insertBlock 接受一段含多个块的 QingML", async () => {

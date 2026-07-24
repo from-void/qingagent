@@ -2,12 +2,14 @@ import type { Client, Row } from "@libsql/client";
 import {
   getStablePmJson,
   normalizePmDoc,
+  normalizeStoredPmDoc,
   type PmDoc,
 } from "@qingagent/pm-schema";
 import { getDocumentsClient, withWriteRetry } from "./documentsClient.js";
 import { ensureMigrated } from "./migrations.js";
 import {
   assertDocumentWriteAllowed,
+  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
   type DocumentWriteTarget,
 } from "./documentWriteGuard.js";
@@ -87,7 +89,7 @@ function parseDraftPm(value: unknown): PmDoc {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("Invalid document_drafts.draft_pm: expected JSON string");
   }
-  return normalizePmDoc(JSON.parse(value) as unknown);
+  return normalizeStoredPmDoc(JSON.parse(value) as unknown);
 }
 
 function parseConflict(value: unknown): unknown | null {
@@ -152,6 +154,7 @@ export async function savePendingDocumentDraft(
       operation: "documentDraft.savePending" as const,
     };
     assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,
@@ -210,6 +213,7 @@ export async function saveCandidateDocumentDraft(
       operation: "documentDraft.saveCandidate" as const,
     };
     assertDocumentWriteAllowed(target);
+    await assertDocumentWriteAllowedPersisted(c, target);
     const result = await c.execute({
       sql: `INSERT INTO document_drafts (
           doc_id, thread_id, base_version, base_hash, draft_pm, status,

@@ -188,7 +188,7 @@ describe("analyzeAiIrEditability", () => {
     });
   });
 
-  it("blockquote 多块或复杂子块标 lossy", () => {
+  it("blockquote 多块与复杂子块经 structured blocks 可无损替换", () => {
     const quote: PmBlockNode = {
       type: "blockquote",
       attrs: { blockId: "block-q" },
@@ -197,7 +197,6 @@ describe("analyzeAiIrEditability", () => {
 
     const result = analyzeAiIrEditability(quote);
 
-    expect(result.replaceBlockAllowed).toBe(false);
-    expect(result.lossyReasons).toEqual(expect.arrayContaining(["multiBlockBlockquote", "complexBlockquoteChild"]));
+    expect(result).toEqual({ replaceBlockAllowed: true, lossyReasons: [] });
   });
 });

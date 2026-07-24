@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDocumentsClient } from "../documentsClient.js";
 import { repairStoredDocumentRows } from "../documentRepo.js";
 import {
+  getMaxDocumentSnapshotVersion,
+  listVersions,
+} from "../documentVersionRepo.js";
+import {
   identifyQuarantine0002OverwriteCandidates,
 } from "../quarantine0002Audit.js";
 import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
@@ -36,7 +40,7 @@ describe("0024 document restore lineage and ops index", () => {
     await insertForeignVersion("current-high", "source-high", "thread-high", 2, "QUARANTINED-LOW");
 
     __resetMigrationsForTest();
-    const result = await runMigrations();
+    const result = await runMigrations(MIGRATIONS.slice(0, 24));
     expect(result.appliedIds).toEqual([24]);
 
     const origins = await client.execute(`
@@ -58,18 +62,13 @@ describe("0024 document restore lineage and ops index", () => {
         source_thread_id: "thread-low",
       },
     ]);
+    await expect(getMaxDocumentSnapshotVersion("current-low")).resolves.toBeNull();
+    await expect(listVersions("current-low")).resolves.toEqual([]);
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const stats = await repairStoredDocumentRows();
     expect(stats.versionPointersRepaired).toBe(0);
-    expect(warn).toHaveBeenCalledWith(
-      "[db:repair] 跳过异历史家族的高版本快照",
-      expect.objectContaining({
-        docId: "current-low",
-        sourceDocId: "source-low",
-        candidateDocVersion: 5,
-      }),
-    );
+    expect(warn).not.toHaveBeenCalled();
     await expect(readCurrent("current-low")).resolves.toEqual({
       docVersion: 1,
       text: "CURRENT-LOW",
@@ -87,7 +86,7 @@ describe("0024 document restore lineage and ops index", () => {
   });
 
   it("创建 (doc_id,to_version) 复合索引并被版本查询计划命中", async () => {
-    await runMigrations();
+    await runMigrations(MIGRATIONS.slice(0, 24));
     const client = getDocumentsClient();
     const indexes = await client.execute("PRAGMA index_list(document_ops)");
     expect(indexes.rows.map((row) => String(row.name))).toContain(
@@ -116,7 +115,7 @@ describe("0024 document restore lineage and ops index", () => {
       "QUARANTINED",
     );
     __resetMigrationsForTest();
-    await runMigrations();
+    await runMigrations(MIGRATIONS.slice(0, 24));
 
     await expect(identifyQuarantine0002OverwriteCandidates()).resolves.toEqual([]);
     const quarantinedPm = pmJson("QUARANTINED", "source-overwritten-p");

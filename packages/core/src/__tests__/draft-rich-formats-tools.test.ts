@@ -173,8 +173,8 @@ describe("draft rich formats session-scoped tools", () => {
     });
     expect(byRef.get("block-callout")).toMatchObject({
       type: "callout",
-      qingml: "<callout emoji=\"!\" tone=\"warning\">第一段提示<br/>第二段提示</callout>",
-      editability: { replaceBlockAllowed: false, lossyReasons: ["multiBlockBlockquote"] },
+      qingml: "<callout emoji=\"!\" tone=\"warning\"><p>第一段提示</p><p>第二段提示</p></callout>",
+      editability: { replaceBlockAllowed: true, lossyReasons: [] },
     });
     expect(byRef.get("block-math")).toMatchObject({
       type: "blockMath",
@@ -233,7 +233,7 @@ describe("draft rich formats session-scoped tools", () => {
   it("editDraft replaceBlock 对 taskList/callout/blockMath 坏 QingML 给出字段或 bad-block 错误", async () => {
     const cases: Array<{ name: string; block: string; field: string }> = [
       { name: "taskList", block: "<tasks></tasks>", field: "items" },
-      { name: "callout", block: "<callout><p>块级越界</p></callout>", field: "QingML bad-block" },
+      { name: "callout", block: "<callout><h2>callout 仅允许 paragraph</h2></callout>", field: "QingML bad-block" },
       { name: "blockMath", block: "<math-block></math-block>", field: "latex" },
     ];
 

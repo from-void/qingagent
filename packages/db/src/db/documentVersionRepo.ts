@@ -116,6 +116,12 @@ export async function listVersions(
   const result = await c.execute({
     sql: `SELECT * FROM document_versions
       WHERE doc_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )
       ORDER BY doc_version DESC`,
     args: [docId],
   });
@@ -137,6 +143,12 @@ export async function getLatestVersionRow(
   const result = await c.execute({
     sql: `SELECT * FROM document_versions
       WHERE doc_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )
       ORDER BY doc_version DESC
       LIMIT 1`,
     args: [docId],
@@ -157,7 +169,13 @@ export async function rollVersionRow(
           content_hash = ?,
           schema_version = ?,
           snapshot_pm = ?
-        WHERE version_id = ? AND doc_id = ?`,
+        WHERE version_id = ? AND doc_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM document_version_restore_origins origin
+            WHERE origin.version_id = document_versions.version_id
+              AND origin.restored_doc_id = document_versions.doc_id
+              AND origin.source_doc_id <> document_versions.doc_id
+          )`,
       args: [
         input.docVersion,
         input.contentHash,
@@ -179,7 +197,15 @@ export async function getMaxDocumentSnapshotVersion(
 ): Promise<number | null> {
   const c = await readyClient(client);
   const result = await c.execute({
-    sql: "SELECT MAX(doc_version) AS max_doc_version FROM document_versions WHERE doc_id = ?",
+    sql: `SELECT MAX(doc_version) AS max_doc_version
+      FROM document_versions
+      WHERE doc_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )`,
     args: [docId],
   });
   return valueAsNullableNumber(result.rows[0]?.max_doc_version);
@@ -191,7 +217,15 @@ export async function getMinDocumentSnapshotVersion(
 ): Promise<number | null> {
   const c = await readyClient(client);
   const result = await c.execute({
-    sql: "SELECT MIN(doc_version) AS min_doc_version FROM document_versions WHERE doc_id = ?",
+    sql: `SELECT MIN(doc_version) AS min_doc_version
+      FROM document_versions
+      WHERE doc_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )`,
     args: [docId],
   });
   return valueAsNullableNumber(result.rows[0]?.min_doc_version);
@@ -203,7 +237,14 @@ export async function getVersionSnapshot(
 ): Promise<DocumentVersionRow | null> {
   const c = await readyClient(client);
   const result = await c.execute({
-    sql: `SELECT * FROM document_versions WHERE version_id = ?`,
+    sql: `SELECT * FROM document_versions
+      WHERE version_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )`,
     args: [versionId],
   });
   const row = result.rows[0];
@@ -218,7 +259,13 @@ export async function getVersionSnapshotByDocumentSnapshot(
   const c = await readyClient(client);
   const result = await c.execute({
     sql: `SELECT * FROM document_versions
-      WHERE doc_id = ? AND doc_version = ?`,
+      WHERE doc_id = ? AND doc_version = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM document_version_restore_origins origin
+          WHERE origin.version_id = document_versions.version_id
+            AND origin.restored_doc_id = document_versions.doc_id
+            AND origin.source_doc_id <> document_versions.doc_id
+        )`,
     args: [docId, docVersion],
   });
   const row = result.rows[0];

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { AiBlock, AiListItem, AiRun, AiTableCell, AiTaskListItem } from "../aiIrSchema";
+import type { PmDoc } from "../../types";
+import {
+  aiBlockSchema,
+  type AiBlock,
+  type AiListItem,
+  type AiRun,
+  type AiTableCell,
+  type AiTaskListItem,
+} from "../aiIrSchema";
 import {
   aiBlockToQingml,
   aiBlocksToQingml,
@@ -7,6 +15,7 @@ import {
   aiTableRowToQingml,
 } from "../aiIrToQingml";
 import { qingmlParse, qingmlParseFragment } from "../qingmlParse";
+import { pmToAiIr } from "../pmToAiIr";
 
 function tableCell(
   runs: AiRun[],
@@ -186,5 +195,90 @@ describe("aiIrToQingml", () => {
       kind: "row",
       cells,
     });
+  });
+
+  it("PM→AI-IR→QingML→parse 保留多块 blockquote/callout 的块类型、列表和 marks", () => {
+    const pm: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "blockquote",
+          attrs: { blockId: "quote" },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "quote-p" },
+              content: [{ type: "text", text: "粗体段", marks: [{ type: "bold" }] }],
+            },
+            {
+              type: "heading",
+              attrs: { blockId: "quote-h", level: 3 },
+              content: [{ type: "text", text: "引用标题" }],
+            },
+            {
+              type: "bulletList",
+              attrs: { blockId: "quote-list" },
+              content: [{
+                type: "listItem",
+                attrs: { blockId: "quote-item" },
+                content: [{
+                  type: "paragraph",
+                  attrs: { blockId: "quote-item-p" },
+                  content: [{ type: "text", text: "列表项", marks: [{ type: "italic" }] }],
+                }],
+              }],
+            },
+          ],
+        },
+        {
+          type: "callout",
+          attrs: { blockId: "callout", emoji: "💡", tone: "info" },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "callout-p-1" },
+              content: [{ type: "text", text: "提示一" }],
+            },
+            {
+              type: "paragraph",
+              attrs: { blockId: "callout-p-2" },
+              content: [{ type: "text", text: "提示二", marks: [{ type: "underline" }] }],
+            },
+          ],
+        },
+      ],
+    };
+    const ir = pmToAiIr(pm);
+    const qingml = aiBlocksToQingml(ir.blocks);
+    expect(qingml).toContain(
+      "<blockquote><p><b>粗体段</b></p><h3>引用标题</h3><ul><li><i>列表项</i></li></ul></blockquote>",
+    );
+    expect(qingml).toContain(
+      '<callout emoji="💡" tone="info"><p>提示一</p><p><u>提示二</u></p></callout>',
+    );
+
+    const parsed = qingmlParse(qingml);
+    const withoutBlockIds = JSON.parse(JSON.stringify(ir.blocks, (key, value) =>
+      key === "blockId" ? undefined : value)) as AiBlock[];
+    expect(parsed.warnings.filter((warning) => warning.severity === "bad-block")).toEqual([]);
+    expect(parsed.blocks).toEqual(withoutBlockIds);
+  });
+
+  it("structured container schema 强制 runs/blocks 二选一，且 callout blocks 仅收 paragraph", () => {
+    expect(aiBlockSchema.safeParse({
+      type: "blockquote",
+      runs: [{ text: "旧式" }],
+      blocks: [{ type: "paragraph", runs: [{ text: "结构化" }] }],
+    }).success).toBe(false);
+    expect(aiBlockSchema.safeParse({ type: "blockquote" }).success).toBe(false);
+    expect(aiBlockSchema.safeParse({
+      type: "callout",
+      blocks: [{ type: "heading", level: 2, runs: [{ text: "非法标题" }] }],
+    }).success).toBe(false);
+    expect(aiBlockSchema.safeParse({
+      type: "callout",
+      blocks: [{ type: "paragraph", runs: [{ text: "合法段落" }] }],
+    }).success).toBe(true);
   });
 });

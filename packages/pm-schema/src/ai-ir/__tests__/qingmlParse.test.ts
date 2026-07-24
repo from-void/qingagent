@@ -245,7 +245,7 @@ describe("qingmlParse", () => {
     `);
   });
 
-  it("处理裸 <&、br、未知标签剥壳、blockquote p 合并和纯文本", () => {
+  it("处理裸 <&、br、未知标签剥壳、blockquote 子块保真和纯文本", () => {
     const bare = qingmlParse(`正文裸 <&;<br>尾`);
     expectValidBlocks(bare.blocks);
     expect(bare.blocks).toEqual([{ type: "paragraph", runs: [{ text: "正文裸 <&;\n尾" }] }]);
@@ -258,7 +258,13 @@ describe("qingmlParse", () => {
 
     const quote = qingmlParse(`<blockquote><p>a</p><p>b</p></blockquote>`);
     expectValidBlocks(quote.blocks);
-    expect(quote.blocks).toEqual([{ type: "blockquote", runs: [{ text: "a\nb" }] }]);
+    expect(quote.blocks).toEqual([{
+      type: "blockquote",
+      blocks: [
+        { type: "paragraph", runs: [{ text: "a" }] },
+        { type: "paragraph", runs: [{ text: "b" }] },
+      ],
+    }]);
     expect(quote.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
 
     const plain = qingmlParse(`纯文本无标签`);
@@ -271,7 +277,7 @@ describe("qingmlParse", () => {
     });
   });
 
-  it("区分 fence/前导话无害剥壳、块级拍平 bad-block 和 CJK 空白折叠", () => {
+  it("区分 fence/前导话无害剥壳、结构化 callout 和 CJK 空白折叠", () => {
     const fenced = qingmlParse("前导\n```qingml\n<p>正文</p>\n```\n收尾");
     expectValidBlocks(fenced.blocks);
     expect(fenced.blocks).toEqual([{ type: "paragraph", runs: [{ text: "正文" }] }]);
@@ -284,8 +290,11 @@ describe("qingmlParse", () => {
 
     const badInlineOnly = qingmlParse(`<callout><p>块级</p></callout>`);
     expectValidBlocks(badInlineOnly.blocks);
-    expect(badInlineOnly.blocks).toEqual([{ type: "callout", runs: [{ text: "块级" }] }]);
-    expect(badInlineOnly.warnings.some((warning) => warning.kind === "inline-block-flattened" && warning.severity === "bad-block")).toBe(true);
+    expect(badInlineOnly.blocks).toEqual([{
+      type: "callout",
+      blocks: [{ type: "paragraph", runs: [{ text: "块级" }] }],
+    }]);
+    expect(badInlineOnly.warnings.some((warning) => warning.severity === "bad-block")).toBe(false);
 
     const structuralUnknown = qingmlParse(`<foo><ul><li>结构</li></ul></foo>`);
     expectValidBlocks(structuralUnknown.blocks);

@@ -86,16 +86,7 @@ function containerContentToQingml(
   block: Extract<AiBlock, { type: "blockquote" | "callout" }>,
 ): string {
   return block.blocks
-    ? block.blocks.map((child) => {
-        if (
-          child.type === "paragraph"
-          || child.type === "heading"
-          || child.type === "penNote"
-        ) {
-          return runsToInline(child.runs);
-        }
-        return aiBlockToQingml(child);
-      }).join("<br/>")
+    ? aiBlocksToQingml(block.blocks)
     : runsToInline(block.runs);
 }
 

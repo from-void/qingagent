@@ -13,6 +13,7 @@ import {
 } from "@qingagent/db";
 import {
   assertDocumentWriteAllowed,
+  assertDocumentWriteAllowedPersisted,
   DocumentWriteBlockedError,
 } from "@qingagent/db/write-guard";
 import {
@@ -489,6 +490,11 @@ export async function commitDocumentOp(
     const projection = buildPmProjection({ pmDoc: nextDoc });
 
     assertDocumentWriteAllowed({
+      docId: input.docId,
+      threadId: input.threadId,
+      operation: "document.commit",
+    });
+    await assertDocumentWriteAllowedPersisted(client, {
       docId: input.docId,
       threadId: input.threadId,
       operation: "document.commit",

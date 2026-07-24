@@ -4,8 +4,6 @@ export type AiIrLossyReason =
   | "nestedList"
   | "multiBlockListItem"
   | "complexListItemBlock"
-  | "multiBlockBlockquote"
-  | "complexBlockquoteChild"
   | "columnLayout";
 
 export interface AiIrEditability {
@@ -13,7 +11,6 @@ export interface AiIrEditability {
   lossyReasons: AiIrLossyReason[];
 }
 
-const SIMPLE_CHILD_TYPES = new Set(["paragraph", "heading", "penNote"]);
 const LIST_CHILD_TYPES = new Set(["bulletList", "orderedList", "taskList"]);
 
 export function analyzeAiIrEditability(block: PmBlockNode): AiIrEditability {
@@ -37,7 +34,6 @@ function visitBlock(block: PmBlockNode, reasons: Set<AiIrLossyReason>): void {
   }
 
   if (block.type === "callout") {
-    if (block.content.length > 1) reasons.add("multiBlockBlockquote");
     return;
   }
 
@@ -69,9 +65,7 @@ function visitBlock(block: PmBlockNode, reasons: Set<AiIrLossyReason>): void {
   }
 
   if (block.type === "blockquote") {
-    if (block.content.length > 1) reasons.add("multiBlockBlockquote");
     for (const child of block.content) {
-      if (!SIMPLE_CHILD_TYPES.has(child.type)) reasons.add("complexBlockquoteChild");
       visitBlock(child, reasons);
     }
   }

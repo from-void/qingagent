@@ -241,7 +241,7 @@ describe("draft rich formats AI 草稿工具链路", () => {
         action: "insertBlock",
         position: "after",
         ref: "block-anchor",
-        blocks: "<callout><p>非法块级</p></callout>",
+        blocks: "<callout><h2>callout 仅允许 paragraph</h2></callout>",
       }],
     }, ctx) as any;
     expect(invalidCallout.ok).toBe(false);

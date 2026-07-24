@@ -48,7 +48,7 @@ export type AiColumn = {
 
 type AiContainerContent =
   | { runs: Array<AiRun>; blocks?: never }
-  | { blocks: Array<AiBlock>; runs?: Array<AiRun> };
+  | { blocks: Array<AiBlock>; runs?: never };
 
 export type AiBlock = {
   blockId?: string;

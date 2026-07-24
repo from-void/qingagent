@@ -8,6 +8,7 @@ import {
 import {
   restoreQuarantinedDocumentFamilies0002,
 } from "../migrations/0023_restore_quarantine_0002.js";
+import { runQuarantine0002Recovery } from "../quarantine0002Recovery.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
 describe("0023 restore quarantine 0002", () => {
@@ -26,7 +27,7 @@ describe("0023 restore quarantine 0002", () => {
     const client = getDocumentsClient();
     const result = await runMigrations();
 
-    expect(result.appliedIds.at(-1)).toBe(24);
+    expect(result.appliedIds.at(-1)).toBe(25);
     await expect(restoreQuarantinedDocumentFamilies0002(client)).resolves.toMatchObject({
       eligibleDocuments: 0,
       restoredDocuments: 0,
@@ -51,7 +52,7 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23, 24]);
+    expect(result.appliedIds).toEqual([23, 24, 25]);
     const row = await client.execute("SELECT title FROM documents WHERE id = 'old-doc'");
     expect(row.rows[0]?.title).toBe("旧库正文");
   });
@@ -80,7 +81,7 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23, 24]);
+    expect(result.appliedIds).toEqual([23, 24, 25]);
     const documents = await client.execute(
       "SELECT id, thread_id, title, role FROM documents ORDER BY thread_id",
     );
@@ -114,22 +115,25 @@ describe("0023 restore quarantine 0002", () => {
       "SELECT COUNT(*) AS n FROM documents WHERE thread_id = 'thread-missing'",
     )).rows[0]?.n)).toBe(0);
 
-    const second = await restoreQuarantinedDocumentFamilies0002(client);
+    const second = await runQuarantine0002Recovery();
     expect(second).toMatchObject({
       eligibleDocuments: 2,
       restoredDocuments: 0,
-      preservedQuarantinedFamilies: 1,
-      restoredDrafts: 0,
-      restoredSuggestions: 0,
-      restoredOps: 0,
-      restoredVersions: 0,
+      preservedCurrentDocuments: 2,
+      restoredDrafts: 1,
+      restoredSuggestions: 1,
+      restoredOps: 1,
+      restoredVersions: 1,
     });
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM document_versions WHERE doc_id = 'metadata-doc'",
+    )).rows[0]?.n)).toBe(0);
   });
 
   it.each([
     { label: "隔离版本高于当前版本", currentVersion: 1, quarantinedVersion: 5 },
     { label: "隔离版本低于当前版本", currentVersion: 5, quarantinedVersion: 1 },
-  ])("$label 时异 docId 家族不映射任何子表，巡检后当前正文不变", async ({
+  ])("$label 时 0025 隔离异 docId 子表，巡检后当前正文不变", async ({
     currentVersion,
     quarantinedVersion,
   }) => {

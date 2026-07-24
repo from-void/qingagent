@@ -261,7 +261,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     case "tasks":
       return { type: "taskList", items: parseTaskItems(element, ctx) };
     case "blockquote":
-      return { type: "blockquote", runs: parseInlineNodes(element.children, ctx, { paragraphBreaks: true, inlineOnlyTag: name }) };
+      return parseContainerBlock(element, ctx, "blockquote");
     case "hr":
       return { type: "horizontalRule" };
     case "pre":
@@ -270,7 +270,7 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
       warnIfTruncatedTableStructure(element, ctx);
       return { type: "table", rows: parseTableRows(element, ctx) };
     case "callout": {
-      const block: AiBlock = { type: "callout", runs: parseInlineNodes(element.children, ctx, { inlineOnlyTag: name }) };
+      const block = parseContainerBlock(element, ctx, "callout");
       const emoji = optionalString(element.attribs.emoji);
       const tone = oneOf(PM_CALLOUT_TONES, element.attribs.tone);
       if (emoji) block.emoji = emoji;
@@ -312,6 +312,36 @@ function parseBlockElement(element: DomElement, ctx: ParseContext): AiBlock | nu
     default:
       return null;
   }
+}
+
+function parseContainerBlock(
+  element: DomElement,
+  ctx: ParseContext,
+  type: "blockquote",
+): Extract<AiBlock, { type: "blockquote" }>;
+function parseContainerBlock(
+  element: DomElement,
+  ctx: ParseContext,
+  type: "callout",
+): Extract<AiBlock, { type: "callout" }>;
+function parseContainerBlock(
+  element: DomElement,
+  ctx: ParseContext,
+  type: "blockquote" | "callout",
+): Extract<AiBlock, { type: "blockquote" | "callout" }> {
+  const hasStructuredChildren = element.children.some(
+    (child) => isTag(child) && isBlockTagName(child.name),
+  );
+  if (hasStructuredChildren) {
+    return { type, blocks: parseNodesAsBlocks(element.children, ctx) };
+  }
+  return {
+    type,
+    runs: parseInlineNodes(element.children, ctx, {
+      paragraphBreaks: type === "blockquote",
+      inlineOnlyTag: type,
+    }),
+  };
 }
 
 function parseListItems(element: DomElement, ctx: ParseContext): AiListItem[] {

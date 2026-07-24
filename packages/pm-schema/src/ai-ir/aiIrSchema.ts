@@ -66,7 +66,7 @@ export type AiColumn = {
 
 type AiContainerContent =
   | { runs: AiRun[]; blocks?: never }
-  | { blocks: AiBlock[]; runs?: AiRun[] };
+  | { blocks: AiBlock[]; runs?: never };
 
 export type AiBlock = {
   /** 容器子块往返时保留 PM 块身份；模型新生成块可省略，由编译器稳定派生。 */
@@ -210,7 +210,10 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
       emoji: z.string().max(16).nullable().optional(),
       tone: z.enum(PM_CALLOUT_TONES).nullable().optional(),
       runs: z.array(aiRunSchema).optional(),
-      blocks: z.array(aiBlockSchema).min(1).optional(),
+      blocks: z.array(aiBlockSchema).min(1).refine(
+        (blocks) => blocks.every((block) => block.type === "paragraph"),
+        { message: "callout blocks must contain paragraphs only" },
+      ).optional(),
     }),
     z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("columnList"), columns: z.array(aiColumnSchema).min(2) }),
     z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("blockMath"), latex: z.string().min(1) }),
@@ -225,12 +228,14 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
   ]).superRefine((block, ctx) => {
     if (
       (block.type === "blockquote" || block.type === "callout")
-      && block.runs === undefined
-      && block.blocks === undefined
+      && (
+        (block.runs === undefined && block.blocks === undefined)
+        || (block.runs !== undefined && block.blocks !== undefined)
+      )
     ) {
       ctx.addIssue({
         code: "custom",
-        message: `${block.type} requires runs or blocks`,
+        message: `${block.type} requires exactly one of runs or blocks`,
       });
     }
   }) as unknown as z.ZodType<AiBlock>,

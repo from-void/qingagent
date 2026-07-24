@@ -7,17 +7,18 @@ export interface Quarantine0002OverwriteCandidate {
   sourceThreadId: string;
   versionId: string;
   docVersion: number;
-  confidence: "exact_snapshot" | "matching_hash";
+  confidence: "exact_snapshot" | "matching_hash" | "persisted_block";
   currentUpdatedAt: string;
 }
 
 /**
  * 只读识别 0023 旧实现可能造成的当前正文覆盖。
  *
- * 仅报告同时满足以下证据的行：
+ * 首次识别报告同时满足以下证据的行：
  * 1. 版本可由 0024 血缘账本追溯到另一 source docId；
  * 2. 当前 documents 指针正落在该隔离版本；
  * 3. 当前 doc_pm 与隔离快照完全一致，或 content_hash 一致。
+ * 0025 持久化阻断后，即使 PM 兼容规整改变了表示，也继续报告到人工解除为止。
  */
 export async function identifyQuarantine0002OverwriteCandidates(): Promise<
   Quarantine0002OverwriteCandidate[]
@@ -35,7 +36,7 @@ export async function identifyQuarantine0002OverwriteCandidates(): Promise<
     );
   }
 
-  const result = await client.execute(`
+  const activeResult = await client.execute(`
     SELECT
       d.id AS current_doc_id,
       d.thread_id AS current_thread_id,
@@ -66,7 +67,56 @@ export async function identifyQuarantine0002OverwriteCandidates(): Promise<
     ORDER BY d.thread_id, d.id, version.doc_version DESC
   `);
 
-  return result.rows.map((row) => ({
+  const rows = [...activeResult.rows];
+  const quarantine0025Table = await client.execute(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'document_versions_quarantine_0025'
+    LIMIT 1
+  `);
+  const writeBlocksTable = await client.execute(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'document_write_blocks'
+    LIMIT 1
+  `);
+  if (
+    quarantine0025Table.rows.length > 0
+    && writeBlocksTable.rows.length > 0
+  ) {
+    const isolatedResult = await client.execute(`
+      SELECT
+        d.id AS current_doc_id,
+        d.thread_id AS current_thread_id,
+        block.source_doc_id,
+        block.source_thread_id,
+        version.version_id,
+        version.doc_version,
+        d.updated_at AS current_updated_at,
+        CASE
+          WHEN d.doc_pm = version.snapshot_pm THEN 'exact_snapshot'
+          WHEN d.content_hash IS NOT NULL
+            AND d.content_hash = version.content_hash THEN 'matching_hash'
+          ELSE 'persisted_block'
+        END AS confidence
+      FROM document_write_blocks block
+      INNER JOIN documents d ON d.id = block.doc_id
+      INNER JOIN document_versions_quarantine_0025 version
+        ON version.version_id = block.version_id
+      WHERE block.reason = 'quarantine_0002_foreign_snapshot'
+      ORDER BY d.thread_id, d.id, version.doc_version DESC
+    `);
+    rows.push(...isolatedResult.rows);
+  }
+
+  const unique = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    unique.set(
+      `${String(row.current_doc_id)}:${String(row.version_id)}`,
+      row,
+    );
+  }
+  return [...unique.values()].map((row) => ({
     currentDocId: String(row.current_doc_id),
     currentThreadId: String(row.current_thread_id),
     sourceDocId: String(row.source_doc_id),

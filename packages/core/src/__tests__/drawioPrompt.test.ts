@@ -75,6 +75,19 @@ describe("图表技能静态提示词契约", () => {
     });
   });
 
+  it("diagram-viz 约束大图通过文档工具分层或增量施工", () => {
+    const skill = readSkillFile("diagram-viz/SKILL.md");
+    for (const keyword of [
+      "`writeDraft` / `editDraft` 落入文档",
+      "严禁在聊天回复里直接手打整段 XML 或 Mermaid 长源码",
+      "单图节点建议不超过 25 个",
+      "按层拆成多张图（每层一张）",
+      "再用 `editDraft` 增量补充节点",
+    ]) {
+      expect(skill).toContain(keyword);
+    }
+  });
+
   it("image-gen 只保留 SVG 配图职责和现行文档工具口径", () => {
     const skill = readSkillFile("image-gen/SKILL.md");
     expect(skill).toContain("本技能只负责**生成式 SVG 插画资产**");

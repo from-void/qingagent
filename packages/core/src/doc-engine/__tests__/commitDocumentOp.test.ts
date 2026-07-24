@@ -717,6 +717,46 @@ describe("commitDocumentOp", () => {
     expect(versions[0]).toMatchObject({ parentVersion: 2 });
   });
 
+  it("系统时钟回拨时开启新版本窗口，不把后续编辑错误折叠进未来版本", async () => {
+    await seedDocument("doc-coalesce-clock-rollback", "before", 1);
+
+    const first = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-clock-rollback",
+        threadId: "thread-doc-coalesce-clock-rollback",
+        clientMutationId: "client-clock-rollback-1",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("first edit") }),
+      }),
+      { now: () => "2026-01-02T00:01:00.000Z" },
+    );
+    expect(first).toMatchObject({ status: "committed", docVersion: 2 });
+
+    const second = await commitDocumentOp(
+      commitInput({
+        docId: "doc-coalesce-clock-rollback",
+        threadId: "thread-doc-coalesce-clock-rollback",
+        expectedDocumentSnapshot: 2,
+        clientMutationId: "client-clock-rollback-2",
+        coalesce: { windowMs: 60_000 },
+        apply: () => ({ nextDoc: pmDocFromText("second edit after rollback") }),
+      }),
+      { now: () => "2026-01-02T00:00:30.000Z" },
+    );
+
+    expect(second).toMatchObject({ status: "committed", docVersion: 3 });
+    const versions = await listVersions("doc-coalesce-clock-rollback");
+    expect(versions.map((version) => version.docVersion)).toEqual([3, 2]);
+    expect(versions[0]).toMatchObject({
+      parentVersion: 2,
+      createdAt: "2026-01-02T00:00:30.000Z",
+    });
+    expect(versions[1]).toMatchObject({
+      docVersion: 2,
+      createdAt: "2026-01-02T00:01:00.000Z",
+    });
+  });
+
   it("starts a new user coalesce window after an agent version", async () => {
     await seedDocument("doc-coalesce-agent", "before", 1);
 

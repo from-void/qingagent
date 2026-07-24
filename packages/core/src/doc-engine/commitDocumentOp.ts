@@ -223,7 +223,8 @@ function isWithinCoalesceWindow(input: {
   const nowMs = Date.parse(input.now);
   const createdAtMs = Date.parse(input.createdAt);
   if (!Number.isFinite(nowMs) || !Number.isFinite(createdAtMs)) return false;
-  return nowMs - createdAtMs < input.windowMs;
+  const elapsed = nowMs - createdAtMs;
+  return elapsed >= 0 && elapsed < input.windowMs;
 }
 
 async function committedResultFromOp(

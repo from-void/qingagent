@@ -64,10 +64,17 @@ export type AiColumn = {
   blocks: AiBlock[];
 };
 
-export type AiBlock =
+type AiContainerContent =
+  | { runs: AiRun[]; blocks?: never }
+  | { blocks: AiBlock[]; runs?: AiRun[] };
+
+export type AiBlock = {
+  /** 容器子块往返时保留 PM 块身份；模型新生成块可省略，由编译器稳定派生。 */
+  blockId?: string;
+} & (
   | { type: "paragraph"; runs: AiRun[]; textAlign?: AiTextAlign }
   | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; anchor?: string | null; runs: AiRun[]; textAlign?: AiTextAlign }
-  | { type: "blockquote"; runs: AiRun[] }
+  | ({ type: "blockquote" } & AiContainerContent)
   | { type: "codeBlock"; language?: string | null; text: string }
   | { type: "bulletList"; items: AiListItem[] }
   | { type: "orderedList"; items: AiListItem[]; start?: number | null; listStyle?: (typeof PM_ORDERED_LIST_STYLES)[number] | null }
@@ -86,15 +93,15 @@ export type AiBlock =
   | { type: "fileAttachment"; fileId: string; filename: string; mimeType: string; size: number }
   | { type: "penNote"; runs: AiRun[] }
   | { type: "taskList"; items: AiTaskListItem[] }
-  | {
+  | ({
       type: "callout";
       emoji?: string | null;
       tone?: (typeof PM_CALLOUT_TONES)[number] | null;
-      runs: AiRun[];
-    }
+    } & AiContainerContent)
   | { type: "columnList"; columns: AiColumn[] }
   | { type: "blockMath"; latex: string }
-  | { type: "diagram"; lang: string; source: string; svg?: string | null };
+  | { type: "diagram"; lang: string; source: string; svg?: string | null }
+);
 
 function aiBlockContainsTable(block: AiBlock): boolean {
   if (block.type === "table") return true;
@@ -154,22 +161,33 @@ export const aiColumnSchema: z.ZodType<AiColumn> = z.lazy(() =>
   }),
 );
 
+const aiBlockIdentitySchemaShape = {
+  blockId: z.string().min(1).optional(),
+};
+
 export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
   z.discriminatedUnion("type", [
-    z.object({ type: z.literal("paragraph"), runs: z.array(aiRunSchema), textAlign: aiTextAlignSchema.optional() }),
-    z.object({ type: z.literal("heading"), level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]), anchor: z.string().nullable().optional(), runs: z.array(aiRunSchema), textAlign: aiTextAlignSchema.optional() }),
-    z.object({ type: z.literal("blockquote"), runs: z.array(aiRunSchema) }),
-    z.object({ type: z.literal("codeBlock"), language: z.string().nullable().optional(), text: z.string() }),
-    z.object({ type: z.literal("bulletList"), items: z.array(aiListItemSchema).min(1) }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("paragraph"), runs: z.array(aiRunSchema), textAlign: aiTextAlignSchema.optional() }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("heading"), level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]), anchor: z.string().nullable().optional(), runs: z.array(aiRunSchema), textAlign: aiTextAlignSchema.optional() }),
     z.object({
+      ...aiBlockIdentitySchemaShape,
+      type: z.literal("blockquote"),
+      runs: z.array(aiRunSchema).optional(),
+      blocks: z.array(aiBlockSchema).min(1).optional(),
+    }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("codeBlock"), language: z.string().nullable().optional(), text: z.string() }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("bulletList"), items: z.array(aiListItemSchema).min(1) }),
+    z.object({
+      ...aiBlockIdentitySchemaShape,
       type: z.literal("orderedList"),
       items: z.array(aiListItemSchema).min(1),
       start: z.number().int().positive().nullable().optional(),
       listStyle: aiOrderedListStyleSchema.nullable().optional(),
     }),
-    z.object({ type: z.literal("horizontalRule") }),
-    z.object({ type: z.literal("table"), rows: z.array(aiTableRowSchema).min(1) }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("horizontalRule") }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("table"), rows: z.array(aiTableRowSchema).min(1) }),
     z.object({
+      ...aiBlockIdentitySchemaShape,
       type: z.literal("image"),
       src: z.string().refine(isAllowedImageSrc, { message: "image src is not allowed" }),
       alt: z.string().nullable().optional(),
@@ -179,28 +197,43 @@ export const aiBlockSchema: z.ZodType<AiBlock> = z.lazy(() =>
       height: z.number().int().positive().nullable().optional(),
       align: aiImageAlignSchema.nullable().optional(),
     }),
-    z.object({ type: z.literal("fileAttachment"), fileId: z.string().min(1), filename: z.string().min(1), mimeType: z.string().min(1), size: z.number().int().nonnegative() }),
-    z.object({ type: z.literal("penNote"), runs: z.array(aiRunSchema) }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("fileAttachment"), fileId: z.string().min(1), filename: z.string().min(1), mimeType: z.string().min(1), size: z.number().int().nonnegative() }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("penNote"), runs: z.array(aiRunSchema) }),
     z.object({
+      ...aiBlockIdentitySchemaShape,
       type: z.literal("taskList"),
       items: z.array(aiTaskListItemSchema).min(1),
     }),
     z.object({
+      ...aiBlockIdentitySchemaShape,
       type: z.literal("callout"),
       emoji: z.string().max(16).nullable().optional(),
       tone: z.enum(PM_CALLOUT_TONES).nullable().optional(),
-      runs: z.array(aiRunSchema),
+      runs: z.array(aiRunSchema).optional(),
+      blocks: z.array(aiBlockSchema).min(1).optional(),
     }),
-    z.object({ type: z.literal("columnList"), columns: z.array(aiColumnSchema).min(2) }),
-    z.object({ type: z.literal("blockMath"), latex: z.string().min(1) }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("columnList"), columns: z.array(aiColumnSchema).min(2) }),
+    z.object({ ...aiBlockIdentitySchemaShape, type: z.literal("blockMath"), latex: z.string().min(1) }),
     // 图表块:lang(目前 mermaid)+ source 源码;svg 客户端渲染缓存,agent 生成时可缺省/null。
     z.object({
+      ...aiBlockIdentitySchemaShape,
       type: z.literal("diagram"),
       lang: z.string().min(1),
       source: z.string().min(1),
       svg: z.string().nullable().optional(),
     }),
-  ]) as unknown as z.ZodType<AiBlock>,
+  ]).superRefine((block, ctx) => {
+    if (
+      (block.type === "blockquote" || block.type === "callout")
+      && block.runs === undefined
+      && block.blocks === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: `${block.type} requires runs or blocks`,
+      });
+    }
+  }) as unknown as z.ZodType<AiBlock>,
 );
 
 export const aiDocumentSchema = z.object({

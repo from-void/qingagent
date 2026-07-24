@@ -102,7 +102,12 @@ describe("嵌套列表格式与只读自检", () => {
 function collectRunTexts(blocks: readonly AiBlock[]): string[] {
   const out: string[] = [];
   const visit = (block: AiBlock): void => {
-    if ("runs" in block) out.push(...block.runs.map((run) => run.text));
+    if ("runs" in block && Array.isArray(block.runs)) {
+      out.push(...block.runs.map((run) => run.text));
+    }
+    if ((block.type === "blockquote" || block.type === "callout") && block.blocks) {
+      for (const child of block.blocks) visit(child);
+    }
     if (block.type === "bulletList" || block.type === "orderedList") {
       for (const item of block.items) {
         out.push(...item.runs.map((run) => run.text));

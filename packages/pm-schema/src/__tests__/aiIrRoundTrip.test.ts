@@ -403,7 +403,87 @@ describe("aiIrRoundTrip", () => {
 
     expect(safeParsePmDoc(pm).success).toBe(true);
     // 关键:往返后列表项/引用的 marks 必须还在(修复前这里会因 pmToPlainText 拍平成纯文本而失败)
-    expect(back.blocks).toEqual(ir.blocks);
+    expect(back.blocks.slice(0, 2)).toEqual(ir.blocks.slice(0, 2));
+    expect(back.blocks[2]).toMatchObject({
+      type: "blockquote",
+      blocks: [{
+        type: "paragraph",
+        runs: [{ text: "引用里有" }, { text: "斜体", marks: [{ type: "italic" }] }],
+      }],
+    });
+  });
+
+  it("多块 blockquote 与多段 callout 往返保留子块边界、类型、marks 和 blockId", () => {
+    const source: PmDoc = {
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        {
+          type: "blockquote",
+          attrs: { blockId: "quote" },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "quote-p-1" },
+              content: [{ type: "text", text: "第一段", marks: [{ type: "bold" }] }],
+            },
+            {
+              type: "heading",
+              attrs: { blockId: "quote-h-2", level: 3 },
+              content: [{ type: "text", text: "引用内标题" }],
+            },
+          ],
+        },
+        {
+          type: "callout",
+          attrs: { blockId: "callout", emoji: "💡", tone: "info" },
+          content: [
+            {
+              type: "paragraph",
+              attrs: { blockId: "callout-p-1" },
+              content: [{ type: "text", text: "提示一" }],
+            },
+            {
+              type: "paragraph",
+              attrs: { blockId: "callout-p-2" },
+              content: [{ type: "text", text: "提示二", marks: [{ type: "italic" }] }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const ir = pmToAiIr(source);
+    expect(ir.blocks).toMatchObject([
+      {
+        type: "blockquote",
+        blocks: [
+          { type: "paragraph", blockId: "quote-p-1" },
+          { type: "heading", blockId: "quote-h-2", level: 3 },
+        ],
+      },
+      {
+        type: "callout",
+        blocks: [
+          { type: "paragraph", blockId: "callout-p-1" },
+          { type: "paragraph", blockId: "callout-p-2" },
+        ],
+      },
+    ]);
+
+    const roundTrip = aiIrToPm(ir);
+    expect(safeParsePmDoc(roundTrip).success).toBe(true);
+    expect(roundTrip.content[0]?.type === "blockquote"
+      ? roundTrip.content[0].content
+      : null).toEqual(source.content[0]?.type === "blockquote"
+        ? source.content[0].content
+        : null);
+    expect(roundTrip.content[1]?.type === "callout"
+      ? roundTrip.content[1].content
+      : null).toEqual(source.content[1]?.type === "callout"
+        ? source.content[1].content
+        : null);
+    expect(pmToAiIr(roundTrip)).toEqual(ir);
   });
 
   it("orderedList.listStyle 在 AI-IR ↔ PM 往返中只为非默认样式保留", () => {
@@ -590,7 +670,17 @@ describe("aiIrRoundTrip", () => {
         { type: "text", text: " 改变了物理学。" },
       ],
     });
-    expect(back.blocks).toEqual(ir.blocks);
+    expect(back.blocks[0]).toEqual(ir.blocks[0]);
+    expect(back.blocks[1]).toMatchObject({
+      type: "callout",
+      emoji: "⚠️",
+      tone: "warning",
+      blocks: [{
+        type: "paragraph",
+        runs: [{ text: "注意:" }, { text: "高风险", marks: [{ type: "bold" }] }],
+      }],
+    });
+    expect(back.blocks.slice(2)).toEqual(ir.blocks.slice(2));
   });
 
   it("多级 taskList children 编译、AI-IR 往返与 Markdown 导出都保留层级", () => {

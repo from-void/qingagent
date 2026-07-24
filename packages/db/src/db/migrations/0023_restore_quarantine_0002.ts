@@ -7,6 +7,7 @@ export interface Quarantine0002RecoveryReport {
   eligibleDocuments: number;
   restoredDocuments: number;
   preservedCurrentDocuments: number;
+  preservedQuarantinedFamilies: number;
   skippedDocumentConflicts: number;
   restoredDrafts: number;
   restoredSuggestions: number;
@@ -19,6 +20,7 @@ function emptyReport(): Quarantine0002RecoveryReport {
     eligibleDocuments: 0,
     restoredDocuments: 0,
     preservedCurrentDocuments: 0,
+    preservedQuarantinedFamilies: 0,
     skippedDocumentConflicts: 0,
     restoredDrafts: 0,
     restoredSuggestions: 0,
@@ -64,12 +66,15 @@ async function restoreDocument(
   client: Client,
   row: Row,
   report: Quarantine0002RecoveryReport,
-): Promise<string | null> {
+): Promise<{ targetDocId: string; restoreChildren: boolean } | null> {
+  const sourceDocId = String(row.id);
   const threadId = String(row.thread_id);
   const existingId = await currentMainDocumentId(client, threadId);
   if (existingId) {
     report.preservedCurrentDocuments += 1;
-    return existingId;
+    const restoreChildren = existingId === sourceDocId;
+    if (!restoreChildren) report.preservedQuarantinedFamilies += 1;
+    return { targetDocId: existingId, restoreChildren };
   }
 
   const result = await client.execute({
@@ -99,7 +104,9 @@ async function restoreDocument(
   report.restoredDocuments += result.rowsAffected;
   const restoredId = await currentMainDocumentId(client, threadId);
   if (!restoredId) report.skippedDocumentConflicts += 1;
-  return restoredId;
+  return restoredId
+    ? { targetDocId: restoredId, restoreChildren: restoredId === sourceDocId }
+    : null;
 }
 
 async function restoreDraft(
@@ -254,8 +261,9 @@ async function restoreVersions(
 }
 
 /**
- * 将 0002 旧形态隔离表显式映射到当前 schema。当前 main 行优先；子表在主行
- * 冲突时映射到当前 main docId；所有主键/唯一键冲突均保留当前数据。
+ * 将 0002 旧形态隔离表显式映射到当前 schema。当前 main 行优先；仅当当前
+ * main docId 与隔离源 docId 相同时才恢复子表。不同 docId 即不同历史家族，
+ * 隔离 versions / ops / drafts / suggestions 原样留在隔离表等待人工判断。
  */
 export async function restoreQuarantinedDocumentFamilies0002(
   client: Client,
@@ -280,8 +288,9 @@ export async function restoreQuarantinedDocumentFamilies0002(
   for (const row of eligible.rows) {
     const sourceDocId = String(row.id);
     const threadId = String(row.thread_id);
-    const targetDocId = await restoreDocument(client, row, report);
-    if (!targetDocId) continue;
+    const target = await restoreDocument(client, row, report);
+    if (!target || !target.restoreChildren) continue;
+    const { targetDocId } = target;
     report.restoredDrafts += await restoreDraft(client, sourceDocId, targetDocId, threadId);
     report.restoredSuggestions += await restoreSuggestions(client, sourceDocId, targetDocId);
     report.restoredOps += await restoreOps(client, sourceDocId, targetDocId);

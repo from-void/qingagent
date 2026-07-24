@@ -363,7 +363,12 @@ const listItemSchema: LazyNode = z.lazy(() =>
   z.object({
     type: z.literal("listItem"),
     attrs: blockIdSchema,
-    content: z.array(blockNodeSchema).min(1),
+    content: z
+      .array(blockNodeSchema)
+      .min(1)
+      .refine((content) => (content[0] as { type?: unknown } | undefined)?.type === "paragraph", {
+        message: "listItem content must start with paragraph",
+      }),
   }),
 );
 

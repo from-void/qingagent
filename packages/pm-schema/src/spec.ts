@@ -156,7 +156,7 @@ export const pmSchemaSpec = {
     blockquote: { group: "block", content: "block+", attrs: ["blockId"] },
     bulletList: { group: "block", content: "listItem+", attrs: ["blockId"] },
     orderedList: { group: "block", content: "listItem+", attrs: ["blockId", "start", "listStyle"] },
-    listItem: { group: "block", content: "block+", attrs: ["blockId"] },
+    listItem: { group: "block", content: "paragraph block*", attrs: ["blockId"] },
     horizontalRule: { group: "block", attrs: ["blockId"] },
     codeBlock: { group: "block", content: "text*", attrs: ["blockId", "language"] },
     table: { group: "block", content: "tableRow+", attrs: ["blockId"] },

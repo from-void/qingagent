@@ -45,6 +45,7 @@ afterEach(() => {
 const APP_TABLES = [
   "documents",
   "document_versions",
+  "document_version_restore_origins",
   "document_ops",
   "document_suggestions",
   "document_drafts",

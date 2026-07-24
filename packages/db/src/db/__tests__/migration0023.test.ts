@@ -3,6 +3,9 @@ import { getDocumentsClient } from "../documentsClient.js";
 import { __resetMigrationsForTest, runMigrations } from "../migrations.js";
 import { MIGRATIONS } from "../migrations/index.js";
 import {
+  repairStoredDocumentRows,
+} from "../documentRepo.js";
+import {
   restoreQuarantinedDocumentFamilies0002,
 } from "../migrations/0023_restore_quarantine_0002.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
@@ -23,7 +26,7 @@ describe("0023 restore quarantine 0002", () => {
     const client = getDocumentsClient();
     const result = await runMigrations();
 
-    expect(result.appliedIds.at(-1)).toBe(23);
+    expect(result.appliedIds.at(-1)).toBe(24);
     await expect(restoreQuarantinedDocumentFamilies0002(client)).resolves.toMatchObject({
       eligibleDocuments: 0,
       restoredDocuments: 0,
@@ -48,12 +51,12 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23]);
+    expect(result.appliedIds).toEqual([23, 24]);
     const row = await client.execute("SELECT title FROM documents WHERE id = 'old-doc'");
     expect(row.rows[0]?.title).toBe("旧库正文");
   });
 
-  it("RF4/F13: 无保险丝 0002 隔离家族按现存 thread 恢复，metadata 主行冲突时当前行胜出", async () => {
+  it("RF4/F13: 无保险丝 0002 隔离家族按现存 thread 恢复，异 docId 主行冲突时只保留隔离子表", async () => {
     const client = getDocumentsClient();
     await runMigrations(MIGRATIONS.slice(0, 22));
     await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
@@ -77,7 +80,7 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23]);
+    expect(result.appliedIds).toEqual([23, 24]);
     const documents = await client.execute(
       "SELECT id, thread_id, title, role FROM documents ORDER BY thread_id",
     );
@@ -89,7 +92,6 @@ describe("0023 restore quarantine 0002", () => {
       "SELECT doc_id, thread_id, batch_id FROM document_drafts ORDER BY doc_id",
     );
     expect(drafts.rows).toMatchObject([
-      { doc_id: "metadata-doc", thread_id: "thread-conflict", batch_id: "legacy" },
       { doc_id: "quarantine-direct", thread_id: "thread-direct", batch_id: "legacy" },
     ]);
     const suggestions = await client.execute(
@@ -97,14 +99,16 @@ describe("0023 restore quarantine 0002", () => {
         FROM document_suggestions ORDER BY doc_id`,
     );
     expect(suggestions.rows).toMatchObject([
-      { doc_id: "metadata-doc", batch_id: "legacy", kind: "revision", severity: null },
       { doc_id: "quarantine-direct", batch_id: "legacy", kind: "revision", severity: null },
     ]);
     expect(Number((await client.execute(
       "SELECT COUNT(*) AS n FROM document_versions WHERE doc_id = 'metadata-doc'",
-    )).rows[0]?.n)).toBe(1);
+    )).rows[0]?.n)).toBe(0);
     expect(Number((await client.execute(
       "SELECT COUNT(*) AS n FROM document_ops WHERE doc_id = 'metadata-doc'",
+    )).rows[0]?.n)).toBe(0);
+    expect(Number((await client.execute(
+      "SELECT COUNT(*) AS n FROM document_versions_quarantine_0002 WHERE doc_id = 'quarantine-conflict'",
     )).rows[0]?.n)).toBe(1);
     expect(Number((await client.execute(
       "SELECT COUNT(*) AS n FROM documents WHERE thread_id = 'thread-missing'",
@@ -114,11 +118,81 @@ describe("0023 restore quarantine 0002", () => {
     expect(second).toMatchObject({
       eligibleDocuments: 2,
       restoredDocuments: 0,
+      preservedQuarantinedFamilies: 1,
       restoredDrafts: 0,
       restoredSuggestions: 0,
       restoredOps: 0,
       restoredVersions: 0,
     });
+  });
+
+  it.each([
+    { label: "隔离版本高于当前版本", currentVersion: 1, quarantinedVersion: 5 },
+    { label: "隔离版本低于当前版本", currentVersion: 5, quarantinedVersion: 1 },
+  ])("$label 时异 docId 家族不映射任何子表，巡检后当前正文不变", async ({
+    currentVersion,
+    quarantinedVersion,
+  }) => {
+    const client = getDocumentsClient();
+    await runMigrations(MIGRATIONS.slice(0, 22));
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute("INSERT INTO mastra_threads(id) VALUES ('thread-family-conflict')");
+    await create0002QuarantineTables();
+    await insertQuarantinedFamily(
+      "quarantined-family",
+      "thread-family-conflict",
+      "隔离正文",
+    );
+    const currentPm = pmJson("CURRENT", "current-p");
+    const quarantinedPm = pmJson("QUARANTINED", "quarantined-p");
+    await client.execute({
+      sql: `UPDATE documents_quarantine_0002
+        SET doc_version = ?, version = ?, doc_pm = ?, content_hash = 'quarantined-hash'
+        WHERE id = 'quarantined-family'`,
+      args: [quarantinedVersion, quarantinedVersion, quarantinedPm],
+    });
+    await client.execute({
+      sql: `UPDATE document_versions_quarantine_0002
+        SET doc_version = ?, snapshot_pm = ?, content_hash = 'quarantined-hash'
+        WHERE doc_id = 'quarantined-family'`,
+      args: [quarantinedVersion, quarantinedPm],
+    });
+    await client.execute({
+      sql: `INSERT INTO documents (
+        id, thread_id, resource_id, title, doc_state, doc_version,
+        last_synced_version, doc_pm, doc_schema_version, content_hash,
+        doc_format, version, created_at, updated_at, role
+      ) VALUES (
+        'current-family', 'thread-family-conflict', 'qingagent-user', '当前正文',
+        'editing', ?, ?, ?, 1, 'current-hash', 'pm', ?,
+        '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z', 'main'
+      )`,
+      args: [currentVersion, currentVersion, currentPm, currentVersion],
+    });
+    __resetMigrationsForTest();
+
+    await runMigrations();
+    const stats = await repairStoredDocumentRows();
+
+    expect(stats.versionPointersRepaired).toBe(0);
+    const current = await client.execute(
+      "SELECT doc_version, doc_pm FROM documents WHERE id = 'current-family'",
+    );
+    expect(Number(current.rows[0]?.doc_version)).toBe(currentVersion);
+    expect(JSON.parse(String(current.rows[0]?.doc_pm))).toEqual(JSON.parse(currentPm));
+    for (const table of [
+      "document_drafts",
+      "document_suggestions",
+      "document_ops",
+      "document_versions",
+    ]) {
+      expect(Number((await client.execute(
+        `SELECT COUNT(*) AS n FROM ${table} WHERE doc_id = 'current-family'`,
+      )).rows[0]?.n)).toBe(0);
+      expect(Number((await client.execute(
+        `SELECT COUNT(*) AS n FROM ${table}_quarantine_0002 WHERE doc_id = 'quarantined-family'`,
+      )).rows[0]?.n)).toBe(1);
+    }
   });
 
   async function create0002QuarantineTables(): Promise<void> {
@@ -187,6 +261,18 @@ describe("0023 restore quarantine 0002", () => {
       ) VALUES (?, ?, 2, 'old-hash', 1, 'agent', '旧版本',
         '{"type":"doc","content":[]}', 1, ?)`,
       args: [`version-${docId}`, docId, now],
+    });
+  }
+
+  function pmJson(text: string, blockId: string): string {
+    return JSON.stringify({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "paragraph",
+        attrs: { blockId },
+        content: [{ type: "text", text }],
+      }],
     });
   }
 });

@@ -7,7 +7,14 @@ const fixture: ContractAiDocument = {
   blocks: [
     { type: "paragraph", textAlign: "justify", runs: [{ text: "段落", marks: [{ type: "bold" }, { type: "math" }] }] },
     { type: "heading", level: 2, anchor: "section", textAlign: "center", runs: [{ text: "标题" }] },
-    { type: "blockquote", runs: [{ text: "引用" }] },
+    {
+      type: "blockquote",
+      blocks: [{
+        type: "paragraph",
+        blockId: "quote-child",
+        runs: [{ text: "结构化引用" }],
+      }],
+    },
     { type: "codeBlock", language: "ts", text: "const ok = true" },
     {
       type: "bulletList",
@@ -30,7 +37,15 @@ const fixture: ContractAiDocument = {
           blocks: [
             { type: "paragraph", runs: [{ text: "单元格" }] },
             { type: "taskList", items: [{ checked: true, runs: [{ text: "cell task" }] }] },
-            { type: "callout", tone: "warning", runs: [{ text: "cell callout" }] },
+            {
+              type: "callout",
+              tone: "warning",
+              blocks: [{
+                type: "paragraph",
+                blockId: "callout-child",
+                runs: [{ text: "structured cell callout" }],
+              }],
+            },
           ],
         }],
       }],

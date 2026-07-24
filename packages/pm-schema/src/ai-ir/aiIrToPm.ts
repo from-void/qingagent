@@ -7,7 +7,7 @@ import {
   PM_TABLE_MAX_LOGICAL_COLUMNS,
   PM_TABLE_MAX_SPAN,
 } from "../validators";
-import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmTaskItemNode, PmTextAlign, PmThemeColor } from "../types";
+import type { PmBlockNode, PmDoc, PmInlineNode, PmMark, PmParagraphNode, PmTaskItemNode, PmTextAlign, PmThemeColor } from "../types";
 import {
   aiBlockSchema,
   aiDocumentEnvelopeSchema,
@@ -168,11 +168,20 @@ function repairAiIrRunShorthand(run: unknown): unknown {
 function repairAiIrBlockShorthand(block: unknown, options: { skipPseudoNestedListRepair?: boolean } = {}): unknown {
   if (!block || typeof block !== "object" || Array.isArray(block)) return block;
   const b = block as Record<string, unknown>;
-  const flatList = flatDepthListToAiIr(b);
+  // flatDepthListToAiIr 对 `{blocks:[...]}` 信封会返回新对象；blockquote/callout
+  // 现在也有 blocks，若无条件递归会把容器误当信封并无限重入。这里只在当前块本身
+  // 是列表时运行扁平 depth 编译，容器子块由下方显式递归处理。
+  const flatList = normalizeListBlockType(b) ? flatDepthListToAiIr(b) : b;
   if (flatList !== b) return repairAiIrBlockShorthand(flatList, options);
 
   const out: Record<string, unknown> = { ...b };
   if (Array.isArray(b.runs)) out.runs = b.runs.map(repairAiIrRunShorthand);
+  if (
+    (b.type === "blockquote" || b.type === "callout")
+    && Array.isArray(b.blocks)
+  ) {
+    out.blocks = b.blocks.map((child) => repairAiIrBlockShorthand(child));
+  }
   if (Array.isArray(b.items)) {
     if (b.type === "taskList") {
       // taskList:items 是 {checked,runs,children?}[];容忍模型写成 run[][](按未勾选修复)。
@@ -599,14 +608,18 @@ function formatBlockErrors(errors: readonly AiIrBlockError[]): string {
 }
 
 function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
-  const blockId = getDeterministicId("ai-block", { index, block });
+  const blockId = block.blockId ?? getDeterministicId("ai-block", { index, block });
   switch (block.type) {
     case "paragraph":
       return { type: "paragraph", attrs: attrsWithAlign(blockId, block.textAlign), content: runsToInline(block.runs) };
     case "heading":
       return { type: "heading", attrs: { ...attrsWithAlign(blockId, block.textAlign), level: block.level, anchor: block.anchor ?? null }, content: runsToInline(block.runs) };
     case "blockquote":
-      return { type: "blockquote", attrs: { blockId }, content: [{ type: "paragraph", attrs: { blockId: `${blockId}-p` }, content: runsToInline(block.runs) }] };
+      return {
+        type: "blockquote",
+        attrs: { blockId },
+        content: containerContentToPm(block, blockId, index),
+      };
     case "codeBlock": {
       // 安全网:模型(尤其 flash 档)常无视「严禁用 codeBlock 写 mermaid」,把图表写成代码块。
       // 凡 language=mermaid 或正文是合法 mermaid 图头,一律转成 diagram 块,确保图表"活"。
@@ -669,7 +682,7 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
       return {
         type: "callout",
         attrs: { blockId, emoji: block.emoji ?? null, tone: block.tone ?? null },
-        content: [{ type: "paragraph", attrs: { blockId: `${blockId}-p` }, content: runsToInline(block.runs) }],
+        content: calloutContentToPm(block, blockId, index),
       };
     case "columnList":
       return {
@@ -689,6 +702,35 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
     case "blockMath":
       return { type: "blockMath", attrs: { blockId, latex: block.latex } };
   }
+}
+
+function containerContentToPm(
+  block: Extract<AiBlock, { type: "blockquote" | "callout" }>,
+  blockId: string,
+  index: number | string,
+): PmBlockNode[] {
+  if (block.blocks) {
+    return block.blocks.map((child, childIndex) =>
+      blockToPm(child, `${index}-${block.type}-child-${childIndex + 1}`),
+    );
+  }
+  return [{
+    type: "paragraph",
+    attrs: { blockId: `${blockId}-p` },
+    content: runsToInline(block.runs),
+  }];
+}
+
+function calloutContentToPm(
+  block: Extract<AiBlock, { type: "callout" }>,
+  blockId: string,
+  index: number | string,
+): PmParagraphNode[] {
+  const content = containerContentToPm(block, blockId, index);
+  if (content.some((child) => child.type !== "paragraph")) {
+    throw new Error("callout blocks must contain paragraphs only");
+  }
+  return content as PmParagraphNode[];
 }
 
 function listItemToPm(
@@ -841,6 +883,7 @@ function cellToPm(
   const singleParagraph = sourceBlocks.length === 1 && sourceBlocks[0]?.type === "paragraph";
   const content = sourceBlocks.map((block, blockIndex) => {
     const compiled = blockToPm(block, `${opts.blockId}-r${opts.rowIndex + 1}-c${opts.cellIndex + 1}-b${blockIndex + 1}`);
+    if (block.blockId) return compiled;
     const directBlockId = singleParagraph
       ? `${cellBlockId}-p`
       : `${cellBlockId}-b${blockIndex + 1}`;

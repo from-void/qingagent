@@ -330,6 +330,32 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("2K 字");
   });
 
+  it("fetchArticle 明确失败时显示真实原因且不渲染成功对勾", () => {
+    renderBar({
+      id: "fetch-loopback",
+      name: "fetchArticle",
+      render: { kind: "chatInline" },
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "Blocked loopback address" },
+      },
+      body: {
+        kind: "generic",
+        data: { argsJson: '{"url":"http://127.0.0.1/private"}' },
+      },
+      result: {
+        kind: "genericText",
+        data: JSON.stringify({ ok: false, error: "Blocked loopback address" }),
+      },
+    });
+
+    expect(host.textContent).toContain("Blocked loopback address");
+    expect(host.querySelector(".u-ico.is-error")).not.toBeNull();
+    expect(host.querySelector(".u-ico svg path")?.getAttribute("d")).not.toBe(
+      "M4 8.5l3 3 5-6.5",
+    );
+  });
+
   it("webSearch 显示「N 条」(itemsCount)", () => {
     renderBar(doneSpec("webSearch", { ok: true, query: "宋代点茶", itemsCount: 5 }));
     expect(host.textContent).toContain("5 条");

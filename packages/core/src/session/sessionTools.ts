@@ -346,6 +346,8 @@ export function missingGenericToolResultFields(
       }
       break;
     case "fetchArticle":
+      requireBoolean("ok");
+      requireNullableString("error");
       requireString("title");
       requireString("text");
       requireNumber("wordCount");

@@ -24,7 +24,7 @@ describe("fetchArticle 浏览器降级失败回退", () => {
     mockDeps.scrapeWithBrowserImpl.mockReset();
   });
 
-  it("浏览器不可用时回退静态最佳结果,不抛错", async () => {
+  it("静态正文不可用且浏览器也不可用时返回失败对象,不抛错", async () => {
     const staticText = "正在加载... 返回首页 返回顶部 版权所有 ICP备 扫一扫 下载App";
     mockDeps.extractArticleContent.mockResolvedValueOnce({
       title: "静态壳",
@@ -43,6 +43,8 @@ describe("fetchArticle 浏览器降级失败回退", () => {
       { url: "https://example.com/article" },
       {} as never,
     ) as {
+      ok: boolean;
+      error: string | null;
       title: string;
       text: string;
       wordCount: number;
@@ -50,9 +52,11 @@ describe("fetchArticle 浏览器降级失败回退", () => {
     };
 
     expect(mockDeps.scrapeWithBrowserImpl).toHaveBeenCalledTimes(1);
-    expect(result.title).toBe("静态壳");
-    expect(result.text).toBe(staticText);
-    expect(result.wordCount).toBe(staticText.replace(/\s+/g, "").length);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Executable doesn't exist");
+    expect(result.title).toBe("抓取失败");
+    expect(result.text).toMatch(/^\[Error].*Executable doesn't exist/);
+    expect(result.wordCount).toBe(0);
     expect(result.via).toBe("static");
   });
 

@@ -205,6 +205,7 @@
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 .pm-diagram-view:hover .pm-diagram-view-actions,
+.pm-diagram.is-selected .pm-diagram-view-actions,
 .pm-diagram-view:focus-within .pm-diagram-view-actions {
   opacity: 1;
   pointer-events: auto;

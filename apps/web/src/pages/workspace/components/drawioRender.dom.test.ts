@@ -31,6 +31,21 @@ describe("drawio 离线渲染器", () => {
     expect(svg).not.toMatch(/foreignObject/i);
   });
 
+  it("html=1 中文多行 label 转为原生文本，不渲染字面量 HTML 或可执行内容", async () => {
+    const source = DEFAULT_DRAWIO_SOURCE.replace(
+      'value="开始" style="rounded=0;whiteSpace=wrap;html=0;',
+      'value="用户端&lt;div&gt;API服务&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;img src=&quot;https://evil.example/a.png&quot;&gt;&lt;script&gt;globalThis.pwned=true&lt;/script&gt;" style="rounded=0;whiteSpace=wrap;html=1;',
+    );
+    const svg = await renderDrawio(source);
+
+    expect(svg).toContain("用户端");
+    expect(svg).toContain("API服务");
+    expect(svg).not.toMatch(/&lt;\/?(?:div|br|img|script)\b|<\/?(?:div|br|img|script)\b/i);
+    expect(svg).not.toContain("evil.example");
+    expect(svg).not.toContain("globalThis.pwned");
+    expect(svg).not.toMatch(/foreignObject/i);
+  });
+
   it("未知 edgeStyle 表达式不会被执行", async () => {
     const runtime = globalThis as typeof globalThis & { __drawioEvalProbe?: boolean };
     delete runtime.__drawioEvalProbe;

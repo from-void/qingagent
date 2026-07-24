@@ -171,6 +171,8 @@ type LineInfo = {
   end: number;
   bodyEnd: number;
   index: number;
+  startsLine?: boolean;
+  separator?: "\n" | ";";
 };
 
 type Edit = { start: number; end: number; text: string };
@@ -181,6 +183,7 @@ type EdgeIdFactory = (input: EdgeIdInput) => string;
 // 反向实线/粗线带 `|label|` 时,Mermaid 11 只接受 3 段长形(`<---`/`<===`),
 // 短形 `<--|x|`/`<==|x|` 直接解析失败(已实测),故反向回写一律用长形(见 flowArrowToken)。
 const FLOW_ARROW_TOKEN_RE = /(?:<-.->|<-->|<==>|<---|<===|<-.-|<==|<--|-.->|==>|---|-.-|===|-->)/g;
+const FLOW_ARROW_TOKEN_AT_RE = new RegExp(FLOW_ARROW_TOKEN_RE.source, "y");
 
 const EDGE_OPS: EditOp["kind"][] = ["connectEdge", "deleteEdge", "reconnectEdge", "setEdgeLabel", "setEdgeArrow"];
 const NODE_OPS: EditOp["kind"][] = ["addNode", "deleteNode", "relabelNode", "setNodeShape"];
@@ -358,10 +361,10 @@ function makeMindmapAdapter(): DiagramAdapter {
 }
 
 function parseFlowchart(source: string): ParseResult {
-  const lines = getLines(source);
-  const header = lines.find((line) => /^\s*(?:flowchart|graph)\s+/.test(line.text));
+  const statements = getFlowchartStatements(source);
+  const header = statements.find((statement) => /^\s*(?:flowchart|graph)\s+\S+\s*$/i.test(stripTrailingComment(statement.text)));
   if (!header) return emptyParse("flowchart", "缺少 flowchart 头");
-  const direction = header.text.trim().split(/\s+/)[1] ?? "TD";
+  const direction = stripTrailingComment(header.text).trim().split(/\s+/)[1] ?? "TD";
   const nodes = new Map<string, BaseNode & { shape?: string; shapeOpenSpan?: Span; shapeCloseSpan?: Span }>();
   const edges: BaseEdge[] = [];
   const protectedSpans: Span[] = [];
@@ -410,50 +413,53 @@ function parseFlowchart(source: string): ParseResult {
     return node;
   };
 
-  for (const line of lines) {
-    const trimmed = line.text.trim();
-    if (!trimmed || line === header) continue;
+  for (const statement of statements) {
+    const trimmed = statement.text.trim();
+    if (!trimmed || statement === header) continue;
     if (trimmed.startsWith("%%")) {
-      protectedSpans.push(lineSpan(line));
+      protectedSpans.push(lineSpan(statement));
       continue;
     }
     if (/^subgraph\b/i.test(trimmed)) {
       const id = trimmed.replace(/^subgraph\s+/i, "").trim();
-      subgraphStack.push({ id, start: line.start, scopePath: subgraphStack.map((item) => item.id) });
-      protectedSpans.push(lineSpan(line));
+      subgraphStack.push({ id, start: statement.start, scopePath: subgraphStack.map((item) => item.id) });
+      protectedSpans.push(lineSpan(statement));
       continue;
     }
     if (/^end$/i.test(trimmed)) {
       const open = subgraphStack.pop();
-      if (open) subgraphs.push({ id: open.id, span: { start: open.start, end: line.end }, scopePath: open.scopePath });
-      protectedSpans.push(lineSpan(line));
+      if (open) subgraphs.push({ id: open.id, span: { start: open.start, end: statement.end }, scopePath: open.scopePath });
+      protectedSpans.push(lineSpan(statement));
       continue;
     }
     if (/^linkStyle\b/i.test(trimmed)) hasLinkStyle = true;
     if (/^(?:click|style|classDef|class|linkStyle)\b/i.test(trimmed)) {
-      protectedSpans.push(lineSpan(line));
+      protectedSpans.push(lineSpan(statement));
       continue;
     }
 
     const scopePath = subgraphStack.map((item) => item.id);
-    const edge = parseFlowEdgeLine(line, edgeOrder, scopePath, nextEdgeId);
-    if (edge) {
-      edges.push(edge.edge);
-      edgeOrder += 1;
-      ensureNode(edge.left.id, edge.left.label, edge.left.span, edge.left.declared, edge.left.labelSpan, edge.left.shape, scopePath, edge.left.shapeOpenSpan, edge.left.shapeCloseSpan);
-      ensureNode(edge.right.id, edge.right.label, edge.right.span, edge.right.declared, edge.right.labelSpan, edge.right.shape, scopePath, edge.right.shapeOpenSpan, edge.right.shapeCloseSpan);
-      if (!edge.edge.rewritable) protectedSpans.push(lineSpan(line));
+    const edgeStatement = parseFlowEdgeStatement(statement, edgeOrder, scopePath, nextEdgeId);
+    if (edgeStatement?.kind === "error") return emptyParse("flowchart", edgeStatement.error);
+    if (edgeStatement?.kind === "parsed") {
+      edges.push(...edgeStatement.edges);
+      edgeOrder += edgeStatement.edges.length;
+      for (const nodeRef of edgeStatement.nodeRefs) {
+        ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, nodeRef.declared, nodeRef.labelSpan, nodeRef.shape, scopePath, nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
+      }
+      if (edgeStatement.edges.some((edge) => !edge.rewritable)) protectedSpans.push(lineSpan(statement));
       continue;
     }
 
-    const leading = line.text.search(/\S/);
-    const nodeRef = leading >= 0 ? parseFlowNodeRef(line.text.slice(leading), line.start + leading) : null;
-    if (nodeRef && nodeRef.endOffset === line.text.trimEnd().length - leading) {
+    const leading = statement.text.search(/\S/);
+    const nodeRef = leading >= 0 ? parseFlowNodeRef(statement.text.slice(leading), statement.start + leading) : null;
+    if (nodeRef?.error) return emptyParse("flowchart", nodeRef.error);
+    if (nodeRef && nodeRef.endOffset === statement.text.trimEnd().length - leading) {
       ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, true, nodeRef.labelSpan, nodeRef.shape, subgraphStack.map((item) => item.id), nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
-      if (nodeRef.unsupported) protectedSpans.push(lineSpan(line));
+      if (nodeRef.unsupported) protectedSpans.push(lineSpan(statement));
       continue;
     }
-    protectedSpans.push(lineSpan(line));
+    protectedSpans.push(lineSpan(statement));
   }
   for (const open of subgraphStack.splice(0).reverse()) {
     subgraphs.push({ id: open.id, span: { start: open.start, end: source.length }, scopePath: open.scopePath });
@@ -466,72 +472,204 @@ function parseFlowchart(source: string): ParseResult {
   };
 }
 
-function parseFlowEdgeLine(
-  line: LineInfo,
+function parseFlowEdgeStatement(
+  statement: LineInfo,
   orderIndex: number,
   scopePath: string[],
   nextEdgeId: EdgeIdFactory,
 ): null | {
-  edge: BaseEdge;
-  left: ParsedFlowNodeRef;
-  right: ParsedFlowNodeRef;
+  kind: "parsed";
+  edges: BaseEdge[];
+  nodeRefs: ParsedFlowNodeRef[];
+} | {
+  kind: "error";
+  error: string;
 } {
-  const raw = stripTrailingComment(line.text);
-  const arrowMatches = [...raw.matchAll(FLOW_ARROW_TOKEN_RE)];
-  if (arrowMatches.length !== 1) return null;
-  const match = arrowMatches[0]!;
-  const arrow = match[0];
-  const arrowSpec = parseFlowArrowToken(arrow);
-  if (!arrowSpec) return null;
-  const arrowIndex = match.index ?? 0;
-  if (raw.includes("&")) return null;
-  const before = raw.slice(0, arrowIndex);
-  let after = raw.slice(arrowIndex + arrow.length);
-  const arrowSpan = { start: line.start + arrowIndex, end: line.start + arrowIndex + arrow.length };
-  let label: string | undefined;
-  let labelSpan: Span | undefined;
-  const labelMatch = after.match(/^\s*\|([^|\n]*)\|\s*/);
-  if (labelMatch?.[1] !== undefined && labelMatch.index === 0) {
-    const rawLabel = labelMatch[1];
-    label = displayMermaidLabel(rawLabel);
-    const localStart = arrowIndex + arrow.length + (labelMatch[0].indexOf("|") + 1);
-    labelSpan = { start: line.start + localStart, end: line.start + localStart + rawLabel.length };
-    after = after.slice(labelMatch[0].length);
+  const raw = stripTrailingComment(statement.text);
+  const arrowMatches = findTopLevelFlowArrows(raw);
+  if (arrowMatches.length === 0) return null;
+  const firstArrow = arrowMatches[0]!;
+  const leftGroup = parseFlowNodeGroup(raw.slice(0, firstArrow.index), statement.start);
+  if (leftGroup?.kind === "error") return { kind: "error", error: leftGroup.error };
+  if (!leftGroup) return null;
+
+  const nodeRefs = [...leftGroup.refs];
+  const edgeInputs: Array<{
+    left: ParsedFlowNodeRef[];
+    right: ParsedFlowNodeRef[];
+    arrow: string;
+    arrowSpan: Span;
+    label?: string;
+    labelSpan?: Span;
+  }> = [];
+  let previous = leftGroup.refs;
+  for (let index = 0; index < arrowMatches.length; index += 1) {
+    const match = arrowMatches[index]!;
+    const next = arrowMatches[index + 1];
+    const arrowSpec = parseFlowArrowToken(match.arrow);
+    if (!arrowSpec) return null;
+    const afterStart = match.index + match.arrow.length;
+    const afterEnd = next?.index ?? raw.length;
+    const after = raw.slice(afterStart, afterEnd);
+    const labelMatch = after.match(/^\s*\|([^|\n]*)\|\s*/);
+    const labelPrefixLength = labelMatch?.[0].length ?? 0;
+    const rightGroup = parseFlowNodeGroup(after.slice(labelPrefixLength), statement.start + afterStart + labelPrefixLength);
+    if (rightGroup?.kind === "error") return { kind: "error", error: rightGroup.error };
+    if (!rightGroup) return null;
+    const rawLabel = labelMatch?.[1];
+    const labelLocalStart = rawLabel === undefined ? -1 : afterStart + labelMatch![0].indexOf("|") + 1;
+    edgeInputs.push({
+      left: previous,
+      right: rightGroup.refs,
+      arrow: match.arrow,
+      arrowSpan: { start: statement.start + match.index, end: statement.start + match.index + match.arrow.length },
+      ...(rawLabel ? { label: displayMermaidLabel(rawLabel) } : {}),
+      ...(labelLocalStart >= 0 ? { labelSpan: { start: statement.start + labelLocalStart, end: statement.start + labelLocalStart + rawLabel!.length } } : {}),
+    });
+    nodeRefs.push(...rightGroup.refs);
+    previous = rightGroup.refs;
   }
-  const leftStart = before.search(/\S/);
-  if (leftStart < 0) return null;
-  const left = parseFlowNodeRef(before.trim(), line.start + leftStart);
-  const rightLeading = after.search(/\S/);
-  if (rightLeading < 0) return null;
-  const right = parseFlowNodeRef(after.trim(), line.start + arrowIndex + arrow.length + (labelMatch?.[0].length ?? 0) + rightLeading);
-  if (!left || !right) return null;
+
+  const expandedEdgeCount = edgeInputs.reduce((count, input) => count + input.left.length * input.right.length, 0);
   const inSubgraph = scopePath.length > 0;
-  const safeRewrite =
+  // 链式边/多目标共享同一 stmt；现有回写按整条 stmt 操作，必须保持只读以免改一边误伤其余边。
+  const safeRewriteStatement =
+    expandedEdgeCount === 1 &&
+    isWholeLineStatement(statement) &&
     !inSubgraph &&
-    !left.unsupported &&
-    !right.unsupported &&
+    nodeRefs.every((nodeRef) => !nodeRef.unsupported) &&
     !/:::/i.test(raw) &&
-    !/\[[^\]]*\]\s*[^\s-]/.test(before.trim().replace(left.raw, ""));
-  const id = nextEdgeId({ source: left.id, target: right.id, syntaxKind: arrow, label: label || undefined });
+    !/\[[^\]]*\]\s*[^\s-]/.test(raw.slice(0, firstArrow.index).trim().replace(leftGroup.refs[0]?.raw ?? "", ""));
+  const edges: BaseEdge[] = [];
+  for (const input of edgeInputs) {
+    const arrowSpec = parseFlowArrowToken(input.arrow)!;
+    for (const left of input.left) {
+      for (const right of input.right) {
+        const id = nextEdgeId({ source: left.id, target: right.id, syntaxKind: input.arrow, label: input.label || undefined });
+        edges.push({
+          id,
+          source: left.id,
+          target: right.id,
+          ...(input.label ? { label: input.label } : {}),
+          ...(input.labelSpan ? { labelSpan: input.labelSpan } : {}),
+          syntaxKind: input.arrow,
+          syntaxSpan: input.arrowSpan,
+          direction: arrowSpec.direction,
+          lineStyle: arrowSpec.lineStyle,
+          orderIndex: orderIndex + edges.length,
+          scopePath: [...scopePath],
+          rewritable: safeRewriteStatement,
+          stmt: lineSpan(statement),
+        });
+      }
+    }
+  }
   return {
-    left,
-    right,
-    edge: {
-      id,
-      source: left.id,
-      target: right.id,
-      ...(label ? { label } : {}),
-      ...(labelSpan ? { labelSpan } : {}),
-      syntaxKind: arrow,
-      syntaxSpan: arrowSpan,
-      direction: arrowSpec.direction,
-      lineStyle: arrowSpec.lineStyle,
-      orderIndex,
-      scopePath: [...scopePath],
-      rewritable: safeRewrite,
-      stmt: lineSpan(line),
-    },
+    kind: "parsed",
+    edges,
+    nodeRefs,
   };
+}
+
+function findTopLevelFlowArrows(raw: string): Array<{ arrow: string; index: number }> {
+  const arrows: Array<{ arrow: string; index: number }> = [];
+  let quote: "'" | '"' | null = null;
+  const bracketClosers: string[] = [];
+  let inPipeLabel = false;
+  for (let cursor = 0; cursor < raw.length; cursor += 1) {
+    const char = raw[cursor]!;
+    if (quote) {
+      if (char === quote && raw[cursor - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    const bracketCloser = flowBracketCloser(char);
+    if (bracketCloser) {
+      bracketClosers.push(bracketCloser);
+      continue;
+    }
+    if (char === "]" || char === ")" || char === "}") {
+      closeFlowBracket(bracketClosers, char);
+      continue;
+    }
+    if (bracketClosers.length === 0 && char === "|") {
+      inPipeLabel = !inPipeLabel;
+      continue;
+    }
+    if (bracketClosers.length > 0 || inPipeLabel) continue;
+    FLOW_ARROW_TOKEN_AT_RE.lastIndex = cursor;
+    const match = FLOW_ARROW_TOKEN_AT_RE.exec(raw);
+    if (!match) continue;
+    arrows.push({ arrow: match[0], index: cursor });
+    cursor += match[0].length - 1;
+  }
+  FLOW_ARROW_TOKEN_AT_RE.lastIndex = 0;
+  return arrows;
+}
+
+function parseFlowNodeGroup(raw: string, absoluteStart: number): null | {
+  kind: "parsed";
+  refs: ParsedFlowNodeRef[];
+} | {
+  kind: "error";
+  error: string;
+} {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let rangeStart = 0;
+  let quote: "'" | '"' | null = null;
+  const bracketClosers: string[] = [];
+  for (let cursor = 0; cursor < raw.length; cursor += 1) {
+    const char = raw[cursor]!;
+    if (quote) {
+      if (char === quote && raw[cursor - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    const bracketCloser = flowBracketCloser(char);
+    if (bracketCloser) {
+      bracketClosers.push(bracketCloser);
+      continue;
+    }
+    if (char === "]" || char === ")" || char === "}") {
+      closeFlowBracket(bracketClosers, char);
+      continue;
+    }
+    if (char === "&" && bracketClosers.length === 0) {
+      ranges.push({ start: rangeStart, end: cursor });
+      rangeStart = cursor + 1;
+    }
+  }
+  ranges.push({ start: rangeStart, end: raw.length });
+
+  const refs: ParsedFlowNodeRef[] = [];
+  for (const range of ranges) {
+    const part = raw.slice(range.start, range.end);
+    const leading = part.search(/\S/);
+    if (leading < 0) return null;
+    const ref = parseFlowNodeRef(part.slice(leading), absoluteStart + range.start + leading);
+    if (!ref) return null;
+    if (ref.error) return { kind: "error", error: ref.error };
+    refs.push(ref);
+  }
+  return refs.length > 0 ? { kind: "parsed", refs } : null;
+}
+
+function flowBracketCloser(char: string): "]" | ")" | "}" | null {
+  if (char === "[") return "]";
+  if (char === "(") return ")";
+  if (char === "{") return "}";
+  return null;
+}
+
+function closeFlowBracket(closers: string[], char: string): void {
+  const matchingOpen = closers.lastIndexOf(char);
+  if (matchingOpen >= 0) closers.length = matchingOpen;
 }
 
 function flowchartCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -691,9 +829,9 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
       bodyEnd: raw.endsWith("\n") ? span.end - 1 : span.end,
       index: 0,
     };
-    const parsed = parseFlowEdgeLine(line, 0, [], nextEdgeId);
-    if (!parsed) continue;
-    for (const ref of [parsed.left, parsed.right]) {
+    const parsed = parseFlowEdgeStatement(line, 0, [], nextEdgeId);
+    if (!parsed || parsed.kind === "error") continue;
+    for (const ref of parsed.nodeRefs) {
       if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
       out.set(ref.id, ref);
     }
@@ -1449,6 +1587,7 @@ interface ParsedFlowNodeRef {
   declared: boolean;
   unsupported: boolean;
   endOffset: number;
+  error?: string;
 }
 
 const FLOW_NODE_SHAPE_SYNTAX: Array<{ open: string; close: string }> = [
@@ -1481,6 +1620,19 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     const restLeading = rest.search(/\S/);
     const r = rest.trim();
     const bracket = parseFlowShapeContent(r);
+    const startsWithShape = FLOW_NODE_SHAPE_SYNTAX.some((syntax) => r.startsWith(syntax.open));
+    if (!bracket && startsWithShape) {
+      return {
+        id,
+        raw,
+        label,
+        span: { start: absoluteStart, end: absoluteStart + id.length },
+        declared: false,
+        unsupported: false,
+        endOffset: id.length,
+        error: `节点 ${id} 的形状未闭合`,
+      };
+    }
     if (bracket) {
       const rawLabel = stripQuotes(bracket.content);
       label = displayMermaidLabel(rawLabel);
@@ -1656,8 +1808,106 @@ function getLines(source: string): LineInfo[] {
   return out;
 }
 
+// Mermaid 的换行总是语句边界；分号只在节点形状、引号、边标签和注释之外切分。
+// 每条语句保留绝对 offset 及分隔符，供节点/边 overlay 与安全回写判断使用。
+function getFlowchartStatements(source: string): LineInfo[] {
+  const out: LineInfo[] = [];
+  let start = 0;
+  let index = 0;
+  let quote: "'" | '"' | null = null;
+  const bracketClosers: string[] = [];
+  let inPipeLabel = false;
+  let inComment = false;
+
+  const push = (separatorIndex: number, separatorLength: number) => {
+    const end = separatorIndex + separatorLength;
+    out.push({
+      text: source.slice(start, separatorIndex),
+      start,
+      end,
+      bodyEnd: separatorIndex,
+      index,
+      startsLine: start === 0 || source[start - 1] === "\n",
+      separator: source[separatorIndex] === ";" ? ";" : "\n",
+    });
+    start = end;
+    index += 1;
+  };
+
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const char = source[cursor]!;
+    const next = source[cursor + 1];
+    if (inComment) {
+      if (char === "\n") {
+        push(cursor, 1);
+        quote = null;
+        bracketClosers.length = 0;
+        inPipeLabel = false;
+        inComment = false;
+      }
+      continue;
+    }
+    if (char === "\n") {
+      push(cursor, 1);
+      quote = null;
+      bracketClosers.length = 0;
+      inPipeLabel = false;
+      inComment = false;
+      continue;
+    }
+    if (!quote && char === "%" && next === "%") {
+      inComment = true;
+      cursor += 1;
+      continue;
+    }
+    if (quote) {
+      if (char === quote && source[cursor - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    const bracketCloser = flowBracketCloser(char);
+    if (bracketCloser) {
+      bracketClosers.push(bracketCloser);
+      continue;
+    }
+    if (char === "]" || char === ")" || char === "}") {
+      closeFlowBracket(bracketClosers, char);
+      continue;
+    }
+    if (bracketClosers.length === 0 && char === "|") {
+      inPipeLabel = !inPipeLabel;
+      continue;
+    }
+    if (!inPipeLabel && bracketClosers.length === 0 && char === ";") {
+      push(cursor, 1);
+      quote = null;
+      bracketClosers.length = 0;
+      inPipeLabel = false;
+      inComment = false;
+    }
+  }
+  if (start < source.length || source.length === 0) {
+    out.push({
+      text: source.slice(start),
+      start,
+      end: source.length,
+      bodyEnd: source.length,
+      index,
+      startsLine: start === 0 || source[start - 1] === "\n",
+    });
+  }
+  return out;
+}
+
 function lineSpan(line: LineInfo): Span {
   return { start: line.start, end: line.end };
+}
+
+function isWholeLineStatement(statement: LineInfo): boolean {
+  return statement.startsLine !== false && statement.separator !== ";";
 }
 
 function lineRemovalSpan(source: string, span: Span): Span {

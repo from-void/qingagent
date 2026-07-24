@@ -39,7 +39,8 @@ function redactAuthInLog(message: string): string {
 }
 
 // Middleware
-// CORS:默认同源 + localhost 家族放行,QINGAGENT_TRUSTED_ORIGINS 扩展(复用 isTrustedOrigin 单一真源)。
+// CORS:仅精确的本机 Web Origin + QINGAGENT_TRUSTED_ORIGINS 扩展
+// (复用 isTrustedOrigin 单一真源,不按 Host 或任意 loopback 端口放行)。
 // credentials:true 是 cookie 鉴权(步骤 B)必需,且带 credentials 时浏览器禁止 ACAO=*,所以 * 必须退役。
 // 无 Origin(同源/curl)时回调收到空串,返回 null 不加 ACAO——同源请求本就不受 CORS 约束。
 app.use(

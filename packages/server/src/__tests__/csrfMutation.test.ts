@@ -48,6 +48,17 @@ function withOrigin(init: RequestInit, origin: string | null): RequestInit {
   return { ...init, headers };
 }
 
+function withOriginAndHost(
+  init: RequestInit,
+  origin: string,
+  host: string,
+): RequestInit {
+  const requestInit = withOrigin(init, origin);
+  const headers = new Headers(requestInit.headers);
+  headers.set("Host", host);
+  return { ...requestInit, headers };
+}
+
 const protectedWriteEndpoints: Array<{
   name: string;
   path: string;
@@ -192,14 +203,124 @@ describe("敏感写/耗资源/读内容路由 CSRF Origin 守卫", () => {
   beforeEach(() => {
     process.env.QINGAGENT_ALLOW_SKILL_MUTATION = "1";
     process.env.QINGAGENT_ENABLE_DEBUG = "1";
+    delete process.env.QINGAGENT_TRUSTED_ORIGINS;
+    delete process.env.QINGAGENT_WEB_PORT;
   });
 
   afterEach(() => {
     delete process.env.QINGAGENT_ALLOW_SKILL_MUTATION;
     delete process.env.QINGAGENT_ENABLE_DEBUG;
+    delete process.env.QINGAGENT_TRUSTED_ORIGINS;
+    delete process.env.QINGAGENT_WEB_PORT;
     vi.doUnmock("../gateway/bridgeHandler");
     vi.doUnmock("@qingagent/core");
     vi.resetModules();
+  });
+
+  describe("精确 Origin 白名单", () => {
+    const path = "/api/v1/clientlog";
+    const init: RequestInit = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [] }),
+    };
+
+    it(
+      "模拟 Vite changeOrigin:false 时同源 loopback POST/DELETE 放行",
+      async () => {
+        const app = await loadApp();
+        const proxyHeaders = withOriginAndHost(
+          init,
+          "http://localhost:6191",
+          "localhost:6191",
+        );
+        const post = await app.request(path, proxyHeaders);
+        const deletion = await app.request(
+          "/api/v1/skills/__csrf_missing_skill__",
+          withOriginAndHost(
+            { method: "DELETE" },
+            "http://localhost:6191",
+            "localhost:6191",
+          ),
+        );
+
+        expect(post.status).toBe(200);
+        expect(deletion.status).toBe(404);
+      },
+      20_000,
+    );
+
+    it("跨源本地页的 Origin 与 Host 端口不同仍拒绝", async () => {
+      const app = await loadApp();
+      const res = await app.request(
+        path,
+        withOriginAndHost(init, "http://localhost:6666", "localhost:8091"),
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("Origin 与 Host 同值的外部 rebinding 域名仍拒绝", async () => {
+      const app = await loadApp();
+      const res = await app.request(
+        path,
+        withOriginAndHost(init, "http://rb.example:8080", "rb.example:8080"),
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("生产公网 Host 不走 loopback 例外，仍需显式配置 Origin", async () => {
+      const app = await loadApp();
+      const requestInit = withOriginAndHost(
+        init,
+        "https://app.example",
+        "app.example",
+      );
+
+      expect((await app.request(path, requestInit)).status).toBe(403);
+
+      process.env.QINGAGENT_TRUSTED_ORIGINS = "https://app.example";
+      expect((await app.request(path, requestInit)).status).toBe(200);
+    });
+
+    it("直连非白名单 Origin 且无匹配 Host 时拒绝", async () => {
+      const app = await loadApp();
+      const res = await app.request(path, withOrigin(init, "http://localhost:62001"));
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "跨站请求被拒绝" });
+    });
+
+    it("内置本机 Web 端口与无 Origin 请求放行", async () => {
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost:6173"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://127.0.0.1:5173"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://[::1]:8091"))).status).toBe(200);
+      expect((await app.request(path, init)).status).toBe(200);
+    });
+
+    it("运行时 Web 端口与显式配置的完整 Origin 放行", async () => {
+      process.env.QINGAGENT_WEB_PORT = "62002";
+      process.env.QINGAGENT_TRUSTED_ORIGINS = "https://app.example";
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost:62002"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "https://app.example"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://app.example"))).status).toBe(403);
+    });
+
+    it("运行时默认 HTTP 端口 80 按 URL.origin 规范化后放行", async () => {
+      process.env.QINGAGENT_WEB_PORT = "80";
+      const app = await loadApp();
+
+      expect((await app.request(path, withOrigin(init, "http://localhost"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://127.0.0.1"))).status).toBe(200);
+      expect((await app.request(path, withOrigin(init, "http://[::1]"))).status).toBe(200);
+    });
   });
 
   for (const endpoint of protectedWriteEndpoints) {

@@ -32,6 +32,25 @@ function nestedJson(depth: number): string {
 }
 
 describe("D6-P1 parseBody 边界", () => {
+  it("写请求只接受 application/json Content-Type", async () => {
+    const textPlain = await app.request("/api/v1/clientlog", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: '{"events":[]}',
+    });
+    expect(textPlain.status).toBe(400);
+    expect(await textPlain.json()).toMatchObject({
+      error: "Content-Type must be application/json",
+    });
+
+    const withCharset = await app.request("/api/v1/clientlog", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: '{"events":[]}',
+    });
+    expect(withCharset.status).toBe(200);
+  });
+
   it("clientlog:非法 JSON / events 非数组 → 400;合法 → 200", async () => {
     expect((await post("/api/v1/clientlog", "{bad")).status).toBe(400);
     expect((await post("/api/v1/clientlog", '{"events":"x"}')).status).toBe(400);

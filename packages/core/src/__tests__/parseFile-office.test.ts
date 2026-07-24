@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { parseFileBuffer, parseFileTool } from "../tools/parseFile.js";
+import {
+  loadSafeOfficeZip,
+  parseFileBuffer,
+  parseFileTool,
+} from "../tools/parseFile.js";
 
 type ParseFileResult = {
   text: string;
@@ -697,6 +701,29 @@ describe("parseFile Office 文本解析", () => {
         signal: controller.signal,
       }),
     ).rejects.toBe(reason);
+  });
+
+  it("Office ZIP 中央目录/entry 遍历逐项检查取消并保留原始 reason", async () => {
+    const zip = new JSZip();
+    for (let index = 0; index < 20; index += 1) {
+      zip.file(`word/part-${index}.xml`, `<p>${index}</p>`);
+    }
+    const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const controller = new AbortController();
+    const reason = new DOMException("取消 Office ZIP 遍历", "AbortError");
+    const originalThrow = controller.signal.throwIfAborted.bind(controller.signal);
+    let checks = 0;
+    Object.defineProperty(controller.signal, "throwIfAborted", {
+      configurable: true,
+      value: () => {
+        checks += 1;
+        if (checks === 8) controller.abort(reason);
+        originalThrow();
+      },
+    });
+
+    await expect(loadSafeOfficeZip(buffer, controller.signal)).rejects.toBe(reason);
+    expect(checks).toBe(8);
   });
 
   it("解压前拒绝高压缩比 Office ZIP，不进入 entry 解压", async () => {

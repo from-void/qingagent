@@ -24,7 +24,13 @@ describe("API JSON 请求体上限", () => {
 
     const health = await app.request("/health");
     expect(health.status).toBe(200);
-    await expect(health.json()).resolves.toEqual({ status: "ok" });
+    await expect(health.json()).resolves.toMatchObject({
+      status: "ok",
+      capabilities: {
+        browser: { status: expect.any(String) },
+        pdfExport: { enabled: expect.any(Boolean) },
+      },
+    });
   });
 
   it("约 2 MiB 的正常长文 updateDoc 不被请求体护栏误拦", async () => {

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { markWechatSessionNeedsReauth, readWechatCredentialBundle } from "../../connectors/wechatCredentials.js";
-import { wechatListArticlesTool, wechatSearchMpTool } from "../wechatSearch.js";
+import {
+  probeWechatSearchbiz,
+  resetWechatRateLimitForTest,
+  wechatListArticlesTool,
+  wechatSearchMpTool,
+} from "../wechatSearch.js";
 
 vi.mock("../../connectors/wechatCredentials.js", () => ({
   readWechatCredentialBundle: vi.fn(),
@@ -34,7 +39,10 @@ async function list(fakeid: string): Promise<Record<string, unknown>> {
 }
 
 describe("wechatSearch 路径B", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await resetWechatRateLimitForTest();
+  });
 
   afterEach(() => {
     vi.useRealTimers();
@@ -141,8 +149,9 @@ describe("wechatSearch 路径B", () => {
 });
 
 describe("probeWechatSearchbiz", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
+    await resetWechatRateLimitForTest();
   });
 
   afterEach(() => {
@@ -230,6 +239,35 @@ describe("probeWechatSearchbiz", () => {
 
     await expect(result).rejects.toBe(reason);
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it("1.2s 限速等待中取消：立即退出、绝不发请求且不占后续槽位", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T00:00:00.000Z"));
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: vi.fn().mockResolvedValue(JSON.stringify({ base_resp: { ret: 0 }, list: [] })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(probeWechatSearchbiz("TOKEN", "cookie=x")).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const cancelled = new AbortController();
+    const reason = new DOMException("用户取消排队中的微信请求", "AbortError");
+    const second = probeWechatSearchbiz("TOKEN", "cookie=x", cancelled.signal);
+    await Promise.resolve();
+    cancelled.abort(reason);
+
+    await expect(second).rejects.toBe(reason);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const third = probeWechatSearchbiz("TOKEN", "cookie=x");
+    await vi.advanceTimersByTimeAsync(1_199);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(third).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it.each([

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chromium } from "playwright";
@@ -85,10 +86,11 @@ function hostAllowed(host: string, allow: string[]): boolean {
 let cached: AgentBrowser | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-const PROXIED_CDP_PORT = 9333;
 let proxiedProc: ChildProcess | null = null;
 let proxiedCdpUrl: string | null = null;
+let proxiedCdpPort: number | null = null;
 let processExitHooksInstalled = false;
+let explicitCdpAuditLogged = false;
 
 /** 在 context 创建后的首个真实导航前安装全请求策略；同一 context 并发调用只安装一次。 */
 export async function installAgentBrowserRequestPolicy(
@@ -138,11 +140,12 @@ class SecuredAgentBrowser extends AgentBrowser {
   }
 }
 
-/** 终止本模块自己拉起的代理 Chromium；复用端口或显式 CDP 从不写 proxiedProc，不会被误关。 */
+/** 终止本模块自己拉起的代理 Chromium；显式外部 CDP 从不写 proxiedProc，不会被误关。 */
 export function stopProxiedChromium(): boolean {
   const owned = proxiedProc;
   proxiedProc = null;
   proxiedCdpUrl = null;
+  proxiedCdpPort = null;
   if (!owned || owned.exitCode !== null || owned.killed) return false;
   try {
     return owned.kill("SIGTERM");
@@ -158,6 +161,15 @@ function installProxiedChromiumExitHooks(): void {
   process.once("exit", stopProxiedChromium);
 }
 
+function auditExplicitExternalCdp(): void {
+  if (explicitCdpAuditLogged) return;
+  explicitCdpAuditLogged = true;
+  console.warn(
+    "[agentBrowser][security-audit] 使用 QINGAGENT_BROWSER_CDP_URL：" +
+      "这是外部浏览器，进程启动参数与出站代理 ACL 不可验证",
+  );
+}
+
 /** 读 chromium 的 CDP /json/version,取 webSocketDebuggerUrl(localhost,绕代理)。 */
 async function probeCdpWs(port: number): Promise<string | null> {
   try {
@@ -170,33 +182,73 @@ async function probeCdpWs(port: number): Promise<string | null> {
   }
 }
 
+async function readOwnedDevToolsEndpoint(
+  activePortPath: string,
+): Promise<{ port: number; wsPath: string; marker: string } | null> {
+  try {
+    const marker = await readFile(activePortPath, "utf8");
+    const [portLine, wsPath] = marker.trim().split(/\r?\n/);
+    const port = Number(portLine);
+    if (
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      !wsPath?.startsWith("/devtools/browser/")
+    ) {
+      return null;
+    }
+    return { port, wsPath, marker };
+  } catch {
+    return null;
+  }
+}
+
+function matchesOwnedCdpEndpoint(
+  wsUrl: string,
+  endpoint: { port: number; wsPath: string },
+): boolean {
+  try {
+    const parsed = new URL(wsUrl);
+    return (
+      parsed.protocol === "ws:" &&
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]") &&
+      Number(parsed.port) === endpoint.port &&
+      parsed.pathname === endpoint.wsPath
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 本机只能经代理上网时,@mastra/agent-browser 的 BrowserConfig 不支持 proxy/args,
  * 所以裸 spawn 一个 chromium(复用仓库 Playwright 的可执行文件),带:
  *   --proxy-server(走代理,能到飞书等)+ --remote-debugging-port(供 CDP 连接)
  *   + 固定 --user-data-dir(profile 持久化登录态,跨重启复用)。
  * 用 spawn 而非 Playwright launch:后者 connectOverCDP 时无初始 page("No page found");
- * 裸 chromium 有原生 about:blank tab,CDP 可直接连。已有 9333 上的实例则复用。
+ * 裸 chromium 有原生 about:blank tab,CDP 可直接连。调试端口由 OS 随机分配，只接受本次
+ * spawn 后写入 profile/DevToolsActivePort 的端点；外部固定端口实例一律不复用。
  */
 async function ensureProxiedChromiumCdpUrl(): Promise<string> {
-  if (proxiedCdpUrl) {
-    const alive = await probeCdpWs(PROXIED_CDP_PORT);
-    if (alive) return proxiedCdpUrl;
-    proxiedCdpUrl = null;
-  }
-  const reuse = await probeCdpWs(PROXIED_CDP_PORT);
-  if (reuse) {
-    proxiedCdpUrl = reuse;
-    return reuse;
+  if (proxiedCdpUrl && proxiedCdpPort && proxiedProc) {
+    if (proxiedProc.exitCode === null && !proxiedProc.killed) {
+      const alive = await probeCdpWs(proxiedCdpPort);
+      if (alive === proxiedCdpUrl) return proxiedCdpUrl;
+    }
+    stopProxiedChromium();
   }
   const proxy = proxyFromEnv();
   const profileDir =
     process.env.QINGAGENT_BROWSER_PROFILE_DIR?.trim() ||
     join(process.cwd(), ".qingagent-browser-profile");
+  const activePortPath = join(profileDir, "DevToolsActivePort");
+  // 不删除已有 marker（它可能属于仍在运行的外部浏览器）。只接受 spawn 之后发生变化的
+  // marker；若 profile 正被占用，新进程会因 profile lock 退出并 fail-closed。
+  const staleActivePortMarker = await readFile(activePortPath, "utf8").catch(() => null);
   const headful = isTruthyFlag(process.env.QINGAGENT_BROWSER_HEADFUL);
   const args = [
     ...(headful ? [] : ["--headless=new"]),
-    `--remote-debugging-port=${PROXIED_CDP_PORT}`,
+    "--remote-debugging-port=0",
     "--remote-debugging-address=127.0.0.1",
     ...browserLaunchArgs(true),
     "--disable-gpu",
@@ -216,6 +268,7 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
       if (proxiedProc === spawnedProc) {
         proxiedProc = null;
         proxiedCdpUrl = null;
+        proxiedCdpPort = null;
       }
       reject(error);
     });
@@ -224,6 +277,7 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
       if (proxiedProc === spawnedProc) {
         proxiedProc = null;
         proxiedCdpUrl = null;
+        proxiedCdpPort = null;
       }
       if (!exitedBeforeReady) return;
       const error = new Error(
@@ -238,9 +292,24 @@ async function ensureProxiedChromiumCdpUrl(): Promise<string> {
   spawnedProc.unref();
   for (let i = 0; i < 60; i++) {
     if (spawnFailure) throw spawnFailure;
-    const ws = await Promise.race([probeCdpWs(PROXIED_CDP_PORT), spawnFailurePromise]);
-    if (ws) {
+    const endpoint = await Promise.race([
+      readOwnedDevToolsEndpoint(activePortPath),
+      spawnFailurePromise,
+    ]);
+    const freshEndpoint =
+      endpoint?.marker !== staleActivePortMarker ? endpoint : null;
+    const ws = freshEndpoint
+      ? await Promise.race([probeCdpWs(freshEndpoint.port), spawnFailurePromise])
+      : null;
+    if (
+      ws &&
+      freshEndpoint &&
+      matchesOwnedCdpEndpoint(ws, freshEndpoint) &&
+      spawnedProc.exitCode === null &&
+      !spawnedProc.killed
+    ) {
       proxiedCdpUrl = ws;
+      proxiedCdpPort = freshEndpoint.port;
       return ws;
     }
     await Promise.race([
@@ -278,6 +347,12 @@ export function getAgentBrowser(): AgentBrowser {
   // 2) 有代理 env(本机只能经代理上网)→ 自起带 --proxy-server 的 chromium,经 CDP 连它(不带 executablePath)
   // 3) 否则自启(无代理环境;持久化时 shared,否则库默认 thread 隔离)→ 带 executablePath
   if (explicitCdp) {
+    auditExplicitExternalCdp();
+    if (proxy) {
+      throw new Error(
+        "代理安全模式拒绝 QINGAGENT_BROWSER_CDP_URL：外部浏览器的 --proxy-server 与出站 ACL 不可验证",
+      );
+    }
     cached = new SecuredAgentBrowser(
       { ...base, cdpUrl: explicitCdp, scope: "shared" },
       false,
@@ -389,6 +464,7 @@ export function getAgentBrowserTools(): BrowserToolset {
 export function resetAgentBrowserForTest(): void {
   cached = null;
   stopProxiedChromium();
+  explicitCdpAuditLogged = false;
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;

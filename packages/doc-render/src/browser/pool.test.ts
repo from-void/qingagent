@@ -100,9 +100,11 @@ describe("browserLaunchCandidates", () => {
   ] as const;
   const savedProxyEnv = Object.fromEntries(proxyEnv.map((key) => [key, process.env[key]]));
   const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
+  const savedNoSandbox = process.env.QINGAGENT_ALLOW_NO_SANDBOX;
   beforeEach(() => {
     for (const key of proxyEnv) delete process.env[key];
     delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
+    delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
   });
   afterEach(() => {
     if (origChannels === undefined) delete process.env.QINGAGENT_BROWSER_CHANNELS;
@@ -114,6 +116,8 @@ describe("browserLaunchCandidates", () => {
     }
     if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
     else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
+    if (savedNoSandbox === undefined) delete process.env.QINGAGENT_ALLOW_NO_SANDBOX;
+    else process.env.QINGAGENT_ALLOW_NO_SANDBOX = savedNoSandbox;
   });
 
   it("末尾恒有默认兜底候选", () => {
@@ -127,6 +131,16 @@ describe("browserLaunchCandidates", () => {
     expect(args).toContain("--disable-dev-shm-usage");
     expect(args).not.toContain("--no-sandbox");
     expect(args).not.toContain("--disable-features=IsolateOrigins,site-per-process");
+  });
+
+  it("只有高危逃生阀精确为 1 时才关闭 sandbox", () => {
+    for (const value of ["true", "yes", "on", "0"]) {
+      process.env.QINGAGENT_ALLOW_NO_SANDBOX = value;
+      expect(browserLaunchArgs(false)).not.toContain("--no-sandbox");
+    }
+    process.env.QINGAGENT_ALLOW_NO_SANDBOX = "1";
+    expect(browserLaunchArgs(false)).toContain("--no-sandbox");
+    expect(browserLaunchArgs(true)).toContain("--no-sandbox");
   });
 
   it("代理模式强制 loopback 也经过出站 ACL", () => {

@@ -31,24 +31,32 @@ vi.mock("@mastra/agent-browser", () => ({
 
 import { getAgentBrowser, resetAgentBrowserForTest } from "./agentBrowser.js";
 
-const savedCdpUrl = process.env.QINGAGENT_BROWSER_CDP_URL;
-const savedProxyAcl = process.env.QINGAGENT_BROWSER_PROXY_ACL;
+const ENV_KEYS = [
+  "QINGAGENT_BROWSER_CDP_URL",
+  "QINGAGENT_BROWSER_PROXY_ACL",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+] as const;
+const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 describe("AgentBrowser 多 context 请求策略", () => {
   beforeEach(() => {
     mocks.installPolicy.mockClear();
     mocks.superEnsureReady.mockClear();
     process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/test";
-    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
+    for (const key of ENV_KEYS.slice(1)) delete process.env[key];
     resetAgentBrowserForTest();
   });
 
   afterEach(() => {
     resetAgentBrowserForTest();
-    if (savedCdpUrl === undefined) delete process.env.QINGAGENT_BROWSER_CDP_URL;
-    else process.env.QINGAGENT_BROWSER_CDP_URL = savedCdpUrl;
-    if (savedProxyAcl === undefined) delete process.env.QINGAGENT_BROWSER_PROXY_ACL;
-    else process.env.QINGAGENT_BROWSER_PROXY_ACL = savedProxyAcl;
+    for (const key of ENV_KEYS) {
+      const value = savedEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   it("从全部页面反查唯一 context，并为新页面所属的第二个 context 安装策略", async () => {

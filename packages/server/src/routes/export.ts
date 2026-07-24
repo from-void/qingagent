@@ -1,6 +1,15 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { loadSessionFromThread, redactSensitiveText } from "@qingagent/core";
-import { toDocx, toHtml, toMarkdown, toPdf, toTxt, withRenderedDiagrams } from "@qingagent/doc-render";
+import {
+  getBrowserCapabilityState,
+  hasHtmlToPdfRenderer,
+  toDocx,
+  toHtml,
+  toMarkdown,
+  toPdf,
+  toTxt,
+  withRenderedDiagrams,
+} from "@qingagent/doc-render";
 import { getSession } from "../gateway/bridgeHandler";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
@@ -35,6 +44,13 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   if (!format) {
     return c.json({ error: "导出格式不支持，仅支持 pdf、docx、txt、markdown、html" }, 400);
   }
+  if (
+    format === "pdf" &&
+    !hasHtmlToPdfRenderer() &&
+    getBrowserCapabilityState().status === "unavailable"
+  ) {
+    return browserCapabilityUnavailableResponse(c);
+  }
 
   const session = getSession(sessionId) ?? (await loadSessionFromThread(sessionId));
   if (!session) {
@@ -58,6 +74,13 @@ exportRoutes.get("/export/:sessionId", async (c) => {
   try {
     body = await renderExport(format, document, title, baseUrl);
   } catch (err) {
+    if (
+      err &&
+      typeof err === "object" &&
+      (err as { code?: unknown }).code === "BROWSER_CAPABILITY_UNAVAILABLE"
+    ) {
+      return browserCapabilityUnavailableResponse(c);
+    }
     const internalDetail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error("[export] render failed", {
       code: "EXPORT_RENDER_FAILED",
@@ -77,6 +100,16 @@ exportRoutes.get("/export/:sessionId", async (c) => {
     },
   });
 });
+
+function browserCapabilityUnavailableResponse(c: Context) {
+  return c.json(
+    {
+      error: "当前部署环境无法安全启动浏览器，PDF 导出能力不可用；请联系部署管理员检查 Chromium sandbox 配置",
+      code: "BROWSER_CAPABILITY_UNAVAILABLE",
+    },
+    503,
+  );
+}
 
 function normalizeExportFormat(value: string | undefined): ExportFormat | null {
   if (value === "md") return "markdown";

@@ -326,6 +326,7 @@ export const readImageTool = createTool({
           try {
             trimmed = await runVisionOnce();
           } catch {
+            parentSignal?.throwIfAborted();
             return { ok: false, text: "", error: READ_IMAGE_RATE_LIMIT_ERROR, materialId: null };
           }
         }
@@ -347,6 +348,9 @@ export const readImageTool = createTool({
         if (heartbeat) clearInterval(heartbeat);
       }
     } catch (error) {
+      if (context?.abortSignal?.aborted) {
+        throw context.abortSignal.reason ?? error;
+      }
       return { ok: false, text: "", error: errorMessageFromUnknown(error), materialId: null };
     } finally {
       stopHeartbeat();

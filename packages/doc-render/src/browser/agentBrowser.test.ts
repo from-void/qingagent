@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserContext } from "playwright";
 import {
+  getAgentBrowser,
   getAgentBrowserTools,
   installAgentBrowserRequestPolicy,
   isAgentBrowserEnabled,
@@ -50,6 +51,29 @@ describe("agentBrowser 接入", () => {
   it("配了持久 Chrome cdpUrl → 启用", () => {
     process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
     expect(isAgentBrowserEnabled()).toBe(true);
+  });
+
+  it("显式 CDP 标记为外部浏览器并打印 ACL 不可验证审计告警", () => {
+    process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      getAgentBrowser();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/外部浏览器.*ACL 不可验证/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("代理安全模式拒绝显式外部 CDP，避免绕过受控 --proxy-server", () => {
+    process.env.QINGAGENT_BROWSER_CDP_URL = "ws://127.0.0.1:9222/devtools/browser/abc";
+    process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+    process.env.QINGAGENT_BROWSER_PROXY_ACL = "deny-private";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(() => getAgentBrowser()).toThrow(/代理安全模式拒绝.*外部浏览器/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("启用后注入 browser_* 工具:含核心读取/登录工具,排除高风险/无用工具", () => {

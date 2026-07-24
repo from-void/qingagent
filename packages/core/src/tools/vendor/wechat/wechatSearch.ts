@@ -65,18 +65,73 @@ function normalizeWechatBusinessError(error: unknown, revision: number): { state
 // 串行化:并发调用排队,防 read-then-write 竞态(两并发都算出 wait≈0 同时发,限速形同虚设)。
 // 注:lastRequestAt/rateLimitChain 为模块级——**单用户桌面的单实例假设**;多会话托管需按 session 隔离。
 let rateLimitChain: Promise<void> = Promise.resolve();
-async function rateLimit(): Promise<void> {
-  const prev = rateLimitChain;
-  let release!: () => void;
-  rateLimitChain = new Promise<void>((r) => (release = r));
-  try {
-    await prev;
-    const wait = REQUEST_MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastRequestAt = Date.now();
-  } finally {
-    release();
-  }
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("微信请求已取消", "AbortError");
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  if (ms <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    timeout.unref?.();
+    const onAbort = () => {
+      clearTimeout(timeout);
+      cleanup();
+      reject(abortReason(signal!));
+    };
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
+/**
+ * 每个调用在链中保留一个有序节点，但父 signal 可让调用方立即退出。取消节点轮到执行时
+ * 直接跳过，不更新 lastRequestAt，也不占用后续 1.2s 槽位；后续节点仍等待它前面的真实请求。
+ */
+function rateLimit(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  let resolveCaller!: () => void;
+  let rejectCaller!: (reason?: unknown) => void;
+  let callerSettled = false;
+  const caller = new Promise<void>((resolve, reject) => {
+    resolveCaller = () => {
+      if (callerSettled) return;
+      callerSettled = true;
+      resolve();
+    };
+    rejectCaller = (reason) => {
+      if (callerSettled) return;
+      callerSettled = true;
+      reject(reason);
+    };
+  });
+  const onAbort = () => rejectCaller(abortReason(signal!));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+
+  const scheduled = rateLimitChain.then(async () => {
+    if (signal?.aborted) return;
+    try {
+      const wait = REQUEST_MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
+      await abortableDelay(wait, signal);
+      signal?.throwIfAborted();
+      lastRequestAt = Date.now();
+      resolveCaller();
+    } catch (error) {
+      rejectCaller(error);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  });
+  // 链本身永不拒绝；取消调用只拒绝 caller，保证后续节点仍按入队顺序串行。
+  rateLimitChain = scheduled.then(() => undefined, () => undefined);
+  return caller;
 }
 
 /** 带登录态请求后台 cgi 接口,返回解析后的 JSON。 */
@@ -87,8 +142,7 @@ async function wechatCgiGet(
   timeoutMs = DEFAULT_CGI_TIMEOUT_MS,
   parentSignal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  await rateLimit();
-  parentSignal?.throwIfAborted();
+  await rateLimit(parentSignal);
   const url = `${WECHAT_CGI_BASE}/${path}?${new URLSearchParams(params).toString()}`;
   const timeoutController = new AbortController();
   const timeout = setTimeout(
@@ -126,6 +180,13 @@ async function wechatCgiGet(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** 仅供测试：清空模块级单用户限速状态。 */
+export async function resetWechatRateLimitForTest(): Promise<void> {
+  await rateLimitChain;
+  rateLimitChain = Promise.resolve();
+  lastRequestAt = 0;
 }
 
 class WechatCgiError extends Error {

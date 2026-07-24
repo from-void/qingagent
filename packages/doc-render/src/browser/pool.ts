@@ -4,6 +4,90 @@ import { systemBrowserExecutablePath } from "./systemBrowser.js";
 // PDF-only browser pool. Web article scraping uses Node.js fetch in extractor.ts.
 let browserPromise: Promise<Browser> | null = null;
 let browserInstance: Browser | null = null;
+let sandboxAuditLogged = false;
+export const ALLOW_NO_SANDBOX_ENV = "QINGAGENT_ALLOW_NO_SANDBOX";
+
+export type BrowserCapabilityState = {
+  status: "unknown" | "available" | "unavailable";
+  sandbox: "required" | "disabled-by-explicit-override";
+  reason: string | null;
+};
+
+let browserCapabilityState: BrowserCapabilityState = {
+  status: "unknown",
+  sandbox:
+    process.env[ALLOW_NO_SANDBOX_ENV]?.trim() === "1"
+      ? "disabled-by-explicit-override"
+      : "required",
+  reason: null,
+};
+
+export class BrowserCapabilityUnavailableError extends Error {
+  readonly code = "BROWSER_CAPABILITY_UNAVAILABLE";
+
+  constructor(message = "当前部署环境无法安全启动浏览器，PDF 导出等浏览器能力已禁用") {
+    super(message);
+    this.name = "BrowserCapabilityUnavailableError";
+  }
+}
+
+/** 高危逃生阀刻意只认精确值 1，避免宽松 truthy 解析造成意外关闭 sandbox。 */
+export function allowNoSandbox(): boolean {
+  return process.env[ALLOW_NO_SANDBOX_ENV]?.trim() === "1";
+}
+
+function logSandboxPolicyOnce(): void {
+  if (sandboxAuditLogged) return;
+  sandboxAuditLogged = true;
+  if (allowNoSandbox()) {
+    console.warn(
+      `[browser][security-audit] ${ALLOW_NO_SANDBOX_ENV}=1：Chromium sandbox 已被显式关闭；` +
+        "这会降低浏览器进程隔离，仅应作为受限容器中的临时高危逃生阀",
+    );
+  }
+}
+
+export function getBrowserCapabilityState(): BrowserCapabilityState {
+  return { ...browserCapabilityState };
+}
+
+function markBrowserUnavailable(error: unknown): BrowserCapabilityUnavailableError {
+  const detail = error instanceof Error ? error.message : String(error);
+  browserCapabilityState = {
+    status: "unavailable",
+    sandbox: allowNoSandbox() ? "disabled-by-explicit-override" : "required",
+    reason: "浏览器无法在当前环境启动；PDF 导出等浏览器能力已禁用",
+  };
+  console.error(
+    "[browser] 启动能力探测失败，PDF 导出等浏览器能力已禁用",
+    detail,
+  );
+  return error instanceof BrowserCapabilityUnavailableError
+    ? error
+    : new BrowserCapabilityUnavailableError();
+}
+
+/**
+ * 服务启动前探测实际浏览器启动策略。失败不拖垮整个服务，而是把依赖浏览器的能力标为禁用；
+ * 默认策略带 Chromium sandbox，只有显式 QINGAGENT_ALLOW_NO_SANDBOX=1 才会关闭。
+ */
+export async function probeBrowserCapability(): Promise<BrowserCapabilityState> {
+  logSandboxPolicyOnce();
+  try {
+    await getBrowser();
+    browserCapabilityState = {
+      status: "available",
+      sandbox: allowNoSandbox() ? "disabled-by-explicit-override" : "required",
+      reason: null,
+    };
+    console.info(
+      `[browser] 启动能力探测通过（sandbox=${allowNoSandbox() ? "disabled-explicitly" : "required"}）`,
+    );
+  } catch {
+    // getBrowser 已记录经过脱敏/截断前的启动诊断，并把状态切成 unavailable。
+  }
+  return getBrowserCapabilityState();
+}
 const BROWSER_CONTEXT_CONCURRENCY = 3;
 let activeBrowserContexts = 0;
 type BrowserContextWaiter = {
@@ -97,12 +181,14 @@ export function assertBrowserProxyAclConfigured(): void {
 
 /** 抓取、导出和自起交互 Chromium 共用的安全启动参数。 */
 export function browserLaunchArgs(proxyConfigured = Boolean(proxyFromEnv())): string[] {
+  logSandboxPolicyOnce();
   return [
     "--disable-dev-shm-usage",
     // 反检测:去掉 navigator.webdriver / AutomationControlled 标记——headless 默认指纹会被
     // baike/zhihu/smzdm 等识别为爬虫只返回空壳。配合 scrapeWithBrowser 里的 stealth initScript。
     "--disable-blink-features=AutomationControlled",
     "--lang=zh-CN",
+    ...(allowNoSandbox() ? ["--no-sandbox"] : []),
     // Chromium 默认可能绕过 loopback；代理 ACL 模式必须让所有 HTTP(S)/WS 出站都经过代理。
     ...(proxyConfigured ? ["--proxy-bypass-list=<-loopback>"] : []),
   ];
@@ -177,6 +263,9 @@ async function launchBrowser(): Promise<Browser> {
 }
 
 export async function getBrowser(): Promise<Browser> {
+  if (browserCapabilityState.status === "unavailable") {
+    throw new BrowserCapabilityUnavailableError();
+  }
   if (browserInstance?.isConnected()) {
     return browserInstance;
   }
@@ -193,7 +282,7 @@ export async function getBrowser(): Promise<Browser> {
       return browser;
     }).catch((error) => {
       browserPromise = null;
-      throw error;
+      throw markBrowserUnavailable(error);
     });
   }
 
@@ -208,6 +297,17 @@ export async function closeBrowser(): Promise<void> {
   if (browser?.isConnected()) {
     await browser.close();
   }
+}
+
+/** 仅供测试：隔离启动探测状态，避免用例间共享模块单例。 */
+export async function resetBrowserCapabilityForTest(): Promise<void> {
+  await closeBrowser();
+  browserCapabilityState = {
+    status: "unknown",
+    sandbox: allowNoSandbox() ? "disabled-by-explicit-override" : "required",
+    reason: null,
+  };
+  sandboxAuditLogged = false;
 }
 
 function closeBrowserSync(): void {

@@ -75,6 +75,8 @@ for (const assertion of [
   'window.DRAWIO_LOG_URL = ""',
   "window.ICON_SERVICE_PATH = null",
   'window.DRAW_MATH_URL = "math4/es5"',
+  'settingsName: "qingagent-drawio"',
+  "enableCustomLibraries: false",
 ]) {
   if (!preConfig.includes(assertion)) failures.push(`PreConfig 缺少离线断言：${assertion}`);
 }

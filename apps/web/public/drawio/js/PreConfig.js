@@ -24,7 +24,11 @@ window.ICON_SERVICE_PATH = null;
 window.DRAW_MATH_URL = "math4/es5";
 window.mxLanguageMap = { en: "English", zh: "简体中文" };
 window.mxLanguages = ["zh"];
-window.DRAWIO_CONFIG = null;
+window.DRAWIO_CONFIG = {
+  settingsName: "qingagent-drawio",
+  enableCustomLibraries: false,
+  defaultCustomLibraries: [],
+};
 urlParams.offline = "1";
 urlParams.plugins = "0";
 urlParams.pwa = "0";

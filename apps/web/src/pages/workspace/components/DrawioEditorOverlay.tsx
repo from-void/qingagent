@@ -3,13 +3,14 @@ import {
   DRAWIO_EMBED_PATH,
   DRAWIO_EXPORT_TIMEOUT_MS,
   DRAWIO_FALLBACK_TIMEOUT_MS,
-  createDrawioExportAction,
   createDrawioLoadAction,
+  createDrawioSnapshotRequest,
+  createDrawioStatusAction,
   encodeDrawioAction,
   finalizeDrawioEdit,
-  isDrawioExportMessage,
   parseDrawioEmbedMessage,
   type DrawioEditorResult,
+  type DrawioSnapshotAction,
 } from "./drawioEmbedProtocol";
 import { renderDrawio } from "./drawioRender";
 import "./DrawioEditorOverlay.css";
@@ -17,19 +18,25 @@ import "./DrawioEditorOverlay.css";
 export interface DrawioEditorOverlayProps {
   source: string;
   title?: string;
+  onSave?: (result: DrawioEditorResult) => void;
   onClose: (result: DrawioEditorResult | null) => void;
 }
 
 export function DrawioEditorOverlay({
   source,
   title = "drawio 可视化编辑",
+  onSave,
   onClose,
 }: DrawioEditorOverlayProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const settledRef = useRef(false);
   const pendingSourceRef = useRef<string | null>(null);
-  const exportNonceRef = useRef<string | null>(null);
+  const pendingSaveIdRef = useRef<number | null>(null);
+  const pendingExitRef = useRef(false);
+  const latestResultRef = useRef<DrawioEditorResult | null>(null);
+  const saveSequenceRef = useRef(0);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("正在启动离线编辑器…");
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +50,12 @@ export function DrawioEditorOverlay({
 
   useEffect(() => {
     const expectedOrigin = window.location.origin;
-    const postAction = (action: ReturnType<typeof createDrawioLoadAction> | ReturnType<typeof createDrawioExportAction>) => {
+    const postAction = (
+      action:
+        | ReturnType<typeof createDrawioLoadAction>
+        | ReturnType<typeof createDrawioStatusAction>
+        | DrawioSnapshotAction,
+    ) => {
       iframeRef.current?.contentWindow?.postMessage(encodeDrawioAction(action), expectedOrigin);
     };
     const clearExportTimer = () => {
@@ -55,17 +67,42 @@ export function DrawioEditorOverlay({
       if (settledRef.current) return;
       settledRef.current = true;
       clearExportTimer();
+      setSaving(false);
       onClose(result);
+    };
+    const clearPendingSave = () => {
+      pendingSourceRef.current = null;
+      pendingSaveIdRef.current = null;
+      pendingExitRef.current = false;
+    };
+    const completeSave = (result: DrawioEditorResult, saveId: number) => {
+      if (settledRef.current || pendingSaveIdRef.current !== saveId) return;
+      const shouldExit = pendingExitRef.current;
+      clearExportTimer();
+      clearPendingSave();
+      latestResultRef.current = result;
+      onSave?.(result);
+      if (shouldExit) {
+        finish(result);
+        return;
+      }
+      // keepmodified=1 让 v31 snapshot 能在 save 后看到脏状态；保存落盘后再按原生
+      // status action 复位，下一轮真实编辑会重新把 modified 置为 true。
+      postAction(createDrawioStatusAction(false));
+      setSaving(false);
+      setStatus(result.warning ? "保存完成（已使用降级渲染），可继续编辑" : "保存完成，可继续编辑");
+      setError(null);
+      iframeRef.current?.focus();
     };
     const fallbackToLocalRender = async (
       fallbackSource: string,
-      fallbackNonce: string,
+      saveId: number,
       reason = "drawio 原生 SVG 导出超时",
     ) => {
       if (
         settledRef.current ||
         pendingSourceRef.current !== fallbackSource ||
-        exportNonceRef.current !== fallbackNonce
+        pendingSaveIdRef.current !== saveId
       ) {
         return;
       }
@@ -80,32 +117,28 @@ export function DrawioEditorOverlay({
         if (
           settledRef.current ||
           pendingSourceRef.current !== fallbackSource ||
-          exportNonceRef.current !== fallbackNonce
+          pendingSaveIdRef.current !== saveId
         ) {
           return;
         }
-        pendingSourceRef.current = null;
-        exportNonceRef.current = null;
-        finish({
+        completeSave({
           source: fallbackSource,
           svg,
           warning: `${reason}，已改用本地渲染保存`,
-        });
+        }, saveId);
       } catch (fallbackError) {
         if (
           settledRef.current ||
           pendingSourceRef.current !== fallbackSource ||
-          exportNonceRef.current !== fallbackNonce
+          pendingSaveIdRef.current !== saveId
         ) {
           return;
         }
-        pendingSourceRef.current = null;
-        exportNonceRef.current = null;
-        finish({
+        completeSave({
           source: fallbackSource,
           svg: null,
           warning: `drawio SVG 缓存生成失败，已保存可继续编辑的源码：${errorMessage(fallbackError)}`,
-        });
+        }, saveId);
       }
     };
     const onMessage = (event: MessageEvent) => {
@@ -116,6 +149,7 @@ export function DrawioEditorOverlay({
 
       if (message.event === "init") {
         try {
+          restoreDrawioEmbedButtons(iframeRef.current);
           postAction(createDrawioLoadAction(source, title));
           setStatus("离线编辑器已就绪");
           setError(null);
@@ -126,22 +160,27 @@ export function DrawioEditorOverlay({
         return;
       }
       if (message.event === "load") {
+        restoreDrawioEmbedButtons(iframeRef.current);
         setStatus("图表已加载");
         return;
       }
       if (message.event === "save") {
+        if (pendingSaveIdRef.current !== null) return;
         try {
-          const exportNonce = crypto.randomUUID();
-          const exportAction = createDrawioExportAction(message.xml, exportNonce);
-          pendingSourceRef.current = exportAction.xml;
-          exportNonceRef.current = exportNonce;
+          const request = createDrawioSnapshotRequest(message.xml);
+          const saveId = ++saveSequenceRef.current;
+          pendingSourceRef.current = request.source;
+          pendingSaveIdRef.current = saveId;
+          pendingExitRef.current = message.exit === true;
+          setSaving(true);
           setStatus("正在生成安全 SVG 缓存…");
           setError(null);
-          postAction(exportAction);
+          iframeRef.current?.blur();
+          postAction(request.action);
           clearExportTimer();
           exportTimerRef.current = setTimeout(() => {
             exportTimerRef.current = null;
-            void fallbackToLocalRender(exportAction.xml, exportNonce);
+            void fallbackToLocalRender(request.source, saveId);
           }, DRAWIO_EXPORT_TIMEOUT_MS);
         } catch (saveError) {
           setError(errorMessage(saveError));
@@ -150,20 +189,18 @@ export function DrawioEditorOverlay({
       }
       if (message.event === "export") {
         const pendingSource = pendingSourceRef.current;
-        const exportNonce = exportNonceRef.current;
-        if (!pendingSource || !exportNonce || !isDrawioExportMessage(message.message, exportNonce)) return;
+        const saveId = pendingSaveIdRef.current;
+        // v31 的 snapshot export 不回显 message/nonce，只能在可信 iframe 的 pending
+        // 保存窗口内接收；origin 与 event.source 校验仍是第一道边界。
+        if (!pendingSource || saveId === null) return;
         try {
           const result = finalizeDrawioEdit(pendingSource, message.data);
-          clearExportTimer();
-          pendingSourceRef.current = null;
-          exportNonceRef.current = null;
-          setStatus("保存完成");
-          finish(result);
+          completeSave(result, saveId);
         } catch (exportError) {
           clearExportTimer();
           void fallbackToLocalRender(
             pendingSource,
-            exportNonce,
+            saveId,
             `drawio 原生 SVG 不可用：${errorMessage(exportError)}`,
           );
         }
@@ -171,13 +208,15 @@ export function DrawioEditorOverlay({
       }
       // saveAndExit 的 save 与 exit 可能相邻到达；已经开始导出时必须等 SVG
       // 加固完成，不能让 exit 抢先把一次有效保存当成取消。
-      if (message.event === "exit" && pendingSourceRef.current === null) finish(null);
+      if (message.event === "exit" && pendingSourceRef.current === null) {
+        finish(latestResultRef.current);
+      }
       // openLink 在 suppressNewWindows + 离线模式下故意不转交系统浏览器。
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      finish(null);
+      finish(latestResultRef.current);
     };
 
     window.addEventListener("message", onMessage);
@@ -187,7 +226,7 @@ export function DrawioEditorOverlay({
       window.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [onClose, source, title]);
+  }, [onClose, onSave, source, title]);
 
   const cancel = () => {
     if (settledRef.current) return;
@@ -197,8 +236,9 @@ export function DrawioEditorOverlay({
       exportTimerRef.current = null;
     }
     pendingSourceRef.current = null;
-    exportNonceRef.current = null;
-    onClose(null);
+    pendingSaveIdRef.current = null;
+    pendingExitRef.current = false;
+    onClose(latestResultRef.current);
   };
 
   return (
@@ -216,16 +256,42 @@ export function DrawioEditorOverlay({
       </header>
       <iframe
         ref={iframeRef}
-        className="drawio-editor-overlay__frame"
+        className={`drawio-editor-overlay__frame${saving ? " is-saving" : ""}`}
         title="drawio 离线图表编辑器"
         src={DRAWIO_EMBED_PATH}
         sandbox="allow-scripts allow-same-origin"
         allow="clipboard-read; clipboard-write"
         referrerPolicy="no-referrer"
-        onLoad={() => setStatus("正在等待编辑器初始化…")}
+        onLoad={(event) => {
+          restoreDrawioEmbedButtons(event.currentTarget);
+          setStatus("正在等待编辑器初始化…");
+        }}
       />
     </div>
   );
+}
+
+const DRAWIO_EMBED_STYLE_ID = "qingagent-drawio-embed-fixes";
+
+function restoreDrawioEmbedButtons(iframe: HTMLIFrameElement | null): void {
+  try {
+    const frameDocument = iframe?.contentDocument;
+    if (!frameDocument?.head) return;
+    if (!frameDocument.getElementById(DRAWIO_EMBED_STYLE_ID)) {
+      const style = frameDocument.createElement("style");
+      style.id = DRAWIO_EMBED_STYLE_ID;
+      style.textContent = [
+        "/* offline=1 会让 v31 误把 embed 当 standalone 并写入 display:none。 */",
+        ".geToolbarContainer > .geButtonContainer { display: inline-flex !important; }",
+      ].join("\n");
+      frameDocument.head.appendChild(style);
+    }
+    frameDocument
+      .querySelectorAll<HTMLElement>(".geToolbarContainer > .geButtonContainer")
+      .forEach((container) => container.style.setProperty("display", "inline-flex", "important"));
+  } catch {
+    // iframe 尚未切到同源文档时等待下一次 load/init，不放宽消息来源校验。
+  }
 }
 
 function errorMessage(error: unknown): string {

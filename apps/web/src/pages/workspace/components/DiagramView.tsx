@@ -183,20 +183,19 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       if (drawioEditorOpening) return;
       setDrawioEditorOpening(true);
       setError(null);
-      void openDrawioEditor(source, "drawio 图编辑")
-        .then((result) => {
-          if (!result || !mountedRef.current) return;
-          // 使编辑器导出的 SVG 成为本次 source 的首选缓存；同时更新 source/draft，
-          // 避免 view effect 在新 attrs 到达前用 maxGraph 结果覆盖高保真导出。
-          renderTokenRef.current += 1;
-          setSource(result.source);
-          setDraft(result.source);
-          setSvg(result.svg);
-          updateAttributes({ source: result.source, svg: result.svg });
-          if (result.warning) {
-            toast.show({ message: result.warning, tone: "warn" });
-          }
-        })
+      void openDrawioEditor(source, "drawio 图编辑", (result) => {
+        if (!result || !mountedRef.current) return;
+        // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
+        // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。
+        renderTokenRef.current += 1;
+        setSource(result.source);
+        setDraft(result.source);
+        setSvg(result.svg);
+        updateAttributes({ source: result.source, svg: result.svg });
+        if (result.warning) {
+          toast.show({ message: result.warning, tone: "warn" });
+        }
+      })
         .catch((openError) => {
           if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));
         })

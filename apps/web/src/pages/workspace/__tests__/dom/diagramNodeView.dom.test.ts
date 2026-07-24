@@ -813,7 +813,11 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await waitForSelector(".pm-diagram-svg svg", editor.view.dom);
       const nextSource = DEFAULT_DRAWIO_SOURCE.replace('value="开始"', 'value="画布保存"');
       const nextSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>画布保存</text></svg>';
-      vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source: nextSource, svg: nextSvg });
+      vi.mocked(openDrawioEditor).mockImplementationOnce(async (_source, _title, onSave) => {
+        const result = { source: nextSource, svg: nextSvg };
+        onSave?.(result);
+        return result;
+      });
 
       const visualButton = Array.from(
         editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
@@ -821,18 +825,31 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(visualButton).not.toBeNull();
       await act(async () => visualButton?.click());
       await flush(4);
-      expect(openDrawioEditor).toHaveBeenCalledWith(DEFAULT_DRAWIO_SOURCE, "drawio 图编辑");
+      expect(openDrawioEditor).toHaveBeenCalledWith(
+        DEFAULT_DRAWIO_SOURCE,
+        "drawio 图编辑",
+        expect.any(Function),
+      );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: nextSource, svg: nextSvg });
 
       const secondSource = nextSource.replace('value="结束"', 'value="第二轮"');
       const secondSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>第二轮</text></svg>';
-      vi.mocked(openDrawioEditor).mockResolvedValueOnce({ source: secondSource, svg: secondSvg });
+      vi.mocked(openDrawioEditor).mockImplementationOnce(async (_source, _title, onSave) => {
+        const result = { source: secondSource, svg: secondSvg };
+        onSave?.(result);
+        return result;
+      });
       const secondVisualButton = Array.from(
         editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
       ).find((button) => button.textContent?.trim() === "可视化编辑");
       await act(async () => secondVisualButton?.click());
       await flush(4);
-      expect(openDrawioEditor).toHaveBeenNthCalledWith(2, nextSource, "drawio 图编辑");
+      expect(openDrawioEditor).toHaveBeenNthCalledWith(
+        2,
+        nextSource,
+        "drawio 图编辑",
+        expect.any(Function),
+      );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
 
       vi.mocked(openDrawioEditor).mockResolvedValueOnce(null);
@@ -841,7 +858,12 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       ).find((button) => button.textContent?.trim() === "可视化编辑");
       await act(async () => thirdVisualButton?.click());
       await flush(4);
-      expect(openDrawioEditor).toHaveBeenNthCalledWith(3, secondSource, "drawio 图编辑");
+      expect(openDrawioEditor).toHaveBeenNthCalledWith(
+        3,
+        secondSource,
+        "drawio 图编辑",
+        expect.any(Function),
+      );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
     } finally {
       await unmount(editor);

@@ -156,7 +156,7 @@ describe("writeDraft intent 调度", () => {
     vi.useRealTimers();
   });
 
-  it("默认 intent=express:thinking disabled,流式固定 4 路并携带 V4 messages", async () => {
+  it("忘调 diagram-viz 且无画图意图时不注入，默认 express 仍固定 4 路并携带 V4 messages", async () => {
     const { tool } = await makeTool();
     streamInnerModelMock.mockResolvedValueOnce({ raw: qingmlParagraph("默认 express"), contentStartMs: 0 });
     const parent = new AbortController();
@@ -195,6 +195,36 @@ describe("writeDraft intent 调度", () => {
     expect(firstCall.branchSteeringTail).not.toContain("允许的块级标签与基础形状");
     expect(JSON.stringify(firstCall.messages)).not.toContain("<diagram_viz_instruction");
     expect(firstCall.branchSteeringTail).not.toContain("<diagram_viz_instruction");
+  });
+
+  it("忘调 diagram-viz 但 writeDraft 参数含画图意图时静默激活并注入对应规范", async () => {
+    const { tool } = await makeTool();
+    streamInnerModelMock.mockResolvedValue({
+      raw: qingmlParagraph("含系统架构图的正文"),
+      contentStartMs: 0,
+      finishReason: "stop",
+    });
+    const requestContext = new RequestContext([
+      ["userText", "写一份技术方案"],
+      ["messages", [{ role: "user", content: "写一份技术方案" }]],
+    ]);
+
+    const out = await run(
+      tool,
+      { title: "系统架构图方案", outline: "说明组件和部署关系" },
+      { requestContext },
+    );
+
+    expect(out.ok).toBe(true);
+    const firstCall = streamInnerModelMock.mock.calls[0]![0] as InnerModelCall;
+    const innerTail = String(
+      (firstCall.messages?.at(-1) as { content?: unknown } | undefined)?.content,
+    );
+    expect(innerTail).toContain(
+      '<diagram_viz_instruction purpose="write" languages="drawio"',
+    );
+    expect(innerTail).toContain("工程图必须写成 `<drawio>");
+    expect(innerTail).not.toContain("Mermaid 语法只认半角");
   });
 
   it("激活 diagram-viz 后把 Mermaid 规范桥接到内层 messages 与旁支尾部，未携带 draw.io 段", async () => {
@@ -240,6 +270,7 @@ describe("writeDraft intent 调度", () => {
     );
     expect(firstCall.branchSteeringTail).toContain("Mermaid 语法只认半角");
     expect(firstCall.branchSteeringTail).not.toContain("未压缩明文 mxGraph XML");
+    expect(innerTail.match(/<diagram_viz_instruction\b/g)).toHaveLength(1);
   });
 
   it("Anthropic 协议也保留 V4 messages 上下文", async () => {

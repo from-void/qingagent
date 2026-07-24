@@ -117,6 +117,21 @@ export function activateDiagramVizSkill(
   ]);
 }
 
+export function autoActivateDiagramVizSkillForWrite(
+  requestContext: RequestContext | undefined,
+  hintText: string,
+): boolean {
+  const existing = requestState(requestContext);
+  if (existing?.activated) return false;
+  const languages = inferDiagramVizLanguages(hintText);
+  if (languages.length === 0) return false;
+  const state = ensureRequestState(requestContext);
+  if (!state) return false;
+  state.activated = true;
+  state.writeLanguages = uniqueLanguages([...state.writeLanguages, ...languages]);
+  return true;
+}
+
 export function markDiagramVizEditing(
   requestContext: RequestContext | undefined,
   languages: Iterable<DiagramVizLanguage>,

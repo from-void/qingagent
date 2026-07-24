@@ -46,7 +46,10 @@ import {
 import { streamInnerModel } from "../llm/innerModelStream.js";
 import { writeDraftInputSchema } from "../llm/draftToolSchemas.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
-import { buildActivatedDiagramVizInstruction } from "../skills/diagramViz.js";
+import {
+  autoActivateDiagramVizSkillForWrite,
+  buildActivatedDiagramVizInstruction,
+} from "../skills/diagramViz.js";
 
 export { writeDraftInputSchema };
 
@@ -323,10 +326,18 @@ export function createWriteDraftTool(opts: {
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
-      const diagramHint = [
+      const diagramActivationHint = [
         context?.requestContext?.get("userText"),
         input.title,
         input.outline,
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
+      // 外层模型忘调技能时静默补激活；只恢复规范注入，不阻断本次写稿。
+      autoActivateDiagramVizSkillForWrite(
+        context?.requestContext,
+        diagramActivationHint,
+      );
+      const diagramHint = [
+        diagramActivationHint,
         input.styleHint,
       ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
       const diagramInstruction = buildActivatedDiagramVizInstruction(

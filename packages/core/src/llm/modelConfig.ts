@@ -536,7 +536,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
       }
     }
     const isKimi = resolveModelProvider(input.requestContext) === "kimi";
-    const body = {
+    let body: Record<string, unknown> = {
       ...baseBody,
       messages: replayMessages,
       stream: true,
@@ -555,10 +555,7 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
     };
     if (!isKimi && input.thinking) delete body.temperature;
     if (isKimi) {
-      Object.assign(body, transformKimiRequestBody(body, input.requestContext));
-      delete body.thinking;
-      delete (body as Record<string, unknown>).enable_thinking;
-      delete (body as Record<string, unknown>).thinking_budget;
+      body = transformKimiRequestBody(body, input.requestContext);
     }
     // 请求链路日志:一次借道一条起始行+一条终态行,量化时机与缓存(用户苛刻项)。
     const t0 = Date.now();
@@ -912,7 +909,8 @@ export function resolveProtocol(requestContext?: RequestContext): ModelProtocol 
 }
 
 /**
- * Kimi K2.7/K3 都保持思考开启:不下发任何开关思考字段；K3 的 effort 固定 high。
+ * Kimi K2.7/K3 都保持思考开启:不下发任何开关思考字段；采样参数走平台默认；
+ * K3 的 effort 固定 high。
  * 这里接在 AI SDK serializer 之后，确保主链、工具内层和识图共享同一 wire 规则。
  */
 export function transformKimiRequestBody(
@@ -920,6 +918,8 @@ export function transformKimiRequestBody(
   requestContext?: RequestContext,
 ): Record<string, unknown> {
   const transformed = { ...body };
+  delete transformed.temperature;
+  delete transformed.top_p;
   delete transformed.thinking;
   delete transformed.enable_thinking;
   delete transformed.thinking_budget;

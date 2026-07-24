@@ -13,6 +13,7 @@ import {
   resolveVisionConfig,
   getDeepseekModel,
   readRawBranchResponse,
+  transformKimiRequestBody,
 } from "../llm/modelConfig.js";
 
 const originalDeepseekApiKey = process.env.DEEPSEEK_API_KEY;
@@ -337,6 +338,42 @@ describe("modelConfig", () => {
     expect(cancel).toHaveBeenCalledWith("branch_stream_buffer_exceeded");
   });
 
+  it("Kimi 请求体移除采样与思考参数，并保留 K3 reasoning_effort=high", () => {
+    const flashContext = requestContext([
+      ["modelOverrides", { provider: "kimi" }],
+    ]);
+    const proContext = requestContext([
+      ["modelOverrides", { provider: "kimi", tier: "pro" }],
+    ]);
+    const body = {
+      model: KIMI_MODEL_IDS.flash,
+      temperature: 0.4,
+      top_p: 0.8,
+      thinking: { type: "disabled" },
+      enable_thinking: false,
+      thinking_budget: 1024,
+      reasoning_effort: "low",
+      messages: [{ role: "user", content: "x" }],
+    };
+
+    const flash = transformKimiRequestBody(body, flashContext);
+    expect(flash).not.toHaveProperty("temperature");
+    expect(flash).not.toHaveProperty("top_p");
+    expect(flash).not.toHaveProperty("thinking");
+    expect(flash).not.toHaveProperty("enable_thinking");
+    expect(flash).not.toHaveProperty("thinking_budget");
+    expect(flash).not.toHaveProperty("reasoning_effort");
+    expect(flash.messages).toEqual(body.messages);
+    expect(body).toHaveProperty("temperature", 0.4);
+    expect(body).toHaveProperty("top_p", 0.8);
+
+    const pro = transformKimiRequestBody({ ...body, model: KIMI_MODEL_IDS.pro }, proContext);
+    expect(pro).not.toHaveProperty("temperature");
+    expect(pro).not.toHaveProperty("top_p");
+    expect(pro).not.toHaveProperty("thinking");
+    expect(pro).toHaveProperty("reasoning_effort", "high");
+  });
+
   it("Kimi mock transport:K2.7 不传思考开关/effort，K3 固定 reasoning_effort=high", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init?: RequestInit) => {
@@ -351,6 +388,7 @@ describe("modelConfig", () => {
       inputFormat: "prompt",
       prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
       temperature: 0.4,
+      topP: 0.8,
     } as never;
     const flashContext = requestContext([
       ["modelOverrides", { provider: "kimi", visitorApiKey: "mock-kimi-key" }],
@@ -363,6 +401,8 @@ describe("modelConfig", () => {
     await getDeepseekModel(proContext, "flash", { thinking: false }).doStream(options);
 
     expect(bodies[0]).toMatchObject({ model: KIMI_MODEL_IDS.flash });
+    expect(bodies[0]).not.toHaveProperty("temperature");
+    expect(bodies[0]).not.toHaveProperty("top_p");
     expect(bodies[0]).not.toHaveProperty("thinking");
     expect(bodies[0]).not.toHaveProperty("reasoning_effort");
     expect(bodies[1]).toMatchObject({
@@ -371,5 +411,7 @@ describe("modelConfig", () => {
     });
     expect(bodies[1]).not.toHaveProperty("thinking");
     expect(bodies[1]).not.toHaveProperty("enable_thinking");
+    expect(bodies[1]).not.toHaveProperty("temperature");
+    expect(bodies[1]).not.toHaveProperty("top_p");
   });
 });

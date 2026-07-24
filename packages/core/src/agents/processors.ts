@@ -1,4 +1,5 @@
 import type {
+  InputProcessor,
   InputProcessorOrWorkflow,
   OutputProcessor,
   OutputProcessorOrWorkflow,
@@ -22,6 +23,10 @@ import {
   resolveDeepseekRouterModelId,
 } from "../llm/modelConfig.js";
 import { toolSearchProcessorFromRequestContext } from "./toolSearch.js";
+import {
+  buildDiagramVizEditingInstructionFromContext,
+  DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
+} from "../skills/diagramViz.js";
 
 export const QINGAGENT_BATCH_PARTS_SIZE = 8;
 export const QINGAGENT_BATCH_PARTS_MAX_WAIT_MS = 10;
@@ -126,6 +131,17 @@ const DEFAULT_BATCH_PARTS_PROCESSOR = new BatchPartsProcessor({
   maxWaitTime: QINGAGENT_BATCH_PARTS_MAX_WAIT_MS,
   emitOnNonText: true,
 }) satisfies OutputProcessor;
+
+const DIAGRAM_VIZ_EDITING_PROCESSOR = {
+  id: DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
+  name: "图表编辑规范按需注入",
+  async processInputStep({ requestContext, messageList }) {
+    const instruction = buildDiagramVizEditingInstructionFromContext(requestContext);
+    if (!instruction) return;
+    messageList.addSystem(instruction, DIAGRAM_VIZ_EDITING_PROCESSOR_ID);
+    return messageList;
+  },
+} satisfies InputProcessor;
 
 /**
  * D8-A 策略编排表:
@@ -289,7 +305,10 @@ export function buildQingagentInputProcessors({
   requestContext?: RequestContext;
 } = {}): InputProcessorOrWorkflow[] {
   const flags = resolveQingagentProcessorFlags();
-  const processors: InputProcessorOrWorkflow[] = [DEFAULT_UNICODE_NORMALIZER];
+  const processors: InputProcessorOrWorkflow[] = [
+    DEFAULT_UNICODE_NORMALIZER,
+    DIAGRAM_VIZ_EDITING_PROCESSOR,
+  ];
   const toolSearch = toolSearchProcessorFromRequestContext(requestContext);
   if (toolSearch) processors.push(toolSearch);
   if (hasInputLlmGuardrail(flags)) {

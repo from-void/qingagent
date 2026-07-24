@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import {
+  DIAGRAM_VIZ_REQUEST_CONTEXT_KEY,
+  type DiagramVizRequestState,
+} from "../skills/diagramViz.js";
 
 const h = vi.hoisted(() => ({
   disabledSkills: new Set<string>(),
@@ -125,6 +129,44 @@ describe("ToolSearch bridge", () => {
       );
     }
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("skill 激活 diagram-viz 时把正文与引擎状态落入 RequestContext，停用时 fail-closed", async () => {
+    const { qingagentAgent } = await import("../agents/qingagent.js");
+    const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
+    const requestContext = new RequestContext([
+      ["userText", "请画一个 Mermaid 流程图"],
+    ]) as unknown as RequestContext;
+
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "diagram-viz" },
+      context: { requestContext },
+    })).resolves.toBeUndefined();
+    expect(
+      requestContext.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY) as DiagramVizRequestState,
+    ).toMatchObject({
+      activated: true,
+      writeLanguages: ["mermaid"],
+      editingLanguages: [],
+      skillBody: expect.stringContaining("# 图表可视化"),
+    });
+
+    h.disabledSkills.add("diagram-viz");
+    const disabledContext = new RequestContext();
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "diagram-viz" },
+      context: { requestContext: disabledContext },
+    })).resolves.toMatchObject({
+      proceed: false,
+      output: {
+        code: "SKILL_DISABLED",
+        skillName: "diagram-viz",
+        toolName: "skill",
+      },
+    });
+    expect(disabledContext.get(DIAGRAM_VIZ_REQUEST_CONTEXT_KEY)).toBeUndefined();
   });
 
   it("ToolSearch 工具签名变化时替换旧 processor,不保留关闭前 schema", async () => {

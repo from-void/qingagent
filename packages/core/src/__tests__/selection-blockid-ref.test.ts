@@ -174,6 +174,12 @@ describe("selection chip resolves referenced block by stable blockId", () => {
     expect(content).not.toContain('readDraft(query: "图表")');
     // 没把第11章表格内容错当成被引用内容
     expect(content).not.toContain("第11章");
+    // diagram 选区在第一下模型调用前就拿到按 lang 裁剪的编辑规范。
+    expect(content).toContain(
+      '<diagram_viz_instruction purpose="selection" languages="mermaid"',
+    );
+    expect(content).toContain("Mermaid 语法只认半角");
+    expect(content).not.toContain("未压缩明文 mxGraph XML");
   });
 
   it("文本部分选区:精确锁定所在段落块,同时点名块内具体选中的子串", async () => {

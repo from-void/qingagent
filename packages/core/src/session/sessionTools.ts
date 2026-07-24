@@ -20,6 +20,11 @@ import {
 import { createReadDocumentTool, createSearchDocumentsTool } from "../tools/folderDocuments.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import {
+  markDiagramVizEditing,
+  normalizeDiagramVizLanguage,
+  type DiagramVizLanguage,
+} from "../skills/diagramViz.js";
+import {
   filterDisabledSkillTools,
   isSkillDisabledToolResult,
 } from "../skills/toolGate.js";
@@ -841,7 +846,7 @@ export function createSessionScopedTools(
       docVersion: z.number().optional(),
       error: z.string().optional(),
     }),
-    execute: async (input) => {
+    execute: async (input, context) => {
       if (!state) return { ok: false, error: "readDraft is unavailable outside a session" };
       const doc = state.docDraftCandidateDoc ?? currentPmDoc(state);
       // 与本次读取到的文档快照绑定；若读取期间用户又提交了新版本，保留旧版本号，
@@ -936,6 +941,14 @@ export function createSessionScopedTools(
         return out;
       });
 
+      const diagramLanguages = selected.flatMap((entry): DiagramVizLanguage[] => {
+        if (entry.node.type !== "diagram") return [];
+        const language = normalizeDiagramVizLanguage(entry.node.attrs.lang);
+        return language ? [language] : [];
+      });
+      if (diagramLanguages.length > 0) {
+        markDiagramVizEditing(context?.requestContext, diagramLanguages);
+      }
       state.modelKnownDocVersion = docVersion;
       return {
         ok: true,

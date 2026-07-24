@@ -13,6 +13,10 @@ import {
   createQingagentToolSearchProcessor,
 } from "../agents/toolSearch.js";
 import { buildQingagentStaticTools } from "../agents/qingagent.js";
+import {
+  DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
+  markDiagramVizEditing,
+} from "../skills/diagramViz.js";
 
 const savedEnv = Object.fromEntries(
   [...Object.values(QINGAGENT_PROCESSOR_ENV), QINGAGENT_TOOL_SEARCH_ENV]
@@ -39,7 +43,10 @@ describe("qingagent processors", () => {
   it("默认只启用非 LLM 型 UnicodeNormalizer 与 BatchPartsProcessor", () => {
     resetProcessorEnv();
 
-    expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
+    expect(processorIds(buildQingagentInputProcessors())).toEqual([
+      "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
+    ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
@@ -53,7 +60,10 @@ describe("qingagent processors", () => {
     resetProcessorEnv();
     process.env[QINGAGENT_TOOL_SEARCH_ENV] = "1";
 
-    expect(processorIds(buildQingagentInputProcessors())).toEqual(["unicode-normalizer"]);
+    expect(processorIds(buildQingagentInputProcessors())).toEqual([
+      "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
+    ]);
     expect(Object.keys(buildQingagentStaticTools())).toEqual([
       "planDraft",
       "askUserQuestion",
@@ -69,6 +79,7 @@ describe("qingagent processors", () => {
       requestContext: requestContext as unknown as RequestContext,
     }))).toEqual([
       "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "tool-search",
     ]);
   });
@@ -128,6 +139,7 @@ describe("qingagent processors", () => {
     expect(resolveQingagentProcessorFlags().promptInjection).toBe(true);
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual(["batch-parts"]);
@@ -136,6 +148,7 @@ describe("qingagent processors", () => {
     process.env[QINGAGENT_PROCESSOR_ENV.pii] = "true";
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
@@ -147,12 +160,44 @@ describe("qingagent processors", () => {
     process.env[QINGAGENT_PROCESSOR_ENV.moderation] = "on";
     expect(processorIds(buildQingagentInputProcessors())).toEqual([
       "unicode-normalizer",
+      DIAGRAM_VIZ_EDITING_PROCESSOR_ID,
       "qingagent-input-llm-guardrails",
     ]);
     expect(processorIds(buildQingagentOutputProcessors())).toEqual([
       "batch-parts",
       "qingagent-output-llm-guardrails",
     ]);
+  });
+
+  it("图表编辑 processor 只在 RequestContext 标记后为下一 step 注入对应引擎 system", async () => {
+    resetProcessorEnv();
+    const requestContext = new RequestContext();
+    const processor = buildQingagentInputProcessors({ requestContext })
+      .find((item) => (item as { id?: string }).id === DIAGRAM_VIZ_EDITING_PROCESSOR_ID) as unknown as {
+        processInputStep: (args: {
+          requestContext: RequestContext;
+          messageList: { addSystem: (content: string, tag?: string) => unknown };
+        }) => Promise<unknown>;
+      };
+    const added: Array<{ content: string; tag?: string }> = [];
+    const messageList = {
+      addSystem: (content: string, tag?: string) => {
+        added.push({ content, tag });
+        return messageList;
+      },
+    };
+
+    await processor.processInputStep({ requestContext, messageList });
+    expect(added).toEqual([]);
+
+    markDiagramVizEditing(requestContext, ["mermaid"]);
+    await processor.processInputStep({ requestContext, messageList });
+
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ tag: DIAGRAM_VIZ_EDITING_PROCESSOR_ID });
+    expect(added[0]!.content).toContain('purpose="edit" languages="mermaid"');
+    expect(added[0]!.content).toContain("Mermaid 语法只认半角");
+    expect(added[0]!.content).not.toContain("未压缩明文 mxGraph XML");
   });
 
   it("LLM detector 默认走当前 flash 解析,并沿用请求级 key/baseURL/模型别名", () => {

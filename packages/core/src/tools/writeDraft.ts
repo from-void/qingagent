@@ -46,6 +46,7 @@ import {
 import { streamInnerModel } from "../llm/innerModelStream.js";
 import { writeDraftInputSchema } from "../llm/draftToolSchemas.js";
 import { startToolHeartbeat, writeToolStreamChunk } from "./toolHeartbeat.js";
+import { buildActivatedDiagramVizInstruction } from "../skills/diagramViz.js";
 
 export { writeDraftInputSchema };
 
@@ -322,16 +323,24 @@ export function createWriteDraftTool(opts: {
       // 长度意图规格化:四种 bound 语义 + 统一计数口径,见 utils/lengthSpec.ts
       const lengthSpec = makeLengthSpec(input);
       const userPrompt = buildWriteDraftFinalInstruction(input, lengthSpec);
-      const steeringTail = buildQingmlSteeringTail(materialContext, userPrompt);
-      const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
-      const runConfig = runConfigForIntent(input.intent ?? "express");
-      const nestedListUserIntent = [
+      const diagramHint = [
         context?.requestContext?.get("userText"),
         input.title,
         input.outline,
         input.styleHint,
       ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n");
-      const nestedIntent = detectNestedListIntent(nestedListUserIntent);
+      const diagramInstruction = buildActivatedDiagramVizInstruction(
+        context?.requestContext,
+        diagramHint,
+      );
+      const steeringTail = buildQingmlSteeringTail(
+        materialContext,
+        userPrompt,
+        diagramInstruction,
+      );
+      const draftMessages = buildDraftMessages(messages, steeringTail, AIIR_SYSTEM_PROMPT);
+      const runConfig = runConfigForIntent(input.intent ?? "express");
+      const nestedIntent = detectNestedListIntent(diagramHint);
 
       // 写稿小卡片:生成期间只镜像一条展示 lane。首个吐正文的 lane 获得展示权,
       // 后续保持粘滞;展示 lane 死亡才切到存活 lane 里当前字数最多者。
@@ -530,7 +539,11 @@ export function createWriteDraftTool(opts: {
             lane: laneKey,
             tier: "flash",
             messages: draftMessages,
-            branchSteeringTail: buildQingmlSteeringTail(materialContext, params.prompt),
+            branchSteeringTail: buildQingmlSteeringTail(
+              materialContext,
+              params.prompt,
+              diagramInstruction,
+            ),
             // 真流式:delta 只进内存赛道状态 + 整帧替换的展示进度,候选文档仅由完整 result.raw 构建,
             // 判废降级重跑最多表现为进度回退,无落库风险。
             liveTextDeltas: true,

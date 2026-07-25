@@ -292,7 +292,7 @@ export function LinkedFilesPanel({
         data-wf="LinkedFilesBar"
         onClick={() => setExpanded(true)}
       >
-        <span className="lf-label">已关联文件</span>
+        <span className="lf-label">已关联素材</span>
         <span className="lf-summary">
           {hasParsing && <span className="lf-spin" aria-hidden="true" />}
           {summary}
@@ -319,7 +319,7 @@ export function LinkedFilesPanel({
           setExpanded(false);
         }}
       >
-        <span className="lf-label">已关联文件</span>
+        <span className="lf-label">已关联素材</span>
         <span className="lf-chev is-open" aria-hidden="true"><ChevronIcon open /></span>
       </div>
       <div className="lf-tree" data-wf="LinkedFilesTree">
@@ -898,9 +898,9 @@ function buildSummary(rows: readonly MaterialParseRow[], folderSource: FolderSou
   const parsing = rows.some((row) => row.state === "parsing");
   const parts: string[] = [];
   if (fileCount > 0) {
-    if (parsing) parts.push(`${fileCount} 个文件 · 解析中`);
-    else if (errorCount > 0) parts.push(`${fileCount} 个文件(${errorCount} 个失败)`);
-    else parts.push(`${fileCount} 个文件`);
+    if (parsing) parts.push(`${fileCount} 个素材 · 解析中`);
+    else if (errorCount > 0) parts.push(`${fileCount} 个素材(${errorCount} 个失败)`);
+    else parts.push(`${fileCount} 个素材`);
   }
   if (folderSource) {
     if (folderSource.status === "connected") {

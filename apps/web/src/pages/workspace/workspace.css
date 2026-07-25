@@ -83,6 +83,7 @@
   #view-workspace .ws-deriv-tabs:hover .ws-deriv-add-wrap,#view-workspace .ws-deriv-tabs:focus-within .ws-deriv-add-wrap{opacity:1;pointer-events:auto}
   #view-workspace .ws-deriv-add{box-sizing:border-box;width:28px;height:28px;padding:0;display:inline-grid;place-items:center;border:1px solid rgba(184,169,140,0.34);border-radius:0;background:transparent;color:rgba(236,227,208,0.60);cursor:pointer}
   #view-workspace .ws-deriv-add:hover{color:rgba(240,232,214,0.92);border-color:rgba(184,169,140,0.62)}
+  #view-workspace .ws-deriv-add.is-disabled,#view-workspace .ws-deriv-add.is-disabled:hover{opacity:0.42;cursor:not-allowed;color:rgba(236,227,208,0.60);border-color:rgba(184,169,140,0.34)}
   /* 下拉菜单完全复用 .ws-export-menu/.ws-export-item 处方,只调锚点方向,不自造样式。 */
   #view-workspace .ws-deriv-menu{top:34px;left:0;right:auto;min-width:180px}
   #view-workspace{--danger:var(--ws-red)}
@@ -2450,6 +2451,10 @@
   #view-workspace .native-presentation-shell.native-presentation-active{
     /* 动效光晕使用负 inset，必须限制在纸张容器内，避免扩大 .ws-right 的滚动尺寸。 */
     overflow:hidden;
+    /* .ws-right 是 flex 容器:默认 shrink 会把壳压到视口高,叠加上面的 hidden 就把
+       打字中越过首屏的正文整段剪掉,滚动区归零(260726 用户报障:放映时右侧滚不动)。
+       flex:none 让壳保持内容高 → hidden 只裁光晕的负 inset,滚动恢复。 */
+    flex:none;
   }
   #view-workspace .native-presentation-vignette{
     position:absolute;

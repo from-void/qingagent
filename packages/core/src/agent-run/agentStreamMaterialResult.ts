@@ -244,20 +244,20 @@ export async function* handleMaterialToolResultSideEffects(
       fileId: matchedFileId,
       updatedAt: material.updatedAt,
     };
+    // 当场 yield 而非攒进 materialFrames 等回合收尾:输入框的「已关联素材」要在
+    // 存储素材卡片落地的同时联动刷新。前端 resourceUpserted/resourceUpdated 均幂等。
     if (existing) {
-      turn.materialFrames.push(resourceUpdated(materialId, material.summary, metadata));
+      yield resourceUpdated(materialId, material.summary, metadata);
     } else {
-      turn.materialFrames.push(
-        resourceUpserted({
-          resourceRef: { id: materialId, domain: { kind: "file" } },
-          displayName: material.filename,
-          summary: material.summary ?? "",
-          mime: material.mimeType,
-          byteLen: material.text.length,
-          createdAt: material.createdAt,
-          metadata,
-        }),
-      );
+      yield resourceUpserted({
+        resourceRef: { id: materialId, domain: { kind: "file" } },
+        displayName: material.filename,
+        summary: material.summary ?? "",
+        mime: material.mimeType,
+        byteLen: material.text.length,
+        createdAt: material.createdAt,
+        metadata,
+      });
     }
     schedulePersist(state, "tool_result:storeMaterial").catch((error) =>
       logger.error("Persist after storeMaterial failed", { error: String(error) }),
@@ -267,13 +267,11 @@ export async function* handleMaterialToolResultSideEffects(
     if (material) {
       material.summary = args.summary as string;
       material.updatedAt = new Date().toISOString();
-      turn.materialFrames.push(
-        resourceUpdated(material.id, material.summary, {
-          ...material.metadata,
-          fileId: material.fileId,
-          updatedAt: material.updatedAt,
-        }),
-      );
+      yield resourceUpdated(material.id, material.summary, {
+        ...material.metadata,
+        fileId: material.fileId,
+        updatedAt: material.updatedAt,
+      });
     }
   }
 }

@@ -407,9 +407,12 @@ function prepareBranch(
   return { steeringTail, progressState: { signature: "" } };
 }
 
-async function runFallback(input: GenerateQuestionsInput): Promise<GeneratedQuestion[]> {
+async function runFallback(
+  input: GenerateQuestionsInput,
+  // 去重态由调用方传入、与主路径共用:各自持一份的话,降级后收尾那帧会把同一套问卷重复发一次。
+  progressState: { signature: string },
+): Promise<GeneratedQuestion[]> {
   let last: GeneratedQuestion[] = [];
-  const progressState = { signature: "" };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = streamText({
       model: getDeepseekModel(input.requestContext, "flash", {
@@ -466,6 +469,10 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
   if (input.abortSignal?.aborted) throw new DOMException("Question generation aborted", "AbortError");
   const snapshot = getSessionSnapshot(input.requestContext);
   const prepared = snapshot ? prepareBranch(input, snapshot) : null;
+  // 出题进度去重态必须是本次调用级的,不能挂在 prepared 上 —— 它与「有没有主链快照」无关,
+  // 挂上去就会在无快照时把整条流式观感丢掉(48728e78 的回归)。prepared 仍带一份,
+  // 是为了兼容 prepareBranch 的既有返回形状;这里优先复用它,拿不到就本地建。
+  const progressState = prepared?.progressState ?? { signature: "" };
   let lastPartial: GeneratedQuestion[] = [];
   let branchText = "";
   const result = await runSideChannel({
@@ -474,10 +481,20 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
     steeringTail: prepared?.steeringTail ?? (input.mode === "initial" ? initialPrompt(input) : additionalPrompt(input)),
     abortSignal: input.abortSignal,
     streamTextDeltas: true,
+    // 真流式:出题要的就是「选项跟着模型输出逐条蹦出」。默认的验真后回放做不到 ——
+    // 它在响应读完后几毫秒内把几百个 delta 涌完,前端只会一次性收到全部选项。
+    // 出题可以接受提前露出半成品:branch 若被判废(tool_call / stale_snapshot),降级路径
+    // 会用同一个 toolCallId 发出完整问卷、整体覆盖前端已收到的 partial。
+    // (正文草稿与 SVG 不能这么干,见 BranchCallInput.liveTextDeltas 的告警。)
+    liveTextDeltas: true,
     onTextDelta: async (_delta, accumulated) => {
       const partial = parsePartialGeneratedQuestions(accumulated);
       if (partial.length > 0) lastPartial = partial;
-      if (prepared) await emitQuestionProgress(input, partial, prepared.progressState);
+      // 无条件发进度:出题的流式观感(选项逐条蹦出)只依赖「解析出了新的 partial」,
+      // 与「能否借道主链快照」无关。progressState 曾被打包进 prepareBranch 的返回值,
+      // 于是拿不到快照(prepared=null)时 partial 明明算好了却整个丢掉,前端只能在最后
+      // suspend 时一次性收到完整问卷 —— 全部选项一起蹦出来。见下方 progressState 定义。
+      await emitQuestionProgress(input, partial, progressState);
     },
     parse: (text) => {
       branchText = text;
@@ -485,7 +502,7 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
       return questions.length > 0 ? questions : null;
     },
     fallback: async () => {
-      const questions = await runFallback(input);
+      const questions = await runFallback(input, progressState);
       if (snapshot) rememberFallbackQuestions(snapshot, input, questions);
       return questions;
     },
@@ -498,8 +515,10 @@ export async function generateQuestions(input: GenerateQuestionsInput): Promise<
       messages: [...prepared.steeringTail, { role: "assistant", content: branchText }],
       touchedAt: Date.now(),
     });
-    await emitQuestionProgress(input, result.value, prepared.progressState);
   }
+  // 收尾补一帧完整问卷(与上面的 partial 同一个去重态,内容没变就不会重复发)。
+  // 不再限定 transport === "branch":独立模型路径同样需要这一帧来补齐最后一题/最后几个选项。
+  await emitQuestionProgress(input, result.value, progressState);
   return {
     questions: result.value,
     transport: result.transport,

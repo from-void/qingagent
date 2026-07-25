@@ -35,6 +35,11 @@ export interface InnerModelStreamCall {
   onContentDelta?: (delta: string, raw: string, observedAt?: number) => void;
   /** 有主链快照时优先借道；失败则原样回退下面的 streamText 请求。 */
   branchSteeringTail?: string | BranchMessage[];
+  /**
+   * 借道时边读边发 onContentDelta,不等验真(见 BranchCallInput.liveTextDeltas 的前提与代价)。
+   * 不开则 branch 路是「读完回放」,与 fallback streamText 的真流式观感不一致。
+   */
+  liveTextDeltas?: boolean;
 }
 
 export interface InnerModelStreamResult {
@@ -70,6 +75,7 @@ export async function streamInnerModel(input: InnerModelStreamCall): Promise<Inn
       attempt: input.attempt,
       abortSignal: input.abortSignal,
       streamTextDeltas: true,
+      liveTextDeltas: input.liveTextDeltas,
       thinking: input.thinking,
       temperature,
       topP,

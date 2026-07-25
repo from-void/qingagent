@@ -14,6 +14,7 @@ vi.mock("../llm/modelConfig.js", () => ({
 }));
 
 import {
+  buildTitleSource,
   generateTitleAfterFirstDraft,
   normalizeGeneratedTitle,
 } from "../session/titleGeneration.js";
@@ -100,5 +101,44 @@ describe("首稿后 BranchCall 标题", () => {
 
     await expect(pending).resolves.toBeNull();
     expect(state.branchTitleGenerated).toBe(false);
+  });
+});
+
+describe("buildTitleSource 输入压缩", () => {
+  it("优先给大纲 + 开头引子，不再灌全文", () => {
+    const doc = {
+      type: "doc" as const,
+      content: [
+        { type: "heading" as const, attrs: { level: 1 as const }, content: [{ type: "text" as const, text: "城市更新总纲" }] },
+        { type: "paragraph" as const, attrs: {}, content: [{ type: "text" as const, text: "开篇交代背景。" }] },
+        { type: "heading" as const, attrs: { level: 2 as const }, content: [{ type: "text" as const, text: "公共空间" }] },
+        // 正文很长,但只应被算进「开头」预算,不该整篇进去
+        { type: "paragraph" as const, attrs: {}, content: [{ type: "text" as const, text: "尾".repeat(4000) }] },
+      ],
+    };
+    const source = buildTitleSource(doc as never);
+
+    expect(source).toContain("# 城市更新总纲");
+    expect(source).toContain("## 公共空间");
+    expect(source).toContain("开篇交代背景。");
+    // 关键:总长受预算约束,不是原来的 12000
+    expect(source.length).toBeLessThanOrEqual(1_600);
+  });
+
+  it("纯图表文档退回带媒体口径 —— 否则 skipMedia 下拿到空串,只能瞎猜标题", () => {
+    const doc = {
+      type: "doc" as const,
+      content: [
+        { type: "diagram" as const, attrs: { source: "graph TD; 采集-->处理-->归档" } },
+      ],
+    };
+    const source = buildTitleSource(doc as never);
+
+    expect(source).toContain("采集");
+    expect(source).not.toBe("");
+  });
+
+  it("空文档给空串，交给调用方走 H1 兜底、不浪费模型请求", () => {
+    expect(buildTitleSource({ type: "doc", content: [] } as never)).toBe("");
   });
 });

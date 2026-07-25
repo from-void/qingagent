@@ -7,6 +7,8 @@ export function DerivTabBar(props: {
   onActivate: (id: "main" | string) => void; onCreate: (dtype: DerivativeDtype) => void;
   onRename: (title: string) => void | Promise<void>;
   isStaleDismissed?: (item: DerivativeItem) => boolean;
+  /** 非空时禁用「+」新建稿件(如青简编辑中),hover 展示原因。 */
+  createDisabledReason?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -54,8 +56,8 @@ export function DerivTabBar(props: {
       <span>翻译</span>{translationItems.some(hasVisibleStale) ? <i className="ws-deriv-stale-dot" title="源文档已更新" /> : null}
     </button> : null}
     {availableDescriptors.length > 0 ? <div className="ws-deriv-add-wrap" ref={menuRef}>
-      <button className="ws-deriv-add" title="新建稿件" aria-label="新建稿件" onClick={() => setOpen((value) => !value)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button>
-      {open ? <div className="ws-export-menu ws-deriv-menu" role="menu">
+      <button className={`ws-deriv-add${props.createDisabledReason ? " is-disabled" : ""}`} title={props.createDisabledReason ?? "新建稿件"} aria-label="新建稿件" aria-disabled={props.createDisabledReason ? true : undefined} onClick={() => { if (!props.createDisabledReason) setOpen((value) => !value); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button>
+      {open && !props.createDisabledReason ? <div className="ws-export-menu ws-deriv-menu" role="menu">
         {availableDescriptors.map((descriptor) => <button key={descriptor.dtype} type="button" role="menuitem" className="ws-export-item" onClick={() => { setOpen(false); props.onCreate(descriptor.dtype); }}>{descriptor.label}</button>)}
       </div> : null}
     </div> : null}

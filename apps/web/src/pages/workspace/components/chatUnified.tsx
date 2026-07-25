@@ -394,6 +394,16 @@ export function UToolBar({
     const t = parseArgs(spec).timeout;
     return typeof t === "number" && t > 0 ? Math.round(t / 1000) : null;
   })();
+  // failed 按 retriable 分档(用户拍板:工具行不出红色的内部报错):
+  //  - aborted(已中止)优先:更具体的终态,停止图标、不红;
+  //  - retriable:false = 真终态(抓取失败/拒绝落库/命令拦截),保留红色+原因——这是"假成功✅"
+  //    修复(fetchArticle bug-2)的用户确认行为,不能倒回对勾;
+  //  - retriable:true = agent 内部重试提示(editDraft 定位未命中、参数重发等),agent 会自行
+  //    换招重试,只是周知 → 常规图标 + 灰字「未完成」,原因藏 hover title 供排查。
+  //    图标不搞特殊(黄点/错误/等待都不要):用户对这行无法操作,特殊图标没有意义(用户拍板)。
+  const failedTerminal =
+    failed && !aborted && spec.status.kind === "failed" && spec.status.data.retriable === false;
+  const failedRetriable = failed && !aborted && !failedTerminal;
   const failedReason =
     failed && spec.status.kind === "failed"
       ? spec.status.data.reason
@@ -416,32 +426,36 @@ export function UToolBar({
       ? "等待中"
       : running
         ? runningText
-        : failed || semanticFailed
-          ? (failedReason ?? customOut ?? "未完成")
-          : isProcOutTool
-            ? waitReturnedWhileRunning
-              ? "本次等待结束，仍在运行"
-              : "已读取输出"
-            : (customOut ?? "已完成");
+        : failedRetriable
+          ? "未完成"
+          : failedTerminal || semanticFailed
+            ? (failedReason ?? customOut ?? "未完成")
+            : isProcOutTool
+              ? waitReturnedWhileRunning
+                ? "本次等待结束，仍在运行"
+                : "已读取输出"
+              : (customOut ?? "已完成");
   // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”；
   // aborted 是更具体的已中止终态，不应沿用普通失败的红色错误态。
   // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。
-  const visualFailed = failed && !aborted;
   const ico = pending ? <span className="u-dot" />
     : running ? (LONG_RUNNING.has(spec.name) ? <Spin /> : <Dots />)
     : aborted ? <UIcon d={ICO.stop} />
-    : failed ? <UIcon d={ICO.error} />
+    : failedTerminal ? <UIcon d={ICO.error} />
     : <UIcon d={DONE_ICON_BY_KIND[spec.body.kind] ?? ICO.check} />;
   const seg = isProcOut && procOutSecs
     ? <span className="u-seg"><Countdown seconds={procOutSecs} /></span>
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className={`u-ico${visualFailed ? " is-error" : ""}`}>{ico}</span>
+      <span className={`u-ico${failedTerminal ? " is-error" : ""}`}>{ico}</span>
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span className={`u-meta${visualFailed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
+      <span
+        className={`u-meta${failedTerminal ? " is-error" : ""}`}
+        title={failedRetriable ? (failedReason ?? undefined) : (outputHint ?? undefined)}
+      >{statusText}</span>
     </div>
   );
 }

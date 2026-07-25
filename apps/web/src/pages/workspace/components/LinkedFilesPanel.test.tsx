@@ -38,19 +38,19 @@ describe("LinkedFilesPanel", () => {
       materialRows: [readyRow("res-a", "a.pdf"), readyRow("res-b", "b.docx")],
       folderSource: mockFolderSource,
     }));
-    expect(getBar().textContent).toContain("2 个文件 · 文件夹「客户资料」 · 14 个文件");
+    expect(getBar().textContent).toContain("2 个素材 · 文件夹「客户资料」 · 14 个文件");
 
     await rerender(panel({
       materialRows: [errorRow("res-d", "file-d", "d.xlsx", "加密文件无法解析")],
       folderSource: { ...mockFolderSource, status: "missing" },
     }));
-    expect(getBar().textContent).toContain("1 个文件(1 个失败) · 文件夹已失效");
+    expect(getBar().textContent).toContain("1 个素材(1 个失败) · 文件夹已失效");
 
     await rerender(panel({
       materialRows: [parsingRow("file-c", "c.pptx")],
       folderSource: null,
     }));
-    expect(getBar().textContent).toContain("1 个文件 · 解析中");
+    expect(getBar().textContent).toContain("1 个素材 · 解析中");
     expect(getBar().querySelector(".lf-spin")).not.toBeNull();
   });
 
@@ -59,7 +59,7 @@ describe("LinkedFilesPanel", () => {
       materialRows: [readyRow("res-a", "a.pdf"), readyRow("res-b", "b.docx")],
       folderSource: { ...mockFolderSource, fileCount: 131, fileCountCapped: false },
     }));
-    expect(getBar().textContent).toContain("2 个文件 · 文件夹「客户资料」 · 131 个文件");
+    expect(getBar().textContent).toContain("2 个素材 · 文件夹「客户资料」 · 131 个文件");
 
     await rerender(panel({
       materialRows: [],
@@ -82,11 +82,11 @@ describe("LinkedFilesPanel", () => {
     click(getBar());
 
     const header = getHeader();
-    expect(header.textContent).toContain("已关联文件");
+    expect(header.textContent).toContain("已关联素材");
     expect(header.textContent).not.toContain("文件夹「客户资料」");
     expect(header.textContent).not.toContain("14 个文件");
     expect(header.querySelector(".lf-summary")).toBeNull();
-    expect(getInfo().textContent).toContain("1 个文件 · 文件夹「客户资料」 · 14 个文件");
+    expect(getInfo().textContent).toContain("1 个素材 · 文件夹「客户资料」 · 14 个文件");
   });
 
   it("展开后渲染 ready/parsing/error 行状态，错误行可重试", async () => {
@@ -364,11 +364,11 @@ describe("LinkedFilesPanel", () => {
     }));
 
     click(getBar());
-    expect(getInfo().textContent).toBe("1 个文件(1 个失败)");
+    expect(getInfo().textContent).toBe("1 个素材(1 个失败)");
     mouseEnter(rowByText("broken.pptx"));
     expect(getInfo().textContent).toContain("旧版格式暂不支持");
     mouseLeave(rowByText("broken.pptx"));
-    expect(getInfo().textContent).toBe("1 个文件(1 个失败)");
+    expect(getInfo().textContent).toBe("1 个素材(1 个失败)");
   });
 
   it("文件夹 hover 文案只展示状态信息，不重复路径和计数", () => {
@@ -453,11 +453,11 @@ describe("LinkedFilesPanel", () => {
     mouseLeave(rowByText("ready.pdf"));
 
     const info = getInfo();
-    expect(info.textContent).toBe("1 个文件");
+    expect(info.textContent).toBe("1 个素材");
     expect(info.hasAttribute("title")).toBe(false);
     mockOverflow(info, { scrollWidth: 160, clientWidth: 30 });
     mouseEnter(info);
-    expect(info.getAttribute("title")).toBe("1 个文件");
+    expect(info.getAttribute("title")).toBe("1 个素材");
   });
 
   it("素材行点击引用后保持面板展开", async () => {

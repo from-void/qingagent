@@ -418,7 +418,6 @@ export function RightPane({
           onJumpNext={onJumpNext}
           onRejectAll={onRejectAll}
           onCommit={onCommit}
-          onApplyAll={onAcceptAll}
         />
       )}
       {showUnrenderableHint && (

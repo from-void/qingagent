@@ -132,6 +132,7 @@ export function ChatMessageList({
             streamActive={rowStreamActive}
             isLastAssistantMessage={m.id === lastAssistantMessageId}
             turnSettled={flags?.turnSettled ?? false}
+            turnReasoningDone={flags?.turnReasoningDone ?? false}
             isFinalAgentMsg={flags?.isFinalAgentMsg ?? false}
             patchRevealing={isLivePatchMessage ? patchRevealing : false}
             livePatchCount={isLivePatchMessage ? livePatchCount : null}
@@ -196,6 +197,7 @@ type MessageRowProps = {
   streamActive: boolean;
   isLastAssistantMessage: boolean;
   turnSettled?: boolean;
+  turnReasoningDone?: boolean;
   isFinalAgentMsg?: boolean;
   patchRevealing?: boolean;
   livePatchCount?: number | null;
@@ -334,6 +336,7 @@ const MessageRow = memo(function MessageRow({
   streamActive,
   isLastAssistantMessage,
   turnSettled = false,
+  turnReasoningDone = false,
   isFinalAgentMsg = false,
   patchRevealing,
   livePatchCount,
@@ -560,7 +563,10 @@ const MessageRow = memo(function MessageRow({
              小缩略图两种视角),按设计共存,不是重复。
           (用户已确认上述非 bug;曾被自动评审误报为"非折叠轮重复展示"。) */}
       {artifacts.map(renderArtifact)}
-      <UImageSummary images={svgImages} />
+      {/* 图片汇总在「推理结束」即出现(luna r1 第7项):门 turnReasoningDone 而非 turnSettled——
+          SVG 插图后进入待审阅态时 turnSettled 会一直 false,汇总行不能拖到用户提交后才出。
+          推理进行中不出(用户拍板);二维码(qrCard)不延后——授权码要青简中途等用户扫。 */}
+      {turnReasoningDone ? <UImageSummary images={svgImages} /> : null}
       {thinkingTailActive && <ThinkingMarquee thinkingText={currentThinkingText} active />}
     </div>
   );
@@ -580,7 +586,12 @@ function getMessagePatchKeys(message: ChatMessage): string[] {
   return keys;
 }
 
-type TurnFoldFlag = { turnSettled: boolean; isFinalAgentMsg: boolean };
+type TurnFoldFlag = {
+  turnSettled: boolean;
+  /** 推理已结束(非进行中流式轮、无运行工具),但可能还有待审批的 live patch。 */
+  turnReasoningDone: boolean;
+  isFinalAgentMsg: boolean;
+};
 
 // 把消息按"轮"分组(user 消息开启新轮),逐轮算两个折叠判定标记:
 //  - turnSettled:本轮已结清 —— 不是进行中的流式轮、轮内没有运行中/等待中的工具、
@@ -618,9 +629,14 @@ function computeTurnFlags(
     const anyLivePatch =
       liveHunkKey != null &&
       agentMsgs.some((m) => getMessagePatchKeys(m).includes(liveHunkKey));
-    const settled = !isActiveTurn && !anyRunningTool && !anyLivePatch;
+    const reasoningDone = !isActiveTurn && !anyRunningTool;
+    const settled = reasoningDone && !anyLivePatch;
     for (const m of turn) {
-      flags.set(m.id, { turnSettled: settled, isFinalAgentMsg: m.id === finalAgentId });
+      flags.set(m.id, {
+        turnSettled: settled,
+        turnReasoningDone: reasoningDone,
+        isFinalAgentMsg: m.id === finalAgentId,
+      });
     }
   }
   return flags;

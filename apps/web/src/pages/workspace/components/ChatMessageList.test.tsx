@@ -1194,6 +1194,60 @@ describe("ChatMessageList", () => {
     expect(host?.textContent ?? "").toContain("已修改 2 处");
   });
 
+  it("「已生成 N 张图片」汇总只在回合结清后出现,回合进行中(有运行工具)不出", async () => {
+    const svgTool = (id: string): ToolCallSpec => ({
+      id,
+      name: "generateSvg",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "generateSvg",
+        data: { prompt: "配图", progress: { stage: "done", src: "/api/v1/files/x/illustration.svg" } },
+      } as unknown as ToolCallSpec["body"],
+      result: null,
+    });
+    const runningTool: ToolCallSpec = {
+      ...genTool("t-running", "readDraft"),
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+    };
+    const unsettled: ChatMessage[] = [
+      turn([{ kind: "toolCall", data: svgTool("t-svg") }, { kind: "toolCall", data: runningTool }]),
+    ];
+    await render(<ChatMessageList messages={unsettled} streamActive={false} />);
+    expect(host?.querySelector(".u-imgsum")).toBeNull();
+
+    const settled: ChatMessage[] = [
+      turn([{ kind: "toolCall", data: svgTool("t-svg") }, { kind: "text", data: { body: "配好了" } }]),
+    ];
+    await render(<ChatMessageList messages={settled} streamActive={false} />);
+    expect(host?.querySelector(".u-imgsum")).not.toBeNull();
+    expect(host?.textContent ?? "").toContain("已生成 1 张图片");
+  });
+
+  it("汇总行门在「推理结束」而非「回合结清」:待审批 live patch 期间也要出(luna r1 第7项)", async () => {
+    const svgTool: ToolCallSpec = {
+      id: "t-svg",
+      name: "generateSvg",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "generateSvg",
+        data: { prompt: "配图", progress: { stage: "done", src: "/api/v1/files/x/illustration.svg" } },
+      } as unknown as ToolCallSpec["body"],
+      result: null,
+    };
+    const pendingApproval: ChatMessage[] = [
+      turn([
+        { kind: "toolCall", data: svgTool },
+        { kind: "patchSummary", data: { count: 1, hunkIds: ["h-img"] } },
+      ]),
+    ];
+    // liveHunkKey 命中 → anyLivePatch=true → turnSettled=false;但推理已结束,汇总行必须在场
+    await render(<ChatMessageList messages={pendingApproval} streamActive={false} liveHunkKey="h-img" />);
+    expect(host?.querySelector(".u-imgsum")).not.toBeNull();
+    expect(host?.textContent ?? "").toContain("已生成 1 张图片");
+  });
+
   it("parseExternalClient 从消息 id 解析调用方,非外部消息返回 null", () => {
     expect(parseExternalClient("external-claudecode-3f2a1b2c-0000")).toBe("claude-code");
     expect(parseExternalClient("external-codex-3f2a1b2c-0000")).toBe("codex");

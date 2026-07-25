@@ -8,16 +8,15 @@ export interface PatchNavProps {
   onJumpPrev: () => void;
   onJumpNext: () => void;
   onRejectAll: () => void;
-  /** 按当前逐处裁决提交；已撤销的修改保持撤销。 */
+  /** 按当前逐处裁决提交；已撤销的修改保持撤销(没动过的默认全部应用)。 */
   onCommit: () => void | Promise<void>;
-  /** 忽略逐处裁决并采纳本轮全部修改；整篇改写误入逐处审阅时的逃生入口。 */
-  onApplyAll?: () => void | Promise<void>;
 }
 
 /**
  * 审核区顶部固定操作条:
  * [dot] [修改 · N 处] [↑上一处][↓下一处](仅 N>1 显示)
- * [flex spacer] [提交↵] [全部应用] [撤销全部]
+ * [flex spacer] [提交↵] [撤销全部]
+ * (曾有「全部应用」逃生按钮;用户拍板移除——提交本身默认应用未裁决的全部修改,按钮冗余)
  */
 export function PatchNav({
   remainingCount,
@@ -28,7 +27,6 @@ export function PatchNav({
   onJumpNext,
   onRejectAll,
   onCommit,
-  onApplyAll,
 }: PatchNavProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -75,17 +73,6 @@ export function PatchNav({
       >
         提交 ↵
       </button>
-      {onApplyAll && (
-        <button
-          type="button"
-          className="pn-commit pn-apply-all"
-          onClick={onApplyAll}
-          disabled={isSubmitting}
-          title="忽略逐处选择，应用本轮全部修改"
-        >
-          全部应用
-        </button>
-      )}
       <span style={{ position: "relative" }}>
         <button
           type="button"

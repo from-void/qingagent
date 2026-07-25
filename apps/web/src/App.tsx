@@ -4,29 +4,38 @@ import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
 import { AuthTokenGate } from "./system/AuthTokenGate";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
 import { awaitPendingStylesheets } from "./system/awaitStyles";
+import { onceAsync } from "./system/onceAsync";
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
 // 各页都抽成命名工厂,既给 lazy 用,也给「空闲预热」用 —— 同一个 import 工厂只会拉一次 chunk。
 //
-// 「组件早于样式挂载 → 无样式裸 DOM」的**第二道**防线(styled)。主防线是 vite.config.ts 的
-// build.cssCodeSplit:false —— 全站 CSS 合成一个渲染阻塞的 <link>,React 挂载前样式必然已生效,
-// 从根上不存在竞态(详见那里的注释)。这里保留等待是因为它零成本(没有 pending 样式表就立即
-// resolve),且能兜住「日后又开启 CSS 分割 / 引入运行时动态样式表」的回归。
+// ⚠️ 每个工厂都必须用 onceAsync 记忆化 —— 这是「组件早于样式挂载 → 无样式裸 DOM」的主防线。
+// Vite 把 import("./x") 编译成 __vitePreload(() => import("./x-hash.js"), deps),**每次调用工厂
+// 都会走一遍 __vitePreload**,而它用模块级 seen 表去重:只有第一次碰到某个 CSS 才返回「等 link
+// load」的 promise。若下面的空闲预热调一次(等待被 void 掉)、用户切页时 lazy 再调一次,第二次就
+// seen 命中直接短路,不等 CSS 就把 chunk 交出去 → 组件先挂载、样式后到,那几百毫秒是完全无样式
+// 的裸 DOM(布局/字色/玻璃感全丢)。记忆化后 __vitePreload 只被调用一次(预热那次,它老实等 CSS),
+// lazy 复用同一个 promise,resolve 时样式必然已生效。
+// 于是 CSS 仍可按页分割:首屏只下首页那份,其余后台预载 —— 不必把全站 CSS 压进首屏。
+// 用户在预载完成前就切页时,等的是同一个 promise:期间 startTransition 保留旧页面的到达态静止帧
+// (或 Suspense 纯色兜底),都是干净的一屏。
 //
-// 病根备忘:Vite preload helper 用全局 seen 表去重,只有**第一次**碰到某个 CSS 才返回「等 link
-// load」的 promise。下面的空闲预热就是那第一次(等待被 void 掉了),等用户真正切页、React.lazy
-// 第二次调同一工厂时 seen 命中直接短路,不等 CSS 就把 chunk 交出去。注意本道防线的等待必须带
-// 超时(网络异常不能卡死导航),所以**一超时裸 DOM 照旧** —— 单靠它治不了根,别把主防线关掉。
+// styled 是**第二道**(零成本:没有 pending 样式表就立即 resolve),兜「别处已先 import 过、seen
+// 已被污染」这类边缘情况。注意它的等待必须带超时(网络异常不能卡死导航),故单靠它治不了根。
 const PAGE_STYLE_TIMEOUT_MS = 3000;
 const styled = <T,>(mod: T): Promise<T> =>
   awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS).then(() => mod);
-const loadHome = () => import("./pages/home/HomePage").then(styled);
+const loadHome = onceAsync(() => import("./pages/home/HomePage").then(styled));
 const HomePage = lazy(() => loadHome().then((m) => ({ default: m.HomePage })));
-const loadNewSession = () => import("./pages/new-session/NewSessionPage").then(styled);
+const loadNewSession = onceAsync(() =>
+  import("./pages/new-session/NewSessionPage").then(styled),
+);
 const NewSessionPage = lazy(() => loadNewSession().then((m) => ({ default: m.NewSessionPage })));
 // 编辑页最重(tiptap 编辑器等),也抽命名工厂供预热,消除「新建页→编辑页」首切白屏。
-const loadWorkspace = () => import("./pages/workspace/WorkspacePage").then(styled);
+const loadWorkspace = onceAsync(() =>
+  import("./pages/workspace/WorkspacePage").then(styled),
+);
 const WorkspacePage = lazy(() => loadWorkspace().then((m) => ({ default: m.WorkspacePage })));
 const devPages = import.meta.env.DEV
   ? {

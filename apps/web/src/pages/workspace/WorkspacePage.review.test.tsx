@@ -1492,7 +1492,7 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelectorAll(".wf-patch-ins")).toHaveLength(7);
   });
 
-  it("低于 70% 的整篇改写落入逐处审阅时仍可全部应用", async () => {
+  it("低于 70% 的整篇改写落入逐处审阅:无「全部应用」按钮,提交默认应用全部", async () => {
     const { deriveReviewRenderMode, RightPane } = await import("./WorkspacePage");
     const mode = deriveReviewRenderMode({
       effectiveReview: true,
@@ -1521,10 +1521,12 @@ describe("WorkspacePage review controls", () => {
     expect(host?.querySelector('[data-wf="WholeDocReviewNav"]')).toBeNull();
     expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();
 
-    await clickButton("全部应用");
+    // 「全部应用」已按用户拍板移除:提交本身默认应用未裁决的全部修改,逃生入口=提交
+    expect(host?.textContent).not.toContain("全部应用");
+    await clickButton("提交 ↵");
 
-    expect(onAcceptAll).toHaveBeenCalledTimes(1);
-    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onAcceptAll).not.toHaveBeenCalled();
   });
 
   it("历史快照未加载时不回退渲染当前正文", async () => {
@@ -3203,7 +3205,8 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("剩余 · 2 处");
     expect(host?.textContent).not.toContain("采纳此处");
     expect(host?.textContent).not.toContain("拒绝此处");
-    expect(host?.textContent).toContain("全部应用");
+    // 「全部应用」已按用户拍板移除:提交本身默认应用未裁决的全部修改
+    expect(host?.textContent).not.toContain("全部应用");
 
     await clickButton("提交 ↵");
 
@@ -3281,18 +3284,19 @@ describe("WorkspacePage review controls", () => {
     expect(host?.textContent).toContain("已成功落库的新版正文");
   });
 
-  it("全部应用写入失败时明确提示并保留候选", async () => {
+  it("提交写入失败时明确提示并保留候选", async () => {
     const stream = await renderWorkspaceWithReview([
       textReviewToolCall("p-keep-1", "batch-keep-1", 0),
       textReviewToolCall("p-keep-2", "batch-keep-2", 1),
     ]);
     stream.commitReviewGroups.mockRejectedValueOnce(new Error("db timeout"));
 
-    await clickButton("全部应用");
+    await clickButton("提交 ↵");
     await flushMicrotasks(5);
 
     expect(stream.commitReviewGroups).toHaveBeenCalledWith("s-1", {
       acceptReviewBatchIds: ["batch-keep-1", "batch-keep-2"],
+      rejectReviewBatchIds: [],
     });
     expect(document.body.dataset.content).toBe("pendingReview");
     expect(host?.querySelector('[data-wf="PatchNav"]')).not.toBeNull();

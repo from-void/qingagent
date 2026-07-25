@@ -97,6 +97,22 @@ export interface BranchCallInput {
   onActivity?: () => void | Promise<void>;
   /** 验真通过后按 provider 原始粒度顺序回放文本 delta。 */
   streamTextDeltas?: boolean;
+  /**
+   * 边读边把 delta 交给 onTextDelta,不等验真(与 streamTextDeltas 的「验真后回放」相对)。
+   * 回放是在响应读完后几毫秒内把几百个 delta 涌完的,节流一合并前端等于一次性收到成品,
+   * 拿不到逐字浮现的真流式观感 —— 开本开关换回真流式。
+   *
+   * 开启前提:调用点把 delta **只用于整帧替换语义的展示进度**(每帧都从全量 raw 重建,
+   * 不追加、不落任何持久状态)。当前满足的三个调用点全部已开:出题(askuser-progress
+   * 全量问题数组)、writeDraft(writedraft-progress 尾巴摘录)、generateSvg
+   * (partialSvg 由全量 raw 重建)。
+   *
+   * 代价:branch 判废只有读完才能确认(tool_call 泄漏/流中 provider error/lease 失守),
+   * 届时已吐出去的字作废、降级 streamText 重跑,前端表现为进度回退从头再来 —— 三个消费端
+   * 的整帧替换语义保证不残留脏内容,判废本身是罕见路径。
+   * 若给新调用点开,先确认其 delta 不牵动持久状态(如文档候选/落库),否则维持回放。
+   */
+  liveTextDeltas?: boolean;
   thinking?: boolean;
   temperature?: number;
   topP?: number;
@@ -161,6 +177,8 @@ export async function readRawBranchResponse(
   onActivity?: BranchCallInput["onActivity"],
   maxBufferedTextBytes = DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
   onRawContentStart?: BranchCallInput["onRawContentStart"],
+  /** liveTextDeltas 专用:每读到一个正文 delta 就立刻交出去,不等验真。见 BranchCallInput。 */
+  onLiveDelta?: BranchCallInput["onTextDelta"],
 ): Promise<RawBranchResponse> {
   const state: RawBranchResponse = {
     text: "",
@@ -191,6 +209,7 @@ export async function readRawBranchResponse(
       state.textDeltas.push({ text: delta, observedAt });
       state.firstTextAt = observedAt;
       await onRawContentStart?.(observedAt);
+      await onLiveDelta?.(delta, state.text, observedAt);
     }
     return state;
   }
@@ -224,6 +243,9 @@ export async function readRawBranchResponse(
         state.firstTextAt = observedAt;
         await onRawContentStart?.(observedAt);
       }
+      // 真流式出口:此刻模型刚吐出这一块,交出去前端才能逐条浮现。
+      // 只有 liveTextDeltas 的调用点会拿到这个回调(出题),正文/SVG 仍走验真后回放。
+      await onLiveDelta?.(delta, state.text, observedAt);
     }
   };
   try {
@@ -547,12 +569,23 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           error,
         };
       }
-      // tool_call 与 lease 只有完整响应后才能确认；此前 delta 一律暂存，禁止污染草稿/SVG 进度。
+      // tool_call 与 lease 只有完整响应后才能确认;默认此前 delta 一律暂存、验真后回放。
+      // liveTextDeltas 的调用点(出题/草稿/SVG)显式接受「提前露出半成品、判废时被降级重跑
+      // 整帧覆盖」,换取真流式观感 —— 回放拿不到,它是读完后几毫秒内把几百个 delta 涌完的。
+      let liveDeltaSent = false;
       const raw = await readRawBranchResponse(
         response,
         input.onActivity,
         input.maxBufferedTextBytes ?? DEFAULT_BRANCH_STREAM_BUFFER_BYTES,
         input.onRawContentStart,
+        input.liveTextDeltas && input.onTextDelta
+          ? async (delta, accumulated, observedAt) => {
+              // 取消后不再推进度:否则用户已经中止,前端还在冒新选项。
+              if (input.abortSignal?.aborted) return;
+              liveDeltaSent = true;
+              await input.onTextDelta?.(delta, accumulated, observedAt);
+            }
+          : undefined,
       );
       if (raw.firstTextAt !== null) {
         tFirstDelta = raw.firstTextAt;
@@ -598,9 +631,12 @@ export async function branchCall(input: BranchCallInput): Promise<BranchCallResu
           error: "provider_request_aborted",
         };
       }
-      const replayDeltas = input.streamTextDeltas
-        ? raw.textDeltas
-        : [{ text: raw.text, observedAt: raw.firstTextAt ?? Date.now() }];
+      // 已经边读边发过就不再回放,否则同一批内容会重复交给调用方。
+      const replayDeltas = liveDeltaSent
+        ? []
+        : input.streamTextDeltas
+          ? raw.textDeltas
+          : [{ text: raw.text, observedAt: raw.firstTextAt ?? Date.now() }];
       let replayedText = "";
       for (const delta of replayDeltas) {
         if (!ownsCurrentLease()) {

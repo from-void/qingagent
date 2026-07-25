@@ -1,4 +1,6 @@
 import { readDisabledSet } from "./enabledStore.js";
+import type { RequestContext } from "@mastra/core/request-context";
+import { activateSkill } from "./writeInject.js";
 
 export const SKILL_DISABLED_TOOL_RESULT_CODE = "SKILL_DISABLED";
 
@@ -8,13 +10,14 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   list_derivatives: ["derivatives"],
   update_derivative_params: ["derivatives"],
   style_template_list: ["gzh-style"],
-  style_template_get: ["gzh-style", "deai-review"],
+  style_template_get: ["gzh-style", "review"],
   style_template_save: ["gzh-style"],
   style_template_delete: ["gzh-style"],
   // fetchArticle 虽被公众号相关技能复用,但本质仍是联网抓取；联网搜关闭时必须一并关停。
   webSearch: ["web-search"],
   fetchArticle: ["web-search"],
   generateSvg: ["image-gen"],
+  importGeneratedImage: ["image-gen"],
   readImage: ["image-reading"],
   wechat_auth_start: ["wechat-official-account"],
   wechat_auth_status: ["wechat-official-account"],
@@ -26,9 +29,9 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   github_read_file: ["github-materials"],
   github_search_code: ["github-materials"],
   feishu_auth_start: ["feishu"],
-  lexicon_list: ["sensitive-review"],
-  sensitive_scan: ["sensitive-review"],
-  lexicon_manage: ["sensitive-review"],
+  lexicon_list: ["review"],
+  sensitive_scan: ["review"],
+  lexicon_manage: ["review"],
 };
 
 const SKILL_LABELS: Record<string, string> = {
@@ -41,8 +44,8 @@ const SKILL_LABELS: Record<string, string> = {
   "wechat-official-account": "抓公众号",
   "github-materials": "GitHub 读取",
   feishu: "连飞书",
-  "sensitive-review": "敏感词审查",
-  "deai-review": "去AI味",
+  review: "文档审查",
+  "diagram-viz": "图表可视化",
 };
 
 export interface SkillDisabledToolResult {
@@ -153,15 +156,46 @@ export function isSkillDisabledToolResult(value: unknown): value is SkillDisable
 export async function beforeSkillToolCall({
   toolName,
   input,
+  context,
 }: {
   toolName: string;
   input: unknown;
+  context?: unknown;
 }): Promise<{ proceed: false; output: SkillDisabledToolResult } | undefined> {
   const disabledSkills = await readDisabledSet();
+  const requestedSkillName =
+    toolName === "skill" &&
+    input &&
+    typeof input === "object" &&
+    typeof (input as { name?: unknown }).name === "string"
+      ? (input as { name: string }).name.trim()
+      : null;
+  if (requestedSkillName && disabledSkills.has(requestedSkillName)) {
+    return {
+      proceed: false,
+      output: buildSkillDisabledToolResult(requestedSkillName, toolName, input),
+    };
+  }
   const skillName = disabledSkillForTool(toolName, disabledSkills);
-  if (!skillName) return undefined;
-  return {
-    proceed: false,
-    output: buildSkillDisabledToolResult(skillName, toolName, input),
-  };
+  if (skillName) {
+    return {
+      proceed: false,
+      output: buildSkillDisabledToolResult(skillName, toolName, input),
+    };
+  }
+  if (requestedSkillName) {
+    const requestContext =
+      context &&
+      typeof context === "object" &&
+      "requestContext" in context
+        ? (context as { requestContext?: RequestContext }).requestContext
+        : undefined;
+    const userText = requestContext?.get("userText");
+    activateSkill(
+      requestContext,
+      requestedSkillName,
+      typeof userText === "string" ? userText : "",
+    );
+  }
+  return undefined;
 }

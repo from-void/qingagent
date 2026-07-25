@@ -80,7 +80,7 @@ describe("external chat log", () => {
         id: "m-agent",
         role: { kind: "agent" },
         ts: "2026-07-09T01:00:01.000Z",
-        text: "## 新段落\n[工具调用]\n[修改建议 2 处]\n[审阅结果]\n[引用]\n[用户答复]",
+        text: "## 新段落\n[工具调用:editDraft]\n[修改建议 2 处]\n[审阅结果]\n[引用]\n[用户答复]",
       },
     ]);
     expect(body.messages[0]).not.toHaveProperty("parts");

@@ -14,6 +14,8 @@ vi.mock("../../connectors/wechatCredentials.js", () => ({
 vi.mock("../wechatSearch.js", () => ({ probeWechatSearchbiz: vi.fn() }));
 
 const opts = { toolCallId: "wechat-auth-test", messages: [] } as never;
+const EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL = `{"id":"wechat-search-route","rationale":"先选一种查找方式，我再继续帮你找这篇公众号文章。","questions":[{"header":"查找方式","question":"你想用哪种方式查找公众号文章？","multiSelect":false,"options":[{"value":"login-owned","label":"我有公众号，直接扫码登录（推荐）","description":"借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"login-register","label":"我没有，先去 mp.weixin.qq.com 免费注册再扫码","description":"注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"fallback-websearch","label":"先用联网搜索（效果较差，只有零散公开网页）","description":"不登录公众号后台，改用公开网页检索，结果可能不完整。"}]}]}`;
+
 function browserMock(
   waitForURL: Promise<void> = Promise.resolve(),
   pageUrl = "https://mp.weixin.qq.com/cgi-bin/home?token=ABC",
@@ -43,8 +45,32 @@ describe("wechat auth connector service thin tools", () => {
   });
   afterEach(() => { wechatAuthService.resetForTests(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  it("空凭据返回 NO_CREDENTIAL", async () => {
-    await expect(status()).resolves.toMatchObject({ state: "NO_CREDENTIAL", mpName: "" });
+  it("空凭据返回 NO_CREDENTIAL，并逐字携带路由问卷", async () => {
+    const result = await status();
+    expect(result).toMatchObject({ state: "NO_CREDENTIAL", mpName: "" });
+    expect(JSON.stringify(result.questionnaire))
+      .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+  });
+
+  it("READY 状态不再携带路由问卷", async () => {
+    vi.mocked(readWechatCredentialBundle).mockResolvedValue({
+      version: 1,
+      connectorId: "wechat-mp",
+      revision: 1,
+      payload: {
+        strategy: "qr-session",
+        version: 1,
+        account: "测试公众号",
+        cookie: "sid=secret-cookie",
+        token: "ABC",
+        expiry: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    await expect(status()).resolves.toMatchObject({
+      state: "READY",
+      mpName: "测试公众号",
+      questionnaire: null,
+    });
   });
 
   it("授权成功单事务写 bundle，结果携 connectorId/pendingId", async () => {

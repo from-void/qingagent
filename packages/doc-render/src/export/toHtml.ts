@@ -138,7 +138,7 @@ function pmBlockToHtml(node: PmBlockNode): string {
         })
         .join("")}</div>`;
     case "diagram":
-      return diagramToHtml(node.attrs.source, node.attrs.svg);
+      return diagramToHtml(node.attrs.lang, node.attrs.source, node.attrs.svg);
     case "image":
       return imageToHtml({
         src: node.attrs.src,
@@ -271,18 +271,27 @@ function pmInlineText(content: readonly { type: string; text?: string }[]): stri
 
 // ============ 图表 / 图片 ============
 
-function diagramToHtml(source: string, svg: string | null): string {
+function diagramFallbackHtml(lang: string, source: string, oversized: boolean): string {
+  const typeLabel = lang === "drawio" ? "draw.io" : "Mermaid";
+  const viewerAction = lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
+  const message = oversized
+    ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
+    : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`;
+  return `<div class="pm-diagram-fallback">${message}</div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+}
+
+function diagramToHtml(lang: string, source: string, svg: string | null): string {
   if (svg && svgExceedsExportByteLimit(svg)) {
-    return `<div class="pm-diagram"><div class="doc-file-attach">[图过大未导出]</div></div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+    return diagramFallbackHtml(lang, source, true);
   }
-  // 缓存 mermaid SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
+  // 缓存图表 SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
   // 加固后仍是可信 SVG,直接内联不转义;加固失败(解析坏/含 XXE)则回退源码。
   const safe = isRenderableSvg(svg) ? hardenInlineSvg(svg, { maxBytes: MAX_EXPORT_SVG_BYTES }) : null;
   if (safe) {
     return `<div class="pm-diagram">${safe}</div>`;
   }
   // 无缓存 / 坏 SVG → 回退源码代码块,绝不让一张图毁掉整篇导出。
-  return `<pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+  return diagramFallbackHtml(lang, source, false);
 }
 
 function imageToHtml(opts: { src: string; alt: string; caption: string | null; align: "left" | "center" | "right" | null }): string {
@@ -347,7 +356,7 @@ function legacySectionToHtml(section: LegacySection): string {
         .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(stripFormatting(cell))}</td>`).join("")}</tr>`)
         .join("")}</tbody></table>`;
     case "diagram":
-      return diagramToHtml(section.data.source, section.data.svg);
+      return diagramToHtml(section.data.lang, section.data.source, section.data.svg);
     case "image":
       return imageToHtml({
         src: section.data.src,

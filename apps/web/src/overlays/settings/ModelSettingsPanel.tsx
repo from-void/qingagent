@@ -6,16 +6,20 @@ import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
 import {
   type CustomProvider,
+  type ModelProvider,
   type ModelTier,
   clearCustomProvider,
-  clearVisitorDeepseekKey,
+  clearVisitorModelKey,
+  getSelectedModelProvider,
   getSelectedModelTier,
-  getVisitorDeepseekKey,
+  getStoredModelProvider,
+  getVisitorModelKey,
   maskKey,
   readCustomProvider,
   readOfficialModelOverride,
+  setSelectedModelProvider,
   setSelectedModelTier,
-  setVisitorDeepseekKey,
+  setVisitorModelKey,
   visitorKeyHeaders,
   writeCustomProvider,
   writeOfficialModelOverride,
@@ -23,6 +27,11 @@ import {
 import { isHttpUrl } from "./visionProviderStore";
 
 ensureSettingsDialogA11y();
+
+const MODEL_DEFAULTS: Record<ModelProvider, { flash: string; pro: string }> = {
+  deepseek: { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" },
+  kimi: { flash: "kimi-for-coding", pro: "k3" },
+};
 
 function modelPersistFailureMessage(): string {
   return window.electron?.isDesktop
@@ -35,9 +44,15 @@ function modelPersistFailureMessage(): string {
 // 进阶:其他云厂商(custom_provider)整体覆盖 baseURL+key+别名;官方模型前缀(official_model)仅覆盖模型名。
 
 interface ServerModelSettings {
+  provider?: ModelProvider;
   apiKeyConfigured: boolean;
   maskedTail: string | null;
   source: "db" | "env" | "none";
+  providers?: Record<ModelProvider, {
+    apiKeyConfigured: boolean;
+    maskedTail: string | null;
+    source: "db" | "env" | "none";
+  }>;
   params: { temperature?: number; topP?: number; maxOutputTokens?: number } | null;
 }
 
@@ -66,6 +81,8 @@ interface BalanceState {
   ok: boolean;
   keySource?: string;
   keyInvalid?: boolean;
+  permissionDenied?: boolean;
+  balanceUnsupported?: boolean;
   error?: string;
   isAvailable?: boolean | null;
   balances?: Array<{ currency: string; total: string; granted: string; toppedUp: string }>;
@@ -74,27 +91,46 @@ interface BalanceState {
 export function ModelSettingsPanel() {
   const toast = useToast();
   const confirm = useConfirm();
+  const initialProvider = getSelectedModelProvider();
+  const [modelProvider, setModelProvider] = useState<ModelProvider>(initialProvider);
   const [server, setServer] = useState<ServerModelSettings | null>(null);
-  const [visitorKey, setVisitorKey] = useState<string | null>(() => getVisitorDeepseekKey());
+  const [visitorKey, setVisitorKey] = useState<string | null>(
+    () => getVisitorModelKey(initialProvider),
+  );
   const [editing, setEditing] = useState(false);
   // 临时回到未配置引导流程(不删后端 .env key,刷新即恢复;方便预览/重配)
   const [forceSetup, setForceSetup] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   // 其他云厂商配置(进阶):存在即表示当前用自定义模型,覆盖 baseURL+key+别名
-  const [customProvider, setCustomProvider] = useState<CustomProvider | null>(() => readCustomProvider());
+  const [customProvider, setCustomProvider] = useState<CustomProvider | null>(
+    () => readCustomProvider(initialProvider),
+  );
   const [persisting, setPersisting] = useState(false);
   // 配置方式:官方 DeepSeek(默认)/ 其他云厂商;已配自定义则默认停在"其他"
-  const [setupMode, setSetupMode] = useState<"official" | "other">(() => (readCustomProvider() ? "other" : "official"));
-  const [customProtocol, setCustomProtocol] = useState(() => readCustomProvider()?.protocol ?? "openai");
-  const [customBaseUrl, setCustomBaseUrl] = useState(() => readCustomProvider()?.baseUrl ?? "");
-  const [customKey, setCustomKey] = useState(() => readCustomProvider()?.apiKey ?? "");
-  // 只接 DeepSeek 模型,但中转厂商的别名可能不同 → 两个可选别名,默认填官方名
-  const [customModelFlash, setCustomModelFlash] = useState(() => readCustomProvider()?.modelFlash ?? "deepseek-v4-flash");
-  const [customModelPro, setCustomModelPro] = useState(() => readCustomProvider()?.modelPro ?? "deepseek-v4-pro");
+  const initialCustom = readCustomProvider(initialProvider);
+  const initialDefaults = initialProvider === "kimi"
+    ? { flash: "kimi-for-coding", pro: "k3" }
+    : { flash: "deepseek-v4-flash", pro: "deepseek-v4-pro" };
+  const [setupMode, setSetupMode] = useState<"official" | "other">(
+    () => (initialCustom ? "other" : "official"),
+  );
+  const [customProtocol, setCustomProtocol] = useState(() => initialCustom?.protocol ?? "openai");
+  const [customBaseUrl, setCustomBaseUrl] = useState(() => initialCustom?.baseUrl ?? "");
+  const [customKey, setCustomKey] = useState(() => initialCustom?.apiKey ?? "");
+  const [customModelFlash, setCustomModelFlash] = useState(
+    () => initialCustom?.modelFlash ?? initialDefaults.flash,
+  );
+  const [customModelPro, setCustomModelPro] = useState(
+    () => initialCustom?.modelPro ?? initialDefaults.pro,
+  );
   const [customTesting, setCustomTesting] = useState(false);
   // 官方模型前缀覆盖(仅 editing 态可改;防官方升级改名)
-  const [officialFlash, setOfficialFlash] = useState(() => readOfficialModelOverride()?.flash ?? "");
-  const [officialPro, setOfficialPro] = useState(() => readOfficialModelOverride()?.pro ?? "");
+  const [officialFlash, setOfficialFlash] = useState(
+    () => readOfficialModelOverride(initialProvider)?.flash ?? "",
+  );
+  const [officialPro, setOfficialPro] = useState(
+    () => readOfficialModelOverride(initialProvider)?.pro ?? "",
+  );
   const [modelTier, setModelTier] = useState<ModelTier>(() => getSelectedModelTier());
   // 官方 key 输入即自动验证的状态
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "verifying" | "ok" | "fail">("idle");
@@ -127,6 +163,32 @@ export function ModelSettingsPanel() {
     customTestControllerRef.current?.abort();
     customTestControllerRef.current = null;
     setCustomTesting(false);
+  };
+
+  const handleProviderChange = (provider: ModelProvider) => {
+    if (provider === modelProvider) return;
+    invalidateCustomTest();
+    setSelectedModelProvider(provider);
+    const custom = readCustomProvider(provider);
+    const official = readOfficialModelOverride(provider);
+    setModelProvider(provider);
+    setVisitorKey(getVisitorModelKey(provider));
+    setCustomProvider(custom);
+    setSetupMode(custom ? "other" : "official");
+    setCustomProtocol(provider === "kimi" ? "openai" : custom?.protocol ?? "openai");
+    setCustomBaseUrl(custom?.baseUrl ?? "");
+    setCustomKey(custom?.apiKey ?? "");
+    setCustomModelFlash(custom?.modelFlash ?? MODEL_DEFAULTS[provider].flash);
+    setCustomModelPro(custom?.modelPro ?? MODEL_DEFAULTS[provider].pro);
+    setOfficialFlash(official?.flash ?? "");
+    setOfficialPro(official?.pro ?? "");
+    setKeyInput("");
+    setVerifyStatus("idle");
+    setVerifyMsg("");
+    setBalance(null);
+    setForceSetup(false);
+    setEditing(false);
+    setMessage(null);
   };
 
   const loadServer = useCallback(async (signal?: AbortSignal) => {
@@ -222,6 +284,18 @@ export function ModelSettingsPanel() {
     return () => controller.abort();
   }, [loadServer]);
   useEffect(() => {
+    // 本机从未选过 provider 时，设置页首开跟随 server DB/env；之后用户选择优先。
+    // 旧版已有 DeepSeek 本地 key/中转/别名也属于访客显式配置，继续优先于 server。
+    if (
+      !server?.provider ||
+      getStoredModelProvider() ||
+      getVisitorModelKey("deepseek") ||
+      readCustomProvider("deepseek") ||
+      readOfficialModelOverride("deepseek")
+    ) return;
+    handleProviderChange(server.provider);
+  }, [server]);
+  useEffect(() => {
     const controller = new AbortController();
     void loadUsage(usageView, controller.signal);
     return () => controller.abort();
@@ -246,6 +320,12 @@ export function ModelSettingsPanel() {
       setVerifyMsg("");
       return;
     }
+    // Kimi 连接测试会产生一次最短模型调用，禁止输入 debounce 自动触发；只允许用户点按钮。
+    if (modelProvider === "kimi") {
+      setVerifyStatus("idle");
+      setVerifyMsg("");
+      return;
+    }
     setVerifyStatus("verifying");
     setVerifyMsg("");
     const ctrl = new AbortController();
@@ -253,7 +333,11 @@ export function ModelSettingsPanel() {
       void (async () => {
         try {
           const res = await fetch("/api/v1/settings/model/balance", {
-            headers: { "x-deepseek-key": trimmed },
+            headers: {
+              "x-model-provider": modelProvider,
+              "x-model-key": trimmed,
+              ...(modelProvider === "deepseek" ? { "x-deepseek-key": trimmed } : {}),
+            },
             signal: ctrl.signal,
           });
           const body = (await res.json()) as BalanceState;
@@ -264,6 +348,9 @@ export function ModelSettingsPanel() {
           } else if (body.keyInvalid) {
             setVerifyStatus("fail");
             setVerifyMsg("这个 Key 不正确或已失效");
+          } else if (body.permissionDenied) {
+            setVerifyStatus("fail");
+            setVerifyMsg("Kimi 返回权限不足；请核对套餐与模型权限");
           } else {
             setVerifyStatus("fail");
             setVerifyMsg(body.error ?? "验证失败,请重试");
@@ -280,19 +367,53 @@ export function ModelSettingsPanel() {
       ctrl.abort();
       clearTimeout(timer);
     };
-  }, [keyInput]);
+  }, [keyInput, modelProvider]);
 
   const usingCustom = Boolean(customProvider);
-  const configured = Boolean(visitorKey) || Boolean(server?.apiKeyConfigured) || usingCustom;
+  const serverProviderState = server?.providers?.[modelProvider] ??
+    (server?.provider === undefined || server.provider === modelProvider ? server : null);
+  const configured =
+    Boolean(visitorKey) || Boolean(serverProviderState?.apiKeyConfigured) || usingCustom;
   const dashboardVisible = configured && !editing && !forceSetup;
 
   // 进入已配置看板:自动查一次连通性 + 余额。其他云厂商不查(DeepSeek 余额接口测不了)。
   useEffect(() => {
-    if (!dashboardVisible || usingCustom) return;
+    if (!dashboardVisible || usingCustom || modelProvider === "kimi") return;
     const controller = new AbortController();
     void checkBalance(controller.signal);
     return () => controller.abort();
-  }, [dashboardVisible, usingCustom, checkBalance, visitorKey]);
+  }, [dashboardVisible, usingCustom, checkBalance, visitorKey, modelProvider]);
+
+  const handleVerifyKimiKey = async () => {
+    const trimmed = keyInput.trim();
+    if (!trimmed || verifyStatus === "verifying") return;
+    setVerifyStatus("verifying");
+    setVerifyMsg("");
+    try {
+      const res = await fetch("/api/v1/settings/model/balance", {
+        headers: {
+          "x-model-provider": "kimi",
+          "x-model-key": trimmed,
+          "x-model-tier": modelTier,
+        },
+      });
+      const body = (await res.json()) as BalanceState;
+      if (body.ok) {
+        setVerifyStatus("ok");
+        setVerifyMsg("Kimi 短对话测试已连通");
+      } else {
+        setVerifyStatus("fail");
+        setVerifyMsg(
+          body.permissionDenied
+            ? "Kimi 返回权限不足；请核对套餐与模型权限"
+            : body.error ?? "验证失败,请重试",
+        );
+      }
+    } catch {
+      setVerifyStatus("fail");
+      setVerifyMsg("验证失败:网络错误");
+    }
+  };
 
   // 进入已配置看板:自动加载按天 + 总计两份用量,喂给趋势图与按模型分布。
   useEffect(() => {
@@ -322,7 +443,7 @@ export function ModelSettingsPanel() {
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const savedKey = await setVisitorDeepseekKey(trimmed);
+    const savedKey = await setVisitorModelKey(modelProvider, trimmed);
     if (!canCommit()) return;
     if (!savedKey) {
       setPersisting(false);
@@ -330,7 +451,7 @@ export function ModelSettingsPanel() {
       return;
     }
     // 互斥:切回官方,清掉其他云厂商配置;写官方模型前缀覆盖(setup 态为空=清除,editing 态可改)
-    const clearedCustom = await clearCustomProvider();
+    const clearedCustom = await clearCustomProvider(modelProvider);
     if (!canCommit()) return;
     setPersisting(false);
     if (!clearedCustom) {
@@ -339,7 +460,7 @@ export function ModelSettingsPanel() {
     }
     setVisitorKey(trimmed);
     setCustomProvider(null);
-    writeOfficialModelOverride({ flash: officialFlash, pro: officialPro });
+    writeOfficialModelOverride({ flash: officialFlash, pro: officialPro }, modelProvider);
     setKeyInput("");
     setEditing(false);
     setForceSetup(false);
@@ -348,7 +469,7 @@ export function ModelSettingsPanel() {
     // 保存后回到用量看板:滚到顶 + 主动查一次连通性(否则可能停在"暂时无法连接",需手动重测)
     requestAnimationFrame(() => {
       document.querySelector(".qj-sheet-body")?.scrollTo({ top: 0, behavior: "auto" });
-      void checkBalance();
+      if (modelProvider === "deepseek") void checkBalance();
     });
   };
 
@@ -365,7 +486,7 @@ export function ModelSettingsPanel() {
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const cleared = await clearVisitorDeepseekKey();
+    const cleared = await clearVisitorModelKey(modelProvider);
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
@@ -389,7 +510,7 @@ export function ModelSettingsPanel() {
     const revision = persistRevisionRef.current;
     const canCommit = () => mountedRef.current && persistRevisionRef.current === revision;
     setPersisting(true);
-    const cleared = await clearCustomProvider();
+    const cleared = await clearCustomProvider(modelProvider);
     if (!canCommit()) return false;
     setPersisting(false);
     if (!cleared) {
@@ -424,8 +545,8 @@ export function ModelSettingsPanel() {
       setMessage("API 地址格式不对:需以 http(s):// 开头");
       return;
     }
-    const modelFlash = customModelFlash.trim() || "deepseek-v4-flash";
-    const modelPro = customModelPro.trim() || "deepseek-v4-pro";
+    const modelFlash = customModelFlash.trim() || MODEL_DEFAULTS[modelProvider].flash;
+    const modelPro = customModelPro.trim() || MODEL_DEFAULTS[modelProvider].pro;
     customTestControllerRef.current?.abort();
     const revision = ++customTestRevisionRef.current;
     setCustomTesting(true);
@@ -445,29 +566,48 @@ export function ModelSettingsPanel() {
       const res = await fetch("/api/v1/settings/model/test-custom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl, apiKey, model: modelFlash, protocol: customProtocol }),
+        body: JSON.stringify({
+          provider: modelProvider,
+          baseUrl,
+          apiKey,
+          model: modelFlash,
+          protocol: modelProvider === "kimi" ? "openai" : customProtocol,
+        }),
         signal: testCtrl.signal,
       });
-      const body = (await res.json()) as { ok: boolean; keyInvalid?: boolean; error?: string };
+      const body = (await res.json()) as {
+        ok: boolean;
+        keyInvalid?: boolean;
+        permissionDenied?: boolean;
+        error?: string;
+      };
       if (!canCommit()) return;
       if (!body.ok) {
         setMessage(
           body.keyInvalid
             ? "key 无效或无权限,请检查"
+            : body.permissionDenied
+              ? "Kimi 返回权限不足；请核对套餐与模型权限"
             : `接口不通:${body.error ?? "请检查 API 地址与 key"}`,
         );
         return;
       }
-      const provider: CustomProvider = { protocol: customProtocol, baseUrl, apiKey, modelFlash, modelPro };
+      const provider: CustomProvider = {
+        protocol: modelProvider === "kimi" ? "openai" : customProtocol,
+        baseUrl,
+        apiKey,
+        modelFlash,
+        modelPro,
+      };
       setPersisting(true);
-      const savedProvider = await writeCustomProvider(provider);
+      const savedProvider = await writeCustomProvider(provider, modelProvider);
       if (!canCommit()) return;
       if (!savedProvider) {
         setMessage(modelPersistFailureMessage());
         return;
       }
       // 互斥:切到其他云厂商,清官方 visitor key
-      const clearedVisitorKey = await clearVisitorDeepseekKey();
+      const clearedVisitorKey = await clearVisitorModelKey(modelProvider);
       if (!canCommit()) return;
       if (!clearedVisitorKey) {
         setMessage("自定义模型已保存，但旧的官方 key 清除失败，请重试");
@@ -510,7 +650,7 @@ export function ModelSettingsPanel() {
   const usageDateUnsupported = usageDate !== "" && usageView !== "day";
 
   // —— 连通性状态:自动 checkBalance 结果 → 色点 + 文案 ——
-  const status = deriveConnectivity(balance, balanceLoading);
+  const status = deriveConnectivity(balance, balanceLoading, modelProvider);
   const balanceVal = balance?.ok ? balance.balances?.[0] : undefined;
   const lowBalance = balanceVal != null && balance?.isAvailable === false;
 
@@ -558,7 +698,7 @@ export function ModelSettingsPanel() {
           autoComplete="off"
           spellCheck={false}
           className="sm-keyinput"
-          placeholder="粘贴 DeepSeek API key(sk-…)"
+          placeholder={modelProvider === "kimi" ? "粘贴 Kimi API key" : "粘贴 DeepSeek API key(sk-…)"}
           value={keyInput}
           disabled={persisting}
           onChange={(e) => {
@@ -576,6 +716,17 @@ export function ModelSettingsPanel() {
         >
           保存
         </button>
+        {modelProvider === "kimi" && (
+          <button
+            type="button"
+            className="sm-btn"
+            onClick={() => void handleVerifyKimiKey()}
+            disabled={persisting || verifyStatus === "verifying" || !keyInput.trim()}
+            title="会发起一次最短 Kimi 对话请求"
+          >
+            {verifyStatus === "verifying" ? "测试中…" : "测试连接"}
+          </button>
+        )}
         {editing && (
           <button
             type="button"
@@ -603,7 +754,7 @@ export function ModelSettingsPanel() {
           {verifyMsg}
         </p>
       )}
-      {editing && (
+      {editing && modelProvider === "deepseek" && (
         <div className="sm-model-prefix">
           <div className="sm-field">
             <span className="sm-field-label">V4 Flash 模型名（一般无需修改）</span>
@@ -643,7 +794,9 @@ export function ModelSettingsPanel() {
   // 配置编辑器(官方 / 其他厂商两 tab);setup 与 editing 共用,editing 不显示官方步骤、改显示模型前缀。
   const configSection = (
     <div className="sm-config">
-      <div className="sm-faq-q">{editing ? "切换 / 修改模型配置" : "如何配置 DeepSeek?"}</div>
+      <div className="sm-faq-q">
+        {editing ? "切换 / 修改模型配置" : `如何配置 ${modelProvider === "kimi" ? "Kimi" : "DeepSeek"}?`}
+      </div>
       {modelTierSection}
       <div className="sm-setup-tabs" role="tablist" aria-label="配置方式">
         <button
@@ -657,7 +810,7 @@ export function ModelSettingsPanel() {
           }}
           disabled={persisting}
         >
-          <span>接入 DeepSeek 官方 API</span>
+          <span>接入 {modelProvider === "kimi" ? "Kimi" : "DeepSeek"} 官方 API</span>
           <small>推荐方式（步骤简单）</small>
         </button>
         <button
@@ -682,14 +835,18 @@ export function ModelSettingsPanel() {
             <ol className="sm-steps">
               <li>
                 前往{" "}
-                <a href="https://platform.deepseek.com/" target="_blank" rel="noreferrer">
-                  platform.deepseek.com
+                <a
+                  href={modelProvider === "kimi" ? "https://www.kimi.com/code" : "https://platform.deepseek.com/"}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {modelProvider === "kimi" ? "Kimi Code" : "platform.deepseek.com"}
                 </a>{" "}
                 完成注册登录
               </li>
-              <li>可先小额充值试用</li>
+              <li>{modelProvider === "kimi" ? "确认套餐已开通 K3 / K2.7 Code 权限" : "可先小额充值试用"}</li>
               <li>
-                创建并复制 API key(以 <code>sk-</code> 开头)
+                创建并复制 API key
               </li>
               <li>粘贴到下方输入框,点保存</li>
             </ol>
@@ -705,15 +862,15 @@ export function ModelSettingsPanel() {
             <span className="sm-field-label">API 协议类型</span>
             <select
               className="sm-field-input"
-              value={customProtocol}
-              disabled={persisting}
+              value={modelProvider === "kimi" ? "openai" : customProtocol}
+              disabled={persisting || modelProvider === "kimi"}
               onChange={(e) => {
                 invalidateCustomTest();
                 setCustomProtocol(e.target.value);
               }}
             >
               <option value="openai">OpenAI 兼容</option>
-              <option value="anthropic">Anthropic 兼容</option>
+              {modelProvider === "deepseek" && <option value="anthropic">Anthropic 兼容</option>}
             </select>
           </div>
           <div className="sm-field">
@@ -752,10 +909,12 @@ export function ModelSettingsPanel() {
             />
           </div>
           <div className="sm-field">
-            <span className="sm-field-label">V4 Flash 模型别名(可选)</span>
+            <span className="sm-field-label">
+              {modelProvider === "kimi" ? "K2.7 Code（Flash）模型别名" : "V4 Flash 模型别名(可选)"}
+            </span>
             <input
               className="sm-field-input"
-              placeholder="deepseek-v4-flash"
+              placeholder={MODEL_DEFAULTS[modelProvider].flash}
               value={customModelFlash}
               disabled={persisting}
               onChange={(e) => {
@@ -765,10 +924,12 @@ export function ModelSettingsPanel() {
             />
           </div>
           <div className="sm-field">
-            <span className="sm-field-label">V4 PRO 模型别名(可选)</span>
+            <span className="sm-field-label">
+              {modelProvider === "kimi" ? "K3（Pro）模型别名" : "V4 PRO 模型别名(可选)"}
+            </span>
             <input
               className="sm-field-input"
-              placeholder="deepseek-v4-pro"
+              placeholder={MODEL_DEFAULTS[modelProvider].pro}
               value={customModelPro}
               disabled={persisting}
               onChange={(e) => {
@@ -778,7 +939,9 @@ export function ModelSettingsPanel() {
             />
           </div>
           <p className="sm-other-note">
-            默认适配 DeepSeek 模型。其他模型可在上面改成对应别名自行尝试(效果不保证);两者留空则默认用 deepseek-v4-flash。
+            {modelProvider === "kimi"
+              ? "档位固定映射 Flash → kimi-for-coding、Pro → k3；第三方中转别名不同时可在上方修改。"
+              : "默认适配 DeepSeek 模型。其他模型可在上面改成对应别名自行尝试(效果不保证);两者留空则默认用 deepseek-v4-flash。"}
           </p>
           <button
             type="button"
@@ -803,7 +966,7 @@ export function ModelSettingsPanel() {
       ? isDesktop
         ? "本机"
         : "本浏览器"
-      : server?.source === "db"
+      : serverProviderState?.source === "db"
         ? isDesktop
           ? "本机配置"
           : "站点全局"
@@ -814,9 +977,9 @@ export function ModelSettingsPanel() {
     ? customProvider.baseUrl
     : visitorKey
       ? maskKey(visitorKey)
-      : server?.source === "db"
-        ? server.maskedTail
-          ? `••••${server.maskedTail}`
+      : serverProviderState?.source === "db"
+        ? serverProviderState.maskedTail
+          ? `••••${serverProviderState.maskedTail}`
           : ""
         : isDesktop
           ? ".env"
@@ -824,6 +987,30 @@ export function ModelSettingsPanel() {
 
   return (
     <div className="settings-model" data-wf="ModelSettingsPanel">
+      <div className="sm-tier-row sm-provider-row" data-wf="ModelProviderSelector">
+        <div className="sm-tier-copy">
+          <span className="sm-tier-title">模型厂商</span>
+          <span className="sm-tier-note">两家配置分别保留，切换不会清除另一家的 key 与中转设置</span>
+        </div>
+        <div className="sm-tier-control" role="radiogroup" aria-label="模型厂商">
+          {(["deepseek", "kimi"] as const).map((provider) => (
+            <button
+              key={provider}
+              type="button"
+              role="radio"
+              aria-checked={modelProvider === provider}
+              aria-pressed={modelProvider === provider}
+              className={`sm-tier-option${modelProvider === provider ? " sm-active" : ""}`}
+              onClick={() => handleProviderChange(provider)}
+              disabled={persisting}
+              data-wf={provider === "deepseek" ? "ProviderDeepSeek" : "ProviderKimi"}
+            >
+              <span>{provider === "deepseek" ? "DeepSeek" : "Kimi"}</span>
+              <small>{provider === "deepseek" ? "V4 双档" : "K2.7 / K3"}</small>
+            </button>
+          ))}
+        </div>
+      </div>
       {!dashboardVisible ? (
         <section className="sm-setup">
           <div className="sm-guide">
@@ -887,7 +1074,9 @@ export function ModelSettingsPanel() {
                     onClick={() => void checkBalance()}
                     data-wf="BalanceCheckBtn"
                   >
-                    {balanceLoading ? "检测中…" : "重新检测"}
+                    {balanceLoading
+                      ? "检测中…"
+                      : modelProvider === "kimi" ? "测试连接" : "重新检测"}
                   </button>
                 </>
               )}
@@ -895,11 +1084,13 @@ export function ModelSettingsPanel() {
 
             {modelTierSection}
 
-            <div className={`md-metrics${usingCustom ? " md-metrics--3" : ""}`}>
+            <div className={`md-metrics${usingCustom || modelProvider === "kimi" ? " md-metrics--3" : ""}`}>
               <div className="md-metric">
-                <div className="md-metric-label">近 7 天消耗</div>
+                <div className="md-metric-label">近 7 天已计价消耗</div>
                 <div className="md-metric-value md-value-accent font-mono">
-                  {recent ? <AnimatedNumber value={recent.cost} format={fmtMoney} /> : "—"}
+                  {recent?.hasPriced
+                    ? <AnimatedNumber value={recent.cost} format={fmtMoney} />
+                    : "—"}
                 </div>
                 <div className="md-metric-sub">
                   {recent ? `${formatTokens(recent.tokens)} tokens` : "暂无记录"}
@@ -924,7 +1115,7 @@ export function ModelSettingsPanel() {
                 </div>
               </div>
 
-              {!usingCustom && (
+              {!usingCustom && modelProvider === "deepseek" && (
                 <div className="md-metric">
                   <div className="md-metric-label">账户余额</div>
                   <div className={`md-metric-value${lowBalance ? "" : " md-value-accent"} font-mono`}>
@@ -1166,7 +1357,7 @@ export function ModelSettingsPanel() {
                       <th>
                         <span className="md-th-label">
                           估算费用
-                          <HelpMark label="估算费用" text="按 DeepSeek 公开单价估算,实际费用以服务商账单为准。" />
+                          <HelpMark label="估算费用" text="仅收录已核实价目的 DeepSeek 模型；Kimi 暂只记 token。" />
                         </span>
                       </th>
                     </tr>
@@ -1187,7 +1378,7 @@ export function ModelSettingsPanel() {
                                 : row.bucket}
                           </td>
                           {usageView === "total" && (
-                            <td>{row.modelId.includes("pro") ? "V4 PRO" : "V4 Flash"}</td>
+                            <td>{modelLabel(row.modelId)}</td>
                           )}
                           <td className="font-mono">{row.callSite}</td>
                           <td
@@ -1206,7 +1397,7 @@ export function ModelSettingsPanel() {
                   </tbody>
                 </table>
               )}
-            <p className="md-foot-note">费用为按 DeepSeek 官方单价的估算,实际以 DeepSeek 账单为准;价格可能变化。</p>
+            <p className="md-foot-note">DeepSeek 费用按已核实公开单价估算；Kimi 暂无价目表，只记录 token，不估算金额。</p>
           </div>
         </section>
       )}
@@ -1289,6 +1480,8 @@ function formatTokens(n: number): string {
 }
 
 function modelLabel(modelId: string): string {
+  if (modelId === "k3") return "K3";
+  if (modelId.includes("kimi-for-coding")) return "K2.7 Code";
   return modelId.includes("pro") ? "V4 PRO" : "V4 Flash";
 }
 
@@ -1314,8 +1507,15 @@ function toYMD(d: Date): string {
 function deriveConnectivity(
   balance: BalanceState | null,
   loading: boolean,
+  provider: ModelProvider,
 ): { tone: "ok" | "bad" | "idle"; text: string } {
-  if (loading || balance === null) return { tone: "idle", text: "正在检测连接…" };
+  if (loading) return { tone: "idle", text: "正在检测连接…" };
+  if (balance === null) {
+    return provider === "kimi"
+      ? { tone: "idle", text: "已配置 · Kimi 连接测试需手动触发" }
+      : { tone: "idle", text: "正在检测连接…" };
+  }
+  if (balance.permissionDenied) return { tone: "bad", text: "Kimi 套餐或模型权限不足" };
   if (balance.keyInvalid) return { tone: "bad", text: "key 无效,请检查" };
   if (balance.ok) return { tone: "ok", text: "已连通" };
   return { tone: "idle", text: balance.error ? `暂时无法连接 · ${balance.error}` : "暂时无法连接" };
@@ -1325,22 +1525,24 @@ function deriveConnectivity(
 function summarizeRecentDays(
   rows: UsageRow[] | null,
   days: number,
-): { cost: number; tokens: number; calls: number } | null {
+): { cost: number; tokens: number; calls: number; hasPriced: boolean } | null {
   if (rows === null) return null;
-  if (rows.length === 0) return { cost: 0, tokens: 0, calls: 0 };
+  if (rows.length === 0) return { cost: 0, tokens: 0, calls: 0, hasPriced: false };
   // bucket 是 YYYY-MM-DD;取按日期倒序后最近 N 天涉及的所有行
   const dates = Array.from(new Set(rows.map((r) => r.bucket))).sort().reverse().slice(0, days);
   const keep = new Set(dates);
   let cost = 0;
   let tokens = 0;
   let calls = 0;
+  let hasPriced = false;
   for (const r of rows) {
     if (!keep.has(r.bucket)) continue;
     cost += r.costCny ?? 0;
+    if (r.costCny != null) hasPriced = true;
     tokens += r.inputTokens + r.outputTokens;
     calls += r.calls;
   }
-  return { cost, tokens, calls };
+  return { cost, tokens, calls, hasPriced };
 }
 
 // 按模型分布:total 数据按 modelId 聚合,算 tokens 占比(降序)。

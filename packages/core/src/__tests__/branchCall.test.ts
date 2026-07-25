@@ -22,11 +22,16 @@ import {
 
 const originalApiKey = process.env.DEEPSEEK_API_KEY;
 
-function context(sessionId: string, streamId: string): RequestContext {
+function context(
+  sessionId: string,
+  streamId: string,
+  entries: Array<[string, unknown]> = [],
+): RequestContext {
   return new RequestContext([
     ["sessionId", sessionId],
     ["streamId", streamId],
     ["runId", `run-${streamId}`],
+    ...entries,
   ] as never) as RequestContext;
 }
 
@@ -72,7 +77,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     vi.restoreAllMocks();
     if (originalApiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = originalApiKey;
-    for (const id of ["snapshot-basic", "snapshot-race", "snapshot-schema", "snapshot-lease", "snapshot-aba", "branch-success", "branch-tool", "branch-sse", "branch-ledger", "branch-abort", "branch-inflight", "branch-callback-race", "branch-http-error", "branch-parse-error"]) {
+    for (const id of ["snapshot-basic", "snapshot-race", "snapshot-schema", "snapshot-lease", "snapshot-aba", "branch-success", "branch-kimi", "branch-tool", "branch-sse", "branch-ledger", "branch-abort", "branch-inflight", "branch-callback-race", "branch-http-error", "branch-parse-error"]) {
       clearSessionSnapshot(id);
     }
   });
@@ -224,7 +229,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       thinking: false,
       temperature: 0.35,
       topP: 0.78,
-      maxTokens: 4096,
+      maxTokens: 65_536,
     });
 
     expect(result).toMatchObject({ ok: true, text: "分支答案", attempts: 1, toolCallRetries: 0 });
@@ -237,7 +242,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(replayBody.thinking).toEqual({ type: "disabled" });
     expect(replayBody.temperature).toBe(0.35);
     expect(replayBody.top_p).toBe(0.78);
-    expect(replayBody.max_tokens).toBe(4096);
+    expect(replayBody.max_tokens).toBe(65_536);
     expect(replayBody.stream).toBe(true);
     expect(replayBody.stream_options).toEqual({ include_usage: true });
     expect(replayBody.tool_choice).toBe(sourceBody.tool_choice);
@@ -265,6 +270,44 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(logLines.find((line) => line.includes(" done latency="))).toContain(
       `hit/miss=100/5 replayBytes=${replayBytes} tailBytes=${tailBytes} attempt=1`,
     );
+  });
+
+  it("Kimi 回放经统一转换移除 temperature/top_p", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-kimi", "stream-kimi", [
+      ["modelOverrides", { provider: "kimi", visitorApiKey: "mock-kimi-key" }],
+    ]);
+    beginSessionSnapshotTurn(requestContext);
+    const model = createSnapshottingQingagentModel(requestContext);
+    await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Kimi 前缀" }] }],
+      temperature: 0.2,
+      topP: 0.7,
+    } as never);
+    const snapshot = getSessionSnapshot(requestContext)!;
+    const sourceBody = JSON.parse(snapshot.bodyText);
+    expect(sourceBody).not.toHaveProperty("temperature");
+    expect(sourceBody).not.toHaveProperty("top_p");
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(
+      { role: "assistant", content: "Kimi 分支答案" },
+      { prompt_tokens: 10, completion_tokens: 2 },
+    ));
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "直接回答。",
+      callSite: "titleGeneration",
+      requestContext,
+      thinking: false,
+      temperature: 0.35,
+    });
+
+    expect(result).toMatchObject({ ok: true, text: "Kimi 分支答案" });
+    const replayBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(replayBody).not.toHaveProperty("temperature");
+    expect(replayBody).not.toHaveProperty("top_p");
+    expect(replayBody).not.toHaveProperty("thinking");
   });
 
   it("raw 请求飞行中被新主轮抢占时丢弃结果且不派发文本", async () => {

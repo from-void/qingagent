@@ -9,6 +9,7 @@ import { NEXT_STEP, QaCliError } from "./errors.js";
 import { hasFlag, optionValue, optionValues, printJson } from "./output.js";
 import { installPointerSkill, writerSkillMarkdown, type SkillInstallTarget } from "./skill.js";
 import type {
+  ExternalAnnotationResponse,
   ExternalChatLogResponse,
   ExternalDocReadResponse,
   ExternalEventsMeta,
@@ -16,6 +17,8 @@ import type {
   ExternalFileTextResponse,
   ExternalProposalResponse,
   ExternalProposeOp,
+  ExternalReviewListResponse,
+  ExternalReviewPatchResponse,
   ExternalSessionCreateResponse,
   ExternalSessionsListResponse,
 } from "./generated/externalApi.js";
@@ -43,8 +46,20 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   const client = await ApiClient.create();
   if (group === "sessions" && command === "list") {
-    const data = await client.request<ExternalSessionsListResponse>("/sessions");
-    return output(data, hasFlag(args, "--json"));
+    const json = hasFlag(args, "--json");
+    const all = hasFlag(args, "--all");
+    const rawLimit = optionValue(args, "--limit");
+    const limit = parseSessionsLimit(rawLimit);
+    const data = all
+      ? await listAllSessions(client, limit)
+      : await client.request<ExternalSessionsListResponse>(
+          `/sessions${rawLimit === undefined ? "" : `?limit=${limit}`}`,
+        );
+    output(data, json);
+    if (!json && !all && data.hasMore) {
+      process.stdout.write(`还有 ${Math.max(0, data.total - data.sessions.length)} 个会话,用 --all 查看\n`);
+    }
+    return;
   }
   if (group === "sessions" && command === "create") {
     const data = await client.request<ExternalSessionCreateResponse>("/sessions", { method: "POST", body: JSON.stringify({}) });
@@ -84,6 +99,82 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       timeoutMs: parseDuration(optionValue(args, "--timeout")),
       until,
     });
+  }
+  if (group === "review" && command === "list") {
+    const sessionId = requireOption(args, "-s");
+    const data = await client.request<ExternalReviewListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    printReviewList(data);
+    return;
+  }
+  if (group === "review" && command === "show") {
+    const sessionId = requireOption(args, "-s");
+    const patchId = optionValue(args, "--patch");
+    const annotationId = optionValue(args, "--annotation");
+    requireExactlyOneReviewTarget(patchId, annotationId);
+    if (patchId) {
+      const data = await client.request<ExternalReviewPatchResponse>(
+        `/sessions/${encodeURIComponent(sessionId)}/review/patches/${encodeURIComponent(patchId)}`,
+      );
+      if (hasFlag(args, "--json")) return printJson(data);
+      printReviewPatch(data);
+      return;
+    }
+    const data = await client.request<ExternalAnnotationResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/review/annotations/${encodeURIComponent(annotationId!)}`,
+    );
+    if (hasFlag(args, "--json")) return printJson(data);
+    printAnnotation(data);
+    return;
+  }
+  if (
+    group === "review" &&
+    (command === "accept" || command === "reject")
+  ) {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const patchId = optionValue(args, "--patch");
+    const all = hasFlag(args, "--all");
+    if ((patchId ? 1 : 0) + (all ? 1 : 0) !== 1) {
+      throw new QaCliError("VALIDATION", "review accept/reject 必须且只能指定 --patch <id> 或 --all");
+    }
+    const data = all
+      ? await client.reviewCommit(sessionId, {
+          expectedDocVersion,
+          action: command === "accept" ? "accept_all" : "reject_all",
+        })
+      : await client.reviewVerdict(sessionId, {
+          expectedDocVersion,
+          patchId: patchId!,
+          verdict: command === "accept" ? "accepted" : "rejected",
+        });
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (group === "review" && command === "commit") {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const data = await client.reviewCommit(sessionId, {
+      expectedDocVersion,
+      action: "commit",
+    });
+    return output(data, hasFlag(args, "--json"));
+  }
+  if (
+    group === "review" &&
+    command === "annotation" &&
+    args[2] === "ignore"
+  ) {
+    const sessionId = requireOption(args, "-s");
+    const expectedDocVersion = requireDocumentVersion(args);
+    const annotationId = requireOption(args, "--annotation");
+    const data = await client.ignoreAnnotations(sessionId, {
+      expectedDocVersion,
+      annotationIds: [annotationId],
+      ...(hasFlag(args, "--remember") ? { rememberDismissal: true } : {}),
+    });
+    return output(data, hasFlag(args, "--json"));
   }
   if (group === "chat" && command === "send") {
     const sessionId = requireOption(args, "-s");
@@ -166,18 +257,20 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   let maxSeq = parseAfterSeq(options.after);
   let cursor = options.after;
   let reconnectAttempt = 0;
-  let watchingPrinted = false;
+  let printWatchingOnNextConnection = true;
+  let gapResubscribed = false;
   try {
     while (!reason && !timedOut) {
       const receivedBeforeConnection = received;
       let reader: ReadableStreamDefaultReader<string> | null = null;
       let meta: ExternalEventsMeta | null = null;
       let buffer = "";
+      let resumeAfter: string | null = null;
       try {
         const res = await client.openEvents(sessionId, cursor, controller.signal);
-        if (!watchingPrinted) {
-          process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
-          watchingPrinted = true;
+        if (printWatchingOnNextConnection) {
+          process.stderr.write(`[qa] watching session=${sessionId} after=${cursor}\n`);
+          printWatchingOnNextConnection = false;
         }
         reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
         while (true) {
@@ -194,7 +287,15 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
             if (event.event === "meta") {
               meta = parseEventsMeta(data);
               if (meta?.gap) {
-                reason = "gap";
+                if (received === 0 && !gapResubscribed) {
+                  gapResubscribed = true;
+                  const resumeSeq = Math.max(1, Math.floor(meta.minSeq));
+                  resumeAfter = String(resumeSeq - 1);
+                  process.stderr.write(`[qa] log truncated, resuming from seq=${resumeSeq}\n`);
+                  printWatchingOnNextConnection = true;
+                } else {
+                  reason = "gap";
+                }
                 break;
               }
               if (cursor === "tip" && meta) {
@@ -213,11 +314,16 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
               break;
             }
           }
-          if (reason) break;
+          if (reason || resumeAfter !== null) break;
           if (!options.follow && !options.until && options.timeoutMs === null && meta && maxSeq >= meta.nextSeq - 1) {
             reason = "limit";
             break;
           }
+        }
+        if (resumeAfter !== null) {
+          cursor = resumeAfter;
+          maxSeq = parseAfterSeq(cursor);
+          continue;
         }
         if (!options.follow || reason || timedOut) break;
       } catch (error) {
@@ -315,6 +421,54 @@ function requireOption(args: string[], name: string): string {
   return value;
 }
 
+function parseSessionsLimit(raw: string | undefined): number {
+  if (raw === undefined) return 100;
+  const limit = Number(raw);
+  if (!Number.isFinite(limit)) throw new QaCliError("VALIDATION", "--limit 必须是数字");
+  return Math.min(500, Math.max(1, Math.floor(limit)));
+}
+
+async function listAllSessions(
+  client: ApiClient,
+  limit: number,
+): Promise<ExternalSessionsListResponse> {
+  const sessions: ExternalSessionsListResponse["sessions"] = [];
+  let offset = 0;
+  let total = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const page = await client.request<ExternalSessionsListResponse>(
+      `/sessions?limit=${limit}&offset=${offset}`,
+    );
+    sessions.push(...page.sessions);
+    total = page.total;
+    hasMore = page.hasMore;
+    offset += limit;
+  }
+  return { sessions, total, hasMore: false };
+}
+
+function requireDocumentVersion(args: string[]): number {
+  const raw = requireOption(args, "--expect-version");
+  const version = Number(raw);
+  if (!Number.isInteger(version) || version < 0) {
+    throw new QaCliError("VALIDATION", "--expect-version 必须是非负整数");
+  }
+  return version;
+}
+
+function requireExactlyOneReviewTarget(
+  patchId: string | undefined,
+  annotationId: string | undefined,
+): void {
+  if ((patchId ? 1 : 0) + (annotationId ? 1 : 0) !== 1) {
+    throw new QaCliError(
+      "VALIDATION",
+      "review show 必须且只能指定 --patch <id> 或 --annotation <id>",
+    );
+  }
+}
+
 function chatText(args: string[]): string {
   const parts: string[] = [];
   for (let i = 2; i < args.length; i += 1) {
@@ -397,6 +551,72 @@ function printFilesList(data: ExternalFilesListResponse): void {
   }
 }
 
+function printReviewList(data: ExternalReviewListResponse): void {
+  process.stdout.write(
+    `审查 session=${data.sessionId} v${data.docVersion} state=${data.state}${data.agentBusy ? " busy" : ""}\n`,
+  );
+  process.stdout.write(`修改建议 (${data.patches.length}):\n`);
+  if (data.patches.length === 0) {
+    process.stdout.write("- 无\n");
+  } else {
+    for (const patch of data.patches) {
+      process.stdout.write(
+        `- ${patch.id}  [${patch.status}] ${compactText(patch.summary, 80)}\n`,
+      );
+      process.stdout.write(
+        `  ${compactText(patch.beforeText, 80) || "（空）"} → ${compactText(patch.afterText, 80) || "（空）"}\n`,
+      );
+      if (patch.conflict) {
+        process.stdout.write(
+          `  冲突: ${patch.conflict.kind} ${compactText(patch.conflict.message, 120)}\n`,
+        );
+      }
+    }
+  }
+  process.stdout.write(`批注 (${data.annotations.length}):\n`);
+  if (data.annotations.length === 0) {
+    process.stdout.write("- 无\n");
+  } else {
+    for (const annotation of data.annotations) {
+      process.stdout.write(
+        `- ${annotation.id}  [${annotation.severity ?? "warn"}/${annotation.status}] ${compactText(annotation.summary, 80)}\n`,
+      );
+    }
+  }
+}
+
+function printReviewPatch(data: ExternalReviewPatchResponse): void {
+  const patch = data.patch;
+  process.stdout.write(
+    `修改建议 ${patch.id} [${patch.status}] batch=${patch.reviewBatchId}\n`,
+  );
+  process.stdout.write(`摘要: ${patch.summary}\n`);
+  process.stdout.write(`定位: ${patch.anchor.quote || "（无引用）"}\n`);
+  process.stdout.write(`原文:\n${patch.beforeText || "（空）"}\n`);
+  process.stdout.write(`改为:\n${patch.afterText || "（空）"}\n`);
+  if (patch.diff) {
+    process.stdout.write(
+      `diff: ${patch.diff.op} blockPath=${patch.diff.blockPath.join(".") || "-"}\n`,
+    );
+  }
+  if (patch.conflict) {
+    process.stdout.write(`冲突: ${patch.conflict.kind} ${patch.conflict.message}\n`);
+  }
+}
+
+function printAnnotation(data: ExternalAnnotationResponse): void {
+  const annotation = data.annotation;
+  process.stdout.write(
+    `批注 ${annotation.id} [${annotation.severity ?? "warn"}/${annotation.status}] origin=${annotation.origin}\n`,
+  );
+  process.stdout.write(`问题: ${annotation.summary}\n`);
+  process.stdout.write(`说明: ${annotation.note}\n`);
+  if (annotation.suggestion) process.stdout.write(`建议: ${annotation.suggestion}\n`);
+  for (const [index, anchor] of annotation.anchors.entries()) {
+    process.stdout.write(`定位 ${index + 1}: ${anchor.quote}\n`);
+  }
+}
+
 function compactText(value: string, maxChars: number): string {
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > maxChars ? `${singleLine.slice(0, maxChars)}...` : singleLine;
@@ -406,12 +626,18 @@ function help(): void {
   process.stdout.write(`AI agents MUST read: qa skills read writer —— 不要只凭 --help 猜用法
 
 qa status
-qa sessions list [--json]
+qa sessions list [--limit N] [--all] [--json]
 qa sessions create
 qa doc read -s <id> [--lines] [--json]
 qa doc state -s <id>
 qa doc propose -s <id> --expect-version N (--full draft.md | --str-replace <old> <new> | --append section.md | --ops ops.json)
 qa doc events -s <id> [--follow] [--after <seq>] [--until reviewed|committed|review] [--timeout 10m]
+qa review list -s <id> [--json]
+qa review show -s <id> (--patch <id> | --annotation <id>) [--json]
+qa review accept -s <id> --expect-version N (--patch <id> | --all) [--json]
+qa review reject -s <id> --expect-version N (--patch <id> | --all) [--json]
+qa review commit -s <id> --expect-version N [--json]
+qa review annotation ignore -s <id> --expect-version N --annotation <id> [--remember] [--json]
 qa chat send -s <id> "指令"
 qa chat log -s <id> [--limit N] [--json]
 qa chat tail -s <id>
@@ -425,7 +651,13 @@ qa skills install claude|codex
 if (isDirectRun()) {
   main().catch((error) => {
     const err = error instanceof QaCliError ? error : new QaCliError("VALIDATION", error instanceof Error ? error.message : String(error));
-    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${NEXT_STEP[err.code]}\n`);
+    const remoteNextStep = err.details &&
+        typeof err.details === "object" &&
+        "nextStep" in err.details &&
+        typeof err.details.nextStep === "string"
+      ? err.details.nextStep
+      : null;
+    process.stderr.write(`${err.code}: ${err.message}\n下一步: ${remoteNextStep ?? NEXT_STEP[err.code]}\n`);
     process.exitCode = 1;
   });
 }

@@ -301,6 +301,21 @@ describe("hardenInlineSvg", () => {
     expect(out).toMatch(/viewBox/i);
   });
 
+  it("drawio 原生 SVG 产物保留路径与文本，同时剥除潜在执行面", () => {
+    const drawio = wrap(
+      `<rect x="1" y="1" width="118" height="58" fill="#efe3cc" pointer-events="none" onclick="x()"/>` +
+      `<path d="M10 30 L100 30" stroke="#7f6a45"/>` +
+      `<text x="20" y="24" font-family="Arial">服务架构</text>` +
+      `<foreignObject><iframe src="https://evil.example"/></foreignObject>`,
+    );
+    const out = hardenInlineSvg(drawio);
+    expect(out).toContain("服务架构");
+    expect(out).toMatch(/<path/i);
+    expect(out).not.toContain("onclick");
+    expect(out).not.toContain("evil.example");
+    expect(out).not.toMatch(/foreignObject/i);
+  });
+
   it("拒绝 DOCTYPE/ENTITY(XXE)与解析失败 → 返回 null", () => {
     expect(hardenInlineSvg(`<!DOCTYPE svg [<!ENTITY x "y">]><svg viewBox="0 0 1 1"><rect/></svg>`)).toBeNull();
     expect(hardenInlineSvg("not svg at all")).toBeNull();

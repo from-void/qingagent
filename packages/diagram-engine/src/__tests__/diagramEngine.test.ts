@@ -1,12 +1,20 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
   carryOverDiagramOverlay,
+  dissolveSubgraph,
   filterStableOverlay,
   getCapabilities,
+  getFlowShapeGeometry,
   graphToSvg,
+  layoutDiagramGraph,
+  moveNodeToSubgraph,
+  normalizeFlowShapeName,
   parseDiagram,
+  renameSubgraph,
   safeMermaid,
+  wrapNodesInSubgraph,
   type BaseEdge,
   type ClassGraph,
   type ErGraph,
@@ -101,6 +109,93 @@ describe("diagram-engine", () => {
     const source = "graph TD; A[未闭合 --> B";
     expect(parseDiagram(source)).toMatchObject({ ok: false, error: "节点 A 的形状未闭合" });
     expect(graphToSvg(source)).toBeNull();
+  });
+
+  it("flowchart a-e 矩阵:顶层 Unicode id 在分区前后、边端点、中英混合和数字开头均不丢失", () => {
+    const cases = [
+      {
+        name: "a. 中文顶层声明在 subgraph 前",
+        source: "flowchart TD\n  自由[自由节点]\n  subgraph 区A\n    A1[X]\n  end\n  自由 --> A1\n",
+        ids: ["自由", "A1"],
+        edge: ["自由", "A1"],
+      },
+      {
+        name: "b. 中文顶层声明在 subgraph 后",
+        source: "flowchart TD\n  subgraph 区A\n    A1[X]\n  end\n  自由[自由节点]\n  自由 --> A1\n",
+        ids: ["A1", "自由"],
+        edge: ["自由", "A1"],
+      },
+      {
+        name: "c. ASCII 对照",
+        source: "flowchart TD\n  free[FreeNode]\n  subgraph 区A\n    A1[X]\n  end\n  free --> A1\n",
+        ids: ["free", "A1"],
+        edge: ["free", "A1"],
+      },
+      {
+        name: "d. 中英混合 id",
+        source: "flowchart TD\n  自由A1_2[混合节点]\n  subgraph 区A\n    B1[X]\n  end\n  自由A1_2 --> B1\n",
+        ids: ["自由A1_2", "B1"],
+        edge: ["自由A1_2", "B1"],
+      },
+      {
+        name: "e. 数字开头 id",
+        source: "flowchart TD\n  123节点[数字节点]\n  subgraph 区A\n    C1[X]\n  end\n  123节点 --> C1\n",
+        ids: ["123节点", "C1"],
+        edge: ["123节点", "C1"],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const parsed = parseDiagram(testCase.source);
+      expect(parsed.ok, testCase.name).toBe(true);
+      const model = parsed.model as FlowGraph;
+      expect(model.nodes.map((node) => node.id), testCase.name).toEqual(testCase.ids);
+      expect(model.edges.map((item) => [item.source, item.target]), testCase.name).toEqual([testCase.edge]);
+    }
+  });
+
+  it("flowchart Unicode id 覆盖分区成员、classDef/class/:::、style 与 click 目标", () => {
+    const source = `flowchart TD
+  classDef 高亮 fill:#FFF3C4,stroke:#8A6D1D
+  顶层中文[顶层]:::高亮
+  subgraph 中文分区[区A]
+    区内中文[区内]
+    中英A1_2[混合]
+    123节点[数字]
+  end
+  顶层中文 --> 区内中文
+  class 顶层中文,区内中文 高亮
+  style 中英A1_2 fill:#DDEEFF
+  click 123节点 "https://example.com"
+`;
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes.map((node) => node.id)).toEqual(["顶层中文", "区内中文", "中英A1_2", "123节点"]);
+    expect(model.nodes.every((node) => node.hasStableId)).toBe(true);
+    expect(model.nodes.find((node) => node.id === "顶层中文")?.scopePath).toEqual([]);
+    expect(model.nodes.filter((node) => node.id !== "顶层中文").every((node) => node.scopePath.join("/") === "中文分区")).toBe(true);
+    expect(model.edges.map((item) => [item.source, item.target])).toEqual([["顶层中文", "区内中文"]]);
+    expect(model.perNodeStyles?.顶层中文).toMatchObject({ fill: "#FFF3C4", stroke: "#8A6D1D" });
+    expect(model.perNodeStyles?.区内中文).toMatchObject({ fill: "#FFF3C4", stroke: "#8A6D1D" });
+    expect(model.perNodeStyles?.中英A1_2).toMatchObject({ fill: "#DDEEFF" });
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(4);
+    expect(svg.match(/data-edge-id=/g)).toHaveLength(1);
+    expect(svg).toContain('data-node-id="顶层中文"');
+    expect(svg).toContain('data-node-id="区内中文"');
+  });
+
+  it("flowchart 无法识别的非空行返回带 span 的错误且保留已解析节点", () => {
+    const source = "flowchart TD\n  A[正常]\n  @@@\n";
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("无法解析第 3 行");
+    expect(parsed.errorSpan).toEqual({
+      start: source.indexOf("  @@@"),
+      end: source.indexOf("  @@@") + "  @@@".length,
+    });
+    expect((parsed.model as FlowGraph).nodes.map((node) => node.id)).toEqual(["A"]);
   });
 
   it("flowchart rewrite 只改目标 span,保留注释/style/class/subgraph/link 文本", () => {
@@ -311,7 +406,7 @@ describe("diagram-engine", () => {
     expect(nodeModel.nodes.find((node) => node.id === "C")?.label).toBe("结束");
   });
 
-  it("flowchart 含 subgraph 时允许顶层 addNode 和删除无关孤立节点,拒绝触碰 subgraph", () => {
+  it("flowchart 含 subgraph 时允许顶层 addNode、删除无关孤立节点和连接分区内节点", () => {
     const subgraphBlock = ["  subgraph S", "    Inside[内部] --> Peer[同组]", "  end"].join("\n");
     const source = ["flowchart TD", "  Outside[外部]", subgraphBlock, ""].join("\n");
 
@@ -330,7 +425,228 @@ describe("diagram-engine", () => {
     expect(getCapabilities(parseDiagram(source), { nodeId: "Inside" }).find((cap) => cap.op === "deleteNode")?.enabled).toBe(false);
     expect(applyEdit(source, { kind: "deleteNode", nodeId: "Inside" })).toMatchObject({ ok: false });
     expect(applyEdit(source, { kind: "deleteEdge", edgeId: innerEdge.id })).toMatchObject({ ok: false });
-    expect(applyEdit(source, { kind: "connectEdge", source: "Inside", target: "Outside" })).toMatchObject({ ok: false });
+    const connected = applyEdit(source, { kind: "connectEdge", source: "Inside", target: "Outside" });
+    expect(connected).toMatchObject({ ok: true });
+    expect(connected.source).toContain("Inside --> Outside");
+  });
+
+  it("wrapNodesInSubgraph 原位包裹连续节点并以中文标题 round-trip", () => {
+    const source = [
+      "flowchart TD",
+      "  A[开始]",
+      "  B(处理)",
+      "  C[结束]",
+      "  A --> B",
+      "",
+    ].join("\n");
+    const wrapped = wrapNodesInSubgraph(source, ["A", "B"], "核心流程");
+    expect(wrapped.ok).toBe(true);
+    expect(wrapped.newSubgraphId).toBe("subgraph_核心流程");
+    expect(wrapped.source).toBe([
+      "flowchart TD",
+      '  subgraph subgraph_核心流程["核心流程"]',
+      "  A[开始]",
+      "  B(处理)",
+      "  end",
+      "  C[结束]",
+      "  A --> B",
+      "",
+    ].join("\n"));
+    const model = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual(["subgraph_核心流程"]);
+    expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual(["subgraph_核心流程"]);
+    expect(model.nodes.find((node) => node.id === "C")?.scopePath).toEqual([]);
+
+    const dissolved = dissolveSubgraph(wrapped.source, wrapped.newSubgraphId!);
+    expect(dissolved).toEqual({ ok: true, source });
+  });
+
+  it("wrapNodesInSubgraph 支持空分区和父分区内嵌，跨父级节点会拒绝", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Outer["外层"]',
+      "    A[甲]",
+      "    B[乙]",
+      "  end",
+      "  C[丙]",
+      "",
+    ].join("\n");
+    const empty = wrapNodesInSubgraph(source, [], "空分区", "Outer");
+    expect(empty.ok).toBe(true);
+    expect(empty.source).toContain('    subgraph subgraph_空分区["空分区"]\n    end\n  end');
+    expect((parseDiagram(empty.source).model as FlowGraph).subgraphs.find((item) => item.id === "subgraph_空分区")?.scopePath).toEqual(["Outer"]);
+
+    const nested = wrapNodesInSubgraph(source, ["A", "B"], "内层", "Outer");
+    expect(nested.ok).toBe(true);
+    expect((parseDiagram(nested.source).model as FlowGraph).subgraphs.find((item) => item.id === "subgraph_内层")?.scopePath).toEqual(["Outer"]);
+    expect(dissolveSubgraph(nested.source, "subgraph_内层").source).toBe(source);
+
+    const crossed = wrapNodesInSubgraph(source, ["A", "C"], "跨界");
+    expect(crossed).toMatchObject({ ok: false, source, error: "节点不在同一父分区内" });
+  });
+
+  it("手写空 subgraph 作为普通布局项进入共享几何与 SVG 空态", () => {
+    const source = [
+      "flowchart LR",
+      '  subgraph Gamma["Gamma区"]',
+      "  end",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes).toHaveLength(0);
+    expect(model.subgraphs).toEqual([
+      expect.objectContaining({ id: "Gamma", label: "Gamma区", scopePath: [] }),
+    ]);
+
+    const layout = layoutDiagramGraph(model);
+    expect(layout.clusters).toHaveLength(1);
+    expect(layout.clusters[0]).toMatchObject({
+      id: "Gamma",
+      empty: true,
+    });
+    expect(layout.clusters[0]!.width).toBeGreaterThanOrEqual(160);
+    expect(layout.clusters[0]!.height).toBeGreaterThanOrEqual(90);
+
+    const svg = graphToSvg(source);
+    expect(svg).not.toBeNull();
+    expect(svg).toContain('data-cluster-id="Gamma"');
+    expect(svg).toContain('data-empty="true"');
+    expect(svg).toContain('stroke-dasharray="6 5"');
+    expect(svg).toContain(">Gamma区</text>");
+    expect(svg).toContain(">拖入节点</text>");
+    expect(svg).not.toContain("data-node-id=");
+  });
+
+  it("luna1-TC2：建区、拖入、改名、拖出后保留空块，后续改写不吞区，显式解散才删除", () => {
+    const baseline = [
+      "flowchart LR",
+      "  A[自由节点A]",
+      "  B[自由节点B]",
+      "",
+    ].join("\n");
+    const created = wrapNodesInSubgraph(baseline, [], "Gamma区");
+    expect(created).toMatchObject({ ok: true, newSubgraphId: "Gamma区" });
+
+    const movedIn = moveNodeToSubgraph(created.source, "A", created.newSubgraphId!);
+    expect(movedIn.ok).toBe(true);
+    expect((parseDiagram(movedIn.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual([created.newSubgraphId]);
+
+    const renamed = renameSubgraph(movedIn.source, created.newSubgraphId!, "Gamma改名");
+    expect(renamed.ok).toBe(true);
+    const movedOut = moveNodeToSubgraph(renamed.source, "A", null);
+    expect(movedOut.ok).toBe(true);
+    expect(movedOut.source).toContain(
+      `subgraph ${created.newSubgraphId}["Gamma改名"]\n  end`,
+    );
+    const emptyModel = parseDiagram(movedOut.source).model as FlowGraph;
+    expect(emptyModel.subgraphs.find((item) => item.id === created.newSubgraphId)?.label)
+      .toBe("Gamma改名");
+    expect(emptyModel.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+
+    const added = applyEdit(movedOut.source, { kind: "addNode", label: "连续保存节点" });
+    expect(added.ok).toBe(true);
+    expect((parseDiagram(added.source).model as FlowGraph).subgraphs.map((item) => item.id))
+      .toContain(created.newSubgraphId);
+    const relabeled = applyEdit(added.source, { kind: "relabelNode", nodeId: "B", label: "已保存" });
+    expect(relabeled.ok).toBe(true);
+    expect((parseDiagram(relabeled.source).model as FlowGraph).subgraphs.map((item) => item.id))
+      .toContain(created.newSubgraphId);
+
+    const dissolved = dissolveSubgraph(relabeled.source, created.newSubgraphId!);
+    expect(dissolved.ok).toBe(true);
+    expect((parseDiagram(dissolved.source).model as FlowGraph).subgraphs).toHaveLength(0);
+    expect(dissolved.source).not.toContain("subgraph ");
+    expect(dissolved.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(0);
+  });
+
+  it("wrapNodesInSubgraph 迁移内联声明时只剥离目标形状，边和 class/style 字节保持", () => {
+    const source = [
+      "flowchart LR",
+      "  A[甲] -->|保持| B[乙]",
+      "  class A hot",
+      "  classDef hot fill:#fff,stroke:#333",
+      "",
+    ].join("\n");
+    const wrapped = wrapNodesInSubgraph(source, ["A"], "甲组");
+    expect(wrapped.ok).toBe(true);
+    expect(wrapped.source).toContain("  A -->|保持| B[乙]");
+    expect(wrapped.source).toContain("  class A hot");
+    expect(wrapped.source).toContain("  classDef hot fill:#fff,stroke:#333");
+    expect(wrapped.source).toContain("    A[甲]");
+    const model = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(model.nodes.find((node) => node.id === "A")).toMatchObject({ label: "甲", scopePath: ["subgraph_甲组"] });
+    expect(model.nodes.find((node) => node.id === "B")).toMatchObject({ label: "乙", scopePath: [] });
+  });
+
+  it("moveNodeToSubgraph 可迁入最深层并迁回父级/根级", () => {
+    const source = [
+      "flowchart TD",
+      "  A[甲]",
+      '  subgraph Outer["外层"]',
+      '    subgraph Inner["内层"]',
+      "      B[乙]",
+      "    end",
+      "  end",
+      "  A --> B",
+      "",
+    ].join("\n");
+    const movedIn = moveNodeToSubgraph(source, "A", "Inner");
+    expect(movedIn.ok).toBe(true);
+    expect((parseDiagram(movedIn.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual(["Outer", "Inner"]);
+
+    const movedToParent = moveNodeToSubgraph(movedIn.source, "A", "Outer");
+    expect(movedToParent.ok).toBe(true);
+    expect((parseDiagram(movedToParent.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual(["Outer"]);
+
+    const movedOut = moveNodeToSubgraph(movedToParent.source, "A", null);
+    expect(movedOut.ok).toBe(true);
+    expect((parseDiagram(movedOut.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(movedOut.source).toContain("  A --> B");
+  });
+
+  it("renameSubgraph 只改标题 span，dissolveSubgraph 解散后子分区和节点归父", () => {
+    const source = [
+      "flowchart TD",
+      "  %% keep",
+      '  subgraph Outer["旧标题"]',
+      "    A[甲]",
+      '    subgraph Inner["内层"]',
+      "      B[乙]",
+      "    end",
+      "  end",
+      "  style A fill:#fff",
+      "",
+    ].join("\n");
+    const renamed = renameSubgraph(source, "Outer", "新标题");
+    expect(renamed.ok).toBe(true);
+    expect(renamed.source).toBe(source.replace('"旧标题"', '"新标题"'));
+    expect((parseDiagram(renamed.source).model as FlowGraph).subgraphs.find((item) => item.id === "Outer")?.label).toBe("新标题");
+
+    const dissolved = dissolveSubgraph(renamed.source, "Outer");
+    expect(dissolved.ok).toBe(true);
+    expect(dissolved.source).toContain("  %% keep");
+    expect(dissolved.source).toContain("  style A fill:#fff");
+    const model = parseDiagram(dissolved.source).model as FlowGraph;
+    expect(model.subgraphs.find((item) => item.id === "Outer")).toBeUndefined();
+    expect(model.subgraphs.find((item) => item.id === "Inner")?.scopePath).toEqual([]);
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual(["Inner"]);
+  });
+
+  it("真实云原生 fixture 的父分区内 wrap+dissolve 可逐字节还原", () => {
+    const source = readFileSync(new URL("./fixtures-user-cloudnative.mmd", import.meta.url), "utf8");
+    const wrapped = wrapNodesInSubgraph(source, ["Web", "iOS", "Android", "Mini"], "终端子组", "U");
+    expect(wrapped.ok).toBe(true);
+    const wrappedModel = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(wrappedModel.nodes.filter((node) => ["Web", "iOS", "Android", "Mini"].includes(node.id)).every(
+      (node) => node.scopePath.join("/") === "U/subgraph_终端子组",
+    )).toBe(true);
+    const dissolved = dissolveSubgraph(wrapped.source, wrapped.newSubgraphId!);
+    expect(dissolved.ok).toBe(true);
+    expect(dissolved.source).toBe(source);
   });
 
   it("flowchart 删除无关早序边后保留未改边 edgeStyles overlay", () => {
@@ -356,6 +672,8 @@ describe("diagram-engine", () => {
     expect(carried?.edgeHandles?.[styledEdge.id]).toEqual({ sourceHandle: "r", targetHandle: "l" });
     expect(carried?.edgeHandles?.ORPHAN).toBeUndefined();
     expect(Object.keys(carried?.edgeStyles ?? {})).toEqual([styledEdge.id]);
+    expect(Object.values(carried ?? {})).not.toContain(undefined);
+    expect(carried).toEqual(JSON.parse(JSON.stringify(carried)));
   });
 
   it("filterStableOverlay 清理 orphan edgeHandles 且保留稳定边 handle", () => {
@@ -371,6 +689,7 @@ describe("diagram-engine", () => {
     expect(filtered?.edgeHandles).toEqual({
       [edgeId]: { sourceHandle: "r", targetHandle: "l" },
     });
+    expect(Object.keys(filtered ?? {})).toEqual(["edgeHandles"]);
   });
 
   it("flowchart 平行边 id 稳定且可区分", () => {
@@ -517,6 +836,33 @@ describe("diagram-engine", () => {
       ["待审核", "已批准"],
       ["待审核", "已驳回"],
     ]);
+  });
+
+  it("state/ER/class 的 Unicode、混合和数字开头 id 与 flowchart 口径一致", () => {
+    const state = parseDiagram(`stateDiagram-v2
+  123状态 --> 中英State_2
+  classDef 高亮 fill:#FFF3C4
+  class 123状态 高亮
+  style 中英State_2 fill:#DDEEFF
+`).model as StateGraph;
+    expect(state.nodes.map((node) => [node.id, node.hasStableId])).toEqual([
+      ["123状态", true],
+      ["中英State_2", true],
+    ]);
+    expect(state.edges.map((item) => [item.source, item.target])).toEqual([["123状态", "中英State_2"]]);
+    expect(state.perNodeStyles?.["123状态"]).toMatchObject({ fill: "#FFF3C4" });
+    expect(state.perNodeStyles?.中英State_2).toMatchObject({ fill: "#DDEEFF" });
+
+    const er = parseDiagram("erDiagram\n  123实体 ||--o{ 中英Entity_2 : 关联\n").model as ErGraph;
+    expect(er.entities.map((entity) => entity.id)).toEqual(["123实体", "中英Entity_2"]);
+    expect(er.rels.map((item) => [item.source, item.target])).toEqual([["123实体", "中英Entity_2"]]);
+
+    const cls = parseDiagram("classDiagram\n  123类 <|-- 中英Class_2\n").model as ClassGraph;
+    expect(cls.classes.map((item) => item.id)).toEqual(["123类", "中英Class_2"]);
+    expect(cls.rels.map((item) => [item.source, item.target])).toEqual([["123类", "中英Class_2"]]);
+
+    const mindmap = parseDiagram("mindmap\n  中文根\n    中英Child_2\n    123节点\n").model as MindmapTree;
+    expect(flattenMindmap(mindmap.root).map((node) => node.label)).toEqual(["中文根", "中英Child_2", "123节点"]);
   });
 
   it("stateDiagram-v2 addNode 插入状态声明并保留现有 transition", () => {
@@ -720,6 +1066,78 @@ describe("diagram-engine", () => {
     expect(flowSvg).not.toContain("Songti SC");
   });
 
+  it("解析经典色板 init 与 classDef/class,graphToSvg 按节点样式和图级色板上色", () => {
+    const source = `%%{init: {'theme':'base','themeVariables':{'primaryColor':'#F0F4FC','mainBkg':'#FFFFFF','primaryBorderColor':'#345678','nodeBorder':'#5178C6','lineColor':'#BBBFC4','primaryTextColor':'#333333','textColor':'#1F2329','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6'}}}%%
+flowchart TD
+  A[开始]:::blue --> B[复核]
+  B --> C[结束]
+  classDef blue fill:#FFFFFF,stroke:#5178C6,stroke-width:2px,color:#1F2329
+  classDef purple fill:#F8F5FF,stroke:#8569CB,stroke-width:3px,color:#31265C
+  class B,C purple
+`;
+    const parsed = parseDiagram(source);
+    const model = parsed.model as FlowGraph;
+
+    expect(parsed.themePalette).toEqual({
+      nodeFill: "#FFFFFF",
+      nodeStroke: "#5178C6",
+      lineColor: "#BBBFC4",
+      textColor: "#1F2329",
+      clusterFill: "#F0F4FC",
+      clusterStroke: "#5178C6",
+    });
+    expect(model.themePalette).toEqual(parsed.themePalette);
+    expect(model.perNodeStyles).toEqual({
+      A: { fill: "#FFFFFF", stroke: "#5178C6", strokeWidth: 2, textColor: "#1F2329" },
+      B: { fill: "#F8F5FF", stroke: "#8569CB", strokeWidth: 3, textColor: "#31265C" },
+      C: { fill: "#F8F5FF", stroke: "#8569CB", strokeWidth: 3, textColor: "#31265C" },
+    });
+
+    const svg = graphToSvg(source)!;
+    expect(svg).toMatch(/data-node-id="A"><rect[^>]+fill="#FFFFFF"[^>]+stroke="#5178C6"/);
+    expect(svg).toMatch(/data-node-id="B"><rect[^>]+fill="#F8F5FF"[^>]+stroke="#8569CB"/);
+    expect(svg).toContain('stroke="#BBBFC4"');
+    expect(svg).toContain('d="M0,0 L0,6 L9,3 z" fill="#BBBFC4"');
+    expect(svg).not.toContain('stroke="#b08a3e"');
+
+    const overlaySvg = graphToSvg(source, { styles: { A: { fill: "#D7E7F6", stroke: "#123456", textColor: "#111111" } } })!;
+    expect(overlaySvg).toMatch(/data-node-id="A"><rect[^>]+fill="#D7E7F6"[^>]+stroke="#123456"/);
+  });
+
+  it("五类图都接住 init 图级色板,无 init 的 graphToSvg 保持纸墨默认", () => {
+    const init = "%%{init: {\"themeVariables\":{\"mainBkg\":\"#FFFFFF\",\"nodeBorder\":\"#5178C6\",\"lineColor\":\"#BBBFC4\",\"textColor\":\"#1F2329\"}}}%%\n";
+    const sources = [
+      `${init}flowchart TD\n  A --> B\n`,
+      `${init}stateDiagram-v2\n  Open --> Closed\n`,
+      `${init}erDiagram\n  CUSTOMER ||--o{ ORDER : places\n`,
+      `${init}classDiagram\n  Animal <|-- Duck\n`,
+      `${init}mindmap\n  root\n    child\n`,
+    ];
+    for (const source of sources) {
+      expect(parseDiagram(source).model.themePalette).toMatchObject({
+        nodeFill: "#FFFFFF",
+        nodeStroke: "#5178C6",
+        lineColor: "#BBBFC4",
+        textColor: "#1F2329",
+      });
+    }
+
+    const defaultSvg = graphToSvg("flowchart TD\n  A[开始] --> B[结束]\n")!;
+    expect(defaultSvg).toMatch(/data-node-id="A"><rect[^>]+fill="#efe3cc"[^>]+stroke="#b08a3e"/);
+    expect(defaultSvg).toContain('d="M0,0 L0,6 L9,3 z" fill="#8d7447"');
+
+    const invalidColorSource = `%%{init: {'themeVariables':{'mainBkg':'url(javascript:alert(1))','primaryColor':'#FFFFFF','nodeBorder':'red','primaryBorderColor':'#5178C6','lineColor':'var(--bad)'}}}%%
+flowchart TD
+  A --> B
+  classDef bad fill:url(javascript:alert(1)),stroke:expression(alert(1)),color:red
+  class A bad
+`;
+    const invalidParsed = parseDiagram(invalidColorSource).model;
+    expect(invalidParsed.themePalette).toEqual({ nodeFill: "#FFFFFF", nodeStroke: "#5178C6" });
+    expect(invalidParsed.perNodeStyles).toBeUndefined();
+    expect(graphToSvg(invalidColorSource)).not.toContain("javascript:");
+  });
+
   it("graphToSvg 的 viewBox 覆盖负坐标 overlay", () => {
     const svg = graphToSvg("flowchart LR\n  A[左侧] --> B[右侧]\n", {
       positions: { A: { x: -280, y: -150 }, B: { x: 20, y: 30 } },
@@ -746,5 +1164,292 @@ describe("diagram-engine", () => {
     expect(svg.match(/<tspan/g)).toHaveLength(3);
     expect(svg).toContain("…</tspan>");
     expect(svg).not.toContain(`>${nodeLabel}</text>`);
+  });
+
+  it("真实云原生 fixture:8 个分区、节点归属、色板、线型和标签完整进入共享布局与 SVG", () => {
+    const source = readFileSync(new URL("./fixtures-user-cloudnative.mmd", import.meta.url), "utf8");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes).toHaveLength(35);
+    expect(model.edges).toHaveLength(48);
+    expect(model.subgraphs.map((subgraph) => [subgraph.id, subgraph.label])).toEqual([
+      ["U", "用户终端层"],
+      ["AS", "接入与安全层"],
+      ["GW", "服务网关层"],
+      ["BIZ", "业务中台"],
+      ["DATA", "数据与中间件层"],
+      ["INFRA", "基础设施层"],
+      ["OBS", "监控可观测性"],
+      ["FLOW", "核心业务流程"],
+    ]);
+    expect(model.themePalette).toMatchObject({ clusterFill: "#F0F4FC", clusterStroke: "#5178C6" });
+    expect(new Set(model.edges.map((item) => item.lineStyle))).toEqual(new Set(["solid", "dotted", "thick"]));
+    expect(model.edges.filter((item) => item.lineStyle === "dotted").map((item) => item.label)).toEqual(
+      expect.arrayContaining(["触发", "扣减", "采集指标", "追踪链路", "采集日志"]),
+    );
+
+    const layout = layoutDiagramGraph(model);
+    expect(layout.clusters).toHaveLength(8);
+    const clusterById = new Map(layout.clusters.map((cluster) => [cluster.id, cluster]));
+    for (const node of model.nodes.filter((item) => item.scopePath.length > 0)) {
+      const rect = layout.nodes[node.id]!;
+      const cluster = clusterById.get(node.scopePath.at(-1)!)!;
+      expect(rect.x).toBeGreaterThanOrEqual(cluster.x);
+      expect(rect.y).toBeGreaterThanOrEqual(cluster.y);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(cluster.x + cluster.width);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(cluster.y + cluster.height);
+    }
+
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-cluster-id=/g)).toHaveLength(8);
+    expect(svg).toContain('fill="#F0F4FC"');
+    expect(svg).toContain('stroke="#5178C6"');
+    expect(svg).toContain('data-line-style="dotted"');
+    expect(svg).toContain('data-line-style="thick"');
+    expect(svg).toContain(">触发</text>");
+  });
+
+  it("subgraph 显式标题、递归嵌套、内部 direction 与边到分区 id 共享同一几何", () => {
+    const source = `flowchart TB
+  Start[开始] --> Outer
+  subgraph Outer["外层"]
+    direction LR
+    A[入口] --> Inner
+    subgraph Inner["内层"]
+      direction BT
+      B[下游] --> C[上游]
+    end
+  end
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.nodes.some((node) => node.id === "Outer" || node.id === "Inner")).toBe(false);
+    expect(model.subgraphs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "Outer", label: "外层", scopePath: [], direction: "LR" }),
+      expect.objectContaining({ id: "Inner", label: "内层", scopePath: ["Outer"], direction: "BT" }),
+    ]));
+    expect(model.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "Start", target: "Outer" }),
+      expect.objectContaining({ source: "A", target: "Inner" }),
+    ]));
+
+    const layout = layoutDiagramGraph(model);
+    const outer = layout.clusters.find((cluster) => cluster.id === "Outer")!;
+    const inner = layout.clusters.find((cluster) => cluster.id === "Inner")!;
+    expect(outer.direction).toBe("LR");
+    expect(inner.direction).toBe("BT");
+    expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+    expect(inner.y).toBeGreaterThanOrEqual(outer.y);
+    expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+    expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height);
+    expect(layout.nodes.B!.y).toBeGreaterThan(layout.nodes.C!.y);
+
+    const svg = graphToSvg(source)!;
+    for (const cluster of layout.clusters) {
+      expect(svg).toContain(`data-cluster-id="${cluster.id}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}"`);
+    }
+  });
+
+  it("subgraph 跟随全部成员的 overlay 位移等量平移并保持包络尺寸", () => {
+    const model = parseDiagram(`flowchart LR
+  subgraph Outer["外层"]
+    A[甲]
+    B[乙]
+  end
+`).model as FlowGraph;
+    const before = layoutDiagramGraph(model, {
+      positions: { A: { x: 80, y: 90 }, B: { x: 300, y: 90 } },
+    }).clusters.find((cluster) => cluster.id === "Outer")!;
+    const after = layoutDiagramGraph(model, {
+      positions: { A: { x: 220, y: 160 }, B: { x: 440, y: 160 } },
+    }).clusters.find((cluster) => cluster.id === "Outer")!;
+
+    expect(after.x - before.x).toBe(140);
+    expect(after.y - before.y).toBe(70);
+    expect(after.width).toBe(before.width);
+    expect(after.height).toBe(before.height);
+  });
+
+  it("链式、多目标、两种标签、不可见边、圆/叉端点与 linkStyle 都进入边模型", () => {
+    const source = `flowchart LR
+  A -->|管道标签| B --> C
+  A -- 文本标签 --> D
+  A --> E & F
+  B ~~~ F
+  C o--x D
+  linkStyle 0,2 stroke:#123456,stroke-width:4px,color:#654321,stroke-dasharray:8 3
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.edges.map((item) => [item.source, item.target])).toEqual([
+      ["A", "B"],
+      ["B", "C"],
+      ["A", "D"],
+      ["A", "E"],
+      ["A", "F"],
+      ["B", "F"],
+      ["C", "D"],
+    ]);
+    expect(model.edges[0]?.label).toBe("管道标签");
+    expect(model.edges[2]?.label).toBe("文本标签");
+    expect(model.edges[5]).toMatchObject({ lineStyle: "invisible", direction: "none" });
+    expect(model.edges[6]).toMatchObject({ sourceMarker: "circle", targetMarker: "cross" });
+    expect(model.perEdgeStyles?.[model.edges[0]!.id]).toMatchObject({
+      stroke: "#123456",
+      textColor: "#654321",
+      strokeWidth: 4,
+      dashArray: "8 3",
+    });
+    expect(model.perEdgeStyles?.[model.edges[2]!.id]).toMatchObject({ stroke: "#123456" });
+    const svg = graphToSvg(source)!;
+    expect(svg).toContain('data-line-style="invisible"');
+    expect(svg).toContain('visibility="hidden"');
+    expect(svg).toContain('marker-start="url(#circle-edge)"');
+    expect(svg).toContain('marker-end="url(#cross-edge)"');
+  });
+
+  it("加长 link token 增加共享布局的层级间距", () => {
+    const shortModel = parseDiagram("flowchart LR\n  A --> B\n").model as FlowGraph;
+    const longModel = parseDiagram("flowchart LR\n  A ----> B\n").model as FlowGraph;
+    expect(longModel.edges[0]).toMatchObject({ syntaxKind: "---->", minLength: 3 });
+    const shortLayout = layoutDiagramGraph(shortModel);
+    const longLayout = layoutDiagramGraph(longModel);
+    expect(longLayout.nodes.B!.x - longLayout.nodes.A!.x).toBeGreaterThan(
+      shortLayout.nodes.B!.x - shortLayout.nodes.A!.x,
+    );
+  });
+
+  it("经典全部括号形状与 Mermaid 11.3 扩展 shape 语法均保留为可渲染形状", () => {
+    const source = String.raw`flowchart TD
+  A[矩形]
+  B(圆角)
+  C([体育场])
+  D[[子流程]]
+  E[(数据库)]
+  F((圆形))
+  G(((双圆)))
+  H>非对称]
+  I{菱形}
+  J{{六边形}}
+  K[/平行/]
+  L[\反向平行\]
+  M[/梯形\]
+  N[\反向梯形/]
+  O@{ shape: cloud, label: "云" }
+  P@{ shape: doc, label: "文档" }
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(Object.fromEntries(model.nodes.map((node) => [node.id, normalizeFlowShapeName(node.shape)]))).toMatchObject({
+      A: "rect",
+      B: "round",
+      C: "stadium",
+      D: "subroutine",
+      E: "cylinder",
+      F: "circle",
+      G: "doublecircle",
+      H: "asymmetric",
+      I: "diamond",
+      J: "hexagon",
+      K: "parallelogram",
+      L: "parallelogram-alt",
+      M: "trapezoid",
+      N: "trapezoid-alt",
+      O: "cloud",
+      P: "doc",
+    });
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(16);
+    expect(svg).toContain(">云</tspan>");
+    expect(svg).toContain(">文档</tspan>");
+  });
+
+  it("Mermaid 官方 48 个 flowchart shape shortName 全部归一化并进入 SVG", () => {
+    const officialShapes: Array<[string, string]> = [
+      ["rect", "rect"],
+      ["rounded", "round"],
+      ["stadium", "stadium"],
+      ["fr-rect", "subroutine"],
+      ["cyl", "cylinder"],
+      ["datastore", "datastore"],
+      ["circle", "circle"],
+      ["bang", "bang"],
+      ["cloud", "cloud"],
+      ["diam", "diamond"],
+      ["hex", "hexagon"],
+      ["lean-r", "parallelogram"],
+      ["lean-l", "parallelogram-alt"],
+      ["trap-b", "trapezoid"],
+      ["trap-t", "trapezoid-alt"],
+      ["dbl-circ", "doublecircle"],
+      ["text", "text"],
+      ["notch-rect", "notch-rect"],
+      ["lin-rect", "lin-rect"],
+      ["sm-circ", "sm-circ"],
+      ["fr-circ", "fr-circ"],
+      ["fork", "fork"],
+      ["hourglass", "hourglass"],
+      ["brace", "brace"],
+      ["brace-r", "brace-r"],
+      ["braces", "braces"],
+      ["bolt", "bolt"],
+      ["doc", "doc"],
+      ["delay", "delay"],
+      ["h-cyl", "h-cyl"],
+      ["lin-cyl", "lin-cyl"],
+      ["curv-trap", "curv-trap"],
+      ["div-rect", "div-rect"],
+      ["tri", "tri"],
+      ["win-pane", "win-pane"],
+      ["f-circ", "f-circ"],
+      ["notch-pent", "notch-pent"],
+      ["flip-tri", "flip-tri"],
+      ["sl-rect", "sl-rect"],
+      ["docs", "docs"],
+      ["st-rect", "st-rect"],
+      ["bow-rect", "bow-rect"],
+      ["cross-circ", "cross-circ"],
+      ["tag-doc", "tag-doc"],
+      ["tag-rect", "tag-rect"],
+      ["flag", "flag"],
+      ["odd", "odd"],
+      ["lin-doc", "lin-doc"],
+    ];
+    const source = [
+      "flowchart TD",
+      ...officialShapes.map(([shape], index) => `  N${index}@{ shape: ${shape}, label: "${shape}" }`),
+    ].join("\n");
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.nodes).toHaveLength(officialShapes.length);
+    officialShapes.forEach(([shape, normalized], index) => {
+      expect(model.nodes[index]?.shape, shape).toBe(normalized);
+    });
+    expect(normalizeFlowShapeName("document")).toBe("doc");
+    expect(getFlowShapeGeometry("text").outlineVisible).toBe(false);
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(officialShapes.length);
+    expect(svg).toContain('data-node-id="N16"');
+    expect(svg).toMatch(/data-node-id="N16"[\s\S]*?stroke="none"/);
+  });
+
+  it("classDef/class/:::、style、default、注释、引号与 HTML entity 不丢失", () => {
+    const source = `flowchart RL
+  %% A --> Ghost
+  classDef default fill:#FFFFFF,stroke:#111111,color:#222222
+  classDef hot,warm fill:#FFEEDD,stroke:#AA5500
+  A["含 ] 与 &#35;、&amp;、\\\\\\"引号\\\\\\""]:::hot --> B[普通]
+  class B warm
+  style B fill:#DDEEFF,stroke-dasharray:6 4,font-size:18px
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.direction).toBe("RL");
+    expect(model.nodes.map((node) => node.id)).toEqual(["A", "B"]);
+    expect(model.nodes.find((node) => node.id === "A")?.label).toBe('含 ] 与 #、&、"引号"');
+    expect(model.perNodeStyles?.A).toMatchObject({ fill: "#FFEEDD", stroke: "#AA5500", textColor: "#222222" });
+    expect(model.perNodeStyles?.B).toMatchObject({
+      fill: "#DDEEFF",
+      stroke: "#AA5500",
+      textColor: "#222222",
+      dashArray: "6 4",
+      fontSize: 18,
+    });
   });
 });

@@ -37,6 +37,7 @@ export function WholeDocReviewNav({
   const unlockTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (unlockTimerRef.current !== null) window.clearTimeout(unlockTimerRef.current);
@@ -84,7 +85,11 @@ export function WholeDocReviewNav({
       message: "退回旧版会放弃本轮全部修改。",
       confirmLabel: "退回旧版",
     });
-    if (!confirmed || !mountedRef.current || reviewScopeKeyRef.current !== activeScopeKey) return;
+    if (!confirmed) return;
+    if (!mountedRef.current || reviewScopeKeyRef.current !== activeScopeKey) {
+      onToast?.("审阅状态已变化，请重试");
+      return;
+    }
     setLocallySubmitting(true);
     armSubmitTimeout();
     try {

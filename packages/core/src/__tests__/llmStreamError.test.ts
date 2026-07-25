@@ -270,7 +270,11 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(textBodies(frames).some((b) => b.includes("第二次成功"))).toBe(true);
     expect(textBodies(frames).some((b) => b.includes("连接失败"))).toBe(false);
     const streamCalls = streamMock.mock.calls as unknown as Array<
-      [unknown, { memory?: unknown; abortSignal?: unknown }]
+      [unknown, {
+        memory?: unknown;
+        abortSignal?: unknown;
+        modelSettings?: { maxOutputTokens?: number };
+      }]
     >;
     const firstOptions = streamCalls[0]?.[1];
     const secondOptions = streamCalls[1]?.[1];
@@ -280,6 +284,8 @@ describe("LLM stream error chunk → 如实报错(可重试)", () => {
     expect(firstOptions.memory).toBeTruthy();
     expect(secondOptions.memory).toBeUndefined();
     expect(firstOptions.abortSignal).toBe(secondOptions.abortSignal);
+    expect(firstOptions.modelSettings?.maxOutputTokens).toBe(65_536);
+    expect(secondOptions.modelSettings?.maxOutputTokens).toBe(65_536);
   });
 
   it("idle-timeout 零产出只自动重试 1 次，并为已 abort 的尝试更换 signal", async () => {

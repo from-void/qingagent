@@ -44,7 +44,11 @@ export interface ExternalSession {
   updatedAt: string;
 }
 
-export interface ExternalSessionsListResponse { sessions: ExternalSession[] }
+export interface ExternalSessionsListResponse {
+  sessions: ExternalSession[];
+  total: number;
+  hasMore: boolean;
+}
 export interface ExternalSessionCreateRequest {}
 export interface ExternalSessionCreateResponse { sessionId: string; seq: number | null }
 
@@ -122,6 +126,152 @@ export type ExternalProposalErrorResponse =
   | (ExternalErrorResponse & { seq?: number })
   | { code: "VERSION_CONFLICT"; expected: number; actual: number; nextStep: string; seq?: number };
 
+export type ExternalReviewPatchStatus =
+  | "reviewing"
+  | "accepted"
+  | "rejected"
+  | "committed"
+  | "conflict"
+  | "ignored";
+
+export interface ExternalReviewConflict {
+  kind: string;
+  message: string;
+  suggestionId?: string;
+  blockId?: string;
+  currentVersion?: number;
+}
+
+export interface ExternalReviewPatchSummary {
+  id: string;
+  reviewBatchId: string;
+  groupMode: "atomic" | "independent" | null;
+  status: ExternalReviewPatchStatus;
+  baseVersion: number;
+  summary: string;
+  beforeText: string;
+  afterText: string;
+  conflict: ExternalReviewConflict | null;
+}
+
+export interface ExternalReviewAnchor {
+  blockId: string;
+  pmFrom: number;
+  pmTo: number;
+  quote: string;
+  prefix?: string;
+  suffix?: string;
+}
+
+export interface ExternalReviewDiff {
+  op: "insert" | "delete" | "replace" | "markAdd" | "markRemove";
+  blockPath: number[];
+  summary: string;
+  beforeText: string;
+  afterText: string;
+  anchor: {
+    blockId?: string;
+    quoteBefore?: string;
+    quoteAfter?: string;
+    pmFrom?: number;
+    pmTo?: number;
+    anchorKind?: "range" | "position";
+    gravity?: "before" | "after";
+  };
+}
+
+export interface ExternalReviewPatchDetail extends ExternalReviewPatchSummary {
+  anchor: ExternalReviewAnchor;
+  diff: ExternalReviewDiff | null;
+}
+
+export interface ExternalAnnotation {
+  id: string;
+  summary: string;
+  note: string;
+  origin: string;
+  suggestion?: string;
+  severity?: "error" | "warn" | "info";
+  status: "reviewing" | "accepted" | "ignored";
+  anchors: ExternalReviewAnchor[];
+}
+
+export interface ExternalReviewListResponse {
+  sessionId: string;
+  docVersion: number;
+  state: ExternalDocumentState;
+  agentBusy: boolean;
+  patches: ExternalReviewPatchSummary[];
+  annotations: ExternalAnnotation[];
+}
+
+export interface ExternalReviewPatchResponse {
+  sessionId: string;
+  patch: ExternalReviewPatchDetail;
+}
+
+export interface ExternalAnnotationResponse {
+  sessionId: string;
+  annotation: ExternalAnnotation;
+}
+
+export interface ExternalReviewVerdictRequest {
+  expectedDocVersion: number;
+  patchId: string;
+  verdict: "accepted" | "rejected";
+}
+
+export interface ExternalReviewVerdictResponse {
+  status: "marked";
+  docVersion: number;
+  patchIds: string[];
+  verdict: "accepted" | "rejected";
+  reviewingCount: number;
+  seq: number | null;
+}
+
+export interface ExternalReviewCommitRequest {
+  expectedDocVersion: number;
+  action: "commit" | "accept_all" | "reject_all";
+}
+
+export interface ExternalReviewOutcomeHunk {
+  verdict: "accepted" | "rejected";
+  blockSummary: string;
+  beforeText: string;
+  afterText: string;
+}
+
+export interface ExternalReviewOutcome {
+  acceptedCount: number;
+  rejectedCount: number;
+  hunks: ExternalReviewOutcomeHunk[];
+}
+
+export interface ExternalReviewCommitResponse {
+  status: "reviewed";
+  docVersion: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  remainingCount: number;
+  outcomeQueued: boolean;
+  outcome: ExternalReviewOutcome;
+  seq: number | null;
+}
+
+export interface ExternalAnnotationIgnoreRequest {
+  expectedDocVersion: number;
+  annotationIds: string[];
+  rememberDismissal?: boolean;
+}
+
+export interface ExternalAnnotationIgnoreResponse {
+  status: "ignored";
+  annotationIds: string[];
+  remainingAnnotationCount: number;
+  seq: number | null;
+}
+
 export interface ExternalEventsMeta { epoch: number; minSeq: number; nextSeq: number; gap: boolean }
 
 /** qa-cli 消费的 BridgeFrame 子集只依赖公开 envelope；data 由 kind 对应的 v1 wire 契约承载。 */
@@ -132,11 +282,14 @@ export interface ExternalBridgeFrame {
     | "toolCallUpdated" | "documentSnapshotWritten" | "docGenerationEvent" | "docCommitted"
     | "docDiffReady" | "docWriteResult" | "docStateChanged" | "todosChanged"
     | "resourceUpserted" | "resourceUpdated" | "resourceRemoved" | "folderSourcesChanged"
-    | "folderSourceOperationResult" | "stream";
+    | "folderSourceOperationResult" | "annotationGroupsReady" | "stream";
   data: unknown;
 }
 
 export type ExternalSuccessResponse =
   | ExternalHealthResponse | ExternalSessionsListResponse | ExternalSessionCreateResponse
   | ExternalDocReadResponse | ExternalChatLogResponse | ExternalChatSendResponse
-  | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse;
+  | ExternalFilesListResponse | ExternalFileTextResponse | ExternalProposalResponse
+  | ExternalReviewListResponse | ExternalReviewPatchResponse | ExternalAnnotationResponse
+  | ExternalReviewVerdictResponse | ExternalReviewCommitResponse
+  | ExternalAnnotationIgnoreResponse;

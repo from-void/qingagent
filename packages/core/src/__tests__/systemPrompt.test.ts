@@ -4,11 +4,7 @@ import { qingagentAgent } from "../agents/qingagent.js";
 import {
   buildSystemPrompt,
   AIIR_SYSTEM_PROMPT,
-  WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL,
 } from "../prompts/system.js";
-import { adaptAskUserQuestionInput } from "../tools/askUserQuestionAdapter.js";
-
-const EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL = `{"id":"wechat-search-route","rationale":"先选一种查找方式，我再继续帮你找这篇公众号文章。","questions":[{"header":"查找方式","question":"你想用哪种方式查找公众号文章？","multiSelect":false,"options":[{"value":"login-owned","label":"我有公众号，直接扫码登录（推荐）","description":"借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"login-register","label":"我没有，先去 mp.weixin.qq.com 免费注册再扫码","description":"注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"fallback-websearch","label":"先用联网搜索（效果较差，只有零散公开网页）","description":"不登录公众号后台，改用公开网页检索，结果可能不完整。"}]}]}`;
 
 describe("system prompt S3", () => {
   it("确认拒绝后要求如实收尾且禁止再次引导批准", () => {
@@ -24,27 +20,6 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("你要读企业微信文档，需要先装它的命令行工具");
   });
 
-  it("授权 CLI 先探测并优先走产品可承接的自动授权方式", () => {
-    const prompt = buildSystemPrompt();
-    for (const keyword of [
-      "在决定接入方式前",
-      "init/login 类命令的 `--help`",
-      "摸清它提供的全部接入方式",
-      "优先选择自动化程度最高",
-      "扫码、device flow 或非交互方式",
-      "`--noninteractive`",
-      "由产品渲染二维码卡让用户扫码",
-      "不要主动把用户推去第三方管理后台手动创建应用",
-      "复制 AppID/App Secret 等凭证",
-      "完全没有任何自动授权方式时",
-      "明确说明为什么只能手动",
-    ]) {
-      expect(prompt).toContain(keyword);
-    }
-    expect(prompt.indexOf("在决定接入方式前"))
-      .toBeLessThan(prompt.indexOf("有的 CLI 首次使用要扫码或网页授权"));
-  });
-
   it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 
@@ -58,21 +33,18 @@ describe("system prompt S3", () => {
       "推荐项 label 必须以「（推荐）」结尾",
       "preview 不超过 800 字",
       "Mermaid 代码块",
-      "当前上下文没有明确的 READY 状态就一律按未 READY 处理",
-      "不要先调用 skill、wechat_auth_status 或 planDraft",
+      "当前上下文没有明确的 READY 状态就先**单独**调用 `wechat_auth_status`",
+      "不要先调用 skill 或 planDraft",
       "此路由优先于写作方向裁决第 2 条",
       "askUserQuestion **不与 wechat_auth_status 同一步并发**",
-      '"value":"login-owned"',
-      '"value":"login-register"',
-      '"value":"fallback-websearch"',
-      "我有公众号，直接扫码登录（推荐）",
-      "我没有，先去 mp.weixin.qq.com 免费注册再扫码",
-      "先用联网搜索（效果较差，只有零散公开网页）",
+      "把工具返回的 `questionnaire` **逐字**传入",
+      "resume 后再激活微信公众号技能",
       "确认选哪个公众号/哪篇文章改为聊天内简短确认",
       "readDraft",
       "editDraft",
       "readDiff",
       "writeDraft",
+      'skill({name:"diagram-viz"})',
       "action",
       "qingml",
       'action:"replaceText"',
@@ -126,27 +98,14 @@ describe("system prompt S3", () => {
       // 检索来源引用纪律(回归 search-ref-not-citation-block)
       "检索来源引用纪律",
       "可点击 link mark",
-      // 来源审查只能由明确意图触发，禁止写作及其他审查误入。
-      "来源审查白名单路由",
-      "仅当用户明确要求",
-      "素材是唯一 ground truth,默认不联网",
-      "未携带来源核查要求的普通写作、修改、润色",
-      "当前会话没有可对照的素材,请先添加素材再做来源审查",
-      "审查执行形态(所有审查通用)",
-      "writeDraft 产出候选后",
-      "最后才让候选 settle",
-      "自定义审查:<模板名>",
-      "reviewAction=annotate 的必须逐条调用 create_annotation_groups",
-      "词库命中不得自行豁免",
-      "降 severity=info 也必须呈现",
-      "一致性审查路由",
-      "必须调用代码执行工具(run_python 或 run_js 均可)真实验算",
-      "隐私泄露审查路由",
-      "格式规范审查路由",
-      "角色审查路由",
-      "role-review skill",
-      "角色审查:<模板名>",
-      "自定义审查路由",
+      // 审查细则下沉 review skill，主提示只保留统一激活路由与失活兜底。
+      "审查统一路由",
+      "敏感词、来源核查、去AI味、一致性、隐私、格式规范、角色审查或自定义审查",
+      'skill({name:"review"})',
+      "内部路由读取对应 reference",
+      "审查兜底",
+      "单独要求审查当前文档",
+      "纯批注模式,不改稿",
       // 结构摘要/自检纪律(回归 fmt-selfcheck-falsepass)
       "结构摘要 / 自检纪律",
       "以工具返回为唯一事实来源",
@@ -182,29 +141,52 @@ describe("system prompt S3", () => {
       "colspan/rowspan 属性必须照抄",
       "列宽由系统自动保留",
       "table ref + 当前 0-based 索引",
-      // 后台命令意图边界：完成只验证、重来才重启；非交互等待要持续轮询。
-      "运行这类命令前先查看该 CLI 的 `--help`",
-      '"不自动打开浏览器"之类的选项',
-      "启动命令**必须带上**",
-      "具体参数名以该 CLI 的帮助为准",
-      '用户说"我扫完了/已授权/好了/完成了"等完成语义时',
-      "严禁 kill 进程、严禁重新起进程、严禁重新出码",
-      '未验证到就如实说"还没检测到完成，可能还没生效/还在等待"',
-      '用户明确说"过期了/重新生成/重来一个/换一个码"等重来语义时',
-      "拿不准是哪种语义时，默认只轮询",
-      '用户明确说"等它结束/跑完告诉我"时',
-      "一次约 60 秒的有界 wait 返回后继续下一次",
-      "不要把球踢回用户",
-      "扫码/授权等交互等待仍按上文出码后立即收尾",
-      "持续轮询只服务于**本轮**用户明确要求的等待",
-      "下一轮必须优先处理新的用户文本",
-      "否则不得因历史里仍有 PID/等待卡而自动续跑旧轮询",
-      "新消息抢占只中止 Agent 等待，不代表后台进程已终止",
     ]) {
       expect(prompt).toContain(keyword);
     }
     expect(prompt).not.toMatch(/\baskUser\b/);
     expect(prompt).not.toContain("quickClarification");
+  });
+
+  it("主 system 只保留图表路由与通用保真纪律，不携带引擎语法正文", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    expect(prompt).toContain('必须先调用 skill({name:"diagram-viz"})');
+    expect(prompt).toContain("保留特殊块");
+    expect(prompt).toContain("preview 可含 Mermaid 代码块");
+    for (const movedDetail of [
+      "Mermaid 语法只认半角",
+      "source **首行必须是合法图型声明**",
+      "工程图/架构图 diagram(drawio)",
+      "必须是**未压缩明文** mxGraph XML",
+      "<drawio>&lt;mxGraphModel",
+    ]) {
+      expect(prompt).not.toContain(movedDetail);
+    }
+  });
+
+  it("主 system 的审查段只保留总技能路由和纯批注兜底", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const start = prompt.indexOf("**审查统一路由**");
+    const end = prompt.indexOf("**衍生稿生成路由", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const reviewSection = prompt.slice(start, end);
+    expect(reviewSection).toContain('skill({name:"review"})');
+    expect(reviewSection).toContain("内部路由读取对应 reference");
+    expect(reviewSection).toContain("纯批注模式,不改稿");
+    for (const movedDetail of [
+      "create_annotation_groups",
+      "summary",
+      "anchors.find",
+      "severity",
+      "origin",
+      "reviewAction",
+      "ground truth",
+      "documentQuote",
+    ]) {
+      expect(reviewSection).not.toContain(movedDetail);
+    }
   });
 
   it("QingML prompt 不泄漏旧编辑协议词", () => {
@@ -256,44 +238,23 @@ describe("system prompt S3", () => {
     }
   });
 
-  it("公众号路由范本整段逐字稳定，adapter 保留完整题目与选项顺序", () => {
-    expect(WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL)
-      .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
-    expect(buildSystemPrompt()).toContain(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+  it("公众号路由只保留工具返回问卷与严格时序，不再内嵌范本正文", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("状态未 READY 时,先单独调用 askUserQuestion");
+    expect(prompt).toContain("把工具返回的 `questionnaire` **逐字**传入");
+    expect(prompt).toContain("askUserQuestion **不与 wechat_auth_status 同一步并发**");
+    expect(prompt).toContain("resume 后再激活微信公众号技能");
+    expect(prompt).not.toContain('"id":"wechat-search-route"');
+    expect(prompt).not.toContain("我有公众号，直接扫码登录（推荐）");
+  });
 
-    const input = JSON.parse(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
-    expect(adaptAskUserQuestionInput(input)).toEqual({
-      id: "wechat-search-route",
-      rationale: "先选一种查找方式，我再继续帮你找这篇公众号文章。",
-      inputQuestionCount: 1,
-      questions: [{
-        id: "q1",
-        header: "查找方式",
-        label: "你想用哪种方式查找公众号文章？",
-        kind: { kind: "single" },
-        placeholder: null,
-        options: [
-          {
-            value: "login-owned",
-            label: "我有公众号，直接扫码登录（推荐）",
-            description: "借用公众号后台自带的搜索能力，你的公众号只是登录入口。",
-            preview: null,
-          },
-          {
-            value: "login-register",
-            label: "我没有，先去 mp.weixin.qq.com 免费注册再扫码",
-            description: "注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。",
-            preview: null,
-          },
-          {
-            value: "fallback-websearch",
-            label: "先用联网搜索（效果较差，只有零散公开网页）",
-            description: "不登录公众号后台，改用公开网页检索，结果可能不完整。",
-            preview: null,
-          },
-        ],
-      }],
-    });
+  it("扫码授权主提示只保留 cli-auth 技能路由，不携带等待规程正文", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("先用 skill_search 找 `cli-auth` 技能并严格按其规程执行");
+    expect(prompt).toContain("绝不在前台死等");
+    expect(prompt).not.toContain("mastra_workspace_get_process_output(pid, tail)");
+    expect(prompt).not.toContain("auth_url redirect_uri jump_url");
+    expect(prompt).not.toContain("字符画二维码在聊天里渲染不出来");
   });
 
   it("连续两次构建 QingML prompt 逐字节稳定", () => {
@@ -306,22 +267,6 @@ describe("system prompt S3", () => {
     expect(prompt).not.toContain("飞书配置/授权三态");
     expect(prompt).not.toContain("lark-cli auth login --device-code <code>");
     expect(prompt).not.toContain("execute_command 带 background:true 跑 \"lark-cli config init");
-  });
-
-  it("show_qr completionMessage 使用无省略号的终态陈述", () => {
-    const prompt = buildSystemPrompt();
-    expect(prompt).toContain("completionMessage 必须是“已完成”的终态陈述");
-    expect(prompt).toContain("不要以半角或全角省略号结尾");
-    expect(prompt).toContain("不要写成“正在……”等进行中口吻");
-  });
-
-  it("show_qr note 明确区分卡内方位与卡片整体方位", () => {
-    const prompt = buildSystemPrompt();
-    expect(prompt).toContain("note 位于二维码下方");
-    expect(prompt).toContain("必须写“上方二维码/上面的二维码”");
-    expect(prompt).toContain("禁止写“下方二维码/下面的二维码”");
-    expect(prompt).toContain("这里说的是 note 与二维码的卡内相对位置");
-    expect(prompt).toContain("卡片整体仍按工具说明位于本条回复下方");
   });
 
   it("agent instructions 连续两次逐字节稳定,不随 requestContext 翻转", async () => {

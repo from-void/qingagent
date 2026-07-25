@@ -34,6 +34,46 @@ describe("usage cache tokens 采集(R2 修复回归)", () => {
     });
   });
 
+  it.each([
+    {
+      label: "Kimi 原始 cached_tokens",
+      usage: { prompt_tokens: 12000, completion_tokens: 90, cached_tokens: 9000 },
+    },
+    {
+      label: "Kimi prompt_tokens_details.cached_tokens",
+      usage: {
+        prompt_tokens: 12000,
+        completion_tokens: 90,
+        prompt_tokens_details: { cached_tokens: 9000 },
+      },
+    },
+    {
+      label: "AI SDK 流式 promptTokensDetails.cachedTokens",
+      usage: {
+        promptTokens: 12000,
+        completionTokens: 90,
+        promptTokensDetails: { cachedTokens: 9000 },
+      },
+    },
+    {
+      label: "providerMetadata.kimi.usage",
+      usage: {
+        inputTokens: 12000,
+        outputTokens: 90,
+        providerMetadata: {
+          kimi: { usage: { cached_tokens: 9000 } },
+        },
+      },
+    },
+  ])("$label 可归一化并推导 miss", ({ usage }) => {
+    expect(normalizeLlmUsageCounts(usage)).toMatchObject({
+      inputTokens: 12000,
+      outputTokens: 90,
+      promptCacheHitTokens: 9000,
+      promptCacheMissTokens: 3000,
+    });
+  });
+
   it("agentSpans.normalizeLlmUsage 同样识别 openai cachedPromptTokens 并推导 miss", () => {
     const usage = normalizeLlmUsage({
       inputTokens: 8000,

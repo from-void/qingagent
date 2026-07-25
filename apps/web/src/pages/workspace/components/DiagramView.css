@@ -104,10 +104,9 @@
   height: 100%;
   min-height: 0;
 }
-/* SVG 图表全屏查看(MediaZoomFullscreen 内):定宽承载,svg 等比铺满。 */
+/* SVG 图表全屏查看(MediaZoomFullscreen 内):跟随卡片内容区,svg 等比铺满。 */
 .pm-diagram-zoom-svg {
-  width: min(90vw, 1100px);
-  max-width: 96vw;
+  width: 100%;
 }
 .pm-diagram-zoom-svg svg {
   width: 100% !important;
@@ -116,6 +115,12 @@
   display: block;
 }
 .pm-diagram-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 160px;
   color: var(--ink-3, #999);
   font-size: 13px;
   padding: 20px;
@@ -147,14 +152,28 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
 }
-.pm-diagram-tool:hover {
+.pm-diagram-tool:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+.pm-diagram-tool:focus-visible {
+  outline: 1px solid var(--mark, #8f6d30);
+  outline-offset: 1px;
+}
+.pm-diagram-tool:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
 }
 .pm-diagram-tool.is-active {
   border-color: rgba(168, 130, 63, 0.38);
   background: var(--mark-soft);
   color: var(--mark, #8f6d30);
+}
+.pm-diagram-tool--icon {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
 }
 .pm-diagram-tool--wide {
   min-width: 58px;
@@ -205,6 +224,7 @@
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 .pm-diagram-view:hover .pm-diagram-view-actions,
+.pm-diagram.is-selected .pm-diagram-view-actions,
 .pm-diagram-view:focus-within .pm-diagram-view-actions {
   opacity: 1;
   pointer-events: auto;
@@ -223,6 +243,10 @@
 }
 .pm-diagram-view-btn:hover {
   background: #243e58;
+}
+.pm-diagram-view-btn:disabled {
+  opacity: 0.58;
+  cursor: wait;
 }
 .pm-diagram-view-btn--ghost {
   background: rgba(255, 250, 240, 0.94);

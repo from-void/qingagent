@@ -62,7 +62,7 @@ function blockToMarkdown(node: PmBlockNode, options: PmToMarkdownOptions): strin
     case "blockMath":
       return `$$\n${node.attrs.latex}\n$$`;
     case "diagram":
-      // 图表块 → 代码围栏(lang=mermaid),markdown 往返 + 飞书画板都吃这个形态。
+      // 图表块 → 对应语言的安全动态围栏，保留 Mermaid/drawio 源码以便 Markdown 往返。
       return fencedCodeBlock(node.attrs.lang, node.attrs.source);
   }
 }
@@ -172,8 +172,9 @@ function inlineCode(text: string): string {
 function fencedCodeBlock(language: string, content: string): string {
   // CommonMark:围栏至少 3 个反引号，且闭围栏不得短于开围栏。比正文最长连续反引号多 1
   // 可确保正文中的 ``` / ```` 永远不会被误认成当前块的闭围栏。
+  // 正文已有尾换行时不再额外补一行，避免严格 Markdown 往返凭空产生空行。
   const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1));
-  return `${fence}${language}\n${content}\n${fence}`;
+  return `${fence}${language}\n${content}${content.endsWith("\n") ? "" : "\n"}${fence}`;
 }
 
 function longestBacktickRun(value: string): number {

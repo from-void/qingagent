@@ -64,6 +64,10 @@ function ensureMermaid(): void {
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
+    // 缓存 SVG 会经过安全净化；必须用原生 text/tspan，避免 foreignObject 被剥离后只剩图形。
+    htmlLabels: false,
+    flowchart: { htmlLabels: false },
+    class: { htmlLabels: false },
     theme: "base",
     themeVariables: WARM_THEME_VARS,
     fontFamily: "var(--font-sans, sans-serif)",

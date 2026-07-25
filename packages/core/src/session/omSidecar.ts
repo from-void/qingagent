@@ -11,7 +11,6 @@ import { ObservationalMemory, TokenCounter } from "@mastra/memory/processors";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { ChatMessage } from "@qingagent/contract-ts";
 import {
-  qingagentModelConfig,
   wrapToolCallRepairingModel,
 } from "../llm/repairingModel.js";
 import type { RepairableLanguageModel } from "../llm/repairingModel.js";
@@ -1173,7 +1172,7 @@ function getObserverFlashModelFor(
   requestContext?: RequestContext,
 ): RepairableLanguageModel {
   const { apiKey } = resolveDeepseekAuth(requestContext);
-  const effectiveKey = apiKey || qingagentModelConfig.apiKey;
+  const effectiveKey = apiKey;
   const baseUrl = resolveBaseUrl(requestContext);
   const callSite = requestContext?.get(OM_BRANCH_CALL_SITE_KEY) === "omReflect"
     ? "omReflect"

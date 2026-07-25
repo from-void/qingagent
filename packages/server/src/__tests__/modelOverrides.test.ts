@@ -1,10 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock @qingagent/core:无站点 global key、无参数(隔离 DB),专注测 header → ModelOverrides 解析
+const mockCore = vi.hoisted(() => {
+  const store = new Map<string, string>();
+  return { store, getAppSetting: vi.fn(async (key: string) => store.get(key) ?? null) };
+});
+
 vi.mock("@qingagent/core", () => ({
   SETTING_DEEPSEEK_GLOBAL_KEY: "deepseek_global_key",
+  SETTING_KIMI_GLOBAL_KEY: "kimi_global_key",
+  SETTING_MODEL_PROVIDER: "model_provider",
   SETTING_MODEL_PARAMS: "model_params",
-  getAppSetting: vi.fn(async () => null),
+  getAppSetting: mockCore.getAppSetting,
   sanitizeBaseUrl: (raw: string | undefined) => {
     const value = raw?.trim();
     if (!value) return undefined;
@@ -36,9 +43,54 @@ vi.mock("@qingagent/core", () => ({
   }),
 }));
 
-import { resolveRequestModelOverrides } from "../modelOverridesProvider.js";
+import {
+  invalidateModelOverridesCache,
+  resolveRequestModelOverrides,
+} from "../modelOverridesProvider.js";
 
 const VKEY = `sk-${"a".repeat(32)}`;
+const originalProviderEnv = process.env.QINGAGENT_MODEL_PROVIDER;
+
+beforeEach(() => {
+  mockCore.store.clear();
+  invalidateModelOverridesCache();
+  delete process.env.QINGAGENT_MODEL_PROVIDER;
+});
+
+afterEach(() => {
+  if (originalProviderEnv === undefined) delete process.env.QINGAGENT_MODEL_PROVIDER;
+  else process.env.QINGAGENT_MODEL_PROVIDER = originalProviderEnv;
+});
+
+describe("resolveRequestModelOverrides — provider 优先级", () => {
+  it("visitor > db > env > 默认，并只注入当前 provider 的 global key", async () => {
+    expect((await resolveRequestModelOverrides({})).provider).toBe("deepseek");
+
+    process.env.QINGAGENT_MODEL_PROVIDER = "kimi";
+    invalidateModelOverridesCache();
+    expect((await resolveRequestModelOverrides({})).provider).toBe("kimi");
+
+    mockCore.store.set("model_provider", "deepseek");
+    mockCore.store.set("deepseek_global_key", "deepseek-db-key");
+    mockCore.store.set("kimi_global_key", "kimi-db-key");
+    invalidateModelOverridesCache();
+    await expect(resolveRequestModelOverrides({})).resolves.toMatchObject({
+      provider: "deepseek",
+      globalApiKey: "deepseek-db-key",
+    });
+
+    await expect(resolveRequestModelOverrides({ provider: "kimi" })).resolves.toMatchObject({
+      provider: "kimi",
+      globalApiKey: "kimi-db-key",
+    });
+  });
+
+  it("非法 visitor provider 忽略，继续走 DB 选择", async () => {
+    mockCore.store.set("model_provider", "kimi");
+    invalidateModelOverridesCache();
+    expect((await resolveRequestModelOverrides({ provider: "unknown" })).provider).toBe("kimi");
+  });
+});
 
 // 回归:代码评审 P1 — 自定义 baseURL/协议/模型名必须绑定 visitor key,
 // 否则无 key 的请求会借用站点 global/env key 的 Authorization 打到任意 endpoint(凭据泄露)。

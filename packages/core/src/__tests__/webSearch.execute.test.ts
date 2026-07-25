@@ -204,6 +204,22 @@ describe("webSearchTool.execute — DeepSeek×多源 并发竞速 + 搜索即抓
     expect(result.items[0]?.url).toBe(deepseekResult.url);
   });
 
+  it("Kimi 主模型 key 不会发往 DeepSeek 专属搜索端点，无搜索专配时走多源", async () => {
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: true });
+    const requestContext = {
+      get: (key: string) =>
+        key === "modelOverrides"
+          ? { provider: "kimi", visitorApiKey: "kimi-main-key" }
+          : undefined,
+    };
+
+    const result = await executeWebSearch({ query: "kimi search isolation" }, { requestContext });
+
+    expect(mockSearchDeps.fetchDeepseekSearchLinks).not.toHaveBeenCalled();
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalled();
+    expect(result.items[0]?.url).toBe(fallbackResult.url);
+  });
+
   it("pro 档 DeepSeek 搜索显式传 pro 模型", async () => {
     mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: true });
     mockSearchDeps.fetchDeepseekSearchLinks.mockResolvedValue([deepseekResult]);

@@ -6,36 +6,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+interface MockSkillInfo {
+  name: string;
+  description: string;
+  label: string;
+  summary: string;
+  icon: string;
+  source: "builtin" | "installed";
+  userInvocable: boolean;
+  placeholder?: string;
+  config?: string;
+  tools: string[];
+  enabled: boolean;
+  children?: MockSkillInfo[];
+}
+
+interface MockSkillDetail extends MockSkillInfo {
+  body: string;
+}
+
 // 可变持有体:每个用例改 caps / 复位 spy。vi.hoisted 保证在 vi.mock 工厂前就绪。
 const h = vi.hoisted(() => ({
   caps: null as { skills: { mutationEnabled: boolean } } | null,
-  skills: [] as Array<{
-    name: string;
-    description: string;
-    label: string;
-    summary: string;
-    icon: string;
-    source: "builtin" | "installed";
-    userInvocable: boolean;
-    placeholder?: string;
-    config?: string;
-    tools: string[];
-    enabled: boolean;
-  }>,
-  details: new Map<string, {
-    name: string;
-    description: string;
-    label: string;
-    summary: string;
-    icon: string;
-    source: "builtin" | "installed";
-    userInvocable: boolean;
-    placeholder?: string;
-    config?: string;
-    tools: string[];
-    enabled: boolean;
-    body: string;
-  }>(),
+  skills: [] as MockSkillInfo[],
+  details: new Map<string, MockSkillDetail>(),
   installSkillMd: vi.fn(async (_md: string) => ({ name: "demo-skill" })),
   installZip: vi.fn(async (_file: File) => ({ name: "pack-skill" })),
   setSkillLabel: vi.fn(async (name: string, label: string) => ({
@@ -226,7 +220,7 @@ describe("SkillsPanel 导入门控", () => {
     h.skills = sampleSkills();
     await render();
 
-    expect(host?.textContent).toContain("停用后模型不再使用该技能；点击卡片查看详情。");
+    expect(host?.textContent).toContain("停用后模型不再使用该技能；点击卡片查看详情或子技能。");
     expect(host?.textContent).toContain("联网搜");
     expect(host?.textContent).toContain("搜资料、核事实、找出处");
     expect(host?.textContent).toContain("读资料");
@@ -263,9 +257,82 @@ describe("SkillsPanel 导入门控", () => {
     expect(host?.querySelector('[data-wf="SearchPanelMock"]')).not.toBeNull();
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).toContain("联网搜索");
     expect(host?.querySelector('[data-wf="SkillDetailBody"]')?.textContent).not.toContain("---");
+    expect(q('[data-wf="SkillLabelEdit"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelInput"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelSave"]')).toBeNull();
   });
 
-  it("详情页可保存超长中文显示名，底层 slug 不变且不截断", async () => {
+  it("母技能显示子技能数量，点击下钻纯展示子技能并可返回上层", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "diagram-viz",
+        description: "图表总技能",
+        label: "图表可视化",
+        summary: "判断是否画图并选择图表引擎",
+        icon: "diagram",
+        source: "builtin",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+        children: [
+          {
+            name: "drawio",
+            description: "生成可编辑画布",
+            label: "draw.io 图表",
+            summary: "生成精确排版的可编辑画布",
+            icon: "diagram",
+            source: "builtin",
+            userInvocable: false,
+            tools: [],
+            enabled: true,
+            children: [],
+          },
+          {
+            name: "mermaid",
+            description: "生成自动布局图表",
+            label: "Mermaid 图表",
+            summary: "生成易维护的自动布局图表",
+            icon: "star",
+            source: "builtin",
+            userInvocable: false,
+            tools: [],
+            enabled: true,
+            children: [],
+          },
+        ],
+      },
+    ];
+    await render();
+
+    expect(q(".sk-card-tag")?.textContent).toContain("含 2 个子技能");
+    const parentCard = q(".sk-card");
+    if (!parentCard) throw new Error("parent skill card not found");
+    await act(async () => {
+      parentCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(h.getSkillDetail).not.toHaveBeenCalled();
+    expect(q('[data-wf="SkillChildren"]')).not.toBeNull();
+    expect(host?.textContent).toContain("图表可视化 · 子技能");
+    expect(host?.textContent).toContain("draw.io 图表");
+    expect(host?.textContent).toContain("生成精确排版的可编辑画布");
+    expect(host?.textContent).toContain("Mermaid 图表");
+    expect(host?.querySelectorAll(".sk-child-item .sk-card-icon")).toHaveLength(2);
+    expect(q(".sk-toggle")).toBeNull();
+
+    const back = q(".sk-back");
+    if (!back) throw new Error("back button not found");
+    await act(async () => {
+      back.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(q('[data-wf="SkillChildren"]')).toBeNull();
+    expect(q(".sk-card-tag")?.textContent).toContain("含 2 个子技能");
+    expect(q(".sk-toggle")).not.toBeNull();
+  });
+
+  it("自定义技能可从 hero 标题进入编辑并保存超长中文显示名，底层 slug 不变", async () => {
     h.caps = { skills: { mutationEnabled: true } };
     h.skills = [
       {
@@ -301,6 +368,11 @@ describe("SkillsPanel 导入门控", () => {
       card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
     });
+    const edit = q('[data-wf="SkillLabelEdit"]') as HTMLButtonElement;
+    expect(edit.textContent).toContain("研资料");
+    await act(async () => {
+      edit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     const input = q('[data-wf="SkillLabelInput"]') as HTMLInputElement;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -318,6 +390,49 @@ describe("SkillsPanel 导入门控", () => {
     expect(h.setSkillLabel).toHaveBeenCalledWith("custom-research", longLabel);
     expect(host?.textContent).toContain("标识：custom-research");
     expect(host?.textContent).toContain(longLabel);
+  });
+
+  it("自定义技能行内编辑按 Escape 取消且不保存", async () => {
+    h.caps = { skills: { mutationEnabled: true } };
+    h.skills = [
+      {
+        name: "custom-research",
+        description: "自装研究技能",
+        label: "研资料",
+        summary: "整理用户资料",
+        icon: "star",
+        source: "installed",
+        userInvocable: true,
+        tools: [],
+        enabled: true,
+      },
+    ];
+    h.details.set("custom-research", {
+      ...h.skills[0]!,
+      body: "# 研资料",
+    });
+    await render();
+
+    const card = q(".sk-card");
+    if (!card) throw new Error("custom skill card not found");
+    await act(async () => {
+      card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      q('[data-wf="SkillLabelEdit"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const input = q('[data-wf="SkillLabelInput"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "临时名字");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(h.setSkillLabel).not.toHaveBeenCalled();
+    expect(q('[data-wf="SkillLabelInput"]')).toBeNull();
+    expect(q('[data-wf="SkillLabelEdit"]')?.textContent).toContain("研资料");
   });
 
   it("点击开关只启停，不进入详情页", async () => {

@@ -1039,6 +1039,88 @@ describe("WorkspacePage review controls", () => {
     expect(captured.current?.state.doc?.pmDoc).toEqual(savedDoc);
   }, 60_000);
 
+  it("断网保存连续失败后，online 会自动重发并推进服务端版本", async () => {
+    window.location.hash = "#/workspace?session=s-1";
+    const { useWorkspacePageController } = await import("./WorkspacePage");
+    const captured: {
+      current: ReturnType<typeof useWorkspacePageController> | null;
+    } = { current: null };
+    function ControllerHarness() {
+      captured.current = useWorkspacePageController();
+      return null;
+    }
+    await render(<ControllerHarness />);
+    const stream = latestServerStream();
+    const initialDoc = pmDoc([pmParagraph("p-offline", "保存前")]);
+    const offlineEditedDoc = pmDoc([pmParagraph("p-offline", "断网期间的新正文")]);
+    await emitFrames(stream, [
+      { kind: "sessionMeta", data: { sessionId: "s-1", title: "离线自动重存" } },
+      {
+        kind: "documentSnapshotWritten",
+        data: { doc: wireSnapshotFromPmDoc(initialDoc, 1) },
+      },
+      {
+        kind: "docStateChanged",
+        data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
+      },
+    ]);
+
+    let sendAttempt = 0;
+    stream.sendCommand.mockImplementation(async (command: Command) => {
+      if (command.kind !== "updateDoc") return;
+      sendAttempt += 1;
+      if (sendAttempt <= 3) throw new TypeError("Failed to fetch");
+      stream.emit({
+        kind: "docWriteResult",
+        data: {
+          ok: true,
+          clientMutationId: command.data.clientMutationId,
+          docVersion: 2,
+        },
+      });
+    });
+
+    vi.useFakeTimers();
+    const failedSave: Promise<Error | null> = captured.current!
+      .handleEditorChange(offlineEditedDoc)
+      .then(() => null)
+      .catch((error: unknown) =>
+        error instanceof Error ? error : new Error(String(error))
+      );
+    await flushMicrotasks(3);
+    expect(updateDocCommands(stream)).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(updateDocCommands(stream)).toHaveLength(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await failedSave).toBeInstanceOf(Error);
+    expect(updateDocCommands(stream)).toHaveLength(3);
+    expect(captured.current?.state.version).toBe(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushMicrotasks(3);
+
+    const retryCommand = updateDocCommands(stream)[3];
+    expect(retryCommand?.data.expectedDocumentSnapshot).toBe(1);
+    expect(retryCommand?.data.baseContentHash).toBe(getPmContentHash(initialDoc));
+    expect(retryCommand?.data.doc).toEqual(offlineEditedDoc);
+    expect(captured.current?.state.version).toBe(2);
+    expect(captured.current?.state.doc?.pmDoc).toEqual(offlineEditedDoc);
+  }, 60_000);
+
   it("异常坍缩态在 updateDoc 前被熔断，不落库也不覆盖有效快照", async () => {
     window.location.hash = "#/workspace?session=s-1";
     const { useWorkspacePageController } = await import("./WorkspacePage");

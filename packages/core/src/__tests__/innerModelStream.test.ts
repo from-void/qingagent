@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const streamTextMock = vi.hoisted(() => vi.fn());
-const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({ modelId: "mock" })));
+const getDeepseekModelMock = vi.hoisted(() => vi.fn(() => ({
+  modelId: "mock",
+  specificationVersion: "v2",
+})));
 const resolveProtocolMock = vi.hoisted(() => vi.fn(() => "openai"));
 const resolveModelParamsMock = vi.hoisted(() => vi.fn(() => ({})));
 const defaultBranchBufferBytes = vi.hoisted(() => 4 * 1024 * 1024);
 const branchCallMock = vi.hoisted(() => vi.fn());
 const getSessionSnapshotMock = vi.hoisted(() => vi.fn());
 
-vi.mock("ai", () => ({ streamText: streamTextMock }));
+vi.mock("ai-v5", () => ({ streamText: streamTextMock }));
 vi.mock("../llm/modelConfig.js", () => ({
   branchCall: branchCallMock,
   DEFAULT_BRANCH_STREAM_BUFFER_BYTES: defaultBranchBufferBytes,
@@ -40,8 +43,8 @@ describe("streamInnerModel", () => {
 
   it("累积 text delta、回传首字节/finishReason，并把 lane/abort/retry 交给框架", async () => {
     streamTextMock.mockReturnValue({ fullStream: fullStream([
-      { type: "text-delta", textDelta: "甲" },
-      { type: "text-delta", textDelta: "乙" },
+      { type: "text-delta", text: "甲" },
+      { type: "text-delta", text: "乙" },
       { type: "finish", finishReason: "stop" },
     ]) });
     const starts: number[] = [];
@@ -55,6 +58,7 @@ describe("streamInnerModel", () => {
       temperature: 0.4,
       abortSignal: abortController.signal,
       maxRetries: 2,
+      maxTokens: 65_536,
       onContentStart: (ms) => starts.push(ms),
       onContentDelta: (_delta, raw) => deltas.push(raw),
     });
@@ -70,6 +74,7 @@ describe("streamInnerModel", () => {
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       abortSignal: abortController.signal,
       maxRetries: 2,
+      maxOutputTokens: 65_536,
       temperature: 0.4,
     }));
   });
@@ -111,7 +116,7 @@ describe("streamInnerModel", () => {
       branchSteeringTail: "不要调用工具，输出 QingML",
       thinking: false,
       temperature: 0.4,
-      maxTokens: 4096,
+      maxTokens: 65_536,
       onActivity: () => { activities += 1; },
       onContentStart: (ms) => starts.push(ms),
       onContentDelta: (_delta, raw) => deltas.push(raw),
@@ -128,7 +133,7 @@ describe("streamInnerModel", () => {
       attempt: 4,
       thinking: false,
       temperature: 0.4,
-      maxTokens: 4096,
+      maxTokens: 65_536,
       maxBufferedTextBytes: defaultBranchBufferBytes,
       streamTextDeltas: true,
     }));
@@ -151,7 +156,7 @@ describe("streamInnerModel", () => {
       };
     });
     streamTextMock.mockReturnValue({ fullStream: fullStream([
-      { type: "text-delta", textDelta: "降级成功" },
+      { type: "text-delta", text: "降级成功" },
       { type: "finish", finishReason: "stop" },
     ]) });
     const starts: number[] = [];
@@ -208,12 +213,12 @@ describe("streamInnerModel", () => {
       topP: 0.82,
       maxTokens: 3456,
     }));
-    // 测试替身走 legacy AI SDK 4 transport，compat 层会把
-    // maxOutputTokens 映射成实际 wire 字段 maxTokens。
+    // fallback 直接走当前 AI SDK 5 transport，使用 maxOutputTokens；
+    // branchCall 仍以内部兼容参数 maxTokens 接收同一个覆盖值。
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       temperature: 0.73,
       topP: 0.82,
-      maxTokens: 3456,
+      maxOutputTokens: 3456,
     }));
   });
 

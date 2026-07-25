@@ -1,7 +1,11 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
-import { normalizeMermaidQuotes } from "@qingagent/pm-schema";
+import {
+  isPoisonedMermaidSvg,
+  normalizeMermaidQuotes,
+  prepareDrawioModelXmlForRender,
+} from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
 import { getDocRenderLogger } from "../renderLogger.js";
 import {
@@ -16,9 +20,9 @@ import { isRenderableSvg, type ExportDocument } from "./shared.js";
 /**
  * 服务端渲染 mermaid 源码 → SVG(供导出用)。
  *
- * 背景:图表块的 svg 缓存只存在于前端编辑器(DiagramView 渲染后回填 node.attrs.svg),且该属性
- * 不被序列化持久化(createQingagentExtensions 里 svg 的 renderHTML 返回空),agent 生成时也是 null。
- * 因此服务端导出读到的 svg 永远为空,只能回退源码——这就是"图表导出成源码"的根因。
+ * 背景:图表块的 svg 是可持久化缓存，但 agent 新生成内容、旧数据或异常中断仍可能没有缓存。
+ * Mermaid 可在服务端安全补渲染；drawio 按 W4 设计只消费客户端加固后持久化的 SVG，缺失时
+ * 明确告警并回退源码，不在导出进程里另起一套 mxGraph XML 执行面。
  *
  * 这里复用 browser/pool 的 Chromium,加载与前端同版本的 mermaid bundle,用同款暖墨主题 + strict
  * 安全级,把源码渲染成 SVG,让导出(PDF / HTML)拿到与前端一致的图表。
@@ -311,9 +315,11 @@ async function renderDiagramSvgsInSlot(
 }
 
 interface DiagramRef {
+  lang: "mermaid" | "drawio";
   source: string;
   overlay?: DiagramOverlay | null;
   assign: (svg: string) => void;
+  assignSource: (source: string) => void;
 }
 
 /** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
@@ -325,16 +331,35 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   if (obj.type === "diagram" && obj.attrs && typeof obj.attrs === "object") {
     const attrs = obj.attrs as Record<string, unknown>;
     const source = typeof attrs.source === "string" ? attrs.source : "";
-    if (source.trim() && !isRenderableSvg(attrs.svg as string | null)) {
-      acc.push({ source, overlay: readOverlay(attrs.overlay), assign: (svg) => { attrs.svg = svg; } });
+    const lang = attrs.lang === "drawio" ? "drawio" : "mermaid";
+    const svg = attrs.svg as string | null;
+    const hasUsableCache = isRenderableSvg(svg)
+      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    if (source.trim() && !hasUsableCache) {
+      acc.push({
+        lang,
+        source,
+        overlay: readOverlay(attrs.overlay),
+        assign: (svg) => { attrs.svg = svg; },
+        assignSource: (source) => { attrs.source = source; },
+      });
     }
   }
   // Legacy 段:{ kind: "diagram", data: { source, svg } }
   if (obj.kind === "diagram" && obj.data && typeof obj.data === "object") {
     const data = obj.data as Record<string, unknown>;
     const source = typeof data.source === "string" ? data.source : "";
-    if (source.trim() && !isRenderableSvg(data.svg as string | null)) {
-      acc.push({ source, assign: (svg) => { data.svg = svg; } });
+    const lang = data.lang === "drawio" ? "drawio" : "mermaid";
+    const svg = data.svg as string | null;
+    const hasUsableCache = isRenderableSvg(svg)
+      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    if (source.trim() && !hasUsableCache) {
+      acc.push({
+        lang,
+        source,
+        assign: (svg) => { data.svg = svg; },
+        assignSource: (source) => { data.source = source; },
+      });
     }
   }
 
@@ -348,19 +373,46 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
 }
 
 /**
- * 导出前预处理:把文档里所有图表块的 mermaid 源码服务端渲染成 SVG 并回填(深拷贝,不改入参)。
+ * 导出前预处理:Mermaid 缺缓存时服务端补渲染；drawio 使用客户端安全 SVG 缓存。
  * PDF / HTML 导出在序列化前调用,确保图表以真实渲染样子导出,而非回退源码。
- * 渲染失败的图表保持 svg=null,toHtml 自然回退源码代码块。
+ * drawio 无缓存时不在 Node/Chromium 重复打包渲染器，保持 svg=null 并回退源码；用户在
+ * 编辑器打开一次图表即可生成经加固并持久化的缓存。这样导出路径不执行不可信 mxGraph XML。
  */
 export async function withRenderedDiagrams(document: ExportDocument): Promise<ExportDocument> {
   const clone = structuredClone(document) as ExportDocument;
   const refs: DiagramRef[] = [];
   collectDiagrams(clone, refs);
   if (refs.length === 0) return clone;
-  // overlay 只负责布局/样式，不能替代 Mermaid 的语法判定。所有源码先经过与前端同版本的
-  // Mermaid parse+render；失败项保持 svg=null，让 toHtml 走既有源码+错误态回退。
-  const mermaidSvgs = await renderDiagramSvgs(refs.map((ref) => ref.source));
-  refs.forEach((ref, index) => {
+  const mermaidRefs: DiagramRef[] = [];
+  for (const ref of refs) {
+    if (ref.lang === "drawio") {
+      try {
+        // 服务端不重复运行 maxGraph；缺缓存回退源码时仍必须经过与前端相同的
+        // render-only 归一化，避免把 `%23` 非法颜色继续导出给用户复制。
+        // mxfile 可能含多页，不能用首个 modelXml 覆盖整个容器；AI 常规产出的
+        // 单页 mxGraphModel 和压缩 diagram 则可安全替换为准备后的明文模型。
+        const prepared = prepareDrawioModelXmlForRender(ref.source);
+        if (!ref.source.trimStart().startsWith("<mxfile")) {
+          ref.source = prepared.modelXml;
+          ref.assignSource(prepared.modelXml);
+        }
+      } catch (error) {
+        getDocRenderLogger().warn("Drawio export source normalization failed; preserving original source", {
+          reason: error instanceof Error ? error.message : String(error),
+          sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+        });
+      }
+      getDocRenderLogger().warn("Drawio export cache missing; open the diagram in the client before exporting", {
+        sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+      });
+      continue;
+    }
+    mermaidRefs.push(ref);
+  }
+  // overlay 只负责布局/样式，不能替代 Mermaid 的语法判定。所有 Mermaid 源码先经过
+  // 与前端同版本的 parse+render；drawio 则绝不送进 Mermaid 解析器。
+  const mermaidSvgs = await renderDiagramSvgs(mermaidRefs.map((ref) => ref.source));
+  mermaidRefs.forEach((ref, index) => {
     const mermaidSvg = mermaidSvgs[index];
     if (!mermaidSvg) return;
     if (hasOverlay(ref.overlay)) {

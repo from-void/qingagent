@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import JSZip from "jszip";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { toDocx } from "../export/toDocx.js";
 import { toHtml } from "../export/toHtml.js";
@@ -20,6 +21,7 @@ function docWithDiagram(svg: string | null): PmDoc {
 
 const NO_DIM_SVG = '<svg onload="alert(1)"><script>x()</script></svg>'; // 无尺寸 → 曾让 pdfmake 崩
 const GOOD_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60"><rect width="120" height="60"/></svg>';
+const DRAWIO_SOURCE = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
 
 describe("diagram 导出崩溃安全", () => {
   it("无尺寸/恶意 svg:docx 不崩,HTML 回退源码且不内联恶意 svg", async () => {
@@ -52,6 +54,22 @@ describe("diagram 导出崩溃安全", () => {
       const pdf = await toPdf(docWithDiagram(svg), { title: "T" });
       expect(pdf.subarray(0, 4).toString("utf8")).toBe("%PDF");
     }
+  });
+
+  it.skipIf(!hasChromium)("drawio 客户端 SVG 缓存可进入 HTML、PDF 与 Word 图片", async () => {
+    const doc = {
+      ...docWithDiagram(GOOD_SVG),
+      content: [
+        { type: "paragraph", attrs: { blockId: "p" }, content: [{ type: "text", text: "前言" }] },
+        { type: "diagram", attrs: { blockId: "d", lang: "drawio", source: DRAWIO_SOURCE, svg: GOOD_SVG } },
+      ],
+    } as PmDoc;
+    expect(toHtml(doc)).toContain('<div class="pm-diagram"><svg');
+    const pdf = await toPdf(doc);
+    expect(pdf.subarray(0, 4).toString("utf8")).toBe("%PDF");
+    const docx = await toDocx(doc);
+    const zip = await JSZip.loadAsync(docx);
+    expect(Object.keys(zip.files).some((name) => /^word\/media\/.+\.png$/i.test(name))).toBe(true);
   });
 
   // 根因回归:图表 svg 缓存不持久化(导出读到 svg=null),必须服务端渲染 mermaid 源码,

@@ -72,7 +72,7 @@ export type AiBlock = {
     } & AiContainerContent)
   | { type: "columnList"; columns: Array<AiColumn> }
   | { type: "blockMath"; latex: string }
-  | { type: "diagram"; lang: string; source: string; svg?: string | null }
+  | { type: "diagram"; lang: "mermaid" | "drawio"; source: string; svg?: string | null }
 );
 
 export type AiDocument = {

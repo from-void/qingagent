@@ -33,6 +33,7 @@ function mockGenerateReturning(...payloads: string[]) {
 
 type InnerModelCall = {
   abortSignal?: AbortSignal;
+  maxTokens?: number;
   onContentStart?: () => void;
   onContentDelta?: (delta: string, raw: string) => void;
 };
@@ -127,6 +128,9 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.revisionCount).toBe(0);
     expect(out.lengthStatus).toBe("accepted_first_pass");
     expect(streamInnerModelMock).toHaveBeenCalledTimes(4);
+    expect(streamInnerModelMock.mock.calls.every(([call]) =>
+      (call as InnerModelCall).maxTokens === 65_536
+    )).toBe(true);
     const { pmToPlainText } = await import("@qingagent/pm-schema");
     expect(pmToPlainText(state.docDraftCandidateDoc!).startsWith("b")).toBe(true);
   }, 10_000);
@@ -243,6 +247,9 @@ describe("writeDraft 赛马式字数控制", () => {
 
     expect(out.ok).toBe(false);
     expect((out as { error?: string }).error).toContain("达到输出长度上限而截断");
+    expect((out as { error?: string }).error).toContain("压缩生成规模");
+    expect((out as { error?: string }).error).toContain("减少图表节点数");
+    expect((out as { error?: string }).error).not.toContain("直接重新调用");
     expect((out as { error?: string }).error).toContain('"length_truncated":4');
     expect(state.docDraftCandidateDoc).toBeNull();
   });

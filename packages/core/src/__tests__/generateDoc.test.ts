@@ -195,12 +195,19 @@ describe("generateDoc QingML helpers", () => {
   });
 
   it("writeDraft 尾巴只带素材、任务与输出扭转，不复制 QingML 总规", () => {
-    const tail = buildQingmlSteeringTail("素材: 报告\n正文", "标题: 测试");
+    const tail = buildQingmlSteeringTail(
+      "素材: 报告\n正文",
+      "标题: 测试",
+      "<activated_skill_write_inject name=\"test\">技能规范</activated_skill_write_inject>",
+    );
     expect(tail).toContain("不要调用任何工具");
     expect(tail).toContain("素材: 报告");
+    expect(tail).toContain("技能规范");
     expect(tail).toContain("标题: 测试");
     expect(tail).toContain("主 system 的 QingML 生成总规");
     expect(tail).not.toContain("允许的块级标签与基础形状");
+    expect(tail.indexOf("素材: 报告")).toBeLessThan(tail.indexOf("技能规范"));
+    expect(tail.indexOf("技能规范")).toBeLessThan(tail.indexOf("标题: 测试"));
     expect(tail.length).toBeLessThan(500);
   });
 
@@ -315,6 +322,7 @@ describe("generateDoc QingML helpers", () => {
     expect(retryPrompt).toContain("上一轮输出未通过 QingML 解析或校验");
     expect(retryPrompt).toContain("完整、闭合的 QingML");
     expect(retryPrompt).toContain("&lt; / &amp;");
+    expect(retryPrompt).toContain("<drawio>");
     expect(retryPrompt).toContain("不要输出 markdown fence");
   });
 });

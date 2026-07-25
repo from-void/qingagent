@@ -282,16 +282,45 @@ describe("GET /api/v1/skills", () => {
         userInvocable?: boolean;
         config?: string;
         tools?: string[];
+        children: Array<{
+          name: string;
+          label: string;
+          summary: string;
+          description: string;
+          icon: string;
+          children: unknown[];
+        }>;
       }>;
     };
 
     const byName = new Map(json.skills.map((skill) => [skill.name, skill]));
-    for (const name of ["browser-ops", "web-search", "image-gen", "materials"]) {
+    for (const name of ["browser-ops", "web-search", "image-gen", "diagram-viz", "materials"]) {
       expect(byName.get(name)).toMatchObject({
         source: "builtin",
         enabled: true,
       });
     }
+    expect(byName.get("diagram-viz")).toMatchObject({
+      label: "图表可视化",
+      summary: "判断是否画图并生成美观、可编辑的 Mermaid 或 draw.io 图表",
+      icon: "diagram",
+      userInvocable: true,
+    });
+    expect(byName.get("diagram-viz")?.children).toHaveLength(2);
+    expect(byName.get("diagram-viz")?.children.map((skill) => skill.name)).toEqual([
+      "drawio",
+      "mermaid",
+    ]);
+    expect(byName.get("image-gen")).toMatchObject({
+      label: "画配图",
+      userInvocable: true,
+      tools: ["generateSvg", "importGeneratedImage"],
+    });
+    expect(byName.get("image-gen")?.children).toHaveLength(2);
+    expect(byName.get("image-gen")?.children.map((skill) => skill.name)).toEqual([
+      "codex-image",
+      "svg",
+    ]);
     expect(byName.get("web-search")).toMatchObject({
       label: "联网搜",
       summary: "搜资料、核事实、找出处",
@@ -306,6 +335,71 @@ describe("GET /api/v1/skills", () => {
       userInvocable: false,
       tools: ["readDocument", "searchDocuments"],
     });
+    expect(byName.get("cli-auth")).toMatchObject({
+      label: "命令行授权",
+      summary: "安全处理阻塞等待扫码或网页授权的 CLI",
+      userInvocable: false,
+    });
+    expect(byName.get("review")).toMatchObject({
+      label: "文档审查",
+      summary: "统一执行八类文档审查",
+      icon: "search",
+      userInvocable: true,
+      tools: [
+        "lexicon_list",
+        "sensitive_scan",
+        "lexicon_manage",
+        "style_template_get",
+        "readDraft",
+        "readMaterial",
+        "run_python",
+        "run_js",
+        "editDraft",
+        "create_annotation_groups",
+      ],
+    });
+    expect(byName.get("review")?.children).toHaveLength(8);
+    expect(byName.get("review")?.children.map((skill) => skill.name)).toEqual([
+      "consistency",
+      "custom",
+      "deai",
+      "format",
+      "privacy",
+      "role",
+      "sensitive",
+      "source-check",
+    ]);
+    expect(byName.get("review")?.children[0]).toMatchObject({
+      label: "一致性审查",
+      summary: "对照文档自身核查并验算一致性问题。",
+      icon: "star",
+      children: [],
+    });
+    expect(byName.get("web-search")?.children).toEqual([]);
+    for (const nonTopLevelName of [
+      "sensitive-review",
+      "sensitive",
+      "source-check",
+      "deai-review",
+      "deai",
+      "consistency-review",
+      "consistency",
+      "privacy-review",
+      "privacy",
+      "format-review",
+      "format",
+      "role-review",
+      "role",
+      "custom-review",
+      "codex-image",
+      "svg",
+      "custom",
+      "mermaid",
+      "drawio",
+    ]) {
+      expect(byName.has(nonTopLevelName)).toBe(false);
+    }
+    expect(byName.has("dingtalk-docs")).toBe(false);
     expect(json.skills.map((skill) => skill.name).slice(0, 8)).toEqual([
       "browser-ops",
       "web-search",

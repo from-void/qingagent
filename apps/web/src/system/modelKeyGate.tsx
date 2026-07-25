@@ -1,14 +1,19 @@
 // 模型 key 门禁:检测是否已配置可用 key;未配置时发送按钮 disable + hover 引导气泡,
 // 「去配置」按钮带转场返回首页并打开设置(定位第一个 tab)。新建页与编辑页共用。
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { getVisitorDeepseekKey, readCustomProvider } from "../overlays/settings/visitorKeyStore";
+import {
+  getSelectedModelProvider,
+  getVisitorModelKey,
+  readCustomProvider,
+} from "../overlays/settings/visitorKeyStore";
 
 const OPEN_SETTINGS_FLAG = "qj-open-settings";
 type ModelKeyGateState = "loading" | "configured" | "unconfigured";
 
 function readLocalKey(): boolean {
   try {
-    return Boolean(getVisitorDeepseekKey()) || Boolean(readCustomProvider());
+    const provider = getSelectedModelProvider();
+    return Boolean(getVisitorModelKey(provider)) || Boolean(readCustomProvider(provider));
   } catch {
     return false;
   }

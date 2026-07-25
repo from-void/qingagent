@@ -201,7 +201,131 @@ describe("external events", () => {
     const events = await readSseEvents(res, controller, 1);
     expect(events).toHaveLength(1);
     expect(events[0]?.event).toBe("meta");
-    expect(JSON.parse(events[0]!.data)).toMatchObject({ minSeq: 1, nextSeq: 1, gap: true });
+    expect(JSON.parse(events[0]!.data)).toEqual({
+      epoch: expect.any(Number),
+      minSeq: 1,
+      nextSeq: 1,
+      gap: true,
+    });
+  });
+
+  it("documentSnapshotWritten 按真实 sections 形状深度净化 SVG", async () => {
+    const sessionId = "events-snapshot-sections-svg";
+    const svg = "<svg>真实 sections 缓存</svg>";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          version: 3,
+          ts: "2026-07-25T00:00:00.000Z",
+          doc: {
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [],
+          },
+          sections: [{
+            kind: "diagram",
+            data: {
+              lang: "mermaid",
+              source: "flowchart TD\nA-->B",
+              svg,
+            },
+          }],
+        },
+      },
+    });
+
+    const frame = await readSingleExternalFrame(sessionId);
+    expect(frame).toMatchObject({
+      data: {
+        doc: {
+          sections: [{
+            data: {
+              svg: null,
+              svgBytes: Buffer.byteLength(svg, "utf8"),
+            },
+          }],
+        },
+      },
+    });
+    expect(JSON.stringify(frame)).not.toContain("<svg");
+
+    const logged = sessionManager.frameLog.readFrom(sessionId, 0).frames[0]?.frame;
+    expect(logged).toMatchObject({
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          sections: [{ data: { svg } }],
+        },
+      },
+    });
+  });
+
+  it("docDiffReady 任意嵌套位置的 SVG 均不外发", async () => {
+    const sessionId = "events-doc-diff-svg";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "docDiffReady",
+      data: {
+        baseVersion: 7,
+        suggestions: [],
+        previewDoc: {
+          type: "doc",
+          attrs: { schemaVersion: 1 },
+          content: [{
+            type: "diagram",
+            attrs: {
+              blockId: "diagram-preview",
+              lang: "mermaid",
+              source: "flowchart TD\nA-->B",
+              svg: "<svg>审阅预览</svg>",
+            },
+          }],
+        },
+      },
+    });
+
+    const frame = await readSingleExternalFrame(sessionId);
+    expect(JSON.stringify(frame)).not.toContain("<svg");
+  });
+
+  it("toolCallUpdated 任意嵌套位置的 SVG 均不外发", async () => {
+    const sessionId = "events-tool-call-svg";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "toolCallUpdated",
+      data: {
+        messageId: "message-svg",
+        toolCallId: "tool-svg",
+        spec: {
+          id: "tool-svg",
+          name: "generate_image",
+          render: { kind: "chatInline" },
+          status: { kind: "running", data: { progressPct: 50, etaSec: null } },
+          body: {
+            kind: "generateSvg",
+            data: {
+              prompt: "生成示意图",
+              style: null,
+              aspect: null,
+              progress: {
+                stage: "streaming",
+                elapsedMs: 100,
+                rawKb: 1,
+                message: "生成中",
+                error: null,
+                src: null,
+                width: null,
+                height: null,
+                partialSvg: "<svg>工具流式预览</svg>",
+              },
+            },
+          },
+          result: null,
+        },
+      },
+    });
+
+    const frame = await readSingleExternalFrame(sessionId);
+    expect(JSON.stringify(frame)).not.toContain("<svg");
   });
 
   it("只下发公开契约帧，并把一次性消费游标收敛到最后一个公开帧", async () => {
@@ -237,6 +361,16 @@ describe("external events", () => {
 
 function authHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+async function readSingleExternalFrame(sessionId: string): Promise<Record<string, unknown>> {
+  const controller = new AbortController();
+  const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
+    headers: authHeaders(),
+    signal: controller.signal,
+  });
+  const events = await readSseEvents(res, controller, 2);
+  return JSON.parse(events[1]!.data) as Record<string, unknown>;
 }
 
 async function readSseEvents(

@@ -181,17 +181,22 @@ export function materialContextFrom(materials: Map<string, Material> | undefined
     : "";
 }
 
-/** writeDraft 只追加任务与素材；完整 QingML 规则只存在主 system。 */
-export function buildQingmlSteeringTail(materialContext: string, finalInstruction: string): string {
+/** writeDraft 追加任务、素材与按需技能；未激活技能时仍不复制主 system 的 QingML 总规。 */
+export function buildQingmlSteeringTail(
+  materialContext: string,
+  finalInstruction: string,
+  skillInstruction = "",
+): string {
   return [
     "不要调用任何工具。现在进入 writeDraft 旁支生成模式，按主 system 的 QingML 生成总规直接输出文档。",
     materialContext ? `以下是本次素材（仅作参考，来源 URL 必须原样用于可点击引用）：\n${materialContext}` : "本次没有可用图片或文件，不要输出 <img>/<file>。",
+    skillInstruction,
     finalInstruction,
     "首字符必须是 <；只输出完整闭合的 QingML，不要输出聊天文字、问卷、Markdown fence 或解释。",
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 export function buildQingmlRetryUserPrompt(basePrompt: string, attempt: number, lastError: string): string {
   if (attempt <= 0) return basePrompt;
-  return `${basePrompt}\n\n上一轮输出未通过 QingML 解析或校验，错误: ${lastError.slice(0, 500)}\n本次是第 ${attempt + 1} 次尝试：只输出完整、闭合的 QingML 标记。特别注意：<pre>/<math-block>/<mermaid> 内的 < 和 & 必须写成 &lt; / &amp;。不要输出 markdown fence、解释文字或半截标记。`;
+  return `${basePrompt}\n\n上一轮输出未通过 QingML 解析或校验，错误: ${lastError.slice(0, 500)}\n本次是第 ${attempt + 1} 次尝试：只输出完整、闭合的 QingML 标记。特别注意：<pre>/<math-block>/<mermaid>/<drawio> 内的 < 和 & 必须写成 &lt; / &amp;。不要输出 markdown fence、解释文字或半截标记。`;
 }

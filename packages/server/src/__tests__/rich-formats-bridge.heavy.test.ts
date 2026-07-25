@@ -4,6 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BridgeFrame, Command, LegacySection } from "@qingagent/contract-ts";
+import {
+  applyEdit,
+  carryOverDiagramOverlay,
+  dissolveSubgraph,
+  moveNodeToSubgraph,
+  parseDiagram,
+  renameSubgraph,
+  wrapNodesInSubgraph,
+  type DiagramOverlay,
+  type FlowGraph,
+  type RewriteResult,
+} from "@qingagent/diagram-engine";
 import { getPmContentHash, type PmBlockNode, type PmDoc, type PmInlineNode } from "@qingagent/pm-schema";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -247,6 +259,282 @@ describe("rich formats HTTP bridge E2E", () => {
     const versions = await core.listVersions(sessionId);
     expect(versions).toHaveLength(1);
     expect(versions[0]).toMatchObject({ docVersion: 4, snapshotPm: aDoc });
+  });
+
+  it("画布连续语义操作逐步落库 source，嵌套归属/改名/连线/移动/解散/撤销均以服务端为准", async () => {
+    const baselineSource = [
+      "flowchart TD",
+      "  U1[未归属]",
+      "  U2[目标]",
+    ].join("\n");
+    let persistedDoc = canvasDiagramDoc(baselineSource);
+    let clientCanonicalDoc = persistedDoc;
+    const sessionId = await seedRestoredSession("画布连续写回", persistedDoc);
+    let expectedVersion = 1;
+
+    const persistStep = async (
+      label: string,
+      nextDoc: PmDoc,
+    ): Promise<PmDoc> => {
+      const clientMutationId = `canvas-${label}-${randomUUID()}`;
+      const { res, frames } = await postStream(updateDocCommand({
+        sessionId,
+        expectedDocumentSnapshot: expectedVersion,
+        // 模拟浏览器 ACK 后以“实际发出的内存 PM 文档”推进下一笔基线。
+        // 若其中混入 undefined，而 JSON 线传输删除了该键，下一笔就会在同版本撞哈希。
+        baseContentHash: getPmContentHash(clientCanonicalDoc),
+        clientMutationId,
+        doc: nextDoc,
+      }));
+      expect(res.status, label).toBe(200);
+      const result = findDocWriteFrame(frames, clientMutationId);
+      expect(result.data.ok, label).toBe(true);
+      if (!result.data.ok) throw new Error(`${label} 保存冲突`);
+      expectedVersion = result.data.docVersion;
+      const stored = await core.documentRepo.load(sessionId);
+      expect(stored?.docVersion, label).toBe(expectedVersion);
+      expect(stored?.pmDoc, label).toEqual(
+        JSON.parse(JSON.stringify(nextDoc)),
+      );
+      clientCanonicalDoc = nextDoc;
+      persistedDoc = stored!.pmDoc!;
+      return persistedDoc;
+    };
+
+    const outer = mustRewrite(
+      wrapNodesInSubgraph(baselineSource, [], "外层"),
+      "建外层空分区",
+    );
+    await persistStep("create-outer", canvasDiagramDoc(outer.source));
+    expect(serverDiagramSource(persistedDoc)).toBe(outer.source);
+
+    const movedOuter = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "U1", outer.newSubgraphId!),
+      "拖入外层",
+    );
+    await persistStep("move-outer", canvasDiagramDoc(movedOuter.source));
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "U1")?.scopePath)
+      .toEqual([outer.newSubgraphId]);
+
+    const inner = mustRewrite(
+      wrapNodesInSubgraph(
+        serverDiagramSource(persistedDoc),
+        [],
+        "内层",
+        outer.newSubgraphId,
+      ),
+      "建嵌套分区",
+    );
+    await persistStep("create-inner", canvasDiagramDoc(inner.source));
+
+    const movedInner = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "U1", inner.newSubgraphId!),
+      "拖入最深层",
+    );
+    await persistStep("move-inner", canvasDiagramDoc(movedInner.source));
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "U1")?.scopePath)
+      .toEqual([outer.newSubgraphId, inner.newSubgraphId]);
+
+    const renamed = mustRewrite(
+      renameSubgraph(serverDiagramSource(persistedDoc), inner.newSubgraphId!, "发布内层"),
+      "双击改名",
+    );
+    await persistStep("rename-inner", canvasDiagramDoc(renamed.source));
+    expect(serverFlowModel(persistedDoc).subgraphs.find((item) => item.id === inner.newSubgraphId)?.label)
+      .toBe("发布内层");
+
+    const connected = mustRewrite(
+      applyEdit(serverDiagramSource(persistedDoc), {
+        kind: "connectEdge",
+        source: "U1",
+        target: "U2",
+      }),
+      "把手建边",
+    );
+    await persistStep("connect-edge", canvasDiagramDoc(connected.source));
+    expect(serverFlowModel(persistedDoc).edges.some(
+      (edge) => edge.source === "U1" && edge.target === "U2",
+    )).toBe(true);
+
+    const movedOverlay = {
+      positions: {
+        U1: { x: 220, y: 160 },
+      },
+    };
+    await persistStep(
+      "move-subgraph",
+      canvasDiagramDoc(serverDiagramSource(persistedDoc), movedOverlay),
+    );
+    expect(serverDiagramOverlay(persistedDoc)).toEqual(movedOverlay);
+
+    const beforeDissolve = persistedDoc;
+    const dissolved = mustRewrite(
+      dissolveSubgraph(serverDiagramSource(persistedDoc), inner.newSubgraphId!),
+      "解散内层",
+    );
+    const dissolvedOverlay = carryOverDiagramOverlay(
+      serverDiagramSource(persistedDoc),
+      movedOverlay,
+      dissolved.source,
+    );
+    await persistStep(
+      "dissolve-inner",
+      canvasDiagramDoc(dissolved.source, dissolvedOverlay),
+    );
+    expect(serverFlowModel(persistedDoc).subgraphs.some(
+      (item) => item.id === inner.newSubgraphId,
+    )).toBe(false);
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "U1")?.scopePath)
+      .toEqual([outer.newSubgraphId]);
+
+    await persistStep("undo-dissolve", beforeDissolve);
+    expect(serverFlowModel(persistedDoc).subgraphs.find(
+      (item) => item.id === inner.newSubgraphId,
+    )?.label).toBe("发布内层");
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "U1")?.scopePath)
+      .toEqual([outer.newSubgraphId, inner.newSubgraphId]);
+  });
+
+  it("空分区建后解散经真实保存与 Markdown 导出可字节级回到基线", async () => {
+    const baselineSource = [
+      "flowchart TD",
+      "  A[甲]",
+      "  %% trailing comment keep",
+      "",
+    ].join("\n");
+    let persistedDoc = canvasDiagramDoc(baselineSource);
+    const sessionId = await seedRestoredSession("画布空行 round-trip", persistedDoc);
+    const baselineExport = await request(
+      "GET",
+      `/api/v1/export/${sessionId}?format=markdown`,
+    ).then((response) => response.text());
+
+    const wrapped = mustRewrite(
+      wrapNodesInSubgraph(baselineSource, [], "临时分区"),
+      "建空分区",
+    );
+    const wrappedMutationId = `canvas-wrap-${randomUUID()}`;
+    const wrappedWrite = await postStream(updateDocCommand({
+      sessionId,
+      expectedDocumentSnapshot: 1,
+      baseContentHash: getPmContentHash(persistedDoc),
+      clientMutationId: wrappedMutationId,
+      doc: canvasDiagramDoc(wrapped.source),
+    }));
+    const wrappedResult = findDocWriteFrame(wrappedWrite.frames, wrappedMutationId);
+    expect(wrappedResult.data.ok).toBe(true);
+    if (!wrappedResult.data.ok) throw new Error("建空分区保存冲突");
+    persistedDoc = (await core.documentRepo.load(sessionId))!.pmDoc!;
+    expect(serverDiagramSource(persistedDoc)).toBe(wrapped.source);
+
+    const dissolved = mustRewrite(
+      dissolveSubgraph(serverDiagramSource(persistedDoc), wrapped.newSubgraphId!),
+      "解散空分区",
+    );
+    const dissolvedMutationId = `canvas-dissolve-${randomUUID()}`;
+    const dissolvedWrite = await postStream(updateDocCommand({
+      sessionId,
+      expectedDocumentSnapshot: wrappedResult.data.docVersion,
+      baseContentHash: getPmContentHash(persistedDoc),
+      clientMutationId: dissolvedMutationId,
+      doc: canvasDiagramDoc(dissolved.source),
+    }));
+    const dissolvedResult = findDocWriteFrame(dissolvedWrite.frames, dissolvedMutationId);
+    expect(dissolvedResult.data.ok).toBe(true);
+    expect(serverDiagramSource((await core.documentRepo.load(sessionId))!.pmDoc!))
+      .toBe(baselineSource);
+
+    const roundTripExport = await request(
+      "GET",
+      `/api/v1/export/${sessionId}?format=markdown`,
+    ).then((response) => response.text());
+    expect(roundTripExport).toBe(baselineExport);
+  });
+
+  it("luna1-TC2 空分区拖空后经连续保存仍是服务端真值，只有显式解散才消失", async () => {
+    const baselineSource = [
+      "flowchart LR",
+      "  A[自由节点A]",
+      "  B[自由节点B]",
+      "",
+    ].join("\n");
+    let persistedDoc = canvasDiagramDoc(baselineSource);
+    let clientCanonicalDoc = persistedDoc;
+    const sessionId = await seedRestoredSession("luna1-TC2 空分区生命周期", persistedDoc);
+    let expectedVersion = 1;
+
+    const persistStep = async (label: string, source: string, overlay?: DiagramOverlay): Promise<void> => {
+      const clientMutationId = `empty-lifecycle-${label}-${randomUUID()}`;
+      const nextDoc = canvasDiagramDoc(source, overlay);
+      const { res, frames } = await postStream(updateDocCommand({
+        sessionId,
+        expectedDocumentSnapshot: expectedVersion,
+        baseContentHash: getPmContentHash(clientCanonicalDoc),
+        clientMutationId,
+        doc: nextDoc,
+      }));
+      expect(res.status, label).toBe(200);
+      const result = findDocWriteFrame(frames, clientMutationId);
+      expect(result.data.ok, label).toBe(true);
+      if (!result.data.ok) throw new Error(`${label} 保存冲突`);
+      expectedVersion = result.data.docVersion;
+      clientCanonicalDoc = nextDoc;
+      persistedDoc = (await core.documentRepo.load(sessionId))!.pmDoc!;
+      expect(persistedDoc, label).toEqual(JSON.parse(JSON.stringify(nextDoc)));
+      expect(serverDiagramSource(persistedDoc), label).toBe(source);
+    };
+
+    const created = mustRewrite(
+      wrapNodesInSubgraph(baselineSource, [], "Gamma区"),
+      "建 Gamma 空分区",
+    );
+    await persistStep("create", created.source);
+
+    const movedIn = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "A", created.newSubgraphId!),
+      "拖入 Gamma",
+    );
+    await persistStep("move-in", movedIn.source);
+
+    const renamed = mustRewrite(
+      renameSubgraph(serverDiagramSource(persistedDoc), created.newSubgraphId!, "Gamma改名"),
+      "Gamma 改名",
+    );
+    await persistStep("rename", renamed.source);
+
+    const movedOut = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "A", null),
+      "拖出 Gamma",
+    );
+    await persistStep("move-out-empty", movedOut.source);
+    expect(serverFlowModel(persistedDoc).subgraphs.find((item) => item.id === created.newSubgraphId))
+      .toMatchObject({ label: "Gamma改名" });
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+
+    const added = mustRewrite(
+      applyEdit(serverDiagramSource(persistedDoc), { kind: "addNode", label: "连续保存节点" }),
+      "空分区后的无关新增",
+    );
+    await persistStep("save-again-1", added.source);
+    expect(serverFlowModel(persistedDoc).subgraphs.map((item) => item.id)).toContain(created.newSubgraphId);
+
+    await persistStep(
+      "save-again-2",
+      serverDiagramSource(persistedDoc),
+      { positions: { A: { x: 700, y: 300 } } },
+    );
+    expect(serverFlowModel(persistedDoc).subgraphs.map((item) => item.id)).toContain(created.newSubgraphId);
+    expect(serverDiagramOverlay(persistedDoc)).toEqual({ positions: { A: { x: 700, y: 300 } } });
+
+    const dissolved = mustRewrite(
+      dissolveSubgraph(serverDiagramSource(persistedDoc), created.newSubgraphId!),
+      "显式解散 Gamma",
+    );
+    await persistStep("dissolve", dissolved.source);
+    expect(serverFlowModel(persistedDoc).subgraphs).toHaveLength(0);
+    expect(serverDiagramSource(persistedDoc)).not.toContain("subgraph ");
+    expect(serverDiagramSource(persistedDoc).split("\n").filter((line) => line.trim() === "end"))
+      .toHaveLength(0);
   });
 
   it("GET /api/v1/export/:sessionId exports rich PM docs as DOCX and PDF binaries", async () => {
@@ -618,6 +906,53 @@ function baseDoc(namespace: string): PmDoc {
   return doc([
     paragraph(`${namespace}-p`, [text("初始正文")]),
   ]);
+}
+
+function canvasDiagramDoc(
+  source: string,
+  overlay?: DiagramOverlay,
+): PmDoc {
+  return doc([{
+    type: "diagram",
+    attrs: {
+      blockId: "canvas-diagram",
+      lang: "mermaid",
+      source,
+      svg: null,
+      ...(overlay ? { overlay } : {}),
+    },
+  }]);
+}
+
+function serverDiagramBlock(pmDoc: PmDoc): Extract<PmBlockNode, { type: "diagram" }> {
+  const block = pmDoc.content.find(
+    (item): item is Extract<PmBlockNode, { type: "diagram" }> =>
+      item.type === "diagram",
+  );
+  if (!block) throw new Error("服务端文档缺 diagram");
+  return block;
+}
+
+function serverDiagramSource(pmDoc: PmDoc): string {
+  return serverDiagramBlock(pmDoc).attrs.source;
+}
+
+function serverDiagramOverlay(pmDoc: PmDoc): unknown {
+  return serverDiagramBlock(pmDoc).attrs.overlay;
+}
+
+function serverFlowModel(pmDoc: PmDoc): FlowGraph {
+  const parsed = parseDiagram(serverDiagramSource(pmDoc));
+  if (!parsed.ok || parsed.model.type !== "flowchart") {
+    throw new Error(parsed.error ?? "服务端 Mermaid 不是 flowchart");
+  }
+  return parsed.model;
+}
+
+function mustRewrite(result: RewriteResult, label: string): RewriteResult & { ok: true } {
+  expect(result.ok, label).toBe(true);
+  if (!result.ok) throw new Error(`${label}: ${result.error ?? "rewrite failed"}`);
+  return result as RewriteResult & { ok: true };
 }
 
 function richPmDoc(namespace: string): PmDoc {

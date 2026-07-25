@@ -68,7 +68,7 @@ import type {
   ToolCallSpec,
   WireActiveOverlay,
 } from "@qingagent/contract-ts";
-import type { PmBlockNode, PmDiagramOverlay, PmDoc, PmInlineNode, PmMark, PmOrderedListStyle, PmTableCellNode } from "@qingagent/pm-schema";
+import type { PmBlockNode, PmDiagramLang, PmDiagramOverlay, PmDoc, PmInlineNode, PmMark, PmOrderedListStyle, PmTableCellNode } from "@qingagent/pm-schema";
 
 /** 从 `AskUserQuestion.id` 到用户答案的映射，仅供 workspace view 层使用。 */
 export type AskUserAnswers = Record<string, AskUserAnswer>;
@@ -201,7 +201,7 @@ export type ViewBlock = ViewBlockMeta & (
       node?: PmBlockNode;
     }
   | { kind: "code"; body: string; language?: string | null }
-  | { kind: "diagram"; source: string; lang: string; svg: string | null; overlay?: PmDiagramOverlay | null }
+  | { kind: "diagram"; source: string; lang: PmDiagramLang; svg: string | null; overlay?: PmDiagramOverlay | null }
   | { kind: "penNote"; text: string; spans?: ViewDocSpan[] }
   | { kind: "image"; src: string; alt: string; caption: string | null; width: number | null; height: number | null; align?: "left" | "center" | "right" | null }
   | { kind: "fileAttachment"; fileId: string; filename: string; mimeType: string; size: number }

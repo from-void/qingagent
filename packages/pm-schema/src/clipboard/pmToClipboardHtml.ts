@@ -200,9 +200,10 @@ function nodeToHtml(node: PmNode): string {
       return filename ? `<p>[附件: ${escapeHtml(filename)}]</p>` : "";
     }
     case "diagram": {
-      // 图表降级为源码代码块(外部应用无 mermaid 渲染);至少别让 text/html 为空导致粘空。
+      // 图表降级为源码代码块(外部应用通常无对应渲染器);至少别让 text/html 为空导致粘空。
       const src = stringAttr((node as { attrs?: { source?: unknown } }).attrs?.source);
-      return src ? `<pre data-language="mermaid"><code class="language-mermaid">${escapeHtml(src)}</code></pre>` : "";
+      const lang = (node as { attrs?: { lang?: unknown } }).attrs?.lang === "drawio" ? "drawio" : "mermaid";
+      return src ? `<pre data-language="${lang}"><code class="language-${lang}">${escapeHtml(src)}</code></pre>` : "";
     }
     case "blockMath": {
       const latex = stringAttr((node as { attrs?: { latex?: unknown } }).attrs?.latex);

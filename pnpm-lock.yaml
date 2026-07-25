@@ -91,6 +91,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@maxgraph/core':
+        specifier: ^0.23.0
+        version: 0.23.0
       '@qingagent/contract-ts':
         specifier: workspace:*
         version: link:../../packages/contract-ts
@@ -408,6 +411,12 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^3.23.1
         version: 3.23.1
+      '@xmldom/xmldom':
+        specifier: ^0.9.10
+        version: 0.9.10
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
       htmlparser2:
         specifier: '10'
         version: 10.1.0
@@ -488,6 +497,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@qingagent/diagram-engine':
+        specifier: workspace:*
+        version: link:../diagram-engine
       tsx:
         specifier: ^4.19.4
         version: 4.22.3
@@ -1452,6 +1464,9 @@ packages:
     engines: {node: '>=22.13.0'}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
+
+  '@maxgraph/core@0.23.0':
+    resolution: {integrity: sha512-/ZbFaMKDJHg3352ANVDct09Rr7k5mLOZO+q3i0Hy2ODQiNvEnbooj4GkwB4Xaozyqfj/Q6JRT+zebdu4WzPyJg==}
 
   '@mermaid-js/parser@1.1.1':
     resolution: {integrity: sha512-VuHdsYMK1bT6X2JbcAaWAhugTRvRBRyuZgd+c22swUeI9g/ntaxF7CY7dYarhZovofCbUNO0G7JesfmNtjYOCw==}
@@ -6349,6 +6364,8 @@ snapshots:
       zod-from-json-schema: 0.5.2
       zod-from-json-schema-v3: zod-from-json-schema@0.0.5
       zod-to-json-schema: 3.25.2(zod@4.4.3)
+
+  '@maxgraph/core@0.23.0': {}
 
   '@mermaid-js/parser@1.1.1':
     dependencies:

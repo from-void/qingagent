@@ -230,6 +230,7 @@ describe("documentRepo", () => {
     await documentRepo.saveMany([
       input("doc-a", { resourceId: "r1", updatedAt: "2026-01-01T00:00:00.000Z" }),
       input("doc-b", { resourceId: "r1", updatedAt: "2026-01-03T00:00:00.000Z" }),
+      input("doc-aa", { resourceId: "r1", updatedAt: "2026-01-03T00:00:00.000Z" }),
       input("doc-c", { resourceId: "r2", updatedAt: "2026-01-04T00:00:00.000Z" }),
       input("doc-d", { resourceId: "r1", updatedAt: "2026-01-02T00:00:00.000Z" }),
     ]);
@@ -237,9 +238,9 @@ describe("documentRepo", () => {
     const page0 = await documentRepo.list({ resourceId: "r1", page: 0, perPage: 2 });
     const page1 = await documentRepo.list({ resourceId: "r1", page: 1, perPage: 2 });
 
-    expect(page0.total).toBe(3);
-    expect(page0.rows.map((row) => row.id)).toEqual(["doc-b", "doc-d"]);
-    expect(page1.rows.map((row) => row.id)).toEqual(["doc-a"]);
+    expect(page0.total).toBe(4);
+    expect(page0.rows.map((row) => row.id)).toEqual(["doc-aa", "doc-b"]);
+    expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
   });
 
   it("后台巡检修复过期 PM 镜像", async () => {

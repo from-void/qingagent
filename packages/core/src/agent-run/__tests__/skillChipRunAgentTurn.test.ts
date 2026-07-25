@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { RequestContext } from "@mastra/core/request-context";
 import type { BridgeFrame, ChatChip } from "@qingagent/contract-ts";
 import { createSession } from "../../session/sessionState.js";
+import { getActivatedSkillRegistrations } from "../../skills/writeInject.js";
 
 const agentStreamCalls: Array<{ messages: unknown[]; options: Record<string, unknown> }> = [];
 
@@ -110,6 +112,11 @@ describe("runAgentTurn skill chip context injection", () => {
       data: { body: "A {{chip:0}}查日历,B {{chip:1}}搜资料" },
     });
     expect(agentStreamCalls).toHaveLength(1);
+    const requestContext = agentStreamCalls[0]!.options
+      .requestContext as RequestContext;
+    expect(
+      getActivatedSkillRegistrations(requestContext).map((entry) => entry.name),
+    ).toEqual(["feishu", "web-search"]);
   }, 15_000);
 
   it("chip-only 消息只展开技能并追加询问缺失输入的引导,不泛化成空问候", async () => {

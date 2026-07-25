@@ -35,6 +35,7 @@ import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { pmToMarkdown } from "@qingagent/pm-schema";
 import { schedulePersist, QINGAGENT_RESOURCE_ID } from "../session/threadPersistence.js";
 import {
+  AGENT_MAX_OUTPUT_TOKENS,
   AGENT_MAX_STEPS,
   TURN_RETRY_LIMIT,
 } from "./agentLimits.js";
@@ -97,6 +98,11 @@ import {
   createTurnCompletion,
   finalizeLingeringRunningToolCalls,
 } from "./turnCleanup.js";
+import {
+  markDiagramVizEditing,
+  type DiagramVizLanguage,
+} from "../skills/diagramViz.js";
+import { activateSkill } from "../skills/writeInject.js";
 import {
   appendVisibleStreamErrorText,
   delayMs,
@@ -244,12 +250,13 @@ export async function* runAgentTurn(
   const selectionChips = chips.filter(
     (c) => c.kind.kind === "selection",
   );
+  const selectionDiagramLanguages = new Set<DiagramVizLanguage>();
 
   // Store chips on state so validatePatch can use from/to for
   // position-based matching later in this turn.
   state._currentChips = selectionChips.length > 0 ? selectionChips : null;
 
-  const selectionCtx =
+  let selectionCtx =
     selectionChips.length > 0
       ? `\n\n【用户选中的文档片段】\n${selectionChips
           .map((c) => {
@@ -258,6 +265,11 @@ export async function* runAgentTurn(
             // 优先按稳定 blockId 精确命中(对图表/图片等原子块也有效,且不受位置估算漂移影响)。
             const exactBlocks = resolveSelectionChipBlocks(state, c);
             if (exactBlocks.length > 0) {
+              for (const exactBlock of exactBlocks) {
+                if (exactBlock.type === "diagram" && exactBlock.lang) {
+                  selectionDiagramLanguages.add(exactBlock.lang);
+                }
+              }
               if (exactBlocks.length > 1) {
                 const refs = exactBlocks.map((item) => item.ref);
                 const summaries = exactBlocks
@@ -322,7 +334,6 @@ export async function* runAgentTurn(
           })
           .join("\n")}\n\n[选区上下文] 用户选中了以上内容。选中本身不等于要改：若用户这轮要求修改（润色/改写/删/调整格式等），你**必须**调用 readDraft/editDraft 真正提交，不能只用文字声称已改；若用户只是要解释/评价/提问，正常回答即可，不必动文档。\n\n用户针对以上选中内容说：`
       : "";
-
   // 模型可见的用户正文(0702,对齐业界模式):有 richText(带 {{chip:N}} 占位)时按原位
   // 展开成内联 token(「技能：X」/「文件：X」…),chip 的位置=语义绑定,多 chip 穿插
   // ("A 用[抓网页],B 用[联网搜]")不再串台;无 richText 走纯文本,行为不变。
@@ -604,6 +615,12 @@ export async function* runAgentTurn(
       ["directionChangeAskedSinceLastWrite", state._directionChangeAskedSinceLastWrite === true],
     ]);
     bindTurnOwnershipToRequestContext(requestContext, turnOwnership);
+    if (selectionDiagramLanguages.size > 0) {
+      markDiagramVizEditing(requestContext, selectionDiagramLanguages);
+    }
+    for (const skillName of selectedSkillNames) {
+      activateSkill(requestContext, skillName, userText);
+    }
     turnRequestContext = requestContext;
     beginSessionSnapshotTurn(requestContext);
     let toolSearchPreloadedToolNames: string[] = [];
@@ -685,7 +702,11 @@ export async function* runAgentTurn(
           // 代理偶发抖动(other side closed)时多扛几次:指数退避 1s/2s/4s/8s,共 5 次尝试。
           // Mastra 默认 maxRetries=2(只 1s/2s)对走代理的 deepseek 偏少。maxRetries 在 modelSettings 里。
           // F1:设置页的采样参数覆盖(temperature/topP/maxOutputTokens)合并,空=不覆盖走默认。
-          modelSettings: { maxRetries: 4, ...resolveModelParams(requestContext) },
+          modelSettings: {
+            maxRetries: 4,
+            maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
+            ...resolveModelParams(requestContext),
+          },
           // 智谱 GLM 等 anthropic 协议:扩展思考默认关,显式开启才会返回 reasoning 流(否则前端无"思考中")。
           // 仅对 anthropic 协议加,deepseek(openai 协议)不受影响。
           ...(resolveProtocol(requestContext) === "anthropic"

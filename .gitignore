@@ -66,6 +66,9 @@ packages/server/*.duckdb.wal
 
 # Local scorer / pm-gate output
 output/
+# draw.io 的 MathJax SVG 输出模块是生产运行时资产，不是本地评测产物。
+!apps/web/public/drawio/math4/es5/output/
+!apps/web/public/drawio/math4/es5/output/svg.js
 
 # Local evaluation artifacts
 .eval-out/

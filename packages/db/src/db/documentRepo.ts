@@ -59,6 +59,7 @@ export interface DocumentRepo {
     resourceId: string;
     page?: number;
     perPage?: number;
+    offset?: number;
   }): Promise<{ rows: DocumentRow[]; total: number }>;
   countByResourceId(resourceId: string): Promise<number>;
 }
@@ -453,7 +454,7 @@ export const documentRepo: DocumentRepo = {
     const client = await readyClient();
     const page = opts.page ?? 0;
     const perPage = opts.perPage ?? 50;
-    const offset = page * perPage;
+    const offset = opts.offset ?? page * perPage;
     const [countResult, rowsResult] = await Promise.all([
       client.execute({
         sql: `SELECT COUNT(*) AS total FROM documents WHERE resource_id = ? AND role = 'main'`,
@@ -462,7 +463,7 @@ export const documentRepo: DocumentRepo = {
       client.execute({
         sql: `SELECT * FROM documents
           WHERE resource_id = ? AND role = 'main'
-          ORDER BY updated_at DESC
+          ORDER BY updated_at DESC, id ASC
           LIMIT ? OFFSET ?`,
         args: [opts.resourceId, perPage, offset],
       }),

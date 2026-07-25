@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import JSZip from "jszip";
 import type { JSZipObject } from "jszip";
 import { existsSync } from "node:fs";
-import { access, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   BUILTIN_SKILLS_DIR,
@@ -10,26 +10,17 @@ import {
   USER_SKILLS_DIR,
   ARCHIVED_BUILTIN_SKILLS,
   getQingagentSkills,
+  listChildSkills,
+  listTopLevelSkills,
+  parseSkillFrontmatter,
   readDisabledSet,
   setEnabled,
   listConnectorDefinitions,
 } from "@qingagent/core";
+import type { ParsedSkillFrontmatter } from "@qingagent/core";
 import { requireTrustedOrigin } from "../lib/trustedOrigin";
 
 type SkillSourceLabel = "builtin" | "installed";
-
-interface ParsedSkillFrontmatter {
-  name: string;
-  description: string;
-  label: string;
-  summary: string;
-  icon: string;
-  userInvocable: boolean;
-  userInvocableExplicit: boolean;
-  placeholder?: string;
-  config?: string;
-  tools: string[];
-}
 
 export interface SkillListItem extends ParsedSkillFrontmatter {
   path: string;
@@ -53,6 +44,8 @@ const BUILTIN_SKILL_ORDER = [
   "feishu",
   "wechat-official-account",
 ] as const;
+
+export { parseSkillFrontmatter };
 
 export const skillsRoutes = new Hono();
 
@@ -84,20 +77,7 @@ skillsRoutes.get("/skills", async (c) => {
   const disabled = await readDisabledSet();
   const skills = await listAllSkillItems(disabled);
   return c.json({
-    skills: skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      label: skill.label,
-      summary: skill.summary,
-      icon: skill.icon,
-      source: skill.source,
-      userInvocable: skill.userInvocable,
-      placeholder: skill.placeholder,
-      config: skill.config,
-      tools: skill.tools,
-      enabled: skill.enabled,
-      connectorId: connectorIdForSkill(skill.name),
-    })),
+    skills: await Promise.all(skills.map(serializeSkillListItem)),
   });
 });
 
@@ -279,14 +259,21 @@ async function installZip(buffer: Buffer): Promise<{ name: string }> {
     throw new Error("invalid zip file");
   }
 
-  let skillMdPath: string | null = null;
+  const skillMdCandidates: string[] = [];
   for (const entry of files) {
     const safe = sanitizeZipPath(entry.name);
     const parts = safe.split("/");
     if (parts.at(-1) === "SKILL.md" && parts.length <= 2) {
-      skillMdPath = safe;
+      skillMdCandidates.push(safe);
     }
   }
+  // 裸根包优先认根 SKILL.md；带一层 ZIP 包装目录时只允许一个候选根。
+  // 子技能 child/SKILL.md 在裸根包里不能反客为主覆盖母技能。
+  const skillMdPath = skillMdCandidates.includes("SKILL.md")
+    ? "SKILL.md"
+    : skillMdCandidates.length === 1
+      ? skillMdCandidates[0]!
+      : null;
   if (!skillMdPath) throw new Error("zip missing SKILL.md");
 
   const skillEntry = zip.file(skillMdPath);
@@ -432,145 +419,6 @@ function sanitizeZipPath(path: string): string {
   return normalized.replace(/\\/g, "/");
 }
 
-export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | null {
-  // 去掉 UTF-8 BOM(Windows 记事本/部分编辑器导出的 .md 首字节会带 ﻿,
-  // 否则正则锚定 ^--- 失配 → 合法技能被误判无 frontmatter)。
-  const match = source.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return null;
-  const data = parseFrontmatterBlock(match[1]!);
-  const name = typeof data.name === "string" ? data.name.trim() : "";
-  const description = typeof data.description === "string" ? data.description.trim() : "";
-  if (!isValidSkillName(name) || !description) return null;
-  const label = nonEmptyString(data.label) ?? fallbackLabel(name);
-  const summary = nonEmptyString(data.summary) ?? fallbackSummary(description);
-  const icon = nonEmptyString(data.icon) ?? "star";
-  const placeholder = nonEmptyString(data.placeholder);
-  const config = nonEmptyString(data.config);
-  const tools = Array.isArray(data.tools) ? data.tools.filter(Boolean) : [];
-  const userInvocable = parseBooleanValue(data["user-invocable"]);
-  return {
-    name,
-    description,
-    label,
-    summary,
-    icon,
-    userInvocable: userInvocable === true,
-    userInvocableExplicit: userInvocable !== undefined,
-    ...(placeholder ? { placeholder } : {}),
-    ...(config ? { config } : {}),
-    tools,
-  };
-}
-
-type FrontmatterValue = string | boolean | string[];
-
-function parseFrontmatterBlock(block: string): Record<string, FrontmatterValue> {
-  const data: Record<string, FrontmatterValue> = {};
-  const lines = block.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const rawLine = lines[i]!;
-    const keyMatch = rawLine.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
-    if (!keyMatch) continue;
-    const key = keyMatch[1]!;
-    let rawValue = (keyMatch[2] ?? "").trim();
-    if (rawValue === ">-" || rawValue === ">" || rawValue === "|") {
-      const parts: string[] = [];
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1]!)) {
-        i += 1;
-        parts.push(lines[i]!.trim());
-      }
-      data[key] = rawValue === "|" ? parts.join("\n") : parts.join(" ");
-      continue;
-    }
-    if (rawValue === "" && key === "tools") {
-      const tools: string[] = [];
-      while (i + 1 < lines.length) {
-        const itemMatch = lines[i + 1]!.match(/^\s*-\s*(.+?)\s*$/);
-        if (!itemMatch) break;
-        i += 1;
-        const tool = parseStringValue(itemMatch[1]!);
-        if (tool) tools.push(tool);
-      }
-      data[key] = tools;
-      continue;
-    }
-    data[key] = key === "tools" ? parseStringArray(rawValue) : parseScalar(rawValue);
-  }
-  return data;
-}
-
-function parseScalar(rawValue: string): string | boolean {
-  const value = stripYamlComment(rawValue).trim();
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return stripQuotes(value);
-}
-
-function parseStringArray(rawValue: string): string[] {
-  const value = stripYamlComment(rawValue).trim();
-  if (!value) return [];
-  if (!value.startsWith("[") || !value.endsWith("]")) {
-    const single = parseStringValue(value);
-    return single ? [single] : [];
-  }
-  return value
-    .slice(1, -1)
-    .split(",")
-    .map((item) => parseStringValue(item))
-    .filter((item) => item.length > 0);
-}
-
-function parseStringValue(rawValue: string): string {
-  return stripQuotes(stripYamlComment(rawValue).trim()).trim();
-}
-
-function stripYamlComment(value: string): string {
-  let quote: string | null = null;
-  for (let i = 0; i < value.length; i += 1) {
-    const ch = value[i]!;
-    if ((ch === "'" || ch === '"') && value[i - 1] !== "\\") {
-      quote = quote === ch ? null : quote ?? ch;
-      continue;
-    }
-    if (ch === "#" && quote === null && (i === 0 || /\s/.test(value[i - 1]!))) {
-      return value.slice(0, i);
-    }
-  }
-  return value;
-}
-
-function stripQuotes(value: string): string {
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'");
-  }
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-  }
-  return value;
-}
-
-function nonEmptyString(value: FrontmatterValue | undefined): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function parseBooleanValue(value: FrontmatterValue | undefined): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value !== "string") return undefined;
-  const normalized = stripQuotes(value.trim()).trim().toLowerCase();
-  if (normalized === "true") return true;
-  if (normalized === "false") return false;
-  return undefined;
-}
-
-function fallbackLabel(name: string): string {
-  return name;
-}
-
-function fallbackSummary(description: string): string {
-  const first = description.match(/^[^，。：——\n]+/)?.[0]?.trim() || description.trim();
-  return first.length > 14 ? first.slice(0, 14) : first;
-}
-
 function stripSkillFrontmatter(source: string): string {
   return source.replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 }
@@ -606,6 +454,37 @@ export async function listAllSkillItems(disabled: Set<string>): Promise<SkillLis
   return items.sort(compareSkillItems);
 }
 
+async function serializeSkillListItem(skill: SkillListItem): Promise<Record<string, unknown>> {
+  const discoveredChildren = await listChildSkills(skill.path).catch(() => []);
+  const children = discoveredChildren.map<SkillListItem>((child) => ({
+    ...child.metadata,
+    userInvocable: child.metadata.userInvocableExplicit
+      ? child.metadata.userInvocable
+      : skill.source === "installed",
+    path: child.path,
+    source: skill.source,
+    // 子技能不提供独立开关，enabled 始终继承母技能的总控状态。
+    enabled: skill.enabled,
+    mtimeMs: child.mtimeMs,
+  }));
+
+  return {
+    name: skill.name,
+    description: skill.description,
+    label: skill.label,
+    summary: skill.summary,
+    icon: skill.icon,
+    source: skill.source,
+    userInvocable: skill.userInvocable,
+    placeholder: skill.placeholder,
+    config: skill.config,
+    tools: skill.tools,
+    enabled: skill.enabled,
+    connectorId: connectorIdForSkill(skill.name),
+    children: await Promise.all(children.map(serializeSkillListItem)),
+  };
+}
+
 async function skillExists(name: string): Promise<boolean> {
   if (ARCHIVED_BUILTIN_SKILLS.has(name)) return false;
   try {
@@ -632,15 +511,14 @@ async function collectAllSkillDirs(): Promise<Array<{ path: string; source: Skil
   const result: Array<{ path: string; source: SkillSourceLabel; mtimeMs: number }> = [];
   for (const root of roots) {
     try {
-      const entries = await readdir(root.path, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const path = resolve(root.path, entry.name);
-        await access(join(path, "SKILL.md"));
-        const source = sourceLabel(path);
-        if (source === "builtin" && ARCHIVED_BUILTIN_SKILLS.has(entry.name)) continue;
-        const info = await stat(join(path, "SKILL.md")).catch(() => null);
-        result.push({ path, source, mtimeMs: info?.mtimeMs ?? 0 });
+      const skills = await listTopLevelSkills(root.path);
+      for (const skill of skills) {
+        if (root.source === "builtin" && ARCHIVED_BUILTIN_SKILLS.has(skill.metadata.name)) continue;
+        result.push({
+          path: skill.path,
+          source: root.source,
+          mtimeMs: skill.mtimeMs,
+        });
       }
     } catch {
       // Missing user install dir is normal.
@@ -664,10 +542,6 @@ function compareSkillItems(a: SkillListItem, b: SkillListItem): number {
 function builtinOrder(name: string): number {
   const index = BUILTIN_SKILL_ORDER.indexOf(name as (typeof BUILTIN_SKILL_ORDER)[number]);
   return index === -1 ? BUILTIN_SKILL_ORDER.length : index;
-}
-
-function sourceLabel(path: string): SkillSourceLabel {
-  return isInside(resolve(SKILLS_INSTALL_DIR), resolve(path)) ? "installed" : "builtin";
 }
 
 function isInside(root: string, child: string): boolean {

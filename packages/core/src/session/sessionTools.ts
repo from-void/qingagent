@@ -20,6 +20,11 @@ import {
 import { createReadDocumentTool, createSearchDocumentsTool } from "../tools/folderDocuments.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
 import {
+  markDiagramVizEditing,
+  normalizeDiagramVizLanguage,
+  type DiagramVizLanguage,
+} from "../skills/diagramViz.js";
+import {
   filterDisabledSkillTools,
   isSkillDisabledToolResult,
 } from "../skills/toolGate.js";
@@ -28,6 +33,7 @@ import { parseFileTool } from "../tools/parseFile.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
 import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
+import { importGeneratedImageTool } from "../tools/importGeneratedImage.js";
 import { readImageTool } from "../tools/readImage.js";
 import { runJsTool } from "../tools/runJs.js";
 import { showQrTool } from "../tools/showQr.js";
@@ -183,7 +189,10 @@ const CAPABILITY_TOOLS = {
   "browser-ops": {},
   // fetchArticle 是 webSearch 的间接联网路径，也受同一个隐私开关约束。
   "web-search": { webSearch: webSearchTool, fetchArticle: fetchArticleTool },
-  "image-gen": { generateSvg: generateSvgTool },
+  "image-gen": {
+    generateSvg: generateSvgTool,
+    importGeneratedImage: importGeneratedImageTool,
+  },
   "image-reading": { readImage: readImageTool },
   "wechat-official-account": {
     wechat_auth_start: wechatAuthStartTool,
@@ -199,12 +208,12 @@ const CAPABILITY_TOOLS = {
     github_search_code: githubSearchCodeTool,
   },
   feishu: { feishu_auth_start: feishuAuthStartTool },
-  "sensitive-review": {
+  review: {
     lexicon_list: lexiconListTool,
     sensitive_scan: sensitiveScanTool,
     lexicon_manage: lexiconManageTool,
+    style_template_get: styleTemplateGetTool,
   },
-  "deai-review": { style_template_get: styleTemplateGetTool },
 } as const;
 
 // CORE 常驻语义：run_js 是系统提示长期承诺的通用精确计算能力，不属于可关闭技能的工具。
@@ -219,7 +228,7 @@ const MATERIAL_TOOL_SEARCH_TOOLS = {
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "web-search": ["webSearch"],
-  "image-gen": ["generateSvg"],
+  "image-gen": ["generateSvg", "importGeneratedImage"],
   "image-reading": ["readImage"],
   "materials": ["parseFile"],
   "doc-calc": ["run_js"],
@@ -231,9 +240,7 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   ],
   "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
   feishu: ["feishu_auth_start"],
-  "sensitive-review": ["lexicon_list", "sensitive_scan", "lexicon_manage"],
-  "deai-review": ["style_template_get"],
-  "consistency-review": ["run_python"],
+  review: ["lexicon_list", "sensitive_scan", "lexicon_manage", "style_template_get", "run_python"],
   "gzh-style": ["fetchArticle", "style_template_list", "style_template_get", "style_template_save", "style_template_delete"],
 };
 
@@ -374,6 +381,11 @@ export function missingGenericToolResultFields(
       requireString("state");
       requireString("mpName");
       requireString("message");
+      if (result.state === "READY") {
+        if (result.questionnaire !== null) missing.push("questionnaire");
+      } else {
+        requireRecord("questionnaire");
+      }
       break;
     case "wechat_search_mp":
       requireBoolean("ok");
@@ -421,6 +433,12 @@ export function missingGenericToolResultFields(
       requireBoolean("ok");
       requireString("text");
       requireNullableString("error");
+      break;
+    case "importGeneratedImage":
+      requireString("imageId");
+      requireString("src");
+      if (result.width !== undefined) requireNumber("width");
+      if (result.height !== undefined) requireNumber("height");
       break;
     default:
       break;
@@ -841,7 +859,7 @@ export function createSessionScopedTools(
       docVersion: z.number().optional(),
       error: z.string().optional(),
     }),
-    execute: async (input) => {
+    execute: async (input, context) => {
       if (!state) return { ok: false, error: "readDraft is unavailable outside a session" };
       const doc = state.docDraftCandidateDoc ?? currentPmDoc(state);
       // 与本次读取到的文档快照绑定；若读取期间用户又提交了新版本，保留旧版本号，
@@ -936,6 +954,14 @@ export function createSessionScopedTools(
         return out;
       });
 
+      const diagramLanguages = selected.flatMap((entry): DiagramVizLanguage[] => {
+        if (entry.node.type !== "diagram") return [];
+        const language = normalizeDiagramVizLanguage(entry.node.attrs.lang);
+        return language ? [language] : [];
+      });
+      if (diagramLanguages.length > 0) {
+        markDiagramVizEditing(context?.requestContext, diagramLanguages);
+      }
       state.modelKnownDocVersion = docVersion;
       return {
         ok: true,

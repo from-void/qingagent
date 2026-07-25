@@ -2,24 +2,52 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Node } from "@tiptap/core";
 import type { NodeViewProps } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { detectType, type DiagramType } from "@qingagent/diagram-engine";
+import {
+  DEFAULT_DRAWIO_SOURCE,
+  isPoisonedMermaidSvg,
+  normalizeDrawioSource,
+  type PmDiagramLang,
+} from "@qingagent/pm-schema";
+import { useToast } from "../../../system";
 import { renderMermaid } from "./mermaidRender";
+import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
+import { openDrawioEditor } from "./drawioEditorLauncher";
 import { DiagramSvgView } from "./MermaidPreview";
-import { DiagramRenderer } from "./diagram/DiagramRenderer";
+import {
+  DiagramRenderer,
+  type DiagramVisualChange,
+} from "./diagram/DiagramRenderer";
 import "./DiagramView.css";
 
 // 图表块(diagram)的 Tiptap 节点 + 节点视图:
-// - 承载 { lang:"mermaid", source, svg };mermaid 在客户端渲染成 svg 并回写 node.attrs.svg(供导出)。
+// - 承载 { lang:"mermaid"|"drawio", source, svg };客户端离线渲染并回写安全 svg(供导出)。
 // - 用户可双击进入源码编辑(textarea + 实时预览),"完成"后持久化 source+svg。
 // - 渲染失败显示错误 + 源码,绝不让坏图表把编辑器搞崩。
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
-function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected, getPos }: NodeViewProps) {
+const DIAGRAM_ERROR_SUMMARY_MAX_CHARS = 180;
+export const DIAGRAM_VISUAL_WRITE_META = "qingagent:diagram-visual-write";
+
+function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
+  const title = lang === "drawio" ? "draw.io 图表无法解析" : "Mermaid 语法错误";
+  const oneLine = error.replace(/\s+/g, " ").trim();
+  const summary = oneLine.length > DIAGRAM_ERROR_SUMMARY_MAX_CHARS
+    ? `${oneLine.slice(0, DIAGRAM_ERROR_SUMMARY_MAX_CHARS - 1)}…`
+    : oneLine;
+  return `${title}${summary ? `：${summary}` : ""}。双击进入编辑器修正`;
+}
+
+function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeViewProps) {
+  const toast = useToast();
   const attrSource = (node.attrs.source as string) ?? "";
-  const lang = (node.attrs.lang as string) ?? "mermaid";
+  const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
+  const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, attrSource);
+  const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
   const overlay = (node.attrs.overlay as Parameters<typeof DiagramRenderer>[0]["overlay"]) ?? null;
   const align: "left" | "center" | "right" =
     node.attrs.align === "left" || node.attrs.align === "right" ? node.attrs.align : "center";
@@ -27,22 +55,71 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source);
   const [visualEditSignal, setVisualEditSignal] = useState(0);
-  const [svg, setSvg] = useState<string | null>(cachedSvg);
+  const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
+  const [svg, setSvg] = useState<string | null>(usableCachedSvg);
   const [error, setError] = useState<string | null>(null);
+  const [editable, setEditable] = useState(editor?.isEditable ?? false);
+  const editableRef = useRef(editable);
   const mountedRef = useRef(true);
   const renderTokenRef = useRef(0);
+  const renderedSourceRef = useRef<string | null>(usableCachedSvg ? attrSource.trim() : null);
   const editingRef = useRef(false);
-  const editable = editor?.isEditable ?? false;
   const viewRef = useRef<HTMLDivElement>(null);
-  // 本次点击手势是否"刚把块选中"(块此前未选中):用于拦"快速点选未选中图表 → 误触双击直接进编辑"。
-  // 冷双击只选中、不进编辑;块已选中时再双击才进编辑。纯状态判据、无定时器,确定可测。
-  const justSelectedRef = useRef(false);
+  // 双击手势第一次按下前,本块是否已经是 NodeSelection。diagram 可拖拽,ProseMirror 会在
+  // mousedown 阶段先完成选中;若等 click 再看当前选区,会丢失"冷双击前未选中"这个事实。
+  const selectedBeforeMouseDownRef = useRef(false);
   const diagramType = lang === "mermaid" ? detectType(source) : null;
-  const supportsVisualEdit = editable && isVisualDiagramType(diagramType);
+  const supportsVisualEdit = editable && (lang === "drawio" || isVisualDiagramType(diagramType));
+  const emptyDrawio = lang === "drawio" && isEmptyDrawioSource(source);
+  const emptyDiagram = !source.trim() || emptyDrawio;
   const storedHeight =
     typeof node.attrs.height === "number" && node.attrs.height > 0 ? Math.round(node.attrs.height) : null;
   const storedWidth =
     typeof node.attrs.width === "number" && node.attrs.width > 0 ? Math.round(node.attrs.width) : null;
+
+  // ReactNodeViewRenderer 注入的 updateAttributes 会用 NodeView 上一拍的 node.attrs
+  // 合并。source→overlay 同步连写时，第二笔会把第一笔 source 原样覆盖；画布仍读
+  // liveSource，所以会形成“视觉已变、文档/服务端没变”。这里每次从编辑器当前文档
+  // 读取 attrs 再提交，且视觉语义操作打 meta 让保存层立即串行落库。
+  const updateDiagramAttributes = useCallback(
+    (
+      attributes: Record<string, unknown>,
+      options?: {
+        visualWrite?: boolean;
+        expectedSource?: string;
+        addToHistory?: boolean;
+      },
+    ) => {
+      if (!editor || editor.isDestroyed || typeof getPos !== "function") return;
+      const pos = getPos();
+      if (typeof pos !== "number") return;
+      const currentNode = editor.state.doc.nodeAt(pos);
+      if (!currentNode || currentNode.type.name !== "diagram") return;
+      if (
+        options?.expectedSource !== undefined &&
+        currentNode.attrs.source !== options.expectedSource
+      ) {
+        return;
+      }
+      const changed = Object.entries(attributes).some(
+        ([key, value]) => currentNode.attrs[key] !== value,
+      );
+      if (!changed) return;
+      const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...currentNode.attrs,
+        ...attributes,
+      });
+      if (options?.visualWrite) {
+        closeHistory(tr);
+        tr.setMeta(DIAGRAM_VISUAL_WRITE_META, true);
+      }
+      if (options?.addToHistory === false) {
+        tr.setMeta("addToHistory", false);
+      }
+      editor.view.dispatch(tr);
+    },
+    [editor, getPos],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -50,6 +127,23 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!editor) return;
+    const syncEditable = () => {
+      const next = editor.isEditable;
+      if (editableRef.current === next) return;
+      editableRef.current = next;
+      setEditable(next);
+    };
+    syncEditable();
+    // TipTap setEditable() 会发 update 而不是 transaction；NodeView 本身不会因这次
+    // options 变化重渲染，所以显式订阅，才能在生成/审阅只读态结束后补写 SVG 缓存。
+    editor.on("update", syncEditable);
+    return () => {
+      editor.off("update", syncEditable);
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editing) setSource(attrSource);
@@ -74,7 +168,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       if (!Number.isFinite(h) || h <= 0 || h === storedHeight) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        if (mountedRef.current) updateAttributes({ height: h });
+        if (mountedRef.current) {
+          updateDiagramAttributes({ height: h }, { visualWrite: true });
+        }
       }, 300);
     });
     ro.observe(el);
@@ -82,7 +178,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       if (timer) clearTimeout(timer);
       ro.disconnect();
     };
-  }, [editable, editing, storedHeight, updateAttributes]);
+  }, [editable, editing, storedHeight, updateDiagramAttributes]);
 
   // 渲染当前要展示的源码(view 态用 node.source,edit 态用 draft);成功则缓存,并在与持久 svg 不同时回写。
   const renderInto = useCallback(
@@ -92,42 +188,62 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       // 避免把过期 svg setState / 写回 node.attrs(否则新 source 下会缓存旧图)。
       const token = ++renderTokenRef.current;
       if (!trimmed) {
+        renderedSourceRef.current = null;
         setSvg(null);
         setError(null);
         return;
       }
-      // 目前只支持 mermaid;其它 lang 不渲染,走错误回退(下方会连源码一起展示)。
-      if (lang !== "mermaid") {
-        setError(`暂不支持这种图表：${lang}`);
+      if (lang === "drawio" && isEmptyDrawioSource(trimmed)) {
+        renderedSourceRef.current = null;
+        setSvg(null);
+        setError(null);
         return;
       }
       try {
-        const out = await renderMermaid(trimmed);
+        const out = await (lang === "drawio" ? renderDrawio(trimmed) : renderMermaid(trimmed));
         if (!mountedRef.current || token !== renderTokenRef.current) return;
+        renderedSourceRef.current = trimmed;
         setSvg(out);
         setError(null);
         // 持久化 svg 到 node(导出 PDF/Word 用);仅在内容真变化且可编辑时写,避免循环。
         if (persist && editable && !editingRef.current && out !== node.attrs.svg) {
-          updateAttributes({ svg: out });
+          updateDiagramAttributes(
+            { svg: out },
+            { expectedSource: text, addToHistory: false },
+          );
         }
       } catch (e) {
         if (!mountedRef.current || token !== renderTokenRef.current) return;
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [editable, lang, node.attrs.svg, updateAttributes],
+    [editable, lang, node.attrs.svg, updateDiagramAttributes],
   );
 
   // view 态:source 变了(或首次且无缓存 svg)就渲染并回写缓存。
+  // 生成/审阅期间 editor 常为只读：那时可以显示 SVG，但不能持久化。切回可编辑态后
+  // 必须再跑一次并补写 attrs.svg，否则服务端 HTML/PDF/Word 导出只能拿到 null 并回退源码。
   useEffect(() => {
     if (editing) return;
-    if (cachedSvg && source === draft) {
-      setSvg(cachedSvg);
+    if (usableCachedSvg && source === draft) {
+      renderedSourceRef.current = source.trim();
+      setSvg(usableCachedSvg);
+      return;
+    }
+    // 只读态已经为同一份源码渲染成功时直接复用内存中的安全 SVG；切回可编辑的
+    // 当拍就写 attrs，避免为了持久化再跑一遍 maxGraph，也消除用户立即导出时的竞态。
+    if (!cachedSvgIsPoisoned && editable && svg && renderedSourceRef.current === source.trim()) {
+      if (svg !== node.attrs.svg) {
+        updateDiagramAttributes(
+          { svg },
+          { expectedSource: source, addToHistory: false },
+        );
+      }
       return;
     }
     void renderInto(source, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, editing]);
+  }, [source, editing, editable]);
 
   // edit 态:draft 变化防抖实时预览(不持久化,完成时才写)。
   useEffect(() => {
@@ -144,6 +260,34 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
 
   const openVisualEdit = () => {
     if (!editable) return;
+    if (lang === "drawio") {
+      if (drawioEditorOpening) return;
+      setDrawioEditorOpening(true);
+      setError(null);
+      void openDrawioEditor(source, "drawio 图编辑", (result) => {
+        if (!result || !mountedRef.current) return;
+        // 「保存」不会关闭 draw.io；每轮原生 SVG 完成加固后立即回写 attrs，并让它
+        // 成为本次 source 的首选缓存，避免 view effect 用 maxGraph 结果覆盖高保真导出。
+        renderTokenRef.current += 1;
+        setSource(result.source);
+        setDraft(result.source);
+        setSvg(result.svg);
+        updateDiagramAttributes(
+          { source: result.source, svg: result.svg },
+          { visualWrite: true },
+        );
+        if (result.warning) {
+          toast.show({ message: result.warning, tone: "warn" });
+        }
+      })
+        .catch((openError) => {
+          if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));
+        })
+        .finally(() => {
+          if (mountedRef.current) setDrawioEditorOpening(false);
+        });
+      return;
+    }
     if (!supportsVisualEdit) {
       startEdit();
       return;
@@ -152,16 +296,27 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   };
 
   const commit = () => {
-    setEditing(false);
     // 空源码不能留:PM 校验要求 diagram.source 非空,留空会让随后的 normalizePmDoc 抛错、
     // 阻断保存流。源码被清空 = 用户想删掉这个图表,直接删节点。
     if (!draft.trim()) {
+      setEditing(false);
       deleteNode?.();
       return;
     }
-    if (draft !== source) {
-      setSource(draft);
-      updateAttributes({ source: draft, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
+    let nextSource = draft;
+    if (lang === "drawio") {
+      try {
+        nextSource = normalizeDrawioSource(draft);
+      } catch (commitError) {
+        setError(commitError instanceof Error ? commitError.message : String(commitError));
+        return;
+      }
+    }
+    setEditing(false);
+    if (nextSource !== source) {
+      setDraft(nextSource);
+      setSource(nextSource);
+      updateDiagramAttributes({ source: nextSource, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
     }
   };
 
@@ -213,7 +368,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     const maxW = el.parentElement?.clientWidth ?? drag.maxW;
     const nextWidth = w > 0 && w < maxW - 8 ? w : null;
     if (nextWidth !== storedWidth) patch.width = nextWidth ?? (null as unknown as number);
-    if (Object.keys(patch).length > 0) updateAttributes(patch);
+    if (Object.keys(patch).length > 0) {
+      updateDiagramAttributes(patch, { visualWrite: true });
+    }
   };
 
   const selectDiagramBlock = (event: ReactMouseEvent<HTMLElement>) => {
@@ -224,10 +381,17 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     if (typeof pos !== "number") return;
     const nextSelection = NodeSelection.create(editor.state.doc, pos);
     if (!nextSelection.eq(editor.state.selection)) {
-      // 选区真的变了 = 块此前未被选中 → 标记"本次手势是来选中的",紧随其后的 dblclick 不进编辑。
-      justSelectedRef.current = true;
       editor.view.dispatch(editor.state.tr.setSelection(nextSelection));
     }
+  };
+
+  const captureSelectionBeforeMouseDown = (event: ReactMouseEvent<HTMLElement>) => {
+    // 原生双击的第二次 mousedown detail=2;只在第一次按下时取样,避免被 PM 已更新的选区覆盖。
+    if (event.detail !== 1) return;
+    const pos = typeof getPos === "function" ? getPos() : null;
+    const selection = editor.state.selection;
+    selectedBeforeMouseDownRef.current =
+      typeof pos === "number" && selection instanceof NodeSelection && selection.from === pos;
   };
 
   return (
@@ -236,6 +400,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       data-pm-node="diagram"
       data-lang={node.attrs.lang ?? "mermaid"}
       data-align={align}
+      onMouseDownCapture={captureSelectionBeforeMouseDown}
       onClickCapture={selectDiagramBlock}
     >
       {editing ? (
@@ -246,7 +411,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
             ) : svg ? (
               <DiagramSvgView svg={svg} />
             ) : (
-              <div className="pm-diagram-empty">输入 Mermaid 源码以预览…</div>
+              <div className="pm-diagram-empty">
+                {lang === "drawio" ? "输入 mxGraph XML 以预览…" : "输入 Mermaid 源码以预览…"}
+              </div>
             )}
           </div>
           <textarea
@@ -266,7 +433,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 commit();
               }
             }}
-            placeholder="flowchart TD&#10;  A[开始] --> B[结束]"
+            placeholder={lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE}
           />
           <div className="pm-diagram-actions">
             <button type="button" className="pm-diagram-btn" onMouseDown={(e) => { e.preventDefault(); commit(); }}>
@@ -299,12 +466,8 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
             ) {
               return;
             }
-            // 若本次手势刚把块选中(冷双击未选中的图表),只选中、不进编辑 —— 清掉标记后返回。
-            // 块此前已选中时 justSelectedRef 为 false,双击照常进编辑。
-            if (justSelectedRef.current) {
-              justSelectedRef.current = false;
-              return;
-            }
+            // 冷双击开始前块未选中时,本次手势只负责选中;已选中的块才允许双击进编辑。
+            if (!emptyDiagram && !selectedBeforeMouseDownRef.current) return;
             event.preventDefault();
             if (supportsVisualEdit) {
               openVisualEdit();
@@ -325,10 +488,11 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 <button
                   type="button"
                   className="pm-diagram-view-btn"
+                  disabled={drawioEditorOpening}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openVisualEdit}
                 >
-                  可视化编辑
+                  {drawioEditorOpening ? "正在打开…" : "可视化编辑"}
                 </button>
               )}
               <button
@@ -337,12 +501,14 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={startEdit}
               >
-                编辑 Mermaid
+                {lang === "drawio" ? "编辑 drawio XML" : "编辑 Mermaid"}
               </button>
             </div>
           )}
-          {error ? (
-            <pre className="pm-diagram-error">图表生成失败，请检查内容后重试{"\n\n"}{source}</pre>
+          {emptyDrawio ? (
+            <div className="pm-diagram-empty">空图表（还没有内容，双击编辑）</div>
+          ) : error ? (
+            <pre className="pm-diagram-error">{diagramErrorMessage(lang, error)}{"\n\n"}{source}</pre>
           ) : (
             <DiagramRenderer
               source={source}
@@ -351,17 +517,33 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
               overlay={overlay}
               readOnly={!editable}
               align={align}
-              onAlignChange={editable ? (next) => updateAttributes({ align: next }) : undefined}
+              // 正文视图只要 editor.isEditable 就是设计上的可编辑态；历史/审阅等真正
+              // 只读上下文会传 readOnly=true，GraphDiagramView 隐藏编辑按钮与把手。
+              onAlignChange={editable
+                ? (next) => updateDiagramAttributes(
+                    { align: next },
+                    { visualWrite: true },
+                  )
+                : undefined}
               openVisualSignal={visualEditSignal}
-              onOverlayChange={(nextOverlay) => {
+              onVisualChange={(change: DiagramVisualChange) => {
                 if (!editable) return;
-                updateAttributes({ overlay: nextOverlay });
+                const patch: Record<string, unknown> = {};
+                if (typeof change.source === "string") {
+                  if (!change.source.trim()) return;
+                  setSource(change.source);
+                  patch.source = change.source;
+                  patch.svg = null;
+                }
+                if (Object.prototype.hasOwnProperty.call(change, "overlay")) {
+                  patch.overlay = change.overlay ?? null;
+                }
+                if (Object.keys(patch).length > 0) {
+                  updateDiagramAttributes(patch, { visualWrite: true });
+                }
               }}
-              onSourceChange={(nextSource) => {
-                if (!editable || !nextSource.trim()) return;
-                setSource(nextSource);
-                updateAttributes({ source: nextSource, svg: null });
-              }}
+              onUndo={() => editor.commands.undo()}
+              onRedo={() => editor.commands.redo()}
             />
           )}
           {editable && (
@@ -386,12 +568,12 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     diagram: {
       /** 在当前位置插入一个图表块(默认 mermaid 流程图模板)。 */
-      insertDiagram: (attrs?: { lang?: string; source?: string }) => ReturnType;
+      insertDiagram: (attrs?: { lang?: PmDiagramLang; source?: string; svg?: string | null }) => ReturnType;
     };
   }
 }
 
-const DEFAULT_DIAGRAM_SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
+export const DEFAULT_MERMAID_SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
 
 export const DiagramCM = Node.create({
   name: "diagram",
@@ -488,10 +670,14 @@ export const DiagramCM = Node.create({
       insertDiagram:
         (attrs) =>
         ({ commands }) =>
-          commands.insertContent({
-            type: "diagram",
-            attrs: { lang: attrs?.lang ?? "mermaid", source: attrs?.source ?? DEFAULT_DIAGRAM_SOURCE, svg: null },
-          }),
+          {
+            const lang = attrs?.lang ?? "mermaid";
+            const source = attrs?.source ?? (lang === "drawio" ? DEFAULT_DRAWIO_SOURCE : DEFAULT_MERMAID_SOURCE);
+            return commands.insertContent({
+              type: "diagram",
+              attrs: { lang, source, svg: attrs?.svg ?? null },
+            });
+          },
     };
   },
 

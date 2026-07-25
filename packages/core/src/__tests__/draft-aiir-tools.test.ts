@@ -17,6 +17,14 @@ import {
 } from "../bridge/index.js";
 import { buildDraftDiff } from "../doc-engine/proposalDiff.js";
 import { qingagentAgent } from "../agents/qingagent.js";
+import { RequestContext } from "@mastra/core/request-context";
+import {
+  getDiagramVizEditingLanguages,
+} from "../skills/diagramViz.js";
+import {
+  diagramVizEditingSourceFromRequestContext,
+  wrapModelWithDiagramVizEditing,
+} from "../llm/diagramVizEditingPrompt.js";
 
 const ctx = {} as any;
 
@@ -242,6 +250,91 @@ describe("QingML draft tools", () => {
       attrs: expect.objectContaining({ blockId: "block-code", language: "ts" }),
       content: [{ type: "text", text: "const nextValue = 2;" }],
     });
+  });
+
+  it("drawio source 可被 readDraft 全文读取、editDraft 反复修改并进入审查 diff", async () => {
+    const oldSource = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="api" value="旧 API" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell></root></mxGraphModel>';
+    const nextSource = oldSource.replace("旧 API", "新 API");
+    const state = createSession("s-drawio-read-edit");
+    bindDoc(state, doc([{
+      type: "diagram",
+      attrs: { blockId: "drawio-1", lang: "drawio", source: oldSource, svg: null },
+    }]));
+    const { editDraft, readDraftAiIr } = createSessionScopedTools(state);
+
+    const read = await readDraftAiIr.execute!({ mode: "full", includeText: true }, ctx) as any;
+    expect(read.blocks[0]).toMatchObject({ ref: "drawio-1", type: "diagram" });
+    expect(read.blocks[0].qingml).toContain("<drawio>&lt;mxGraphModel>");
+    expect(read.blocks[0].qingml).toContain("旧 API");
+    expect(read.blocks[0].text).toContain(oldSource);
+
+    const edited = await editDraft.execute!({
+      ops: [{
+        action: "replaceBlock",
+        ref: "drawio-1",
+        block: qingmlBlock({ type: "diagram", lang: "drawio", source: nextSource }),
+      }],
+    }, ctx) as any;
+    expect(edited.ok).toBe(true);
+    const candidate = state.docDraftCandidateDoc!;
+    expect(candidate.content[0]).toMatchObject({
+      type: "diagram",
+      attrs: { blockId: "drawio-1", lang: "drawio", source: nextSource, svg: null },
+    });
+
+    const serializedDiff = JSON.stringify(buildDraftDiff(state.doc!, candidate));
+    expect(serializedDiff).toContain("旧 API");
+    expect(serializedDiff).toContain("新 API");
+    expect(serializedDiff).not.toContain("<svg");
+  });
+
+  it("readDraft 实际读到 diagram 后标记语言，下一次 provider 调用在尾部注入对应编辑规范", async () => {
+    const state = createSession("s-diagram-read-processor");
+    bindDoc(state, doc([{
+      type: "diagram",
+      attrs: {
+        blockId: "mermaid-1",
+        lang: "mermaid",
+        source: "flowchart TD\n  A[开始] --> B[结束]",
+        svg: null,
+      },
+    }]));
+    const requestContext = new RequestContext();
+    const { readDraftAiIr } = createSessionScopedTools(state);
+    const seenPrompts: unknown[][] = [];
+    const wrapped = wrapModelWithDiagramVizEditing(
+      {
+        async doGenerate(options: { prompt?: unknown }) {
+          seenPrompts.push(options.prompt as unknown[]);
+          return { content: [], finishReason: "stop", usage: {}, warnings: [] };
+        },
+        async doStream() {
+          return { stream: new ReadableStream() };
+        },
+      },
+      diagramVizEditingSourceFromRequestContext(requestContext),
+    );
+    const originalPrompt = [{ role: "user", content: "先读取图表" }];
+
+    await wrapped.doGenerate({ prompt: originalPrompt });
+    expect(seenPrompts[0]).toBe(originalPrompt);
+
+    const read = await readDraftAiIr.execute!(
+      { mode: "full" },
+      { requestContext } as never,
+    ) as any;
+    expect(read.ok).toBe(true);
+    expect(getDiagramVizEditingLanguages(requestContext)).toEqual(["mermaid"]);
+
+    await wrapped.doGenerate({ prompt: originalPrompt });
+
+    const providerPrompt = seenPrompts[1] as Array<{ role?: string; content?: unknown }>;
+    expect(providerPrompt).toHaveLength(2);
+    expect(providerPrompt.at(-1)?.role).toBe("user");
+    const instruction = JSON.stringify(providerPrompt.at(-1)?.content);
+    expect(instruction).toContain("readDraft 读取图表后的下一步编辑");
+    expect(instruction).toContain("Mermaid 语法只认半角");
+    expect(instruction).not.toContain("未压缩明文 mxGraph XML");
   });
 
   it("editDraft insertBlock 接受一段含多个块的 QingML", async () => {

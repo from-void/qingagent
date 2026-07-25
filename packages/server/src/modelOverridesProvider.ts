@@ -1,11 +1,14 @@
 import {
   SETTING_DEEPSEEK_GLOBAL_KEY,
+  SETTING_KIMI_GLOBAL_KEY,
+  SETTING_MODEL_PROVIDER,
   SETTING_MODEL_PARAMS,
   getAppSetting,
   sanitizeBaseUrl,
   sanitizeModelId,
   validateModelFetchUrl,
   type ModelOverrides,
+  type ModelProvider,
   type DeepseekTier,
   type ModelProtocol,
   type ModelParamOverrides,
@@ -15,7 +18,8 @@ const CACHE_TTL_MS = 30_000;
 
 interface CachedSettings {
   expiresAt: number;
-  globalApiKey?: string;
+  provider?: ModelProvider;
+  globalApiKeys?: Partial<Record<ModelProvider, string>>;
   params?: ModelParamOverrides;
 }
 
@@ -44,6 +48,11 @@ function sanitizeHeaderValue(raw: string | undefined | null, maxLen: number): st
 function sanitizeModelTier(raw: string | undefined | null): DeepseekTier | undefined {
   const value = raw?.trim().toLowerCase();
   return value === "flash" || value === "pro" ? value : undefined;
+}
+
+function sanitizeModelProvider(raw: string | undefined | null): ModelProvider | undefined {
+  const value = raw?.trim().toLowerCase();
+  return value === "deepseek" || value === "kimi" ? value : undefined;
 }
 
 async function validateVisitorBaseUrl(raw: string | undefined): Promise<string | undefined> {
@@ -89,13 +98,21 @@ async function readCachedSettings(): Promise<CachedSettings> {
   if (cachedSettings && cachedSettings.expiresAt > now) return cachedSettings;
 
   try {
-    const [globalApiKeyRaw, paramsRaw] = await Promise.all([
+    const [deepseekKeyRaw, kimiKeyRaw, providerRaw, paramsRaw] = await Promise.all([
       getAppSetting(SETTING_DEEPSEEK_GLOBAL_KEY),
+      getAppSetting(SETTING_KIMI_GLOBAL_KEY),
+      getAppSetting(SETTING_MODEL_PROVIDER),
       getAppSetting(SETTING_MODEL_PARAMS),
     ]);
+    const deepseekKey = sanitizeApiKey(deepseekKeyRaw);
+    const kimiKey = sanitizeApiKey(kimiKeyRaw);
     cachedSettings = {
       expiresAt: now + CACHE_TTL_MS,
-      globalApiKey: sanitizeApiKey(globalApiKeyRaw),
+      provider: sanitizeModelProvider(providerRaw),
+      globalApiKeys: {
+        ...(deepseekKey ? { deepseek: deepseekKey } : {}),
+        ...(kimiKey ? { kimi: kimiKey } : {}),
+      },
       params: parseStoredParams(paramsRaw),
     };
     return cachedSettings;
@@ -106,6 +123,7 @@ async function readCachedSettings(): Promise<CachedSettings> {
 }
 
 export interface RequestModelHeaders {
+  provider?: string | null;
   visitorKey?: string | null;
   baseUrl?: string | null;
   modelFlash?: string | null;
@@ -121,6 +139,12 @@ export interface RequestModelHeaders {
 export async function resolveRequestModelOverrides(
   headers: RequestModelHeaders,
 ): Promise<ModelOverrides> {
+  const settings = await readCachedSettings();
+  const provider =
+    sanitizeModelProvider(headers.provider) ??
+    settings.provider ??
+    sanitizeModelProvider(process.env.QINGAGENT_MODEL_PROVIDER) ??
+    "deepseek";
   const visitorApiKey = sanitizeApiKey(headers.visitorKey);
   // 安全（代码评审 P1）:自定义 baseURL / 协议 / 模型名只在"访客自带 key"时生效。
   // 否则无 key 的请求会借用站点 global/env key 的 Authorization 打到任意 endpoint,造成凭据泄露。
@@ -131,8 +155,10 @@ export async function resolveRequestModelOverrides(
   const modelPro = visitorApiKey ? sanitizeHeaderValue(headers.modelPro, 120) : undefined;
   const tier = sanitizeModelTier(headers.modelTier);
   // protocol override 必须和合法自定义 baseUrl 成对出现;否则回到默认 OpenAI 兼容协议/地址。
-  const protocol = baseUrl && headers.protocol === "anthropic" ? "anthropic" : undefined;
-  const settings = await readCachedSettings();
+  const protocol =
+    provider === "deepseek" && baseUrl && headers.protocol === "anthropic"
+      ? "anthropic"
+      : undefined;
   const modelIds =
     modelFlash || modelPro
       ? { ...(modelFlash ? { flash: modelFlash } : {}), ...(modelPro ? { pro: modelPro } : {}) }
@@ -157,8 +183,11 @@ export async function resolveRequestModelOverrides(
       }
     : undefined;
   return {
+    provider,
     ...(visitorApiKey ? { visitorApiKey } : {}),
-    ...(settings.globalApiKey ? { globalApiKey: settings.globalApiKey } : {}),
+    ...(settings.globalApiKeys?.[provider]
+      ? { globalApiKey: settings.globalApiKeys[provider] }
+      : {}),
     ...(settings.params ? { params: settings.params } : {}),
     ...(baseUrl ? { baseUrl } : {}),
     ...(modelIds ? { modelIds } : {}),

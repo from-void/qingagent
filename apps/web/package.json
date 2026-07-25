@@ -11,10 +11,12 @@
     "test": "vitest run && vitest run --config vitest.dom.config.ts",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:dom": "vitest run --config vitest.dom.config.ts",
+    "check:drawio-vendor": "node scripts/check-drawio-vendor.mjs",
     "visual": "playwright test",
     "visual:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "@maxgraph/core": "^0.23.0",
     "@qingagent/contract-ts": "workspace:*",
     "@qingagent/diagram-engine": "workspace:*",
     "@qingagent/pm-schema": "workspace:*",

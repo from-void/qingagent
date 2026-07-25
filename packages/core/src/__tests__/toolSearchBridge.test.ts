@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MASTRA_THREAD_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import type { BridgeFrame } from "@qingagent/contract-ts";
+import {
+  getActivatedSkillRegistrations,
+} from "../skills/writeInject.js";
 
 const h = vi.hoisted(() => ({
   disabledSkills: new Set<string>(),
@@ -43,6 +46,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(bridge.searchableTools).sort()).toEqual(expect.arrayContaining([
       "fetchArticle",
       "generateSvg",
+      "importGeneratedImage",
       "parseFile",
       "readImage",
       "run_js",
@@ -50,7 +54,11 @@ describe("ToolSearch bridge", () => {
     ]));
     expect(Object.keys(bridge.searchableTools)).not.toContain("show_qr");
     expect(Object.keys(bridge.searchableTools)).not.toContain("updateTodos");
-    expect(bridge.preloadToolNames.sort()).toEqual(["generateSvg", "parseFile"]);
+    expect(bridge.preloadToolNames.sort()).toEqual([
+      "generateSvg",
+      "importGeneratedImage",
+      "parseFile",
+    ]);
   });
 
   it("doc-calc 点召预加载 run_js,停用 doc-calc 后 run_js 仍作为通用计算工具可搜索", async () => {
@@ -66,6 +74,39 @@ describe("ToolSearch bridge", () => {
     expect(disabledBridge.preloadToolNames).toEqual([]);
   });
 
+  it("review 汇总审查专用工具，旧技能禁用记录不影响新技能", async () => {
+    const {
+      buildCapabilityToolSearchBridge,
+      buildCapabilityTools,
+    } = await import("../session/sessionTools.js");
+    const oldReviewNames = [
+      "sensitive-review",
+      "source-check",
+      "deai-review",
+      "consistency-review",
+      "privacy-review",
+      "format-review",
+      "role-review",
+      "custom-review",
+    ];
+    for (const oldName of oldReviewNames) h.disabledSkills.add(oldName);
+
+    const tools = await buildCapabilityTools();
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining([
+      "lexicon_list",
+      "sensitive_scan",
+      "lexicon_manage",
+      "style_template_get",
+    ]));
+    const bridge = await buildCapabilityToolSearchBridge(["review"]);
+    expect(bridge.preloadToolNames.sort()).toEqual([
+      "lexicon_list",
+      "lexicon_manage",
+      "sensitive_scan",
+      "style_template_get",
+    ]);
+  });
+
   it("关闭 web-search 后 schema 同时移除 webSearch 与间接联网 fetchArticle", async () => {
     h.disabledSkills.add("web-search");
     const {
@@ -77,6 +118,7 @@ describe("ToolSearch bridge", () => {
     expect(Object.keys(tools)).not.toContain("webSearch");
     expect(Object.keys(tools)).not.toContain("fetchArticle");
     expect(Object.keys(tools)).toContain("generateSvg");
+    expect(Object.keys(tools)).toContain("importGeneratedImage");
     expect(Object.keys(tools)).toContain("run_js");
 
     const bridge = await buildCapabilityToolSearchBridge([
@@ -127,6 +169,59 @@ describe("ToolSearch bridge", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("skill() 按名称登记通用激活状态，diagram-viz 停用时仍 fail-closed", async () => {
+    const { buildQingagentStaticTools, qingagentAgent } = await import("../agents/qingagent.js");
+    const beforeToolCall = qingagentAgent.getConfiguredToolHooks()?.beforeToolCall;
+    const requestContext = new RequestContext([
+      ["userText", "请画一个 Mermaid 流程图"],
+    ]) as unknown as RequestContext;
+    const systemBefore = await qingagentAgent.getInstructions({ requestContext });
+    const toolsBefore = Object.entries(buildQingagentStaticTools()).map(
+      ([name, tool]) => [name, (tool as { description?: string }).description],
+    );
+
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "diagram-viz" },
+      context: { requestContext },
+    })).resolves.toBeUndefined();
+    expect(getActivatedSkillRegistrations(requestContext)).toEqual([{
+      name: "diagram-viz",
+      hints: ["请画一个 Mermaid 流程图"],
+    }]);
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "image-gen" },
+      context: { requestContext },
+    })).resolves.toBeUndefined();
+    expect(
+      getActivatedSkillRegistrations(requestContext).map((entry) => entry.name),
+    ).toEqual(["diagram-viz", "image-gen"]);
+    expect(await qingagentAgent.getInstructions({ requestContext })).toBe(systemBefore);
+    expect(
+      Object.entries(buildQingagentStaticTools()).map(
+        ([name, tool]) => [name, (tool as { description?: string }).description],
+      ),
+    ).toEqual(toolsBefore);
+    expect(systemBefore).not.toContain("Mermaid 语法只认半角");
+
+    h.disabledSkills.add("diagram-viz");
+    const disabledContext = new RequestContext();
+    await expect(beforeToolCall!({
+      toolName: "skill",
+      input: { name: "diagram-viz" },
+      context: { requestContext: disabledContext },
+    })).resolves.toMatchObject({
+      proceed: false,
+      output: {
+        code: "SKILL_DISABLED",
+        skillName: "diagram-viz",
+        toolName: "skill",
+      },
+    });
+    expect(getActivatedSkillRegistrations(disabledContext)).toEqual([]);
+  });
+
   it("ToolSearch 工具签名变化时替换旧 processor,不保留关闭前 schema", async () => {
     const { createSession } = await import("../session/sessionState.js");
     const {
@@ -170,10 +265,10 @@ describe("ToolSearch bridge", () => {
       requestContext,
       messages: [],
       toolNames: bridge.preloadToolNames,
-    })).resolves.toEqual(["generateSvg"]);
+    })).resolves.toEqual(["generateSvg", "importGeneratedImage"]);
 
     const loaded = await processor.getLoadedToolsForRequestContext({ requestContext });
-    expect(Object.keys(loaded)).toEqual(["generateSvg"]);
+    expect(Object.keys(loaded)).toEqual(["generateSvg", "importGeneratedImage"]);
   });
 
   it("ToolSearch preload 在 pro 档使用 pro router model", async () => {

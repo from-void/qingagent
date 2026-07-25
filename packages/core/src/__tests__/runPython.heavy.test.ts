@@ -45,11 +45,15 @@ describe("run_python capability tool", () => {
     expect(getPyodideTools()).toHaveProperty("run_python");
   });
 
-  it("一致性审查 skill 显式允许 readDraft + 两种代码执行工具 + 批注组合", async () => {
-    const skillPath = fileURLToPath(new URL("../../skills/capability/consistency-review/SKILL.md", import.meta.url));
-    const skill = await readFile(skillPath, "utf8");
-    expect(skill).toContain("tools: [readDraft, run_python, run_js, editDraft, create_annotation_groups]");
-    expect(skill).toContain("必须调用代码执行工具(`run_python` 或 `run_js` 均可)真实验算");
+  it("审查母技能声明两种代码执行工具，一致性子技能强制真实验算", async () => {
+    const skillPath = fileURLToPath(new URL("../../skills/capability/review/SKILL.md", import.meta.url));
+    const referencePath = fileURLToPath(new URL("../../skills/capability/review/consistency/SKILL.md", import.meta.url));
+    const [skill, reference] = await Promise.all([
+      readFile(skillPath, "utf8"),
+      readFile(referencePath, "utf8"),
+    ]);
+    expect(skill).toContain("run_python, run_js");
+    expect(reference).toContain("必须调用代码执行工具（`run_python` 或 `run_js` 均可）真实验算");
   });
 
   it("按运行时开关注入工具:显式关闭时模型看不到 run_python", () => {

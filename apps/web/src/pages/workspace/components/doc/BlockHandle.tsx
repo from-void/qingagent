@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
-import { pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
+import { DEFAULT_DRAWIO_SOURCE, pmToClipboardHtml, pmToPlainText, type PmDoc } from "@qingagent/pm-schema";
 import { findDraggableBlock, type MovableBlock } from "../ColumnDnD";
 import { findDraggableListItem, LIST_ITEM_DND_MIME, resolveListItemByBlockId, type DraggableListItem } from "../ListItemDnD";
 import { getBlockCollapseInfo, qingagentCollapseKey, toggleBlockCollapse } from "../BlockCollapse";
+import { openDrawioEditor } from "../drawioEditorLauncher";
 import { insertFileAsset, insertImageAsset } from "../../data/insertUploadedAsset";
 import { uploadFailureMessage } from "../../data/uploadAsset";
 import { pickFile } from "./pickFile";
@@ -582,7 +583,7 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
   );
 
   const insertBlock = useCallback(
-    (type: string, opts?: number) => {
+    async (type: string, opts?: number) => {
       if (!handle || handle.kind !== "block") return;
       if (!editor.isEditable) return;
       if (!getCurrentHandleNode(editor.state.doc, handle)) {
@@ -606,9 +607,27 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               type: "diagram",
               attrs: { lang: "mermaid", source: "flowchart TD\n  A[开始] --> B[结束]", svg: null },
             },
-            "插入图表",
+            "插入 Mermaid 图表",
           );
           return;
+        case "drawio": {
+          try {
+            const result = await openDrawioEditor(DEFAULT_DRAWIO_SOURCE, "新建 drawio 工程图");
+            if (!result || !editor.isEditable) return;
+            insertStructureBlockAfter(
+              h,
+              {
+                type: "diagram",
+                attrs: { lang: "drawio", source: result.source, svg: result.svg },
+              },
+              "插入 drawio 工程图",
+            );
+            if (result.warning) onToast?.(result.warning);
+          } catch {
+            runHandleCommand(false, "插入 drawio 工程图");
+          }
+          return;
+        }
         case "horizontalRule":
           insertStructureBlockAfter(h, { type: "horizontalRule" }, "插入分隔线");
           return;
@@ -982,7 +1001,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
         </button>
         <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
           <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
-          插入图表
+          插入 Mermaid 图表
+        </button>
+        <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("drawio")}>
+          <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
+          插入 drawio 工程图
         </button>
         <button
           type="button"
@@ -1263,7 +1286,11 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               </button>
               <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("diagram")}>
                 <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
-                插入图表
+                插入 Mermaid 图表
+              </button>
+              <button type="button" role="menuitem" className="block-handle-item" onClick={() => insertBlock("drawio")}>
+                <span className="bh-icon"><BlockHandleIcon name="diagram" /></span>
+                插入 drawio 工程图
               </button>
               <button
                 type="button"

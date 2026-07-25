@@ -6,6 +6,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { ARCHIVED_BUILTIN_SKILLS } from "../skills/archived.js";
+import {
+  listChildSkills,
+  listTopLevelSkills,
+  scanSkillHierarchy,
+} from "../skills/discovery.js";
 
 function parseFrontmatter(source: string): Record<string, unknown> {
   const match = source.match(/^---\n([\s\S]*?)\n---/);
@@ -118,9 +123,9 @@ describe("builtin skills", () => {
       expect(skill).toContain(commonRule);
     }
 
-    const referenceRules: Record<string, string[]> = {
+    const childRules: Record<string, string[]> = {
       sensitive: ["`sensitive_scan`", '`reviewAction:"replace"`', '`reviewAction:"annotate"`'],
-      source: ["素材是唯一 ground truth", "`materialQuote`", "`checkedScope`", "素材遗漏"],
+      "source-check": ["素材是唯一 ground truth", "`materialQuote`", "`checkedScope`", "素材遗漏"],
       deai: ["优先 `replaceText`", "痕迹类别：N 处", "保持段落结构、句序与篇幅"],
       consistency: ["`run_python` 或 `run_js`", "`documentQuote`", "称谓与术语"],
       privacy: ["模式类、语义类与间接组合泄露", "138****1234", "同一敏感值多次出现合为一组"],
@@ -128,14 +133,115 @@ describe("builtin skills", () => {
       role: ["角色身份、立场和审查维度", "不擅加模板没有要求的维度", "不调用 AI 或额外检索"],
       custom: ["模板 prompt 是本轮审查逻辑的完整来源", "不额外发明固定维度", "不伪造引句"],
     };
-    for (const [referenceName, rules] of Object.entries(referenceRules)) {
-      expect(skill).toContain(`references/${referenceName}.md`);
-      const reference = await readFile(
-        join(reviewDir!, "references", `${referenceName}.md`),
+    for (const [childName, rules] of Object.entries(childRules)) {
+      expect(skill).toContain(`${childName}/SKILL.md`);
+      const childSkill = await readFile(
+        join(reviewDir!, childName, "SKILL.md"),
         "utf8",
       );
-      expect(reference).toMatch(/^# .+审查|^# 来源核查|^# 去 AI 味/);
-      for (const rule of rules) expect(reference).toContain(rule);
+      const childFrontmatter = parseFrontmatter(childSkill);
+      expect(childFrontmatter).toMatchObject({
+        name: childName,
+        description: expect.any(String),
+        label: expect.any(String),
+        summary: expect.any(String),
+      });
+      expect(childSkill).toMatch(/\n# (?:.+审查|来源核查|去 AI 味)/);
+      for (const rule of rules) expect(childSkill).toContain(rule);
+    }
+  });
+
+  it("review 与 diagram-viz 暴露标准子技能列表，Mastra 顶层列表不平铺子技能", async () => {
+    const capabilityRoot = join(BUILTIN_SKILLS_DIR, "capability");
+    const reviewDir = join(capabilityRoot, "review");
+    const diagramDir = join(capabilityRoot, "diagram-viz");
+    const reviewChildren = await listChildSkills(reviewDir);
+    const diagramChildren = await listChildSkills(diagramDir);
+
+    expect(reviewChildren.map((skill) => skill.metadata.name).sort()).toEqual([
+      "consistency",
+      "custom",
+      "deai",
+      "format",
+      "privacy",
+      "role",
+      "sensitive",
+      "source-check",
+    ]);
+    expect(diagramChildren.map((skill) => skill.metadata.name).sort()).toEqual([
+      "drawio",
+      "mermaid",
+    ]);
+
+    const enabledDirs = await resolveEnabledSkillDirsFromRoots([capabilityRoot], new Set());
+    const workspace = new Workspace({
+      filesystem: new LocalFilesystem({ basePath: BUILTIN_SKILLS_DIR }),
+      skills: enabledDirs,
+    });
+    const listedNames = (await workspace.skills?.list() ?? []).map((skill) => skill.name);
+    expect(listedNames).toContain("review");
+    expect(listedNames).toContain("diagram-viz");
+    for (const childName of [
+      ...reviewChildren.map((skill) => skill.metadata.name),
+      ...diagramChildren.map((skill) => skill.metadata.name),
+    ]) {
+      expect(listedNames).not.toContain(childName);
+    }
+  });
+
+  it("嵌套扫描按最近合法祖先归属，纯资料目录与非法 frontmatter 不成为技能", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qingagent-skill-hierarchy-"));
+    try {
+      const writeSkill = async (
+        relativeDir: string,
+        name: string,
+        description = `测试技能 ${name}`,
+      ): Promise<void> => {
+        const dir = join(root, relativeDir);
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, "SKILL.md"),
+          `---\nname: ${name}\ndescription: ${description}\n---\n# ${name}\n`,
+          "utf8",
+        );
+      };
+      await writeSkill("parent", "parent");
+      await writeSkill("parent/direct", "direct");
+      await writeSkill("parent/direct/grandchild", "grandchild");
+      await writeSkill("parent/references/grouped", "grouped");
+      await writeSkill("peer", "peer");
+      await mkdir(join(root, "parent", "references", "notes"), { recursive: true });
+      await writeFile(
+        join(root, "parent", "references", "notes", "guide.md"),
+        "纯资料，不是技能。",
+        "utf8",
+      );
+      await mkdir(join(root, "parent", "broken"), { recursive: true });
+      await writeFile(
+        join(root, "parent", "broken", "SKILL.md"),
+        "---\nname: INVALID_NAME\ndescription: 非法技能\n---\n",
+        "utf8",
+      );
+
+      const hierarchy = await scanSkillHierarchy(root);
+      const byName = new Map(hierarchy.map((skill) => [skill.metadata.name, skill]));
+      expect((await listTopLevelSkills(root)).map((skill) => skill.metadata.name).sort()).toEqual([
+        "parent",
+        "peer",
+      ]);
+      expect((await listChildSkills(join(root, "parent"))).map((skill) => skill.metadata.name).sort())
+        .toEqual(["direct", "grouped"]);
+      expect(byName.get("direct")?.parentPath).toBe(byName.get("parent")?.path);
+      expect(byName.get("grouped")?.parentPath).toBe(byName.get("parent")?.path);
+      expect(byName.get("grandchild")?.parentPath).toBe(byName.get("direct")?.path);
+      expect(hierarchy.some((skill) => skill.path.endsWith("/references/notes"))).toBe(false);
+      expect(hierarchy.some((skill) => skill.path.endsWith("/broken"))).toBe(false);
+
+      // USER_SKILLS_DIR 与内置技能根共用同一扫描入口：解析给 Workspace 的仍只有母技能。
+      const workspaceDirs = await resolveEnabledSkillDirsFromRoots([root], new Set());
+      expect(workspaceDirs.map((dir) => basename(dir)).sort()).toEqual(["parent", "peer"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

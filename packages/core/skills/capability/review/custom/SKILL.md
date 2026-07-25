@@ -1,3 +1,10 @@
+---
+name: custom
+description: 完整依照用户所选自定义模板的 prompt 执行文档审查。
+label: 自定义审查
+summary: 以自定义模板为本轮审查逻辑的完整来源。
+---
+
 # 自定义审查
 
 ## 什么时候用

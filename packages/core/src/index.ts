@@ -229,8 +229,16 @@ export {
   BUILTIN_SKILLS_DIR,
   SKILLS_INSTALL_DIR,
   USER_SKILLS_DIR,
+  listChildSkills,
+  listTopLevelSkills,
+  parseSkillFrontmatter,
   readDisabledSet,
+  scanSkillHierarchy,
   setEnabled,
+} from "./skills/index.js";
+export type {
+  DiscoveredSkill,
+  ParsedSkillFrontmatter,
 } from "./skills/index.js";
 export {
   askUserTool,

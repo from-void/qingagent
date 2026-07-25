@@ -1,7 +1,5 @@
 import { Agent, type ToolsInput } from "@mastra/core/agent";
 import { Workspace, LocalFilesystem } from "@mastra/core/workspace";
-import { access, readdir } from "node:fs/promises";
-import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { planDraftTool } from "../tools/planDraft.js";
 import { askUserQuestionTool } from "../tools/askUserQuestion.js";
@@ -13,6 +11,7 @@ import { isArchivedBuiltinSkillName } from "../skills/archived.js";
 import { getSessionWorkspace } from "../workspace/sessionWorkspace.js";
 import { getSessionFolderSources } from "../folderSources/runtime.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
+import { listTopLevelSkills } from "../skills/discovery.js";
 import { beforeSkillToolCall } from "../skills/toolGate.js";
 import {
   wrapToolCallRepairingModel,
@@ -142,35 +141,6 @@ function maybeTrackNonBridgeModel<T extends object>(model: T, requestContext?: R
 
 const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
 
-async function hasSkillFile(dir: string): Promise<boolean> {
-  try {
-    await access(join(dir, "SKILL.md"));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function collectSkillDirs(root: string): Promise<string[]> {
-  let entries: Dirent<string>[];
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-  const dirs: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const dir = join(root, entry.name);
-    if (isArchivedBuiltinSkillName(entry.name)) continue;
-    if (await hasSkillFile(dir)) dirs.push(dir);
-  }
-  return dirs;
-}
-
 /**
  * 把技能目录路径规范成正斜杠。@mastra/core 的 Workspace 加载技能时,用 lastIndexOf("/")/
  * split("/") 这类 POSIX 字符串操作取目录名做「技能名==目录名」校验(私有 #getParentPath);
@@ -202,7 +172,7 @@ export async function resolveEnabledSkillDirsFromRoots(
   const groups = await Promise.all(
     roots.map(async (root) => {
       try {
-        return await collectSkillDirs(root);
+        return await listTopLevelSkills(root);
       } catch {
         // A broken user install directory or mount must not make all built-in
         // skills disappear from the Workspace.
@@ -212,8 +182,9 @@ export async function resolveEnabledSkillDirsFromRoots(
   );
   return groups
     .flat()
-    .filter((dir) => !disabled.has(dir.split(/[\\/]/).pop() ?? ""))
-    .map(toPosixPath);
+    .filter((skill) => !isArchivedBuiltinSkillName(skill.metadata.name))
+    .filter((skill) => !disabled.has(skill.metadata.name))
+    .map((skill) => toPosixPath(skill.path));
 }
 
 export async function getQingagentSessionWorkspace(sessionId: string): Promise<Workspace> {

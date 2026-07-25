@@ -42,7 +42,7 @@ function extractMarkedSection(source: string, marker: string): string {
   const startIndex = source.indexOf(start);
   const endIndex = source.indexOf(end);
   if (startIndex < 0 || endIndex <= startIndex) {
-    throw new Error(`diagram-viz reference 缺少 ${marker} 标记`);
+    throw new Error(`diagram-viz 资源缺少 ${marker} 标记`);
   }
   return source.slice(startIndex + start.length, endIndex).trim();
 }
@@ -52,8 +52,8 @@ export function loadDiagramVizResources(): DiagramVizResources {
   const root = join(BUILTIN_SKILLS_DIR, "capability", DIAGRAM_VIZ_SKILL_NAME);
   const references = join(root, "references");
   const skill = readFileSync(join(root, "SKILL.md"), "utf8");
-  const mermaid = readFileSync(join(references, "mermaid.md"), "utf8");
-  const drawio = readFileSync(join(references, "drawio.md"), "utf8");
+  const mermaid = readFileSync(join(root, "mermaid", "SKILL.md"), "utf8");
+  const drawio = readFileSync(join(root, "drawio", "SKILL.md"), "utf8");
   const palettes = readFileSync(join(references, "palettes.md"), "utf8");
   const templates = readFileSync(join(references, "templates.md"), "utf8");
   cachedResources = {

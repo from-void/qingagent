@@ -1,3 +1,10 @@
+---
+name: mermaid
+description: 生成或修改自动布局的 Mermaid 流程、时序、状态、关系与层级图表。
+label: Mermaid 图表
+summary: 用自动布局生成易维护的 Mermaid 图表。
+---
+
 # Mermaid 图表规范
 
 <!-- diagram-viz:mermaid:start -->

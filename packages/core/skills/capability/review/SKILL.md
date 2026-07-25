@@ -3,7 +3,7 @@ name: review
 label: 文档审查
 summary: 统一执行八类文档审查
 icon: search
-description: 文档审查总技能，统一路由敏感词、来源核查、去 AI 味、一致性、隐私、格式规范、角色与自定义审查；按需读取对应 reference 后执行。
+description: 文档审查总技能，统一路由敏感词、来源核查、去 AI 味、一致性、隐私、格式规范、角色与自定义审查；按需读取对应子技能后执行。
 user-invocable: true
 placeholder: 审查当前文档
 tools: [lexicon_list, sensitive_scan, lexicon_manage, style_template_get, readDraft, readMaterial, run_python, run_js, editDraft, create_annotation_groups]
@@ -13,20 +13,20 @@ metadata:
 
 # 文档审查
 
-本技能统一承载八类文档审查。先按下表判断审查类型，再用 `skill_read` 读取对应 reference；用户同时要求多类审查时逐个读取所需文件，不要无差别加载全部 reference。
+本技能统一承载八类文档审查。先按下表判断审查类型，再用 `skill_read` 读取对应相对路径下的子技能 `SKILL.md`；用户同时要求多类审查时逐个读取所需文件，不要无差别加载全部子技能。
 
 ## 路由表
 
 | 类型 | 触发词或入口 | 执行前必读 |
 |---|---|---|
-| 敏感词审查 | 敏感词、违禁词、极限词审查，或管理审查词库 | `references/sensitive.md` |
-| 来源核查 | 来源审查、来源核查、核对依据、是否按素材写 | `references/source.md` |
-| 去 AI 味 | 去AI味、像人写的、去机器味、humanize | `references/deai.md` |
-| 一致性审查 | 一致性审查、自洽核查、前后矛盾检查、数字一致性 | `references/consistency.md` |
-| 隐私审查 | 隐私泄露审查、隐私检查、脱敏检查、对外发布泄露检查 | `references/privacy.md` |
-| 格式审查 | 格式规范审查、格式检查、版式校对、交付前格式整备 | `references/format.md` |
-| 角色审查 | 角色审查、点名审查角色，或 query 携带角色审查模板 | `references/role.md` |
-| 自定义审查 | 自定义审查、点名自定义模板，或 query 携带自定义审查模板 | `references/custom.md` |
+| 敏感词审查 | 敏感词、违禁词、极限词审查，或管理审查词库 | `sensitive/SKILL.md` |
+| 来源核查 | 来源审查、来源核查、核对依据、是否按素材写 | `source-check/SKILL.md` |
+| 去 AI 味 | 去AI味、像人写的、去机器味、humanize | `deai/SKILL.md` |
+| 一致性审查 | 一致性审查、自洽核查、前后矛盾检查、数字一致性 | `consistency/SKILL.md` |
+| 隐私审查 | 隐私泄露审查、隐私检查、脱敏检查、对外发布泄露检查 | `privacy/SKILL.md` |
+| 格式审查 | 格式规范审查、格式检查、版式校对、交付前格式整备 | `format/SKILL.md` |
+| 角色审查 | 角色审查、点名审查角色，或 query 携带角色审查模板 | `role/SKILL.md` |
+| 自定义审查 | 自定义审查、点名自定义模板，或 query 携带自定义审查模板 | `custom/SKILL.md` |
 
 ## 公共执行纪律
 

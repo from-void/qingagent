@@ -1,3 +1,10 @@
+---
+name: drawio
+description: 生成或修改可手工编辑画布的 draw.io 架构、拓扑与自由排版图表。
+label: draw.io 图表
+summary: 用可编辑画布生成精确排版的 draw.io 图表。
+---
+
 # draw.io 图表规范
 
 <!-- diagram-viz:drawio:start -->

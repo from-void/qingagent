@@ -31,9 +31,9 @@ describe("图表技能静态提示词契约", () => {
     }
   });
 
-  it("diagram-viz references 承接两段原语法纪律及可解析 draw.io 范本", () => {
-    const mermaid = readSkillFile("diagram-viz/references/mermaid.md");
-    const drawio = readSkillFile("diagram-viz/references/drawio.md");
+  it("diagram-viz 子技能承接两段原语法纪律及可解析 draw.io 范本", () => {
+    const mermaid = readSkillFile("diagram-viz/mermaid/SKILL.md");
+    const drawio = readSkillFile("diagram-viz/drawio/SKILL.md");
     expect(migratedDisciplineHash(mermaid, "- 图表块 diagram：")).toBe(
       "ffdab917b253716e439803cb6222aa379c933557edd7161ba2b5622aa5dffd42",
     );
@@ -83,6 +83,22 @@ describe("图表技能静态提示词契约", () => {
       "单图节点建议不超过 25 个",
       "按层拆成多张图（每层一张）",
       "再用 `editDraft` 增量补充节点",
+    ]) {
+      expect(skill).toContain(keyword);
+    }
+  });
+
+  it("diagram-viz 单独画图时反问引擎，并只保留三个豁免", () => {
+    const skill = readSkillFile("diagram-viz/SKILL.md");
+    for (const keyword of [
+      "单独画图先问引擎（铁则）",
+      "`askUserQuestion`",
+      "Mermaid（自动布局，适合流程/时序/状态，改起来省心）",
+      "draw.io（手工可编辑画布，适合架构/拓扑/自由排版）",
+      "用户已点名引擎",
+      "写文章时顺带配图",
+      "用户说过“别问”“直接画”",
+      "只有三个豁免",
     ]) {
       expect(skill).toContain(keyword);
     }

@@ -1,3 +1,10 @@
+---
+name: deai
+description: 按审查模板定位并最小化处理当前文档中的 AI 写作痕迹。
+label: 去 AI 味
+summary: 按模板小步处理确定的 AI 写作痕迹。
+---
+
 # 去 AI 味
 
 ## 什么时候用

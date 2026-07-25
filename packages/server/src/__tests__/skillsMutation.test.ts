@@ -317,6 +317,46 @@ describe("技能导入 UX 元数据", () => {
     expect(defaultSkill).toMatchObject({ userInvocable: true, enabled: true });
     expect(hiddenSkill).toMatchObject({ userInvocable: false, enabled: true });
   });
+
+  it("ZIP 导入保留标准子技能，母技能进入顶层列表而子技能不平铺", async () => {
+    const app = await loadApp();
+    const parentName = "nested-package-demo";
+    const childName = "nested-child-demo";
+    const zip = new JSZip();
+    zip.file(
+      "SKILL.md",
+      `---\nname: ${parentName}\ndescription: 带子技能的导入包\n---\n# 母技能`,
+    );
+    zip.file(
+      `${childName}/SKILL.md`,
+      `---\nname: ${childName}\ndescription: 导入包子技能\nlabel: 子技能\nsummary: 仅归属母技能\n---\n# 子技能`,
+    );
+    const archive = await zip.generateAsync({ type: "arraybuffer" });
+    const form = new FormData();
+    form.set("file", new File([archive], "nested-skill.zip", { type: "application/zip" }));
+
+    const install = await app.request("/api/v1/skills/install", {
+      method: "POST",
+      body: form,
+    });
+    expect(install.status).toBe(200);
+    expect(await install.json()).toMatchObject({ installed: true, name: parentName });
+    installedNames.add(parentName);
+
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { SKILLS_INSTALL_DIR } = await import("@qingagent/core");
+    await expect(
+      readFile(join(SKILLS_INSTALL_DIR, parentName, childName, "SKILL.md"), "utf8"),
+    ).resolves.toContain(`name: ${childName}`);
+
+    const list = await app.request("/api/v1/skills");
+    expect(list.status).toBe(200);
+    const body = await list.json() as { skills: Array<{ name: string }> };
+    const names = body.skills.map((skill) => skill.name);
+    expect(names).toContain(parentName);
+    expect(names).not.toContain(childName);
+  });
 });
 
 describe("parseSkillFrontmatter 扩展字段脏路径", () => {

@@ -330,17 +330,26 @@ describe("GET /api/v1/skills", () => {
         "create_annotation_groups",
       ],
     });
-    for (const oldName of [
+    for (const nonTopLevelName of [
       "sensitive-review",
+      "sensitive",
       "source-check",
       "deai-review",
+      "deai",
       "consistency-review",
+      "consistency",
       "privacy-review",
+      "privacy",
       "format-review",
+      "format",
       "role-review",
+      "role",
       "custom-review",
+      "custom",
+      "mermaid",
+      "drawio",
     ]) {
-      expect(byName.has(oldName)).toBe(false);
+      expect(byName.has(nonTopLevelName)).toBe(false);
     }
     expect(byName.has("dingtalk-docs")).toBe(false);
     expect(json.skills.map((skill) => skill.name).slice(0, 8)).toEqual([

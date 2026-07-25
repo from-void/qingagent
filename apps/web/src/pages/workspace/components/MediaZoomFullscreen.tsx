@@ -49,14 +49,23 @@ export function MediaZoomFullscreen({
       setTransform({ x: 0, y: 0, scale: 1 });
       return;
     }
-    const viewportRect = viewport.getBoundingClientRect();
-    const contentRect = content.getBoundingClientRect();
-    const contentWidth = contentRect.width || content.offsetWidth;
-    const contentHeight = contentRect.height || content.offsetHeight;
+    const viewportWidth = viewport.offsetWidth;
+    const viewportHeight = viewport.offsetHeight;
+    const contentWidth = content.offsetWidth;
+    const contentHeight = content.offsetHeight;
+    if (viewportWidth <= 0 || viewportHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
+      setTransform({ x: 0, y: 0, scale: 1 });
+      return;
+    }
+    const fitScale = Math.min(
+      1,
+      (viewportWidth - 32) / contentWidth,
+      (viewportHeight - 32) / contentHeight,
+    );
     setTransform({
-      scale: 1,
-      x: (viewportRect.width - contentWidth) / 2,
-      y: (viewportRect.height - contentHeight) / 2,
+      scale: fitScale,
+      x: (viewportWidth - contentWidth * fitScale) / 2,
+      y: (viewportHeight - contentHeight * fitScale) / 2,
     });
   }, []);
 

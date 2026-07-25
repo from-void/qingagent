@@ -61,7 +61,6 @@
   transform-origin: 0 0;
   width: min(90vw, 1100px);
   max-width: 96vw;
-  max-height: 92vh;
   padding: 24px;
   border-radius:0;
   /* 全屏预览所见即所得:用文档纸米黄 #efe7d6 作底,等于图嵌进正文后的真实观感 */

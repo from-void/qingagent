@@ -111,6 +111,93 @@ describe("diagram-engine", () => {
     expect(graphToSvg(source)).toBeNull();
   });
 
+  it("flowchart a-e 矩阵:顶层 Unicode id 在分区前后、边端点、中英混合和数字开头均不丢失", () => {
+    const cases = [
+      {
+        name: "a. 中文顶层声明在 subgraph 前",
+        source: "flowchart TD\n  自由[自由节点]\n  subgraph 区A\n    A1[X]\n  end\n  自由 --> A1\n",
+        ids: ["自由", "A1"],
+        edge: ["自由", "A1"],
+      },
+      {
+        name: "b. 中文顶层声明在 subgraph 后",
+        source: "flowchart TD\n  subgraph 区A\n    A1[X]\n  end\n  自由[自由节点]\n  自由 --> A1\n",
+        ids: ["A1", "自由"],
+        edge: ["自由", "A1"],
+      },
+      {
+        name: "c. ASCII 对照",
+        source: "flowchart TD\n  free[FreeNode]\n  subgraph 区A\n    A1[X]\n  end\n  free --> A1\n",
+        ids: ["free", "A1"],
+        edge: ["free", "A1"],
+      },
+      {
+        name: "d. 中英混合 id",
+        source: "flowchart TD\n  自由A1_2[混合节点]\n  subgraph 区A\n    B1[X]\n  end\n  自由A1_2 --> B1\n",
+        ids: ["自由A1_2", "B1"],
+        edge: ["自由A1_2", "B1"],
+      },
+      {
+        name: "e. 数字开头 id",
+        source: "flowchart TD\n  123节点[数字节点]\n  subgraph 区A\n    C1[X]\n  end\n  123节点 --> C1\n",
+        ids: ["123节点", "C1"],
+        edge: ["123节点", "C1"],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const parsed = parseDiagram(testCase.source);
+      expect(parsed.ok, testCase.name).toBe(true);
+      const model = parsed.model as FlowGraph;
+      expect(model.nodes.map((node) => node.id), testCase.name).toEqual(testCase.ids);
+      expect(model.edges.map((item) => [item.source, item.target]), testCase.name).toEqual([testCase.edge]);
+    }
+  });
+
+  it("flowchart Unicode id 覆盖分区成员、classDef/class/:::、style 与 click 目标", () => {
+    const source = `flowchart TD
+  classDef 高亮 fill:#FFF3C4,stroke:#8A6D1D
+  顶层中文[顶层]:::高亮
+  subgraph 中文分区[区A]
+    区内中文[区内]
+    中英A1_2[混合]
+    123节点[数字]
+  end
+  顶层中文 --> 区内中文
+  class 顶层中文,区内中文 高亮
+  style 中英A1_2 fill:#DDEEFF
+  click 123节点 "https://example.com"
+`;
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes.map((node) => node.id)).toEqual(["顶层中文", "区内中文", "中英A1_2", "123节点"]);
+    expect(model.nodes.every((node) => node.hasStableId)).toBe(true);
+    expect(model.nodes.find((node) => node.id === "顶层中文")?.scopePath).toEqual([]);
+    expect(model.nodes.filter((node) => node.id !== "顶层中文").every((node) => node.scopePath.join("/") === "中文分区")).toBe(true);
+    expect(model.edges.map((item) => [item.source, item.target])).toEqual([["顶层中文", "区内中文"]]);
+    expect(model.perNodeStyles?.顶层中文).toMatchObject({ fill: "#FFF3C4", stroke: "#8A6D1D" });
+    expect(model.perNodeStyles?.区内中文).toMatchObject({ fill: "#FFF3C4", stroke: "#8A6D1D" });
+    expect(model.perNodeStyles?.中英A1_2).toMatchObject({ fill: "#DDEEFF" });
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(4);
+    expect(svg.match(/data-edge-id=/g)).toHaveLength(1);
+    expect(svg).toContain('data-node-id="顶层中文"');
+    expect(svg).toContain('data-node-id="区内中文"');
+  });
+
+  it("flowchart 无法识别的非空行返回带 span 的错误且保留已解析节点", () => {
+    const source = "flowchart TD\n  A[正常]\n  @@@\n";
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("无法解析第 3 行");
+    expect(parsed.errorSpan).toEqual({
+      start: source.indexOf("  @@@"),
+      end: source.indexOf("  @@@") + "  @@@".length,
+    });
+    expect((parsed.model as FlowGraph).nodes.map((node) => node.id)).toEqual(["A"]);
+  });
+
   it("flowchart rewrite 只改目标 span,保留注释/style/class/subgraph/link 文本", () => {
     const source = [
       "flowchart TD",
@@ -674,6 +761,33 @@ describe("diagram-engine", () => {
     ]);
   });
 
+  it("state/ER/class 的 Unicode、混合和数字开头 id 与 flowchart 口径一致", () => {
+    const state = parseDiagram(`stateDiagram-v2
+  123状态 --> 中英State_2
+  classDef 高亮 fill:#FFF3C4
+  class 123状态 高亮
+  style 中英State_2 fill:#DDEEFF
+`).model as StateGraph;
+    expect(state.nodes.map((node) => [node.id, node.hasStableId])).toEqual([
+      ["123状态", true],
+      ["中英State_2", true],
+    ]);
+    expect(state.edges.map((item) => [item.source, item.target])).toEqual([["123状态", "中英State_2"]]);
+    expect(state.perNodeStyles?.["123状态"]).toMatchObject({ fill: "#FFF3C4" });
+    expect(state.perNodeStyles?.中英State_2).toMatchObject({ fill: "#DDEEFF" });
+
+    const er = parseDiagram("erDiagram\n  123实体 ||--o{ 中英Entity_2 : 关联\n").model as ErGraph;
+    expect(er.entities.map((entity) => entity.id)).toEqual(["123实体", "中英Entity_2"]);
+    expect(er.rels.map((item) => [item.source, item.target])).toEqual([["123实体", "中英Entity_2"]]);
+
+    const cls = parseDiagram("classDiagram\n  123类 <|-- 中英Class_2\n").model as ClassGraph;
+    expect(cls.classes.map((item) => item.id)).toEqual(["123类", "中英Class_2"]);
+    expect(cls.rels.map((item) => [item.source, item.target])).toEqual([["123类", "中英Class_2"]]);
+
+    const mindmap = parseDiagram("mindmap\n  中文根\n    中英Child_2\n    123节点\n").model as MindmapTree;
+    expect(flattenMindmap(mindmap.root).map((node) => node.label)).toEqual(["中文根", "中英Child_2", "123节点"]);
+  });
+
   it("stateDiagram-v2 addNode 插入状态声明并保留现有 transition", () => {
     const source = "stateDiagram-v2\n  state \"打开\" as Open\n  Closed\n  Open --> Closed : close\n";
     const before = parseDiagram(source).model as StateGraph;
@@ -980,6 +1094,8 @@ flowchart TD
     const parsed = parseDiagram(source);
     expect(parsed.ok).toBe(true);
     const model = parsed.model as FlowGraph;
+    expect(model.nodes).toHaveLength(35);
+    expect(model.edges).toHaveLength(48);
     expect(model.subgraphs.map((subgraph) => [subgraph.id, subgraph.label])).toEqual([
       ["U", "用户终端层"],
       ["AS", "接入与安全层"],

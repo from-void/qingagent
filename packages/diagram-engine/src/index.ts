@@ -171,6 +171,7 @@ export interface ParseResult extends DiagramThemeMetadata {
   spanMap: SpanMap;
   ok: boolean;
   error?: string;
+  errorSpan?: Span;
 }
 
 export type EditOp =
@@ -283,6 +284,17 @@ type EdgeIdFactory = (input: EdgeIdInput) => string;
 // 反向实线/粗线带 `|label|` 时,Mermaid 11 只接受 3 段长形(`<---`/`<===`),
 // 短形 `<--|x|`/`<==|x|` 直接解析失败(已实测),故反向回写一律用长形(见 flowArrowToken)。
 const FLOW_ARROW_TOKEN_RE = /(?:<-.->|<-->|<==>|<---|<===|<-.-|<==|<--|-.->|==>|---|-.-|===|-->)/g;
+const MERMAID_ID_SOURCE = String.raw`[\p{L}\p{N}_][\p{L}\p{N}_-]*`;
+const MERMAID_ID_LIST_SOURCE = String.raw`${MERMAID_ID_SOURCE}(?:\s*,\s*${MERMAID_ID_SOURCE})*`;
+const MERMAID_ID_RE = new RegExp(String.raw`^${MERMAID_ID_SOURCE}$`, "u");
+const FLOW_NODE_REF_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})(.*)$`, "u");
+const FLOW_SUBGRAPH_DECLARATION_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})\s*\[\s*(.*?)\s*\]\s*$`, "u");
+const CLASS_DEFINITION_RE = new RegExp(String.raw`^classDef\s+(${MERMAID_ID_LIST_SOURCE})\s+(.+?)\s*;?$`, "iu");
+const CLASS_ASSIGNMENT_RE = new RegExp(String.raw`^class\s+(${MERMAID_ID_LIST_SOURCE})\s+(${MERMAID_ID_SOURCE})\s*;?$`, "iu");
+const INLINE_STYLE_RE = new RegExp(String.raw`^style\s+(${MERMAID_ID_SOURCE})\s+(.+?)\s*;?$`, "iu");
+const INLINE_CLASS_RE = new RegExp(String.raw`:::(${MERMAID_ID_SOURCE})`, "gu");
+const FLOW_EDGE_ID_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})@`, "u");
+const MERMAID_ID_PREFIX_RE = new RegExp(String.raw`^(${MERMAID_ID_SOURCE})`, "u");
 
 const EDGE_OPS: EditOp["kind"][] = ["connectEdge", "deleteEdge", "reconnectEdge", "setEdgeLabel", "setEdgeArrow"];
 const NODE_OPS: EditOp["kind"][] = ["addNode", "deleteNode", "relabelNode", "setNodeShape"];
@@ -787,7 +799,7 @@ function parseClassStyleStatements(source: string): {
   const nodeStyles = new Map<string, NodeStyleOverride>();
   for (const line of getLines(source)) {
     const trimmed = line.text.trim();
-    const definition = trimmed.match(/^classDef\s+([A-Za-z_][\w-]*(?:\s*,\s*[A-Za-z_][\w-]*)*)\s+(.+?)\s*;?$/i);
+    const definition = trimmed.match(CLASS_DEFINITION_RE);
     if (definition) {
       const style = parseClassDefinitionStyle(definition[2]!);
       if (style) {
@@ -797,7 +809,7 @@ function parseClassStyleStatements(source: string): {
       }
       continue;
     }
-    const assignment = trimmed.match(/^class\s+([A-Za-z_][\w-]*(?:\s*,\s*[A-Za-z_][\w-]*)*)\s+([A-Za-z_][\w-]*)\s*;?$/i);
+    const assignment = trimmed.match(CLASS_ASSIGNMENT_RE);
     if (assignment) {
       const className = assignment[2]!;
       for (const nodeId of assignment[1]!.split(",").map((value) => value.trim()).filter(Boolean)) {
@@ -805,7 +817,7 @@ function parseClassStyleStatements(source: string): {
       }
       continue;
     }
-    const inlineStyle = trimmed.match(/^style\s+([A-Za-z_][\w-]*)\s+(.+?)\s*;?$/i);
+    const inlineStyle = trimmed.match(INLINE_STYLE_RE);
     if (inlineStyle) {
       const style = parseClassDefinitionStyle(inlineStyle[2]!);
       if (style) nodeStyles.set(inlineStyle[1]!, { ...(nodeStyles.get(inlineStyle[1]!) ?? {}), ...style });
@@ -937,6 +949,7 @@ function parseFlowchart(source: string): ParseResult {
   const subgraphStack: { id: string; label: string; start: number; scopePath: string[]; direction?: string }[] = [];
   const inlineNodeClasses = new Map<string, string[]>();
   let hasLinkStyle = false;
+  let firstUnparsedLine: LineInfo | undefined;
 
   const ensureNode = (
     id: string,
@@ -1050,6 +1063,7 @@ function parseFlowchart(source: string): ParseResult {
       continue;
     }
     protectedSpans.push(lineSpan(line));
+    firstUnparsedLine ??= line;
   }
   for (const open of subgraphStack.splice(0).reverse()) {
     subgraphs.push({
@@ -1067,16 +1081,17 @@ function parseFlowchart(source: string): ParseResult {
     if (candidate?.implicit) nodes.delete(subgraphId);
   }
   const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys(), inlineNodeClasses, edges);
-  return {
+  const result: ParseResult = {
     ok: true,
     ...themeMetadata,
     model: { type: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, hasLinkStyle, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
+  return firstUnparsedLine ? withUnparsedLineError(result, firstUnparsedLine) : result;
 }
 
 function parseFlowSubgraphDeclaration(raw: string): { id: string; label: string } {
-  const explicit = raw.match(/^([A-Za-z_][\p{L}\p{N}_-]*)\s*\[\s*(.*?)\s*\]\s*$/u);
+  const explicit = raw.match(FLOW_SUBGRAPH_DECLARATION_RE);
   if (explicit) {
     return { id: explicit[1]!, label: displayMermaidLabel(stripQuotes(explicit[2]!)) };
   }
@@ -1292,7 +1307,7 @@ function parseFlowNodeSet(
 function parseFlowLinkAt(raw: string, offset: number): ParsedFlowLink | null {
   const start = skipWhitespace(raw, offset);
   const source = raw.slice(start);
-  const edgeIdMatch = source.match(/^([A-Za-z_][\w-]*)@/);
+  const edgeIdMatch = source.match(FLOW_EDGE_ID_RE);
   const edgeId = edgeIdMatch?.[1];
   const prefixLength = edgeIdMatch?.[0].length ?? 0;
   const linkSource = source.slice(prefixLength);
@@ -2556,7 +2571,7 @@ const FLOW_NODE_SHAPE_SYNTAX: Array<{ open: string; close: string }> = [
 
 function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNodeRef | null {
   const raw = rawInput.trim();
-  const match = raw.match(/^([A-Za-z_][\p{L}\p{N}_-]*)(.*)$/u);
+  const match = raw.match(FLOW_NODE_REF_RE);
   if (!match) return null;
   let id = match[1]!;
   let rest = match[2] ?? "";
@@ -2619,8 +2634,7 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     }
     const inlineClassStart = Math.max(0, endOffset - id.length);
     const inlineClassSource = rest.slice(inlineClassStart);
-    const inlineClassRe = /:::([A-Za-z_][\w-]*)/g;
-    for (const classMatch of inlineClassSource.matchAll(inlineClassRe)) {
+    for (const classMatch of inlineClassSource.matchAll(INLINE_CLASS_RE)) {
       classNames.push(classMatch[1]!);
       endOffset = Math.max(endOffset, id.length + inlineClassStart + (classMatch.index ?? 0) + classMatch[0].length);
     }
@@ -2841,6 +2855,16 @@ function emptyParse(type: DiagramType, error: string): ParseResult {
             ? ({ type: "mindmap", root: { id: "mind-root", label: "", line: { start: 0, end: 0 }, indent: 0, children: [], hasStableId: true, parentId: null, scopePath: [], sourceRefs: [] } } as MindmapTree)
             : ({ type: "flowchart", direction: "TD", nodes: [], edges: [], subgraphs: [] } as FlowGraph);
   return { ok: false, error, model, spanMap: { directives: [], protectedSpans: [] } };
+}
+
+function withUnparsedLineError(result: ParseResult, line: LineInfo): ParseResult {
+  const sourceText = line.text.trim();
+  return {
+    ...result,
+    ok: false,
+    error: `无法解析第 ${line.index + 1} 行: ${sourceText}`,
+    errorSpan: { start: line.start, end: line.bodyEnd },
+  };
 }
 
 function getLines(source: string): LineInfo[] {
@@ -3143,7 +3167,7 @@ function flowSubgraphLabelSpan(line: FlowSourceLine, subgraphId: string): Span |
   if (!keyword) return null;
   const restStart = keyword[0].length;
   const rest = body.slice(restStart);
-  const idMatch = rest.match(/^([A-Za-z_][\p{L}\p{N}_-]*)/u);
+  const idMatch = rest.match(MERMAID_ID_PREFIX_RE);
   if (!idMatch || idMatch[1] !== subgraphId) return null;
   let cursor = restStart + idMatch[0].length;
   while (cursor < body.length && /\s/.test(body[cursor]!)) cursor += 1;
@@ -3322,11 +3346,11 @@ function stripTrailingComment(value: string): string {
 }
 
 function isStableMermaidId(id: string): boolean {
-  return /^[A-Za-z_][\p{L}\p{N}_-]*$/u.test(id);
+  return MERMAID_ID_RE.test(id);
 }
 
 function isStableStateId(id: string): boolean {
-  return new RegExp(String.raw`^[\p{L}_][\p{L}\p{N}_-]*$`, "u").test(id);
+  return MERMAID_ID_RE.test(id);
 }
 
 function uniqueId(existing: Iterable<string>, base: string): string {

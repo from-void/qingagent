@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode, SyntheticEvent } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  SyntheticEvent,
+} from "react";
 import type {
   Connection,
   Edge,
@@ -31,6 +38,7 @@ import {
   Position,
   ReactFlow,
   SelectionMode,
+  ViewportPortal,
   applyEdgeChanges,
   applyNodeChanges,
   getBezierPath,
@@ -45,13 +53,17 @@ import "@xyflow/react/dist/style.css";
 import {
   applyEdit,
   carryOverDiagramOverlay,
+  dissolveSubgraph,
   getFlowShapeGeometry,
   getCapabilities,
   getStableElementIds,
   graphToSvg,
   layoutDiagramGraph,
   normalizeFlowShapeName,
+  moveNodeToSubgraph,
   parseDiagram,
+  renameSubgraph,
+  wrapNodesInSubgraph,
   type BaseEdge as DiagramBaseEdge,
   type BaseNode,
   type Capability,
@@ -63,10 +75,12 @@ import {
   type EdgeStyleOverride,
   type EditOp,
   type FlowNodeShape,
+  type FlowGraph,
   type MindNode,
   type NodeStyleOverride,
   type RewriteResult,
 } from "@qingagent/diagram-engine";
+import { useToast } from "../../../../system";
 import "./graphDiagram.css";
 
 interface GraphDiagramViewProps {
@@ -120,6 +134,7 @@ type CanvasToolIconName =
   | "zoom-in"
   | "fit"
   | "fullscreen"
+  | "dissolve"
   | "plus";
 type GraphNodeShape = FlowNodeShape;
 type GraphNodeData = {
@@ -138,8 +153,16 @@ type GraphNodeData = {
 type GraphRegularNode = Node<GraphNodeData, "graphNode">;
 type GraphClusterData = {
   label: string;
+  editLabel: string;
   direction: string;
   depth: number;
+  scopePath: string[];
+  isRenaming: boolean;
+  canEdit: boolean;
+  onSelect: () => void;
+  onRenameStart: () => void;
+  onRenameCommit: (value: string) => void;
+  onRenameCancel: () => void;
 } & Record<string, unknown>;
 type GraphClusterNode = Node<GraphClusterData, "graphCluster">;
 type GraphFlowNode = GraphRegularNode | GraphClusterNode;
@@ -175,11 +198,25 @@ type ShiftDragState = {
   axis: "x" | "y" | null;
   startPositions: Record<string, { x: number; y: number }>;
 };
+type GraphRect = { x: number; y: number; width: number; height: number };
+type PendingSubgraph = {
+  rect: GraphRect;
+  nodeIds: string[];
+  parentSubgraph: string | null;
+};
+type ClusterDragState = {
+  clusterId: string;
+  startPosition: { x: number; y: number };
+  movingPositions: Record<string, { x: number; y: number }>;
+};
 type GraphDiagramTestAction =
   | { kind: "altDuplicate"; nodeId: string; dropPosition: { x: number; y: number } }
   | { kind: "shiftDrag"; nodeId: string; dropPosition: { x: number; y: number } }
   | { kind: "boxSelect"; nodeIds: string[]; edgeIds?: string[] }
-  | { kind: "moveParent"; nodeId: string; newParentId: string };
+  | { kind: "moveParent"; nodeId: string; newParentId: string }
+  | { kind: "drawSubgraph"; rect: GraphRect }
+  | { kind: "dropNode"; nodeId: string; position: { x: number; y: number } }
+  | { kind: "moveSubgraph"; subgraphId: string; delta: { x: number; y: number } };
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 72;
@@ -468,15 +505,87 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
   );
 }
 
-function GraphCluster({ data, isConnectable }: NodeProps<GraphClusterNode>) {
+function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterNode>) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const titleRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!data.isRenaming) return;
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [data.isRenaming]);
+
+  useEffect(() => {
+    const title = titleRef.current;
+    if (!title || !data.canEdit || data.isRenaming) return;
+    const openRename = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      data.onRenameStart();
+    };
+    const handleClick = (event: MouseEvent) => {
+      if (event.detail >= 2) openRename(event);
+    };
+    title.addEventListener("click", handleClick, { capture: true });
+    title.addEventListener("dblclick", openRename, { capture: true });
+    return () => {
+      title.removeEventListener("click", handleClick, { capture: true });
+      title.removeEventListener("dblclick", openRename, { capture: true });
+    };
+  }, [data]);
+
   return (
     <div
-      className="graph-diagram-cluster"
+      className={classNames("graph-diagram-cluster", selected && "is-selected", data.isRenaming && "is-renaming")}
       data-cluster-label={data.label}
       data-cluster-direction={data.direction}
       data-cluster-depth={data.depth}
     >
-      <div className="graph-diagram-cluster__title">{data.label}</div>
+      <div
+        ref={titleRef}
+        className={classNames("graph-diagram-cluster__title", data.isRenaming && "nodrag nowheel")}
+        title={data.canEdit && !data.isRenaming ? "拖动分区；双击改名" : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          data.onSelect();
+        }}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (data.canEdit) data.onRenameStart();
+        }}
+      >
+        {data.isRenaming ? (
+          <input
+            ref={inputRef}
+            className="graph-diagram-cluster__title-input nodrag nowheel"
+            aria-label="分区名称"
+            defaultValue={data.editLabel}
+            spellCheck={false}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onBlur={(event) => {
+              const nextTitle = event.currentTarget.value.trim();
+              if (nextTitle && nextTitle !== data.editLabel.trim()) data.onRenameCommit(nextTitle);
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                data.onRenameCommit(event.currentTarget.value);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                data.onRenameCancel();
+              }
+            }}
+          />
+        ) : data.label}
+      </div>
       {GRAPH_HANDLES.map((handle) => (
         <div key={handle.id} className={`graph-diagram-cluster__handle-slot graph-diagram-cluster__handle-slot--${handle.id}`}>
           <Handle
@@ -817,6 +926,12 @@ function CanvasToolIcon({ name }: { name: CanvasToolIconName }) {
       {name === "fullscreen" && (
         <path d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" {...common} />
       )}
+      {name === "dissolve" && (
+        <>
+          <path d="M5 3H2.5v2.5M11 3h2.5v2.5M13.5 10.5V13H11M5 13H2.5v-2.5" strokeDasharray="1.7 1.5" {...common} />
+          <path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" {...common} />
+        </>
+      )}
       {name === "plus" && <path d="M3.2 8h9.6M8 3.2v9.6" {...common} />}
     </svg>
   );
@@ -849,6 +964,73 @@ export function graphNodePositionKey(nodes: readonly GraphNodePosition[]): strin
     .map((node) => `${node.id}:${node.position.x}:${node.position.y}`)
     .sort()
     .join("|");
+}
+
+function normalizeGraphRect(rect: GraphRect): GraphRect {
+  const x = rect.width < 0 ? rect.x + rect.width : rect.x;
+  const y = rect.height < 0 ? rect.y + rect.height : rect.y;
+  return { x, y, width: Math.abs(rect.width), height: Math.abs(rect.height) };
+}
+
+function graphNodeRect(node: Node): GraphRect {
+  const width = (node.measured?.width ?? node.width ?? node.initialWidth ?? Number(node.style?.width)) || NODE_WIDTH;
+  const height = (node.measured?.height ?? node.height ?? node.initialHeight ?? Number(node.style?.height)) || NODE_HEIGHT;
+  return { x: node.position.x, y: node.position.y, width, height };
+}
+
+function graphNodeCenter(node: Node): { x: number; y: number } {
+  const rect = graphNodeRect(node);
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+function graphRectContainsPoint(rect: GraphRect, point: { x: number; y: number }): boolean {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+}
+
+function graphRectContainsRect(outer: GraphRect, inner: GraphRect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+function graphRectsIntersect(left: GraphRect, right: GraphRect): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+function resolveSubgraphFramePlacement(
+  rect: GraphRect,
+  clusters: GraphClusterNode[],
+): { ok: true; parentSubgraph: string | null } | { ok: false } {
+  const containing: GraphClusterNode[] = [];
+  for (const cluster of clusters) {
+    const clusterRect = graphNodeRect(cluster);
+    if (!graphRectsIntersect(rect, clusterRect)) continue;
+    if (!graphRectContainsRect(clusterRect, rect)) return { ok: false };
+    containing.push(cluster);
+  }
+  containing.sort((left, right) => right.data.depth - left.data.depth);
+  return { ok: true, parentSubgraph: containing[0]?.id ?? null };
+}
+
+function deepestSubgraphAtPoint(
+  point: { x: number; y: number },
+  clusters: GraphClusterNode[],
+): string | null {
+  return clusters
+    .filter((cluster) => graphRectContainsPoint(graphNodeRect(cluster), point))
+    .sort((left, right) => right.data.depth - left.data.depth)[0]?.id ?? null;
+}
+
+function sameStringPath(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
 const MIN_PREVIEW_ZOOM = 0.1;
@@ -925,6 +1107,7 @@ export function GraphDiagramView({
   onOverlayChange,
   onSourceChange,
 }: GraphDiagramViewProps) {
+  const toast = useToast();
   const [liveSource, setLiveSource] = useState(source);
   const liveSourceRef = useRef(source);
   const overlayRef = useRef<DiagramOverlay | null | undefined>(overlay);
@@ -933,6 +1116,8 @@ export function GraphDiagramView({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const altDuplicateDragRef = useRef<AltDuplicateDragState | null>(null);
   const shiftDragRef = useRef<ShiftDragState | null>(null);
+  const clusterDragRef = useRef<ClusterDragState | null>(null);
+  const subgraphDrawStartRef = useRef<{ pointerId: number; point: { x: number; y: number } } | null>(null);
   const nodesRef = useRef<GraphFlowNode[]>([]);
   if (!editorOwnerIdRef.current) editorOwnerIdRef.current = createGraphEditorOwnerId();
   useEffect(() => {
@@ -973,16 +1158,22 @@ export function GraphDiagramView({
   const [connecting, setConnecting] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selectedSubgraphId, setSelectedSubgraphId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
+  const [renamingSubgraphId, setRenamingSubgraphId] = useState<string | null>(null);
   const [editingEdgeLabelId, setEditingEdgeLabelId] = useState<string | null>(null);
   const [parentPickerNodeId, setParentPickerNodeId] = useState<string | null>(null);
   const [openToolbarMenu, setOpenToolbarMenu] = useState<ToolbarMenu | null>(null);
   const [editViewport, setEditViewport] = useState<Viewport>(DEFAULT_VIEWPORT);
   const [editCanvasFrame, setEditCanvasFrame] = useState<CanvasFrame>(DEFAULT_CANVAS_FRAME);
   const [error, setError] = useState<string | null>(null);
+  const [subgraphDrawMode, setSubgraphDrawMode] = useState(false);
+  const [subgraphPreview, setSubgraphPreview] = useState<GraphRect | null>(null);
+  const [pendingSubgraph, setPendingSubgraph] = useState<PendingSubgraph | null>(null);
   const renameCommittedRef = useRef(false);
+  const subgraphRenameCommittedRef = useRef(false);
   const edgeLabelCommittedRef = useRef(false);
   const inEdit = !readOnly && editing;
   const baseCaps = useMemo(() => getCapabilities(parsed), [parsed]);
@@ -991,6 +1182,9 @@ export function GraphDiagramView({
 
   const selectedNode = selectedNodeId ? graphNodes.find((node) => node.id === selectedNodeId) : undefined;
   const selectedEdge = selectedEdgeId ? graphEdges.find((edge) => edge.id === selectedEdgeId) : undefined;
+  const selectedSubgraph = parsed.ok && parsed.model.type === "flowchart" && selectedSubgraphId
+    ? parsed.model.subgraphs.find((subgraph) => subgraph.id === selectedSubgraphId)
+    : undefined;
   const selectedNodeCaps = useMemo(
     () => (selectedNodeId ? getCapabilities(parsed, { nodeId: selectedNodeId }) : baseCaps),
     [baseCaps, parsed, selectedNodeId],
@@ -1025,12 +1219,19 @@ export function GraphDiagramView({
     setConnecting(false);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
+    setSelectedSubgraphId(null);
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setRenamingNodeId(null);
+    setRenamingSubgraphId(null);
     setEditingEdgeLabelId(null);
     setParentPickerNodeId(null);
     setOpenToolbarMenu(null);
+    setSubgraphDrawMode(false);
+    setSubgraphPreview(null);
+    setPendingSubgraph(null);
+    subgraphDrawStartRef.current = null;
+    clusterDragRef.current = null;
   }, []);
 
   const openEditor = useCallback(() => {
@@ -1103,14 +1304,19 @@ export function GraphDiagramView({
   }, [closeFullscreen, viewingFullscreen]);
 
   useEffect(() => {
+    const subgraphIds = parsed.ok && parsed.model.type === "flowchart"
+      ? new Set(parsed.model.subgraphs.map((subgraph) => subgraph.id))
+      : new Set<string>();
     setSelectedNodeId((current) => (current && graphNodes.some((node) => node.id === current) ? current : null));
     setSelectedEdgeId((current) => (current && graphEdges.some((edge) => edge.id === current) ? current : null));
+    setSelectedSubgraphId((current) => (current && subgraphIds.has(current) ? current : null));
     setSelectedNodeIds((current) => current.filter((id) => graphNodes.some((node) => node.id === id)));
     setSelectedEdgeIds((current) => current.filter((id) => graphEdges.some((edge) => edge.id === id)));
     setRenamingNodeId((current) => (current && graphNodes.some((node) => node.id === current) ? current : null));
+    setRenamingSubgraphId((current) => (current && subgraphIds.has(current) ? current : null));
     setEditingEdgeLabelId((current) => (current && graphEdges.some((edge) => edge.id === current) ? current : null));
     setParentPickerNodeId((current) => (current && graphNodes.some((node) => node.id === current) ? current : null));
-  }, [graphEdges, graphNodes]);
+  }, [graphEdges, graphNodes, parsed]);
 
   useEffect(() => {
     if (!inEdit) return;
@@ -1118,14 +1324,23 @@ export function GraphDiagramView({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeEditor();
+      if (event.key !== "Escape") return;
+      if (subgraphDrawMode || pendingSubgraph) {
+        event.preventDefault();
+        setSubgraphDrawMode(false);
+        setSubgraphPreview(null);
+        setPendingSubgraph(null);
+        subgraphDrawStartRef.current = null;
+        return;
+      }
+      closeEditor();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeEditor, inEdit]);
+  }, [closeEditor, inEdit, pendingSubgraph, subgraphDrawMode]);
 
   const emitOverlay = useCallback(
     (next: DiagramOverlay, extraIds?: { nodes?: string[]; edges?: string[] }) => {
@@ -1168,11 +1383,11 @@ export function GraphDiagramView({
     [emitOverlay, ids.nodes, inEdit],
   );
 
-  const runEdit = useCallback(
-    (op: EditOp): RewriteResult | null => {
+  const runRewrite = useCallback(
+    (rewrite: (source: string) => RewriteResult): RewriteResult | null => {
       if (readOnly || !onSourceChange) return null;
       const baseSource = liveSourceRef.current;
-      const result = applyEdit(baseSource, op);
+      const result = rewrite(baseSource);
       if (!result.ok) {
         setError(result.error ?? "图表语义编辑失败");
         return null;
@@ -1199,6 +1414,11 @@ export function GraphDiagramView({
       return result;
     },
     [onOverlayChange, onSourceChange, readOnly],
+  );
+
+  const runEdit = useCallback(
+    (op: EditOp): RewriteResult | null => runRewrite((baseSource) => applyEdit(baseSource, op)),
+    [runRewrite],
   );
 
   const onConnect: OnConnect = useCallback(
@@ -1265,8 +1485,10 @@ export function GraphDiagramView({
     setSelectedNodeId(nodeId);
     setSelectedNodeIds([nodeId]);
     setSelectedEdgeId(null);
+    setSelectedSubgraphId(null);
     setSelectedEdgeIds([]);
     setRenamingNodeId(null);
+    setRenamingSubgraphId(null);
     setEditingEdgeLabelId(null);
     setParentPickerNodeId(null);
     setOpenToolbarMenu(null);
@@ -1276,8 +1498,10 @@ export function GraphDiagramView({
     setSelectedEdgeId(edgeId);
     setSelectedEdgeIds([edgeId]);
     setSelectedNodeId(null);
+    setSelectedSubgraphId(null);
     setSelectedNodeIds([]);
     setRenamingNodeId(null);
+    setRenamingSubgraphId(null);
     setEditingEdgeLabelId(null);
     setParentPickerNodeId(null);
     setOpenToolbarMenu(null);
@@ -1286,7 +1510,21 @@ export function GraphDiagramView({
   const clearSelection = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
+    setSelectedSubgraphId(null);
     setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setRenamingNodeId(null);
+    setRenamingSubgraphId(null);
+    setEditingEdgeLabelId(null);
+    setParentPickerNodeId(null);
+    setOpenToolbarMenu(null);
+  }, []);
+
+  const selectSubgraph = useCallback((subgraphId: string) => {
+    setSelectedSubgraphId(subgraphId);
+    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
     setSelectedEdgeIds([]);
     setRenamingNodeId(null);
     setEditingEdgeLabelId(null);
@@ -1295,16 +1533,23 @@ export function GraphDiagramView({
   }, []);
 
   const syncSelection = useCallback((selection: { nodes: Node[]; edges: Edge[] }) => {
-    const nextNodeIds = selection.nodes.map((node) => node.id);
+    const nextSubgraphIds = selection.nodes.filter((node) => node.type === "graphCluster").map((node) => node.id);
+    const nextNodeIds = selection.nodes.filter((node) => node.type !== "graphCluster").map((node) => node.id);
     const nextEdgeIds = selection.edges.map((edge) => edge.id);
     setSelectedNodeIds(nextNodeIds);
     setSelectedEdgeIds(nextEdgeIds);
-    setSelectedNodeId(nextNodeIds.length === 1 && nextEdgeIds.length === 0 ? nextNodeIds[0]! : null);
-    setSelectedEdgeId(nextEdgeIds.length === 1 && nextNodeIds.length === 0 ? nextEdgeIds[0]! : null);
-    if (nextNodeIds.length !== 1 || nextEdgeIds.length > 0) setRenamingNodeId(null);
-    if (nextEdgeIds.length !== 1 || nextNodeIds.length > 0) setEditingEdgeLabelId(null);
-    if (nextNodeIds.length !== 1 || nextEdgeIds.length > 0) setParentPickerNodeId(null);
-    if (nextNodeIds.length !== 1 && nextEdgeIds.length !== 1) setOpenToolbarMenu(null);
+    setSelectedNodeId(nextNodeIds.length === 1 && nextEdgeIds.length === 0 && nextSubgraphIds.length === 0 ? nextNodeIds[0]! : null);
+    setSelectedEdgeId(nextEdgeIds.length === 1 && nextNodeIds.length === 0 && nextSubgraphIds.length === 0 ? nextEdgeIds[0]! : null);
+    setSelectedSubgraphId(
+      nextSubgraphIds.length === 1 && nextNodeIds.length === 0 && nextEdgeIds.length === 0
+        ? nextSubgraphIds[0]!
+        : null,
+    );
+    if (nextNodeIds.length !== 1 || nextEdgeIds.length > 0 || nextSubgraphIds.length > 0) setRenamingNodeId(null);
+    if (nextSubgraphIds.length !== 1 || nextNodeIds.length > 0 || nextEdgeIds.length > 0) setRenamingSubgraphId(null);
+    if (nextEdgeIds.length !== 1 || nextNodeIds.length > 0 || nextSubgraphIds.length > 0) setEditingEdgeLabelId(null);
+    if (nextNodeIds.length !== 1 || nextEdgeIds.length > 0 || nextSubgraphIds.length > 0) setParentPickerNodeId(null);
+    if (nextNodeIds.length !== 1 && nextEdgeIds.length !== 1 && nextSubgraphIds.length !== 1) setOpenToolbarMenu(null);
   }, []);
 
   const addNode = useCallback(() => {
@@ -1336,6 +1581,11 @@ export function GraphDiagramView({
 
   const deleteSelection = useCallback(() => {
     if (!inEdit) return;
+    if (selectedSubgraphId) {
+      const result = runRewrite((baseSource) => dissolveSubgraph(baseSource, selectedSubgraphId));
+      if (result?.ok) clearSelection();
+      return;
+    }
     const nodeTargets = selectedNodeIds.length > 0 ? selectedNodeIds : selectedNodeId ? [selectedNodeId] : [];
     const edgeTargets = selectedEdgeIds.length > 0 ? selectedEdgeIds : selectedEdgeId ? [selectedEdgeId] : [];
     if (nodeTargets.length > 0) {
@@ -1355,7 +1605,17 @@ export function GraphDiagramView({
       }
       clearSelection();
     }
-  }, [clearSelection, inEdit, runEdit, selectedEdgeId, selectedEdgeIds, selectedNodeId, selectedNodeIds]);
+  }, [
+    clearSelection,
+    inEdit,
+    runEdit,
+    runRewrite,
+    selectedEdgeId,
+    selectedEdgeIds,
+    selectedNodeId,
+    selectedNodeIds,
+    selectedSubgraphId,
+  ]);
 
   const updateNodeStyle = useCallback(
     (patch: NodeStyleOverride) => {
@@ -1464,6 +1724,151 @@ export function GraphDiagramView({
     setRenamingNodeId(null);
   }, []);
 
+  const startSubgraphRename = useCallback((subgraphId: string) => {
+    if (!parsed.ok || parsed.model.type !== "flowchart" || !parsed.model.subgraphs.some((item) => item.id === subgraphId)) return;
+    selectSubgraph(subgraphId);
+    subgraphRenameCommittedRef.current = false;
+    setRenamingSubgraphId(subgraphId);
+  }, [parsed, selectSubgraph]);
+
+  const commitSubgraphRename = useCallback((value: string) => {
+    if (subgraphRenameCommittedRef.current || !renamingSubgraphId) return;
+    subgraphRenameCommittedRef.current = true;
+    const nextTitle = value.trim();
+    const currentTitle = parsed.ok && parsed.model.type === "flowchart"
+      ? parsed.model.subgraphs.find((item) => item.id === renamingSubgraphId)?.label ?? ""
+      : "";
+    setRenamingSubgraphId(null);
+    if (!nextTitle || nextTitle === currentTitle) return;
+    runRewrite((baseSource) => renameSubgraph(baseSource, renamingSubgraphId, nextTitle));
+  }, [parsed, renamingSubgraphId, runRewrite]);
+
+  const cancelSubgraphRename = useCallback(() => {
+    subgraphRenameCommittedRef.current = false;
+    setRenamingSubgraphId(null);
+  }, []);
+
+  const dissolveSelectedSubgraph = useCallback(() => {
+    if (!selectedSubgraphId) return;
+    const result = runRewrite((baseSource) => dissolveSubgraph(baseSource, selectedSubgraphId));
+    if (result?.ok) clearSelection();
+  }, [clearSelection, runRewrite, selectedSubgraphId]);
+
+  const beginSubgraphDrawing = useCallback(() => {
+    if (!parsed.ok || parsed.model.type !== "flowchart" || readOnly) return;
+    openEditor();
+    clearSelection();
+    setError(null);
+    setPendingSubgraph(null);
+    setSubgraphPreview(null);
+    subgraphDrawStartRef.current = null;
+    setSubgraphDrawMode(true);
+  }, [clearSelection, openEditor, parsed, readOnly]);
+
+  const preparePendingSubgraph = useCallback((rawRect: GraphRect): boolean => {
+    if (!parsed.ok || parsed.model.type !== "flowchart") return false;
+    const rect = normalizeGraphRect(rawRect);
+    if (rect.width < 8 || rect.height < 8) {
+      setSubgraphPreview(null);
+      return false;
+    }
+    const clusterNodes = nodesRef.current.filter((node): node is GraphClusterNode => node.type === "graphCluster");
+    const placement = resolveSubgraphFramePlacement(rect, clusterNodes);
+    if (!placement.ok) {
+      setSubgraphPreview(null);
+      toast.show({ message: "分区不能跨越已有分区边界", tone: "warn" });
+      return false;
+    }
+    const parent = placement.parentSubgraph
+      ? parsed.model.subgraphs.find((subgraph) => subgraph.id === placement.parentSubgraph)
+      : undefined;
+    const expectedScopePath = parent ? [...parent.scopePath, parent.id] : [];
+    const modelNodeById = new Map(parsed.model.nodes.map((node) => [node.id, node]));
+    const nodeIds = nodesRef.current
+      .filter((node): node is GraphRegularNode => node.type === "graphNode")
+      .filter((node) => graphRectContainsPoint(rect, graphNodeCenter(node)))
+      .filter((node) => sameStringPath(modelNodeById.get(node.id)?.scopePath ?? [], expectedScopePath))
+      .map((node) => node.id);
+    setSubgraphPreview(rect);
+    setPendingSubgraph({ rect, nodeIds, parentSubgraph: placement.parentSubgraph });
+    return true;
+  }, [parsed, toast]);
+
+  const cancelPendingSubgraph = useCallback(() => {
+    setPendingSubgraph(null);
+    setSubgraphPreview(null);
+    setSubgraphDrawMode(false);
+    subgraphDrawStartRef.current = null;
+  }, []);
+
+  const confirmPendingSubgraph = useCallback((value: string) => {
+    const pending = pendingSubgraph;
+    const title = value.trim();
+    if (!pending || !title) return;
+    const result = runRewrite((baseSource) =>
+      wrapNodesInSubgraph(baseSource, pending.nodeIds, title, pending.parentSubgraph),
+    );
+    if (!result?.ok) return;
+    setPendingSubgraph(null);
+    setSubgraphPreview(null);
+    setSubgraphDrawMode(false);
+    setSelectedSubgraphId(result.newSubgraphId ?? null);
+  }, [pendingSubgraph, runRewrite]);
+
+  const handleSubgraphPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!subgraphDrawMode || pendingSubgraph || event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (!target?.classList.contains("react-flow__pane")) return;
+    const point = editorFit.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    if (!point) return;
+    event.preventDefault();
+    event.stopPropagation();
+    subgraphDrawStartRef.current = { pointerId: event.pointerId, point };
+    setSubgraphPreview({ x: point.x, y: point.y, width: 0, height: 0 });
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* jsdom/旧浏览器无指针捕获时仍可依赖冒泡事件 */
+    }
+  }, [editorFit, pendingSubgraph, subgraphDrawMode]);
+
+  const handleSubgraphPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = subgraphDrawStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const point = editorFit.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    if (!point) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSubgraphPreview(normalizeGraphRect({
+      x: start.point.x,
+      y: start.point.y,
+      width: point.x - start.point.x,
+      height: point.y - start.point.y,
+    }));
+  }, [editorFit]);
+
+  const handleSubgraphPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = subgraphDrawStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const point = editorFit.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    subgraphDrawStartRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* 指针可能已由浏览器释放 */
+    }
+    if (!point) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const accepted = preparePendingSubgraph({
+      x: start.point.x,
+      y: start.point.y,
+      width: point.x - start.point.x,
+      height: point.y - start.point.y,
+    });
+    if (accepted) setSubgraphDrawMode(false);
+  }, [editorFit, preparePendingSubgraph]);
+
   const startEdgeLabelEdit = useCallback(
     (edgeId: string) => {
       const edge = graphEdges.find((item) => item.id === edgeId);
@@ -1559,14 +1964,24 @@ export function GraphDiagramView({
         targetPosition: graphHandleDirection.targetPosition,
         data: {
           label: cluster.label,
+          editLabel: cluster.label,
           direction: cluster.direction,
           depth: cluster.depth,
+          scopePath: cluster.scopePath,
+          isRenaming: inEdit && renamingSubgraphId === cluster.id,
+          canEdit: inEdit,
+          onSelect: () => selectSubgraph(cluster.id),
+          onRenameStart: () => startSubgraphRename(cluster.id),
+          onRenameCommit: commitSubgraphRename,
+          onRenameCancel: cancelSubgraphRename,
         },
-        draggable: false,
-        selectable: false,
-        focusable: false,
+        draggable: inEdit && renamingSubgraphId !== cluster.id,
+        selectable: inEdit,
+        focusable: inEdit,
+        selected: inEdit && selectedSubgraphId === cluster.id,
+        dragHandle: ".graph-diagram-cluster__title",
         zIndex: -100 + cluster.depth,
-        className: "graph-diagram-cluster-node",
+        className: classNames("graph-diagram-cluster-node", selectedSubgraphId === cluster.id && "is-selected"),
         style: {
           width: cluster.width,
           height: cluster.height,
@@ -1701,11 +2116,13 @@ export function GraphDiagramView({
   }, [
     addConnectedNodeFromHandle,
     autoLayout,
+    cancelSubgraphRename,
     cancelRename,
     canConnectEdge,
     cancelEdgeLabelEdit,
     commitRename,
     commitEdgeLabelEdit,
+    commitSubgraphRename,
     diagramLayout.clusters,
     editingEdgeLabelId,
     graphEdges,
@@ -1718,11 +2135,15 @@ export function GraphDiagramView({
     parsed.model,
     parsed,
     renamingNodeId,
+    renamingSubgraphId,
     selectedEdgeId,
     selectedNodeId,
+    selectedSubgraphId,
     selectEdge,
+    selectSubgraph,
     startEdgeLabelEdit,
     startRename,
+    startSubgraphRename,
   ]);
 
   const beginParentPicker = useCallback(() => {
@@ -1735,6 +2156,10 @@ export function GraphDiagramView({
 
   const handleEditorNodeClick = useCallback(
     (node: Node) => {
+      if (node.type === "graphCluster") {
+        selectSubgraph(node.id);
+        return;
+      }
       if (!parentPickerNodeId) {
         selectNode(node.id);
         return;
@@ -1753,7 +2178,7 @@ export function GraphDiagramView({
       setRenamingNodeId(null);
       setError(null);
     },
-    [moveParentTargetIds, parentPickerNodeId, parsed, runEdit, selectNode],
+    [moveParentTargetIds, parentPickerNodeId, parsed, runEdit, selectNode, selectSubgraph],
   );
 
   const contextPosition = useMemo(
@@ -1815,10 +2240,50 @@ export function GraphDiagramView({
     [emitOverlay, isMindmap, parsed.model, runEdit],
   );
 
+  const commitDroppedNodes = useCallback((droppedNodes: Node[]) => {
+    commitNodePositions(droppedNodes);
+    if (!parsed.ok || parsed.model.type !== "flowchart") return;
+    const clusterNodes = nodesRef.current.filter((item): item is GraphClusterNode => item.type === "graphCluster");
+    const modelNodeById = new Map(parsed.model.nodes.map((item) => [item.id, item]));
+    for (const droppedNode of droppedNodes) {
+      if (droppedNode.type === "graphCluster") continue;
+      const modelNode = modelNodeById.get(droppedNode.id);
+      if (!modelNode) continue;
+      const targetSubgraph = deepestSubgraphAtPoint(graphNodeCenter(droppedNode), clusterNodes);
+      const target = targetSubgraph
+        ? parsed.model.subgraphs.find((subgraph) => subgraph.id === targetSubgraph)
+        : undefined;
+      const nextScopePath = target ? [...target.scopePath, target.id] : [];
+      if (sameStringPath(modelNode.scopePath, nextScopePath)) continue;
+      runRewrite((baseSource) => moveNodeToSubgraph(baseSource, droppedNode.id, targetSubgraph));
+    }
+  }, [commitNodePositions, parsed, runRewrite]);
+
   const handleNodeDragStart = useCallback(
     (event: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
       editorRef.current?.focus({ preventScroll: true });
       if (!inEdit) return;
+      if (node.type === "graphCluster" && parsed.ok && parsed.model.type === "flowchart") {
+        const descendantNodeIds = new Set(
+          parsed.model.nodes.filter((item) => item.scopePath.includes(node.id)).map((item) => item.id),
+        );
+        const descendantSubgraphIds = new Set(
+          parsed.model.subgraphs.filter((item) => item.scopePath.includes(node.id)).map((item) => item.id),
+        );
+        clusterDragRef.current = {
+          clusterId: node.id,
+          startPosition: { ...node.position },
+          movingPositions: Object.fromEntries(
+            nodesRef.current
+              .filter((item) => descendantNodeIds.has(item.id) || descendantSubgraphIds.has(item.id))
+              .map((item) => [item.id, { ...item.position }]),
+          ),
+        };
+        altDuplicateDragRef.current = null;
+        shiftDragRef.current = null;
+        selectSubgraph(node.id);
+        return;
+      }
       const source = graphNodes.find((item) => item.id === node.id);
       if (!source) return;
       if (eventHasAlt(event) && capEnabled(getCapabilities(parseDiagram(liveSourceRef.current), { nodeId: node.id }), "addNode")) {
@@ -1846,10 +2311,22 @@ export function GraphDiagramView({
         shiftDragRef.current = null;
       }
     },
-    [graphNodes, inEdit],
+    [graphNodes, inEdit, parsed, selectSubgraph],
   );
 
   const handleNodeDrag = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
+    const clusterState = clusterDragRef.current;
+    if (clusterState && clusterState.clusterId === node.id) {
+      const dx = node.position.x - clusterState.startPosition.x;
+      const dy = node.position.y - clusterState.startPosition.y;
+      setNodes((current) =>
+        current.map((item) => {
+          const start = clusterState.movingPositions[item.id];
+          return start ? { ...item, position: { x: start.x + dx, y: start.y + dy } } : item;
+        }),
+      );
+      return;
+    }
     const altState = altDuplicateDragRef.current;
     if (altState && altState.source.id === node.id) {
       altState.dropPosition = { ...node.position };
@@ -1870,6 +2347,26 @@ export function GraphDiagramView({
 
   const handleNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, node: Node, draggedNodes: Node[]) => {
+      const clusterState = clusterDragRef.current;
+      if (clusterState && clusterState.clusterId === node.id) {
+        clusterDragRef.current = null;
+        const dx = node.position.x - clusterState.startPosition.x;
+        const dy = node.position.y - clusterState.startPosition.y;
+        const movedNodes = nodesRef.current
+          .filter((item): item is GraphRegularNode => item.type === "graphNode" && !!clusterState.movingPositions[item.id])
+          .map((item) => {
+            const start = clusterState.movingPositions[item.id]!;
+            return { ...item, position: { x: start.x + dx, y: start.y + dy }, dragging: false };
+          });
+        setNodes((current) =>
+          current.map((item) => {
+            const start = clusterState.movingPositions[item.id];
+            return start ? { ...item, position: { x: start.x + dx, y: start.y + dy }, dragging: false } : item;
+          }),
+        );
+        commitNodePositions(movedNodes);
+        return;
+      }
       const altState = altDuplicateDragRef.current;
       if (altState && altState.source.id === node.id) {
         altDuplicateDragRef.current = null;
@@ -1890,12 +2387,12 @@ export function GraphDiagramView({
         setNodes((current) =>
           current.map((item) => (constrained[item.id] ? { ...item, position: constrained[item.id]!, dragging: false } : item)),
         );
-        commitNodePositions(committed);
+        commitDroppedNodes(committed);
         return;
       }
-      commitNodePositions(draggedNodes.length > 0 ? draggedNodes : [node]);
+      commitDroppedNodes(draggedNodes.length > 0 ? draggedNodes : [node]);
     },
-    [commitNodePositions, duplicateNodeAt],
+    [commitDroppedNodes, commitNodePositions, duplicateNodeAt],
   );
 
   useEffect(() => {
@@ -1934,7 +2431,7 @@ export function GraphDiagramView({
         setNodes((current) =>
           current.map((item) => (item.id === action.nodeId ? { ...item, position } : item)),
         );
-        commitNodePositions([{ ...flowNode, position }]);
+        commitDroppedNodes([{ ...flowNode, position }]);
         return;
       }
       if (action.kind === "boxSelect") {
@@ -1970,12 +2467,57 @@ export function GraphDiagramView({
         setEditingEdgeLabelId(null);
         setParentPickerNodeId(null);
         setOpenToolbarMenu(null);
+        return;
+      }
+      if (action.kind === "drawSubgraph") {
+        if (preparePendingSubgraph(action.rect)) setSubgraphDrawMode(false);
+        return;
+      }
+      if (action.kind === "dropNode") {
+        const flowNode = nodesRef.current.find((item): item is GraphRegularNode => item.id === action.nodeId && item.type === "graphNode");
+        if (!flowNode) return;
+        const moved = { ...flowNode, position: action.position };
+        setNodes((current) => current.map((item) => (item.id === action.nodeId ? moved : item)));
+        commitDroppedNodes([moved]);
+        return;
+      }
+      if (action.kind === "moveSubgraph" && parsed.ok && parsed.model.type === "flowchart") {
+        const descendantIds = new Set(
+          parsed.model.nodes.filter((item) => item.scopePath.includes(action.subgraphId)).map((item) => item.id),
+        );
+        const moved = nodesRef.current
+          .filter((item): item is GraphRegularNode => item.type === "graphNode" && descendantIds.has(item.id))
+          .map((item) => ({
+            ...item,
+            position: {
+              x: item.position.x + action.delta.x,
+              y: item.position.y + action.delta.y,
+            },
+          }));
+        setNodes((current) =>
+          current.map((item) => {
+            const next = moved.find((candidate) => candidate.id === item.id);
+            return next ?? item;
+          }),
+        );
+        commitNodePositions(moved);
       }
     };
 
     editor.addEventListener("graph-diagram-test-action", handleTestAction);
     return () => editor.removeEventListener("graph-diagram-test-action", handleTestAction);
-  }, [commitNodePositions, duplicateNodeAt, graphNodes, ids.edges, ids.nodes, inEdit, runEdit]);
+  }, [
+    commitDroppedNodes,
+    commitNodePositions,
+    duplicateNodeAt,
+    graphNodes,
+    ids.edges,
+    ids.nodes,
+    inEdit,
+    parsed,
+    preparePendingSubgraph,
+    runEdit,
+  ]);
 
   const handleEditorKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -2015,6 +2557,31 @@ export function GraphDiagramView({
               <div className="graph-diagram-editor__title">图编辑</div>
             </div>
             <div className="graph-diagram-editor__topbar-actions">
+              {parsed.model.type === "flowchart" && (
+                <div className="graph-diagram-editor__canvas-tools" role="toolbar" aria-label="分区操作">
+                  <CanvasToolButton
+                    label="新增分区"
+                    icon="subgraph"
+                    active={subgraphDrawMode}
+                    pressed={subgraphDrawMode}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      beginSubgraphDrawing();
+                    }}
+                  />
+                  <CanvasToolButton
+                    label="解散分区"
+                    icon="dissolve"
+                    disabled={!selectedSubgraph}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      dissolveSelectedSubgraph();
+                    }}
+                  />
+                </div>
+              )}
               <button type="button" className="graph-diagram-primary-action" disabled={!canAddNodeFromToolbar} onClick={addNode}>
                 新增节点
               </button>
@@ -2024,7 +2591,23 @@ export function GraphDiagramView({
             </div>
           </div>
           {error && <div className="graph-diagram-error graph-diagram-error--floating">{error}</div>}
-          <div className={classNames("graph-diagram-canvas graph-diagram-canvas--editor", connecting && "is-connecting")} ref={editorFit.canvasRef}>
+          <div
+            className={classNames(
+              "graph-diagram-canvas",
+              "graph-diagram-canvas--editor",
+              connecting && "is-connecting",
+              subgraphDrawMode && "is-drawing-subgraph",
+              pendingSubgraph && "is-naming-subgraph",
+            )}
+            ref={editorFit.canvasRef}
+            onPointerDownCapture={handleSubgraphPointerDown}
+            onPointerMove={handleSubgraphPointerMove}
+            onPointerUp={handleSubgraphPointerUp}
+            onPointerCancel={() => {
+              subgraphDrawStartRef.current = null;
+              if (!pendingSubgraph) setSubgraphPreview(null);
+            }}
+          >
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -2035,14 +2618,15 @@ export function GraphDiagramView({
               minZoom={0.1}
               onInit={editorFit.onInit}
               onMove={(_event, viewport) => setEditViewport(viewport)}
-              nodesDraggable={inEdit}
-              nodesConnectable={canConnectEdge}
-              elementsSelectable
+              nodesDraggable={inEdit && !subgraphDrawMode && !pendingSubgraph}
+              nodesConnectable={canConnectEdge && !subgraphDrawMode && !pendingSubgraph}
+              elementsSelectable={!subgraphDrawMode && !pendingSubgraph}
               deleteKeyCode={null}
               selectionKeyCode={["Control", "Meta"]}
               multiSelectionKeyCode={["Control", "Meta"]}
               selectionMode={SelectionMode.Partial}
               selectionOnDrag={false}
+              panOnDrag={!subgraphDrawMode && !pendingSubgraph}
               proOptions={{ hideAttribution: true }}
               zoomOnDoubleClick={false}
               // 关掉拖节点时的自动平移:alt 拖拽复制会把源节点钉在原位,但 React Flow 的拖拽仍"活跃",
@@ -2065,7 +2649,8 @@ export function GraphDiagramView({
               }}
               onNodeDoubleClick={(event, node) => {
                 event.stopPropagation();
-                startRename(node.id);
+                if (node.type === "graphCluster") startSubgraphRename(node.id);
+                else startRename(node.id);
               }}
               onEdgeClick={(event, edge) => {
                 event.stopPropagation();
@@ -2075,11 +2660,52 @@ export function GraphDiagramView({
                 event.stopPropagation();
                 startEdgeLabelEdit(edge.id);
               }}
-              onPaneClick={clearSelection}
+              onPaneClick={() => {
+                if (!subgraphDrawMode && !pendingSubgraph) clearSelection();
+              }}
             >
               <FitOnNodesInitialized />
               <Background color="#d8c9a8" gap={18} />
               <Controls showInteractive />
+              {subgraphPreview && (
+                <ViewportPortal>
+                  <div
+                    className={classNames("graph-diagram-subgraph-draft", pendingSubgraph && "is-pending")}
+                    data-draft-node-count={pendingSubgraph?.nodeIds.length}
+                    style={{
+                      left: subgraphPreview.x,
+                      top: subgraphPreview.y,
+                      width: subgraphPreview.width,
+                      height: subgraphPreview.height,
+                    }}
+                  >
+                    {pendingSubgraph && (
+                      <input
+                        className="graph-diagram-subgraph-draft__input nodrag nowheel"
+                        aria-label="新分区名称"
+                        defaultValue="新分区"
+                        autoFocus
+                        spellCheck={false}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          event.stopPropagation();
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            confirmPendingSubgraph(event.currentTarget.value);
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelPendingSubgraph();
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                </ViewportPortal>
+              )}
             </ReactFlow>
           </div>
           {selectedNode && contextPosition && renamingNodeId !== selectedNode.id && (
@@ -2374,7 +3000,7 @@ export function GraphDiagramView({
             readOnly={readOnly}
             align={align}
             onAlignChange={onAlignChange}
-            onCreateSubgraph={parsed.model.type === "flowchart" ? openEditor : undefined}
+            onCreateSubgraph={parsed.model.type === "flowchart" ? beginSubgraphDrawing : undefined}
             onFullscreen={openFullscreen}
           />
         </ReactFlow>
@@ -2704,6 +3330,9 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
     rfRef.current = inst;
     requestAnimationFrame(() => inst.fitView({ padding: 0.15, maxZoom: 1 }));
   }, []);
+  const screenToFlowPosition = useCallback((point: { x: number; y: number }) => {
+    return rfRef.current?.screenToFlowPosition(point) ?? null;
+  }, []);
 
   useEffect(() => {
     if (!active || !canvasEl || typeof ResizeObserver === "undefined") return;
@@ -2725,7 +3354,7 @@ function useFitOnResize(active: boolean, onCanvasFrameChange?: (frame: CanvasFra
     };
   }, [active, canvasEl, onCanvasFrameChange]);
 
-  return { canvasRef, onInit };
+  return { canvasRef, onInit, screenToFlowPosition };
 }
 
 function modelNodes(model: DiagramModel): BaseNode[] {

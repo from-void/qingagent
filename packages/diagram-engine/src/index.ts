@@ -3738,10 +3738,16 @@ function refitClustersToContents(
     const minY = Math.min(...contents.map((rect) => rect.y));
     const maxX = Math.max(...contents.map((rect) => rect.x + rect.width));
     const maxY = Math.max(...contents.map((rect) => rect.y + rect.height));
-    cluster.x = Math.min(cluster.x, minX - GRAPH_CLUSTER_SIDE_PADDING);
-    cluster.y = Math.min(cluster.y, minY - GRAPH_CLUSTER_TITLE_HEIGHT);
-    cluster.width = Math.max(cluster.width, maxX - cluster.x + GRAPH_CLUSTER_SIDE_PADDING);
-    cluster.height = Math.max(cluster.height, maxY - cluster.y + GRAPH_CLUSTER_BOTTOM_PADDING);
+    cluster.x = minX - GRAPH_CLUSTER_SIDE_PADDING;
+    cluster.y = minY - GRAPH_CLUSTER_TITLE_HEIGHT;
+    cluster.width = Math.max(
+      GRAPH_LAYOUT_NODE_WIDTH + GRAPH_CLUSTER_SIDE_PADDING * 2,
+      maxX - minX + GRAPH_CLUSTER_SIDE_PADDING * 2,
+    );
+    cluster.height = Math.max(
+      GRAPH_LAYOUT_NODE_HEIGHT + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+      maxY - minY + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+    );
   }
   return next;
 }

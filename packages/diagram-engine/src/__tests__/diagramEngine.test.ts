@@ -1054,6 +1054,26 @@ flowchart TD
     }
   });
 
+  it("subgraph 跟随全部成员的 overlay 位移等量平移并保持包络尺寸", () => {
+    const model = parseDiagram(`flowchart LR
+  subgraph Outer["外层"]
+    A[甲]
+    B[乙]
+  end
+`).model as FlowGraph;
+    const before = layoutDiagramGraph(model, {
+      positions: { A: { x: 80, y: 90 }, B: { x: 300, y: 90 } },
+    }).clusters.find((cluster) => cluster.id === "Outer")!;
+    const after = layoutDiagramGraph(model, {
+      positions: { A: { x: 220, y: 160 }, B: { x: 440, y: 160 } },
+    }).clusters.find((cluster) => cluster.id === "Outer")!;
+
+    expect(after.x - before.x).toBe(140);
+    expect(after.y - before.y).toBe(70);
+    expect(after.width).toBe(before.width);
+    expect(after.height).toBe(before.height);
+  });
+
   it("链式、多目标、两种标签、不可见边、圆/叉端点与 linkStyle 都进入边模型", () => {
     const source = `flowchart LR
   A -->|管道标签| B --> C

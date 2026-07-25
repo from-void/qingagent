@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Node, Viewport } from "@xyflow/react";
 import { parseDiagram, type FlowGraph, type MindmapTree } from "@qingagent/diagram-engine";
+import { ToastProvider } from "../../../../system/ToastProvider";
 import { DiagramRenderer } from "../../components/diagram/DiagramRenderer";
 const graphDiagramCss = readFileSync(path.join(process.cwd(), "src/pages/workspace/components/diagram/graphDiagram.css"), "utf8");
 
@@ -658,6 +659,218 @@ flowchart LR
     expect(latestOverlay?.positions?.n_新节点?.x).toBeGreaterThan(200);
     const fixedHandle = Object.values(latestOverlay?.edgeHandles ?? {}).find((item) => item.sourceHandle === "r");
     expect(fixedHandle).toEqual({ sourceHandle: "r", targetHandle: "l" });
+  });
+
+  it("画框建区先预览并命名，Esc 整体取消，Enter 将框内节点写回 subgraph", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[甲]
+  B[乙]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 }, B: { x: 320, y: 50 } } }}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: { x: 20, y: 20, width: 220, height: 140 },
+    });
+    const firstDraft = await waitForSelector(".graph-diagram-subgraph-draft.is-pending", editor) as HTMLElement;
+    expect(firstDraft.dataset.draftNodeCount).toBe("1");
+    const firstInput = findInput("新分区名称", editor);
+    await keyDown(firstInput, { key: "Escape" });
+    expect(editor.querySelector(".graph-diagram-subgraph-draft")).toBeNull();
+    expect(onSourceChange).not.toHaveBeenCalled();
+
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: { x: 20, y: 20, width: 220, height: 140 },
+    });
+    const input = findInput("新分区名称", editor);
+    await setInputValue(input, "业务分区");
+    await keyDown(input, { key: "Enter" });
+
+    const nextSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const model = parseDiagram(nextSource).model as FlowGraph;
+    expect(model.subgraphs.find((subgraph) => subgraph.label === "业务分区")).toBeTruthy();
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual(["subgraph_业务分区"]);
+    expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual([]);
+    expect(editor.querySelector(".graph-diagram-subgraph-draft")).toBeNull();
+
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: { x: 620, y: 320, width: 120, height: 80 },
+    });
+    const emptyInput = findInput("新分区名称", editor);
+    await setInputValue(emptyInput, "空分区");
+    await keyDown(emptyInput, { key: "Enter" });
+    const emptyModel = parseDiagram(onSourceChange.mock.calls.at(-1)?.[0] as string).model as FlowGraph;
+    expect(emptyModel.subgraphs.find((subgraph) => subgraph.label === "空分区")).toBeTruthy();
+    expect(emptyModel.nodes.every((node) => !node.scopePath.includes("subgraph_空分区"))).toBe(true);
+  });
+
+  it("分区内画框创建嵌套子分区，跨越已有边界时拒绝并走全局 toast", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <ToastProvider>
+        <EditableDiagramHarness
+          source={`flowchart TD
+  subgraph Outer["外层"]
+    A[甲]
+  end
+  B[乙]
+`}
+          initialOverlay={{ positions: { A: { x: 100, y: 100 }, B: { x: 430, y: 100 } } }}
+          onSourceChange={onSourceChange}
+        />
+      </ToastProvider>,
+    );
+    const editor = await openEditor();
+    const outerNode = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    const outer = parseTranslate(outerNode.style.transform);
+
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: {
+        x: outer.x + 20,
+        y: outer.y + 20,
+        width: 48,
+        height: 28,
+      },
+    });
+    const input = findInput("新分区名称", editor);
+    await setInputValue(input, "内层");
+    await keyDown(input, { key: "Enter" });
+    const nestedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(nestedSource).model as FlowGraph).subgraphs.find(
+      (subgraph) => subgraph.label === "内层",
+    )?.scopePath).toEqual(["Outer"]);
+
+    const latestOuter = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    const latestPosition = parseTranslate(latestOuter.style.transform);
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: {
+        x: latestPosition.x + 160,
+        y: latestPosition.y + 24,
+        width: 90,
+        height: 80,
+      },
+    });
+    const toast = await waitForSelector(".qa-toast", document.body);
+    expect(toast.textContent).toContain("分区不能跨越已有分区边界");
+    expect(editor.querySelector("input[aria-label='新分区名称']")).toBeNull();
+  });
+
+  it("拖节点进出分区会改归属，容器按新成员自动包络", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  subgraph Outer["外层"]
+    A[甲]
+  end
+  B[乙]
+`}
+        initialOverlay={{ positions: { A: { x: 100, y: 100 }, B: { x: 430, y: 100 } } }}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    const outerNode = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    const outerPosition = parseTranslate(outerNode.style.transform);
+    await dispatchGraphTestAction(editor, {
+      kind: "dropNode",
+      nodeId: "B",
+      position: { x: outerPosition.x, y: outerPosition.y },
+    });
+    const movedInSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(movedInSource).model as FlowGraph).nodes.find((node) => node.id === "B")?.scopePath).toEqual(["Outer"]);
+
+    await dispatchGraphTestAction(editor, { kind: "dropNode", nodeId: "A", position: { x: 760, y: 120 } });
+    const movedOutSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const movedOutModel = parseDiagram(movedOutSource).model as FlowGraph;
+    expect(movedOutModel.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(movedOutModel.nodes.find((node) => node.id === "B")?.scopePath).toEqual(["Outer"]);
+    const cluster = await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement;
+    expect(parseTranslate(cluster.style.transform).x).toBeLessThan(200);
+  });
+
+  it("分区标题可选择、双击内联改名，工具栏解散后节点保留归父", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart TD
+  subgraph Outer["旧分区"]
+    A[甲]
+  end
+`}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+    const title = await waitForSelector(".graph-diagram-cluster__title", editor) as HTMLElement;
+    await click(title);
+    expect(title.closest(".graph-diagram-cluster")?.classList.contains("is-selected")).toBe(true);
+    const dissolveButton = editor.querySelector<HTMLButtonElement>("button[aria-label='解散分区']")!;
+    expect(dissolveButton.disabled).toBe(false);
+
+    const selectedTitle = await waitForSelector(".graph-diagram-cluster__title", editor) as HTMLElement;
+    await act(async () => {
+      selectedTitle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+    });
+    await flush();
+    const renameInput = findInput("分区名称", editor);
+    await setInputValue(renameInput, "新分区");
+    await keyDown(renameInput, { key: "Enter" });
+    const renamedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(renamedSource).model as FlowGraph).subgraphs.find((subgraph) => subgraph.id === "Outer")?.label).toBe("新分区");
+
+    const renamedTitle = await waitForSelector(".graph-diagram-cluster__title", editor) as HTMLElement;
+    await click(renamedTitle);
+    await mouseDown(editor.querySelector("button[aria-label='解散分区']")!);
+    const dissolvedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const model = parseDiagram(dissolvedSource).model as FlowGraph;
+    expect(model.subgraphs).toHaveLength(0);
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+  });
+
+  it("选中分区按 Delete 解散；拖标题整体移动时内部相对位置不变且不改 source", async () => {
+    const onSourceChange = vi.fn();
+    const onOverlayChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  subgraph Outer["外层"]
+    A[甲]
+    B[乙]
+  end
+`}
+        initialOverlay={{ positions: { A: { x: 80, y: 90 }, B: { x: 300, y: 90 } } }}
+        onSourceChange={onSourceChange}
+        onOverlayChange={onOverlayChange}
+      />,
+    );
+    const editor = await openEditor();
+    const clusterBefore = parseTranslate((await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement).style.transform);
+    await dispatchGraphTestAction(editor, { kind: "moveSubgraph", subgraphId: "Outer", delta: { x: 140, y: 70 } });
+    const latestOverlay = onOverlayChange.mock.calls.at(-1)?.[0] as NonNullable<Parameters<typeof DiagramRenderer>[0]["overlay"]>;
+    expect(latestOverlay.positions?.A).toEqual({ x: 220, y: 160 });
+    expect(latestOverlay.positions?.B).toEqual({ x: 440, y: 160 });
+    expect((latestOverlay.positions?.B?.x ?? 0) - (latestOverlay.positions?.A?.x ?? 0)).toBe(220);
+    const clusterAfter = parseTranslate((await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement).style.transform);
+    expect(clusterAfter.x - clusterBefore.x).toBe(140);
+    expect(clusterAfter.y - clusterBefore.y).toBe(70);
+    expect(onSourceChange).not.toHaveBeenCalled();
+
+    await click(await waitForSelector(".graph-diagram-cluster__title", editor));
+    await keyDown(editor, { key: "Delete" });
+    const dissolvedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(dissolvedSource).model as FlowGraph).subgraphs).toHaveLength(0);
+    expect((parseDiagram(dissolvedSource).model as FlowGraph).nodes.map((node) => node.id).sort()).toEqual(["A", "B"]);
   });
 
   it("连续语义编辑基于组件内最新 source,不会重复写同一个节点声明", async () => {

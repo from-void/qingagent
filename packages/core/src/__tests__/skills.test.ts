@@ -37,6 +37,56 @@ function parseFrontmatter(source: string): Record<string, unknown> {
 }
 
 describe("builtin skills", () => {
+  it("发现 cli-auth 内部技能且显式禁止用户调用", async () => {
+    const skillPath = join(BUILTIN_SKILLS_DIR, "capability", "cli-auth", "SKILL.md");
+    const source = await readFile(skillPath, "utf8");
+    const frontmatter = parseFrontmatter(source);
+
+    expect(frontmatter).toMatchObject({
+      name: "cli-auth",
+      label: "命令行授权",
+      "user-invocable": "false",
+    });
+    expect(source).toContain("mastra_workspace_get_process_output(pid, tail)");
+    expect(source).toContain("auth_url redirect_uri jump_url");
+    expect(source).toContain("发出二维码卡后立刻收尾并结束本轮回复");
+    for (const keyword of [
+      "在决定接入方式前",
+      "init/login 类命令的 `--help`",
+      "摸清它提供的全部接入方式",
+      "优先选择自动化程度最高",
+      "扫码、device flow 或非交互方式",
+      "`--noninteractive`",
+      "由产品渲染二维码卡让用户扫码",
+      "不要主动把用户推去第三方管理后台手动创建应用",
+      "复制 AppID/App Secret 等凭证",
+      "完全没有任何自动授权方式时",
+      "明确说明为什么只能手动",
+      "运行这类命令前先查看该 CLI 的 `--help`",
+      "“不自动打开浏览器”之类的选项",
+      "启动命令**必须带上**",
+      "具体参数名以该 CLI 的帮助为准",
+      "严禁 kill 进程、严禁重新起进程、严禁重新出码",
+      "还没检测到完成，可能还没生效/还在等待",
+      "拿不准是哪种语义时，默认只轮询",
+      "一次约 60 秒的有界 wait 返回后继续下一次",
+      "不要把球踢回用户",
+      "持续轮询只服务于**本轮**用户明确要求的等待",
+      "下一轮必须优先处理新的用户文本",
+      "否则不得因历史里仍有 PID/等待卡而自动续跑旧轮询",
+      "新消息抢占只中止 Agent 等待，不代表后台进程已终止",
+      '"completedCardId":"<首次返回的 cardId>"',
+      "completionMessage",
+      "note 位于二维码下方",
+      "必须写“上方二维码/上面的二维码”",
+      "禁止写“下方二维码/下面的二维码”",
+    ]) {
+      expect(source).toContain(keyword);
+    }
+    expect(source.indexOf("在决定接入方式前"))
+      .toBeLessThan(source.indexOf("## 标准流程"));
+  });
+
   it("发现 diagram-viz 内置技能，并在显式停用后从 Workspace 目录移除", async () => {
     const categoryRoots = [
       join(BUILTIN_SKILLS_DIR, "capability"),

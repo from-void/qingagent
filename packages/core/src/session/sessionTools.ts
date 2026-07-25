@@ -377,6 +377,11 @@ export function missingGenericToolResultFields(
       requireString("state");
       requireString("mpName");
       requireString("message");
+      if (result.state === "READY") {
+        if (result.questionnaire !== null) missing.push("questionnaire");
+      } else {
+        requireRecord("questionnaire");
+      }
       break;
     case "wechat_search_mp":
       requireBoolean("ok");

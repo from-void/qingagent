@@ -325,6 +325,11 @@ describe("GET /api/v1/skills", () => {
       userInvocable: false,
       tools: ["readDocument", "searchDocuments"],
     });
+    expect(byName.get("cli-auth")).toMatchObject({
+      label: "命令行授权",
+      summary: "安全处理阻塞等待扫码或网页授权的 CLI",
+      userInvocable: false,
+    });
     expect(byName.get("review")).toMatchObject({
       label: "文档审查",
       summary: "统一执行八类文档审查",

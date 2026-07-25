@@ -10,6 +10,7 @@ import {
   type Event,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from "electron";
 import path from "node:path";
 import {
@@ -60,8 +61,11 @@ let mainWindowRememberGeneration = 0;
 let mainWindowRememberScope: string | null = null;
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
-function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
-  assertTrustedRendererEvent(event, mainWindow?.webContents ?? null);
+function assertTrustedRenderer(
+  event: IpcMainEvent | IpcMainInvokeEvent,
+  expectedRenderer: WebContents | null = mainWindow?.webContents ?? null,
+): void {
+  assertTrustedRendererEvent(event, expectedRenderer);
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -433,10 +437,12 @@ function showTrustedRememberPrompt(
       event: Electron.IpcMainEvent,
       decision: unknown,
     ) => {
-      if (
-        event.sender !== promptWindow.webContents ||
-        (decision !== "remember" && decision !== "cancel")
-      ) return;
+      try {
+        assertTrustedRenderer(event, promptWindow.webContents);
+      } catch {
+        return;
+      }
+      if (decision !== "remember" && decision !== "cancel") return;
       if (decision === "remember" && !promptInputGate.consume({
         senderId: event.sender.id,
         mainWindowSenderId: promptWindow.webContents.id,

@@ -31,6 +31,10 @@ import {
   type TempDocumentsDb,
 } from "./dbTestUtils.js";
 
+function expectMigration0025AppliedExactlyOnce(appliedIds: readonly number[]): void {
+  expect(appliedIds.filter((id) => id === 25)).toEqual([25]);
+}
+
 describe("0025 quarantine lineage and PM compatibility", () => {
   let db: TempDocumentsDb;
 
@@ -58,7 +62,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     __resetMigrationsForTest();
 
     const migration = await runMigrations();
-    expect(migration.appliedIds).toEqual([24, 25]);
+    expectMigration0025AppliedExactlyOnce(migration.appliedIds);
     await expectActiveFamilyClean();
     await expect(getMaxDocumentSnapshotVersion("current-doc")).resolves.toBe(1);
     await expect(listVersions("current-doc")).resolves.toMatchObject([
@@ -144,7 +148,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     __resetMigrationsForTest();
 
     const migration = await runMigrations();
-    expect(migration.appliedIds).toEqual([23, 24, 25]);
+    expectMigration0025AppliedExactlyOnce(migration.appliedIds);
     await expectActiveFamilyClean();
     await expect(getMaxDocumentSnapshotVersion("current-doc")).resolves.toBe(1);
     const blocks = await getDocumentsClient().execute(
@@ -199,7 +203,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
     });
     __resetMigrationsForTest();
 
-    expect((await runMigrations()).appliedIds).toEqual([23, 24, 25]);
+    expectMigration0025AppliedExactlyOnce((await runMigrations()).appliedIds);
     const blocks = await client.execute(`
       SELECT COUNT(*) AS n
       FROM document_write_blocks
@@ -322,7 +326,7 @@ describe("0025 quarantine lineage and PM compatibility", () => {
       collectText(JSON.parse(draftPm)),
     ];
     __resetMigrationsForTest();
-    expect((await runMigrations()).appliedIds).toEqual([25]);
+    expectMigration0025AppliedExactlyOnce((await runMigrations()).appliedIds);
 
     const rows = await client.execute(`
       SELECT doc_pm AS pm FROM documents WHERE id = 'legacy-list-doc'

@@ -21,8 +21,8 @@ async function up(client: Parameters<Migration["up"]>[0]): Promise<void> {
   );
 }
 
-export const migration0026ConfirmGrantVersions: Migration = {
-  id: 26,
+export const migration0028ConfirmGrantVersions: Migration = {
+  id: 28,
   name: "confirm_grant_versions",
   up,
 };

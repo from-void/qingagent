@@ -26,15 +26,7 @@ import { migration0024DocumentRestoreLineageAndOpsIndex } from "./0024_document_
 import { migration0025QuarantineLineageAndPmCompat } from "./0025_quarantine_lineage_and_pm_compat.js";
 import { migration0026ConfirmGrantsAndAudit } from "./0026_confirm_grants_and_audit.js";
 import { migration0027ConfirmAuditSubject } from "./0027_confirm_audit_subject.js";
-import {
-  migration0026ConfirmGrantVersions as migration0028ConfirmGrantVersionsBase,
-} from "./0026_confirm_grant_versions.js";
-
-// 本迁移在分支上原为 0026；main 已占用 0026、0027，注册时顺延以保持已发布历史不变。
-const migration0028ConfirmGrantVersions: Migration = {
-  ...migration0028ConfirmGrantVersionsBase,
-  id: 28,
-};
+import { migration0028ConfirmGrantVersions } from "./0028_confirm_grant_versions.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),

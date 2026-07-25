@@ -117,7 +117,7 @@ function diagramDoc(source: string, svg: string | null = null): PmDoc {
   } as unknown as PmDoc;
 }
 
-function drawioDoc(svg: string | null = null): PmDoc {
+function drawioDoc(svg: string | null = null, source = DEFAULT_DRAWIO_SOURCE): PmDoc {
   return {
     type: "doc",
     attrs: { schemaVersion: 1 },
@@ -127,7 +127,7 @@ function drawioDoc(svg: string | null = null): PmDoc {
         attrs: {
           blockId: "drawio-1",
           lang: "drawio",
-          source: DEFAULT_DRAWIO_SOURCE,
+          source,
           svg,
         },
       },
@@ -1362,17 +1362,40 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("渲染失败(mermaid 抛错)时显示错误回退而不是崩溃", async () => {
+  it("坏 Mermaid 显示语法错误摘要、编辑提示与原始源码", async () => {
     const mermaid = (await import("mermaid")).default;
-    (mermaid.render as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Parse error: bad"));
-    const editor = await mountEditor(diagramDoc("sequenceDiagram\n  A->>", null));
+    (mermaid.render as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Parse error on line 1:\nflowchar TD\n---------^\nExpecting 'graph'"),
+    );
+    const editor = await mountEditor(diagramDoc("flowchar TD", null));
     try {
       await flush();
       const err = editor.view.dom.querySelector(".pm-diagram-error");
       expect(err).not.toBeNull();
-      // dev 图表重构后:失败态显友好兜底文案 + 保留源码(不暴露原始 mermaid 报错,也不崩、不丢内容)。
-      expect(err!.textContent).toContain("图表生成失败");
-      expect(err!.textContent).toContain("sequenceDiagram");
+      const [message] = err!.textContent!.split("\n\n");
+      expect(message).toContain("Mermaid 语法错误");
+      expect(message).toContain("line 1");
+      expect(message).toContain("Expecting 'graph'");
+      expect(message).toContain("双击进入编辑器修正");
+      expect(message).not.toContain("\n");
+      expect(err!.textContent).toContain("flowchar TD");
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("坏 draw.io 显示无法解析口径、编辑提示与原始源码", async () => {
+    const badSource = "<mxGraphModel><broken>";
+    const editor = await mountEditor(drawioDoc(null, badSource));
+    try {
+      await flush();
+      const err = editor.view.dom.querySelector(".pm-diagram-error");
+      expect(err).not.toBeNull();
+      const [message] = err!.textContent!.split("\n\n");
+      expect(message).toContain("draw.io 图表无法解析");
+      expect(message).toContain("双击进入编辑器修正");
+      expect(message).not.toContain("\n");
+      expect(err!.textContent).toContain(badSource);
     } finally {
       await unmount(editor);
     }

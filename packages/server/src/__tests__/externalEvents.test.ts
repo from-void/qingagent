@@ -201,7 +201,94 @@ describe("external events", () => {
     const events = await readSseEvents(res, controller, 1);
     expect(events).toHaveLength(1);
     expect(events[0]?.event).toBe("meta");
-    expect(JSON.parse(events[0]!.data)).toMatchObject({ minSeq: 1, nextSeq: 1, gap: true });
+    expect(JSON.parse(events[0]!.data)).toEqual({
+      epoch: expect.any(Number),
+      minSeq: 1,
+      nextSeq: 1,
+      gap: true,
+    });
+  });
+
+  it("documentSnapshotWritten 外发副本移除所有 diagram SVG 缓存并保留字节数", async () => {
+    const sessionId = "events-snapshot-svg";
+    const rootSvg = "<svg>根节点</svg>";
+    const nestedSvg = "<svg>nested</svg>";
+    sessionManager.frameLog.append(sessionId, {
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          version: 3,
+          ts: "2026-07-25T00:00:00.000Z",
+          doc: {
+            type: "doc",
+            attrs: { schemaVersion: 1 },
+            content: [
+              {
+                type: "diagram",
+                attrs: {
+                  blockId: "diagram-root",
+                  lang: "mermaid",
+                  source: "flowchart TD\nA-->B",
+                  svg: rootSvg,
+                },
+              },
+              {
+                type: "blockquote",
+                attrs: { blockId: "quote-1" },
+                content: [
+                  {
+                    type: "diagram",
+                    attrs: {
+                      blockId: "diagram-nested",
+                      lang: "drawio",
+                      source: "<mxfile/>",
+                      svg: nestedSvg,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const controller = new AbortController();
+    const res = await app.request(`/api/v1/external/sessions/${sessionId}/events?after=0`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+    const events = await readSseEvents(res, controller, 2);
+    const frame = JSON.parse(events[1]!.data) as {
+      data: { doc: { doc: { content: Array<Record<string, unknown>> } } };
+    };
+    const content = frame.data.doc.doc.content;
+    expect(content[0]).toMatchObject({
+      type: "diagram",
+      attrs: { svg: null, svgBytes: Buffer.byteLength(rootSvg, "utf8") },
+    });
+    expect(content[1]).toMatchObject({
+      type: "blockquote",
+      content: [{
+        type: "diagram",
+        attrs: { svg: null, svgBytes: Buffer.byteLength(nestedSvg, "utf8") },
+      }],
+    });
+
+    const logged = sessionManager.frameLog.readFrom(sessionId, 0).frames[0]?.frame;
+    expect(logged).toMatchObject({
+      kind: "documentSnapshotWritten",
+      data: {
+        doc: {
+          doc: {
+            content: [
+              { type: "diagram", attrs: { svg: rootSvg } },
+              { content: [{ type: "diagram", attrs: { svg: nestedSvg } }] },
+            ],
+          },
+        },
+      },
+    });
   });
 
   it("只下发公开契约帧，并把一次性消费游标收敛到最后一个公开帧", async () => {

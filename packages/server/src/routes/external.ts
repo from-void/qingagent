@@ -1089,7 +1089,38 @@ function isExternalFrameKind(kind: BridgeFrame["kind"]): kind is ExternalBridgeF
 
 function frameForExternal(entry: LoggedFrame): ExternalBridgeFrame | null {
   if (!isExternalFrameKind(entry.frame.kind)) return null;
+  if (entry.frame.kind === "documentSnapshotWritten") {
+    return {
+      seq: entry.seq,
+      kind: entry.frame.kind,
+      data: snapshotDataForExternal(entry.frame.data),
+    };
+  }
   return { seq: entry.seq, kind: entry.frame.kind, data: entry.frame.data };
+}
+
+function snapshotDataForExternal(
+  data: Extract<BridgeFrame, { kind: "documentSnapshotWritten" }>["data"],
+): Extract<BridgeFrame, { kind: "documentSnapshotWritten" }>["data"] {
+  const cloned = structuredClone(data);
+  stripDiagramSvgCaches(cloned);
+  return cloned;
+}
+
+function stripDiagramSvgCaches(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) stripDiagramSvgCaches(item);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  const record = value as Record<string, unknown>;
+  if (record.type === "diagram" && record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)) {
+    const attrs = record.attrs as Record<string, unknown>;
+    attrs.svgBytes = typeof attrs.svg === "string" ? Buffer.byteLength(attrs.svg, "utf8") : 0;
+    attrs.svg = null;
+  }
+  for (const child of Object.values(record)) stripDiagramSvgCaches(child);
 }
 
 function externalEventsMeta(
@@ -1159,8 +1190,12 @@ function partText(part: MessagePart): string {
     case "text":
     case "code":
       return part.data.body;
-    case "toolCall":
-      return "[工具调用]";
+    case "toolCall": {
+      const data = part.data as { name?: unknown; toolName?: unknown };
+      const toolName = [data.name, data.toolName]
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      return toolName ? `[工具调用:${toolName}]` : "[工具调用]";
+    }
     case "thinking":
       return "";
     case "image":

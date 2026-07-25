@@ -37,6 +37,20 @@ export interface BaseEdge {
 export type EdgeDirection = "forward" | "backward" | "both" | "none";
 export type EdgeLineStyle = "solid" | "dotted" | "thick";
 
+export interface ThemePalette {
+  nodeFill?: string;
+  nodeStroke?: string;
+  lineColor?: string;
+  textColor?: string;
+  clusterFill?: string;
+  clusterStroke?: string;
+}
+
+export interface DiagramThemeMetadata {
+  themePalette?: ThemePalette;
+  perNodeStyles?: Record<string, NodeStyleOverride>;
+}
+
 export type FlowNodeShape =
   | "rect"
   | "round"
@@ -46,7 +60,7 @@ export type FlowNodeShape =
   | "hexagon"
   | "parallelogram";
 
-export interface FlowGraph {
+export interface FlowGraph extends DiagramThemeMetadata {
   type: "flowchart";
   direction: string;
   nodes: (BaseNode & { shape?: string; shapeOpenSpan?: Span; shapeCloseSpan?: Span })[];
@@ -55,25 +69,25 @@ export interface FlowGraph {
   hasLinkStyle?: boolean;
 }
 
-export interface StateGraph {
+export interface StateGraph extends DiagramThemeMetadata {
   type: "state";
   nodes: (BaseNode & { kind: "state" | "start" | "end" | "choice" | "fork" | "composite" })[];
   edges: BaseEdge[];
 }
 
-export interface ErGraph {
+export interface ErGraph extends DiagramThemeMetadata {
   type: "er";
   entities: (BaseNode & { attrs: { type: string; name: string; keys?: string[]; span: Span }[] })[];
   rels: (BaseEdge & { leftCard: string; rightCard: string })[];
 }
 
-export interface ClassGraph {
+export interface ClassGraph extends DiagramThemeMetadata {
   type: "class";
   classes: (BaseNode & { members: { raw: string; span: Span }[]; generics?: string })[];
   rels: (BaseEdge & { relKind: string })[];
 }
 
-export interface MindmapTree {
+export interface MindmapTree extends DiagramThemeMetadata {
   type: "mindmap";
   root: MindNode;
 }
@@ -97,7 +111,7 @@ export interface SpanMap {
   protectedSpans: Span[];
 }
 
-export interface ParseResult {
+export interface ParseResult extends DiagramThemeMetadata {
   model: DiagramModel;
   spanMap: SpanMap;
   ok: boolean;
@@ -301,13 +315,30 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
   const layout = layoutNodes(flattened, edges, overlay);
   const bounds = graphSvgBounds(flattened, edges, layout, overlay);
   const nodeSvg = flattened
-    .map((node) => renderSvgNode(node.id, node.label, layout[node.id] ?? { x: 24, y: 24 }, overlay?.styles?.[node.id]))
+    .map((node) =>
+      renderSvgNode(
+        node.id,
+        node.label,
+        layout[node.id] ?? { x: 24, y: 24 },
+        parsed.model.themePalette,
+        parsed.model.perNodeStyles?.[node.id],
+        overlay?.styles?.[node.id],
+      ),
+    )
     .join("");
   const edgeSvg = edges
     .filter((edge) => layout[edge.source] && layout[edge.target])
-    .map((edge) => renderSvgEdge(edge, layout[edge.source]!, layout[edge.target]!, overlay?.edgeStyles?.[edge.id]))
+    .map((edge) =>
+      renderSvgEdge(
+        edge,
+        layout[edge.source]!,
+        layout[edge.target]!,
+        parsed.model.themePalette,
+        overlay?.edgeStyles?.[edge.id],
+      ),
+    )
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs()}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${edgeSvg}${nodeSvg}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${edgeSvg}${nodeSvg}</svg>`;
 }
 
 function makeFlowchartAdapter(): DiagramAdapter {
@@ -360,6 +391,195 @@ function makeMindmapAdapter(): DiagramAdapter {
   };
 }
 
+function parseDiagramThemeMetadata(
+  source: string,
+  nodeIds: Iterable<string>,
+  inlineNodeClasses: Map<string, string[]> = new Map(),
+): DiagramThemeMetadata {
+  const themePalette = parseThemePalette(source);
+  const { classDefinitions, nodeClasses } = parseClassStyleStatements(source);
+  for (const [nodeId, classNames] of inlineNodeClasses) {
+    appendNodeClasses(nodeClasses, nodeId, classNames);
+  }
+
+  const perNodeStyles: Record<string, NodeStyleOverride> = {};
+  for (const nodeId of nodeIds) {
+    const classNames = nodeClasses.get(nodeId) ?? [];
+    const style = classNames.reduce<NodeStyleOverride>((merged, className) => {
+      const classStyle = classDefinitions.get(className);
+      return classStyle ? { ...merged, ...classStyle } : merged;
+    }, {});
+    if (Object.keys(style).length > 0) perNodeStyles[nodeId] = style;
+  }
+
+  return {
+    ...(themePalette ? { themePalette } : {}),
+    ...(Object.keys(perNodeStyles).length > 0 ? { perNodeStyles } : {}),
+  };
+}
+
+function parseThemePalette(source: string): ThemePalette | undefined {
+  const initStart = /%%\{\s*init\s*:/i.exec(source);
+  if (!initStart) return undefined;
+  const payloadStart = initStart.index + initStart[0].length;
+  const directiveEnd = /\}\s*%%/g;
+  directiveEnd.lastIndex = payloadStart;
+  const endMatch = directiveEnd.exec(source);
+  if (!endMatch) return undefined;
+  const payload = source.slice(payloadStart, endMatch.index);
+  const themeVariablesKey = /(?:["']themeVariables["']|\bthemeVariables\b)\s*:/i.exec(payload);
+  if (!themeVariablesKey) return undefined;
+  const objectStart = payload.indexOf("{", themeVariablesKey.index + themeVariablesKey[0].length);
+  if (objectStart < 0) return undefined;
+  const themeVariables = extractBalancedObjectBody(payload, objectStart);
+  if (themeVariables === null) return undefined;
+
+  const readColor = (key: string) => sanitizeColor(readObjectValue(themeVariables, key));
+  const palette: ThemePalette = {
+    nodeFill: readColor("mainBkg") ?? readColor("primaryColor") ?? undefined,
+    nodeStroke: readColor("nodeBorder") ?? readColor("primaryBorderColor") ?? undefined,
+    lineColor: readColor("lineColor") ?? undefined,
+    textColor: readColor("textColor") ?? readColor("primaryTextColor") ?? undefined,
+    clusterFill: readColor("clusterBkg") ?? undefined,
+    clusterStroke: readColor("clusterBorder") ?? undefined,
+  };
+  return Object.values(palette).some(Boolean) ? palette : undefined;
+}
+
+function extractBalancedObjectBody(source: string, objectStart: number): string | null {
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = objectStart; index < source.length; index += 1) {
+    const char = source[index]!;
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") continue;
+    depth -= 1;
+    if (depth === 0) return source.slice(objectStart + 1, index);
+  }
+  return null;
+}
+
+function readObjectValue(source: string, key: string): string | undefined {
+  const keyPattern = new RegExp(`(?:["']${key}["']|\\b${key}\\b)\\s*:`, "i");
+  const match = keyPattern.exec(source);
+  if (!match) return undefined;
+  const valueSource = source.slice(match.index + match[0].length).trimStart();
+  const quote = valueSource[0];
+  if (quote === "'" || quote === '"') {
+    let escaped = false;
+    for (let index = 1; index < valueSource.length; index += 1) {
+      const char = valueSource[index]!;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        return valueSource.slice(1, index);
+      }
+    }
+    return undefined;
+  }
+  return valueSource.split(/[,}]/, 1)[0]?.trim();
+}
+
+function parseClassStyleStatements(source: string): {
+  classDefinitions: Map<string, NodeStyleOverride>;
+  nodeClasses: Map<string, string[]>;
+} {
+  const classDefinitions = new Map<string, NodeStyleOverride>();
+  const nodeClasses = new Map<string, string[]>();
+  for (const line of getLines(source)) {
+    const trimmed = line.text.trim();
+    const definition = trimmed.match(/^classDef\s+([A-Za-z_][\w-]*)\s+(.+?)\s*;?$/i);
+    if (definition) {
+      const style = parseClassDefinitionStyle(definition[2]!);
+      if (style) classDefinitions.set(definition[1]!, style);
+      continue;
+    }
+    const assignment = trimmed.match(/^class\s+([A-Za-z_][\w-]*(?:\s*,\s*[A-Za-z_][\w-]*)*)\s+([A-Za-z_][\w-]*)\s*;?$/i);
+    if (!assignment) continue;
+    const className = assignment[2]!;
+    for (const nodeId of assignment[1]!.split(",").map((value) => value.trim()).filter(Boolean)) {
+      appendNodeClasses(nodeClasses, nodeId, [className]);
+    }
+  }
+  return { classDefinitions, nodeClasses };
+}
+
+function parseClassDefinitionStyle(source: string): NodeStyleOverride | undefined {
+  const style: NodeStyleOverride = {};
+  for (const declaration of splitStyleDeclarations(source)) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    const property = declaration.slice(0, colon).trim().toLowerCase();
+    const rawValue = declaration.slice(colon + 1).trim().replace(/;$/, "");
+    if (property === "fill") {
+      const fill = sanitizeColor(rawValue);
+      if (fill) style.fill = fill;
+    } else if (property === "stroke") {
+      const stroke = sanitizeColor(rawValue);
+      if (stroke) style.stroke = stroke;
+    } else if (property === "color") {
+      const textColor = sanitizeColor(rawValue);
+      if (textColor) style.textColor = textColor;
+    } else if (property === "stroke-width") {
+      const width = Number.parseFloat(rawValue);
+      if (Number.isFinite(width) && width > 0) style.strokeWidth = Math.max(1, Math.min(8, width));
+    }
+  }
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function splitStyleDeclarations(source: string): string[] {
+  const declarations: string[] = [];
+  let start = 0;
+  let parentheses = 0;
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]!;
+    if (quote) {
+      if (char === quote && source[index - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "(") {
+      parentheses += 1;
+    } else if (char === ")") {
+      parentheses = Math.max(0, parentheses - 1);
+    } else if (char === "," && parentheses === 0) {
+      declarations.push(source.slice(start, index));
+      start = index + 1;
+    }
+  }
+  declarations.push(source.slice(start));
+  return declarations;
+}
+
+function appendNodeClasses(target: Map<string, string[]>, nodeId: string, classNames: string[]): void {
+  if (classNames.length === 0) return;
+  const current = target.get(nodeId) ?? [];
+  target.set(nodeId, [...current, ...classNames]);
+}
+
 function parseFlowchart(source: string): ParseResult {
   const statements = getFlowchartStatements(source);
   const header = statements.find((statement) => /^\s*(?:flowchart|graph)\s+\S+\s*$/i.test(stripTrailingComment(statement.text)));
@@ -372,6 +592,7 @@ function parseFlowchart(source: string): ParseResult {
   let edgeOrder = 0;
   const nextEdgeId = createEdgeIdFactory("flow");
   const subgraphStack: { id: string; start: number; scopePath: string[] }[] = [];
+  const inlineNodeClasses = new Map<string, string[]>();
   let hasLinkStyle = false;
 
   const ensureNode = (
@@ -446,6 +667,7 @@ function parseFlowchart(source: string): ParseResult {
       edgeOrder += edgeStatement.edges.length;
       for (const nodeRef of edgeStatement.nodeRefs) {
         ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, nodeRef.declared, nodeRef.labelSpan, nodeRef.shape, scopePath, nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
+        appendNodeClasses(inlineNodeClasses, nodeRef.id, nodeRef.classNames);
       }
       if (edgeStatement.edges.some((edge) => !edge.rewritable)) protectedSpans.push(lineSpan(statement));
       continue;
@@ -456,6 +678,7 @@ function parseFlowchart(source: string): ParseResult {
     if (nodeRef?.error) return emptyParse("flowchart", nodeRef.error);
     if (nodeRef && nodeRef.endOffset === statement.text.trimEnd().length - leading) {
       ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, true, nodeRef.labelSpan, nodeRef.shape, subgraphStack.map((item) => item.id), nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
+      appendNodeClasses(inlineNodeClasses, nodeRef.id, nodeRef.classNames);
       if (nodeRef.unsupported) protectedSpans.push(lineSpan(statement));
       continue;
     }
@@ -465,9 +688,11 @@ function parseFlowchart(source: string): ParseResult {
     subgraphs.push({ id: open.id, span: { start: open.start, end: source.length }, scopePath: open.scopePath });
   }
 
+  const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys(), inlineNodeClasses);
   return {
     ok: true,
-    model: { type: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, hasLinkStyle },
+    ...themeMetadata,
+    model: { type: "flowchart", direction, nodes: [...nodes.values()], edges, subgraphs, hasLinkStyle, ...themeMetadata },
     spanMap: { directives: [lineSpan(header)], protectedSpans },
   };
 }
@@ -1012,7 +1237,13 @@ function parseState(source: string): ParseResult {
     }
     protectedSpans.push(lineSpan(line));
   }
-  return { ok: true, model: { type: "state", nodes: [...nodes.values()], edges }, spanMap: { directives: [lineSpan(header)], protectedSpans } };
+  const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys());
+  return {
+    ok: true,
+    ...themeMetadata,
+    model: { type: "state", nodes: [...nodes.values()], edges, ...themeMetadata },
+    spanMap: { directives: [lineSpan(header)], protectedSpans },
+  };
 }
 
 function stateCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -1161,7 +1392,13 @@ function parseEr(source: string): ParseResult {
     }
     protectedSpans.push(lineSpan(line));
   }
-  return { ok: true, model: { type: "er", entities: [...entities.values()], rels }, spanMap: { directives: [lineSpan(header)], protectedSpans } };
+  const themeMetadata = parseDiagramThemeMetadata(source, entities.keys());
+  return {
+    ok: true,
+    ...themeMetadata,
+    model: { type: "er", entities: [...entities.values()], rels, ...themeMetadata },
+    spanMap: { directives: [lineSpan(header)], protectedSpans },
+  };
 }
 
 function erCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -1286,7 +1523,13 @@ function parseClass(source: string): ParseResult {
     }
     protectedSpans.push(lineSpan(line));
   }
-  return { ok: true, model: { type: "class", classes: [...classes.values()], rels }, spanMap: { directives: [lineSpan(header)], protectedSpans } };
+  const themeMetadata = parseDiagramThemeMetadata(source, classes.keys());
+  return {
+    ok: true,
+    ...themeMetadata,
+    model: { type: "class", classes: [...classes.values()], rels, ...themeMetadata },
+    spanMap: { directives: [lineSpan(header)], protectedSpans },
+  };
 }
 
 function classCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -1419,7 +1662,13 @@ function parseMindmap(source: string): ParseResult {
   if (!root) {
     root = { id: "mind-root", label: "mindmap", line: lineSpan(header), indent: 0, children: [], hasStableId: true, parentId: null, scopePath: ["mindmap"], sourceRefs: [] };
   }
-  return { ok: true, model: { type: "mindmap", root }, spanMap: { directives: [lineSpan(header)], protectedSpans } };
+  const themeMetadata = parseDiagramThemeMetadata(source, flattenMindmap(root).map((node) => node.id));
+  return {
+    ok: true,
+    ...themeMetadata,
+    model: { type: "mindmap", root, ...themeMetadata },
+    spanMap: { directives: [lineSpan(header)], protectedSpans },
+  };
 }
 
 function mindmapCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -1588,6 +1837,7 @@ interface ParsedFlowNodeRef {
   unsupported: boolean;
   endOffset: number;
   error?: string;
+  classNames: string[];
 }
 
 const FLOW_NODE_SHAPE_SYNTAX: Array<{ open: string; close: string }> = [
@@ -1616,6 +1866,7 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
   let shapeCloseSpan: Span | undefined;
   let unsupported = false;
   let endOffset = id.length;
+  const classNames: string[] = [];
   if (rest.trim()) {
     const restLeading = rest.search(/\S/);
     const r = rest.trim();
@@ -1630,6 +1881,7 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
         declared: false,
         unsupported: false,
         endOffset: id.length,
+        classNames: [],
         error: `节点 ${id} 的形状未闭合`,
       };
     }
@@ -1647,6 +1899,13 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
       shape = bracket.open;
       endOffset = id.length + restLeading + bracket.totalLength;
     }
+    const inlineClassStart = Math.max(0, endOffset - id.length);
+    const inlineClassSource = rest.slice(inlineClassStart);
+    const inlineClassRe = /:::([A-Za-z_][\w-]*)/g;
+    for (const classMatch of inlineClassSource.matchAll(inlineClassRe)) {
+      classNames.push(classMatch[1]!);
+      endOffset = Math.max(endOffset, id.length + inlineClassStart + (classMatch.index ?? 0) + classMatch[0].length);
+    }
     if (/:::|@\{|class\b|click\b/.test(rest)) unsupported = true;
   }
   return {
@@ -1661,6 +1920,7 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     declared: !!labelSpan,
     unsupported,
     endOffset,
+    classNames,
   };
 }
 
@@ -2141,8 +2401,9 @@ function layoutNodes(nodes: BaseNode[], edges: BaseEdge[], overlay: DiagramOverl
   return out;
 }
 
-function svgDefs(): string {
-  return `<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#8d7447"/></marker></defs>`;
+function svgDefs(themePalette: ThemePalette | undefined): string {
+  const lineColor = sanitizeColor(themePalette?.lineColor) ?? "#8d7447";
+  return `<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="${lineColor}"/></marker></defs>`;
 }
 
 const SVG_NODE_WIDTH = 160;
@@ -2238,21 +2499,35 @@ function graphSvgBounds(
   return { minX: Math.floor(minX), minY: Math.floor(minY), width: Math.ceil(width), height: Math.ceil(height) };
 }
 
-function renderSvgNode(id: string, label: string, pos: { x: number; y: number }, style: NodeStyleOverride | undefined): string {
-  const fill = sanitizeColor(style?.fill) ?? "#efe3cc";
-  const stroke = sanitizeColor(style?.stroke) ?? "#b08a3e";
-  const textColor = sanitizeColor(style?.textColor) ?? "#2f2a22";
-  const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.5;
-  const fontSize = typeof style?.fontSize === "number" ? Math.max(9, Math.min(28, style.fontSize)) : 14;
+function renderSvgNode(
+  id: string,
+  label: string,
+  pos: { x: number; y: number },
+  themePalette: ThemePalette | undefined,
+  sourceStyle: NodeStyleOverride | undefined,
+  overlayStyle: NodeStyleOverride | undefined,
+): string {
+  const fill = sanitizeColor(overlayStyle?.fill) ?? sanitizeColor(sourceStyle?.fill) ?? sanitizeColor(themePalette?.nodeFill) ?? "#efe3cc";
+  const stroke = sanitizeColor(overlayStyle?.stroke) ?? sanitizeColor(sourceStyle?.stroke) ?? sanitizeColor(themePalette?.nodeStroke) ?? "#b08a3e";
+  const textColor = sanitizeColor(overlayStyle?.textColor) ?? sanitizeColor(sourceStyle?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
+  const strokeWidthSource = overlayStyle?.strokeWidth ?? sourceStyle?.strokeWidth;
+  const strokeWidth = typeof strokeWidthSource === "number" ? Math.max(1, Math.min(8, strokeWidthSource)) : 1.5;
+  const fontSize = typeof overlayStyle?.fontSize === "number" ? Math.max(9, Math.min(28, overlayStyle.fontSize)) : 14;
   const lines = wrapNodeLabel(label, fontSize);
   const firstBaseline = pos.y + (lines.length === 1 ? 38 : 28);
   const text = lines.map((line, index) => `<tspan x="${pos.x + SVG_NODE_WIDTH / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
   return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="${SVG_NODE_WIDTH}" height="${SVG_NODE_HEIGHT}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
 }
 
-function renderSvgEdge(edge: BaseEdge, from: { x: number; y: number }, to: { x: number; y: number }, style: EdgeStyleOverride | undefined): string {
-  const stroke = sanitizeColor(style?.stroke) ?? "#8d7447";
-  const textColor = sanitizeColor(style?.textColor) ?? "#5c5346";
+function renderSvgEdge(
+  edge: BaseEdge,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  themePalette: ThemePalette | undefined,
+  style: EdgeStyleOverride | undefined,
+): string {
+  const stroke = sanitizeColor(style?.stroke) ?? sanitizeColor(themePalette?.lineColor) ?? "#8d7447";
+  const textColor = sanitizeColor(style?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#5c5346";
   const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.4;
   const { x1, y1, x2, y2, c1x, c2x } = edgeGeometry(from, to);
   const label = edge.label

@@ -745,6 +745,18 @@ export function GraphDiagramView({
   }, [overlay]);
 
   const parsed = useMemo(() => parseDiagram(liveSource), [liveSource]);
+  const themeStyle = useMemo(() => {
+    if (!parsed.ok || !parsed.model.themePalette) return undefined;
+    const palette = parsed.model.themePalette;
+    return {
+      ...(palette.nodeFill ? { "--graph-node-fill": palette.nodeFill } : {}),
+      ...(palette.nodeStroke ? { "--graph-node-stroke": palette.nodeStroke } : {}),
+      ...(palette.lineColor ? { "--graph-line-color": palette.lineColor } : {}),
+      ...(palette.textColor ? { "--graph-node-text": palette.textColor, "--graph-edge-text": palette.textColor } : {}),
+      ...(palette.clusterFill ? { "--graph-cluster-fill": palette.clusterFill } : {}),
+      ...(palette.clusterStroke ? { "--graph-cluster-stroke": palette.clusterStroke } : {}),
+    } as CSSProperties & Record<string, string>;
+  }, [parsed]);
   const ids = useMemo(() => (parsed.ok ? getStableElementIds(parsed.model) : { nodes: new Set<string>(), edges: new Set<string>() }), [parsed]);
   const graphNodes = useMemo(() => (parsed.ok ? modelNodes(parsed.model) : []), [parsed]);
   const graphEdges = useMemo(() => (parsed.ok ? modelEdges(parsed.model) : []), [parsed]);
@@ -1315,7 +1327,8 @@ export function GraphDiagramView({
 
   useEffect(() => {
     const nextNodes = graphNodes.map((node) => {
-      const style = overlay?.styles?.[node.id];
+      const sourceStyle = parsed.model.perNodeStyles?.[node.id];
+      const overlayStyle = overlay?.styles?.[node.id];
       const over = overlay?.positions?.[node.id];
       const auto = autoLayout[node.id] ?? { x: 40, y: 40 };
       const isSelected = inEdit && node.id === selectedNodeId;
@@ -1323,7 +1336,10 @@ export function GraphDiagramView({
       const isRenaming = inEdit && renamingNodeId === node.id;
       const canRename = inEdit && capEnabled(getCapabilities(parsed, { nodeId: node.id }), "relabelNode");
       const canQuickAdd = inEdit && canConnectEdge && capEnabled(getCapabilities(parsed, { nodeId: node.id }), "addNode");
-      const strokeWidth = style?.strokeWidth ?? 1.5;
+      const strokeWidth = overlayStyle?.strokeWidth ?? sourceStyle?.strokeWidth ?? 1.5;
+      const nodeFill = overlayStyle?.fill ?? sourceStyle?.fill;
+      const nodeStroke = overlayStyle?.stroke ?? sourceStyle?.stroke;
+      const nodeText = overlayStyle?.textColor ?? sourceStyle?.textColor;
       return {
         id: node.id,
         type: "graphNode",
@@ -1360,12 +1376,12 @@ export function GraphDiagramView({
           fontFamily: "var(--font-zh-serif)",
           padding: 0,
           textAlign: "center",
-          "--graph-node-fill": style?.fill ?? "#efe3cc",
-          "--graph-node-stroke": style?.stroke ?? "#b08a3e",
-          "--graph-node-text": style?.textColor ?? "#2f2a22",
+          ...(nodeFill ? { "--graph-node-fill": nodeFill } : {}),
+          ...(nodeStroke ? { "--graph-node-stroke": nodeStroke } : {}),
+          ...(nodeText ? { "--graph-node-text": nodeText } : {}),
           "--graph-node-stroke-width": `${strokeWidth}px`,
-          "--graph-node-font-size": `${style?.fontSize ?? 13}px`,
-          fontSize: style?.fontSize ?? 13,
+          "--graph-node-font-size": `${overlayStyle?.fontSize ?? 13}px`,
+          fontSize: overlayStyle?.fontSize ?? 13,
         } as CSSProperties & Record<string, string | number>,
       } satisfies GraphFlowNode;
     });
@@ -1375,7 +1391,7 @@ export function GraphDiagramView({
       const fixedHandles = overlay?.edgeHandles?.[edge.id];
       const renderHandles = graphEdgeRenderHandles(edge, nextNodeById, fixedHandles);
       const isSelected = inEdit && edge.id === selectedEdgeId;
-      const edgeStroke = style?.stroke ?? DEFAULT_EDGE_STROKE;
+      const edgeStroke = style?.stroke ?? parsed.model.themePalette?.lineColor ?? DEFAULT_EDGE_STROKE;
       const edgeLineStyle = getEdgeLineStyle(edge);
       const edgeDirection = getEdgeDirection(edge);
       const baseStrokeWidth = style?.strokeWidth ?? (edgeLineStyle === "thick" ? 2.8 : 1.5);
@@ -1390,7 +1406,7 @@ export function GraphDiagramView({
         data: {
           floating: !fixedHandles?.sourceHandle || !fixedHandles?.targetHandle,
           label: edge.label ?? "",
-          textColor: style?.textColor ?? DEFAULT_EDGE_TEXT,
+          textColor: style?.textColor ?? parsed.model.themePalette?.textColor ?? DEFAULT_EDGE_TEXT,
           canEditLabel: inEdit && capEnabled(getCapabilities(parsed, { edgeId: edge.id }), "setEdgeLabel"),
           isEditingLabel: inEdit && editingEdgeLabelId === edge.id,
           onSelect: () => selectEdge(edge.id),
@@ -1718,6 +1734,7 @@ export function GraphDiagramView({
           aria-label="图表编辑器"
           tabIndex={-1}
           data-editor-owner={editorOwnerIdRef.current ?? undefined}
+          style={themeStyle}
           onKeyDown={handleEditorKeyDown}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closeEditor();
@@ -2007,7 +2024,7 @@ export function GraphDiagramView({
     : null;
 
   return (
-    <div className="graph-diagram" data-diagram-type={parsed.model.type}>
+    <div className="graph-diagram" data-diagram-type={parsed.model.type} style={themeStyle}>
       {error && !inEdit && <div className="graph-diagram-error">{error}</div>}
       <div
         className="graph-diagram-canvas graph-diagram-canvas--preview"

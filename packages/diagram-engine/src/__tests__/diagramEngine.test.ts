@@ -720,6 +720,78 @@ describe("diagram-engine", () => {
     expect(flowSvg).not.toContain("Songti SC");
   });
 
+  it("解析经典色板 init 与 classDef/class,graphToSvg 按节点样式和图级色板上色", () => {
+    const source = `%%{init: {'theme':'base','themeVariables':{'primaryColor':'#F0F4FC','mainBkg':'#FFFFFF','primaryBorderColor':'#345678','nodeBorder':'#5178C6','lineColor':'#BBBFC4','primaryTextColor':'#333333','textColor':'#1F2329','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6'}}}%%
+flowchart TD
+  A[开始]:::blue --> B[复核]
+  B --> C[结束]
+  classDef blue fill:#FFFFFF,stroke:#5178C6,stroke-width:2px,color:#1F2329
+  classDef purple fill:#F8F5FF,stroke:#8569CB,stroke-width:3px,color:#31265C
+  class B,C purple
+`;
+    const parsed = parseDiagram(source);
+    const model = parsed.model as FlowGraph;
+
+    expect(parsed.themePalette).toEqual({
+      nodeFill: "#FFFFFF",
+      nodeStroke: "#5178C6",
+      lineColor: "#BBBFC4",
+      textColor: "#1F2329",
+      clusterFill: "#F0F4FC",
+      clusterStroke: "#5178C6",
+    });
+    expect(model.themePalette).toEqual(parsed.themePalette);
+    expect(model.perNodeStyles).toEqual({
+      A: { fill: "#FFFFFF", stroke: "#5178C6", strokeWidth: 2, textColor: "#1F2329" },
+      B: { fill: "#F8F5FF", stroke: "#8569CB", strokeWidth: 3, textColor: "#31265C" },
+      C: { fill: "#F8F5FF", stroke: "#8569CB", strokeWidth: 3, textColor: "#31265C" },
+    });
+
+    const svg = graphToSvg(source)!;
+    expect(svg).toMatch(/data-node-id="A"><rect[^>]+fill="#FFFFFF"[^>]+stroke="#5178C6"/);
+    expect(svg).toMatch(/data-node-id="B"><rect[^>]+fill="#F8F5FF"[^>]+stroke="#8569CB"/);
+    expect(svg).toContain('stroke="#BBBFC4"');
+    expect(svg).toContain('d="M0,0 L0,6 L9,3 z" fill="#BBBFC4"');
+    expect(svg).not.toContain('stroke="#b08a3e"');
+
+    const overlaySvg = graphToSvg(source, { styles: { A: { fill: "#D7E7F6", stroke: "#123456", textColor: "#111111" } } })!;
+    expect(overlaySvg).toMatch(/data-node-id="A"><rect[^>]+fill="#D7E7F6"[^>]+stroke="#123456"/);
+  });
+
+  it("五类图都接住 init 图级色板,无 init 的 graphToSvg 保持纸墨默认", () => {
+    const init = "%%{init: {\"themeVariables\":{\"mainBkg\":\"#FFFFFF\",\"nodeBorder\":\"#5178C6\",\"lineColor\":\"#BBBFC4\",\"textColor\":\"#1F2329\"}}}%%\n";
+    const sources = [
+      `${init}flowchart TD\n  A --> B\n`,
+      `${init}stateDiagram-v2\n  Open --> Closed\n`,
+      `${init}erDiagram\n  CUSTOMER ||--o{ ORDER : places\n`,
+      `${init}classDiagram\n  Animal <|-- Duck\n`,
+      `${init}mindmap\n  root\n    child\n`,
+    ];
+    for (const source of sources) {
+      expect(parseDiagram(source).model.themePalette).toMatchObject({
+        nodeFill: "#FFFFFF",
+        nodeStroke: "#5178C6",
+        lineColor: "#BBBFC4",
+        textColor: "#1F2329",
+      });
+    }
+
+    const defaultSvg = graphToSvg("flowchart TD\n  A[开始] --> B[结束]\n")!;
+    expect(defaultSvg).toMatch(/data-node-id="A"><rect[^>]+fill="#efe3cc"[^>]+stroke="#b08a3e"/);
+    expect(defaultSvg).toContain('d="M0,0 L0,6 L9,3 z" fill="#8d7447"');
+
+    const invalidColorSource = `%%{init: {'themeVariables':{'mainBkg':'url(javascript:alert(1))','primaryColor':'#FFFFFF','nodeBorder':'red','primaryBorderColor':'#5178C6','lineColor':'var(--bad)'}}}%%
+flowchart TD
+  A --> B
+  classDef bad fill:url(javascript:alert(1)),stroke:expression(alert(1)),color:red
+  class A bad
+`;
+    const invalidParsed = parseDiagram(invalidColorSource).model;
+    expect(invalidParsed.themePalette).toEqual({ nodeFill: "#FFFFFF", nodeStroke: "#5178C6" });
+    expect(invalidParsed.perNodeStyles).toBeUndefined();
+    expect(graphToSvg(invalidColorSource)).not.toContain("javascript:");
+  });
+
   it("graphToSvg 的 viewBox 覆盖负坐标 overlay", () => {
     const svg = graphToSvg("flowchart LR\n  A[左侧] --> B[右侧]\n", {
       positions: { A: { x: -280, y: -150 }, B: { x: 20, y: 30 } },

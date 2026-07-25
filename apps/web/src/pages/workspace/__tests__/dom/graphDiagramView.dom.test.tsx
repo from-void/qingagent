@@ -376,6 +376,30 @@ describe("GraphDiagramView", () => {
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });
 
+  it("经典色板注入根变量,classDef 节点与 React Flow 连线使用同一解析结果", async () => {
+    const source = `%%{init: {'theme':'base','themeVariables':{'mainBkg':'#FFFFFF','nodeBorder':'#5178C6','lineColor':'#BBBFC4','textColor':'#1F2329','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6'}}}%%
+flowchart LR
+  A[开始] --> B[结束]
+  classDef purple fill:#F8F5FF,stroke:#8569CB,stroke-width:2px,color:#31265C
+  class A purple
+`;
+    await render(<DiagramRenderer source={source} readOnly />);
+    const graph = await waitForSelector(".graph-diagram") as HTMLElement;
+    const startNode = findNode("开始", graph);
+    const endNode = findNode("结束", graph);
+    const edgePath = await waitForSelector(".react-flow__edge-path", graph) as SVGPathElement;
+
+    expect(graph.style.getPropertyValue("--graph-node-fill")).toBe("#FFFFFF");
+    expect(graph.style.getPropertyValue("--graph-node-stroke")).toBe("#5178C6");
+    expect(graph.style.getPropertyValue("--graph-line-color")).toBe("#BBBFC4");
+    expect(startNode.style.getPropertyValue("--graph-node-fill")).toBe("#F8F5FF");
+    expect(startNode.style.getPropertyValue("--graph-node-stroke")).toBe("#8569CB");
+    expect(startNode.style.getPropertyValue("--graph-node-text")).toBe("#31265C");
+    expect(endNode.style.getPropertyValue("--graph-node-stroke")).toBe("");
+    expect(edgePath.style.stroke).toBe("#BBBFC4");
+    expect(graph.outerHTML).not.toContain("#b08a3e");
+  });
+
   it("外部信号进入全屏后空选可加节点并回写 source", async () => {
     const onSourceChange = vi.fn();
     await render(

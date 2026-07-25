@@ -400,6 +400,43 @@ flowchart LR
     expect(graph.outerHTML).not.toContain("#b08a3e");
   });
 
+  it("保存态真实云原生 fixture 渲出 8 个分区,并与 graphToSvg 消费同一布局几何", async () => {
+    const source = readFileSync(
+      path.join(process.cwd(), "../../packages/diagram-engine/src/__tests__/fixtures-user-cloudnative.mmd"),
+      "utf8",
+    );
+    await render(<DiagramRenderer source={source} readOnly />);
+    const graph = await waitForSelector(".graph-diagram") as HTMLElement;
+    const clusters = Array.from(graph.querySelectorAll<HTMLElement>(".graph-diagram-cluster"));
+    expect(clusters).toHaveLength(8);
+    expect(clusters.map((cluster) => cluster.dataset.clusterLabel)).toEqual(expect.arrayContaining([
+      "用户终端层",
+      "接入与安全层",
+      "服务网关层",
+      "业务中台",
+      "数据与中间件层",
+      "基础设施层",
+      "监控可观测性",
+      "核心业务流程",
+    ]));
+    expect(graph.style.getPropertyValue("--graph-cluster-fill")).toBe("#F0F4FC");
+    expect(graph.style.getPropertyValue("--graph-cluster-stroke")).toBe("#5178C6");
+
+    const svgClusters = new Map(
+      Array.from(graph.querySelectorAll<SVGGElement>(".graph-diagram-export [data-cluster-id]"))
+        .map((cluster) => [cluster.dataset.clusterId!, cluster]),
+    );
+    expect(svgClusters.size).toBe(8);
+    for (const cluster of clusters) {
+      const flowNode = cluster.closest<HTMLElement>(".react-flow__node");
+      const clusterId = flowNode?.getAttribute("data-id");
+      const svgCluster = clusterId ? svgClusters.get(clusterId) : undefined;
+      expect(svgCluster).toBeTruthy();
+      expect(flowNode?.style.width).toBe(`${svgCluster!.dataset.layoutWidth}px`);
+      expect(flowNode?.style.height).toBe(`${svgCluster!.dataset.layoutHeight}px`);
+    }
+  });
+
   it("外部信号进入全屏后空选可加节点并回写 source", async () => {
     const onSourceChange = vi.fn();
     await render(
@@ -882,14 +919,21 @@ flowchart LR
     expect(toolbar.querySelector(".graph-diagram-panel-section")).toBeNull();
     expect(toolbar.querySelector(".graph-diagram-popover")).toBeNull();
     await openToolbarMenu("形状", editor);
-    expect(["矩形", "圆角矩形", "体育场/胶囊", "菱形(判断)", "圆形", "六边形", "平行四边形"].map((label) => findButton(label, editor).textContent?.trim())).toEqual([
+    expect(["矩形", "圆角矩形", "体育场/胶囊", "子流程", "圆柱", "菱形(判断)", "圆形", "双圆形", "非对称形", "六边形", "平行四边形", "反向平行四边形", "梯形", "反向梯形"].map((label) => findButton(label, editor).textContent?.trim())).toEqual([
       "矩形",
       "圆角矩形",
       "体育场/胶囊",
+      "子流程",
+      "圆柱",
       "菱形(判断)",
       "圆形",
+      "双圆形",
+      "非对称形",
       "六边形",
       "平行四边形",
+      "反向平行四边形",
+      "梯形",
+      "反向梯形",
     ]);
     await click(findButton("菱形(判断)", editor));
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("A{开始} --> B[结束]"));

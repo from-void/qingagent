@@ -1,0 +1,140 @@
+%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#5178C6','primaryTextColor':'#1F2329','mainBkg':'#FFFFFF','nodeBorder':'#5178C6','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6','lineColor':'#BBBFC4','edgeLabelBackground':'#FFFFFF','textColor':'#1F2329','fontSize':'14px'}}}%%
+flowchart TD
+  classDef blue fill:#FFFFFF,stroke:#5178C6,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
+  classDef purple fill:#FFFFFF,stroke:#8569CB,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
+  classDef green fill:#FFFFFF,stroke:#509863,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
+  classDef yellow fill:#FFFFFF,stroke:#D4B45B,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
+  classDef dashed fill:#FFFFFF,stroke:#BBBFC4,stroke-width:2px,stroke-dasharray:6 4,color:#1F2329,rx:8px,ry:8px
+
+  subgraph U["用户终端层"]
+    direction LR
+    Web["Web 浏览器"]
+    iOS["iOS App"]
+    Android["Android App"]
+    Mini["微信小程序"]
+  end
+
+  subgraph AS["接入与安全层"]
+    direction LR
+    CDN["CDN 全球加速"]
+    WAF["WAF Web 防火墙"]
+    SLB["负载均衡 ALB"]
+  end
+
+  subgraph GW["服务网关层"]
+    direction LR
+    Gateway["API 网关 Kong"]
+    Auth["OAuth2 认证中心"]
+    RateLimit["限流熔断 Sentinel"]
+  end
+
+  subgraph BIZ["业务中台"]
+    direction TB
+    UserSvc["用户中心服务"]
+    ProductSvc["商品中心服务"]
+    OrderSvc["订单中心服务"]
+    PaymentSvc["支付中心服务"]
+    CartSvc["购物车服务"]
+    SearchSvc["搜索服务"]
+    RecommendSvc["推荐引擎"]
+    MsgSvc["消息通知服务"]
+  end
+
+  subgraph DATA["数据与中间件层"]
+    direction LR
+    MySQL["MySQL 主从集群"]
+    Redis["Redis 缓存集群"]
+    MQ["RocketMQ 消息队列"]
+    ES["Elasticsearch 集群"]
+    OSS["对象存储 MinIO"]
+  end
+
+  subgraph INFRA["基础设施层"]
+    direction LR
+    K8s["Kubernetes 集群"]
+    Mesh["服务网格 Istio"]
+  end
+
+  subgraph OBS["监控可观测性"]
+    direction LR
+    Prom["Prometheus"]
+    Grafana["Grafana"]
+    Sky["SkyWalking"]
+    Loki["Loki"]
+    Alert["AlertManager"]
+  end
+
+  Web --> CDN
+  iOS --> CDN
+  Android --> CDN
+  Mini --> CDN
+  CDN --> WAF
+  WAF --> SLB
+  SLB --> Gateway
+
+  Gateway --> Auth
+  Auth --> RateLimit
+
+  RateLimit --> UserSvc
+  RateLimit --> ProductSvc
+  RateLimit --> OrderSvc
+  RateLimit --> PaymentSvc
+  RateLimit --> CartSvc
+  RateLimit --> SearchSvc
+
+  UserSvc --> MySQL
+  UserSvc --> Redis
+  ProductSvc --> MySQL
+  ProductSvc --> Redis
+  ProductSvc --> ES
+  CartSvc --> Redis
+  OrderSvc --> MySQL
+  OrderSvc --> MQ
+  PaymentSvc --> MySQL
+  PaymentSvc --> MQ
+  SearchSvc --> ES
+  RecommendSvc --> ES
+
+  MQ --> MsgSvc
+
+  ProductSvc -.->|"触发"| SearchSvc
+  ProductSvc -.->|"触发"| RecommendSvc
+  OrderSvc -.->|"扣减"| CartSvc
+
+  subgraph FLOW["核心业务流程"]
+    direction TB
+    Browse["用户浏览商品"]
+    AddCart["加入购物车"]
+    CreateOrder["创建订单"]
+    PayOrder["支付订单"]
+    Notify["通知发货"]
+  end
+
+  Browse --> AddCart
+  AddCart --> CreateOrder
+  CreateOrder --> PayOrder
+  PayOrder --> Notify
+
+  Web ==> Browse
+  Browse ==> ProductSvc
+  AddCart ==> CartSvc
+  CreateOrder ==> OrderSvc
+  PayOrder ==> PaymentSvc
+  Notify ==> MsgSvc
+
+  Prom -.->|"采集指标"| K8s
+  Prom -.->|"采集指标"| Mesh
+  Sky -.->|"追踪链路"| Mesh
+  Loki -.->|"采集日志"| K8s
+  Prom --> Grafana
+  Prom --> Alert
+  Loki --> Grafana
+
+  class Web,iOS,Android,Mini blue
+  class CDN,WAF,SLB blue
+  class Gateway,Auth,RateLimit purple
+  class UserSvc,ProductSvc,OrderSvc,PaymentSvc,CartSvc,SearchSvc,RecommendSvc,MsgSvc green
+  class Browse,AddCart,CreateOrder,PayOrder,Notify green
+  class MySQL,Redis,MQ,ES,OSS yellow
+  class K8s,Mesh yellow
+  class Prom,Grafana,Sky,Loki,Alert dashed

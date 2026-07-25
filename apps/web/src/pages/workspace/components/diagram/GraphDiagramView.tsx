@@ -34,6 +34,8 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   getBezierPath,
+  getSmoothStepPath,
+  getStraightPath,
   useNodes,
   useNodesInitialized,
   useReactFlow,
@@ -43,9 +45,12 @@ import "@xyflow/react/dist/style.css";
 import {
   applyEdit,
   carryOverDiagramOverlay,
+  getFlowShapeGeometry,
   getCapabilities,
   getStableElementIds,
   graphToSvg,
+  layoutDiagramGraph,
+  normalizeFlowShapeName,
   parseDiagram,
   type BaseEdge as DiagramBaseEdge,
   type BaseNode,
@@ -54,6 +59,7 @@ import {
   type DiagramOverlay,
   type EdgeDirection,
   type EdgeLineStyle,
+  type EdgeMarkerKind,
   type EdgeStyleOverride,
   type EditOp,
   type FlowNodeShape,
@@ -74,8 +80,6 @@ interface GraphDiagramViewProps {
   onSourceChange?: (source: string) => void;
 }
 
-type ElkNode = { id: string; width: number; height: number; x?: number; y?: number };
-type ElkEdge = { id: string; sources: string[]; targets: string[] };
 type CanvasSize = { width: number; height: number };
 type CanvasFrame = CanvasSize & { left: number; top: number };
 type FloatingPlacement = "above" | "below";
@@ -107,7 +111,7 @@ type IconName =
   | "move";
 type GraphDirection = "TB" | "BT" | "LR" | "RL";
 type GraphHandleId = "t" | "r" | "b" | "l";
-type GraphNodeShape = "rect" | "round" | "stadium" | "subroutine" | "cylinder" | "circle" | "doublecircle" | "diamond" | "hexagon" | "parallelogram" | "trapezoid";
+type GraphNodeShape = FlowNodeShape;
 type GraphNodeData = {
   label: string;
   editLabel: string;
@@ -121,7 +125,14 @@ type GraphNodeData = {
   onRenameCancel: () => void;
   onQuickAdd: (handleId: GraphHandleId) => void;
 } & Record<string, unknown>;
-type GraphFlowNode = Node<GraphNodeData, "graphNode">;
+type GraphRegularNode = Node<GraphNodeData, "graphNode">;
+type GraphClusterData = {
+  label: string;
+  direction: string;
+  depth: number;
+} & Record<string, unknown>;
+type GraphClusterNode = Node<GraphClusterData, "graphCluster">;
+type GraphFlowNode = GraphRegularNode | GraphClusterNode;
 type GraphEdgeData = {
   floating: boolean;
   label: string;
@@ -132,6 +143,10 @@ type GraphEdgeData = {
   onLabelEditStart: () => void;
   onLabelCommit: (label: string) => void;
   onLabelCancel: () => void;
+  sourceMarker: EdgeMarkerKind;
+  targetMarker: EdgeMarkerKind;
+  markerColor: string;
+  curve?: string;
 } & Record<string, unknown>;
 type GraphFlowEdge = Edge<GraphEdgeData, "graphEdge">;
 type GraphNodeDragSnapshot = {
@@ -182,7 +197,7 @@ const DEFAULT_NODE_STROKE = "#b08a3e";
 const DEFAULT_NODE_TEXT = "#2f2a22";
 const DEFAULT_EDGE_STROKE = "#8d7447";
 const DEFAULT_EDGE_TEXT = "#5c5346";
-const NODE_SHAPE_LABELS: Record<GraphNodeShape, string> = {
+const NODE_SHAPE_LABELS: Partial<Record<GraphNodeShape, string>> = {
   rect: "矩形",
   round: "圆角矩形",
   stadium: "体育场/胶囊",
@@ -190,19 +205,29 @@ const NODE_SHAPE_LABELS: Record<GraphNodeShape, string> = {
   cylinder: "圆柱",
   circle: "圆形",
   doublecircle: "双圆形",
+  asymmetric: "非对称形",
   diamond: "菱形(判断)",
   hexagon: "六边形",
   parallelogram: "平行四边形",
+  "parallelogram-alt": "反向平行四边形",
   trapezoid: "梯形",
+  "trapezoid-alt": "反向梯形",
 };
 const NODE_SHAPE_OPTIONS: Array<{ shape: FlowNodeShape; label: string }> = [
-  { shape: "rect", label: NODE_SHAPE_LABELS.rect },
-  { shape: "round", label: NODE_SHAPE_LABELS.round },
-  { shape: "stadium", label: NODE_SHAPE_LABELS.stadium },
-  { shape: "diamond", label: NODE_SHAPE_LABELS.diamond },
-  { shape: "circle", label: NODE_SHAPE_LABELS.circle },
-  { shape: "hexagon", label: NODE_SHAPE_LABELS.hexagon },
-  { shape: "parallelogram", label: NODE_SHAPE_LABELS.parallelogram },
+  { shape: "rect", label: NODE_SHAPE_LABELS.rect! },
+  { shape: "round", label: NODE_SHAPE_LABELS.round! },
+  { shape: "stadium", label: NODE_SHAPE_LABELS.stadium! },
+  { shape: "subroutine", label: NODE_SHAPE_LABELS.subroutine! },
+  { shape: "cylinder", label: NODE_SHAPE_LABELS.cylinder! },
+  { shape: "diamond", label: NODE_SHAPE_LABELS.diamond! },
+  { shape: "circle", label: NODE_SHAPE_LABELS.circle! },
+  { shape: "doublecircle", label: NODE_SHAPE_LABELS.doublecircle! },
+  { shape: "asymmetric", label: NODE_SHAPE_LABELS.asymmetric! },
+  { shape: "hexagon", label: NODE_SHAPE_LABELS.hexagon! },
+  { shape: "parallelogram", label: NODE_SHAPE_LABELS.parallelogram! },
+  { shape: "parallelogram-alt", label: NODE_SHAPE_LABELS["parallelogram-alt"]! },
+  { shape: "trapezoid", label: NODE_SHAPE_LABELS.trapezoid! },
+  { shape: "trapezoid-alt", label: NODE_SHAPE_LABELS["trapezoid-alt"]! },
 ];
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_CANVAS_FRAME: CanvasFrame = { width: 0, height: 0, left: 0, top: 0 };
@@ -237,7 +262,7 @@ const DIRECTION_HANDLES: Record<GraphDirection, {
 
 const NODE_SHAPE_VIEWBOX = `0 0 ${NODE_WIDTH} ${NODE_HEIGHT}`;
 
-const graphNodeTypes = { graphNode: GraphNode } satisfies NodeTypes;
+const graphNodeTypes = { graphNode: GraphNode, graphCluster: GraphCluster } satisfies NodeTypes;
 const graphEdgeTypes = { graphEdge: GraphEdge } satisfies EdgeTypes;
 const GRAPH_EDITOR_OWNER_EVENT = "qingagent:graph-diagram-editor-owner-change";
 
@@ -256,7 +281,7 @@ function setActiveGraphEditorOwner(ownerId: string | null): void {
   }
 }
 
-function GraphNode({ data, isConnectable }: NodeProps<GraphFlowNode>) {
+function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLDivElement | null>(null);
   const wasRenamingRef = useRef(false);
@@ -430,6 +455,39 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphFlowNode>) {
   );
 }
 
+function GraphCluster({ data, isConnectable }: NodeProps<GraphClusterNode>) {
+  return (
+    <div
+      className="graph-diagram-cluster"
+      data-cluster-label={data.label}
+      data-cluster-direction={data.direction}
+      data-cluster-depth={data.depth}
+    >
+      <div className="graph-diagram-cluster__title">{data.label}</div>
+      {GRAPH_HANDLES.map((handle) => (
+        <div key={handle.id} className={`graph-diagram-cluster__handle-slot graph-diagram-cluster__handle-slot--${handle.id}`}>
+          <Handle
+            id={handle.id}
+            type="target"
+            position={handle.position}
+            isConnectable={isConnectable}
+            isConnectableStart={false}
+            className="graph-diagram-cluster__handle"
+          />
+          <Handle
+            id={handle.id}
+            type="source"
+            position={handle.position}
+            isConnectable={isConnectable}
+            isConnectableEnd={false}
+            className="graph-diagram-cluster__handle"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function GraphEdge({
   id,
   sourceX,
@@ -448,7 +506,12 @@ function GraphEdge({
   const isComposingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
   const blurArmedRef = useRef(false);
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const pathArgs = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [edgePath, labelX, labelY] = data?.curve === "linear"
+    ? getStraightPath({ sourceX, sourceY, targetX, targetY })
+    : data?.curve?.startsWith("step")
+      ? getSmoothStepPath(pathArgs)
+      : getBezierPath(pathArgs);
   const isEditing = data?.isEditingLabel === true;
   const canEdit = data?.canEditLabel === true;
   const label = data?.label ?? "";
@@ -483,6 +546,12 @@ function GraphEdge({
 
   return (
     <>
+      <GraphEdgeMarkerDefs
+        edgeId={id}
+        sourceMarker={data?.sourceMarker ?? "none"}
+        targetMarker={data?.targetMarker ?? "none"}
+        color={data?.markerColor ?? DEFAULT_EDGE_STROKE}
+      />
       <ReactFlowBaseEdge
         id={id}
         path={edgePath}
@@ -557,6 +626,39 @@ function GraphEdge({
       ) : null}
     </>
   );
+}
+
+function GraphEdgeMarkerDefs({
+  edgeId,
+  sourceMarker,
+  targetMarker,
+  color,
+}: {
+  edgeId: string;
+  sourceMarker: EdgeMarkerKind;
+  targetMarker: EdgeMarkerKind;
+  color: string;
+}) {
+  const markers = new Set([sourceMarker, targetMarker]);
+  const safeId = graphMarkerSafeId(edgeId);
+  return (
+    <defs>
+      {markers.has("circle") ? (
+        <marker id={`graph-circle-${safeId}`} markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto" markerUnits="strokeWidth">
+          <circle cx="5" cy="5" r="3.2" fill="var(--graph-cluster-fill, #fbf7ee)" stroke={color} strokeWidth="1.5" />
+        </marker>
+      ) : null}
+      {markers.has("cross") ? (
+        <marker id={`graph-cross-${safeId}`} markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M2 2 L8 8 M8 2 L2 8" fill="none" stroke={color} strokeWidth="1.8" />
+        </marker>
+      ) : null}
+    </defs>
+  );
+}
+
+function graphMarkerSafeId(edgeId: string): string {
+  return edgeId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 // 预览态右上角统一工具栏:对齐(左/中/右)+ 放大/缩小/适应 + 全屏编辑。样式与图片块工具栏统一。
@@ -762,7 +864,11 @@ export function GraphDiagramView({
   const graphEdges = useMemo(() => (parsed.ok ? modelEdges(parsed.model) : []), [parsed]);
   const graphDirection = useMemo(() => (parsed.ok ? getGraphDirection(parsed.model) : "TB"), [parsed]);
   const graphHandleDirection = DIRECTION_HANDLES[graphDirection];
-  const [autoLayout, setAutoLayout] = useState<Record<string, { x: number; y: number }>>({});
+  const diagramLayout = useMemo(
+    () => parsed.ok ? layoutDiagramGraph(parsed.model, overlay) : { nodes: {}, clusters: [] },
+    [overlay, parsed],
+  );
+  const autoLayout = diagramLayout.nodes;
   const [nodes, setNodes] = useState<GraphFlowNode[]>([]);
   const [edges, setEdges] = useState<GraphFlowEdge[]>([]);
   const [editing, setEditing] = useState(false);
@@ -865,16 +971,6 @@ export function GraphDiagramView({
       }
     };
   }, [resetEditorState]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void computeAutoLayout(graphNodes, graphEdges, graphDirection).then((layout) => {
-      if (!cancelled) setAutoLayout(layout);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [graphDirection, graphNodes, graphEdges]);
 
   useEffect(() => {
     if (!readOnly) return;
@@ -1326,7 +1422,35 @@ export function GraphDiagramView({
   );
 
   useEffect(() => {
-    const nextNodes = graphNodes.map((node) => {
+    const clusterNodes = [...diagramLayout.clusters]
+      .sort((left, right) => left.depth - right.depth)
+      .map((cluster): GraphClusterNode => ({
+        id: cluster.id,
+        type: "graphCluster",
+        position: { x: cluster.x, y: cluster.y },
+        initialWidth: cluster.width,
+        initialHeight: cluster.height,
+        sourcePosition: graphHandleDirection.sourcePosition,
+        targetPosition: graphHandleDirection.targetPosition,
+        data: {
+          label: cluster.label,
+          direction: cluster.direction,
+          depth: cluster.depth,
+        },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        zIndex: -100 + cluster.depth,
+        className: "graph-diagram-cluster-node",
+        style: {
+          width: cluster.width,
+          height: cluster.height,
+          border: "none",
+          background: "transparent",
+          padding: 0,
+        },
+      }));
+    const regularNodes = graphNodes.map((node) => {
       const sourceStyle = parsed.model.perNodeStyles?.[node.id];
       const overlayStyle = overlay?.styles?.[node.id];
       const over = overlay?.positions?.[node.id];
@@ -1340,6 +1464,8 @@ export function GraphDiagramView({
       const nodeFill = overlayStyle?.fill ?? sourceStyle?.fill;
       const nodeStroke = overlayStyle?.stroke ?? sourceStyle?.stroke;
       const nodeText = overlayStyle?.textColor ?? sourceStyle?.textColor;
+      const nodeFontSize = overlayStyle?.fontSize ?? sourceStyle?.fontSize ?? 13;
+      const nodeDashArray = overlayStyle?.dashArray ?? sourceStyle?.dashArray;
       return {
         id: node.id,
         type: "graphNode",
@@ -1380,22 +1506,34 @@ export function GraphDiagramView({
           ...(nodeStroke ? { "--graph-node-stroke": nodeStroke } : {}),
           ...(nodeText ? { "--graph-node-text": nodeText } : {}),
           "--graph-node-stroke-width": `${strokeWidth}px`,
-          "--graph-node-font-size": `${overlayStyle?.fontSize ?? 13}px`,
-          fontSize: overlayStyle?.fontSize ?? 13,
+          ...(nodeDashArray ? { "--graph-node-stroke-dasharray": nodeDashArray } : {}),
+          "--graph-node-font-size": `${nodeFontSize}px`,
+          fontSize: nodeFontSize,
         } as CSSProperties & Record<string, string | number>,
-      } satisfies GraphFlowNode;
+      } satisfies GraphRegularNode;
     });
+    const nextNodes: GraphFlowNode[] = [...clusterNodes, ...regularNodes];
     const nextNodeById = new Map(nextNodes.map((node) => [node.id, node]));
     const nextEdges = graphEdges.map((edge) => {
-      const style = overlay?.edgeStyles?.[edge.id];
+      const style = {
+        ...(parsed.model.perEdgeStyles?.[edge.id] ?? {}),
+        ...(overlay?.edgeStyles?.[edge.id] ?? {}),
+      };
       const fixedHandles = overlay?.edgeHandles?.[edge.id];
       const renderHandles = graphEdgeRenderHandles(edge, nextNodeById, fixedHandles);
       const isSelected = inEdit && edge.id === selectedEdgeId;
       const edgeStroke = style?.stroke ?? parsed.model.themePalette?.lineColor ?? DEFAULT_EDGE_STROKE;
       const edgeLineStyle = getEdgeLineStyle(edge);
       const edgeDirection = getEdgeDirection(edge);
+      const sourceMarker = edge.sourceMarker ?? (edgeDirection === "backward" || edgeDirection === "both" ? "arrow" : "none");
+      const targetMarker = edge.targetMarker ?? (edgeDirection === "forward" || edgeDirection === "both" ? "arrow" : "none");
       const baseStrokeWidth = style?.strokeWidth ?? (edgeLineStyle === "thick" ? 2.8 : 1.5);
       const renderStrokeWidth = isSelected ? Math.max(baseStrokeWidth, 2.5) : baseStrokeWidth;
+      const markerFor = (marker: EdgeMarkerKind) => marker === "arrow"
+        ? { type: MarkerType.ArrowClosed, color: edgeStroke }
+        : marker === "circle" || marker === "cross"
+          ? `url(#graph-${marker}-${graphMarkerSafeId(edge.id)})`
+          : undefined;
       return {
         id: edge.id,
         type: "graphEdge",
@@ -1405,7 +1543,7 @@ export function GraphDiagramView({
         targetHandle: renderHandles.targetHandle,
         data: {
           floating: !fixedHandles?.sourceHandle || !fixedHandles?.targetHandle,
-          label: edge.label ?? "",
+          label: edgeLineStyle === "invisible" ? "" : edge.label ?? "",
           textColor: style?.textColor ?? parsed.model.themePalette?.textColor ?? DEFAULT_EDGE_TEXT,
           canEditLabel: inEdit && capEnabled(getCapabilities(parsed, { edgeId: edge.id }), "setEdgeLabel"),
           isEditingLabel: inEdit && editingEdgeLabelId === edge.id,
@@ -1413,10 +1551,14 @@ export function GraphDiagramView({
           onLabelEditStart: () => startEdgeLabelEdit(edge.id),
           onLabelCommit: (label: string) => commitEdgeLabelEdit(edge.id, label),
           onLabelCancel: cancelEdgeLabelEdit,
+          sourceMarker,
+          targetMarker,
+          markerColor: edgeStroke,
+          ...(style.curve ? { curve: style.curve } : {}),
         },
         domAttributes: edgeDomAttributes(renderHandles, !fixedHandles?.sourceHandle || !fixedHandles?.targetHandle),
-        markerStart: edgeDirection === "backward" || edgeDirection === "both" ? { type: MarkerType.ArrowClosed, color: edgeStroke } : undefined,
-        markerEnd: edgeDirection === "forward" || edgeDirection === "both" ? { type: MarkerType.ArrowClosed, color: edgeStroke } : undefined,
+        markerStart: edgeLineStyle === "invisible" ? undefined : markerFor(sourceMarker),
+        markerEnd: edgeLineStyle === "invisible" ? undefined : markerFor(targetMarker),
         animated: false,
         selectable: inEdit,
         selected: isSelected,
@@ -1424,7 +1566,8 @@ export function GraphDiagramView({
         style: {
           stroke: edgeStroke,
           strokeWidth: renderStrokeWidth,
-          ...(edgeLineStyle === "dotted" ? { strokeDasharray: "4 6" } : {}),
+          ...(style.dashArray ? { strokeDasharray: style.dashArray } : edgeLineStyle === "dotted" ? { strokeDasharray: "4 6" } : {}),
+          ...(edgeLineStyle === "invisible" ? { visibility: "hidden" } : {}),
         },
       } satisfies GraphFlowEdge;
     });
@@ -1438,6 +1581,7 @@ export function GraphDiagramView({
     cancelEdgeLabelEdit,
     commitRename,
     commitEdgeLabelEdit,
+    diagramLayout.clusters,
     editingEdgeLabelId,
     graphEdges,
     graphHandleDirection,
@@ -2511,26 +2655,16 @@ function getRawNodeShape(node: BaseNode): string | null {
 }
 
 function normalizeGraphNodeShape(raw: string | null): GraphNodeShape {
-  const shape = (raw ?? "round").trim().toLowerCase();
-  if (!shape || shape === "[" || shape === "rect" || shape === "rectangle" || shape === "square") return "rect";
-  if (shape === "(" || shape === "round" || shape === "rounded" || shape === "rounded-rect") return "round";
-  if (shape === "([" || shape === "stadium" || shape === "pill" || shape === "rounded-pill") return "stadium";
-  if (shape === "[[" || shape === "subroutine" || shape === "framed") return "subroutine";
-  if (shape === "[(" || shape === "cylinder" || shape === "database") return "cylinder";
-  if (shape === "((" || shape === "circle") return "circle";
-  if (shape === "doublecircle" || shape === "double-circle" || shape === "double_circle") return "doublecircle";
-  if (shape === "{" || shape === "rhombus" || shape === "diamond" || shape === "decision") return "diamond";
-  if (shape === "{{" || shape === "hexagon") return "hexagon";
-  if (shape === "[/" || shape === "[\\" || shape === "parallelogram" || shape === "lean-right" || shape === "lean-left") return "parallelogram";
-  if (shape === "trapezoid" || shape === "trapezoid-alt") return "trapezoid";
-  return "round";
+  return normalizeFlowShapeName(raw);
 }
 
 function renderShapeSvg(shape: GraphNodeShape) {
+  const geometry = getFlowShapeGeometry(shape);
   const shapeStyle = {
-    fill: "var(--graph-node-fill)",
-    stroke: "var(--graph-node-stroke)",
+    fill: geometry.open ? "none" : "var(--graph-node-fill)",
+    stroke: geometry.outlineVisible === false ? "none" : "var(--graph-node-stroke)",
     strokeWidth: "var(--graph-node-stroke-width)",
+    strokeDasharray: "var(--graph-node-stroke-dasharray, none)",
     vectorEffect: "non-scaling-stroke",
   } satisfies CSSProperties;
   const lineStyle = {
@@ -2554,69 +2688,14 @@ function renderShapeSvg(shape: GraphNodeShape) {
 
   return (
     <>
-      {renderShapeBody(shape, shapeStyle, lineStyle, "graph-diagram-node-shape-fill", "graph-diagram-node-shape-detail", 0, true)}
-      {renderShapeOutline(shape, selectionRingStyle, "graph-diagram-node-selection-ring", 5)}
-      {renderShapeOutline(shape, hoverRingStyle, "graph-diagram-node-hover-ring", 3)}
+      <path className="graph-diagram-node-shape-fill" d={geometry.outlinePath} style={shapeStyle} />
+      {geometry.detailPaths.map((path, index) => (
+        <path key={`${shape}-detail-${index}`} className="graph-diagram-node-shape-detail" d={path} style={lineStyle} />
+      ))}
+      <path className="graph-diagram-node-selection-ring" d={geometry.outlinePath} style={selectionRingStyle} />
+      <path className="graph-diagram-node-hover-ring" d={geometry.outlinePath} style={hoverRingStyle} />
     </>
   );
-}
-
-function renderShapeBody(
-  shape: GraphNodeShape,
-  shapeStyle: CSSProperties,
-  lineStyle: CSSProperties,
-  shapeClassName: string,
-  lineClassName: string,
-  expand: number,
-  includeDetails: boolean,
-) {
-  if (shape === "subroutine") {
-    return (
-      <>
-        {renderShapeOutline(shape, shapeStyle, shapeClassName, expand)}
-        {includeDetails ? <path className={lineClassName} d="M20 1 V71 M140 1 V71" style={lineStyle} /> : null}
-      </>
-    );
-  }
-  if (shape === "cylinder") {
-    return (
-      <>
-        {renderShapeOutline(shape, shapeStyle, shapeClassName, expand)}
-        {includeDetails ? <path className={lineClassName} d="M1 12 C1 18 36 23 80 23 C124 23 159 18 159 12" style={lineStyle} /> : null}
-      </>
-    );
-  }
-  if (shape === "doublecircle") {
-    return (
-      <>
-        {renderShapeOutline(shape, shapeStyle, shapeClassName, expand)}
-        {includeDetails ? <circle className={lineClassName} cx="80" cy="36" r="28" style={lineStyle} /> : null}
-      </>
-    );
-  }
-  return renderShapeOutline(shape, shapeStyle, shapeClassName, expand);
-}
-
-function renderShapeOutline(shape: GraphNodeShape, style: CSSProperties, className: string, expand: number) {
-  const x = 1 - expand;
-  const y = 1 - expand;
-  const width = 158 + expand * 2;
-  const height = 70 + expand * 2;
-  if (shape === "rect") return <rect className={className} x={x} y={y} width={width} height={height} rx={Math.max(2, 2 + expand)} style={style} />;
-  if (shape === "round") return <rect className={className} x={x} y={y} width={width} height={height} rx={Math.max(10, 10 + expand)} style={style} />;
-  if (shape === "stadium") return <rect className={className} x={x} y={y} width={width} height={height} rx={35 + expand} style={style} />;
-  if (shape === "subroutine") {
-    return <rect className={className} x={x} y={y} width={width} height={height} rx={Math.max(4, 4 + expand)} style={style} />;
-  }
-  if (shape === "cylinder") {
-    return <path className={className} d={`M${1 - expand} ${12 - expand} C${1 - expand} ${6 - expand} ${36 - expand} ${1 - expand} 80 ${1 - expand} C${124 + expand} ${1 - expand} ${159 + expand} ${6 - expand} ${159 + expand} ${12 - expand} V${60 + expand} C${159 + expand} ${66 + expand} ${124 + expand} ${71 + expand} 80 ${71 + expand} C${36 - expand} ${71 + expand} ${1 - expand} ${66 + expand} ${1 - expand} ${60 + expand} Z`} style={style} />;
-  }
-  if (shape === "circle" || shape === "doublecircle") return <circle className={className} cx="80" cy="36" r={34 + expand} style={style} />;
-  if (shape === "diamond") return <polygon className={className} points={`80,${1 - expand} ${159 + expand},36 80,${71 + expand} ${1 - expand},36`} style={style} />;
-  if (shape === "hexagon") return <polygon className={className} points={`${34 - expand},${1 - expand} ${126 + expand},${1 - expand} ${159 + expand},36 ${126 + expand},${71 + expand} ${34 - expand},${71 + expand} ${1 - expand},36`} style={style} />;
-  if (shape === "parallelogram") return <polygon className={className} points={`${23 - expand},${1 - expand} ${159 + expand},${1 - expand} ${137 + expand},${71 + expand} ${1 - expand},${71 + expand}`} style={style} />;
-  if (shape === "trapezoid") return <polygon className={className} points={`${25 - expand},${1 - expand} ${135 + expand},${1 - expand} ${159 + expand},${71 + expand} ${1 - expand},${71 + expand}`} style={style} />;
-  return <rect className={className} x={x} y={y} width={width} height={height} rx={Math.max(10, 10 + expand)} style={style} />;
 }
 
 function getGraphDirection(model: DiagramModel): GraphDirection {
@@ -2825,7 +2904,22 @@ function constrainedShiftPositions(state: ShiftDragState, primaryNode: Node): Re
 
 function copyableFlowShape(node: BaseNode): FlowNodeShape | null {
   const shape = getNodeShape(node);
-  if (shape === "rect" || shape === "round" || shape === "stadium" || shape === "diamond" || shape === "circle" || shape === "hexagon" || shape === "parallelogram") {
+  if (
+    shape === "rect"
+    || shape === "round"
+    || shape === "stadium"
+    || shape === "subroutine"
+    || shape === "cylinder"
+    || shape === "circle"
+    || shape === "doublecircle"
+    || shape === "asymmetric"
+    || shape === "diamond"
+    || shape === "hexagon"
+    || shape === "parallelogram"
+    || shape === "parallelogram-alt"
+    || shape === "trapezoid"
+    || shape === "trapezoid-alt"
+  ) {
     return shape;
   }
   return null;
@@ -2854,47 +2948,6 @@ function selectEditableContents(el: HTMLElement): void {
 
 function isDescendantNode(candidate: BaseNode, ancestor: BaseNode): boolean {
   return candidate.scopePath.length > ancestor.scopePath.length && ancestor.scopePath.every((part, index) => candidate.scopePath[index] === part);
-}
-
-async function computeAutoLayout(nodes: BaseNode[], edges: DiagramBaseEdge[], direction: GraphDirection): Promise<Record<string, { x: number; y: number }>> {
-  if (edges.some((edge) => edge.syntaxKind === "tree")) {
-    return fallbackGridLayout(nodes);
-  }
-  try {
-    const mod = await import("elkjs/lib/elk.bundled.js");
-    const Elk = mod.default;
-    const elk = new Elk();
-    const directionHandles = DIRECTION_HANDLES[direction];
-    const graph = await elk.layout({
-      id: "root",
-      layoutOptions: {
-        "elk.algorithm": "layered",
-        "elk.direction": directionHandles.elkDirection,
-        "elk.spacing.nodeNode": "70",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "80",
-      },
-      children: nodes.map((node): ElkNode => ({ id: node.id, width: 180, height: 72 })),
-      edges: edges.map((edge): ElkEdge => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
-    });
-    const out: Record<string, { x: number; y: number }> = {};
-    for (const child of graph.children ?? []) {
-      if (typeof child.x === "number" && typeof child.y === "number") {
-        out[child.id] = { x: child.x, y: child.y };
-      }
-    }
-    if (Object.keys(out).length > 0) return out;
-  } catch {
-    // ELK 加载失败时降级为确定性网格,不影响文档可编辑。
-  }
-  return fallbackGridLayout(nodes);
-}
-
-function fallbackGridLayout(nodes: BaseNode[]): Record<string, { x: number; y: number }> {
-  const out: Record<string, { x: number; y: number }> = {};
-  nodes.forEach((node, index) => {
-    out[node.id] = { x: 40 + (index % 3) * 230, y: 40 + Math.floor(index / 3) * 130 };
-  });
-  return out;
 }
 
 export function getFloatingPosition({

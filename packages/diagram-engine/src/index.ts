@@ -27,6 +27,9 @@ export interface BaseEdge {
   syntaxSpan?: Span;
   direction?: EdgeDirection;
   lineStyle?: EdgeLineStyle;
+  sourceMarker?: EdgeMarkerKind;
+  targetMarker?: EdgeMarkerKind;
+  minLength?: number;
   orderIndex: number;
   cardinality?: string;
   scopePath: string[];
@@ -35,7 +38,8 @@ export interface BaseEdge {
 }
 
 export type EdgeDirection = "forward" | "backward" | "both" | "none";
-export type EdgeLineStyle = "solid" | "dotted" | "thick";
+export type EdgeLineStyle = "solid" | "dotted" | "thick" | "invisible";
+export type EdgeMarkerKind = "arrow" | "circle" | "cross" | "none";
 
 export interface ThemePalette {
   nodeFill?: string;
@@ -49,6 +53,7 @@ export interface ThemePalette {
 export interface DiagramThemeMetadata {
   themePalette?: ThemePalette;
   perNodeStyles?: Record<string, NodeStyleOverride>;
+  perEdgeStyles?: Record<string, EdgeStyleOverride>;
 }
 
 export type FlowNodeShape =
@@ -57,15 +62,65 @@ export type FlowNodeShape =
   | "stadium"
   | "diamond"
   | "circle"
+  | "doublecircle"
+  | "subroutine"
+  | "cylinder"
+  | "asymmetric"
   | "hexagon"
-  | "parallelogram";
+  | "parallelogram"
+  | "parallelogram-alt"
+  | "trapezoid"
+  | "trapezoid-alt"
+  | "bang"
+  | "notch-rect"
+  | "cloud"
+  | "hourglass"
+  | "bolt"
+  | "brace"
+  | "brace-r"
+  | "braces"
+  | "datastore"
+  | "delay"
+  | "h-cyl"
+  | "lin-cyl"
+  | "curv-trap"
+  | "div-rect"
+  | "doc"
+  | "tri"
+  | "fork"
+  | "win-pane"
+  | "f-circ"
+  | "lin-doc"
+  | "lin-rect"
+  | "notch-pent"
+  | "flip-tri"
+  | "sl-rect"
+  | "docs"
+  | "st-rect"
+  | "odd"
+  | "flag"
+  | "sm-circ"
+  | "fr-circ"
+  | "bow-rect"
+  | "cross-circ"
+  | "tag-doc"
+  | "tag-rect"
+  | "text";
+
+export interface FlowSubgraph {
+  id: string;
+  label: string;
+  span: Span;
+  scopePath: string[];
+  direction?: string;
+}
 
 export interface FlowGraph extends DiagramThemeMetadata {
   type: "flowchart";
   direction: string;
   nodes: (BaseNode & { shape?: string; shapeOpenSpan?: Span; shapeCloseSpan?: Span })[];
   edges: BaseEdge[];
-  subgraphs: { id: string; span: Span; scopePath: string[] }[];
+  subgraphs: FlowSubgraph[];
   hasLinkStyle?: boolean;
 }
 
@@ -151,12 +206,15 @@ export interface NodeStyleOverride {
   textColor?: string;
   strokeWidth?: number;
   fontSize?: number;
+  dashArray?: string;
 }
 
 export interface EdgeStyleOverride {
   stroke?: string;
   textColor?: string;
   strokeWidth?: number;
+  dashArray?: string;
+  curve?: string;
 }
 
 export interface EdgeHandleOverride {
@@ -169,6 +227,33 @@ export interface DiagramOverlay {
   styles?: Record<string, NodeStyleOverride>;
   edgeStyles?: Record<string, EdgeStyleOverride>;
   edgeHandles?: Record<string, EdgeHandleOverride>;
+}
+
+export interface GraphLayoutRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface GraphLayoutCluster extends GraphLayoutRect {
+  id: string;
+  label: string;
+  scopePath: string[];
+  direction: string;
+  depth: number;
+}
+
+export interface DiagramGraphLayout {
+  nodes: Record<string, GraphLayoutRect>;
+  clusters: GraphLayoutCluster[];
+}
+
+export interface FlowShapeGeometry {
+  outlinePath: string;
+  detailPaths: string[];
+  open?: boolean;
+  outlineVisible?: boolean;
 }
 
 export interface DiagramAdapter {
@@ -197,7 +282,6 @@ type EdgeIdFactory = (input: EdgeIdInput) => string;
 // 反向实线/粗线带 `|label|` 时,Mermaid 11 只接受 3 段长形(`<---`/`<===`),
 // 短形 `<--|x|`/`<==|x|` 直接解析失败(已实测),故反向回写一律用长形(见 flowArrowToken)。
 const FLOW_ARROW_TOKEN_RE = /(?:<-.->|<-->|<==>|<---|<===|<-.-|<==|<--|-.->|==>|---|-.-|===|-->)/g;
-const FLOW_ARROW_TOKEN_AT_RE = new RegExp(FLOW_ARROW_TOKEN_RE.source, "y");
 
 const EDGE_OPS: EditOp["kind"][] = ["connectEdge", "deleteEdge", "reconnectEdge", "setEdgeLabel", "setEdgeArrow"];
 const NODE_OPS: EditOp["kind"][] = ["addNode", "deleteNode", "relabelNode", "setNodeShape"];
@@ -312,14 +396,21 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
   const edges = modelEdges(parsed.model);
   const flattened = modelNodes(parsed.model);
   if (flattened.length === 0) return null;
-  const layout = layoutNodes(flattened, edges, overlay);
-  const bounds = graphSvgBounds(flattened, edges, layout, overlay);
+  const layout = layoutDiagramGraph(parsed.model, overlay);
+  const endpointRects: Record<string, GraphLayoutRect> = {
+    ...layout.nodes,
+    ...Object.fromEntries(layout.clusters.map((cluster) => [cluster.id, cluster])),
+  };
+  const bounds = graphSvgBounds(flattened, edges, layout, endpointRects, overlay);
+  const clusterSvg = layout.clusters
+    .sort((left, right) => left.depth - right.depth)
+    .map((cluster) => renderSvgCluster(cluster, parsed.model.themePalette))
+    .join("");
   const nodeSvg = flattened
     .map((node) =>
       renderSvgNode(
-        node.id,
-        node.label,
-        layout[node.id] ?? { x: 24, y: 24 },
+        node,
+        layout.nodes[node.id] ?? { x: 24, y: 24, width: GRAPH_LAYOUT_NODE_WIDTH, height: GRAPH_LAYOUT_NODE_HEIGHT },
         parsed.model.themePalette,
         parsed.model.perNodeStyles?.[node.id],
         overlay?.styles?.[node.id],
@@ -327,18 +418,18 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
     )
     .join("");
   const edgeSvg = edges
-    .filter((edge) => layout[edge.source] && layout[edge.target])
+    .filter((edge) => endpointRects[edge.source] && endpointRects[edge.target])
     .map((edge) =>
       renderSvgEdge(
         edge,
-        layout[edge.source]!,
-        layout[edge.target]!,
+        endpointRects[edge.source]!,
+        endpointRects[edge.target]!,
         parsed.model.themePalette,
-        overlay?.edgeStyles?.[edge.id],
+        { ...(parsed.model.perEdgeStyles?.[edge.id] ?? {}), ...(overlay?.edgeStyles?.[edge.id] ?? {}) },
       ),
     )
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${edgeSvg}${nodeSvg}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}" role="img">${svgDefs(parsed.model.themePalette)}<rect x="${bounds.minX}" y="${bounds.minY}" width="${bounds.width}" height="${bounds.height}" fill="#faf6ec"/>${clusterSvg}${edgeSvg}${nodeSvg}</svg>`;
 }
 
 function makeFlowchartAdapter(): DiagramAdapter {
@@ -395,26 +486,31 @@ function parseDiagramThemeMetadata(
   source: string,
   nodeIds: Iterable<string>,
   inlineNodeClasses: Map<string, string[]> = new Map(),
+  edges: BaseEdge[] = [],
 ): DiagramThemeMetadata {
   const themePalette = parseThemePalette(source);
-  const { classDefinitions, nodeClasses } = parseClassStyleStatements(source);
+  const { classDefinitions, nodeClasses, nodeStyles } = parseClassStyleStatements(source);
   for (const [nodeId, classNames] of inlineNodeClasses) {
     appendNodeClasses(nodeClasses, nodeId, classNames);
   }
 
   const perNodeStyles: Record<string, NodeStyleOverride> = {};
   for (const nodeId of nodeIds) {
-    const classNames = nodeClasses.get(nodeId) ?? [];
-    const style = classNames.reduce<NodeStyleOverride>((merged, className) => {
+    const assignedClassNames = nodeClasses.get(nodeId) ?? [];
+    const classNames = classDefinitions.has("default") ? ["default", ...assignedClassNames] : assignedClassNames;
+    const classStyle = classNames.reduce<NodeStyleOverride>((merged, className) => {
       const classStyle = classDefinitions.get(className);
       return classStyle ? { ...merged, ...classStyle } : merged;
     }, {});
+    const style = { ...classStyle, ...(nodeStyles.get(nodeId) ?? {}) };
     if (Object.keys(style).length > 0) perNodeStyles[nodeId] = style;
   }
+  const perEdgeStyles = parseLinkStyleStatements(source, edges);
 
   return {
     ...(themePalette ? { themePalette } : {}),
     ...(Object.keys(perNodeStyles).length > 0 ? { perNodeStyles } : {}),
+    ...(Object.keys(perEdgeStyles).length > 0 ? { perEdgeStyles } : {}),
   };
 }
 
@@ -503,25 +599,38 @@ function readObjectValue(source: string, key: string): string | undefined {
 function parseClassStyleStatements(source: string): {
   classDefinitions: Map<string, NodeStyleOverride>;
   nodeClasses: Map<string, string[]>;
+  nodeStyles: Map<string, NodeStyleOverride>;
 } {
   const classDefinitions = new Map<string, NodeStyleOverride>();
   const nodeClasses = new Map<string, string[]>();
+  const nodeStyles = new Map<string, NodeStyleOverride>();
   for (const line of getLines(source)) {
     const trimmed = line.text.trim();
-    const definition = trimmed.match(/^classDef\s+([A-Za-z_][\w-]*)\s+(.+?)\s*;?$/i);
+    const definition = trimmed.match(/^classDef\s+([A-Za-z_][\w-]*(?:\s*,\s*[A-Za-z_][\w-]*)*)\s+(.+?)\s*;?$/i);
     if (definition) {
       const style = parseClassDefinitionStyle(definition[2]!);
-      if (style) classDefinitions.set(definition[1]!, style);
+      if (style) {
+        for (const className of definition[1]!.split(",").map((value) => value.trim()).filter(Boolean)) {
+          classDefinitions.set(className, style);
+        }
+      }
       continue;
     }
     const assignment = trimmed.match(/^class\s+([A-Za-z_][\w-]*(?:\s*,\s*[A-Za-z_][\w-]*)*)\s+([A-Za-z_][\w-]*)\s*;?$/i);
-    if (!assignment) continue;
-    const className = assignment[2]!;
-    for (const nodeId of assignment[1]!.split(",").map((value) => value.trim()).filter(Boolean)) {
-      appendNodeClasses(nodeClasses, nodeId, [className]);
+    if (assignment) {
+      const className = assignment[2]!;
+      for (const nodeId of assignment[1]!.split(",").map((value) => value.trim()).filter(Boolean)) {
+        appendNodeClasses(nodeClasses, nodeId, [className]);
+      }
+      continue;
+    }
+    const inlineStyle = trimmed.match(/^style\s+([A-Za-z_][\w-]*)\s+(.+?)\s*;?$/i);
+    if (inlineStyle) {
+      const style = parseClassDefinitionStyle(inlineStyle[2]!);
+      if (style) nodeStyles.set(inlineStyle[1]!, { ...(nodeStyles.get(inlineStyle[1]!) ?? {}), ...style });
     }
   }
-  return { classDefinitions, nodeClasses };
+  return { classDefinitions, nodeClasses, nodeStyles };
 }
 
 function parseClassDefinitionStyle(source: string): NodeStyleOverride | undefined {
@@ -543,9 +652,60 @@ function parseClassDefinitionStyle(source: string): NodeStyleOverride | undefine
     } else if (property === "stroke-width") {
       const width = Number.parseFloat(rawValue);
       if (Number.isFinite(width) && width > 0) style.strokeWidth = Math.max(1, Math.min(8, width));
+    } else if (property === "font-size") {
+      const size = Number.parseFloat(rawValue);
+      if (Number.isFinite(size) && size > 0) style.fontSize = Math.max(9, Math.min(48, size));
+    } else if (property === "stroke-dasharray") {
+      const dashArray = sanitizeDashArray(rawValue);
+      if (dashArray) style.dashArray = dashArray;
     }
   }
   return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function parseEdgeStyle(source: string): EdgeStyleOverride | undefined {
+  const style: EdgeStyleOverride = {};
+  for (const declaration of splitStyleDeclarations(source)) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    const property = declaration.slice(0, colon).trim().toLowerCase();
+    const rawValue = declaration.slice(colon + 1).trim().replace(/;$/, "");
+    if (property === "stroke") {
+      const stroke = sanitizeColor(rawValue);
+      if (stroke) style.stroke = stroke;
+    } else if (property === "color") {
+      const textColor = sanitizeColor(rawValue);
+      if (textColor) style.textColor = textColor;
+    } else if (property === "stroke-width") {
+      const width = Number.parseFloat(rawValue);
+      if (Number.isFinite(width) && width > 0) style.strokeWidth = Math.max(1, Math.min(8, width));
+    } else if (property === "stroke-dasharray") {
+      const dashArray = sanitizeDashArray(rawValue);
+      if (dashArray) style.dashArray = dashArray;
+    } else if (property === "curve") {
+      const curve = sanitizeCurve(rawValue);
+      if (curve) style.curve = curve;
+    }
+  }
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function parseLinkStyleStatements(source: string, edges: BaseEdge[]): Record<string, EdgeStyleOverride> {
+  const out: Record<string, EdgeStyleOverride> = {};
+  for (const line of getLines(source)) {
+    const match = line.text.trim().match(/^linkStyle\s+(\S+)\s+(.+?)\s*;?$/i);
+    if (!match) continue;
+    const style = parseEdgeStyle(match[2]!);
+    if (!style) continue;
+    const indexes = match[1]!.toLowerCase() === "default"
+      ? edges.map((edge) => edge.orderIndex)
+      : match[1]!.split(",").map((value) => Number.parseInt(value.trim(), 10)).filter(Number.isFinite);
+    for (const index of indexes) {
+      const edge = edges.find((item) => item.orderIndex === index);
+      if (edge) out[edge.id] = { ...(out[edge.id] ?? {}), ...style };
+    }
+  }
+  return out;
 }
 
 function splitStyleDeclarations(source: string): string[] {
@@ -581,8 +741,10 @@ function appendNodeClasses(target: Map<string, string[]>, nodeId: string, classN
 }
 
 function parseFlowchart(source: string): ParseResult {
-  const statements = getFlowchartStatements(source);
-  const header = statements.find((statement) => /^\s*(?:flowchart|graph)\s+\S+\s*$/i.test(stripTrailingComment(statement.text)));
+  const lines = getFlowchartStatements(source);
+  const header = lines.find((line) =>
+    /^\s*(?:flowchart|graph)\s+\S+\s*$/i.test(stripTrailingComment(line.text))
+  );
   if (!header) return emptyParse("flowchart", "缺少 flowchart 头");
   const direction = stripTrailingComment(header.text).trim().split(/\s+/)[1] ?? "TD";
   const nodes = new Map<string, BaseNode & { shape?: string; shapeOpenSpan?: Span; shapeCloseSpan?: Span }>();
@@ -591,7 +753,7 @@ function parseFlowchart(source: string): ParseResult {
   const subgraphs: FlowGraph["subgraphs"] = [];
   let edgeOrder = 0;
   const nextEdgeId = createEdgeIdFactory("flow");
-  const subgraphStack: { id: string; start: number; scopePath: string[] }[] = [];
+  const subgraphStack: { id: string; label: string; start: number; scopePath: string[]; direction?: string }[] = [];
   const inlineNodeClasses = new Map<string, string[]>();
   let hasLinkStyle = false;
 
@@ -609,7 +771,11 @@ function parseFlowchart(source: string): ParseResult {
     const existing = nodes.get(id);
     if (existing) {
       existing.sourceRefs.push(span);
-      if (declared && !existing.declared) existing.declared = true;
+      if (declared && !existing.declared) {
+        existing.declared = true;
+        existing.implicit = false;
+        existing.scopePath = [...scopePath];
+      }
       if (label && existing.label === id) existing.label = label;
       if (labelSpan) existing.labelSpan = labelSpan;
       if (shape) existing.shape = shape;
@@ -634,61 +800,92 @@ function parseFlowchart(source: string): ParseResult {
     return node;
   };
 
-  for (const statement of statements) {
-    const trimmed = statement.text.trim();
-    if (!trimmed || statement === header) continue;
+  for (const line of lines) {
+    const trimmed = line.text.trim();
+    if (!trimmed || line === header) continue;
     if (trimmed.startsWith("%%")) {
-      protectedSpans.push(lineSpan(statement));
+      protectedSpans.push(lineSpan(line));
       continue;
     }
     if (/^subgraph\b/i.test(trimmed)) {
-      const id = trimmed.replace(/^subgraph\s+/i, "").trim();
-      subgraphStack.push({ id, start: statement.start, scopePath: subgraphStack.map((item) => item.id) });
-      protectedSpans.push(lineSpan(statement));
+      const declaration = parseFlowSubgraphDeclaration(trimmed.replace(/^subgraph\s+/i, "").trim());
+      subgraphStack.push({
+        ...declaration,
+        start: line.start,
+        scopePath: subgraphStack.map((item) => item.id),
+      });
+      protectedSpans.push(lineSpan(line));
       continue;
     }
     if (/^end$/i.test(trimmed)) {
       const open = subgraphStack.pop();
-      if (open) subgraphs.push({ id: open.id, span: { start: open.start, end: statement.end }, scopePath: open.scopePath });
-      protectedSpans.push(lineSpan(statement));
+      if (open) {
+        subgraphs.push({
+          id: open.id,
+          label: open.label,
+          span: { start: open.start, end: line.end },
+          scopePath: open.scopePath,
+          ...(open.direction ? { direction: open.direction } : {}),
+        });
+      }
+      protectedSpans.push(lineSpan(line));
+      continue;
+    }
+    const scopedDirection = trimmed.match(/^direction\s+(TB|TD|BT|LR|RL)\s*;?$/i);
+    if (scopedDirection && subgraphStack.length > 0) {
+      subgraphStack[subgraphStack.length - 1]!.direction = scopedDirection[1]!.toUpperCase();
+      protectedSpans.push(lineSpan(line));
       continue;
     }
     if (/^linkStyle\b/i.test(trimmed)) hasLinkStyle = true;
     if (/^(?:click|style|classDef|class|linkStyle)\b/i.test(trimmed)) {
-      protectedSpans.push(lineSpan(statement));
+      protectedSpans.push(lineSpan(line));
       continue;
     }
 
     const scopePath = subgraphStack.map((item) => item.id);
-    const edgeStatement = parseFlowEdgeStatement(statement, edgeOrder, scopePath, nextEdgeId);
-    if (edgeStatement?.kind === "error") return emptyParse("flowchart", edgeStatement.error);
-    if (edgeStatement?.kind === "parsed") {
+    const edgeStatement = parseFlowEdgeStatement(line, edgeOrder, scopePath, nextEdgeId);
+    if (edgeStatement && "error" in edgeStatement) {
+      return emptyParse("flowchart", edgeStatement.error);
+    }
+    if (edgeStatement) {
       edges.push(...edgeStatement.edges);
       edgeOrder += edgeStatement.edges.length;
-      for (const nodeRef of edgeStatement.nodeRefs) {
-        ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, nodeRef.declared, nodeRef.labelSpan, nodeRef.shape, scopePath, nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
-        appendNodeClasses(inlineNodeClasses, nodeRef.id, nodeRef.classNames);
+      for (const ref of edgeStatement.refs) {
+        ensureNode(ref.id, ref.label, ref.span, ref.declared, ref.labelSpan, ref.shape, scopePath, ref.shapeOpenSpan, ref.shapeCloseSpan);
+        appendNodeClasses(inlineNodeClasses, ref.id, ref.classNames);
       }
-      if (edgeStatement.edges.some((edge) => !edge.rewritable)) protectedSpans.push(lineSpan(statement));
+      if (edgeStatement.edges.some((item) => !item.rewritable)) protectedSpans.push(lineSpan(line));
       continue;
     }
 
-    const leading = statement.text.search(/\S/);
-    const nodeRef = leading >= 0 ? parseFlowNodeRef(statement.text.slice(leading), statement.start + leading) : null;
+    const leading = line.text.search(/\S/);
+    const nodeRef = leading >= 0 ? parseFlowNodeRef(line.text.slice(leading), line.start + leading) : null;
     if (nodeRef?.error) return emptyParse("flowchart", nodeRef.error);
-    if (nodeRef && nodeRef.endOffset === statement.text.trimEnd().length - leading) {
+    if (nodeRef && nodeRef.endOffset === line.text.trimEnd().length - leading) {
       ensureNode(nodeRef.id, nodeRef.label, nodeRef.span, true, nodeRef.labelSpan, nodeRef.shape, subgraphStack.map((item) => item.id), nodeRef.shapeOpenSpan, nodeRef.shapeCloseSpan);
       appendNodeClasses(inlineNodeClasses, nodeRef.id, nodeRef.classNames);
-      if (nodeRef.unsupported) protectedSpans.push(lineSpan(statement));
+      if (nodeRef.unsupported) protectedSpans.push(lineSpan(line));
       continue;
     }
-    protectedSpans.push(lineSpan(statement));
+    protectedSpans.push(lineSpan(line));
   }
   for (const open of subgraphStack.splice(0).reverse()) {
-    subgraphs.push({ id: open.id, span: { start: open.start, end: source.length }, scopePath: open.scopePath });
+    subgraphs.push({
+      id: open.id,
+      label: open.label,
+      span: { start: open.start, end: source.length },
+      scopePath: open.scopePath,
+      ...(open.direction ? { direction: open.direction } : {}),
+    });
   }
 
-  const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys(), inlineNodeClasses);
+  const subgraphIds = new Set(subgraphs.map((subgraph) => subgraph.id));
+  for (const subgraphId of subgraphIds) {
+    const candidate = nodes.get(subgraphId);
+    if (candidate?.implicit) nodes.delete(subgraphId);
+  }
+  const themeMetadata = parseDiagramThemeMetadata(source, nodes.keys(), inlineNodeClasses, edges);
   return {
     ok: true,
     ...themeMetadata,
@@ -697,204 +894,317 @@ function parseFlowchart(source: string): ParseResult {
   };
 }
 
-function parseFlowEdgeStatement(
-  statement: LineInfo,
+function parseFlowSubgraphDeclaration(raw: string): { id: string; label: string } {
+  const explicit = raw.match(/^([A-Za-z_][\p{L}\p{N}_-]*)\s*\[\s*(.*?)\s*\]\s*$/u);
+  if (explicit) {
+    return { id: explicit[1]!, label: displayMermaidLabel(stripQuotes(explicit[2]!)) };
+  }
+  const ref = parseFlowNodeRef(raw, 0);
+  if (ref?.declared && ref.endOffset === raw.length) {
+    return { id: ref.id, label: ref.label };
+  }
+  const title = displayMermaidLabel(stripQuotes(raw.trim()));
+  return { id: raw.trim(), label: title || raw.trim() };
+}
+
+function parseFlowEdgeLine(
+  line: LineInfo,
   orderIndex: number,
   scopePath: string[],
   nextEdgeId: EdgeIdFactory,
 ): null | {
-  kind: "parsed";
-  edges: BaseEdge[];
-  nodeRefs: ParsedFlowNodeRef[];
+  edge: BaseEdge;
+  left: ParsedFlowNodeRef;
+  right: ParsedFlowNodeRef;
 } | {
-  kind: "error";
   error: string;
 } {
-  const raw = stripTrailingComment(statement.text);
-  const arrowMatches = findTopLevelFlowArrows(raw);
-  if (arrowMatches.length === 0) return null;
-  const firstArrow = arrowMatches[0]!;
-  const leftGroup = parseFlowNodeGroup(raw.slice(0, firstArrow.index), statement.start);
-  if (leftGroup?.kind === "error") return { kind: "error", error: leftGroup.error };
-  if (!leftGroup) return null;
-
-  const nodeRefs = [...leftGroup.refs];
-  const edgeInputs: Array<{
-    left: ParsedFlowNodeRef[];
-    right: ParsedFlowNodeRef[];
-    arrow: string;
-    arrowSpan: Span;
-    label?: string;
-    labelSpan?: Span;
-  }> = [];
-  let previous = leftGroup.refs;
-  for (let index = 0; index < arrowMatches.length; index += 1) {
-    const match = arrowMatches[index]!;
-    const next = arrowMatches[index + 1];
-    const arrowSpec = parseFlowArrowToken(match.arrow);
-    if (!arrowSpec) return null;
-    const afterStart = match.index + match.arrow.length;
-    const afterEnd = next?.index ?? raw.length;
-    const after = raw.slice(afterStart, afterEnd);
-    const labelMatch = after.match(/^\s*\|([^|\n]*)\|\s*/);
-    const labelPrefixLength = labelMatch?.[0].length ?? 0;
-    const rightGroup = parseFlowNodeGroup(after.slice(labelPrefixLength), statement.start + afterStart + labelPrefixLength);
-    if (rightGroup?.kind === "error") return { kind: "error", error: rightGroup.error };
-    if (!rightGroup) return null;
-    const rawLabel = labelMatch?.[1];
-    const labelLocalStart = rawLabel === undefined ? -1 : afterStart + labelMatch![0].indexOf("|") + 1;
-    edgeInputs.push({
-      left: previous,
-      right: rightGroup.refs,
-      arrow: match.arrow,
-      arrowSpan: { start: statement.start + match.index, end: statement.start + match.index + match.arrow.length },
-      ...(rawLabel ? { label: displayMermaidLabel(rawLabel) } : {}),
-      ...(labelLocalStart >= 0 ? { labelSpan: { start: statement.start + labelLocalStart, end: statement.start + labelLocalStart + rawLabel!.length } } : {}),
-    });
-    nodeRefs.push(...rightGroup.refs);
-    previous = rightGroup.refs;
+  const raw = stripTrailingComment(line.text);
+  const arrowMatches = [...raw.matchAll(FLOW_ARROW_TOKEN_RE)];
+  if (arrowMatches.length !== 1) return null;
+  const match = arrowMatches[0]!;
+  const arrow = match[0];
+  const arrowSpec = parseFlowArrowToken(arrow);
+  if (!arrowSpec) return null;
+  const arrowIndex = match.index ?? 0;
+  if (raw.includes("&")) return null;
+  const before = raw.slice(0, arrowIndex);
+  let after = raw.slice(arrowIndex + arrow.length);
+  const arrowSpan = { start: line.start + arrowIndex, end: line.start + arrowIndex + arrow.length };
+  let label: string | undefined;
+  let labelSpan: Span | undefined;
+  const labelMatch = after.match(/^\s*\|([^|\n]*)\|\s*/);
+  if (labelMatch?.[1] !== undefined && labelMatch.index === 0) {
+    const rawLabel = labelMatch[1];
+    label = displayMermaidLabel(stripQuotes(rawLabel.trim()));
+    const localStart = arrowIndex + arrow.length + (labelMatch[0].indexOf("|") + 1);
+    labelSpan = { start: line.start + localStart, end: line.start + localStart + rawLabel.length };
+    after = after.slice(labelMatch[0].length);
   }
-
-  const expandedEdgeCount = edgeInputs.reduce((count, input) => count + input.left.length * input.right.length, 0);
+  const leftStart = before.search(/\S/);
+  if (leftStart < 0) return null;
+  const left = parseFlowNodeRef(before.trim(), line.start + leftStart);
+  const rightLeading = after.search(/\S/);
+  if (rightLeading < 0) return null;
+  const right = parseFlowNodeRef(after.trim(), line.start + arrowIndex + arrow.length + (labelMatch?.[0].length ?? 0) + rightLeading);
+  if (!left || !right) return null;
+  if (left.error) return { error: left.error };
+  if (right.error) return { error: right.error };
+  if (left.endOffset !== before.trim().length || right.endOffset !== after.trim().length) return null;
   const inSubgraph = scopePath.length > 0;
-  // 链式边/多目标共享同一 stmt；现有回写按整条 stmt 操作，必须保持只读以免改一边误伤其余边。
-  const safeRewriteStatement =
-    expandedEdgeCount === 1 &&
-    isWholeLineStatement(statement) &&
+  const safeRewrite =
+    isWholeLineStatement(line) &&
     !inSubgraph &&
-    nodeRefs.every((nodeRef) => !nodeRef.unsupported) &&
+    !left.unsupported &&
+    !right.unsupported &&
     !/:::/i.test(raw) &&
-    !/\[[^\]]*\]\s*[^\s-]/.test(raw.slice(0, firstArrow.index).trim().replace(leftGroup.refs[0]?.raw ?? "", ""));
-  const edges: BaseEdge[] = [];
-  for (const input of edgeInputs) {
-    const arrowSpec = parseFlowArrowToken(input.arrow)!;
-    for (const left of input.left) {
-      for (const right of input.right) {
-        const id = nextEdgeId({ source: left.id, target: right.id, syntaxKind: input.arrow, label: input.label || undefined });
-        edges.push({
-          id,
-          source: left.id,
-          target: right.id,
-          ...(input.label ? { label: input.label } : {}),
-          ...(input.labelSpan ? { labelSpan: input.labelSpan } : {}),
-          syntaxKind: input.arrow,
-          syntaxSpan: input.arrowSpan,
-          direction: arrowSpec.direction,
-          lineStyle: arrowSpec.lineStyle,
-          orderIndex: orderIndex + edges.length,
-          scopePath: [...scopePath],
-          rewritable: safeRewriteStatement,
-          stmt: lineSpan(statement),
-        });
-      }
-    }
-  }
+    !/\[[^\]]*\]\s*[^\s-]/.test(before.trim().replace(left.raw, ""));
+  const id = nextEdgeId({ source: left.id, target: right.id, syntaxKind: arrow, label: label || undefined });
   return {
-    kind: "parsed",
-    edges,
-    nodeRefs,
+    left,
+    right,
+    edge: {
+      id,
+      source: left.id,
+      target: right.id,
+      ...(label ? { label } : {}),
+      ...(labelSpan ? { labelSpan } : {}),
+      syntaxKind: arrow,
+      syntaxSpan: arrowSpan,
+      direction: arrowSpec.direction,
+      lineStyle: arrowSpec.lineStyle,
+      minLength: flowLinkMinLength(arrow),
+      orderIndex,
+      scopePath: [...scopePath],
+      rewritable: safeRewrite,
+      stmt: lineSpan(line),
+    },
   };
 }
 
-function findTopLevelFlowArrows(raw: string): Array<{ arrow: string; index: number }> {
-  const arrows: Array<{ arrow: string; index: number }> = [];
-  let quote: "'" | '"' | null = null;
-  const bracketClosers: string[] = [];
-  let inPipeLabel = false;
-  for (let cursor = 0; cursor < raw.length; cursor += 1) {
-    const char = raw[cursor]!;
-    if (quote) {
-      if (char === quote && raw[cursor - 1] !== "\\") quote = null;
-      continue;
+type ParsedFlowLink = {
+  token: string;
+  tokenStart: number;
+  tokenEnd: number;
+  endOffset: number;
+  label?: string;
+  labelStart?: number;
+  labelEnd?: number;
+  edgeId?: string;
+  direction: EdgeDirection;
+  lineStyle: EdgeLineStyle;
+  sourceMarker: EdgeMarkerKind;
+  targetMarker: EdgeMarkerKind;
+};
+
+const FLOW_DIRECT_LINK_TOKENS = [
+  "<-.->",
+  "<-->",
+  "<==>",
+  "<---",
+  "<===",
+  "o--o",
+  "x--x",
+  "o--x",
+  "x--o",
+  "o-->",
+  "x-->",
+  "<--o",
+  "<--x",
+  "-.->",
+  "<-.-",
+  "==>",
+  "<==",
+  "-->",
+  "<--",
+  "--o",
+  "--x",
+  "---",
+  "-.-",
+  "===",
+  "~~~",
+] as const;
+
+function parseFlowEdgeStatement(
+  line: LineInfo,
+  orderIndex: number,
+  scopePath: string[],
+  nextEdgeId: EdgeIdFactory,
+): { edges: BaseEdge[]; refs: ParsedFlowNodeRef[] } | { error: string } | null {
+  const legacy = parseFlowEdgeLine(line, orderIndex, scopePath, nextEdgeId);
+  if (legacy && "error" in legacy) return legacy;
+  if (legacy) return { edges: [legacy.edge], refs: [legacy.left, legacy.right] };
+
+  const raw = stripTrailingComment(line.text);
+  let cursor = raw.search(/\S/);
+  if (cursor < 0) return null;
+  const first = parseFlowNodeSet(raw, cursor, line.start);
+  if (!first) return null;
+  if ("error" in first) return first;
+  cursor = first.endOffset;
+  let sources = first.refs;
+  const refs = [...first.refs];
+  const edges: BaseEdge[] = [];
+
+  while (cursor < raw.length) {
+    const link = parseFlowLinkAt(raw, cursor);
+    if (!link) return null;
+    const targets = parseFlowNodeSet(raw, link.endOffset, line.start);
+    if (!targets) return null;
+    if ("error" in targets) return targets;
+    refs.push(...targets.refs);
+    const cartesianCount = sources.length * targets.refs.length;
+    for (const source of sources) {
+      for (const target of targets.refs) {
+        const currentOrder = orderIndex + edges.length;
+        const providedId = link.edgeId && cartesianCount === 1 && edges.length === 0 ? link.edgeId : undefined;
+        edges.push({
+          id: providedId ?? nextEdgeId({ source: source.id, target: target.id, syntaxKind: link.token, label: link.label }),
+          source: source.id,
+          target: target.id,
+          ...(link.label ? { label: link.label } : {}),
+          ...(link.labelStart !== undefined && link.labelEnd !== undefined
+            ? { labelSpan: { start: line.start + link.labelStart, end: line.start + link.labelEnd } }
+            : {}),
+          syntaxKind: link.token,
+          syntaxSpan: { start: line.start + link.tokenStart, end: line.start + link.tokenEnd },
+          direction: link.direction,
+          lineStyle: link.lineStyle,
+          sourceMarker: link.sourceMarker,
+          targetMarker: link.targetMarker,
+          minLength: flowLinkMinLength(link.token),
+          orderIndex: currentOrder,
+          scopePath: [...scopePath],
+          rewritable: false,
+          stmt: lineSpan(line),
+        });
+      }
     }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    const bracketCloser = flowBracketCloser(char);
-    if (bracketCloser) {
-      bracketClosers.push(bracketCloser);
-      continue;
-    }
-    if (char === "]" || char === ")" || char === "}") {
-      closeFlowBracket(bracketClosers, char);
-      continue;
-    }
-    if (bracketClosers.length === 0 && char === "|") {
-      inPipeLabel = !inPipeLabel;
-      continue;
-    }
-    if (bracketClosers.length > 0 || inPipeLabel) continue;
-    FLOW_ARROW_TOKEN_AT_RE.lastIndex = cursor;
-    const match = FLOW_ARROW_TOKEN_AT_RE.exec(raw);
-    if (!match) continue;
-    arrows.push({ arrow: match[0], index: cursor });
-    cursor += match[0].length - 1;
+    cursor = targets.endOffset;
+    sources = targets.refs;
+    const tail = raw.slice(cursor);
+    if (!tail.trim()) break;
   }
-  FLOW_ARROW_TOKEN_AT_RE.lastIndex = 0;
-  return arrows;
+  return edges.length > 0 ? { edges, refs } : null;
 }
 
-function parseFlowNodeGroup(raw: string, absoluteStart: number): null | {
-  kind: "parsed";
-  refs: ParsedFlowNodeRef[];
-} | {
-  kind: "error";
-  error: string;
-} {
-  const ranges: Array<{ start: number; end: number }> = [];
-  let rangeStart = 0;
-  let quote: "'" | '"' | null = null;
-  const bracketClosers: string[] = [];
-  for (let cursor = 0; cursor < raw.length; cursor += 1) {
-    const char = raw[cursor]!;
-    if (quote) {
-      if (char === quote && raw[cursor - 1] !== "\\") quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    const bracketCloser = flowBracketCloser(char);
-    if (bracketCloser) {
-      bracketClosers.push(bracketCloser);
-      continue;
-    }
-    if (char === "]" || char === ")" || char === "}") {
-      closeFlowBracket(bracketClosers, char);
-      continue;
-    }
-    if (char === "&" && bracketClosers.length === 0) {
-      ranges.push({ start: rangeStart, end: cursor });
-      rangeStart = cursor + 1;
-    }
-  }
-  ranges.push({ start: rangeStart, end: raw.length });
-
+function parseFlowNodeSet(
+  raw: string,
+  offset: number,
+  absoluteLineStart: number,
+): { refs: ParsedFlowNodeRef[]; endOffset: number } | { error: string } | null {
   const refs: ParsedFlowNodeRef[] = [];
-  for (const range of ranges) {
-    const part = raw.slice(range.start, range.end);
-    const leading = part.search(/\S/);
-    if (leading < 0) return null;
-    const ref = parseFlowNodeRef(part.slice(leading), absoluteStart + range.start + leading);
-    if (!ref) return null;
-    if (ref.error) return { kind: "error", error: ref.error };
+  let cursor = skipWhitespace(raw, offset);
+  while (cursor < raw.length) {
+    const ref = parseFlowNodeRef(raw.slice(cursor), absoluteLineStart + cursor);
+    if (!ref) return refs.length > 0 ? { refs, endOffset: cursor } : null;
+    if (ref.error) return { error: ref.error };
     refs.push(ref);
+    cursor += ref.endOffset;
+    const next = skipWhitespace(raw, cursor);
+    if (raw[next] !== "&") return { refs, endOffset: next };
+    cursor = skipWhitespace(raw, next + 1);
   }
-  return refs.length > 0 ? { kind: "parsed", refs } : null;
+  return refs.length > 0 ? { refs, endOffset: cursor } : null;
 }
 
-function flowBracketCloser(char: string): "]" | ")" | "}" | null {
-  if (char === "[") return "]";
-  if (char === "(") return ")";
-  if (char === "{") return "}";
-  return null;
+function parseFlowLinkAt(raw: string, offset: number): ParsedFlowLink | null {
+  const start = skipWhitespace(raw, offset);
+  const source = raw.slice(start);
+  const edgeIdMatch = source.match(/^([A-Za-z_][\w-]*)@/);
+  const edgeId = edgeIdMatch?.[1];
+  const prefixLength = edgeIdMatch?.[0].length ?? 0;
+  const linkSource = source.slice(prefixLength);
+
+  const embeddedPatterns: Array<{ re: RegExp; token: string; lineStyle: EdgeLineStyle }> = [
+    { re: /^--\s+(.+?)\s+-->\s*/s, token: "-->", lineStyle: "solid" },
+    { re: /^-\.\s+(.+?)\s+\.->\s*/s, token: "-.->", lineStyle: "dotted" },
+    { re: /^==\s+(.+?)\s+==>\s*/s, token: "==>", lineStyle: "thick" },
+  ];
+  for (const pattern of embeddedPatterns) {
+    const match = linkSource.match(pattern.re);
+    if (!match?.[1]) continue;
+    const rawLabel = match[1];
+    const localLabelStart = linkSource.indexOf(rawLabel);
+    const tokenStart = start + prefixLength;
+    return {
+      token: pattern.token,
+      tokenStart,
+      tokenEnd: tokenStart + pattern.token.length,
+      endOffset: start + prefixLength + match[0].length,
+      label: displayMermaidLabel(stripQuotes(rawLabel.trim())),
+      labelStart: start + prefixLength + localLabelStart,
+      labelEnd: start + prefixLength + localLabelStart + rawLabel.length,
+      ...(edgeId ? { edgeId } : {}),
+      direction: "forward",
+      lineStyle: pattern.lineStyle,
+      sourceMarker: "none",
+      targetMarker: "arrow",
+    };
+  }
+
+  const token = linkSource.match(/^(?:[ox]|<)?(?:-\.+-|={2,}|-{3,})(?:[ox]|>)?/)?.[0]
+    ?? FLOW_DIRECT_LINK_TOKENS.find((candidate) => linkSource.startsWith(candidate));
+  if (!token) return null;
+  const spec = parseFlowArrowToken(token);
+  if (!spec) return null;
+  const tokenStart = start + prefixLength;
+  let endOffset = tokenStart + token.length;
+  let label: string | undefined;
+  let labelStart: number | undefined;
+  let labelEnd: number | undefined;
+  const afterToken = raw.slice(endOffset);
+  const pipeLabel = afterToken.match(/^\s*\|((?:\\.|[^|])*)\|\s*/s);
+  if (pipeLabel?.[1] !== undefined) {
+    const rawLabel = pipeLabel[1];
+    const pipeOffset = pipeLabel[0].indexOf("|");
+    labelStart = endOffset + pipeOffset + 1;
+    labelEnd = labelStart + rawLabel.length;
+    label = displayMermaidLabel(stripQuotes(rawLabel.trim()));
+    endOffset += pipeLabel[0].length;
+  }
+  const markers = flowEdgeMarkers(token, spec.direction);
+  return {
+    token,
+    tokenStart,
+    tokenEnd: tokenStart + token.length,
+    endOffset,
+    ...(label ? { label } : {}),
+    ...(labelStart !== undefined ? { labelStart } : {}),
+    ...(labelEnd !== undefined ? { labelEnd } : {}),
+    ...(edgeId ? { edgeId } : {}),
+    ...spec,
+    ...markers,
+  };
 }
 
-function closeFlowBracket(closers: string[], char: string): void {
-  const matchingOpen = closers.lastIndexOf(char);
-  if (matchingOpen >= 0) closers.length = matchingOpen;
+function skipWhitespace(value: string, offset: number): number {
+  let cursor = offset;
+  while (cursor < value.length && /\s/.test(value[cursor]!)) cursor += 1;
+  return cursor;
+}
+
+function flowEdgeMarkers(token: string, direction: EdgeDirection): { sourceMarker: EdgeMarkerKind; targetMarker: EdgeMarkerKind } {
+  const sourceMarker: EdgeMarkerKind = token.startsWith("o") ? "circle"
+    : token.startsWith("x") ? "cross"
+    : direction === "backward" || direction === "both" ? "arrow"
+    : "none";
+  const targetMarker: EdgeMarkerKind = token.endsWith("o") ? "circle"
+    : token.endsWith("x") ? "cross"
+    : direction === "forward" || direction === "both" ? "arrow"
+    : "none";
+  return { sourceMarker, targetMarker };
+}
+
+function flowLinkMinLength(token: string): number {
+  if (token === "~~~") return 1;
+  if (token.includes(".")) return Math.max(1, (token.match(/\./g) ?? []).length);
+  if (token.includes("=")) {
+    const count = (token.match(/=/g) ?? []).length;
+    return Math.max(1, count - (token.endsWith(">") ? 1 : 2));
+  }
+  const count = (token.match(/-/g) ?? []).length;
+  return Math.max(1, count - (token.endsWith(">") ? 1 : 2));
 }
 
 function flowchartCapabilities(p: ParseResult, target?: { nodeId?: string; edgeId?: string }): Capability[] {
@@ -1054,9 +1364,9 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
       bodyEnd: raw.endsWith("\n") ? span.end - 1 : span.end,
       index: 0,
     };
-    const parsed = parseFlowEdgeStatement(line, 0, [], nextEdgeId);
-    if (!parsed || parsed.kind === "error") continue;
-    for (const ref of parsed.nodeRefs) {
+    const parsed = parseFlowEdgeLine(line, 0, [], nextEdgeId);
+    if (!parsed) continue;
+    for (const ref of [parsed.left, parsed.right]) {
       if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
       out.set(ref.id, ref);
     }
@@ -1067,33 +1377,232 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
 function formatFlowNodeDeclaration(node: ParsedFlowNodeRef): string {
   const label = safeMermaidLabel(node.label);
   if (!node.shape || node.shape === "[") return `${node.id}["${label}"]`;
-  const close = flowShapeClose(node.shape);
-  return close ? `${node.id}${node.shape}${label}${close}` : `${node.id}["${label}"]`;
-}
-
-function flowShapeClose(open: string): string | null {
-  if (open === "[[") return "]]";
-  if (open === "[(") return ")]";
-  if (open === "((") return "))";
-  if (open === "([") return "])";
-  if (open === "{{") return "}}";
-  if (open === "[/") return "/]";
-  if (open === "[\\") return "\\]";
-  if (open === "(") return ")";
-  if (open === "{") return "}";
-  if (open === "[") return "]";
-  return null;
+  const syntax = flowShapeSyntax(normalizeFlowShapeName(node.shape));
+  return syntax ? `${node.id}${syntax.open}${label}${syntax.close}` : `${node.id}["${label}"]`;
 }
 
 function flowShapeSyntax(shape: FlowNodeShape): { open: string; close: string } | null {
   if (shape === "rect") return { open: "[", close: "]" };
   if (shape === "round") return { open: "(", close: ")" };
   if (shape === "stadium") return { open: "([", close: "])" };
+  if (shape === "subroutine") return { open: "[[", close: "]]" };
+  if (shape === "cylinder") return { open: "[(", close: ")]" };
   if (shape === "diamond") return { open: "{", close: "}" };
   if (shape === "circle") return { open: "((", close: "))" };
+  if (shape === "doublecircle") return { open: "(((", close: ")))" };
+  if (shape === "asymmetric") return { open: ">", close: "]" };
   if (shape === "hexagon") return { open: "{{", close: "}}" };
   if (shape === "parallelogram") return { open: "[/", close: "/]" };
+  if (shape === "parallelogram-alt") return { open: "[\\", close: "\\]" };
+  if (shape === "trapezoid") return { open: "[/", close: "\\]" };
+  if (shape === "trapezoid-alt") return { open: "[\\", close: "/]" };
   return null;
+}
+
+const FLOW_SHAPE_ALIASES: Record<string, FlowNodeShape> = {
+  "": "rect",
+  "[": "rect",
+  rect: "rect",
+  rectangle: "rect",
+  proc: "rect",
+  process: "rect",
+  square: "rect",
+  "(": "round",
+  round: "round",
+  rounded: "round",
+  event: "round",
+  "([": "stadium",
+  stadium: "stadium",
+  pill: "stadium",
+  terminal: "stadium",
+  "[[": "subroutine",
+  "fr-rect": "subroutine",
+  framed: "subroutine",
+  "framed-rectangle": "subroutine",
+  subprocess: "subroutine",
+  subproc: "subroutine",
+  subroutine: "subroutine",
+  "[(": "cylinder",
+  cyl: "cylinder",
+  cylinder: "cylinder",
+  database: "cylinder",
+  db: "cylinder",
+  "((": "circle",
+  circle: "circle",
+  circ: "circle",
+  "(((": "doublecircle",
+  "dbl-circ": "doublecircle",
+  "double-circle": "doublecircle",
+  doublecircle: "doublecircle",
+  ">": "asymmetric",
+  asymmetric: "asymmetric",
+  "{": "diamond",
+  diam: "diamond",
+  diamond: "diamond",
+  decision: "diamond",
+  question: "diamond",
+  "{{": "hexagon",
+  hex: "hexagon",
+  hexagon: "hexagon",
+  prepare: "hexagon",
+  "[/": "parallelogram",
+  parallelogram: "parallelogram",
+  "lean-r": "parallelogram",
+  "lean-right": "parallelogram",
+  "in-out": "parallelogram",
+  "[\\": "parallelogram-alt",
+  "parallelogram-alt": "parallelogram-alt",
+  "lean-l": "parallelogram-alt",
+  "lean-left": "parallelogram-alt",
+  "out-in": "parallelogram-alt",
+  trapezoid: "trapezoid",
+  "trap-b": "trapezoid",
+  priority: "trapezoid",
+  "trapezoid-bottom": "trapezoid",
+  "trapezoid-alt": "trapezoid-alt",
+  "trap-t": "trapezoid-alt",
+  "inv-trapezoid": "trapezoid-alt",
+  manual: "trapezoid-alt",
+  "trapezoid-top": "trapezoid-alt",
+  card: "notch-rect",
+  "notched-rectangle": "notch-rect",
+  collate: "hourglass",
+  "com-link": "bolt",
+  "lightning-bolt": "bolt",
+  "brace-l": "brace",
+  comment: "brace",
+  "data-store": "datastore",
+  "half-rounded-rectangle": "delay",
+  das: "h-cyl",
+  "horizontal-cylinder": "h-cyl",
+  disk: "lin-cyl",
+  "lined-cylinder": "lin-cyl",
+  display: "curv-trap",
+  "curved-trapezoid": "curv-trap",
+  "div-proc": "div-rect",
+  "divided-process": "div-rect",
+  "divided-rectangle": "div-rect",
+  document: "doc",
+  extract: "tri",
+  triangle: "tri",
+  join: "fork",
+  "internal-storage": "win-pane",
+  "window-pane": "win-pane",
+  "filled-circle": "f-circ",
+  junction: "f-circ",
+  "lined-document": "lin-doc",
+  "lin-proc": "lin-rect",
+  "lined-process": "lin-rect",
+  "lined-rectangle": "lin-rect",
+  "shaded-process": "lin-rect",
+  "loop-limit": "notch-pent",
+  "notched-pentagon": "notch-pent",
+  "flipped-triangle": "flip-tri",
+  "manual-file": "flip-tri",
+  "manual-input": "sl-rect",
+  "sloped-rectangle": "sl-rect",
+  documents: "docs",
+  "st-doc": "docs",
+  "stacked-document": "docs",
+  processes: "st-rect",
+  procs: "st-rect",
+  "stacked-rectangle": "st-rect",
+  "paper-tape": "flag",
+  "bow-tie-rectangle": "bow-rect",
+  "stored-data": "bow-rect",
+  summary: "cross-circ",
+  "crossed-circle": "cross-circ",
+  "tagged-document": "tag-doc",
+  "tag-proc": "tag-rect",
+  "tagged-process": "tag-rect",
+  "tagged-rectangle": "tag-rect",
+  "small-circle": "sm-circ",
+  start: "sm-circ",
+  "framed-circle": "fr-circ",
+  stop: "fr-circ",
+};
+
+export function normalizeFlowShapeName(raw: string | null | undefined): FlowNodeShape {
+  const value = (raw ?? "").trim().toLowerCase();
+  return FLOW_SHAPE_ALIASES[value] ?? ((
+    [
+      "bang", "notch-rect", "cloud", "hourglass", "bolt", "brace", "brace-r", "braces",
+      "datastore", "delay", "h-cyl", "lin-cyl", "curv-trap", "div-rect", "doc", "tri", "fork",
+      "win-pane", "f-circ", "lin-doc", "lin-rect", "notch-pent", "flip-tri", "sl-rect",
+      "docs", "st-rect", "odd", "flag", "sm-circ", "fr-circ", "bow-rect", "cross-circ",
+      "tag-doc", "tag-rect", "text",
+    ] as string[]
+  ).includes(value) ? value as FlowNodeShape : "rect");
+}
+
+export function getFlowShapeGeometry(raw: string | null | undefined): FlowShapeGeometry {
+  const shape = normalizeFlowShapeName(raw);
+  const rect = "M0 0 H160 V72 H0 Z";
+  const round = "M11 1 H149 Q159 1 159 11 V61 Q159 71 149 71 H11 Q1 71 1 61 V11 Q1 1 11 1 Z";
+  const stadium = "M36 1 H124 A35 35 0 0 1 124 71 H36 A35 35 0 0 1 36 1 Z";
+  const circle = "M80 1 A35 35 0 1 1 79.99 1 Z";
+  if (shape === "rect") return { outlinePath: rect, detailPaths: [] };
+  if (shape === "round") return { outlinePath: round, detailPaths: [] };
+  if (shape === "stadium") return { outlinePath: stadium, detailPaths: [] };
+  if (shape === "subroutine") return { outlinePath: rect, detailPaths: ["M20 1 V71", "M140 1 V71"] };
+  if (shape === "cylinder") {
+    return {
+      outlinePath: "M1 12 C1 6 36 1 80 1 C124 1 159 6 159 12 V60 C159 66 124 71 80 71 C36 71 1 66 1 60 Z",
+      detailPaths: ["M1 12 C1 18 36 23 80 23 C124 23 159 18 159 12"],
+    };
+  }
+  if (shape === "circle") return { outlinePath: circle, detailPaths: [] };
+  if (shape === "doublecircle") return { outlinePath: circle, detailPaths: ["M80 7 A29 29 0 1 1 79.99 7 Z"] };
+  if (shape === "asymmetric") return { outlinePath: "M1 1 H137 L159 36 L137 71 H1 L20 36 Z", detailPaths: [] };
+  if (shape === "diamond") return { outlinePath: "M80 1 L159 36 L80 71 L1 36 Z", detailPaths: [] };
+  if (shape === "hexagon") return { outlinePath: "M34 1 H126 L159 36 L126 71 H34 L1 36 Z", detailPaths: [] };
+  if (shape === "parallelogram") return { outlinePath: "M23 1 H159 L137 71 H1 Z", detailPaths: [] };
+  if (shape === "parallelogram-alt") return { outlinePath: "M1 1 H137 L159 71 H23 Z", detailPaths: [] };
+  if (shape === "trapezoid") return { outlinePath: "M25 1 H135 L159 71 H1 Z", detailPaths: [] };
+  if (shape === "trapezoid-alt") return { outlinePath: "M1 1 H159 L135 71 H25 Z", detailPaths: [] };
+  if (shape === "bang") return { outlinePath: "M80 1 L94 20 L122 8 L119 31 L159 36 L119 41 L122 64 L94 52 L80 71 L66 52 L38 64 L41 41 L1 36 L41 31 L38 8 L66 20 Z", detailPaths: [] };
+  if (shape === "notch-rect") return { outlinePath: "M1 1 H139 L159 21 V71 H1 Z", detailPaths: ["M139 1 V21 H159"] };
+  if (shape === "cloud") return { outlinePath: "M35 64 C15 64 6 52 15 39 C4 26 18 12 38 17 C47 2 73 0 86 15 C101 3 126 8 128 25 C151 22 164 39 151 52 C143 63 128 65 112 62 C91 75 58 73 35 64 Z", detailPaths: [] };
+  if (shape === "hourglass") return { outlinePath: "M1 1 H159 L104 36 L159 71 H1 L56 36 Z", detailPaths: [] };
+  if (shape === "bolt") return { outlinePath: "M91 1 L35 42 H70 L60 71 L125 28 H88 Z", detailPaths: [] };
+  if (shape === "brace") return { outlinePath: "M124 1 C94 1 104 28 80 32 C104 36 94 71 124 71", detailPaths: [], open: true };
+  if (shape === "brace-r") return { outlinePath: "M36 1 C66 1 56 28 80 32 C56 36 66 71 36 71", detailPaths: [], open: true };
+  if (shape === "braces") return { outlinePath: "M45 1 C15 1 25 28 1 32 C25 36 15 71 45 71 M115 1 C145 1 135 28 159 32 C135 36 145 71 115 71", detailPaths: [], open: true };
+  if (shape === "datastore") return { outlinePath: rect, detailPaths: ["M1 10 H159", "M1 62 H159"] };
+  if (shape === "delay") return { outlinePath: "M1 1 H124 A35 35 0 0 1 124 71 H1 Z", detailPaths: [] };
+  if (shape === "h-cyl") return { outlinePath: "M16 1 H144 C164 1 164 71 144 71 H16 C-4 71 -4 1 16 1 Z", detailPaths: ["M16 1 C36 1 36 71 16 71"] };
+  if (shape === "lin-cyl") return { outlinePath: "M1 12 C1 6 36 1 80 1 C124 1 159 6 159 12 V60 C159 66 124 71 80 71 C36 71 1 66 1 60 Z", detailPaths: ["M1 12 C1 18 36 23 80 23 C124 23 159 18 159 12", "M1 20 C1 26 36 31 80 31 C124 31 159 26 159 20"] };
+  if (shape === "curv-trap") return { outlinePath: "M20 1 H140 Q159 36 140 71 H20 Q1 36 20 1 Z", detailPaths: [] };
+  if (shape === "div-rect") return { outlinePath: rect, detailPaths: ["M1 50 H159"] };
+  if (shape === "doc") return { outlinePath: "M1 1 H159 V61 C125 78 101 50 80 64 C55 79 31 51 1 66 Z", detailPaths: [] };
+  if (shape === "tri") return { outlinePath: "M80 1 L159 71 H1 Z", detailPaths: [] };
+  if (shape === "fork") return { outlinePath: "M1 27 H159 V45 H1 Z", detailPaths: [] };
+  if (shape === "win-pane") return { outlinePath: rect, detailPaths: ["M24 1 V71", "M1 20 H159"] };
+  if (shape === "f-circ") return { outlinePath: "M80 23 A13 13 0 1 1 79.99 23 Z", detailPaths: [] };
+  if (shape === "lin-doc") return { outlinePath: "M1 1 H159 V61 C125 78 101 50 80 64 C55 79 31 51 1 66 Z", detailPaths: ["M1 12 H159"] };
+  if (shape === "lin-rect") return { outlinePath: rect, detailPaths: ["M10 1 V71", "M150 1 V71"] };
+  if (shape === "notch-pent") return { outlinePath: "M25 1 H135 L159 22 V71 H1 V22 Z", detailPaths: [] };
+  if (shape === "flip-tri") return { outlinePath: "M1 1 H159 L80 71 Z", detailPaths: [] };
+  if (shape === "sl-rect") return { outlinePath: "M18 1 H159 L142 71 H1 Z", detailPaths: [] };
+  if (shape === "docs") return { outlinePath: "M13 1 H159 V58 C128 72 105 51 85 62 C62 74 38 54 13 65 Z", detailPaths: ["M7 7 H153", "M1 13 H147"] };
+  if (shape === "st-rect") return { outlinePath: "M13 1 H159 V59 H13 Z", detailPaths: ["M7 7 H153 V65 H7", "M1 13 H147 V71 H1"] };
+  if (shape === "odd") return { outlinePath: "M1 1 H139 L159 36 L139 71 H1 L18 36 Z", detailPaths: [] };
+  if (shape === "flag") return { outlinePath: "M1 8 C45 -6 66 21 104 8 C127 0 143 3 159 9 V64 C122 78 96 50 58 64 C35 72 17 69 1 63 Z", detailPaths: [] };
+  if (shape === "sm-circ") return { outlinePath: "M80 26 A10 10 0 1 1 79.99 26 Z", detailPaths: [] };
+  if (shape === "fr-circ") return { outlinePath: circle, detailPaths: ["M80 8 A28 28 0 1 1 79.99 8 Z"] };
+  if (shape === "bow-rect") return { outlinePath: "M1 1 H159 L139 36 L159 71 H1 L21 36 Z", detailPaths: [] };
+  if (shape === "cross-circ") return { outlinePath: circle, detailPaths: ["M56 12 L104 60", "M104 12 L56 60"] };
+  if (shape === "tag-doc") return { outlinePath: "M1 1 H139 L159 21 V61 C125 78 101 50 80 64 C55 79 31 51 1 66 Z", detailPaths: ["M139 1 V21 H159"] };
+  if (shape === "tag-rect") return { outlinePath: "M1 1 H139 L159 21 V71 H1 Z", detailPaths: ["M139 1 V21 H159"] };
+  if (shape === "text") {
+    return {
+      outlinePath: "M1 1 H159 V71 H1 Z",
+      detailPaths: [],
+      open: true,
+      outlineVisible: false,
+    };
+  }
+  return { outlinePath: rect, detailPaths: [] };
 }
 
 function validateFlowEdgeLabel(label: string): string | null {
@@ -1123,6 +1632,11 @@ function rewriteFlowEdgeLabel(source: string, edge: BaseEdge, label: string): st
 }
 
 function parseFlowArrowToken(token: string): { direction: EdgeDirection; lineStyle: EdgeLineStyle } | null {
+  if (token === "~~~") return { direction: "none", lineStyle: "invisible" };
+  if (/^[ox]--[ox]$/.test(token)) return { direction: "none", lineStyle: "solid" };
+  if (/^[ox]-->$/.test(token)) return { direction: "forward", lineStyle: "solid" };
+  if (/^<--[ox]$/.test(token)) return { direction: "backward", lineStyle: "solid" };
+  if (/^--[ox]$/.test(token)) return { direction: "none", lineStyle: "solid" };
   if (token === "-->") return { direction: "forward", lineStyle: "solid" };
   if (token === "<--") return { direction: "backward", lineStyle: "solid" };
   if (token === "<---") return { direction: "backward", lineStyle: "solid" };
@@ -1137,6 +1651,13 @@ function parseFlowArrowToken(token: string): { direction: EdgeDirection; lineSty
   if (token === "<===") return { direction: "backward", lineStyle: "thick" };
   if (token === "<==>") return { direction: "both", lineStyle: "thick" };
   if (token === "===") return { direction: "none", lineStyle: "thick" };
+  if (/^(?:[ox]|<)?(?:-\.+-|={2,}|-{3,})(?:[ox]|>)?$/.test(token)) {
+    const lineStyle: EdgeLineStyle = token.includes(".") ? "dotted" : token.includes("=") ? "thick" : "solid";
+    const backward = token.startsWith("<");
+    const forward = token.endsWith(">");
+    const direction: EdgeDirection = backward && forward ? "both" : backward ? "backward" : forward ? "forward" : "none";
+    return { direction, lineStyle };
+  }
   return null;
 }
 
@@ -1841,13 +2362,17 @@ interface ParsedFlowNodeRef {
 }
 
 const FLOW_NODE_SHAPE_SYNTAX: Array<{ open: string; close: string }> = [
+  { open: "(((", close: ")))" },
   { open: "[[", close: "]]" },
   { open: "[(", close: ")]" },
   { open: "((", close: "))" },
   { open: "([", close: "])" },
   { open: "{{", close: "}}" },
+  { open: "[/", close: "\\]" },
+  { open: "[\\", close: "/]" },
   { open: "[/", close: "/]" },
   { open: "[\\", close: "\\]" },
+  { open: ">", close: "]" },
   { open: "[", close: "]" },
   { open: "(", close: ")" },
   { open: "{", close: "}" },
@@ -1857,8 +2382,16 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
   const raw = rawInput.trim();
   const match = raw.match(/^([A-Za-z_][\p{L}\p{N}_-]*)(.*)$/u);
   if (!match) return null;
-  const id = match[1]!;
-  const rest = match[2] ?? "";
+  let id = match[1]!;
+  let rest = match[2] ?? "";
+  // Mermaid 允许节点 ID 含连字符，但也允许边 token 紧贴 ID（A-->B）。
+  // 贪婪 ID 正则会把箭头开头的 `--` 吞进 ID；以真实 link parser 找到最早合法边界。
+  for (let cursor = 1; cursor < id.length; cursor += 1) {
+    if (!parseFlowLinkAt(raw, cursor)) continue;
+    id = raw.slice(0, cursor);
+    rest = raw.slice(cursor);
+    break;
+  }
   let label = id;
   let labelSpan: Span | undefined;
   let shape: string | undefined;
@@ -1866,13 +2399,15 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
   let shapeCloseSpan: Span | undefined;
   let unsupported = false;
   let endOffset = id.length;
+  let declared = false;
   const classNames: string[] = [];
   if (rest.trim()) {
     const restLeading = rest.search(/\S/);
     const r = rest.trim();
-    const bracket = parseFlowShapeContent(r);
+    const attribute = parseFlowAttributeShape(r);
+    const bracket = attribute ? null : parseFlowShapeContent(r);
     const startsWithShape = FLOW_NODE_SHAPE_SYNTAX.some((syntax) => r.startsWith(syntax.open));
-    if (!bracket && startsWithShape) {
+    if (!attribute && !bracket && startsWithShape) {
       return {
         id,
         raw,
@@ -1885,7 +2420,13 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
         error: `节点 ${id} 的形状未闭合`,
       };
     }
-    if (bracket) {
+    if (attribute) {
+      shape = normalizeFlowShapeName(attribute.shape);
+      label = displayMermaidLabel(attribute.label ?? id);
+      endOffset = id.length + restLeading + attribute.totalLength;
+      declared = true;
+      unsupported = true;
+    } else if (bracket) {
       const rawLabel = stripQuotes(bracket.content);
       label = displayMermaidLabel(rawLabel);
       const quoteOffset = isQuoted(bracket.content) ? 1 : 0;
@@ -1896,8 +2437,9 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
       labelSpan = { start: absoluteStart + localLabelStart, end: absoluteStart + localLabelEnd };
       shapeOpenSpan = { start: absoluteStart + localOpenStart, end: absoluteStart + localOpenStart + bracket.open.length };
       shapeCloseSpan = { start: absoluteStart + localCloseStart, end: absoluteStart + localCloseStart + bracket.close.length };
-      shape = bracket.open;
+      shape = flowBracketShapeKey(bracket.open, bracket.close);
       endOffset = id.length + restLeading + bracket.totalLength;
+      declared = true;
     }
     const inlineClassStart = Math.max(0, endOffset - id.length);
     const inlineClassSource = rest.slice(inlineClassStart);
@@ -1917,18 +2459,24 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
     ...(shape ? { shape } : {}),
     ...(shapeOpenSpan ? { shapeOpenSpan } : {}),
     ...(shapeCloseSpan ? { shapeCloseSpan } : {}),
-    declared: !!labelSpan,
+    declared,
     unsupported,
     endOffset,
     classNames,
   };
 }
 
+function flowBracketShapeKey(open: string, close: string): string {
+  if (open === "[/" && close === "\\]") return "trapezoid";
+  if (open === "[\\" && close === "/]") return "trapezoid-alt";
+  return open;
+}
+
 function parseFlowShapeContent(raw: string): { open: string; close: string; content: string; closeStart: number; totalLength: number } | null {
   for (const syntax of FLOW_NODE_SHAPE_SYNTAX) {
     if (!raw.startsWith(syntax.open)) continue;
-    const closeStart = raw.indexOf(syntax.close, syntax.open.length);
-    if (closeStart < 0) return null;
+    const closeStart = findFlowShapeClose(raw, syntax.open.length, syntax.close);
+    if (closeStart < 0) continue;
     return {
       open: syntax.open,
       close: syntax.close,
@@ -1938,6 +2486,73 @@ function parseFlowShapeContent(raw: string): { open: string; close: string; cont
     };
   }
   return null;
+}
+
+function findFlowShapeClose(raw: string, start: number, close: string): number {
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  for (let index = start; index <= raw.length - close.length; index += 1) {
+    const char = raw[index]!;
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (raw.startsWith(close, index)) return index;
+  }
+  return -1;
+}
+
+function parseFlowAttributeShape(raw: string): { shape: string; label?: string; totalLength: number } | null {
+  if (!raw.startsWith("@{")) return null;
+  const bodyEnd = findBalancedBraceEnd(raw, 1);
+  if (bodyEnd < 0) return null;
+  const body = raw.slice(2, bodyEnd);
+  const shapeMatch = body.match(/\bshape\s*:\s*["']?([A-Za-z][\w-]*)["']?/i);
+  const imageMatch = body.match(/\bimg\s*:/i);
+  const iconMatch = body.match(/\bicon\s*:/i);
+  const shape = shapeMatch?.[1] ?? (imageMatch ? "image" : iconMatch ? "icon" : "rect");
+  const labelMatch = body.match(/\blabel\s*:\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^,}]+))/i);
+  const label = labelMatch ? (labelMatch[1] ?? labelMatch[2] ?? labelMatch[3])?.trim() : undefined;
+  return {
+    shape,
+    ...(label ? { label: stripQuotes(label) } : {}),
+    totalLength: bodyEnd + 1,
+  };
+}
+
+function findBalancedBraceEnd(raw: string, openIndex: number): number {
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = openIndex; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
 }
 
 function isQuoted(value: string): boolean {
@@ -2162,6 +2777,18 @@ function getFlowchartStatements(source: string): LineInfo[] {
   return out;
 }
 
+function flowBracketCloser(char: string): "]" | ")" | "}" | null {
+  if (char === "[") return "]";
+  if (char === "(") return ")";
+  if (char === "{") return "}";
+  return null;
+}
+
+function closeFlowBracket(closers: string[], char: string): void {
+  const matchingOpen = closers.lastIndexOf(char);
+  if (matchingOpen >= 0) closers.length = matchingOpen;
+}
+
 function lineSpan(line: LineInfo): Span {
   return { start: line.start, end: line.end };
 }
@@ -2242,12 +2869,52 @@ function stripQuotes(value: string): string {
 }
 
 function displayMermaidLabel(value: string): string {
-  return value.replace(/<br\s*\/?>/gi, "\n");
+  return decodeMermaidEntities(value)
+    .replace(/\\+(["'\\])/g, "$1")
+    .replace(/^`([\s\S]*)`$/, "$1")
+    .replace(/<br\s*\/?>/gi, "\n");
+}
+
+function decodeMermaidEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: "\u00a0",
+    quot: '"',
+  };
+  return value.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (match, decimal: string | undefined, hex: string | undefined, name: string | undefined) => {
+    if (decimal) {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isSafeInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    }
+    if (hex) {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isSafeInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    }
+    return name ? named[name.toLowerCase()] ?? match : match;
+  });
 }
 
 function stripTrailingComment(value: string): string {
-  const idx = value.indexOf("%%");
-  return idx >= 0 ? value.slice(0, idx) : value;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  for (let index = 0; index < value.length - 1; index += 1) {
+    const char = value[index]!;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "%" && value[index + 1] === "%") return value.slice(0, index);
+  }
+  return value;
 }
 
 function isStableMermaidId(id: string): boolean {
@@ -2383,31 +3050,315 @@ function intersectSets(a: Set<string>, b: Set<string>): Set<string> {
   return out;
 }
 
-function layoutNodes(nodes: BaseNode[], edges: BaseEdge[], overlay: DiagramOverlay | null | undefined): Record<string, { x: number; y: number }> {
-  const out: Record<string, { x: number; y: number }> = {};
-  const incoming = new Map<string, number>();
-  for (const node of nodes) incoming.set(node.id, 0);
-  for (const edge of edges) incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
-  const roots = nodes.filter((node) => (incoming.get(node.id) ?? 0) === 0);
-  const ordered = roots.length ? [...roots, ...nodes.filter((node) => !roots.includes(node))] : nodes;
-  ordered.forEach((node, index) => {
-    const over = overlay?.positions?.[node.id];
-    if (over && Number.isFinite(over.x) && Number.isFinite(over.y)) {
-      out[node.id] = { x: over.x, y: over.y };
-      return;
+export const GRAPH_LAYOUT_NODE_WIDTH = 160;
+export const GRAPH_LAYOUT_NODE_HEIGHT = 72;
+
+const GRAPH_LAYOUT_NODE_GAP = 70;
+const GRAPH_LAYOUT_LAYER_GAP = 86;
+const GRAPH_LAYOUT_ROOT_OFFSET = 40;
+const GRAPH_CLUSTER_SIDE_PADDING = 30;
+const GRAPH_CLUSTER_TITLE_HEIGHT = 46;
+const GRAPH_CLUSTER_BOTTOM_PADDING = 28;
+
+type LayoutDirection = "TB" | "BT" | "LR" | "RL";
+type LayoutItem = {
+  id: string;
+  width: number;
+  height: number;
+  nodeRects: Record<string, GraphLayoutRect>;
+  clusters: GraphLayoutCluster[];
+};
+type LayoutLink = { source: string; target: string; minLength: number };
+
+export function layoutDiagramGraph(
+  model: DiagramModel,
+  overlay: DiagramOverlay | null | undefined = undefined,
+): DiagramGraphLayout {
+  const nodes = modelNodes(model);
+  const edges = modelEdges(model);
+  if (model.type !== "flowchart" || model.subgraphs.length === 0) {
+    const items = nodes.map((node): LayoutItem => ({
+      id: node.id,
+      width: GRAPH_LAYOUT_NODE_WIDTH,
+      height: GRAPH_LAYOUT_NODE_HEIGHT,
+      nodeRects: {
+        [node.id]: { x: 0, y: 0, width: GRAPH_LAYOUT_NODE_WIDTH, height: GRAPH_LAYOUT_NODE_HEIGHT },
+      },
+      clusters: [],
+    }));
+    const arranged = arrangeLayoutItems(
+      items,
+      edges.map((edge) => ({ source: edge.source, target: edge.target, minLength: edge.minLength ?? 1 })),
+      graphModelDirection(model),
+    );
+    const nodeRects = translateLayoutItems(arranged.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET).nodes;
+    applyOverlayPositions(nodeRects, overlay);
+    return { nodes: nodeRects, clusters: [] };
+  }
+
+  const subgraphById = new Map(model.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
+  const rootDirection = normalizeLayoutDirection(model.direction);
+
+  const endpointItemAtScope = (endpointId: string, scopePath: string[]): string | null => {
+    const node = nodeById.get(endpointId);
+    const endpointPath = node?.scopePath ?? (
+      subgraphById.has(endpointId)
+        ? [...subgraphById.get(endpointId)!.scopePath, endpointId]
+        : []
+    );
+    if (endpointPath.length < scopePath.length || !scopePath.every((part, index) => endpointPath[index] === part)) return null;
+    if (endpointPath.length === scopePath.length) return endpointId;
+    return endpointPath[scopePath.length] ?? endpointId;
+  };
+
+  const subgraphDirection = (subgraphId: string, inherited: LayoutDirection): LayoutDirection => {
+    const subgraph = subgraphById.get(subgraphId);
+    if (!subgraph?.direction) return inherited;
+    const endpointInside = (endpointId: string): boolean => {
+      const node = nodeById.get(endpointId);
+      if (node) return node.scopePath.includes(subgraphId);
+      const childSubgraph = subgraphById.get(endpointId);
+      return !!childSubgraph && childSubgraph.id !== subgraphId && childSubgraph.scopePath.includes(subgraphId);
+    };
+    const hasExternalNodeLink = model.edges.some((edge) => {
+      const sourceInside = endpointInside(edge.source);
+      const targetInside = endpointInside(edge.target);
+      return sourceInside !== targetInside;
+    });
+    // Mermaid 官方行为:子图节点连到外部时,该子图 direction 被父方向覆盖。
+    return hasExternalNodeLink ? inherited : normalizeLayoutDirection(subgraph.direction);
+  };
+
+  const buildGroup = (scopePath: string[], direction: LayoutDirection): LayoutItem[] => {
+    const directNodes = model.nodes.filter((node) => samePath(node.scopePath, scopePath));
+    const directSubgraphs = model.subgraphs.filter((subgraph) => samePath(subgraph.scopePath, scopePath));
+    const items: LayoutItem[] = directNodes.map((node) => ({
+      id: node.id,
+      width: GRAPH_LAYOUT_NODE_WIDTH,
+      height: GRAPH_LAYOUT_NODE_HEIGHT,
+      nodeRects: {
+        [node.id]: { x: 0, y: 0, width: GRAPH_LAYOUT_NODE_WIDTH, height: GRAPH_LAYOUT_NODE_HEIGHT },
+      },
+      clusters: [],
+    }));
+    for (const subgraph of directSubgraphs) {
+      const ownDirection = subgraphDirection(subgraph.id, direction);
+      const childScope = [...scopePath, subgraph.id];
+      const children = buildGroup(childScope, ownDirection);
+      const pairs = model.edges
+        .map((edge): LayoutLink | null => {
+          const source = endpointItemAtScope(edge.source, childScope);
+          const target = endpointItemAtScope(edge.target, childScope);
+          return source && target && source !== target ? { source, target, minLength: edge.minLength ?? 1 } : null;
+        })
+        .filter((pair): pair is LayoutLink => !!pair);
+      const arranged = arrangeLayoutItems(children, pairs, ownDirection);
+      const translated = translateLayoutItems(
+        arranged.items,
+        GRAPH_CLUSTER_SIDE_PADDING,
+        GRAPH_CLUSTER_TITLE_HEIGHT,
+      );
+      const width = Math.max(
+        GRAPH_LAYOUT_NODE_WIDTH + GRAPH_CLUSTER_SIDE_PADDING * 2,
+        arranged.width + GRAPH_CLUSTER_SIDE_PADDING * 2,
+      );
+      const height = Math.max(
+        GRAPH_LAYOUT_NODE_HEIGHT + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+        arranged.height + GRAPH_CLUSTER_TITLE_HEIGHT + GRAPH_CLUSTER_BOTTOM_PADDING,
+      );
+      const cluster: GraphLayoutCluster = {
+        id: subgraph.id,
+        label: subgraph.label,
+        x: 0,
+        y: 0,
+        width,
+        height,
+        scopePath: [...subgraph.scopePath],
+        direction: ownDirection,
+        depth: subgraph.scopePath.length,
+      };
+      items.push({
+        id: subgraph.id,
+        width,
+        height,
+        nodeRects: translated.nodes,
+        clusters: [cluster, ...translated.clusters],
+      });
     }
-    out[node.id] = { x: 40 + (index % 3) * 220, y: 36 + Math.floor(index / 3) * 130 };
+    return items;
+  };
+
+  const rootItems = buildGroup([], rootDirection);
+  const rootPairs = model.edges
+    .map((edge): LayoutLink | null => {
+      const source = endpointItemAtScope(edge.source, []);
+      const target = endpointItemAtScope(edge.target, []);
+      return source && target && source !== target ? { source, target, minLength: edge.minLength ?? 1 } : null;
+    })
+    .filter((pair): pair is LayoutLink => !!pair);
+  const root = arrangeLayoutItems(rootItems, rootPairs, rootDirection);
+  const translated = translateLayoutItems(root.items, GRAPH_LAYOUT_ROOT_OFFSET, GRAPH_LAYOUT_ROOT_OFFSET);
+  applyOverlayPositions(translated.nodes, overlay);
+  const clusters = refitClustersToContents(translated.clusters, translated.nodes, model.nodes);
+  return { nodes: translated.nodes, clusters };
+}
+
+function graphModelDirection(model: DiagramModel): LayoutDirection {
+  if (model.type === "flowchart") return normalizeLayoutDirection(model.direction);
+  if (model.type === "mindmap") return "LR";
+  return "TB";
+}
+
+function normalizeLayoutDirection(value: string | undefined): LayoutDirection {
+  const direction = (value ?? "").trim().toUpperCase().replace(/;$/, "");
+  if (direction === "LR" || direction === "RL" || direction === "BT") return direction;
+  return "TB";
+}
+
+function samePath(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
+}
+
+function arrangeLayoutItems(
+  items: LayoutItem[],
+  rawLinks: LayoutLink[],
+  direction: LayoutDirection,
+): { items: Array<LayoutItem & { x: number; y: number }>; width: number; height: number } {
+  if (items.length === 0) return { items: [], width: 0, height: 0 };
+  const ids = new Set(items.map((item) => item.id));
+  const links = rawLinks.filter(({ source, target }) => ids.has(source) && ids.has(target) && source !== target);
+  const incoming = new Map(items.map((item) => [item.id, 0]));
+  const outgoing = new Map(items.map((item) => [item.id, new Map<string, number>()]));
+  for (const { source, target, minLength } of links) {
+    const existingLength = outgoing.get(source)!.get(target);
+    if (existingLength === undefined) incoming.set(target, (incoming.get(target) ?? 0) + 1);
+    outgoing.get(source)!.set(target, Math.max(existingLength ?? 1, minLength));
+  }
+  const rank = new Map<string, number>();
+  const queue = items.filter((item) => (incoming.get(item.id) ?? 0) === 0).map((item) => item.id);
+  for (const id of queue) rank.set(id, 0);
+  for (let index = 0; index < queue.length; index += 1) {
+    const id = queue[index]!;
+    for (const [target, minLength] of outgoing.get(id) ?? []) {
+      rank.set(target, Math.max(rank.get(target) ?? 0, (rank.get(id) ?? 0) + minLength));
+      incoming.set(target, (incoming.get(target) ?? 1) - 1);
+      if (incoming.get(target) === 0) queue.push(target);
+    }
+  }
+  let fallbackRank = Math.max(0, ...rank.values());
+  for (const item of items) {
+    if (!rank.has(item.id)) rank.set(item.id, fallbackRank++);
+  }
+  const layers = new Map<number, LayoutItem[]>();
+  for (const item of items) {
+    const itemRank = rank.get(item.id) ?? 0;
+    const layer = layers.get(itemRank) ?? [];
+    layer.push(item);
+    layers.set(itemRank, layer);
+  }
+  const orderedLayerEntries = [...layers.entries()].sort(([left], [right]) => left - right);
+  const orderedLayers = orderedLayerEntries.map(([, layer]) => layer);
+  const layerRanks = orderedLayerEntries.map(([itemRank]) => itemRank);
+  const vertical = direction === "TB" || direction === "BT";
+  const layerMainSizes = orderedLayers.map((layer) => Math.max(...layer.map((item) => vertical ? item.height : item.width)));
+  const layerCrossSizes = orderedLayers.map((layer) =>
+    layer.reduce((size, item, index) => size + (vertical ? item.width : item.height) + (index > 0 ? GRAPH_LAYOUT_NODE_GAP : 0), 0)
+  );
+  const mainSize = layerMainSizes.reduce((size, layerSize, index) => {
+    if (index === 0) return layerSize;
+    const rankDistance = Math.max(1, layerRanks[index]! - layerRanks[index - 1]!);
+    return size + layerSize + GRAPH_LAYOUT_LAYER_GAP * rankDistance;
+  }, 0);
+  const crossSize = Math.max(...layerCrossSizes);
+  const placed: Array<LayoutItem & { x: number; y: number }> = [];
+  let mainCursor = 0;
+  orderedLayers.forEach((layer, layerIndex) => {
+    const layerMain = layerMainSizes[layerIndex]!;
+    const layerCross = layerCrossSizes[layerIndex]!;
+    let crossCursor = (crossSize - layerCross) / 2;
+    for (const item of layer) {
+      let x = vertical ? crossCursor : mainCursor;
+      let y = vertical ? mainCursor : crossCursor;
+      if (direction === "BT") y = mainSize - y - item.height;
+      if (direction === "RL") x = mainSize - x - item.width;
+      placed.push({ ...item, x, y });
+      crossCursor += (vertical ? item.width : item.height) + GRAPH_LAYOUT_NODE_GAP;
+    }
+    const nextRank = layerRanks[layerIndex + 1];
+    const rankDistance = nextRank === undefined ? 0 : Math.max(1, nextRank - layerRanks[layerIndex]!);
+    mainCursor += layerMain + GRAPH_LAYOUT_LAYER_GAP * rankDistance;
   });
-  return out;
+  return {
+    items: placed,
+    width: vertical ? crossSize : mainSize,
+    height: vertical ? mainSize : crossSize,
+  };
+}
+
+function translateLayoutItems(
+  items: Array<LayoutItem & { x: number; y: number }>,
+  offsetX: number,
+  offsetY: number,
+): { nodes: Record<string, GraphLayoutRect>; clusters: GraphLayoutCluster[] } {
+  const nodes: Record<string, GraphLayoutRect> = {};
+  const clusters: GraphLayoutCluster[] = [];
+  for (const item of items) {
+    const itemX = offsetX + item.x;
+    const itemY = offsetY + item.y;
+    for (const [id, rect] of Object.entries(item.nodeRects)) {
+      nodes[id] = { ...rect, x: rect.x + itemX, y: rect.y + itemY };
+    }
+    for (const cluster of item.clusters) {
+      clusters.push({ ...cluster, x: cluster.x + itemX, y: cluster.y + itemY });
+    }
+  }
+  return { nodes, clusters };
+}
+
+function applyOverlayPositions(
+  nodes: Record<string, GraphLayoutRect>,
+  overlay: DiagramOverlay | null | undefined,
+): void {
+  for (const [id, position] of Object.entries(overlay?.positions ?? {})) {
+    if (!nodes[id] || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
+    nodes[id] = { ...nodes[id]!, x: position.x, y: position.y };
+  }
+}
+
+function refitClustersToContents(
+  clusters: GraphLayoutCluster[],
+  nodes: Record<string, GraphLayoutRect>,
+  modelNodes: FlowGraph["nodes"],
+): GraphLayoutCluster[] {
+  const next = clusters.map((cluster) => ({ ...cluster }));
+  const scopeByNodeId = new Map(modelNodes.map((node) => [node.id, node.scopePath]));
+  for (const cluster of [...next].sort((left, right) => right.depth - left.depth)) {
+    const directNodes = Object.entries(nodes)
+      .filter(([nodeId]) => scopeByNodeId.get(nodeId)?.includes(cluster.id))
+      .map(([, rect]) => rect);
+    const childClusters = next.filter((candidate) => candidate.scopePath[candidate.scopePath.length - 1] === cluster.id);
+    const contents = [...directNodes, ...childClusters];
+    if (contents.length === 0) continue;
+    const minX = Math.min(...contents.map((rect) => rect.x));
+    const minY = Math.min(...contents.map((rect) => rect.y));
+    const maxX = Math.max(...contents.map((rect) => rect.x + rect.width));
+    const maxY = Math.max(...contents.map((rect) => rect.y + rect.height));
+    cluster.x = Math.min(cluster.x, minX - GRAPH_CLUSTER_SIDE_PADDING);
+    cluster.y = Math.min(cluster.y, minY - GRAPH_CLUSTER_TITLE_HEIGHT);
+    cluster.width = Math.max(cluster.width, maxX - cluster.x + GRAPH_CLUSTER_SIDE_PADDING);
+    cluster.height = Math.max(cluster.height, maxY - cluster.y + GRAPH_CLUSTER_BOTTOM_PADDING);
+  }
+  return next;
 }
 
 function svgDefs(themePalette: ThemePalette | undefined): string {
   const lineColor = sanitizeColor(themePalette?.lineColor) ?? "#8d7447";
-  return `<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="${lineColor}"/></marker></defs>`;
+  return `<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="${lineColor}"/></marker><marker id="circle-edge" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto" markerUnits="strokeWidth"><circle cx="5" cy="5" r="3.2" fill="#faf6ec" stroke="${lineColor}" stroke-width="1.5"/></marker><marker id="cross-edge" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M2 2 L8 8 M8 2 L2 8" stroke="${lineColor}" stroke-width="1.8"/></marker></defs>`;
 }
 
-const SVG_NODE_WIDTH = 160;
-const SVG_NODE_HEIGHT = 64;
+const SVG_NODE_WIDTH = GRAPH_LAYOUT_NODE_WIDTH;
+const SVG_NODE_HEIGHT = GRAPH_LAYOUT_NODE_HEIGHT;
 const SVG_PADDING = 32;
 // 导出会在无网络的 server Chromium 中直接绘制 SVG。VPS 的 fonts-noto-cjk 注册名是
 // "Noto * CJK SC"，并不提供 "Noto Serif SC" / "Songti SC"；旧字体栈最终落到缺少中文
@@ -2445,18 +3396,43 @@ function wrapNodeLabel(label: string, fontSize: number): string[] {
   return [lines[0] ?? "", `${last}…`];
 }
 
-function edgeGeometry(from: { x: number; y: number }, to: { x: number; y: number }) {
-  const x1 = from.x + SVG_NODE_WIDTH;
-  const y1 = from.y + SVG_NODE_HEIGHT / 2;
-  const x2 = to.x;
-  const y2 = to.y + SVG_NODE_HEIGHT / 2;
-  return { x1, y1, x2, y2, c1x: x1 + 40, c2x: x2 - 40 };
+function edgeGeometry(from: GraphLayoutRect, to: GraphLayoutRect) {
+  const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+  const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
+  const start = rectBoundaryPoint(from, toCenter);
+  const end = rectBoundaryPoint(to, fromCenter);
+  const horizontal = Math.abs(end.x - start.x) >= Math.abs(end.y - start.y);
+  const mainDistance = horizontal ? end.x - start.x : end.y - start.y;
+  const bend = Math.max(36, Math.abs(mainDistance) * 0.45) * Math.sign(mainDistance || 1);
+  return {
+    x1: start.x,
+    y1: start.y,
+    x2: end.x,
+    y2: end.y,
+    c1x: horizontal ? start.x + bend : start.x,
+    c1y: horizontal ? start.y : start.y + bend,
+    c2x: horizontal ? end.x - bend : end.x,
+    c2y: horizontal ? end.y : end.y - bend,
+    horizontal,
+  };
+}
+
+function rectBoundaryPoint(rect: GraphLayoutRect, toward: { x: number; y: number }): { x: number; y: number } {
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const dx = toward.x - center.x;
+  const dy = toward.y - center.y;
+  if (dx === 0 && dy === 0) return { x: center.x, y: rect.y + rect.height };
+  const scaleX = dx === 0 ? Number.POSITIVE_INFINITY : (rect.width / 2) / Math.abs(dx);
+  const scaleY = dy === 0 ? Number.POSITIVE_INFINITY : (rect.height / 2) / Math.abs(dy);
+  const scale = Math.min(scaleX, scaleY);
+  return { x: center.x + dx * scale, y: center.y + dy * scale };
 }
 
 function graphSvgBounds(
   nodes: BaseNode[],
   edges: BaseEdge[],
-  layout: Record<string, { x: number; y: number }>,
+  layout: DiagramGraphLayout,
+  endpointRects: Record<string, GraphLayoutRect>,
   overlay: DiagramOverlay | null | undefined,
 ): { minX: number; minY: number; width: number; height: number } {
   const bounds: SvgBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
@@ -2466,17 +3442,25 @@ function graphSvgBounds(
     bounds.maxX = Math.max(bounds.maxX, maxX);
     bounds.maxY = Math.max(bounds.maxY, maxY);
   };
+  for (const cluster of layout.clusters) {
+    include(cluster.x, cluster.y, cluster.x + cluster.width, cluster.y + cluster.height);
+  }
   for (const node of nodes) {
-    const pos = layout[node.id]!;
+    const pos = layout.nodes[node.id]!;
     const stroke = typeof overlay?.styles?.[node.id]?.strokeWidth === "number" ? Math.max(1, Math.min(8, overlay.styles[node.id]!.strokeWidth!)) : 1.5;
-    include(pos.x - stroke / 2, pos.y - stroke / 2, pos.x + SVG_NODE_WIDTH + stroke / 2, pos.y + SVG_NODE_HEIGHT + stroke / 2);
+    include(pos.x - stroke / 2, pos.y - stroke / 2, pos.x + pos.width + stroke / 2, pos.y + pos.height + stroke / 2);
   }
   for (const edge of edges) {
-    const from = layout[edge.source];
-    const to = layout[edge.target];
+    const from = endpointRects[edge.source];
+    const to = endpointRects[edge.target];
     if (!from || !to) continue;
     const path = edgeGeometry(from, to);
-    include(Math.min(path.x1, path.x2, path.c1x, path.c2x), Math.min(path.y1, path.y2), Math.max(path.x1, path.x2, path.c1x, path.c2x), Math.max(path.y1, path.y2));
+    include(
+      Math.min(path.x1, path.x2, path.c1x, path.c2x),
+      Math.min(path.y1, path.y2, path.c1y, path.c2y),
+      Math.max(path.x1, path.x2, path.c1x, path.c2x),
+      Math.max(path.y1, path.y2, path.c1y, path.c2y),
+    );
     if (edge.label) {
       const centerX = (path.x1 + path.x2) / 2;
       const baseline = (path.y1 + path.y2) / 2 - 6;
@@ -2500,9 +3484,8 @@ function graphSvgBounds(
 }
 
 function renderSvgNode(
-  id: string,
-  label: string,
-  pos: { x: number; y: number },
+  node: BaseNode,
+  pos: GraphLayoutRect,
   themePalette: ThemePalette | undefined,
   sourceStyle: NodeStyleOverride | undefined,
   overlayStyle: NodeStyleOverride | undefined,
@@ -2512,28 +3495,60 @@ function renderSvgNode(
   const textColor = sanitizeColor(overlayStyle?.textColor) ?? sanitizeColor(sourceStyle?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
   const strokeWidthSource = overlayStyle?.strokeWidth ?? sourceStyle?.strokeWidth;
   const strokeWidth = typeof strokeWidthSource === "number" ? Math.max(1, Math.min(8, strokeWidthSource)) : 1.5;
-  const fontSize = typeof overlayStyle?.fontSize === "number" ? Math.max(9, Math.min(28, overlayStyle.fontSize)) : 14;
-  const lines = wrapNodeLabel(label, fontSize);
-  const firstBaseline = pos.y + (lines.length === 1 ? 38 : 28);
-  const text = lines.map((line, index) => `<tspan x="${pos.x + SVG_NODE_WIDTH / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
-  return `<g data-node-id="${escapeXml(id)}"><rect x="${pos.x}" y="${pos.y}" width="${SVG_NODE_WIDTH}" height="${SVG_NODE_HEIGHT}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/><text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
+  const fontSizeSource = overlayStyle?.fontSize ?? sourceStyle?.fontSize;
+  const fontSize = typeof fontSizeSource === "number" ? Math.max(9, Math.min(28, fontSizeSource)) : 14;
+  const lines = wrapNodeLabel(node.label, fontSize);
+  const firstBaseline = pos.y + (lines.length === 1 ? 41 : 30);
+  const text = lines.map((line, index) => `<tspan x="${pos.x + pos.width / 2}" y="${firstBaseline + index * 18}">${escapeXml(line)}</tspan>`).join("");
+  const geometry = getFlowShapeGeometry((node as BaseNode & { shape?: string }).shape);
+  const normalizedShape = normalizeFlowShapeName((node as BaseNode & { shape?: string }).shape);
+  const dashArray = overlayStyle?.dashArray ?? sourceStyle?.dashArray;
+  const layoutAttributes = ` data-layout-x="${pos.x}" data-layout-y="${pos.y}" data-layout-width="${pos.width}" data-layout-height="${pos.height}"`;
+  const shape = normalizedShape === "rect"
+    ? `<rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${layoutAttributes}${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>`
+    : `<g transform="translate(${pos.x} ${pos.y})"${layoutAttributes}><path d="${geometry.outlinePath}" fill="${geometry.open ? "none" : fill}" stroke="${geometry.outlineVisible === false ? "none" : stroke}" stroke-width="${strokeWidth}"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}/>${geometry.detailPaths.map((path) => `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"/>`).join("")}</g>`;
+  return `<g data-node-id="${escapeXml(node.id)}">${shape}<text text-anchor="middle" font-size="${fontSize}" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${text}</text></g>`;
 }
 
 function renderSvgEdge(
   edge: BaseEdge,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
+  from: GraphLayoutRect,
+  to: GraphLayoutRect,
   themePalette: ThemePalette | undefined,
   style: EdgeStyleOverride | undefined,
 ): string {
   const stroke = sanitizeColor(style?.stroke) ?? sanitizeColor(themePalette?.lineColor) ?? "#8d7447";
   const textColor = sanitizeColor(style?.textColor) ?? sanitizeColor(themePalette?.textColor) ?? "#5c5346";
-  const strokeWidth = typeof style?.strokeWidth === "number" ? Math.max(1, Math.min(8, style.strokeWidth)) : 1.4;
-  const { x1, y1, x2, y2, c1x, c2x } = edgeGeometry(from, to);
-  const label = edge.label
+  const strokeWidth = typeof style?.strokeWidth === "number"
+    ? Math.max(1, Math.min(8, style.strokeWidth))
+    : edge.lineStyle === "thick" ? 2.8 : 1.4;
+  const { x1, y1, x2, y2, c1x, c1y, c2x, c2y, horizontal } = edgeGeometry(from, to);
+  const curve = style?.curve;
+  const pathData = curve === "linear"
+    ? `M${x1} ${y1} L${x2} ${y2}`
+    : curve?.startsWith("step")
+      ? horizontal
+        ? `M${x1} ${y1} L${(x1 + x2) / 2} ${y1} L${(x1 + x2) / 2} ${y2} L${x2} ${y2}`
+        : `M${x1} ${y1} L${x1} ${(y1 + y2) / 2} L${x2} ${(y1 + y2) / 2} L${x2} ${y2}`
+      : `M${x1} ${y1} C${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`;
+  const invisible = edge.lineStyle === "invisible";
+  const label = edge.label && !invisible
     ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-size="12" fill="${textColor}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(edge.label)}</text>`
     : "";
-  return `<g data-edge-id="${escapeXml(edge.id)}"><path d="M${x1} ${y1} C${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" marker-end="url(#arrow)"/>${label}</g>`;
+  const sourceMarker = edge.sourceMarker ?? (edge.direction === "backward" || edge.direction === "both" ? "arrow" : "none");
+  const targetMarker = edge.targetMarker ?? (edge.direction === "forward" || edge.direction === "both" || edge.direction === undefined ? "arrow" : "none");
+  const markerUrl = (marker: EdgeMarkerKind) => marker === "arrow" ? "url(#arrow)" : marker === "circle" ? "url(#circle-edge)" : marker === "cross" ? "url(#cross-edge)" : null;
+  const markerStart = markerUrl(sourceMarker);
+  const markerEnd = markerUrl(targetMarker);
+  const dashArray = style?.dashArray ?? (edge.lineStyle === "dotted" ? "4 6" : undefined);
+  return `<g data-edge-id="${escapeXml(edge.id)}" data-line-style="${edge.lineStyle ?? "solid"}"><path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"${dashArray ? ` stroke-dasharray="${escapeXml(dashArray)}"` : ""}${markerStart && !invisible ? ` marker-start="${markerStart}"` : ""}${markerEnd && !invisible ? ` marker-end="${markerEnd}"` : ""}${invisible ? ' visibility="hidden"' : ""}/>${label}</g>`;
+}
+
+function renderSvgCluster(cluster: GraphLayoutCluster, themePalette: ThemePalette | undefined): string {
+  const fill = sanitizeColor(themePalette?.clusterFill) ?? "#f3ecdd";
+  const stroke = sanitizeColor(themePalette?.clusterStroke) ?? "#cdbfa3";
+  const text = sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
+  return `<g data-cluster-id="${escapeXml(cluster.id)}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}" data-direction="${cluster.direction}"><rect x="${cluster.x}" y="${cluster.y}" width="${cluster.width}" height="${cluster.height}" fill="${fill}" fill-opacity="0.72" stroke="${stroke}" stroke-width="1.5"/><text x="${cluster.x + cluster.width / 2}" y="${cluster.y + 27}" text-anchor="middle" font-size="14" font-weight="600" fill="${text}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(cluster.label)}</text></g>`;
 }
 
 function escapeXml(value: string): string {
@@ -2542,5 +3557,22 @@ function escapeXml(value: string): string {
 
 function sanitizeColor(value: string | undefined): string | null {
   if (!value) return null;
-  return /^#[0-9a-fA-F]{3,8}$/.test(value) || /^rgba?\([0-9.,\s]+\)$/.test(value) ? value : null;
+  return /^#[0-9a-fA-F]{3,8}$/.test(value)
+    || /^rgba?\([0-9.%+,\s-]+\)$/.test(value)
+    ? value
+    : null;
+}
+
+function sanitizeDashArray(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.replace(/\\,/g, ",").trim();
+  return /^(?:\d+(?:\.\d+)?(?:px)?)(?:[\s,]+(?:\d+(?:\.\d+)?(?:px)?))*$/.test(normalized) ? normalized : null;
+}
+
+function sanitizeCurve(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  return /^(?:basis|bumpX|bumpY|cardinal|catmullRom|linear|monotoneX|monotoneY|natural|step|stepAfter|stepBefore)$/.test(normalized)
+    ? normalized
+    : null;
 }

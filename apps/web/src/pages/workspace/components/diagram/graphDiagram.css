@@ -128,6 +128,52 @@
   line-height: 1.45;
 }
 
+.graph-diagram[data-diagram-type] .react-flow__node-graphCluster,
+.graph-diagram-editor .react-flow__node-graphCluster {
+  pointer-events: none;
+  z-index: -1;
+}
+
+.graph-diagram-cluster {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border: 1.5px solid var(--graph-cluster-stroke);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--graph-cluster-fill) 72%, transparent);
+  color: var(--graph-node-text);
+  font-family: var(--font-zh-serif);
+}
+
+.graph-diagram-cluster__title {
+  position: absolute;
+  top: 9px;
+  right: 13px;
+  left: 13px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-diagram-cluster__handle-slot {
+  position: absolute;
+  inset: 0;
+}
+
+.graph-diagram-cluster .react-flow__handle.graph-diagram-cluster__handle {
+  display: block;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .graph-diagram-node-shell {
   position: relative;
   display: flex;

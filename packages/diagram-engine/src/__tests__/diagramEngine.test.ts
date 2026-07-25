@@ -1,10 +1,14 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   applyEdit,
   carryOverDiagramOverlay,
   filterStableOverlay,
   getCapabilities,
+  getFlowShapeGeometry,
   graphToSvg,
+  layoutDiagramGraph,
+  normalizeFlowShapeName,
   parseDiagram,
   safeMermaid,
   type BaseEdge,
@@ -818,5 +822,270 @@ flowchart TD
     expect(svg.match(/<tspan/g)).toHaveLength(3);
     expect(svg).toContain("…</tspan>");
     expect(svg).not.toContain(`>${nodeLabel}</text>`);
+  });
+
+  it("真实云原生 fixture:8 个分区、节点归属、色板、线型和标签完整进入共享布局与 SVG", () => {
+    const source = readFileSync(new URL("./fixtures-user-cloudnative.mmd", import.meta.url), "utf8");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.subgraphs.map((subgraph) => [subgraph.id, subgraph.label])).toEqual([
+      ["U", "用户终端层"],
+      ["AS", "接入与安全层"],
+      ["GW", "服务网关层"],
+      ["BIZ", "业务中台"],
+      ["DATA", "数据与中间件层"],
+      ["INFRA", "基础设施层"],
+      ["OBS", "监控可观测性"],
+      ["FLOW", "核心业务流程"],
+    ]);
+    expect(model.themePalette).toMatchObject({ clusterFill: "#F0F4FC", clusterStroke: "#5178C6" });
+    expect(new Set(model.edges.map((item) => item.lineStyle))).toEqual(new Set(["solid", "dotted", "thick"]));
+    expect(model.edges.filter((item) => item.lineStyle === "dotted").map((item) => item.label)).toEqual(
+      expect.arrayContaining(["触发", "扣减", "采集指标", "追踪链路", "采集日志"]),
+    );
+
+    const layout = layoutDiagramGraph(model);
+    expect(layout.clusters).toHaveLength(8);
+    const clusterById = new Map(layout.clusters.map((cluster) => [cluster.id, cluster]));
+    for (const node of model.nodes.filter((item) => item.scopePath.length > 0)) {
+      const rect = layout.nodes[node.id]!;
+      const cluster = clusterById.get(node.scopePath.at(-1)!)!;
+      expect(rect.x).toBeGreaterThanOrEqual(cluster.x);
+      expect(rect.y).toBeGreaterThanOrEqual(cluster.y);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(cluster.x + cluster.width);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(cluster.y + cluster.height);
+    }
+
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-cluster-id=/g)).toHaveLength(8);
+    expect(svg).toContain('fill="#F0F4FC"');
+    expect(svg).toContain('stroke="#5178C6"');
+    expect(svg).toContain('data-line-style="dotted"');
+    expect(svg).toContain('data-line-style="thick"');
+    expect(svg).toContain(">触发</text>");
+  });
+
+  it("subgraph 显式标题、递归嵌套、内部 direction 与边到分区 id 共享同一几何", () => {
+    const source = `flowchart TB
+  Start[开始] --> Outer
+  subgraph Outer["外层"]
+    direction LR
+    A[入口] --> Inner
+    subgraph Inner["内层"]
+      direction BT
+      B[下游] --> C[上游]
+    end
+  end
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.nodes.some((node) => node.id === "Outer" || node.id === "Inner")).toBe(false);
+    expect(model.subgraphs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "Outer", label: "外层", scopePath: [], direction: "LR" }),
+      expect.objectContaining({ id: "Inner", label: "内层", scopePath: ["Outer"], direction: "BT" }),
+    ]));
+    expect(model.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "Start", target: "Outer" }),
+      expect.objectContaining({ source: "A", target: "Inner" }),
+    ]));
+
+    const layout = layoutDiagramGraph(model);
+    const outer = layout.clusters.find((cluster) => cluster.id === "Outer")!;
+    const inner = layout.clusters.find((cluster) => cluster.id === "Inner")!;
+    expect(outer.direction).toBe("LR");
+    expect(inner.direction).toBe("BT");
+    expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+    expect(inner.y).toBeGreaterThanOrEqual(outer.y);
+    expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+    expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height);
+    expect(layout.nodes.B!.y).toBeGreaterThan(layout.nodes.C!.y);
+
+    const svg = graphToSvg(source)!;
+    for (const cluster of layout.clusters) {
+      expect(svg).toContain(`data-cluster-id="${cluster.id}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}"`);
+    }
+  });
+
+  it("链式、多目标、两种标签、不可见边、圆/叉端点与 linkStyle 都进入边模型", () => {
+    const source = `flowchart LR
+  A -->|管道标签| B --> C
+  A -- 文本标签 --> D
+  A --> E & F
+  B ~~~ F
+  C o--x D
+  linkStyle 0,2 stroke:#123456,stroke-width:4px,color:#654321,stroke-dasharray:8 3
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.edges.map((item) => [item.source, item.target])).toEqual([
+      ["A", "B"],
+      ["B", "C"],
+      ["A", "D"],
+      ["A", "E"],
+      ["A", "F"],
+      ["B", "F"],
+      ["C", "D"],
+    ]);
+    expect(model.edges[0]?.label).toBe("管道标签");
+    expect(model.edges[2]?.label).toBe("文本标签");
+    expect(model.edges[5]).toMatchObject({ lineStyle: "invisible", direction: "none" });
+    expect(model.edges[6]).toMatchObject({ sourceMarker: "circle", targetMarker: "cross" });
+    expect(model.perEdgeStyles?.[model.edges[0]!.id]).toMatchObject({
+      stroke: "#123456",
+      textColor: "#654321",
+      strokeWidth: 4,
+      dashArray: "8 3",
+    });
+    expect(model.perEdgeStyles?.[model.edges[2]!.id]).toMatchObject({ stroke: "#123456" });
+    const svg = graphToSvg(source)!;
+    expect(svg).toContain('data-line-style="invisible"');
+    expect(svg).toContain('visibility="hidden"');
+    expect(svg).toContain('marker-start="url(#circle-edge)"');
+    expect(svg).toContain('marker-end="url(#cross-edge)"');
+  });
+
+  it("加长 link token 增加共享布局的层级间距", () => {
+    const shortModel = parseDiagram("flowchart LR\n  A --> B\n").model as FlowGraph;
+    const longModel = parseDiagram("flowchart LR\n  A ----> B\n").model as FlowGraph;
+    expect(longModel.edges[0]).toMatchObject({ syntaxKind: "---->", minLength: 3 });
+    const shortLayout = layoutDiagramGraph(shortModel);
+    const longLayout = layoutDiagramGraph(longModel);
+    expect(longLayout.nodes.B!.x - longLayout.nodes.A!.x).toBeGreaterThan(
+      shortLayout.nodes.B!.x - shortLayout.nodes.A!.x,
+    );
+  });
+
+  it("经典全部括号形状与 Mermaid 11.3 扩展 shape 语法均保留为可渲染形状", () => {
+    const source = String.raw`flowchart TD
+  A[矩形]
+  B(圆角)
+  C([体育场])
+  D[[子流程]]
+  E[(数据库)]
+  F((圆形))
+  G(((双圆)))
+  H>非对称]
+  I{菱形}
+  J{{六边形}}
+  K[/平行/]
+  L[\反向平行\]
+  M[/梯形\]
+  N[\反向梯形/]
+  O@{ shape: cloud, label: "云" }
+  P@{ shape: doc, label: "文档" }
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(Object.fromEntries(model.nodes.map((node) => [node.id, normalizeFlowShapeName(node.shape)]))).toMatchObject({
+      A: "rect",
+      B: "round",
+      C: "stadium",
+      D: "subroutine",
+      E: "cylinder",
+      F: "circle",
+      G: "doublecircle",
+      H: "asymmetric",
+      I: "diamond",
+      J: "hexagon",
+      K: "parallelogram",
+      L: "parallelogram-alt",
+      M: "trapezoid",
+      N: "trapezoid-alt",
+      O: "cloud",
+      P: "doc",
+    });
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(16);
+    expect(svg).toContain(">云</tspan>");
+    expect(svg).toContain(">文档</tspan>");
+  });
+
+  it("Mermaid 官方 48 个 flowchart shape shortName 全部归一化并进入 SVG", () => {
+    const officialShapes: Array<[string, string]> = [
+      ["rect", "rect"],
+      ["rounded", "round"],
+      ["stadium", "stadium"],
+      ["fr-rect", "subroutine"],
+      ["cyl", "cylinder"],
+      ["datastore", "datastore"],
+      ["circle", "circle"],
+      ["bang", "bang"],
+      ["cloud", "cloud"],
+      ["diam", "diamond"],
+      ["hex", "hexagon"],
+      ["lean-r", "parallelogram"],
+      ["lean-l", "parallelogram-alt"],
+      ["trap-b", "trapezoid"],
+      ["trap-t", "trapezoid-alt"],
+      ["dbl-circ", "doublecircle"],
+      ["text", "text"],
+      ["notch-rect", "notch-rect"],
+      ["lin-rect", "lin-rect"],
+      ["sm-circ", "sm-circ"],
+      ["fr-circ", "fr-circ"],
+      ["fork", "fork"],
+      ["hourglass", "hourglass"],
+      ["brace", "brace"],
+      ["brace-r", "brace-r"],
+      ["braces", "braces"],
+      ["bolt", "bolt"],
+      ["doc", "doc"],
+      ["delay", "delay"],
+      ["h-cyl", "h-cyl"],
+      ["lin-cyl", "lin-cyl"],
+      ["curv-trap", "curv-trap"],
+      ["div-rect", "div-rect"],
+      ["tri", "tri"],
+      ["win-pane", "win-pane"],
+      ["f-circ", "f-circ"],
+      ["notch-pent", "notch-pent"],
+      ["flip-tri", "flip-tri"],
+      ["sl-rect", "sl-rect"],
+      ["docs", "docs"],
+      ["st-rect", "st-rect"],
+      ["bow-rect", "bow-rect"],
+      ["cross-circ", "cross-circ"],
+      ["tag-doc", "tag-doc"],
+      ["tag-rect", "tag-rect"],
+      ["flag", "flag"],
+      ["odd", "odd"],
+      ["lin-doc", "lin-doc"],
+    ];
+    const source = [
+      "flowchart TD",
+      ...officialShapes.map(([shape], index) => `  N${index}@{ shape: ${shape}, label: "${shape}" }`),
+    ].join("\n");
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.nodes).toHaveLength(officialShapes.length);
+    officialShapes.forEach(([shape, normalized], index) => {
+      expect(model.nodes[index]?.shape, shape).toBe(normalized);
+    });
+    expect(normalizeFlowShapeName("document")).toBe("doc");
+    expect(getFlowShapeGeometry("text").outlineVisible).toBe(false);
+    const svg = graphToSvg(source)!;
+    expect(svg.match(/data-node-id=/g)).toHaveLength(officialShapes.length);
+    expect(svg).toContain('data-node-id="N16"');
+    expect(svg).toMatch(/data-node-id="N16"[\s\S]*?stroke="none"/);
+  });
+
+  it("classDef/class/:::、style、default、注释、引号与 HTML entity 不丢失", () => {
+    const source = `flowchart RL
+  %% A --> Ghost
+  classDef default fill:#FFFFFF,stroke:#111111,color:#222222
+  classDef hot,warm fill:#FFEEDD,stroke:#AA5500
+  A["含 ] 与 &#35;、&amp;、\\\\\\"引号\\\\\\""]:::hot --> B[普通]
+  class B warm
+  style B fill:#DDEEFF,stroke-dasharray:6 4,font-size:18px
+`;
+    const model = parseDiagram(source).model as FlowGraph;
+    expect(model.direction).toBe("RL");
+    expect(model.nodes.map((node) => node.id)).toEqual(["A", "B"]);
+    expect(model.nodes.find((node) => node.id === "A")?.label).toBe('含 ] 与 #、&、"引号"');
+    expect(model.perNodeStyles?.A).toMatchObject({ fill: "#FFEEDD", stroke: "#AA5500", textColor: "#222222" });
+    expect(model.perNodeStyles?.B).toMatchObject({
+      fill: "#DDEEFF",
+      stroke: "#AA5500",
+      textColor: "#222222",
+      dashArray: "6 4",
+      fontSize: 18,
+    });
   });
 });

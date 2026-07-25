@@ -18,7 +18,7 @@ import { SVG_TEMPLATES } from "@qingagent/doc-render/svg-templates";
 // 不会误杀"图很大、一直在画"的正常生成。另设宽松的总硬上限兜底极端情况。
 export const SVG_IDLE_TIMEOUT_MS = 45_000;
 export const SVG_HARD_TIMEOUT_MS = 180_000;
-export const GENERATE_SVG_MAX_OUTPUT_TOKENS = 16_384;
+export const GENERATE_SVG_MAX_OUTPUT_TOKENS = 65_536;
 export const GENERATE_SVG_RAW_MAX_BYTES = SVG_MAX_BYTES * 2;
 const SVG_PROGRESS_THROTTLE_MS = 400;
 const SVG_PROGRESS_KEEPALIVE_MS = 8_000;
@@ -363,6 +363,8 @@ export const generateSvgTool = createTool({
             system: sys,
             prompt: userPrompt,
             branchSteeringTail: buildGenerateSvgBranchTail(sys, userPrompt),
+            // 真流式:partialSvg 每帧从全量 raw 重建(整帧替换),判废降级重跑只是草稿从头重画。
+            liveTextDeltas: true,
             thinking: false,
             temperature: temperature ?? 0.4,
             abortSignal: linked.controller.signal,

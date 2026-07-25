@@ -161,6 +161,18 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
   });
 
+  it("青简编辑中「+」禁用:点了不开菜单、hover 展示原因", async () => {
+    await act(async () => root.render(
+      <DerivTabBar title="主文档" items={[item]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} createDisabledReason="请等待青简完成编辑" />,
+    ));
+    const add = host.querySelector<HTMLButtonElement>('[aria-label="新建稿件"]')!;
+    expect(add.classList.contains("is-disabled")).toBe(true);
+    expect(add.title).toBe("请等待青简完成编辑");
+    expect(add.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => add.click());
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
+
   it("翻译 Tab 仅在仍有未忽略的过期译稿时显示红点", async () => {
     const english = { ...item, docId: "translate-en", dtype: "translate", targetLang: "英语", stale: true };
     const japanese = { ...english, docId: "translate-ja", targetLang: "日语" };

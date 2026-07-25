@@ -1073,7 +1073,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 <path d="M13.5 3.5H6.5A1.5 1.5 0 0 0 5 5v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V9z" />
                 <path d="M13.5 3.5V9H19" />
               </svg>{" "}
-              文件
+              素材
             </button>
             {fileMenuOpen && (
               <FileActionMenu

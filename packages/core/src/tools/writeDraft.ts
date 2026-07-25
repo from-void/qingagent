@@ -454,6 +454,20 @@ export function createWriteDraftTool(opts: {
         const displayLane = currentDisplayLane();
         return emitProgress("failed", displayLane?.raw ?? "", 0, true);
       };
+      // 赛道流结束(候选已产出)后交出展示权:该赛道字数若脱靶,赛马还要等其余路,
+      // 展示若继续钉在它身上,前端会呈现"打完了却卡住不动"的缺漏观感(260726 用户报障)。
+      // 有别的活口在写就切过去(与赛道死亡同语义);没有就保持现内容,避免闪空。
+      // 若该候选最终胜出,emitWinnerFrame 会重新锁定并整帧覆盖。
+      const settleLaneDisplay = (laneKey: number) => {
+        const lane = laneProgress.get(laneKey);
+        if (!lane) return;
+        lane.alive = false;
+        if (displayLaneKey !== laneKey) return;
+        const next = selectAliveLeadLane();
+        if (!next) return;
+        displayLaneKey = next.key;
+        void emitProgress("writing", next.raw, 0, true);
+      };
 
       // ---- 赛马式生成:固定一轮 4 路并发,不因字数脱靶加赛;全废快速返回让 agent 重调工具。----
       // 字数未满足硬边界也如实交稿(lengthStatus 标 below_min/above_hard_max),由外层模型用 editDraft
@@ -517,6 +531,9 @@ export function createWriteDraftTool(opts: {
             tier: "flash",
             messages: draftMessages,
             branchSteeringTail: buildQingmlSteeringTail(materialContext, params.prompt),
+            // 真流式:delta 只进内存赛道状态 + 整帧替换的展示进度,候选文档仅由完整 result.raw 构建,
+            // 判废降级重跑最多表现为进度回退,无落库风险。
+            liveTextDeltas: true,
             thinking: params.thinking,
             temperature: params.temperature,
             abortSignal: params.abortSignal,
@@ -552,7 +569,7 @@ export function createWriteDraftTool(opts: {
             return null;
           }
           innerSpan.end({ ok: true, outputText: raw });
-          return {
+          const candidate: DraftCandidate = {
             laneKey,
             document,
             doc: compiled.doc,
@@ -561,6 +578,10 @@ export function createWriteDraftTool(opts: {
             raw,
             kind: params.kind,
           };
+          // 达标候选会当场胜出并由 emitWinnerFrame 锁定展示,不移交(避免闪别家文本);
+          // 脱靶候选要等其余赛道,交出展示权让前端继续看到"还在写"。
+          if (!isStopWorthyCandidate(candidate)) settleLaneDisplay(laneKey);
+          return candidate;
         } catch (error) {
           const failureKind = failureKindFromError(error, finishReason);
           failureKinds.push(failureKind);

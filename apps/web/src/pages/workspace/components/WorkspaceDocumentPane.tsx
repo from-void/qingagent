@@ -131,6 +131,7 @@ export function WorkspaceDocumentPane({
     exportAnchorRef,
     reviewAnchorRef,
     exportDisabledReason,
+    derivativeCreateDisabledReason,
     exportMenuOpen,
     setExportMenuOpen,
     reviewMenuOpen,
@@ -191,6 +192,7 @@ export function WorkspaceDocumentPane({
               setDerivativeCreateDtype(dtype);
               setDerivativeCreateOpen(true);
             }}
+            createDisabledReason={derivativeCreateDisabledReason}
             isStaleDismissed={isStaleDismissed}
             onRename={async (nextTitle) => {
               const previousTitle = title;

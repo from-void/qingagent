@@ -52,28 +52,33 @@ describe("boot 与切页底色契约", () => {
     expect(workspaceCss).toMatch(/#view-workspace\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
   });
 
-  it("关掉 CSS 代码分割:样式必须是渲染阻塞的单文件(治「无样式裸 DOM」的主防线)", () => {
-    // 开着分割时页面样式随 lazy chunk 走,而 Vite preload 的 seen 去重会让第二次 import
-    // (= 用户真正切页那次)不等 CSS load,组件先挂载几百毫秒的**无样式裸 DOM**。
-    // 在 lazy 工厂里等样式只能缓解:等待必须带超时,一超时裸 DOM 照旧(实测慢 CSS 下必然触发)。
-    // 关掉分割后 CSS 由 index.html 静态 <link> 引入、渲染阻塞 → React 挂载前样式必然生效。
-    // 谁把这行改回 true,那类闪烁立刻回归。
-    expect(viteConfig).toMatch(/cssCodeSplit:\s*false/);
-  });
-
-  it("每个懒加载路由工厂都等自己的样式表落地才交出 chunk(第二道)", () => {
-    // 主防线。Vite preload 的 seen 去重让第二次 import(= 用户真正切页那次)不等 CSS load,
-    // 页面会以**完全无样式的裸 DOM**挂出来几百毫秒(布局/字色/玻璃感全丢,不只是底色)。
-    // 必须挡在 lazy 工厂里 —— 那是所有进入路径(转场/hash 直达/深链/前进后退)的唯一收口;
-    // 挡在某个页面的跳转回调里只能护住一条路径。
-    expect(appTsx).toContain("awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS)");
+  it("路由工厂必须 onceAsync 记忆化:预热与 lazy 共用同一次 __vitePreload(治「无样式裸 DOM」)", () => {
+    // 主防线。每次调用路由工厂都会走一遍 Vite 的 __vitePreload,而它用模块级 seen 表去重 ——
+    // 只有第一次碰到某个 CSS 才返回「等 link load」的 promise。预热调一次(等待被 void 掉)、
+    // 切页时 lazy 再调一次,第二次就 seen 命中直接短路,不等 CSS 就交出 chunk → 组件先挂载、
+    // 样式后到,那几百毫秒是完全无样式的裸 DOM。记忆化后只有一次调用,它会老实等 CSS。
+    // 谁把 onceAsync 摘掉(退回每次新建 promise),那类闪烁立刻回归。
+    expect(appTsx).toContain('import { onceAsync } from "./system/onceAsync"');
     for (const factory of [
-      'import("./pages/home/HomePage").then(styled)',
-      'import("./pages/new-session/NewSessionPage").then(styled)',
-      'import("./pages/workspace/WorkspacePage").then(styled)',
+      'onceAsync(() => import("./pages/home/HomePage").then(styled))',
+      'import("./pages/new-session/NewSessionPage").then(styled),',
+      'import("./pages/workspace/WorkspacePage").then(styled),',
     ]) {
       expect(appTsx).toContain(factory);
     }
+    // 三个工厂都得包上,别漏
+    expect(appTsx.match(/onceAsync\(/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("CSS 保持按页分割:首屏不该被全站样式拖重", () => {
+    // 无样式裸 DOM 由 onceAsync 治(见上),不需要牺牲首屏把全站 CSS 变成渲染阻塞单文件。
+    expect(viteConfig).not.toMatch(/cssCodeSplit:\s*false/);
+  });
+
+  it("样式表就绪等待作为第二道保留(兜 seen 已被别处污染的边缘情况)", () => {
+    // 零成本:没有 pending 样式表就立即 resolve。但它的等待必须带超时(网络异常不能卡死导航),
+    // 所以一超时裸 DOM 照旧 —— 只能当第二道,主防线是上面的 onceAsync。
+    expect(appTsx).toContain("awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS)");
   });
 
   it("主包给编辑页兜底玄青底 + 页框满铺(样式表等待超时后的最后一道)", () => {

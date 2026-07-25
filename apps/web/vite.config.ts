@@ -20,21 +20,10 @@ export default defineConfig({
     __BUILD_INFO__: JSON.stringify(buildInfo),
     __APP_VERSION__: JSON.stringify(appVersion),
   },
-  build: {
-    // 全站 CSS 打成一个文件、由 index.html 静态 <link> 引入(渲染阻塞)。
-    //
-    // 病根:开启 CSS 代码分割时,页面样式随 lazy chunk 走,而 Vite preload helper 用全局 seen
-    // 表去重 —— 只有第一次碰到某个 CSS 才返回「等 link load」的 promise。App.tsx 的空闲预热正是
-    // 那第一次(等待被 void 掉),等用户真正切页、React.lazy 第二次调同一工厂时 seen 命中直接短路,
-    // 不等 CSS 就把 chunk 交出去 → 组件先挂载、样式后到,那几百毫秒是**完全无样式的裸 DOM**
-    // (布局/字色/玻璃感全丢)。在 lazy 工厂里等样式表只能缓解:等待必须带超时(否则网络异常会卡死
-    // 导航),一超时裸 DOM 照旧 —— 实测 10s 慢 CSS 下必然触发。
-    //
-    // 关掉分割则从根上消除「组件可能早于样式」:CSS 在 React 挂载前就已生效,任何路由、任何进入
-    // 路径(转场/hash 直达/深链/前进后退)都不可能无样式。代价是首屏多下全站 CSS(约 90KB gzip,
-    // 单请求、与 JS 并行),相对 WorkspacePage 自己 777KB gzip 的 JS 可以忽略。
-    cssCodeSplit: false,
-  },
+  // 注:CSS 保持按页分割(Vite 默认 cssCodeSplit:true)—— 首屏只下首页那份,其余随 lazy chunk
+  // 后台预载。「组件早于样式挂载 → 无样式裸 DOM」不靠关掉分割来解,而是由 App.tsx 用 onceAsync
+  // 记忆化路由工厂来解:让预热与 React.lazy 落在同一次 __vitePreload 上,那一次会等 CSS link
+  // load(第二次调用会命中 Vite 的 seen 去重、直接短路不等 CSS)。详见 system/onceAsync.ts。
   server: {
     host: true,
     port: devPort,

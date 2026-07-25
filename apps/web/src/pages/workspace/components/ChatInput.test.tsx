@@ -162,7 +162,7 @@ describe("ChatInput", () => {
     expect(attachChipLabels()).toEqual([]);
   });
 
-  it("选择文件未发送时只插 attach chip，不渲染已关联文件条", async () => {
+  it("选择文件未发送时只插 attach chip，不渲染已关联素材条", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(
       <ChatInput
@@ -493,7 +493,7 @@ describe("ChatInput", () => {
     expect(host?.querySelector('[data-wf="WsFolderPopover"]')).toBeNull();
   });
 
-  it("点已连接状态行本体会展开已关联文件树并收起菜单", async () => {
+  it("点已连接状态行本体会展开已关联素材树并收起菜单", async () => {
     await render(
       <ChatInput
         {...baseFolderProps({
@@ -597,7 +597,7 @@ describe("ChatInput", () => {
     );
 
     const button = getFileButton();
-    expect(button.textContent?.trim()).toBe("文件");
+    expect(button.textContent?.trim()).toBe("素材");
     expect(button.classList.contains("is-active")).toBe(false);
 
     clickElement(button);

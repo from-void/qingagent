@@ -169,16 +169,38 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("已完成");
   });
 
-  it("tool-error 的 failed 终态显示失败原因与错误图标，不误显完成对勾", () => {
-    const failed = genericSpec("failed", "{}");
+  it("retriable 失败 = agent 内部重试提示:常规图标+灰字「未完成」,无红色无黄点,行话藏 hover", () => {
+    // 用户拍板(260725/26):editDraft 定位未命中这类 agent 会自行重试的内部报错,
+    // 不许红字怼给用户;图标也不搞特殊(黄点/错误/等待都不要)——用户对这行无法操作,
+    // 只是周知。但右侧文案不能是"已完成"(P2-1 假成功教训),用「未完成」。
+    const failed = genericSpec("failed", "{}", "editDraft");
     failed.status = {
       kind: "failed",
-      data: { retriable: true, reason: "上游工具连接中断" },
+      data: { retriable: true, reason: "文本未命中或未唯一命中,请先 readDraft 后缩小 withinRef" },
     };
 
     renderBar(failed);
 
-    expect(host.textContent).toContain("上游工具连接中断");
+    expect(host.textContent).toContain("未完成");
+    expect(host.textContent).not.toContain("已完成");
+    expect(host.textContent).not.toContain("文本未命中");
+    expect(host.querySelector(".u-ico.is-error")).toBeNull();
+    expect(host.querySelector(".u-meta.is-error")).toBeNull();
+    expect(host.querySelector(".u-dot")).toBeNull();
+    expect(host.querySelector(".u-ico svg")).not.toBeNull();
+    expect(host.querySelector(".u-meta")?.getAttribute("title")).toContain("文本未命中");
+  });
+
+  it("终态失败(retriable:false)保留红色错误图标与原因,不误显完成对勾", () => {
+    const failed = genericSpec("failed", "{}");
+    failed.status = {
+      kind: "failed",
+      data: { retriable: false, reason: "网页抓取失败:目标不可达" },
+    };
+
+    renderBar(failed);
+
+    expect(host.textContent).toContain("网页抓取失败:目标不可达");
     expect(host.textContent).not.toContain("已完成");
     expect(host.querySelector(".u-ico.is-error")).not.toBeNull();
     expect(host.querySelector(".u-meta.is-error")).not.toBeNull();

@@ -798,27 +798,6 @@ export function useWorkspacePageController() {
   if (!chatInputEditorDisabled) inputWasEverActiveRef.current = true;
   const chatInputSendEnabledWhenDisabled =
     dim.content.kind === "pendingReview" && !askUserInputDisabled;
-  // 导出按钮 gating:① 文档区为空(无可导出内容);② 不在可发送态(右侧问卷 / 上方审批条),
-  // 因为平台导出要把 query 发回对话,这两态下发送会冲突。disable + hover 提示原因。
-  // 文案按原因分流(e2e-loop-0704 R12:笼统的"完成问卷或处理未提交修改"让用户找不到入口)。
-  const exportDisabledReason = useMemo<string | null>(() => {
-    if (dim.content.kind === "empty") return "还没有可导出的内容";
-    if (!chatInputEditorDisabled) return null;
-    if (viewingHistory) return "回到当前版本后可导出";
-    if (askUserInputDisabled || dim.overlay === "askUser") {
-      return "请先完成问卷，再导出";
-    }
-    if (dim.content.kind === "pendingReview") {
-      return "有待处理的修改：请先采纳或撤销正文中的候选（或点「放弃全部」），再导出";
-    }
-    return "请先完成当前操作，再导出";
-  }, [
-    dim.content.kind,
-    dim.overlay,
-    chatInputEditorDisabled,
-    viewingHistory,
-    askUserInputDisabled,
-  ]);
   const allReviewPatches = useMemo(() => selectPatches(state), [state]);
   const pendingReviewPatches = useMemo(
     () =>
@@ -1046,14 +1025,51 @@ export function useWorkspacePageController() {
     (patchPresentation?.droppedIds.length ?? 0) +
     (patchPresentation?.conflictIds.length ?? 0);
   const effectivePatchRevealing = inlinePatchReview && patchRevealing;
-  const editLockHint =
+  // 「青简编辑中」统一判定:正文编辑锁提示、审查/导出禁用、「+」新建子文档禁用共用同一条件,
+  // 保证 toast 出现时相关入口必然同时不可点。
+  const qingjianEditing =
     dataAttrs.tool === "agentBusy" ||
     dataAttrs.tool === "imageProgress" ||
-    effectivePatchRevealing
-      ? "请等待青简完成编辑后再做修改"
-      : dim.content.kind === "pendingReview"
-        ? "请先确认或放弃当前修改候选"
+    effectivePatchRevealing;
+  // 提示分支顺序:pendingReview 优先于「青简编辑中」——docDiff 一到审批条就升起(刻意设计:
+  // 与揭示动画同体平移),此时再浮「请等待青简完成编辑」会压在审批条上(260726 用户报障:错乱)。
+  // 揭示动画期间(条已在、光标在正文打字)不出任何锁提示;动画结束后才给「确认或放弃」指引。
+  const editLockHint =
+    dim.content.kind === "pendingReview"
+      ? effectivePatchRevealing
+        ? null
+        : "请先确认或放弃当前修改候选"
+      : qingjianEditing
+        ? "请等待青简完成编辑后再做修改"
         : null;
+  // 导出/审查按钮 gating:① 文档区为空(无可导出内容);② 青简编辑中;③ 不在可发送态
+  // (右侧问卷 / 上方审批条),因为平台导出要把 query 发回对话,这些态下发送会冲突。
+  // disable + hover 提示原因,文案按原因分流(e2e-loop-0704 R12:笼统文案让用户找不到入口)。
+  const exportDisabledReason = useMemo<string | null>(() => {
+    if (dim.content.kind === "empty") return "还没有可导出的内容";
+    if (qingjianEditing) return "请等待青简完成编辑";
+    if (!chatInputEditorDisabled) return null;
+    if (viewingHistory) return "回到当前版本后可导出";
+    if (askUserInputDisabled || dim.overlay === "askUser") {
+      return "请先完成问卷，再导出";
+    }
+    if (dim.content.kind === "pendingReview") {
+      return "有待处理的修改：请先采纳或撤销正文中的候选（或点「放弃全部」），再导出";
+    }
+    return "请先完成当前操作，再导出";
+  }, [
+    dim.content.kind,
+    dim.overlay,
+    qingjianEditing,
+    chatInputEditorDisabled,
+    viewingHistory,
+    askUserInputDisabled,
+  ]);
+  // 编辑中禁止新建子文档(公众号稿/小红书稿/翻译):生成子文档要把 query 发回对话,会与
+  // 进行中的编辑回合冲突。
+  const derivativeCreateDisabledReason = qingjianEditing
+    ? "请等待青简完成编辑"
+    : null;
   const editLockPortalTarget =
     typeof document !== "undefined" ? document.body : null;
 
@@ -2841,6 +2857,7 @@ export function useWorkspacePageController() {
     exportAnchorRef,
     reviewAnchorRef,
     exportDisabledReason,
+    derivativeCreateDisabledReason,
     exportMenuOpen,
     setExportMenuOpen,
     reviewMenuOpen,

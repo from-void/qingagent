@@ -23,6 +23,8 @@ export interface RunSideChannelInput<T> {
    */
   fallback: (reason: SideChannelFailure) => Promise<T>;
   streamTextDeltas?: boolean;
+  /** 边读边交 delta,不等验真。仅出题这类「半成品可露出、失败被整体覆盖」的调用点可开。 */
+  liveTextDeltas?: boolean;
   onTextDelta?: BranchCallInput["onTextDelta"];
   onActivity?: BranchCallInput["onActivity"];
   lane?: number | null;
@@ -65,6 +67,7 @@ export async function runSideChannel<T>(
       lane: input.lane,
       abortSignal: input.abortSignal,
       streamTextDeltas: input.streamTextDeltas,
+      liveTextDeltas: input.liveTextDeltas,
       onTextDelta: input.onTextDelta,
       onActivity: input.onActivity,
       thinking: input.thinking,

@@ -281,7 +281,10 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(progressEvents(writes).at(-1)).toMatchObject({ phase: "failed" });
   });
 
-  it("流式展示粘滞:首个吐正文的 lane 获得展示权,其它 lane 字数反超也不切", async () => {
+  it("流式展示:写作中粘滞不被反超,展示 lane 完稿未达标则移交仍在写的 lane", async () => {
+    // 260726 用户拍板:展示 lane 的流一旦结束而字数脱靶(赛马还要等其余路),
+    // 不能继续钉在它身上——前端会呈现"打完了却卡住"的缺漏观感;要移交给仍在写的 lane。
+    // 写作进行中仍然粘滞(不因字数反超切换),赢家帧最终整帧锁定。
     const { tool } = await makeTool();
     mockGenerateReturningDelayed(
       { raw: qingmlParagraph("a".repeat(40)), delayMs: 40, streamRaw: true },
@@ -297,8 +300,11 @@ describe("writeDraft 赛马式字数控制", () => {
     expect(out.ok).toBe(true);
     const events = progressEvents(writes);
     const writingCounts = events.filter((e) => e.phase === "writing").map((e) => e.charCount);
+    // 首个吐正文的 lane a 拿到展示权(粘滞期)
     expect(writingCounts).toContain(40);
-    expect(writingCounts).not.toContain(180);
+    // lane a 完稿(40 字,脱靶)后移交:仍在写的 lane 的进度接续出现,不再卡在 40
+    expect(Math.max(...writingCounts)).toBeGreaterThan(40);
+    // 赢家 c(100 字命中)最终整帧锁定
     expect(events.at(-1)).toMatchObject({ phase: "finalizing", charCount: 100 });
     expect(events.at(-1)?.excerpt).toContain("c".repeat(20));
   });

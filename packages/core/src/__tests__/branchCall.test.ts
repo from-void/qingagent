@@ -714,3 +714,70 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     })));
   });
 });
+
+describe("liveTextDeltas 真流式", () => {
+  it("边读边交 delta,不等验真 —— 出题要的逐条浮现只能这样拿到", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-live-stream", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"[{\\"id\\":"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"content":"\\"q1\\"}]"},"finish_reason":"stop"}]}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
+    const seen: Array<{ delta: string; accumulated: string }> = [];
+
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "出题",
+      callSite: "planDraft",
+      requestContext,
+      streamTextDeltas: true,
+      liveTextDeltas: true,
+      onTextDelta: (delta, accumulated) => { seen.push({ delta, accumulated }); },
+    });
+
+    expect(result.ok).toBe(true);
+    // 两个 delta 各交一次:开了 live 之后回放被跳过,不能重复发
+    expect(seen.map((s) => s.delta)).toEqual(['[{"id":', '"q1"}]']);
+    // accumulated 是「到此刻为止」的文本,前端靠它做 partial 解析
+    expect(seen[0]?.accumulated).toBe('[{"id":');
+    expect(seen[1]?.accumulated).toBe('[{"id":"q1"}]');
+  });
+
+  it("tool_call 判废时 live 已交出的 delta 不回收 —— 这是出题换真流式的明码代价", async () => {
+    // 对照上面「验真后回放」那条:不开 live 时 tool_call 会让 deltas 保持为空(原子性)。
+    // 出题显式接受这个取舍:降级路径会用同一个 toolCallId 发完整问卷整体覆盖前端 partial。
+    // 正文草稿 / SVG 绝不能开 live,就是因为它们没有这层覆盖兜底。
+    const fetchMock = vi.fn().mockResolvedValueOnce(emptySse());
+    vi.stubGlobal("fetch", fetchMock);
+    const requestContext = context("branch-live-toolcall", "stream-main");
+    beginSessionSnapshotTurn(requestContext);
+    await triggerProviderFetch(requestContext, "main-prefix");
+    const snapshot = getSessionSnapshot(requestContext)!;
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"半截问卷"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"planDraft","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }));
+    const deltas: string[] = [];
+
+    const result = await branchCall({
+      sessionSnapshot: snapshot,
+      steeringTail: "出题",
+      callSite: "planDraft",
+      requestContext,
+      streamTextDeltas: true,
+      liveTextDeltas: true,
+      onTextDelta: (delta) => { deltas.push(delta); },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "tool_call", attempts: 1, toolCallRetries: 0 });
+    expect(deltas).toEqual(["半截问卷"]);
+  });
+});

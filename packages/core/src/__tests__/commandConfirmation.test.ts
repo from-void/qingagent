@@ -83,9 +83,51 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     );
     expect(withReason).toMatchObject({
       title: "安装 httpx",
-      say: "你要读取接口数据，需要先装这个工具。会从网上下载并安装到这台电脑",
+      say: "你要读取接口数据，需要先装这个工具",
     });
     expect(withReason.say).not.toContain("用它帮你干活");
+  });
+
+  it.each([
+    [
+      "带句号且含下载安装语义",
+      "你要安装企业微信命令行工具，需要先下载安装。",
+      "你要安装企业微信命令行工具，需要先下载安装。",
+    ],
+    [
+      "不带句号且含下载安装语义",
+      "需要从官网下载这个工具",
+      "需要从官网下载这个工具",
+    ],
+    [
+      "带句号且不含下载安装语义",
+      "读取接口数据前需要准备这个工具。",
+      "读取接口数据前需要准备这个工具。会从网上下载并安装到这台电脑",
+    ],
+    [
+      "不带句号且不含下载安装语义",
+      "读取接口数据前需要准备这个工具",
+      "读取接口数据前需要准备这个工具。会从网上下载并安装到这台电脑",
+    ],
+  ])("模型 reason %s 时规范拼接安装影响", (_case, reason, expected) => {
+    const spec = buildCommandConfirmSpec(
+      { command: "npm install httpx", reason },
+      "安装命令需要确认",
+      "reason-punctuation",
+    );
+    expect(spec.say).toBe(expected);
+    expect(spec.say).not.toContain("。。");
+  });
+
+  it("无模型 reason 时保持现有安装兜底句", () => {
+    const spec = buildCommandConfirmSpec(
+      { command: "npm install httpx" },
+      "安装命令需要确认",
+      "reason-fallback",
+    );
+    expect(spec.say).toBe(
+      "装好后青简才能用它帮你干活。会从网上下载并安装到这台电脑",
+    );
   });
 
   it("模型 reason 先脱敏和剥离 HTML，且不参与 digest", () => {

@@ -25,6 +25,24 @@ const secondsSchema = z.preprocess(
 export const MAX_EXECUTE_COMMAND_LENGTH = 8_192;
 export const MAX_EXECUTE_COMMAND_REASON_LENGTH = 80;
 
+function joinExplanationParts(parts: Array<string | undefined>): string {
+  const uniqueParts = parts.filter(
+    (value, index, values): value is string =>
+      Boolean(value) && values.indexOf(value) === index,
+  );
+  return uniqueParts.reduce(
+    (explanation, part) =>
+      explanation
+        ? `${explanation}${/[。！？.!?]$/u.test(explanation) ? "" : "。"}${part}`
+        : part,
+    "",
+  );
+}
+
+function mentionsInstallAction(reason: string): boolean {
+  return /下载|安装|装(?:好|上|入|这个|该|工具|软件|依赖|命令行|[。！？.!?]|$)/u.test(reason);
+}
+
 export function insecureRememberEnvironmentAllowed(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -110,14 +128,12 @@ export function buildCommandConfirmSpec(
   const installImpact = "会从网上下载并安装到这台电脑";
   const explanationParts = modelReason
     ? kind === "install"
-      ? [modelReason, modelReason.includes(installImpact) ? undefined : installImpact]
+      ? [modelReason, mentionsInstallAction(modelReason) ? undefined : installImpact]
       : [modelReason, verdict.detail]
     : kind === "install"
       ? [verdict.detail]
       : [policyReason, verdict.detail];
-  const explanation = explanationParts
-    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
-    .join("。");
+  const explanation = joinExplanationParts(explanationParts);
   const rememberCategory = kind === "install" || kind === "command"
     ? {
         kind,

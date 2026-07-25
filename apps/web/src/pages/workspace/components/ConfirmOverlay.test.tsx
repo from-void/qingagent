@@ -241,19 +241,22 @@ describe("ConfirmOverlay", () => {
     ).toBeTruthy();
   });
 
-  it("footer 常规宽度左右同行，窄屏允许记忆项回落到按钮上方", () => {
+  it("footer 常规卡片内几何同行，极窄屏允许记忆项回落到按钮上方", () => {
     const css = readFileSync(
       resolve(process.cwd(), "src/pages/workspace/components/confirm-overlay.css"),
       "utf8",
     );
+    const rememberRule = css.match(
+      /\.cf-actions \.cf-remember \{([^}]*)\}/s,
+    )?.[1] ?? "";
     expect(css).toMatch(
       /\.cf-actions \{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*align-items: center;/s,
     );
+    expect(rememberRule).toMatch(/flex:\s*0 1 auto;/);
+    expect(rememberRule).toMatch(/margin-right:\s*auto;/);
+    expect(rememberRule).not.toMatch(/flex:\s*1(?:\s|;)/);
     expect(css).toMatch(
-      /\.cf-actions \.cf-remember \{[^}]*flex: 1 1 200px;[^}]*margin-right: auto;/s,
-    );
-    expect(css).toMatch(
-      /@media \(max-width: 520px\) \{[\s\S]*?\.cf-actions \.cf-remember \{[^}]*flex-basis: 100%;/,
+      /@media \(max-width: 360px\) \{[\s\S]*?\.cf-actions \.cf-remember \{[^}]*flex-basis: 100%;/,
     );
   });
 

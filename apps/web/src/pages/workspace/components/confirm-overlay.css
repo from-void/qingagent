@@ -405,7 +405,7 @@
 }
 
 #view-workspace .cf-actions .cf-remember {
-  flex: 1 1 200px;
+  flex: 0 1 auto;
   min-width: 0;
   margin-right: auto;
 }
@@ -514,7 +514,7 @@
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 360px) {
   #view-workspace .cf-actions .cf-remember {
     flex-basis: 100%;
   }

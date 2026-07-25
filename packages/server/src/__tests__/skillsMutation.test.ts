@@ -352,10 +352,34 @@ describe("技能导入 UX 元数据", () => {
 
     const list = await app.request("/api/v1/skills");
     expect(list.status).toBe(200);
-    const body = await list.json() as { skills: Array<{ name: string }> };
+    const body = await list.json() as {
+      skills: Array<{
+        name: string;
+        children: Array<{
+          name: string;
+          label: string;
+          summary: string;
+          icon: string;
+          source: string;
+          enabled: boolean;
+          children: unknown[];
+        }>;
+      }>;
+    };
     const names = body.skills.map((skill) => skill.name);
     expect(names).toContain(parentName);
     expect(names).not.toContain(childName);
+    expect(body.skills.find((skill) => skill.name === parentName)?.children).toEqual([
+      expect.objectContaining({
+        name: childName,
+        label: "子技能",
+        summary: "仅归属母技能",
+        icon: "star",
+        source: "installed",
+        enabled: true,
+        children: [],
+      }),
+    ]);
   });
 });
 

@@ -9,7 +9,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useToast } from "../../system/ToastProvider";
-import { useSkills, type SkillDetailInfo, type SkillInfo } from "./useSkills";
+import {
+  useSkills,
+  type SkillBaseInfo,
+  type SkillDetailInfo,
+  type SkillInfo,
+} from "./useSkills";
 import { SearchPanel } from "./SearchPanel";
 import { VisionPanel } from "./VisionPanel";
 import { useClientCapabilities, useConfirm } from "../../system";
@@ -64,7 +69,7 @@ function toolLabel(tool: string): string {
   return TOOL_LABELS[tool] ?? tool;
 }
 
-function sourceLabel(source: SkillInfo["source"]): string {
+function sourceLabel(source: SkillBaseInfo["source"]): string {
   return source === "builtin" ? "内置" : "已安装";
 }
 
@@ -130,6 +135,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   const [message, setMessage] = useState<string | null>(null);
   const toast = useToast();
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [childrenParentName, setChildrenParentName] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetailInfo | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -306,15 +312,57 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
     setMenu({ name: s.name, builtin: s.source === "builtin", title: s.label, x: e.clientX, y: e.clientY });
   };
 
-  const openDetailByKey = (e: KeyboardEvent<HTMLDivElement>, name: string) => {
+  const openSkill = (skill: SkillInfo) => {
+    if (childSkills(skill).length > 0) {
+      setChildrenParentName(skill.name);
+      return;
+    }
+    setSelectedName(skill.name);
+  };
+
+  const openSkillByKey = (e: KeyboardEvent<HTMLDivElement>, skill: SkillInfo) => {
     if (e.currentTarget !== e.target) return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
-    setSelectedName(name);
+    openSkill(skill);
   };
 
+  const childrenParent = childrenParentName
+    ? skills.find((skill) => skill.name === childrenParentName) ?? null
+    : null;
   const selectedFromList = selectedName ? skills.find((skill) => skill.name === selectedName) ?? null : null;
   const selectedSkill = detail ?? selectedFromList;
+
+  if (childrenParent) {
+    return (
+      <div className="settings-skills" data-wf="SkillsPanel">
+        <div className="sk-subhead">
+          <button type="button" className="sk-back" onClick={() => setChildrenParentName(null)}>
+            <span className="sk-back-arrow" aria-hidden="true">
+              ‹
+            </span>
+            返回技能
+          </button>
+          <span className="sk-subtitle">{childrenParent.label} · 子技能</span>
+        </div>
+
+        <p className="sm-note" style={{ marginTop: 0 }}>
+          子技能由「{childrenParent.label}」统一启用或停用，此处仅展示各自职责。
+        </p>
+        <div className="sk-child-list" data-wf="SkillChildren">
+          {childSkills(childrenParent).map((child) => (
+            <div className="sk-child-item" key={child.name}>
+              <SkIcon icon={child.icon} />
+              <div className="sk-child-copy">
+                <span className="sk-child-title">{child.label}</span>
+                <p className="sk-child-summary">{child.summary || child.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (selectedName) {
     return (
@@ -354,7 +402,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   return (
     <div className="settings-skills" data-wf="SkillsPanel">
       <p className="sm-note" style={{ marginTop: 0 }}>
-        停用后模型不再使用该技能；点击卡片查看详情。
+        停用后模型不再使用该技能；点击卡片查看详情或子技能。
         {canMutate ? "可导入 .zip 技能包或 .md 文件。" : "技能的导入与删除仅在桌面客户端开放。"}
       </p>
 
@@ -379,8 +427,8 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
             className={`sk-card${s.enabled ? "" : " sk-off"}`}
             role="button"
             tabIndex={0}
-            onClick={() => setSelectedName(s.name)}
-            onKeyDown={(e) => openDetailByKey(e, s.name)}
+            onClick={() => openSkill(s)}
+            onKeyDown={(e) => openSkillByKey(e, s)}
             onContextMenu={(e) => openMenu(e, s)}
           >
             <div className="sk-card-head">
@@ -402,6 +450,11 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
               </button>
             </div>
             <p className="sk-card-summary">{s.summary}</p>
+            {childSkills(s).length > 0 && (
+              <div className="sk-card-foot">
+                <span className="sk-card-tag">含 {childSkills(s).length} 个子技能</span>
+              </div>
+            )}
             {/* 依赖连接行只在技能详情页展示,列表卡保持轻。 */}
           </div>
         ))}
@@ -457,6 +510,11 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
   );
 }
 
+function childSkills(skill: SkillInfo): SkillInfo[] {
+  // 兼容升级期间旧服务响应，正式 API 始终返回 children 数组。
+  return Array.isArray(skill.children) ? skill.children : [];
+}
+
 function SkillDetail({
   skill,
   body,
@@ -469,7 +527,7 @@ function SkillDetail({
   onDelete,
   onOpenConnector,
 }: {
-  skill: SkillInfo;
+  skill: SkillInfo | SkillDetailInfo;
   body: string;
   bodyLoading: boolean;
   bodyError: string | null;

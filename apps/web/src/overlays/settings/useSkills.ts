@@ -3,7 +3,7 @@ import type { ConnectorId } from "@qingagent/contract-ts";
 
 export const SKILLS_CHANGED_EVENT = "qingagent:skills-changed";
 
-export interface SkillInfo {
+export interface SkillBaseInfo {
   name: string;
   description: string;
   label: string;
@@ -18,7 +18,11 @@ export interface SkillInfo {
   connectorId?: ConnectorId;
 }
 
-export interface SkillDetailInfo extends SkillInfo {
+export interface SkillInfo extends SkillBaseInfo {
+  children: SkillInfo[];
+}
+
+export interface SkillDetailInfo extends SkillBaseInfo {
   body: string;
 }
 

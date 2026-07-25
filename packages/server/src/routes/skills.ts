@@ -10,6 +10,7 @@ import {
   USER_SKILLS_DIR,
   ARCHIVED_BUILTIN_SKILLS,
   getQingagentSkills,
+  listChildSkills,
   listTopLevelSkills,
   parseSkillFrontmatter,
   readDisabledSet,
@@ -76,20 +77,7 @@ skillsRoutes.get("/skills", async (c) => {
   const disabled = await readDisabledSet();
   const skills = await listAllSkillItems(disabled);
   return c.json({
-    skills: skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      label: skill.label,
-      summary: skill.summary,
-      icon: skill.icon,
-      source: skill.source,
-      userInvocable: skill.userInvocable,
-      placeholder: skill.placeholder,
-      config: skill.config,
-      tools: skill.tools,
-      enabled: skill.enabled,
-      connectorId: connectorIdForSkill(skill.name),
-    })),
+    skills: await Promise.all(skills.map(serializeSkillListItem)),
   });
 });
 
@@ -464,6 +452,37 @@ export async function listAllSkillItems(disabled: Set<string>): Promise<SkillLis
     }
   }
   return items.sort(compareSkillItems);
+}
+
+async function serializeSkillListItem(skill: SkillListItem): Promise<Record<string, unknown>> {
+  const discoveredChildren = await listChildSkills(skill.path).catch(() => []);
+  const children = discoveredChildren.map<SkillListItem>((child) => ({
+    ...child.metadata,
+    userInvocable: child.metadata.userInvocableExplicit
+      ? child.metadata.userInvocable
+      : skill.source === "installed",
+    path: child.path,
+    source: skill.source,
+    // 子技能不提供独立开关，enabled 始终继承母技能的总控状态。
+    enabled: skill.enabled,
+    mtimeMs: child.mtimeMs,
+  }));
+
+  return {
+    name: skill.name,
+    description: skill.description,
+    label: skill.label,
+    summary: skill.summary,
+    icon: skill.icon,
+    source: skill.source,
+    userInvocable: skill.userInvocable,
+    placeholder: skill.placeholder,
+    config: skill.config,
+    tools: skill.tools,
+    enabled: skill.enabled,
+    connectorId: connectorIdForSkill(skill.name),
+    children: await Promise.all(children.map(serializeSkillListItem)),
+  };
 }
 
 async function skillExists(name: string): Promise<boolean> {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,24 +25,51 @@ describe("WholeDocReviewNav", () => {
 
   it("确认弹层返回时审阅作用域已变化则不执行退回", async () => {
     const onRevert = vi.fn();
+    const onToast = vi.fn();
 
-    await renderReviewNav("session-a:doc-a", onRevert);
+    await renderReviewNav("session-a:doc-a", onRevert, onToast);
     await click(buttonByText("退回旧版"));
     expect(confirmText()).toContain("退回旧版？");
 
-    await renderReviewNav("session-b:doc-b", onRevert);
+    await renderReviewNav("session-b:doc-b", onRevert, onToast);
     expect(confirmText()).toContain("退回旧版？");
 
     await click(confirmButtonByText("退回旧版"));
     await flushMicrotasks();
 
     expect(onRevert).not.toHaveBeenCalled();
+    expect(onToast).toHaveBeenCalledWith("审阅状态已变化，请重试");
   });
 
   it("确认弹层返回时审阅作用域未变化才执行退回", async () => {
     const onRevert = vi.fn();
 
     await renderReviewNav("session-a:doc-a", onRevert);
+    await click(buttonByText("退回旧版"));
+    await click(confirmButtonByText("退回旧版"));
+    await flushMicrotasks();
+
+    expect(onRevert).toHaveBeenCalledTimes(1);
+  });
+
+  it("StrictMode 重挂载后确认退回仍生效", async () => {
+    const onRevert = vi.fn();
+
+    await render(
+      <StrictMode>
+        <ConfirmProvider>
+          <section id="view-workspace">
+            <WholeDocReviewNav
+              reviewScopeKey="session-a:doc-a"
+              version="new"
+              onVersionChange={() => {}}
+              onApply={() => {}}
+              onRevert={onRevert}
+            />
+          </section>
+        </ConfirmProvider>
+      </StrictMode>,
+    );
     await click(buttonByText("退回旧版"));
     await click(confirmButtonByText("退回旧版"));
     await flushMicrotasks();
@@ -82,7 +109,11 @@ describe("WholeDocReviewNav", () => {
   });
 });
 
-async function renderReviewNav(reviewScopeKey: string, onRevert: () => void): Promise<void> {
+async function renderReviewNav(
+  reviewScopeKey: string,
+  onRevert: () => void,
+  onToast?: (message: string) => void,
+): Promise<void> {
   await render(
     <ConfirmProvider>
       <section id="view-workspace">
@@ -92,6 +123,7 @@ async function renderReviewNav(reviewScopeKey: string, onRevert: () => void): Pr
           onVersionChange={() => {}}
           onApply={() => {}}
           onRevert={onRevert}
+          onToast={onToast}
         />
       </section>
     </ConfirmProvider>,

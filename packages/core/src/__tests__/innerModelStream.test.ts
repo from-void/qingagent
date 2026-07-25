@@ -213,12 +213,12 @@ describe("streamInnerModel", () => {
       topP: 0.82,
       maxTokens: 3456,
     }));
-    // 测试替身走 legacy AI SDK 4 transport，compat 层会把
-    // maxOutputTokens 映射成实际 wire 字段 maxTokens。
+    // fallback 直接走当前 AI SDK 5 transport，使用 maxOutputTokens；
+    // branchCall 仍以内部兼容参数 maxTokens 接收同一个覆盖值。
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       temperature: 0.73,
       topP: 0.82,
-      maxTokens: 3456,
+      maxOutputTokens: 3456,
     }));
   });
 

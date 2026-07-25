@@ -1561,7 +1561,7 @@ function collectRemovedFlowInlineLabels(source: string, spans: Span[]): Map<stri
       index: 0,
     };
     const parsed = parseFlowEdgeLine(line, 0, [], nextEdgeId);
-    if (!parsed) continue;
+    if (!parsed || "error" in parsed) continue;
     for (const ref of [parsed.left, parsed.right]) {
       if (!ref.declared || !ref.labelSpan || ref.label === ref.id) continue;
       out.set(ref.id, ref);

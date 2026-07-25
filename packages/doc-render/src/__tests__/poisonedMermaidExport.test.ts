@@ -2,10 +2,16 @@ import type { PmDoc } from "@qingagent/pm-schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderedDiagrams } from "../export/mermaidServer.js";
 
-const getBrowserMock = vi.hoisted(() => vi.fn());
+const { getBrowserMock, withBrowserContextSlotMock } = vi.hoisted(() => ({
+  getBrowserMock: vi.fn(),
+  withBrowserContextSlotMock: vi.fn(
+    async (run: () => Promise<unknown>) => run(),
+  ),
+}));
 
 vi.mock("../browser/pool.js", () => ({
   getBrowser: getBrowserMock,
+  withBrowserContextSlot: withBrowserContextSlotMock,
 }));
 
 const SOURCE = "flowchart TD\n  A[开始] --> B[结束]";
@@ -54,6 +60,7 @@ function installFakeMermaidServer(): { render: ReturnType<typeof vi.fn> } {
 
 beforeEach(() => {
   getBrowserMock.mockReset();
+  withBrowserContextSlotMock.mockClear();
 });
 
 describe("Mermaid 无文字毒缓存导出自愈", () => {
@@ -65,6 +72,7 @@ describe("Mermaid 无文字毒缓存导出自愈", () => {
     const block = prepared.content[0];
 
     expect(getBrowserMock).toHaveBeenCalledOnce();
+    expect(withBrowserContextSlotMock).toHaveBeenCalledOnce();
     expect(mermaid.render).toHaveBeenCalledWith("exp-0", SOURCE);
     expect(block?.type === "diagram" ? block.attrs.svg : null).toBe(FRESH_SVG);
     expect(input.content[0]?.type === "diagram" ? input.content[0].attrs.svg : null).toBe(POISONED_SVG);
@@ -76,6 +84,7 @@ describe("Mermaid 无文字毒缓存导出自愈", () => {
     const prepared = await withRenderedDiagrams(input) as PmDoc;
 
     expect(getBrowserMock).not.toHaveBeenCalled();
+    expect(withBrowserContextSlotMock).not.toHaveBeenCalled();
     expect(prepared.content[0]?.type === "diagram" ? prepared.content[0].attrs.svg : null).toBe(FRESH_SVG);
   });
 });

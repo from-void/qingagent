@@ -16,6 +16,7 @@ import { commandSchema } from "@qingagent/contract-ts/schemas";
 import type {
   ExternalAnnotation,
   ExternalBridgeFrame,
+  ExternalErrorCode,
   ExternalReviewCommitRequest,
   ExternalReviewDiff,
   ExternalReviewPatchDetail,

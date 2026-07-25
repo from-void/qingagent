@@ -485,6 +485,83 @@ describe("diagram-engine", () => {
     expect(crossed).toMatchObject({ ok: false, source, error: "节点不在同一父分区内" });
   });
 
+  it("手写空 subgraph 作为普通布局项进入共享几何与 SVG 空态", () => {
+    const source = [
+      "flowchart LR",
+      '  subgraph Gamma["Gamma区"]',
+      "  end",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.nodes).toHaveLength(0);
+    expect(model.subgraphs).toEqual([
+      expect.objectContaining({ id: "Gamma", label: "Gamma区", scopePath: [] }),
+    ]);
+
+    const layout = layoutDiagramGraph(model);
+    expect(layout.clusters).toHaveLength(1);
+    expect(layout.clusters[0]).toMatchObject({
+      id: "Gamma",
+      empty: true,
+    });
+    expect(layout.clusters[0]!.width).toBeGreaterThanOrEqual(160);
+    expect(layout.clusters[0]!.height).toBeGreaterThanOrEqual(90);
+
+    const svg = graphToSvg(source);
+    expect(svg).not.toBeNull();
+    expect(svg).toContain('data-cluster-id="Gamma"');
+    expect(svg).toContain('data-empty="true"');
+    expect(svg).toContain('stroke-dasharray="6 5"');
+    expect(svg).toContain(">Gamma区</text>");
+    expect(svg).toContain(">拖入节点</text>");
+    expect(svg).not.toContain("data-node-id=");
+  });
+
+  it("luna1-TC2：建区、拖入、改名、拖出后保留空块，后续改写不吞区，显式解散才删除", () => {
+    const baseline = [
+      "flowchart LR",
+      "  A[自由节点A]",
+      "  B[自由节点B]",
+      "",
+    ].join("\n");
+    const created = wrapNodesInSubgraph(baseline, [], "Gamma区");
+    expect(created).toMatchObject({ ok: true, newSubgraphId: "Gamma区" });
+
+    const movedIn = moveNodeToSubgraph(created.source, "A", created.newSubgraphId!);
+    expect(movedIn.ok).toBe(true);
+    expect((parseDiagram(movedIn.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual([created.newSubgraphId]);
+
+    const renamed = renameSubgraph(movedIn.source, created.newSubgraphId!, "Gamma改名");
+    expect(renamed.ok).toBe(true);
+    const movedOut = moveNodeToSubgraph(renamed.source, "A", null);
+    expect(movedOut.ok).toBe(true);
+    expect(movedOut.source).toContain(
+      `subgraph ${created.newSubgraphId}["Gamma改名"]\n  end`,
+    );
+    const emptyModel = parseDiagram(movedOut.source).model as FlowGraph;
+    expect(emptyModel.subgraphs.find((item) => item.id === created.newSubgraphId)?.label)
+      .toBe("Gamma改名");
+    expect(emptyModel.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+
+    const added = applyEdit(movedOut.source, { kind: "addNode", label: "连续保存节点" });
+    expect(added.ok).toBe(true);
+    expect((parseDiagram(added.source).model as FlowGraph).subgraphs.map((item) => item.id))
+      .toContain(created.newSubgraphId);
+    const relabeled = applyEdit(added.source, { kind: "relabelNode", nodeId: "B", label: "已保存" });
+    expect(relabeled.ok).toBe(true);
+    expect((parseDiagram(relabeled.source).model as FlowGraph).subgraphs.map((item) => item.id))
+      .toContain(created.newSubgraphId);
+
+    const dissolved = dissolveSubgraph(relabeled.source, created.newSubgraphId!);
+    expect(dissolved.ok).toBe(true);
+    expect((parseDiagram(dissolved.source).model as FlowGraph).subgraphs).toHaveLength(0);
+    expect(dissolved.source).not.toContain("subgraph ");
+    expect(dissolved.source.split("\n").filter((line) => line.trim() === "end")).toHaveLength(0);
+  });
+
   it("wrapNodesInSubgraph 迁移内联声明时只剥离目标形状，边和 class/style 字节保持", () => {
     const source = [
       "flowchart LR",

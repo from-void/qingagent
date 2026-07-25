@@ -200,6 +200,10 @@
   transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
 }
 
+.graph-diagram-cluster.is-empty {
+  border-style: dashed;
+}
+
 .graph-diagram-cluster__title {
   position: absolute;
   top: 9px;
@@ -212,6 +216,19 @@
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.graph-diagram-cluster__empty-hint {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  left: 12px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+  transform: translateY(-20%);
 }
 
 .graph-diagram-editor .graph-diagram-cluster__title {

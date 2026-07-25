@@ -160,6 +160,7 @@ type GraphClusterData = {
   direction: string;
   depth: number;
   scopePath: string[];
+  empty: boolean;
   isRenaming: boolean;
   canEdit: boolean;
   onSelect: () => void;
@@ -540,10 +541,16 @@ function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterN
 
   return (
     <div
-      className={classNames("graph-diagram-cluster", selected && "is-selected", data.isRenaming && "is-renaming")}
+      className={classNames(
+        "graph-diagram-cluster",
+        data.empty && "is-empty",
+        selected && "is-selected",
+        data.isRenaming && "is-renaming",
+      )}
       data-cluster-label={data.label}
       data-cluster-direction={data.direction}
       data-cluster-depth={data.depth}
+      data-cluster-empty={data.empty}
     >
       <div
         ref={titleRef}
@@ -588,6 +595,11 @@ function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterN
           />
         ) : data.label}
       </div>
+      {data.empty ? (
+        <div className="graph-diagram-cluster__empty-hint" aria-hidden="true">
+          拖入节点
+        </div>
+      ) : null}
       {GRAPH_HANDLES.map((handle) => (
         <div key={handle.id} className={`graph-diagram-cluster__handle-slot graph-diagram-cluster__handle-slot--${handle.id}`}>
           <Handle
@@ -1993,6 +2005,7 @@ export function GraphDiagramView({
           direction: cluster.direction,
           depth: cluster.depth,
           scopePath: cluster.scopePath,
+          empty: cluster.empty,
           isRenaming: inEdit && renamingSubgraphId === cluster.id,
           canEdit: inEdit,
           onSelect: () => selectSubgraph(cluster.id),

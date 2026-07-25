@@ -244,6 +244,7 @@ export interface GraphLayoutCluster extends GraphLayoutRect {
   scopePath: string[];
   direction: string;
   depth: number;
+  empty: boolean;
 }
 
 export interface DiagramGraphLayout {
@@ -334,7 +335,10 @@ export function getCapabilities(
 export function applyEdit(source: string, op: EditOp): RewriteResult {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
-  return registry[parsed.model.type].rewrite(source, parsed, op);
+  const result = registry[parsed.model.type].rewrite(source, parsed, op);
+  return parsed.model.type === "flowchart"
+    ? verifyFlowSubgraphsPreserved(source, result)
+    : result;
 }
 
 /**
@@ -588,7 +592,8 @@ export function graphToSvg(source: string, overlay: DiagramOverlay | null | unde
   if (!parsed.ok) return null;
   const edges = modelEdges(parsed.model);
   const flattened = modelNodes(parsed.model);
-  if (flattened.length === 0) return null;
+  const hasFlowSubgraphs = parsed.model.type === "flowchart" && parsed.model.subgraphs.length > 0;
+  if (flattened.length === 0 && !hasFlowSubgraphs) return null;
   const layout = layoutDiagramGraph(parsed.model, overlay);
   const endpointRects: Record<string, GraphLayoutRect> = {
     ...layout.nodes,
@@ -3217,6 +3222,12 @@ function verifyFlowSubgraphRewrite(
   if (!reparsed.ok || reparsed.model.type !== "flowchart") {
     return { ok: false, source: originalSource, error: reparsed.error ?? "分区改写后无法重新解析" };
   }
+  const preserved = verifyFlowSubgraphsPreserved(
+    originalSource,
+    { ok: true, source: nextSource },
+    expected.removedSubgraphId ? new Set([expected.removedSubgraphId]) : undefined,
+  );
+  if (!preserved.ok) return preserved;
   if (expected.removedSubgraphId && reparsed.model.subgraphs.some((item) => item.id === expected.removedSubgraphId)) {
     return { ok: false, source: originalSource, error: "分区解散后仍残留声明" };
   }
@@ -3240,6 +3251,42 @@ function verifyFlowSubgraphRewrite(
     source: nextSource,
     ...(expected.newSubgraphId ? { newSubgraphId: expected.newSubgraphId } : {}),
   };
+}
+
+/**
+ * 所有 Mermaid 增量写回都必须保留源码里已有的 subgraph。
+ * 唯一例外是 dissolveSubgraph 明确传入的目标；这样即使后续新增了按节点重建源码的路径，
+ * 空分区也不会因为“没有成员行”而被静默吞掉。
+ */
+function verifyFlowSubgraphsPreserved(
+  originalSource: string,
+  result: RewriteResult,
+  allowedRemovedIds: Set<string> = new Set(),
+): RewriteResult {
+  if (!result.ok) return result;
+  const before = parseDiagram(originalSource);
+  const after = parseDiagram(result.source);
+  if (
+    !before.ok ||
+    before.model.type !== "flowchart" ||
+    !after.ok ||
+    after.model.type !== "flowchart"
+  ) {
+    return after.ok
+      ? result
+      : { ok: false, source: originalSource, error: after.error ?? "分区改写后无法重新解析" };
+  }
+  const afterIds = new Set(after.model.subgraphs.map((subgraph) => subgraph.id));
+  const missing = before.model.subgraphs
+    .map((subgraph) => subgraph.id)
+    .filter((id) => !allowedRemovedIds.has(id) && !afterIds.has(id));
+  return missing.length === 0
+    ? result
+    : {
+        ok: false,
+        source: originalSource,
+        error: `改写不得静默删除分区：${missing.join("、")}`,
+      };
 }
 
 function dedupeEdits(edits: Edit[]): Edit[] {
@@ -3605,6 +3652,7 @@ export function layoutDiagramGraph(
         scopePath: [...subgraph.scopePath],
         direction: ownDirection,
         depth: subgraph.scopePath.length,
+        empty: children.length === 0,
       };
       items.push({
         id: subgraph.id,
@@ -3982,7 +4030,10 @@ function renderSvgCluster(cluster: GraphLayoutCluster, themePalette: ThemePalett
   const fill = sanitizeColor(themePalette?.clusterFill) ?? "#f3ecdd";
   const stroke = sanitizeColor(themePalette?.clusterStroke) ?? "#cdbfa3";
   const text = sanitizeColor(themePalette?.textColor) ?? "#2f2a22";
-  return `<g data-cluster-id="${escapeXml(cluster.id)}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}" data-direction="${cluster.direction}"><rect x="${cluster.x}" y="${cluster.y}" width="${cluster.width}" height="${cluster.height}" fill="${fill}" fill-opacity="0.72" stroke="${stroke}" stroke-width="1.5"/><text x="${cluster.x + cluster.width / 2}" y="${cluster.y + 27}" text-anchor="middle" font-size="14" font-weight="600" fill="${text}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(cluster.label)}</text></g>`;
+  const emptyHint = cluster.empty
+    ? `<text x="${cluster.x + cluster.width / 2}" y="${cluster.y + cluster.height / 2 + 12}" text-anchor="middle" font-size="12" fill="${text}" fill-opacity="0.58" font-family="${SVG_TEXT_FONT_FAMILY}">拖入节点</text>`
+    : "";
+  return `<g data-cluster-id="${escapeXml(cluster.id)}" data-layout-x="${cluster.x}" data-layout-y="${cluster.y}" data-layout-width="${cluster.width}" data-layout-height="${cluster.height}" data-direction="${cluster.direction}" data-empty="${cluster.empty}"><rect x="${cluster.x}" y="${cluster.y}" width="${cluster.width}" height="${cluster.height}" fill="${fill}" fill-opacity="0.72" stroke="${stroke}" stroke-width="1.5"${cluster.empty ? ' stroke-dasharray="6 5"' : ""}/><text x="${cluster.x + cluster.width / 2}" y="${cluster.y + 27}" text-anchor="middle" font-size="14" font-weight="600" fill="${text}" font-family="${SVG_TEXT_FONT_FAMILY}">${escapeXml(cluster.label)}</text>${emptyHint}</g>`;
 }
 
 function escapeXml(value: string): string {

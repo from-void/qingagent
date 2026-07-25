@@ -806,6 +806,130 @@ flowchart LR
     expect(parseTranslate(cluster.style.transform).x).toBeLessThan(200);
   });
 
+  it("luna1-TC2：空分区持续渲染，可拖入、改名、拖空、选中并显式解散", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[自由节点A]
+  B[自由节点B]
+`}
+        initialOverlay={{ positions: { A: { x: 40, y: 50 }, B: { x: 320, y: 50 } } }}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const editor = await openEditor();
+
+    await dispatchGraphTestAction(editor, {
+      kind: "drawSubgraph",
+      rect: { x: 620, y: 320, width: 120, height: 80 },
+    });
+    const createInput = findInput("新分区名称", editor);
+    await setInputValue(createInput, "Gamma区");
+    await keyDown(createInput, { key: "Enter" });
+    const createdSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const gammaId = (parseDiagram(createdSource).model as FlowGraph).subgraphs
+      .find((subgraph) => subgraph.label === "Gamma区")!.id;
+
+    let clusterNode = await waitForSelector(`.react-flow__node[data-id="${gammaId}"]`, editor) as HTMLElement;
+    let cluster = clusterNode.querySelector<HTMLElement>(".graph-diagram-cluster")!;
+    expect(cluster.dataset.clusterEmpty).toBe("true");
+    expect(cluster.classList.contains("is-empty")).toBe(true);
+    expect(cluster.textContent).toContain("拖入节点");
+    expect(clusterNode.style.width).toBe("220px");
+    expect(clusterNode.style.height).toBe("146px");
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram-cluster\.is-empty\s*\{\s*border-style:\s*dashed;/s,
+    );
+
+    const createdPosition = parseTranslate(clusterNode.style.transform);
+    await dispatchGraphTestAction(editor, {
+      kind: "dropNode",
+      nodeId: "A",
+      position: {
+        x: createdPosition.x,
+        y: createdPosition.y,
+      },
+    });
+    const movedInSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(movedInSource).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual([gammaId]);
+
+    const title = await waitForSelector(
+      `.react-flow__node[data-id="${gammaId}"] .graph-diagram-cluster__title`,
+      editor,
+    ) as HTMLElement;
+    await act(async () => {
+      title.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+    });
+    await flush();
+    const renameInput = findInput("分区名称", editor);
+    await setInputValue(renameInput, "Gamma改名");
+    await keyDown(renameInput, { key: "Enter" });
+    const renamedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(renamedSource).model as FlowGraph).subgraphs.find((item) => item.id === gammaId)?.label)
+      .toBe("Gamma改名");
+
+    await dispatchGraphTestAction(editor, {
+      kind: "dropNode",
+      nodeId: "A",
+      position: { x: 980, y: 540 },
+    });
+    const emptiedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    const emptiedModel = parseDiagram(emptiedSource).model as FlowGraph;
+    expect(emptiedModel.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(emptiedModel.subgraphs.find((item) => item.id === gammaId)?.label).toBe("Gamma改名");
+
+    clusterNode = await waitForSelector(`.react-flow__node[data-id="${gammaId}"]`, editor) as HTMLElement;
+    cluster = clusterNode.querySelector<HTMLElement>(".graph-diagram-cluster")!;
+    expect(cluster.dataset.clusterEmpty).toBe("true");
+    const emptyTitle = cluster.querySelector<HTMLElement>(".graph-diagram-cluster__title")!;
+    await click(emptyTitle);
+    const dissolveButton = editor.querySelector<HTMLButtonElement>("button[aria-label='解散分区']")!;
+    expect(dissolveButton.disabled).toBe(false);
+    await mouseDown(dissolveButton);
+
+    const dissolvedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(dissolvedSource).model as FlowGraph).subgraphs).toHaveLength(0);
+    expect(dissolvedSource).not.toContain("subgraph ");
+    expect(dissolvedSource.split("\n").filter((line) => line.trim() === "end")).toHaveLength(0);
+  });
+
+  it("源码手写空 subgraph 在预览和编辑态同路渲染，节点可拖入", async () => {
+    const onSourceChange = vi.fn();
+    await render(
+      <EditableDiagramHarness
+        source={`flowchart LR
+  A[自由节点A]
+  subgraph Gamma["手写空分区"]
+  end
+`}
+        initialOverlay={{ positions: { A: { x: 420, y: 80 } } }}
+        onSourceChange={onSourceChange}
+      />,
+    );
+    const previewCluster = await waitForSelector('.graph-diagram-export [data-cluster-id="Gamma"]') as SVGGElement;
+    expect(previewCluster.dataset.empty).toBe("true");
+    expect(previewCluster.textContent).toContain("手写空分区");
+    expect(previewCluster.textContent).toContain("拖入节点");
+
+    const editor = await openEditor();
+    const clusterNode = await waitForSelector('.react-flow__node[data-id="Gamma"]', editor) as HTMLElement;
+    expect(clusterNode.querySelector<HTMLElement>(".graph-diagram-cluster")?.dataset.clusterEmpty).toBe("true");
+    const position = parseTranslate(clusterNode.style.transform);
+    await dispatchGraphTestAction(editor, {
+      kind: "dropNode",
+      nodeId: "A",
+      position: { x: position.x, y: position.y },
+    });
+
+    const movedSource = onSourceChange.mock.calls.at(-1)?.[0] as string;
+    expect((parseDiagram(movedSource).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual(["Gamma"]);
+    expect((parseDiagram(movedSource).model as FlowGraph).subgraphs.find((item) => item.id === "Gamma"))
+      .toMatchObject({ label: "手写空分区" });
+  });
+
   it("分区标题可选择、双击内联改名，工具栏解散后节点保留归父", async () => {
     const onSourceChange = vi.fn();
     await render(

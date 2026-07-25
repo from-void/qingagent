@@ -451,6 +451,92 @@ describe("rich formats HTTP bridge E2E", () => {
     expect(roundTripExport).toBe(baselineExport);
   });
 
+  it("luna1-TC2 空分区拖空后经连续保存仍是服务端真值，只有显式解散才消失", async () => {
+    const baselineSource = [
+      "flowchart LR",
+      "  A[自由节点A]",
+      "  B[自由节点B]",
+      "",
+    ].join("\n");
+    let persistedDoc = canvasDiagramDoc(baselineSource);
+    let clientCanonicalDoc = persistedDoc;
+    const sessionId = await seedRestoredSession("luna1-TC2 空分区生命周期", persistedDoc);
+    let expectedVersion = 1;
+
+    const persistStep = async (label: string, source: string, overlay?: DiagramOverlay): Promise<void> => {
+      const clientMutationId = `empty-lifecycle-${label}-${randomUUID()}`;
+      const nextDoc = canvasDiagramDoc(source, overlay);
+      const { res, frames } = await postStream(updateDocCommand({
+        sessionId,
+        expectedDocumentSnapshot: expectedVersion,
+        baseContentHash: getPmContentHash(clientCanonicalDoc),
+        clientMutationId,
+        doc: nextDoc,
+      }));
+      expect(res.status, label).toBe(200);
+      const result = findDocWriteFrame(frames, clientMutationId);
+      expect(result.data.ok, label).toBe(true);
+      if (!result.data.ok) throw new Error(`${label} 保存冲突`);
+      expectedVersion = result.data.docVersion;
+      clientCanonicalDoc = nextDoc;
+      persistedDoc = (await core.documentRepo.load(sessionId))!.pmDoc!;
+      expect(persistedDoc, label).toEqual(JSON.parse(JSON.stringify(nextDoc)));
+      expect(serverDiagramSource(persistedDoc), label).toBe(source);
+    };
+
+    const created = mustRewrite(
+      wrapNodesInSubgraph(baselineSource, [], "Gamma区"),
+      "建 Gamma 空分区",
+    );
+    await persistStep("create", created.source);
+
+    const movedIn = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "A", created.newSubgraphId!),
+      "拖入 Gamma",
+    );
+    await persistStep("move-in", movedIn.source);
+
+    const renamed = mustRewrite(
+      renameSubgraph(serverDiagramSource(persistedDoc), created.newSubgraphId!, "Gamma改名"),
+      "Gamma 改名",
+    );
+    await persistStep("rename", renamed.source);
+
+    const movedOut = mustRewrite(
+      moveNodeToSubgraph(serverDiagramSource(persistedDoc), "A", null),
+      "拖出 Gamma",
+    );
+    await persistStep("move-out-empty", movedOut.source);
+    expect(serverFlowModel(persistedDoc).subgraphs.find((item) => item.id === created.newSubgraphId))
+      .toMatchObject({ label: "Gamma改名" });
+    expect(serverFlowModel(persistedDoc).nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+
+    const added = mustRewrite(
+      applyEdit(serverDiagramSource(persistedDoc), { kind: "addNode", label: "连续保存节点" }),
+      "空分区后的无关新增",
+    );
+    await persistStep("save-again-1", added.source);
+    expect(serverFlowModel(persistedDoc).subgraphs.map((item) => item.id)).toContain(created.newSubgraphId);
+
+    await persistStep(
+      "save-again-2",
+      serverDiagramSource(persistedDoc),
+      { positions: { A: { x: 700, y: 300 } } },
+    );
+    expect(serverFlowModel(persistedDoc).subgraphs.map((item) => item.id)).toContain(created.newSubgraphId);
+    expect(serverDiagramOverlay(persistedDoc)).toEqual({ positions: { A: { x: 700, y: 300 } } });
+
+    const dissolved = mustRewrite(
+      dissolveSubgraph(serverDiagramSource(persistedDoc), created.newSubgraphId!),
+      "显式解散 Gamma",
+    );
+    await persistStep("dissolve", dissolved.source);
+    expect(serverFlowModel(persistedDoc).subgraphs).toHaveLength(0);
+    expect(serverDiagramSource(persistedDoc)).not.toContain("subgraph ");
+    expect(serverDiagramSource(persistedDoc).split("\n").filter((line) => line.trim() === "end"))
+      .toHaveLength(0);
+  });
+
   it("GET /api/v1/export/:sessionId exports rich PM docs as DOCX and PDF binaries", async () => {
     const sessionId = await seedRestoredSession("富格式导出桥接", richPmDoc("export"));
 

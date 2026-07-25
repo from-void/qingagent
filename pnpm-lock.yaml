@@ -497,6 +497,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@qingagent/diagram-engine':
+        specifier: workspace:*
+        version: link:../diagram-engine
       tsx:
         specifier: ^4.19.4
         version: 4.22.3

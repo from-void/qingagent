@@ -81,6 +81,7 @@ import {
   type RewriteResult,
 } from "@qingagent/diagram-engine";
 import { useToast } from "../../../../system";
+import type { DiagramVisualChange } from "./DiagramRenderer";
 import "./graphDiagram.css";
 
 interface GraphDiagramViewProps {
@@ -92,6 +93,8 @@ interface GraphDiagramViewProps {
   openVisualSignal?: number;
   onOverlayChange?: (overlay: DiagramOverlay | null) => void;
   onSourceChange?: (source: string) => void;
+  onVisualChange?: (change: DiagramVisualChange) => void;
+  onUndo?: () => boolean;
 }
 
 type CanvasSize = { width: number; height: number };
@@ -473,7 +476,6 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             type="source"
             position={handle.position}
             isConnectable={isConnectable}
-            isConnectableEnd={false}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线起点`}
             title="拖到另一节点建立连线"
@@ -601,7 +603,6 @@ function GraphCluster({ data, isConnectable, selected }: NodeProps<GraphClusterN
             type="source"
             position={handle.position}
             isConnectable={isConnectable}
-            isConnectableEnd={false}
             className="graph-diagram-cluster__handle"
           />
         </div>
@@ -1106,6 +1107,8 @@ export function GraphDiagramView({
   openVisualSignal = 0,
   onOverlayChange,
   onSourceChange,
+  onVisualChange,
+  onUndo,
 }: GraphDiagramViewProps) {
   const toast = useToast();
   const [liveSource, setLiveSource] = useState(source);
@@ -1324,6 +1327,18 @@ export function GraphDiagramView({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        onUndo &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "z" &&
+        !target?.closest("input, textarea, [contenteditable='true']")
+      ) {
+        event.preventDefault();
+        onUndo();
+        return;
+      }
       if (event.key !== "Escape") return;
       if (subgraphDrawMode || pendingSubgraph) {
         event.preventDefault();
@@ -1340,7 +1355,7 @@ export function GraphDiagramView({
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeEditor, inEdit, pendingSubgraph, subgraphDrawMode]);
+  }, [closeEditor, inEdit, onUndo, pendingSubgraph, subgraphDrawMode]);
 
   const emitOverlay = useCallback(
     (next: DiagramOverlay, extraIds?: { nodes?: string[]; edges?: string[] }) => {
@@ -1351,9 +1366,10 @@ export function GraphDiagramView({
       const cleaned = cleanOverlay(next, nodeIds, edgeIds);
       const payload = isOverlayEmpty(cleaned) ? null : cleaned;
       overlayRef.current = payload;
-      onOverlayChange?.(payload);
+      if (onVisualChange) onVisualChange({ overlay: payload });
+      else onOverlayChange?.(payload);
     },
-    [ids.edges, ids.nodes, onOverlayChange],
+    [ids.edges, ids.nodes, onOverlayChange, onVisualChange],
   );
 
   const onNodesChange: OnNodesChange<GraphFlowNode> = useCallback((changes: NodeChange<GraphFlowNode>[]) => {
@@ -1385,7 +1401,7 @@ export function GraphDiagramView({
 
   const runRewrite = useCallback(
     (rewrite: (source: string) => RewriteResult): RewriteResult | null => {
-      if (readOnly || !onSourceChange) return null;
+      if (readOnly || (!onSourceChange && !onVisualChange)) return null;
       const baseSource = liveSourceRef.current;
       const result = rewrite(baseSource);
       if (!result.ok) {
@@ -1395,7 +1411,6 @@ export function GraphDiagramView({
       setError(null);
       liveSourceRef.current = result.source;
       setLiveSource(result.source);
-      onSourceChange(result.source);
       if (result.idMap) {
         setSelectedNodeId((current) => remapSelectedId(current, result.idMap?.nodes));
         setSelectedNodeIds((current) => current.map((id) => result.idMap?.nodes?.[id] ?? id));
@@ -1406,14 +1421,24 @@ export function GraphDiagramView({
         setParentPickerNodeId((current) => remapSelectedId(current, result.idMap?.nodes));
       }
       const currentOverlay = overlayRef.current;
+      let carriedOverlay: DiagramOverlay | null | undefined;
       if (currentOverlay) {
         const carried = carryOverDiagramOverlay(baseSource, currentOverlay, result.source, result.idMap) ?? null;
         overlayRef.current = carried;
-        onOverlayChange?.(carried);
+        carriedOverlay = carried;
+      }
+      if (onVisualChange) {
+        onVisualChange({
+          source: result.source,
+          ...(currentOverlay ? { overlay: carriedOverlay ?? null } : {}),
+        });
+      } else {
+        onSourceChange?.(result.source);
+        if (currentOverlay) onOverlayChange?.(carriedOverlay ?? null);
       }
       return result;
     },
-    [onOverlayChange, onSourceChange, readOnly],
+    [onOverlayChange, onSourceChange, onVisualChange, readOnly],
   );
 
   const runEdit = useCallback(
@@ -1979,7 +2004,6 @@ export function GraphDiagramView({
         selectable: inEdit,
         focusable: inEdit,
         selected: inEdit && selectedSubgraphId === cluster.id,
-        dragHandle: ".graph-diagram-cluster__title",
         zIndex: -100 + cluster.depth,
         className: classNames("graph-diagram-cluster-node", selectedSubgraphId === cluster.id && "is-selected"),
         style: {
@@ -3857,11 +3881,15 @@ function remapSelectedId(id: string | null, idMap: Record<string, string> | unde
 }
 
 function cleanOverlay(overlay: DiagramOverlay, nodeIds: Set<string>, edgeIds: Set<string>): DiagramOverlay {
+  const positions = filterRecord(overlay.positions, nodeIds);
+  const styles = filterRecord(overlay.styles, nodeIds);
+  const edgeStyles = filterRecord(overlay.edgeStyles, edgeIds);
+  const edgeHandles = filterRecord(overlay.edgeHandles, edgeIds);
   return {
-    positions: filterRecord(overlay.positions, nodeIds),
-    styles: filterRecord(overlay.styles, nodeIds),
-    edgeStyles: filterRecord(overlay.edgeStyles, edgeIds),
-    edgeHandles: filterRecord(overlay.edgeHandles, edgeIds),
+    ...(positions ? { positions } : {}),
+    ...(styles ? { styles } : {}),
+    ...(edgeStyles ? { edgeStyles } : {}),
+    ...(edgeHandles ? { edgeHandles } : {}),
   };
 }
 

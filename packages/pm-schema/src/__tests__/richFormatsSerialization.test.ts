@@ -99,6 +99,28 @@ const richPmDoc: PmDoc = {
 };
 
 describe("rich format serialization", () => {
+  it("Mermaid source 有无单个尾换行时导出同一字节，解散分区不制造空行", () => {
+    const diagramMarkdown = (source: string) => pmToMarkdown({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: {
+          blockId: "diagram-roundtrip",
+          lang: "mermaid",
+          source,
+          svg: null,
+        },
+      }],
+    });
+    const source = "flowchart TD\n  A[开始]\n  %% trailing comment keep";
+
+    expect(diagramMarkdown(source)).toBe(diagramMarkdown(`${source}\n`));
+    expect(diagramMarkdown(source)).toBe(
+      "```mermaid\nflowchart TD\n  A[开始]\n  %% trailing comment keep\n```",
+    );
+  });
+
   it("serializes taskList, callout, blockMath, and inlineMath to markdown", () => {
     const markdown = pmToMarkdown(richPmDoc);
 

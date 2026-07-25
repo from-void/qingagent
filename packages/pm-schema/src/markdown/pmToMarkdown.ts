@@ -172,8 +172,9 @@ function inlineCode(text: string): string {
 function fencedCodeBlock(language: string, content: string): string {
   // CommonMark:围栏至少 3 个反引号，且闭围栏不得短于开围栏。比正文最长连续反引号多 1
   // 可确保正文中的 ``` / ```` 永远不会被误认成当前块的闭围栏。
+  // 正文已有尾换行时不再额外补一行，避免严格 Markdown 往返凭空产生空行。
   const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1));
-  return `${fence}${language}\n${content}\n${fence}`;
+  return `${fence}${language}\n${content}${content.endsWith("\n") ? "" : "\n"}${fence}`;
 }
 
 function longestBacktickRun(value: string): number {

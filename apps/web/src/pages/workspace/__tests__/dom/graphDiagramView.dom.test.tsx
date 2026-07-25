@@ -547,6 +547,13 @@ flowchart LR
     expect(handles.map((handle) => handle.dataset.handlepos).sort()).toEqual(["bottom", "bottom", "left", "left", "right", "right", "top", "top"]);
     expect(handles.every((handle) => handle.title === "拖到另一节点建立连线")).toBe(true);
     expect(handles.every((handle) => handle.getAttribute("aria-label")?.includes("连线"))).toBe(true);
+    // Loose 模式下 source/target 把手重叠；松手实际命中 DOM 上层 source，
+    // source 也必须允许作为连接终点，否则真机拖拽会被 React Flow 静默拒绝。
+    expect(
+      handles
+        .filter((handle) => handle.classList.contains("source"))
+        .every((handle) => handle.classList.contains("connectableend")),
+    ).toBe(true);
     expect(editor.querySelectorAll(".react-flow__handle")).toHaveLength(16);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0\.28;/s);
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle");
@@ -855,11 +862,15 @@ flowchart LR
       />,
     );
     const editor = await openEditor();
+    expect(graphDiagramCss).toMatch(
+      /\.graph-diagram-editor \.react-flow__node-graphCluster\s*\{\s*pointer-events:\s*auto;/s,
+    );
     const clusterBefore = parseTranslate((await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement).style.transform);
     await dispatchGraphTestAction(editor, { kind: "moveSubgraph", subgraphId: "Outer", delta: { x: 140, y: 70 } });
     const latestOverlay = onOverlayChange.mock.calls.at(-1)?.[0] as NonNullable<Parameters<typeof DiagramRenderer>[0]["overlay"]>;
     expect(latestOverlay.positions?.A).toEqual({ x: 220, y: 160 });
     expect(latestOverlay.positions?.B).toEqual({ x: 440, y: 160 });
+    expect(Object.keys(latestOverlay)).toEqual(["positions"]);
     expect((latestOverlay.positions?.B?.x ?? 0) - (latestOverlay.positions?.A?.x ?? 0)).toBe(220);
     const clusterAfter = parseTranslate((await waitForSelector('.react-flow__node[data-id="Outer"]', editor) as HTMLElement).style.transform);
     expect(clusterAfter.x - clusterBefore.x).toBe(140);

@@ -8,8 +8,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent } from "@tiptap/react";
+import { parseDiagram, type FlowGraph } from "@qingagent/diagram-engine";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
-import { DEFAULT_DRAWIO_SOURCE, normalizePmDoc, type PmDoc } from "@qingagent/pm-schema";
+import {
+  DEFAULT_DRAWIO_SOURCE,
+  getPmContentHash,
+  normalizePmDoc,
+  type PmDoc,
+} from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
 
@@ -107,12 +113,25 @@ async function unmount(editor: Editor) {
   editor.destroy();
 }
 
-function diagramDoc(source: string, svg: string | null = null): PmDoc {
+function diagramDoc(
+  source: string,
+  svg: string | null = null,
+  overlay?: Record<string, unknown>,
+): PmDoc {
   return {
     type: "doc",
     attrs: { schemaVersion: 1 },
     content: [
-      { type: "diagram", attrs: { blockId: "d-1", lang: "mermaid", source, svg } },
+      {
+        type: "diagram",
+        attrs: {
+          blockId: "d-1",
+          lang: "mermaid",
+          source,
+          svg,
+          ...(overlay ? { overlay } : {}),
+        },
+      },
     ],
   } as unknown as PmDoc;
 }
@@ -255,6 +274,16 @@ function firstDiagramAttrs(editor: Editor): { lang: string; source: string; svg:
 function diagramAttrsFromDoc(doc: PmDoc): Record<string, unknown> | null {
   const block = doc.content.find((node) => node.type === "diagram");
   return block?.type === "diagram" ? block.attrs as unknown as Record<string, unknown> : null;
+}
+
+function translatedPosition(element: HTMLElement): { x: number; y: number } {
+  const match = element.style.transform.match(
+    /translate(?:3d)?\(\s*([-.\d]+)px,\s*([-.\d]+)px/,
+  );
+  return {
+    x: Number(match?.[1] ?? 0),
+    y: Number(match?.[2] ?? 0),
+  };
 }
 
 function updateFirstDiagramAttrs(editor: Editor, attrs: Record<string, unknown>): void {
@@ -496,6 +525,194 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       await act(async () => {
         root.unmount();
       });
+      container.remove();
+    }
+  });
+
+  it("画布拖入最深分区会原子改写 PM source+overlay，立即转发保存且 Ctrl+Z 撤销 source", async () => {
+    const source = `flowchart TD
+  subgraph Outer["外层"]
+    subgraph Inner["内层"]
+      A[甲]
+    end
+  end
+  B[乙]
+`;
+    const snap = pmDocToViewDocumentSnapshot(
+      diagramDoc(source, null, {
+        positions: {
+          A: { x: 120, y: 120 },
+          B: { x: 620, y: 120 },
+        },
+      }),
+      1,
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onEditorChange = vi.fn(async (_doc: PmDoc) => undefined);
+    let editor: Editor | null = null;
+
+    try {
+      await act(async () => {
+        root.render(createElement(DocumentSnapshotView, {
+          doc: snap,
+          docId: "doc-diagram-visual-save",
+          editable: true,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+          onEditorChange,
+          onEditorReady: (next: Editor | null) => {
+            editor = next;
+          },
+        }));
+      });
+      await flush(20);
+      expect(editor).not.toBeNull();
+      onEditorChange.mockClear();
+
+      const visualButton = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          ".pm-diagram-view-actions button",
+        ),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+      expect(visualButton).not.toBeNull();
+      await act(async () => visualButton!.click());
+      await flush(20);
+
+      const visualEditor = await waitForSelector(
+        ".graph-diagram-editor",
+        document.body,
+      ) as HTMLElement;
+      const innerCluster = await waitForSelector(
+        '.react-flow__node[data-id="Inner"]',
+        visualEditor,
+      ) as HTMLElement;
+      const inner = translatedPosition(innerCluster);
+      const width = Number.parseFloat(innerCluster.style.width) || 260;
+      const height = Number.parseFloat(innerCluster.style.height) || 180;
+
+      await act(async () => {
+        visualEditor.dispatchEvent(new CustomEvent("graph-diagram-test-action", {
+          bubbles: true,
+          detail: {
+            kind: "dropNode",
+            nodeId: "B",
+            // Graph 节点默认 180×72；让节点中心落在内层分区中心。
+            position: {
+              x: inner.x + width / 2 - 90,
+              y: inner.y + height / 2 - 36,
+            },
+          },
+        }));
+      });
+      await flush(20);
+
+      const persistedAttrs = firstDiagramAttrs(editor!);
+      const persistedModel = parseDiagram(
+        persistedAttrs?.source ?? "",
+      ).model as FlowGraph;
+      expect(persistedModel.nodes.find((node) => node.id === "B")?.scopePath)
+        .toEqual(["Outer", "Inner"]);
+      const editorJson = editor!.getJSON() as {
+        content?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
+      };
+      const overlay = editorJson.content?.find(
+        (node) => node.type === "diagram",
+      )?.attrs?.overlay as {
+        positions?: Record<string, { x: number; y: number }>;
+      } | undefined;
+      expect(overlay?.positions?.B).toBeDefined();
+
+      // 不等 400ms：visual-write meta 应在本拍就进入既有单飞保存队列。
+      const saved = onEditorChange.mock.calls
+        .map(([doc]) => doc as PmDoc)
+        .find((doc) => {
+          const nextSource = String(diagramAttrsFromDoc(doc)?.source ?? "");
+          const parsed = parseDiagram(nextSource);
+          return parsed.ok && parsed.model.type === "flowchart" &&
+            parsed.model.nodes.find((node) => node.id === "B")?.scopePath.join("/") ===
+              "Outer/Inner";
+        });
+      expect(saved).toBeDefined();
+      // 画布 overlay 不能保留 undefined 自有字段：JSON 发往服务端会删除它们，
+      // 若内存 PM 文档仍含这些键，下一笔保存的 baseContentHash 就会与服务端分叉。
+      expect(getPmContentHash(saved!)).toBe(
+        getPmContentHash(JSON.parse(JSON.stringify(saved!)) as PmDoc),
+      );
+      const savedOverlay = diagramAttrsFromDoc(saved!)?.overlay as
+        | Record<string, unknown>
+        | undefined;
+      expect(Object.values(savedOverlay ?? {})).not.toContain(undefined);
+
+      const innerTitle = await waitForSelector(
+        '.react-flow__node[data-id="Inner"] .graph-diagram-cluster__title',
+        visualEditor,
+      ) as HTMLElement;
+      await act(async () => {
+        innerTitle.dispatchEvent(new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          detail: 2,
+        }));
+      });
+      await flush(8);
+      const renameInput = await waitForSelector(
+        "input[aria-label='分区名称']",
+        visualEditor,
+      ) as HTMLInputElement;
+      const setInputValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      await act(async () => {
+        setInputValue.call(renameInput, "发布内层");
+        renameInput.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      expect((parseDiagram(firstDiagramAttrs(editor!)?.source ?? "").model as FlowGraph)
+        .subgraphs.find((subgraph) => subgraph.id === "Inner")?.label)
+        .toBe("发布内层");
+
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      const renameUndoneModel = parseDiagram(
+        firstDiagramAttrs(editor!)?.source ?? "",
+      ).model as FlowGraph;
+      expect(renameUndoneModel.subgraphs.find(
+        (subgraph) => subgraph.id === "Inner",
+      )?.label).toBe("内层");
+      expect(renameUndoneModel.nodes.find((node) => node.id === "B")?.scopePath)
+        .toEqual(["Outer", "Inner"]);
+
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      const undoneModel = parseDiagram(
+        firstDiagramAttrs(editor!)?.source ?? "",
+      ).model as FlowGraph;
+      expect(undoneModel.nodes.find((node) => node.id === "B")?.scopePath)
+        .toEqual([]);
+    } finally {
+      await act(async () => root.unmount());
       container.remove();
     }
   });

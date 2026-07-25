@@ -36,6 +36,13 @@ export interface DiagramRendererProps {
   openVisualSignal?: number;
   onOverlayChange?: (overlay: DiagramOverlay | null) => void;
   onSourceChange?: (source: string) => void;
+  onVisualChange?: (change: DiagramVisualChange) => void;
+  onUndo?: () => boolean;
+}
+
+export interface DiagramVisualChange {
+  source?: string;
+  overlay?: DiagramOverlay | null;
 }
 
 export function DiagramRenderer({
@@ -49,6 +56,8 @@ export function DiagramRenderer({
   openVisualSignal,
   onOverlayChange,
   onSourceChange,
+  onVisualChange,
+  onUndo,
 }: DiagramRendererProps) {
   const type = lang === "mermaid" ? detectType(source) : null;
   const normalizedOverlay = normalizeOverlay(overlay);
@@ -64,6 +73,8 @@ export function DiagramRenderer({
           openVisualSignal={openVisualSignal}
           onOverlayChange={onOverlayChange}
           onSourceChange={onSourceChange}
+          onVisualChange={onVisualChange}
+          onUndo={onUndo}
         />
       </Suspense>
     );

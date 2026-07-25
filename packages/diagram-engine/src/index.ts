@@ -516,7 +516,7 @@ export function filterStableOverlay(source: string, overlay: DiagramOverlay | nu
   const styles = filterRecord(overlay.styles, ids.nodes);
   const edgeStyles = filterRecord(overlay.edgeStyles, ids.edges);
   const edgeHandles = filterRecord(overlay.edgeHandles, ids.edges);
-  return emptyOverlay({ positions, styles, edgeStyles, edgeHandles }) ? undefined : { positions, styles, edgeStyles, edgeHandles };
+  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
 }
 
 export function carryOverDiagramOverlay(
@@ -537,7 +537,17 @@ export function carryOverDiagramOverlay(
   const styles = remapRecord(oldOverlay.styles, newIds.nodes, nodes, idMap?.nodes);
   const edgeStyles = remapRecord(oldOverlay.edgeStyles, newIds.edges, edges, idMap?.edges);
   const edgeHandles = remapRecord(oldOverlay.edgeHandles, newIds.edges, edges, idMap?.edges);
-  return emptyOverlay({ positions, styles, edgeStyles, edgeHandles }) ? undefined : { positions, styles, edgeStyles, edgeHandles };
+  return compactOverlay({ positions, styles, edgeStyles, edgeHandles });
+}
+
+function compactOverlay(overlay: DiagramOverlay): DiagramOverlay | undefined {
+  const compacted: DiagramOverlay = {
+    ...(overlay.positions ? { positions: overlay.positions } : {}),
+    ...(overlay.styles ? { styles: overlay.styles } : {}),
+    ...(overlay.edgeStyles ? { edgeStyles: overlay.edgeStyles } : {}),
+    ...(overlay.edgeHandles ? { edgeHandles: overlay.edgeHandles } : {}),
+  };
+  return emptyOverlay(compacted) ? undefined : compacted;
 }
 
 export function safeMermaidId(label: string, prefix = "n"): string {

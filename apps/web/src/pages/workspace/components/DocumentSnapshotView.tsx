@@ -40,7 +40,7 @@ import {
   setBlockCollapseForceExpanded,
   toggleBlockCollapse,
 } from "./BlockCollapse";
-import { DiagramCM } from "./DiagramView";
+import { DIAGRAM_VISUAL_WRITE_META, DiagramCM } from "./DiagramView";
 import { ImageCM, ReadonlyImageFigure, normalizeImageAlign } from "./ImageView";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
 import { mountBlockPatchView } from "./doc/blockPatchView";
@@ -711,7 +711,7 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
 
   useEffect(() => {
     if (!editor || !onEditorChange) return;
-    const handleUpdate = () => {
+    const handleUpdate = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
       if (
         !shouldForwardEditorUpdate({
           isApplyingRemote: isApplyingRemoteRef.current,
@@ -724,6 +724,13 @@ const TipTapDoc = forwardRef<TipTapDocHandle, {
       // 都可能在这段窗口内消费已经坍缩的 doc。
       if (!readValidEditorDocOrRecover()) return;
       if (updateTimerRef.current) clearTimeout(updateTimerRef.current);
+      if (transaction.getMeta(DIAGRAM_VISUAL_WRITE_META) === true) {
+        updateTimerRef.current = null;
+        void forwardCurrentEditorDoc().catch((error) => {
+          console.error("[doc] diagram visual save failed", error);
+        });
+        return;
+      }
       updateTimerRef.current = setTimeout(() => {
         updateTimerRef.current = null;
         // forwardCurrentEditorDoc 内含 normalizePmDoc;.catch 兜住个别瞬态非法块

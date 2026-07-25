@@ -508,6 +508,8 @@ describe("diagram-engine", () => {
     expect(carried?.edgeHandles?.[styledEdge.id]).toEqual({ sourceHandle: "r", targetHandle: "l" });
     expect(carried?.edgeHandles?.ORPHAN).toBeUndefined();
     expect(Object.keys(carried?.edgeStyles ?? {})).toEqual([styledEdge.id]);
+    expect(Object.values(carried ?? {})).not.toContain(undefined);
+    expect(carried).toEqual(JSON.parse(JSON.stringify(carried)));
   });
 
   it("filterStableOverlay 清理 orphan edgeHandles 且保留稳定边 handle", () => {
@@ -523,6 +525,7 @@ describe("diagram-engine", () => {
     expect(filtered?.edgeHandles).toEqual({
       [edgeId]: { sourceHandle: "r", targetHandle: "l" },
     });
+    expect(Object.keys(filtered ?? {})).toEqual(["edgeHandles"]);
   });
 
   it("flowchart 平行边 id 稳定且可区分", () => {

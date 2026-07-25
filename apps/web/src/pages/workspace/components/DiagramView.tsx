@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Node } from "@tiptap/core";
 import type { NodeViewProps } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { detectType, type DiagramType } from "@qingagent/diagram-engine";
@@ -16,7 +17,10 @@ import { renderMermaid } from "./mermaidRender";
 import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import { DiagramSvgView } from "./MermaidPreview";
-import { DiagramRenderer } from "./diagram/DiagramRenderer";
+import {
+  DiagramRenderer,
+  type DiagramVisualChange,
+} from "./diagram/DiagramRenderer";
 import "./DiagramView.css";
 
 // 图表块(diagram)的 Tiptap 节点 + 节点视图:
@@ -26,6 +30,7 @@ import "./DiagramView.css";
 // - 渲染口径与只读/审阅态共用 mermaidRender + DiagramSvgView(全屏/尺寸一致)。
 
 const DIAGRAM_ERROR_SUMMARY_MAX_CHARS = 180;
+export const DIAGRAM_VISUAL_WRITE_META = "qingagent:diagram-visual-write";
 
 function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
   const title = lang === "drawio" ? "draw.io 图表无法解析" : "Mermaid 语法错误";
@@ -36,7 +41,7 @@ function diagramErrorMessage(lang: PmDiagramLang, error: string): string {
   return `${title}${summary ? `：${summary}` : ""}。双击进入编辑器修正`;
 }
 
-function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected, getPos }: NodeViewProps) {
+function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeViewProps) {
   const toast = useToast();
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
@@ -71,6 +76,50 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     typeof node.attrs.height === "number" && node.attrs.height > 0 ? Math.round(node.attrs.height) : null;
   const storedWidth =
     typeof node.attrs.width === "number" && node.attrs.width > 0 ? Math.round(node.attrs.width) : null;
+
+  // ReactNodeViewRenderer 注入的 updateAttributes 会用 NodeView 上一拍的 node.attrs
+  // 合并。source→overlay 同步连写时，第二笔会把第一笔 source 原样覆盖；画布仍读
+  // liveSource，所以会形成“视觉已变、文档/服务端没变”。这里每次从编辑器当前文档
+  // 读取 attrs 再提交，且视觉语义操作打 meta 让保存层立即串行落库。
+  const updateDiagramAttributes = useCallback(
+    (
+      attributes: Record<string, unknown>,
+      options?: {
+        visualWrite?: boolean;
+        expectedSource?: string;
+        addToHistory?: boolean;
+      },
+    ) => {
+      if (!editor || editor.isDestroyed || typeof getPos !== "function") return;
+      const pos = getPos();
+      if (typeof pos !== "number") return;
+      const currentNode = editor.state.doc.nodeAt(pos);
+      if (!currentNode || currentNode.type.name !== "diagram") return;
+      if (
+        options?.expectedSource !== undefined &&
+        currentNode.attrs.source !== options.expectedSource
+      ) {
+        return;
+      }
+      const changed = Object.entries(attributes).some(
+        ([key, value]) => currentNode.attrs[key] !== value,
+      );
+      if (!changed) return;
+      const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...currentNode.attrs,
+        ...attributes,
+      });
+      if (options?.visualWrite) {
+        closeHistory(tr);
+        tr.setMeta(DIAGRAM_VISUAL_WRITE_META, true);
+      }
+      if (options?.addToHistory === false) {
+        tr.setMeta("addToHistory", false);
+      }
+      editor.view.dispatch(tr);
+    },
+    [editor, getPos],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -119,7 +168,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       if (!Number.isFinite(h) || h <= 0 || h === storedHeight) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        if (mountedRef.current) updateAttributes({ height: h });
+        if (mountedRef.current) {
+          updateDiagramAttributes({ height: h }, { visualWrite: true });
+        }
       }, 300);
     });
     ro.observe(el);
@@ -127,7 +178,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       if (timer) clearTimeout(timer);
       ro.disconnect();
     };
-  }, [editable, editing, storedHeight, updateAttributes]);
+  }, [editable, editing, storedHeight, updateDiagramAttributes]);
 
   // 渲染当前要展示的源码(view 态用 node.source,edit 态用 draft);成功则缓存,并在与持久 svg 不同时回写。
   const renderInto = useCallback(
@@ -156,14 +207,17 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
         setError(null);
         // 持久化 svg 到 node(导出 PDF/Word 用);仅在内容真变化且可编辑时写,避免循环。
         if (persist && editable && !editingRef.current && out !== node.attrs.svg) {
-          updateAttributes({ svg: out });
+          updateDiagramAttributes(
+            { svg: out },
+            { expectedSource: text, addToHistory: false },
+          );
         }
       } catch (e) {
         if (!mountedRef.current || token !== renderTokenRef.current) return;
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [editable, lang, node.attrs.svg, updateAttributes],
+    [editable, lang, node.attrs.svg, updateDiagramAttributes],
   );
 
   // view 态:source 变了(或首次且无缓存 svg)就渲染并回写缓存。
@@ -179,7 +233,12 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     // 只读态已经为同一份源码渲染成功时直接复用内存中的安全 SVG；切回可编辑的
     // 当拍就写 attrs，避免为了持久化再跑一遍 maxGraph，也消除用户立即导出时的竞态。
     if (!cachedSvgIsPoisoned && editable && svg && renderedSourceRef.current === source.trim()) {
-      if (svg !== node.attrs.svg) updateAttributes({ svg });
+      if (svg !== node.attrs.svg) {
+        updateDiagramAttributes(
+          { svg },
+          { expectedSource: source, addToHistory: false },
+        );
+      }
       return;
     }
     void renderInto(source, true);
@@ -213,7 +272,10 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
         setSource(result.source);
         setDraft(result.source);
         setSvg(result.svg);
-        updateAttributes({ source: result.source, svg: result.svg });
+        updateDiagramAttributes(
+          { source: result.source, svg: result.svg },
+          { visualWrite: true },
+        );
         if (result.warning) {
           toast.show({ message: result.warning, tone: "warn" });
         }
@@ -254,7 +316,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     if (nextSource !== source) {
       setDraft(nextSource);
       setSource(nextSource);
-      updateAttributes({ source: nextSource, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
+      updateDiagramAttributes({ source: nextSource, svg: null }); // svg 置空,view useEffect 会按新 source 重渲并回写
     }
   };
 
@@ -306,7 +368,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
     const maxW = el.parentElement?.clientWidth ?? drag.maxW;
     const nextWidth = w > 0 && w < maxW - 8 ? w : null;
     if (nextWidth !== storedWidth) patch.width = nextWidth ?? (null as unknown as number);
-    if (Object.keys(patch).length > 0) updateAttributes(patch);
+    if (Object.keys(patch).length > 0) {
+      updateDiagramAttributes(patch, { visualWrite: true });
+    }
   };
 
   const selectDiagramBlock = (event: ReactMouseEvent<HTMLElement>) => {
@@ -453,17 +517,32 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
               overlay={overlay}
               readOnly={!editable}
               align={align}
-              onAlignChange={editable ? (next) => updateAttributes({ align: next }) : undefined}
+              // 正文视图只要 editor.isEditable 就是设计上的可编辑态；历史/审阅等真正
+              // 只读上下文会传 readOnly=true，GraphDiagramView 隐藏编辑按钮与把手。
+              onAlignChange={editable
+                ? (next) => updateDiagramAttributes(
+                    { align: next },
+                    { visualWrite: true },
+                  )
+                : undefined}
               openVisualSignal={visualEditSignal}
-              onOverlayChange={(nextOverlay) => {
+              onVisualChange={(change: DiagramVisualChange) => {
                 if (!editable) return;
-                updateAttributes({ overlay: nextOverlay });
+                const patch: Record<string, unknown> = {};
+                if (typeof change.source === "string") {
+                  if (!change.source.trim()) return;
+                  setSource(change.source);
+                  patch.source = change.source;
+                  patch.svg = null;
+                }
+                if (Object.prototype.hasOwnProperty.call(change, "overlay")) {
+                  patch.overlay = change.overlay ?? null;
+                }
+                if (Object.keys(patch).length > 0) {
+                  updateDiagramAttributes(patch, { visualWrite: true });
+                }
               }}
-              onSourceChange={(nextSource) => {
-                if (!editable || !nextSource.trim()) return;
-                setSource(nextSource);
-                updateAttributes({ source: nextSource, svg: null });
-              }}
+              onUndo={() => editor.commands.undo()}
             />
           )}
           {editable && (

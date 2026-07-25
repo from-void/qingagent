@@ -183,6 +183,10 @@
   z-index: -1;
 }
 
+.graph-diagram-editor .react-flow__node-graphCluster {
+  pointer-events: auto;
+}
+
 .graph-diagram-cluster {
   position: relative;
   box-sizing: border-box;
@@ -212,6 +216,10 @@
 
 .graph-diagram-editor .graph-diagram-cluster__title {
   pointer-events: auto;
+  cursor: grab;
+}
+
+.graph-diagram-editor .graph-diagram-cluster {
   cursor: grab;
 }
 

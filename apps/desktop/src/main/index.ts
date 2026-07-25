@@ -209,11 +209,18 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
 if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
   console.warn("[sandbox] QINGAGENT_SANDBOX_NODE_RUNTIME=system, using host node for diagnostics only");
 } else {
-  const { ensureNodeRuntimeShim, isElectronRuntime } = await import(
+  const { ensureNodeRuntimeShim, isElectronRuntime, renderWindowsNodeOptions } = await import(
     "@qingagent/core/workspace/runtime-shims"
   );
   const { ensureLarkCliShim } = await import("@qingagent/core/workspace/runtime-shims");
-  const nodeShimPath = ensureNodeRuntimeShim({ execPath: process.execPath, electron: isElectronRuntime() });
+  const electronRuntime = isElectronRuntime();
+  const nodeShimPath = path.resolve(
+    ensureNodeRuntimeShim({ execPath: process.execPath, electron: electronRuntime }),
+  );
+  const nodeOptions = process.platform === "win32" && electronRuntime
+    ? renderWindowsNodeOptions(path.dirname(nodeShimPath))
+    : "<unset>";
+  console.info("[sandbox] node runtime shim ready", { nodeShimPath, nodeOptions });
 
   // 飞书 lark-cli:随包带到 Resources/lark-cli(build.mjs 暂存,electron-builder extraResources),
   // 首启往沙箱 PATH 写 `lark-cli` shim——经 node shim(Electron-as-Node)跑其 run.js。HOME/配置走

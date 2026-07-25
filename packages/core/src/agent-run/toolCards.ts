@@ -152,8 +152,12 @@ export function commandCardFromResult(
     icon: verdict.icon,
     command,
     exitCode,
-    outputTail: outputForDisplay.slice(-600),
-    phase: background ? "running" : failed ? "failed" : "done",
+    outputTail: background && pid
+      ? `已在后台启动（PID: ${pid}）`
+      : outputForDisplay.slice(-600),
+    // 后台工具调用的职责是拉起进程；spawn 成功时这张卡即完成。进程真正的
+    // 成败仍由 PID owner 索引和后续 lifecycle 事件收口。
+    phase: background ? "done" : failed ? "failed" : "done",
     ...(terminalKind ? { terminalKind } : {}),
     ...(background && pid
       ? {

@@ -9,7 +9,11 @@ export function isPersistentBackgroundCommand(spec: ToolCallSpec): boolean {
     spec.body.data.pid.length > 0 &&
     spec.body.data.ownerToolCallId === spec.id &&
     spec.body.data.terminalKind === undefined &&
-    (spec.status.kind === "pending" || spec.status.kind === "running")
+    (
+      spec.status.kind === "pending" ||
+      spec.status.kind === "running" ||
+      spec.status.kind === "done"
+    )
   );
 }
 

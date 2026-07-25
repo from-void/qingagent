@@ -47,7 +47,7 @@ async function executeTool(
   return await tool.execute(input, context as never) as string;
 }
 
-function neverSettlingHandle(output = "扫码地址：https://example.test/auth\n"): FakeProcessHandle {
+function neverSettlingHandle(output = "working\n"): FakeProcessHandle {
   return {
     pid: "qr-login",
     command: "wecom-cli login",
@@ -64,17 +64,121 @@ afterEach(() => {
 });
 
 describe("bounded get_process_output", () => {
-  it("wait:true 到上限后返回当前输出和仍在运行提示，不杀进程", async () => {
-    const handle = neverSettlingHandle();
+  it("无授权信号时 wait:true 仍等满上限，再返回当前输出且不杀进程", async () => {
+    vi.useFakeTimers();
+    const handle = neverSettlingHandle("正在下载 https://example.test/archive.zip\n");
     const { tool } = createHarness(handle, 15);
 
-    const output = await executeTool(tool, { pid: handle.pid, wait: true });
+    let settled = false;
+    const result = executeTool(tool, { pid: handle.pid, wait: true });
+    void result.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.wait).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(14);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const output = await result;
 
-    expect(output).toContain("扫码地址：https://example.test/auth");
+    expect(output).toContain("正在下载 https://example.test/archive.zip");
     expect(output).toContain("进程仍在运行（等待 15ms 未退出）");
     expect(output).toContain("不带 wait 再次轮询");
     expect(output).not.toContain("Exit code:");
     expect(handle.kill).not.toHaveBeenCalled();
+  });
+
+  it("stdout 渐进出现授权 URL 与扫码语义时提前返回当前输出", async () => {
+    vi.useFakeTimers();
+    const handle = neverSettlingHandle("正在初始化\n");
+    handle.wait = vi.fn((options) => new Promise<CommandResult>(() => {
+      setTimeout(() => {
+        const chunk = "请扫码完成授权：https://example.test/device-auth\n";
+        handle.stdout += chunk;
+        void options?.onStdout?.(chunk);
+      }, 5);
+    }));
+    const { tool } = createHarness(handle, 60_000);
+
+    const result = executeTool(tool, { pid: handle.pid, wait: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.wait).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(4);
+    let settled = false;
+    void result.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const output = await result;
+    expect(output).toContain("请扫码完成授权：https://example.test/device-auth");
+    expect(output).not.toContain("进程仍在运行");
+    expect(handle.kill).not.toHaveBeenCalled();
+  });
+
+  it("授权信号出现在 stderr 时也提前返回", async () => {
+    vi.useFakeTimers();
+    const handle = neverSettlingHandle("starting\n");
+    handle.wait = vi.fn((options) => new Promise<CommandResult>(() => {
+      setTimeout(() => {
+        const chunk = "Scan the QR code: https://example.test/qr-login\n";
+        handle.stderr += chunk;
+        void options?.onStderr?.(chunk);
+      }, 8);
+    }));
+    const { tool } = createHarness(handle, 60_000);
+
+    const result = executeTool(tool, { pid: handle.pid, wait: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.wait).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(8);
+    const output = await result;
+
+    expect(output).toContain("stderr:");
+    expect(output).toContain("Scan the QR code: https://example.test/qr-login");
+    expect(output).not.toContain("进程仍在运行");
+    expect(handle.kill).not.toHaveBeenCalled();
+  });
+
+  it("调用 wait 前已有授权信号时立即返回，仍保留迟到退出事件", async () => {
+    let resolveWait: ((result: CommandResult) => void) | undefined;
+    const custom = vi.fn(async () => {});
+    const handle = neverSettlingHandle(
+      "Authorize this login at https://example.test/authorize\n",
+    );
+    handle.wait = vi.fn(() => new Promise<CommandResult>((resolve) => {
+      resolveWait = resolve;
+    }));
+    const { tool } = createHarness(handle, 60_000);
+
+    const output = await executeTool(tool, { pid: handle.pid, wait: true }, {
+      ...toolInvocationOptions,
+      agent: { toolCallId: "auth-signal-read" },
+      writer: { custom, write: vi.fn() },
+    } as never);
+    expect(output).toContain("Authorize this login");
+    expect(output).not.toContain("进程仍在运行");
+
+    handle.exitCode = 3;
+    resolveWait?.({
+      success: false,
+      exitCode: 3,
+      stdout: handle.stdout,
+      stderr: handle.stderr,
+      executionTimeMs: 25,
+    });
+    await vi.waitFor(() => expect(custom).toHaveBeenCalledWith({
+      type: "data-sandbox-exit",
+      data: {
+        pid: handle.pid,
+        exitCode: 3,
+        success: false,
+        timedOut: false,
+        executionTimeMs: 25,
+        toolCallId: "auth-signal-read",
+      },
+    }));
   });
 
   it("wait:true 且上限内退出时返回输出和 Exit code，并发退出事件", async () => {

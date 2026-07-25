@@ -650,13 +650,15 @@ export function UCommand({
               ? `运行失败（退出码 ${body.exitCode}）`
               : "运行失败"
             : terminalKind === "succeeded" || done
-              ? "已完成"
+              ? body.background === true && body.pid
+                ? `已在后台启动（PID: ${body.pid}）`
+                : "已完成"
               : failed
                 ? "运行失败"
                 : queued
                   ? "已确认，排队执行"
                   : "处理中";
-  const icon = terminalKind === "succeeded"
+  const icon = terminalKind === "succeeded" || done
     ? ICO.check
     : terminalKind === "rejected"
       ? ICO.cancel

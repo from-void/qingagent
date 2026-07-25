@@ -343,7 +343,7 @@ describe("沙箱命令终端卡", () => {
     ["正常退出", 0, true, "done", "succeeded"],
     ["非零退出", 3, false, "failed", "failed"],
   ] as const)(
-    "后台启动卡按 PID 收口%s，读取输出结果不覆盖 owner",
+    "后台启动卡 spawn 成功即完成，后续按 PID 收口%s且读取输出结果不覆盖 owner",
     async (_label, exitCode, success, statusKind, terminalKind) => {
       const {
         createSession,
@@ -418,6 +418,28 @@ describe("沙箱命令终端卡", () => {
         },
       ));
 
+      const startedOwner = specs(frames)
+        .filter((spec) =>
+          spec.id === "background-owner" &&
+          spec.body.kind === "commandCard" &&
+          spec.body.data.background === true &&
+          spec.body.data.terminalKind === undefined
+        )
+        .at(-1);
+      expect(startedOwner).toMatchObject({
+        status: { kind: "done" },
+        body: {
+          kind: "commandCard",
+          data: {
+            pid: "4242",
+            ownerToolCallId: "background-owner",
+            background: true,
+            phase: "done",
+            outputTail: "已在后台启动（PID: 4242）",
+          },
+        },
+      });
+
       const owner = findSpec(state, "background-owner");
       expect(owner?.status.kind).toBe(statusKind);
       expect(owner?.body).toMatchObject({
@@ -428,6 +450,7 @@ describe("沙箱命令终端卡", () => {
           background: true,
           exitCode,
           terminalKind,
+          phase: statusKind === "done" ? "done" : "failed",
         },
       });
       expect(findSpec(state, "read-output")?.status.kind).toBe("done");
@@ -881,11 +904,13 @@ describe("沙箱命令终端卡", () => {
     ));
 
     expect(findSpec(state, "kill-miss-owner")).toMatchObject({
-      status: { kind: "running" },
+      status: { kind: "done" },
       body: {
         kind: "commandCard",
         data: {
           pid: "5353",
+          phase: "done",
+          outputTail: "已在后台启动（PID: 5353）",
         },
       },
     });
@@ -894,7 +919,7 @@ describe("沙箱命令终端卡", () => {
       .toBeUndefined();
   });
 
-  it("后台进程卡跨轮次保持 running，不被 lingering 清理误改", async () => {
+  it("后台启动卡跨轮次保持完成态，同时继续保留进程生命周期 owner", async () => {
     const {
       createSession,
       finalizeLingeringRunningToolCalls,
@@ -939,14 +964,15 @@ describe("沙箱命令终端卡", () => {
 
     expect(finalizeLingeringRunningToolCalls(state)).toEqual([]);
     expect(findSpec(state, "cross-turn-owner")).toMatchObject({
-      status: { kind: "running" },
+      status: { kind: "done" },
       body: {
         kind: "commandCard",
         data: {
           pid: "6262",
           ownerToolCallId: "cross-turn-owner",
           background: true,
-          phase: "running",
+          phase: "done",
+          outputTail: "已在后台启动（PID: 6262）",
         },
       },
     });

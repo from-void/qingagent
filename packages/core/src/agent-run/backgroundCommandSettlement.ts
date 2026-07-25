@@ -44,7 +44,7 @@ interface CommandCardCandidate {
     pidMatches: boolean;
     ownerMatchesSpec: boolean;
     nonTerminal: boolean;
-    statusRunningOrPending: boolean;
+    statusAcceptsLifecycleUpdate: boolean;
   };
 }
 
@@ -90,8 +90,10 @@ function commandCardCandidates(
           pidMatches: body.pid === pid,
           ownerMatchesSpec: body.ownerToolCallId === part.data.id,
           nonTerminal: body.terminalKind === undefined,
-          statusRunningOrPending:
-            part.data.status.kind === "pending" || part.data.status.kind === "running",
+          statusAcceptsLifecycleUpdate:
+            part.data.status.kind === "pending" ||
+            part.data.status.kind === "running" ||
+            part.data.status.kind === "done",
         },
       });
     }
@@ -102,7 +104,7 @@ function commandCardCandidates(
 function canSettleIndexedCandidate(candidate: CommandCardCandidate): boolean {
   return (
     candidate.predicates.nonTerminal &&
-    candidate.predicates.statusRunningOrPending
+    candidate.predicates.statusAcceptsLifecycleUpdate
   );
 }
 
@@ -113,7 +115,7 @@ function canRecoverByScanning(candidate: CommandCardCandidate): boolean {
     candidate.predicates.pidMatches &&
     candidate.predicates.ownerMatchesSpec &&
     candidate.predicates.nonTerminal &&
-    candidate.predicates.statusRunningOrPending
+    candidate.predicates.statusAcceptsLifecycleUpdate
   );
 }
 

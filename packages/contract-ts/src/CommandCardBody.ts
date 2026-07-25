@@ -19,9 +19,9 @@ export type CommandCardBody = {
   exitCode: number;
   /** 输出尾部(折叠在详情里;已脱敏截断)。 */
   outputTail: string;
-  /** running=执行中;done=成功;failed=非零退出。 */
+  /** running=动作执行中;done=动作已完成（后台命令指已拉起）;failed=动作失败。 */
   phase: "running" | "done" | "failed";
-  /** 结构化终态；运行中不填写，前端不得再从 reason 文案猜测。 */
+  /** 结构化进程终态；后台命令刚拉起时即使 phase=done 也暂不填写。 */
   terminalKind?: CommandTerminalKind;
   /** 后台进程 PID；随 owner 卡持久化，供后续退出/kill 精确收口。 */
   pid?: string;

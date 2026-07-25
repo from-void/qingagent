@@ -1743,14 +1743,14 @@ describe("thread persistence", () => {
     }
   });
 
-  it("冷恢复保留带 PID 与 owner 的后台命令运行态", async () => {
+  it("冷恢复保留已完成启动动作但尚待进程终态的 PID owner", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const { settleBackgroundCommand } = await import("../agent-run/backgroundCommandSettlement.js");
     const backgroundOwner: ToolCallSpec = {
       id: "background-owner",
       name: "mastra_workspace_execute_command",
       render: { kind: "chatInline" },
-      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      status: { kind: "done" },
       body: {
         kind: "commandCard",
         data: {
@@ -1758,8 +1758,8 @@ describe("thread persistence", () => {
           icon: "⚙️",
           command: "sleep 300",
           exitCode: 0,
-          outputTail: "后台任务已启动",
-          phase: "running",
+          outputTail: "已在后台启动（PID: 4242）",
+          phase: "done",
           pid: "4242",
           ownerToolCallId: "background-owner",
           background: true,

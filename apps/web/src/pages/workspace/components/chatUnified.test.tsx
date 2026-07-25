@@ -111,6 +111,36 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(host?.querySelector(".u-spin")).toBeNull();
   });
 
+  it("后台命令 spawn 成功即显示带 PID 的完成态，不因进程仍运行而转圈", async () => {
+    const started: ToolCallSpec = {
+      id: "background-started",
+      name: "mastra_workspace_execute_command",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "commandCard",
+        data: {
+          title: "运行命令",
+          icon: "⚙️",
+          command: "wecom-cli init --noninteractive --no-open",
+          exitCode: 0,
+          outputTail: "已在后台启动（PID: 4242）",
+          phase: "done",
+          pid: "4242",
+          ownerToolCallId: "background-started",
+          background: true,
+        },
+      },
+      result: null,
+    };
+
+    await render([started]);
+
+    expect(host?.textContent).toContain("已在后台启动（PID: 4242）");
+    expect(host?.textContent).not.toContain("处理中");
+    expect(host?.querySelector(".u-spin")).toBeNull();
+  });
+
   it("用户拒绝确认时按 terminalKind 显示已取消且不提供重试", async () => {
     const notStarted: ToolCallSpec = {
       id: "command-not-started",

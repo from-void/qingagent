@@ -16,6 +16,35 @@ const TRUNCATED_OUTPUT_NOTICE =
   "[This is the tail of the complete output. To see more, increase tail or use 0 for all output; do not rerun the command to obtain complete output because it may have side effects.]";
 
 /**
+ * 交互式授权进程往往先打印可扫码/可点击 URL，再停住等待用户操作。这里仅在
+ * “URL + 授权语义”同时出现时提前结束本次 wait，避免把普通长任务的进度输出误判成授权。
+ */
+export const INTERACTIVE_AUTH_OUTPUT_KEYWORDS: readonly RegExp[] = [
+  /扫码/u,
+  /扫描/u,
+  /授权/u,
+  /二维码/u,
+  /登录/u,
+  /认证/u,
+  /\bscan(?:s|ned|ning)?\b/iu,
+  /\bauthori[sz](?:e|es|ed|ing|ation)\b/iu,
+  /\bauthenticat(?:e|es|ed|ing|ion)\b/iu,
+  /\bqr[\s_-]*code\b/iu,
+  /\blog[\s_-]?in\b/iu,
+  /\bsign[\s_-]?in\b/iu,
+];
+
+const INTERACTIVE_AUTH_URL_PATTERN = /https?:\/\/[^\s"'<>]+/iu;
+
+function hasInteractiveAuthOutputSignal(stdout: string, stderr: string): boolean {
+  const output = [stdout, stderr].filter(Boolean).join("\n");
+  return (
+    INTERACTIVE_AUTH_URL_PATTERN.test(output) &&
+    INTERACTIVE_AUTH_OUTPUT_KEYWORDS.some((keyword) => keyword.test(output))
+  );
+}
+
+/**
  * 必须显著小于默认 AGENT_IDLE_TIMEOUT_MS(90s)，确保即使模型误传 wait:true，
  * 也会在 agent 空闲看门狗前把控制权交还模型。环境变量只供部署按需收紧或调整。
  */
@@ -144,22 +173,54 @@ Use this after starting a background command with execute_command (background: t
 
         let waitTimedOut = false;
         let exitEventEmitted = false;
+        let authorizationSignalDetected = false;
+        let observedStdout = handle.stdout;
+        let observedStderr = handle.stderr;
         if (shouldWait && handle.exitCode === undefined) {
+          let resolveAuthorizationSignal: (() => void) | undefined;
+          const authorizationSignalPromise = new Promise<{ kind: "authorizationSignal" }>(
+            (resolve) => {
+              resolveAuthorizationSignal = () => resolve({ kind: "authorizationSignal" });
+            },
+          );
+          const detectAuthorizationSignal = () => {
+            if (
+              !authorizationSignalDetected &&
+              hasInteractiveAuthOutputSignal(observedStdout, observedStderr)
+            ) {
+              authorizationSignalDetected = true;
+              resolveAuthorizationSignal?.();
+            }
+          };
+          detectAuthorizationSignal();
+
           const waitPromise = handle.wait({
-            onStdout: writer
-              ? (data) => safeCustom(writer, {
+            onStdout: (data) => {
+              observedStdout = handle.stdout !== observedStdout
+                ? handle.stdout
+                : `${observedStdout}${data}`;
+              detectAuthorizationSignal();
+              return writer
+                ? safeCustom(writer, {
                   type: "data-sandbox-stdout",
                   data: { output: data, timestamp: Date.now(), toolCallId },
                   transient: true,
                 })
-              : undefined,
-            onStderr: writer
-              ? (data) => safeCustom(writer, {
+                : undefined;
+            },
+            onStderr: (data) => {
+              observedStderr = handle.stderr !== observedStderr
+                ? handle.stderr
+                : `${observedStderr}${data}`;
+              detectAuthorizationSignal();
+              return writer
+                ? safeCustom(writer, {
                   type: "data-sandbox-stderr",
                   data: { output: data, timestamp: Date.now(), toolCallId },
                   transient: true,
                 })
-              : undefined,
+                : undefined;
+            },
           });
           // race 输掉后 wait 仍会在进程退出时 settle；显式挂 rejection handler，避免
           // provider 的 wait 实现或迟到 writer 回调形成 unhandled rejection。
@@ -173,11 +234,13 @@ Use this after starting a background command with execute_command (background: t
               | { kind: "exited"; result: CommandResult }
               | { kind: "timeout" }
               | { kind: "aborted" }
+              | { kind: "authorizationSignal" }
             >> = [
               waitPromise.then((result) => ({ kind: "exited" as const, result })),
               new Promise<{ kind: "timeout" }>((resolve) => {
                 timeout = setTimeout(() => resolve({ kind: "timeout" }), waitMaxMs);
               }),
+              authorizationSignalPromise,
             ];
             if (abortSignal) {
               races.push(new Promise<{ kind: "aborted" }>((resolve) => {
@@ -205,9 +268,10 @@ Use this after starting a background command with execute_command (background: t
               // 只结束本次有界读取；后台 ProcessHandle 继续存活，绝不在这里隐式 kill。
               throw abortError(abortSignal!);
             } else {
-              waitTimedOut = handle.exitCode === undefined;
-              if (waitTimedOut) {
-                // 有界读取返回后，原 wait 仍掌握真实退出结果。若 agent 流尚存活，
+              waitTimedOut =
+                outcome.kind === "timeout" && handle.exitCode === undefined;
+              if (handle.exitCode === undefined) {
+                // 有界读取或授权信号提前返回后，原 wait 仍掌握真实退出结果。若 agent 流尚存活，
                 // 用同一原生退出帧补发；writer 已关闭时 safeCustom 安静降级到下次轮询。
                 void waitPromise.then(async (result) => {
                   if (exitEventEmitted) return;
@@ -248,8 +312,10 @@ Use this after starting a background command with execute_command (background: t
           });
         }
 
-        const stdout = applyTail(handle.stdout, tail);
-        const stderr = applyTail(handle.stderr, tail);
+        const currentStdout = authorizationSignalDetected ? observedStdout : handle.stdout;
+        const currentStderr = authorizationSignalDetected ? observedStderr : handle.stderr;
+        const stdout = applyTail(currentStdout, tail);
+        const stderr = applyTail(currentStderr, tail);
         const output = formatOutput(stdout, stderr, handle.exitCode);
         if (!waitTimedOut) return output;
         return [

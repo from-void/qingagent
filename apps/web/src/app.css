@@ -180,10 +180,18 @@
   min-height: 0;
 }
 
-/* 编辑页是亮色文档:显式给编辑页铺 --bg-canvas 亮底。
-   放 app.css 而非 workspace.css —— 避开后者的 css 字节合约。 */
+/* 编辑页底色兜底(主包)。真值由 workspace-ink-skin.css 覆盖成同一玄青,这里只负责
+   「皮肤 CSS 还没落地的那几帧」不露错色 —— 那份 CSS 随 lazy chunk 才到(见
+   system/awaitStyles.ts 的 preload seen 竞态),旧值 --bg-canvas 会把整屏刷成亮底,
+   加上页框的 1440 限宽,两侧还会漏 --app-boot-bg 暖纸。故底色改玄青、页框同步满铺。
+   放 app.css 而非 workspace.css —— 避开后者的 css 行数/字节合约。 */
 #view-workspace {
-  background: var(--bg-canvas);
+  background: var(--desk-base);
+}
+
+.web-page-frame--workspace {
+  width: 100%;
+  background: var(--desk-base);
 }
 
 .mobile-desktop-notice {

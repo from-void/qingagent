@@ -1327,8 +1327,9 @@ export function QingjianScroll({
           inner.style.transform = `translate3d(${(-viewX).toFixed(2)}px,0,0)`;
         }
       }
-      // 首帧(paint 前):卡静停在「离开新建页时的顶层卡 rect」,背景瞬时已深(零入场动画)
-      stage.snapArrived(arrive.rect);
+      // 首帧(paint 前):卡静停在「离开时的 rect」,背景瞬时已深(零入场动画)。
+      // 从编辑页返回时首帧即切纯净纸 —— 那张纸就是刚才的文档纸,不该闪新建卡皮。
+      stage.snapArrived(arrive.rect, arrive.source === "workspace");
       // 等布局稳定(新建卡槽位就位)再算反向落点 → 飞回 + 墨退
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -1819,6 +1820,8 @@ export function QingjianScroll({
         .playForward(fromRect, landing, inkOrigin, true)
         .then(() => {
           // 卡落定 + 背景已深的静止帧:交付到达态 → 切路由。编辑页挂载即静帧渲染。
+          // (皮肤 CSS 的等待不在这儿:挡在 App.tsx 的 lazy 工厂里,覆盖所有进入路径。
+          //  切页后 startTransition 会保留这一帧首页静止画面,直到编辑页连样式一起就绪。)
           setWorkspaceArrive({
             rect: landing,
             x: inkOrigin.x,
@@ -2051,7 +2054,13 @@ export function QingjianScroll({
 
   return (
     <div
-      className={`qj-root${openingScroll ? " qj-opening" : ""}`}
+      // ccx-stage-host 必须写在这里、由 React 拥有。它原先只由 createHomeTransitionStage 用
+      // classList.add 挂上,而本元素的 className 是整串模板 —— openingScroll 一变(开卷动画结束)
+      // React 重写 className 就把它整串擦掉。转场深底规则是 .qj-root.ccx-stage-host.is-dark
+      // .ccx-space,少这一个 class 就永不匹配:is-dark 加了也没用,.ccx-space 的 opacity 恒为 0,
+      // 于是「纸已飞到落点、背景还是首页浅底」。返场时首页重挂载又加回来 → 表现成
+      // 「初次有问题、加载过一次就好了」(用户实证)。
+      className={`qj-root ccx-stage-host${openingScroll ? " qj-opening" : ""}`}
       ref={rootRef}
       data-theme={theme}
       data-anim={anim}

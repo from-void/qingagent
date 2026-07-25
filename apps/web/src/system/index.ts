@@ -44,6 +44,7 @@ export {
   fetchClientCapabilities,
   useClientCapabilities,
 } from "./clientCapabilities";
+export { awaitPendingStylesheets } from "./awaitStyles";
 export { Pressable } from "./Pressable";
 export type { PressableProps } from "./Pressable";
 export { InkBubble } from "./InkBubble";

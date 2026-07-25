@@ -10,6 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "../..");
 const indexHtml = readFileSync(path.join(webRoot, "index.html"), "utf8");
 const appTsx = readFileSync(path.join(webRoot, "src/App.tsx"), "utf8");
+const viteConfig = readFileSync(path.join(webRoot, "vite.config.ts"), "utf8");
 const appCss = readFileSync(path.join(webRoot, "src/app.css"), "utf8");
 const desktopMain = readFileSync(path.join(webRoot, "../desktop/src/main/index.ts"), "utf8");
 const homeCss = readFileSync(path.join(webRoot, "src/pages/home/components/qingjian.css"), "utf8");
@@ -49,6 +50,41 @@ describe("boot 与切页底色契约", () => {
     expect(appCss).toContain("--desk-base: #16212c");
     expect(newSessionCss).toMatch(/\.ccx-space\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
     expect(workspaceCss).toMatch(/#view-workspace\s*\{[^}]*background-color:\s*var\(--desk-base\)/s);
+  });
+
+  it("关掉 CSS 代码分割:样式必须是渲染阻塞的单文件(治「无样式裸 DOM」的主防线)", () => {
+    // 开着分割时页面样式随 lazy chunk 走,而 Vite preload 的 seen 去重会让第二次 import
+    // (= 用户真正切页那次)不等 CSS load,组件先挂载几百毫秒的**无样式裸 DOM**。
+    // 在 lazy 工厂里等样式只能缓解:等待必须带超时,一超时裸 DOM 照旧(实测慢 CSS 下必然触发)。
+    // 关掉分割后 CSS 由 index.html 静态 <link> 引入、渲染阻塞 → React 挂载前样式必然生效。
+    // 谁把这行改回 true,那类闪烁立刻回归。
+    expect(viteConfig).toMatch(/cssCodeSplit:\s*false/);
+  });
+
+  it("每个懒加载路由工厂都等自己的样式表落地才交出 chunk(第二道)", () => {
+    // 主防线。Vite preload 的 seen 去重让第二次 import(= 用户真正切页那次)不等 CSS load,
+    // 页面会以**完全无样式的裸 DOM**挂出来几百毫秒(布局/字色/玻璃感全丢,不只是底色)。
+    // 必须挡在 lazy 工厂里 —— 那是所有进入路径(转场/hash 直达/深链/前进后退)的唯一收口;
+    // 挡在某个页面的跳转回调里只能护住一条路径。
+    expect(appTsx).toContain("awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS)");
+    for (const factory of [
+      'import("./pages/home/HomePage").then(styled)',
+      'import("./pages/new-session/NewSessionPage").then(styled)',
+      'import("./pages/workspace/WorkspacePage").then(styled)',
+    ]) {
+      expect(appTsx).toContain(factory);
+    }
+  });
+
+  it("主包给编辑页兜底玄青底 + 页框满铺(样式表等待超时后的最后一道)", () => {
+    // 兜底必须留在主包 app.css:上面的等待有超时(网络挂了不能卡死导航),超时放行后
+    // 若 app.css 仍铺亮色 --bg-canvas、页框仍受 1440 限宽,就会露亮底 + 两侧暖纸边。
+    // Suspense 兜底那一屏也靠这两条才能铺满(否则纯色块只有 1440 宽)。
+    expect(appCss).toMatch(/#view-workspace\s*\{[^}]*background:\s*var\(--desk-base\)/s);
+    expect(appCss).not.toMatch(/#view-workspace\s*\{[^}]*background:\s*var\(--bg-canvas\)/s);
+    expect(appCss).toMatch(
+      /\.web-page-frame--workspace\s*\{[^}]*width:\s*100%;[^}]*background:\s*var\(--desk-base\)/s,
+    );
   });
 
   it("React 挂载前的 index.html 不得回退到旧版深色", () => {

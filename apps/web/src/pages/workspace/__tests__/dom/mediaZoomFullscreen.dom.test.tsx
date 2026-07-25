@@ -68,6 +68,82 @@ describe("MediaZoomFullscreen", () => {
     }
   });
 
+  it("打开时小于视口的内容不放大并居中", async () => {
+    let resetFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      resetFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      const content = document.body.querySelector<HTMLElement>(".media-zoom-content")!;
+      Object.defineProperty(viewport, "offsetWidth", { configurable: true, value: 1000 });
+      Object.defineProperty(viewport, "offsetHeight", { configurable: true, value: 800 });
+      Object.defineProperty(content, "offsetWidth", { configurable: true, value: 400 });
+      Object.defineProperty(content, "offsetHeight", { configurable: true, value: 200 });
+
+      await act(async () => {
+        resetFrame!(0);
+      });
+      expect(content.style.transform).toBe("translate(300px, 300px) scale(1)");
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it("打开时竖长内容缩小适配视口并留出边距", async () => {
+    let resetFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      resetFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(createElement(Harness));
+      });
+      await act(async () => {
+        container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const viewport = document.body.querySelector<HTMLElement>(".media-zoom-viewport")!;
+      const content = document.body.querySelector<HTMLElement>(".media-zoom-content")!;
+      Object.defineProperty(viewport, "offsetWidth", { configurable: true, value: 800 });
+      Object.defineProperty(viewport, "offsetHeight", { configurable: true, value: 600 });
+      Object.defineProperty(content, "offsetWidth", { configurable: true, value: 400 });
+      Object.defineProperty(content, "offsetHeight", { configurable: true, value: 1000 });
+
+      await act(async () => {
+        resetFrame!(0);
+      });
+      expect(content.style.transform).toBe("translate(286.4px, 16px) scale(0.568)");
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it("静止时不挂 will-change:transform(矢量 SVG 全屏保持清晰),仅拖拽平移期间挂(防全屏发糊回归)", async () => {
     const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);

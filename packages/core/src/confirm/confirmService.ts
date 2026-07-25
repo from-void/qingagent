@@ -4,12 +4,20 @@ import type {
   ConfirmResolved,
 } from "@qingagent/contract-ts";
 import { confirmDecisionForSpecSchema } from "@qingagent/contract-ts/schemas";
+import {
+  appendConfirmAuditEvent,
+  getConfirmGrantState,
+  type ConfirmAuditEvent,
+  type ConfirmGrant,
+  type ConfirmGrantKind,
+  type ConfirmGrantState,
+} from "@qingagent/db";
 import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { evaluateCommandPolicy } from "../workspace/commandPolicy.js";
 import { SANDBOX_BIN_DIR } from "../workspace/sandboxPaths.js";
 import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 import type { PendingConfirm, SessionState } from "../session/sessionState.js";
-import { persistSessionMetadata } from "../session/threadPersistence.js";
+import { persistSessionMetadata, schedulePersist } from "../session/threadPersistence.js";
 import { clearApprovalProof, clearAllApprovalProofs, issueApprovalProof } from "./approvalProof.js";
 import {
   buildCommandConfirmSpec,
@@ -45,11 +53,24 @@ export interface ConfirmServiceOptions {
   now?: () => number;
   createId?: () => string;
   persist?: (state: SessionState, reason: string) => Promise<void>;
+  retryPersist?: (state: SessionState, reason: string) => Promise<void>;
   secrets?: SecretLeaseStore;
+  loadGrant?: (kind: ConfirmGrantKind) => Promise<ConfirmGrant | null>;
+  loadGrantState?: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
+  appendAudit?: (
+    event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
+  ) => Promise<unknown>;
+  issueProof?: typeof issueApprovalProof;
 }
 
 export type RequestCommandConfirmResult =
-  | { ok: true; pending: PendingConfirm; frame: BridgeFrame }
+  | { ok: true; pending: PendingConfirm; frame: BridgeFrame; storedGrantApproval?: undefined }
+  | {
+      ok: true;
+      pending: PendingConfirm;
+      frame?: undefined;
+      storedGrantApproval: { decisionId: string; grant: ConfirmGrant };
+    }
   | { ok: false; reason: string };
 
 interface DecisionReceipt {
@@ -60,19 +81,54 @@ interface DecisionReceipt {
   expiresAt: number;
 }
 
+type ConfirmTerminalPersistReason = `confirm:${ConfirmResolved["resolution"]}`;
+
+interface TerminalTombstone {
+  pending: PendingConfirm;
+  reason: ConfirmTerminalPersistReason;
+}
+
 export class ConfirmService {
   readonly #now: () => number;
   readonly #createId: () => string;
   readonly #persist: (state: SessionState, reason: string) => Promise<void>;
+  readonly #retryPersist: (state: SessionState, reason: string) => Promise<void>;
   readonly #secrets: SecretLeaseStore;
+  readonly #loadGrantState: (kind: ConfirmGrantKind) => Promise<ConfirmGrantState>;
+  readonly #appendAudit: (
+    event: Omit<ConfirmAuditEvent, "eventId" | "ts">,
+  ) => Promise<unknown>;
+  readonly #issueProof: typeof issueApprovalProof;
   readonly #receipts = new WeakMap<SessionState, Map<string, DecisionReceipt>>();
+  readonly #terminalTombstones = new WeakMap<
+    SessionState,
+    Map<string, TerminalTombstone>
+  >();
 
   constructor(options: ConfirmServiceOptions = {}) {
     this.#now = options.now ?? Date.now;
     this.#createId = options.createId ?? (() => crypto.randomUUID());
     // main 已把 persistSessionMetadata 改为失败无条件抛,无需再显式要求 rethrow
     this.#persist = options.persist ?? ((state, reason) => persistSessionMetadata(state, reason));
+    // 生产走自带退避与 dirty 记账的 schedulePersist；注入 persist 的单测默认沿用同一替身。
+    this.#retryPersist = options.retryPersist ?? options.persist ?? schedulePersist;
     this.#secrets = options.secrets ?? secretLeaseStore;
+    this.#loadGrantState = options.loadGrantState
+      ?? (options.loadGrant
+        ? async (kind) => {
+            const grant = await options.loadGrant!(kind);
+            return {
+              kind,
+              present: grant !== null,
+              grantId: grant?.grantId ?? null,
+              version: grant ? 1 : 0,
+              revocationEpoch: 0,
+              grant,
+            };
+          }
+        : getConfirmGrantState);
+    this.#appendAudit = options.appendAudit ?? appendConfirmAuditEvent;
+    this.#issueProof = options.issueProof ?? issueApprovalProof;
   }
 
   async requestCommandConfirm(input: {
@@ -120,6 +176,18 @@ export class ConfirmService {
     } catch {
       return { ok: false, reason: "确认卡无法安全生成" };
     }
+    let grantState: ConfirmGrantState | null = null;
+    if (spec.kind === "install" || spec.kind === "command") {
+      try {
+        grantState = await this.#loadGrantState(spec.kind);
+      } catch (error) {
+        console.error("[confirm-audit] grant state lookup failed; showing confirm card", {
+          sessionId: input.state.sessionId,
+          confirmId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const pending: PendingConfirm = {
       confirmId,
       runId: input.runId,
@@ -130,6 +198,9 @@ export class ConfirmService {
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CONFIRM_TTL_MS).toISOString(),
       status: "pending",
+      ...(grantState
+        ? { rememberRevocationEpoch: grantState.revocationEpoch }
+        : {}),
     };
     input.state.pendingConfirms.set(input.toolCallId, pending);
     try {
@@ -138,7 +209,138 @@ export class ConfirmService {
       input.state.pendingConfirms.delete(input.toolCallId);
       return { ok: false, reason: "确认请求无法安全持久化" };
     }
+    if (grantState?.grant) {
+      try {
+        const grant = grantState.grant;
+        const decisionId = await this.#approveFromStoredGrant(input.state, pending, grant);
+        return {
+          ok: true,
+          pending,
+          storedGrantApproval: { decisionId, grant },
+        };
+      } catch (error) {
+        if (
+          error instanceof ConfirmDecisionError &&
+          error.message === "存量确认已撤销" &&
+          input.state.pendingConfirms.get(pending.toolCallId) === pending &&
+          pending.status === "pending"
+        ) {
+          pending.spec = {
+            ...pending.spec,
+            notice: "设置刚刚发生变化，这次操作需要重新确认。",
+          };
+          await this.#persist(input.state, "confirm:revocation-race-notice").catch(() => undefined);
+        }
+        console.error("[confirm-audit] stored grant lookup/approval failed; showing confirm card", {
+          sessionId: input.state.sessionId,
+          confirmId: pending.confirmId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (
+          input.state.pendingConfirms.get(pending.toolCallId) !== pending ||
+          pending.status !== "pending"
+        ) {
+          return {
+            ok: false,
+            reason: "确认没有完成，命令没有执行。请重新确认后再试。",
+          };
+        }
+      }
+    }
     return { ok: true, pending, frame: this.requestedFrame(pending) };
+  }
+
+  /**
+   * 仅供服务端确认流水线内部调用。它不进入 HTTP route、agent toolset 或模型上下文；
+   * 每次命中都按当前 pending 的精确 digest 签发一张新的短时 proof。
+   */
+  async #approveFromStoredGrant(
+    state: SessionState,
+    pending: PendingConfirm,
+    grant: ConfirmGrant,
+  ): Promise<string> {
+    const pendingExpiresAt = Date.parse(pending.expiresAt);
+    if (
+      state.pendingConfirms.get(pending.toolCallId) !== pending ||
+      pending.status !== "pending" ||
+      pending.toolName !== WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND ||
+      pending.spec.kind !== grant.kind ||
+      (grant.kind !== "install" && grant.kind !== "command") ||
+      !Number.isFinite(pendingExpiresAt) ||
+      pendingExpiresAt <= this.#now()
+    ) {
+      throw new ConfirmDecisionError("conflict", "存量授权与确认请求不匹配");
+    }
+    const decisionId = `stored-${this.#createId()}`.slice(0, 128);
+    pending.status = "resuming";
+    pending.decisionId = decisionId;
+    pending.decisionSource = "stored-grant";
+    pending.decisionAccepted = true;
+    pending.decisionGrantId = grant.grantId;
+    try {
+      await this.#persist(state, "confirm:stored-grant-resuming");
+    } catch (error) {
+      this.#resetStoredGrantDecision(pending);
+      throw error;
+    }
+    try {
+      const currentState = await this.#loadGrantState(grant.kind);
+      if (!currentState.grant || currentState.grant.grantId !== grant.grantId) {
+        throw new ConfirmDecisionError("conflict", "存量确认已撤销");
+      }
+      this.#issueProof(state, {
+        sessionId: state.sessionId,
+        runId: pending.runId,
+        toolCallId: pending.toolCallId,
+        commandDigest: pending.commandDigest,
+        expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+      });
+      await this.#safeAppendAudit(state, pending, {
+        eventType: "decision_started",
+        decision: "accepted",
+        source: "stored-grant",
+        grantId: grant.grantId,
+        result: "stored-grant-approved",
+      });
+      return decisionId;
+    } catch (error) {
+      clearApprovalProof(state, pending.toolCallId);
+      await this.#rollbackStoredGrantDecision(state, pending);
+      throw error;
+    }
+  }
+
+  #resetStoredGrantDecision(pending: PendingConfirm): void {
+    pending.status = "pending";
+    delete pending.decisionId;
+    delete pending.decisionSource;
+    delete pending.decisionAccepted;
+    delete pending.decisionGrantId;
+  }
+
+  async #rollbackStoredGrantDecision(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    const decision = {
+      status: pending.status,
+      decisionId: pending.decisionId,
+      decisionSource: pending.decisionSource,
+      decisionAccepted: pending.decisionAccepted,
+      decisionGrantId: pending.decisionGrantId,
+    };
+    this.#resetStoredGrantDecision(pending);
+    try {
+      await this.#persist(state, "confirm:stored-grant-rollback");
+    } catch (error) {
+      // durable snapshot 仍是 resuming；内存也恢复同态，交给恢复路径 fail-closed 收口。
+      pending.status = decision.status;
+      pending.decisionId = decision.decisionId;
+      pending.decisionSource = decision.decisionSource;
+      pending.decisionAccepted = decision.decisionAccepted;
+      pending.decisionGrantId = decision.decisionGrantId;
+      throw error;
+    }
   }
 
   stageSecret(
@@ -225,9 +427,16 @@ export class ConfirmService {
       this.#secrets.delete(state, pending.confirmId);
       throw new ConfirmDecisionError("conflict", "确认请求已经被处理");
     }
+    if (pending.status === "terminal") {
+      this.#secrets.delete(state, pending.confirmId);
+      throw new ConfirmDecisionError("conflict", "确认请求已经被处理");
+    }
     if (Date.parse(pending.expiresAt) <= this.#now()) {
       this.#secrets.delete(state, pending.confirmId);
-      throw new ConfirmDecisionError("expired", "确认请求已过期");
+      throw new ConfirmDecisionError(
+        "expired",
+        "这张确认卡已过期，命令没有执行。请重新确认。",
+      );
     }
 
     const secretPresent = this.#secrets.has(state, {
@@ -258,31 +467,75 @@ export class ConfirmService {
 
     pending.status = "resuming";
     pending.decisionId = submission.decisionId;
+    pending.decisionSource = "ui";
+    pending.decisionAccepted = submission.decision.accepted;
+    // pending 恢复或异常重试不得把上一轮 grant 归因带入本次 UI 决策。
+    delete pending.decisionGrantId;
     try {
       await this.#persist(state, "confirm:resuming");
     } catch {
       pending.status = "pending";
       delete pending.decisionId;
+      delete pending.decisionSource;
+      delete pending.decisionAccepted;
       this.#secrets.delete(state, pending.confirmId);
       throw new ConfirmDecisionError("conflict", "确认状态无法安全持久化");
     }
 
     if (submission.decision.accepted && pending.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) {
-      issueApprovalProof(state, {
-        sessionId: state.sessionId,
-        runId: pending.runId,
-        toolCallId: pending.toolCallId,
-        commandDigest: pending.commandDigest,
-        expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
-      });
+      try {
+        this.#issueProof(state, {
+          sessionId: state.sessionId,
+          runId: pending.runId,
+          toolCallId: pending.toolCallId,
+          commandDigest: pending.commandDigest,
+          expiresAt: Math.min(Date.parse(pending.expiresAt), this.#now() + 60_000),
+        });
+      } catch {
+        clearApprovalProof(state, pending.toolCallId);
+        try {
+          await this.#rollbackStoredGrantDecision(state, pending);
+        } catch {
+          throw new ConfirmDecisionError("conflict", "确认授权签发失败，状态等待恢复");
+        }
+        throw new ConfirmDecisionError("conflict", "确认授权签发失败，请重试");
+      }
     } else {
       clearApprovalProof(state, pending.toolCallId);
     }
+    await this.#safeAppendAudit(state, pending, {
+      eventType: "decision_started",
+      decision: submission.decision.accepted ? "accepted" : "rejected",
+      source: "ui",
+      grantId: null,
+      result: "decision-validated",
+    });
     return {
       pending,
       idempotent: false,
       resolution: submission.decision.accepted ? "accepted" : "rejected",
     };
+  }
+
+  attachRememberedGrant(pending: PendingConfirm, grant: ConfirmGrant): void {
+    if (pending.decisionSource !== "ui" || pending.decisionAccepted !== true) return;
+    if (pending.spec.kind !== grant.kind) return;
+    pending.decisionGrantId = grant.grantId;
+  }
+
+  async recordRememberRejected(
+    state: SessionState,
+    pending: PendingConfirm,
+    accepted: boolean,
+    reason: string,
+  ): Promise<void> {
+    await this.#safeAppendAudit(state, pending, {
+      eventType: "remember_rejected",
+      decision: accepted ? "accepted" : "rejected",
+      source: "ui",
+      grantId: null,
+      result: `remember-rejected:${reason}`,
+    });
   }
 
   async finishDecision(
@@ -292,7 +545,11 @@ export class ConfirmService {
     resolution: ConfirmResolved["resolution"],
   ): Promise<void> {
     this.finishDecisionInMemory(state, pending, decisionId, resolution);
-    await this.persistDecisionState(state, `confirm:${resolution}`);
+    try {
+      await this.persistDecisionState(state, `confirm:${resolution}`);
+    } finally {
+      await this.recordDecisionFinished(state, pending, resolution);
+    }
   }
 
   finishDecisionInMemory(
@@ -303,7 +560,15 @@ export class ConfirmService {
   ): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        resolution,
+        `confirm:${resolution}`,
+      );
+    }
     let receipts = this.#receipts.get(state);
     if (!receipts) {
       receipts = new Map();
@@ -320,40 +585,102 @@ export class ConfirmService {
 
   async failDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
     this.failDecisionInMemory(state, pending);
-    await this.persistDecisionState(state, "confirm:failed");
+    try {
+      await this.persistDecisionState(state, "confirm:failed");
+    } finally {
+      await this.recordDecisionFailed(state, pending);
+    }
   }
 
   failDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        "failed",
+        "confirm:failed",
+      );
+    }
   }
 
   async expireDecision(state: SessionState, pending: PendingConfirm): Promise<void> {
     this.expireDecisionInMemory(state, pending);
-    await this.persistDecisionState(state, "confirm:expired");
+    try {
+      await this.persistDecisionState(state, "confirm:expired");
+    } finally {
+      await this.recordDecisionExpired(state, pending);
+    }
   }
 
   expireDecisionInMemory(state: SessionState, pending: PendingConfirm): void {
     clearApprovalProof(state, pending.toolCallId);
     this.#secrets.delete(state, pending.confirmId);
-    state.pendingConfirms.delete(pending.toolCallId);
+    if (state.pendingConfirms.get(pending.toolCallId) === pending) {
+      state.pendingConfirms.delete(pending.toolCallId);
+      this.#rememberTerminalTombstone(
+        state,
+        pending,
+        "expired",
+        "confirm:expired",
+      );
+    }
   }
 
   persistDecisionState(
     state: SessionState,
-    reason:
-      | `confirm:${ConfirmResolved["resolution"]}`
-      | "confirm:failed"
-      | "confirm:expired",
+    reason: ConfirmTerminalPersistReason,
   ): Promise<void> {
-    return this.#persist(state, reason);
+    return this.#persistTerminalDecisionState(state, reason);
+  }
+
+  recordDecisionFinished(
+    state: SessionState,
+    pending: PendingConfirm,
+    resolution: ConfirmResolved["resolution"],
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_finished",
+      decision: resolution === "accepted" ? "accepted" : "rejected",
+      source: pending.decisionSource ?? "ui",
+      grantId: pending.decisionGrantId ?? null,
+      result: resolution,
+    });
+  }
+
+  recordDecisionFailed(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_failed",
+      decision: "failed",
+      source: pending.decisionSource ?? "ui",
+      grantId: pending.decisionGrantId ?? null,
+      result: "failed",
+    });
+  }
+
+  recordDecisionExpired(
+    state: SessionState,
+    pending: PendingConfirm,
+  ): Promise<void> {
+    return this.#safeAppendAudit(state, pending, {
+      eventType: "decision_expired",
+      decision: "expired",
+      source: "expired",
+      grantId: null,
+      result: "expired",
+    });
   }
 
   clearSession(state: SessionState): void {
     clearAllApprovalProofs(state);
     this.#secrets.clear(state);
     this.#receipts.delete(state);
+    this.#terminalTombstones.delete(state);
     state.pendingConfirms.clear();
   }
 
@@ -393,6 +720,164 @@ export class ConfirmService {
       if (receipt.expiresAt <= now) receipts.delete(id);
     }
     if (receipts.size === 0) this.#receipts.delete(state);
+  }
+
+  #rememberTerminalTombstone(
+    state: SessionState,
+    pending: PendingConfirm,
+    resolution: ConfirmResolved["resolution"],
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    let tombstones = this.#terminalTombstones.get(state);
+    if (!tombstones) {
+      tombstones = new Map();
+      this.#terminalTombstones.set(state, tombstones);
+    }
+    tombstones.set(pending.toolCallId, {
+      pending: {
+        ...pending,
+        status: "terminal",
+        terminalResolution: resolution,
+      },
+      reason,
+    });
+  }
+
+  async #persistTerminalDecisionState(
+    state: SessionState,
+    reason: ConfirmTerminalPersistReason,
+  ): Promise<void> {
+    const tombstones = Array.from(
+      this.#terminalTombstones.get(state)?.values() ?? [],
+    ).filter((item) => item.reason === reason);
+    if (tombstones.length === 0) {
+      await this.#persist(state, reason);
+      return;
+    }
+
+    // main 要求先把 live pending 从内存移除，避免慢存储阻塞会话清理；墓碑只放进
+    // 独立快照落盘，既保留分支的防复活语义，也不会让已结束确认重新暴露为活状态。
+    const terminalState: SessionState = {
+      ...state,
+      pendingConfirms: new Map(state.pendingConfirms),
+    };
+    for (const tombstone of tombstones) {
+      terminalState.pendingConfirms.set(
+        tombstone.pending.toolCallId,
+        tombstone.pending,
+      );
+    }
+
+    try {
+      await this.#persist(terminalState, `${reason}:terminal`);
+    } catch (error) {
+      this.#queueTerminalPersistRetry(state, terminalState, tombstones, reason);
+      throw error;
+    }
+
+    this.#forgetTerminalTombstones(state, tombstones);
+    try {
+      await this.#persist(state, reason);
+    } catch (error) {
+      this.#queueCleanupPersistRetry(state, reason);
+      throw error;
+    }
+  }
+
+  #queueTerminalPersistRetry(
+    state: SessionState,
+    terminalState: SessionState,
+    tombstones: TerminalTombstone[],
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    void this.#retryPersist(terminalState, `${reason}:terminal-retry`).then(async () => {
+      this.#forgetTerminalTombstones(state, tombstones);
+      await this.#retryPersist(state, `${reason}:cleanup-retry`);
+    }).catch((error) => {
+      console.error("[confirm-persist] terminal retry failed; session remains dirty", {
+        sessionId: state.sessionId,
+        confirmIds: tombstones.map((item) => item.pending.confirmId),
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  #forgetTerminalTombstones(
+    state: SessionState,
+    tombstones: TerminalTombstone[],
+  ): void {
+    const current = this.#terminalTombstones.get(state);
+    if (!current) return;
+    for (const tombstone of tombstones) {
+      if (current.get(tombstone.pending.toolCallId) === tombstone) {
+        current.delete(tombstone.pending.toolCallId);
+      }
+    }
+    if (current.size === 0) this.#terminalTombstones.delete(state);
+  }
+
+  #queueCleanupPersistRetry(
+    state: SessionState,
+    reason: ConfirmTerminalPersistReason,
+  ): void {
+    void this.#retryPersist(state, `${reason}:cleanup-retry`).catch((error) => {
+      console.error("[confirm-persist] cleanup retry failed; terminal tombstone remains durable", {
+        sessionId: state.sessionId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  async #safeAppendAudit(
+    state: SessionState,
+    pending: PendingConfirm,
+    input: Pick<
+      ConfirmAuditEvent,
+      "eventType" | "decision" | "source" | "grantId" | "result"
+    >,
+  ): Promise<void> {
+    try {
+      await this.#appendAudit({
+        ...input,
+        subjectId: "local-user",
+        sessionId: state.sessionId,
+        runId: pending.runId,
+        toolCallId: pending.toolCallId,
+        confirmId: pending.confirmId,
+        kind: pending.spec.kind,
+        commandDigest: pending.commandDigest,
+        commandPreview: pending.spec.commandPreview ?? "",
+        policyVersion: "command-policy-v1",
+        isolationEpoch: null,
+        configHash: null,
+      });
+    } catch (error) {
+      const previous = state.confirmAuditDegraded;
+      state.confirmAuditDegraded = {
+        failureCount: (previous?.failureCount ?? 0) + 1,
+        lastFailedAt: new Date(this.#now()).toISOString(),
+        lastEventType: input.eventType,
+        lastConfirmId: pending.confirmId,
+      };
+      console.error("[confirm-audit] append failed", {
+        sessionId: state.sessionId,
+        confirmId: pending.confirmId,
+        eventType: input.eventType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        await this.#retryPersist(state, "confirm:audit-degraded");
+      } catch (persistError) {
+        console.error("[confirm-audit] degraded marker persist failed; session remains dirty", {
+          sessionId: state.sessionId,
+          confirmId: pending.confirmId,
+          eventType: input.eventType,
+          error: persistError instanceof Error ? persistError.message : String(persistError),
+        });
+      }
+    }
   }
 }
 

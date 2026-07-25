@@ -1107,6 +1107,57 @@ describe("thread persistence", () => {
     expectRestoredStableFields(restored, state);
   });
 
+  it("恢复时消费终态墓碑且保留审计降级记账，不复活已结束确认", async () => {
+    const { createSession } = await import("../session/sessionState.js");
+    const { loadSessionFromThread, persistSessionMetadata } = await import(
+      "../session/threadPersistence.js"
+    );
+    const state = createSession("confirm-terminal-tombstone");
+    const tool = toolCall(
+      "mastra_workspace_execute_command",
+      { kind: "pending" },
+      "tool-terminal-tombstone",
+    );
+    state.chatHistory = [toolMessage(tool)];
+    state.pendingConfirms.set(tool.id, {
+      confirmId: "confirm-terminal-tombstone",
+      runId: "run-terminal-tombstone",
+      toolCallId: tool.id,
+      toolName: tool.name,
+      commandDigest: "digest-terminal-tombstone",
+      spec: {
+        id: "confirm-terminal-tombstone",
+        kind: "command",
+        title: "执行命令",
+        say: "需要确认",
+        footHint: "仅一次",
+        primaryLabel: "执行",
+        secondaryLabel: "取消",
+      },
+      requestedAt: "2026-07-22T01:00:00.000Z",
+      expiresAt: "2026-07-22T01:10:00.000Z",
+      status: "terminal",
+      terminalResolution: "failed",
+    });
+    state.confirmAuditDegraded = {
+      failureCount: 2,
+      lastFailedAt: "2026-07-22T01:02:00.000Z",
+      lastEventType: "decision_failed",
+      lastConfirmId: "confirm-terminal-tombstone",
+    };
+
+    await persistSessionMetadata(state, "test:confirm-terminal-tombstone");
+    const persisted = threads.get(state.sessionId)?.metadata as QingagentThreadMetadata;
+    expect(persisted.pendingConfirms).toEqual([
+      expect.objectContaining({ status: "terminal", terminalResolution: "failed" }),
+    ]);
+    expect(persisted.confirmAuditDegraded).toEqual(state.confirmAuditDegraded);
+
+    const restored = await loadSessionFromThread(state.sessionId);
+    expect(restored?.pendingConfirms.size).toBe(0);
+    expect(restored?.confirmAuditDegraded).toEqual(state.confirmAuditDegraded);
+  });
+
   it("恢复仲裁场景1: documents 无行时继续使用 metadata", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");
     const sessionId = "restore-arb-metadata-only";
@@ -1690,6 +1741,67 @@ describe("thread persistence", () => {
         data: { retriable: false, reason: "上次的确认已结束，请重新发起。" },
       });
     }
+  });
+
+  it("冷恢复保留已完成启动动作但尚待进程终态的 PID owner", async () => {
+    const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+    const { settleBackgroundCommand } = await import("../agent-run/backgroundCommandSettlement.js");
+    const backgroundOwner: ToolCallSpec = {
+      id: "background-owner",
+      name: "mastra_workspace_execute_command",
+      render: { kind: "chatInline" },
+      status: { kind: "done" },
+      body: {
+        kind: "commandCard",
+        data: {
+          title: "运行命令",
+          icon: "⚙️",
+          command: "sleep 300",
+          exitCode: 0,
+          outputTail: "已在后台启动（PID: 4242）",
+          phase: "done",
+          pid: "4242",
+          ownerToolCallId: "background-owner",
+          background: true,
+        },
+      },
+      result: {
+        kind: "genericText",
+        data: "Started background process (PID: 4242)",
+      },
+    };
+    threads.set("background-owner-restore", storedThread(
+      "background-owner-restore",
+      metadata({ chatHistory: [toolMessage(backgroundOwner)] }),
+    ));
+
+    const restored = await loadSessionFromThread("background-owner-restore");
+    const restoredPart = restored?.chatHistory[0]?.parts[0];
+
+    expect(restoredPart?.kind).toBe("toolCall");
+    if (restoredPart?.kind === "toolCall") {
+      expect(restoredPart.data).toEqual(backgroundOwner);
+    }
+    expect(restored?._backgroundCommandOwnerByPid?.size).toBe(0);
+    if (!restored) throw new Error("后台命令会话恢复失败");
+    expect(settleBackgroundCommand(
+      restored,
+      "4242",
+      { kind: "succeeded", exitCode: 0 },
+      {
+        eventToolCallId: "restored-read",
+        sourceToolName: "mastra_workspace_get_process_output",
+      },
+    )).toMatchObject({
+      toolCallId: "background-owner",
+      spec: {
+        status: { kind: "done" },
+        body: {
+          kind: "commandCard",
+          data: { terminalKind: "succeeded" },
+        },
+      },
+    });
   });
 
   it("cold restore uses submitted askUser toolCallId to recover stale persisted suspension id", async () => {

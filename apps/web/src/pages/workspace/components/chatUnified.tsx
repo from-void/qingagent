@@ -21,6 +21,8 @@ import "./chatUnified.css";
 const ICO = {
   check: "M4 8.5l3 3 5-6.5",
   error: "M8 2.5v6 M8 12.5h.01 M2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0",
+  cancel: "M4 4l8 8 M12 4l-8 8",
+  stop: "M4 4h8v8H4z",
   search: "M7 7m-4 0a4 4 0 108 0 4 4 0 10-8 0 M11 11l3.5 3.5",
   image: "M2.5 3.5h11v9h-11z M2.5 10l3-3 2.5 2.5 3-3.5 2.5 3",
   cmd: "M3 4l3 3-3 3 M8 11h5",
@@ -52,12 +54,34 @@ function Countdown({ seconds }: { seconds: number }) {
   return <>{left > 0 ? `${left} 秒后发起检查` : "正在检查…"}</>;
 }
 
+const OUTPUT_ACTIVITY_VISIBLE_MS = 5_000;
+
+function outputActivityAt(result: ToolCallResult | null): number | null {
+  const parsed = parseGenericResultObject(result);
+  const value = parsed?.outputActivityAt;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** 等待态只做稳定的秒数更新；stdout 活动提示保留 5 秒，不做闪烁动画。 */
+function ProcessWaitMeta({ activityAt }: { activityAt: number | null }) {
+  const startedAtRef = useRef(Date.now());
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const elapsedSec = Math.max(0, Math.floor((now - startedAtRef.current) / 1_000));
+  const hasRecentOutput =
+    activityAt !== null && now >= activityAt && now - activityAt < OUTPUT_ACTIVITY_VISIBLE_MS;
+  return <>{hasRecentOutput ? "仍在输出" : "等待输出"} · 已等待 {elapsedSec} 秒</>;
+}
+
 // —— 工具中文名(= 生产显示名 + renames + 原未映射 3 个) ——
 export const TOOL_LABELS: Record<string, string> = {
   parseFile: "解析文件", storeMaterial: "存储素材", summarizeMaterial: "更新素材", readMaterial: "读取素材",
   readDraft: "读取草稿", editDraft: "修改草稿", readDiff: "核对修改",
   webSearch: "联网搜索", fetchArticle: "网页抓取",
-  skill: "调用技能", skill_read: "读取技能", skill_search: "搜索技能",
+  skill: "使用技能", skill_read: "读取技能", skill_search: "搜索技能",
   browser_goto: "打开网页", browser_snapshot: "网页浏览", browser_click: "网页点击",
   browser_type: "网页输入", browser_press: "按键", browser_wait: "等待", browser_scroll: "滚动", browser_back: "返回",
   browser_close: "关闭浏览器", browser_hover: "悬停", browser_select: "选择", browser_dialog: "处理弹窗",
@@ -76,8 +100,8 @@ export const TOOL_LABELS: Record<string, string> = {
   show_qr: "生成二维码",
   // askUser 仅为老会话持久化兼容保留，待老会话数据迁移或过期后删除。
   askUser: "确认方向", planDraft: "确认方向", askUserQuestion: "有问题待确认",
-  // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body,不加映射会裸显"工具调用"。
-  wechat_auth_status: "检查微信授权状态", wechat_auth_start: "生成二维码",
+  // 微信公众号 skill:auth_start 的 running(生成中)态是 generic body，显式补上映射。
+  wechat_auth_status: "检查微信登录状态", wechat_auth_start: "生成二维码",
   wechat_search_mp: "搜索公众号", wechat_list_articles: "列出文章",
   github_list_repos: "列出 GitHub 仓库", github_repo_tree: "读取 GitHub 文件树",
   github_read_file: "读取 GitHub 文件",
@@ -94,13 +118,13 @@ export const TOOL_LABELS: Record<string, string> = {
 
 // 已报过的未映射工具名(去重,防止 render 反复刷屏)。
 const anonToolReported = new Set<string>();
-// 未映射工具 = 会裸显示成"工具调用",属 TOOL_LABELS 配置遗漏。首次遇到即 console.error 报警,
+// 未映射工具会回退为通用操作，仍属 TOOL_LABELS 配置遗漏。首次遇到即 console.error 报警，
 // 便于开发在控制台一眼揪出并回补中文名(用户诉求:一旦出现匿名工具就报错,后续去修)。
 function reportAnonTool(name: string, spec: ToolCallSpec): void {
   if (anonToolReported.has(name)) return;
   anonToolReported.add(name);
   console.error(
-    `[anon-tool] 工具「${name}」未在 TOOL_LABELS 映射,前端裸显示成"工具调用"。请在 chatUnified.tsx 的 TOOL_LABELS 补中文名。`,
+    `[anon-tool] 工具「${name}」未在 TOOL_LABELS 映射，前端已回退为通用操作。请在 chatUnified.tsx 的 TOOL_LABELS 补中文名。`,
     { toolName: name, bodyKind: spec.body.kind },
   );
 }
@@ -126,7 +150,7 @@ function bodyKindLabel(spec: ToolCallSpec): string {
       // 兜底:任何未显式映射的 browser_* 工具,统一成"浏览器操作",不裸"工具调用"。
       if (spec.name.startsWith("browser_")) return "浏览器操作";
       reportAnonTool(spec.name, spec);
-      return "工具调用";
+      return "执行操作";
   }
 }
 
@@ -246,7 +270,7 @@ function pickOutputSummary(result: ToolCallResult | null, toolName?: string): st
       const applied = cnt("applied");
       if (applied != null && applied > 0) return `改 ${applied} 处`;
       if (bool("changed") === false) return "未改动";
-      if (bool("ok") === false) return "未完成";
+      if (bool("ok") === false) return "修改失败";
       return null;
     }
     case "readDiff": {
@@ -359,31 +383,53 @@ export function UToolBar({
   const customOut = !pending && !running && !failed ? pickOutputSummary(spec.result, spec.name) : null;
   const semanticFailed = !pending && !running && !failed && isToolResultFailure(spec.result, spec.name);
   const outputHint = semanticFailed ? pickOutputHint(spec.result, spec.name) : null;
-  // 读取后台进程输出 = 阻塞等待:右侧状态"等待输出",左侧参数位换成倒计时(N 秒后发起检查)。
-  const isProcOut = running && spec.name === "mastra_workspace_get_process_output";
+  // 读取后台进程输出 = 有界等待:左侧保留本次检查倒计时，右侧持续显示已等待时长；
+  // stdout/stderr 流动时短暂切成「仍在输出」，不使用闪烁动画。
+  const isProcOutTool = spec.name === "mastra_workspace_get_process_output";
+  const isProcOut = running && isProcOutTool;
+  const aborted =
+    spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted";
   const procOutSecs = (() => {
     if (!isProcOut) return null;
     const t = parseArgs(spec).timeout;
     return typeof t === "number" && t > 0 ? Math.round(t / 1000) : null;
   })();
-  const runningText = isProcOut ? "等待输出" : "处理中";
   const failedReason =
     failed && spec.status.kind === "failed"
       ? spec.status.data.reason
       : null;
+  const waitReturnedWhileRunning =
+    isProcOutTool &&
+    spec.result?.kind === "genericText" &&
+    (
+      boolField(parseGenericResultObject(spec.result) ?? {}, "processStillRunning") === true ||
+      (spec.result.data.includes("进程仍在运行") && spec.result.data.includes("未退出"))
+    );
+  const runningText = isProcOut
+    ? <ProcessWaitMeta activityAt={outputActivityAt(spec.result)} />
+    : "处理中";
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
-  const statusText = pending
-    ? "等待中"
-    : running
-      ? runningText
-      : failed || semanticFailed
-        ? (failedReason ?? customOut ?? "未完成")
-        : (customOut ?? "已完成");
-  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”。
+  const statusText = aborted
+    ? "已中止，结果可能未知"
+    : pending
+      ? "等待中"
+      : running
+        ? runningText
+        : failed || semanticFailed
+          ? (failedReason ?? customOut ?? "未完成")
+          : isProcOutTool
+            ? waitReturnedWhileRunning
+              ? "本次等待结束，仍在运行"
+              : "已读取输出"
+            : (customOut ?? "已完成");
+  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”；
+  // aborted 是更具体的已中止终态，不应沿用普通失败的红色错误态。
   // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。
+  const visualFailed = failed && !aborted;
   const ico = pending ? <span className="u-dot" />
     : running ? (LONG_RUNNING.has(spec.name) ? <Spin /> : <Dots />)
+    : aborted ? <UIcon d={ICO.stop} />
     : failed ? <UIcon d={ICO.error} />
     : <UIcon d={DONE_ICON_BY_KIND[spec.body.kind] ?? ICO.check} />;
   const seg = isProcOut && procOutSecs
@@ -391,11 +437,11 @@ export function UToolBar({
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className={`u-ico${failed ? " is-error" : ""}`}>{ico}</span>
+      <span className={`u-ico${visualFailed ? " is-error" : ""}`}>{ico}</span>
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span className={`u-meta${failed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
+      <span className={`u-meta${visualFailed ? " is-error" : ""}`} title={outputHint ?? undefined}>{statusText}</span>
     </div>
   );
 }
@@ -485,7 +531,7 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
   const done = status === "done" || stage === "done";
   const failed = status === "failed" || stage === "failed";
   const running = !done && !failed;
-  const meta = done ? "已完成" : failed ? "未完成" : "生成中";
+  const meta = done ? "已完成" : failed ? "生成失败" : "生成中";
   const src = body.progress?.src ?? null;
   const partial = running ? body.progress?.partialSvg ?? null : null;
   return (
@@ -518,7 +564,7 @@ type ReadImageBody = { prompt: string; thumbnailSrc: string | null; excerpt: str
 export function UReadImage({ body, status }: { body: ReadImageBody; status: string }) {
   const done = status === "done" || status === "failed";
   const running = !done;
-  const meta = status === "failed" ? "未完成" : done ? "已完成" : "处理中";
+  const meta = status === "failed" ? "识别失败" : done ? "已完成" : "处理中";
   return (
     <UCard icon={ICO.image} title="识别图片" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
       <div className="u-card-bd">
@@ -565,21 +611,67 @@ function ScrollBox({ lines, variant, children }: {
   );
 }
 
-export function UCommand({ body }: { body: CommandCardBody }) {
-  const done = body.phase === "done";
-  const failed = body.phase === "failed";
-  const running = body.phase === "running";
-  const meta = done ? "已完成" : failed ? "未完成" : "处理中";
+export function UCommand({
+  body,
+  status,
+}: {
+  body: CommandCardBody;
+  status?: ToolCallSpec["status"];
+}) {
+  const statusKind = status?.kind;
+  // status 是单一权威；body.phase 只兼容尚未带终态 status 的旧帧。
+  const phase = statusKind === "failed"
+    ? "failed"
+    : statusKind === "done"
+      ? "done"
+      : statusKind === "pending" || statusKind === "running"
+        ? "running"
+        : body.phase;
+  const done = phase === "done";
+  const failed = phase === "failed";
+  const running = phase === "running";
+  const queued = statusKind === "pending";
+  const terminalKind = running ? undefined : body.terminalKind;
+  const meta = terminalKind === "rejected"
+    ? "已取消，命令未执行"
+    : terminalKind === "killed"
+      ? body.signal ? `已终止（${body.signal}）` : "已终止"
+      : terminalKind === "aborted"
+        ? "已中止，结果可能未知"
+        : terminalKind === "timedOut"
+          ? "执行超时"
+          : terminalKind === "failed"
+            ? body.exitCode > 0
+              ? `运行失败（退出码 ${body.exitCode}）`
+              : "运行失败"
+            : terminalKind === "succeeded" || done
+              ? body.background === true && body.pid
+                ? `已在后台启动（PID: ${body.pid}）`
+                : "已完成"
+              : failed
+                ? "运行失败"
+                : queued
+                  ? "已确认，排队执行"
+                  : "处理中";
+  const icon = terminalKind === "succeeded" || done
+    ? ICO.check
+    : terminalKind === "rejected"
+      ? ICO.cancel
+      : terminalKind === "killed" || terminalKind === "aborted"
+        ? ICO.stop
+        : terminalKind === "failed" || terminalKind === "timedOut"
+          ? ICO.error
+          : ICO.cmd;
   const expandable = Boolean(body.command || body.outputTail);
   return (
-    <UCard icon={ICO.cmd} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
+    <UCard icon={icon} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
       {expandable && (
         <div className="u-card-bd u-card-bd--cmd">
           {body.command && (
             <ScrollBox lines={4} variant="code">{body.command.includes("\n") ? body.command : `$ ${body.command}`}</ScrollBox>
           )}
           {body.outputTail && (
-            <ScrollBox lines={3} variant="output">{body.outputTail}{body.exitCode !== 0 ? `\n(退出码 ${body.exitCode})` : ""}</ScrollBox>
+            <ScrollBox lines={3} variant="output">{body.outputTail}</ScrollBox>
           )}
         </div>
       )}
@@ -647,7 +739,9 @@ export function UnifiedToolCall({
   if (b.kind === "researchCard") return <UResearch body={b.data} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
-  if (b.kind === "commandCard") return <UCommand body={b.data} />;
+  if (b.kind === "commandCard") {
+    return <UCommand body={b.data} status={spec.status} />;
+  }
   // generic / 旧死 body.kind / askUser overlay → 统一一行
   return <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
 }

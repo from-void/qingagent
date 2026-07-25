@@ -135,7 +135,7 @@ describe("confirm cold recovery", () => {
       kind: "confirmResolved",
       data: expect.objectContaining({
         resolution: "failed",
-        message: expect.stringContaining("结果未知"),
+        message: "上次确认后没有收到完整结果。为避免重复操作，系统没有自动重试；请查看命令输出后再决定是否重新执行。",
       }),
     }));
   });

@@ -14,6 +14,8 @@ import { buildToolIoEndMetadata, endToolIoSpan } from "./toolIoSpans.js";
 import { SESSION_STATE_TOOL_NAMES } from "./agentStreamToolCall.js";
 import type { ToolResultContext } from "./agentStreamToolResultTypes.js";
 import { isRecord } from "./redaction.js";
+import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
+import { normalizeKillProcessResult } from "./backgroundCommandLifecycle.js";
 
 export async function* handleToolResultEvent(
   turn: AgentStreamTurnContext,
@@ -27,6 +29,8 @@ export async function* handleToolResultEvent(
   }
   const rawArgs = (chunk.payload.args ?? {}) as Record<string, unknown>;
   const args = { ...(turn.toolCallArgsById.get(toolCallId) ?? {}), ...rawArgs };
+  turn.toolCallNameById.set(toolCallId, toolName);
+  turn.toolCallArgsById.set(toolCallId, args);
   const payload = chunk.payload as Record<string, unknown>;
   const rawToolResult =
     Object.prototype.hasOwnProperty.call(payload, "result")
@@ -113,6 +117,37 @@ export async function* handleToolResultEvent(
     toolResult,
     toolResultOk,
   };
+  const killLifecycle = normalizeKillProcessResult({
+    turn,
+    toolCallId,
+    toolName,
+    args,
+    rawToolResult,
+  });
+  if (killLifecycle) {
+    const settled = settleBackgroundCommand(
+      state,
+      killLifecycle.pid,
+      killLifecycle.terminal,
+      {
+        eventToolCallId: killLifecycle.sourceToolCallId,
+        sourceToolName: killLifecycle.sourceToolName,
+        eventPid: killLifecycle.eventPid,
+        argumentPid: killLifecycle.argumentPid,
+      },
+    );
+    if (settled) {
+      yield {
+        kind: "toolCallUpdated",
+        data: {
+          messageId: settled.messageId,
+          toolCallId: settled.toolCallId,
+          spec: settled.spec,
+        },
+      };
+      outcome.producedVisibleFrame = true;
+    }
+  }
   const questionnaireResult = yield* handleQuestionnaireToolResult(input);
   if (questionnaireResult === "short-circuit") return true;
   if (questionnaireResult === "unhandled") {

@@ -56,8 +56,9 @@ function updateTodosResult(toolCallId: string, todos: unknown) {
 function visibleToolFrames(frames: BridgeFrame[]): BridgeFrame[] {
   return frames.filter(
     (frame) =>
-      frame.kind === "chatMessageAppended" ||
-      frame.kind === "chatMessageAdded" ||
+      (frame.kind === "chatMessageAppended" && frame.data.part.kind === "toolCall") ||
+      (frame.kind === "chatMessageAdded" &&
+        frame.data.message.parts.some((part) => part.kind === "toolCall")) ||
       frame.kind === "toolCallUpdated",
   );
 }
@@ -112,6 +113,17 @@ describe("updateTodos 会话状态帧", () => {
     );
 
     expect(frames.some((frame) => frame.kind === "todosChanged")).toBe(false);
+    expect(frames).toEqual([
+      expect.objectContaining({
+        kind: "chatMessageAppended",
+        data: expect.objectContaining({
+          part: {
+            kind: "text",
+            data: { body: expect.stringContaining("没有得到可展示的结果") },
+          },
+        }),
+      }),
+    ]);
     expect(state.todos).toEqual([]);
     expect(visibleToolFrames(frames)).toEqual([]);
   });

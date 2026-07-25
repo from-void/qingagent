@@ -1,4 +1,11 @@
-import type { Command, BridgeFrame, AskUserQuestion, ReviewType, SubmitConfirmDecision } from "@qingagent/contract-ts";
+import type {
+  AskUserQuestion,
+  BridgeFrame,
+  CancelConfirmedCommand,
+  Command,
+  ReviewType,
+  SubmitConfirmDecision,
+} from "@qingagent/contract-ts";
 import { validateBridgeFrame } from "../../../system/validators";
 import { visitorKeyHeaders } from "../../../overlays/settings/visitorKeyStore";
 import type { AskUserAnswer, StreamError, WorkspaceLocalAction } from "./protocol";
@@ -277,8 +284,17 @@ export class ServerStream {
   }
 
   /** secret 专用上行：不经过 Command/client_event 摘要，也不读取或回显请求体。 */
-  async resolveConfirm(submission: SubmitConfirmDecision): Promise<void> {
-    this.connectEvents(submission.sessionId);
+  async resolveConfirm(
+    submission: SubmitConfirmDecision,
+    options: { activateSession?: boolean } = {},
+  ): Promise<{
+    accepted: true;
+    remembered: boolean;
+    grantState?: { present: boolean; grantId: string | null; version: number };
+    rememberFailure?: "not-saved" | "settings-changed";
+  }> {
+    // 旧组件的决策仍必须送达原 session，但不得把当前共享 EventSource 拉回旧会话。
+    if (options.activateSession !== false) this.connectEvents(submission.sessionId);
     const controller = new AbortController();
     this.activeControllers.add(controller);
     try {
@@ -289,7 +305,69 @@ export class ServerStream {
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`确认请求失败：${response.status}`);
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string" && body.error.trim()
+            ? body.error
+            : "确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。",
+        );
+      }
+      const body = await response.json().catch(() => null) as {
+        accepted?: unknown;
+        remembered?: unknown;
+        present?: unknown;
+        grantId?: unknown;
+        version?: unknown;
+        rememberFailure?: unknown;
+      } | null;
+      if (body?.accepted !== true || typeof body.remembered !== "boolean") {
+        throw new Error("确认没有提交成功，命令尚未确定是否执行。请先查看命令卡，不要连续重复点击。");
+      }
+      const hasGrantState =
+        typeof body.present === "boolean" &&
+        (body.grantId === null || typeof body.grantId === "string") &&
+        Number.isSafeInteger(body.version) &&
+        Number(body.version) >= 0;
+      const rememberFailure = body.rememberFailure === "not-saved" ||
+        body.rememberFailure === "settings-changed"
+        ? body.rememberFailure
+        : undefined;
+      return {
+        accepted: true,
+        remembered: body.remembered,
+        ...(hasGrantState
+          ? {
+              grantState: {
+                present: body.present as boolean,
+                grantId: body.grantId as string | null,
+                version: Number(body.version),
+              },
+            }
+          : {}),
+        ...(rememberFailure ? { rememberFailure } : {}),
+      };
+    } finally {
+      this.activeControllers.delete(controller);
+    }
+  }
+
+  async cancelConfirmedCommand(input: CancelConfirmedCommand): Promise<void> {
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    try {
+      const response = await fetch("/api/v1/confirms/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string" && body.error.trim()
+            ? body.error
+            : "停止失败，请再试一次。",
+        );
       }
     } finally {
       this.activeControllers.delete(controller);

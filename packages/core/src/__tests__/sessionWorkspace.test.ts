@@ -63,13 +63,13 @@ describe("sessionWorkspaceDirName 路径安全", () => {
 describe("buildSandboxEnv 最小环境", () => {
   it("带必需系统变量+代理,不继承宿主业务变量或托管凭据", () => {
     process.env.SOME_HOST_SECRET = "leak-me";
-    process.env.DINGTALK_APP_SECRET = "t-1";
+    process.env.PLATFORM_API_SECRET = "t-1";
     const env = buildSandboxEnv();
     expect(env.PATH).toContain(process.env.PATH!); // 含宿主 PATH(前置了产品 bin 目录)
-    expect(env.DINGTALK_APP_SECRET).toBeUndefined();
+    expect(env.PLATFORM_API_SECRET).toBeUndefined();
     expect(env.SOME_HOST_SECRET).toBeUndefined();
     delete process.env.SOME_HOST_SECRET;
-    delete process.env.DINGTALK_APP_SECRET;
+    delete process.env.PLATFORM_API_SECRET;
   });
   it("代理透传(lark-cli 是 Go net/http,认 HTTP(S)_PROXY、尊重 NO_PROXY、不读 ALL_PROXY;ALL_PROXY 仍透传兼容其它工具)", () => {
     process.env.HTTPS_PROXY = "http://127.0.0.1:10809";

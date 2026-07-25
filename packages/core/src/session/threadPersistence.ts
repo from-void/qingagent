@@ -20,6 +20,7 @@ import type {
   SuggestionRecord,
   SessionState,
   PendingConfirm,
+  ConfirmAuditDegradedMarker,
   PersistAuditSnapshot,
   SuspensionOwner,
   OmSidecarCursor,
@@ -71,6 +72,7 @@ import {
   isQuestionnaireTool,
   normalizeQuestionnaireSpecForRestore,
 } from "../agent-run/questionnaireTools.js";
+import { isPersistentBackgroundCommand } from "./backgroundCommand.js";
 import { clearSessionSnapshot } from "../llm/modelConfig.js";
 import { clearQuestionBranch } from "../services/genService.js";
 
@@ -199,9 +201,16 @@ export interface QingagentThreadMetadata {
     spec: ConfirmSpec;
     requestedAt: string;
     expiresAt: string;
-    status: "pending" | "resuming";
+    status: "pending" | "resuming" | "terminal";
+    terminalResolution?: "accepted" | "rejected" | "expired" | "aborted" | "failed";
     decisionId?: string;
+    decisionSource?: "ui" | "stored-grant";
+    decisionAccepted?: boolean;
+    decisionGrantId?: string;
+    rememberRevocationEpoch?: number;
   }>;
+  /** confirm 审计写失败时的非敏感降级记账。 */
+  confirmAuditDegraded?: ConfirmAuditDegradedMarker | null;
   /** Lightweight summary for home page listing — avoids parsing full legacySections. */
   threadSummary?: {
     sectionCount: number;
@@ -250,6 +259,25 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function deserializeConfirmAuditDegraded(value: unknown): ConfirmAuditDegradedMarker | null {
+  if (
+    !isRecord(value) ||
+    !Number.isSafeInteger(value.failureCount) ||
+    (value.failureCount as number) < 1 ||
+    !parseValidTimestamp(value.lastFailedAt) ||
+    !isNonEmptyString(value.lastEventType) ||
+    !isNonEmptyString(value.lastConfirmId)
+  ) {
+    return null;
+  }
+  return {
+    failureCount: value.failureCount as number,
+    lastFailedAt: value.lastFailedAt as string,
+    lastEventType: value.lastEventType,
+    lastConfirmId: value.lastConfirmId,
+  };
 }
 
 function normalizeParseState(value: unknown): "ready" | "error" {
@@ -545,8 +573,13 @@ function staleRestoreStatus(
     return null;
   }
 
-  // 兜底自愈:持久化里仍停在 running/pending 的非 askUser 工具——进程早结束了不可能还在跑
-  // (典型成因:tool-error 没收口留下的卡死 spec)。恢复时切 done,旧会话重开 spinner 不再永久转。
+  if (isPersistentBackgroundCommand(spec)) {
+    return null;
+  }
+
+  // 兜底自愈:除持久后台进程外，持久化里仍停在 running/pending 的非 askUser 工具
+  // 已不可能继续运行(典型成因:tool-error 没收口留下的卡死 spec)。恢复时切 done，
+  // 避免旧会话重开后 spinner 永久转动。
   if (spec.status.kind === "running" || spec.status.kind === "pending") {
     return { kind: "done" };
   }
@@ -641,8 +674,20 @@ function serializeMetadata(state: SessionState): QingagentThreadMetadata {
       requestedAt: pending.requestedAt,
       expiresAt: pending.expiresAt,
       status: pending.status,
+      ...(pending.terminalResolution
+        ? { terminalResolution: pending.terminalResolution }
+        : {}),
       ...(pending.decisionId ? { decisionId: pending.decisionId } : {}),
+      ...(pending.decisionSource ? { decisionSource: pending.decisionSource } : {}),
+      ...(pending.decisionAccepted !== undefined
+        ? { decisionAccepted: pending.decisionAccepted }
+        : {}),
+      ...(pending.decisionGrantId ? { decisionGrantId: pending.decisionGrantId } : {}),
+      ...(pending.rememberRevocationEpoch !== undefined
+        ? { rememberRevocationEpoch: pending.rememberRevocationEpoch }
+        : {}),
     })),
+    confirmAuditDegraded: state.confirmAuditDegraded,
     threadSummary,
     lastPersistedAt: new Date().toISOString(),
   };
@@ -664,6 +709,8 @@ function deserializePendingConfirms(
   );
   for (const item of value) {
     if (!isRecord(item)) continue;
+    // 已落盘的终态墓碑只证明该确认不可再恢复；绝不重建为 pending。
+    if (item.status === "terminal") continue;
     const spec = confirmSpecSchema.safeParse(item.spec);
     const requestedAt = parseValidTimestamp(item.requestedAt);
     const expiresAt = parseValidTimestamp(item.expiresAt);
@@ -693,6 +740,20 @@ function deserializePendingConfirms(
       expiresAt,
       status: item.status,
       ...(isNonEmptyString(item.decisionId) ? { decisionId: item.decisionId } : {}),
+      ...(item.decisionSource === "ui" || item.decisionSource === "stored-grant"
+        ? { decisionSource: item.decisionSource }
+        : {}),
+      ...(typeof item.decisionAccepted === "boolean"
+        ? { decisionAccepted: item.decisionAccepted }
+        : {}),
+      ...(isNonEmptyString(item.decisionGrantId)
+        ? { decisionGrantId: item.decisionGrantId }
+        : {}),
+      ...(typeof item.rememberRevocationEpoch === "number" &&
+        Number.isSafeInteger(item.rememberRevocationEpoch) &&
+        item.rememberRevocationEpoch >= 0
+        ? { rememberRevocationEpoch: item.rememberRevocationEpoch }
+        : {}),
     });
   }
   return restored;
@@ -1964,9 +2025,12 @@ export async function loadSessionFromThread(
     previousDocState: null,
     _lastEmittedWireKind: null,
     _abortController: null,
+    _activeConfirmedToolCallId: null,
+    _backgroundCommandOwnerByPid: new Map(),
     _activeTurnPromise: null,
     _turnOwner: null,
     _turnGeneration: 0,
+    _activeAgentMessageId: null,
     suggestions,
     // 批注是宁简勿繁的瞬时确认事务；刷新/退出不恢复，避免残留不可回状态。
     annotationGroups: [],
@@ -2000,6 +2064,7 @@ export async function loadSessionFromThread(
     _suspensionOwner: restoredSuspensionOwner,
     pendingConfirms,
     _confirmPersistenceDirtyReasons: new Set(),
+    confirmAuditDegraded: deserializeConfirmAuditDegraded(meta.confirmAuditDegraded),
     chatHistory,
     // 阶段4 follow-up — 用「当前已持久化的状态」初始化 db_write 审计基线快照，
     // 使恢复后第一条 db_write span 的 before 反映真实已存状态，而非把恢复当成首次写

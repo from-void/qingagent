@@ -27,6 +27,11 @@ import {
   readImageToolCallSpec,
   researchCardToolCallSpec,
 } from "./toolCards.js";
+import { settleBackgroundCommand } from "./backgroundCommandSettlement.js";
+import {
+  normalizeSandboxExitEvent,
+  rememberWorkspaceToolMetadata,
+} from "./backgroundCommandLifecycle.js";
 
 const logger = mastra.getLogger();
 
@@ -74,8 +79,85 @@ export async function* handleToolOutputEvent(
   }
   outcome.sawToolCall = true;
   if (output?.type === "doc-generation-event") outcome.sawSideEffectToolCall = true;
+  const outputData = isRecord(output?.data) ? output.data : null;
+  if (output && rememberWorkspaceToolMetadata(context, output)) {
+    return true;
+  }
   const toolCallId =
-    typeof chunk.payload.toolCallId === "string" ? chunk.payload.toolCallId : null;
+    typeof chunk.payload.toolCallId === "string"
+      ? chunk.payload.toolCallId
+      : typeof outputData?.toolCallId === "string"
+        ? outputData.toolCallId
+        : null;
+
+  if (
+    (output?.type === "data-sandbox-stdout" || output?.type === "data-sandbox-stderr") &&
+    toolCallId
+  ) {
+    const owner = state.chatHistory.find((message) =>
+      message.parts.some(
+        (part) => part.kind === "toolCall" && part.data.id === toolCallId,
+      ),
+    );
+    const part = owner?.parts.find(
+      (candidate) => candidate.kind === "toolCall" && candidate.data.id === toolCallId,
+    );
+    if (
+      owner &&
+      part?.kind === "toolCall" &&
+      part.data.name === "mastra_workspace_get_process_output" &&
+      part.data.status.kind === "running"
+    ) {
+      const timestamp =
+        typeof outputData?.timestamp === "number" && Number.isFinite(outputData.timestamp)
+          ? outputData.timestamp
+          : Date.now();
+      let previousAt = 0;
+      if (part.data.result?.kind === "genericText") {
+        try {
+          const previous = JSON.parse(part.data.result.data) as { outputActivityAt?: unknown };
+          if (typeof previous.outputActivityAt === "number") previousAt = previous.outputActivityAt;
+        } catch {
+          // running 卡的普通结果不属于活动标记，直接覆盖即可。
+        }
+      }
+      // 高频 stdout 只需每秒投影一次，避免工具卡更新淹没正文流。
+      if (timestamp - previousAt >= 1_000) {
+        const spec: ToolCallSpec = {
+          ...part.data,
+          result: {
+            kind: "genericText",
+            data: JSON.stringify({ outputActivityAt: timestamp }),
+          },
+        };
+        updateToolCallInChatHistory(state, owner.id, toolCallId, spec);
+        yield toolCallUpdated(owner.id, toolCallId, spec);
+        outcome.producedVisibleFrame = true;
+      }
+    }
+    return true;
+  }
+
+  if (output?.type === "data-sandbox-exit") {
+    const lifecycle = normalizeSandboxExitEvent(context, chunk);
+    if (!lifecycle) return true;
+    const settled = settleBackgroundCommand(
+      state,
+      lifecycle.pid,
+      lifecycle.terminal,
+      {
+        eventToolCallId: lifecycle.sourceToolCallId,
+        sourceToolName: lifecycle.sourceToolName,
+        eventPid: lifecycle.eventPid,
+        argumentPid: lifecycle.argumentPid,
+      },
+    );
+    if (settled) {
+      yield toolCallUpdated(settled.messageId, settled.toolCallId, settled.spec);
+      outcome.producedVisibleFrame = true;
+    }
+    return true;
+  }
 
   if (output?.type === "research-fulltext" && Array.isArray(output.items)) {
     for (const raw of output.items) {

@@ -299,7 +299,8 @@ describe("pending draft rehydrate", () => {
       args: [sessionId, sessionId, legacyBaseHash, JSON.stringify(pendingDraft)],
     });
     __resetMigrationsForTest();
-    expect((await runMigrations()).appliedIds).toEqual([25]);
+    const appliedIds = (await runMigrations()).appliedIds;
+    expect(appliedIds.filter((id) => id === 25)).toEqual([25]);
     const normalizedRow = (await client.execute({
       sql: "SELECT doc_pm, content_hash FROM documents WHERE id = ?",
       args: [sessionId],

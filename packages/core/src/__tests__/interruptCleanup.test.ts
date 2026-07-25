@@ -65,6 +65,48 @@ function runningWriteDraft(id: string): ToolCallSpec {
   });
 }
 
+function runningCommand(id: string): ToolCallSpec {
+  return {
+    id,
+    name: "mastra_workspace_execute_command",
+    render: { kind: "chatInline" },
+    status: { kind: "running", data: { progressPct: null, etaSec: null } },
+    body: {
+      kind: "commandCard",
+      data: {
+        title: "运行命令",
+        icon: "⚙️",
+        command: "sleep 20",
+        exitCode: 0,
+        outputTail: "",
+        phase: "running",
+      },
+    },
+    result: null,
+  };
+}
+
+function runningBackgroundCommand(id: string, pid = "4242"): ToolCallSpec {
+  return {
+    ...runningCommand(id),
+    body: {
+      kind: "commandCard",
+      data: {
+        title: "运行命令",
+        icon: "⚙️",
+        command: "sleep 300",
+        exitCode: 0,
+        outputTail: `后台任务已启动（PID ${pid}）`,
+        phase: "running",
+        pid,
+        ownerToolCallId: id,
+        background: true,
+      },
+    },
+    result: { kind: "genericText", data: `Started background process (PID: ${pid})` },
+  };
+}
+
 function setSingleToolCall(
   state: import("../bridge/index.js").SessionState,
   spec: ToolCallSpec,
@@ -116,6 +158,56 @@ beforeEach(() => {
 });
 
 describe("abortAndCleanupTurn", () => {
+  it.each([
+    ["仍有运行卡", true],
+    ["旧进程已退出且无运行卡", false],
+  ])("新消息抢占%s时都给旧轮追加诚实可见收尾", async (_label, withRunningCard) => {
+    const {
+      abortAndCleanupTurn,
+      createSession,
+    } = await import("../bridge/index.js");
+    const {
+      PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+    } = await import("../agent-run/turnCleanup.js");
+    const state = createSession(`preempt-notice-${withRunningCard}`);
+    state._activeAgentMessageId = "old-agent-message";
+    state.chatHistory.push({
+      id: "old-agent-message",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      parts: withRunningCard
+        ? [{ kind: "toolCall", data: runningCommand("old-wait") }]
+        : [],
+      chips: null,
+    });
+
+    const frames = await collectFrames(
+      abortAndCleanupTurn(state, {
+        emitStreamEnd: false,
+        reason: "preemptedByNewMessage",
+      }),
+    );
+
+    expect(frames).toContainEqual({
+      kind: "chatMessageAppended",
+      data: {
+        messageId: "old-agent-message",
+        seq: 1,
+        part: {
+          kind: "text",
+          data: { body: PREEMPTED_BY_NEW_MESSAGE_NOTICE },
+        },
+      },
+    });
+    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("没有被自动终止");
+    expect(PREEMPTED_BY_NEW_MESSAGE_NOTICE).toContain("状态仍待确认");
+    expect(state.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+    });
+    expect(state._activeAgentMessageId).toBeNull();
+  });
+
   it("aborts, waits for the active turn finally, terminalizes in-flight tools, and projects idle", async () => {
     const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
     const state = createSession("abort-cleanup");
@@ -222,6 +314,101 @@ describe("abortAndCleanupTurn", () => {
       data: {
         kind: "end",
         data: { streamId: "hung-stream", reason: { kind: "cancelled" } },
+      },
+    });
+  });
+
+  it("运行命令取消并切回会话时 status 与 commandCard 都持久收敛为 failed", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("abort-running-command-card");
+    state.streamId = "stream-running-command";
+    state._abortController = new AbortController();
+    setSingleToolCall(state, runningCommand("command-sleep"));
+
+    const frames = await collectFrames(abortAndCleanupTurn(state));
+    const persisted = findToolCallSpec(state, "command-sleep");
+
+    expect(persisted).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false, reason: "本轮生成已中断" },
+      },
+      body: {
+        kind: "commandCard",
+        data: expect.objectContaining({
+          phase: "failed",
+          exitCode: -1,
+          outputTail: expect.stringContaining("本轮生成已中断"),
+        }),
+      },
+    });
+    expect(frames).toContainEqual(expect.objectContaining({
+      kind: "toolCallUpdated",
+      data: expect.objectContaining({
+        toolCallId: "command-sleep",
+        spec: expect.objectContaining({
+          status: expect.objectContaining({ kind: "failed" }),
+          body: expect.objectContaining({
+            kind: "commandCard",
+            data: expect.objectContaining({ phase: "failed" }),
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it("全局急停把后台 owner 与读取输出卡收成 aborted，不误报 killed", async () => {
+    const { abortAndCleanupTurn, createSession } = await import("../bridge/index.js");
+    const state = createSession("global-stop-background");
+    state.streamId = "stream-global-stop";
+    state._abortController = new AbortController();
+    state.chatHistory = [{
+      id: "agent-global-stop",
+      role: { kind: "agent" },
+      ts: "2026-01-01T00:00:00.000Z",
+      chips: null,
+      parts: [
+        { kind: "toolCall", data: runningBackgroundCommand("background-owner", "7373") },
+        {
+          kind: "toolCall",
+          data: {
+            id: "background-read",
+            name: "mastra_workspace_get_process_output",
+            render: { kind: "chatInline" },
+            status: { kind: "running", data: { progressPct: null, etaSec: null } },
+            body: { kind: "generic", data: { argsJson: "{\"pid\":\"7373\",\"wait\":true}" } },
+            result: null,
+          },
+        },
+      ],
+    }];
+
+    await collectFrames(abortAndCleanupTurn(state, {
+      emitStreamEnd: false,
+      reason: "globalStop",
+    }));
+
+    const owner = findToolCallSpec(state, "background-owner");
+    expect(owner?.status).toEqual({
+      kind: "failed",
+      data: {
+        retriable: false,
+        reason: "已中止，结果可能未知；进程状态未确认",
+      },
+    });
+    expect(owner?.body).toMatchObject({
+      kind: "commandCard",
+      data: { terminalKind: "aborted", pid: "7373" },
+    });
+    expect(JSON.stringify(owner)).not.toContain("killed");
+    expect(findToolCallSpec(state, "background-read")).toMatchObject({
+      status: {
+        kind: "failed",
+        data: { retriable: false },
+      },
+      body: {
+        kind: "generic",
+        data: { terminalKind: "aborted" },
       },
     });
   });

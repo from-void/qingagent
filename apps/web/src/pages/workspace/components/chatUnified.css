@@ -164,6 +164,11 @@
 .u-scope .u-procdiv:hover .u-procdiv-lbl { color: var(--u-ink); }
 .u-scope .u-detail { margin: 0; padding: 6px 12px; font-size: 11px; font-family: var(--font-mono); color: var(--u-ink-soft); background: var(--u-bg-soft); border: var(--u-border); border-top: none; white-space: pre-wrap; word-break: break-all; }
 
+/* 聊天 markdown 正文与链接允许在任意长串处折行；不选择 pre/code，保留代码块自身滚动策略。 */
+.u-scope .chat-markdown-body { min-width: 0; max-width: 100%; }
+.u-scope .chat-markdown-inline,
+.u-scope .chat-link { overflow-wrap: anywhere; word-break: break-word; }
+
 /* 命令卡 body:代码块 + 输出块,各自限高,溢出滚动 */
 .u-scope .u-card-bd--cmd { display: flex; flex-direction: column; gap: 6px; }
 .u-scope .u-scrollbox { position: relative; --u-sb-edge: rgba(0, 0, 0, 0.55); }

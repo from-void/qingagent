@@ -106,4 +106,29 @@ describe("workspace execute_command gate placement", () => {
     await workspace.destroy();
     invalidateSessionWorkspace("g2-gate-test");
   });
+
+  it("G3:qingagent 关闭原生 get_process_output 后使用 session-scoped bounded 工具", async () => {
+    const tools = await qingagentAgent.getToolsForExecution({
+      requestContext: new RequestContext([["sessionId", "g2-gate-test"]]),
+      toolsets: {
+        sessionScoped: {
+          [WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT]: createTool({
+            id: WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT,
+            description: "session bounded get process output",
+            inputSchema: z.object({ pid: z.string() }),
+            execute: async () => "session-bounded-marker",
+          }),
+        },
+      },
+    });
+    const getProcessOutput = tools[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT];
+
+    expect(getProcessOutput?.description).toBe("session bounded get process output");
+    await expect(
+      getProcessOutput!.execute!({ pid: "123" }, toolInvocationOptions),
+    ).resolves.toContain("session-bounded-marker");
+    const workspace = await getQingagentSessionWorkspace("g2-gate-test");
+    await workspace.destroy();
+    invalidateSessionWorkspace("g2-gate-test");
+  });
 });

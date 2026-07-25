@@ -95,6 +95,13 @@ export type {
 } from "../agent-run/processAgentStream.js";
 
 export {
+  cancelConfirmedCommand,
+  failConfirmedToolCall,
+  resumeConfirmDecision,
+} from "../agent-run/confirmResume.js";
+export type { ApprovalAgent } from "../agent-run/confirmResume.js";
+
+export {
   estimateTurnCounterFromMessages,
   isOmSidecarEnabled,
   nextOmTurnIndex,

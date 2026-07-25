@@ -51,7 +51,7 @@ describe("bridge redaction", () => {
   it("Round17 回归:大写 env-var 风格凭据名在文本路径会脱敏", () => {
     for (const [input, secret] of [
       ["FEISHU_APP_SECRET=feishu-secret-1", "feishu-secret-1"],
-      ["DINGTALK_APP_KEY=dingtalk-key-1", "dingtalk-key-1"],
+      ["PLATFORM_API_KEY=platform-key-1", "platform-key-1"],
       ["export FEISHU_APP_SECRET=feishu-secret-2", "feishu-secret-2"],
       ['{"FEISHU_APP_SECRET":"feishu-secret-3"}', "feishu-secret-3"],
       ["FEISHU_APP_SECRET: 'feishu-secret-4'", "feishu-secret-4"],
@@ -70,11 +70,11 @@ describe("bridge redaction", () => {
     expect(feishu).toContain('"FEISHU_APP_SECRET":"***"');
     expect(feishu).not.toContain("feishu-secret-6");
 
-    const dingtalk = redactedSerializedText({
-      DINGTALK_APP_KEY: "dingtalk-key-2",
+    const platform = redactedSerializedText({
+      PLATFORM_API_KEY: "platform-key-2",
     });
-    expect(dingtalk).toContain('"DINGTALK_APP_KEY":"***"');
-    expect(dingtalk).not.toContain("dingtalk-key-2");
+    expect(platform).toContain('"PLATFORM_API_KEY":"***"');
+    expect(platform).not.toContain("platform-key-2");
   });
 
   it("Round17 回归:env-var 脱敏不误伤公开 app id 和普通词", () => {
@@ -99,11 +99,36 @@ describe("bridge redaction", () => {
 });
 
 describe("commandCardFromResult 状态映射(Round10)", () => {
-  it("含 Exit code 非 0 但有产出 → done(命令真跑过即完成,退出码进详情;用户口径)", () => {
-    // 完成的定义 = 命令跑起来并有输出,而非退出码为 0。退出码非零仍算完成,退出码进详情区。
+  it("旧字符串结果里的非零退出也 fail-closed，不再显示已完成", () => {
     const card = commandCardFromResult({ command: "node x" }, "boom\nExit code: 2", true);
     expect(card.exitCode).toBe(2);
-    expect(card.phase).toBe("done");
+    expect(card.phase).toBe("failed");
+    expect(card.outputTail).toBe("boom");
+  });
+
+  it("结构化非零退出直接落 failed，不靠文本前缀推断", () => {
+    const card = commandCardFromResult({ command: "node x" }, {
+      success: false,
+      exitCode: 2,
+      cancelled: false,
+      timedOut: false,
+      output: "boom",
+    }, false);
+    expect(card.exitCode).toBe(2);
+    expect(card.phase).toBe("failed");
+    expect(card.terminalKind).toBe("failed");
+  });
+
+  it("结构化超时直接落 timedOut，不与普通失败混淆", () => {
+    const card = commandCardFromResult({ command: "node slow.mjs" }, {
+      success: false,
+      exitCode: -1,
+      cancelled: false,
+      timedOut: true,
+      output: "命令执行超时",
+    }, false);
+    expect(card.phase).toBe("failed");
+    expect(card.terminalKind).toBe("timedOut");
   });
 
   it("catch 路径 'Error: ...'(无 Exit code)→ failed,不再误渲完成", () => {
@@ -116,6 +141,7 @@ describe("commandCardFromResult 状态映射(Round10)", () => {
     const card = commandCardFromResult({ command: "node calc.mjs sum" }, "{\"sum\":6}", true);
     expect(card.phase).toBe("done");
     expect(card.exitCode).toBe(0);
+    expect(card.terminalKind).toBe("succeeded");
   });
 
   it("命令卡输出脱敏:Bearer token 不外泄", () => {

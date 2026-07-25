@@ -306,7 +306,6 @@ describe("GET /api/v1/skills", () => {
       userInvocable: false,
       tools: ["readDocument", "searchDocuments"],
     });
-    expect(byName.has("dingtalk-docs")).toBe(false);
     expect(json.skills.map((skill) => skill.name).slice(0, 8)).toEqual([
       "browser-ops",
       "web-search",
@@ -321,7 +320,7 @@ describe("GET /api/v1/skills", () => {
 });
 
 describe("GET /api/v1/skills/:name", () => {
-  it("returns one skill detail with body and hides archived dingtalk", async () => {
+  it("returns one skill detail with body", async () => {
     const res = await request("GET", "/api/v1/skills/web-search");
     expect(res.status).toBe(200);
     const json = await res.json() as {
@@ -339,9 +338,6 @@ describe("GET /api/v1/skills/:name", () => {
     });
     expect(json.body).toContain("# 联网搜索");
     expect(json.body.trimStart().startsWith("---")).toBe(false);
-
-    const archived = await request("GET", "/api/v1/skills/dingtalk-docs");
-    expect(archived.status).toBe(404);
   });
 });
 

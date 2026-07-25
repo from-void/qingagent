@@ -5,6 +5,7 @@ import { emitOrUpdateToolCall } from "./agentStreamToolOutput.js";
 import { emitProjectedDocState } from "../doc-engine/docStateMachine.js";
 import { draftingFailedFrame } from "./streamErrors.js";
 import { markToolIoSpanSuspended } from "./toolIoSpans.js";
+import { confirmedCommandCardSpec } from "./toolCards.js";
 
 export type ApprovalEventResult = "unhandled" | "handled";
 
@@ -44,18 +45,6 @@ export async function* handleApprovalEvent(
     return "handled";
   }
 
-  if (toolCallId && toolName) {
-    yield* emitOrUpdateToolCall(context, {
-      id: toolCallId,
-      name: toolName,
-      render: { kind: "chatInline" },
-      status: { kind: "running", data: { progressPct: null, etaSec: null } },
-      // 原始参数不得因确认卡进入 Frame；命令预览由 ConfirmService 单独脱敏生成。
-      body: { kind: "generic", data: { argsJson: "" } },
-      result: null,
-    });
-  }
-
   const result = await context.confirmService.requestCommandConfirm({
     state: context.state,
     runId: context.runId,
@@ -65,7 +54,7 @@ export async function* handleApprovalEvent(
     aborted: context.abortController.signal.aborted,
   });
   if (!result.ok) {
-    const safeReason = "命令确认请求无效，已拒绝执行";
+    const safeReason = "确认没有完成，命令没有执行。请稍后再试。";
     yield* emitOrUpdateToolCall(
       context,
       failedApprovalSpec(toolCallId, toolName, safeReason),
@@ -79,6 +68,30 @@ export async function* handleApprovalEvent(
   context.wasSuspended = true;
   markToolIoSpanSuspended(context.toolIoSpans.get(toolCallId));
   context.toolIoSpans.delete(toolCallId);
+  if (result.storedGrantApproval) {
+    // 命中记忆时首个可见产物直接是命令卡；pending 表示已确认但尚在会话 FIFO 中。
+    yield* emitOrUpdateToolCall(
+      context,
+      confirmedCommandCardSpec(result.pending, "pending"),
+    );
+    context.outcome.storedGrantApprovals.push({
+      pending: result.pending,
+      decisionId: result.storedGrantApproval.decisionId,
+    });
+    context.outcome.producedVisibleFrame = true;
+    return "handled";
+  }
+  if (toolCallId && toolName) {
+    yield* emitOrUpdateToolCall(context, {
+      id: toolCallId,
+      name: toolName,
+      render: { kind: "chatInline" },
+      status: { kind: "running", data: { progressPct: null, etaSec: null } },
+      // 人工确认时卡片会覆盖此占位；原始参数不得进入 Frame。
+      body: { kind: "generic", data: { argsJson: "" } },
+      result: null,
+    });
+  }
   yield result.frame;
   yield* emitProjectedDocState(context.state, "confirm_requested");
   context.outcome.producedVisibleFrame = true;

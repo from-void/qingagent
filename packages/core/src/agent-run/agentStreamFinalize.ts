@@ -1,4 +1,10 @@
-import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
+import {
+  sanitizeVisibleText,
+  type BridgeFrame,
+  type ChatMessage,
+  type MessagePart,
+  type ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { documentDraftRepo } from "@qingagent/db";
 import { pmToPlainText } from "@qingagent/pm-schema";
 import { mastra } from "../mastra.js";
@@ -12,7 +18,13 @@ import {
   transitionAndProjectDocState,
 } from "../doc-engine/docStateSync.js";
 import { DRAFT_TOOL_JSON_RETRY_NOTICE } from "../doc-engine/draftToolArgs.js";
-import { chatMessageAppended, toolCallUpdated } from "./frames.js";
+import {
+  chatMessageAdded,
+  chatMessageAppended,
+  newId,
+  nowIso,
+  toolCallUpdated,
+} from "./frames.js";
 import { settleDraftCandidate } from "../doc-engine/settleDraftCandidate.js";
 import { buildAnnotationMappingNotice } from "../doc-engine/annotationMapping.js";
 import {
@@ -22,12 +34,12 @@ import {
   nextSeq,
 } from "../session/sessionState.js";
 import {
-  appendVisibleStreamErrorText,
   draftingFailedFrame,
   isUserAbortSignal,
 } from "./streamErrors.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { endToolIoSpan } from "./toolIoSpans.js";
+import { recomputeUserVisibleOutput } from "./agentStreamVisibility.js";
 
 const logger = mastra.getLogger();
 
@@ -73,6 +85,40 @@ export async function* finalizeAgentStream(
     abortController,
     outcome,
   } = context;
+  let finalTextMessageId = agentMessageId;
+  const appendFinalVisibleText = (body: string): BridgeFrame => {
+    const accumulatedTextIsInternal =
+      /\S/u.test(context.accumulatedText) &&
+      sanitizeVisibleText(context.accumulatedText) === null;
+
+    if (
+      finalTextMessageId === agentMessageId &&
+      accumulatedTextIsInternal
+    ) {
+      // 前端与持久化恢复都会合并相邻 text part；若把兜底继续追加到纯内部文本
+      // 后面，整块仍会被过滤。另起一条 agent 消息，保证内部块隐藏而兜底可见。
+      const detachedBody = body.trimStart();
+      const message: ChatMessage = {
+        id: newId(),
+        role: { kind: "agent" },
+        ts: nowIso(),
+        parts: [{ kind: "text", data: { body: detachedBody } }],
+        chips: null,
+      };
+      state.chatHistory.push(message);
+      finalTextMessageId = message.id;
+      context.accumulatedText = detachedBody;
+      recomputeUserVisibleOutput(context);
+      return chatMessageAdded(message);
+    }
+
+    const seq = nextSeq(state, finalTextMessageId);
+    const textPart: MessagePart = { kind: "text", data: { body } };
+    appendPartToChatHistory(state, finalTextMessageId, textPart);
+    context.accumulatedText += body;
+    recomputeUserVisibleOutput(context);
+    return chatMessageAppended(finalTextMessageId, seq, textPart);
+  };
   yield* context.annotationPreview.clear();
   context.docJustGenerated = false;
   for (const frame of context.materialFrames) yield frame;
@@ -182,12 +228,6 @@ export async function* finalizeAgentStream(
     });
   }
   context.toolIoSpans.clear();
-  logger.info("Agent stream completed", {
-    streamId,
-    sessionId: state.sessionId,
-    durationMs: Date.now() - context.streamStartTime,
-    validPatchCount: context.validPatchCount,
-  });
   if (context.validPatchCount === 0 && state.suggestions.size === 0) {
     console.warn(`[stream ${streamId}] Stream ended with no accepted patch suggestions.`);
   } else {
@@ -199,6 +239,13 @@ export async function* finalizeAgentStream(
   const streamWasUserAborted =
     isUserAbortSignal(abortController.signal) && !context.sawIdleTimeout;
   outcome.streamWasUserAborted = streamWasUserAborted;
+  recomputeUserVisibleOutput(context);
+  const hadUserVisibleOutputBeforeFallbacks = context.hasUserVisibleOutput;
+  const accumulatedTextHadNonWhitespaceBeforeFallbacks =
+    /\S/u.test(context.accumulatedText);
+  let visibilityInvariantFallbackEmitted = false;
+  // 破损 draft 参数必须显式报错；失败工具卡或模型谎称已修改的正文虽已可见，
+  // 都不能替代可重试提示与 draftingFailed 终态。
   if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
@@ -207,18 +254,13 @@ export async function* finalizeAgentStream(
     context.validPatchCount === 0 &&
     state.suggestions.size === 0
   ) {
-    yield appendVisibleStreamErrorText(
-      state,
-      agentMessageId,
-      DRAFT_TOOL_JSON_RETRY_NOTICE,
-    );
+    const hadAccumulatedText = context.accumulatedText.length > 0;
+    yield appendFinalVisibleText(DRAFT_TOOL_JSON_RETRY_NOTICE);
     outcome.producedVisibleFrame = true;
-    context.accumulatedText += DRAFT_TOOL_JSON_RETRY_NOTICE;
     logger.warn("Draft mutation input failure — emitted retry notice", {
       sessionId: state.sessionId,
       streamId,
-      hadAccumulatedText:
-        context.accumulatedText.length > DRAFT_TOOL_JSON_RETRY_NOTICE.length,
+      hadAccumulatedText,
     });
     yield draftingFailedFrame(streamId, DRAFT_TOOL_JSON_RETRY_NOTICE);
   }
@@ -242,12 +284,8 @@ export async function* finalizeAgentStream(
     const visibleText = context.accumulatedText
       ? `\n\n${settleNotice}`
       : settleNotice;
-    const seq = nextSeq(state, agentMessageId);
-    const textPart: MessagePart = { kind: "text", data: { body: visibleText } };
-    yield chatMessageAppended(agentMessageId, seq, textPart);
+    yield appendFinalVisibleText(visibleText);
     outcome.producedVisibleFrame = true;
-    appendPartToChatHistory(state, agentMessageId, textPart);
-    context.accumulatedText += visibleText;
     logger.info("Idle-timeout turn settled with draft suggestions", {
       sessionId: state.sessionId,
       streamId,
@@ -269,12 +307,8 @@ export async function* finalizeAgentStream(
         ? "草稿已生成，本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。"
         : "本轮在工具调用后达到步数上限，尚未完成最后收尾，回复“继续”我接着处理。";
     const visibleText = context.accumulatedText ? `\n\n${stepNotice}` : stepNotice;
-    const seq = nextSeq(state, agentMessageId);
-    const textPart: MessagePart = { kind: "text", data: { body: visibleText } };
-    yield chatMessageAppended(agentMessageId, seq, textPart);
+    yield appendFinalVisibleText(visibleText);
     outcome.producedVisibleFrame = true;
-    appendPartToChatHistory(state, agentMessageId, textPart);
-    context.accumulatedText += visibleText;
     logger.warn("Tool-call-finished turn ended without final text — emitted fallback notice", {
       sessionId: state.sessionId,
       streamId,
@@ -289,20 +323,16 @@ export async function* finalizeAgentStream(
   } else if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
-    !context.accumulatedText &&
     !context.sawAnyToolCall &&
     !context.sawToolHeartbeat &&
+    !context.hasUserVisibleOutput &&
     context.validPatchCount === 0 &&
     state.suggestions.size === 0
   ) {
     const emptyNotice =
       "模型这一轮没有返回任何内容，可能是临时异常。请重试，或换个说法再发一次。";
-    const seq = nextSeq(state, agentMessageId);
-    const textPart: MessagePart = { kind: "text", data: { body: emptyNotice } };
-    yield chatMessageAppended(agentMessageId, seq, textPart);
+    yield appendFinalVisibleText(emptyNotice);
     outcome.producedVisibleFrame = true;
-    appendPartToChatHistory(state, agentMessageId, textPart);
-    context.accumulatedText += emptyNotice;
     logger.warn("Empty agent turn — emitted user-visible fallback notice", {
       sessionId: state.sessionId,
       streamId,
@@ -311,10 +341,9 @@ export async function* finalizeAgentStream(
   } else if (
     !context.wasSuspended &&
     !streamWasUserAborted &&
-    !context.accumulatedText &&
     context.sawAnyToolCall &&
     context.sawNonUiToolCall &&
-    !outcome.producedVisibleFrame &&
+    !context.hasUserVisibleOutput &&
     !context.sawValidDraftMutation &&
     context.validPatchCount === 0 &&
     state.suggestions.size === 0
@@ -322,12 +351,8 @@ export async function* finalizeAgentStream(
     const stepNotice = context.sawIdleTimeout
       ? "本轮有一步工具长时间无响应被中断,还没给出最终回复。回复“继续”我接着完成,或重试。"
       : "做了多步操作，但还没给出最终结果。回复“继续”我接着完成，或重试。";
-    const seq = nextSeq(state, agentMessageId);
-    const textPart: MessagePart = { kind: "text", data: { body: stepNotice } };
-    yield chatMessageAppended(agentMessageId, seq, textPart);
+    yield appendFinalVisibleText(stepNotice);
     outcome.producedVisibleFrame = true;
-    appendPartToChatHistory(state, agentMessageId, textPart);
-    context.accumulatedText += stepNotice;
     logger.warn("Tool-only turn with no final text — likely hit maxSteps, emitted fallback notice", {
       sessionId: state.sessionId,
       streamId,
@@ -358,13 +383,49 @@ export async function* finalizeAgentStream(
       : allUnlocatedGroupCount;
     const notice = buildAnnotationMappingNotice(survivingGroupCount, unlocatedGroupCount);
     const visibleText = context.accumulatedText ? `\n\n${notice}` : notice;
-    const seq = nextSeq(state, agentMessageId);
-    const textPart: MessagePart = { kind: "text", data: { body: visibleText } };
-    yield chatMessageAppended(agentMessageId, seq, textPart);
+    yield appendFinalVisibleText(visibleText);
     outcome.producedVisibleFrame = true;
-    appendPartToChatHistory(state, agentMessageId, textPart);
-    context.accumulatedText += visibleText;
   }
+
+  if (
+    !context.wasSuspended &&
+    !streamWasUserAborted &&
+    !context.hasUserVisibleOutput
+  ) {
+    visibilityInvariantFallbackEmitted = true;
+    const invariantNotice =
+      "本轮没有得到可展示的结果。请重试，或换个说法再发一次。";
+    yield appendFinalVisibleText(invariantNotice);
+    outcome.producedVisibleFrame = true;
+    logger.warn("Agent turn visibility invariant emitted fallback notice", {
+      sessionId: state.sessionId,
+      streamId,
+    });
+  }
+
+  logger.info("Agent stream completed", {
+    streamId,
+    sessionId: state.sessionId,
+    durationMs: Date.now() - context.streamStartTime,
+    validPatchCount: context.validPatchCount,
+    wasSuspended: context.wasSuspended,
+    streamWasUserAborted,
+    hasUserVisibleOutput: context.hasUserVisibleOutput,
+    hadUserVisibleOutputBeforeFallbacks,
+    visibilityInvariantFallbackEmitted,
+    producedVisibleFrame: outcome.producedVisibleFrame,
+    accumulatedTextHasNonWhitespace: /\S/u.test(context.accumulatedText),
+    accumulatedTextHadNonWhitespaceBeforeFallbacks,
+    sawAnyToolCall: context.sawAnyToolCall,
+    sawNonUiToolCall: context.sawNonUiToolCall,
+    sawToolHeartbeat: context.sawToolHeartbeat,
+    sawIdleTimeout: context.sawIdleTimeout,
+    chunkTypeCounts: Object.fromEntries(
+      [...context.chunkTypeCounts.entries()].sort(([left], [right]) =>
+        left.localeCompare(right)
+      ),
+    ),
+  });
 
   if (context.accumulatedText) {
     state.messages.push({ role: "assistant", content: context.accumulatedText });

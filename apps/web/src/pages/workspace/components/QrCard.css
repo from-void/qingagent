@@ -24,7 +24,7 @@
   letter-spacing: 0.01em;
 }
 
-/* 码区:相对定位,过期遮罩/刷新按钮绝对覆盖其上 */
+/* 码区:相对定位,过期遮罩/刷新按钮/完成信息绝对覆盖其上 */
 .qr-card__frame {
   position: relative;
   width: 200px;
@@ -46,7 +46,7 @@
   display: block;
   -webkit-user-select: none;
   user-select: none;
-  transition: filter 0.25s ease, opacity 0.25s ease;
+  transition: filter 0.25s ease, opacity 0.25s ease, transform 0.25s ease;
 }
 
 .qr-card__placeholder {
@@ -59,6 +59,13 @@
 .qr-card__frame.is-expired .qr-card__img {
   filter: grayscale(1) blur(4px) brightness(0.92);
   opacity: 0.5;
+}
+
+/* 完成态:保留原码作为上下文，但明确弱化为已使用的终态背景。 */
+.qr-card__frame.is-completed .qr-card__img {
+  filter: grayscale(0.45) blur(5px);
+  opacity: 0.24;
+  transform: scale(1.03);
 }
 
 /* 刷新按钮:平时藏起,过期且悬停时浮现(键盘聚焦也浮现,保可达性)。 */
@@ -115,9 +122,39 @@
 }
 
 .qr-card__scanned {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   font-weight: 600;
   color: #5eb87d;
+}
+
+.qr-card__success {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-1);
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+}
+
+.qr-card__success svg {
+  color: var(--mark);
+}
+
+.qr-card__completion {
+  width: 200px;
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink-1);
+  text-align: center;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .qr-card__expiry {
@@ -127,7 +164,7 @@
 }
 
 .qr-card__expiry.is-expired {
-  color: var(--mark);
+  color: var(--ink-3);
 }
 
 .qr-card__confirm {
@@ -189,6 +226,21 @@
 }
 
 /* GitHub 等「输码型」卡:无二维码,配对码即主体,大字显示。 */
+.qr-card__code-stage {
+  position: relative;
+  width: 200px;
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.qr-card__code-stage.is-completed .qr-card__usercode {
+  filter: blur(4px);
+  opacity: 0.2;
+}
+
 .qr-card__usercode.is-hero {
   display: flex;
   flex-direction: column;

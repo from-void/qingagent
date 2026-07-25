@@ -2,6 +2,7 @@ import type {
   AskUserQuestionKind,
   AskUserSliderSpec,
   CommandCardBody,
+  CommandTerminalKind,
   DiffHunk,
   DocSuggestion,
   ResearchCardBody,
@@ -19,6 +20,7 @@ import {
   redactedSerializedText,
 } from "./redaction.js";
 import type { SessionState } from "../session/sessionState.js";
+import type { PendingConfirm } from "../session/sessionState.js";
 import type { QuestionnaireToolName } from "./questionnaireTools.js";
 
 function commandPolicyBlockFromOutput(output: string): { title: string; icon: string; reason: string } | null {
@@ -34,6 +36,9 @@ function commandPolicyBlockFromOutput(output: string): { title: string; icon: st
 
 export function commandCardStatusFromCard(card: CommandCardBody): ToolCallStatus {
   if (card.phase === "done") return { kind: "done" };
+  if (card.phase === "running") {
+    return { kind: "running", data: { progressPct: null, etaSec: null } };
+  }
   return {
     kind: "failed",
     data: {
@@ -43,22 +48,76 @@ export function commandCardStatusFromCard(card: CommandCardBody): ToolCallStatus
   };
 }
 
+/** 确认通过后的命令卡占位；只含 ConfirmSpec 已脱敏的预览。 */
+export function confirmedCommandCardSpec(
+  pending: PendingConfirm,
+  status: "pending" | "running",
+): ToolCallSpec {
+  return {
+    id: pending.toolCallId,
+    name: pending.toolName,
+    render: { kind: "chatInline" },
+    status: status === "pending"
+      ? { kind: "pending" }
+      : { kind: "running", data: { progressPct: null, etaSec: null } },
+    body: {
+      kind: "commandCard",
+      data: {
+        title: pending.spec.title,
+        icon:
+          pending.spec.kind === "install"
+            ? "📦"
+            : pending.spec.kind === "send"
+              ? "📤"
+              : "⚙️",
+        command: pending.spec.commandPreview ?? "",
+        exitCode: 0,
+        outputTail: "",
+        phase: "running",
+        cancellable: true,
+      },
+    },
+    result: null,
+  };
+}
+
 /** 执行命令工具结束时定格成友好终端卡。命令原文与输出脱敏后藏详情,标题用人话。 */
 export function commandCardFromResult(
   args: Record<string, unknown>,
   toolResult: unknown,
   ok: boolean,
+  ownerToolCallId?: string,
 ): CommandCardBody {
   const rawCommand = typeof args.command === "string" ? args.command : "";
   const command = redactSensitiveText(rawCommand);
-  // 结果可能是字符串(stdout)或 {output}/对象;取文本并脱敏
-  const outRaw = redactedJsonText(toolResult ?? "");
-  // 退出码:原版失败时结果含 "Exit code: N"
+  const structured =
+    toolResult !== null && typeof toolResult === "object" && !Array.isArray(toolResult)
+      ? toolResult as Record<string, unknown>
+      : null;
+  // 新链路直接读取结构化执行信号；字符串解析只兼容旧快照/旧 provider。
+  const outRaw = redactedJsonText(
+    typeof structured?.output === "string" ? structured.output : toolResult ?? "",
+  );
   const exitMatch = outRaw.match(/Exit code:?\s*(\d+)/i);
-  // 工具 catch 路径返回 "Error: <msg>"(无 Exit code 行),不能因为没退出码就当成功
-  // (R10-3:Error 前缀无 Exit code 被误渲完成态)。
+  const outputForDisplay = outRaw.replace(/\n?Exit code:?\s*\d+\s*$/i, "").trimEnd();
   const looksLikeError = !exitMatch && /^Error:/.test(outRaw.trimStart());
-  const exitCode = exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1;
+  const structuredExitCode = typeof structured?.exitCode === "number"
+    ? structured.exitCode
+    : null;
+  const exitCode = structuredExitCode ?? (
+    exitMatch ? Number(exitMatch[1]) : ok && !looksLikeError ? 0 : 1
+  );
+  const cancelled = structured?.cancelled === true;
+  const timedOut = structured?.timedOut === true;
+  const pid = typeof structured?.pid === "string" || typeof structured?.pid === "number"
+    ? String(structured.pid)
+    : null;
+  const background =
+    structured?.background === true && pid !== null && structured?.success === true;
+  const structuredFailed = structured !== null && (
+    structured.success === false || exitCode !== 0 || cancelled || timedOut
+  );
+  const legacyNonZeroExit = structured === null && exitMatch !== null && exitCode !== 0;
   const policyBlock = commandPolicyBlockFromOutput(outRaw);
   if (policyBlock) {
     return {
@@ -68,6 +127,7 @@ export function commandCardFromResult(
       exitCode: 1,
       outputTail: policyBlock.reason.slice(-600),
       phase: "failed",
+      terminalKind: "failed",
     };
   }
   const verdict = assessCommand(rawCommand);
@@ -76,17 +136,86 @@ export function commandCardFromResult(
     verdict.risk === "deny" || (verdict.risk === "safe" && verdict.title === "执行操作")
       ? "运行命令"
       : verdict.title.replace(/^AI 想/, "");
+  const failed =
+    structuredFailed || legacyNonZeroExit || looksLikeError || !ok;
+  const terminalKind: CommandTerminalKind | undefined = background
+    ? undefined
+    : timedOut
+      ? "timedOut"
+      : cancelled
+        ? "aborted"
+        : failed
+          ? "failed"
+          : "succeeded";
   return {
     title: cardTitle,
     icon: verdict.icon,
     command,
     exitCode,
-    outputTail: outRaw.slice(-600),
-    // "完成"的定义 = 命令真的跑起来并有产出,而非退出码为 0(用户口径)。退出码非零但有输出
-    // (如校验类命令)仍算已完成,退出码进详情区显示;只有 catch 路径(Error 前缀、根本没跑起来)
-    // 才算未完成。policy 拦截已在上面提前 return failed。
-    phase: looksLikeError ? "failed" : "done",
+    outputTail: background && pid
+      ? `已在后台启动（PID: ${pid}）`
+      : outputForDisplay.slice(-600),
+    // 后台工具调用的职责是拉起进程；spawn 成功时这张卡即完成。进程真正的
+    // 成败仍由 PID owner 索引和后续 lifecycle 事件收口。
+    phase: background ? "done" : failed ? "failed" : "done",
+    ...(terminalKind ? { terminalKind } : {}),
+    ...(background && pid
+      ? {
+          pid,
+          ownerToolCallId: ownerToolCallId ?? "",
+          background: true,
+        }
+      : {}),
   };
+}
+
+/** commandCard 的 status 是唯一权威；任何终态改写都同步收敛 body，避免恢复后永久转圈。 */
+export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
+  if (spec.body.kind !== "commandCard") return spec;
+  const status = spec.status;
+  const phase = status.kind === "failed"
+    ? "failed"
+    : status.kind === "done"
+      ? "done"
+      : status.kind === "pending" || status.kind === "running"
+        ? "running"
+        : spec.body.data.phase;
+  const reason = status.kind === "failed" ? status.data.reason : "";
+  const existingTerminalKind = spec.body.data.terminalKind;
+  const terminalKind: CommandTerminalKind | undefined = phase === "running"
+    ? undefined
+    : phase === "done"
+      ? "succeeded"
+      : existingTerminalKind && existingTerminalKind !== "succeeded"
+        ? existingTerminalKind
+        : "failed";
+  const outputTail = reason && !spec.body.data.outputTail.includes(reason)
+    ? [spec.body.data.outputTail, reason].filter(Boolean).join("\n")
+    : spec.body.data.outputTail;
+  return {
+    ...spec,
+    body: {
+      kind: "commandCard",
+      data: {
+        ...spec.body.data,
+        phase,
+        terminalKind,
+        exitCode:
+          phase === "failed" && spec.body.data.exitCode === 0
+            ? -1
+            : spec.body.data.exitCode,
+        outputTail,
+      },
+    },
+  };
+}
+
+export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
+  return (
+    spec.body.kind === "commandCard" &&
+    spec.body.data.terminalKind !== undefined &&
+    (spec.status.kind === "done" || spec.status.kind === "failed")
+  );
 }
 
 /** 把 run_js / run_python 定格成同款命令卡:脚本当 command、stdout/返回值/错误当 outputTail,
@@ -122,6 +251,7 @@ export function scriptCardFromResult(
     exitCode: failed ? 1 : 0,
     outputTail: output.slice(-600),
     phase: failed ? "failed" : "done",
+    terminalKind: failed ? "failed" : "succeeded",
   };
 }
 
@@ -287,6 +417,27 @@ export function researchCardToolCallSpec(
   };
 }
 
+const DEFAULT_QR_EXPIRES_IN_SEC = 300;
+
+function qrExpiryFromDuration(expiresInSec: unknown, fallbackInSec: number): number {
+  const durationSec =
+    typeof expiresInSec === "number" && Number.isFinite(expiresInSec) && expiresInSec > 0
+      ? expiresInSec
+      : fallbackInSec;
+  return Date.now() + durationSec * 1000;
+}
+
+function qrExpiryFromAbsolute(expiresAt: unknown, fallbackInSec: number): number {
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > 0) {
+    return expiresAt;
+  }
+  if (typeof expiresAt === "string") {
+    const parsed = Date.parse(expiresAt);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return qrExpiryFromDuration(undefined, fallbackInSec);
+}
+
 export function qrCardToolCallSpec(
   toolCallId: string,
   args: Record<string, unknown>,
@@ -311,12 +462,8 @@ export function qrCardToolCallSpec(
         : null,
     };
   }
-  const expiresInSec =
-    typeof args.expiresInSec === "number" && Number.isFinite(args.expiresInSec) && args.expiresInSec > 0
-      ? args.expiresInSec
-      : 300;
   // 用「收到工具调用的此刻」换算成绝对过期时间戳,前端据此倒计时——不受 agent 思考/网络/渲染延迟影响。
-  const expiresAt = Date.now() + expiresInSec * 1000;
+  const expiresAt = qrExpiryFromDuration(args.expiresInSec, DEFAULT_QR_EXPIRES_IN_SEC);
   return {
     id: toolCallId,
     name: "show_qr",
@@ -343,9 +490,9 @@ export function qrCardToolCallSpec(
 /** 可信 connector bridge 专用：pendingId/device flow 元数据绝不经过模型参数。 */
 export function githubAuthCardToolCallSpec(
   toolCallId: string,
-  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: string },
+  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: unknown },
 ): ToolCallSpec {
-  const expiresAt = Date.parse(input.expiresAt);
+  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 15 * 60);
   return {
     id: toolCallId,
     name: "github_auth_start",
@@ -359,7 +506,7 @@ export function githubAuthCardToolCallSpec(
         title: "连接 GitHub",
         code: input.userCode,
         note: "复制用户码并在 GitHub 完成授权。",
-        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 15 * 60_000,
+        expiresAt,
         refreshQuery: "GitHub 授权已中断，请重新发起连接",
         confirmQuery: null,
         connectorId: "github",
@@ -377,10 +524,10 @@ export function feishuAuthCardToolCallSpec(
     pendingId: string;
     url: string;
     userCode?: string;
-    expiresAt: string;
+    expiresAt: unknown;
   },
 ): ToolCallSpec {
-  const expiresAt = Date.parse(input.expiresAt);
+  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 10 * 60);
   const configuration = input.mode === "configuration";
   return {
     id: toolCallId,
@@ -397,7 +544,7 @@ export function feishuAuthCardToolCallSpec(
         note: configuration
           ? `用飞书扫码，或 [点此打开创建向导](${input.url})，完成后连接器会自动继续。`
           : `用飞书 App 扫码，或 [点此在浏览器授权](${input.url})。`,
-        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60_000,
+        expiresAt,
         refreshQuery: configuration ? "创建应用的链接过期了，请重新发起" : "飞书授权二维码过期了，请重新生成",
         confirmQuery: null,
         connectorId: "feishu",
@@ -436,11 +583,7 @@ export function wechatAuthQrToolCallSpec(
           : null,
     };
   }
-  const expiresInSec =
-    typeof result?.expiresInSec === "number" && Number.isFinite(result.expiresInSec) && result.expiresInSec > 0
-      ? (result.expiresInSec as number)
-      : 240;
-  const expiresAt = Date.now() + expiresInSec * 1000;
+  const expiresAt = qrExpiryFromDuration(result?.expiresInSec, 240);
   return {
     id: toolCallId,
     name: "wechat_auth_start",

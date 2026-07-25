@@ -10,6 +10,7 @@ import {
   type Event,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from "electron";
 import path from "node:path";
 import {
@@ -27,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
+import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
@@ -42,12 +44,28 @@ import {
 } from "./update/updater.js";
 import { acquireSingleInstanceLock } from "./singleInstance.js";
 import { assertTrustedRenderer as assertTrustedRendererEvent } from "./ipcTrust.js";
+import {
+  buildRememberPromptHtml,
+  NativeRememberGrantGate,
+  REMEMBER_PROMPT_DECISION_CHANNEL,
+  TrustedRememberUiGate,
+  type RememberGrantKind,
+  type RememberPromptCopy,
+  type RememberPromptDecision,
+} from "./trustedRememberUi.js";
 
 let mainWindow: BrowserWindow | null = null;
+const trustedRememberUiGate = new TrustedRememberUiGate();
+const nativeRememberGrantGate = new NativeRememberGrantGate();
+let mainWindowRememberGeneration = 0;
+let mainWindowRememberScope: string | null = null;
 const hasSingleInstanceLock = acquireSingleInstanceLock(app, () => mainWindow);
 
-function assertTrustedRenderer(event: IpcMainEvent | IpcMainInvokeEvent): void {
-  assertTrustedRendererEvent(event, mainWindow?.webContents ?? null);
+function assertTrustedRenderer(
+  event: IpcMainEvent | IpcMainInvokeEvent,
+  expectedRenderer: WebContents | null = mainWindow?.webContents ?? null,
+): void {
+  assertTrustedRendererEvent(event, expectedRenderer);
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -126,7 +144,7 @@ if (!process.env.QINGAGENT_UPLOADS_DIR) {
 }
 
 // 桌面端能力必须在 import server/core 前设好:capabilities、技能导入 gate 都从服务端同进程读取。
-configureDesktopRuntimeEnv(process.env);
+configureDesktopRuntimeEnv(process.env, { isPackaged: app.isPackaged });
 
 // 浏览器类能力(fetchArticle 内置渲染降级 / 服务端 mermaid 渲染 / DOCX SVG 栅格化)默认走
 // 系统已装浏览器(Edge → Chrome)的 Playwright channel,避免随包 ~170MB Chromium。Windows 预装
@@ -196,11 +214,18 @@ if (app.isPackaged && !process.env.QINGAGENT_SANDBOX_EXTRA_READONLY_PATHS) {
 if (process.env.QINGAGENT_SANDBOX_NODE_RUNTIME === "system") {
   console.warn("[sandbox] QINGAGENT_SANDBOX_NODE_RUNTIME=system, using host node for diagnostics only");
 } else {
-  const { ensureNodeRuntimeShim, isElectronRuntime } = await import(
+  const { ensureNodeRuntimeShim, isElectronRuntime, renderWindowsNodeOptions } = await import(
     "@qingagent/core/workspace/runtime-shims"
   );
   const { ensureLarkCliShim } = await import("@qingagent/core/workspace/runtime-shims");
-  const nodeShimPath = ensureNodeRuntimeShim({ execPath: process.execPath, electron: isElectronRuntime() });
+  const electronRuntime = isElectronRuntime();
+  const nodeShimPath = path.resolve(
+    ensureNodeRuntimeShim({ execPath: process.execPath, electron: electronRuntime }),
+  );
+  const nodeOptions = process.platform === "win32" && electronRuntime
+    ? renderWindowsNodeOptions(path.dirname(nodeShimPath))
+    : "<unset>";
+  console.info("[sandbox] node runtime shim ready", { nodeShimPath, nodeOptions });
 
   // 飞书 lark-cli:随包带到 Resources/lark-cli(build.mjs 暂存,electron-builder extraResources),
   // 首启往沙箱 PATH 写 `lark-cli` shim——经 node shim(Electron-as-Node)跑其 run.js。HOME/配置走
@@ -338,6 +363,183 @@ function installTelemetryProcessErrorHandlers() {
     }
   });
 }
+
+function rememberGrantKind(value: unknown): RememberGrantKind | null {
+  return value === "install" || value === "command" ? value : null;
+}
+
+function boundedRememberId(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : null;
+}
+
+function consumeTrustedRememberGesture(event: Electron.IpcMainInvokeEvent): boolean {
+  const window = mainWindow;
+  const senderIsDevtools = Boolean(
+    window?.webContents.devToolsWebContents
+      && event.sender.id === window.webContents.devToolsWebContents.id,
+  );
+  const mainFrame = event.sender.mainFrame;
+  const isMainFrame = event.senderFrame !== null
+    && event.frameId === mainFrame.routingId
+    && event.processId === mainFrame.processId;
+  return isMainFrame && trustedRememberUiGate.consume({
+    senderId: event.sender.id,
+    mainWindowSenderId: window && !window.isDestroyed() ? window.webContents.id : null,
+    windowFocused: Boolean(window && !window.isDestroyed() && window.isFocused()),
+    senderIsDevtools,
+  });
+}
+
+function showTrustedRememberPrompt(
+  owner: BrowserWindow,
+  copy: RememberPromptCopy,
+): Promise<RememberPromptDecision> {
+  const promptWindow = new BrowserWindow({
+    width: 480,
+    height: 316,
+    useContentSize: true,
+    parent: owner,
+    modal: true,
+    center: true,
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    title: copy.title,
+    backgroundColor: "#10191d",
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/rememberPrompt.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: false,
+      spellcheck: false,
+    },
+  });
+  const promptInputGate = new TrustedRememberUiGate();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (decision: RememberPromptDecision) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener(REMEMBER_PROMPT_DECISION_CHANNEL, handleDecision);
+      if (!promptWindow.isDestroyed()) promptWindow.close();
+      resolve(decision);
+    };
+    const handleDecision = (
+      event: Electron.IpcMainEvent,
+      decision: unknown,
+    ) => {
+      try {
+        assertTrustedRenderer(event, promptWindow.webContents);
+      } catch {
+        return;
+      }
+      if (decision !== "remember" && decision !== "cancel") return;
+      if (decision === "remember" && !promptInputGate.consume({
+        senderId: event.sender.id,
+        mainWindowSenderId: promptWindow.webContents.id,
+        windowFocused: promptWindow.isFocused(),
+        senderIsDevtools: Boolean(
+          promptWindow.webContents.devToolsWebContents &&
+          event.sender.id === promptWindow.webContents.devToolsWebContents.id,
+        ),
+      })) return;
+      settle(decision);
+    };
+
+    ipcMain.on(REMEMBER_PROMPT_DECISION_CHANNEL, handleDecision);
+    promptWindow.webContents.on("before-input-event", (_event, input) => {
+      promptInputGate.record(promptWindow.webContents.id, input.type);
+    });
+    promptWindow.webContents.on("before-mouse-event", (_event, input) => {
+      promptInputGate.record(promptWindow.webContents.id, input.type);
+    });
+    promptWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    promptWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    promptWindow.webContents.once("render-process-gone", () => settle("cancel"));
+    promptWindow.once("closed", () => settle("cancel"));
+    promptWindow.once("ready-to-show", () => {
+      if (!settled && !promptWindow.isDestroyed()) promptWindow.show();
+    });
+
+    const html = buildRememberPromptHtml(copy);
+    void promptWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      .catch(() => settle("cancel"));
+  });
+}
+
+ipcMain.handle("qingagent:confirm-remember-grant", async (event, input: unknown) => {
+  assertTrustedRenderer(event);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const sessionId = boundedRememberId(record.sessionId);
+  const confirmId = boundedRememberId(record.confirmId);
+  const kind = rememberGrantKind(record.kind);
+  if (!sessionId || !confirmId || !kind || record.trustedGesture !== true) return null;
+  if (!consumeTrustedRememberGesture(event)) return null;
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed()) return null;
+  const generation = mainWindowRememberGeneration;
+  const scope = mainWindowRememberScope;
+  if (!scope) return null;
+  return nativeRememberGrantGate.request({
+    purpose: "confirm",
+    kind,
+    showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
+    generation,
+    register: async () => {
+      const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      return registerConfirmUiGrant({
+        purpose: "confirm",
+        sessionId,
+        confirmId,
+        kind,
+        ttlMs: 60_000,
+        scope,
+      });
+    },
+    revoke: async (nonce) => {
+      const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      revokeConfirmUiGrant(nonce);
+    },
+  });
+});
+
+ipcMain.handle("qingagent:settings-remember-grant", async (event, input: unknown) => {
+  assertTrustedRenderer(event);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const kind = rememberGrantKind(record.kind);
+  if (!kind || record.trustedGesture !== true) return null;
+  if (!consumeTrustedRememberGesture(event)) return null;
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed()) return null;
+  const generation = mainWindowRememberGeneration;
+  const scope = mainWindowRememberScope;
+  if (!scope) return null;
+  return nativeRememberGrantGate.request({
+    purpose: "settings",
+    kind,
+    showPrompt: (copy) => showTrustedRememberPrompt(owner, copy),
+    generation,
+    register: async () => {
+      const { registerConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      return registerConfirmUiGrant({ purpose: "settings", kind, ttlMs: 60_000, scope });
+    },
+    revoke: async (nonce) => {
+      const { revokeConfirmUiGrant } = await import("@qingagent/server/confirmUiGrant");
+      revokeConfirmUiGrant(nonce);
+    },
+  });
+});
 
 ipcMain.handle("qingagent:select-folder-source", async (event) => {
   assertTrustedRenderer(event);
@@ -739,8 +941,41 @@ async function createWindowOnce() {
     },
   });
   const contentWindow = mainWindow;
+  const rememberGeneration = nativeRememberGrantGate.reset();
+  const rememberScope = `desktop-window:${rememberGeneration}`;
+  mainWindowRememberGeneration = rememberGeneration;
+  mainWindowRememberScope = rememberScope;
+
+  // 仅主应用窗口开放文本编辑右键菜单；可信确认模态窗和 PDF 离屏窗保持无右键交互面。
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    Menu.buildFromTemplate(buildEditContextMenuTemplate(params)).popup({
+      window: contentWindow,
+      frame: params.frame ?? undefined,
+      x: params.x,
+      y: params.y,
+      sourceType: params.menuSourceType,
+    });
+  });
+
   contentWindow.once("closed", () => {
-    if (mainWindow === contentWindow) mainWindow = null;
+    trustedRememberUiGate.clear();
+    nativeRememberGrantGate.cancel(rememberGeneration);
+    void import("@qingagent/server/confirmUiGrant")
+      .then(({ clearConfirmUiGrantsForScope }) => {
+        clearConfirmUiGrantsForScope(rememberScope);
+      })
+      .catch(() => undefined);
+    if (mainWindow === contentWindow) {
+      mainWindow = null;
+      mainWindowRememberScope = null;
+    }
+  });
+
+  contentWindow.webContents.on("before-input-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
+  });
+  contentWindow.webContents.on("before-mouse-event", (_event, input) => {
+    trustedRememberUiGate.record(contentWindow.webContents.id, input.type);
   });
 
   attachRendererDiagnostics(contentWindow.webContents, desktopLogDir);

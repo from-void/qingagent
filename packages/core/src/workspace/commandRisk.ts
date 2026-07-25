@@ -886,6 +886,159 @@ function isInstallCommand(command: AnalyzedSimpleCommand, pipeline: AnalyzedSimp
   return false;
 }
 
+const INSTALL_OPTIONS_WITH_VALUE = new Set([
+  "-c", "--channel",
+  "-i", "--index-url",
+  "-r", "--requirement",
+  "-t", "--target",
+  "-w", "--workspace",
+  "--arch",
+  "--cache",
+  "--config",
+  "--extra-index-url",
+  "--filter",
+  "--global-folder",
+  "--platform",
+  "--prefix",
+  "--python",
+  "--registry",
+  "--root",
+  "--source",
+  "--toolchain",
+  "--userconfig",
+  "--version",
+]);
+
+function nextInstallOperand(
+  command: AnalyzedSimpleCommand,
+  startIndex: number,
+): { index: number; value: string } | null {
+  for (let index = startIndex; index < command.words.length; index += 1) {
+    const word = command.words[index]!;
+    const value = word.value;
+    if (value === "--") {
+      const next = command.words[index + 1];
+      return next && !next.dynamic
+        ? { index: index + 1, value: next.value }
+        : null;
+    }
+    if (value.startsWith("-") && value !== "-") {
+      const flag = value.split("=", 1)[0]!.toLowerCase();
+      if (!value.includes("=") && INSTALL_OPTIONS_WITH_VALUE.has(flag)) index += 1;
+      continue;
+    }
+    if (word.dynamic) return null;
+    return { index, value };
+  }
+  return null;
+}
+
+function actionIndex(command: AnalyzedSimpleCommand, actions: Set<string>): number {
+  return command.argv.findIndex(
+    (arg, index) => index > 0 && actions.has(arg.toLowerCase()),
+  );
+}
+
+function npxInstallTarget(command: AnalyzedSimpleCommand): string | null {
+  for (let index = 1; index < command.words.length; index += 1) {
+    const value = command.words[index]!.value;
+    const lower = value.toLowerCase();
+    if (lower === "-p" || lower === "--package") {
+      const packageWord = command.words[index + 1];
+      return packageWord && !packageWord.dynamic ? packageWord.value : null;
+    }
+    if (lower.startsWith("--package=")) {
+      return command.words[index]!.dynamic
+        ? null
+        : value.slice(value.indexOf("=") + 1);
+    }
+  }
+  const executable = nextInstallOperand(command, 1);
+  if (!executable) return null;
+  if (executable.value.toLowerCase() !== "skills") return executable.value;
+  const addIndex = command.argv.findIndex(
+    (arg, index) => index > executable.index && arg.toLowerCase() === "add",
+  );
+  return addIndex < 0
+    ? executable.value
+    : nextInstallOperand(command, addIndex + 1)?.value ?? executable.value;
+}
+
+function rawInstallTarget(command: AnalyzedSimpleCommand): string | null {
+  const name = commandName(command.argv[0] ?? "");
+  if (name === "npx") return npxInstallTarget(command);
+
+  let actions: Set<string> | null = null;
+  if (name === "npm") actions = new Set(["install", "i", "update", "exec"]);
+  else if (name === "pnpm") actions = new Set(["add", "install", "i", "up", "update", "dlx"]);
+  else if (name === "yarn") actions = new Set(["add", "install", "up", "upgrade", "dlx"]);
+  else if (name === "pip" || name === "pip3") actions = new Set(["install"]);
+  else if (/^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/.test(name)) actions = new Set(["install"]);
+  else if (name === "uv") actions = new Set(["add", "install", "sync", "update", "upgrade"]);
+  else if (new Set(["pipx", "poetry", "pdm"]).has(name)) actions = new Set(["add", "install", "sync", "update", "upgrade"]);
+  else if (new Set(["apt", "apt-get", "brew", "dnf", "yum", "apk", "pacman", "zypper", "choco", "winget", "scoop"]).has(name)) {
+    actions = new Set(["install", "add", "upgrade"]);
+  } else if (name === "gem") actions = new Set(["install", "update"]);
+  else if (name === "bundle" || name === "bundler") actions = new Set(["install", "update"]);
+  else if (name === "cargo") actions = new Set(["install", "update"]);
+  else if (name === "go") actions = new Set(["install", "get"]);
+  else if (name === "composer") actions = new Set(["install", "update", "require"]);
+  else if (name === "dotnet") actions = new Set(["install", "update"]);
+  else if (new Set(["conda", "mamba", "micromamba"]).has(name)) {
+    actions = new Set(["install", "update", "upgrade"]);
+  }
+  if (!actions) return null;
+  const index = actionIndex(command, actions);
+  return index < 0 ? null : nextInstallOperand(command, index + 1)?.value ?? null;
+}
+
+function installDisplayName(raw: string): string | null {
+  let value = raw
+    .replace(/[\u0000-\u001f\u007f-\u009f<>]/g, "")
+    .trim();
+  if (!value || /\s/.test(value) || value.startsWith("-")) return null;
+  value = value.replace(/[?#].*$/, "").replace(/\/+$/, "");
+  value = value.split("/").at(-1) ?? value;
+  value = value.replace(/\.git$/i, "");
+  const versionAt = value.lastIndexOf("@");
+  if (versionAt > 0) value = value.slice(0, versionAt);
+  value = value
+    .replace(/\[[^\]]*]$/, "")
+    .split(/===|==|~=|!=|<=|>=|<|>|=/, 1)[0]!
+    .trim();
+  if (!value || !/^[\p{L}\p{N}._+:-]+$/u.test(value)) return null;
+  return value.slice(0, 96);
+}
+
+function installTarget(commands: AnalyzedSimpleCommand[]): string | null {
+  for (const command of commands) {
+    const raw = rawInstallTarget(command);
+    if (!raw) continue;
+    const displayName = installDisplayName(raw);
+    if (displayName) return displayName;
+  }
+  return null;
+}
+
+function installDetail(target: string | null): string {
+  const impact = "会从网上下载并安装到这台电脑";
+  if (!target) {
+    return `装好后青简才能继续帮你完成这项操作。${impact}`;
+  }
+  const normalized = target.toLowerCase();
+  if (
+    normalized === "wecom"
+    || normalized === "wecom-cli"
+    || normalized.startsWith("wecom-cli-")
+  ) {
+    return `装好后青简就能帮你操作企业微信。${impact}`;
+  }
+  if (normalized === "lark-cli" || normalized.startsWith("lark-cli-")) {
+    return `装好后青简就能帮你操作飞书。${impact}`;
+  }
+  return `装好后青简才能用它帮你干活。${impact}`;
+}
+
 function larkWrites(command: AnalyzedSimpleCommand): boolean {
   if (commandName(command.argv[0] ?? "") !== "lark-cli") return false;
   const writeActions = new Set([
@@ -1093,10 +1246,6 @@ function isSendCommand(command: AnalyzedSimpleCommand): boolean {
   const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
   if (hasDynamicExternalLocation(command)) return true;
   if (larkWrites(command)) return true;
-  if (name === "node" || name === "nodejs") {
-    const script = command.argv[1] ?? "";
-    if (commandName(script) === "dingtalk.mjs" && args.some((arg) => new Set(["doc-create", "doc-update", "upload", "send", "publish"]).has(arg))) return true;
-  }
   if (name === "curl" && curlWrites(command)) return true;
   if (name === "wget" && wgetWrites(command)) return true;
   if (name === "git" && args[0] === "push") return true;
@@ -1147,9 +1296,6 @@ function sendTitle(commands: AnalyzedSimpleCommand[]): { title: string; detail: 
   if (commands.some((command) => larkWrites(command))) {
     return { title: "发送或发布到飞书", detail: "将修改你的飞书内容或向飞书发送数据" };
   }
-  if (commands.some((command) => command.argv.some((arg) => commandName(arg) === "dingtalk.mjs"))) {
-    return { title: "发送或发布到钉钉", detail: "将修改你的钉钉内容或向钉钉发送数据" };
-  }
   if (commands.some((command) => commandName(command.argv[0] ?? "") === "git" && command.argv[1]?.toLowerCase() === "push")) {
     return { title: "推送代码到远端", detail: "将修改远端代码仓库" };
   }
@@ -1178,12 +1324,13 @@ function verdictFromEffects(
     };
   }
   if (effects.has("install")) {
+    const target = installTarget(commands);
     return {
       risk: "confirm",
       effects: ["install"],
       confirmKind: "install",
-      title: "安装依赖/工具",
-      detail: "将下载或执行新代码，并修改运行环境",
+      title: target ? `安装 ${target}` : "安装依赖/工具",
+      detail: installDetail(target),
       icon: "📦",
     };
   }

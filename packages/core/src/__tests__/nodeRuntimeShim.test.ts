@@ -3,11 +3,13 @@ import { mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   ensureNodeRuntimeShim,
   isElectronRuntime,
   posixSingleQuote,
   renderNodeRuntimeShim,
+  renderWindowsNodeOptions,
   writeIfChanged,
 } from "../workspace/nodeRuntimeShim.js";
 
@@ -37,6 +39,7 @@ describe("nodeRuntimeShim", () => {
     const rendered = renderNodeRuntimeShim({
       execPath: "C:\\Program Files\\青简 100%\\青简.exe",
       electron: true,
+      binDir: "C:\\Users\\Test User\\AppData\\Roaming\\青简\\data\\bin",
       platform: "win32",
     });
     const lines = rendered.content.split(/\r?\n/);
@@ -44,13 +47,38 @@ describe("nodeRuntimeShim", () => {
     expect(lines[0]).toBe("@echo off");
     expect(rendered.content).toContain('set "ELECTRON_RUN_AS_NODE=1"');
     expect(rendered.content).toContain(
-      'set NODE_OPTIONS=--require "%~dp0hide-console.cjs"',
+      'set NODE_OPTIONS=--require "C:/Users/Test User/AppData/Roaming/青简/data/bin/hide-console.cjs"',
     );
+    expect(lines.find((line) => line.startsWith("set NODE_OPTIONS="))).not.toContain("%~dp0");
+    expect(lines.find((line) => line.startsWith("set NODE_OPTIONS="))).not.toContain("\\");
     expect(rendered.content).toContain('"C:\\Program Files\\青简 100%%\\青简.exe" %*');
   });
 
-  it("win32+electron 时写出 hide-console.cjs 预载,补丁 child_process windowsHide", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "node-shim-hide-"));
+  it("Windows NODE_OPTIONS 使用绝对正斜杠路径并正确引用空格", () => {
+    expect(
+      renderWindowsNodeOptions("C:\\Users\\Test User\\AppData\\Roaming\\青简\\data\\bin"),
+    ).toBe('--require "C:/Users/Test User/AppData/Roaming/青简/data/bin/hide-console.cjs"');
+  });
+
+  it("Node 从 NODE_OPTIONS 解析反斜杠 preload 路径时会吞掉反斜杠", () => {
+    const preloadPath = "C:\\Users\\Test User\\sessions\\fixture\\hide-console.cjs";
+    const result = spawnSync(process.execPath, ["-e", "0"], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require "${preloadPath}"`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `Cannot find module '${preloadPath.replace(/\\/g, "")}'`,
+    );
+    expect(result.stderr).not.toContain(preloadPath);
+  });
+
+  it("win32+electron 时写出 hide-console.cjs,并可由 NODE_OPTIONS 环境变量预载", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "node-shim hide-"));
     ensureNodeRuntimeShim({
       execPath: "C:\\app\\qingagent.exe",
       electron: true,
@@ -60,11 +88,16 @@ describe("nodeRuntimeShim", () => {
     const preload = await readFile(join(dir, "hide-console.cjs"), "utf8");
     expect(preload).toContain("windowsHide");
     expect(preload).toContain("execFileSync");
-    // 预载在本平台 node 里可直接执行且不报错(win32 之外为空操作)
-    const { execFileSync } = await import("node:child_process");
-    execFileSync(process.execPath, ["--require", join(dir, "hide-console.cjs"), "-e", "0"], {
-      stdio: "ignore",
+    // 必须走 NODE_OPTIONS 环境变量,覆盖 Node 自身的 env 解析器；CLI --require 不能复现本缺陷。
+    const result = spawnSync(process.execPath, ["-e", "0"], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: renderWindowsNodeOptions(dir),
+      },
+      encoding: "utf8",
     });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
   it("非 electron 的 win32 shim 不注入 NODE_OPTIONS 预载", () => {

@@ -54,6 +54,7 @@ export {
   ensureWorkingMemorySnapshotWithStatus,
   endTurnOwnership,
   finalizeLingeringRunningToolCalls,
+  failConfirmedToolCall,
   findLiteralMatches,
   findMaterialByFileId,
   getActiveSuspensionOwner,
@@ -86,6 +87,8 @@ export {
   replaceTextRuns,
   resolveFileIds,
   runAgentTurn,
+  cancelConfirmedCommand,
+  resumeConfirmDecision,
   scheduleOmSidecarAfterTurn,
   schedulePersist,
   serializeReviewOutcome,
@@ -97,6 +100,7 @@ export {
   updatePatchVerdict,
   upsertMaterialByFileId,
 } from "./bridge/index.js";
+export type { ApprovalAgent } from "./bridge/index.js";
 export type { ConnectorInfoDto } from "./connectors/index.js";
 export {
   CONFIRM_TTL_MS,

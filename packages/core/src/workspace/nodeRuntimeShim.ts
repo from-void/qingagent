@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { SANDBOX_BIN_DIR } from "./sandboxPaths.js";
 
 export interface NodeRuntimeShimOptions {
@@ -24,6 +24,15 @@ export function posixSingleQuote(value: string): string {
 }
 
 export const WINDOWS_HIDE_PRELOAD_FILENAME = "hide-console.cjs";
+
+export function renderWindowsNodeOptions(binDir: string): string {
+  // Node 的 ParseNodeOptionsEnvVar 会把双引号内的反斜杠当转义符消费。Windows Node
+  // 接受正斜杠路径，因此在写入 .cmd 前就固化绝对正斜杠路径，避免依赖 %~dp0 展开出的反斜杠。
+  const preloadPath = win32
+    .resolve(binDir, WINDOWS_HIDE_PRELOAD_FILENAME)
+    .replace(/\\/g, "/");
+  return `--require "${preloadPath}"`;
+}
 
 /**
  * Windows + Electron-as-node 专用预载:GUI 子系统进程没有控制台,它的 node 脚本再拉起
@@ -68,8 +77,9 @@ export function renderNodeRuntimeShim(options: NodeRuntimeShimOptions): Rendered
     if (options.electron) {
       lines.push(
         'set "ELECTRON_RUN_AS_NODE=1"',
-        // set 不带外层引号:让路径两侧的引号进入变量值,cmd 对引号内的 & 等特殊字符按字面处理
-        `set NODE_OPTIONS=--require "%~dp0${WINDOWS_HIDE_PRELOAD_FILENAME}"`,
+        // set 不带外层引号:让 preload 路径两侧的引号进入变量值,cmd 对引号内的 & 等特殊字符
+        // 按字面处理。这里只对 batch 的 % 做转义，最终 NODE_OPTIONS 仍保留原始绝对路径。
+        `set NODE_OPTIONS=${renderWindowsNodeOptions(options.binDir ?? SANDBOX_BIN_DIR).replace(/%/g, "%%")}`,
       );
     }
     lines.push(`"${options.execPath.replace(/%/g, "%%")}" %*`);

@@ -11,6 +11,10 @@ import {
 import { runQuarantine0002Recovery } from "../quarantine0002Recovery.js";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 
+function expectMigration0023AppliedExactlyOnce(appliedIds: readonly number[]): void {
+  expect(appliedIds.filter((id) => id === 23)).toEqual([23]);
+}
+
 describe("0023 restore quarantine 0002", () => {
   let db: TempDocumentsDb;
 
@@ -27,7 +31,12 @@ describe("0023 restore quarantine 0002", () => {
     const client = getDocumentsClient();
     const result = await runMigrations();
 
-    expect(result.appliedIds.at(-1)).toBe(25);
+    expect(result.appliedIds.at(-1)).toBe(MIGRATIONS.at(-1)?.id);
+    expectMigration0023AppliedExactlyOnce(result.appliedIds);
+    const ledger = await client.execute(
+      "SELECT id, name FROM schema_migrations WHERE id = 23",
+    );
+    expect(ledger.rows).toMatchObject([{ id: 23, name: "restore_quarantine_0002" }]);
     await expect(restoreQuarantinedDocumentFamilies0002(client)).resolves.toMatchObject({
       eligibleDocuments: 0,
       restoredDocuments: 0,
@@ -52,7 +61,8 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23, 24, 25]);
+    expect(result.appliedIds).toEqual(MIGRATIONS.slice(22).map(({ id }) => id));
+    expectMigration0023AppliedExactlyOnce(result.appliedIds);
     const row = await client.execute("SELECT title FROM documents WHERE id = 'old-doc'");
     expect(row.rows[0]?.title).toBe("旧库正文");
   });
@@ -81,7 +91,8 @@ describe("0023 restore quarantine 0002", () => {
 
     const result = await runMigrations();
 
-    expect(result.appliedIds).toEqual([23, 24, 25]);
+    expect(result.appliedIds).toEqual(MIGRATIONS.slice(22).map(({ id }) => id));
+    expectMigration0023AppliedExactlyOnce(result.appliedIds);
     const documents = await client.execute(
       "SELECT id, thread_id, title, role FROM documents ORDER BY thread_id",
     );

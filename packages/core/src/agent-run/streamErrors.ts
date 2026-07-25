@@ -1,4 +1,8 @@
-import type { BridgeFrame, MessagePart } from "@qingagent/contract-ts";
+import {
+  sanitizeVisibleText,
+  type BridgeFrame,
+  type MessagePart,
+} from "@qingagent/contract-ts";
 import type { SessionState } from "../session/sessionState.js";
 import { appendPartToChatHistory, nextSeq } from "../session/sessionState.js";
 import { chatMessageAppended } from "./frames.js";
@@ -334,20 +338,7 @@ export function guardrailTripwireMessage(chunk: unknown): string {
 }
 
 export function isLikelyInternalTextDelta(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return false;
-  if (
-    /\bAI-IR\b/i.test(trimmed) ||
-    /\bblock-[A-Za-z0-9_-]+\b/.test(trimmed) ||
-    /\bnumericValue\b/.test(trimmed) ||
-    /\[(?:tool-result|tool-call|askUserAnswers|internal|transcript)\]/i.test(trimmed)
-  ) {
-    return true;
-  }
-  if (/^(?:let me|let's|i need to|i should|i will|i'll|we need to|we should|now i|the user wants|need to)\b/i.test(trimmed)) {
-    return true;
-  }
-  return /\b(?:different approach|tool result|tool call|system prompt|developer instruction)\b/i.test(trimmed);
+  return text.trim().length > 0 && sanitizeVisibleText(text) === null;
 }
 
 export function appendVisibleStreamErrorText(

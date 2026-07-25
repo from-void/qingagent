@@ -1,4 +1,13 @@
 export type ConfirmKind = "install" | "connect" | "send" | "command";
+export type RememberableConfirmKind = "install" | "command";
+
+export interface RememberCategory {
+  kind: RememberableConfirmKind;
+  label: string;
+  riskHint?: string;
+  /** 仅本地开发显式放宽时为 true；生产 Web 不得据此显示记忆入口。 */
+  insecureWithoutDesktop?: boolean;
+}
 
 export interface ConfirmOption {
   value: string;
@@ -23,9 +32,12 @@ export interface ConfirmSpec {
   title: string;
   sub?: string;
   say: string;
+  /** 状态变化后的非阻断解释；不得承载内部机制词。 */
+  notice?: string;
   commandPreview?: string;
   widget?: ConfirmWidget;
-  footHint: string;
+  rememberCategory?: RememberCategory;
+  footHint?: string;
   primaryLabel: string;
   secondaryLabel: string;
 }
@@ -35,6 +47,8 @@ export interface ConfirmDecision {
   accepted: boolean;
   optionValue?: string;
   secretValue?: string;
+  remember?: boolean;
+  uiGrantNonce?: string;
 }
 
 export interface SubmitConfirmDecision {
@@ -42,6 +56,11 @@ export interface SubmitConfirmDecision {
   toolCallId: string;
   decisionId: string;
   decision: ConfirmDecision;
+}
+
+export interface CancelConfirmedCommand {
+  sessionId: string;
+  toolCallId: string;
 }
 
 export interface ConfirmRequested {

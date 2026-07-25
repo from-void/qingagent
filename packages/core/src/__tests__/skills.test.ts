@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { resolveEnabledSkillDirsFromRoots } from "../agents/qingagent.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
-import { isArchivedBuiltinSkillName } from "../skills/archived.js";
+import { ARCHIVED_BUILTIN_SKILLS } from "../skills/archived.js";
 
 function parseFrontmatter(source: string): Record<string, unknown> {
   const match = source.match(/^---\n([\s\S]*?)\n---/);
@@ -56,7 +56,7 @@ describe("builtin skills", () => {
     expect((frontmatter.description as string).length).toBeGreaterThan(0);
   });
 
-  it("filters archived builtin skills before Mastra Workspace can discover them", async () => {
+  it("归档清单为空时仍正常发现内置技能", async () => {
     const skillDirs = await resolveEnabledSkillDirsFromRoots(
       [
         join(BUILTIN_SKILLS_DIR, "capability"),
@@ -66,7 +66,7 @@ describe("builtin skills", () => {
       new Set(),
     );
 
-    expect(skillDirs.some((dir) => isArchivedBuiltinSkillName(basename(dir)))).toBe(false);
+    expect(ARCHIVED_BUILTIN_SKILLS.size).toBe(0);
     expect(skillDirs.some((dir) => basename(dir) === "browser-ops")).toBe(true);
 
     const workspace = new Workspace({
@@ -79,7 +79,6 @@ describe("builtin skills", () => {
     const skillsApi = workspace.skills;
     if (!skillsApi) throw new Error("Workspace skills are not configured");
 
-    expect(await skillsApi.has("dingtalk-docs")).toBe(false);
     expect(await skillsApi.has("browser-ops")).toBe(true);
   });
 
@@ -113,6 +112,8 @@ describe("builtin skills", () => {
   // roots 与显式 disabled 集,绝不回读真实 BUILTIN_SKILLS_DIR 或全局 .disabled.json。
   it("resolveEnabledSkillDirsFromRoots 只认传入的 tmp roots 与显式禁用集(隔离全局 .disabled.json 污染)", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-skills-hermetic-"));
+    const archivedName = "archived-test-skill";
+    ARCHIVED_BUILTIN_SKILLS.add(archivedName);
     try {
       const category = join(root, "capability");
       const makeSkill = async (name: string): Promise<void> => {
@@ -121,16 +122,17 @@ describe("builtin skills", () => {
         await writeFile(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: 测试技能 ${name}\n---\n`, "utf8");
       };
       await makeSkill("browser-ops"); // 未归档、未禁用 → 应存活
-      await makeSkill("dingtalk-docs"); // 归档名(location 无关)→ 应被过滤
+      await makeSkill(archivedName); // 归档名(location 无关)→ 应被过滤
       await makeSkill("team-notes"); // 正常技能,但被显式塞进禁用集 → 应被过滤
 
       const dirs = await resolveEnabledSkillDirsFromRoots([category], new Set(["team-notes"]));
       const names = dirs.map((dir) => basename(dir));
 
       expect(names).toContain("browser-ops");
-      expect(names).not.toContain("dingtalk-docs");
+      expect(names).not.toContain(archivedName);
       expect(names).not.toContain("team-notes");
     } finally {
+      ARCHIVED_BUILTIN_SKILLS.delete(archivedName);
       await rm(root, { recursive: true, force: true });
     }
   });

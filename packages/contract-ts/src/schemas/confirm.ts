@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type {
+  CancelConfirmedCommand,
   ConfirmDecision,
   ConfirmKind,
   ConfirmOption,
   ConfirmRequested,
+  RememberCategory,
   ConfirmResolved,
   ConfirmSpec,
   ConfirmWidget,
@@ -14,6 +16,7 @@ import type { Equal, Expect } from "./typeAssert";
 
 const ID_MAX = 128;
 const SECRET_MAX = 8_192;
+const UI_GRANT_NONCE_MAX = 256;
 
 export const confirmKindSchema = z.enum([
   "install",
@@ -68,18 +71,35 @@ export const confirmWidgetSchema = z.discriminatedUnion("type", [
 ]) satisfies z.ZodType<ConfirmWidget>;
 type _ConfirmWidgetExact = Expect<Equal<z.infer<typeof confirmWidgetSchema>, ConfirmWidget>>;
 
+export const rememberCategorySchema = z.object({
+  kind: z.enum(["install", "command"]),
+  label: boundedNonEmptyString(160),
+  riskHint: boundedNonEmptyString(300).optional(),
+  insecureWithoutDesktop: z.boolean().optional(),
+}).strict() satisfies z.ZodType<RememberCategory>;
+
 export const confirmSpecSchema = z.object({
   id: boundedNonEmptyString(ID_MAX),
   kind: confirmKindSchema,
   title: boundedNonEmptyString(120),
   sub: boundedNonEmptyString(200).optional(),
   say: boundedNonEmptyString(1_200),
+  notice: boundedNonEmptyString(300).optional(),
   commandPreview: boundedNonEmptyString(2_000).optional(),
   widget: confirmWidgetSchema.optional(),
-  footHint: boundedNonEmptyString(300),
+  rememberCategory: rememberCategorySchema.optional(),
+  footHint: boundedNonEmptyString(300).optional(),
   primaryLabel: boundedNonEmptyString(64),
   secondaryLabel: boundedNonEmptyString(64),
-}).strict() satisfies z.ZodType<ConfirmSpec>;
+}).strict().superRefine((spec, ctx) => {
+  if (spec.rememberCategory && spec.rememberCategory.kind !== spec.kind) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["rememberCategory", "kind"],
+      message: "rememberCategory kind must match confirm kind",
+    });
+  }
+}) satisfies z.ZodType<ConfirmSpec>;
 type _ConfirmSpecExact = Expect<Equal<z.infer<typeof confirmSpecSchema>, ConfirmSpec>>;
 
 export const confirmDecisionSchema = z.object({
@@ -87,6 +107,8 @@ export const confirmDecisionSchema = z.object({
   accepted: z.boolean(),
   optionValue: boundedNonEmptyString(128).optional(),
   secretValue: z.string().max(SECRET_MAX).optional(),
+  remember: z.boolean().optional(),
+  uiGrantNonce: boundedNonEmptyString(UI_GRANT_NONCE_MAX).optional(),
 }).strict().superRefine((decision, ctx) => {
   if (!decision.accepted && decision.optionValue !== undefined) {
     ctx.addIssue({
@@ -102,6 +124,20 @@ export const confirmDecisionSchema = z.object({
       message: "secretValue is forbidden when accepted is false",
     });
   }
+  if (!decision.accepted && decision.uiGrantNonce !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["uiGrantNonce"],
+      message: "uiGrantNonce is forbidden when accepted is false",
+    });
+  }
+  if (decision.uiGrantNonce !== undefined && decision.remember !== true) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["uiGrantNonce"],
+      message: "uiGrantNonce requires remember=true",
+    });
+  }
 }) satisfies z.ZodType<ConfirmDecision>;
 type _ConfirmDecisionExact = Expect<Equal<z.infer<typeof confirmDecisionSchema>, ConfirmDecision>>;
 
@@ -113,6 +149,14 @@ export const submitConfirmDecisionSchema = z.object({
 }).strict() satisfies z.ZodType<SubmitConfirmDecision>;
 type _SubmitConfirmDecisionExact = Expect<
   Equal<z.infer<typeof submitConfirmDecisionSchema>, SubmitConfirmDecision>
+>;
+
+export const cancelConfirmedCommandSchema = z.object({
+  sessionId: boundedNonEmptyString(ID_MAX),
+  toolCallId: boundedNonEmptyString(ID_MAX),
+}).strict() satisfies z.ZodType<CancelConfirmedCommand>;
+type _CancelConfirmedCommandExact = Expect<
+  Equal<z.infer<typeof cancelConfirmedCommandSchema>, CancelConfirmedCommand>
 >;
 
 export const confirmRequestedSchema = z.object({
@@ -148,6 +192,16 @@ export function confirmDecisionForSpecSchema(
       return;
     }
     if (!decision.accepted) return;
+
+    if (decision.remember === true) {
+      if (!spec.rememberCategory || spec.rememberCategory.kind !== spec.kind) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["remember"],
+          message: "remember is forbidden for this confirm spec",
+        });
+      }
+    }
 
     if (spec.widget?.type === "options") {
       if (

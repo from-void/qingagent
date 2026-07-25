@@ -6,6 +6,7 @@ import { SkillsPanel } from "../../../overlays/settings/SkillsPanel";
 import { ConnectionsPanel } from "../../../overlays/settings/ConnectionsPanel";
 import type { ConnectorId } from "@qingagent/contract-ts";
 import { AboutPanel } from "../../../overlays/settings/AboutPanel";
+import { SecurityPanel } from "../../../overlays/settings/SecurityPanel";
 import "../../../overlays/settings/settings.css";
 import { SettingsInkBackdrop } from "./settingsInkVariants";
 import type { SettingsInkVariantId } from "./settingsInkVariants/types";
@@ -13,7 +14,7 @@ import type { SettingsInkVariantId } from "./settingsInkVariants/types";
 // 全部设置统一从首页右上角 ⚙ 浮层进入。本组件渲染在 .qj-root 内,样式走青简 --qj-* 体系。
 // tab:外观(明暗/字体/进场/动效) · 模型(看板) · 技能 · 搜索 · 快捷键。数据 tab 暂隐藏。
 
-export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "diagnostics" | "shortcuts" | "about";
+export type SettingsSheetTab = "appearance" | "model" | "skills" | "connections" | "security" | "diagnostics" | "shortcuts" | "about";
 
 interface SheetOption<T extends string> {
   id: T;
@@ -45,6 +46,7 @@ const TABS: Array<{ id: SettingsSheetTab; label: string }> = [
   // 「外观」整组已隐藏:产品只保留浅色宣纸,无深/浅模式与外观设置。
   { id: "skills", label: "技能" },
   { id: "connections", label: "连接" },
+  { id: "security", label: "安全" },
   { id: "shortcuts", label: "快捷键" },
   { id: "diagnostics", label: "反馈" },
   { id: "about", label: "关于" },
@@ -289,6 +291,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                 onSelectedIdChange={setSelectedConnectorId}
               />
             )}
+            {tab === "security" && <SecurityPanel />}
             {tab === "diagnostics" && <FeedbackPanel />}
             {tab === "shortcuts" && <ShortcutsPanel />}
             {tab === "about" && <AboutPanel />}

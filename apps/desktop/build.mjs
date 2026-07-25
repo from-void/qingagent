@@ -66,12 +66,12 @@ await build({
   ...sharedOptions,
   format: "cjs",
   banner: { js: "" },
-  entryPoints: ["src/preload/index.ts"],
+  entryPoints: ["src/preload/index.ts", "src/preload/rememberPrompt.ts"],
   outdir: "dist/preload",
   outExtension: { ".js": ".cjs" },
 });
 
-console.log("Desktop preload script bundled -> dist/preload/index.cjs (CommonJS)");
+console.log("Desktop preload scripts bundled -> dist/preload/*.cjs (CommonJS)");
 
 await buildInjectBundle({ write: true });
 

@@ -31,10 +31,12 @@ import {
   nextSeq,
   updateToolCallInChatHistory,
 } from "../session/sessionState.js";
+import { registerBackgroundCommandOwner } from "../session/backgroundCommand.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   commandCardFromResult,
   commandCardStatusFromCard,
+  isTerminalCommandCard,
   scriptCardFromResult,
   writeDraftCardFromResult,
 } from "./toolCards.js";
@@ -57,6 +59,18 @@ function genericToolFailureReason(
     }
   }
   return redactedToolResultPreview(rawToolResult);
+}
+
+function hasTerminalCommandCard(
+  state: ToolResultContext["turn"]["state"],
+  toolCallId: string,
+): boolean {
+  return state.chatHistory.some((message) => message.parts.some(
+    (part) =>
+      part.kind === "toolCall" &&
+      part.data.id === toolCallId &&
+      isTerminalCommandCard(part.data),
+  ));
 }
 
 export async function* handleDraftOrGenericToolResult(
@@ -212,9 +226,18 @@ export async function* handleDraftOrGenericToolResult(
     return;
   }
 
+  // 确认拒绝、kill、急停等终态一旦落定，同 toolCallId 的迟到 generic result
+  // 不得把权威终态重新覆盖成普通完成/失败。
+  if (
+    toolName === "mastra_workspace_execute_command" &&
+    hasTerminalCommandCard(state, toolCallId)
+  ) {
+    return;
+  }
+
   const commandCard =
     toolName === "mastra_workspace_execute_command"
-      ? commandCardFromResult(args, rawToolResult, toolResultOk)
+      ? commandCardFromResult(args, rawToolResult, toolResultOk, toolCallId)
       : toolName === "run_js" || toolName === "run_python"
         ? scriptCardFromResult(toolName, args, rawToolResult, toolResultOk)
         : null;
@@ -238,9 +261,25 @@ export async function* handleDraftOrGenericToolResult(
     render: { kind: "chatInline" },
     status: doneStatus,
     body: doneBody,
-    result: { kind: "genericText", data: toolResultCardSummary(rawToolResult) },
+    result: {
+      kind: "genericText",
+      data:
+        toolName === "mastra_workspace_get_process_output" &&
+        typeof rawToolResult === "string" &&
+        rawToolResult.includes("进程仍在运行") &&
+        rawToolResult.includes("未退出")
+          ? JSON.stringify({ processStillRunning: true })
+          : toolResultCardSummary(rawToolResult),
+    },
   };
   updateToolCallInChatHistory(state, agentMessageId, toolCallId, doneSpec);
+  if (
+    commandCard?.background === true &&
+    typeof commandCard.pid === "string" &&
+    commandCard.pid.length > 0
+  ) {
+    registerBackgroundCommandOwner(state, commandCard.pid, toolCallId);
+  }
   if (toolName === "readDraft") {
     schedulePersist(state, "tool_result:readDraft").catch((error) =>
       logger.error("Persist after readDraft result failed", { error: String(error) }),

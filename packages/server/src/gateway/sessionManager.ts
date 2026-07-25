@@ -11,11 +11,12 @@ import {
   SessionActor,
   type CommandOrigin,
   type HandleCommandFn,
+  type TurnPreemptionReason,
 } from "./sessionActor";
 
 export interface SessionManagerOptions {
   handleCommand: HandleCommandFn;
-  abortSession: (sessionId: string) => void;
+  abortSession: (sessionId: string, reason?: TurnPreemptionReason) => void;
   cleanupSession: (sessionId: string) => void | Promise<void>;
   afterRun?: (sessionId: string) => void;
   frameLog?: FrameLog;

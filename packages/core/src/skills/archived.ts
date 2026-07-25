@@ -1,5 +1,5 @@
-// M1 下架入口但保留代码留档的内置技能名。所有技能发现路径都必须过滤这份清单。
-export const ARCHIVED_BUILTIN_SKILLS = new Set<string>(["dingtalk-docs"]);
+// 通用内置技能归档清单；当前无归档项。所有技能发现路径仍必须过滤这份清单。
+export const ARCHIVED_BUILTIN_SKILLS = new Set<string>();
 
 export function isArchivedBuiltinSkillName(name: string): boolean {
   return ARCHIVED_BUILTIN_SKILLS.has(name);

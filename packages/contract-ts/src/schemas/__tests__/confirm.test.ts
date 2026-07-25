@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cancelConfirmedCommandSchema,
   confirmDecisionForSpecSchema,
   confirmSpecSchema,
   submitConfirmDecisionSchema,
@@ -11,7 +12,6 @@ const plainSpec: ConfirmSpec = {
   kind: "command",
   title: "执行命令",
   say: "将执行一次需要确认的命令",
-  footHint: "只授权本次调用",
   primaryLabel: "确认执行",
   secondaryLabel: "取消",
 };
@@ -23,6 +23,13 @@ describe("confirm contract schemas", () => {
       expect(confirmSpecSchema.parse({ ...plainSpec, kind }).kind).toBe(kind);
     },
   );
+
+  it("footHint 可选，提供时仍校验非空与长度", () => {
+    expect(confirmSpecSchema.parse(plainSpec).footHint).toBeUndefined();
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "只授权本次调用" }).success).toBe(true);
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "" }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({ ...plainSpec, footHint: "x".repeat(301) }).success).toBe(false);
+  });
 
   it("commandPreview 是通用可选字段且最多 2000 字符", () => {
     const commandPreview = "npx skills add ffmpeg";
@@ -38,6 +45,71 @@ describe("confirm contract schemas", () => {
     expect(confirmSpecSchema.safeParse({
       ...plainSpec,
       commandPreview: "x".repeat(2_001),
+    }).success).toBe(false);
+  });
+
+  it("rememberCategory 仅允许 install/command，且拒绝未声明卡片的 remember", () => {
+    const remembered = confirmSpecSchema.parse({
+      ...plainSpec,
+      rememberCategory: {
+        kind: "command",
+        label: "后续此类命令都默认同意",
+      },
+    });
+    expect(confirmDecisionForSpecSchema(remembered).safeParse({
+      id: remembered.id,
+      accepted: true,
+      remember: true,
+      uiGrantNonce: "nonce-1",
+    }).success).toBe(true);
+    expect(confirmDecisionForSpecSchema(plainSpec).safeParse({
+      id: plainSpec.id,
+      accepted: true,
+      remember: true,
+    }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      kind: "send",
+      rememberCategory: { kind: "send", label: "错误" },
+    }).success).toBe(false);
+    expect(confirmSpecSchema.safeParse({
+      ...plainSpec,
+      kind: "install",
+      rememberCategory: { kind: "command", label: "错误类别" },
+    }).success).toBe(false);
+  });
+
+  it("拒绝态 remember 合法但仍不能携带 UI grant nonce", () => {
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: false,
+        remember: true,
+      },
+    }).success).toBe(true);
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: false,
+        remember: true,
+        uiGrantNonce: "nonce",
+      },
+    }).success).toBe(false);
+    expect(submitConfirmDecisionSchema.safeParse({
+      sessionId: "s",
+      toolCallId: "t",
+      decisionId: "d",
+      decision: {
+        id: plainSpec.id,
+        accepted: true,
+        uiGrantNonce: "nonce",
+      },
     }).success).toBe(false);
   });
 
@@ -155,5 +227,16 @@ describe("confirm contract schemas", () => {
     });
     expect(tooLong.success).toBe(false);
     expect(tooLong.success ? "" : tooLong.error.message).not.toContain(sentinel);
+  });
+
+  it("卡级停止必须同时携带非空 sessionId 与 toolCallId", () => {
+    expect(cancelConfirmedCommandSchema.parse({
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+    })).toEqual({ sessionId: "session-1", toolCallId: "tool-1" });
+    expect(cancelConfirmedCommandSchema.safeParse({
+      sessionId: "session-1",
+      toolCallId: "",
+    }).success).toBe(false);
   });
 });

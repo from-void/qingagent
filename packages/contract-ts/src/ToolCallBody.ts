@@ -29,7 +29,7 @@ export interface GenerateSvgCardBody {
   progress: GenerateSvgProgress | null;
 }
 
-export type ToolCallBody = { "kind": "askUser", "data": AskUserSpec } | { "kind": "docSuggestion", "data": DocSuggestionBody } | { "kind": "spawnSubAgent", "data": { subAgentId: string, name: string, description: string, rootTaskId: string, } } | { "kind": "extractFile", "data": { resourceRef: ResourceRef, } } | { "kind": "extractImage", "data": { resourceRef: ResourceRef, } } | { "kind": "generateSvg", "data": GenerateSvgCardBody } | { "kind": "readImageCard", "data": { prompt: string, thumbnailSrc: string | null, excerpt: string | null, } } | { "kind": "webFetch", "data": { urlRef: ResourceRef, } } | { "kind": "browserOpen", "data": { urlRef: ResourceRef, requireInteraction: boolean, } } | { "kind": "browserAct", "data": { action: string, } } | { "kind": "writeDraftCard", "data": WriteDraftCardBody } | { "kind": "commandCard", "data": CommandCardBody } | { "kind": "researchCard", "data": ResearchCardBody } | { "kind": "qrCard", "data": QrCardBody } | { "kind": "generic", "data": { argsJson: string, } };
+export type ToolCallBody = { "kind": "askUser", "data": AskUserSpec } | { "kind": "docSuggestion", "data": DocSuggestionBody } | { "kind": "spawnSubAgent", "data": { subAgentId: string, name: string, description: string, rootTaskId: string, } } | { "kind": "extractFile", "data": { resourceRef: ResourceRef, } } | { "kind": "extractImage", "data": { resourceRef: ResourceRef, } } | { "kind": "generateSvg", "data": GenerateSvgCardBody } | { "kind": "readImageCard", "data": { prompt: string, thumbnailSrc: string | null, excerpt: string | null, } } | { "kind": "webFetch", "data": { urlRef: ResourceRef, } } | { "kind": "browserOpen", "data": { urlRef: ResourceRef, requireInteraction: boolean, } } | { "kind": "browserAct", "data": { action: string, } } | { "kind": "writeDraftCard", "data": WriteDraftCardBody } | { "kind": "commandCard", "data": CommandCardBody } | { "kind": "researchCard", "data": ResearchCardBody } | { "kind": "qrCard", "data": QrCardBody } | { "kind": "generic", "data": { argsJson: string, terminalKind?: "aborted", } };
 
 /**
  * 对话流内置二维码卡:agent 调 show_qr 工具输出。到 expiresAt(绝对时间戳)码作废、置灰打码,
@@ -60,7 +60,7 @@ export interface QrCardBody {
   /** 确认按钮的显示文案(可选,短,如「我已创建好」)。缺省/null 则用默认「我已完成授权」。
    *  与 confirmQuery 解耦:label 给用户看(要短、贴场景),query 是点击后发送给 agent 的话术(可更明确)。 */
   confirmLabel?: string | null;
-  /** 仅 connector bridge/service 可生成；show_qr 模型 schema 不含这些字段。 */
+  /** 由 connector bridge/service 或 show_qr 的完成态更新通道回填；模型不能直接传入此对象。 */
   connectorId?: "github" | "feishu" | "wechat-mp";
   /** 进程内 pending 的不可猜标识；M1b 仅预留兼容字段，不启动轮询。 */
   pendingId?: string;

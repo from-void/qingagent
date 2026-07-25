@@ -8,6 +8,7 @@ import type {
   MessagePart,
   ToolCallSpec,
 } from "../data/protocol";
+import { sanitizeVisibleText } from "@qingagent/contract-ts";
 import { InkBubble } from "../../../system";
 import { SparkleIcon, FileChipIcon } from "../../../system/SkillMenu";
 import { StreamingChars, useStreamFxConfig } from "./StreamingText";
@@ -247,45 +248,6 @@ export function sanitizeVisibleMessagePart(
     case "thinking":
       return options.debugMode ? part : null;
   }
-}
-
-function sanitizeVisibleText(body: string): string | null {
-  const normalized = body.replace(/\r\n/g, "\n");
-  if (isInternalTextBlock(normalized)) return null;
-  const lines = normalized
-    .split("\n")
-    .filter((line) => !isInternalTextLine(line));
-  const cleaned = lines.join("\n").trim();
-  return cleaned.length > 0 ? cleaned : null;
-}
-
-function stripMarkdownFence(text: string): string {
-  const match = text.trim().match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/);
-  return match ? match[1]!.trim() : text.trim();
-}
-
-function isInternalTextBlock(body: string): boolean {
-  const text = stripMarkdownFence(body);
-  if (/\bAI-IR\b/i.test(text)) return true;
-  if (/\[(?:tool-result|tool-call|askUserAnswers|internal|transcript)\]/i.test(text)) return true;
-  if (/\bnumericValue\b/.test(text)) return true;
-  if (/\bblock-[A-Za-z0-9_-]+\b/.test(text)) return true;
-  if (/^\s*(?:system|developer)\s*:/i.test(text)) return true;
-  if (/you are (?:chatgpt|codex|qingagent)/i.test(text)) return true;
-  if (/^\s*[\[{]/.test(text) && /"(?:blocks|blockId|attrs|content|chosen|freeText|numericValue|tool|args|result)"/.test(text)) {
-    return true;
-  }
-  return false;
-}
-
-function isInternalTextLine(line: string): boolean {
-  const text = line.trim();
-  if (!text) return false;
-  if (isInternalTextBlock(text)) return true;
-  if (/^(?:let me|let's|i need to|i should|i will|i'll|we need to|we should|now i|the user wants|need to)\b/i.test(text)) {
-    return true;
-  }
-  return /\b(?:different approach|tool result|tool call|system prompt|developer instruction)\b/i.test(text);
 }
 
 // 外部提案来源:服务端把调用方编进消息 id(external-<client>-<uuid>);web 只做展示映射。
@@ -677,10 +639,271 @@ function getPatchSummaryReviewOutcome(
     : null;
 }
 
+/** 聊天正文的内联 markdown run；start 按 Unicode 码点计，供流式动画稳定复用。 */
+export type StreamingInlineRun =
+  | { kind: "plain" | "bold" | "code"; text: string; start: number }
+  | { kind: "link"; text: string; href: string; start: number };
+
+type ParsedMarkdownLink = {
+  end: number;
+  text: string;
+  href: string | null;
+};
+
+function safeHttpHref(rawHref: string): string | null {
+  try {
+    const url = new URL(rawHref);
+    return url.protocol === "http:" || url.protocol === "https:" ? rawHref : null;
+  } catch {
+    return null;
+  }
+}
+
+function unescapeMarkdown(value: string): string {
+  return value.replace(/\\([\\[\]()<>])/g, "$1");
+}
+
+function findQuotedTitleEnd(value: string, start: number, quote: string): number {
+  for (let i = start + 1; i < value.length; i++) {
+    if (value[i] === "\\") {
+      i += 1;
+    } else if (value[i] === quote) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 解析一个完整 markdown 链接。
+ * href=null 表示语法完整但协议不安全/目标无效；调用方会把整段保留成纯文本，
+ * 避免再从 javascript:/data: 目标内部误提取出一个裸 URL。
+ */
+function parseMarkdownLinkAt(value: string, start: number): ParsedMarkdownLink | null {
+  if (value[start] !== "[") return null;
+
+  let labelEnd = -1;
+  for (let i = start + 1; i < value.length; i++) {
+    if (value[i] === "\\") {
+      i += 1;
+    } else if (value[i] === "]") {
+      labelEnd = i;
+      break;
+    }
+  }
+  if (labelEnd <= start + 1 || value[labelEnd + 1] !== "(") return null;
+
+  let cursor = labelEnd + 2;
+  while (value[cursor] === " " || value[cursor] === "\t") cursor += 1;
+
+  let rawHref = "";
+  if (value[cursor] === "<") {
+    const hrefStart = cursor + 1;
+    let hrefEnd = -1;
+    for (let i = hrefStart; i < value.length; i++) {
+      if (value[i] === "\\") {
+        i += 1;
+      } else if (value[i] === ">") {
+        hrefEnd = i;
+        break;
+      } else if (value[i] === "\n") {
+        return null;
+      }
+    }
+    if (hrefEnd < 0) return null;
+    rawHref = value.slice(hrefStart, hrefEnd);
+    cursor = hrefEnd + 1;
+  } else {
+    const hrefStart = cursor;
+    let parenDepth = 0;
+    for (; cursor < value.length; cursor++) {
+      const char = value[cursor]!;
+      if (char === "\\") {
+        cursor += 1;
+      } else if (char === "(") {
+        parenDepth += 1;
+      } else if (char === ")") {
+        if (parenDepth === 0) break;
+        parenDepth -= 1;
+      } else if (/\s/u.test(char) && parenDepth === 0) {
+        break;
+      }
+    }
+    rawHref = value.slice(hrefStart, cursor);
+  }
+  if (!rawHref) return null;
+
+  while (value[cursor] === " " || value[cursor] === "\t") cursor += 1;
+  if (value[cursor] !== ")") {
+    const quote = value[cursor];
+    if (quote !== "\"" && quote !== "'" && quote !== "(") return null;
+    const titleEnd = findQuotedTitleEnd(value, cursor, quote === "(" ? ")" : quote);
+    if (titleEnd < 0) return null;
+    cursor = titleEnd;
+    while (value[cursor] === " " || value[cursor] === "\t") cursor += 1;
+    if (value[cursor] !== ")") return null;
+  }
+
+  const href = unescapeMarkdown(rawHref);
+  return {
+    end: cursor + 1,
+    text: unescapeMarkdown(value.slice(start + 1, labelEnd)),
+    href: safeHttpHref(href),
+  };
+}
+
+function trimBareUrlEnd(candidate: string): number {
+  let end = candidate.length;
+  while (end > 0) {
+    const char = candidate[end - 1]!;
+    if (/[.,!;:，。！；：、]/u.test(char)) {
+      end -= 1;
+      continue;
+    }
+    if (char === ")") {
+      const body = candidate.slice(0, end);
+      const opens = (body.match(/\(/g) ?? []).length;
+      const closes = (body.match(/\)/g) ?? []).length;
+      if (closes > opens) {
+        end -= 1;
+        continue;
+      }
+    }
+    break;
+  }
+  return end;
+}
+
+function parseBareUrlAt(value: string, start: number): { end: number; href: string } | null {
+  const prefix = value.slice(start, start + 8).toLowerCase();
+  if (!prefix.startsWith("http://") && !prefix.startsWith("https://")) return null;
+  let candidateEnd = start;
+  while (
+    candidateEnd < value.length &&
+    !/[\s<>"'`[\]{}，。！？；：、]/u.test(value[candidateEnd]!)
+  ) {
+    candidateEnd += 1;
+  }
+  const hrefEnd = start + trimBareUrlEnd(value.slice(start, candidateEnd));
+  if (hrefEnd <= start) return null;
+  const href = value.slice(start, hrefEnd);
+  return safeHttpHref(href) ? { end: hrefEnd, href } : null;
+}
+
+function splitInlineMarkdownRuns(value: string, optimisticTrailingBold = false): StreamingInlineRun[] {
+  const runs: StreamingInlineRun[] = [];
+  const toCharOffset = (index: number) => Array.from(value.slice(0, index)).length;
+  let plainStart = 0;
+  let cursor = 0;
+
+  const pushPlain = (from: number, to: number) => {
+    if (to > from) {
+      runs.push({ kind: "plain", text: value.slice(from, to), start: toCharOffset(from) });
+    }
+  };
+
+  while (cursor < value.length) {
+    if (value[cursor] === "`") {
+      const end = value.indexOf("`", cursor + 1);
+      if (end > cursor + 1) {
+        pushPlain(plainStart, cursor);
+        runs.push({
+          kind: "code",
+          text: value.slice(cursor + 1, end),
+          start: toCharOffset(cursor + 1),
+        });
+        cursor = end + 1;
+        plainStart = cursor;
+        continue;
+      }
+    }
+
+    if (value.startsWith("**", cursor)) {
+      const end = value.indexOf("**", cursor + 2);
+      if (end > cursor + 2) {
+        pushPlain(plainStart, cursor);
+        runs.push({
+          kind: "bold",
+          text: value.slice(cursor + 2, end),
+          start: toCharOffset(cursor + 2),
+        });
+        cursor = end + 2;
+        plainStart = cursor;
+        continue;
+      }
+    }
+
+    const markdownLink = parseMarkdownLinkAt(value, cursor);
+    if (markdownLink) {
+      if (markdownLink.href) {
+        pushPlain(plainStart, cursor);
+        runs.push({
+          kind: "link",
+          text: markdownLink.text,
+          href: markdownLink.href,
+          start: toCharOffset(cursor + 1),
+        });
+        plainStart = markdownLink.end;
+      }
+      cursor = markdownLink.end;
+      continue;
+    }
+
+    const bareUrl = parseBareUrlAt(value, cursor);
+    if (bareUrl) {
+      pushPlain(plainStart, cursor);
+      runs.push({
+        kind: "link",
+        text: bareUrl.href,
+        href: bareUrl.href,
+        start: toCharOffset(cursor),
+      });
+      cursor = bareUrl.end;
+      plainStart = cursor;
+      continue;
+    }
+
+    cursor += 1;
+  }
+  pushPlain(plainStart, value.length);
+
+  if (!optimisticTrailingBold) return runs;
+  const tail = runs[runs.length - 1];
+  if (!tail || tail.kind !== "plain") return runs;
+  const openIndex = tail.text.lastIndexOf("**");
+  if (openIndex < 0) return runs;
+
+  runs.pop();
+  const before = tail.text.slice(0, openIndex);
+  const content = tail.text.slice(openIndex + 2);
+  if (before) runs.push({ ...tail, text: before });
+  if (content) {
+    runs.push({
+      kind: "bold",
+      text: content,
+      start: tail.start + Array.from(tail.text.slice(0, openIndex + 2)).length,
+    });
+  }
+  return runs;
+}
+
+function parseStandaloneLink(value: string): { title: string; href: string } | null {
+  const markdownLink = parseMarkdownLinkAt(value, 0);
+  if (markdownLink?.href && markdownLink.end === value.length) {
+    return { title: markdownLink.text, href: markdownLink.href };
+  }
+  const bareUrl = parseBareUrlAt(value, 0);
+  if (bareUrl?.end === value.length) {
+    return { title: toolHost(bareUrl.href), href: bareUrl.href };
+  }
+  return null;
+}
+
 /**
  * Render chat text with basic markdown support:
  * - **bold**
  * - `code`
+ * - [text](https://example.com) links and bare http(s) URLs
  * - Unordered lists (- item / * item)
  * - Ordered lists (1. item)
  * - Newlines
@@ -706,31 +929,30 @@ export function renderSimpleMarkdown(text: string) {
   }
 
   function renderInline(str: string, key: string): JSX.Element {
-    const parts = str.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g);
+    const parts = splitInlineMarkdownRuns(str);
     const els: (string | JSX.Element)[] = [];
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i]!;
-      const link = p.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-      if (p.startsWith("**") && p.endsWith("**")) {
-        els.push(<strong key={`${key}-b${i}`}>{p.slice(2, -2)}</strong>);
-      } else if (p.startsWith("`") && p.endsWith("`")) {
+      if (p.kind === "bold") {
+        els.push(<strong key={`${key}-b${i}`}>{p.text}</strong>);
+      } else if (p.kind === "code") {
         els.push(
           <code key={`${key}-c${i}`} className="chat-inline-code">
-            {p.slice(1, -1)}
+            {p.text}
           </code>,
         );
-      } else if (link) {
+      } else if (p.kind === "link") {
         els.push(
-          <a key={`${key}-l${i}`} className="chat-link" href={link[2]} target="_blank" rel="noreferrer noopener">
-            {link[1]}
+          <a key={`${key}-l${i}`} className="chat-link" href={p.href} target="_blank" rel="noreferrer noopener">
+            {p.text}
             <span className="ws-link-arrow"> ↗</span>
           </a>,
         );
       } else {
-        els.push(p);
+        els.push(p.text);
       }
     }
-    return <span key={key}>{els}</span>;
+    return <span key={key} className="chat-markdown-inline">{els}</span>;
   }
 
   let bqLines: JSX.Element[] = [];
@@ -886,13 +1108,12 @@ export function renderSimpleMarkdown(text: string) {
       } else {
         flushList();
         const trimmed = line.trim();
-        const linkOnly = trimmed.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-        const bareUrl = trimmed.match(/^(https?:\/\/[^\s]+)$/);
-        if (linkOnly) {
+        const standaloneLink = parseStandaloneLink(trimmed);
+        if (standaloneLink) {
           // 整行就是一个链接 → demo 链接卡(标题 + 域名↗)
-          result.push(<ChatLinkCard key={`lc-${i}`} title={linkOnly[1]!} url={linkOnly[2]!} />);
-        } else if (bareUrl) {
-          result.push(<ChatLinkCard key={`lc-${i}`} title={toolHost(bareUrl[1])} url={bareUrl[1]!} />);
+          result.push(
+            <ChatLinkCard key={`lc-${i}`} title={standaloneLink.title} url={standaloneLink.href} />,
+          );
         } else if (trimmed === "") {
           // Empty line: use a slim spacer instead of a full <br> to keep
           // paragraph gaps compact.
@@ -1288,58 +1509,16 @@ const PartView = memo(function PartView({
   }
 });
 
-/** 流式最后一行的内联 run:与 renderInline 同一套内联语法(粗体/行内码/链接)。 */
-export type StreamingInlineRun =
-  | { kind: "plain" | "bold" | "code"; text: string; start: number }
-  | { kind: "link"; text: string; href: string; start: number };
-
 /**
  * 把"正在流式写入的一行"切成内联 run(0702:流式加粗实时渲染):
- * - 完整的 `**粗**` / `` `码` `` / `[文](url)` 立即按样式渲染(隐藏标记符);
+ * - 完整的 `**粗**` / `` `码` `` / `[文](url)` / 裸 http(s) URL 立即按样式渲染;
  * - **尾部未闭合的 `**`** 乐观按加粗渲染——闭合符流到时视觉零跳变,这就是"边写边粗";
  *   (未闭合反引号/半截链接不乐观,保持字面,与成行后 renderInline 的字面行为一致)
  * - `start` 为**可见内容**在原始行里的字符偏移(Array.from 计数,与 StreamingChars 的
  *   segment offset 同单位),供进场动画 key 稳定:标记符隐藏/闭合都不会让已有字重播动画。
  */
 export function splitStreamingInlineRuns(line: string): StreamingInlineRun[] {
-  const runs: StreamingInlineRun[] = [];
-  const chars = Array.from(line);
-  // 与 renderInline 同一 token 集;用字符数组扫描保证偏移按码点计。
-  const tokenRe = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
-  const pushPlain = (from: number, to: number) => {
-    if (to > from) runs.push({ kind: "plain", text: chars.slice(from, to).join(""), start: from });
-  };
-  // 在"字符偏移"空间里跑正则:对 BMP 外码点,String.index 与 char 偏移会漂;
-  // 聊天正文含 emoji 常见,统一把 match.index 换算成字符偏移。
-  const toCharOffset = (strIndex: number) => Array.from(line.slice(0, strIndex)).length;
-  let cursor = 0;
-  for (const m of line.matchAll(tokenRe)) {
-    const tok = m[0]!;
-    const startCh = toCharOffset(m.index!);
-    pushPlain(cursor, startCh);
-    const tokLen = Array.from(tok).length;
-    if (tok.startsWith("**")) {
-      runs.push({ kind: "bold", text: Array.from(tok).slice(2, -2).join(""), start: startCh + 2 });
-    } else if (tok.startsWith("`")) {
-      runs.push({ kind: "code", text: Array.from(tok).slice(1, -1).join(""), start: startCh + 1 });
-    } else {
-      const link = tok.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/)!;
-      runs.push({ kind: "link", text: link[1]!, href: link[2]!, start: startCh + 1 });
-    }
-    cursor = startCh + tokLen;
-  }
-  // 尾巴:检查未闭合的 `**`(乐观加粗)。
-  const tail = chars.slice(cursor).join("");
-  const openIdx = tail.lastIndexOf("**");
-  if (openIdx >= 0) {
-    const openCh = cursor + Array.from(tail.slice(0, openIdx)).length;
-    pushPlain(cursor, openCh);
-    const content = chars.slice(openCh + 2).join("");
-    if (content.length > 0) runs.push({ kind: "bold", text: content, start: openCh + 2 });
-  } else {
-    pushPlain(cursor, chars.length);
-  }
-  return runs;
+  return splitInlineMarkdownRuns(line, true);
 }
 
 /** 流式最后一行:内联样式实时渲染 + 每 run 内保持逐段进场动画(key=原文绝对偏移)。 */
@@ -1406,10 +1585,10 @@ function MarkdownText({ text, streamActive }: { text: string; streamActive?: boo
 
   const head = useMemo(() => renderSimpleMarkdown(split ? split.before : text), [split, text]);
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div className="chat-markdown-body" style={{ marginBottom: 2 }}>
       {head}
       {split && (
-        <div style={{ marginBottom: 1 }}>
+        <div className="chat-markdown-inline" style={{ marginBottom: 1 }}>
           <StreamingInlineLine line={split.lastLine} baseKey={split.baseKey} config={cfg} />
         </div>
       )}
@@ -1562,7 +1741,13 @@ function ToolCallRow({
   if (shouldSuppressOverlayAskUserToolCall(spec, visibleAskUserAnswerToolCallIds)) {
     return null;
   }
-  return <UnifiedToolCall spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;
+  return (
+    <UnifiedToolCall
+      spec={spec}
+      skillLabels={skillLabels}
+      materialLabels={materialLabels}
+    />
+  );
 }
 
 function toolHost(u: unknown): string {

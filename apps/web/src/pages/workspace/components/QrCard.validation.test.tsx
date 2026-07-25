@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
@@ -139,7 +141,7 @@ describe("QrCard — validation loop 3", () => {
       // 过期后,刷新按钮应显示且框架带 is-expired 类
       const refreshBtn = document.querySelector(".qr-card__refresh");
       expect(refreshBtn).toBeTruthy();
-      expect(refreshBtn?.textContent).toContain("二维码已过期");
+      expect(refreshBtn?.textContent).toContain("二维码已失效");
       expect(document.querySelector(".qr-card__frame.is-expired")).toBeTruthy();
     });
   });
@@ -247,6 +249,32 @@ describe("QrCard — validation loop 3", () => {
       expect(link?.textContent).toBe("点此打开");
     });
 
+    it.each([
+      ["请扫描下方二维码", "请扫描上方二维码"],
+      ["请扫描下方的二维码", "请扫描上方的二维码"],
+      ["请扫描下面二维码", "请扫描上面二维码"],
+      ["请扫描下面的二维码", "请扫描上面的二维码"],
+      ["二维码在下方，请扫码", "二维码在上方，请扫码"],
+      ["二维码在下面，请扫码", "二维码在上面，请扫码"],
+    ])("只归一明显写反的二维码方位：%s", (note, expected) => {
+      render(<QrCard data={{ ...baseData, note }} />);
+
+      expect(document.querySelector(".qr-card__note")?.textContent).toBe(expected);
+    });
+
+    it("保留下方其它正常内容，只修正链接文字且不改链接地址", () => {
+      render(<QrCard data={{
+        ...baseData,
+        note: "扫描二维码后，请查看下方说明，下面还有备用入口：[下方二维码](https://example.com/下方二维码)",
+      }} />);
+
+      const note = document.querySelector(".qr-card__note");
+      const link = note?.querySelector("a");
+      expect(note?.textContent).toContain("请查看下方说明，下面还有备用入口");
+      expect(link?.textContent).toBe("上方二维码");
+      expect(link?.getAttribute("href")).toBe("https://example.com/下方二维码");
+    });
+
     it("handles multi-line note with line breaks", () => {
       const data: QrCardBody = {
         ...baseData,
@@ -258,6 +286,73 @@ describe("QrCard — validation loop 3", () => {
       // 应该有 3 个 <p> 标签
       const paragraphs = noteContent?.querySelectorAll("p");
       expect(paragraphs?.length).toBe(3);
+    });
+
+    it("restores literal newline escape sequences without breaking markdown", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "请扫码登录。\\r\\n也可 [点此打开](https://example.com)\\n**完成后返回**",
+      };
+      render(<QrCard data={data} />);
+      const paragraphs = document.querySelectorAll(".qr-card__note-line");
+      expect(paragraphs).toHaveLength(3);
+      expect(paragraphs[1]?.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+      expect(paragraphs[2]?.querySelector("strong")?.textContent).toBe("完成后返回");
+      expect(document.querySelector(".qr-card__note")?.textContent).not.toContain("\\n");
+    });
+
+    it.each(["<br>", "<br/>", "<br />", "<BR>", "<Br />"])(
+      "normalizes HTML break tag %s as a real line break",
+      (breakTag) => {
+        const data: QrCardBody = {
+          ...baseData,
+          note: `第一行${breakTag}第二行`,
+        };
+        render(<QrCard data={data} />);
+        const paragraphs = document.querySelectorAll(".qr-card__note-line");
+        expect(paragraphs).toHaveLength(2);
+        expect(paragraphs[0]?.textContent).toBe("第一行");
+        expect(paragraphs[1]?.textContent).toBe("第二行");
+        expect(document.querySelector(".qr-card__note")?.textContent).not.toContain(breakTag);
+      },
+    );
+
+    it("normalizes HTML break tags together with literal newline escapes", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "第一行<br>第二行\\n第三行<BR />第四行",
+      };
+      render(<QrCard data={data} />);
+      const paragraphs = document.querySelectorAll(".qr-card__note-line");
+      expect(Array.from(paragraphs, (paragraph) => paragraph.textContent)).toEqual([
+        "第一行",
+        "第二行",
+        "第三行",
+        "第四行",
+      ]);
+    });
+
+    it("keeps non-break HTML as inert text", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "<img src=x onerror=alert(1)>第一行<br>第二行",
+      };
+      render(<QrCard data={data} />);
+      expect(document.querySelector(".qr-card__note img")).toBeNull();
+      expect(document.querySelector(".qr-card__note")?.textContent)
+        .toContain("<img src=x onerror=alert(1)>第一行");
+    });
+
+    it("preserves deliberate backslashes that are not clear newline escapes", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: String.raw`路径 C:\new 与字面量 \\n 保持不变`,
+      };
+      render(<QrCard data={data} />);
+      const text = document.querySelector(".qr-card__note")?.textContent ?? "";
+      expect(document.querySelectorAll(".qr-card__note-line")).toHaveLength(1);
+      expect(text).toContain(String.raw`C:\new`);
+      expect(text).toContain(String.raw`\\n`);
     });
   });
 
@@ -277,9 +372,33 @@ describe("QrCard — validation loop 3", () => {
 
       render(<QrCard data={data} />);
 
-      // 已过期应该显示"已过期"
+      // 已失效应该使用中性文案
       const expiry = document.querySelector(".qr-card__expiry");
-      expect(expiry?.textContent).toBe("已过期");
+      expect(expiry?.textContent).toBe("二维码已失效");
+    });
+
+    it.each([
+      ["empty string", ""],
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["undefined", undefined],
+    ])("does not render an expired state for invalid expiresAt: %s", (_label, expiresAt) => {
+      const data = {
+        title: "测试",
+        content: "https://test.qr",
+        expiresAt,
+        code: null,
+        refreshQuery: "refresh",
+        confirmQuery: null,
+        note: null,
+      } as unknown as QrCardBody;
+
+      render(<QrCard data={data} />);
+
+      expect(document.querySelector(".qr-card__frame.is-expired")).toBeNull();
+      expect(document.querySelector(".qr-card__refresh")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
+      expect(document.body.textContent).not.toContain("二维码已失效");
     });
   });
 
@@ -451,7 +570,7 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={data} />);
 
       const refreshButton = document.querySelector(".qr-card__refresh") as HTMLButtonElement | null;
-      expect(refreshButton?.getAttribute("aria-label")).toBe("刷新已过期二维码");
+      expect(refreshButton?.getAttribute("aria-label")).toBe("重新获取已失效二维码");
     });
 
     it("adds an accessible label to the confirm button", async () => {
@@ -502,7 +621,8 @@ describe("QrCard — validation loop 3", () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "@octocat" } } }), { status: 200 })));
       render(<QrCard data={connectorCard()} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已连接为 @octocat");
+      expect(document.querySelector(".qr-card__completion")?.textContent).toContain("已连接为 @octocat");
+      expect(document.querySelector(".qr-card__success svg[aria-hidden='true']")).toBeTruthy();
     });
 
     it("轮询成功通知设置页刷新连接状态", async () => {
@@ -529,7 +649,7 @@ describe("QrCard — validation loop 3", () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "测试号" } } }), { status: 200 })));
       render(<QrCard data={wechat} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已登录 测试号 公众号");
+      expect(document.querySelector(".qr-card__completion")?.textContent).toContain("已登录 测试号 公众号");
     });
 
     it("微信 pending 带 WECHAT_SCANNED 时卡上显示已扫到提示", async () => {
@@ -554,6 +674,110 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={{ ...connectorCard(), connectorId: undefined, pendingId: undefined }} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("(h) explicit completion state", () => {
+    const completedCard = (message: string): QrCardBody => ({
+      title: "扫码授权",
+      content: "https://test.qr",
+      imageDataUri: "data:image/png;base64,AA",
+      expiresAt: Date.now() - 60_000,
+      code: null,
+      refreshQuery: "refresh",
+      confirmQuery: "confirm",
+      note: "请用企业微信 App 扫描上方二维码，完成初始化配置",
+      success: { account: null, message },
+    });
+
+    it("完成态只在模糊码上保留 SVG，对外隐藏出码指引与操作元素", async () => {
+      vi.useFakeTimers();
+      render(<QrCard data={completedCard("企业微信登录成功")} />);
+
+      expect(document.querySelector(".qr-card__title")?.textContent).toBe("扫码授权");
+      expect(document.querySelector(".qr-card__frame.is-completed .qr-card__img")).toBeTruthy();
+      expect(document.querySelector(".qr-card__frame.is-expired")).toBeNull();
+      expect(document.querySelector(".qr-card__success svg[aria-hidden='true']")).toBeTruthy();
+      expect(document.querySelector(".qr-card__completion")?.textContent).toBe("企业微信登录成功");
+      expect(document.querySelector(".qr-card__frame .qr-card__completion")).toBeNull();
+      expect(document.querySelector(".qr-card__note")).toBeNull();
+      expect(document.body.textContent).not.toContain("请用企业微信 App 扫描");
+      expect(document.body.textContent).not.toContain("✓");
+      expect(document.querySelector(".qr-card__refresh")).toBeNull();
+      expect(document.querySelector(".qr-card__scanned")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
+      expect(document.querySelector(".qr-card__confirm")).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
+      expect(document.body.textContent).not.toContain("失效");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(document.querySelector(".qr-card__confirm")).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
+    });
+
+    it.each([
+      ["企业微信登录成功...", "企业微信登录成功"],
+      ["企业微信登录成功…", "企业微信登录成功"],
+      ["企业微信登录成功... \n\t", "企业微信登录成功"],
+      ["企业微信登录成功... \t…  \n", "企业微信登录成功"],
+    ])("移除完成文案末尾的省略号：%j", (message, expected) => {
+      render(<QrCard data={completedCard(message)} />);
+
+      expect(document.querySelector(".qr-card__completion")?.textContent).toBe(expected);
+    });
+
+    it.each(["", "...", "…", "  ... \t…  \n"])(
+      "空或纯省略号完成文案回落到默认值：%j",
+      (message) => {
+        render(<QrCard data={completedCard(message)} />);
+
+        expect(document.querySelector(".qr-card__completion")?.textContent).toBe("授权已完成");
+      },
+    );
+
+    it("超长完成文案移出码区并具备断词兜底，不撑破卡片", () => {
+      const message = `企业微信登录成功，${"正在同步组织架构与通讯录".repeat(12)}`;
+      render(<QrCard data={completedCard(message)} />);
+
+      expect(document.querySelector(".qr-card__frame .qr-card__completion")).toBeNull();
+      expect(document.querySelector(".qr-card__completion")?.textContent).toBe(message);
+
+      const css = readFileSync(
+        resolve(process.cwd(), "src/pages/workspace/components/QrCard.css"),
+        "utf8",
+      );
+      const completionRule = css.match(/\.qr-card__completion\s*\{(?<body>[^}]*)\}/u)?.groups?.body ?? "";
+      expect(completionRule).toMatch(/width:\s*200px/u);
+      expect(completionRule).toMatch(/max-width:\s*100%/u);
+      expect(completionRule).toMatch(/overflow-wrap:\s*anywhere/u);
+      expect(completionRule).toMatch(/word-break:\s*break-word/u);
+    });
+
+    it("GitHub 输码流完成后保留并弱化配对码骨架，不恢复二维码或操作按钮", () => {
+      render(<QrCard data={{
+        title: "连接 GitHub",
+        content: "https://example.test/device",
+        imageDataUri: null,
+        expiresAt: Date.now() + 60_000,
+        code: "ABCD-EFGH",
+        note: "浏览器配对授权",
+        refreshQuery: "重新连接",
+        confirmQuery: null,
+        connectorId: "github",
+        pendingId: "pending-safe-id",
+        success: { account: "@octocat", message: "GitHub 授权完成…" },
+      }} />);
+
+      expect(document.querySelector(".qr-card__frame")).toBeNull();
+      expect(document.querySelector(".qr-card__code-stage.is-completed")).toBeTruthy();
+      expect(document.querySelector(".qr-card__usercode[aria-hidden='true']")?.textContent)
+        .toContain("ABCD-EFGH");
+      expect(document.querySelector(".qr-card__completion")?.textContent).toBe("GitHub 授权完成");
+      expect(document.querySelector(".qr-card__note")).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
     });
   });
 });

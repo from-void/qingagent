@@ -17,10 +17,9 @@ function deriveEditorState(
   streamActive: boolean,
   overlay: ActiveOverlay,
 ): EditorState {
-  // 锁定(用户决议:agent 生成时禁止用户编辑):后端 agentBusy 投影 或 前端可靠的 streamActive
-  // 任一为真即生成中,加上浮层期间,都置只读。streamActive 必须并联——P0 后 agentBusy 读后端投影态、
-  // 生成进行中不保证为 true(见 WorkspacePage 辉光判据同款并联),只看 agentBusy 会漏掉
-  // "streamActive 真但 agentBusy 假"的生成窗口,导致用户编辑与 agent 写竞态。
+  // 锁定(用户决议:agent 生成时禁止用户编辑):agentBusy 已由 reducer 统一吸收后端投影、
+  // 活跃 stream 与运行中工具。这里仍并联 streamActive 作为防御性约束，避免恢复/旧缓存
+  // 形成不一致状态时放开编辑，浮层期间也一律只读。
   if (agentBusy || streamActive || overlay !== null) return "locked";
   if (content.kind === "empty") return "empty";
   if (content.kind === "pendingReview") return "pendingReview";

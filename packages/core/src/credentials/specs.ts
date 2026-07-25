@@ -10,15 +10,6 @@ export interface PlatformCredentialSpec {
 
 export const PLATFORM_CREDENTIAL_SPECS: PlatformCredentialSpec[] = [
   {
-    platform: "dingtalk",
-    label: "钉钉",
-    fields: [
-      { key: "DINGTALK_APP_KEY", label: "AppKey", secret: false },
-      { key: "DINGTALK_APP_SECRET", label: "AppSecret", secret: true },
-    ],
-    helpUrl: "https://open-dev.dingtalk.com",
-  },
-  {
     platform: "connector:wechat-mp",
     label: "微信公众号",
     fields: [

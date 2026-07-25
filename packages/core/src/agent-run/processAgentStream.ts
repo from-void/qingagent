@@ -7,6 +7,7 @@ import {
 } from "../session/turnOwnership.js";
 import {
   createAgentStreamTurnContext,
+  type AgentStreamTurnContext,
   type ProcessAgentStreamOptions,
   type ProcessOutcome,
 } from "./agentStreamTurnContext.js";
@@ -23,6 +24,7 @@ import {
   isUserAbortSignal,
   withIdleTimeout,
 } from "./streamErrors.js";
+import { trackUserVisibleFrames } from "./agentStreamVisibility.js";
 
 // usageCoverageMatrix 以原模块为稳定调用点索引；真实记账实现已下沉到 lifecycle handler。
 const AGENT_USAGE_CALL_SITE = "agent";
@@ -72,6 +74,13 @@ function startsContentSegment(chunk: AgentStreamEvent): boolean {
     ? payload.stepResult as Record<string, unknown>
     : null;
   return (stepResult?.reason ?? payload.finishReason ?? payload.reason) === "tool-calls";
+}
+
+function countChunkType(context: AgentStreamTurnContext, chunk: AgentStreamEvent): void {
+  const type = typeof chunk.type === "string" && chunk.type.length > 0
+    ? chunk.type
+    : "unknown";
+  context.chunkTypeCounts.set(type, (context.chunkTypeCounts.get(type) ?? 0) + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +146,7 @@ export async function* processAgentStream(
       },
     );
     for await (const chunk of monitoredStream) {
+      countChunkType(context, chunk);
       // 上游在 abort 前已排队的 chunk 仍可能继续抵达。用户取消后禁止再把这些
       // 文本/工具事件写入会话；跳出循环仍会经过 finalize/finally 完成必要收尾。
       if (isUserAbortSignal(context.abortController.signal)) break;
@@ -151,29 +161,46 @@ export async function* processAgentStream(
         );
       }
 
-      const lifecycleResult = yield* handleLifecycleEvent(context, chunk);
+      const lifecycleResult = yield* trackUserVisibleFrames(
+        context,
+        handleLifecycleEvent(context, chunk),
+      );
       if (lifecycleResult === "terminal") {
         yield* context.annotationPreview.clear();
         return context.outcome;
       }
       if (lifecycleResult === "handled") continue;
-      if (yield* handleToolOutputEvent(context, chunk)) continue;
-      if (yield* handleTextAndReasoningEvent(context, chunk)) continue;
+      if (yield* trackUserVisibleFrames(context, handleToolOutputEvent(context, chunk))) {
+        continue;
+      }
+      if (yield* trackUserVisibleFrames(context, handleTextAndReasoningEvent(context, chunk))) {
+        continue;
+      }
 
-      const approvalResult = yield* handleApprovalEvent(context, chunk);
+      const approvalResult = yield* trackUserVisibleFrames(
+        context,
+        handleApprovalEvent(context, chunk),
+      );
       if (approvalResult === "handled") continue;
 
-      const suspensionResult = yield* handleSuspensionEvent(context, chunk);
+      const suspensionResult = yield* trackUserVisibleFrames(
+        context,
+        handleSuspensionEvent(context, chunk),
+      );
       if (suspensionResult === "terminal") {
         yield* context.annotationPreview.clear();
         return context.outcome;
       }
       if (suspensionResult === "handled") continue;
-      if (yield* handleToolCallEvent(context, chunk)) continue;
-      if (yield* handleToolResultEvent(context, chunk)) continue;
+      if (yield* trackUserVisibleFrames(context, handleToolCallEvent(context, chunk))) {
+        continue;
+      }
+      if (yield* trackUserVisibleFrames(context, handleToolResultEvent(context, chunk))) {
+        continue;
+      }
     }
 
-    return yield* finalizeAgentStream(context);
+    return yield* trackUserVisibleFrames(context, finalizeAgentStream(context));
   } finally {
     if (context.restoreStreamIdOnExit) {
       context.state.streamId = context.previousStreamId;

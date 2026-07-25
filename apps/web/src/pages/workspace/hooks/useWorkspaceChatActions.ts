@@ -450,5 +450,9 @@ export function useWorkspaceChatActions(input: {
       showToast,
     });
   }, [showToast]);
-  return { handleCancelActiveStream, handleSubmitChat };
+
+  return {
+    handleCancelActiveStream,
+    handleSubmitChat,
+  };
 }

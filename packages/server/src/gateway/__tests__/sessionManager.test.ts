@@ -375,7 +375,7 @@ describe("SessionManager", () => {
     await manager.destroySession("destroy-running");
     await expect(running).rejects.toThrow("Session actor disposed");
 
-    expect(abortSession).toHaveBeenCalledWith("destroy-running");
+    expect(abortSession).toHaveBeenCalledWith("destroy-running", "globalStop");
     expect(order).toEqual([
       "tombstone",
       "abort",

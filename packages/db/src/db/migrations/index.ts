@@ -24,6 +24,9 @@ import { migration0022DocumentSuggestionBatches } from "./0022_document_suggesti
 import { migration0023RestoreQuarantine0002 } from "./0023_restore_quarantine_0002.js";
 import { migration0024DocumentRestoreLineageAndOpsIndex } from "./0024_document_restore_lineage_and_ops_index.js";
 import { migration0025QuarantineLineageAndPmCompat } from "./0025_quarantine_lineage_and_pm_compat.js";
+import { migration0026ConfirmGrantsAndAudit } from "./0026_confirm_grants_and_audit.js";
+import { migration0027ConfirmAuditSubject } from "./0027_confirm_audit_subject.js";
+import { migration0028ConfirmGrantVersions } from "./0028_confirm_grant_versions.js";
 
 // 迁移注册表:id 必须从 1 严格连续递增(runner 启动即断言)。
 // 新增迁移追加到数组尾部,写确定性 DDL(禁用 baseline 的 catch-正则幂等技),
@@ -54,4 +57,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration0023RestoreQuarantine0002,
   migration0024DocumentRestoreLineageAndOpsIndex,
   migration0025QuarantineLineageAndPmCompat,
+  migration0026ConfirmGrantsAndAudit,
+  migration0027ConfirmAuditSubject,
+  migration0028ConfirmGrantVersions,
 ];

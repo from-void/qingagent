@@ -3,7 +3,11 @@ import type { Command, BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts"
 
 const mockState = vi.hoisted(() => {
   const events: string[] = [];
-  const abortAndCleanupTurn = vi.fn(async function* (session: any): AsyncGenerator<BridgeFrame> {
+  const controls: unknown[] = [];
+  const abortAndCleanupTurn = vi.fn(async function* (
+    session: any,
+    options: { reason?: string } = {},
+  ): AsyncGenerator<BridgeFrame> {
     events.push("cleanup-start");
     session._abortController?.abort();
     if (session._activeTurnPromise) {
@@ -13,6 +17,22 @@ const mockState = vi.hoisted(() => {
     session.streamId = null;
     session._abortController = null;
     session._activeTurnPromise = null;
+    if (options.reason === "preemptedByNewMessage") {
+      yield {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: session._activeAgentMessageId ?? "old-agent-message",
+          seq: 1,
+          part: {
+            kind: "text",
+            data: {
+              body: "本轮已被新消息中断。若有后台进程，它没有被自动终止，当前状态仍待确认。",
+            },
+          },
+        },
+      };
+    }
+    session._activeAgentMessageId = null;
     yield {
       kind: "docStateChanged",
       data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
@@ -21,14 +41,85 @@ const mockState = vi.hoisted(() => {
   const runAgentTurn = vi.fn(async function* (
     session: any,
     userText: string,
+    _fileIds?: unknown,
+    _chips?: unknown,
+    _skills?: unknown,
+    _displayParts?: unknown,
+    _clientMessageId?: unknown,
+    _richText?: unknown,
+    _reviewContext?: unknown,
+    control?: unknown,
   ): AsyncGenerator<BridgeFrame> {
+    controls.push(control);
     events.push(`runAgentTurn:${userText}:stream=${session.streamId ?? "null"}`);
+    if (userText === "后台等待旧进程") {
+      const controller = new AbortController();
+      let resolveActiveTurn!: () => void;
+      session.streamId = "old-wait-stream";
+      session._abortController = controller;
+      session._activeAgentMessageId = "old-agent-message";
+      session._activeTurnPromise = new Promise<void>((resolve) => {
+        resolveActiveTurn = resolve;
+      });
+      yield {
+        kind: "chatMessageAdded",
+        data: {
+          message: {
+            id: "old-agent-message",
+            role: { kind: "agent" },
+            ts: "2026-01-01T00:00:00.000Z",
+            parts: [],
+            chips: null,
+          },
+        },
+      };
+      await new Promise<void>((resolve) => {
+        if (controller.signal.aborted) resolve();
+        else controller.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      events.push(`old-wait-aborted:${String(controller.signal.reason)}`);
+      session.streamId = null;
+      session._abortController = null;
+      session._activeTurnPromise = null;
+      resolveActiveTurn();
+      return;
+    }
     yield {
       kind: "stream",
       data: { kind: "start", data: { streamId: "new-stream" } },
     };
+    if (userText.includes("3+5")) {
+      yield {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "new-agent-message",
+          seq: 1,
+          part: { kind: "text", data: { body: "3+5=8" } },
+        },
+      };
+    }
+    if (userText.includes("终止 PID")) {
+      yield {
+        kind: "chatMessageAppended",
+        data: {
+          messageId: "new-agent-message",
+          seq: 1,
+          part: {
+            kind: "toolCall",
+            data: {
+              id: "kill-current-request",
+              name: "mastra_workspace_kill_process",
+              render: { kind: "chatInline" },
+              status: { kind: "done" },
+              body: { kind: "generic", data: { argsJson: "" } },
+              result: { kind: "genericText", data: "已按本轮要求终止 PID 4242" },
+            },
+          },
+        },
+      };
+    }
   });
-  return { events, abortAndCleanupTurn, runAgentTurn };
+  return { events, controls, abortAndCleanupTurn, runAgentTurn };
 });
 
 async function collectFrames(gen: AsyncGenerator<BridgeFrame>): Promise<BridgeFrame[]> {
@@ -128,6 +219,7 @@ describe("handleCommand interrupt-and-resteer", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockState.events.length = 0;
+    mockState.controls.length = 0;
     mockState.abortAndCleanupTurn.mockClear();
     mockState.runAgentTurn.mockClear();
   });
@@ -167,6 +259,118 @@ describe("handleCommand interrupt-and-resteer", () => {
       "runAgentTurn:改成 2000 字:stream=null",
     ]);
     expect(mockState.runAgentTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("真实 SessionManager→SessionActor 路径：wait 中新算术题先收尾旧轮，再只回答本轮", async () => {
+    const bridge = await loadBridge();
+    const session = await createSession(bridge);
+
+    const oldTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: sendMessage(session.sessionId, "后台等待旧进程"),
+    });
+    await vi.waitFor(() =>
+      expect(mockState.events).toContain(
+        "runAgentTurn:后台等待旧进程:stream=null",
+      )
+    );
+
+    const newTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: sendMessage(session.sessionId, "顺便告诉我 3+5 等于几?"),
+    });
+    const [, newFrames] = await Promise.all([oldTurn, newTurn]);
+    const emitted = newFrames.map((entry) => entry.frame);
+
+    expect(mockState.events).toContain(
+      "old-wait-aborted:preemptedByNewMessage",
+    );
+    expect(mockState.abortAndCleanupTurn).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ reason: "preemptedByNewMessage" }),
+    );
+    expect(emitted).toContainEqual(expect.objectContaining({
+      kind: "chatMessageAppended",
+      data: expect.objectContaining({
+        messageId: "old-agent-message",
+        part: {
+          kind: "text",
+          data: {
+            body: expect.stringContaining("没有被自动终止"),
+          },
+        },
+      }),
+    }));
+    expect(emitted).toContainEqual(expect.objectContaining({
+      kind: "chatMessageAppended",
+      data: expect.objectContaining({
+        part: {
+          kind: "text",
+          data: { body: "3+5=8" },
+        },
+      }),
+    }));
+    expect(mockState.controls.at(-1)).toEqual({
+      preemptedByNewMessage: true,
+    });
+    expect(
+      mockState.events.filter((event) => event.includes("get_process_output")),
+    ).toEqual([]);
+  });
+
+  it("真实 Actor 抢占后，本轮明确 kill 仍按新输入执行，不自动续 wait", async () => {
+    const bridge = await loadBridge();
+    const session = await createSession(bridge);
+
+    const oldTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: sendMessage(session.sessionId, "后台等待旧进程"),
+    });
+    await vi.waitFor(() =>
+      expect(mockState.events).toContain(
+        "runAgentTurn:后台等待旧进程:stream=null",
+      )
+    );
+    const killTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: sendMessage(session.sessionId, "请终止 PID 4242"),
+    });
+    const [, killFrames] = await Promise.all([oldTurn, killTurn]);
+
+    expect(
+      killFrames.some(
+        (entry) =>
+          entry.frame.kind === "chatMessageAppended" &&
+          entry.frame.data.part.kind === "toolCall" &&
+          entry.frame.data.part.data.name === "mastra_workspace_kill_process",
+      ),
+    ).toBe(true);
+    expect(mockState.controls.at(-1)).toEqual({
+      preemptedByNewMessage: true,
+    });
+  });
+
+  it("真实 Actor 全局停止按 routed session 直接清理，不依赖旧 streamId 反查", async () => {
+    const bridge = await loadBridge();
+    const session = await createSession(bridge);
+
+    const oldTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: sendMessage(session.sessionId, "后台等待旧进程"),
+    });
+    await vi.waitFor(() =>
+      expect(mockState.events).toContain(
+        "runAgentTurn:后台等待旧进程:stream=null",
+      )
+    );
+    const stopTurn = bridge.sessionManager.submit(session.sessionId, {
+      command: {
+        kind: "cancelStream",
+        data: { streamId: "old-wait-stream" },
+      },
+    });
+    await Promise.all([oldTurn, stopTurn]);
+
+    expect(mockState.events).toContain("old-wait-aborted:globalStop");
+    expect(mockState.abortAndCleanupTurn).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ reason: "globalStop" }),
+    );
   });
 
   it("dispatches cancelStream to abortAndCleanupTurn for the matching stream", async () => {

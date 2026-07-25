@@ -13,6 +13,7 @@ import {
   workspaceReducer,
 } from "./workspaceState";
 import { deriveDocDimensions } from "./docDimensions";
+import { canEditDocument, workspaceDataAttrs } from "./workspacePageView";
 import { resources } from "../../../system/resources";
 import type { AnnotationGroup, DocumentSnapshot, FolderSource } from "@qingagent/contract-ts";
 
@@ -57,6 +58,21 @@ const askUserToolCall: ToolCallSpec = {
         },
       ],
     },
+  },
+  result: null,
+};
+
+const runningCommandToolCall: ToolCallSpec = {
+  id: "tc-command-1",
+  name: "execute_command",
+  render: { kind: "chatInline" },
+  status: {
+    kind: "running",
+    data: { progressPct: null, etaSec: null },
+  },
+  body: {
+    kind: "generic",
+    data: { argsJson: '{"cmd":"pnpm test"}' },
   },
   result: null,
 };
@@ -208,6 +224,38 @@ describe("workspaceReducer", () => {
       expect(next.messages).toHaveLength(0);
       expect(next.docState).toEqual({ kind: "empty" });
       expect(next.viewingVersion).toBeNull();
+    });
+
+    it("会话切换会清除忙碌态、活跃流和运行中工具", () => {
+      const seeded = reduce(
+        {
+          kind: "sessionMeta",
+          data: { sessionId: "session-A", title: "A" },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "stream-A" } },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: "m-agent",
+            toolCallId: runningCommandToolCall.id,
+            spec: runningCommandToolCall,
+          },
+        },
+      );
+      expect(seeded.agentBusy).toBe(true);
+
+      const next = workspaceReducer(seeded, {
+        kind: "sessionMeta",
+        data: { sessionId: "session-B", title: "B" },
+      });
+
+      expect(next.agentBusy).toBe(false);
+      expect(next.streamActive).toBe(false);
+      expect(next.activeStreamIds).toEqual([]);
+      expect(next.toolCalls.size).toBe(0);
     });
   });
 
@@ -784,7 +832,7 @@ describe("annotationGroupsReady 来源增量", () => {
       expect(finished.doc?.pmDoc?.content[0]).toEqual(streamedPmNode);
     });
 
-    it("generation_finished 作为终稿终态到达时立即清除 busy/stream 锁,不等额外 idle 帧", () => {
+    it("generation_finished 后仍有活跃流和运行中工具时保持忙碌与编辑锁", () => {
       const busy = reduce(
         {
           kind: "docStateChanged",
@@ -793,6 +841,14 @@ describe("annotationGroupsReady 来源增量", () => {
         {
           kind: "stream",
           data: { kind: "start", data: { streamId: "s1" } },
+        },
+        {
+          kind: "toolCallUpdated",
+          data: {
+            messageId: "m-agent",
+            toolCallId: runningCommandToolCall.id,
+            spec: runningCommandToolCall,
+          },
         },
       );
       expect(busy.agentBusy).toBe(true);
@@ -815,10 +871,39 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(finished.doc?.pmDoc?.content[0]).toEqual(streamedPmNode);
       expect(finished.generationDraft).toBeNull();
-      expect(finished.agentBusy).toBe(false);
-      expect(finished.streamActive).toBe(false);
-      expect(finished.activeStreamIds).toEqual([]);
-      expect(deriveDocDimensions(finished).editor).toBe("editable");
+      expect(finished.agentBusy).toBe(true);
+      expect(finished.streamActive).toBe(true);
+      expect(finished.activeStreamIds).toEqual(["s1"]);
+      const dimensions = deriveDocDimensions(finished);
+      expect(dimensions.editor).toBe("locked");
+      expect(workspaceDataAttrs(dimensions).tool).toBe("agentBusy");
+      expect(canEditDocument(dimensions, null)).toBe(false);
+    });
+
+    it("后端 busy=false 但工具仍在运行时继续保持呼吸提示与编辑锁", () => {
+      const running = reduce({
+        kind: "toolCallUpdated",
+        data: {
+          messageId: "m-agent",
+          toolCallId: runningCommandToolCall.id,
+          spec: runningCommandToolCall,
+        },
+      });
+      const projectedIdle = workspaceReducer(running, {
+        kind: "docStateChanged",
+        data: {
+          state: { kind: "editing" },
+          activeOverlay: null,
+          agentBusy: false,
+        },
+      });
+
+      expect(projectedIdle.streamActive).toBe(false);
+      expect(projectedIdle.agentBusy).toBe(true);
+      const dimensions = deriveDocDimensions(projectedIdle);
+      expect(dimensions.editor).toBe("locked");
+      expect(workspaceDataAttrs(dimensions).tool).toBe("agentBusy");
+      expect(canEditDocument(dimensions, null)).toBe(false);
     });
   });
 
@@ -1346,6 +1431,7 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(reset.sessionId).toBe("s-1");
       expect(reset.messages).toHaveLength(0);
+      expect(reset.agentBusy).toBe(false);
       expect(reset.streamActive).toBe(false);
       expect(reset.activeStreamIds).toEqual([]);
     });
@@ -1359,6 +1445,7 @@ describe("annotationGroupsReady 来源增量", () => {
         },
       });
       expect(started.streamActive).toBe(true);
+      expect(started.agentBusy).toBe(true);
 
       const ended = workspaceReducer(started, {
         kind: "stream",
@@ -1368,28 +1455,81 @@ describe("annotationGroupsReady 来源增量", () => {
         },
       });
       expect(ended.streamActive).toBe(false);
+      expect(ended.agentBusy).toBe(false);
     });
 
-    it.each([
-      ["stop", "stop"],
-      ["abort", "abort"],
-      ["error", "error"],
-    ] as const)("clears streamActive on local %s termination", (_label, reason) => {
-      const started = workspaceReducer(initialWorkspaceState, {
+    it("交错流只结束其中一条时保持忙碌，最后一条结束才解锁", () => {
+      const started = reduce(
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "s-1" } },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "s-2" } },
+        },
+      );
+
+      const oneRemaining = workspaceReducer(started, {
         kind: "stream",
         data: {
-          kind: "start",
-          data: { streamId: "s" },
+          kind: "end",
+          data: { streamId: "s-1", reason: { kind: "done" } },
         },
       });
+      expect(oneRemaining.activeStreamIds).toEqual(["s-2"]);
+      expect(oneRemaining.agentBusy).toBe(true);
 
-      const stopped = workspaceReducer(started, {
-        kind: "streamTerminated",
-        reason,
+      const ended = workspaceReducer(oneRemaining, {
+        kind: "stream",
+        data: {
+          kind: "end",
+          data: { streamId: "s-2", reason: { kind: "done" } },
+        },
       });
-
-      expect(stopped.streamActive).toBe(false);
+      expect(ended.activeStreamIds).toEqual([]);
+      expect(ended.agentBusy).toBe(false);
     });
+
+    it.each(["stop", "abort", "error", "completed"] as const)(
+      "local %s termination clears stream and agent busy",
+      (reason) => {
+        const started = reduce(
+          {
+            kind: "docStateChanged",
+            data: {
+              state: { kind: "editing" },
+              activeOverlay: null,
+              agentBusy: true,
+            },
+          },
+          {
+            kind: "stream",
+            data: {
+              kind: "start",
+              data: { streamId: "s" },
+            },
+          },
+          {
+            kind: "toolCallUpdated",
+            data: {
+              messageId: "m-agent",
+              toolCallId: runningCommandToolCall.id,
+              spec: runningCommandToolCall,
+            },
+          },
+        );
+
+        const stopped = workspaceReducer(started, {
+          kind: "streamTerminated",
+          reason,
+        });
+
+        expect(stopped.streamActive).toBe(false);
+        expect(stopped.activeStreamIds).toEqual([]);
+        expect(stopped.agentBusy).toBe(false);
+      },
+    );
 
     it("R2-22 stop 终止流时立即清除 agentBusy，按钮可恢复为发送", () => {
       const busy = workspaceReducer(initialWorkspaceState, {
@@ -1411,6 +1551,35 @@ describe("annotationGroupsReady 来源增量", () => {
 
       expect(stopped.streamActive).toBe(false);
       expect(stopped.agentBusy).toBe(false);
+    });
+
+    it.each([
+      { kind: "done" } as const,
+      { kind: "cancelled" } as const,
+      { kind: "error", data: "boom" } as const,
+    ])("wire stream end $kind clears agent busy", (reason) => {
+      const started = reduce(
+        {
+          kind: "docStateChanged",
+          data: {
+            state: { kind: "editing" },
+            activeOverlay: null,
+            agentBusy: true,
+          },
+        },
+        {
+          kind: "stream",
+          data: { kind: "start", data: { streamId: "s" } },
+        },
+      );
+
+      const ended = workspaceReducer(started, {
+        kind: "stream",
+        data: { kind: "end", data: { streamId: "s", reason } },
+      });
+
+      expect(ended.streamActive).toBe(false);
+      expect(ended.agentBusy).toBe(false);
     });
 
     it("clears streamActive on stream end error", () => {
@@ -1456,6 +1625,7 @@ describe("annotationGroupsReady 来源增量", () => {
       });
 
       expect(failed.streamActive).toBe(false);
+      expect(failed.agentBusy).toBe(false);
     });
 
     it("draftingFailed sets retriable streamError", () => {

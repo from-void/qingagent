@@ -1,19 +1,49 @@
-import type { BridgeFrame, ToolCallSpec } from "@qingagent/contract-ts";
+import type {
+  BridgeFrame,
+  ChatMessage,
+  MessagePart,
+  ToolCallSpec,
+} from "@qingagent/contract-ts";
 import { mastra } from "../mastra.js";
 import { ABORT_CLEANUP_ACTIVE_TURN_TIMEOUT_MS } from "./agentLimits.js";
-import { streamEnd, toolCallUpdated } from "./frames.js";
+import {
+  chatMessageAdded,
+  chatMessageAppended,
+  newId,
+  nowIso,
+  streamEnd,
+  toolCallUpdated,
+} from "./frames.js";
 import type { SessionState } from "../session/sessionState.js";
 import {
   clearStaleSuspensionIfInactive,
   getActiveSuspensionOwner,
+  appendPartToChatHistory,
+  nextSeq,
 } from "../session/sessionState.js";
 import { clearDraftConfirmationState } from "../doc-engine/draftScratch.js";
 import { syncContentAndProjectDocState } from "../doc-engine/docStateSync.js";
 import { schedulePersist } from "../session/threadPersistence.js";
 import { USER_ABORT_REASON } from "./streamErrors.js";
 import { invalidateTurnOwnership } from "../session/turnOwnership.js";
+import { alignCommandCardWithStatus } from "./toolCards.js";
+import { isPersistentBackgroundCommand } from "./backgroundCommandSettlement.js";
 
 const logger = mastra.getLogger();
+
+export type TurnCleanupReason =
+  | "userAbort"
+  | "preemptedByNewMessage"
+  | "globalStop";
+
+export const PREEMPTED_BY_NEW_MESSAGE_NOTICE =
+  "本轮已被新消息中断。若有后台进程，它没有被自动终止，当前状态仍待确认。";
+
+function abortReasonForCleanup(reason: TurnCleanupReason): string {
+  if (reason === "preemptedByNewMessage") return "preemptedByNewMessage";
+  if (reason === "globalStop") return "globalStop";
+  return USER_ABORT_REASON;
+}
 
 export function createTurnCompletion(): {
   promise: Promise<void>;
@@ -28,6 +58,7 @@ export function createTurnCompletion(): {
 
 function terminalizeInFlightToolCalls(
   state: SessionState,
+  reason: TurnCleanupReason,
 ): Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> {
   const updates: Array<{ messageId: string; toolCallId: string; spec: ToolCallSpec }> = [];
 
@@ -38,14 +69,31 @@ function terminalizeInFlightToolCalls(
       if (part.data.status.kind !== "pending" && part.data.status.kind !== "running") {
         continue;
       }
-
-      const spec: ToolCallSpec = {
+      const commandAbortedReason = reason === "globalStop"
+        ? "已中止，结果可能未知；进程状态未确认"
+        : "本轮生成已中断";
+      const failedReason =
+        part.data.body.kind === "commandCard" ? commandAbortedReason : "本轮生成已中断";
+      const spec = alignCommandCardWithStatus({
         ...part.data,
         status: {
           kind: "failed",
-          data: { retriable: false, reason: "本轮生成已中断" },
+          data: { retriable: false, reason: failedReason },
         },
-      };
+        body: part.data.body.kind === "commandCard"
+          ? {
+              kind: "commandCard",
+              data: { ...part.data.body.data, terminalKind: "aborted" },
+            }
+          : part.data.body.kind === "generic" &&
+              part.data.name === "mastra_workspace_get_process_output"
+            ? {
+                kind: "generic",
+                data: { ...part.data.body.data, terminalKind: "aborted" },
+              }
+            : part.data.body,
+        result: part.data.result ?? { kind: "genericText", data: failedReason },
+      });
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
     }
@@ -79,22 +127,26 @@ export function finalizeLingeringRunningToolCalls(
       const shouldFinalize =
         part.data.status.kind === "running" &&
         !isOwnedSuspensionToolCall &&
-        !activeConfirmToolCallIds.has(part.data.id);
+        !activeConfirmToolCallIds.has(part.data.id) &&
+        !isPersistentBackgroundCommand(part.data);
       if (!shouldFinalize) continue;
 
       const isUnexecutedStreamingPlaceholder =
         part.data.result === null &&
         part.data.body.kind === "generic" &&
         part.data.body.data.argsJson === "";
-      const spec: ToolCallSpec = {
+      const isCommandWithoutResult =
+        part.data.result === null && part.data.body.kind === "commandCard";
+      const failedReason = isCommandWithoutResult ? "命令未返回结果" : "本轮未产出结果";
+      const spec = alignCommandCardWithStatus({
         ...part.data,
-        status: isUnexecutedStreamingPlaceholder
-          ? { kind: "failed", data: { retriable: true, reason: "本轮未产出结果" } }
+        status: isUnexecutedStreamingPlaceholder || isCommandWithoutResult
+          ? { kind: "failed", data: { retriable: true, reason: failedReason } }
           : { kind: "done" },
-        result: isUnexecutedStreamingPlaceholder
-          ? { kind: "genericText", data: "本轮未产出结果" }
+        result: isUnexecutedStreamingPlaceholder || isCommandWithoutResult
+          ? { kind: "genericText", data: failedReason }
           : part.data.result,
-      };
+      });
       message.parts[i] = { kind: "toolCall", data: spec };
       updates.push({ messageId: message.id, toolCallId: spec.id, spec });
     }
@@ -127,13 +179,54 @@ async function waitForActiveTurnCleanup(
   }
 }
 
+async function* appendPreemptionNotice(
+  state: SessionState,
+  preferredMessageId: string | null,
+): AsyncGenerator<BridgeFrame> {
+  let messageId = preferredMessageId;
+  let message = messageId
+    ? state.chatHistory.find((item) => item.id === messageId && item.role.kind === "agent")
+    : undefined;
+  if (!message) {
+    messageId = newId();
+    message = {
+      id: messageId,
+      role: { kind: "agent" },
+      ts: nowIso(),
+      parts: [],
+      chips: null,
+    } satisfies ChatMessage;
+    state.chatHistory.push(message);
+    yield chatMessageAdded(message);
+  }
+  if (!messageId) return;
+
+  const textPart: MessagePart = {
+    kind: "text",
+    data: { body: PREEMPTED_BY_NEW_MESSAGE_NOTICE },
+  };
+  const seq = nextSeq(state, messageId);
+  appendPartToChatHistory(state, messageId, textPart);
+  yield chatMessageAppended(messageId, seq, textPart);
+  state.messages.push({
+    role: "assistant",
+    content: PREEMPTED_BY_NEW_MESSAGE_NOTICE,
+  });
+}
+
 export async function* abortAndCleanupTurn(
   state: SessionState,
-  options: { activeTurnTimeoutMs?: number; emitStreamEnd?: boolean } = {},
+  options: {
+    activeTurnTimeoutMs?: number;
+    emitStreamEnd?: boolean;
+    reason?: TurnCleanupReason;
+  } = {},
 ): AsyncGenerator<BridgeFrame> {
   const activeTurnPromise = state._activeTurnPromise;
   const abortedStreamId = state.streamId;
-  state._abortController?.abort(USER_ABORT_REASON);
+  const activeAgentMessageId = state._activeAgentMessageId;
+  const reason = options.reason ?? "userAbort";
+  state._abortController?.abort(abortReasonForCleanup(reason));
   invalidateTurnOwnership(state);
 
   if (activeTurnPromise) {
@@ -153,10 +246,17 @@ export async function* abortAndCleanupTurn(
   state._activeTurnPromise = null;
   state._currentChips = null;
 
-  const updates = terminalizeInFlightToolCalls(state);
+  const updates = terminalizeInFlightToolCalls(state, reason);
   for (const update of updates) {
     yield toolCallUpdated(update.messageId, update.toolCallId, update.spec);
   }
+  if (reason === "preemptedByNewMessage") {
+    yield* appendPreemptionNotice(
+      state,
+      activeAgentMessageId ?? state._activeAgentMessageId,
+    );
+  }
+  state._activeAgentMessageId = null;
   clearStaleSuspensionIfInactive(state);
 
   clearDraftConfirmationState(state);

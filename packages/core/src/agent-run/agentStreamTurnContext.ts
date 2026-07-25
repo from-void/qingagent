@@ -8,6 +8,7 @@ import type { Span } from "@mastra/core/observability";
 import { basename } from "node:path";
 import { mastra } from "../mastra.js";
 import type { SessionState } from "../session/sessionState.js";
+import type { PendingConfirm } from "../session/sessionState.js";
 import {
   AGENT_FIRST_CHUNK_TIMEOUT_MS,
   AGENT_IDLE_TIMEOUT_MS,
@@ -61,6 +62,7 @@ export interface ProcessOutcome {
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
   retryableIdleTimeoutChunk?: unknown;
+  storedGrantApprovals: Array<{ pending: PendingConfirm; decisionId: string }>;
 }
 
 export interface ExtractedTextEntry {
@@ -91,6 +93,10 @@ export interface AgentStreamTurnContext {
 
   firstChunkLogged: boolean;
   accumulatedText: string;
+  /** 仅由桥接层按实际可渲染帧维护；不得用内部 chunk/heartbeat 代替。 */
+  hasUserVisibleOutput: boolean;
+  /** 只记类型与数量，不记录 chunk 正文或工具参数。 */
+  chunkTypeCounts: Map<string, number>;
   reasoningId: string | null;
   materialFrames: BridgeFrame[];
   extractedTexts: Map<string, ExtractedTextEntry>;
@@ -118,6 +124,7 @@ export interface AgentStreamTurnContext {
   readImageMeta: Map<string, { args: Record<string, unknown>; thumbnailSrc: string | null }>;
   generateSvgMeta: Map<string, { args: Record<string, unknown> }>;
   toolCallArgsById: Map<string, Record<string, unknown>>;
+  toolCallNameById: Map<string, string>;
   askUserRenderMode: "fullpage" | "overlay";
   askUserPurpose: AskUserPurposeKind | null;
   questionnaireToolName: QuestionnaireToolName | null;
@@ -192,6 +199,7 @@ export async function createAgentStreamTurnContext(
       sawToolCall: false,
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
+      storedGrantApprovals: [],
     },
     previousStreamId,
     restoreStreamIdOnExit,
@@ -206,6 +214,8 @@ export async function createAgentStreamTurnContext(
     confirmService: opts.confirmService ?? confirmService,
     firstChunkLogged: false,
     accumulatedText: "",
+    hasUserVisibleOutput: false,
+    chunkTypeCounts: new Map(),
     reasoningId: null,
     materialFrames: [],
     extractedTexts,
@@ -233,6 +243,7 @@ export async function createAgentStreamTurnContext(
     readImageMeta: new Map(),
     generateSvgMeta: new Map(),
     toolCallArgsById: new Map(),
+    toolCallNameById: new Map(),
     askUserRenderMode: "fullpage",
     askUserPurpose: null,
     questionnaireToolName: null,

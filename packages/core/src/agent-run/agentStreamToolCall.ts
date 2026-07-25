@@ -1,5 +1,6 @@
 import type { BridgeFrame, MessagePart, ToolCallSpec } from "@qingagent/contract-ts";
 import { todosSchema } from "@qingagent/contract-ts/schemas";
+import { WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import { mastra } from "../mastra.js";
 import { thumbnailSrcForImageInput } from "../tools/imageInput.js";
 import type { AgentStreamEvent } from "./agentStreamEvents.js";
@@ -35,6 +36,7 @@ import {
   PURE_UI_TOOL_NAMES,
   buildAskUserToolCallSpec,
   generateSvgToolCallSpec,
+  isTerminalCommandCard,
   qrCardToolCallSpec,
   readImageToolCallSpec,
   researchCardToolCallSpec,
@@ -70,6 +72,13 @@ export async function* handleToolCallEvent(
     const toolName =
       typeof chunk.payload.toolName === "string" ? chunk.payload.toolName : null;
     if (!toolCallId || !toolName) return true;
+    context.toolCallNameById.set(toolCallId, toolName);
+    // 命令工具紧接着会进入审批事件；这里先挂 generic 会让命中记忆时闪一下假卡。
+    // 等审批结果后直接产出 confirm 卡或已确认命令卡，参数仍不会泄露进 Frame。
+    if (toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) return true;
+    // show_qr 在完整参数到达后会直接产出二维码，完成态更新则只改旧卡；
+    // 两种情况都不需要先闪一张 generic 占位卡。
+    if (toolName === "show_qr") return true;
     if (toolName === "create_annotation_groups") {
       context.annotationPreview.start(toolCallId);
     }
@@ -131,6 +140,7 @@ export async function* handleToolCallEvent(
       toolName,
       chunk.payload as Record<string, unknown>,
     );
+    context.toolCallNameById.set(toolCallId, toolName);
     context.toolCallArgsById.set(toolCallId, toolArgs);
     if (SESSION_STATE_TOOL_NAMES.has(toolName)) {
       context.sawAnyToolCall = true;
@@ -307,6 +317,15 @@ export async function* handleToolCallEvent(
       );
       outcome.producedVisibleFrame = true;
     } else if (toolName === "show_qr") {
+      const completedCardId =
+        typeof toolArgs.completedCardId === "string" && toolArgs.completedCardId.trim()
+          ? toolArgs.completedCardId.trim()
+          : null;
+      if (completedCardId) {
+        // tool-result 到达后由既有 toolCallUpdated 通道更新目标旧卡；当前调用不新增可见卡。
+        context.streamingPlaceholders.delete(toolCallId);
+        return true;
+      }
       // 出码前确定性验真:content 若是"出码展示页"链接,替换为页面内嵌的真实授权 URL
       // (模型侧教学已实证不可靠,见 qrContentResolver 注释)。imageDataUri 模式不涉及。
       const qrArgs = toolArgs as Record<string, unknown>;
@@ -392,6 +411,13 @@ export async function* handleToolCallEvent(
   const originalPart = originalMessage?.parts.find(
     (part) => part.kind === "toolCall" && part.data.id === toolCallId,
   );
+  if (
+    originalPart?.kind === "toolCall" &&
+    isTerminalCommandCard(originalPart.data)
+  ) {
+    context.streamingPlaceholders.delete(toolCallId);
+    return true;
+  }
   if (originalMessage && originalPart?.kind === "toolCall") {
     const failedSpec: ToolCallSpec = {
       ...originalPart.data,

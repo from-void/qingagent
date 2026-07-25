@@ -257,11 +257,14 @@
   opacity: 0;
 }
 .qj-root.qj-opening .qj-scroll {
-  pointer-events: none;
+  pointer-events: auto;
   clip-path: inset(0 calc(100% - 190px) 0 0);
   animation: qj-opening-real-unroll 2100ms cubic-bezier(0.25, 1, 0.5, 1) 90ms both;
   filter: drop-shadow(0 22px 36px rgba(0, 0, 0, 0.45));
   will-change: clip-path, filter;
+}
+.qj-root.qj-opening .qj-roller {
+  pointer-events: none;
 }
 .qj-root.qj-opening .qj-inner {
   clip-path: none;
@@ -290,10 +293,13 @@
   animation: qj-opening-real-content 720ms cubic-bezier(0.22, 1, 0.36, 1) 1780ms both;
 }
 .qj-root.qj-opening .qj-topctrl,
-.qj-root.qj-opening .qj-new-fab,
 .qj-root.qj-opening .qj-dock,
 .qj-root.qj-opening .qj-dock-hotspot {
   pointer-events: none;
+  animation: qj-opening-ui-fade 460ms ease-out 2100ms both;
+}
+.qj-root.qj-opening .qj-new-fab {
+  pointer-events: auto;
   animation: qj-opening-ui-fade 460ms ease-out 2100ms both;
 }
 @keyframes qj-opening-real-unroll {

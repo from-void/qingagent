@@ -4,6 +4,7 @@ import type { FrameLog, LoggedFrame } from "./frameLog";
 
 export type SessionActorState = "idle" | "running" | "cancelling" | "disposed";
 export type CommandOrigin = "manual" | "agent" | "e2e" | "external";
+export type TurnPreemptionReason = "preemptedByNewMessage" | "globalStop";
 
 export interface ActorCommand {
   command: Command;
@@ -22,6 +23,7 @@ export type HandleCommandFn = (
   client?: string,
   routedSessionId?: string,
   abortSignal?: AbortSignal,
+  preemptionReason?: TurnPreemptionReason,
 ) => AsyncGenerator<BridgeFrame>;
 
 export class SessionActorCommandError extends Error {
@@ -49,6 +51,7 @@ export class SessionActorQueueFullError extends Error {
 interface QueueItem {
   input: ActorCommand | null;
   task?: () => AsyncGenerator<BridgeFrame>;
+  preemptionReason?: TurnPreemptionReason;
   resolve: (frames: LoggedFrame[]) => void;
   reject: (error: unknown) => void;
 }
@@ -57,7 +60,7 @@ export interface SessionActorOptions {
   sessionId: string;
   frameLog: FrameLog;
   handleCommand: HandleCommandFn;
-  abortSession: (sessionId: string) => void;
+  abortSession: (sessionId: string, reason?: TurnPreemptionReason) => void;
   afterRun?: (sessionId: string) => void;
   maxQueueSize?: number;
 }
@@ -89,6 +92,7 @@ export class SessionActor {
 
   enqueue(input: ActorCommand): Promise<LoggedFrame[]> {
     if (this.stateValue === "disposed") return Promise.reject(DISPOSED_ERROR);
+    let preemptionReason: TurnPreemptionReason | undefined;
     if (input.command.kind === "cancelStream") {
       // cancel 是当前用户 turn 的终止屏障：除 abort 正在跑的项外，还要丢弃在它之前
       // 已排队的模型续轮/重复派发。否则队列会按 old → queued send → cancel 执行，
@@ -97,11 +101,12 @@ export class SessionActor {
     }
     this.assertQueueCapacity();
     if (this.isBusy && isPreemptiveCommand(input.command)) {
-      this.abortCurrent();
+      preemptionReason = preemptionReasonForCommand(input.command);
+      this.abortCurrent(preemptionReason);
     }
 
     return new Promise<LoggedFrame[]>((resolve, reject) => {
-      this.queue.push({ input, resolve, reject });
+      this.queue.push({ input, preemptionReason, resolve, reject });
       this.startDrainLoop();
     });
   }
@@ -122,11 +127,11 @@ export class SessionActor {
     }
   }
 
-  abortCurrent(): void {
+  abortCurrent(reason: TurnPreemptionReason = "globalStop"): void {
     if (this.stateValue !== "running" && this.stateValue !== "cancelling") return;
     this.stateValue = "cancelling";
     try {
-      this.options.abortSession(this.options.sessionId);
+      this.options.abortSession(this.options.sessionId, reason);
     } catch (error) {
       console.error("[sessionActor] abortSession failed", {
         sessionId: this.options.sessionId,
@@ -200,6 +205,7 @@ export class SessionActor {
               item.input!.client,
               this.options.sessionId,
               item.input!.abortSignal,
+              item.preemptionReason,
             );
         for await (const frame of frames) {
           // dispose 后继续消费 generator 到 done，但绝不 append。只调用一次 return()
@@ -266,6 +272,12 @@ export function isAgentTurnDispatchCommand(command: Command): boolean {
     command.kind === "resumeAskUser" ||
     command.kind === "submitReviewOutcome"
   );
+}
+
+function preemptionReasonForCommand(command: Command): TurnPreemptionReason {
+  return command.kind === "sendMessage"
+    ? "preemptedByNewMessage"
+    : "globalStop";
 }
 
 /**

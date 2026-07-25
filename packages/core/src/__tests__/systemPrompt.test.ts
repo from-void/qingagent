@@ -11,6 +11,40 @@ import { adaptAskUserQuestionInput } from "../tools/askUserQuestionAdapter.js";
 const EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL = `{"id":"wechat-search-route","rationale":"先选一种查找方式，我再继续帮你找这篇公众号文章。","questions":[{"header":"查找方式","question":"你想用哪种方式查找公众号文章？","multiSelect":false,"options":[{"value":"login-owned","label":"我有公众号，直接扫码登录（推荐）","description":"借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"login-register","label":"我没有，先去 mp.weixin.qq.com 免费注册再扫码","description":"注册后借用公众号后台自带的搜索能力，你的公众号只是登录入口。"},{"value":"fallback-websearch","label":"先用联网搜索（效果较差，只有零散公开网页）","description":"不登录公众号后台，改用公开网页检索，结果可能不完整。"}]}]}`;
 
 describe("system prompt S3", () => {
+  it("确认拒绝后要求如实收尾且禁止再次引导批准", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("已取消，命令未执行");
+    expect(prompt).toContain("严禁再让用户点击批准");
+  });
+
+  it("触发确认的 execute_command 要提供面向用户的限长 reason", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("给 execute_command 传 reason");
+    expect(prompt).toContain("不超过 80 字");
+    expect(prompt).toContain("你要读企业微信文档，需要先装它的命令行工具");
+  });
+
+  it("授权 CLI 先探测并优先走产品可承接的自动授权方式", () => {
+    const prompt = buildSystemPrompt();
+    for (const keyword of [
+      "在决定接入方式前",
+      "init/login 类命令的 `--help`",
+      "摸清它提供的全部接入方式",
+      "优先选择自动化程度最高",
+      "扫码、device flow 或非交互方式",
+      "`--noninteractive`",
+      "由产品渲染二维码卡让用户扫码",
+      "不要主动把用户推去第三方管理后台手动创建应用",
+      "复制 AppID/App Secret 等凭证",
+      "完全没有任何自动授权方式时",
+      "明确说明为什么只能手动",
+    ]) {
+      expect(prompt).toContain(keyword);
+    }
+    expect(prompt.indexOf("在决定接入方式前"))
+      .toBeLessThan(prompt.indexOf("有的 CLI 首次使用要扫码或网页授权"));
+  });
+
   it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 
@@ -148,6 +182,24 @@ describe("system prompt S3", () => {
       "colspan/rowspan 属性必须照抄",
       "列宽由系统自动保留",
       "table ref + 当前 0-based 索引",
+      // 后台命令意图边界：完成只验证、重来才重启；非交互等待要持续轮询。
+      "运行这类命令前先查看该 CLI 的 `--help`",
+      '"不自动打开浏览器"之类的选项',
+      "启动命令**必须带上**",
+      "具体参数名以该 CLI 的帮助为准",
+      '用户说"我扫完了/已授权/好了/完成了"等完成语义时',
+      "严禁 kill 进程、严禁重新起进程、严禁重新出码",
+      '未验证到就如实说"还没检测到完成，可能还没生效/还在等待"',
+      '用户明确说"过期了/重新生成/重来一个/换一个码"等重来语义时',
+      "拿不准是哪种语义时，默认只轮询",
+      '用户明确说"等它结束/跑完告诉我"时',
+      "一次约 60 秒的有界 wait 返回后继续下一次",
+      "不要把球踢回用户",
+      "扫码/授权等交互等待仍按上文出码后立即收尾",
+      "持续轮询只服务于**本轮**用户明确要求的等待",
+      "下一轮必须优先处理新的用户文本",
+      "否则不得因历史里仍有 PID/等待卡而自动续跑旧轮询",
+      "新消息抢占只中止 Agent 等待，不代表后台进程已终止",
     ]) {
       expect(prompt).toContain(keyword);
     }
@@ -254,6 +306,22 @@ describe("system prompt S3", () => {
     expect(prompt).not.toContain("飞书配置/授权三态");
     expect(prompt).not.toContain("lark-cli auth login --device-code <code>");
     expect(prompt).not.toContain("execute_command 带 background:true 跑 \"lark-cli config init");
+  });
+
+  it("show_qr completionMessage 使用无省略号的终态陈述", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("completionMessage 必须是“已完成”的终态陈述");
+    expect(prompt).toContain("不要以半角或全角省略号结尾");
+    expect(prompt).toContain("不要写成“正在……”等进行中口吻");
+  });
+
+  it("show_qr note 明确区分卡内方位与卡片整体方位", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("note 位于二维码下方");
+    expect(prompt).toContain("必须写“上方二维码/上面的二维码”");
+    expect(prompt).toContain("禁止写“下方二维码/下面的二维码”");
+    expect(prompt).toContain("这里说的是 note 与二维码的卡内相对位置");
+    expect(prompt).toContain("卡片整体仍按工具说明位于本条回复下方");
   });
 
   it("agent instructions 连续两次逐字节稳定,不随 requestContext 翻转", async () => {

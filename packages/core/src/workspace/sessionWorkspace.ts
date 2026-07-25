@@ -179,7 +179,7 @@ export function sandboxExtraReadOnlyPaths(): string[] {
 /** 安全开关口径:仅显式真值(1/true/yes/on,忽略大小写与空白)才视为开启;
  *  未设 / 空 / 0 / false / off / no / 其它一律关闭。用于高危能力默认安全。 */
 const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
-function isEnvEnabled(raw: string | undefined): boolean {
+export function isEnvEnabled(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   return TRUTHY_ENV_VALUES.has(raw.trim().toLowerCase());
 }
@@ -548,6 +548,9 @@ async function buildSessionWorkspace(
   const toolsConfig: Record<string, { enabled: boolean }> = {};
   if (commandsEnabled) {
     toolsConfig[WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND] = { enabled: false };
+    // 与 execute_command 一样禁用 Mastra 原生实现，再由 sessionScoped 注入有界等待版本。
+    // 否则 workspace 原生工具优先于同名 toolset，bounded 覆盖不会实际生效。
+    toolsConfig[WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT] = { enabled: false };
   }
   if (folderSources.length > 0) {
     // /sources 正文只能经 readDocument/searchDocuments 的受控契约进入模型。

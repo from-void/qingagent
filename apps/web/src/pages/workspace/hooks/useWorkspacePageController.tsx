@@ -1338,9 +1338,9 @@ export function useWorkspacePageController() {
       }
 
       let nextRun: NativePresentationRun | null = null;
-      // 动画"是否该播"的判据 = 这篇 doc 是 agent 刚产出的。P0 把 deriveDocDimensions().agentBusy
-      // 改成读后端投影态(生成进行中不保证发 agentBusy:true),故并联前端可靠的 streamActive
-      // (= activeStreamIds>0,正是 P0 前 agentBusy 的来源),恢复"生成后播放"的触发。
+      // 动画"是否该播"的判据 = 这篇 doc 是 agent 刚产出的。agentBusy 已统一吸收
+      // 后端投影、活跃 stream 与运行中工具；这里保留 streamActive/sawDrafting 作为
+      // 恢复旧状态及帧交错时的防御性证据。
       if (
         currentDim.agentBusy ||
         current.streamActive ||
@@ -1386,7 +1386,7 @@ export function useWorkspacePageController() {
   );
 
   useEffect(() => {
-    // streamActive 并联:生成进行中前端可靠为真(P0 前 agentBusy 即由它推导)。
+    // streamActive 继续作为恢复旧状态时的防御性生成信号。
     if (dim.agentBusy || state.streamActive) {
       sawDraftingRef.current = true;
       setPresentationRun((run) =>
@@ -1411,8 +1411,8 @@ export function useWorkspacePageController() {
   useEffect(() => {
     setPresentationRun((run) => {
       if (!run) return run;
-      // generation_finished 会先交付终稿并清 busy，随后服务端才可能完成异步标题生成、
-      // 投影 editing。这个窗口里 docState 仍是 drafting，editor 因而暂时 locked；
+      // generation_finished 会先交付终稿，但整轮可能仍在执行工具或异步标题生成，
+      // 随后服务端才投影 editing。这个窗口里 editor 仍是 locked；
       // 不能据此清掉刚 staged 的同版本 presentationRun，否则 effect cleanup 会在
       // 第一帧后直接回灌成品。run 自身由完成/取消回调或 watchdog 收口；这里只清理
       // 真正失配的版本、会话与 reduced-motion 情形。

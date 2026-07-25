@@ -201,7 +201,7 @@ describe("R0 frontend two-dimensional docState red tests", () => {
     });
   });
 
-  it("agentBusy and imageProgress come from backend projection while image tool selector stays local", () => {
+  it("imageProgress stays separate from generic agentBusy while its tool selector stays local", () => {
     const imageRunning: ToolCallSpec = {
       id: "img-1",
       name: "generateSvg",
@@ -238,10 +238,9 @@ describe("R0 frontend two-dimensional docState red tests", () => {
     });
   });
 
-  it("locks editing during agent stream even when backend agentBusy projection is false", () => {
-    // 用户决议:agent 生成时禁止用户编辑。P0 后 agentBusy 读后端投影态、生成中不保证为 true,
-    // 前端 streamActive 才是可靠信号;只看 agentBusy 会漏掉"streamActive 真但 agentBusy 假"的
-    // 生成窗口,让用户能在生成时编辑、与 agent 写竞态。锁定须并联 streamActive。
+  it("active agent stream raises agentBusy and locks editing even when the last projection was idle", () => {
+    // 用户决议:agent 生成时禁止用户编辑。活跃 stream 是本轮仍在工作的直接证据，
+    // 必须提升统一的 agentBusy，确保编辑锁、呼吸和 hover 提示同源。
     const editing = reduce({
       kind: "docStateChanged",
       data: { state: { kind: "editing" }, activeOverlay: null, agentBusy: false },
@@ -260,7 +259,7 @@ describe("R0 frontend two-dimensional docState red tests", () => {
       editable: canEditDocument(dim, streaming.viewingVersion),
     }).toEqual({
       streamActive: true,
-      agentBusy: false,
+      agentBusy: true,
       editor: "locked",
       editable: false,
     });

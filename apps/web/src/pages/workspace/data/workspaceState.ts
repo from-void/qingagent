@@ -271,7 +271,10 @@ function workspaceReducerMut(
       }
       draft.docState = nextDocState;
       draft.activeOverlay = action.data.activeOverlay;
-      draft.agentBusy = action.data.agentBusy;
+      reduceAgentBusyMut(draft, {
+        kind: "projection",
+        busy: action.data.agentBusy,
+      });
       if (draft.docState.kind !== "pendingReview") {
         draft.docDiff = null;
       }
@@ -299,10 +302,12 @@ function workspaceReducerMut(
       });
       draft.appendCursor[msg.id] = action.data.appendSeq ?? 0;
       drainAppendQueueMut(draft, msg.id, []);
+      reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     }
     case "chatMessageAppended":
       drainAppendQueueMut(draft, action.data.messageId, [action]);
+      reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     case "toolCallUpdated": {
       // 这条 update 之前该 toolCall 的旧态——既要看 toolCalls 缓存(流式 running/pending 进来的),
@@ -357,6 +362,7 @@ function workspaceReducerMut(
           }
         }
       }
+      reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     }
     case "documentSnapshotWritten":
@@ -533,6 +539,7 @@ function workspaceReducerMut(
       draft.streamError = action.error;
       draft.streamActive = false;
       draft.activeStreamIds = [];
+      reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       return;
     case "retryDrafting":
       draft.streamError = null;
@@ -557,7 +564,10 @@ function workspaceReducerMut(
       }
       draft.activeOverlay = action.overlay;
       draft.docState = action.docState;
-      draft.agentBusy = action.agentBusy;
+      reduceAgentBusyMut(draft, {
+        kind: "projection",
+        busy: action.agentBusy,
+      });
       return;
     }
     case "forceUnlockReview":
@@ -568,7 +578,7 @@ function workspaceReducerMut(
       settleReviewToolCallsMut(draft);
       draft.docDiff = null;
       draft.activeOverlay = null;
-      draft.agentBusy = false;
+      reduceAgentBusyMut(draft, { kind: "reset" });
       return;
     case "rewindChat":
       draft.messages.splice(action.keepMessageCount);
@@ -716,10 +726,58 @@ function effectiveDocSuggestionStatus(
   return toolStatusFromSuggestion(suggestion);
 }
 
+type AgentBusyEvent =
+  | { kind: "projection"; busy: boolean }
+  | { kind: "activityObserved" }
+  | { kind: "turnTerminated" }
+  | { kind: "reset" };
+
+function hasRunningToolCall(draft: WorkspaceState): boolean {
+  for (const spec of draft.toolCalls.values()) {
+    if (spec.status.kind !== "running") continue;
+    // 这两类 running 工具有各自覆盖层；把它们并入通用 agentBusy 会抢走
+    // askUser/imageProgress 的专属提示与视觉状态。
+    if (spec.body.kind === "askUser" || spec.name === "generateSvg") continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * `agentBusy` 的唯一状态转换入口。
+ *
+ * 后端投影、活跃 stream 和 running tool 都能证明本轮仍在工作；其中任一为真都不能
+ * 被文档生成等子事件清掉。反过来，stream 的最终结束/本地终止才是整轮结束的权威
+ * 信号，此时忽略可能迟到的 running 卡快照，避免编辑锁永久卡住。
+ */
+function reduceAgentBusyMut(
+  draft: WorkspaceState,
+  event: AgentBusyEvent,
+): void {
+  const hasActiveStream = draft.activeStreamIds.length > 0;
+  switch (event.kind) {
+    case "projection":
+      draft.agentBusy =
+        event.busy || hasActiveStream || hasRunningToolCall(draft);
+      return;
+    case "activityObserved":
+      if (hasActiveStream || hasRunningToolCall(draft)) {
+        draft.agentBusy = true;
+      }
+      return;
+    case "turnTerminated":
+      draft.agentBusy = hasActiveStream;
+      return;
+    case "reset":
+      draft.agentBusy = false;
+      return;
+  }
+}
+
 function resetSessionScopedStateMut(draft: WorkspaceState): void {
   draft.docState = { kind: "empty" };
   draft.activeOverlay = null;
-  draft.agentBusy = false;
+  reduceAgentBusyMut(draft, { kind: "reset" });
   draft.messages = [];
   draft.appendCursor = {};
   draft.pendingAppends = {};
@@ -774,9 +832,11 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
   switch (s.kind) {
     case "start":
       markStreamActiveMut(draft, s.data.streamId);
+      reduceAgentBusyMut(draft, { kind: "activityObserved" });
       return;
     case "end":
       markStreamInactiveMut(draft, s.data.streamId);
+      reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       if (s.data.reason.kind === "cancelled") {
         draft.streamError = { kind: "cancelled", reason: "" };
       } else if (s.data.reason.kind === "error") {
@@ -785,6 +845,7 @@ function reduceStreamMut(draft: WorkspaceState, s: StreamFrame): void {
       return;
     case "draftingFailed":
       markStreamInactiveMut(draft, s.data.streamId);
+      reduceAgentBusyMut(draft, { kind: "turnTerminated" });
       draft.generationDraft = null;
       draft.streamError = {
         kind: "draftingFailed",
@@ -814,13 +875,13 @@ function markStreamInactiveMut(draft: WorkspaceState, streamId: string): void {
 function reduceStreamTerminatedMut(
   draft: WorkspaceState,
   streamIds: string[] | undefined,
-  reason: "stop" | "abort" | "error" | "completed",
+  _reason: "stop" | "abort" | "error" | "completed",
 ): void {
   if (!streamIds || streamIds.length === 0) {
     draft.activeStreamIds = [];
     draft.streamActive = false;
     draft.generationDraft = null;
-    if (reason === "stop") draft.agentBusy = false;
+    reduceAgentBusyMut(draft, { kind: "turnTerminated" });
     return;
   }
   const terminated = new Set(streamIds);
@@ -830,8 +891,8 @@ function reduceStreamTerminatedMut(
   draft.streamActive = draft.activeStreamIds.length > 0;
   if (!draft.streamActive) {
     draft.generationDraft = null;
-    if (reason === "stop") draft.agentBusy = false;
   }
+  reduceAgentBusyMut(draft, { kind: "turnTerminated" });
 }
 
 /* ───────────── helpers ───────────── */
@@ -864,9 +925,6 @@ function reduceDocGenerationEventMut(
       draft.version = event.data.finalVersion;
       draft.progressPct = 1;
       draft.streamError = null;
-      draft.agentBusy = false;
-      draft.streamActive = false;
-      draft.activeStreamIds = [];
       return;
     case "generation_failed":
       if (
@@ -1204,7 +1262,7 @@ export function selectGenerateSvgRunning(state: WorkspaceState): ToolCallSpec | 
   return null;
 }
 
-/** Agent busy mirrors backend streamId lifecycle and excludes suspension waits. */
+/** 统一后的轮次忙碌态；挂起等待及专属工具覆盖层不计入通用 busy。 */
 export function selectAgentBusy(state: WorkspaceState): boolean {
   return state.agentBusy;
 }

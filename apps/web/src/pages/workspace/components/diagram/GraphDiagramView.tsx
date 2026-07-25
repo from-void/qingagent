@@ -95,6 +95,7 @@ interface GraphDiagramViewProps {
   onSourceChange?: (source: string) => void;
   onVisualChange?: (change: DiagramVisualChange) => void;
   onUndo?: () => boolean;
+  onRedo?: () => boolean;
 }
 
 type CanvasSize = { width: number; height: number };
@@ -1121,6 +1122,7 @@ export function GraphDiagramView({
   onSourceChange,
   onVisualChange,
   onUndo,
+  onRedo,
 }: GraphDiagramViewProps) {
   const toast = useToast();
   const [liveSource, setLiveSource] = useState(source);
@@ -1340,15 +1342,20 @@ export function GraphDiagramView({
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
+      const key = event.key.toLowerCase();
+      const hasMod = event.ctrlKey || event.metaKey;
+      const isUndo = hasMod && !event.shiftKey && key === "z";
+      const isRedo = hasMod && (
+        (event.shiftKey && key === "z") ||
+        (!event.shiftKey && key === "y")
+      );
       if (
-        onUndo &&
-        (event.ctrlKey || event.metaKey) &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "z" &&
+        ((isUndo && onUndo) || (isRedo && onRedo)) &&
         !target?.closest("input, textarea, [contenteditable='true']")
       ) {
         event.preventDefault();
-        onUndo();
+        if (isUndo) onUndo?.();
+        else onRedo?.();
         return;
       }
       if (event.key !== "Escape") return;
@@ -1367,7 +1374,7 @@ export function GraphDiagramView({
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [closeEditor, inEdit, onUndo, pendingSubgraph, subgraphDrawMode]);
+  }, [closeEditor, inEdit, onRedo, onUndo, pendingSubgraph, subgraphDrawMode]);
 
   const emitOverlay = useCallback(
     (next: DiagramOverlay, extraIds?: { nodes?: string[]; edges?: string[] }) => {

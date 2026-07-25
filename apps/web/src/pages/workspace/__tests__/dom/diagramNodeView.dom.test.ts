@@ -697,6 +697,57 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(renameUndoneModel.nodes.find((node) => node.id === "B")?.scopePath)
         .toEqual(["Outer", "Inner"]);
 
+      // 全屏画布不在 TipTap DOM 内，必须把两种 redo 键位显式转发回编辑器。
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      expect((parseDiagram(firstDiagramAttrs(editor!)?.source ?? "").model as FlowGraph)
+        .subgraphs.find((subgraph) => subgraph.id === "Inner")?.label)
+        .toBe("发布内层");
+
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      expect((parseDiagram(firstDiagramAttrs(editor!)?.source ?? "").model as FlowGraph)
+        .subgraphs.find((subgraph) => subgraph.id === "Inner")?.label)
+        .toBe("内层");
+
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "y",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
+      expect((parseDiagram(firstDiagramAttrs(editor!)?.source ?? "").model as FlowGraph)
+        .subgraphs.find((subgraph) => subgraph.id === "Inner")?.label)
+        .toBe("发布内层");
+
+      // 回到撤销态，继续验证上一笔“节点移出分区”也仍可撤销。
+      await act(async () => {
+        visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      await flush(20);
       await act(async () => {
         visualEditor.dispatchEvent(new KeyboardEvent("keydown", {
           key: "z",

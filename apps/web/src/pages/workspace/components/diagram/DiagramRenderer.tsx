@@ -38,6 +38,7 @@ export interface DiagramRendererProps {
   onSourceChange?: (source: string) => void;
   onVisualChange?: (change: DiagramVisualChange) => void;
   onUndo?: () => boolean;
+  onRedo?: () => boolean;
 }
 
 export interface DiagramVisualChange {
@@ -58,6 +59,7 @@ export function DiagramRenderer({
   onSourceChange,
   onVisualChange,
   onUndo,
+  onRedo,
 }: DiagramRendererProps) {
   const type = lang === "mermaid" ? detectType(source) : null;
   const normalizedOverlay = normalizeOverlay(overlay);
@@ -75,6 +77,7 @@ export function DiagramRenderer({
           onSourceChange={onSourceChange}
           onVisualChange={onVisualChange}
           onUndo={onUndo}
+          onRedo={onRedo}
         />
       </Suspense>
     );

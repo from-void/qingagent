@@ -543,6 +543,7 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
                 }
               }}
               onUndo={() => editor.commands.undo()}
+              onRedo={() => editor.commands.redo()}
             />
           )}
           {editable && (

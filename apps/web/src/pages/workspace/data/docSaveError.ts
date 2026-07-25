@@ -42,4 +42,4 @@ export function classifyDocSaveError(error: unknown): DocSaveErrorClass {
 
 /** 瞬态保存失败、重试仍未成功时给用户的温和文案(不吓人,且说明数据没丢)。 */
 export const TRANSIENT_DOC_SAVE_TOAST =
-  "网络不稳,自动保存稍后重试——你的内容仍在,继续编辑或片刻后会自动重存。";
+  "网络不稳，内容仍在；网络连接恢复后会自动重存，也可继续编辑触发保存。";

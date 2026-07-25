@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
 } from "react";
@@ -154,6 +155,8 @@ export function useWorkspaceDocumentEditor(input: {
     waitForPendingDocSaveDrain,
   } = input;
 
+  const failedTransientDocWriteRef = useRef<QueuedDocWrite | null>(null);
+
   const sendDocWrite = useCallback(
     (pmDoc: PmDoc, explicitTarget?: DocWriteTarget): Promise<void> => {
       const stream = explicitTarget?.stream ?? streamRef.current;
@@ -202,6 +205,8 @@ export function useWorkspaceDocumentEditor(input: {
       pendingDocWriteRef.current = true;
       latestDocMutationIdRef.current = clientMutationId;
       lastSentPmDocRef.current = pmDoc;
+      // 新编辑或 online 重发一旦开始，以本次发送为最新待落库内容，淘汰旧失败快照。
+      failedTransientDocWriteRef.current = null;
 
       const ackPromise = new Promise<void>((resolve, reject) => {
         docWriteAckRef.current.set(clientMutationId, { resolve, reject });
@@ -272,6 +277,16 @@ export function useWorkspaceDocumentEditor(input: {
               : e instanceof Error
                 ? new PendingDocSaveError(`保存请求失败：${e.message}`)
                 : new PendingDocSaveError("保存请求失败，请重试。");
+            if (isTransient && canRetryDocSave()) {
+              const queued = queuedPmDocRef.current;
+              failedTransientDocWriteRef.current =
+                queued &&
+                queued.sessionId === sessionId &&
+                queued.stream === stream &&
+                queued.streamGeneration === streamGeneration
+                  ? queued
+                  : { pmDoc, sessionId, stream, streamGeneration };
+            }
             console.error("[workspace] updateDoc failed", e);
             failAck(error);
             showBackgroundDocSaveFailure(error);
@@ -288,6 +303,30 @@ export function useWorkspaceDocumentEditor(input: {
   useEffect(() => {
     sendDocWriteRef.current = sendDocWrite;
   }, [sendDocWrite]);
+
+  useEffect(() => {
+    const retryFailedDocWrite = () => {
+      const failed = failedTransientDocWriteRef.current;
+      if (!failed) return;
+      if (
+        sessionIdRef.current !== failed.sessionId ||
+        streamRef.current !== failed.stream ||
+        streamGenerationRef.current !== failed.streamGeneration
+      ) {
+        failedTransientDocWriteRef.current = null;
+        return;
+      }
+      if (pendingDocWriteRef.current || scheduledDocWriteRef.current) return;
+      failedTransientDocWriteRef.current = null;
+      sendDocWriteRef.current(failed.pmDoc, failed).catch((error) => {
+        // sendDocWrite 会重新登记仍属瞬态的失败快照；这里仅避免 online 事件产生未处理拒绝。
+        console.error("[workspace] online updateDoc retry failed", error);
+      });
+    };
+
+    window.addEventListener("online", retryFailedDocWrite);
+    return () => window.removeEventListener("online", retryFailedDocWrite);
+  }, []);
 
   const focusPendingBlankTarget = useCallback(() => {
     const target = pendingBlankFocusRef.current;

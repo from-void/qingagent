@@ -313,8 +313,7 @@
   display: grid;
   grid-template-columns: 15px minmax(0, 1fr);
   gap: 8px;
-  align-items: start;
-  padding-top: 2px;
+  align-items: center;
   color: var(--ink-2);
   cursor: pointer;
 }
@@ -350,6 +349,11 @@
   outline-offset: 2px;
 }
 
+#view-workspace .cf-remember:has(input:disabled) {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
 #view-workspace .cf-remember-copy {
   display: flex;
   flex-direction: column;
@@ -372,14 +376,22 @@
 
 #view-workspace .cf-foot {
   display: flex;
-  align-items: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 9px 15px 13px;
 }
 
+#view-workspace .cf-foot-copy {
+  display: flex;
+  flex: 1 1 200px;
+  min-width: 160px;
+  flex-direction: column;
+  gap: 4px;
+}
+
 #view-workspace .cf-foot-hint {
-  flex: 1 1 auto;
   min-width: 0;
   color: var(--ink-4);
   font-size: 10.5px;

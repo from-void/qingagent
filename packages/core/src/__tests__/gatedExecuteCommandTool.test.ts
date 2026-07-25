@@ -21,6 +21,7 @@ import type { SessionState } from "../session/sessionState.js";
 
 interface GatedExecuteInput {
   command: string;
+  reason?: string;
   timeout?: number | null;
   cwd?: string | null;
   tail?: number | null;
@@ -176,7 +177,7 @@ function approvalContext(runId: string, toolCallId: string) {
 }
 
 describe("gated execute_command tool schema", () => {
-  it("rejects empty and overlong command inputs", () => {
+  it("rejects empty/overlong commands and reasons longer than 80 characters", () => {
     const tool = createGatedExecuteCommandTool({
       sessionId: "schema-test",
       getWorkspace: async () => {
@@ -187,6 +188,14 @@ describe("gated execute_command tool schema", () => {
     expect(validateToolInput(tool, { command: "" }).success).toBe(false);
     expect(validateToolInput(tool, { command: "x".repeat(8192) }).success).toBe(true);
     expect(validateToolInput(tool, { command: "x".repeat(8193) }).success).toBe(false);
+    expect(validateToolInput(tool, {
+      command: "npm install zod",
+      reason: "你".repeat(80),
+    }).success).toBe(true);
+    expect(validateToolInput(tool, {
+      command: "npm install zod",
+      reason: "你".repeat(81),
+    }).success).toBe(false);
   });
 });
 

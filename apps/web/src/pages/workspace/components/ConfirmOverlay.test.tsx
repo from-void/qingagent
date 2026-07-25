@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, type ReactNode, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -214,6 +216,37 @@ describe("ConfirmOverlay", () => {
     expect(checkbox).not.toBeNull();
     expect(host!.querySelector(".cf-remember")?.textContent).toContain(rememberSpec.rememberCategory?.label);
     expect(host!.querySelector(".cf-remember-risk")?.textContent).toBe("请确认安装内容和影响范围。");
+    expect(host!.querySelector(".cf-body .cf-remember")).toBeNull();
+    const footer = host!.querySelector<HTMLElement>(".cf-foot")!;
+    expect(footer.querySelector(".cf-foot-copy .cf-remember")).not.toBeNull();
+    expect(footer.querySelector(".cf-actions")).not.toBeNull();
+    expect(checkbox?.closest("label")?.classList.contains("cf-remember")).toBe(true);
+    expect(checkbox?.tabIndex).toBe(0);
+    const describedBy = checkbox?.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(
+      "请确认安装内容和影响范围。",
+    );
+    expect(
+      checkbox!.compareDocumentPosition(findButton("先跳过"))
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("footer 常规宽度左右同行，窄屏允许记忆项回落到按钮上方", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/pages/workspace/components/confirm-overlay.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.cf-foot \{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*align-items: center;/s,
+    );
+    expect(css).toMatch(
+      /\.cf-foot-copy \{[^}]*flex: 1 1 200px;[^}]*min-width: 160px;/s,
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 520px\) \{[\s\S]*?\.cf-foot \{[^}]*flex-direction: column;[^}]*align-items: stretch;/,
+    );
   });
 
   it("显式不安全开发标记允许纯 web 渲染，程序化 click 不取得 nonce", async () => {
@@ -489,6 +522,8 @@ describe("ConfirmOverlay", () => {
     expect(host?.querySelector(".cf-button-spinner")).not.toBeNull();
     expect(Array.from(host!.querySelectorAll<HTMLButtonElement>("button"))
       .every((button) => button.disabled)).toBe(true);
+    expect(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')?.disabled)
+      .toBe(true);
     expect(onDecision).not.toHaveBeenCalled();
 
     await act(async () => {

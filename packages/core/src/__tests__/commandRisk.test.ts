@@ -103,6 +103,38 @@ describe("assessCommand 危险意图分类", () => {
     ])("反例 %s 保持 allow", (command) => {
       expect(assessCommand(command).risk).toBe("safe");
     });
+
+    it.each([
+      [
+        "npx skills add WeComTeam/wecom-cli -y -g",
+        "安装 wecom-cli",
+        "操作企业微信",
+      ],
+      ["npm install @scope/toolkit@2.0.0", "安装 toolkit", "用它帮你干活"],
+      ["pnpm add zod", "安装 zod", "用它帮你干活"],
+      ["yarn add vite", "安装 vite", "用它帮你干活"],
+      ["pip install pandas==2.3.0", "安装 pandas", "用它帮你干活"],
+      ["brew install jq", "安装 jq", "用它帮你干活"],
+      ["npm install @larksuite/lark-cli", "安装 lark-cli", "操作飞书"],
+      ["npm install awesomecom", "安装 awesomecom", "用它帮你干活"],
+    ])("%s 提取工具名并生成用户视角文案", (command, title, purpose) => {
+      expect(assessCommand(command)).toMatchObject({
+        risk: "confirm",
+        effects: ["install"],
+        title,
+        detail: expect.stringContaining(purpose),
+      });
+      expect(assessCommand(command).detail).toContain("会从网上下载并安装到这台电脑");
+    });
+
+    it("安装目标无法可靠提取时保留类别标题和中性用途", () => {
+      expect(assessCommand("npm ci")).toMatchObject({
+        risk: "confirm",
+        effects: ["install"],
+        title: "安装依赖/工具",
+        detail: "装好后青简才能继续帮你完成这项操作。会从网上下载并安装到这台电脑",
+      });
+    });
   });
 
   describe("外发 effect", () => {

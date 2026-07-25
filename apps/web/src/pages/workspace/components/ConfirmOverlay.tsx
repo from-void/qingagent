@@ -58,6 +58,7 @@ export function ConfirmOverlay({
   const mountedRef = useRef(true);
   const titleId = useId();
   const sayId = useId();
+  const rememberRiskId = useId();
   const [selectedOption, setSelectedOption] = useState(() =>
     initialOptionValue(spec),
   );
@@ -302,34 +303,44 @@ export function ConfirmOverlay({
           />
         )}
 
-        {showRemember && spec.rememberCategory && (
-          <label className="cf-remember">
-            <input
-              type="checkbox"
-              checked={remember}
-              disabled={busy}
-              onChange={(event) => setRemember(event.currentTarget.checked)}
-            />
-            <span className="cf-remember-box" aria-hidden="true">
-              {remember && <CheckIcon size={11} />}
-            </span>
-            <span className="cf-remember-copy">
-              <span>{spec.rememberCategory.label}</span>
-              {spec.rememberCategory.riskHint && (
-                <span className="cf-remember-risk">{spec.rememberCategory.riskHint}</span>
-              )}
-            </span>
-          </label>
-        )}
-        {!showRemember && sessionId && spec.rememberCategory && (
-          <p className="cf-remember-unavailable">
-            开启记忆需要在桌面应用中完成确认。
-          </p>
-        )}
       </div>
 
       <div className="cf-foot">
-        {spec.footHint && <span className="cf-foot-hint">{spec.footHint}</span>}
+        {(spec.footHint || (sessionId && spec.rememberCategory)) && (
+          <div className="cf-foot-copy">
+            {showRemember && spec.rememberCategory && (
+              <label className="cf-remember">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  disabled={busy}
+                  aria-describedby={spec.rememberCategory.riskHint ? rememberRiskId : undefined}
+                  onChange={(event) => setRemember(event.currentTarget.checked)}
+                />
+                <span className="cf-remember-box" aria-hidden="true">
+                  {remember && <CheckIcon size={11} />}
+                </span>
+                <span className="cf-remember-copy">
+                  <span>{spec.rememberCategory.label}</span>
+                  {spec.rememberCategory.riskHint && (
+                    <span
+                      className="cf-remember-risk"
+                      id={rememberRiskId}
+                    >
+                      {spec.rememberCategory.riskHint}
+                    </span>
+                  )}
+                </span>
+              </label>
+            )}
+            {!showRemember && sessionId && spec.rememberCategory && (
+              <p className="cf-remember-unavailable">
+                开启记忆需要在桌面应用中完成确认。
+              </p>
+            )}
+            {spec.footHint && <span className="cf-foot-hint">{spec.footHint}</span>}
+          </div>
+        )}
         <div className="cf-actions">
           <button
             type="button"

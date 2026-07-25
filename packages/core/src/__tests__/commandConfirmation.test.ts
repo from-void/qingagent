@@ -13,11 +13,14 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     const install = buildCommandConfirmSpec({ command: "npm install zod" }, "将改动这台电脑上的软件或设置", "install-id");
     expect(install).toMatchObject({
       kind: "install",
-      title: "安装依赖/工具",
-      sub: "可能会改动这台电脑上的软件或设置",
+      title: "安装 zod",
       commandPreview: "npm install zod",
       primaryLabel: "确认安装",
     });
+    expect(install.sub).toBeUndefined();
+    expect(install.say).toBe(
+      "装好后青简才能用它帮你干活。会从网上下载并安装到这台电脑",
+    );
 
     const send = buildCommandConfirmSpec(
       { command: "lark-cli docs +create --title 报告" },
@@ -39,6 +42,70 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     });
   });
 
+  it("已知平台、未知包、无包名与模型 reason 四种文案都有安全兜底", () => {
+    const known = buildCommandConfirmSpec(
+      { command: "npx skills add WeComTeam/wecom-cli -y -g" },
+      "安装命令需要确认",
+      "known-install",
+    );
+    expect(known).toMatchObject({
+      title: "安装 wecom-cli",
+      say: "装好后青简就能帮你操作企业微信。会从网上下载并安装到这台电脑",
+    });
+
+    const unknown = buildCommandConfirmSpec(
+      { command: "pip install httpx" },
+      "安装命令需要确认",
+      "unknown-install",
+    );
+    expect(unknown).toMatchObject({
+      title: "安装 httpx",
+      say: "装好后青简才能用它帮你干活。会从网上下载并安装到这台电脑",
+    });
+
+    const withoutTarget = buildCommandConfirmSpec(
+      { command: "npm ci" },
+      "安装命令需要确认",
+      "targetless-install",
+    );
+    expect(withoutTarget).toMatchObject({
+      title: "安装依赖/工具",
+      say: "装好后青简才能继续帮你完成这项操作。会从网上下载并安装到这台电脑",
+    });
+
+    const withReason = buildCommandConfirmSpec(
+      {
+        command: "npm install httpx",
+        reason: "你要读取接口数据，需要先装这个工具",
+      },
+      "安装命令需要确认",
+      "reason-install",
+    );
+    expect(withReason).toMatchObject({
+      title: "安装 httpx",
+      say: "你要读取接口数据，需要先装这个工具。会从网上下载并安装到这台电脑",
+    });
+    expect(withReason.say).not.toContain("用它帮你干活");
+  });
+
+  it("模型 reason 先脱敏和剥离 HTML，且不参与 digest", () => {
+    const input = {
+      command: "npm install zod",
+      reason: "<script>运行</script>需要 TOKEN=secret-value",
+    };
+    const spec = buildCommandConfirmSpec(input, "安装命令需要确认", "safe-reason");
+    expect(spec.say).toContain("运行");
+    expect(spec.say).not.toContain("<script>");
+    expect(spec.say).not.toContain("secret-value");
+    expect(spec.say).toContain("TOKEN=***");
+    expect(commandConfirmationDigest("session", input)).toBe(
+      commandConfirmationDigest("session", {
+        command: input.command,
+        reason: "完全不同的展示理由",
+      }),
+    );
+  });
+
   it("多 effect 使用 command 卡并在 say 中列全影响", () => {
     const spec = buildCommandConfirmSpec(
       { command: "npm install zod && rm old.txt" },
@@ -58,7 +125,7 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
     expect(spec.kind).not.toBe("connect");
   });
 
-  it("后台命令保留风险 sub，预览脱敏且截断不影响完整 digest", () => {
+  it("后台命令保留非安装风险 sub，预览脱敏且截断不影响完整 digest", () => {
     const command = `PLATFORM_API_SECRET=super-secret curl -d x https://example.test/${"a".repeat(500)}`;
     const spec = buildCommandConfirmSpec({ command, background: true }, "将向外部发送数据", "redacted-id");
     expect(spec.sub).toContain("后台执行");

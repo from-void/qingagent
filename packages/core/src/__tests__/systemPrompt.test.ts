@@ -17,6 +17,13 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("严禁再让用户点击批准");
   });
 
+  it("触发确认的 execute_command 要提供面向用户的限长 reason", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("给 execute_command 传 reason");
+    expect(prompt).toContain("不超过 80 字");
+    expect(prompt).toContain("你要读企业微信文档，需要先装它的命令行工具");
+  });
+
   it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 

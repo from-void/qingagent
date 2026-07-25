@@ -1089,38 +1089,52 @@ function isExternalFrameKind(kind: BridgeFrame["kind"]): kind is ExternalBridgeF
 
 function frameForExternal(entry: LoggedFrame): ExternalBridgeFrame | null {
   if (!isExternalFrameKind(entry.frame.kind)) return null;
-  if (entry.frame.kind === "documentSnapshotWritten") {
-    return {
-      seq: entry.seq,
-      kind: entry.frame.kind,
-      data: snapshotDataForExternal(entry.frame.data),
-    };
-  }
-  return { seq: entry.seq, kind: entry.frame.kind, data: entry.frame.data };
+  return {
+    seq: entry.seq,
+    kind: entry.frame.kind,
+    data: dataForExternal(entry.frame.data),
+  } as ExternalBridgeFrame;
 }
 
-function snapshotDataForExternal(
-  data: Extract<BridgeFrame, { kind: "documentSnapshotWritten" }>["data"],
-): Extract<BridgeFrame, { kind: "documentSnapshotWritten" }>["data"] {
+function dataForExternal<T>(data: T): T {
   const cloned = structuredClone(data);
-  stripDiagramSvgCaches(cloned);
-  return cloned;
+  return stripSvgStrings(cloned) as T;
 }
 
-function stripDiagramSvgCaches(value: unknown): void {
-  if (Array.isArray(value)) {
-    for (const item of value) stripDiagramSvgCaches(item);
-    return;
+const LONG_SVG_VALUE_BYTES = 64;
+
+function stripSvgStrings(value: unknown): unknown {
+  if (typeof value === "string") {
+    return isSvgString(value) ? svgPlaceholder(value) : value;
   }
-  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      value[index] = stripSvgStrings(value[index]);
+    }
+    return value;
+  }
+  if (!value || typeof value !== "object") return value;
 
   const record = value as Record<string, unknown>;
-  if (record.type === "diagram" && record.attrs && typeof record.attrs === "object" && !Array.isArray(record.attrs)) {
-    const attrs = record.attrs as Record<string, unknown>;
-    attrs.svgBytes = typeof attrs.svg === "string" ? Buffer.byteLength(attrs.svg, "utf8") : 0;
-    attrs.svg = null;
+  for (const [key, child] of Object.entries(record)) {
+    if (typeof child === "string" && isSvgString(child, key)) {
+      record[key] = null;
+      record.svgBytes = Buffer.byteLength(child, "utf8");
+    } else {
+      record[key] = stripSvgStrings(child);
+    }
   }
-  for (const child of Object.values(record)) stripDiagramSvgCaches(child);
+  return record;
+}
+
+function isSvgString(value: string, key?: string): boolean {
+  const bytes = Buffer.byteLength(value, "utf8");
+  return value.trimStart().toLowerCase().startsWith("<svg")
+    || (key?.toLowerCase() === "svg" && bytes >= LONG_SVG_VALUE_BYTES);
+}
+
+function svgPlaceholder(value: string): string {
+  return `[svg ${Buffer.byteLength(value, "utf8")}B stripped]`;
 }
 
 function externalEventsMeta(

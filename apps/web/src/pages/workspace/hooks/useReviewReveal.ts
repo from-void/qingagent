@@ -13,6 +13,28 @@ import {
   type ReviewTableTypedByPatch,
 } from "../data/tableTypewriter";
 
+export function diagramBlockPatchIds(
+  inputs: readonly BlockPatchInput[],
+): ReadonlySet<string> {
+  return new Set(
+    inputs
+      .filter((patch) =>
+        patch.blocks.some((block) => block.kind === "diagram"),
+      )
+      .map((patch) => patch.patchId),
+  );
+}
+
+export function reviewTextRevealTarget(
+  id: string,
+  diagramPatchIds: ReadonlySet<string>,
+  patchMeta: ReadonlyMap<string, PatchMeta>,
+): number {
+  if (diagramPatchIds.has(id)) return 0;
+  const patch = patchMeta.get(id);
+  return patch ? revealNewPartLen(patch.before, patch.after) : 0;
+}
+
 export function useReviewReveal(input: {
   enabled: boolean;
   applied: readonly { id: string }[];
@@ -64,6 +86,10 @@ export function useReviewReveal(input: {
       ),
     [input.blockPatchInputs],
   );
+  const diagramPatchIds = useMemo(
+    () => diagramBlockPatchIds(input.blockPatchInputs),
+    [input.blockPatchInputs],
+  );
   const tableRevealPlans = useMemo(
     () =>
       input.blockPatchInputs.flatMap((patch) => {
@@ -75,6 +101,10 @@ export function useReviewReveal(input: {
   const tableBlockPatchIdsKey = useMemo(
     () => Array.from(tableBlockPatchIds).sort().join(","),
     [tableBlockPatchIds],
+  );
+  const diagramPatchIdsKey = useMemo(
+    () => Array.from(diagramPatchIds).sort().join(","),
+    [diagramPatchIds],
   );
   const tableRevealPlansKey = useMemo(
     () =>
@@ -131,12 +161,12 @@ export function useReviewReveal(input: {
       tableRevealPlans.map((plan) => [plan.patchId, plan]),
     );
     const targetOf = (id: string): number => {
+      if (diagramPatchIds.has(id)) return 0;
       if (tableBlockPatchIds.has(id)) {
         if (finalizedTablePatchIdsRef.current.has(id)) return 0;
         return tablePlanByPatchId.get(id)?.totalGraphemes ?? 0;
       }
-      const patch = meta.get(id);
-      return patch ? revealNewPartLen(patch.before, patch.after) : 0;
+      return reviewTextRevealTarget(id, diagramPatchIds, meta);
     };
     const frames = planRevealTypewriter(
       ids,
@@ -213,6 +243,7 @@ export function useReviewReveal(input: {
     charsPerTick,
     configuredTailHoldMs,
     tableBlockPatchIdsKey,
+    diagramPatchIdsKey,
     tableRevealPlansKey,
     input.replayNonce,
   ]);

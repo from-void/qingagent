@@ -262,11 +262,21 @@ describe("toHtml 图表与图片", () => {
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: GOOD_SVG } }] as never));
     expect(html).toContain('<div class="pm-diagram"><svg');
     expect(html).toContain("viewBox");
+    expect(html).not.toContain('<div class="pm-diagram-fallback">');
   });
 
-  it("坏 SVG 图表回退源码代码块", () => {
+  it("无缓存 SVG 图表显示类型化说明并回退源码代码块", () => {
+    const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: null } }] as never));
+    expect(html).toContain('<div class="pm-diagram-fallback">');
+    expect(html).toContain("Mermaid 图表源码（未能生成预览，可复制到 Mermaid 编辑器查看）");
+    expect(html).toContain('<pre class="code-block">');
+    expect(html).toContain("flowchart TD");
+  });
+
+  it("坏 SVG 图表回退说明与源码代码块", () => {
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: "<svg onload=x></svg>" } }] as never));
     expect(html).not.toContain("onload");
+    expect(html).toContain("pm-diagram-fallback");
     expect(html).toContain('<pre class="code-block">');
     expect(html).toContain("flowchart TD");
   });
@@ -275,7 +285,8 @@ describe("toHtml 图表与图片", () => {
     const oversized = `<svg viewBox="0 0 120 60"><text>${"a".repeat(2_000_000)}</text></svg>`;
     const html = toHtml(doc([{ type: "diagram", attrs: { blockId: "d", lang: "mermaid", source: "flowchart TD\n A-->B", svg: oversized } }] as never));
 
-    expect(html).toContain("图过大未导出");
+    expect(html).toContain('<div class="pm-diagram-fallback">');
+    expect(html).toContain("Mermaid 图表过大，以下为源码");
     expect(html).toContain("flowchart TD");
     expect(html).not.toContain("a".repeat(1_000));
   });

@@ -6,6 +6,17 @@ import {
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DRAWIO_RENDER_PADDING = 8;
 
+/** 合法 draw.io XML 中没有任何顶点或边时，视为可继续编辑的空图，而非渲染失败。 */
+export function isEmptyDrawioSource(rawSource: string): boolean {
+  try {
+    const { modelXml } = prepareDrawioModelXmlForRender(rawSource);
+    const document = new DOMParser().parseFromString(modelXml, "application/xml");
+    return document.querySelectorAll('mxCell[vertex="1"], mxCell[edge="1"]').length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 离线把未压缩 mxGraph XML 渲染成原生 SVG。maxGraph 仅在出现 drawio 块时动态加载，
  * 不进入首屏 chunk；foEnabled=false 禁止 foreignObject，最终结果仍必须过统一 SVG 加固。

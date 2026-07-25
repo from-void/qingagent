@@ -630,11 +630,25 @@ async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Pro
 async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | Table>> {
   switch (section.kind) {
     case "diagram": {
+      const typeLabel = section.data.lang === "drawio" ? "draw.io" : "Mermaid";
+      const viewerAction = section.data.lang === "drawio" ? "draw.io 查看" : "Mermaid 编辑器查看";
+      const fallbackNotice = (oversized: boolean) => new Paragraph({
+        children: [new TextRun({
+          text: oversized
+            ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
+            : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,
+          font: FONT,
+          size: 18,
+          color: "666666",
+        })],
+        shading: { type: ShadingType.CLEAR, fill: "F2F0EB" },
+        spacing: { after: 80 },
+      });
       // svg 看起来合法且不超大才走图片(sharp svg→png);失败/无 svg 一律回退源码代码块,
       // 绝不丢 Mermaid 源码(原先 sharp 失败会落到 [图: 图表] 占位,源码尽失)。
       if (section.data.svg && svgExceedsExportByteLimit(section.data.svg)) {
         return [
-          new Paragraph({ children: [new TextRun({ text: "[图过大未导出]", font: FONT })], spacing: { after: 80 } }),
+          fallbackNotice(true),
           ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }),
         ];
       }
@@ -645,7 +659,10 @@ async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | 
         });
         if (run) return [new Paragraph({ children: [run], spacing: { after: 180 } })];
       }
-      return sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } });
+      return [
+        fallbackNotice(false),
+        ...await sectionToDocx({ kind: "code", data: { body: section.data.source, language: section.data.lang } }),
+      ];
     }
     case "quote":
       return [

@@ -358,6 +358,15 @@ td.wf-page-cell {
   max-width: 100%;
   height: auto;
 }
+.wf-doc .pm-diagram-fallback {
+  margin: 14px 0 0;
+  padding: 7px 10px;
+  background: #f2f0eb;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
 
 /* ============ 图片 ============ */
 .wf-doc figure.doc-image { margin: 14px 0; text-align: center; break-inside: avoid; }

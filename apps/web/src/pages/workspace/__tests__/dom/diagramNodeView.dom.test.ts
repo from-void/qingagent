@@ -1310,6 +1310,58 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
+  it("合法空 drawio 显示可恢复占位，不误报生成失败或铺开 XML", async () => {
+    const emptySource = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
+    const editor = await mountEditor({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [{
+        type: "diagram",
+        attrs: { blockId: "drawio-empty", lang: "drawio", source: emptySource, svg: null },
+      }],
+    } as unknown as PmDoc);
+    try {
+      await flush(4);
+      const placeholder = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-empty");
+      expect(placeholder?.textContent).toBe("空图表（还没有内容，双击编辑）");
+      expect(editor.view.dom.querySelector(".pm-diagram-error")).toBeNull();
+      expect(editor.view.dom.textContent).not.toContain("<mxGraphModel");
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("空 Mermaid 占位有可点击高度，未预选时双击仍能恢复源码编辑", async () => {
+    const editor = await mountEditor({
+      type: "doc",
+      attrs: { schemaVersion: 1 },
+      content: [
+        { type: "paragraph", attrs: { blockId: "p-before" }, content: [{ type: "text", text: "前导" }] },
+        { type: "diagram", attrs: { blockId: "mermaid-empty", lang: "mermaid", source: "", svg: null } },
+      ],
+    } as unknown as PmDoc);
+    try {
+      await act(async () => {
+        editor.chain().setTextSelection(1).run();
+      });
+      await flush(4);
+      const placeholder = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-empty");
+      const diagramView = editor.view.dom.querySelector<HTMLElement>(".pm-diagram-view");
+      expect(placeholder?.textContent).toBe("空图表");
+      expect(diagramViewCss).toMatch(/\.pm-diagram-empty\s*\{[^}]*min-height:\s*160px;/s);
+      expect(editor.view.dom.querySelector(".pm-diagram.is-selected")).toBeNull();
+
+      await act(async () => {
+        diagramView!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        diagramView!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+      });
+      await flush(4);
+      expect(editor.view.dom.querySelector<HTMLTextAreaElement>(".pm-diagram-source")).not.toBeNull();
+    } finally {
+      await unmount(editor);
+    }
+  });
+
   it("渲染失败(mermaid 抛错)时显示错误回退而不是崩溃", async () => {
     const mermaid = (await import("mermaid")).default;
     (mermaid.render as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Parse error: bad"));

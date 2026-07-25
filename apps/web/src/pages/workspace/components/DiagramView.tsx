@@ -13,7 +13,7 @@ import {
 } from "@qingagent/pm-schema";
 import { useToast } from "../../../system";
 import { renderMermaid } from "./mermaidRender";
-import { renderDrawio } from "./drawioRender";
+import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { openDrawioEditor } from "./drawioEditorLauncher";
 import { DiagramSvgView } from "./MermaidPreview";
 import { DiagramRenderer } from "./diagram/DiagramRenderer";
@@ -54,6 +54,8 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const selectedBeforeMouseDownRef = useRef(false);
   const diagramType = lang === "mermaid" ? detectType(source) : null;
   const supportsVisualEdit = editable && (lang === "drawio" || isVisualDiagramType(diagramType));
+  const emptyDrawio = lang === "drawio" && isEmptyDrawioSource(source);
+  const emptyDiagram = !source.trim() || emptyDrawio;
   const storedHeight =
     typeof node.attrs.height === "number" && node.attrs.height > 0 ? Math.round(node.attrs.height) : null;
   const storedWidth =
@@ -124,6 +126,12 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
       // 避免把过期 svg setState / 写回 node.attrs(否则新 source 下会缓存旧图)。
       const token = ++renderTokenRef.current;
       if (!trimmed) {
+        renderedSourceRef.current = null;
+        setSvg(null);
+        setError(null);
+        return;
+      }
+      if (lang === "drawio" && isEmptyDrawioSource(trimmed)) {
         renderedSourceRef.current = null;
         setSvg(null);
         setError(null);
@@ -384,7 +392,7 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
               return;
             }
             // 冷双击开始前块未选中时,本次手势只负责选中;已选中的块才允许双击进编辑。
-            if (!selectedBeforeMouseDownRef.current) return;
+            if (!emptyDiagram && !selectedBeforeMouseDownRef.current) return;
             event.preventDefault();
             if (supportsVisualEdit) {
               openVisualEdit();
@@ -422,7 +430,9 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
               </button>
             </div>
           )}
-          {error ? (
+          {emptyDrawio ? (
+            <div className="pm-diagram-empty">空图表（还没有内容，双击编辑）</div>
+          ) : error ? (
             <pre className="pm-diagram-error">图表生成失败，请检查内容后重试{"\n\n"}{source}</pre>
           ) : (
             <DiagramRenderer

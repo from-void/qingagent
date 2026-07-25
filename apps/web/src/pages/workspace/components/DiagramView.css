@@ -115,6 +115,12 @@
   display: block;
 }
 .pm-diagram-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 160px;
   color: var(--ink-3, #999);
   font-size: 13px;
   padding: 20px;

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import JSZip from "jszip";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { setDocRenderLogger } from "../renderLogger.js";
 import { withRenderedDiagrams } from "../export/mermaidServer.js";
+import { toDocx } from "../export/toDocx.js";
 import { toHtml } from "../export/toHtml.js";
 
 const DRAWIO_SOURCE = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
@@ -45,6 +47,17 @@ describe("drawio 导出缓存与服务端兜底", () => {
       expect.objectContaining({ sourceBytes: expect.any(Number) }),
     );
     const html = toHtml(prepared);
+    expect(html).toContain("draw.io 图表源码（未能生成预览，可复制到 draw.io 查看）");
     expect(html).toContain("&lt;mxGraphModel&gt;");
+  });
+
+  it("DOCX 无缓存回退同样先说明图表类型，再保留源码", async () => {
+    setDocRenderLogger({ warn: vi.fn() });
+    const xml = await new JSZip()
+      .loadAsync(await toDocx(drawioDoc(null)))
+      .then((zip) => zip.file("word/document.xml")!.async("string"));
+
+    expect(xml).toContain("draw.io 图表源码（未能生成预览，可复制到 draw.io 查看）");
+    expect(xml).toContain("&lt;mxGraphModel&gt;");
   });
 });

@@ -1,6 +1,6 @@
 # 图表色板
 
-所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。Mermaid 每图最多四个语义 `classDef`；draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
+所有色板都遵守：容器浅填充加深描边、组内节点白底加组色 2px 描边、连线统一专属灰、强调色不超过 10%。Mermaid 每图最多四个语义 `classDef`；每个节点都必须挂到某个 `classDef` 类（用 `class` 语句逐节点点名），未挂类节点会吃主题默认底色、破坏整板；`subgraph` 容器颜色只靠 init 的 `clusterBkg` / `clusterBorder` 控制，不要给 `subgraph` 写 `style` 行。draw.io 样式串必须完整复制，不能遗漏安全的 `html=0`、边框、字号与边标签白底。
 
 ## Token 总表
 
@@ -19,7 +19,7 @@
 ### 青简纸墨
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#FAF6EC','primaryColor':'#FFFFFF','primaryBorderColor':'#2F2A22','primaryTextColor':'#2F2A22','secondaryColor':'#FFFFFF','secondaryBorderColor':'#A8823F','tertiaryColor':'#EFE7D6','tertiaryBorderColor':'#2F2A22','lineColor':'#B3A791','edgeLabelBackground':'#FFFFFF','textColor':'#2F2A22','fontSize':'14px'}}}%%
+%%{init: {'theme':'base','themeVariables':{'background':'#FAF6EC','primaryColor':'#FFFFFF','primaryBorderColor':'#2F2A22','primaryTextColor':'#2F2A22','secondaryColor':'#FFFFFF','secondaryBorderColor':'#A8823F','tertiaryColor':'#EFE7D6','tertiaryBorderColor':'#2F2A22','mainBkg':'#FFFFFF','nodeBorder':'#2F2A22','clusterBkg':'#EFE7D6','clusterBorder':'#2F2A22','lineColor':'#B3A791','edgeLabelBackground':'#FFFFFF','textColor':'#2F2A22','fontSize':'14px'}}}%%
 flowchart LR
   classDef ink fill:#FFFFFF,stroke:#2F2A22,stroke-width:2px,color:#2F2A22,rx:8px,ry:8px
   classDef gold fill:#FFFFFF,stroke:#A8823F,stroke-width:2px,color:#2F2A22,rx:8px,ry:8px
@@ -30,7 +30,7 @@ flowchart LR
 ### 经典
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#5178C6','primaryTextColor':'#1F2329','lineColor':'#BBBFC4','edgeLabelBackground':'#FFFFFF','textColor':'#1F2329','fontSize':'14px'}}}%%
+%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#5178C6','primaryTextColor':'#1F2329','mainBkg':'#FFFFFF','nodeBorder':'#5178C6','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6','lineColor':'#BBBFC4','edgeLabelBackground':'#FFFFFF','textColor':'#1F2329','fontSize':'14px'}}}%%
 flowchart LR
   classDef blue fill:#FFFFFF,stroke:#5178C6,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
   classDef purple fill:#FFFFFF,stroke:#8569CB,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
@@ -44,7 +44,7 @@ flowchart LR
 ### 商务
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#4A6FA5','primaryTextColor':'#1F2329','lineColor':'#718BAE','edgeLabelBackground':'#FFFFFF','textColor':'#1F2329','fontSize':'14px'}}}%%
+%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#4A6FA5','primaryTextColor':'#1F2329','mainBkg':'#FFFFFF','nodeBorder':'#4A6FA5','clusterBkg':'#EDF2F7','clusterBorder':'#4A6FA5','lineColor':'#718BAE','edgeLabelBackground':'#FFFFFF','textColor':'#1F2329','fontSize':'14px'}}}%%
 flowchart LR
   classDef zone fill:#FFFFFF,stroke:#4A6FA5,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
   classDef team fill:#FFFFFF,stroke:#5A7B9A,stroke-width:2px,color:#1F2329,rx:8px,ry:8px
@@ -57,7 +57,7 @@ flowchart LR
 ### 极简
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#868E96','primaryTextColor':'#343A40','lineColor':'#ADB5BD','edgeLabelBackground':'#FFFFFF','textColor':'#343A40','fontSize':'14px'}}}%%
+%%{init: {'theme':'base','themeVariables':{'background':'#FFFFFF','primaryColor':'#FFFFFF','primaryBorderColor':'#868E96','primaryTextColor':'#343A40','mainBkg':'#FFFFFF','nodeBorder':'#ADB5BD','clusterBkg':'#F8F9FA','clusterBorder':'#DEE2E6','lineColor':'#ADB5BD','edgeLabelBackground':'#FFFFFF','textColor':'#343A40','fontSize':'14px'}}}%%
 flowchart LR
   classDef light fill:#FFFFFF,stroke:#DEE2E6,stroke-width:2px,color:#343A40,rx:8px,ry:8px
   classDef medium fill:#FFFFFF,stroke:#ADB5BD,stroke-width:2px,color:#343A40,rx:8px,ry:8px
@@ -77,6 +77,10 @@ config:
     primaryColor: "#FFFFFF"
     primaryBorderColor: "#192B1B"
     primaryTextColor: "#192B1B"
+    mainBkg: "#FFFFFF"
+    nodeBorder: "#192B1B"
+    clusterBkg: "#E8E4D6"
+    clusterBorder: "#192B1B"
     lineColor: "#8E9588"
     edgeLabelBackground: "#FFFFFF"
     fontSize: "14px"

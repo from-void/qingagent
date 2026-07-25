@@ -195,6 +195,7 @@ export interface ElementIdMap {
 export interface RewriteResult {
   source: string;
   newNodeId?: string;
+  newSubgraphId?: string;
   idMap?: ElementIdMap;
   ok: boolean;
   error?: string;
@@ -322,6 +323,176 @@ export function applyEdit(source: string, op: EditOp): RewriteResult {
   const parsed = parseDiagram(source);
   if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
   return registry[parsed.model.type].rewrite(source, parsed, op);
+}
+
+/**
+ * 把指定 flowchart 节点包进新 subgraph。连续独立声明会原位包裹；其它情况只迁移节点声明，
+ * 不重排边、注释、样式等无关源码。parentSubgraph 省略时在根级创建。
+ */
+export function wrapNodesInSubgraph(
+  source: string,
+  nodeIds: string[],
+  title: string,
+  parentSubgraph?: string | null,
+): RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "wrapNodesInSubgraph");
+  const model = parsed.model;
+  const nextTitle = title.trim();
+  if (!nextTitle) return { ok: false, source, error: "分区名称不能为空" };
+  const parent = parentSubgraph
+    ? model.subgraphs.find((subgraph) => subgraph.id === parentSubgraph)
+    : undefined;
+  if (parentSubgraph && !parent) return { ok: false, source, error: "父分区不存在" };
+
+  const uniqueNodeIds = [...new Set(nodeIds)];
+  const selectedNodes = uniqueNodeIds.map((nodeId) => model.nodes.find((node) => node.id === nodeId));
+  if (selectedNodes.some((node) => !node)) return { ok: false, source, error: "待包裹节点不存在" };
+  const expectedParentPath = parent ? [...parent.scopePath, parent.id] : [];
+  if (selectedNodes.some((node) => !samePath(node!.scopePath, expectedParentPath))) {
+    return { ok: false, source, error: "节点不在同一父分区内" };
+  }
+
+  const reservedIds = [...model.nodes.map((node) => node.id), ...model.subgraphs.map((subgraph) => subgraph.id)];
+  const newSubgraphId = uniqueId(reservedIds, safeMermaidId(nextTitle, "subgraph"));
+  const lineEnding = preferredLineEnding(source);
+  const wrapperIndent = flowScopeContentIndent(source, model, parent);
+  const inlineRange = findInlineSubgraphWrapRange(source, selectedNodes as FlowGraph["nodes"], uniqueNodeIds);
+  if (inlineRange) {
+    const header = `${wrapperIndent}subgraph ${newSubgraphId}["${safeMermaidLabel(nextTitle)}"]${lineEnding}`;
+    const footerPrefix = inlineRange.endsWithLineBreak ? "" : lineEnding;
+    const footer = `${footerPrefix}${wrapperIndent}end${inlineRange.endsWithLineBreak ? lineEnding : ""}`;
+    const nextSource = applyEdits(source, [
+      { start: inlineRange.start, end: inlineRange.start, text: header },
+      { start: inlineRange.end, end: inlineRange.end, text: footer },
+    ]);
+    return verifyFlowSubgraphRewrite(source, nextSource, {
+      subgraphId: newSubgraphId,
+      nodeIds: uniqueNodeIds,
+      expectedScopePath: [...expectedParentPath, newSubgraphId],
+      newSubgraphId,
+    });
+  }
+
+  const relocation = collectFlowNodeRelocation(source, selectedNodes as FlowGraph["nodes"]);
+  if (!relocation.ok) return { ok: false, source, error: relocation.error };
+  const insertionAt = parent ? flowSubgraphClosingLine(source, parent)?.start : source.length;
+  if (insertionAt === undefined) return { ok: false, source, error: "父分区结束位置不可定位" };
+  const declarationIndent = `${wrapperIndent}  `;
+  const block = [
+    `${wrapperIndent}subgraph ${newSubgraphId}["${safeMermaidLabel(nextTitle)}"]`,
+    ...relocation.declarations.map((declaration) => `${declarationIndent}${declaration}`),
+    `${wrapperIndent}end`,
+  ].join(lineEnding) + lineEnding;
+  const nextSource = applyEdits(source, [
+    ...relocation.edits,
+    { start: insertionAt, end: insertionAt, text: sourceInsertionPrefix(source, insertionAt) + block },
+  ]);
+  return verifyFlowSubgraphRewrite(source, nextSource, {
+    subgraphId: newSubgraphId,
+    nodeIds: uniqueNodeIds,
+    expectedScopePath: [...expectedParentPath, newSubgraphId],
+    newSubgraphId,
+  });
+}
+
+/** 把 flowchart 节点迁入目标 subgraph；targetSubgraph=null 表示迁回根级。 */
+export function moveNodeToSubgraph(
+  source: string,
+  nodeId: string,
+  targetSubgraph: string | null,
+): RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "moveNodeToSubgraph");
+  const model = parsed.model;
+  const node = model.nodes.find((item) => item.id === nodeId);
+  if (!node) return { ok: false, source, error: "节点不存在" };
+  const target = targetSubgraph
+    ? model.subgraphs.find((subgraph) => subgraph.id === targetSubgraph)
+    : undefined;
+  if (targetSubgraph && !target) return { ok: false, source, error: "目标分区不存在" };
+  const expectedScopePath = target ? [...target.scopePath, target.id] : [];
+  if (samePath(node.scopePath, expectedScopePath)) return { ok: true, source };
+
+  const relocation = collectFlowNodeRelocation(source, [node]);
+  if (!relocation.ok) return { ok: false, source, error: relocation.error };
+  const insertionAt = target ? flowSubgraphClosingLine(source, target)?.start : source.length;
+  if (insertionAt === undefined) return { ok: false, source, error: "目标分区结束位置不可定位" };
+  const indent = flowScopeContentIndent(source, model, target);
+  const lineEnding = preferredLineEnding(source);
+  const declaration = relocation.declarations[0] ?? `${node.id}["${safeMermaidLabel(node.label)}"]`;
+  const nextSource = applyEdits(source, [
+    ...relocation.edits,
+    {
+      start: insertionAt,
+      end: insertionAt,
+      text: `${sourceInsertionPrefix(source, insertionAt)}${indent}${declaration}${lineEnding}`,
+    },
+  ]);
+  return verifyFlowSubgraphRewrite(source, nextSource, {
+    nodeIds: [nodeId],
+    expectedScopePath,
+  });
+}
+
+/** 只改 subgraph 声明行中的标题文本，稳定 id 保持不变。 */
+export function renameSubgraph(source: string, subgraphId: string, title: string): RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "renameSubgraph");
+  const subgraph = parsed.model.subgraphs.find((item) => item.id === subgraphId);
+  if (!subgraph) return { ok: false, source, error: "分区不存在" };
+  const nextTitle = title.trim();
+  if (!nextTitle) return { ok: false, source, error: "分区名称不能为空" };
+  if (subgraph.label === nextTitle) return { ok: true, source };
+  if (!isStableMermaidId(subgraph.id)) return { ok: false, source, error: "分区 id 不稳定，无法安全改名" };
+
+  const declaration = flowSubgraphDeclarationLine(source, subgraph);
+  if (!declaration) return { ok: false, source, error: "分区声明位置不可定位" };
+  const labelSpan = flowSubgraphLabelSpan(declaration, subgraph.id);
+  const nextSource = labelSpan
+    ? applyEdits(source, [{ start: labelSpan.start, end: labelSpan.end, text: safeMermaidLabel(nextTitle) }])
+    : applyEdits(source, [{
+        start: declaration.bodyStart,
+        end: declaration.bodyEnd,
+        text: `${declaration.indent}subgraph ${subgraph.id}["${safeMermaidLabel(nextTitle)}"]`,
+      }]);
+  return verifyFlowSubgraphRewrite(source, nextSource, {
+    subgraphId,
+    expectedTitle: nextTitle,
+  });
+}
+
+/** 解散 subgraph，仅移除它自己的声明行和配对 end；节点/子分区自然回到父级。 */
+export function dissolveSubgraph(source: string, subgraphId: string): RewriteResult {
+  const parsed = parseDiagram(source);
+  if (!parsed.ok) return { ok: false, source, error: parsed.error ?? "图表解析失败" };
+  if (parsed.model.type !== "flowchart") return unsupportedRewrite(source, "dissolveSubgraph");
+  const model = parsed.model;
+  const subgraph = model.subgraphs.find((item) => item.id === subgraphId);
+  if (!subgraph) return { ok: false, source, error: "分区不存在" };
+  if (model.edges.some((edge) => edge.source === subgraphId || edge.target === subgraphId)) {
+    return { ok: false, source, error: "分区仍被连线引用，无法安全解散" };
+  }
+  const declaration = flowSubgraphDeclarationLine(source, subgraph);
+  const closing = flowSubgraphClosingLine(source, subgraph);
+  if (!declaration || !closing) return { ok: false, source, error: "分区边界位置不可定位" };
+  const expectedParentPath = subgraph.scopePath;
+  const directNodeIds = model.nodes
+    .filter((node) => samePath(node.scopePath, [...subgraph.scopePath, subgraph.id]))
+    .map((node) => node.id);
+  const nextSource = applyEdits(source, [
+    { start: declaration.start, end: declaration.end, text: "" },
+    { start: closing.start, end: closing.end, text: "" },
+  ]);
+  const verified = verifyFlowSubgraphRewrite(source, nextSource, {
+    removedSubgraphId: subgraphId,
+    nodeIds: directNodeIds,
+    expectedScopePath: expectedParentPath,
+  });
+  return verified.ok ? verified : { ok: false, source, error: verified.error };
 }
 
 export function getStableElementIds(model: DiagramModel): { nodes: Set<string>; edges: Set<string> } {
@@ -1246,11 +1417,6 @@ function rewriteFlowchart(source: string, p: ParseResult, op: EditOp): RewriteRe
   if (op.kind === "connectEdge") {
     const endpointError = connectEndpointError(model.nodes.map((n) => n.id), op);
     if (endpointError) return { ok: false, source, error: endpointError };
-    const sourceNode = model.nodes.find((n) => n.id === op.source);
-    const targetNode = model.nodes.find((n) => n.id === op.target);
-    if ((sourceNode && flowNodeTouchesSubgraph(model, sourceNode)) || (targetNode && flowNodeTouchesSubgraph(model, targetNode))) {
-      return { ok: false, source, error: "subgraph 内节点连边不做语义编辑" };
-    }
     return { ok: true, source: insertBeforeSourceEnd(source, `  ${op.source} -->${op.label ? `|${safeMermaidLabel(op.label)}|` : ""} ${op.target}\n`) };
   }
   if (op.kind === "deleteEdge") {
@@ -2812,6 +2978,234 @@ function applyEdits(source: string, edits: Edit[]): string {
     out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
   }
   return out;
+}
+
+type FlowSourceLine = LineInfo & {
+  indent: string;
+  bodyStart: number;
+  bodyEnd: number;
+};
+
+type FlowNodeRelocation =
+  | { ok: true; edits: Edit[]; declarations: string[] }
+  | { ok: false; error: string };
+
+function preferredLineEnding(source: string): "\n" | "\r\n" {
+  return source.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function sourceInsertionPrefix(source: string, insertionAt: number): string {
+  if (insertionAt <= 0 || source[insertionAt - 1] === "\n") return "";
+  return preferredLineEnding(source);
+}
+
+function sourceLineAt(lines: LineInfo[], offset: number): LineInfo | undefined {
+  return lines.find((line) => offset >= line.start && offset < Math.max(line.end, line.start + 1));
+}
+
+function flowSourceLine(line: LineInfo): FlowSourceLine {
+  const indent = line.text.match(/^\s*/)?.[0].replace(/\r$/, "") ?? "";
+  const bodyEnd = line.text.endsWith("\r") ? line.bodyEnd - 1 : line.bodyEnd;
+  return { ...line, indent, bodyStart: line.start, bodyEnd };
+}
+
+function parseFlowNodeRefAtSource(source: string, lines: LineInfo[], ref: Span): {
+  line: FlowSourceLine;
+  parsed: ParsedFlowNodeRef;
+  standalone: boolean;
+} | null {
+  const line = sourceLineAt(lines, ref.start);
+  if (!line) return null;
+  const sourceLine = flowSourceLine(line);
+  const parsed = parseFlowNodeRef(source.slice(ref.start, sourceLine.bodyEnd), ref.start);
+  if (!parsed) return null;
+  const before = source.slice(sourceLine.bodyStart, ref.start);
+  const after = source.slice(parsed.span.end, sourceLine.bodyEnd);
+  return {
+    line: sourceLine,
+    parsed,
+    standalone: before.trim().length === 0 && after.trim().length === 0,
+  };
+}
+
+function collectFlowNodeRelocation(source: string, nodes: FlowGraph["nodes"]): FlowNodeRelocation {
+  const lines = getLines(source);
+  const edits: Edit[] = [];
+  const declarations: string[] = [];
+  const removedLineStarts = new Set<number>();
+  const removedShapeSpans = new Set<string>();
+
+  for (const node of nodes) {
+    let declaration: string | undefined;
+    for (const ref of node.sourceRefs) {
+      const located = parseFlowNodeRefAtSource(source, lines, ref);
+      if (!located || located.parsed.id !== node.id || !located.parsed.declared) continue;
+      const { line, parsed, standalone } = located;
+      if (!parsed.shapeOpenSpan || !parsed.shapeCloseSpan) {
+        return { ok: false, error: `节点 ${node.id} 使用了无法安全迁移的声明语法` };
+      }
+      declaration ??= source.slice(ref.start, parsed.shapeCloseSpan.end);
+      if (standalone && parsed.classNames.length === 0 && !parsed.unsupported) {
+        if (!removedLineStarts.has(line.start)) {
+          edits.push({ start: line.start, end: line.end, text: "" });
+          removedLineStarts.add(line.start);
+        }
+        continue;
+      }
+      const shapeSpan = { start: parsed.shapeOpenSpan.start, end: parsed.shapeCloseSpan.end };
+      const key = `${shapeSpan.start}:${shapeSpan.end}`;
+      if (!removedShapeSpans.has(key)) {
+        edits.push({ ...shapeSpan, text: "" });
+        removedShapeSpans.add(key);
+      }
+    }
+    declarations.push(declaration ?? formatFlowModelNodeDeclaration(node));
+  }
+  return { ok: true, edits, declarations };
+}
+
+function formatFlowModelNodeDeclaration(node: FlowGraph["nodes"][number]): string {
+  const syntax = flowShapeSyntax(normalizeFlowShapeName(node.shape));
+  const label = `"${safeMermaidLabel(node.label)}"`;
+  return syntax
+    ? `${node.id}${syntax.open}${label}${syntax.close}`
+    : `${node.id}[${label}]`;
+}
+
+function findInlineSubgraphWrapRange(
+  source: string,
+  nodes: FlowGraph["nodes"],
+  selectedNodeIds: string[],
+): { start: number; end: number; endsWithLineBreak: boolean } | null {
+  if (nodes.length === 0) return null;
+  const lines = getLines(source);
+  const selected = new Set(selectedNodeIds);
+  const declarationByLine = new Map<number, string>();
+
+  for (const node of nodes) {
+    const declaredRefs = node.sourceRefs
+      .map((ref) => parseFlowNodeRefAtSource(source, lines, ref))
+      .filter((located): located is NonNullable<typeof located> =>
+        !!located && located.parsed.id === node.id && located.parsed.declared,
+      );
+    if (declaredRefs.length !== 1 || !declaredRefs[0]!.standalone) return null;
+    declarationByLine.set(declaredRefs[0]!.line.start, node.id);
+  }
+
+  const declarationLines = [...declarationByLine.keys()].sort((left, right) => left - right);
+  const start = declarationLines[0];
+  const lastStart = declarationLines.at(-1);
+  if (start === undefined || lastStart === undefined) return null;
+  const lastLine = lines.find((line) => line.start === lastStart);
+  if (!lastLine) return null;
+  const end = lastLine.end;
+  for (const line of lines) {
+    if (line.start < start || line.start >= end) continue;
+    const nodeId = declarationByLine.get(line.start);
+    const trimmed = line.text.trim();
+    if (nodeId ? selected.has(nodeId) : trimmed.length === 0 || trimmed.startsWith("%%")) continue;
+    return null;
+  }
+  return {
+    start,
+    end,
+    endsWithLineBreak: source.slice(lastLine.start, lastLine.end).endsWith("\n"),
+  };
+}
+
+function flowSubgraphDeclarationLine(source: string, subgraph: FlowSubgraph): FlowSourceLine | null {
+  const line = sourceLineAt(getLines(source), subgraph.span.start);
+  if (!line || !/^\s*subgraph\b/i.test(line.text)) return null;
+  return flowSourceLine(line);
+}
+
+function flowSubgraphClosingLine(source: string, subgraph: FlowSubgraph): FlowSourceLine | null {
+  const lines = getLines(source)
+    .filter((line) => line.start >= subgraph.span.start && line.end <= subgraph.span.end)
+    .reverse();
+  const line = lines.find((candidate) => /^\s*end\s*$/i.test(candidate.text));
+  return line ? flowSourceLine(line) : null;
+}
+
+function flowSubgraphLabelSpan(line: FlowSourceLine, subgraphId: string): Span | null {
+  const body = line.text.replace(/\r$/, "");
+  const keyword = body.match(/^(\s*subgraph\s+)/i);
+  if (!keyword) return null;
+  const restStart = keyword[0].length;
+  const rest = body.slice(restStart);
+  const idMatch = rest.match(/^([A-Za-z_][\p{L}\p{N}_-]*)/u);
+  if (!idMatch || idMatch[1] !== subgraphId) return null;
+  let cursor = restStart + idMatch[0].length;
+  while (cursor < body.length && /\s/.test(body[cursor]!)) cursor += 1;
+  if (body[cursor] !== "[") return null;
+  const close = body.lastIndexOf("]");
+  if (close <= cursor) return null;
+  let labelStart = cursor + 1;
+  let labelEnd = close;
+  while (labelStart < labelEnd && /\s/.test(body[labelStart]!)) labelStart += 1;
+  while (labelEnd > labelStart && /\s/.test(body[labelEnd - 1]!)) labelEnd -= 1;
+  const quote = body[labelStart];
+  if ((quote === '"' || quote === "'" || quote === "`") && body[labelEnd - 1] === quote) {
+    labelStart += 1;
+    labelEnd -= 1;
+  }
+  return { start: line.start + labelStart, end: line.start + labelEnd };
+}
+
+function flowScopeContentIndent(
+  source: string,
+  model: FlowGraph,
+  parent: FlowSubgraph | undefined,
+): string {
+  if (parent) {
+    const declaration = flowSubgraphDeclarationLine(source, parent);
+    return `${declaration?.indent ?? ""}  `;
+  }
+  const header = getLines(source).find((line) => /^\s*(?:flowchart|graph)\s+/i.test(line.text));
+  const indent = header?.text.match(/^\s*/)?.[0].replace(/\r$/, "") ?? "";
+  void model;
+  return `${indent}  `;
+}
+
+function verifyFlowSubgraphRewrite(
+  originalSource: string,
+  nextSource: string,
+  expected: {
+    subgraphId?: string;
+    removedSubgraphId?: string;
+    expectedTitle?: string;
+    nodeIds?: string[];
+    expectedScopePath?: string[];
+    newSubgraphId?: string;
+  },
+): RewriteResult {
+  const reparsed = parseDiagram(nextSource);
+  if (!reparsed.ok || reparsed.model.type !== "flowchart") {
+    return { ok: false, source: originalSource, error: reparsed.error ?? "分区改写后无法重新解析" };
+  }
+  if (expected.removedSubgraphId && reparsed.model.subgraphs.some((item) => item.id === expected.removedSubgraphId)) {
+    return { ok: false, source: originalSource, error: "分区解散后仍残留声明" };
+  }
+  if (expected.subgraphId) {
+    const subgraph = reparsed.model.subgraphs.find((item) => item.id === expected.subgraphId);
+    if (!subgraph) return { ok: false, source: originalSource, error: "分区改写后未能重新定位" };
+    if (expected.expectedTitle !== undefined && subgraph.label !== expected.expectedTitle) {
+      return { ok: false, source: originalSource, error: "分区标题改写后未能 round-trip" };
+    }
+  }
+  if (expected.nodeIds && expected.expectedScopePath) {
+    for (const nodeId of expected.nodeIds) {
+      const node = reparsed.model.nodes.find((item) => item.id === nodeId);
+      if (!node || !samePath(node.scopePath, expected.expectedScopePath)) {
+        return { ok: false, source: originalSource, error: `节点 ${nodeId} 的分区归属改写失败` };
+      }
+    }
+  }
+  return {
+    ok: true,
+    source: nextSource,
+    ...(expected.newSubgraphId ? { newSubgraphId: expected.newSubgraphId } : {}),
+  };
 }
 
 function dedupeEdits(edits: Edit[]): Edit[] {

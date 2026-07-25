@@ -3,14 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   applyEdit,
   carryOverDiagramOverlay,
+  dissolveSubgraph,
   filterStableOverlay,
   getCapabilities,
   getFlowShapeGeometry,
   graphToSvg,
   layoutDiagramGraph,
+  moveNodeToSubgraph,
   normalizeFlowShapeName,
   parseDiagram,
+  renameSubgraph,
   safeMermaid,
+  wrapNodesInSubgraph,
   type BaseEdge,
   type ClassGraph,
   type ErGraph,
@@ -315,7 +319,7 @@ describe("diagram-engine", () => {
     expect(nodeModel.nodes.find((node) => node.id === "C")?.label).toBe("结束");
   });
 
-  it("flowchart 含 subgraph 时允许顶层 addNode 和删除无关孤立节点,拒绝触碰 subgraph", () => {
+  it("flowchart 含 subgraph 时允许顶层 addNode、删除无关孤立节点和连接分区内节点", () => {
     const subgraphBlock = ["  subgraph S", "    Inside[内部] --> Peer[同组]", "  end"].join("\n");
     const source = ["flowchart TD", "  Outside[外部]", subgraphBlock, ""].join("\n");
 
@@ -334,7 +338,151 @@ describe("diagram-engine", () => {
     expect(getCapabilities(parseDiagram(source), { nodeId: "Inside" }).find((cap) => cap.op === "deleteNode")?.enabled).toBe(false);
     expect(applyEdit(source, { kind: "deleteNode", nodeId: "Inside" })).toMatchObject({ ok: false });
     expect(applyEdit(source, { kind: "deleteEdge", edgeId: innerEdge.id })).toMatchObject({ ok: false });
-    expect(applyEdit(source, { kind: "connectEdge", source: "Inside", target: "Outside" })).toMatchObject({ ok: false });
+    const connected = applyEdit(source, { kind: "connectEdge", source: "Inside", target: "Outside" });
+    expect(connected).toMatchObject({ ok: true });
+    expect(connected.source).toContain("Inside --> Outside");
+  });
+
+  it("wrapNodesInSubgraph 原位包裹连续节点并以中文标题 round-trip", () => {
+    const source = [
+      "flowchart TD",
+      "  A[开始]",
+      "  B(处理)",
+      "  C[结束]",
+      "  A --> B",
+      "",
+    ].join("\n");
+    const wrapped = wrapNodesInSubgraph(source, ["A", "B"], "核心流程");
+    expect(wrapped.ok).toBe(true);
+    expect(wrapped.newSubgraphId).toBe("subgraph_核心流程");
+    expect(wrapped.source).toBe([
+      "flowchart TD",
+      '  subgraph subgraph_核心流程["核心流程"]',
+      "  A[开始]",
+      "  B(处理)",
+      "  end",
+      "  C[结束]",
+      "  A --> B",
+      "",
+    ].join("\n"));
+    const model = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual(["subgraph_核心流程"]);
+    expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual(["subgraph_核心流程"]);
+    expect(model.nodes.find((node) => node.id === "C")?.scopePath).toEqual([]);
+
+    const dissolved = dissolveSubgraph(wrapped.source, wrapped.newSubgraphId!);
+    expect(dissolved).toEqual({ ok: true, source });
+  });
+
+  it("wrapNodesInSubgraph 支持空分区和父分区内嵌，跨父级节点会拒绝", () => {
+    const source = [
+      "flowchart TD",
+      '  subgraph Outer["外层"]',
+      "    A[甲]",
+      "    B[乙]",
+      "  end",
+      "  C[丙]",
+      "",
+    ].join("\n");
+    const empty = wrapNodesInSubgraph(source, [], "空分区", "Outer");
+    expect(empty.ok).toBe(true);
+    expect(empty.source).toContain('    subgraph subgraph_空分区["空分区"]\n    end\n  end');
+    expect((parseDiagram(empty.source).model as FlowGraph).subgraphs.find((item) => item.id === "subgraph_空分区")?.scopePath).toEqual(["Outer"]);
+
+    const nested = wrapNodesInSubgraph(source, ["A", "B"], "内层", "Outer");
+    expect(nested.ok).toBe(true);
+    expect((parseDiagram(nested.source).model as FlowGraph).subgraphs.find((item) => item.id === "subgraph_内层")?.scopePath).toEqual(["Outer"]);
+    expect(dissolveSubgraph(nested.source, "subgraph_内层").source).toBe(source);
+
+    const crossed = wrapNodesInSubgraph(source, ["A", "C"], "跨界");
+    expect(crossed).toMatchObject({ ok: false, source, error: "节点不在同一父分区内" });
+  });
+
+  it("wrapNodesInSubgraph 迁移内联声明时只剥离目标形状，边和 class/style 字节保持", () => {
+    const source = [
+      "flowchart LR",
+      "  A[甲] -->|保持| B[乙]",
+      "  class A hot",
+      "  classDef hot fill:#fff,stroke:#333",
+      "",
+    ].join("\n");
+    const wrapped = wrapNodesInSubgraph(source, ["A"], "甲组");
+    expect(wrapped.ok).toBe(true);
+    expect(wrapped.source).toContain("  A -->|保持| B[乙]");
+    expect(wrapped.source).toContain("  class A hot");
+    expect(wrapped.source).toContain("  classDef hot fill:#fff,stroke:#333");
+    expect(wrapped.source).toContain("    A[甲]");
+    const model = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(model.nodes.find((node) => node.id === "A")).toMatchObject({ label: "甲", scopePath: ["subgraph_甲组"] });
+    expect(model.nodes.find((node) => node.id === "B")).toMatchObject({ label: "乙", scopePath: [] });
+  });
+
+  it("moveNodeToSubgraph 可迁入最深层并迁回父级/根级", () => {
+    const source = [
+      "flowchart TD",
+      "  A[甲]",
+      '  subgraph Outer["外层"]',
+      '    subgraph Inner["内层"]',
+      "      B[乙]",
+      "    end",
+      "  end",
+      "  A --> B",
+      "",
+    ].join("\n");
+    const movedIn = moveNodeToSubgraph(source, "A", "Inner");
+    expect(movedIn.ok).toBe(true);
+    expect((parseDiagram(movedIn.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual(["Outer", "Inner"]);
+
+    const movedToParent = moveNodeToSubgraph(movedIn.source, "A", "Outer");
+    expect(movedToParent.ok).toBe(true);
+    expect((parseDiagram(movedToParent.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual(["Outer"]);
+
+    const movedOut = moveNodeToSubgraph(movedToParent.source, "A", null);
+    expect(movedOut.ok).toBe(true);
+    expect((parseDiagram(movedOut.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(movedOut.source).toContain("  A --> B");
+  });
+
+  it("renameSubgraph 只改标题 span，dissolveSubgraph 解散后子分区和节点归父", () => {
+    const source = [
+      "flowchart TD",
+      "  %% keep",
+      '  subgraph Outer["旧标题"]',
+      "    A[甲]",
+      '    subgraph Inner["内层"]',
+      "      B[乙]",
+      "    end",
+      "  end",
+      "  style A fill:#fff",
+      "",
+    ].join("\n");
+    const renamed = renameSubgraph(source, "Outer", "新标题");
+    expect(renamed.ok).toBe(true);
+    expect(renamed.source).toBe(source.replace('"旧标题"', '"新标题"'));
+    expect((parseDiagram(renamed.source).model as FlowGraph).subgraphs.find((item) => item.id === "Outer")?.label).toBe("新标题");
+
+    const dissolved = dissolveSubgraph(renamed.source, "Outer");
+    expect(dissolved.ok).toBe(true);
+    expect(dissolved.source).toContain("  %% keep");
+    expect(dissolved.source).toContain("  style A fill:#fff");
+    const model = parseDiagram(dissolved.source).model as FlowGraph;
+    expect(model.subgraphs.find((item) => item.id === "Outer")).toBeUndefined();
+    expect(model.subgraphs.find((item) => item.id === "Inner")?.scopePath).toEqual([]);
+    expect(model.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(model.nodes.find((node) => node.id === "B")?.scopePath).toEqual(["Inner"]);
+  });
+
+  it("真实云原生 fixture 的父分区内 wrap+dissolve 可逐字节还原", () => {
+    const source = readFileSync(new URL("./fixtures-user-cloudnative.mmd", import.meta.url), "utf8");
+    const wrapped = wrapNodesInSubgraph(source, ["Web", "iOS", "Android", "Mini"], "终端子组", "U");
+    expect(wrapped.ok).toBe(true);
+    const wrappedModel = parseDiagram(wrapped.source).model as FlowGraph;
+    expect(wrappedModel.nodes.filter((node) => ["Web", "iOS", "Android", "Mini"].includes(node.id)).every(
+      (node) => node.scopePath.join("/") === "U/subgraph_终端子组",
+    )).toBe(true);
+    const dissolved = dissolveSubgraph(wrapped.source, wrapped.newSubgraphId!);
+    expect(dissolved.ok).toBe(true);
+    expect(dissolved.source).toBe(source);
   });
 
   it("flowchart 删除无关早序边后保留未改边 edgeStyles overlay", () => {

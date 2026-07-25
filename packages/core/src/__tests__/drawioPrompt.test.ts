@@ -104,15 +104,30 @@ describe("图表技能静态提示词契约", () => {
     }
   });
 
-  it("image-gen 只保留 SVG 配图职责和现行文档工具口径", () => {
-    const skill = readSkillFile("image-gen/SKILL.md");
-    expect(skill).toContain("本技能只负责**生成式 SVG 插画资产**");
-    expect(skill).toContain("writeDraft");
-    expect(skill).toContain("editDraft");
-    expect(skill).toContain("readDiff");
-    expect(skill).not.toContain("## ① Mermaid");
-    expect(skill).not.toContain("## ② drawio");
-    expect(skill).not.toContain("generateDoc");
-    expect(skill).not.toContain("AI-IR");
+  it("image-gen 母技能检测 Codex、按需反问，并把执行细则下沉到两个子技能", () => {
+    const parent = readSkillFile("image-gen/SKILL.md");
+    const svg = readSkillFile("image-gen/svg/SKILL.md");
+    const codexImage = readSkillFile("image-gen/codex-image/SKILL.md");
+
+    expect(parent).toContain("`command -v codex`");
+    expect(parent).toContain("`where codex`");
+    expect(parent).toContain("未检测到 Codex 时只有一条可用路线：不反问");
+    expect(parent).toContain("必须单独调用一次 `askUserQuestion`");
+    expect(parent).toContain("内置 SVG 插画");
+    expect(parent).toContain("调度本机 codex 生图");
+    expect(parent).toContain("用户配置的自定义生图模型");
+    expect(parent).not.toContain("照片级写实图当前未接入");
+
+    expect(svg).toContain("本子技能只负责**生成式 SVG 插画资产**");
+    expect(svg).toContain("generateSvg");
+    expect(svg).toContain("editDraft");
+    expect(svg).toContain("readDiff");
+
+    expect(codexImage).toContain("codex exec --ephemeral --skip-git-repo-check");
+    expect(codexImage).toContain("background:true");
+    expect(codexImage).toContain("mastra_workspace_get_process_output");
+    expect(codexImage).toContain("importGeneratedImage");
+    expect(codexImage).toContain("readDiff");
+    expect(codexImage).toContain("禁止复制整段对话");
   });
 });

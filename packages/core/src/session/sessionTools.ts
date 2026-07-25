@@ -33,6 +33,7 @@ import { parseFileTool } from "../tools/parseFile.js";
 import { fetchArticleTool } from "../tools/fetchArticle.js";
 import { webSearchTool } from "../tools/webSearch.js";
 import { generateSvgTool } from "../tools/generateSvg.js";
+import { importGeneratedImageTool } from "../tools/importGeneratedImage.js";
 import { readImageTool } from "../tools/readImage.js";
 import { runJsTool } from "../tools/runJs.js";
 import { showQrTool } from "../tools/showQr.js";
@@ -188,7 +189,10 @@ const CAPABILITY_TOOLS = {
   "browser-ops": {},
   // fetchArticle 是 webSearch 的间接联网路径，也受同一个隐私开关约束。
   "web-search": { webSearch: webSearchTool, fetchArticle: fetchArticleTool },
-  "image-gen": { generateSvg: generateSvgTool },
+  "image-gen": {
+    generateSvg: generateSvgTool,
+    importGeneratedImage: importGeneratedImageTool,
+  },
   "image-reading": { readImage: readImageTool },
   "wechat-official-account": {
     wechat_auth_start: wechatAuthStartTool,
@@ -224,7 +228,7 @@ const MATERIAL_TOOL_SEARCH_TOOLS = {
 
 const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   "web-search": ["webSearch"],
-  "image-gen": ["generateSvg"],
+  "image-gen": ["generateSvg", "importGeneratedImage"],
   "image-reading": ["readImage"],
   "materials": ["parseFile"],
   "doc-calc": ["run_js"],
@@ -429,6 +433,12 @@ export function missingGenericToolResultFields(
       requireBoolean("ok");
       requireString("text");
       requireNullableString("error");
+      break;
+    case "importGeneratedImage":
+      requireString("imageId");
+      requireString("src");
+      if (result.width !== undefined) requireNumber("width");
+      if (result.height !== undefined) requireNumber("height");
       break;
     default:
       break;

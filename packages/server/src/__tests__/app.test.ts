@@ -311,6 +311,16 @@ describe("GET /api/v1/skills", () => {
       "drawio",
       "mermaid",
     ]);
+    expect(byName.get("image-gen")).toMatchObject({
+      label: "画配图",
+      userInvocable: true,
+      tools: ["generateSvg", "importGeneratedImage"],
+    });
+    expect(byName.get("image-gen")?.children).toHaveLength(2);
+    expect(byName.get("image-gen")?.children.map((skill) => skill.name)).toEqual([
+      "codex-image",
+      "svg",
+    ]);
     expect(byName.get("web-search")).toMatchObject({
       label: "联网搜",
       summary: "搜资料、核事实、找出处",
@@ -381,6 +391,8 @@ describe("GET /api/v1/skills", () => {
       "role-review",
       "role",
       "custom-review",
+      "codex-image",
+      "svg",
       "custom",
       "mermaid",
       "drawio",

@@ -17,6 +17,7 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   webSearch: ["web-search"],
   fetchArticle: ["web-search"],
   generateSvg: ["image-gen"],
+  importGeneratedImage: ["image-gen"],
   readImage: ["image-reading"],
   wechat_auth_start: ["wechat-official-account"],
   wechat_auth_status: ["wechat-official-account"],

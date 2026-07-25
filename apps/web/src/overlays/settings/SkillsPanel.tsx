@@ -37,6 +37,7 @@ const TOOL_LABELS: Record<string, string> = {
   fetchArticle: "网页抓取",
   "browser_*": "浏览器操作",
   generateSvg: "生成配图",
+  importGeneratedImage: "导入生成图片",
   readImage: "图像识别",
   run_js: "精确计算",
   parseFile: "文件解析",

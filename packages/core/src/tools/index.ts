@@ -41,6 +41,16 @@ export { feishuAuthStartTool, feishuAuthDomainSchema } from "./vendor/feishu/fei
 export { lexiconListTool, sensitiveScanTool, lexiconManageTool } from "./lexicon.js";
 export { webSearchTool } from "./webSearch.js";
 export { generateSvgTool } from "./generateSvg.js";
+export {
+  importGeneratedImageTool,
+  importGeneratedImageFromPath,
+  IMPORT_GENERATED_IMAGE_MAX_BYTES,
+} from "./importGeneratedImage.js";
+export type {
+  ImportGeneratedImageInput,
+  ImportGeneratedImageOptions,
+  ImportGeneratedImageResult,
+} from "./importGeneratedImage.js";
 export { readImageTool } from "./readImage.js";
 export { runJsTool, runJsInWorker } from "./runJs.js";
 export type { RunJsInput, RunJsResult } from "./runJs.js";

@@ -96,7 +96,7 @@ export const TOOL_LABELS: Record<string, string> = {
   readDocument: "读取文件", searchDocuments: "搜索文件",
   run_js: "运行代码", run_python: "运行代码", readImage: "识别图片",
   // tool-call-input-streaming-start 占位期 generic body 只能靠真实工具名取显示名。
-  writeDraft: "生成草稿", generateSvg: "生成配图", larkConfigInit: "配置飞书",
+  writeDraft: "生成草稿", generateSvg: "生成配图", importGeneratedImage: "导入生成图片", larkConfigInit: "配置飞书",
   show_qr: "生成二维码",
   // askUser 仅为老会话持久化兼容保留，待老会话数据迁移或过期后删除。
   askUser: "确认方向", planDraft: "确认方向", askUserQuestion: "有问题待确认",

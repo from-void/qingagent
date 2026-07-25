@@ -201,12 +201,14 @@ describe("builtin skills", () => {
     }
   });
 
-  it("review 与 diagram-viz 暴露标准子技能列表，Mastra 顶层列表不平铺子技能", async () => {
+  it("review、diagram-viz 与 image-gen 暴露标准子技能列表，Mastra 顶层列表不平铺子技能", async () => {
     const capabilityRoot = join(BUILTIN_SKILLS_DIR, "capability");
     const reviewDir = join(capabilityRoot, "review");
     const diagramDir = join(capabilityRoot, "diagram-viz");
+    const imageGenDir = join(capabilityRoot, "image-gen");
     const reviewChildren = await listChildSkills(reviewDir);
     const diagramChildren = await listChildSkills(diagramDir);
+    const imageGenChildren = await listChildSkills(imageGenDir);
 
     expect(reviewChildren.map((skill) => skill.metadata.name).sort()).toEqual([
       "consistency",
@@ -222,6 +224,10 @@ describe("builtin skills", () => {
       "drawio",
       "mermaid",
     ]);
+    expect(imageGenChildren.map((skill) => skill.metadata.name).sort()).toEqual([
+      "codex-image",
+      "svg",
+    ]);
 
     const enabledDirs = await resolveEnabledSkillDirsFromRoots([capabilityRoot], new Set());
     const workspace = new Workspace({
@@ -231,9 +237,11 @@ describe("builtin skills", () => {
     const listedNames = (await workspace.skills?.list() ?? []).map((skill) => skill.name);
     expect(listedNames).toContain("review");
     expect(listedNames).toContain("diagram-viz");
+    expect(listedNames).toContain("image-gen");
     for (const childName of [
       ...reviewChildren.map((skill) => skill.metadata.name),
       ...diagramChildren.map((skill) => skill.metadata.name),
+      ...imageGenChildren.map((skill) => skill.metadata.name),
     ]) {
       expect(listedNames).not.toContain(childName);
     }

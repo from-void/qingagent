@@ -49,6 +49,7 @@ describe("enabledStore", () => {
     expect(tools).not.toHaveProperty("webSearch");
     expect(tools).not.toHaveProperty("fetchArticle");
     expect(tools).toHaveProperty("generateSvg");
+    expect(tools).toHaveProperty("importGeneratedImage");
     expect(tools).toHaveProperty("run_js");
   });
 
@@ -60,6 +61,17 @@ describe("enabledStore", () => {
     const tools = await buildCapabilityTools();
 
     expect(tools).toHaveProperty("run_js");
+  });
+
+  it("omits both image generation tools when image-gen is disabled", async () => {
+    const store = await withStore();
+    await store.setEnabled("image-gen", false);
+
+    const { buildCapabilityTools } = await import("../session/sessionTools.js");
+    const tools = await buildCapabilityTools();
+
+    expect(tools).not.toHaveProperty("generateSvg");
+    expect(tools).not.toHaveProperty("importGeneratedImage");
   });
 
   it("omits browser tools when browser-ops is disabled", async () => {

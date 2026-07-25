@@ -152,14 +152,28 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
 }
-.pm-diagram-tool:hover {
+.pm-diagram-tool:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+.pm-diagram-tool:focus-visible {
+  outline: 1px solid var(--mark, #8f6d30);
+  outline-offset: 1px;
+}
+.pm-diagram-tool:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
 }
 .pm-diagram-tool.is-active {
   border-color: rgba(168, 130, 63, 0.38);
   background: var(--mark-soft);
   color: var(--mark, #8f6d30);
+}
+.pm-diagram-tool--icon {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
 }
 .pm-diagram-tool--wide {
   min-width: 58px;

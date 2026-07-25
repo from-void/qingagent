@@ -111,6 +111,16 @@ type IconName =
   | "move";
 type GraphDirection = "TB" | "BT" | "LR" | "RL";
 type GraphHandleId = "t" | "r" | "b" | "l";
+type CanvasToolIconName =
+  | "subgraph"
+  | "align-left"
+  | "align-center"
+  | "align-right"
+  | "zoom-out"
+  | "zoom-in"
+  | "fit"
+  | "fullscreen"
+  | "plus";
 type GraphNodeShape = FlowNodeShape;
 type GraphNodeData = {
   label: string;
@@ -418,7 +428,8 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectable={isConnectable}
             isConnectableStart={false}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
-            aria-label={`连接点 ${handle.id}`}
+            aria-label={`${handleLabel(handle.id)}连线目标`}
+            title="拖到另一节点建立连线"
           />
           <Handle
             id={handle.id}
@@ -427,13 +438,15 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectable={isConnectable}
             isConnectableEnd={false}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
-            aria-label={`连接点 ${handle.id}`}
+            aria-label={`${handleLabel(handle.id)}连线起点`}
+            title="拖到另一节点建立连线"
           />
           {data.canQuickAdd ? (
             <button
               type="button"
               className={`graph-diagram-handle-add graph-diagram-handle-add--${handle.id} nodrag nopan`}
               aria-label={`从${handleLabel(handle.id)}新增连接节点`}
+              title={`从${handleLabel(handle.id)}新增连接节点`}
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}
@@ -446,7 +459,7 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
                 data.onQuickAdd(handle.id);
               }}
             >
-              +
+              <CanvasToolIcon name="plus" />
             </button>
           ) : null}
         </div>
@@ -667,61 +680,145 @@ function GraphPreviewToolbar({
   readOnly,
   align,
   onAlignChange,
+  onCreateSubgraph,
   onFullscreen,
 }: {
   readOnly: boolean;
   align: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
-  onFullscreen?: () => void;
+  onCreateSubgraph?: () => void;
+  onFullscreen: () => void;
 }) {
-  const { zoomIn, zoomOut } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const editable = !readOnly;
   const stop = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
   };
   const showAlign = editable && Boolean(onAlignChange);
+  const run = (event: ReactMouseEvent, action: () => void | Promise<boolean>) => {
+    stop(event);
+    void action();
+  };
   return (
     <Panel
       position="top-right"
       className="graph-diagram-viewbar pm-diagram-viewbar pm-diagram-chrome"
+      role="toolbar"
+      aria-label="图表画布工具栏"
       // 工具栏内的任何点击/双击都不冒泡到图表块,避免"快速点按钮被识别成双击进编辑"(用户反馈)。
       onMouseDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      {showAlign &&
-        (["left", "center", "right"] as const).map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            className={`pm-diagram-tool${align === opt ? " is-active" : ""}`}
-            aria-pressed={align === opt}
-            title={opt === "left" ? "左对齐" : opt === "center" ? "居中" : "右对齐"}
-            onMouseDown={(event) => {
-              stop(event);
-              onAlignChange?.(opt);
-            }}
-          >
-            {opt === "left" ? "左" : opt === "center" ? "中" : "右"}
-          </button>
-        ))}
-      {showAlign && <span className="pm-diagram-tool-sep" aria-hidden="true" />}
-      <button type="button" className="pm-diagram-tool" title="缩小" onMouseDown={(event) => { stop(event); void zoomOut(); }}>
-        −
-      </button>
-      <button type="button" className="pm-diagram-tool" title="放大" onMouseDown={(event) => { stop(event); void zoomIn(); }}>
-        ＋
-      </button>
-      {editable && onFullscreen && (
+      {editable && onCreateSubgraph && (
         <>
+          <CanvasToolButton
+            label="新增分区"
+            icon="subgraph"
+            onMouseDown={(event) => run(event, onCreateSubgraph)}
+          />
           <span className="pm-diagram-tool-sep" aria-hidden="true" />
-          <button type="button" className="pm-diagram-tool pm-diagram-tool--wide" title="全屏编辑" onMouseDown={(event) => { stop(event); onFullscreen(); }}>
-            ⛶ 全屏
-          </button>
         </>
       )}
+      {showAlign &&
+        ([
+          { value: "left", label: "左对齐", icon: "align-left" },
+          { value: "center", label: "居中对齐", icon: "align-center" },
+          { value: "right", label: "右对齐", icon: "align-right" },
+        ] as const).map((option) => (
+          <CanvasToolButton
+            key={option.value}
+            label={option.label}
+            icon={option.icon}
+            active={align === option.value}
+            pressed={align === option.value}
+            onMouseDown={(event) => {
+              stop(event);
+              onAlignChange?.(option.value);
+            }}
+          />
+        ))}
+      {showAlign && <span className="pm-diagram-tool-sep" aria-hidden="true" />}
+      <CanvasToolButton label="缩小" icon="zoom-out" onMouseDown={(event) => run(event, zoomOut)} />
+      <CanvasToolButton label="放大" icon="zoom-in" onMouseDown={(event) => run(event, zoomIn)} />
+      <CanvasToolButton
+        label="适配视图"
+        icon="fit"
+        onMouseDown={(event) => run(event, () => fitView({ padding: 0.15, maxZoom: 1, duration: 180 }))}
+      />
+      <span className="pm-diagram-tool-sep" aria-hidden="true" />
+      <CanvasToolButton
+        label={editable ? "全屏编辑" : "全屏查看"}
+        icon="fullscreen"
+        onMouseDown={(event) => run(event, onFullscreen)}
+      />
     </Panel>
+  );
+}
+
+function CanvasToolButton({
+  label,
+  icon,
+  active = false,
+  pressed,
+  disabled = false,
+  onMouseDown,
+}: {
+  label: string;
+  icon: CanvasToolIconName;
+  active?: boolean;
+  pressed?: boolean;
+  disabled?: boolean;
+  onMouseDown: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={classNames("pm-diagram-tool", "pm-diagram-tool--icon", active && "is-active")}
+      title={label}
+      aria-label={label}
+      aria-pressed={pressed}
+      disabled={disabled}
+      onMouseDown={onMouseDown}
+    >
+      <CanvasToolIcon name={icon} />
+    </button>
+  );
+}
+
+function CanvasToolIcon({ name }: { name: CanvasToolIconName }) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.5,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  } as const;
+  return (
+    <svg className="graph-diagram-canvas-tool-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      {name === "subgraph" && (
+        <>
+          <rect x="2.5" y="3" width="11" height="10" strokeDasharray="2.2 1.8" {...common} />
+          <path d="M8 5.4v5.2M5.4 8h5.2" {...common} />
+        </>
+      )}
+      {name === "align-left" && <path d="M3 3v10M5.5 5h7M5.5 8h4.5M5.5 11h6" {...common} />}
+      {name === "align-center" && <path d="M8 3v10M4 5h8M5.5 8h5M4.8 11h6.4" {...common} />}
+      {name === "align-right" && <path d="M13 3v10M3.5 5h7M6 8h4.5M4.5 11h6" {...common} />}
+      {name === "zoom-out" && <path d="M3.2 8h9.6" {...common} />}
+      {name === "zoom-in" && <path d="M3.2 8h9.6M8 3.2v9.6" {...common} />}
+      {name === "fit" && (
+        <>
+          <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" {...common} />
+          <rect x="5.4" y="5.4" width="5.2" height="5.2" {...common} />
+        </>
+      )}
+      {name === "fullscreen" && (
+        <path d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" {...common} />
+      )}
+      {name === "plus" && <path d="M3.2 8h9.6M8 3.2v9.6" {...common} />}
+    </svg>
   );
 }
 
@@ -872,6 +969,7 @@ export function GraphDiagramView({
   const [nodes, setNodes] = useState<GraphFlowNode[]>([]);
   const [edges, setEdges] = useState<GraphFlowEdge[]>([]);
   const [editing, setEditing] = useState(false);
+  const [viewingFullscreen, setViewingFullscreen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -913,6 +1011,7 @@ export function GraphDiagramView({
   const moveParentTargetIds = useMemo(() => new Set(moveParentOptions.map((node) => node.id)), [moveParentOptions]);
   const previewFit = useFitOnResize(true);
   const editorFit = useFitOnResize(inEdit, setEditCanvasFrame);
+  const fullscreenFit = useFitOnResize(viewingFullscreen);
 
   // 预览 fit 的触发键同时描述每个节点坐标。ELK 落地后它会先变化；子组件会等 React Flow
   // 内部 store 采纳完全相同的坐标后再调 fitView，不能仅靠节点数或包围盒相同来猜已同步。
@@ -955,6 +1054,18 @@ export function GraphDiagramView({
     resetEditorState();
   }, [resetEditorState]);
 
+  const openFullscreen = useCallback(() => {
+    if (readOnly) {
+      setViewingFullscreen(true);
+      return;
+    }
+    openEditor();
+  }, [openEditor, readOnly]);
+
+  const closeFullscreen = useCallback(() => {
+    setViewingFullscreen(false);
+  }, []);
+
   useEffect(() => {
     const ownerId = editorOwnerIdRef.current;
     const handleOwnerChange = (event: Event) => {
@@ -976,6 +1087,20 @@ export function GraphDiagramView({
     if (!readOnly) return;
     closeEditor();
   }, [closeEditor, readOnly]);
+
+  useEffect(() => {
+    if (!viewingFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeFullscreen();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeFullscreen, viewingFullscreen]);
 
   useEffect(() => {
     setSelectedNodeId((current) => (current && graphNodes.some((node) => node.id === current) ? current : null));
@@ -2167,6 +2292,56 @@ export function GraphDiagramView({
       )
     : null;
 
+  const fullscreenViewer = viewingFullscreen && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          className="graph-diagram-viewer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="图表全屏预览"
+          style={themeStyle}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeFullscreen();
+          }}
+        >
+          <div className="graph-diagram-viewer__topbar">
+            <div className="graph-diagram-viewer__title">图表预览</div>
+            <button type="button" className="graph-diagram-editor__close" onClick={closeFullscreen}>
+              关闭
+            </button>
+          </div>
+          <div
+            className="graph-diagram-canvas graph-diagram-canvas--preview graph-diagram-canvas--fullscreen"
+            ref={fullscreenFit.canvasRef}
+          >
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={graphNodeTypes}
+              edgeTypes={graphEdgeTypes}
+              connectionMode={ConnectionMode.Loose}
+              fitView
+              minZoom={MIN_PREVIEW_ZOOM}
+              onInit={fullscreenFit.onInit}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+              deleteKeyCode={null}
+              proOptions={{ hideAttribution: true }}
+              zoomOnDoubleClick={false}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+            >
+              <FitOnNodesInitialized />
+              <Background color="#d8c9a8" gap={18} />
+              <Controls showInteractive />
+            </ReactFlow>
+          </div>
+        </div>,
+        document.body,
+      )
+    : null;
+
   return (
     <div className="graph-diagram" data-diagram-type={parsed.model.type} style={themeStyle}>
       {error && !inEdit && <div className="graph-diagram-error">{error}</div>}
@@ -2199,11 +2374,13 @@ export function GraphDiagramView({
             readOnly={readOnly}
             align={align}
             onAlignChange={onAlignChange}
-            onFullscreen={openEditor}
+            onCreateSubgraph={parsed.model.type === "flowchart" ? openEditor : undefined}
+            onFullscreen={openFullscreen}
           />
         </ReactFlow>
       </div>
       {editor}
+      {fullscreenViewer}
       <div className="graph-diagram-export" aria-hidden="true" dangerouslySetInnerHTML={{ __html: graphToSvg(liveSource, overlay ?? undefined) ?? "" }} />
     </div>
   );

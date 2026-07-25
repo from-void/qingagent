@@ -66,6 +66,13 @@
   pointer-events: none;
   transition: opacity 0.15s ease;
 }
+
+.graph-diagram-canvas-tool-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  color: currentColor;
+}
 .pm-diagram:hover .graph-diagram-viewbar.react-flow__panel,
 .pm-diagram.is-selected .graph-diagram-viewbar.react-flow__panel,
 .graph-diagram-canvas--preview:hover .graph-diagram-viewbar.react-flow__panel {
@@ -273,13 +280,15 @@
   height: 10px;
   border: 2px solid #fffaf0;
   background: #35619d;
-  opacity: 0;
-  transition: opacity 0.12s ease;
+  opacity: 0.28;
+  cursor: crosshair;
+  transform: scale(0.82);
+  transition: opacity 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
 
 .graph-diagram-canvas--editor .react-flow__handle {
   display: block;
-  opacity: 0;
+  opacity: 0.28;
 }
 
 .graph-diagram-canvas--preview .react-flow__handle {
@@ -290,7 +299,7 @@
   position: absolute;
   inset: 0;
   z-index: 4;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .graph-diagram-handle-slot .react-flow__handle {
@@ -304,7 +313,7 @@
 .graph-diagram-handle-slot::before {
   content: "";
   position: absolute;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .graph-diagram-handle-slot--t::before {
@@ -336,10 +345,21 @@
 }
 
 .graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle,
+.graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle,
+.graph-diagram-canvas--editor .react-flow__node.selected .react-flow__handle,
 .graph-diagram-canvas--editor .react-flow__handle.connectingfrom,
 .graph-diagram-canvas--editor .react-flow__handle.connectingto,
 .graph-diagram-canvas--editor.is-connecting .react-flow__handle.connectionindicator {
   opacity: 1;
+  transform: scale(1);
+}
+
+.graph-diagram-canvas--editor .react-flow__handle:hover {
+  z-index: 7;
+  background: #1d4f91;
+  box-shadow: 0 0 0 3px rgba(53, 97, 157, 0.18);
+  opacity: 1;
+  transform: scale(1.35);
 }
 
 .graph-diagram-handle-add {
@@ -361,6 +381,12 @@
   pointer-events: none;
   transform: translate(-50%, -50%) scale(0.92);
   transition: opacity 0.12s ease, transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.graph-diagram-handle-add .graph-diagram-canvas-tool-icon {
+  width: 11px;
+  height: 11px;
+  stroke-width: 1.8;
 }
 
 .graph-diagram-handle-add--t {
@@ -503,7 +529,22 @@
   overscroll-behavior: contain;
 }
 
-.graph-diagram-editor__topbar {
+.graph-diagram-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(246, 241, 231, 0.98);
+  pointer-events: auto;
+  overscroll-behavior: contain;
+}
+
+.graph-diagram-editor__topbar,
+.graph-diagram-viewer__topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -511,10 +552,25 @@
   min-height: 44px;
 }
 
-.graph-diagram-editor__title {
+.graph-diagram-editor__title,
+.graph-diagram-viewer__title {
   color: #211f1b;
+  font-family: var(--font-zh-serif);
   font-size: 16px;
   font-weight: 650;
+}
+
+.graph-diagram-canvas--fullscreen {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border: 1px solid rgba(83, 105, 136, 0.24);
+}
+
+.graph-diagram-canvas--fullscreen .react-flow__controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }
 
 .graph-diagram-editor__topbar-actions {

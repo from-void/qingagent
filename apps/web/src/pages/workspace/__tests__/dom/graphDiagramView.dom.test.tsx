@@ -290,7 +290,7 @@ afterEach(() => {
   }
   container?.remove();
   container = null;
-  document.body.querySelectorAll(".graph-diagram-editor").forEach((el) => el.remove());
+  document.body.querySelectorAll(".graph-diagram-editor, .graph-diagram-viewer").forEach((el) => el.remove());
   vi.restoreAllMocks();
 });
 
@@ -376,6 +376,70 @@ describe("GraphDiagramView", () => {
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });
 
+  it("工具栏全量图标化，编辑态分组齐全且只读态隐藏编辑按钮", async () => {
+    const onAlignChange = vi.fn();
+    const source = `flowchart TD
+  A[开始] --> B[结束]
+`;
+    await render(
+      <DiagramRenderer
+        source={source}
+        readOnly={false}
+        align="center"
+        onAlignChange={onAlignChange}
+        onSourceChange={() => {}}
+      />,
+    );
+    const editableToolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
+    const editableLabels = Array.from(editableToolbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
+      .map((button) => button.getAttribute("aria-label"));
+    expect(editableLabels).toEqual([
+      "新增分区",
+      "左对齐",
+      "居中对齐",
+      "右对齐",
+      "缩小",
+      "放大",
+      "适配视图",
+      "全屏编辑",
+    ]);
+    expect(editableToolbar.querySelectorAll(".pm-diagram-tool-sep")).toHaveLength(3);
+    expect(editableToolbar.querySelectorAll(".graph-diagram-canvas-tool-icon")).toHaveLength(8);
+    expect(Array.from(editableToolbar.querySelectorAll("button")).every((button) => button.title === button.getAttribute("aria-label"))).toBe(true);
+    await mouseDown(editableToolbar.querySelector("[aria-label='右对齐']")!);
+    expect(onAlignChange).toHaveBeenCalledWith("right");
+
+    await act(async () => {
+      root!.render(<DiagramRenderer source={source} readOnly />);
+    });
+    await flush();
+    const readOnlyToolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
+    const readOnlyLabels = Array.from(readOnlyToolbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
+      .map((button) => button.getAttribute("aria-label"));
+    expect(readOnlyLabels).toEqual(["缩小", "放大", "适配视图", "全屏查看"]);
+    expect(readOnlyLabels).not.toContain("新增分区");
+    expect(readOnlyLabels.some((label) => label?.includes("对齐"))).toBe(false);
+  });
+
+  it("只读态全屏按钮打开纯查看层，Esc/关闭可退出且不出现编辑把手", async () => {
+    await render(
+      <DiagramRenderer
+        source={`flowchart TD
+  A[开始] --> B[结束]
+`}
+        readOnly
+      />,
+    );
+    const toolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
+    await mouseDown(toolbar.querySelector("[aria-label='全屏查看']")!);
+    const viewer = await waitForSelector(".graph-diagram-viewer", document.body) as HTMLElement;
+    expect(viewer.getAttribute("aria-label")).toBe("图表全屏预览");
+    expect(viewer.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__handle\s*\{[^}]*display:\s*none;/s);
+    await click(findButton("关闭", viewer));
+    expect(document.body.querySelector(".graph-diagram-viewer")).toBeNull();
+  });
+
   it("经典色板注入根变量,classDef 节点与 React Flow 连线使用同一解析结果", async () => {
     const source = `%%{init: {'theme':'base','themeVariables':{'mainBkg':'#FFFFFF','nodeBorder':'#5178C6','lineColor':'#BBBFC4','textColor':'#1F2329','clusterBkg':'#F0F4FC','clusterBorder':'#5178C6'}}}%%
 flowchart LR
@@ -456,7 +520,7 @@ flowchart LR
     expect(onSourceChange).toHaveBeenCalledWith(expect.stringContaining("新节点"));
   });
 
-  it("编辑态节点有四面 handle,默认隐藏并在 hover 或连接态显形", async () => {
+  it("编辑态节点有四面 handle，默认弱化并在选中/hover/连接态实显", async () => {
     await render(
       <EditableDiagramHarness
         source={`flowchart LR
@@ -480,10 +544,16 @@ flowchart LR
       "target:t",
     ]);
     expect(handles.map((handle) => handle.dataset.handlepos).sort()).toEqual(["bottom", "bottom", "left", "left", "right", "right", "top", "top"]);
+    expect(handles.every((handle) => handle.title === "拖到另一节点建立连线")).toBe(true);
+    expect(handles.every((handle) => handle.getAttribute("aria-label")?.includes("连线"))).toBe(true);
     expect(editor.querySelectorAll(".react-flow__handle")).toHaveLength(16);
-    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0;/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle\s*\{[^}]*display:\s*block;[^}]*opacity:\s*0\.28;/s);
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle");
+    expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle");
     expect(graphDiagramCss).toContain(".graph-diagram-canvas--editor.is-connecting .react-flow__handle.connectionindicator");
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--editor \.react-flow__handle:hover\s*\{[^}]*transform:\s*scale\(1\.35\);/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram-handle-slot\s*\{[^}]*pointer-events:\s*none;/s);
+    expect(graphDiagramCss).toMatch(/\.graph-diagram .react-flow__handle,[\s\S]*cursor:\s*crosshair;/);
     expect(graphDiagramCss).toMatch(/\.graph-diagram-canvas--preview \.react-flow__handle\s*\{[^}]*display:\s*none;/s);
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__node:hover");
     expect(graphDiagramCss).toContain(".graph-diagram[data-diagram-type] .react-flow__edge:hover .react-flow__edge-path");
@@ -577,6 +647,8 @@ flowchart LR
     const startNode = findNode("开始", editor);
     const addButton = startNode.querySelector<HTMLButtonElement>("button[aria-label='从右侧新增连接节点']");
     expect(addButton).not.toBeNull();
+    expect(addButton?.title).toBe("从右侧新增连接节点");
+    expect(addButton?.querySelector(".graph-diagram-canvas-tool-icon")).not.toBeNull();
     await click(addButton!);
 
     const latestSource = onSourceChange.mock.calls.at(-1)?.[0] as string;

@@ -1034,18 +1034,17 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     }
   });
 
-  it("预览态右上角统一工具栏:对齐(左中右)+缩放/全屏齐全,点对齐回写 node.attrs.align", async () => {
+  it("预览态右上角统一工具栏:分区/对齐/缩放/适配/全屏图标齐全,点对齐回写 node.attrs.align", async () => {
     const editor = await mountEditor(diagramDoc(`flowchart TD
   A[开始] --> B[结束]
 `));
     try {
       await waitForSelector(".graph-diagram", editor.view.dom);
       const viewbar = await waitForSelector(".graph-diagram-viewbar", editor.view.dom) as HTMLElement;
-      const labels = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).map((b) => b.textContent?.trim());
-      // 对齐 左/中/右 + 缩小/放大 + 全屏 都在(无「适应」按钮)
-      expect(labels).toEqual(expect.arrayContaining(["左", "中", "右", "−", "＋", "⛶ 全屏"]));
-      expect(labels).not.toContain("⤢");
-      const rightBtn = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).find((b) => b.textContent?.trim() === "右")!;
+      const labels = Array.from(viewbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool")).map((b) => b.getAttribute("aria-label"));
+      expect(labels).toEqual(["新增分区", "左对齐", "居中对齐", "右对齐", "缩小", "放大", "适配视图", "全屏编辑"]);
+      expect(viewbar.querySelectorAll(".graph-diagram-canvas-tool-icon")).toHaveLength(8);
+      const rightBtn = viewbar.querySelector<HTMLButtonElement>("[aria-label='右对齐']")!;
       await act(async () => {
         rightBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       });

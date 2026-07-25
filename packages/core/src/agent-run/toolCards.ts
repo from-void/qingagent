@@ -417,6 +417,27 @@ export function researchCardToolCallSpec(
   };
 }
 
+const DEFAULT_QR_EXPIRES_IN_SEC = 300;
+
+function qrExpiryFromDuration(expiresInSec: unknown, fallbackInSec: number): number {
+  const durationSec =
+    typeof expiresInSec === "number" && Number.isFinite(expiresInSec) && expiresInSec > 0
+      ? expiresInSec
+      : fallbackInSec;
+  return Date.now() + durationSec * 1000;
+}
+
+function qrExpiryFromAbsolute(expiresAt: unknown, fallbackInSec: number): number {
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > 0) {
+    return expiresAt;
+  }
+  if (typeof expiresAt === "string") {
+    const parsed = Date.parse(expiresAt);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return qrExpiryFromDuration(undefined, fallbackInSec);
+}
+
 export function qrCardToolCallSpec(
   toolCallId: string,
   args: Record<string, unknown>,
@@ -441,12 +462,8 @@ export function qrCardToolCallSpec(
         : null,
     };
   }
-  const expiresInSec =
-    typeof args.expiresInSec === "number" && Number.isFinite(args.expiresInSec) && args.expiresInSec > 0
-      ? args.expiresInSec
-      : 300;
   // 用「收到工具调用的此刻」换算成绝对过期时间戳,前端据此倒计时——不受 agent 思考/网络/渲染延迟影响。
-  const expiresAt = Date.now() + expiresInSec * 1000;
+  const expiresAt = qrExpiryFromDuration(args.expiresInSec, DEFAULT_QR_EXPIRES_IN_SEC);
   return {
     id: toolCallId,
     name: "show_qr",
@@ -473,9 +490,9 @@ export function qrCardToolCallSpec(
 /** 可信 connector bridge 专用：pendingId/device flow 元数据绝不经过模型参数。 */
 export function githubAuthCardToolCallSpec(
   toolCallId: string,
-  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: string },
+  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: unknown },
 ): ToolCallSpec {
-  const expiresAt = Date.parse(input.expiresAt);
+  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 15 * 60);
   return {
     id: toolCallId,
     name: "github_auth_start",
@@ -489,7 +506,7 @@ export function githubAuthCardToolCallSpec(
         title: "连接 GitHub",
         code: input.userCode,
         note: "复制用户码并在 GitHub 完成授权。",
-        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 15 * 60_000,
+        expiresAt,
         refreshQuery: "GitHub 授权已中断，请重新发起连接",
         confirmQuery: null,
         connectorId: "github",
@@ -507,10 +524,10 @@ export function feishuAuthCardToolCallSpec(
     pendingId: string;
     url: string;
     userCode?: string;
-    expiresAt: string;
+    expiresAt: unknown;
   },
 ): ToolCallSpec {
-  const expiresAt = Date.parse(input.expiresAt);
+  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 10 * 60);
   const configuration = input.mode === "configuration";
   return {
     id: toolCallId,
@@ -527,7 +544,7 @@ export function feishuAuthCardToolCallSpec(
         note: configuration
           ? `用飞书扫码，或 [点此打开创建向导](${input.url})，完成后连接器会自动继续。`
           : `用飞书 App 扫码，或 [点此在浏览器授权](${input.url})。`,
-        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60_000,
+        expiresAt,
         refreshQuery: configuration ? "创建应用的链接过期了，请重新发起" : "飞书授权二维码过期了，请重新生成",
         confirmQuery: null,
         connectorId: "feishu",
@@ -566,11 +583,7 @@ export function wechatAuthQrToolCallSpec(
           : null,
     };
   }
-  const expiresInSec =
-    typeof result?.expiresInSec === "number" && Number.isFinite(result.expiresInSec) && result.expiresInSec > 0
-      ? (result.expiresInSec as number)
-      : 240;
-  const expiresAt = Date.now() + expiresInSec * 1000;
+  const expiresAt = qrExpiryFromDuration(result?.expiresInSec, 240);
   return {
     id: toolCallId,
     name: "wechat_auth_start",

@@ -364,7 +364,7 @@ export async function* handleSpecialToolResult(
       userCode: typeof toolResult.user_code === "string" ? toolResult.user_code : "",
       verificationUri:
         typeof toolResult.verification_uri === "string" ? toolResult.verification_uri : "",
-      expiresAt: typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "",
+      expiresAt: toolResult.expiresAt,
     });
     yield toolCallUpdated(agentMessageId, toolCallId, spec);
     updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);
@@ -387,7 +387,7 @@ export async function* handleSpecialToolResult(
       pendingId: typeof toolResult.pendingId === "string" ? toolResult.pendingId : "",
       url,
       userCode: typeof toolResult.user_code === "string" ? toolResult.user_code : undefined,
-      expiresAt: typeof toolResult.expiresAt === "string" ? toolResult.expiresAt : "",
+      expiresAt: toolResult.expiresAt,
     });
     yield toolCallUpdated(agentMessageId, toolCallId, spec);
     updateToolCallInChatHistory(state, agentMessageId, toolCallId, spec);

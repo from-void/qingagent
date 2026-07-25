@@ -130,6 +130,7 @@ describe("show_qr 二维码卡帧协议", () => {
   it("tool-result 找不到 running part 时也 append done 二维码卡", async () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("qr-result-only");
+    const startedAt = Date.now();
 
     const frames = await collect(
       processAgentStream(
@@ -150,7 +151,9 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(final?.body.kind).toBe("qrCard");
     if (final?.body.kind === "qrCard") {
       expect(final.body.data.content).toBe("https://example.com/auth");
-      expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
+      expect(typeof final.body.data.expiresAt).toBe("number");
+      expect(final.body.data.expiresAt).toBeGreaterThanOrEqual(startedAt + 300_000);
+      expect(final.body.data.expiresAt).toBeLessThanOrEqual(Date.now() + 300_000);
     }
     expect(
       state.chatHistory.some((message) =>
@@ -214,6 +217,7 @@ describe("show_qr 二维码卡帧协议", () => {
     const { createSession, processAgentStream } = await import("../bridge/index.js");
     const state = createSession("wechat-auth-qr");
     const img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
+    const startedAt = Date.now();
     const frames = await collect(
       processAgentStream(
         streamOf(
@@ -237,7 +241,9 @@ describe("show_qr 二维码卡帧协议", () => {
     if (final?.body.kind === "qrCard") {
       expect(final.body.data.imageDataUri).toBe(img);
       expect(final.body.data.confirmQuery).toBe("我已扫完码,请继续");
-      expect(final.body.data.expiresAt).toBeGreaterThan(Date.now());
+      expect(typeof final.body.data.expiresAt).toBe("number");
+      expect(final.body.data.expiresAt).toBeGreaterThanOrEqual(startedAt + 240_000);
+      expect(final.body.data.expiresAt).toBeLessThanOrEqual(Date.now() + 240_000);
       expect(final.body.data.connectorId).toBe("wechat-mp");
       expect(final.body.data.pendingId).toBe("wechat-pending-safe");
     }
@@ -248,6 +254,50 @@ describe("show_qr 二维码卡帧协议", () => {
     expect(transcript).not.toContain("data:image");
     expect(transcript).not.toContain(img);
     expect(transcript).toContain("二维码已展示给用户");
+  });
+
+  it("github_auth_start 透传 number 绝对时间戳到二维码卡", async () => {
+    const { createSession, processAgentStream } = await import("../bridge/index.js");
+    const state = createSession("github-auth-qr-expiry");
+    const expiresAt = Date.now() + 15 * 60_000;
+
+    const frames = await collect(
+      processAgentStream(
+        streamOf(
+          {
+            type: "tool-call",
+            payload: {
+              toolName: "github_auth_start",
+              toolCallId: "ga1",
+              args: { scope: "repo" },
+            },
+          },
+          {
+            type: "tool-result",
+            payload: {
+              toolName: "github_auth_start",
+              toolCallId: "ga1",
+              args: { scope: "repo" },
+              result: {
+                user_code: "ABCD-EFGH",
+                verification_uri: "https://github.example/device",
+                expiresAt,
+                pendingId: "github-pending-safe",
+                reused: false,
+              },
+            },
+          },
+        ),
+        { state, agentMessageId: "m", streamId: "s", runId: "r" },
+      ),
+    );
+
+    const final = toolSpecs(frames, "ga1").at(-1);
+    expect(final?.body.kind).toBe("qrCard");
+    if (final?.body.kind === "qrCard") {
+      expect(typeof final.body.data.expiresAt).toBe("number");
+      expect(final.body.data.expiresAt).toBe(expiresAt);
+    }
   });
 
   it("show_qr-only 回合结束等待用户时不发 draftingFailed", async () => {
@@ -361,7 +411,7 @@ describe("show_qr 二维码卡帧协议", () => {
     const publicResult = {
       mode: "authorization", connectorId: "feishu", pendingId: "feishu-pending-safe",
       verification_url: "https://example.com/device?user_code=ABCD", user_code: "ABCD",
-      expiresAt: new Date(Date.now() + 300_000).toISOString(), reused: false,
+      expiresAt: Date.now() + 300_000, reused: false,
     };
 
     const frames = await collect(
@@ -395,6 +445,8 @@ describe("show_qr 二维码卡帧协议", () => {
     if (final?.body.kind === "qrCard") {
       expect(final.body.data.connectorId).toBe("feishu");
       expect(final.body.data.pendingId).toBe("feishu-pending-safe");
+      expect(typeof final.body.data.expiresAt).toBe("number");
+      expect(final.body.data.expiresAt).toBe(publicResult.expiresAt);
     }
   });
 

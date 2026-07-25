@@ -168,12 +168,25 @@ describe("ConnectionsPanel", () => {
     expect(host.textContent).not.toContain("ABCD-EFGH");
   });
 
+  it("映射 GitHub 授权为 number 绝对过期时间", () => {
+    const mapped = mapConnectorStart("github", {
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://github.test/device",
+      expiresAt: "2026-07-12T10:00:00.000Z",
+      pendingId: "github-pending",
+    });
+
+    expect(typeof mapped.expiresAt).toBe("number");
+    expect(mapped.expiresAt).toBe(Date.parse("2026-07-12T10:00:00.000Z"));
+  });
+
   it("映射飞书授权与配置 union 两分支，并统一 ISO 过期时间", () => {
     const authorization = mapConnectorStart("feishu", {
       mode: "authorization", verification_url: "https://feishu.test/auth", user_code: "LARK-CODE",
       expiresAt: "2026-07-12T10:00:00.000Z", pendingId: "fs-auth",
     });
     expect(authorization).toMatchObject({ content: "https://feishu.test/auth", code: "LARK-CODE", pendingId: "fs-auth", confirmQuery: null });
+    expect(typeof authorization.expiresAt).toBe("number");
     expect(authorization.expiresAt).toBe(Date.parse("2026-07-12T10:00:00.000Z"));
 
     const configuration = mapConnectorStart("feishu", {
@@ -181,6 +194,7 @@ describe("ConnectionsPanel", () => {
       expiresAt: "2026-07-12T11:00:00.000Z", pendingId: "fs-config",
     });
     expect(configuration).toMatchObject({ title: "配置飞书应用", content: "https://feishu.test/config", code: null, pendingId: "fs-config" });
+    expect(typeof configuration.expiresAt).toBe("number");
     expect(configuration.note).toContain("应用配置步骤");
     expect(configuration.note).toContain("[点此打开创建向导]");
   });
@@ -191,8 +205,18 @@ describe("ConnectionsPanel", () => {
   });
 
   it("映射微信图片与相对过期秒数", () => {
-    expect(mapConnectorStart("wechat-mp", { imageDataUri: "data:image/png;base64,AA", expiresInSec: 180, pendingId: "wx-1" }, 1_000))
-      .toMatchObject({ content: "", imageDataUri: "data:image/png;base64,AA", expiresAt: 181_000, pendingId: "wx-1" });
+    const mapped = mapConnectorStart(
+      "wechat-mp",
+      { imageDataUri: "data:image/png;base64,AA", expiresInSec: 180, pendingId: "wx-1" },
+      1_000,
+    );
+    expect(mapped).toMatchObject({
+      content: "",
+      imageDataUri: "data:image/png;base64,AA",
+      expiresAt: 181_000,
+      pendingId: "wx-1",
+    });
+    expect(typeof mapped.expiresAt).toBe("number");
   });
 
   it("selectedId 未配回调时仍可从详情返回列表", () => {

@@ -30,11 +30,14 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const [scanned, setScanned] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const remainOf = useCallback(
-    () => Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000)),
+    (): number | null =>
+      typeof data.expiresAt === "number" && Number.isFinite(data.expiresAt)
+        ? Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000))
+        : null,
     [data.expiresAt],
   );
   const [remain, setRemain] = useState(remainOf);
-  const expired = remain <= 0;
+  const expired = remain !== null && remain <= 0;
   const pollingRef = useRef(false);
   const settledRef = useRef(false);
 
@@ -94,7 +97,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   }, [remainOf]);
   useVisibilityPausedInterval(
     () => setRemain(remainOf()),
-    expired ? null : 1000,
+    remain === null || expired ? null : 1000,
     { runOnResume: true },
   );
 
@@ -123,9 +126,11 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
   // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
   const codeFirst = data.connectorId === "github" && !data.imageDataUri;
-  const expiryLabel = remain >= 60
-    ? `${Math.floor(remain / 60)}分${remain % 60 === 0 ? "" : `${remain % 60}秒`}`
-    : `${remain}秒`;
+  const expiryLabel = remain === null
+    ? null
+    : remain >= 60
+      ? `${Math.floor(remain / 60)}分${remain % 60 === 0 ? "" : `${remain % 60}秒`}`
+      : `${remain}秒`;
 
   useEffect(() => {
     refreshSentRef.current = false;
@@ -204,9 +209,9 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
       {scanned && !expired && (
         <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
       )}
-      <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
+      {expiryLabel !== null && <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
         {expired ? "二维码已失效" : `${expiryLabel}后过期`}
-      </div>
+      </div>}
       {noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。
           文案用 confirmLabel(短、贴场景),没传则默认「我已完成授权」。 */}
@@ -232,24 +237,27 @@ export const QrCard = AuthCard;
 // 轻量渲染 note 的富文本:按行分段,inline 支持 markdown 链接 [文字](url) 与 **粗体**。
 // 模型自产的说明 + 可点授权链接合为一段,替代写死的"扫不了码点此打开"。
 export function normalizeQrNoteLineBreaks(note: string): string {
+  // note 始终按文本渲染；这里只把模型常写的 HTML 换行标签折叠为换行，
+  // 其它标签继续作为普通文本保留，绝不引入 HTML 解释或放宽链接净化。
+  const noteWithNormalizedBreakTags = note.replace(/<br\s*\/?>/gi, "\n");
   let normalized = "";
-  for (let i = 0; i < note.length;) {
-    if (note[i] !== "\\") {
-      normalized += note[i];
+  for (let i = 0; i < noteWithNormalizedBreakTags.length;) {
+    if (noteWithNormalizedBreakTags[i] !== "\\") {
+      normalized += noteWithNormalizedBreakTags[i];
       i += 1;
       continue;
     }
     let slashEnd = i;
-    while (note[slashEnd] === "\\") slashEnd += 1;
+    while (noteWithNormalizedBreakTags[slashEnd] === "\\") slashEnd += 1;
     const slashCount = slashEnd - i;
     const hasUnescapedSlash = slashCount % 2 === 1;
     const crlfEscape =
       hasUnescapedSlash &&
-      note.slice(slashEnd, slashEnd + 3) === "r\\n";
-    const nextAfterNewlineEscape = note[slashEnd + 1] ?? "";
+      noteWithNormalizedBreakTags.slice(slashEnd, slashEnd + 3) === "r\\n";
+    const nextAfterNewlineEscape = noteWithNormalizedBreakTags[slashEnd + 1] ?? "";
     const newlineEscape =
       hasUnescapedSlash &&
-      note[slashEnd] === "n" &&
+      noteWithNormalizedBreakTags[slashEnd] === "n" &&
       // 避免把 C:\new、正则 \namespace 之类合法反斜杠正文误判成换行。
       !/[a-z0-9_]/.test(nextAfterNewlineEscape);
     if (crlfEscape || newlineEscape) {

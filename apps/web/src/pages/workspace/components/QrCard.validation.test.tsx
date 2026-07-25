@@ -273,6 +273,48 @@ describe("QrCard — validation loop 3", () => {
       expect(document.querySelector(".qr-card__note")?.textContent).not.toContain("\\n");
     });
 
+    it.each(["<br>", "<br/>", "<br />", "<BR>", "<Br />"])(
+      "normalizes HTML break tag %s as a real line break",
+      (breakTag) => {
+        const data: QrCardBody = {
+          ...baseData,
+          note: `第一行${breakTag}第二行`,
+        };
+        render(<QrCard data={data} />);
+        const paragraphs = document.querySelectorAll(".qr-card__note-line");
+        expect(paragraphs).toHaveLength(2);
+        expect(paragraphs[0]?.textContent).toBe("第一行");
+        expect(paragraphs[1]?.textContent).toBe("第二行");
+        expect(document.querySelector(".qr-card__note")?.textContent).not.toContain(breakTag);
+      },
+    );
+
+    it("normalizes HTML break tags together with literal newline escapes", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "第一行<br>第二行\\n第三行<BR />第四行",
+      };
+      render(<QrCard data={data} />);
+      const paragraphs = document.querySelectorAll(".qr-card__note-line");
+      expect(Array.from(paragraphs, (paragraph) => paragraph.textContent)).toEqual([
+        "第一行",
+        "第二行",
+        "第三行",
+        "第四行",
+      ]);
+    });
+
+    it("keeps non-break HTML as inert text", () => {
+      const data: QrCardBody = {
+        ...baseData,
+        note: "<img src=x onerror=alert(1)>第一行<br>第二行",
+      };
+      render(<QrCard data={data} />);
+      expect(document.querySelector(".qr-card__note img")).toBeNull();
+      expect(document.querySelector(".qr-card__note")?.textContent)
+        .toContain("<img src=x onerror=alert(1)>第一行");
+    });
+
     it("preserves deliberate backslashes that are not clear newline escapes", () => {
       const data: QrCardBody = {
         ...baseData,
@@ -305,6 +347,30 @@ describe("QrCard — validation loop 3", () => {
       // 已失效应该使用中性文案
       const expiry = document.querySelector(".qr-card__expiry");
       expect(expiry?.textContent).toBe("二维码已失效");
+    });
+
+    it.each([
+      ["empty string", ""],
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["undefined", undefined],
+    ])("does not render an expired state for invalid expiresAt: %s", (_label, expiresAt) => {
+      const data = {
+        title: "测试",
+        content: "https://test.qr",
+        expiresAt,
+        code: null,
+        refreshQuery: "refresh",
+        confirmQuery: null,
+        note: null,
+      } as unknown as QrCardBody;
+
+      render(<QrCard data={data} />);
+
+      expect(document.querySelector(".qr-card__frame.is-expired")).toBeNull();
+      expect(document.querySelector(".qr-card__refresh")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
+      expect(document.body.textContent).not.toContain("二维码已失效");
     });
   });
 

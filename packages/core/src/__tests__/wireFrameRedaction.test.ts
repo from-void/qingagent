@@ -51,7 +51,7 @@ describe("bridge redaction", () => {
   it("Round17 回归:大写 env-var 风格凭据名在文本路径会脱敏", () => {
     for (const [input, secret] of [
       ["FEISHU_APP_SECRET=feishu-secret-1", "feishu-secret-1"],
-      ["DINGTALK_APP_KEY=dingtalk-key-1", "dingtalk-key-1"],
+      ["PLATFORM_API_KEY=platform-key-1", "platform-key-1"],
       ["export FEISHU_APP_SECRET=feishu-secret-2", "feishu-secret-2"],
       ['{"FEISHU_APP_SECRET":"feishu-secret-3"}', "feishu-secret-3"],
       ["FEISHU_APP_SECRET: 'feishu-secret-4'", "feishu-secret-4"],
@@ -70,11 +70,11 @@ describe("bridge redaction", () => {
     expect(feishu).toContain('"FEISHU_APP_SECRET":"***"');
     expect(feishu).not.toContain("feishu-secret-6");
 
-    const dingtalk = redactedSerializedText({
-      DINGTALK_APP_KEY: "dingtalk-key-2",
+    const platform = redactedSerializedText({
+      PLATFORM_API_KEY: "platform-key-2",
     });
-    expect(dingtalk).toContain('"DINGTALK_APP_KEY":"***"');
-    expect(dingtalk).not.toContain("dingtalk-key-2");
+    expect(platform).toContain('"PLATFORM_API_KEY":"***"');
+    expect(platform).not.toContain("platform-key-2");
   });
 
   it("Round17 回归:env-var 脱敏不误伤公开 app id 和普通词", () => {

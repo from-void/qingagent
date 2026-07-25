@@ -17,12 +17,12 @@ const mockCore = vi.hoisted(() => {
   invalidateSessionWorkspace: vi.fn(),
   PLATFORM_CREDENTIAL_SPECS: [
     {
-      platform: "dingtalk",
-      label: "钉钉",
-      helpUrl: "https://open-dev.dingtalk.com",
+      platform: "test-platform",
+      label: "测试平台",
+      helpUrl: "https://example.test/credentials",
       fields: [
-        { key: "DINGTALK_APP_KEY", label: "AppKey", secret: false },
-        { key: "DINGTALK_APP_SECRET", label: "AppSecret", secret: true },
+        { key: "PLATFORM_API_KEY", label: "API Key", secret: false },
+        { key: "PLATFORM_API_SECRET", label: "API Secret", secret: true },
       ],
     },
     {
@@ -46,15 +46,15 @@ async function loadApp() {
 describe("credentials 路由", () => {
   it("GET 返回规格+configured 状态,不含明文", async () => {
     mockCore.listCredentialMeta.mockResolvedValueOnce([
-      { platform: "dingtalk", key: "DINGTALK_APP_SECRET", updatedAt: "t", status: "ok" },
+      { platform: "test-platform", key: "PLATFORM_API_SECRET", updatedAt: "t", status: "ok" },
     ] as never);
     const app = await loadApp();
     const res = await app.request("/api/v1/credentials");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.specs).toHaveLength(2);
-    expect(body.specs[0].platform).toBe("dingtalk");
-    const secretField = body.specs[0].fields.find((field: { key: string }) => field.key === "DINGTALK_APP_SECRET");
+    expect(body.specs[0].platform).toBe("test-platform");
+    const secretField = body.specs[0].fields.find((field: { key: string }) => field.key === "PLATFORM_API_SECRET");
     expect(secretField).toMatchObject({ configured: true });
     // 不回传实际凭据明文值(字段 label 含 "Secret" 是字段名,不算泄露)
     expect(JSON.stringify(body)).not.toContain("tok-secret-value");
@@ -82,18 +82,18 @@ describe("credentials 路由", () => {
     const res = await app.request("/api/v1/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform: "dingtalk", values: { DINGTALK_APP_SECRET: "tok" } }),
+      body: JSON.stringify({ platform: "test-platform", values: { PLATFORM_API_SECRET: "tok" } }),
     });
     expect(res.status).toBe(200);
-    expect(mockCore.saved).toEqual([{ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "tok" }]);
+    expect(mockCore.saved).toEqual([{ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "tok" }]);
   });
 
-  it("POST 拒绝跨平台的 key(FEISHU_APP_SECRET 存到 dingtalk)", async () => {
+  it("POST 拒绝跨平台字段", async () => {
     const app = await loadApp();
     const res = await app.request("/api/v1/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform: "dingtalk", values: { FEISHU_APP_SECRET: "x" } }),
+      body: JSON.stringify({ platform: "test-platform", values: { FEISHU_APP_SECRET: "x" } }),
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("不支持该字段");
@@ -125,7 +125,7 @@ describe("credentials 路由", () => {
     const res = await app.request("/api/v1/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: "https://evil.com" },
-      body: JSON.stringify({ platform: "dingtalk", values: { DINGTALK_APP_SECRET: "t" } }),
+      body: JSON.stringify({ platform: "test-platform", values: { PLATFORM_API_SECRET: "t" } }),
     });
     expect(res.status).toBe(403);
   });
@@ -136,7 +136,7 @@ describe("credentials 路由", () => {
     const res = await app.request("/api/v1/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: "http://localhost:6173" },
-      body: JSON.stringify({ platform: "dingtalk", values: { DINGTALK_APP_SECRET: "t" } }),
+      body: JSON.stringify({ platform: "test-platform", values: { PLATFORM_API_SECRET: "t" } }),
     });
     expect(res.status).toBe(200);
   });

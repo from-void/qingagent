@@ -16,12 +16,22 @@ import {
   saveCredentialRecord,
   saveConnectorCredentialBundle,
 } from "../credentialsRepo.js";
+import { PLATFORM_CREDENTIAL_SPECS, type PlatformCredentialSpec } from "../specs.js";
 import { __resetDocumentsClientForTest, getDocumentsClient } from "@qingagent/db";
 import { __resetMigrationsForTest } from "@qingagent/db";
 
 // 沙箱凭据子系统:加密往返 + 加密存储 + env 注入 + 脱敏
 
 let tempDir: string;
+const TEST_PLATFORM_SPEC: PlatformCredentialSpec = {
+  platform: "test-platform",
+  label: "测试平台",
+  fields: [
+    { key: "PLATFORM_API_KEY", label: "API Key", secret: false },
+    { key: "PLATFORM_API_SECRET", label: "API Secret", secret: true },
+  ],
+  helpUrl: "https://example.test/credentials",
+};
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "qingagent-cred-"));
@@ -31,6 +41,7 @@ beforeEach(() => {
   __resetCredentialKeyForTest();
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
+  PLATFORM_CREDENTIAL_SPECS.push(TEST_PLATFORM_SPEC);
 });
 
 afterEach(() => {
@@ -39,6 +50,8 @@ afterEach(() => {
   __resetCredentialKeyForTest();
   __resetDocumentsClientForTest();
   __resetMigrationsForTest();
+  const testSpecIndex = PLATFORM_CREDENTIAL_SPECS.indexOf(TEST_PLATFORM_SPEC);
+  if (testSpecIndex >= 0) PLATFORM_CREDENTIAL_SPECS.splice(testSpecIndex, 1);
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -77,26 +90,26 @@ describe("redactSecret 脱敏", () => {
 
 describe("credentialsRepo 存取与注入", () => {
   it("保存→读取该平台凭据(解密)", async () => {
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_KEY", value: "app_x" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "sec_y" });
-    const creds = await getCredentialsForPlatform("dingtalk");
-    expect(creds).toEqual({ DINGTALK_APP_KEY: "app_x", DINGTALK_APP_SECRET: "sec_y" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_KEY", value: "app_x" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "sec_y" });
+    const creds = await getCredentialsForPlatform("test-platform");
+    expect(creds).toEqual({ PLATFORM_API_KEY: "app_x", PLATFORM_API_SECRET: "sec_y" });
   });
 
   it("upsert:同键覆盖不重复", async () => {
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "old" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "new" });
-    const creds = await getCredentialsForPlatform("dingtalk");
-    expect(creds.DINGTALK_APP_SECRET).toBe("new");
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "old" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "new" });
+    const creds = await getCredentialsForPlatform("test-platform");
+    expect(creds.PLATFORM_API_SECRET).toBe("new");
     expect(await listCredentialMeta()).toHaveLength(1);
   });
 
   it("getAllCredentialEnv 只注入仍登记在 spec 的平台和字段", async () => {
     await saveCredentialRecord({ platform: "feishu", key: "FEISHU_APP_ID", value: "cli_x" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "tok" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "UNKNOWN_TOKEN", value: "bad" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "tok" });
+    await saveCredentialRecord({ platform: "test-platform", key: "UNKNOWN_TOKEN", value: "bad" });
     const env = await getAllCredentialEnv();
-    expect(env).toEqual({ DINGTALK_APP_SECRET: "tok" });
+    expect(env).toEqual({ PLATFORM_API_SECRET: "tok" });
   });
 
   it("getAllCredentialEnv 不注入 connector namespace，非连接器凭据仍正常注入", async () => {
@@ -105,29 +118,29 @@ describe("credentialsRepo 存取与注入", () => {
       token: "secret-token",
     });
     await saveCredentialRecord({
-      platform: "dingtalk",
-      key: "DINGTALK_APP_KEY",
+      platform: "test-platform",
+      key: "PLATFORM_API_KEY",
       value: "app-key",
     });
 
     const env = await getAllCredentialEnv();
 
-    expect(env).toEqual({ DINGTALK_APP_KEY: "app-key" });
+    expect(env).toEqual({ PLATFORM_API_KEY: "app-key" });
     expect(env).not.toHaveProperty("bundle");
   });
 
   it("listCredentialMeta 不含明文,可解密标 status:ok", async () => {
     await saveCredentialRecord({ platform: "feishu", key: "FEISHU_APP_ID", value: "legacy" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "topsecret" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "topsecret" });
     const meta = await listCredentialMeta();
     expect(meta).toHaveLength(1);
-    expect(meta[0]).toMatchObject({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", status: "ok" });
+    expect(meta[0]).toMatchObject({ platform: "test-platform", key: "PLATFORM_API_SECRET", status: "ok" });
     expect(JSON.stringify(meta)).not.toContain("topsecret");
     expect(JSON.stringify(meta)).not.toContain("FEISHU_APP_ID");
   });
 
   it("密钥轮换后解不开的凭据 meta 标 status:invalid(不假显示已配置)", async () => {
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "tok" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "tok" });
     process.env.QINGAGENT_CREDENTIAL_KEY = Buffer.alloc(32, 9).toString("base64");
     __resetCredentialKeyForTest();
     const meta = await listCredentialMeta();
@@ -135,12 +148,12 @@ describe("credentialsRepo 存取与注入", () => {
   });
 
   it("删除单键 / 删除整平台", async () => {
-    await saveCredentialRecord({ platform: "dingtalk", key: "A", value: "1" });
-    await saveCredentialRecord({ platform: "dingtalk", key: "B", value: "2" });
-    await deleteCredential("dingtalk", "A");
-    expect(Object.keys(await getCredentialsForPlatform("dingtalk"))).toEqual(["B"]);
-    await deleteCredential("dingtalk");
-    expect(await getCredentialsForPlatform("dingtalk")).toEqual({});
+    await saveCredentialRecord({ platform: "test-platform", key: "A", value: "1" });
+    await saveCredentialRecord({ platform: "test-platform", key: "B", value: "2" });
+    await deleteCredential("test-platform", "A");
+    expect(Object.keys(await getCredentialsForPlatform("test-platform"))).toEqual(["B"]);
+    await deleteCredential("test-platform");
+    expect(await getCredentialsForPlatform("test-platform")).toEqual({});
   });
 
   it("启动清理迁移幂等删除 legacy feishu 凭据", async () => {
@@ -182,7 +195,7 @@ describe("credentialsRepo 存取与注入", () => {
   });
 
   it("密钥变化后旧密文解不开则跳过(不毁整组)", async () => {
-    await saveCredentialRecord({ platform: "dingtalk", key: "DINGTALK_APP_SECRET", value: "tok" });
+    await saveCredentialRecord({ platform: "test-platform", key: "PLATFORM_API_SECRET", value: "tok" });
     // 换密钥
     process.env.QINGAGENT_CREDENTIAL_KEY = Buffer.alloc(32, 9).toString("base64");
     __resetCredentialKeyForTest();

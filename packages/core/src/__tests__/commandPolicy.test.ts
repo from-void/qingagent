@@ -12,7 +12,6 @@ import { sessionWorkspaceDir } from "../workspace/sessionWorkspace.js";
 
 const workspaceCwd = sessionWorkspaceDir("policy-test");
 const calcScript = join(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
-const dingtalkScript = join(BUILTIN_SKILLS_DIR, "capability", "dingtalk-docs", "scripts", "dingtalk.mjs");
 
 function decision(command: string) {
   return evaluateCommandPolicy(command, { workspaceCwd });
@@ -67,9 +66,8 @@ describe("commandPolicy P0 gate", () => {
       action: "allow",
       credentialConsumer: "trusted-node-skill",
     });
-    expect(decision(`node "${dingtalkScript}" doc-create --title x`)).toMatchObject({
+    expect(decision("lark-cli docs +create --title x")).toMatchObject({
       action: "confirm",
-      credentialConsumer: "trusted-node-skill",
     });
     // 不存在的用户脚本交给运行时自然失败，且绝不获得托管凭据。
     expect(decision(`node "${join(USER_SKILLS_DIR, "custom", "scripts", "publish.js")}"`)).toEqual({ action: "allow" });
@@ -598,12 +596,12 @@ describe("commandPolicy P0 gate", () => {
     for (const command of generic) {
       expect(decision(command), command).not.toHaveProperty("credentialConsumer");
     }
-    const trustedSend = decision(`node "${dingtalkScript}" doc-create --title x`);
-    expect(trustedSend).toMatchObject({
-      action: "confirm",
+    const trustedSkill = decision(`node "${calcScript}" sum`);
+    expect(trustedSkill).toMatchObject({
+      action: "allow",
       credentialConsumer: "trusted-node-skill",
     });
-    expect(decision(`node "${dingtalkScript}" doc-create --title x && printenv`))
+    expect(decision(`node "${calcScript}" sum && printenv`))
       .not.toHaveProperty("credentialConsumer");
   });
 

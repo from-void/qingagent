@@ -1076,9 +1076,7 @@
   #view-workspace .ws-pill .font-mono{font-size:11px;margin-right:2px;color:var(--ink-3)}
   /* 技能菜单已抽到共享组件 SkillMenu(system/skill-menu.css 的 .qa-skill-*),新建页/编辑页同一套。 */
 
-  /* 死件已清除(0704 style-cleanup):.ws-cred-*(旧工作区平台凭据录入模态)——
-     承载组件早已删除、产品侧零渲染仅剩孤儿 CSS。现役凭据录入走设置弹框
-     (core/credentials + server/routes/credentials,当前仅钉钉),逻辑树仍活、保留。 */
+  /* 死件已清除(0704 style-cleanup):.ws-cred-*(旧工作区平台凭据录入模态)。 */
   /* 死件已清除(0704 style-cleanup):B5 旧 plan 计划面板整簇已无产品侧渲染,
      现役开场问卷/计划走 bigplan-panel(bp-*)。 */
 

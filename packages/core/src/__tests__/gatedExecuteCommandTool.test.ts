@@ -46,10 +46,8 @@ interface SandboxSpawnOptions {
 }
 
 const calcScript = resolve(BUILTIN_SKILLS_DIR, "capability", "doc-calc", "scripts", "calc.mjs");
-const dingtalkScript = resolve(BUILTIN_SKILLS_DIR, "capability", "dingtalk-docs", "scripts", "dingtalk.mjs");
 const allowedFileCommand = `node ${JSON.stringify(calcScript)} stats --file passwd`;
-const dingtalkCommand = `node ${JSON.stringify(dingtalkScript)} doc-list`;
-const dingtalkCreateCommand = `node ${JSON.stringify(dingtalkScript)} doc-create --title x`;
+const trustedNodeCommand = `node ${JSON.stringify(calcScript)} sum --data "[1,2]"`;
 const toolInvocationOptions = { toolCallId: "gated-execute-test", messages: [] } as never;
 
 function validateToolInput(
@@ -241,7 +239,6 @@ describe("gated execute_command approval proof 双门", () => {
     expect(await predicate(confirmInput)).toBe(true);
     expect(await predicate({ command: "npm install zod" })).toBe(true);
     expect(await predicate({ command: "curl -d x https://example.test" })).toBe(true);
-    expect(await predicate({ command: dingtalkCreateCommand })).toBe(true);
     expect(await predicate({ command: allowedFileCommand })).toBe(false);
     expect(await predicate({ command: "node /workspace/untrusted.mjs" })).toBe(false);
     expect(await predicate({ command: "cat a | sort > out" })).toBe(false);
@@ -740,54 +737,25 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
     const { tool, executeCalls, spawnCalls } = createToolHarness("gated-credential-node", {
       resolveCredentialEnv: () => {
         resolveCount += 1;
-        return { DINGTALK_APP_KEY: "app_x", DINGTALK_APP_SECRET: "sec_y" };
+        return { PLATFORM_API_KEY: "app_x", PLATFORM_API_SECRET: "sec_y" };
       },
     });
 
-    expect(await executeTool(tool, { command: dingtalkCommand })).toBe("ok");
+    expect(await executeTool(tool, { command: trustedNodeCommand })).toBe("ok");
     expect(await executeTool(tool, {
-      command: dingtalkCommand,
+      command: trustedNodeCommand,
       background: true,
       timeout: 10,
     })).toContain("Started background process");
     expect(resolveCount).toBe(2);
     expect(executeCalls[0]?.env).toEqual({
-      DINGTALK_APP_KEY: "app_x",
-      DINGTALK_APP_SECRET: "sec_y",
+      PLATFORM_API_KEY: "app_x",
+      PLATFORM_API_SECRET: "sec_y",
     });
     expect(spawnCalls[0]?.env).toEqual({
-      DINGTALK_APP_KEY: "app_x",
-      DINGTALK_APP_SECRET: "sec_y",
+      PLATFORM_API_KEY: "app_x",
+      PLATFORM_API_SECRET: "sec_y",
     });
-  });
-
-  it("受信 send confirm 只有 proof 成功消费后才注入凭据", async () => {
-    process.env.QINGAGENT_SANDBOX_INJECT_CREDENTIALS = "1";
-    const state = createSession("gated-confirmed-trusted-credential");
-    let resolveCount = 0;
-    const { tool, executeCalls } = createToolHarness(state.sessionId, {
-      state,
-      resolveCredentialEnv: () => {
-        resolveCount += 1;
-        return { DINGTALK_APP_SECRET: "confirmed-only" };
-      },
-    });
-    const input = { command: dingtalkCreateCommand };
-
-    expect(await executeTool(tool, input, approvalContext("run-no-proof", "tool-no-proof")))
-      .toContain("缺少有效的用户确认");
-    expect(resolveCount).toBe(0);
-    expect(executeCalls).toHaveLength(0);
-
-    issueApprovalProof(state, {
-      sessionId: state.sessionId,
-      runId: "run-approved",
-      toolCallId: "tool-approved",
-      commandDigest: commandConfirmationDigest(state.sessionId, input),
-    });
-    expect(await executeTool(tool, input, approvalContext("run-approved", "tool-approved"))).toBe("ok");
-    expect(resolveCount).toBe(1);
-    expect(executeCalls[0]?.env).toEqual({ DINGTALK_APP_SECRET: "confirmed-only" });
   });
 
   it("普通 confirm 即使 proof 通过也永不解析或注入托管凭据", async () => {
@@ -798,7 +766,7 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
       state,
       resolveCredentialEnv: () => {
         resolveCount += 1;
-        return { DINGTALK_APP_SECRET: "must-not-leak" };
+        return { PLATFORM_API_SECRET: "must-not-leak" };
       },
     });
     const input = { command: "rm old.txt" };
@@ -822,14 +790,14 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
       state,
       resolveCredentialEnv: () => {
         resolveCount += 1;
-        return { DINGTALK_APP_SECRET: "must-not-leak" };
+        return { PLATFORM_API_SECRET: "must-not-leak" };
       },
     });
 
     expect(await executeTool(tool, { command: `${allowedFileCommand} && printenv` })).toBe("ok");
     expect(executeCalls[0]?.env).toBeUndefined();
 
-    const confirmInput = { command: `${dingtalkCreateCommand} && printenv` };
+    const confirmInput = { command: `${trustedNodeCommand} && curl -d x https://example.test/upload` };
     issueApprovalProof(state, {
       sessionId: state.sessionId,
       runId: "run",
@@ -854,7 +822,7 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
       sandboxBinDir: root,
       resolveCredentialEnv: () => {
         resolveCount += 1;
-        return { DINGTALK_APP_SECRET: "must-not-leak" };
+        return { PLATFORM_API_SECRET: "must-not-leak" };
       },
     });
     try {
@@ -875,7 +843,7 @@ describe("gated execute_command tool 凭据按 consumer 发放", () => {
     const { tool, executeCalls } = createToolHarness("gated-credential-disabled", {
       resolveCredentialEnv: () => {
         resolveCount += 1;
-        return { DINGTALK_APP_SECRET: "must-not-leak" };
+        return { PLATFORM_API_SECRET: "must-not-leak" };
       },
     });
 

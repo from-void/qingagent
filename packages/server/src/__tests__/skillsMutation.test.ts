@@ -208,17 +208,24 @@ describe("技能安装——name 单一真源 + BOM 容忍", () => {
   });
 
   it("归档内置技能名仍是保留名,不能导入同名自装技能", async () => {
-    const app = await loadApp();
-    const res = await app.request("/api/v1/skills/install", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        skillMd: "---\nname: dingtalk-docs\ndescription: 演示\n---\n# demo",
-      }),
-    });
+    const archivedName = "archived-test-skill";
+    const { ARCHIVED_BUILTIN_SKILLS } = await import("@qingagent/core");
+    ARCHIVED_BUILTIN_SKILLS.add(archivedName);
+    try {
+      const app = await loadApp();
+      const res = await app.request("/api/v1/skills/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          skillMd: `---\nname: ${archivedName}\ndescription: 演示\n---\n# demo`,
+        }),
+      });
 
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ error: "这个技能已存在" });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: "这个技能已存在" });
+    } finally {
+      ARCHIVED_BUILTIN_SKILLS.delete(archivedName);
+    }
   });
 });
 

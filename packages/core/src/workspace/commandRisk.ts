@@ -1093,10 +1093,6 @@ function isSendCommand(command: AnalyzedSimpleCommand): boolean {
   const args = command.argv.slice(1).map((arg) => arg.toLowerCase());
   if (hasDynamicExternalLocation(command)) return true;
   if (larkWrites(command)) return true;
-  if (name === "node" || name === "nodejs") {
-    const script = command.argv[1] ?? "";
-    if (commandName(script) === "dingtalk.mjs" && args.some((arg) => new Set(["doc-create", "doc-update", "upload", "send", "publish"]).has(arg))) return true;
-  }
   if (name === "curl" && curlWrites(command)) return true;
   if (name === "wget" && wgetWrites(command)) return true;
   if (name === "git" && args[0] === "push") return true;
@@ -1146,9 +1142,6 @@ function destructiveTitle(command: AnalyzedSimpleCommand): string | null {
 function sendTitle(commands: AnalyzedSimpleCommand[]): { title: string; detail: string } {
   if (commands.some((command) => larkWrites(command))) {
     return { title: "发送或发布到飞书", detail: "将修改你的飞书内容或向飞书发送数据" };
-  }
-  if (commands.some((command) => command.argv.some((arg) => commandName(arg) === "dingtalk.mjs"))) {
-    return { title: "发送或发布到钉钉", detail: "将修改你的钉钉内容或向钉钉发送数据" };
   }
   if (commands.some((command) => commandName(command.argv[0] ?? "") === "git" && command.argv[1]?.toLowerCase() === "push")) {
     return { title: "推送代码到远端", detail: "将修改远端代码仓库" };

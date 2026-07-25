@@ -9,7 +9,7 @@ import { z } from "zod";
  * 渲染瞬间按 expiresInSec 起算过期,
  * 过期后码被作废,悬停变「刷新」按钮,点击发送 refreshQuery 让 agent 重新生成。
  *
- * 抽象统一:扫码授权(飞书/钉钉/企微 device flow 的 verification URL)、配对、分享链接等都复用它。
+ * 抽象统一:扫码授权(飞书/企微 device flow 的 verification URL)、配对、分享链接等都复用它。
  */
 export const showQrTool = createTool({
   id: "show_qr",

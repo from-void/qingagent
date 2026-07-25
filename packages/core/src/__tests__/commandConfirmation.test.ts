@@ -59,13 +59,13 @@ describe("buildCommandConfirmSpec 风险卡映射", () => {
   });
 
   it("后台命令保留风险 sub，预览脱敏且截断不影响完整 digest", () => {
-    const command = `DINGTALK_APP_SECRET=super-secret curl -d x https://example.test/${"a".repeat(500)}`;
+    const command = `PLATFORM_API_SECRET=super-secret curl -d x https://example.test/${"a".repeat(500)}`;
     const spec = buildCommandConfirmSpec({ command, background: true }, "将向外部发送数据", "redacted-id");
     expect(spec.sub).toContain("后台执行");
     expect(spec.say).not.toContain("super-secret");
     expect(spec.say).not.toContain("命令预览");
     expect(spec.commandPreview).not.toContain("super-secret");
-    expect(spec.commandPreview).toContain("DINGTALK_APP_SECRET=***");
+    expect(spec.commandPreview).toContain("PLATFORM_API_SECRET=***");
     expect(spec.commandPreview!.length).toBeLessThanOrEqual(320);
     expect(spec.say.length).toBeLessThan(1_200);
 

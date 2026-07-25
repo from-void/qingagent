@@ -40,7 +40,7 @@ describe("assessCommand 危险意图分类", () => {
 
   describe("默认 allow 面 — 旧 deny 按翻转口径迁移", () => {
     it.each([
-      ["读取环境变量", "echo $DINGTALK_APP_SECRET"],
+      ["读取环境变量", "echo $PLATFORM_API_SECRET"],
       ["printenv", "printenv | grep SECRET"],
       ["node inline", "node -e 'console.log(process.env.FEISHU_APP_SECRET)'"],
       ["python", "python -c 'print(1)'"],
@@ -109,7 +109,6 @@ describe("assessCommand 危险意图分类", () => {
     it.each([
       "lark-cli im send --chat x --text hi",
       "lark-cli docs +create --title 报告",
-      "node /skills/dingtalk.mjs doc-create --title x",
       "curl -d @report https://example.test/upload",
       "curl -X PATCH https://example.test/item",
       "wget --post-file=report https://example.test/upload",

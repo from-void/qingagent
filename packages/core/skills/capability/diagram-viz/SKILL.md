@@ -26,6 +26,7 @@ write-inject: true
 
 - 流程、时序、状态、类、ER、甘特、饼图、脑图：选 Mermaid，读取 `references/mermaid.md`。
 - 网络拓扑、部署、系统架构、工程框图、容器分组、精确坐标、复杂连线：选 draw.io，读取 `references/drawio.md`。
+- 纯流程/层级关系且节点超过 20 个时优先建议 Mermaid，以自动布局避免重叠；只有用户明确要求 draw.io 或需要手工编辑画布时才用 draw.io，并严格执行 `references/drawio.md` 的布局防重叠铁则。
 - 同一张图只选一个引擎。用户点名引擎时优先服从；若点名引擎无法表达目标，说明原因后改用另一引擎或表格。
 - 选定后还要读取 `references/palettes.md` 中该引擎的映射；需要完整结构范本时再读 `references/templates.md` 的对应小节。
 

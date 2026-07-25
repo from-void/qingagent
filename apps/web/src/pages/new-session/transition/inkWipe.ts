@@ -129,7 +129,15 @@ export function createInkWipe(canvas: HTMLCanvasElement): InkWipeHandle {
 }
 
 export function prewarmInkWipe(): boolean {
-  return getSharedInkWipeEngine() !== null;
+  const engine = getSharedInkWipeEngine();
+  if (!engine) {
+    return false;
+  }
+  // 只建 context + linkProgram 不算预热:驱动对 shader 的最终编译普遍惰性到**首次 draw call**
+  // 才做,于是第一次转场的首帧卡住几百毫秒 —— 那期间 ink canvas 是 clear 后的透明(alpha=0),
+  // 屏幕上就是「纸已经飞到落点、背景还是首页浅底」。这里离屏真画一帧把成本前置到空闲期。
+  engine.warmUp();
+  return true;
 }
 
 function createNoopInkWipe(): InkWipeHandle {
@@ -209,6 +217,7 @@ class SharedInkWipeEngine {
   private ph = 0;
   private pw = 0;
   private raf = 0;
+  private warmedUp = false;
   private readonly onResize = () => this.resize();
 
   constructor(
@@ -221,6 +230,40 @@ class SharedInkWipeEngine {
     this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
     this.resize();
     window.addEventListener("resize", this.onResize);
+  }
+
+  /**
+   * 空闲期离屏画一帧,把「驱动编译 shader + 首帧全屏填充」的成本前置。
+   * 此刻 canvas 还没 attach 到 DOM(attach 在 createHandle 才发生),画了也看不见。
+   * 末尾读 1x1 像素强制同步 —— 否则 drawArrays 只是入队,那笔成本仍留在首次转场。
+   */
+  warmUp(): void {
+    if (this.warmedUp) {
+      return;
+    }
+    this.warmedUp = true;
+    try {
+      this.useProgram();
+      const U = this.program.uniforms;
+      this.gl.uniform2f(U.origin, 0.5, 0.5);
+      this.gl.uniform2f(U.res, this.pw, this.ph);
+      this.gl.uniform1f(U.reverse, 0);
+      this.gl.uniform1f(U.maxDist, 1);
+      this.gl.uniform3fv(U.bg0, COL.bg0);
+      this.gl.uniform3fv(U.bg1, COL.bg1);
+      this.gl.uniform3fv(U.ink, COL.ink);
+      this.gl.uniform3fv(U.cinnabar, COL.cinnabar);
+      // 取渗墨中段:锋面带、fbm 各层、朱砂混色都走一遍,别只跑 progress=0 的平凡分支
+      this.gl.uniform1f(U.progress, 0.5);
+      this.gl.uniform1f(U.time, 0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      this.gl.drawArrays(this.gl.TRIANGLES, 0, 3);
+      const px = new Uint8Array(4);
+      this.gl.readPixels(0, 0, 1, 1, this.gl.RGBA, this.gl.UNSIGNED_BYTE, px);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    } catch (error) {
+      console.error("[ink-wipe] warmUp", error);
+    }
   }
 
   createHandle(targetCanvas: HTMLCanvasElement): InkWipeHandle {

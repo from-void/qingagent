@@ -14,6 +14,8 @@ afterEach(() => {
 
 function installWebGlMock() {
   const compileShader = vi.fn();
+  const drawArrays = vi.fn();
+  const readPixels = vi.fn();
   const gl = {
     ARRAY_BUFFER: 0x8892,
     BLEND: 0x0be2,
@@ -22,9 +24,11 @@ function installWebGlMock() {
     FLOAT: 0x1406,
     FRAGMENT_SHADER: 0x8b30,
     ONE_MINUS_SRC_ALPHA: 0x0303,
+    RGBA: 0x1908,
     SRC_ALPHA: 0x0302,
     STATIC_DRAW: 0x88e4,
     TRIANGLES: 0x0004,
+    UNSIGNED_BYTE: 0x1401,
     VERTEX_SHADER: 0x8b31,
     attachShader: vi.fn(),
     bindBuffer: vi.fn(),
@@ -35,7 +39,7 @@ function installWebGlMock() {
     createBuffer: vi.fn(() => ({})),
     createProgram: vi.fn(() => ({})),
     createShader: vi.fn((type: number) => ({ type })),
-    drawArrays: vi.fn(),
+    drawArrays,
     enable: vi.fn(),
     enableVertexAttribArray: vi.fn(),
     getAttribLocation: vi.fn(() => 0),
@@ -43,6 +47,7 @@ function installWebGlMock() {
     getShaderParameter: vi.fn(() => true),
     getUniformLocation: vi.fn((_program: unknown, name: string) => ({ name })),
     linkProgram: vi.fn(),
+    readPixels,
     shaderSource: vi.fn(),
     uniform1f: vi.fn(),
     uniform2f: vi.fn(),
@@ -57,7 +62,7 @@ function installWebGlMock() {
     return gl;
   });
 
-  return { compileShader };
+  return { compileShader, drawArrays, readPixels };
 }
 
 describe("inkWipe WebGL 资源复用", () => {
@@ -87,5 +92,22 @@ describe("inkWipe WebGL 资源复用", () => {
     second.dispose();
 
     expect(webgl.compileShader).toHaveBeenCalledTimes(2);
+  });
+
+  it("预热必须真画一帧并同步读回 —— 只 link 不 draw 等于没预热", async () => {
+    // 回归:驱动对 shader 的最终编译普遍惰性到首次 draw call,只建 context+linkProgram 的话
+    // 第一次转场的首帧仍卡几百毫秒,那期间 ink canvas 是 clear 后的透明 → 屏幕上是
+    // 「纸已经飞到落点、背景还是首页浅底」(用户录屏实证)。readPixels 是强制同步点:
+    // 少了它 drawArrays 只是入队,成本仍留在首次转场。
+    const webgl = installWebGlMock();
+    const { prewarmInkWipe } = await import("./inkWipe");
+
+    expect(prewarmInkWipe()).toBe(true);
+    expect(webgl.drawArrays).toHaveBeenCalledTimes(1);
+    expect(webgl.readPixels).toHaveBeenCalledTimes(1);
+
+    // 幂等:重复预热不再重画
+    expect(prewarmInkWipe()).toBe(true);
+    expect(webgl.drawArrays).toHaveBeenCalledTimes(1);
   });
 });

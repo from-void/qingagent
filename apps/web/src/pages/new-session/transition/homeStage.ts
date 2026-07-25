@@ -43,14 +43,26 @@ export interface HomeTransitionStage {
     // animate=false(从文档编辑页返回):不做形变,就地淡出。
     animate?: boolean,
   ) => Promise<void>;
-  /** 立即把背景置深、卡静帧停在 rect(返回到达态首帧,零入场动画)。 */
-  snapArrived: (rect: StageRect) => void;
+  /**
+   * 立即把背景置深、卡静帧停在 rect(返回到达态首帧,零入场动画)。
+   * plain=true(从文档编辑页返回):这一帧起就是纯净纸 —— 否则会先 paint 出一两帧
+   * 新建卡皮(噪点/棕框/朱砂角标)再被 playReturn 切掉。
+   */
+  snapArrived: (rect: StageRect, plain?: boolean) => void;
   dispose: () => void;
 }
 
 const EASE_CUBIC = (p: number) =>
   p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
 const INK_HANDOFF_MS = 180;
+// 背景置深的兜底时刻(去程)。正常路径由墨渗进度触发(easeInOutCubic 到 0.82 约在 710ms),
+// 这里略晚一点点,正常时不改变观感;墨渗因任何原因没推进(WebGL 首帧卡在驱动编译、掉帧、
+// 上下文丢失、GPU 不可用)时就由它把背景置深 —— 否则会出现「纸已飞到落点、背景还是首页浅底」。
+const DARK_FALLBACK_MS = 780;
+// 文档编辑页返回:纸下滑收起的时长(位移略长于淡出,收尾时纸已透明、动势仍在)。
+// 收起是「离开」动作,要利落 —— 520ms 实测偏拖沓,收到 340ms。
+const RETURN_SLIDE_MS = 340;
+const RETURN_SLIDE_FADE_MS = 300;
 
 /**
  * 在 host(首页根容器)内挂出固定覆盖层(space/dust/ink/morph),返回过渡控制器。
@@ -79,7 +91,11 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   const noiseEl = morph.querySelector<HTMLElement>(".ccx-morph-noise");
   if (noiseEl) noiseEl.style.background = `${textures.noise} repeat`;
 
-  // host 上加 ccx-page 状态钩子(复用 is-dark / is-ink-wipe 的 CSS 切换)
+  // host 上加 ccx-page 状态钩子(复用 is-dark / is-ink-wipe 的 CSS 切换)。
+  // ⚠️ 这一句只是防御(幂等):若 host 的 className 由 React 用整串模板控制,光靠这里挂不住 ——
+  // 任何一次重渲染都会把它擦掉,而深底规则 .qj-root.ccx-stage-host.is-dark .ccx-space 就此
+  // 永不匹配(背景不再变深,露出首页浅底)。调用方必须把 ccx-stage-host 写进自己的 className,
+  // 见 QingjianScroll 根元素。
   host.classList.add("ccx-stage-host");
   host.appendChild(space);
   host.appendChild(dustCanvas);
@@ -146,6 +162,16 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     requestAnimationFrame(tick);
   }
 
+  // 去程「背景置深」的兜底定时器。放 stage 作用域(而非 playForward 局部)是为了 dispose 能取消 ——
+  // 否则转场中途卸载首页,定时器仍会把 is-dark 加回已清理的 host 上。
+  let darkFallbackTimer = 0;
+  function cancelDarkFallback() {
+    if (darkFallbackTimer) {
+      window.clearTimeout(darkFallbackTimer);
+      darkFallbackTimer = 0;
+    }
+  }
+
   function darkOn(animate = false) {
     host.classList.toggle("is-dark-anim", animate);
     host.classList.add("is-dark");
@@ -192,8 +218,15 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
 
       let morphDone = false;
       let inkDone = false;
+      // 到点无条件置深,与墨渗进度触发取先到者(详见 DARK_FALLBACK_MS)。
+      cancelDarkFallback();
+      darkFallbackTimer = window.setTimeout(() => {
+        darkFallbackTimer = 0;
+        darkOn(true);
+      }, DARK_FALLBACK_MS);
       const tryResolve = () => {
         if (morphDone && inkDone) {
+          cancelDarkFallback();
           // 卡落定 + 背景已深的静止帧:确保 morph 精确停在落点(去掉弧线残留)
           setMorphRect(to);
           resolve();
@@ -205,9 +238,13 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
         host.classList.add("is-ink-wipe");
         inkHandle
           .play([ox, oy], 1100, false, (e) => {
-            if (e > 0.82) darkOn(true);
+            if (e > 0.82) {
+              cancelDarkFallback();
+              darkOn(true);
+            }
           })
           .then(async () => {
+            cancelDarkFallback();
             darkOn(true);
             await fadeOutForwardInk();
             inkDone = true;
@@ -215,6 +252,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
           });
       } else {
         // WebGL 不可用:直接置深背景(无墨)
+        cancelDarkFallback();
         darkOn(true);
         inkDone = true;
       }
@@ -226,20 +264,23 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     });
   }
 
-  function snapArrived(rect: StageRect) {
+  function snapArrived(rect: StageRect, plain = false) {
     // 返回到达态首帧(必须在 paint 前调):背景瞬时已深(is-ink-wipe 让 .ccx-space 无慢渐显,
     // is-dark 令其 opacity:1 立即满深,纯 CSS 渐变即可,无需 WebGL 墨层)、卡静停落点。
-    // 这一帧 = 新建页返回前的最后一帧(卡同 rect + 深背景)→ 切换瞬间不跳、不闪、不漏白。
+    // 这一帧 = 离开前的最后一帧(卡同 rect + 深背景)→ 切换瞬间不跳、不闪、不漏白。
+    // plain 必须在这里定:双 rAF 之后才跑的 playReturn 已经晚了一两帧,那两帧会 paint 出
+    // 新建卡皮。从文档编辑页返回时 morph 只当文档纸用,故首帧即纯净纸。
     host.classList.remove("is-dark-anim");
     host.classList.add("is-ink-wipe");
     host.classList.add("is-dark");
     dust?.start();
+    morph.classList.toggle("ccx-morph-plain", plain);
     setMorphRect(rect);
   }
 
   // 返回首页,按来源分流:
   //  · animate=false(文档编辑页返回):不做"卡飞回卡片位置"的形变(落点常不稳/找不到),
-  //    卡停在工作区文档落点原地纯淡出,深背景与墨层同步平滑退去,首页内容随后淡入。
+  //    纸停在工作区文档落点、往下滑出视口收起,深背景与墨层同步平滑退去,首页内容随后淡入。
   //  · animate=true(新建页返回):保留原动效——卡飞回新建卡固定位 + 墨退回宣纸。
   function playReturn(
     from: StageRect,
@@ -248,18 +289,30 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
     animate = false,
   ): Promise<void> {
     return new Promise((resolve) => {
+      cancelDarkFallback(); // 返程要变浅,别让去程遗留的兜底又把背景置深
       host.classList.remove("is-ink-wipe");
       ensureInk()?.hide(); // 收起墨层,不再播放渗墨锋面
       darkOff(); // 深背景平滑退去(.ccx-space 自带过渡)
 
       if (!animate) {
-        // 文档编辑页返回:就地淡出,不位移
+        // 文档编辑页返回:纸停在原文档纸落点,往下滑出视口收起(纸被收走的动向)。
+        //
+        // 纯净纸兜底(幂等)。返程的 morph 是首页重新挂载时新建的元素 —— 去程那次
+        // playForward(plain=true) 的 class 随旧 stage 一起销毁了,不带 plain 就会露出
+        // .ccx-morph 的新建卡皮(#efe9dd 底 + 噪点 + 棕色双边框 + 朱砂角标)。
+        // 正常路径由 snapArrived(rect, true) 在到达态首帧就切好,这里只兜「没走 snapArrived」。
+        morph.classList.add("ccx-morph-plain");
         setMorphRect(from);
-        morph.style.transition = "opacity 0.6s ease";
+        void morph.offsetWidth; // setMorphRect 写了 transition:none,强制回流让下面的过渡真的生效
+        morph.style.transition =
+          `transform ${RETURN_SLIDE_MS}ms cubic-bezier(0.32, 0, 0.67, 0),` +
+          ` opacity ${RETURN_SLIDE_FADE_MS}ms ease`;
         requestAnimationFrame(() => {
+          // 纸顶滑到视口下沿 = 整张纸滑出屏幕;与 darkOff() 的背景转浅同时进行。
+          morph.style.transform = `translate(${from.left}px,${window.innerHeight}px)`;
           morph.style.opacity = "0";
         });
-        window.setTimeout(resolve, 620);
+        window.setTimeout(resolve, RETURN_SLIDE_MS + 20);
         return;
       }
 
@@ -276,6 +329,7 @@ export function createHomeTransitionStage(host: HTMLElement): HomeTransitionStag
   }
 
   function dispose() {
+    cancelDarkFallback();
     ink?.dispose();
     dust?.dispose();
     host.classList.remove("ccx-stage-host", "is-dark", "is-dark-anim", "is-ink-wipe");

@@ -3,16 +3,30 @@ import type { RouteName } from "./shell";
 import { AppUpdateWatcher } from "./system/AppUpdateWatcher";
 import { AuthTokenGate } from "./system/AuthTokenGate";
 import { ConfirmProvider, ToastProvider, useToast } from "./system";
+import { awaitPendingStylesheets } from "./system/awaitStyles";
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 // 路由页面懒加载:首页只下载 home chunk,workspace 的 tiptap 编辑器等不再进首屏 bundle。
 // 各页都抽成命名工厂,既给 lazy 用,也给「空闲预热」用 —— 同一个 import 工厂只会拉一次 chunk。
-const loadHome = () => import("./pages/home/HomePage");
+//
+// 「组件早于样式挂载 → 无样式裸 DOM」的**第二道**防线(styled)。主防线是 vite.config.ts 的
+// build.cssCodeSplit:false —— 全站 CSS 合成一个渲染阻塞的 <link>,React 挂载前样式必然已生效,
+// 从根上不存在竞态(详见那里的注释)。这里保留等待是因为它零成本(没有 pending 样式表就立即
+// resolve),且能兜住「日后又开启 CSS 分割 / 引入运行时动态样式表」的回归。
+//
+// 病根备忘:Vite preload helper 用全局 seen 表去重,只有**第一次**碰到某个 CSS 才返回「等 link
+// load」的 promise。下面的空闲预热就是那第一次(等待被 void 掉了),等用户真正切页、React.lazy
+// 第二次调同一工厂时 seen 命中直接短路,不等 CSS 就把 chunk 交出去。注意本道防线的等待必须带
+// 超时(网络异常不能卡死导航),所以**一超时裸 DOM 照旧** —— 单靠它治不了根,别把主防线关掉。
+const PAGE_STYLE_TIMEOUT_MS = 3000;
+const styled = <T,>(mod: T): Promise<T> =>
+  awaitPendingStylesheets(PAGE_STYLE_TIMEOUT_MS).then(() => mod);
+const loadHome = () => import("./pages/home/HomePage").then(styled);
 const HomePage = lazy(() => loadHome().then((m) => ({ default: m.HomePage })));
-const loadNewSession = () => import("./pages/new-session/NewSessionPage");
+const loadNewSession = () => import("./pages/new-session/NewSessionPage").then(styled);
 const NewSessionPage = lazy(() => loadNewSession().then((m) => ({ default: m.NewSessionPage })));
 // 编辑页最重(tiptap 编辑器等),也抽命名工厂供预热,消除「新建页→编辑页」首切白屏。
-const loadWorkspace = () => import("./pages/workspace/WorkspacePage");
+const loadWorkspace = () => import("./pages/workspace/WorkspacePage").then(styled);
 const WorkspacePage = lazy(() => loadWorkspace().then((m) => ({ default: m.WorkspacePage })));
 const devPages = import.meta.env.DEV
   ? {

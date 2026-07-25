@@ -35,6 +35,7 @@ import { resolveFileIds } from "../session/uploadFileResolver.js";
 import { pmToMarkdown } from "@qingagent/pm-schema";
 import { schedulePersist, QINGAGENT_RESOURCE_ID } from "../session/threadPersistence.js";
 import {
+  AGENT_MAX_OUTPUT_TOKENS,
   AGENT_MAX_STEPS,
   TURN_RETRY_LIMIT,
 } from "./agentLimits.js";
@@ -701,7 +702,11 @@ export async function* runAgentTurn(
           // 代理偶发抖动(other side closed)时多扛几次:指数退避 1s/2s/4s/8s,共 5 次尝试。
           // Mastra 默认 maxRetries=2(只 1s/2s)对走代理的 deepseek 偏少。maxRetries 在 modelSettings 里。
           // F1:设置页的采样参数覆盖(temperature/topP/maxOutputTokens)合并,空=不覆盖走默认。
-          modelSettings: { maxRetries: 4, ...resolveModelParams(requestContext) },
+          modelSettings: {
+            maxRetries: 4,
+            maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
+            ...resolveModelParams(requestContext),
+          },
           // 智谱 GLM 等 anthropic 协议:扩展思考默认关,显式开启才会返回 reasoning 流(否则前端无"思考中")。
           // 仅对 anthropic 协议加,deepseek(openai 协议)不受影响。
           ...(resolveProtocol(requestContext) === "anthropic"

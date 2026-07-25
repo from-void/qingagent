@@ -229,7 +229,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
       thinking: false,
       temperature: 0.35,
       topP: 0.78,
-      maxTokens: 4096,
+      maxTokens: 65_536,
     });
 
     expect(result).toMatchObject({ ok: true, text: "分支答案", attempts: 1, toolCallRetries: 0 });
@@ -242,7 +242,7 @@ describe("BranchCall provider 快照与 raw 回放", () => {
     expect(replayBody.thinking).toEqual({ type: "disabled" });
     expect(replayBody.temperature).toBe(0.35);
     expect(replayBody.top_p).toBe(0.78);
-    expect(replayBody.max_tokens).toBe(4096);
+    expect(replayBody.max_tokens).toBe(65_536);
     expect(replayBody.stream).toBe(true);
     expect(replayBody.stream_options).toEqual({ include_usage: true });
     expect(replayBody.tool_choice).toBe(sourceBody.tool_choice);

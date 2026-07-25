@@ -53,6 +53,10 @@ import { buildActivatedSkillWriteInject } from "../skills/writeInject.js";
 
 export { writeDraftInputSchema };
 
+// 按复杂整稿/大图的最大合理需求取约 2 倍余量；同时作为复读跑飞保险丝。
+// deepseek-v4-flash 实测上限为 393216，无需把单路预算直接吃满。
+const WRITE_DRAFT_MAX_TOKENS = 65_536;
+
 export const writeDraftOutputSchema = z.object({
   ok: z.boolean(),
   blockCount: z.number().optional(),
@@ -563,6 +567,7 @@ export function createWriteDraftTool(opts: {
             temperature: params.temperature,
             abortSignal: params.abortSignal,
             maxRetries: 2,
+            maxTokens: WRITE_DRAFT_MAX_TOKENS,
             onContentStart: params.onContentStart,
             onContentDelta: (_delta, currentRaw) => {
               raw = currentRaw;
@@ -758,7 +763,8 @@ export function createWriteDraftTool(opts: {
               return (
                 `writeDraft 失败: ${lengthFails}/${totalFails} 路都因达到输出长度上限而截断，` +
                 `截断稿未进入候选池。${detail}` +
-                `请直接重新调用 writeDraft 重试。`
+                `重新调用时必须压缩生成规模：减少图表节点数、精简样式并压缩正文篇幅；` +
+                `如果已连续两次因超长失败，请按更小规模出稿，并在正文中向用户说明。`
               );
             }
             if (budgetFails > totalFails / 2) {

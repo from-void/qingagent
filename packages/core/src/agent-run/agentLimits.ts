@@ -4,6 +4,10 @@
 // "步数耗尽兜底"发可见提示(见 processAgentStream)。
 export const AGENT_MAX_STEPS = Math.max(1, Number(process.env.QINGAGENT_AGENT_MAX_STEPS) || 60);
 
+// 主 Agent 会直接生成 editDraft / generate_derivative 的整段 QingML 参数：
+// 按最大合理长内容需求取约 2 倍余量，同时保留为复读跑飞保险丝，不吃满 v4-flash 的 393216 上限。
+export const AGENT_MAX_OUTPUT_TOKENS = 65_536;
+
 // agent 主流空闲看门狗:连续这么久没有任何 chunk 就判定卡死、abort 整轮。
 // 默认 90s 是"有心跳时"的兜底:允许偶发心跳漏发或单次 await 抖动,避免工具正常
 // 执行时被误杀(实测:SVG 生成期静默 >45s 被掐、图没插入)。

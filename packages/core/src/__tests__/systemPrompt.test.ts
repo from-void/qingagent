@@ -127,27 +127,14 @@ describe("system prompt S3", () => {
       // 检索来源引用纪律(回归 search-ref-not-citation-block)
       "检索来源引用纪律",
       "可点击 link mark",
-      // 来源审查只能由明确意图触发，禁止写作及其他审查误入。
-      "来源审查白名单路由",
-      "仅当用户明确要求",
-      "素材是唯一 ground truth,默认不联网",
-      "未携带来源核查要求的普通写作、修改、润色",
-      "当前会话没有可对照的素材,请先添加素材再做来源审查",
-      "审查执行形态(所有审查通用)",
-      "writeDraft 产出候选后",
-      "最后才让候选 settle",
-      "自定义审查:<模板名>",
-      "reviewAction=annotate 的必须逐条调用 create_annotation_groups",
-      "词库命中不得自行豁免",
-      "降 severity=info 也必须呈现",
-      "一致性审查路由",
-      "必须调用代码执行工具(run_python 或 run_js 均可)真实验算",
-      "隐私泄露审查路由",
-      "格式规范审查路由",
-      "角色审查路由",
-      "role-review skill",
-      "角色审查:<模板名>",
-      "自定义审查路由",
+      // 审查细则下沉 review skill，主提示只保留统一激活路由与失活兜底。
+      "审查统一路由",
+      "敏感词、来源核查、去AI味、一致性、隐私、格式规范、角色审查或自定义审查",
+      'skill({name:"review"})',
+      "内部路由读取对应 reference",
+      "审查兜底",
+      "单独要求审查当前文档",
+      "纯批注模式,不改稿",
       // 结构摘要/自检纪律(回归 fmt-selfcheck-falsepass)
       "结构摘要 / 自检纪律",
       "以工具返回为唯一事实来源",
@@ -221,6 +208,31 @@ describe("system prompt S3", () => {
       "<drawio>&lt;mxGraphModel",
     ]) {
       expect(prompt).not.toContain(movedDetail);
+    }
+  });
+
+  it("主 system 的审查段只保留总技能路由和纯批注兜底", () => {
+    const prompt = AIIR_SYSTEM_PROMPT;
+    const start = prompt.indexOf("**审查统一路由**");
+    const end = prompt.indexOf("**衍生稿生成路由", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const reviewSection = prompt.slice(start, end);
+    expect(reviewSection).toContain('skill({name:"review"})');
+    expect(reviewSection).toContain("内部路由读取对应 reference");
+    expect(reviewSection).toContain("纯批注模式,不改稿");
+    for (const movedDetail of [
+      "create_annotation_groups",
+      "summary",
+      "anchors.find",
+      "severity",
+      "origin",
+      "reviewAction",
+      "ground truth",
+      "documentQuote",
+    ]) {
+      expect(reviewSection).not.toContain(movedDetail);
     }
   });
 

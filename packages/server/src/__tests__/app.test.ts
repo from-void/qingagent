@@ -312,6 +312,37 @@ describe("GET /api/v1/skills", () => {
       userInvocable: false,
       tools: ["readDocument", "searchDocuments"],
     });
+    expect(byName.get("review")).toMatchObject({
+      label: "文档审查",
+      summary: "统一执行八类文档审查",
+      icon: "search",
+      userInvocable: true,
+      tools: [
+        "lexicon_list",
+        "sensitive_scan",
+        "lexicon_manage",
+        "style_template_get",
+        "readDraft",
+        "readMaterial",
+        "run_python",
+        "run_js",
+        "editDraft",
+        "create_annotation_groups",
+      ],
+    });
+    for (const oldName of [
+      "sensitive-review",
+      "source-check",
+      "deai-review",
+      "consistency-review",
+      "privacy-review",
+      "format-review",
+      "role-review",
+      "custom-review",
+    ]) {
+      expect(byName.has(oldName)).toBe(false);
+    }
+    expect(byName.has("dingtalk-docs")).toBe(false);
     expect(json.skills.map((skill) => skill.name).slice(0, 8)).toEqual([
       "browser-ops",
       "web-search",

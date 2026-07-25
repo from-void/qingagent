@@ -204,12 +204,12 @@ const CAPABILITY_TOOLS = {
     github_search_code: githubSearchCodeTool,
   },
   feishu: { feishu_auth_start: feishuAuthStartTool },
-  "sensitive-review": {
+  review: {
     lexicon_list: lexiconListTool,
     sensitive_scan: sensitiveScanTool,
     lexicon_manage: lexiconManageTool,
+    style_template_get: styleTemplateGetTool,
   },
-  "deai-review": { style_template_get: styleTemplateGetTool },
 } as const;
 
 // CORE 常驻语义：run_js 是系统提示长期承诺的通用精确计算能力，不属于可关闭技能的工具。
@@ -236,9 +236,7 @@ const SELECTED_SKILL_TOOL_SEARCH_PRELOADS: Record<string, string[]> = {
   ],
   "github-materials": ["github_auth_start", "github_list_repos", "github_repo_tree", "github_read_file", "github_search_code"],
   feishu: ["feishu_auth_start"],
-  "sensitive-review": ["lexicon_list", "sensitive_scan", "lexicon_manage"],
-  "deai-review": ["style_template_get"],
-  "consistency-review": ["run_python"],
+  review: ["lexicon_list", "sensitive_scan", "lexicon_manage", "style_template_get", "run_python"],
   "gzh-style": ["fetchArticle", "style_template_list", "style_template_get", "style_template_save", "style_template_delete"],
 };
 

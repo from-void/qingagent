@@ -69,6 +69,39 @@ describe("ToolSearch bridge", () => {
     expect(disabledBridge.preloadToolNames).toEqual([]);
   });
 
+  it("review 汇总审查专用工具，旧技能禁用记录不影响新技能", async () => {
+    const {
+      buildCapabilityToolSearchBridge,
+      buildCapabilityTools,
+    } = await import("../session/sessionTools.js");
+    const oldReviewNames = [
+      "sensitive-review",
+      "source-check",
+      "deai-review",
+      "consistency-review",
+      "privacy-review",
+      "format-review",
+      "role-review",
+      "custom-review",
+    ];
+    for (const oldName of oldReviewNames) h.disabledSkills.add(oldName);
+
+    const tools = await buildCapabilityTools();
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining([
+      "lexicon_list",
+      "sensitive_scan",
+      "lexicon_manage",
+      "style_template_get",
+    ]));
+    const bridge = await buildCapabilityToolSearchBridge(["review"]);
+    expect(bridge.preloadToolNames.sort()).toEqual([
+      "lexicon_list",
+      "lexicon_manage",
+      "sensitive_scan",
+      "style_template_get",
+    ]);
+  });
+
   it("关闭 web-search 后 schema 同时移除 webSearch 与间接联网 fetchArticle", async () => {
     h.disabledSkills.add("web-search");
     const {

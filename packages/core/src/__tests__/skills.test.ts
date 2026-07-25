@@ -69,6 +69,76 @@ describe("builtin skills", () => {
     expect(disabledDirs.some((dir) => basename(dir) === "diagram-viz")).toBe(false);
   });
 
+  it("将八类审查合并为 review，并允许旧禁用记录自然失效", async () => {
+    const categoryRoots = [
+      join(BUILTIN_SKILLS_DIR, "capability"),
+      join(BUILTIN_SKILLS_DIR, "native"),
+      join(BUILTIN_SKILLS_DIR, "style"),
+    ];
+    const oldReviewNames = [
+      "sensitive-review",
+      "source-check",
+      "deai-review",
+      "consistency-review",
+      "privacy-review",
+      "format-review",
+      "role-review",
+      "custom-review",
+    ];
+    const enabledDirs = await resolveEnabledSkillDirsFromRoots(
+      categoryRoots,
+      new Set(oldReviewNames),
+    );
+    const names = enabledDirs.map((dir) => basename(dir));
+
+    expect(names).toContain("review");
+    for (const oldName of oldReviewNames) {
+      expect(names).not.toContain(oldName);
+    }
+
+    const reviewDir = enabledDirs.find((dir) => basename(dir) === "review");
+    expect(reviewDir).toBeTruthy();
+    const skill = await readFile(join(reviewDir!, "SKILL.md"), "utf8");
+    const frontmatter = parseFrontmatter(skill);
+    expect(frontmatter).toMatchObject({
+      name: "review",
+      label: "文档审查",
+      summary: "统一执行八类文档审查",
+      "user-invocable": "true",
+    });
+    expect(frontmatter["write-inject"]).toBeUndefined();
+    for (const commonRule of [
+      "纯批注模式，不改稿",
+      "`writeDraft` 产出候选后",
+      "`summary` 只写不超过 15 字",
+      "只有模板明确要求严重度时才传",
+      "同一固定 `origin` 或同名角色/自定义模板重跑时换代旧结果",
+      "每次不超过 3 组",
+    ]) {
+      expect(skill).toContain(commonRule);
+    }
+
+    const referenceRules: Record<string, string[]> = {
+      sensitive: ["`sensitive_scan`", '`reviewAction:"replace"`', '`reviewAction:"annotate"`'],
+      source: ["素材是唯一 ground truth", "`materialQuote`", "`checkedScope`", "素材遗漏"],
+      deai: ["优先 `replaceText`", "痕迹类别：N 处", "保持段落结构、句序与篇幅"],
+      consistency: ["`run_python` 或 `run_js`", "`documentQuote`", "称谓与术语"],
+      privacy: ["模式类、语义类与间接组合泄露", "138****1234", "同一敏感值多次出现合为一组"],
+      format: ["真实 heading level", "列表、表格与分栏", "不同统一目标不要塞进同一组"],
+      role: ["角色身份、立场和审查维度", "不擅加模板没有要求的维度", "不调用 AI 或额外检索"],
+      custom: ["模板 prompt 是本轮审查逻辑的完整来源", "不额外发明固定维度", "不伪造引句"],
+    };
+    for (const [referenceName, rules] of Object.entries(referenceRules)) {
+      expect(skill).toContain(`references/${referenceName}.md`);
+      const reference = await readFile(
+        join(reviewDir!, "references", `${referenceName}.md`),
+        "utf8",
+      );
+      expect(reference).toMatch(/^# .+审查|^# 来源核查|^# 去 AI 味/);
+      for (const rule of rules) expect(reference).toContain(rule);
+    }
+  });
+
   it("loads browser-ops from the capability category with valid frontmatter", async () => {
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({

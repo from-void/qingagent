@@ -10,7 +10,7 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   list_derivatives: ["derivatives"],
   update_derivative_params: ["derivatives"],
   style_template_list: ["gzh-style"],
-  style_template_get: ["gzh-style", "deai-review"],
+  style_template_get: ["gzh-style", "review"],
   style_template_save: ["gzh-style"],
   style_template_delete: ["gzh-style"],
   // fetchArticle 虽被公众号相关技能复用,但本质仍是联网抓取；联网搜关闭时必须一并关停。
@@ -28,9 +28,9 @@ const TOOL_SKILL_OWNERS: Record<string, readonly string[]> = {
   github_read_file: ["github-materials"],
   github_search_code: ["github-materials"],
   feishu_auth_start: ["feishu"],
-  lexicon_list: ["sensitive-review"],
-  sensitive_scan: ["sensitive-review"],
-  lexicon_manage: ["sensitive-review"],
+  lexicon_list: ["review"],
+  sensitive_scan: ["review"],
+  lexicon_manage: ["review"],
 };
 
 const SKILL_LABELS: Record<string, string> = {
@@ -43,8 +43,7 @@ const SKILL_LABELS: Record<string, string> = {
   "wechat-official-account": "抓公众号",
   "github-materials": "GitHub 读取",
   feishu: "连飞书",
-  "sensitive-review": "敏感词审查",
-  "deai-review": "去AI味",
+  review: "文档审查",
   "diagram-viz": "图表可视化",
 };
 

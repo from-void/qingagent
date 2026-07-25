@@ -21,7 +21,7 @@ vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
     render: vi.fn(async (_id: string, source: string) => ({
-      svg: `<svg data-mmd="1" data-src="${encodeURIComponent(source)}"><g/></svg>`,
+      svg: `<svg data-mmd="1" data-src="${encodeURIComponent(source)}"><text>标签</text></svg>`,
     })),
   },
 }));
@@ -720,7 +720,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
   it("已有缓存 svg 时优先复用、不重复调用 mermaid.render", async () => {
     const mermaid = (await import("mermaid")).default;
     const source = 'pie\n  "A": 1\n  "B": 2';
-    const cached = '<svg data-cached="1"></svg>';
+    const cached = '<svg data-cached="1"><text>A</text></svg>';
     const editor = await mountEditor(diagramDoc(source, cached));
     try {
       const svgHost = editor.view.dom.querySelector(".pm-diagram-svg svg");
@@ -729,6 +729,56 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
       expect(mermaid.render as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     } finally {
       await unmount(editor);
+    }
+  });
+
+  it("R7-31 编辑态不复用 Mermaid 无文字毒缓存，重渲染并回写 attrs.svg", async () => {
+    const mermaid = (await import("mermaid")).default;
+    const source = 'pie\n  "A": 1\n  "B": 2';
+    const poisoned = '<svg viewBox="0 0 100 60" data-poisoned="1"><circle cx="30" cy="30" r="20"/></svg>';
+    const editor = await mountEditor(diagramDoc(source, poisoned));
+    try {
+      await flush(12);
+      const svgHost = editor.view.dom.querySelector(".pm-diagram-svg svg");
+      expect(mermaid.render).toHaveBeenCalledWith(expect.any(String), source);
+      expect(svgHost?.getAttribute("data-poisoned")).toBeNull();
+      expect(svgHost?.getAttribute("data-src")).toBe(encodeURIComponent(source));
+      expect(firstDiagramAttrs(editor)?.svg).toContain("<text>标签</text>");
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("R7-31 只读预览不展示 Mermaid 无文字毒缓存，改用客户端新渲染", async () => {
+    const mermaid = (await import("mermaid")).default;
+    const source = "sequenceDiagram\n  A->>B: hi";
+    const poisoned = '<svg viewBox="0 0 100 60" data-poisoned="1"><path d="M0 0L10 10"/></svg>';
+    const snap = pmDocToViewDocumentSnapshot(diagramDoc(source, poisoned), 1);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(createElement(DocumentSnapshotView, {
+          doc: snap,
+          editable: false,
+          showPatches: false,
+          acceptedPatches: new Set<string>(),
+          rejectedPatches: new Set<string>(),
+        }));
+      });
+      await flush(12);
+
+      const svgHost = container.querySelector(".pm-diagram-svg svg");
+      expect(mermaid.render).toHaveBeenCalledWith(expect.any(String), source);
+      expect(svgHost?.getAttribute("data-poisoned")).toBeNull();
+      expect(svgHost?.getAttribute("data-src")).toBe(encodeURIComponent(source));
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
     }
   });
 
@@ -1052,7 +1102,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
   it("SVG 图表(时序图/饼图等)同样有右上角统一工具栏:对齐+缩放+全屏,点对齐回写 align", async () => {
     // 提供 cachedSvg 让 MermaidPreview 直接渲染(不走 mermaid 异步),source 检测为非图(时序图)→ SVG 路径。
     const editor = await mountEditor(
-      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/></svg>"),
+      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/><text>hi</text></svg>"),
     );
     try {
       const viewbar = await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom) as HTMLElement;
@@ -1075,7 +1125,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
     // 复现「放大两下往左拖拽整页崩到 ErrorBoundary」:旧实现里 onPointerMove 的 setT updater
     // 内联读 dragRef.current!.ox,而同一批次的 pointerup 已把 dragRef 置空 → updater flush 时 NPE。
     const editor = await mountEditor(
-      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/></svg>"),
+      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/><text>hi</text></svg>"),
     );
     try {
       const box = (await waitForSelector(".pm-diagram-svg", editor.view.dom)) as HTMLElement;
@@ -1118,7 +1168,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
 
   it("SVG 工具栏按钮上双击不进入 Mermaid 源码编辑(防误触回归)", async () => {
     const editor = await mountEditor(
-      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/></svg>"),
+      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/><text>hi</text></svg>"),
     );
     try {
       const viewbar = (await waitForSelector(".pm-diagram-svg-viewbar", editor.view.dom)) as HTMLElement;
@@ -1140,7 +1190,7 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
 
   it("放大态下纯点击(不移动)不触发平移/指针捕获:真拖动才平移(防点两下减号误进编辑回归)", async () => {
     const editor = await mountEditor(
-      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/></svg>"),
+      diagramDoc("sequenceDiagram\n  A->>B: hi\n", "<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/><text>hi</text></svg>"),
     );
     try {
       const box = (await waitForSelector(".pm-diagram-svg", editor.view.dom)) as HTMLElement;

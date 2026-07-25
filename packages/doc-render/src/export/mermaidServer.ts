@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
-import { normalizeMermaidQuotes } from "@qingagent/pm-schema";
+import { isPoisonedMermaidSvg, normalizeMermaidQuotes } from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
 import { getDocRenderLogger } from "../renderLogger.js";
 import {
@@ -326,9 +326,13 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   if (obj.type === "diagram" && obj.attrs && typeof obj.attrs === "object") {
     const attrs = obj.attrs as Record<string, unknown>;
     const source = typeof attrs.source === "string" ? attrs.source : "";
-    if (source.trim() && !isRenderableSvg(attrs.svg as string | null)) {
+    const lang = attrs.lang === "drawio" ? "drawio" : "mermaid";
+    const svg = attrs.svg as string | null;
+    const hasUsableCache = isRenderableSvg(svg)
+      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    if (source.trim() && !hasUsableCache) {
       acc.push({
-        lang: attrs.lang === "drawio" ? "drawio" : "mermaid",
+        lang,
         source,
         overlay: readOverlay(attrs.overlay),
         assign: (svg) => { attrs.svg = svg; },
@@ -339,9 +343,13 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   if (obj.kind === "diagram" && obj.data && typeof obj.data === "object") {
     const data = obj.data as Record<string, unknown>;
     const source = typeof data.source === "string" ? data.source : "";
-    if (source.trim() && !isRenderableSvg(data.svg as string | null)) {
+    const lang = data.lang === "drawio" ? "drawio" : "mermaid";
+    const svg = data.svg as string | null;
+    const hasUsableCache = isRenderableSvg(svg)
+      && (lang === "drawio" || !isPoisonedMermaidSvg(svg, source));
+    if (source.trim() && !hasUsableCache) {
       acc.push({
-        lang: data.lang === "drawio" ? "drawio" : "mermaid",
+        lang,
         source,
         assign: (svg) => { data.svg = svg; },
       });

@@ -7,6 +7,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { detectType, type DiagramType } from "@qingagent/diagram-engine";
 import {
   DEFAULT_DRAWIO_SOURCE,
+  isPoisonedMermaidSvg,
   normalizeDrawioSource,
   type PmDiagramLang,
 } from "@qingagent/pm-schema";
@@ -29,6 +30,8 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const attrSource = (node.attrs.source as string) ?? "";
   const lang: PmDiagramLang = node.attrs.lang === "drawio" ? "drawio" : "mermaid";
   const cachedSvg = (node.attrs.svg as string | null) ?? null;
+  const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, attrSource);
+  const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
   const overlay = (node.attrs.overlay as Parameters<typeof DiagramRenderer>[0]["overlay"]) ?? null;
   const align: "left" | "center" | "right" =
     node.attrs.align === "left" || node.attrs.align === "right" ? node.attrs.align : "center";
@@ -37,13 +40,13 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   const [draft, setDraft] = useState(source);
   const [visualEditSignal, setVisualEditSignal] = useState(0);
   const [drawioEditorOpening, setDrawioEditorOpening] = useState(false);
-  const [svg, setSvg] = useState<string | null>(cachedSvg);
+  const [svg, setSvg] = useState<string | null>(usableCachedSvg);
   const [error, setError] = useState<string | null>(null);
   const [editable, setEditable] = useState(editor?.isEditable ?? false);
   const editableRef = useRef(editable);
   const mountedRef = useRef(true);
   const renderTokenRef = useRef(0);
-  const renderedSourceRef = useRef<string | null>(cachedSvg ? attrSource.trim() : null);
+  const renderedSourceRef = useRef<string | null>(usableCachedSvg ? attrSource.trim() : null);
   const editingRef = useRef(false);
   const viewRef = useRef<HTMLDivElement>(null);
   // 双击手势第一次按下前,本块是否已经是 NodeSelection。diagram 可拖拽,ProseMirror 会在
@@ -149,14 +152,14 @@ function DiagramComponent({ node, updateAttributes, deleteNode, editor, selected
   // 必须再跑一次并补写 attrs.svg，否则服务端 HTML/PDF/Word 导出只能拿到 null 并回退源码。
   useEffect(() => {
     if (editing) return;
-    if (cachedSvg && source === draft) {
+    if (usableCachedSvg && source === draft) {
       renderedSourceRef.current = source.trim();
-      setSvg(cachedSvg);
+      setSvg(usableCachedSvg);
       return;
     }
     // 只读态已经为同一份源码渲染成功时直接复用内存中的安全 SVG；切回可编辑的
     // 当拍就写 attrs，避免为了持久化再跑一遍 maxGraph，也消除用户立即导出时的竞态。
-    if (editable && svg && renderedSourceRef.current === source.trim()) {
+    if (!cachedSvgIsPoisoned && editable && svg && renderedSourceRef.current === source.trim()) {
       if (svg !== node.attrs.svg) updateAttributes({ svg });
       return;
     }

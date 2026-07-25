@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
 import { renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
@@ -228,7 +229,9 @@ export function MermaidPreview({
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
 }) {
-  const [svg, setSvg] = useState<string | null>(cachedSvg ?? null);
+  const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, source);
+  const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
+  const [svg, setSvg] = useState<string | null>(usableCachedSvg ?? null);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const mountedRef = useRef(true);
@@ -248,8 +251,8 @@ export function MermaidPreview({
       setError(null);
       return;
     }
-    if (cachedSvg) {
-      setSvg(cachedSvg);
+    if (usableCachedSvg) {
+      setSvg(usableCachedSvg);
       setError(null);
       return;
     }

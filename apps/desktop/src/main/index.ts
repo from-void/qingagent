@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { config as loadEnvFile } from "dotenv";
 import { configureDesktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 import { configureDesktopCredentialKeyProvider } from "./credentialKeyProvider.js";
+import { buildEditContextMenuTemplate } from "./contextMenu.js";
 import { createRollingConsoleTransport } from "./diagnostics/rollingFiles.js";
 import { attachRendererDiagnostics } from "./diagnostics/rendererLog.js";
 import {
@@ -938,6 +939,17 @@ async function createWindowOnce() {
   const rememberScope = `desktop-window:${rememberGeneration}`;
   mainWindowRememberGeneration = rememberGeneration;
   mainWindowRememberScope = rememberScope;
+
+  // 仅主应用窗口开放文本编辑右键菜单；可信确认模态窗和 PDF 离屏窗保持无右键交互面。
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    Menu.buildFromTemplate(buildEditContextMenuTemplate(params)).popup({
+      window: contentWindow,
+      frame: params.frame ?? undefined,
+      x: params.x,
+      y: params.y,
+      sourceType: params.menuSourceType,
+    });
+  });
 
   contentWindow.once("closed", () => {
     trustedRememberUiGate.clear();

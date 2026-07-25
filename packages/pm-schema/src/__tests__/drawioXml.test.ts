@@ -9,6 +9,11 @@ import {
 } from "../drawio/drawioXml";
 import { normalizePmDoc, safeParsePmDoc } from "../validators";
 
+// 线上真实回归样本：packages/server/qingagent.db / document_suggestions /
+// diff-hunk-e15b1cdd0d280391 / steps_json[0].slice.content[0].attrs.source。
+// 禁止改写为手造简化图，否则无法覆盖这次三个容器同时变黑的真实故障形态。
+const REAL_PERCENT_ENCODED_COLOR_XML = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="zone-wan" value="外网区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23EDF2F7;strokeColor=%234A6FA5;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="600" height="120" as="geometry"/></mxCell><mxCell id="zone-app" value="应用区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23D4E0ED;strokeColor=%234A6FA5;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="600" height="120" as="geometry"/></mxCell><mxCell id="zone-data" value="数据区" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23E8EDF3;strokeColor=%235A7B9A;strokeWidth=2;dashed=1;fontColor=%231F2329;fontSize=24;fontStyle=1;verticalAlign=top;spacingTop=12;" vertex="1" parent="1"><mxGeometry x="40" y="360" width="600" height="120" as="geometry"/></mxCell><mxCell id="client" value="客户端" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%234A6FA5;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-wan"><mxGeometry x="80" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="app-server" value="应用服务器" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%235A7B9A;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-app"><mxGeometry x="220" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="db-server" value="数据库服务器" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=%23FFFFFF;strokeColor=%238895A7;strokeWidth=2;fontColor=%231F2329;fontSize=14;spacing=8;" vertex="1" parent="zone-data"><mxGeometry x="360" y="30" width="160" height="60" as="geometry"/></mxCell><mxCell id="edge-c2a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=%23718BAE;strokeWidth=2;labelBackgroundColor=%23FFFFFF;fontColor=%235E6C7B;fontSize=13;" edge="1" parent="1" source="client" target="app-server"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="-12" as="offset"/></mxGeometry></mxCell><mxCell id="edge-a2d" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;strokeColor=%23718BAE;strokeWidth=2;labelBackgroundColor=%23FFFFFF;fontColor=%235E6C7B;fontSize=13;" edge="1" parent="1" source="app-server" target="db-server"><mxGeometry relative="1" as="geometry"><mxPoint x="0" y="-12" as="offset"/></mxGeometry></mxCell></root></mxGraphModel>';
+
 function compressDrawio(xml: string): string {
   const bytes = deflateSync(strToU8(encodeURIComponent(xml)));
   let binary = "";
@@ -122,5 +127,43 @@ describe("drawio XML 明文归一化与安全边界", () => {
     expect(prepared.modelXml).not.toContain("onclick");
     expect(prepared.modelXml).not.toContain("xlink:href");
     expect(prepared.modelXml).toContain("whiteSpace=wrap");
+  });
+
+  it("真实线上 XML 的百分号编码颜色在渲染副本中恢复为三个容器的原始配色", () => {
+    const prepared = prepareDrawioModelXmlForRender(REAL_PERCENT_ENCODED_COLOR_XML);
+
+    expect(prepared.source).toBe(REAL_PERCENT_ENCODED_COLOR_XML);
+    expect(prepared.modelXml).toContain("fillColor=#EDF2F7");
+    expect(prepared.modelXml).toContain("fillColor=#D4E0ED");
+    expect(prepared.modelXml).toContain("fillColor=#E8EDF3");
+    expect(prepared.modelXml).toContain("strokeColor=#4A6FA5");
+    expect(prepared.modelXml).toContain("strokeColor=#5A7B9A");
+    expect(prepared.modelXml).not.toContain("%23");
+  });
+
+  it("style 值先解码再做安全过滤，编码后的 javascript 不能绕过", () => {
+    const source = DEFAULT_DRAWIO_SOURCE.replace(
+      "strokeColor=#b08a3e",
+      "strokeColor=%6A%61%76%61script%3Aalert(1)",
+    );
+    const prepared = prepareDrawioModelXmlForRender(source);
+
+    expect(prepared.modelXml).not.toContain("javascript:");
+    expect(prepared.modelXml).not.toContain("%6A%61%76%61script");
+  });
+
+  it("明文井号颜色保持不变，无法识别的颜色回退到纸墨默认色", () => {
+    const source = DEFAULT_DRAWIO_SOURCE
+      .replace("fillColor=#efe3cc", "fillColor=不是颜色")
+      .replace("strokeColor=#b08a3e", "strokeColor=也不是颜色")
+      .replace("fontColor=#2f2a22", "fontColor=仍不是颜色");
+    const prepared = prepareDrawioModelXmlForRender(source);
+
+    expect(prepared.modelXml).toContain("fillColor=#f7f1e3");
+    expect(prepared.modelXml).toContain("strokeColor=#7f6a45");
+    expect(prepared.modelXml).toContain("fontColor=#2f2a22");
+    expect(prepareDrawioModelXmlForRender(DEFAULT_DRAWIO_SOURCE).modelXml).toContain(
+      "fillColor=#efe3cc;strokeColor=#b08a3e;fontColor=#2f2a22",
+    );
   });
 });

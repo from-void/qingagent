@@ -14,6 +14,10 @@
 
 ## 样式串与布局网格
 
+- 颜色值必须写成明文 `#RRGGBB`，禁止 URL/百分号编码（例如用 `%23` 代替 `#`）。
+  - ✅ 正确：`fillColor=#EDF2F7;strokeColor=#4A6FA5;fontColor=#1F2329;`
+  - ❌ 错误：`fillColor=%23EDF2F7;strokeColor=%234A6FA5;fontColor=%231F2329;`
+
 节点样式基式：
 
 ```text

@@ -1,7 +1,11 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { graphToSvg, type DiagramOverlay } from "@qingagent/diagram-engine";
-import { isPoisonedMermaidSvg, normalizeMermaidQuotes } from "@qingagent/pm-schema";
+import {
+  isPoisonedMermaidSvg,
+  normalizeMermaidQuotes,
+  prepareDrawioModelXmlForRender,
+} from "@qingagent/pm-schema";
 import { getBrowser } from "../browser/pool.js";
 import { getDocRenderLogger } from "../renderLogger.js";
 import {
@@ -315,6 +319,7 @@ interface DiagramRef {
   source: string;
   overlay?: DiagramOverlay | null;
   assign: (svg: string) => void;
+  assignSource: (source: string) => void;
 }
 
 /** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
@@ -336,6 +341,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
         source,
         overlay: readOverlay(attrs.overlay),
         assign: (svg) => { attrs.svg = svg; },
+        assignSource: (source) => { attrs.source = source; },
       });
     }
   }
@@ -352,6 +358,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
         lang,
         source,
         assign: (svg) => { data.svg = svg; },
+        assignSource: (source) => { data.source = source; },
       });
     }
   }
@@ -379,6 +386,22 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
   const mermaidRefs: DiagramRef[] = [];
   for (const ref of refs) {
     if (ref.lang === "drawio") {
+      try {
+        // 服务端不重复运行 maxGraph；缺缓存回退源码时仍必须经过与前端相同的
+        // render-only 归一化，避免把 `%23` 非法颜色继续导出给用户复制。
+        // mxfile 可能含多页，不能用首个 modelXml 覆盖整个容器；AI 常规产出的
+        // 单页 mxGraphModel 和压缩 diagram 则可安全替换为准备后的明文模型。
+        const prepared = prepareDrawioModelXmlForRender(ref.source);
+        if (!ref.source.trimStart().startsWith("<mxfile")) {
+          ref.source = prepared.modelXml;
+          ref.assignSource(prepared.modelXml);
+        }
+      } catch (error) {
+        getDocRenderLogger().warn("Drawio export source normalization failed; preserving original source", {
+          reason: error instanceof Error ? error.message : String(error),
+          sourceBytes: Buffer.byteLength(ref.source, "utf8"),
+        });
+      }
       getDocRenderLogger().warn("Drawio export cache missing; open the diagram in the client before exporting", {
         sourceBytes: Buffer.byteLength(ref.source, "utf8"),
       });

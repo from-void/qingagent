@@ -18,6 +18,51 @@ const BASE64_TEXT = /^[A-Za-z0-9+/]+={0,2}$/;
 const UNSAFE_STYLE_VALUE = /(?:javascript:|data:|https?:|(?:^|[("'])\/\/|url\s*\()/i;
 const UNSAFE_STYLE_KEYS = new Set(["image", "link", "href", "src"]);
 const UNSAFE_ATTRS = new Set(["link", "href", "src", "image"]);
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const FUNCTION_COLOR = /^(?:rgb|rgba|hsl|hsla)\([+\-.\d%,/\s]+\)$/i;
+const SPECIAL_DRAWIO_COLORS = new Set(["none", "inherit", "swimlane", "indicated"]);
+const CSS_NAMED_COLORS = new Set(`
+  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue
+  blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk
+  crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki
+  darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+  darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue
+  dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite
+  gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki
+  lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+  lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen
+  lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen
+  magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen
+  mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
+  mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid
+  palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum
+  powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown
+  seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen
+  steelblue tan teal thistle tomato transparent turquoise violet wheat white whitesmoke
+  yellow yellowgreen
+`.trim().split(/\s+/));
+const DRAWIO_COLOR_DEFAULTS = new Map<string, string>([
+  ["fillcolor", "#f7f1e3"],
+  ["gradientcolor", "#f7f1e3"],
+  ["fontbackgroundcolor", "#f7f1e3"],
+  ["imagebackground", "#f7f1e3"],
+  ["labelbackgroundcolor", "#f7f1e3"],
+  ["swimlanefillcolor", "#f7f1e3"],
+  ["startfillcolor", "#f7f1e3"],
+  ["endfillcolor", "#f7f1e3"],
+  ["strokecolor", "#7f6a45"],
+  ["fontbordercolor", "#7f6a45"],
+  ["imageborder", "#7f6a45"],
+  ["indicatorcolor", "#7f6a45"],
+  ["indicatorgradientcolor", "#7f6a45"],
+  ["indicatorstrokecolor", "#7f6a45"],
+  ["labelbordercolor", "#7f6a45"],
+  ["separatorcolor", "#7f6a45"],
+  ["shadowcolor", "#7f6a45"],
+  ["startstrokecolor", "#7f6a45"],
+  ["endstrokecolor", "#7f6a45"],
+  ["fontcolor", "#2f2a22"],
+]);
 
 export const DEFAULT_DRAWIO_SOURCE = `<mxGraphModel dx="0" dy="0" grid="1" gridSize="10" page="1" pageScale="1" pageWidth="827" pageHeight="1169">
   <root>
@@ -144,7 +189,16 @@ export function prepareDrawioModelXmlForRender(raw: string): DrawioModel {
         continue;
       }
       if (name === "style") {
-        const safeStyle = attr.value
+        // 安全顺序不变量：必须先逐段解码 value，再重新分段并做危险 key/value
+        // 过滤。绝不能把 decodeURIComponent 移到过滤之后，否则
+        // `%6A%61%76%61script:` 可绕过检查；重新分段也会拦住编码分号注入的新属性。
+        const decodedStyle = attr.value
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .map(decodeDrawioStyleValue)
+          .join(";");
+        const safeStyle = decodedStyle
           .split(";")
           .map((part) => part.trim())
           .filter(Boolean)
@@ -154,6 +208,7 @@ export function prepareDrawioModelXmlForRender(raw: string): DrawioModel {
             const value = separator === -1 ? "" : part.slice(separator + 1).trim();
             return !UNSAFE_STYLE_KEYS.has(key) && !UNSAFE_STYLE_VALUE.test(value);
           })
+          .map(normalizeDrawioStyleColor)
           .join(";");
         if (safeStyle) element.setAttribute(attr.name, `${safeStyle};`);
         else element.removeAttribute(attr.name);
@@ -164,6 +219,36 @@ export function prepareDrawioModelXmlForRender(raw: string): DrawioModel {
     source: parsed.source,
     modelXml: new XMLSerializer().serializeToString(root),
   };
+}
+
+function decodeDrawioStyleValue(part: string): string {
+  const separator = part.indexOf("=");
+  if (separator === -1) return part;
+  const key = part.slice(0, separator).trim();
+  const value = part.slice(separator + 1).trim();
+  try {
+    return `${key}=${decodeURIComponent(value)}`;
+  } catch {
+    return `${key}=${value}`;
+  }
+}
+
+function normalizeDrawioStyleColor(part: string): string {
+  const separator = part.indexOf("=");
+  if (separator === -1) return part;
+  const key = part.slice(0, separator).trim();
+  const value = part.slice(separator + 1).trim();
+  const fallback = DRAWIO_COLOR_DEFAULTS.get(key.toLowerCase());
+  if (!fallback || isRecognizedDrawioColor(value)) return `${key}=${value}`;
+  return `${key}=${fallback}`;
+}
+
+function isRecognizedDrawioColor(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return HEX_COLOR.test(value)
+    || FUNCTION_COLOR.test(value)
+    || SPECIAL_DRAWIO_COLORS.has(normalized)
+    || CSS_NAMED_COLORS.has(normalized);
 }
 
 export function validateDrawioSource(raw: string): { ok: true; source: string } | { ok: false; error: string } {

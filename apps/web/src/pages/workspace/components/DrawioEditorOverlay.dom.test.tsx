@@ -30,6 +30,21 @@ afterEach(() => {
 });
 
 describe("drawio 全屏编辑面板", () => {
+  it("启动期盖住 vendor 首屏，图表加载后揭开，自愈重载时重新盖住", async () => {
+    const fake = await createFakeV31Embed(vi.fn(), vi.fn());
+
+    expect(document.querySelector(".drawio-editor-overlay__boot")).not.toBeNull();
+
+    await fake.init();
+    expect(document.querySelector(".drawio-editor-overlay__boot")).not.toBeNull();
+
+    await fake.dispatch(window.location.origin, { event: "load" });
+    expect(document.querySelector(".drawio-editor-overlay__boot")).toBeNull();
+
+    await act(async () => fake.iframe.dispatchEvent(new Event("load")));
+    expect(document.querySelector(".drawio-editor-overlay__boot")).not.toBeNull();
+  });
+
   it("只信任当前 iframe 的同源消息，并忽略没有 pending 保存的 export", async () => {
     const onSave = vi.fn();
     const onClose = vi.fn();

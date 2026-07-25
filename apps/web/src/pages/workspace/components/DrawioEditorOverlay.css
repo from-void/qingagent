@@ -67,17 +67,52 @@
   color: var(--ink-1);
 }
 
+.drawio-editor-overlay__stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg-paper-deep);
+}
+
 .drawio-editor-overlay__frame {
   display: block;
-  flex: 1 1 auto;
   width: 100%;
-  min-height: 0;
+  height: 100%;
   border: 0;
   background: var(--bg-canvas);
 }
 
 .drawio-editor-overlay__frame.is-saving {
   pointer-events: none;
+}
+
+.drawio-editor-overlay__boot {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-paper-deep);
+  color: var(--ink-3);
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+.drawio-editor-overlay__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--mark);
+  border-radius: 50%;
+  animation: drawio-editor-overlay-spin 0.8s linear infinite;
+}
+
+@keyframes drawio-editor-overlay-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 640px) {

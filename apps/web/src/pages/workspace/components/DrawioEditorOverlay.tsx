@@ -38,6 +38,7 @@ export function DrawioEditorOverlay({
   const saveSequenceRef = useRef(0);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [frameReady, setFrameReady] = useState(false);
   const [status, setStatus] = useState("正在启动离线编辑器…");
   const [error, setError] = useState<string | null>(null);
 
@@ -167,12 +168,14 @@ export function DrawioEditorOverlay({
           iframeRef.current?.focus();
         } catch (loadError) {
           setError(errorMessage(loadError));
+          setFrameReady(true);
         }
         return;
       }
       if (message.event === "load") {
         restoreDrawioEmbedButtons(iframeRef.current);
         setStatus("图表已加载");
+        setFrameReady(true);
         return;
       }
       if (message.event === "save") {
@@ -206,6 +209,7 @@ export function DrawioEditorOverlay({
           }, DRAWIO_EXPORT_TIMEOUT_MS);
         } catch (saveError) {
           setError(errorMessage(saveError));
+          setFrameReady(true);
         }
         return;
       }
@@ -277,19 +281,28 @@ export function DrawioEditorOverlay({
           取消
         </button>
       </header>
-      <iframe
-        ref={iframeRef}
-        className={`drawio-editor-overlay__frame${saving ? " is-saving" : ""}`}
-        title="drawio 离线图表编辑器"
-        src={DRAWIO_EMBED_PATH}
-        sandbox="allow-scripts allow-same-origin"
-        allow="clipboard-read; clipboard-write"
-        referrerPolicy="no-referrer"
-        onLoad={(event) => {
-          restoreDrawioEmbedButtons(event.currentTarget);
-          setStatus("正在等待编辑器初始化…");
-        }}
-      />
+      <div className="drawio-editor-overlay__stage">
+        <iframe
+          ref={iframeRef}
+          className={`drawio-editor-overlay__frame${saving ? " is-saving" : ""}`}
+          title="drawio 离线图表编辑器"
+          src={DRAWIO_EMBED_PATH}
+          sandbox="allow-scripts allow-same-origin"
+          allow="clipboard-read; clipboard-write"
+          referrerPolicy="no-referrer"
+          onLoad={(event) => {
+            setFrameReady(false);
+            restoreDrawioEmbedButtons(event.currentTarget);
+            setStatus("正在等待编辑器初始化…");
+          }}
+        />
+        {!frameReady && (
+          <div className="drawio-editor-overlay__boot" role="status">
+            <span className="drawio-editor-overlay__spinner" aria-hidden="true" />
+            <span>正在启动离线编辑器…</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

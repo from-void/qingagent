@@ -46,8 +46,20 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   const client = await ApiClient.create();
   if (group === "sessions" && command === "list") {
-    const data = await client.request<ExternalSessionsListResponse>("/sessions");
-    return output(data, hasFlag(args, "--json"));
+    const json = hasFlag(args, "--json");
+    const all = hasFlag(args, "--all");
+    const rawLimit = optionValue(args, "--limit");
+    const limit = parseSessionsLimit(rawLimit);
+    const data = all
+      ? await listAllSessions(client, limit)
+      : await client.request<ExternalSessionsListResponse>(
+          `/sessions${rawLimit === undefined ? "" : `?limit=${limit}`}`,
+        );
+    output(data, json);
+    if (!json && !all && data.hasMore) {
+      process.stdout.write(`还有 ${Math.max(0, data.total - data.sessions.length)} 个会话,用 --all 查看\n`);
+    }
+    return;
   }
   if (group === "sessions" && command === "create") {
     const data = await client.request<ExternalSessionCreateResponse>("/sessions", { method: "POST", body: JSON.stringify({}) });
@@ -409,6 +421,33 @@ function requireOption(args: string[], name: string): string {
   return value;
 }
 
+function parseSessionsLimit(raw: string | undefined): number {
+  if (raw === undefined) return 100;
+  const limit = Number(raw);
+  if (!Number.isFinite(limit)) throw new QaCliError("VALIDATION", "--limit 必须是数字");
+  return Math.min(500, Math.max(1, Math.floor(limit)));
+}
+
+async function listAllSessions(
+  client: ApiClient,
+  limit: number,
+): Promise<ExternalSessionsListResponse> {
+  const sessions: ExternalSessionsListResponse["sessions"] = [];
+  let offset = 0;
+  let total = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const page = await client.request<ExternalSessionsListResponse>(
+      `/sessions?limit=${limit}&offset=${offset}`,
+    );
+    sessions.push(...page.sessions);
+    total = page.total;
+    hasMore = page.hasMore;
+    offset += limit;
+  }
+  return { sessions, total, hasMore: false };
+}
+
 function requireDocumentVersion(args: string[]): number {
   const raw = requireOption(args, "--expect-version");
   const version = Number(raw);
@@ -587,7 +626,7 @@ function help(): void {
   process.stdout.write(`AI agents MUST read: qa skills read writer —— 不要只凭 --help 猜用法
 
 qa status
-qa sessions list [--json]
+qa sessions list [--limit N] [--all] [--json]
 qa sessions create
 qa doc read -s <id> [--lines] [--json]
 qa doc state -s <id>

@@ -47,6 +47,8 @@ export const externalRoutes = new Hono();
 type ExternalClient = "claudecode" | "codex" | "agent";
 
 const DEFAULT_MATERIAL_TEXT_MAX_BYTES = 200_000;
+const DEFAULT_SESSIONS_LIMIT = 100;
+const MAX_SESSIONS_LIMIT = 500;
 const READ_RATE_LIMIT_PER_SECOND = 5;
 const WRITE_RATE_LIMIT_PER_SECOND = 20;
 
@@ -76,32 +78,30 @@ externalRoutes.get("/health", (c) => {
 
 externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
-  const { rows } = await documentRepo.list({ resourceId: QINGAGENT_RESOURCE_ID, page: 0, perPage: 50 });
-  const byId = new Map<string, { id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }>();
+  const limit = clampedQueryInteger(c.req.query("limit"), DEFAULT_SESSIONS_LIMIT, 1, MAX_SESSIONS_LIMIT);
+  const offset = clampedQueryInteger(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const { rows, total } = await documentRepo.list({
+    resourceId: QINGAGENT_RESOURCE_ID,
+    perPage: limit,
+    offset,
+  });
+  const sessions: Array<{ id: string; title: string; state: ContentDocState["kind"]; updatedAt: string }> = [];
   for (const row of rows) {
     const session = await getOrRestoreSessionReadOnly(row.id);
     if (!session) continue;
-    byId.set(row.id, {
+    sessions.push({
       id: row.id,
       title: session.title || "未命名草稿",
       state: deriveContentState(session).kind,
       updatedAt: row.updatedAt,
     });
   }
-  for (const sessionId of sessionManager.listSessionIds(50)) {
-    const session = await getOrRestoreSessionReadOnly(sessionId);
-    if (!session) continue;
-    byId.set(session.sessionId, {
-      id: session.sessionId,
-      title: session.title || "未命名草稿",
-      state: deriveContentState(session).kind,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-  const sessions = [...byId.values()];
-  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: sessions.length });
+  const hasMore = offset + rows.length < total;
+  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: sessions.length, total, hasMore });
   return c.json({
     sessions,
+    total,
+    hasMore,
   });
 });
 
@@ -1287,6 +1287,17 @@ function elapsed(startedAt: number): number {
   return Date.now() - startedAt;
 }
 
+function clampedQueryInteger(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = raw === undefined ? fallback : Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
 function externalLog(
   evt:
     | "propose"
@@ -1313,6 +1324,8 @@ function externalLog(
     verdict?: "accepted" | "rejected";
     accepted?: number;
     rejected?: number;
+    total?: number;
+    hasMore?: boolean;
   },
 ): void {
   const parts = [
@@ -1329,5 +1342,7 @@ function externalLog(
   if (fields.verdict !== undefined) parts.push(`verdict=${fields.verdict}`);
   if (fields.accepted !== undefined) parts.push(`accepted=${fields.accepted}`);
   if (fields.rejected !== undefined) parts.push(`rejected=${fields.rejected}`);
+  if (fields.total !== undefined) parts.push(`total=${fields.total}`);
+  if (fields.hasMore !== undefined) parts.push(`hasMore=${fields.hasMore}`);
   console.info(parts.join(" "));
 }

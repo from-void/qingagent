@@ -41,7 +41,11 @@ export interface ExternalSession {
   updatedAt: string;
 }
 
-export interface ExternalSessionsListResponse { sessions: ExternalSession[] }
+export interface ExternalSessionsListResponse {
+  sessions: ExternalSession[];
+  total: number;
+  hasMore: boolean;
+}
 export interface ExternalSessionCreateRequest {}
 export interface ExternalSessionCreateResponse { sessionId: string; seq: number | null }
 

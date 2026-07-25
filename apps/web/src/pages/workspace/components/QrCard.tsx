@@ -4,6 +4,7 @@ import type { QrCardBody } from "@qingagent/contract-ts";
 import { chatInputBus } from "../../../system";
 import { useVisibilityPausedInterval } from "../../../system/perf/visibilityScheduler";
 import { sanitizeToolbarLinkHref } from "../data/toolbarUnlock";
+import { CheckIcon } from "./icons";
 import "./QrCard.css";
 
 /**
@@ -116,13 +117,14 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const noteNodes = useMemo(() => renderQrNote(data.note), [data.note]);
   const confirmQuery = data.confirmQuery;
   const completed = data.success !== undefined || connectorState === "connected";
-  const completionText = data.success?.message ?? (data.connectorId === "wechat-mp"
+  const defaultCompletionText = data.connectorId === "wechat-mp"
     ? `已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
     : data.connectorId === "feishu"
       ? `已授权${connectedAccount ? `为 ${connectedAccount}` : "飞书"}`
       : data.connectorId === "github"
         ? `已连接为 ${connectedAccount ?? "GitHub 账号"}`
-        : "授权已完成");
+        : "授权已完成";
+  const completionText = normalizeQrCompletionText(data.success?.message, defaultCompletionText);
   // GitHub device flow 是「浏览器打开 + 输配对码」,扫码没有意义(扫开的页面仍要手输码):
   // 不渲二维码,配对码大字化(对齐拍板稿)。其余连接器(扫码类)保持二维码。
   const codeFirst = data.connectorId === "github" && !data.imageDataUri;
@@ -163,19 +165,19 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
   return (
     <div className="qr-card" data-wf="QrCard" data-component="AuthCard">
-      {completed ? (
-        <div className="qr-card__success">✓ {completionText}</div>
-      ) : connectorState === "interrupted" ? (
+      {!completed && connectorState === "interrupted" ? (
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>授权已中断，重新发起</button>
       ) : <>
       {data.title && <div className="qr-card__title">{data.title}</div>}
-      {!codeFirst && <div className={`qr-card__frame${expired ? " is-expired" : ""}`}>
+      {!codeFirst && <div className={`qr-card__frame${completed ? " is-completed" : expired ? " is-expired" : ""}`}>
         {qrUrl ? (
           <img className="qr-card__img" src={qrUrl} alt={data.title ?? "二维码"} draggable={false} />
         ) : (
           <div className="qr-card__placeholder">二维码生成中…</div>
         )}
-        {expired && (
+        {completed ? (
+          <QrCompletionOverlay completionText={completionText} />
+        ) : expired && (
           <button
             type="button"
             className="qr-card__refresh"
@@ -189,12 +191,22 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           </button>
         )}
       </div>}
-      {codeFirst && expired && (
+      {codeFirst && completed && (
+        <div className="qr-card__code-stage is-completed">
+          {data.code && (
+            <div className="qr-card__usercode is-hero" aria-hidden="true">
+              配对码 <b>{data.code}</b>
+            </div>
+          )}
+          <QrCompletionOverlay completionText={completionText} />
+        </div>
+      )}
+      {codeFirst && !completed && expired && (
         <button type="button" className="qr-card__confirm" onClick={sendRefreshOnce} disabled={refreshSent}>
           {refreshSent ? "已请求重新发起" : "配对码已失效，重新发起"}
         </button>
       )}
-      {data.code && !(codeFirst && expired) && (
+      {!completed && data.code && !(codeFirst && expired) && (
         <div className={`qr-card__usercode${codeFirst ? " is-hero" : ""}`}>
           配对码 <b>{data.code}</b>
           {data.connectorId === "github" && (
@@ -206,16 +218,19 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           )}
         </div>
       )}
-      {scanned && !expired && (
-        <div className="qr-card__scanned">✓ 已扫到二维码，请在手机上确认登录</div>
+      {!completed && scanned && !expired && (
+        <div className="qr-card__scanned">
+          <CheckIcon size={13} />
+          <span>已扫到二维码，请在手机上确认登录</span>
+        </div>
       )}
-      {expiryLabel !== null && <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
+      {!completed && expiryLabel !== null && <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
         {expired ? "二维码已失效" : `${expiryLabel}后过期`}
       </div>}
       {noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。
           文案用 confirmLabel(短、贴场景),没传则默认「我已完成授权」。 */}
-      {!expired && confirmReady && confirmQuery && (
+      {!completed && !expired && confirmReady && confirmQuery && (
         <button
           type="button"
           className="qr-card__confirm"
@@ -233,6 +248,28 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 
 /** 旧组件名兼容层：已有 import、快照和持久化 qrCard wire 均保持不变。 */
 export const QrCard = AuthCard;
+
+function QrCompletionOverlay({ completionText }: { completionText: string }) {
+  return (
+    <div className="qr-card__success" role="status">
+      <CheckIcon size={26} />
+      <span>{completionText}</span>
+    </div>
+  );
+}
+
+/** 完成态是终态陈述：剥掉模型偶尔附带的尾部省略号，空结果回落到连接器默认文案。 */
+function normalizeQrCompletionText(
+  message: string | null | undefined,
+  fallback = "授权已完成",
+): string {
+  if (typeof message !== "string") return fallback;
+  const normalized = message
+    .replace(/\s+$/u, "")
+    .replace(/(?:(?:\.{3,}|…)\s*)+$/u, "")
+    .trim();
+  return normalized || fallback;
+}
 
 // 轻量渲染 note 的富文本:按行分段,inline 支持 markdown 链接 [文字](url) 与 **粗体**。
 // 模型自产的说明 + 可点授权链接合为一段,替代写死的"扫不了码点此打开"。

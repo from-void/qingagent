@@ -593,7 +593,8 @@ describe("QrCard — validation loop 3", () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "@octocat" } } }), { status: 200 })));
       render(<QrCard data={connectorCard()} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已连接为 @octocat");
+      expect(document.querySelector(".qr-card__success")?.textContent).toContain("已连接为 @octocat");
+      expect(document.querySelector(".qr-card__success svg[aria-hidden='true']")).toBeTruthy();
     });
 
     it("轮询成功通知设置页刷新连接状态", async () => {
@@ -620,7 +621,7 @@ describe("QrCard — validation loop 3", () => {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "测试号" } } }), { status: 200 })));
       render(<QrCard data={wechat} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-      expect(document.querySelector(".qr-card__success")?.textContent).toContain("✓ 已登录 测试号 公众号");
+      expect(document.querySelector(".qr-card__success")?.textContent).toContain("已登录 测试号 公众号");
     });
 
     it("微信 pending 带 WECHAT_SCANNED 时卡上显示已扫到提示", async () => {
@@ -649,26 +650,84 @@ describe("QrCard — validation loop 3", () => {
   });
 
   describe("(h) explicit completion state", () => {
-    it("completed state wins over expiry and removes every refresh entry", () => {
-      const data: QrCardBody = {
-        title: "扫码授权",
-        content: "https://test.qr",
-        expiresAt: Date.now() - 60_000,
-        code: null,
-        refreshQuery: "refresh",
-        confirmQuery: "confirm",
-        note: null,
-        success: { account: null, message: "企业微信登录成功" },
-      };
+    const completedCard = (message: string): QrCardBody => ({
+      title: "扫码授权",
+      content: "https://test.qr",
+      imageDataUri: "data:image/png;base64,AA",
+      expiresAt: Date.now() - 60_000,
+      code: null,
+      refreshQuery: "refresh",
+      confirmQuery: "confirm",
+      note: "请在原设备继续后续操作",
+      success: { account: null, message },
+    });
 
-      render(<QrCard data={data} />);
+    it("完成态保留原卡骨架并在模糊码上叠加 SVG 成功信息", async () => {
+      vi.useFakeTimers();
+      render(<QrCard data={completedCard("企业微信登录成功")} />);
 
-      expect(document.querySelector(".qr-card__success")?.textContent)
-        .toContain("✓ 企业微信登录成功");
+      expect(document.querySelector(".qr-card__title")?.textContent).toBe("扫码授权");
+      expect(document.querySelector(".qr-card__frame.is-completed .qr-card__img")).toBeTruthy();
+      expect(document.querySelector(".qr-card__frame.is-expired")).toBeNull();
+      expect(document.querySelector(".qr-card__success")?.textContent).toContain("企业微信登录成功");
+      expect(document.querySelector(".qr-card__success svg[aria-hidden='true']")).toBeTruthy();
+      expect(document.querySelector(".qr-card__note")?.textContent).toContain("请在原设备继续后续操作");
+      expect(document.body.textContent).not.toContain("✓");
       expect(document.querySelector(".qr-card__refresh")).toBeNull();
       expect(document.querySelector(".qr-card__expiry")).toBeNull();
       expect(document.querySelector(".qr-card__confirm")).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
       expect(document.body.textContent).not.toContain("失效");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(document.querySelector(".qr-card__confirm")).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
+    });
+
+    it.each([
+      ["企业微信登录成功...", "企业微信登录成功"],
+      ["企业微信登录成功…", "企业微信登录成功"],
+      ["企业微信登录成功... \n\t", "企业微信登录成功"],
+      ["企业微信登录成功... \t…  \n", "企业微信登录成功"],
+    ])("移除完成文案末尾的省略号：%j", (message, expected) => {
+      render(<QrCard data={completedCard(message)} />);
+
+      expect(document.querySelector(".qr-card__success span")?.textContent).toBe(expected);
+    });
+
+    it.each(["", "...", "…", "  ... \t…  \n"])(
+      "空或纯省略号完成文案回落到默认值：%j",
+      (message) => {
+        render(<QrCard data={completedCard(message)} />);
+
+        expect(document.querySelector(".qr-card__success span")?.textContent).toBe("授权已完成");
+      },
+    );
+
+    it("GitHub 输码流完成后保留并弱化配对码骨架，不恢复二维码或操作按钮", () => {
+      render(<QrCard data={{
+        title: "连接 GitHub",
+        content: "https://example.test/device",
+        imageDataUri: null,
+        expiresAt: Date.now() + 60_000,
+        code: "ABCD-EFGH",
+        note: "浏览器配对授权",
+        refreshQuery: "重新连接",
+        confirmQuery: null,
+        connectorId: "github",
+        pendingId: "pending-safe-id",
+        success: { account: "@octocat", message: "GitHub 授权完成…" },
+      }} />);
+
+      expect(document.querySelector(".qr-card__frame")).toBeNull();
+      expect(document.querySelector(".qr-card__code-stage.is-completed")).toBeTruthy();
+      expect(document.querySelector(".qr-card__usercode[aria-hidden='true']")?.textContent)
+        .toContain("ABCD-EFGH");
+      expect(document.querySelector(".qr-card__success span")?.textContent).toBe("GitHub 授权完成");
+      expect(document.querySelector("button")).toBeNull();
+      expect(document.querySelector(".qr-card__expiry")).toBeNull();
     });
   });
 });

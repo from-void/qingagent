@@ -308,6 +308,13 @@ describe("system prompt S3", () => {
     expect(prompt).not.toContain("execute_command 带 background:true 跑 \"lark-cli config init");
   });
 
+  it("show_qr completionMessage 使用无省略号的终态陈述", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("completionMessage 必须是“已完成”的终态陈述");
+    expect(prompt).toContain("不要以半角或全角省略号结尾");
+    expect(prompt).toContain("不要写成“正在……”等进行中口吻");
+  });
+
   it("agent instructions 连续两次逐字节稳定,不随 requestContext 翻转", async () => {
     const first = await qingagentAgent.getInstructions({
       requestContext: new RequestContext([["aiIrDraftToolsEnabled", false]]),

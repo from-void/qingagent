@@ -315,6 +315,15 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("不要写成“正在……”等进行中口吻");
   });
 
+  it("show_qr note 明确区分卡内方位与卡片整体方位", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("note 位于二维码下方");
+    expect(prompt).toContain("必须写“上方二维码/上面的二维码”");
+    expect(prompt).toContain("禁止写“下方二维码/下面的二维码”");
+    expect(prompt).toContain("这里说的是 note 与二维码的卡内相对位置");
+    expect(prompt).toContain("卡片整体仍按工具说明位于本条回复下方");
+  });
+
   it("agent instructions 连续两次逐字节稳定,不随 requestContext 翻转", async () => {
     const first = await qingagentAgent.getInstructions({
       requestContext: new RequestContext([["aiIrDraftToolsEnabled", false]]),

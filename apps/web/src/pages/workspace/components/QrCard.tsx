@@ -41,6 +41,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const expired = remain !== null && remain <= 0;
   const pollingRef = useRef(false);
   const settledRef = useRef(false);
+  const completed = data.success !== undefined || connectorState === "connected";
 
   useEffect(() => {
     setConnectorState(data.success ? "connected" : "polling");
@@ -110,13 +111,13 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
   const confirmSentRef = useRef(false);
 
   useEffect(() => {
+    if (completed) return;
     const id = window.setTimeout(() => setConfirmReady(true), 10000);
     return () => window.clearTimeout(id);
-  }, []);
+  }, [completed]);
 
   const noteNodes = useMemo(() => renderQrNote(data.note), [data.note]);
   const confirmQuery = data.confirmQuery;
-  const completed = data.success !== undefined || connectorState === "connected";
   const defaultCompletionText = data.connectorId === "wechat-mp"
     ? `已登录 ${connectedAccount ?? "微信公众号"}${connectedAccount ? " 公众号" : ""}`
     : data.connectorId === "feishu"
@@ -176,7 +177,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
           <div className="qr-card__placeholder">二维码生成中…</div>
         )}
         {completed ? (
-          <QrCompletionOverlay completionText={completionText} />
+          <QrCompletionOverlay />
         ) : expired && (
           <button
             type="button"
@@ -198,7 +199,12 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
               配对码 <b>{data.code}</b>
             </div>
           )}
-          <QrCompletionOverlay completionText={completionText} />
+          <QrCompletionOverlay />
+        </div>
+      )}
+      {completed && (
+        <div className="qr-card__completion" role="status">
+          {completionText}
         </div>
       )}
       {codeFirst && !completed && expired && (
@@ -227,7 +233,7 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
       {!completed && expiryLabel !== null && <div className={`qr-card__expiry${expired ? " is-expired" : ""}`}>
         {expired ? "二维码已失效" : `${expiryLabel}后过期`}
       </div>}
-      {noteNodes && <div className="qr-card__note">{noteNodes}</div>}
+      {!completed && noteNodes && <div className="qr-card__note">{noteNodes}</div>}
       {/* 确认按钮:放在卡片最下方,渲染 10 秒后才出现(防用户没扫就误点)。
           文案用 confirmLabel(短、贴场景),没传则默认「我已完成授权」。 */}
       {!completed && !expired && confirmReady && confirmQuery && (
@@ -249,11 +255,10 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
 /** 旧组件名兼容层：已有 import、快照和持久化 qrCard wire 均保持不变。 */
 export const QrCard = AuthCard;
 
-function QrCompletionOverlay({ completionText }: { completionText: string }) {
+function QrCompletionOverlay() {
   return (
-    <div className="qr-card__success" role="status">
+    <div className="qr-card__success" aria-hidden="true">
       <CheckIcon size={26} />
-      <span>{completionText}</span>
     </div>
   );
 }
@@ -352,7 +357,19 @@ function stripMarkdownAngleHref(href: string): string {
 }
 
 function renderQrBold(str: string, key: string): (string | JSX.Element)[] {
-  return str.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
+  const normalized = normalizeQrNoteDirection(str);
+  return normalized.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
     p.startsWith("**") && p.endsWith("**") ? <strong key={`${key}-b${i}`}>{p.slice(2, -2)}</strong> : p,
   );
+}
+
+/** 只修正 note 内明确指向二维码的常见反向方位，不泛化改写其它“下方/下面”内容。 */
+function normalizeQrNoteDirection(text: string): string {
+  return text
+    .replaceAll("下方的二维码", "上方的二维码")
+    .replaceAll("下方二维码", "上方二维码")
+    .replaceAll("下面的二维码", "上面的二维码")
+    .replaceAll("下面二维码", "上面二维码")
+    .replaceAll("二维码在下方", "二维码在上方")
+    .replaceAll("二维码在下面", "二维码在上面");
 }

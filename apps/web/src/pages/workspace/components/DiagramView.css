@@ -104,10 +104,9 @@
   height: 100%;
   min-height: 0;
 }
-/* SVG 图表全屏查看(MediaZoomFullscreen 内):定宽承载,svg 等比铺满。 */
+/* SVG 图表全屏查看(MediaZoomFullscreen 内):跟随卡片内容区,svg 等比铺满。 */
 .pm-diagram-zoom-svg {
-  width: min(90vw, 1100px);
-  max-width: 96vw;
+  width: 100%;
 }
 .pm-diagram-zoom-svg svg {
   width: 100% !important;

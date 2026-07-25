@@ -245,18 +245,20 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
   let maxSeq = parseAfterSeq(options.after);
   let cursor = options.after;
   let reconnectAttempt = 0;
-  let watchingPrinted = false;
+  let printWatchingOnNextConnection = true;
+  let gapResubscribed = false;
   try {
     while (!reason && !timedOut) {
       const receivedBeforeConnection = received;
       let reader: ReadableStreamDefaultReader<string> | null = null;
       let meta: ExternalEventsMeta | null = null;
       let buffer = "";
+      let resumeAfter: string | null = null;
       try {
         const res = await client.openEvents(sessionId, cursor, controller.signal);
-        if (!watchingPrinted) {
-          process.stderr.write(`[qa] watching session=${sessionId} after=${options.after}\n`);
-          watchingPrinted = true;
+        if (printWatchingOnNextConnection) {
+          process.stderr.write(`[qa] watching session=${sessionId} after=${cursor}\n`);
+          printWatchingOnNextConnection = false;
         }
         reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
         while (true) {
@@ -273,7 +275,15 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
             if (event.event === "meta") {
               meta = parseEventsMeta(data);
               if (meta?.gap) {
-                reason = "gap";
+                if (received === 0 && !gapResubscribed) {
+                  gapResubscribed = true;
+                  const resumeSeq = Math.max(1, Math.floor(meta.minSeq));
+                  resumeAfter = String(resumeSeq - 1);
+                  process.stderr.write(`[qa] log truncated, resuming from seq=${resumeSeq}\n`);
+                  printWatchingOnNextConnection = true;
+                } else {
+                  reason = "gap";
+                }
                 break;
               }
               if (cursor === "tip" && meta) {
@@ -292,11 +302,16 @@ async function events(client: ApiClient, sessionId: string, options: EventOption
               break;
             }
           }
-          if (reason) break;
+          if (reason || resumeAfter !== null) break;
           if (!options.follow && !options.until && options.timeoutMs === null && meta && maxSeq >= meta.nextSeq - 1) {
             reason = "limit";
             break;
           }
+        }
+        if (resumeAfter !== null) {
+          cursor = resumeAfter;
+          maxSeq = parseAfterSeq(cursor);
+          continue;
         }
         if (!options.follow || reason || timedOut) break;
       } catch (error) {

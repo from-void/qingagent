@@ -75,7 +75,7 @@ PlantUML、合并单元格。记死:**行内只解析 粗体 / 斜体 / 行内�
 - stdout 只输出命中的帧,一行一个 NDJSON;诊断只在 stderr;
 - 命中 \`docCommitted\`,或 \`docStateChanged\` 且 state 离开 \`pendingReview\`,立即退出码 0;
 - 超时也退出码 0,stderr 末行 \`[qa] events exited reason=timeout received=<N>\`;
-- 补拉发现帧日志失效时退出码 0,stderr 末行 \`[qa] events exited reason=gap received=<N>\`;
+- 首次发现帧日志失效且尚未收到事件时会按服务端 \`minSeq\` 自动重订一次；已有输出或重订后仍 gap 时退出码 0,stderr 末行 \`[qa] events exited reason=gap received=<N>\`;
 - 命中后读 stdout 那帧,向用户汇报"已采纳/已拒绝",不要替用户 accept/reject。
 
 如果宿主不能后台监听,记下 propose 返回的 \`seq\`,下次被唤起时用

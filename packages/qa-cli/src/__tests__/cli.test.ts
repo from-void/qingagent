@@ -443,19 +443,50 @@ describe("qa cli", () => {
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] events exited reason=timeout received=0");
   });
 
-  it("doc events 收到 meta gap 时以 reason=gap 退出且不输出 meta", async () => {
+  it("doc events 首次收到 gap 且尚无事件时从 minSeq 自动重订", async () => {
     const { main } = await import("../cli.js");
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    globalThis.fetch = vi.fn(async () =>
-      new Response(sseRawStream([
-        `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 1, nextSeq: 1, gap: true })}\n\n`,
-      ])),
-    ) as typeof fetch;
+    let requestCount = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        expect(String(input)).toBe("http://127.0.0.1:45678/api/v1/external/sessions/s1/events?after=0");
+        return new Response(sseRawStream([
+          `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 41, nextSeq: 43, gap: true })}\n\n`,
+        ]));
+      }
+      expect(String(input)).toBe("http://127.0.0.1:45678/api/v1/external/sessions/s1/events?after=40");
+      return new Response(sseRawStream([
+        `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 41, nextSeq: 43, gap: false })}\n\n`,
+        `event: frame\ndata: ${JSON.stringify({ seq: 41, kind: "docCommitted", data: { version: 2 } })}\n\n`,
+      ]));
+    }) as typeof fetch;
+
+    await main(["doc", "events", "-s", "s1", "--after", "0", "--until", "reviewed"]);
+
+    expect(requestCount).toBe(2);
+    expect(stdout.mock.calls.map((call) => call[0]).join("")).toContain("\"seq\":41");
+    const err = stderr.mock.calls.map((call) => call[0]).join("");
+    expect(err).toContain("[qa] log truncated, resuming from seq=41\n");
+    expect(err).toContain("[qa] watching session=s1 after=40\n");
+    expect(err).not.toContain("events exited reason=gap");
+  });
+
+  it("doc events 自动重订后再次收到 gap 时以 reason=gap 退出且不输出 meta", async () => {
+    const { main } = await import("../cli.js");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const fetchMock = vi.fn(async () => new Response(sseRawStream([
+      `event: meta\ndata: ${JSON.stringify({ epoch: 1, minSeq: 1, nextSeq: 1, gap: true })}\n\n`,
+    ])));
+    globalThis.fetch = fetchMock as typeof fetch;
 
     await main(["doc", "events", "-s", "s1", "--after", "999", "--until", "reviewed"]);
 
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(stdout.mock.calls.map((call) => call[0]).join("")).toBe("");
+    expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] log truncated, resuming from seq=1");
     expect(stderr.mock.calls.map((call) => call[0]).join("")).toContain("[qa] events exited reason=gap received=0");
   });
 

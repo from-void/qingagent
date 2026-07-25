@@ -376,17 +376,14 @@
 
 #view-workspace .cf-foot {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 9px 15px 13px;
 }
 
 #view-workspace .cf-foot-copy {
   display: flex;
-  flex: 1 1 200px;
-  min-width: 160px;
   flex-direction: column;
   gap: 4px;
 }
@@ -400,10 +397,17 @@
 
 #view-workspace .cf-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  margin-left: auto;
+  width: 100%;
+}
+
+#view-workspace .cf-actions .cf-remember {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin-right: auto;
 }
 
 #view-workspace .cf-button {
@@ -511,13 +515,8 @@
 }
 
 @media (max-width: 520px) {
-  #view-workspace .cf-foot {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  #view-workspace .cf-actions {
-    justify-content: flex-end;
+  #view-workspace .cf-actions .cf-remember {
+    flex-basis: 100%;
   }
 }
 

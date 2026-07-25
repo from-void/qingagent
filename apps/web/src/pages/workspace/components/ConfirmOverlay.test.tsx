@@ -194,9 +194,11 @@ describe("ConfirmOverlay", () => {
     };
     await renderOverlay(rememberSpec);
     expect(host!.querySelector<HTMLInputElement>('.cf-remember input[type="checkbox"]')).toBeNull();
-    expect(host?.querySelector(".cf-remember-unavailable")?.textContent).toContain(
+    const unavailable = host!.querySelector<HTMLElement>(".cf-remember-unavailable")!;
+    expect(unavailable.textContent).toContain(
       "开启记忆需要在桌面应用中完成确认。",
     );
+    expect(unavailable.closest(".cf-actions")).toBeNull();
 
     window.electron = {
       platform: "win32",
@@ -217,9 +219,15 @@ describe("ConfirmOverlay", () => {
     expect(host!.querySelector(".cf-remember")?.textContent).toContain(rememberSpec.rememberCategory?.label);
     expect(host!.querySelector(".cf-remember-risk")?.textContent).toBe("请确认安装内容和影响范围。");
     expect(host!.querySelector(".cf-body .cf-remember")).toBeNull();
-    const footer = host!.querySelector<HTMLElement>(".cf-foot")!;
-    expect(footer.querySelector(".cf-foot-copy .cf-remember")).not.toBeNull();
-    expect(footer.querySelector(".cf-actions")).not.toBeNull();
+    const rememberLabel = host!.querySelector<HTMLElement>(".cf-remember")!;
+    const secondaryButton = findButton("先跳过");
+    const primaryButton = findButton("安装并继续");
+    const actions = host!.querySelector<HTMLElement>(".cf-actions")!;
+    expect(rememberLabel.parentElement).toBe(actions);
+    expect(secondaryButton.parentElement).toBe(actions);
+    expect(primaryButton.parentElement).toBe(actions);
+    expect(host!.querySelector(".cf-foot-copy .cf-remember")).toBeNull();
+    expect(actions.querySelector(".cf-foot-hint")).toBeNull();
     expect(checkbox?.closest("label")?.classList.contains("cf-remember")).toBe(true);
     expect(checkbox?.tabIndex).toBe(0);
     const describedBy = checkbox?.getAttribute("aria-describedby");
@@ -228,7 +236,7 @@ describe("ConfirmOverlay", () => {
       "请确认安装内容和影响范围。",
     );
     expect(
-      checkbox!.compareDocumentPosition(findButton("先跳过"))
+      checkbox!.compareDocumentPosition(secondaryButton)
         & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
@@ -239,13 +247,13 @@ describe("ConfirmOverlay", () => {
       "utf8",
     );
     expect(css).toMatch(
-      /\.cf-foot \{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*align-items: center;/s,
+      /\.cf-actions \{[^}]*display: flex;[^}]*flex-wrap: wrap;[^}]*align-items: center;/s,
     );
     expect(css).toMatch(
-      /\.cf-foot-copy \{[^}]*flex: 1 1 200px;[^}]*min-width: 160px;/s,
+      /\.cf-actions \.cf-remember \{[^}]*flex: 1 1 200px;[^}]*margin-right: auto;/s,
     );
     expect(css).toMatch(
-      /@media \(max-width: 520px\) \{[\s\S]*?\.cf-foot \{[^}]*flex-direction: column;[^}]*align-items: stretch;/,
+      /@media \(max-width: 520px\) \{[\s\S]*?\.cf-actions \.cf-remember \{[^}]*flex-basis: 100%;/,
     );
   });
 

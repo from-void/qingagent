@@ -15,6 +15,7 @@ import {
   ChatMessageList,
   EMPTY_HINT_TEXT,
   parseExternalClient,
+  renderSimpleMarkdown,
   shouldShowPreTokenLoading,
   splitStreamingInlineRuns,
 } from "./ChatMessageList";
@@ -215,6 +216,49 @@ describe("ChatMessageList", () => {
 
     expect(host?.textContent ?? "").not.toContain("正在连接模型");
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("常见 markdown 链接和裸 URL 都安全渲染为可点击链接", async () => {
+    const wecomUrl = "https://work.weixin.qq.com/wework_admin/frame#apps";
+    const labeledUrl = "https://example.com/search?q=%E4%B8%AD%E6%96%87&x=1#结果";
+    const parenthesizedUrl = "https://example.com/wiki/A_(B)?from=chat#section";
+    const bareUrl = "https://example.com/direct/path?x=1&y=2#part";
+    await render(
+      <div>
+        {renderSimpleMarkdown([
+          "1. 在浏览器打开这个链接:",
+          `   [${wecomUrl}](${wecomUrl})`,
+          "查看[文字](https://example.com/guide?q=1#intro)",
+          `查看[含 # / ? & 中文 和空格](${labeledUrl})`,
+          `括号链接[文档](${parenthesizedUrl})`,
+          `裸链 ${bareUrl} 继续`,
+          "[危险](javascript:alert(1))",
+          "[数据](data:text/html,boom)",
+          "javascript:alert(1) data:text/html,boom",
+        ].join("\n"))}
+      </div>,
+    );
+
+    const anchors = Array.from(host!.querySelectorAll<HTMLAnchorElement>("a"));
+    expect(anchors.map((anchor) => anchor.getAttribute("href"))).toEqual([
+      wecomUrl,
+      "https://example.com/guide?q=1#intro",
+      labeledUrl,
+      parenthesizedUrl,
+      bareUrl,
+    ]);
+    expect(anchors[0]?.textContent).not.toContain(`[${wecomUrl}]`);
+    expect(anchors[0]?.textContent).toContain(wecomUrl);
+    expect(anchors[1]?.textContent).toContain("文字");
+    expect(anchors[2]?.textContent).toContain("含 # / ? & 中文 和空格");
+    for (const anchor of anchors) {
+      expect(anchor.target).toBe("_blank");
+      expect(anchor.rel.split(/\s+/)).toEqual(expect.arrayContaining(["noreferrer", "noopener"]));
+      expect(anchor.protocol === "http:" || anchor.protocol === "https:").toBe(true);
+    }
+    expect(host?.textContent).toContain("[危险](javascript:alert(1))");
+    expect(host?.textContent).toContain("[数据](data:text/html,boom)");
+    expect(anchors.some((anchor) => /^(?:javascript|data):/u.test(anchor.href))).toBe(false);
   });
 
   it("skill/skill_read 工具卡技能名使用 skills API label", async () => {
@@ -1298,6 +1342,19 @@ describe("splitStreamingInlineRuns", () => {
       { kind: "plain", text: " 见 ", start: 12 },
       { kind: "link", text: "文档", href: "https://a.b/c", start: 16 },
       { kind: "plain", text: " 了解", start: 34 },
+    ]);
+  });
+
+  it("流式最后一行也会 autolink 裸 URL 并剥离句末标点", () => {
+    expect(splitStreamingInlineRuns("打开 https://example.com/path?q=1&x=2#part，继续")).toEqual([
+      { kind: "plain", text: "打开 ", start: 0 },
+      {
+        kind: "link",
+        text: "https://example.com/path?q=1&x=2#part",
+        href: "https://example.com/path?q=1&x=2#part",
+        start: 3,
+      },
+      { kind: "plain", text: "，继续", start: 40 },
     ]);
   });
 

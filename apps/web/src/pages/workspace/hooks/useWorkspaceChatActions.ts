@@ -451,26 +451,8 @@ export function useWorkspaceChatActions(input: {
     });
   }, [showToast]);
 
-  const handleCancelConfirmedCommand = useCallback(async (toolCallId: string) => {
-    const sessionId = stateRef.current.sessionId;
-    const stream = streamRef.current;
-    if (!sessionId || !stream) {
-      showToast("连接还没准备好");
-      throw new Error("confirm command stream unavailable");
-    }
-    try {
-      await stream.cancelConfirmedCommand({ sessionId, toolCallId });
-      showToast("正在停止此命令…");
-    } catch (error) {
-      console.error("[workspace] cancel confirmed command failed", error);
-      showToast(error instanceof Error ? error.message : "停止失败，请再试一次。");
-      throw error;
-    }
-  }, [showToast]);
-
   return {
     handleCancelActiveStream,
-    handleCancelConfirmedCommand,
     handleSubmitChat,
   };
 }

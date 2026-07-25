@@ -493,4 +493,22 @@ describe("chatUnified.css", () => {
     expect(cssText).not.toMatch(/(^|\n)\s*(?:button\.)?\.u-(?!scope\b)[\w-]+/);
     expect(cssText).not.toMatch(/(^|\n)\s*:root\[data-perf="low"\]\s+\.u-/);
   });
+
+  it("聊天正文长串可折行且不改动代码块滚动策略", () => {
+    expect(chatCss).toMatch(
+      /\.u-scope \.chat-markdown-body \{[^}]*min-width: 0;[^}]*max-width: 100%;[^}]*\}/s,
+    );
+    expect(chatCss).toMatch(
+      /\.u-scope \.chat-markdown-inline,\s*\n\.u-scope \.chat-link \{[^}]*overflow-wrap: anywhere;[^}]*word-break: break-word;[^}]*\}/s,
+    );
+    const markdownWrapRules = chatCss.match(
+      /\.u-scope \.chat-markdown-body \{[^}]*\}|\.u-scope \.chat-markdown-inline,[^}]*\}/gs,
+    )?.join("\n") ?? "";
+    expect(markdownWrapRules).not.toMatch(/\b(?:pre|code)\b|overflow-x/);
+  });
+
+  it("命令卡样式不再保留单条停止入口", () => {
+    expect(chatCss).not.toContain(".u-command-stop");
+    expect(chatCss).not.toContain(".u-command-actions");
+  });
 });

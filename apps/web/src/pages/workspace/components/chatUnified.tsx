@@ -614,15 +614,10 @@ function ScrollBox({ lines, variant, children }: {
 export function UCommand({
   body,
   status,
-  toolCallId,
-  onStop,
 }: {
   body: CommandCardBody;
   status?: ToolCallSpec["status"];
-  toolCallId?: string;
-  onStop?: (toolCallId: string) => Promise<void>;
 }) {
-  const [stopping, setStopping] = useState(false);
   const statusKind = status?.kind;
   // status 是单一权威；body.phase 只兼容尚未带终态 status 的旧帧。
   const phase = statusKind === "failed"
@@ -677,23 +672,6 @@ export function UCommand({
           )}
           {body.outputTail && (
             <ScrollBox lines={3} variant="output">{body.outputTail}</ScrollBox>
-          )}
-          {statusKind === "running" && body.cancellable === true && onStop && toolCallId && (
-            <div className="u-command-actions">
-              <button
-                type="button"
-                className="u-command-stop"
-                disabled={stopping}
-                onClick={() => {
-                  setStopping(true);
-                  void onStop(toolCallId)
-                    .catch(() => undefined)
-                    .finally(() => setStopping(false));
-                }}
-              >
-                {stopping ? "正在停止…" : "停止此命令"}
-              </button>
-            </div>
           )}
         </div>
       )}
@@ -752,26 +730,17 @@ export function UnifiedToolCall({
   spec,
   skillLabels = EMPTY_SKILL_LABELS,
   materialLabels = EMPTY_MATERIAL_LABELS,
-  onStopCommand,
 }: {
   spec: ToolCallSpec;
   skillLabels?: SkillLabelMap;
   materialLabels?: MaterialLabelMap;
-  onStopCommand?: (toolCallId: string) => Promise<void>;
 }) {
   const b = spec.body;
   if (b.kind === "researchCard") return <UResearch body={b.data} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
   if (b.kind === "commandCard") {
-    return (
-      <UCommand
-        body={b.data}
-        status={spec.status}
-        toolCallId={spec.id}
-        onStop={onStopCommand}
-      />
-    );
+    return <UCommand body={b.data} status={spec.status} />;
   }
   // generic / 旧死 body.kind / askUser overlay → 统一一行
   return <UToolBar spec={spec} skillLabels={skillLabels} materialLabels={materialLabels} />;

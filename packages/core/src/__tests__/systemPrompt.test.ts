@@ -24,6 +24,27 @@ describe("system prompt S3", () => {
     expect(prompt).toContain("你要读企业微信文档，需要先装它的命令行工具");
   });
 
+  it("授权 CLI 先探测并优先走产品可承接的自动授权方式", () => {
+    const prompt = buildSystemPrompt();
+    for (const keyword of [
+      "在决定接入方式前",
+      "init/login 类命令的 `--help`",
+      "摸清它提供的全部接入方式",
+      "优先选择自动化程度最高",
+      "扫码、device flow 或非交互方式",
+      "`--noninteractive`",
+      "由产品渲染二维码卡让用户扫码",
+      "不要主动把用户推去第三方管理后台手动创建应用",
+      "复制 AppID/App Secret 等凭证",
+      "完全没有任何自动授权方式时",
+      "明确说明为什么只能手动",
+    ]) {
+      expect(prompt).toContain(keyword);
+    }
+    expect(prompt.indexOf("在决定接入方式前"))
+      .toBeLessThan(prompt.indexOf("有的 CLI 首次使用要扫码或网页授权"));
+  });
+
   it("返回单一 QingML prompt,包含新工具契约", () => {
     const prompt = buildSystemPrompt();
 

@@ -17,10 +17,7 @@ const genericTool = (name: string): ToolCallSpec => ({
   result: null,
 });
 
-async function render(
-  specs: ToolCallSpec[],
-  onStopCommand?: (toolCallId: string) => Promise<void>,
-) {
+async function render(specs: ToolCallSpec[]) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -29,7 +26,6 @@ async function render(
       <UnifiedToolCall
         key={spec.id}
         spec={spec}
-        onStopCommand={onStopCommand}
       />
     ))}</>);
   });
@@ -171,8 +167,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(host?.textContent).not.toContain("重试");
   });
 
-  it("排队命令卡显示已确认进度，running 卡可按 toolCallId 定向停止", async () => {
-    const onStopCommand = vi.fn(async () => undefined);
+  it("排队命令卡显示已确认进度，running 卡不提供单条停止入口", async () => {
     const commandBody = {
       kind: "commandCard" as const,
       data: {
@@ -199,16 +194,11 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       status: { kind: "running", data: { progressPct: null, etaSec: null } },
     };
 
-    await render([queued, running], onStopCommand);
+    await render([queued, running]);
 
     expect(host?.textContent).toContain("已确认，排队执行");
-    const stopButton = Array.from(host!.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent === "停止此命令")!;
-    await act(async () => {
-      stopButton.click();
-      await Promise.resolve();
-    });
-    expect(onStopCommand).toHaveBeenCalledWith("command-running");
+    expect(host?.textContent).not.toContain("停止此命令");
+    expect(host?.querySelector(".u-command-stop")).toBeNull();
   });
 
   it("定向停止终态显示已中止和结果可能未知", async () => {
@@ -235,7 +225,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       result: null,
     };
 
-    await render([stopped], vi.fn(async () => undefined));
+    await render([stopped]);
 
     expect(host?.textContent).toContain("已中止，结果可能未知");
     expect(host?.textContent).not.toContain("停止此命令");

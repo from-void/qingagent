@@ -33,7 +33,6 @@ export function WorkspaceChatPane({
     chatInputSendEnabledWhenDisabled,
     handleSubmitChat,
     handleCancelActiveStream,
-    handleCancelConfirmedCommand,
     setPreviewSource,
     handleRemoveMaterial,
     showToast,
@@ -80,7 +79,6 @@ export function WorkspaceChatPane({
         wholeDocReviewKeys={wholeDocReviewKeysRef.current}
         scrollRef={chatScrollRef}
         debugMode={debugMode}
-        onStopCommand={handleCancelConfirmedCommand}
       />
       <div className="ws-input-wrap">
         {confirmRecord && !inlineConfirm && (

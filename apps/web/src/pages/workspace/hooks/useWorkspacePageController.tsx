@@ -2552,7 +2552,6 @@ export function useWorkspacePageController() {
 
   const {
     handleCancelActiveStream,
-    handleCancelConfirmedCommand,
     handleSubmitChat,
   } =
     useWorkspaceChatActions({
@@ -2890,7 +2889,6 @@ export function useWorkspacePageController() {
     chatInputSendEnabledWhenDisabled,
     handleSubmitChat,
     handleCancelActiveStream,
-    handleCancelConfirmedCommand,
     setPreviewSource,
     handleRemoveMaterial,
     folderSource,

@@ -140,7 +140,12 @@ export function createQingagentExtensions(options: {
           const cn = ["", "一级", "二级", "三级", "四级", "五级", "六级"][level] ?? "";
           return `${cn}标题`;
         }
-        if (node.type.name === "paragraph" && editor?.isEmpty) {
+        const doc = editor?.state.doc;
+        if (
+          node.type.name === "paragraph"
+          && doc?.childCount === 1
+          && node.content.size === 0
+        ) {
           return "输入正文,或点左侧 + 插入其他块";
         }
         return "";

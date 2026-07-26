@@ -27,6 +27,10 @@ import {
   resolveToolbarUnlockConfig,
 } from "../data/toolbarUnlock";
 import { useToolbarLinkEditor } from "./doc/ToolbarLinkEditor";
+import {
+  createDefaultColumnListNode,
+  insertStructureNodeAfterBlock,
+} from "./doc/structureNodes";
 
 interface ToolbarPos {
   top: number;
@@ -791,17 +795,9 @@ export function DocToolbar({
         case "insertColumns": {
           // 在当前顶层块之后插入,不能用 insertContent(会替换选区:全选时清空正文,e2e V1-c1)。
           const $from = editor.state.selection.$from;
-          const afterBlock = $from.depth >= 1 ? $from.after(1) : editor.state.selection.to;
+          const blockPos = $from.depth >= 1 ? $from.before(1) : 0;
           run("插入分栏", () =>
-            chain
-              .insertContentAt(afterBlock, {
-                type: "columnList",
-                content: [
-                  { type: "column", attrs: { widthRatio: 0.5 }, content: [{ type: "paragraph" }] },
-                  { type: "column", attrs: { widthRatio: 0.5 }, content: [{ type: "paragraph" }] },
-                ],
-              })
-              .run(),
+            insertStructureNodeAfterBlock(editor, blockPos, createDefaultColumnListNode()),
           );
           break;
         }

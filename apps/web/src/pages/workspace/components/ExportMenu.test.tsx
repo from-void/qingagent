@@ -98,6 +98,58 @@ describe("ExportMenu", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/export/session-1?format=html");
   });
 
+  it("HTML 导出先等待 drawio 补缓存并显示逐块进度，再保存和请求导出", async () => {
+    const events: string[] = [];
+    let finishPreparation: (() => void) | undefined;
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    const prepareDrawioForExport = vi.fn(
+      async (onProgress: (current: number, total: number) => void) => {
+        events.push("prepare");
+        onProgress(3, 12);
+        await preparation;
+      },
+    );
+    const flushPendingDocSave = vi.fn(async () => {
+      events.push("flush");
+    });
+    const fetchMock = vi.fn(async () => {
+      events.push("fetch");
+      return new Response(new Blob(["<html></html>"]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(URL, "createObjectURL", { value: vi.fn(() => "blob:export"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    await render(
+      <ExportMenuHarness
+        onClose={() => undefined}
+        prepareDrawioForExport={prepareDrawioForExport}
+        flushPendingDocSave={flushPendingDocSave}
+      />,
+    );
+
+    const item = host?.querySelector<HTMLButtonElement>('[data-wf="ExportFormat-html"]');
+    if (!item) throw new Error("HTML export item not found");
+    await act(async () => {
+      item.click();
+      await Promise.resolve();
+    });
+
+    expect(item.textContent).toContain("正在渲染图表 3/12");
+    expect(events).toEqual(["prepare"]);
+
+    await act(async () => {
+      finishPreparation?.();
+      await preparation;
+    });
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(events).toEqual(["prepare", "flush", "fetch"]);
+  });
+
   it("递归识别 column/table/list/callout 内的节点类型", () => {
     expect(docHasNodeType(columnDoc(), "columnList")).toBe(true);
     expect(docHasNodeType(columnDoc(), "orderedList")).toBe(true);
@@ -141,11 +193,15 @@ describe("ExportMenu", () => {
 function ExportMenuHarness({
   onClose,
   onAction = () => undefined,
+  prepareDrawioForExport,
   flushPendingDocSave,
   getLatestPmDoc,
 }: {
   onClose: () => void;
   onAction?: (message: string, durationMs?: number) => void;
+  prepareDrawioForExport?: (
+    onProgress: (current: number, total: number) => void,
+  ) => Promise<void>;
   flushPendingDocSave?: () => Promise<void>;
   getLatestPmDoc?: () => PmDoc | null;
 }) {
@@ -166,6 +222,7 @@ function ExportMenuHarness({
           anchorRef={anchorRef}
           onClose={close}
           onAction={onAction}
+          prepareDrawioForExport={prepareDrawioForExport}
           flushPendingDocSave={flushPendingDocSave}
           getLatestPmDoc={getLatestPmDoc}
         />

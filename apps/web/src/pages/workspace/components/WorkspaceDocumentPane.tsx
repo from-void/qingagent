@@ -12,6 +12,7 @@ import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
 } from "./derivatives/dtypeRegistry";
+import { prepareEditorDrawioCaches } from "./drawioExportPreparation";
 import { ExportMenu } from "./ExportMenu";
 import {
   buildReviewActionCard,
@@ -186,6 +187,22 @@ export function WorkspaceDocumentPane({
     docScrollRef,
     markDocumentSurfaceReady,
   ]);
+
+  const prepareDrawioForExport = useCallback(
+    async (onProgress: (current: number, total: number) => void) => {
+      if (!tiptapEditor || tiptapEditor.isDestroyed) return;
+      await prepareEditorDrawioCaches(tiptapEditor, {
+        onProgress,
+        onRenderError: (block, error) => {
+          console.warn(
+            `[workspace] drawio export cache render failed: ${block.blockId}`,
+            error,
+          );
+        },
+      });
+    },
+    [tiptapEditor],
+  );
 
   const derivativeActive = activeTab !== "main";
   const translationItems = derivatives.filter(
@@ -393,6 +410,7 @@ export function WorkspaceDocumentPane({
                   anchorRef={exportAnchorRef}
                   onClose={() => setExportMenuOpen(false)}
                   onAction={showToast}
+                  prepareDrawioForExport={prepareDrawioForExport}
                   flushPendingDocSave={flushPendingDocSave}
                   getLatestPmDoc={getLatestExportPmDoc}
                 />

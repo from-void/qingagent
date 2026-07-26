@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ModelSettingsPanel } from "../../../overlays/settings/ModelSettingsPanel";
 import { FeedbackPanel } from "../../../overlays/settings/FeedbackPanel";
 import { ShortcutsPanel } from "../../../overlays/settings/ShortcutsPanel";
@@ -77,6 +77,25 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
   const [closing, setClosing] = useState(false);
   // 墨退场比内容晚 160ms 触发:内容先淡出,墨再回收,避免墨先退留残影
   const [inkExiting, setInkExiting] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const scrollPositionsRef = useRef<Partial<Record<SettingsSheetTab, number>>>({});
+
+  const switchTab = useCallback((nextTab: SettingsSheetTab) => {
+    if (nextTab === tab) return;
+    scrollPositionsRef.current[tab] = bodyRef.current?.scrollTop ?? 0;
+    setTab(nextTab);
+  }, [tab]);
+
+  // tab 内容由 key={tab} 重新挂载。等本次提交完成并进入下一帧后再恢复滚动，
+  // 避免新内容尚未形成高度时 scrollTop 被浏览器钳回 0；未访问过的 tab 默认回顶。
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (bodyRef.current) {
+        bodyRef.current.scrollTop = scrollPositionsRef.current[tab] ?? 0;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [tab]);
 
   // 关闭:先播墨退场动画(墨球四散+淡出),退场结束再真正卸载
   const handleClose = useCallback(() => {
@@ -163,14 +182,14 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                   role="tab"
                   aria-selected={tab === t.id}
                   className={`qj-sheet-tab${tab === t.id ? " qj-active" : ""}`}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => switchTab(t.id)}
                 >
                   {t.label}
                 </button>
               ))}
             </nav>
           </div>
-          <div className="qj-sheet-body" role="tabpanel">
+          <div ref={bodyRef} className="qj-sheet-body" role="tabpanel">
             <div className="qj-sheet-panel" key={tab}>
             {tab === "appearance" && (
               <div className="qj-appear">
@@ -283,7 +302,7 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
             {tab === "model" && <ModelSettingsPanel />}
             {tab === "skills" && <SkillsPanel onOpenConnector={(id) => {
               setSelectedConnectorId(id);
-              setTab("connections");
+              switchTab("connections");
             }} />}
             {tab === "connections" && (
               <ConnectionsPanel

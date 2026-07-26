@@ -588,6 +588,11 @@
 .uk-image-demo .pm-image-upload-overlay {
   opacity: 1;
 }
+.uk-media-toolbar-demo.pm-image-toolbar {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+}
 
 /* 图表块编辑件:左下入口 + 图编辑器上下文条 */
 .uk-diagramedit-demo {

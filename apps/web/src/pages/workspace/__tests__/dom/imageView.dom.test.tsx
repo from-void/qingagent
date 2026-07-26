@@ -197,6 +197,9 @@ describe("ImageView", () => {
       expect(toolbar?.getAttribute("aria-label")).toBe("图片操作");
       expect(toolbar?.getAttribute("aria-hidden")).toBeNull();
       expect(toolbar?.classList.contains("pm-image-chrome")).toBe(true);
+      expect(Array.from(toolbar?.children ?? []).every((child) => child.tagName === "BUTTON")).toBe(true);
+      expect(Array.from(toolbar?.querySelectorAll<HTMLButtonElement>(".pm-image-tool") ?? []).map((button) => button.textContent?.trim()))
+        .toEqual(["左", "中", "右", "全屏"]);
       expect(editor.view.dom.querySelector<HTMLButtonElement>('button[aria-label="全屏查看图片"]')).not.toBeNull();
     } finally {
       await unmount(editor);

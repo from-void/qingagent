@@ -32,7 +32,6 @@ import {
   ConnectionMode,
   Controls,
   EdgeLabelRenderer,
-  Panel,
   Handle,
   MarkerType,
   Position,
@@ -81,6 +80,7 @@ import {
   type RewriteResult,
 } from "@qingagent/diagram-engine";
 import { useToast } from "../../../../system";
+import { MediaBlockToolbar } from "../MediaBlockToolbar";
 import type { DiagramVisualChange } from "./DiagramRenderer";
 import "./graphDiagram.css";
 
@@ -797,86 +797,27 @@ function graphMarkerSafeId(edgeId: string): string {
   return edgeId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-// 预览态右上角统一工具栏:对齐(左/中/右)+ 放大/缩小/适应 + 全屏编辑。样式与图片块工具栏统一。
-// 必须作为 ReactFlow 子组件(Panel)以拿到 useReactFlow 的 zoom/fit 能力。
+// 图表块外部工具栏只负责块对齐与进入全屏，结构和视觉与图片块完全共用。
 function GraphPreviewToolbar({
   readOnly,
   align,
   onAlignChange,
-  onCreateSubgraph,
   onFullscreen,
 }: {
   readOnly: boolean;
   align: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
-  onCreateSubgraph?: () => void;
   onFullscreen: () => void;
 }) {
-  const { fitView, zoomIn, zoomOut } = useReactFlow();
-  const editable = !readOnly;
-  const stop = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-  };
-  const showAlign = editable && Boolean(onAlignChange);
-  const run = (event: ReactMouseEvent, action: () => void | Promise<boolean>) => {
-    stop(event);
-    void action();
-  };
   return (
-    <Panel
-      position="top-right"
+    <MediaBlockToolbar
+      align={align}
+      onAlignChange={readOnly ? undefined : onAlignChange}
+      onFullscreen={onFullscreen}
+      ariaLabel="图表画布工具栏"
+      fullscreenAriaLabel="全屏查看"
       className="graph-diagram-viewbar pm-diagram-viewbar pm-diagram-chrome"
-      role="toolbar"
-      aria-label="图表画布工具栏"
-      // 工具栏内的任何点击/双击都不冒泡到图表块,避免"快速点按钮被识别成双击进编辑"(用户反馈)。
-      onMouseDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-    >
-      {editable && onCreateSubgraph && (
-        <>
-          <CanvasToolButton
-            label="新增分区"
-            icon="subgraph"
-            onMouseDown={(event) => run(event, onCreateSubgraph)}
-          />
-          <span className="pm-diagram-tool-sep" aria-hidden="true" />
-        </>
-      )}
-      {showAlign &&
-        ([
-          { value: "left", label: "左对齐", icon: "align-left" },
-          { value: "center", label: "居中对齐", icon: "align-center" },
-          { value: "right", label: "右对齐", icon: "align-right" },
-        ] as const).map((option) => (
-          <CanvasToolButton
-            key={option.value}
-            label={option.label}
-            icon={option.icon}
-            active={align === option.value}
-            pressed={align === option.value}
-            onMouseDown={(event) => {
-              stop(event);
-              onAlignChange?.(option.value);
-            }}
-          />
-        ))}
-      {showAlign && <span className="pm-diagram-tool-sep" aria-hidden="true" />}
-      <CanvasToolButton label="缩小" icon="zoom-out" onMouseDown={(event) => run(event, zoomOut)} />
-      <CanvasToolButton label="放大" icon="zoom-in" onMouseDown={(event) => run(event, zoomIn)} />
-      <CanvasToolButton
-        label="适配视图"
-        icon="fit"
-        onMouseDown={(event) => run(event, () => fitView({ padding: 0.15, maxZoom: 1, duration: 180 }))}
-      />
-      <span className="pm-diagram-tool-sep" aria-hidden="true" />
-      <CanvasToolButton
-        label={editable ? "全屏编辑" : "全屏查看"}
-        icon="fullscreen"
-        onMouseDown={(event) => run(event, onFullscreen)}
-      />
-    </Panel>
+    />
   );
 }
 
@@ -1273,12 +1214,8 @@ export function GraphDiagramView({
   }, [resetEditorState]);
 
   const openFullscreen = useCallback(() => {
-    if (readOnly) {
-      setViewingFullscreen(true);
-      return;
-    }
-    openEditor();
-  }, [openEditor, readOnly]);
+    setViewingFullscreen(true);
+  }, []);
 
   const closeFullscreen = useCallback(() => {
     setViewingFullscreen(false);
@@ -3044,7 +2981,6 @@ export function GraphDiagramView({
             readOnly={readOnly}
             align={align}
             onAlignChange={onAlignChange}
-            onCreateSubgraph={parsed.model.type === "flowchart" ? beginSubgraphDrawing : undefined}
             onFullscreen={openFullscreen}
           />
         </ReactFlow>

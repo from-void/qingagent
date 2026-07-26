@@ -43,6 +43,51 @@ describe("公众号稿生成体验", () => {
   beforeEach(() => { host = document.createElement("div"); host.id = "view-workspace"; document.body.append(host); root = createRoot(host); });
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
 
+  it("既有衍生稿用预取正文首帧成画，不先挂空纸等待二次请求", async () => {
+    const generated = { ...item, sourceVersion: 1, generatedAt: "now" };
+    const initialDocument = {
+      meta: generated,
+      docPm: JSON.stringify({
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: "prefetched" },
+            content: [{ type: "text", text: "预取正文首帧可见" }],
+          },
+        ],
+      }),
+      docVersion: 1,
+      title: "预取稿",
+    };
+    const stream = {
+      getDerivativeDoc: vi.fn(
+        () => new Promise<typeof initialDocument>(() => undefined),
+      ),
+    };
+
+    await act(async () => {
+      root.render(
+        <ConfirmProvider>
+          <DerivativeView
+            sessionId="session-1"
+            item={generated}
+            initialDocument={initialDocument}
+            stream={stream as never}
+            streamActive={false}
+            onRefresh={vi.fn(async () => {})}
+            onDeleted={vi.fn()}
+            onToast={vi.fn()}
+            onSendQuery={vi.fn()}
+          />
+        </ConfirmProvider>,
+      );
+    });
+
+    expect(host.textContent).toContain("预取正文首帧可见");
+  });
+
   it("F4: 历史非矩形表格衍生稿可宽容打开", async () => {
     const legacyBrokenTable = JSON.stringify({
       type: "doc", attrs: { schemaVersion: 1 }, content: [{
@@ -460,7 +505,7 @@ describe("公众号稿生成体验", () => {
       generateTranslations,
       deleteDerivative: vi.fn(async () => {}),
     };
-    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed"; text: string; reason?: string }>) => root.render(
+    const renderView = (translationGen: ReadonlyMap<string, { status: "streaming" | "failed" | "aborted"; text: string; reason?: string }>) => root.render(
       <ConfirmProvider><DerivativeView
         sessionId="session-1"
         item={english}
@@ -477,7 +522,7 @@ describe("公众号稿生成体验", () => {
 
     await act(async () => renderView(new Map([
       [english.docId, { status: "streaming" as const, text: "" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
     ])));
     expect(host.querySelector('.ws-deriv-streaming-paper [data-wf="QingLoading"]')).not.toBeNull();
     const streamingView = host.querySelector(".ws-deriv-view")!;
@@ -491,7 +536,7 @@ describe("公众号稿生成体验", () => {
 
     await act(async () => renderView(new Map([
       [english.docId, { status: "streaming" as const, text: "<p>Hello &amp; <mark>world</mark></p><p>Second &#x1F44B;</p>" }],
-      [japanese.docId, { status: "failed" as const, text: "", reason: "译文生成失败，请重试" }],
+      [japanese.docId, { status: "failed" as const, text: "", reason: "Rendered page is a hollow shell" }],
     ])));
     expect(host.querySelector(".ws-translate-stream-text")?.textContent).toBe("Hello & worldSecond 👋");
     expect(host.querySelector(".ws-translate-stream-text mark")).toBeNull();
@@ -501,7 +546,8 @@ describe("公众号稿生成体验", () => {
     expect(deleteButton.title).toBe("生成中不可删除");
 
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>(".ws-translate-segmented button")).find((button) => button.textContent === "日语")!.click());
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("译文生成失败，请重试");
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("翻译未完成");
+    expect(host.textContent).not.toContain("Rendered page is a hollow shell");
     await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "重试")!.click());
     expect(generateTranslations).toHaveBeenCalledWith("session-1", [japanese.docId]);
   });

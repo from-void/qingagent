@@ -145,6 +145,8 @@ export function useWorkspaceChatActions(input: {
   toast: ReturnType<typeof useToast>;
   handleBackHome: () => void;
   restoreExistingSession: (sessionId: string) => Promise<unknown>;
+  /** 仅进模型当轮 user message，不进入用户可见气泡。 */
+  turnContext?: string | null;
 }) {
   const {
     dim,
@@ -170,6 +172,7 @@ export function useWorkspaceChatActions(input: {
     toast,
     handleBackHome,
     restoreExistingSession,
+    turnContext,
   } = input;
 
   const handleSubmitChat = useCallback(() => {
@@ -297,6 +300,7 @@ export function useWorkspaceChatActions(input: {
                   chips: contractChips,
                   fileIds,
                   clientMessageId,
+                  ...(turnContext ? { turnContext } : {}),
                   // richText({{chip:N}} 原位):服务端据此内联展开给模型 + 作气泡体(WYSIWYG)。
                   ...(snap.chips.length > 0 && snap.richText
                     ? { richText: snap.richText }
@@ -345,6 +349,7 @@ export function useWorkspaceChatActions(input: {
     markMaterialParsing,
     showToast,
     tiptapEditor,
+    turnContext,
   ]);
   // 让 chatInputBus.send 的订阅者拿到最新 handleSubmitChat(每渲染同步)。
   handleSubmitChatRef.current = handleSubmitChat;

@@ -1,4 +1,5 @@
 import { goConfigureModel } from "../../../system/modelKeyGate";
+import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AskUserOverlay } from "./AskUserOverlay";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageList, shouldShowPreTokenLoading } from "./ChatMessageList";
@@ -63,23 +64,28 @@ export function WorkspaceChatPane({
   const inputHidden = inputHandedOff || Boolean(inlineConfirm);
 
   return (
-    <div className="ws-left">
-      <ChatMessageList
-        messages={state.messages}
-        streamActive={state.streamActive}
-        showLoading={shouldShowPreTokenLoading(
-          state.messages,
-          state.streamActive,
-        )}
-        patchRevealing={effectivePatchRevealing}
-        livePatchCount={reviewUiState.livePatchCount}
-        liveHunkKey={liveHunkKey}
-        sessionId={state.sessionId}
-        wholeDocReview={wholeDocReview}
-        wholeDocReviewKeys={wholeDocReviewKeysRef.current}
-        scrollRef={chatScrollRef}
-        debugMode={debugMode}
-      />
+    <div className={WORKSPACE_PAPER_DOM.chatColumnClass}>
+      <div
+        className="ws-chat-content"
+        data-wf="WorkspaceHydrationChatContent"
+      >
+        <ChatMessageList
+          messages={state.messages}
+          streamActive={state.streamActive}
+          showLoading={shouldShowPreTokenLoading(
+            state.messages,
+            state.streamActive,
+          )}
+          patchRevealing={effectivePatchRevealing}
+          livePatchCount={reviewUiState.livePatchCount}
+          liveHunkKey={liveHunkKey}
+          sessionId={state.sessionId}
+          wholeDocReview={wholeDocReview}
+          wholeDocReviewKeys={wholeDocReviewKeysRef.current}
+          scrollRef={chatScrollRef}
+          debugMode={debugMode}
+        />
+      </div>
       <div className="ws-input-wrap">
         {confirmRecord && !inlineConfirm && (
           <ConfirmRecordBar record={confirmRecord} />

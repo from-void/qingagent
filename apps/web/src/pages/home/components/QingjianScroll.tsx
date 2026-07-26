@@ -1802,7 +1802,8 @@ export function QingjianScroll({
         height: NEW_CARD_H,
       };
       // 落点 = workspace 编辑页文档纸张 rect,与文章打开路径保持同一几何。
-      const landing = computeWorkspaceDocRect();
+      // 用同构 DOM 探针实测真实纸壳；homeStage 在终帧会再调一次，覆盖转场中 resize。
+      const measureLanding = () => computeWorkspaceDocRect();
 
       // 兜底:无舞台(理论不会)时退回旧式「直接切路由,新建页自播进场」。
       if (!txStage) {
@@ -1817,8 +1818,8 @@ export function QingjianScroll({
       // (新建卡中心)对称。剔除点击抖动用卡中心而非 cx/cy,与返回落点同一坐标系。
       const inkOrigin = { x: fromRect.left + fromRect.width / 2, y: fromRect.top + fromRect.height / 2 };
       txStage
-        .playForward(fromRect, landing, inkOrigin, true)
-        .then(() => {
+        .playForward(fromRect, measureLanding, inkOrigin, true)
+        .then((landing) => {
           // 卡落定 + 背景已深的静止帧:交付到达态 → 切路由。编辑页挂载即静帧渲染。
           // (皮肤 CSS 的等待不在这儿:挡在 App.tsx 的 lazy 工厂里,覆盖所有进入路径。
           //  切页后 startTransition 会保留这一帧首页静止画面,直到编辑页连样式一起就绪。)
@@ -1842,15 +1843,16 @@ export function QingjianScroll({
         return;
       }
 
-      const landing = computeWorkspaceDocRect();
+      // 与新建路径同口径：起飞前/落定帧各实测一次目标纸壳。
+      const measureLanding = () => computeWorkspaceDocRect();
       transitioningRef.current = true;
       const root = rootRef.current;
       root?.classList.add("qj-transitioning");
       const inkOrigin = { x: from.centerX, y: from.centerY };
       txStage
         // plain=true:点击文章卡瞬间先把飞卡切成纯净纸,和工作区文档一致,再形变进场
-        .playForward(from.rect, landing, inkOrigin, true)
-        .then(() => {
+        .playForward(from.rect, measureLanding, inkOrigin, true)
+        .then((landing) => {
           setWorkspaceArrive({
             rect: landing,
             x: inkOrigin.x,

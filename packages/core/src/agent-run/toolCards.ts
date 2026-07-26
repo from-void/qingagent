@@ -1,6 +1,7 @@
 import type {
   AskUserQuestionKind,
   AskUserSliderSpec,
+  AuthCardPresentation,
   CommandCardBody,
   CommandTerminalKind,
   DiffHunk,
@@ -173,7 +174,7 @@ export function commandCardFromResult(
 export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
   if (spec.body.kind !== "commandCard") return spec;
   const status = spec.status;
-  const phase = status.kind === "failed"
+  const phase = status.kind === "failed" || status.kind === "aborted"
     ? "failed"
     : status.kind === "done"
       ? "done"
@@ -184,7 +185,9 @@ export function alignCommandCardWithStatus(spec: ToolCallSpec): ToolCallSpec {
   const existingTerminalKind = spec.body.data.terminalKind;
   const terminalKind: CommandTerminalKind | undefined = phase === "running"
     ? undefined
-    : phase === "done"
+    : status.kind === "aborted"
+      ? "aborted"
+      : phase === "done"
       ? "succeeded"
       : existingTerminalKind && existingTerminalKind !== "succeeded"
         ? existingTerminalKind
@@ -214,7 +217,7 @@ export function isTerminalCommandCard(spec: ToolCallSpec): boolean {
   return (
     spec.body.kind === "commandCard" &&
     spec.body.data.terminalKind !== undefined &&
-    (spec.status.kind === "done" || spec.status.kind === "failed")
+    (spec.status.kind === "done" || spec.status.kind === "failed" || spec.status.kind === "aborted")
   );
 }
 
@@ -438,171 +441,90 @@ function qrExpiryFromAbsolute(expiresAt: unknown, fallbackInSec: number): number
   return qrExpiryFromDuration(undefined, fallbackInSec);
 }
 
-export function qrCardToolCallSpec(
-  toolCallId: string,
-  args: Record<string, unknown>,
-  status: ToolCallStatus,
-): ToolCallSpec {
-  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
-  const content = str(args.content);
-  const imageDataUri = str(args.imageDataUri);
-  // content(编码模式)与 imageDataUri(图片模式)至少给一个,两者都无才无法渲染。
-  if (!content && !imageDataUri) {
-    return {
-      id: toolCallId,
-      name: "show_qr",
-      render: { kind: "chatInline" },
-      status,
-      body: {
-        kind: "generic",
-        data: { argsJson: redactedSerializedText(args) },
-      },
-      result: status.kind === "done"
-        ? { kind: "genericText", data: "show_qr 缺少 content/imageDataUri,无法渲染二维码" }
-        : null,
-    };
-  }
-  // 用「收到工具调用的此刻」换算成绝对过期时间戳,前端据此倒计时——不受 agent 思考/网络/渲染延迟影响。
-  const expiresAt = qrExpiryFromDuration(args.expiresInSec, DEFAULT_QR_EXPIRES_IN_SEC);
-  return {
-    id: toolCallId,
-    name: "show_qr",
-    render: { kind: "chatInline" },
-    status,
-    body: {
-      kind: "qrCard",
-      data: {
-        content: content ?? "",
-        imageDataUri,
-        title: str(args.title),
-        code: str(args.code),
-        note: str(args.note),
-        expiresAt,
-        refreshQuery: str(args.refreshQuery) ?? "二维码过期了,请帮我重新生成",
-        confirmQuery: str(args.confirmQuery),
-        confirmLabel: str(args.confirmLabel),
-      },
-    },
-    result: null,
-  };
-}
-
-/** 可信 connector bridge 专用：pendingId/device flow 元数据绝不经过模型参数。 */
-export function githubAuthCardToolCallSpec(
-  toolCallId: string,
-  input: { pendingId: string; userCode: string; verificationUri: string; expiresAt: unknown },
-): ToolCallSpec {
-  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 15 * 60);
-  return {
-    id: toolCallId,
-    name: "github_auth_start",
-    render: { kind: "chatInline" },
-    status: { kind: "done" },
-    body: {
-      kind: "qrCard",
-      data: {
-        content: input.verificationUri,
-        imageDataUri: null,
-        title: "连接 GitHub",
-        code: input.userCode,
-        note: "复制用户码并在 GitHub 完成授权。",
-        expiresAt,
-        refreshQuery: "GitHub 授权已中断，请重新发起连接",
-        confirmQuery: null,
-        connectorId: "github",
-        pendingId: input.pendingId,
-      },
-    },
-    result: null,
-  };
-}
-
-export function feishuAuthCardToolCallSpec(
-  toolCallId: string,
-  input: {
-    mode: "authorization" | "configuration";
-    pendingId: string;
-    url: string;
-    userCode?: string;
-    expiresAt: unknown;
-  },
-): ToolCallSpec {
-  const expiresAt = qrExpiryFromAbsolute(input.expiresAt, 10 * 60);
-  const configuration = input.mode === "configuration";
-  return {
-    id: toolCallId,
-    name: "feishu_auth_start",
-    render: { kind: "chatInline" },
-    status: { kind: "done" },
-    body: {
-      kind: "qrCard",
-      data: {
-        content: input.url,
-        imageDataUri: null,
-        title: configuration ? "创建你的飞书应用" : "扫码授权飞书",
-        code: input.userCode ?? null,
-        note: configuration
-          ? `用飞书扫码，或 [点此打开创建向导](${input.url})，完成后连接器会自动继续。`
-          : `用飞书 App 扫码，或 [点此在浏览器授权](${input.url})。`,
-        expiresAt,
-        refreshQuery: configuration ? "创建应用的链接过期了，请重新发起" : "飞书授权二维码过期了，请重新生成",
-        confirmQuery: null,
-        connectorId: "feishu",
-        pendingId: input.pendingId,
-      },
-    },
-    result: null,
-  };
+export interface AuthCardToolCallInput {
+  toolCallId: string;
+  toolName: string;
+  presentation: AuthCardPresentation;
+  status: ToolCallStatus;
+  content?: unknown;
+  imageDataUri?: unknown;
+  title?: unknown;
+  code?: unknown;
+  note?: unknown;
+  expiresAt?: unknown;
+  expiresInSec?: unknown;
+  fallbackExpiresInSec?: number;
+  refreshQuery?: unknown;
+  confirmQuery?: unknown;
+  confirmLabel?: unknown;
+  connectorId?: "github" | "feishu" | "wechat-mp";
+  pendingId?: unknown;
+  pendingText?: string;
+  invalidText?: string;
+  sourceArgs?: Record<string, unknown>;
 }
 
 /**
- * wechat_auth_start 授权卡:工具**直接**产出二维码卡片,base64 图片不经过模型
- * (微信登录码是 7KB+ base64,若让模型当 show_qr 参数复述会卡死/出错)。
- * running(无 result)显示生成中占位;done 从 result.imageDataUri 渲染 qrCard(图片模式),
- * 授权交互文案(标题/引导/确认/刷新)在此硬编码,模型无需操心。
+ * 授权/分享卡的唯一规格构造器。连接器调用方从 ConnectorDefinition 传 presentation；
+ * show_qr 的字符串链接固定为 link、图片固定为 scan，不允许模型替连接器猜展示形态。
  */
-export function wechatAuthQrToolCallSpec(
-  toolCallId: string,
-  result: Record<string, unknown> | null,
-  status: ToolCallStatus,
-): ToolCallSpec {
-  const imageDataUri =
-    result && typeof result.imageDataUri === "string" && result.imageDataUri
-      ? result.imageDataUri
-      : null;
-  if (!imageDataUri) {
+export function authCardToolCallSpec(input: AuthCardToolCallInput): ToolCallSpec {
+  const str = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  const content = str(input.content);
+  const imageDataUri = str(input.imageDataUri);
+  if (!content && !imageDataUri) {
+    const invalidText =
+      input.invalidText ?? `${input.toolName} 缺少 content/imageDataUri,无法渲染授权卡`;
     return {
-      id: toolCallId,
-      name: "wechat_auth_start",
+      id: input.toolCallId,
+      name: input.toolName,
       render: { kind: "chatInline" },
-      status,
-      body: { kind: "generic", data: { argsJson: "正在生成微信登录二维码…" } },
+      status: input.status,
+      body: {
+        kind: "generic",
+        data: {
+          argsJson:
+            input.pendingText ??
+            redactedSerializedText(input.sourceArgs ?? {}),
+        },
+      },
       result:
-        status.kind === "done"
-          ? { kind: "genericText", data: "微信登录二维码生成失败,请重试" }
+        input.status.kind === "done"
+          ? { kind: "genericText", data: invalidText }
           : null,
     };
   }
-  const expiresAt = qrExpiryFromDuration(result?.expiresInSec, 240);
+  const expiresAt = input.expiresAt === undefined
+    ? qrExpiryFromDuration(
+        input.expiresInSec,
+        input.fallbackExpiresInSec ?? DEFAULT_QR_EXPIRES_IN_SEC,
+      )
+    : qrExpiryFromAbsolute(
+        input.expiresAt,
+        input.fallbackExpiresInSec ?? DEFAULT_QR_EXPIRES_IN_SEC,
+      );
   return {
-    id: toolCallId,
-    name: "wechat_auth_start",
+    id: input.toolCallId,
+    name: input.toolName,
     render: { kind: "chatInline" },
-    status,
+    status: input.status,
     body: {
       kind: "qrCard",
       data: {
-        content: "",
+        presentation: input.presentation,
+        content: content ?? "",
         imageDataUri,
-        title: "扫码登录微信公众号",
-        code: null,
-        note: "用你**公众号管理员**的那个微信扫码,扫完手机上点「登录」,再点下方按钮",
+        title: str(input.title),
+        code: str(input.code),
+        note: str(input.note),
         expiresAt,
-        refreshQuery: "微信登录二维码过期了,请帮我重新生成",
-        confirmQuery: "我已扫完码,请继续",
-        confirmLabel: "我已扫码完成",
-        connectorId: result?.connectorId === "wechat-mp" ? "wechat-mp" : undefined,
-        pendingId: typeof result?.pendingId === "string" ? result.pendingId : undefined,
+        refreshQuery:
+          str(input.refreshQuery) ?? "授权卡已过期,请帮我重新生成",
+        confirmQuery: str(input.confirmQuery),
+        confirmLabel: str(input.confirmLabel),
+        connectorId: input.connectorId,
+        pendingId: str(input.pendingId) ?? undefined,
       },
     },
     result: null,

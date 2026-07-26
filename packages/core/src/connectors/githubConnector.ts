@@ -30,6 +30,7 @@ const githubConnectorDefinition = {
   icon: "github",
   official: true,
   authStrategy: "oauth2-device",
+  authPresentation: "device-code",
   custody: "internal",
   scopeGroups: [
     { id: "public", name: "公开仓库", scopes: ["public_repo"], description: "读取账号可见的公开仓库" },

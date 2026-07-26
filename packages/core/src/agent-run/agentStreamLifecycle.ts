@@ -183,5 +183,14 @@ export async function* handleLifecycleEvent(
     return "handled";
   }
 
+  if (chunk.type === "finish") {
+    const payload = asRecord(chunk.payload);
+    const reason = payload?.finishReason ?? payload?.reason;
+    if (typeof reason === "string") {
+      context.lastStepFinishReason = reason;
+    }
+    return "handled";
+  }
+
   return "unhandled";
 }

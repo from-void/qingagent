@@ -1895,7 +1895,7 @@ describe("WorkspacePage review controls", () => {
       .every((text) => text.includes("已拒绝"))).toBe(true);
   });
 
-  it("失效 suggestion 的失败终态在聊天中显示未应用", async () => {
+  it("失效 suggestion 的失败终态在聊天中只显示中性短文案", async () => {
     const { ChatMessageList } = await import("./components/ChatMessageList");
     const failedSpec: ToolCallSpec = {
       ...reviewToolCall("p-invalid", "batch-invalid", "reviewing"),
@@ -1917,7 +1917,8 @@ describe("WorkspacePage review controls", () => {
 
     await render(<ChatMessageList messages={messages} streamActive={false} />);
 
-    expect(host?.textContent).toContain("修改已失效,未应用");
+    expect(host?.textContent).toContain("修改未完成");
+    expect(host?.textContent).not.toContain("目标位置已被前序修改改变");
   });
 
   // 旧断言(forceAllRejected 把 accepted 也全计 rejected)正是 e2e-loop-0704 P1 的错误语义:
@@ -3349,6 +3350,10 @@ describe("WorkspacePage review controls", () => {
       {
         kind: "docStateChanged",
         data: { state: { kind: "pendingReview" }, activeOverlay: null, agentBusy: false },
+      },
+      {
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "s-1" },
       },
     ]);
 

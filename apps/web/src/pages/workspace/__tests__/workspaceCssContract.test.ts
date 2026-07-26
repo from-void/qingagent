@@ -30,6 +30,48 @@ describe("workspaceCssContract", () => {
     expect(css.split("\n").length - (css.endsWith("\n") ? 1 : 0)).toBe(skinContract.skinLineCount);
   });
 
+  it("工具行与工具卡禁止红色失败态，内部错误只能留在诊断链路", () => {
+    // UI Iron Rule 契约：任何工具失败/中止/超时都只能使用中性灰短文案。
+    // 从底层选择器与状态映射同时卡死 danger/红色及原始 reason/error 上屏回归。
+    const unifiedCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/chatUnified.css"),
+      "utf8",
+    );
+    const unifiedView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/chatUnified.tsx"),
+      "utf8",
+    );
+    const chatView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/ChatMessageList.tsx"),
+      "utf8",
+    );
+    const workspaceCss = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/workspace.css"),
+      "utf8",
+    );
+    const derivativeView = readFileSync(
+      path.join(repoRoot, "apps/web/src/pages/workspace/components/derivatives/DerivativeView.tsx"),
+      "utf8",
+    );
+    const skinContract = contract as typeof contract & { skinFile: string };
+    const skinCss = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
+    const draftRules = [...skinCss.matchAll(/#view-workspace [^{]*\.ws-draft-[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+    const translationRules = [...workspaceCss.matchAll(/#view-workspace [^{]*\.ws-translate-[^{]*\{[^}]*\}/g)]
+      .map(([rule]) => rule)
+      .join("\n");
+
+    expect(unifiedCss).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(draftRules).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(translationRules).not.toMatch(/(?:danger|#b42318|#c0392b|--ws-red|diff-del)/i);
+    expect(unifiedView).not.toContain("spec.status.data.reason");
+    expect(unifiedView).not.toContain("body.progress?.error");
+    expect(unifiedView).not.toMatch(/className=.*is-error/);
+    expect(chatView).not.toMatch(/isFailed[^\\n]*var\(--danger/);
+    expect(derivativeView).not.toMatch(/<p>\{translationState\.reason/);
+  });
+
   it("keeps annotation hover card light, anchored, and token-safe", () => {
     const skinContract = contract as typeof contract & { skinFile: string };
     const css = readFileSync(path.join(repoRoot, skinContract.skinFile), "utf8");
@@ -166,20 +208,16 @@ describe("workspaceCssContract", () => {
     expect(workspaceCss).toMatch(
       /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-del-marker\s*\{\s*pointer-events:auto;\s*\}/,
     );
-    expect(workspaceCss).toMatch(
-      /body\[data-content="pendingReview"\] #view-workspace \.wf-doc \.wf-patch-replace-old\s*\{\s*pointer-events:auto;\s*\}/,
-    );
   });
 
-  it("keeps inline replacements readable as struck old value, separator, then inserted value", () => {
+  it("keeps deleted and replaced old text collapsed behind the compact cursor", () => {
     const workspaceCss = readFileSync(path.join(repoRoot, contract.file), "utf8");
 
     expect(workspaceCss).toMatch(
-      /#view-workspace \.wf-doc \.wf-patch-del\.wf-patch-replace-old\{[\s\S]*?text-decoration:line-through;[\s\S]*?\}/,
+      /#view-workspace \.wf-doc \.wf-patch-del\{[\s\S]*?width:0;[\s\S]*?overflow:hidden;[\s\S]*?font-size:0;[\s\S]*?\}/,
     );
-    expect(workspaceCss).toMatch(
-      /#view-workspace \.wf-patch-replace-separator\{[\s\S]*?margin:0 \.32em;[\s\S]*?\}/,
-    );
+    expect(workspaceCss).not.toContain(".wf-patch-replace-old");
+    expect(workspaceCss).not.toContain(".wf-patch-replace-separator");
   });
 
   it("keeps streaming text decoration from covering workspace controls", () => {

@@ -2,7 +2,11 @@
 import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { peekHomeArrive } from "../../new-session/transition/origin";
+import {
+  peekHomeArrive,
+  peekWorkspaceArrive,
+  setWorkspaceArrive,
+} from "../../new-session/transition/origin";
 import { useWorkspaceChrome } from "./useWorkspaceChrome";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +57,52 @@ describe("useWorkspaceChrome 返回首页", () => {
     });
     expect(peekHomeArrive()?.sessionId).toBeUndefined();
   });
+
+  it("到场态与 hydration 解耦，纸壳首帧在场并按原两帧时序揭示 chrome", async () => {
+    setWorkspaceArrive({
+      rect: { left: 20, top: 52, width: 800, height: 600 },
+      x: 420,
+      y: 120,
+      sessionId: "session-existing",
+    });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    const view = host.querySelector("#view-workspace");
+    expect(host.querySelector('[data-wf="WorkspacePaperShell"]')).not.toBeNull();
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
+
+    act(() => vi.advanceTimersByTime(16));
+    expect(view?.classList.contains("ws-arriving")).toBe(true);
+    expect(peekWorkspaceArrive()).not.toBeNull();
+
+    act(() => vi.advanceTimersByTime(16));
+    expect(view?.classList.contains("ws-arriving")).toBe(false);
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(true);
+    expect(peekWorkspaceArrive()).toBeNull();
+
+    act(() => vi.advanceTimersByTime(760));
+    expect(view?.classList.contains("ws-arrive-revealing")).toBe(false);
+  });
+
+  it("没有首页交接载荷时不自造到场编舞，新建与直接打开均立即呈现 chrome", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root?.render(createElement(Harness));
+    });
+    const view = host.querySelector("#view-workspace");
+    expect(view?.className).toBe("");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(view?.className).toBe("");
+  });
 });
 
 function Harness() {
@@ -71,7 +121,11 @@ function Harness() {
   return createElement(
     "section",
     { id: "view-workspace", ref: viewRef },
-    createElement("div", { ref: docScrollRef }),
+    createElement(
+      "div",
+      { ref: docScrollRef },
+      createElement("div", { "data-wf": "WorkspacePaperShell" }),
+    ),
     createElement("div", { ref: chatScrollRef }),
   );
 }

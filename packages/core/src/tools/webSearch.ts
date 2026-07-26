@@ -546,10 +546,14 @@ export const webSearchTool = createTool({
             progressItems[index] = { ...progressItems[index]!, status: "browser", wordCount: null };
             await emitSnapshot("fetching", results.length);
           }
-        } catch {
+        } catch (error) {
+          if (context?.abortSignal?.aborted) {
+            throw context.abortSignal.reason ?? error;
+          }
           // 单条来源失败不应拖垮整次 webSearch。
         }
 
+        context?.abortSignal?.throwIfAborted();
         const substantive = isSubstantiveContent(best.text);
         const progressStatus = substantive ? "done" : "skipped";
         const progressWordCount = substantive ? (best.wordCount ?? 0) : null;
@@ -580,6 +584,7 @@ export const webSearchTool = createTool({
       };
 
       const items = await mapWithConcurrency(results, FETCH_CONCURRENCY, fetchOne);
+      context?.abortSignal?.throwIfAborted();
       await emitSnapshot("done", results.length);
       const fullTexts = items
         .filter((item) => item.__fullText && isSubstantiveContent(item.__fullText))

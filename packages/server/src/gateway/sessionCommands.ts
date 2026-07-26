@@ -42,6 +42,9 @@ function* emitExistingSessionRestore(session: SessionState): Generator<BridgeFra
   };
   yield { kind: "sessionMeta", data: { sessionId, title: session.title } };
   yield* emitRestoreFrames(session);
+  // 这是前端首屏原子呈现的协议边界：文档快照与首批聊天历史已全部入 FrameLog。
+  // 不拿 sessionMeta 充当完成信号，因为它刻意位于恢复序列开头。
+  yield { kind: "sessionRestoreCompleted", data: { sessionId } };
 }
 
 type SessionCommand = Extract<Command, { kind: "startSession" | "renameSession" }>;

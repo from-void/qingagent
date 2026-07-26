@@ -361,6 +361,21 @@ describe("validateBridgeFrame", () => {
     ).toThrow(BridgeFrameValidationError);
   });
 
+  it("accepts sessionRestoreCompleted and rejects an empty session id", () => {
+    expect(() =>
+      validateBridgeFrame({
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "session-1" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateBridgeFrame({
+        kind: "sessionRestoreCompleted",
+        data: { sessionId: "" },
+      }),
+    ).toThrow(/sessionId/);
+  });
+
   it("accepts chatMessageAdded.appendSeq only when it is a non-negative integer", () => {
     const frame: BridgeFrame = {
       kind: "chatMessageAdded",
@@ -634,6 +649,7 @@ describe("validateBridgeFrame", () => {
     const modern = structuredClone(legacy);
     if (modern.kind !== "toolCallUpdated" || modern.data.spec.body.kind !== "qrCard") throw new Error("bad fixture");
     Object.assign(modern.data.spec.body.data, {
+      presentation: "scan",
       connectorId: "feishu",
       pendingId: "pending_12345678",
       success: { account: "示例用户", message: "已连接" },
@@ -642,6 +658,7 @@ describe("validateBridgeFrame", () => {
   });
 
   it.each([
+    { presentation: "hologram" },
     { connectorId: "evil" }, { pendingId: "short" }, { pendingId: "x".repeat(129) },
     { success: { account: null, message: "" } },
     { success: { account: "x".repeat(129), message: "ok" } },

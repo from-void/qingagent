@@ -61,6 +61,7 @@ const ST = {
   pending: { kind: "pending" } as ToolCallStatus,
   running: { kind: "running", data: { progressPct: null, etaSec: null } } as ToolCallStatus,
   done: { kind: "done" } as ToolCallStatus,
+  aborted: { kind: "aborted" } as ToolCallStatus,
   reviewing: { kind: "reviewing" } as ToolCallStatus,
   accepted: { kind: "accepted" } as ToolCallStatus,
   rejected: { kind: "rejected" } as ToolCallStatus,
@@ -1143,7 +1144,8 @@ const STATUS_REF: { kind: string; where: string; render: string }[] = [
   { kind: "pending", where: "工具已登记、未开始", render: "灰点 ·" },
   { kind: "running", where: "execute 进行中", render: "三点 loading (chat-loading-dots)" },
   { kind: "done", where: "成功完成", render: "灰勾 CheckIcon" },
-  { kind: "failed", where: "工具抛错/非零退出", render: "通用行弱化为未完成;svg/draft/cmd 卡有独立失败态" },
+  { kind: "failed", where: "工具抛错/非零退出", render: "中性灰停止图标 · 未完成；隐藏内部错误" },
+  { kind: "aborted", where: "停止/抢占/断线收敛", render: "中性灰停止图标 · 已中止" },
 ];
 
 // ═════════════════════════════════════════════════════════════════════════

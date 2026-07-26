@@ -34,11 +34,57 @@
 
   /* ---------- 主体 ---------- */
   #view-workspace .ws-body{
-    flex:1 1 auto;min-height:0;display:flex;overflow:hidden;
+    flex:1 1 auto;min-height:0;display:flex;overflow:hidden;position:relative;
+  }
+  /* 既有会话恢复只扣“墨迹”，不扣舞台：
+     左栏 chrome、输入框和右侧奶白纸壳首帧恒在，接住首页交接帧；
+     消息/正文在 ready 后只做一次 180ms 淡入。transition 无 fill 残留，
+     且从不作用于 .ws-left/.ws-right，避免给输入毛玻璃制造祖先 stacking context。 */
+  #view-workspace .ws-chat-content{
+    flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-document-content{display:contents}
+  #view-workspace .ws-document-content > *{
+    position:relative;z-index:1;
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-document-content .wf-doc > *,
+  #view-workspace .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+  #view-workspace .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){
+    opacity:1;visibility:visible;
+    transition:opacity 180ms ease-out;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-chat-content,
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content > *{
+    opacity:0;visibility:hidden;pointer-events:none;
+  }
+  /* 数据树内一旦已有真纸，就让它无缝接管同源纸壳；等待期仍只藏纸上的字和附属浮层。
+     shell 节点不卸载，换手前后背景/尺寸/阴影完全共用 .wf-doc 的声明。 */
+  #view-workspace .ws-right:has(.ws-document-content .wf-doc) > .ws-paper-shell{
+    visibility:hidden;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content > :is(.wf-doc,:has(.wf-doc)){
+    opacity:1;visibility:visible;
+  }
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .wf-doc > *,
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+  #view-workspace .ws-body[data-hydration="waiting"] .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){
+    opacity:0;visibility:hidden;pointer-events:none;
+  }
+  @media (prefers-reduced-motion:reduce){
+    #view-workspace .ws-chat-content,
+    #view-workspace .ws-document-content > *,
+    #view-workspace .ws-document-content .wf-doc > *,
+    #view-workspace .ws-document-content .ws-paper-surface > :not(.wf-doc):not(:has(.wf-doc)),
+    #view-workspace .ws-document-content .native-presentation-shell > :not(.ws-paper-surface){transition:none}
   }
   /* bigplan 态 · 右侧文档区被替换成 plan 面板, 左侧对话保持不变 */
-  body[data-ws-state="bigplan"] #view-workspace .ws-right > article.wf-doc,
-  body[data-ws-state="bigplan"] #view-workspace .ws-right > #patch-nav{display:none !important}
+  body[data-ws-state="bigplan"] #view-workspace .ws-paper-shell,
+  body[data-ws-state="bigplan"] #view-workspace .ws-document-content > article.wf-doc,
+  body[data-ws-state="bigplan"] #view-workspace .ws-document-content > #patch-nav{display:none !important}
   /* bigplan 时, ws-right 让 plan 面板自己管滚动 · 去掉外层 padding */
   body[data-ws-state="bigplan"] #view-workspace .ws-right{padding:0;overflow:hidden;display:flex;flex-direction:column}
 
@@ -109,12 +155,12 @@
   #view-workspace .ws-translate-segmented button{display:inline-flex;align-items:center;gap:7px}
   #view-workspace .ws-translate-status{display:inline-block;width:7px;height:7px;border-radius:var(--r-pill);background:var(--line-3)}
   #view-workspace .ws-translate-status.is-streaming{background:var(--mark);animation:ws-translate-status-breathe 1.2s ease-in-out infinite}
-  #view-workspace .ws-translate-status.is-failed{background:var(--danger)}
+  #view-workspace .ws-translate-status.is-failed,#view-workspace .ws-translate-status.is-aborted{background:var(--ink-3)}
   #view-workspace .ws-deriv-streaming-paper{position:relative;isolation:isolate;min-height:420px;max-height:calc(100vh - 210px);overflow-y:auto;padding:24px 20px}
   #view-workspace .ws-translate-stream-text{display:grid;gap:14px;color:var(--ink-1);font:16px/1.85 var(--font-zh-serif);white-space:pre-wrap}
   #view-workspace .ws-translate-stream-text p{margin:0}
   #view-workspace .ws-translate-failed{min-height:420px;display:grid;place-content:center;justify-items:center;gap:12px;text-align:center;color:var(--ink-2)}
-  #view-workspace .ws-translate-failed p{margin:0;color:var(--danger)}
+  #view-workspace .ws-translate-failed p{margin:0;color:var(--ink-3)}
   #view-workspace .ws-export-item:disabled{cursor:not-allowed;opacity:.45}
   @keyframes ws-translate-status-breathe{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
   @media (prefers-reduced-motion:reduce){#view-workspace .ws-translate-status.is-streaming{animation:none;opacity:1}}
@@ -655,7 +701,8 @@
   }
   /* 预览态:把文档区的其余直接子节点(正文/工具条/审批条等)藏掉,让预览真正"替换"
      文档内容而非盖在上面。用 display:none 而非卸载,保住 tiptap 实例/滚动/review 态。 */
-  #view-workspace .ws-right.is-previewing > :not(.fd-right-preview){display:none !important}
+  #view-workspace .ws-right.is-previewing > .ws-paper-shell{display:none !important}
+  #view-workspace .ws-right.is-previewing > .ws-document-content > :not(.fd-right-preview){display:none !important}
   /* 头部:文件类型图标 + 标题 + 关闭。顶部留白由 .ws-right 的 36px padding 负责。 */
   #view-workspace .fd-rp-head{
     flex:0 0 auto;display:flex;align-items:center;gap:12px;
@@ -3276,8 +3323,8 @@
     background:rgba(220, 80, 70, 0.6);
     transform:translateX(-50%);
   }
-  /* 纯删除标记:统一红色光标(行内删除 / 整段删除都用它),原位不显示被删内容,hover 看。
-     行内替换的旧值由下方 .wf-patch-replace-old 例外解折叠。 */
+  /* 审阅态删除铁律：含 replace 旧值在内，被删正文原位只留「竖线+圆点」游标，
+     原文仅在 hover 卡展示。改此处前先读 AGENTS.md UI Iron Rules。 */
   #view-workspace .wf-doc .wf-patch-del{
     display:inline-block;
     width:0;
@@ -3288,31 +3335,6 @@
     line-height:0;
     color:transparent;
     vertical-align:baseline;
-  }
-  /* 行内替换按「旧值 → 新值」展示：只解折叠替换的旧半，纯删除仍维持紧凑红光标。 */
-  #view-workspace .wf-doc .wf-patch-del.wf-patch-replace-old{
-    display:inline;
-    width:auto;
-    max-width:none;
-    overflow:visible;
-    white-space:inherit;
-    font-size:inherit;
-    line-height:inherit;
-    color:var(--diff-del-ink);
-    opacity:.64;
-    vertical-align:baseline;
-    text-decoration:line-through;
-    text-decoration-color:var(--diff-del-bd);
-    text-decoration-thickness:1.5px;
-    text-decoration-skip-ink:none;
-  }
-  #view-workspace .wf-patch-replace-separator{
-    display:inline-block;
-    margin:0 .32em;
-    color:var(--ink-4);
-    font-size:.88em;
-    line-height:1;
-    vertical-align:.04em;
   }
   #view-workspace .wf-patch-del-marker{
     position:relative;
@@ -3343,9 +3365,6 @@
   }
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-ins-wrap,
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-replace-wrap{
-    pointer-events:auto;
-  }
-  body[data-content="pendingReview"] #view-workspace .wf-doc .wf-patch-replace-old{
     pointer-events:auto;
   }
   body[data-content="pendingReview"] #view-workspace .wf-doc .wf-blockmark,

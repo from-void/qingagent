@@ -29,6 +29,7 @@ export const ST = {
   pending: { kind: "pending" } as ToolCallStatus,
   running: { kind: "running", data: { progressPct: null, etaSec: null } } as ToolCallStatus,
   done: { kind: "done" } as ToolCallStatus,
+  aborted: { kind: "aborted" } as ToolCallStatus,
   failed: (r: string): ToolCallStatus => ({ kind: "failed", data: { retriable: true, reason: r } }),
 };
 export const tool = (

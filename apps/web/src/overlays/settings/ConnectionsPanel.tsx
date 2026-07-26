@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { ConnectorId, ConnectorInfo, ConnectorState, QrCardBody } from "@qingagent/contract-ts";
+import type {
+  ConnectorAuthPresentation,
+  ConnectorId,
+  ConnectorInfo,
+  ConnectorState,
+  QrCardBody,
+} from "@qingagent/contract-ts";
 import { useClientCapabilities, useConfirm } from "../../system";
 import { useToast } from "../../system/ToastProvider";
 import { AuthCard } from "../../pages/workspace/components/QrCard";
@@ -29,10 +35,15 @@ function absoluteExpiry(value: unknown): number {
   return expiresAt;
 }
 
-export function mapConnectorStart(id: ConnectorId, value: unknown, now = Date.now()): QrCardBody {
+export function mapConnectorStart(
+  id: ConnectorId,
+  presentation: ConnectorAuthPresentation,
+  value: unknown,
+  now = Date.now(),
+): QrCardBody {
   if (id === "github") {
     const result = value as Partial<GithubStartResult>;
-    return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
+    return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "连接 GitHub", content: requireString(result.verification_uri, "verification_uri"),
       code: requireString(result.user_code, "user_code"), note: "在浏览器打开授权页面，输入上方代码并确认授权。", expiresAt: absoluteExpiry(result.expiresAt),
       refreshQuery: "重新连接 GitHub", confirmQuery: null };
   }
@@ -41,19 +52,19 @@ export function mapConnectorStart(id: ConnectorId, value: unknown, now = Date.no
     if (result.mode !== "authorization" && result.mode !== "configuration") throw new Error("授权响应 mode 非法");
     if (result.mode === "configuration") {
       const url = requireString(result.configuration_url, "configuration_url");
-      return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "配置飞书应用", content: url,
+      return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "配置飞书应用", content: url,
         code: null, note: `这是飞书应用配置步骤，请[点此打开创建向导](${url})并按指引完成配置。`, expiresAt: absoluteExpiry(result.expiresAt),
         refreshQuery: "重新配置飞书应用", confirmQuery: null };
     }
     const authorization = result as Partial<Extract<FeishuStartResult, { mode: "authorization" }>>;
     const url = requireString(authorization.verification_url, "verification_url");
-    return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码授权飞书", content: url,
+    return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码授权飞书", content: url,
       code: requireString(authorization.user_code, "user_code"), note: `用飞书 App 扫码，或[点此在浏览器授权](${url})并输入配对码。`, expiresAt: absoluteExpiry(result.expiresAt),
       refreshQuery: "重新授权飞书", confirmQuery: null };
   }
   const result = value as Partial<WechatStartResult>;
   if (typeof result.expiresInSec !== "number" || !Number.isFinite(result.expiresInSec) || result.expiresInSec <= 0) throw new Error("授权响应 expiresInSec 非法");
-  return { connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码登录微信公众平台", content: "", imageDataUri: requireString(result.imageDataUri, "imageDataUri"),
+  return { presentation, connectorId: id, pendingId: requireString(result.pendingId, "pendingId"), title: "扫码登录微信公众平台", content: "", imageDataUri: requireString(result.imageDataUri, "imageDataUri"),
     code: null, note: "用你自己的微信扫码登录公众平台后台。登录态可能提前失效，届时可重新扫码。",
     expiresAt: now + result.expiresInSec * 1000, refreshQuery: "重新登录微信公众号", confirmQuery: null };
 }
@@ -282,7 +293,14 @@ export function ConnectionsPanel({ selectedId: controlledId, onSelectedIdChange 
           : selected.id === "feishu"
             ? { domains: [...DEFAULT_FEISHU_AUTH_DOMAINS] }
             : {};
-        setAuthCard({ connectorId: selected.id, data: mapConnectorStart(selected.id, await start(selected.id, body)) });
+        setAuthCard({
+          connectorId: selected.id,
+          data: mapConnectorStart(
+            selected.id,
+            selected.authPresentation,
+            await start(selected.id, body),
+          ),
+        });
       } catch (cause) {
         toast.show({ message: cause instanceof Error ? cause.message : "发起授权失败", tone: "error" });
         throw cause;

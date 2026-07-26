@@ -51,11 +51,18 @@ function RegenIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path 
 function ExportIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10 4 4 4-4"/><path d="M5 16v4h14v-4"/></svg>; }
 function MoreIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>; }
 
-const EMPTY_TRANSLATION_GEN = new Map<string, { status: "streaming" | "failed"; text: string; reason?: string }>();
+type TranslationGenerationState = {
+  status: "streaming" | "failed" | "aborted";
+  text: string;
+  reason?: string;
+};
+
+const EMPTY_TRANSLATION_GEN = new Map<string, TranslationGenerationState>();
 
 export function DerivativeView(props: {
   sessionId: string; item: DerivativeItem; items?: DerivativeItem[]; stream: ServerStream; streamActive: boolean; generatingInitially?: boolean;
-  translationGen?: ReadonlyMap<string, { status: "streaming" | "failed"; text: string; reason?: string }>;
+  initialDocument?: DerivativeDocument | null;
+  translationGen?: ReadonlyMap<string, TranslationGenerationState>;
   onRefresh: () => Promise<void>; onDeleted: () => void; onToast: (text: string) => void;
   onSendQuery: (text: string, displayCard: ActionCardData) => void;
   isStaleDismissed?: (item: DerivativeItem) => boolean;
@@ -68,7 +75,9 @@ export function DerivativeView(props: {
   const isTranslation = descriptor.dtype === "translate";
   const translationGen = props.translationGen ?? EMPTY_TRANSLATION_GEN;
   const translationState = translationGen.get(item.docId);
-  const [document, setDocument] = useState<DerivativeDocument | null>(null);
+  const [document, setDocument] = useState<DerivativeDocument | null>(
+    props.initialDocument ?? null,
+  );
   const [mode, setMode] = useState<"phone" | "desktop">("phone");
   const [generating, setGenerating] = useState(Boolean(props.generatingInitially));
   const [generationBefore, setGenerationBefore] = useState<string | null>(item.generatedAt);
@@ -90,12 +99,22 @@ export function DerivativeView(props: {
   }, [props.items, selectedDocId]);
   useEffect(() => {
     let current = true;
-    setDocument(null);
+    if (props.initialDocument?.meta.docId === item.docId) {
+      setDocument(props.initialDocument);
+    } else {
+      setDocument(null);
+    }
     void props.stream.getDerivativeDoc(props.sessionId, item.docId).then((next) => {
       if (current && next?.meta.docId === item.docId) setDocument(next);
     });
     return () => { current = false; };
-  }, [item.docId, item.generatedAt, props.sessionId, props.stream]);
+  }, [
+    item.docId,
+    item.generatedAt,
+    props.initialDocument,
+    props.sessionId,
+    props.stream,
+  ]);
   useEffect(() => { streamActiveRef.current = props.streamActive; if (props.streamActive) sawActiveRef.current = true; }, [props.streamActive]);
   useEffect(() => { if (generating && generationComplete && !props.streamActive) setGenerating(false); }, [generating, generationComplete, props.streamActive]);
   useEffect(() => { if (item.generatedAt != null || item.sourceVersion != null) setAbortedEmpty(false); }, [item.generatedAt, item.sourceVersion]);
@@ -244,7 +263,7 @@ export function DerivativeView(props: {
       return <button key={candidate.docId} className={candidate.docId === item.docId ? "is-active" : ""} onClick={() => { setSelectedDocId(candidate.docId); setGenerating(false); setAbortedEmpty(false); setGenerationBefore(candidate.generatedAt); }}><span>{candidate.targetLang ?? "译文"}</span>{status ? <i className={`ws-translate-status is-${status}`} aria-hidden="true"/> : null}</button>;
     })}</div> : null}
     {isTranslation && translationState?.status === "streaming" ? <div ref={streamingTextRef} className="ws-deriv-streaming-paper is-generating">{translationParagraphs.length > 0 ? <article className="ws-translate-stream-text" aria-live="polite">{translationParagraphs.map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>)}</article> : <QingLoading reasoning />}</div>
-      : isTranslation && translationState?.status === "failed" ? <div className="ws-translate-failed" role="alert"><strong>翻译未完成</strong><p>{translationState.reason ?? "译文生成失败，请重试"}</p><button className="ws-deriv-primary" onClick={() => void props.stream.generateTranslations(props.sessionId, [item.docId]).catch(() => props.onToast("重新翻译失败，请重试"))}>重试</button></div>
+      : isTranslation && (translationState?.status === "failed" || translationState?.status === "aborted") ? <div className="ws-translate-failed" role="status"><strong>{translationState.status === "aborted" ? "翻译已中止" : "翻译未完成"}</strong><button className="ws-deriv-primary" onClick={() => void props.stream.generateTranslations(props.sessionId, [item.docId]).catch(() => props.onToast("重新翻译未完成，请重试"))}>重试</button></div>
         : isTranslation && !pmDoc ? <div className="ws-deriv-empty"><strong>尚未生成</strong><div className="ws-deriv-empty-actions"><button className="ws-deriv-primary" onClick={() => setModalOpen(true)}>重新生成</button></div></div>
           : pmDoc && PlainPreview ? <PlainPreview {...previewProps}/> : pmDoc && mode === "phone" && PhonePreview ? <><div className="ws-deriv-mode"><button className="is-active" onClick={() => setMode("phone")}>手机</button><button onClick={() => setMode("desktop")}>电脑</button></div><PhonePreview {...previewProps}/></> : pmDoc && DesktopPreview ? <><div className="ws-deriv-mode"><button onClick={() => setMode("phone")}>手机</button><button className="is-active" onClick={() => setMode("desktop")}>电脑</button></div><DesktopPreview {...previewProps}/></> : null}
     {modal}

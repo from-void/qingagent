@@ -122,28 +122,28 @@
      safe center:放得下时居中,放不下时回退到 start(靠左)以保证能滚到左侧、不被裁掉。 */
   justify-content: safe center !important;
   align-items: stretch !important;
-  gap: 48px !important;
-  padding: 0 40px !important;
+  gap: var(--ws-paper-column-gap) !important;
+  padding: 0 var(--ws-paper-body-padding-inline) !important;
   overflow-x: auto !important;
   overflow-y: hidden !important;
 }
 /* 左对话区:定宽 400(不再随 vw 收窄),放不下走 .ws-body 的横向滚动 */
 #view-workspace .ws-left {
   --ws-chat-scrollbar-outset: 14px;
-  flex: 0 0 400px !important;
-  max-width: 400px !important;
+  flex: 0 0 var(--ws-paper-chat-column-width) !important;
+  max-width: var(--ws-paper-chat-column-width) !important;
 }
-/* 右文档列:定宽 800(纸宽,不再随窗口收窄)。几何与 computeWorkspaceDocRect 严格对齐
-   (该函数已同步改成 chatW=400/docW=800 + max(0,...) 的 safe-center 居中),使新建页翻转落点
-   = 编辑页这张纸的真实 rect;窗口放不下时两者都回退靠左、由 .ws-body 横向滚动承接。 */
+/* 右文档列:定宽上限与首页探针共用 --ws-paper-* 几何变量。转场通过同构 DOM 实测
+   safe-center + scrollbar-gutter 后的真实 rect；窗口放不下时两端都回退靠左，
+   由 .ws-body 横向滚动承接。 */
 #view-workspace .ws-right {
-  --ws-paper-min-height: calc(100vh - 52px);
+  --ws-paper-min-height: calc(100vh - var(--ws-paper-top-offset));
   /* 纸内功能区(.ws-docfns)绝对定位的锚:相对滚动容器定位,随内容一起滚。 */
   position: relative;
-  flex: 0 0 800px !important;
+  flex: 0 0 var(--ws-paper-column-width) !important;
   width: auto !important;
-  max-width: 800px !important;
-  padding: 52px 0 0 !important;
+  max-width: var(--ws-paper-column-width) !important;
+  padding: var(--ws-paper-top-offset) 0 0 !important;
   overflow-y: auto;
   /* 内容变长出滚动条时,经典占位滚动条(自定义 4px)会吃掉内容区宽,居中的纸右边被挤、
      视觉上「往左缩一点」。both-edges 让两侧恒留同宽的滚动槽 → 滚动条出不出,内容区宽度
@@ -711,11 +711,12 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 /* 左列:对话区满列高滚动,输入框悬浮在内容之上,内容从其下方滚过(被输入框毛玻璃模糊) */
 #view-workspace .ws-left {
   position: relative;
+  --ws-input-clearance-gap: 24px;
 }
 #view-workspace .ws-chat {
-  /* 满高滚动 + 底部留白(下半区):留白 = 悬浮输入框实际高度(JS 测量写入 --ws-input-h)+ 余量,
-     保证任何状态(禁用态/多行)最后的消息都能完整滚到输入框上方、不被挡。 */
-  padding-bottom: calc(var(--ws-input-h, 120px) + 28px) !important;
+  /* 满高滚动 + 底部留白:JS 直接测量「最上方可见输入控件 → 滚动区底边」
+     并计入独立的呼吸间距；普通/多行/问卷/确认卡/展开菜单共用同一实测值。 */
+  padding-bottom: var(--ws-input-clearance, 148px) !important;
 }
 #view-workspace .ws-input-wrap {
   position: absolute !important;
@@ -1837,31 +1838,53 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
 }
 
 /* —— 右侧:玄青桌面留白,正文为奶白文档纸 —— */
-#view-workspace .ws-right {
-  /* 透明露出深墨:纸张上方 padding 形成顶部留白间隔(顶部空间感);
-     底部靠 .wf-doc min-height:100% 铺满到底,不再留黑空隙 */
+/* 画布贯通契约:从横向工作区到纸面内容之间不允许任何中间层另刷底色。
+   尤其 .ws-right 的 stable both-edges gutter 属于滚动容器绘制区；整条父链透明后，
+   左右预留槽会按原坐标直接露出 #view-workspace 的玄青色斑与暗角。 */
+#view-workspace .ws-body,
+#view-workspace .ws-right,
+#view-workspace .ws-document-content,
+#view-workspace .native-presentation-shell,
+#view-workspace .ws-paper-surface {
   background: transparent !important;
 }
-#view-workspace .wf-doc {
+/* 纸壳仍是唯一不透明层，但外投影会落入两侧透明 gutter，并被滚动容器裁成贯穿
+   全高的窄黑条。纸张与桌面的分界已由明暗材质本身建立，不再向纸外绘制阴影。 */
+#view-workspace .wf-doc,
+#view-workspace .ws-paper-shell,
+#view-workspace .ws-deriv-view,
+#view-workspace .fd-right-preview,
+#view-workspace .doc-empty,
+#view-workspace .bigplan-panel {
+  box-shadow: none !important;
+}
+#view-workspace .wf-doc,
+#view-workspace .ws-paper-shell {
   /* !important:覆盖 editing/pendingReview 等态把纸改成 transparent 的规则,任何态都保持奶白 */
   background: var(--bg-paper-deep) !important;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
   padding: 52px 64px !important;
-  border-radius: 0;
-  /* 纸宽 = 右列可用内容宽(上限 800)。竖向滚动条出现时(占 ~8px),纸自动收 8px 刚好填满,
-     不再比容器宽 → 消除底部横向滚动条(不是隐藏,是让内容刚好放下)。 */
+  border-radius: var(--ws-paper-radius);
+  /* 纸宽 = 右列扣除浏览器实际双侧 scrollbar-gutter 后的内容宽。首页探针复刻同一规则，
+     转场终帧直接采用实测值，不再把列宽上限误当成纸壳真实宽度。 */
   width: 100% !important;
-  max-width: 800px !important;
+  max-width: var(--ws-paper-column-width) !important;
   box-sizing: border-box !important;
   /* 铺满滚动容器内容区:短文档也撑到底、底部不露深墨黑;长文档随内容向下延伸。
      顶部留白由 ws-right 的 padding-top 提供(深墨间隔),底部由 padding-bottom:0 贴到底 */
   min-height: var(--ws-paper-min-height);
   margin: 0;
 }
+#view-workspace .ws-paper-shell {
+  position: absolute;
+  top: var(--ws-paper-top-offset);
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+}
 #view-workspace .ws-paper-surface {
   position: relative;
   width: 100%;
-  max-width: 800px;
+  max-width: var(--ws-paper-column-width);
   min-height: var(--ws-paper-min-height);
   /* 审阅态纸面是 .ws-right(列 flex 容器)的直接弹性子项;默认 flex-shrink:1 会把纸面
      从内容真实高压缩到 min-height(一屏),正文靠 overflow 溢出照常滚,但发光层 inset:0
@@ -2898,7 +2921,7 @@ body[data-content="pendingReview"] #view-workspace .wf-doc {
   color: #8a7350;
 }
 #view-workspace .ws-draft-fail {
-  color: #b42318;
+  color: var(--ink-3);
 }
 
 /* —— 聊天行内代码:玄青暗底描金,不再白块 —— */
@@ -3312,7 +3335,7 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
 /* 审阅态 diff 当前定位只保留 workspace.css 的绿色加深;不再加赭金描边 / 外发光。 */
 
 /* —— 文末落款:正文末尾续奶白纸,竖排两列「作于{干支年月初几} | 成文{中文数字}字+印章」——
-   position + z-index:1 盖住正文纸(.wf-doc)向下投的那道阴影,消除接缝丑阴影,正文+落款连成一张纸。 */
+   position + z-index:1 保持纸内兄弟层级连续,正文+落款连成一张纸。 */
 #view-workspace .ws-colophon {
   --ws-colophon-ease: cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
@@ -3462,8 +3485,8 @@ body[data-patch-revealing="1"] #view-workspace .ws-right {
    浮层)之上,浮层只要向下溢出到落款带就被切断。
    非放映态根本没有 vignette,这个 z-index:1 纯属多余的"陷阱"。这里仅在
    非 active(无 vignette)时把纸的 z-index 还原为 auto:纸不再成层叠上下文,
-   浮层 z-index:20 直接压过落款 z-index:1;落款(定位+z-index:1)依旧盖住纸向下
-   投的阴影接缝(实测接缝仍被遮、浮层不再被切)。放映态(.native-presentation-active)
+   浮层 z-index:20 直接压过落款 z-index:1;落款(定位+z-index:1)继续维持纸内层级,
+   放映态(.native-presentation-active)
    维持原 z-index:1,vignette 叠放不受影响。 */
 #view-workspace
   .native-presentation-shell:not(.native-presentation-active)
@@ -3586,25 +3609,21 @@ body[data-patch-revealing="1"] #view-workspace .ws-paper-surface > .ws-editor-gl
   0%,
   100% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 42px 6px rgba(181, 154, 99, 0.32),
       inset 0 0 100px 20px rgba(181, 154, 99, 0.16);
   }
   28% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 54px 11px rgba(203, 170, 108, 0.44),
       inset 0 0 118px 26px rgba(203, 170, 108, 0.2);
   }
   55% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 54px 11px rgba(120, 156, 142, 0.4),
       inset 0 0 118px 26px rgba(120, 156, 142, 0.18);
   }
   80% {
     box-shadow:
-      0 30px 80px rgba(0, 0, 0, 0.5),
       inset 0 0 48px 9px rgba(178, 128, 104, 0.4),
       inset 0 0 110px 22px rgba(178, 128, 104, 0.17);
   }

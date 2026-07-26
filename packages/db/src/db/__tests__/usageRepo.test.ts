@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prepareTempDocumentsDb, type TempDocumentsDb } from "./dbTestUtils.js";
 import { __resetMigrationsForTest } from "../migrations.js";
+import { getDocumentsClient } from "../documentsClient.js";
 import {
   aggregateUsageByDay,
   aggregateUsageBySession,
@@ -50,6 +51,20 @@ describe("usageRepo", () => {
       usageState: "missing",
       reason: "provider_request_aborted",
     });
+    await getDocumentsClient().execute({
+      sql: `INSERT INTO documents
+        (id, thread_id, resource_id, title, doc_state, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        "doc-a",
+        "session-a",
+        "qingagent-user",
+        "文档甲",
+        "editing",
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
+    });
 
     const today = new Date().toISOString().slice(0, 10);
     const rows = (bucket: string) => [
@@ -84,9 +99,58 @@ describe("usageRepo", () => {
         coverageRate: 1,
       },
     ];
-    expect(await aggregateUsageByDay(1)).toEqual(rows(today));
+    expect(await aggregateUsageByDay(1)).toEqual(
+      rows(today).map((row) => ({
+        ...row,
+        sessionId: "session-a",
+        documentId: "doc-a",
+        documentTitle: "文档甲",
+      })),
+    );
     expect(await aggregateUsageBySession()).toEqual(rows("session-a"));
     expect(await aggregateUsageTotal()).toEqual(rows("total"));
+  });
+
+  it("按天聚合以真实 session→documents 关联拆分文档，不合并相同调用点", async () => {
+    for (const sessionId of ["session-a", "session-b"]) {
+      await recordUsageEvent({
+        sessionId,
+        callSite: "agent",
+        modelId: "deepseek-v4-flash",
+        keyOrigin: "visitor",
+        inputTokens: 100,
+        outputTokens: 20,
+      });
+    }
+    const now = new Date().toISOString();
+    for (const [id, threadId, title] of [
+      ["doc-a", "session-a", "文档甲"],
+      ["doc-b", "session-b", "文档乙"],
+    ] as const) {
+      await getDocumentsClient().execute({
+        sql: `INSERT INTO documents
+          (id, thread_id, resource_id, title, doc_state, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [id, threadId, "qingagent-user", title, "editing", now, now],
+      });
+    }
+
+    expect(await aggregateUsageByDay(1)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "session-a",
+          documentId: "doc-a",
+          documentTitle: "文档甲",
+          callSite: "agent",
+        }),
+        expect.objectContaining({
+          sessionId: "session-b",
+          documentId: "doc-b",
+          documentTitle: "文档乙",
+          callSite: "agent",
+        }),
+      ]),
+    );
   });
 
   it("Anthropic 只有 cache read/creation、miss 未知时命中率保持 null", async () => {

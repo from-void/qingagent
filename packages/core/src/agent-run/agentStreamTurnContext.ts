@@ -30,6 +30,7 @@ import type { QuestionnaireToolName } from "./questionnaireTools.js";
 import { AnnotationPreviewState } from "./annotationPreview.js";
 import { currentPmDoc } from "../doc-engine/draftScratch.js";
 import { confirmService, type ConfirmService } from "../confirm/confirmService.js";
+import type { TrustedAuthCardSignal } from "./authCardDedup.js";
 
 const logger = mastra.getLogger();
 
@@ -58,6 +59,10 @@ export interface ProcessOutcome {
   producedVisibleFrame: boolean;
   sawToolCall: boolean;
   streamWasUserAborted: boolean;
+  /** 正常收口时的最后一步 finish reason，供 runAgentTurn 做窄范围续推判定。 */
+  finishReason: string | null;
+  /** 本段模型正文；只在进程内续接上下文，不写入日志。 */
+  finalText: string;
   /** askUser 重放不算副作用，供瞬态错误重试守卫区分。 */
   sawSideEffectToolCall: boolean;
   transientErrorChunk?: unknown;
@@ -131,6 +136,9 @@ export interface AgentStreamTurnContext {
   generateSvgPreviousDocState: DocState | null;
   toolIoSpans: Map<string, Span<SpanType.TOOL_CALL> | null>;
   streamingPlaceholders: Set<string>;
+  /** 本 turn 已由可信连接器流层展示的授权卡，用于吞掉模型重复 show_qr。 */
+  trustedAuthCards: TrustedAuthCardSignal[];
+  suppressedShowQrCallIds: Set<string>;
   annotationPreview: AnnotationPreviewState;
   sawAnyToolCall: boolean;
   sawNonUiToolCall: boolean;
@@ -199,6 +207,8 @@ export async function createAgentStreamTurnContext(
       sawToolCall: false,
       sawSideEffectToolCall: false,
       streamWasUserAborted: false,
+      finishReason: null,
+      finalText: "",
       storedGrantApprovals: [],
     },
     previousStreamId,
@@ -250,6 +260,8 @@ export async function createAgentStreamTurnContext(
     generateSvgPreviousDocState: null,
     toolIoSpans: new Map(),
     streamingPlaceholders: new Set(),
+    trustedAuthCards: [],
+    suppressedShowQrCallIds: new Set(),
     annotationPreview: new AnnotationPreviewState(),
     sawAnyToolCall: false,
     sawNonUiToolCall: false,

@@ -16,6 +16,44 @@ function frame(sessionId: string): BridgeFrame {
 }
 
 describe("SessionManager", () => {
+  it("最后一个 SSE 订阅断开时取消 active turn；仍有订阅者时不误停", async () => {
+    const frameLog = new InMemoryFrameLog();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const abortSession = vi.fn(() => release());
+    const manager = new SessionManager({
+      frameLog,
+      handleCommand: async function* (command) {
+        if (command.kind !== "cancelStream") await blocked;
+        yield frame("disconnect-running");
+      },
+      abortSession,
+      cleanupSession: vi.fn(),
+    });
+
+    const running = manager.submit("disconnect-running", {
+      command: startExisting("disconnect-running"),
+    });
+    await vi.waitFor(() => {
+      expect(frameLog.readFrom("disconnect-running", 0).activeRunner).toBe(true);
+    });
+    const unsubscribe = frameLog.subscribe("disconnect-running", 0, () => undefined);
+
+    await expect(
+      manager.cancelRunningTurnAfterDisconnect("disconnect-running"),
+    ).resolves.toBe(false);
+    expect(abortSession).not.toHaveBeenCalled();
+
+    unsubscribe();
+    await expect(
+      manager.cancelRunningTurnAfterDisconnect("disconnect-running"),
+    ).resolves.toBe(true);
+    await running;
+    expect(abortSession).toHaveBeenCalledWith("disconnect-running", "globalStop");
+  });
+
   it("RF5: 启动只加载 pending，completed 首次命令按主键惰性查询并缓存", async () => {
     const get = vi.fn(async (sessionId: string) => {
       if (sessionId === "completed-lazy") {

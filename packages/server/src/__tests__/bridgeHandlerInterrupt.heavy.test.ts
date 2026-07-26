@@ -17,21 +17,7 @@ const mockState = vi.hoisted(() => {
     session.streamId = null;
     session._abortController = null;
     session._activeTurnPromise = null;
-    if (options.reason === "preemptedByNewMessage") {
-      yield {
-        kind: "chatMessageAppended",
-        data: {
-          messageId: session._activeAgentMessageId ?? "old-agent-message",
-          seq: 1,
-          part: {
-            kind: "text",
-            data: {
-              body: "本轮已被新消息中断。若有后台进程，它没有被自动终止，当前状态仍待确认。",
-            },
-          },
-        },
-      };
-    }
+    void options;
     session._activeAgentMessageId = null;
     yield {
       kind: "docStateChanged",
@@ -287,18 +273,11 @@ describe("handleCommand interrupt-and-resteer", () => {
       session,
       expect.objectContaining({ reason: "preemptedByNewMessage" }),
     );
-    expect(emitted).toContainEqual(expect.objectContaining({
-      kind: "chatMessageAppended",
-      data: expect.objectContaining({
-        messageId: "old-agent-message",
-        part: {
-          kind: "text",
-          data: {
-            body: expect.stringContaining("没有被自动终止"),
-          },
-        },
-      }),
-    }));
+    expect(emitted.some(
+      (frame) =>
+        frame.kind === "chatMessageAppended" &&
+        frame.data.messageId === "old-agent-message",
+    )).toBe(false);
     expect(emitted).toContainEqual(expect.objectContaining({
       kind: "chatMessageAppended",
       data: expect.objectContaining({

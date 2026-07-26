@@ -1,5 +1,6 @@
 import "./workspace.css";
 import "./workspace-ink-skin.css";
+import { WORKSPACE_PAPER_DOM } from "../../system/workspacePaperGeometry";
 import { WorkspaceChatPane } from "./components/WorkspaceChatPane";
 import { WorkspaceDocumentPane } from "./components/WorkspaceDocumentPane";
 import { WorkspaceOverlays } from "./components/WorkspaceOverlays";
@@ -15,10 +16,10 @@ export function WorkspacePage() {
     <section
       ref={controller.viewRef}
       data-view="workspace"
-      data-wf="WorkspacePage"
+      data-wf={WORKSPACE_PAPER_DOM.viewDataWf}
       data-content={controller.dataAttrs.content}
       data-tool={controller.dataAttrs.tool}
-      id="view-workspace"
+      id={WORKSPACE_PAPER_DOM.viewId}
       style={{
         flex: 1,
         display: "flex",
@@ -28,7 +29,11 @@ export function WorkspacePage() {
       }}
     >
       <WorkspaceTopbar controller={controller} />
-      <div className="ws-body">
+      <div
+        className={WORKSPACE_PAPER_DOM.bodyClass}
+        data-hydration={controller.hydration.phase}
+        aria-busy={controller.hydration.phase === "waiting"}
+      >
         <WorkspaceChatPane controller={controller} />
         <WorkspaceDocumentPane controller={controller} />
       </div>

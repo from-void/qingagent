@@ -40,6 +40,11 @@ clientMessageId?: string,
  * Absent = plain-text message; behavior unchanged.
  */
 richText?: string,
+/**
+ * 可选的当轮模型专用上下文。服务端只把它追加到模型侧 user message，
+ * 不得渲染进用户气泡。
+ */
+turnContext?: string,
 /** 可选的用户侧展示卡；模型仍接收 text 原文。 */
 displayCard?: ActionCardData,
 /** 审查菜单发起时的结构化类型/模板标识；只约束当前回合。 */

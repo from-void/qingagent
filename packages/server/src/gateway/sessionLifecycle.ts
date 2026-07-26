@@ -54,6 +54,7 @@ export async function collectRestoreFrames(sessionId: string): Promise<BridgeFra
   return [
     { kind: "sessionMeta", data: { sessionId, title: session.title } },
     ...emitRestoreFrames(session, { readOnly: true }),
+    { kind: "sessionRestoreCompleted", data: { sessionId } },
   ];
 }
 

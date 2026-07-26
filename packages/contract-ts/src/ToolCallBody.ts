@@ -35,7 +35,11 @@ export type ToolCallBody = { "kind": "askUser", "data": AskUserSpec } | { "kind"
  * 对话流内置二维码卡:agent 调 show_qr 工具输出。到 expiresAt(绝对时间戳)码作废、置灰打码,
  * 悬停变「刷新」按钮,点击发送 refreshQuery(预设文案)让 agent 重新生成。抽象统一,任意平台授权/分享均可复用。
  */
+export type AuthCardPresentation = "device-code" | "scan" | "link";
+
 export interface QrCardBody {
+  /** 展示形态由可信流程决定。旧帧缺失时，前端按历史字段兼容推断。 */
+  presentation?: AuthCardPresentation;
   /** 要编码进二维码的字符串(如 OAuth 验证 URL)。图片模式(imageDataUri 非空)下可为空串。 */
   content: string;
   /** 直接展示的二维码图片(data URI)。用于码本身就是一张图、无法用字符串编码的场景

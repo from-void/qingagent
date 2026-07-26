@@ -564,8 +564,7 @@ function staleRestoreStatus(
       return null;
     }
     return {
-      kind: "failed",
-      data: { retriable: false, reason: "上次的确认已结束，请重新发起。" },
+      kind: "aborted",
     };
   }
 
@@ -577,11 +576,10 @@ function staleRestoreStatus(
     return null;
   }
 
-  // 兜底自愈:除持久后台进程外，持久化里仍停在 running/pending 的非 askUser 工具
-  // 已不可能继续运行(典型成因:tool-error 没收口留下的卡死 spec)。恢复时切 done，
-  // 避免旧会话重开后 spinner 永久转动。
+  // 断线/冷恢复兜底:除持久后台进程外，持久化里仍停在 running/pending 的工具
+  // 已不可能确认其结果。恢复时统一切 aborted，既不伪报完成，也不让 spinner 复活。
   if (spec.status.kind === "running" || spec.status.kind === "pending") {
-    return { kind: "done" };
+    return { kind: "aborted" };
   }
 
   return null;
@@ -1948,14 +1946,12 @@ export async function loadSessionFromThread(
       .filter((pending) => pending.status === "pending")
       .map((pending) => pending.toolCallId),
   );
-  if (toolCallFacts.hasOpenAskUserToolCall || pendingConfirms.size > 0) {
-    chatHistory = terminalizeStaleRestoreToolCalls(chatHistory, {
-      preserveOpenAskUserToolCallId: hasRestorableAskUserSuspension
-        ? restorableAskUserToolCallId
-        : null,
-      preservePendingConfirmToolCallIds: pendingConfirmToolCallIds,
-    });
-  }
+  chatHistory = terminalizeStaleRestoreToolCalls(chatHistory, {
+    preserveOpenAskUserToolCallId: hasRestorableAskUserSuspension
+      ? restorableAskUserToolCallId
+      : null,
+    preservePendingConfirmToolCallIds: pendingConfirmToolCallIds,
+  });
 
   meta = {
     ...meta,

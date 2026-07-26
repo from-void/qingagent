@@ -1,4 +1,5 @@
 export type ConnectorId = "github" | "feishu" | "wechat-mp";
+export type ConnectorAuthPresentation = "device-code" | "scan";
 
 export type ConnectorState =
   | "unavailable"
@@ -31,6 +32,7 @@ export interface ConnectorInfo {
   name: string;
   icon: string;
   official: boolean;
+  authPresentation: ConnectorAuthPresentation;
   riskNote: string | null;
   usedBySkills: string[];
   status: ConnectorStatus;

@@ -281,6 +281,12 @@ function checkToolBody(b: ToolCallBody): void {
       checkRef("BrowserOpen.urlRef", b.data.urlRef, ["url"]);
       return;
     case "qrCard":
+      if (b.data.presentation !== undefined &&
+          b.data.presentation !== "device-code" &&
+          b.data.presentation !== "scan" &&
+          b.data.presentation !== "link") {
+        fail(`QrCard.presentation must be device-code|scan|link`);
+      }
       // content(编码模式)或 imageDataUri(图片模式,如微信后台登录码是图片非 URL)至少一个非空。
       if (
         (typeof b.data.content !== "string" || !b.data.content) &&
@@ -844,6 +850,11 @@ export function validateBridgeFrame(frame: BridgeFrame): void {
       }
       if (!Number.isInteger(frame.data.snapshotSeq) || frame.data.snapshotSeq < 0) {
         fail("RestoreReset.snapshotSeq must be a non-negative integer");
+      }
+      return;
+    case "sessionRestoreCompleted":
+      if (!frame.data.sessionId) {
+        fail("SessionRestoreCompleted.sessionId must be non-empty");
       }
       return;
     case "sessionMeta":

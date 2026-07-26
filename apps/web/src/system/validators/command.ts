@@ -97,6 +97,9 @@ function checkChip(c: ChatChip): void {
 
 function checkSendMessage(m: SendMessage): void {
   if (!m.sessionId) fail(`SendMessage.sessionId must be non-empty`);
+  if (m.turnContext !== undefined && typeof m.turnContext !== "string") {
+    fail(`SendMessage.turnContext must be a string`);
+  }
   for (const r of m.mentions) checkRefAny("SendMessage.mentions[]", r);
   for (const c of m.chips) checkChip(c);
   // fileIds is optional; when present each entry must be a non-empty string

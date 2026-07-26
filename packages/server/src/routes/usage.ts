@@ -8,6 +8,7 @@ import {
   listSessionThreads,
 } from "@qingagent/core";
 import type { QingagentThreadMetadata } from "@qingagent/core";
+import type { UsageSummaryResponse } from "@qingagent/contract-ts";
 import { countDocVisibleChars, legacySectionsToPm, type PmDoc } from "@qingagent/pm-schema";
 
 export const usageRoutes = new Hono();
@@ -27,9 +28,9 @@ usageRoutes.get("/usage/summary", async (c) => {
         ? await aggregateUsageBySession()
         : await aggregateUsageTotal();
 
-  // 会话视图:把每行的 sessionId(bucket)映射成文档标题,前端用标题展示而非裸 ID。
+  // 会话视图沿用 bucket→标题；按天视图在 documents.title 为空时兼容旧线程 metadata 标题。
   let titleMap: Map<string, string> | null = null;
-  if (view === "session") {
+  if (view === "session" || view === "day") {
     const { threads } = await listSessionThreads({ page: 0, perPage: 200 });
     titleMap = new Map(
       threads.map((t) => {
@@ -39,23 +40,31 @@ usageRoutes.get("/usage/summary", async (c) => {
     );
   }
 
-  return c.json({
+  const response = {
     view,
-    rows: rows.map((row) => ({
-      ...row,
-      ...(titleMap ? { label: titleMap.get(row.bucket) || undefined } : {}),
-      ...(hasDeepseekPricing(row.modelId)
-        ? {
-            costCny: estimateCostCny(row.modelId, {
-              input: row.inputTokens,
-              output: row.outputTokens,
-              cacheHit: row.cacheHitTokens,
-              cacheMiss: row.cacheMissTokens,
-            }),
-          }
-        : {}),
-    })),
-  });
+    rows: rows.map((row) => {
+      const { sessionId, ...publicRow } = row;
+      const fallbackTitle = titleMap?.get(sessionId ?? row.bucket) || undefined;
+      return {
+        ...publicRow,
+        ...(view === "session" ? { label: fallbackTitle } : {}),
+        ...(view === "day"
+          ? { documentTitle: row.documentTitle || fallbackTitle }
+          : {}),
+        ...(hasDeepseekPricing(row.modelId)
+          ? {
+              costCny: estimateCostCny(row.modelId, {
+                input: row.inputTokens,
+                output: row.outputTokens,
+                cacheHit: row.cacheHitTokens,
+                cacheMiss: row.cacheMissTokens,
+              }),
+            }
+          : {}),
+      };
+    }),
+  } satisfies UsageSummaryResponse;
+  return c.json(response);
 });
 
 // 近 N 天创建的文档数 + 总字数(用于模型看板的"每篇成本/还能建几篇"指标)

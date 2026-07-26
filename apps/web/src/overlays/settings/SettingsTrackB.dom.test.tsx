@@ -32,8 +32,27 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 const dayRows = [
-  usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.001),
-  usageRow("2026-06-25", "deepseek-v4-pro", 2000, 800, 0.002),
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-flash", 1000, 500, 0.001),
+    documentId: "doc-a",
+    documentTitle: "文档甲",
+  },
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-pro", 600, 300, 0.001),
+    callSite: "writeDraft",
+    documentId: "doc-a",
+    documentTitle: "文档甲",
+  },
+  {
+    ...usageRow("2026-06-24", "deepseek-v4-flash", 400, 200, 0.001),
+    documentId: "doc-b",
+    documentTitle: "文档乙",
+  },
+  {
+    ...usageRow("2026-06-25", "deepseek-v4-pro", 2000, 800, 0.002),
+    documentId: "doc-c",
+    documentTitle: "文档丙",
+  },
 ];
 
 describe("Settings Track B", () => {
@@ -554,7 +573,9 @@ describe("Settings Track B", () => {
     expect(tableBefore.textContent).toContain("2026-06-24");
     expect(tableBefore.textContent).toContain("2026-06-25");
 
-    setInput(getDateInput(), "2026-06-24");
+    await click(getDateTrigger());
+    await click(getButtonByLabel("上个月"));
+    await click(getButtonByLabel("2026-06-24"));
     const filteredTable = getTable();
     expect(filteredTable.textContent).toContain("2026-06-24");
     expect(filteredTable.textContent).not.toContain("2026-06-25");
@@ -565,11 +586,133 @@ describe("Settings Track B", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0])).some((url) => url.includes("date="))).toBe(false);
   });
 
+  it("用量明细默认小白模式只展示聚合列", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    const headers = Array.from(getTable().querySelectorAll("th")).map(
+      (cell) => cell.textContent?.replace(/\?/g, "").replace(/\s+/g, " ").trim(),
+    );
+    expect(headers).toEqual(["日期", "输入", "输出", "缓存命中率", "估算费用"]);
+    expect(getTable().textContent).not.toContain("调用点");
+    expect(getTable().textContent).not.toContain("请求覆盖");
+    expect(getButtonByWf("UsageModeToggle").textContent).toContain("小白");
+  });
+
+  it("点击用量明细标题切换专家模式并披露完整列", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    const toggle = getButtonByWf("UsageModeToggle");
+    await click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.textContent).toContain("专家");
+    const headerText = Array.from(getTable().querySelectorAll("th"))
+      .map((cell) => cell.textContent ?? "")
+      .join(" ");
+    expect(headerText).toContain("模型");
+    expect(headerText).toContain("调用点");
+    expect(headerText).toContain("请求覆盖");
+  });
+
+  it("专家模式按文档分组，默认收起且可展开收起调用点", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/v1/usage/summary?view=session")) {
+        return json({
+          rows: [
+            { ...usageRow("session-1", "deepseek-v4-flash", 1200, 500, 0.001), label: "测试文档" },
+            {
+              ...usageRow("session-1", "deepseek-v4-pro", 800, 300, 0.002),
+              callSite: "writeDraft",
+              label: "测试文档",
+            },
+          ],
+        });
+      }
+      return fallbackFetch(input, init);
+    }));
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    await click(getButtonByText("按文档"));
+    await flush();
+
+    expect(getTable().querySelectorAll('[data-wf="UsageGroupRow"]')).toHaveLength(1);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    const groupToggle = getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle");
+    expect(groupToggle?.textContent).toContain("测试文档");
+    expect(groupToggle?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(groupToggle!);
+    expect(groupToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(2);
+    expect(getTable().textContent).toContain("writeDraft");
+
+    await click(groupToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+  });
+
+  it("专家按天视图按天→文档→调用点三层展开，且各层默认收起", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    await flush();
+
+    expect(getTable().querySelectorAll('[data-wf="UsageGroupRow"]')).toHaveLength(2);
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(0);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+
+    const dayToggle = getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle");
+    expect(dayToggle?.textContent).toContain("2026-06-24");
+    await click(dayToggle!);
+
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(2);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    const documentToggle = getTable().querySelector<HTMLButtonElement>(
+      ".md-usage-group-toggle--document",
+    );
+    expect(documentToggle?.textContent).toContain("文档甲");
+    expect(documentToggle?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(documentToggle!);
+    expect(documentToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(2);
+    expect(getTable().textContent).toContain("writeDraft");
+
+    await click(documentToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDetailRow"]')).toHaveLength(0);
+    await click(dayToggle!);
+    expect(getTable().querySelectorAll('[data-wf="UsageDocumentRow"]')).toHaveLength(0);
+  });
+
+  it("用量明细模式持久化到本地并在重新挂载后恢复", async () => {
+    setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
+    await render(<ModelSettingsPanel />);
+    await click(getButtonByWf("UsageModeToggle"));
+    expect(window.localStorage.getItem("qingagent:model-usage-mode")).toBe("expert");
+
+    await act(async () => root?.unmount());
+    root = null;
+    host?.remove();
+    host = null;
+    await render(<ModelSettingsPanel />);
+    await flush();
+
+    expect(getButtonByWf("UsageModeToggle").getAttribute("aria-pressed")).toBe("true");
+    expect(getButtonByWf("UsageModeToggle").textContent).toContain("专家");
+  });
+
   it("缓存 hit+miss 均缺失时展示未知而不是 0%", async () => {
     setVisitorDeepseekKey(`sk-${"A".repeat(32)}`);
     await render(<ModelSettingsPanel />);
     await click(getButtonByText("总计"));
+    await click(getButtonByWf("UsageModeToggle"));
     await flush();
+    await click(getTable().querySelector<HTMLButtonElement>(".md-usage-group-toggle")!);
     expect(getTable().textContent).toContain("未知");
     expect(getTable().textContent).toContain("100% · 1/1");
   });
@@ -900,10 +1043,16 @@ function getInputByPlaceholder(placeholder: string): HTMLInputElement {
   return input;
 }
 
-function getDateInput(): HTMLInputElement {
-  const input = host?.querySelector<HTMLInputElement>('input[type="date"]');
-  if (!input) throw new Error("date input not found");
-  return input;
+function getDateTrigger(): HTMLButtonElement {
+  const button = host?.querySelector<HTMLButtonElement>('button[aria-label="筛选用量日期"]');
+  if (!button) throw new Error("date trigger not found");
+  return button;
+}
+
+function getButtonByLabel(label: string): HTMLButtonElement {
+  const button = document.body.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`${label} button not found`);
+  return button;
 }
 
 function getTable(): HTMLTableElement {

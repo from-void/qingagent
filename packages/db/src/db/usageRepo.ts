@@ -87,6 +87,12 @@ export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
 export interface UsageAggRow {
   /** 聚合桶:day 模式为 YYYY-MM-DD,session 模式为 session_id。 */
   bucket: string;
+  /** 按天聚合内部保留真实会话键，供上层兼容旧线程标题。 */
+  sessionId?: string;
+  /** 按天聚合的文档主表 ID；旧数据无主表行时回退 session_id。 */
+  documentId?: string;
+  /** documents.title 为空时不返回，由上层尝试旧线程标题。 */
+  documentTitle?: string;
   callSite: string;
   modelId: string;
   inputTokens: number;
@@ -106,6 +112,11 @@ export interface UsageAggRow {
 function rowToAgg(row: Record<string, unknown>): UsageAggRow {
   return {
     bucket: String(row.bucket ?? ""),
+    ...(row.session_id == null ? {} : { sessionId: String(row.session_id) }),
+    ...(row.document_id == null ? {} : { documentId: String(row.document_id) }),
+    ...(row.document_title == null || String(row.document_title) === ""
+      ? {}
+      : { documentTitle: String(row.document_title) }),
     callSite: String(row.call_site ?? ""),
     modelId: String(row.model_id ?? ""),
     inputTokens: Number(row.input_tokens ?? 0),
@@ -123,26 +134,35 @@ function rowToAgg(row: Record<string, unknown>): UsageAggRow {
   };
 }
 
-/** 天级 × 模型聚合(默认最近 30 天)。 */
+/** 天级 × 文档 × 调用点 × 模型聚合(默认最近 30 天)。 */
 export async function aggregateUsageByDay(days = 30): Promise<UsageAggRow[]> {
   const client = getDocumentsClient();
   await ensureMigrated();
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const result = await client.execute({
-    sql: `SELECT date(created_at) AS bucket, call_site, model_id,
-        SUM(CASE WHEN usage_state = 'recorded' THEN input_tokens ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN output_tokens ELSE 0 END) AS output_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
-        SUM(CASE WHEN usage_state = 'recorded' THEN COALESCE(cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
-        1.0 * SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens ELSE 0 END) /
-          NULLIF(SUM(CASE WHEN usage_state = 'recorded' AND cache_accounting_state = 'known' THEN cache_hit_tokens + cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
+    sql: `SELECT date(usage.created_at) AS bucket,
+        usage.session_id,
+        COALESCE(document.id, usage.session_id) AS document_id,
+        NULLIF(document.title, '') AS document_title,
+        usage.call_site,
+        usage.model_id,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.input_tokens ELSE 0 END) AS input_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.output_tokens ELSE 0 END) AS output_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_hit_tokens ELSE 0 END) AS cache_hit_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN usage.cache_miss_tokens ELSE 0 END) AS cache_miss_tokens,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN COALESCE(usage.cache_creation_tokens, 0) ELSE 0 END) AS cache_creation_tokens,
+        1.0 * SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens ELSE 0 END) /
+          NULLIF(SUM(CASE WHEN usage.usage_state = 'recorded' AND usage.cache_accounting_state = 'known' THEN usage.cache_hit_tokens + usage.cache_miss_tokens ELSE 0 END), 0) AS cache_hit_rate,
         COUNT(*) AS calls,
-        SUM(CASE WHEN usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
-        SUM(CASE WHEN usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
-      FROM llm_usage_events WHERE created_at >= ?
-      GROUP BY date(created_at), call_site, model_id
-      ORDER BY bucket DESC, call_site, model_id`,
+        SUM(CASE WHEN usage.usage_state = 'recorded' THEN 1 ELSE 0 END) AS recorded_calls,
+        SUM(CASE WHEN usage.usage_state = 'missing' THEN 1 ELSE 0 END) AS missing_calls
+      FROM llm_usage_events usage
+      LEFT JOIN documents document
+        ON document.thread_id = usage.session_id AND document.role = 'main'
+      WHERE usage.created_at >= ?
+      GROUP BY date(usage.created_at), usage.session_id, document.id, document.title,
+        usage.call_site, usage.model_id
+      ORDER BY bucket DESC, document_title, document_id, usage.call_site, usage.model_id`,
     args: [since],
   });
   return result.rows.map((r) => rowToAgg(r as unknown as Record<string, unknown>));

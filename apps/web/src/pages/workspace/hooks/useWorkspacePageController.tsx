@@ -42,6 +42,7 @@ import { validateCommand } from "../../../system/validators";
 import type { ChatInputHandle } from "../data/chatInputTypes";
 import { buildWholeDocReviewKey } from "../components/ChatMessageList";
 import type { DerivativeGenerateParams } from "../components/derivatives/DerivativeGenerateModal";
+import { buildActiveDerivativeTurnContext } from "../components/derivatives/derivativeTurnContext";
 import {
   DTYPE_REGISTRY,
   type DerivativeDtype,
@@ -159,6 +160,12 @@ import {
   selectPatches,
   workspaceReducer,
 } from "../data/workspaceState";
+import {
+  initialWorkspaceHydration,
+  WORKSPACE_HYDRATION_TIMEOUT_MS,
+  type WorkspaceHydrationAction,
+  workspaceHydrationReducer,
+} from "../data/workspaceHydration";
 import { useAutoScroll } from "../useAutoScroll";
 import { useAssetPreviewState } from "./useAssetPreviewState";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
@@ -258,6 +265,18 @@ export function useWorkspacePageController() {
   const { previewExit, previewSource, setPreviewSource } =
     useAssetPreviewState();
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
+  const initialHydrationSessionIdRef = useRef<string | null>(
+    typeof window === "undefined"
+      ? null
+      : workspaceSessionIdFromHash(window.location.hash),
+  );
+  const [hydration, setHydration] = useState(() =>
+    initialWorkspaceHydration(initialHydrationSessionIdRef.current),
+  );
+  const hydrationRef = useRef(hydration);
+  const hydrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [derivatives, setDerivatives] = useState<DerivativeItem[]>([]);
   const [derivativeCreateOpen, setDerivativeCreateOpen] = useState(false);
   const [derivativeCreateDtype, setDerivativeCreateDtype] =
@@ -273,6 +292,10 @@ export function useWorkspacePageController() {
     ) => void
   >(() => undefined);
   const [activeTab, setActiveTab] = useState<"main" | string>("main");
+  const derivativeTurnContext = useMemo(
+    () => buildActiveDerivativeTurnContext(activeTab, derivatives),
+    [activeTab, derivatives],
+  );
   useEffect(() => {
     // 批注预览是转瞬态：切 tab 不恢复、不保留。
     dispatch({ kind: "annotationPreviewCleared", data: {} });
@@ -338,6 +361,90 @@ export function useWorkspacePageController() {
   const startSessionPromisesBySessionRef = useRef<Map<string, Promise<string>>>(
     new Map(),
   );
+  const applyWorkspaceHydrationAction = useCallback(
+    (action: WorkspaceHydrationAction) => {
+      const current = hydrationRef.current;
+      const next = workspaceHydrationReducer(current, action);
+      if (next !== current) {
+        // 同步推进 ref，避免同一事件循环内的 restoreReset/startSession 看见旧相位，
+        // 在 React 下一次 render 前把 ready 误重置为 waiting。
+        hydrationRef.current = next;
+        setHydration(next);
+      }
+      return next;
+    },
+    [],
+  );
+  const clearHydrationTimers = useCallback(() => {
+    if (hydrationTimeoutRef.current !== null) {
+      clearTimeout(hydrationTimeoutRef.current);
+      hydrationTimeoutRef.current = null;
+    }
+  }, []);
+  const beginWorkspaceHydration = useCallback(
+    (sessionId: string | null) => {
+      const current = hydrationRef.current;
+      if (current.sessionId === sessionId) {
+        // 初始 hash 已把门设为 waiting；第一次真正发起恢复时只补上绝对超时，
+        // 同会话之后的重连/重复 effect 一律不重开门、也不重置 4s 预算。
+        if (
+          sessionId &&
+          current.phase === "waiting" &&
+          hydrationTimeoutRef.current === null
+        ) {
+          hydrationTimeoutRef.current = setTimeout(() => {
+            hydrationTimeoutRef.current = null;
+            applyWorkspaceHydrationAction({ kind: "timeout", sessionId });
+          }, WORKSPACE_HYDRATION_TIMEOUT_MS);
+        }
+        return;
+      }
+      clearHydrationTimers();
+      applyWorkspaceHydrationAction({ kind: "begin", sessionId });
+      if (!sessionId) return;
+      hydrationTimeoutRef.current = setTimeout(() => {
+        hydrationTimeoutRef.current = null;
+        applyWorkspaceHydrationAction({ kind: "timeout", sessionId });
+      }, WORKSPACE_HYDRATION_TIMEOUT_MS);
+    },
+    [applyWorkspaceHydrationAction, clearHydrationTimers],
+  );
+  const observeHydrationFrame = useCallback(
+    (frame: BridgeFrame, fallbackSessionId: string | null) => {
+      if (frame.kind === "restoreReset") {
+        // begin 对同会话是幂等的：既不 ready→waiting，也不重启弱网预算；
+        // waiting 内的新恢复批次另行清掉上一批的半完成信号。
+        beginWorkspaceHydration(fallbackSessionId);
+        if (fallbackSessionId) {
+          applyWorkspaceHydrationAction({
+            kind: "restoreReset",
+            sessionId: fallbackSessionId,
+          });
+        }
+        return;
+      }
+      if (frame.kind === "documentSnapshotWritten" && fallbackSessionId) {
+        applyWorkspaceHydrationAction({
+          kind: "documentObserved",
+          sessionId: fallbackSessionId,
+        });
+        return;
+      }
+      if (frame.kind === "sessionRestoreCompleted") {
+        const next = applyWorkspaceHydrationAction({
+          kind: "restoreCompleted",
+          sessionId: frame.data.sessionId,
+        });
+        // 有正文时完成帧只代表协议首批结束；编辑器首帧尚未可画就继续守门。
+        if (next.phase === "ready") clearHydrationTimers();
+      }
+    },
+    [
+      applyWorkspaceHydrationAction,
+      beginWorkspaceHydration,
+      clearHydrationTimers,
+    ],
+  );
   const restoreExistingSessionIdRef = useRef<string | null>(null);
   const lastRetriableSendRef = useRef<Extract<
     Command,
@@ -395,6 +502,7 @@ export function useWorkspacePageController() {
   );
   const reducedMotionRef = useRef(false);
   stateRef.current = state;
+  hydrationRef.current = hydration;
   sessionIdRef.current = state.sessionId ?? sessionIdRef.current;
   docVersionRef.current = state.version;
   if (state.version === 0) {
@@ -407,6 +515,18 @@ export function useWorkspacePageController() {
   }
   presentationRunRef.current = presentationRun;
   const [tiptapEditor, setTiptapEditor] = useState<Editor | null>(null);
+  const markDocumentSurfaceReady = useCallback(
+    () => {
+      const sessionId = hydrationRef.current.sessionId;
+      if (!sessionId) return;
+      const next = applyWorkspaceHydrationAction({
+        kind: "documentSurfaceReady",
+        sessionId,
+      });
+      if (next.phase === "ready") clearHydrationTimers();
+    },
+    [applyWorkspaceHydrationAction, clearHydrationTimers],
+  );
   const toast = useToast();
   const confirm = useConfirm();
   const showToast = useCallback(
@@ -1467,6 +1587,10 @@ export function useWorkspacePageController() {
       ) {
         return;
       }
+      observeHydrationFrame(
+        frame,
+        streamSessionId ?? activeWorkspaceSessionTargetRef.current,
+      );
 
       if (frame.kind === "sessionMeta") {
         activeWorkspaceSessionTargetRef.current = frame.data.sessionId;
@@ -1732,6 +1856,7 @@ export function useWorkspacePageController() {
       startNewSessionPromiseRef.current = null;
       pendingBrowserAttachRef.current = null;
       setSendPending(false);
+      beginWorkspaceHydration(targetSessionId);
 
       if (options.resetSessionState && targetSessionId) {
         setTitle("");
@@ -2025,8 +2150,11 @@ export function useWorkspacePageController() {
       }, 75);
     };
   }, [
+    beginWorkspaceHydration,
+    clearHydrationTimers,
     rejectPendingDocSaveDrain,
     markMaterialParsing,
+    observeHydrationFrame,
     resolvePendingDocSaveDrain,
     restoreExistingSession,
     sendAttachFolderSelection,
@@ -2038,12 +2166,13 @@ export function useWorkspacePageController() {
   // 组件卸载时清掉在排的瞬态保存重试定时器,防孤儿定时器卸载后用旧态杂散重发。
   useEffect(() => {
     return () => {
+      clearHydrationTimers();
       if (docSaveRetryTimerRef.current !== null) {
         clearTimeout(docSaveRetryTimerRef.current);
         docSaveRetryTimerRef.current = null;
       }
     };
-  }, []);
+  }, [clearHydrationTimers]);
 
   // Mirror content and tool dimensions onto <body> for CSS state hooks.
   useEffect(() => {
@@ -2102,20 +2231,9 @@ export function useWorkspacePageController() {
     );
   }, [activeTab, refreshDerivatives]);
 
-  // 对话工具可在弹框之外完成衍生稿重生成；活动衍生视图持续观察 generatedAt，
-  // 新时间戳进入 props 后 DerivativeView 会自行重取正文，避免必须切 Tab 才看到改稿。
-  useEffect(() => {
-    if (activeTab === "main" || activeTab === "translate" || !state.sessionId)
-      return;
-    const timer = window.setInterval(
-      () =>
-        void refreshDerivatives().catch((error) =>
-          console.error("[workspace] poll derivative generation failed", error),
-        ),
-      2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [activeTab, refreshDerivatives, state.sessionId]);
+  // 衍生稿元数据不做常驻轮询：正常完成由 derivativeGenFinished 帧刷新，切换 Tab
+  // 也会刷新一次。生成中的活动视图仅在 DerivativeView 内按 2s 轮询单稿正文，
+  // 完成、视图卸载/切换或 3 分钟兜底超时即停止，避免 listDerivatives 泄漏。
 
   const handleCreateDerivative = useCallback(
     async (params: DerivativeGenerateParams) => {
@@ -2594,6 +2712,7 @@ export function useWorkspacePageController() {
       toast,
       handleBackHome,
       restoreExistingSession,
+      turnContext: derivativeTurnContext,
     });
 
   const sendDerivativeQuery = useCallback(
@@ -2850,6 +2969,7 @@ export function useWorkspacePageController() {
   return {
     viewRef,
     dataAttrs,
+    hydration,
     title,
     setTitle,
     handleBackHome,
@@ -2963,6 +3083,7 @@ export function useWorkspacePageController() {
     handlePatchVerdict,
     closeViewingVersion,
     setTiptapEditor,
+    markDocumentSurfaceReady,
     handleEditorChange,
     clearPresentationRun,
     findOpen,

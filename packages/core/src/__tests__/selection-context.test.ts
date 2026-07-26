@@ -54,6 +54,38 @@ describe("selection chip edit context", () => {
     agentStreamCalls.length = 0;
   });
 
+  it("turnContext 只追加到模型侧当轮 user message，不污染可见用户气泡", async () => {
+    const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
+    const state = createSession("sess-derivative-turn-context");
+    const turnContext =
+      "[系统:用户当前正查看衍生稿(doc_id: derivative-xhs-1,类型=小红书稿)。]";
+
+    await collectFrames(
+      runAgentTurn(
+        state,
+        "把标题改得更抓人",
+        [],
+        [],
+        [],
+        null,
+        undefined,
+        undefined,
+        undefined,
+        { turnContext },
+      ),
+    );
+
+    const modelUserMessage = state.messages.find((message) => message.role === "user");
+    expect(modelUserMessage?.content).toContain("把标题改得更抓人");
+    expect(modelUserMessage?.content).toContain(turnContext);
+    const visibleUserMessage = state.chatHistory.find(
+      (message) => message.role.kind === "user",
+    );
+    expect(visibleUserMessage?.parts).toEqual([
+      { kind: "text", data: { body: "把标题改得更抓人" } },
+    ]);
+  });
+
   it("blockId 缺失时用 chip label 作为 readDraft 模糊定位文本", async () => {
     const { runAgentTurn } = await import("../agent-run/runAgentTurn.js");
 

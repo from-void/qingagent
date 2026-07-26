@@ -14,6 +14,66 @@ import {
 } from "../../new-session/transition/origin";
 import { workspaceSessionIdFromHash } from "../data/workspacePageView";
 
+/**
+ * 用户铁律「浮层不占位」：
+ * - 计入：输入区本体，以及替换/变形输入区本体的 askUser、确认条、任务胶囊。
+ * - 不计入：悬浮其上的 popover；`.qa-skill-menu`（技能/素材菜单）和
+ *   `.ws-taskpill-flyout` 开合时绝不能改变对话流底部留白。
+ */
+const INPUT_OCCUPANT_SELECTOR = [
+  ".wf-input",
+  ".askuser-overlay",
+  ".cf-overlay",
+  ".cf-record",
+  ".ws-taskpill-host",
+].join(",");
+
+const CHAT_BOTTOM_THRESHOLD = 50;
+const DEFAULT_INPUT_CLEARANCE_GAP = 24;
+
+function isVisibleInputOccupant(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const style = getComputedStyle(element);
+  const opacity = parseFloat(style.opacity);
+  return style.display !== "none"
+    && style.visibility !== "hidden"
+    && (!Number.isFinite(opacity) || opacity > 0);
+}
+
+/**
+ * 输入区所需留白 = 最上方可见输入控件到滚动区底边的距离 + 显式呼吸间距。
+ * 呼吸间距至少为 --ws-input-clearance-gap；若 wrap 自身上 padding 更大则取其值，
+ * 避免把两份设计间距重复相加。
+ */
+export function measureWorkspaceInputClearance(
+  chat: HTMLElement,
+  wrap: HTMLElement,
+): number | null {
+  const chatRect = chat.getBoundingClientRect();
+  if (chatRect.height <= 0) return null;
+  const wrapRect = wrap.getBoundingClientRect();
+  const wrapStyle = getComputedStyle(wrap);
+  const paddingTop = parseFloat(wrapStyle.paddingTop) || 0;
+  const configuredGap =
+    parseFloat(wrapStyle.getPropertyValue("--ws-input-clearance-gap"))
+    || DEFAULT_INPUT_CLEARANCE_GAP;
+  const breathingGap = Math.max(configuredGap, paddingTop);
+  let occupantTop = Number.POSITIVE_INFINITY;
+
+  for (const occupant of wrap.querySelectorAll<HTMLElement>(
+    INPUT_OCCUPANT_SELECTOR,
+  )) {
+    if (!isVisibleInputOccupant(occupant)) continue;
+    occupantTop = Math.min(occupantTop, occupant.getBoundingClientRect().top);
+  }
+  if (!Number.isFinite(occupantTop)) {
+    occupantTop = wrapRect.top + paddingTop;
+  }
+
+  return Math.max(0, Math.ceil(chatRect.bottom - occupantTop + breathingGap));
+}
+
 export function useWorkspaceChrome(input: {
   viewRef: RefObject<HTMLElement | null>;
   docScrollRef: RefObject<HTMLDivElement | null>;
@@ -24,6 +84,10 @@ export function useWorkspaceChrome(input: {
 }) {
   const homeReturnTransitionRef = useRef(false);
   const homeReturnTimerRef = useRef<number | null>(null);
+  const workspaceArrivePendingRef = useRef<boolean | null>(null);
+  if (workspaceArrivePendingRef.current === null) {
+    workspaceArrivePendingRef.current = Boolean(peekWorkspaceArrive());
+  }
 
   useLayoutEffect(() => {
     const element = input.viewRef.current;
@@ -75,46 +139,177 @@ export function useWorkspaceChrome(input: {
     };
   }, [input.docScrollRef, input.viewRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = input.viewRef.current;
     const left = element?.querySelector<HTMLElement>(".ws-left");
     const wrap = element?.querySelector<HTMLElement>(".ws-input-wrap");
-    if (!left || !wrap) return;
-    const apply = () =>
-      left.style.setProperty("--ws-input-h", `${wrap.offsetHeight}px`);
+    const chat = input.chatScrollRef.current;
+    if (!left || !wrap || !chat) return;
+
+    let stickToBottom =
+      chat.scrollHeight - chat.scrollTop - chat.clientHeight
+        < CHAT_BOTTOM_THRESHOLD;
+    let lastClearance = -1;
+    let frame = 0;
+    let activeMotionCount = 0;
+
+    const scrollToBottom = () => {
+      if (typeof chat.scrollTo === "function") {
+        chat.scrollTo({ top: chat.scrollHeight, behavior: "instant" });
+      } else {
+        chat.scrollTop = chat.scrollHeight;
+      }
+    };
+    const apply = () => {
+      const clearance = measureWorkspaceInputClearance(chat, wrap);
+      if (clearance === null || clearance === lastClearance) return;
+      const shouldStick = stickToBottom;
+      lastClearance = clearance;
+      left.style.setProperty("--ws-input-clearance", `${clearance}px`);
+      if (shouldStick) scrollToBottom();
+    };
+    const scheduleApply = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        apply();
+        if (activeMotionCount > 0) scheduleApply();
+      });
+    };
+    const handleScroll = () => {
+      stickToBottom =
+        chat.scrollHeight - chat.scrollTop - chat.clientHeight
+          < CHAT_BOTTOM_THRESHOLD;
+    };
+    const isMeasuredMotion = (event: Event) =>
+      event.target instanceof HTMLElement
+      && (event.target === wrap
+        || event.target.matches(INPUT_OCCUPANT_SELECTOR));
+    const handleMotionStart = (event: Event) => {
+      if (!isMeasuredMotion(event)) return;
+      activeMotionCount += 1;
+      scheduleApply();
+    };
+    const handleMotionEnd = (event: Event) => {
+      if (!isMeasuredMotion(event)) return;
+      activeMotionCount = Math.max(0, activeMotionCount - 1);
+      scheduleApply();
+    };
+
     apply();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(apply);
-    observer.observe(wrap);
-    return () => observer.disconnect();
-  }, [input.viewRef]);
+    chat.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", scheduleApply);
+    window.addEventListener("load", scheduleApply);
+    wrap.addEventListener("transitionrun", handleMotionStart, true);
+    wrap.addEventListener("transitionend", handleMotionEnd, true);
+    wrap.addEventListener("transitioncancel", handleMotionEnd, true);
+    wrap.addEventListener("animationstart", handleMotionStart, true);
+    wrap.addEventListener("animationend", handleMotionEnd, true);
+    wrap.addEventListener("animationcancel", handleMotionEnd, true);
+
+    const observed = new Set<HTMLElement>();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(scheduleApply);
+    const observeOccupants = () => {
+      if (!resizeObserver) return;
+      for (const target of [
+        chat,
+        wrap,
+        ...wrap.querySelectorAll<HTMLElement>(INPUT_OCCUPANT_SELECTOR),
+      ]) {
+        if (observed.has(target)) continue;
+        observed.add(target);
+        resizeObserver.observe(target);
+      }
+    };
+    observeOccupants();
+
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => {
+          observeOccupants();
+          scheduleApply();
+        });
+    mutationObserver?.observe(wrap, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "data-portal"],
+    });
+
+    // layout effect 可能早于桌面包内容区成画；跨过首帧后无条件再测一次。
+    let readyFrame = window.requestAnimationFrame(() => {
+      readyFrame = window.requestAnimationFrame(() => {
+        readyFrame = 0;
+        apply();
+      });
+    });
+
+    return () => {
+      chat.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", scheduleApply);
+      window.removeEventListener("load", scheduleApply);
+      wrap.removeEventListener("transitionrun", handleMotionStart, true);
+      wrap.removeEventListener("transitionend", handleMotionEnd, true);
+      wrap.removeEventListener("transitioncancel", handleMotionEnd, true);
+      wrap.removeEventListener("animationstart", handleMotionStart, true);
+      wrap.removeEventListener("animationend", handleMotionEnd, true);
+      wrap.removeEventListener("animationcancel", handleMotionEnd, true);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+      if (readyFrame) window.cancelAnimationFrame(readyFrame);
+      left.style.removeProperty("--ws-input-clearance");
+    };
+  }, [input.chatScrollRef, input.viewRef]);
 
   useLayoutEffect(() => {
-    if (!peekWorkspaceArrive()) return;
+    if (!workspaceArrivePendingRef.current) return;
     const view = input.viewRef.current;
     if (!view) return;
     view.classList.add("ws-arriving");
-    let firstFrame = 0;
-    let secondFrame = 0;
-    let timer = 0;
-    firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        clearWorkspaceArrive();
-        view.classList.remove("ws-arriving");
-        view.classList.add("ws-arrive-revealing");
-        timer = window.setTimeout(
-          () => view.classList.remove("ws-arrive-revealing"),
-          760,
-        );
-      });
-    });
     return () => {
-      cancelAnimationFrame(firstFrame);
-      cancelAnimationFrame(secondFrame);
-      if (timer) window.clearTimeout(timer);
       view.classList.remove("ws-arriving", "ws-arrive-revealing");
     };
   }, [input.viewRef]);
+
+  useLayoutEffect(() => {
+    if (!workspaceArrivePendingRef.current) return;
+    const view = input.viewRef.current;
+    if (!view) return;
+
+    let settleFrame = 0;
+    let revealFrame = 0;
+    let revealTimer = 0;
+    const reveal = () => {
+      clearWorkspaceArrive();
+      workspaceArrivePendingRef.current = false;
+      view.classList.remove("ws-arriving");
+      if (input.reducedMotion) return;
+      view.classList.add("ws-arrive-revealing");
+      revealTimer = window.setTimeout(
+        () => view.classList.remove("ws-arrive-revealing"),
+        760,
+      );
+    };
+
+    // 到场编舞只负责把首页交接帧落到真实工作区，和数据水合门解耦。
+    // 纸壳已在首帧就位；两帧后按原时序揭示 chrome，内容仍由自己的门单独放行。
+    if (input.reducedMotion) reveal();
+    else {
+      settleFrame = requestAnimationFrame(() => {
+        revealFrame = requestAnimationFrame(reveal);
+      });
+    }
+
+    return () => {
+      if (settleFrame) cancelAnimationFrame(settleFrame);
+      if (revealFrame) cancelAnimationFrame(revealFrame);
+      if (revealTimer) window.clearTimeout(revealTimer);
+      view.classList.remove("ws-arrive-revealing");
+    };
+  }, [input.reducedMotion, input.viewRef]);
 
   useEffect(() => {
     const doc = input.docScrollRef.current;

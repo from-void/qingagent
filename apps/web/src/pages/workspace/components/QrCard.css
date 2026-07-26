@@ -183,6 +183,11 @@
   animation: qr-card__confirm-in 0.2s ease;
 }
 
+a.qr-card__confirm {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .qr-card__confirm:hover {
   background: #c9ad75;
 }

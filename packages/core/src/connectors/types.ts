@@ -2,6 +2,7 @@ export type ConnectorId = "github" | "feishu" | "wechat-mp";
 
 export type ConnectorAuthStrategy = "oauth2-device" | "device-flow-cli" | "qr-session";
 export type ConnectorCustody = "internal" | "external-cli";
+export type ConnectorAuthPresentation = "device-code" | "scan";
 
 export interface ConnectorScopeGroup {
   id: string;
@@ -16,6 +17,8 @@ export interface ConnectorDefinition {
   icon: string;
   official: boolean;
   authStrategy: ConnectorAuthStrategy;
+  /** 授权卡展示形态由连接器流程声明，模型不得猜测。 */
+  authPresentation: ConnectorAuthPresentation;
   custody: ConnectorCustody;
   scopeGroups: ConnectorScopeGroup[];
   tools: string[];

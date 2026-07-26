@@ -1,5 +1,7 @@
 import { createSession, documentRepo, persistSessionMetadata, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
 import { deleteDocumentFamilyByDocIds, getDocumentsClient } from "@qingagent/db";
+import { __resetDocumentsClientForTest } from "@qingagent/db/client";
+import { __resetMigrationsForTest } from "@qingagent/db/migrations";
 import { markdownToPm, normalizePmDoc } from "@qingagent/pm-schema";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,11 +14,15 @@ import { getExternalToken, startExternalInstance, stopExternalInstance } from ".
 
 const dirs: string[] = [];
 const syntheticSessionIds: string[] = [];
+const originalDatabaseUrl = process.env.DATABASE_URL;
 let token = "";
 
 beforeEach(async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "qa-sessions-test-"));
   dirs.push(dir);
+  process.env.DATABASE_URL = `file:${path.join(dir, "documents.db")}`;
+  __resetDocumentsClientForTest();
+  __resetMigrationsForTest();
   await startExternalInstance({ port: 52341, version: "test", filePath: path.join(dir, "instance.json") });
   token = getExternalToken() ?? "";
 });
@@ -27,6 +33,10 @@ afterEach(async () => {
   const ids = syntheticSessionIds.splice(0);
   for (const sessionId of ids) sessions.delete(sessionId);
   await deleteDocumentFamilyByDocIds(getDocumentsClient(), ids);
+  __resetDocumentsClientForTest();
+  __resetMigrationsForTest();
+  if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = originalDatabaseUrl;
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 

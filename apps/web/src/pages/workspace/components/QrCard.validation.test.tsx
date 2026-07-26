@@ -598,6 +598,7 @@ describe("QrCard — validation loop 3", () => {
 
   describe("(g) trusted connector polling", () => {
     const connectorCard = (): QrCardBody => ({
+      presentation: "device-code",
       title: "连接 GitHub", content: "https://example.test/device", imageDataUri: null,
       expiresAt: Date.now() + 60_000, code: "ABCD-EFGH", note: null,
       refreshQuery: "重新连接", confirmQuery: null, connectorId: "github", pendingId: "pending-safe-id",
@@ -607,6 +608,19 @@ describe("QrCard — validation loop 3", () => {
       render(<QrCard data={connectorCard()} />);
       expect(document.querySelector(".qr-card__frame")).toBeNull();
       expect(document.querySelector(".qr-card__usercode.is-hero")?.textContent).toContain("ABCD-EFGH");
+      expect(document.querySelector(".qr-card__confirm")?.textContent).toContain("复制代码并打开");
+    });
+
+    it("link 形态只展示打开链接，不生成二维码", () => {
+      render(<QrCard data={{
+        ...connectorCard(),
+        presentation: "link",
+        connectorId: undefined,
+        pendingId: undefined,
+        code: null,
+      }} />);
+      expect(document.querySelector(".qr-card__frame")).toBeNull();
+      expect(document.querySelector('a.qr-card__confirm')?.textContent).toBe("打开链接");
     });
 
     it("GitHub 输码卡过期后显示重新发起按钮而非二维码刷新", () => {
@@ -638,14 +652,14 @@ describe("QrCard — validation loop 3", () => {
       vi.useFakeTimers();
       const onStatusChange = vi.fn();
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "disconnected", reasonCode: "LARK_AUTH_MISSING" } }), { status: 200 })));
-      render(<QrCard data={{ ...connectorCard(), connectorId: "feishu", code: null }} onStatusChange={onStatusChange} />);
+      render(<QrCard data={{ ...connectorCard(), presentation: "scan", connectorId: "feishu", code: null }} onStatusChange={onStatusChange} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
       expect(onStatusChange).toHaveBeenCalledTimes(1);
     });
 
     it("微信新帧轮询成功显示已登录公众号，过期/410 进入中断分支", async () => {
       vi.useFakeTimers();
-      const wechat = { ...connectorCard(), connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null, confirmQuery: "confirm" };
+      const wechat = { ...connectorCard(), presentation: "scan" as const, connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null, confirmQuery: "confirm" };
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "connected", account: { displayName: "测试号" } } }), { status: 200 })));
       render(<QrCard data={wechat} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -654,7 +668,7 @@ describe("QrCard — validation loop 3", () => {
 
     it("微信 pending 带 WECHAT_SCANNED 时卡上显示已扫到提示", async () => {
       vi.useFakeTimers();
-      const wechat = { ...connectorCard(), connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null };
+      const wechat = { ...connectorCard(), presentation: "scan" as const, connectorId: "wechat-mp" as const, imageDataUri: "data:image/png;base64,AA", content: "", code: null };
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: { state: "pending", reasonCode: "WECHAT_SCANNED" } }), { status: 200 })));
       render(<QrCard data={wechat} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });

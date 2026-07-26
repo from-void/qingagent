@@ -1,5 +1,6 @@
 import { pmToPlainText } from "@qingagent/pm-schema";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { AnnotationCarousel, buildAnnotationInstruction } from "./AnnotationCarousel";
 import { AssetPreview } from "./AssetPreview";
 import { DocFindBar } from "./DocFindBar";
@@ -29,6 +30,7 @@ import {
 } from "../data/revisionedMutation";
 import type { WorkspacePageController } from "../hooks/useWorkspacePageController";
 import type { DerivativeItem } from "./derivatives/types";
+import type { DerivativeDocument } from "./derivatives/types";
 
 function staleDismissKey(item: DerivativeItem): string {
   return `${item.docId}:${item.currentSourceVersion}`;
@@ -42,6 +44,10 @@ export function WorkspaceDocumentPane({
   const [dismissedStaleKeys, setDismissedStaleKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [derivativeDocCache, setDerivativeDocCache] = useState<
+    Map<string, DerivativeDocument>
+  >(() => new Map());
+  const derivativeTabRequestRef = useRef(0);
   const isStaleDismissed = useCallback(
     (item: DerivativeItem) => dismissedStaleKeys.has(staleDismissKey(item)),
     [dismissedStaleKeys],
@@ -105,6 +111,7 @@ export function WorkspaceDocumentPane({
     handleCancelAskUser,
     closeViewingVersion,
     setTiptapEditor,
+    markDocumentSurfaceReady,
     handleEditorChange,
     clearPresentationRun,
     findOpen,
@@ -152,6 +159,34 @@ export function WorkspaceDocumentPane({
     chatInputRef,
   } = controller;
 
+  useEffect(() => {
+    if (
+      controller.hydration.phase !== "waiting" ||
+      !controller.hydration.documentSeen
+    ) {
+      return;
+    }
+    const pane = docScrollRef.current;
+    if (!pane) return;
+    const markWhenPaintable = () => {
+      if (!pane.querySelector(".wf-doc")) return false;
+      markDocumentSurfaceReady();
+      return true;
+    };
+    if (markWhenPaintable()) return;
+    const observer = new MutationObserver(() => {
+      if (!markWhenPaintable()) return;
+      observer.disconnect();
+    });
+    observer.observe(pane, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [
+    controller.hydration.documentSeen,
+    controller.hydration.phase,
+    docScrollRef,
+    markDocumentSurfaceReady,
+  ]);
+
   const derivativeActive = activeTab !== "main";
   const translationItems = derivatives.filter(
     (item) => item.dtype === "translate",
@@ -160,6 +195,68 @@ export function WorkspaceDocumentPane({
     activeTab === "translate"
       ? translationItems[0]
       : derivatives.find((item) => item.docId === activeTab);
+  const activeDerivativeCacheKey =
+    state.sessionId && activeDerivative
+      ? `${state.sessionId}:${activeDerivative.docId}:${activeDerivative.generatedAt ?? ""}`
+      : null;
+  const activateDocumentTab = useCallback(
+    (nextTab: "main" | string) => {
+      const requestId = derivativeTabRequestRef.current + 1;
+      derivativeTabRequestRef.current = requestId;
+      if (nextTab === "main" || !state.sessionId || !streamRef.current) {
+        setActiveTab(nextTab);
+        return;
+      }
+      const target =
+        nextTab === "translate"
+          ? translationItems[0]
+          : derivatives.find((item) => item.docId === nextTab);
+      if (!target) return;
+      const cacheKey = `${state.sessionId}:${target.docId}:${target.generatedAt ?? ""}`;
+      if (
+        derivativeDocCache.has(cacheKey) ||
+        pendingDerivativeGeneration === target.docId ||
+        state.translationGen.has(target.docId)
+      ) {
+        setActiveTab(nextTab);
+        return;
+      }
+
+      // 既有衍生稿先取正文再换 tab：网络等待期保留当前稳定纸面，避免先挂空纸再替换。
+      void streamRef.current
+        .getDerivativeDoc(state.sessionId, target.docId)
+        .then((document) => {
+          if (
+            derivativeTabRequestRef.current !== requestId ||
+            document?.meta.docId !== target.docId
+          ) {
+            return;
+          }
+          setDerivativeDocCache((current) => {
+            const next = new Map(current);
+            next.set(cacheKey, document);
+            return next;
+          });
+          setActiveTab(nextTab);
+        })
+        .catch((error) => {
+          if (derivativeTabRequestRef.current !== requestId) return;
+          console.error("[workspace] preload derivative tab failed", error);
+          showToast("稿件打开失败 · 请重试");
+        });
+    },
+    [
+      derivativeDocCache,
+      derivatives,
+      pendingDerivativeGeneration,
+      setActiveTab,
+      showToast,
+      state.sessionId,
+      state.translationGen,
+      streamRef,
+      translationItems,
+    ],
+  );
 
   return (
     <>
@@ -179,36 +276,45 @@ export function WorkspaceDocumentPane({
         />
       ) : null}
       <div
-        className={`ws-right${previewExit.source ? " is-previewing" : ""}`}
+        className={`${WORKSPACE_PAPER_DOM.paperColumnClass}${previewExit.source ? " is-previewing" : ""}`}
         ref={docScrollRef}
       >
-        {dim.content.kind === "empty" && derivatives.length === 0 ? null : (
-          <DerivTabBar
-            title={title}
-            items={derivatives}
-            activeTab={activeTab}
-            onActivate={setActiveTab}
-            onCreate={(dtype) => {
-              setDerivativeCreateDtype(dtype);
-              setDerivativeCreateOpen(true);
-            }}
-            createDisabledReason={derivativeCreateDisabledReason}
-            isStaleDismissed={isStaleDismissed}
-            onRename={async (nextTitle) => {
-              const previousTitle = title;
-              setTitle(nextTitle);
-              try {
-                const stream = streamRef.current;
-                if (!stream || !state.sessionId) throw new Error("会话未就绪");
-                await stream.renameSession(state.sessionId, nextTitle);
-              } catch (error) {
-                setTitle(previousTitle);
-                console.error("[workspace] rename session failed", error);
-                showToast("标题修改失败 · 请重试");
-              }
-            }}
-          />
-        )}
+        <div
+          className={WORKSPACE_PAPER_DOM.paperShellClass}
+          data-wf={WORKSPACE_PAPER_DOM.paperShellDataWf}
+          aria-hidden="true"
+        />
+        <div
+          className={WORKSPACE_PAPER_DOM.documentContentClass}
+          data-wf="WorkspaceHydrationDocumentContent"
+        >
+          {dim.content.kind === "empty" && derivatives.length === 0 ? null : (
+            <DerivTabBar
+              title={title}
+              items={derivatives}
+              activeTab={activeTab}
+              onActivate={activateDocumentTab}
+              onCreate={(dtype) => {
+                setDerivativeCreateDtype(dtype);
+                setDerivativeCreateOpen(true);
+              }}
+              createDisabledReason={derivativeCreateDisabledReason}
+              isStaleDismissed={isStaleDismissed}
+              onRename={async (nextTitle) => {
+                const previousTitle = title;
+                setTitle(nextTitle);
+                try {
+                  const stream = streamRef.current;
+                  if (!stream || !state.sessionId) throw new Error("会话未就绪");
+                  await stream.renameSession(state.sessionId, nextTitle);
+                } catch (error) {
+                  setTitle(previousTitle);
+                  console.error("[workspace] rename session failed", error);
+                  showToast("标题修改失败 · 请重试");
+                }
+              }}
+            />
+          )}
 
         {!derivativeActive && dim.content.kind !== "empty" ? (
           <div className="ws-docfns" data-wf="WorkspaceDocFunctions">
@@ -363,6 +469,11 @@ export function WorkspaceDocumentPane({
             }
             sessionId={state.sessionId}
             item={activeDerivative}
+            initialDocument={
+              activeDerivativeCacheKey
+                ? derivativeDocCache.get(activeDerivativeCacheKey) ?? null
+                : null
+            }
             items={activeTab === "translate" ? translationItems : undefined}
             stream={streamRef.current}
             streamActive={agentActive}
@@ -549,6 +660,7 @@ export function WorkspaceDocumentPane({
             closing={previewExit.closing}
           />
         )}
+        </div>
       </div>
     </>
   );

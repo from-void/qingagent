@@ -7,7 +7,7 @@ import { startToolHeartbeat } from "../../toolHeartbeat.js";
 /** 模型只选择最小固定 scope；device_code/token 始终封装在 connector service 内。 */
 export const githubAuthStartTool = createTool({
   id: "github_auth_start",
-  description: "在用户需要连接 GitHub 时发起可信 device flow 授权卡。默认 repo(含私有仓);仅当用户明确只要公开仓时才传 public_repo。",
+  description: "在用户需要连接 GitHub 时发起可信 device flow；流层会自动展示纯配对码授权卡（无二维码），不要再调用 show_qr 或复述配对码。默认 repo(含私有仓);仅当用户明确只要公开仓时才传 public_repo。",
   inputSchema: z.object({ scope: z.enum(["public_repo", "repo"]).default("repo") }).strict(),
   execute: async (input, context) => {
     const stop = startToolHeartbeat(context, { tool: "github_auth_start" });

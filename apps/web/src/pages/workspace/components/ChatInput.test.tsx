@@ -119,6 +119,57 @@ describe("ChatInput", () => {
     expect(attachChipLabels()).toEqual(["alpha.txt", "beta.txt"]);
   });
 
+  it("长附件文件名中间省略并保留扩展名，短名保持原样，hover 展示全名", async () => {
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+      />,
+    );
+    const longName = "这是一份非常非常长的中文项目验收报告最终版.pdf";
+    const shortName = "简报.md";
+
+    await selectFiles([
+      new File(["long"], longName, { type: "application/pdf" }),
+      new File(["short"], shortName, { type: "text/markdown" }),
+    ]);
+
+    const labels = Array.from(
+      getEditor().querySelectorAll<HTMLElement>('.chat-chip[data-kind="attach"] .c-label'),
+    );
+    expect(labels[0]?.textContent).toContain("…");
+    expect(labels[0]?.textContent).toMatch(/\.pdf$/);
+    expect(labels[0]?.textContent).not.toBe(longName);
+    expect(labels[0]?.title).toBe(longName);
+    expect(labels[1]?.textContent).toBe(shortName);
+    expect(labels[1]?.title).toBe(shortName);
+  });
+
+  it("素材引用 chip 的长文件名中间省略且扩展名与完整 title 可见", async () => {
+    const longName = "29887bbc-932c-408e-b5fc-93f2.png";
+    await render(
+      <ChatInput
+        {...baseFolderProps()}
+        placeholder="输入"
+        onSubmit={() => undefined}
+        materialParseRows={[readyMaterialRow("res-long-name", longName)]}
+      />,
+    );
+
+    clickElement(getLinkedFilesBar());
+    const referenceButton = Array.from(rowByText(longName).querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("引用"));
+    if (!referenceButton) throw new Error("reference button not found");
+    clickElement(referenceButton);
+
+    const label = getEditor().querySelector<HTMLElement>('.chat-chip[data-kind="attach"] .c-label');
+    expect(label?.textContent).toContain("…");
+    expect(label?.textContent).toMatch(/\.png$/);
+    expect(label?.textContent).not.toBe(longName);
+    expect(label?.title).toBe(longName);
+  });
+
   it("同名重复选择复用现有 attach chip,不新增幽灵 chip", async () => {
     const ref = createRef<ChatInputHandle>();
     await render(

@@ -20,7 +20,6 @@ import "./chatUnified.css";
 // —— 统一自设线性图标 ——
 const ICO = {
   check: "M4 8.5l3 3 5-6.5",
-  error: "M8 2.5v6 M8 12.5h.01 M2.5 8a5.5 5.5 0 1111 0 5.5 5.5 0 01-11 0",
   cancel: "M4 4l8 8 M12 4l-8 8",
   stop: "M4 4h8v8H4z",
   search: "M7 7m-4 0a4 4 0 108 0 4 4 0 10-8 0 M11 11l3.5 3.5",
@@ -215,12 +214,6 @@ function boolField(o: Record<string, unknown>, key: string): boolean | null {
   return typeof o[key] === "boolean" ? (o[key] as boolean) : null;
 }
 
-function stringField(o: Record<string, unknown>, key: string): string | null {
-  return typeof o[key] === "string" && (o[key] as string).trim()
-    ? (o[key] as string)
-    : null;
-}
-
 function isToolResultFailure(result: ToolCallResult | null, toolName?: string): boolean {
   const o = parseGenericResultObject(result);
   if (!o) return false;
@@ -232,15 +225,6 @@ function isToolResultFailure(result: ToolCallResult | null, toolName?: string): 
     default:
       return false;
   }
-}
-
-function pickOutputHint(result: ToolCallResult | null, toolName?: string): string | null {
-  const o = parseGenericResultObject(result);
-  if (!o) return null;
-  if (toolName === "readImage" && boolField(o, "ok") === false) {
-    return stringField(o, "error");
-  }
-  return null;
 }
 
 // 工具完成态右侧状态文案:把后端 toolResultCardSummary 产出的紧凑 JSON
@@ -351,6 +335,7 @@ export function UToolBar({
   const pending = k === "pending";
   const running = k === "running";
   const failed = k === "failed";
+  const abortedStatus = k === "aborted";
   const label = bodyKindLabel(spec);
   // 只针对「流式还没输出完」的占位态:刚建占位卡(generic body 且参数 JSON 还没到,argsJson 为空)。
   // 参数到位/工具执行中/完成/失败 一律不改,仍走下面原有的条/卡。
@@ -381,33 +366,23 @@ export function UToolBar({
     main = clip(materialLabels[rawMaterialId] ?? main);
   }
   const customOut = !pending && !running && !failed ? pickOutputSummary(spec.result, spec.name) : null;
-  const semanticFailed = !pending && !running && !failed && isToolResultFailure(spec.result, spec.name);
-  const outputHint = semanticFailed ? pickOutputHint(spec.result, spec.name) : null;
+  const semanticFailed =
+    !pending && !running && !failed && !abortedStatus &&
+    isToolResultFailure(spec.result, spec.name);
   // 读取后台进程输出 = 有界等待:左侧保留本次检查倒计时，右侧持续显示已等待时长；
   // stdout/stderr 流动时短暂切成「仍在输出」，不使用闪烁动画。
   const isProcOutTool = spec.name === "mastra_workspace_get_process_output";
   const isProcOut = running && isProcOutTool;
   const aborted =
-    spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted";
+    abortedStatus ||
+    (spec.body.kind === "generic" && spec.body.data.terminalKind === "aborted");
   const procOutSecs = (() => {
     if (!isProcOut) return null;
     const t = parseArgs(spec).timeout;
     return typeof t === "number" && t > 0 ? Math.round(t / 1000) : null;
   })();
-  // failed 按 retriable 分档(用户拍板:工具行不出红色的内部报错):
-  //  - aborted(已中止)优先:更具体的终态,停止图标、不红;
-  //  - retriable:false = 真终态(抓取失败/拒绝落库/命令拦截),保留红色+原因——这是"假成功✅"
-  //    修复(fetchArticle bug-2)的用户确认行为,不能倒回对勾;
-  //  - retriable:true = agent 内部重试提示(editDraft 定位未命中、参数重发等),agent 会自行
-  //    换招重试,只是周知 → 常规图标 + 灰字「未完成」,原因藏 hover title 供排查。
-  //    图标不搞特殊(黄点/错误/等待都不要):用户对这行无法操作,特殊图标没有意义(用户拍板)。
-  const failedTerminal =
-    failed && !aborted && spec.status.kind === "failed" && spec.status.data.retriable === false;
-  const failedRetriable = failed && !aborted && !failedTerminal;
-  const failedReason =
-    failed && spec.status.kind === "failed"
-      ? spec.status.data.reason
-      : null;
+  // AGENTS.md UI Iron Rule:工具失败/中止一律中性灰短文案；协议 reason 只供日志与
+  // agent 诊断，绝不进入正文、title 或 aria 文本，避免英文原始错误和内部路径泄露。
   const waitReturnedWhileRunning =
     isProcOutTool &&
     spec.result?.kind === "genericText" &&
@@ -421,41 +396,33 @@ export function UToolBar({
   // 原则:工具只要返回了结果,通用对话行就按完成收口;工具内部失败由 agent 感知并在正文里沟通。
   // 这里的 failed 只渲染后端明确给出的未执行/异常状态,不把 "[Error]" 文本再高亮成失败。
   const statusText = aborted
-    ? "已中止，结果可能未知"
+    ? "已中止"
     : pending
       ? "等待中"
       : running
         ? runningText
-        : failedRetriable
+        : failed || semanticFailed
           ? "未完成"
-          : failedTerminal || semanticFailed
-            ? (failedReason ?? customOut ?? "未完成")
-            : isProcOutTool
+          : isProcOutTool
               ? waitReturnedWhileRunning
                 ? "本次等待结束，仍在运行"
                 : "已读取输出"
               : (customOut ?? "已完成");
-  // 明确的 tool-error 是协议终态 failed，不能再投影成“对勾/已完成”；
-  // aborted 是更具体的已中止终态，不应沿用普通失败的红色错误态。
-  // 工具自己返回 ok:false 的语义失败仍沿用常规卡片样式，由 agent 在正文解释。
+  // 失败不能投影成“完成”对勾；失败与中止都只使用中性停止图标。
   const ico = pending ? <span className="u-dot" />
     : running ? (LONG_RUNNING.has(spec.name) ? <Spin /> : <Dots />)
-    : aborted ? <UIcon d={ICO.stop} />
-    : failedTerminal ? <UIcon d={ICO.error} />
+    : aborted || failed || semanticFailed ? <UIcon d={ICO.stop} />
     : <UIcon d={DONE_ICON_BY_KIND[spec.body.kind] ?? ICO.check} />;
   const seg = isProcOut && procOutSecs
     ? <span className="u-seg"><Countdown seconds={procOutSecs} /></span>
     : main ? <span className="u-seg">{main}</span> : null;
   return (
     <div className="u-bar">
-      <span className={`u-ico${failedTerminal ? " is-error" : ""}`}>{ico}</span>
+      <span className="u-ico">{ico}</span>
       <span className="u-lbl">{label}</span>
       {seg}
       <span className="u-spacer" />
-      <span
-        className={`u-meta${failedTerminal ? " is-error" : ""}`}
-        title={failedRetriable ? (failedReason ?? undefined) : (outputHint ?? undefined)}
-      >{statusText}</span>
+      <span className="u-meta">{statusText}</span>
     </div>
   );
 }
@@ -493,25 +460,40 @@ function UCard({ icon, title, sub, meta, running, collapsible, defaultOpen = tru
 }
 
 // ═══════════ 各工具卡(二次定制) ═══════════
-export function UResearch({ body }: { body: ResearchCardBody }) {
-  const done = body.phase === "done";
+export function UResearch({
+  body,
+  status = body.phase === "done" ? "done" : "running",
+}: {
+  body: ResearchCardBody;
+  status?: ToolCallSpec["status"]["kind"];
+}) {
+  const aborted = status === "aborted";
+  const failed = status === "failed";
+  const terminal = aborted || failed;
+  const done = status === "done" || (!terminal && body.phase === "done");
   const items = body.items.filter((it) => it.status !== "skipped");
   // 进度分子用 okCount(真正抓到实质正文的篇数),不用 fetchedCount(含略过的)——
   // 否则会出现"抓取 5/6"最后却只有"4 篇"的尴尬;改后 "抓取 4/6" 直接收敛到 "4 篇"。
-  const meta = body.phase === "searching" ? "检索中…"
+  const meta = aborted ? "已中止"
+    : failed ? "未完成"
+    : body.phase === "searching" ? "检索中…"
     : body.phase === "fetching" ? `抓取 ${body.okCount}/${body.total ?? "…"}`
     : `${body.okCount} 篇`;
   return (
-    <UCard icon={ICO.search} title="检索" sub={body.query} meta={meta} running={!done} collapsible={body.phase !== "searching"} defaultOpen={!done}>
+    <UCard icon={terminal ? ICO.stop : ICO.search} title="检索" sub={body.query} meta={meta} running={!done && !terminal} collapsible={body.phase !== "searching"} defaultOpen={!done && !terminal}>
       {items.length > 0 && (
         <div className="u-card-bd">
           <div className="u-list">
             {items.map((it, i) => {
               // 契约四态:pending=待抓取(灰点,不转) / fetching=抓取中(转) / browser=经浏览器(转) / done=对勾+字数
+              const itemInFlight =
+                it.status === "pending" || it.status === "fetching" || it.status === "browser";
               const ico = it.status === "done" ? <UIcon d={ICO.check} size={13} />
+                : terminal && itemInFlight ? <UIcon d={ICO.stop} size={13} />
                 : it.status === "pending" ? <span className="u-list-wait" />
                 : <Spin />;
               const tag = it.status === "done" ? (it.wordCount ? `${it.wordCount.toLocaleString("zh-CN")} 字` : "已抓取")
+                : terminal && itemInFlight ? (aborted ? "已中止" : "未完成")
                 : it.status === "browser" ? "经浏览器"
                 : it.status === "pending" ? "待抓取"
                 : "抓取中";
@@ -543,14 +525,15 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
   const [fullscreen, setFullscreen] = useState(false);
   const stage = body.progress?.stage;
   const done = status === "done" || stage === "done";
+  const aborted = status === "aborted";
   const failed = status === "failed" || stage === "failed";
-  const running = !done && !failed;
-  const meta = done ? "已完成" : failed ? "生成失败" : "生成中";
+  const running = !done && !failed && !aborted;
+  const meta = done ? "已完成" : aborted ? "已中止" : failed ? "未完成" : "生成中";
   const src = body.progress?.src ?? null;
   const partial = running ? body.progress?.partialSvg ?? null : null;
   return (
     <>
-      <UCard icon={ICO.image} title="生成配图" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
+      <UCard icon={failed || aborted ? ICO.stop : ICO.image} title="生成配图" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
         <div className="u-card-bd">
           {done && src ? (
             <button type="button" className="u-thumb u-thumb-btn" onClick={() => setFullscreen(true)} title="全屏预览">
@@ -561,7 +544,7 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
               <span className="u-thumb-svg" dangerouslySetInnerHTML={{ __html: partial }} />
               <span className="u-thumb-pulse" aria-hidden="true" />
             </span>
-          ) : failed ? <div className="u-foot">{body.progress?.error ?? "生成失败"}</div>
+          ) : failed || aborted ? <div className="u-foot">{meta}</div>
             : <div className="u-thumb-empty">草稿生成中…</div>}
         </div>
       </UCard>
@@ -576,11 +559,13 @@ export function USvg({ body, status }: { body: GenerateSvgCardBody; status: stri
 
 type ReadImageBody = { prompt: string; thumbnailSrc: string | null; excerpt: string | null };
 export function UReadImage({ body, status }: { body: ReadImageBody; status: string }) {
-  const done = status === "done" || status === "failed";
-  const running = !done;
-  const meta = status === "failed" ? "识别失败" : done ? "已完成" : "处理中";
+  const aborted = status === "aborted";
+  const failed = status === "failed";
+  const done = status === "done";
+  const running = !done && !failed && !aborted;
+  const meta = aborted ? "已中止" : failed ? "未完成" : done ? "已完成" : "处理中";
   return (
-    <UCard icon={ICO.image} title="识别图片" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
+    <UCard icon={failed || aborted ? ICO.stop : ICO.image} title="识别图片" sub={body.prompt} meta={meta} running={running} collapsible defaultOpen={running}>
       <div className="u-card-bd">
         {body.thumbnailSrc && (
           <span className="u-thumb">
@@ -588,7 +573,7 @@ export function UReadImage({ body, status }: { body: ReadImageBody; status: stri
             {running && <span className="u-thumb-pulse" aria-hidden="true" />}
           </span>
         )}
-        {body.excerpt && <div className="u-foot">{body.excerpt}</div>}
+        {done && body.excerpt && <div className="u-foot">{body.excerpt}</div>}
       </div>
     </UCard>
   );
@@ -636,6 +621,8 @@ export function UCommand({
   // status 是单一权威；body.phase 只兼容尚未带终态 status 的旧帧。
   const phase = statusKind === "failed"
     ? "failed"
+    : statusKind === "aborted"
+      ? "failed"
     : statusKind === "done"
       ? "done"
       : statusKind === "pending" || statusKind === "running"
@@ -645,25 +632,27 @@ export function UCommand({
   const failed = phase === "failed";
   const running = phase === "running";
   const queued = statusKind === "pending";
-  const terminalKind = running ? undefined : body.terminalKind;
+  const terminalKind = running
+    ? undefined
+    : statusKind === "aborted"
+      ? "aborted"
+      : body.terminalKind;
   const meta = terminalKind === "rejected"
     ? "已取消，命令未执行"
     : terminalKind === "killed"
       ? body.signal ? `已终止（${body.signal}）` : "已终止"
       : terminalKind === "aborted"
-        ? "已中止，结果可能未知"
+        ? "已中止"
         : terminalKind === "timedOut"
-          ? "执行超时"
+          ? "已超时"
           : terminalKind === "failed"
-            ? body.exitCode > 0
-              ? `运行失败（退出码 ${body.exitCode}）`
-              : "运行失败"
+            ? "未完成"
             : terminalKind === "succeeded" || done
               ? body.background === true && body.pid
                 ? `已在后台启动（PID: ${body.pid}）`
                 : "已完成"
               : failed
-                ? "运行失败"
+                ? "未完成"
                 : queued
                   ? "已确认，排队执行"
                   : "处理中";
@@ -674,9 +663,10 @@ export function UCommand({
       : terminalKind === "killed" || terminalKind === "aborted"
         ? ICO.stop
         : terminalKind === "failed" || terminalKind === "timedOut"
-          ? ICO.error
+          ? ICO.stop
           : ICO.cmd;
-  const expandable = Boolean(body.command || body.outputTail);
+  const showOutput = !failed && terminalKind !== "timedOut" && terminalKind !== "aborted";
+  const expandable = Boolean(body.command || (showOutput && body.outputTail));
   return (
     <UCard icon={icon} title={body.title} meta={meta} running={running} collapsible={expandable} defaultOpen={running}>
       {expandable && (
@@ -684,7 +674,7 @@ export function UCommand({
           {body.command && (
             <ScrollBox lines={4} variant="code">{body.command.includes("\n") ? body.command : `$ ${body.command}`}</ScrollBox>
           )}
-          {body.outputTail && (
+          {showOutput && body.outputTail && (
             <ScrollBox lines={3} variant="output">{body.outputTail}</ScrollBox>
           )}
         </div>
@@ -750,7 +740,7 @@ export function UnifiedToolCall({
   materialLabels?: MaterialLabelMap;
 }) {
   const b = spec.body;
-  if (b.kind === "researchCard") return <UResearch body={b.data} />;
+  if (b.kind === "researchCard") return <UResearch body={b.data} status={spec.status.kind} />;
   if (b.kind === "readImageCard") return <UReadImage body={b.data} status={spec.status.kind} />;
   if (b.kind === "generateSvg") return <USvg body={b.data} status={spec.status.kind} />;
   if (b.kind === "commandCard") {

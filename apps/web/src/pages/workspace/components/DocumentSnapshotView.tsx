@@ -19,6 +19,7 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 import { APPLYING_REMOTE_META, createDedupeBlockIdsTransaction, createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import { flattenNestedTablesInCells, legacySectionsToPm, markdownToPm, normalizePmDoc, pmToClipboardHtml, pmToPlainText, upgradeMermaidCodeBlocksToDiagram, type PmDoc, type PmInlineNode, type PmTableCellNode } from "@qingagent/pm-schema";
+import { WORKSPACE_PAPER_DOM } from "../../../system/workspacePaperGeometry";
 import { CodeBlockCM } from "./CodeBlockView";
 import { CalloutCM } from "./CalloutView";
 import { findDraggableBlock, type MovableBlock } from "./ColumnDnD";
@@ -316,7 +317,7 @@ export const DocumentSnapshotView = forwardRef<
       <div className="ws-editor-glow" data-wf="WorkspaceEditorGlow" aria-hidden="true" />
       <article
         ref={articleRef}
-        className="wf-doc"
+        className={WORKSPACE_PAPER_DOM.documentClass}
         style={{ maxWidth: 800, paddingRight: 200 }}
         data-wf="DocumentSnapshotView"
         data-version={doc.version}

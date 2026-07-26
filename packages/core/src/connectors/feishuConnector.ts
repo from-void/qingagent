@@ -34,6 +34,7 @@ const feishuConnectorDefinition = {
   icon: "feishu",
   official: true,
   authStrategy: "device-flow-cli",
+  authPresentation: "scan",
   custody: "external-cli",
   scopeGroups: [],
   tools: ["feishu_auth_start"],

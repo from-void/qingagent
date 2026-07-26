@@ -169,7 +169,7 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("已完成");
   });
 
-  it("retriable 失败 = agent 内部重试提示:常规图标+灰字「未完成」,无红色无黄点,行话藏 hover", () => {
+  it("retriable 失败只显示灰字「未完成」,无红色无黄点且不在 hover 泄露行话", () => {
     // 用户拍板(260725/26):editDraft 定位未命中这类 agent 会自行重试的内部报错,
     // 不许红字怼给用户;图标也不搞特殊(黄点/错误/等待都不要)——用户对这行无法操作,
     // 只是周知。但右侧文案不能是"已完成"(P2-1 假成功教训),用「未完成」。
@@ -188,10 +188,10 @@ describe("UToolBar", () => {
     expect(host.querySelector(".u-meta.is-error")).toBeNull();
     expect(host.querySelector(".u-dot")).toBeNull();
     expect(host.querySelector(".u-ico svg")).not.toBeNull();
-    expect(host.querySelector(".u-meta")?.getAttribute("title")).toContain("文本未命中");
+    expect(host.querySelector(".u-meta")?.getAttribute("title")).toBeNull();
   });
 
-  it("终态失败(retriable:false)保留红色错误图标与原因,不误显完成对勾", () => {
+  it("终态失败(retriable:false)同样中性化且不披露原因", () => {
     const failed = genericSpec("failed", "{}");
     failed.status = {
       kind: "failed",
@@ -200,10 +200,12 @@ describe("UToolBar", () => {
 
     renderBar(failed);
 
-    expect(host.textContent).toContain("网页抓取失败:目标不可达");
+    expect(host.textContent).toContain("未完成");
+    expect(host.textContent).not.toContain("网页抓取失败:目标不可达");
     expect(host.textContent).not.toContain("已完成");
-    expect(host.querySelector(".u-ico.is-error")).not.toBeNull();
-    expect(host.querySelector(".u-meta.is-error")).not.toBeNull();
+    expect(host.querySelector(".u-ico.is-error")).toBeNull();
+    expect(host.querySelector(".u-meta.is-error")).toBeNull();
+    expect(host.querySelector(".u-meta")?.getAttribute("title")).toBeNull();
   });
 
   it("#27 writeDraft 参数生成期占位显示「酝酿中…」", () => {
@@ -326,7 +328,7 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("1.5K 字");
   });
 
-  it("parseFile 失败态直接显示文件过大原因", () => {
+  it("parseFile 失败态只显示中性短文案", () => {
     renderBar({
       id: "parse-large",
       name: "parseFile",
@@ -341,7 +343,8 @@ describe("UToolBar", () => {
         data: JSON.stringify({ ok: false, errorCode: "FILE_TOO_LARGE" }),
       },
     });
-    expect(host.textContent).toContain("文件过大（上限 64MiB）");
+    expect(host.textContent).toContain("未完成");
+    expect(host.textContent).not.toContain("文件过大（上限 64MiB）");
     expect(host.textContent).not.toContain("0 字");
   });
 
@@ -352,7 +355,7 @@ describe("UToolBar", () => {
     expect(host.textContent).toContain("2K 字");
   });
 
-  it("fetchArticle 明确失败时显示真实原因且不渲染成功对勾", () => {
+  it("fetchArticle 明确失败时隐藏真实原因且不渲染成功对勾", () => {
     renderBar({
       id: "fetch-loopback",
       name: "fetchArticle",
@@ -371,8 +374,9 @@ describe("UToolBar", () => {
       },
     });
 
-    expect(host.textContent).toContain("Blocked loopback address");
-    expect(host.querySelector(".u-ico.is-error")).not.toBeNull();
+    expect(host.textContent).toContain("未完成");
+    expect(host.textContent).not.toContain("Blocked loopback address");
+    expect(host.querySelector(".u-ico.is-error")).toBeNull();
     expect(host.querySelector(".u-ico svg path")?.getAttribute("d")).not.toBe(
       "M4 8.5l3 3 5-6.5",
     );
@@ -391,24 +395,24 @@ describe("UToolBar", () => {
     renderBar(doneSpec("readImage", { ok: true }));
     expect(host.textContent).toContain("已识别");
     renderBar(doneSpec("run_js", { ok: false }));
-    expect(host.textContent).toContain("运行失败");
+    expect(host.textContent).toContain("未完成");
   });
 
-  it("readImage ok=false 渲染成需配置/失败态,不误显已完成;且不再红色报错(设计原则)", () => {
+  it("readImage ok=false 只显示中性失败态,不误显已完成且不披露配置详情", () => {
     renderBar(doneSpec("readImage", {
       ok: false,
       text: "",
       error: "还未配置图像识别模型,请在 设置 → 技能 → 图像识别 里填写模型 API Key。",
     }));
 
-    expect(host.textContent).toContain("需配置视觉模型");
+    expect(host.textContent).toContain("未完成");
+    expect(host.textContent).not.toContain("设置 → 技能 → 图像识别");
     expect(host.textContent).not.toContain("已完成");
     // 设计原则:工具"只要调过了"就不再红色报错——失败/需配置态一律常规图标,不加 is-error。
     expect(host.querySelector(".u-ico.is-error")).toBeNull();
     expect(host.querySelector(".u-meta.is-error")).toBeNull();
-    // 但排查提示仍保留在 .u-meta 的 title 上,指引用户去配置。
     const meta = host.querySelector<HTMLElement>(".u-meta");
-    expect(meta?.getAttribute("title")).toContain("设置 → 技能 → 图像识别");
+    expect(meta?.getAttribute("title")).toBeNull();
   });
 
   it("readDraft 优先字数,退化为「N 块」", () => {

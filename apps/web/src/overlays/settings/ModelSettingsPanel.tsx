@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UsageSummaryResponse, UsageSummaryRow } from "@qingagent/contract-ts";
 import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
+import { CalendarDatePicker } from "../../system/CalendarDatePicker";
+import { SkinSelect } from "../../system/SkinSelect";
 import "./modelDashboard.css";
 import { SecretInput } from "./SecretInput";
 import { ensureSettingsDialogA11y } from "./settingsDialogA11y";
@@ -56,26 +59,12 @@ interface ServerModelSettings {
   params: { temperature?: number; topP?: number; maxOutputTokens?: number } | null;
 }
 
-interface UsageRow {
-  bucket: string;
-  /** 会话视图:bucket(sessionId)对应的文档标题,由服务端注入。 */
-  label?: string;
-  callSite: string;
-  modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheHitTokens: number;
-  cacheMissTokens: number;
-  cacheCreationTokens: number;
-  cacheHitRate: number | null;
-  calls: number;
-  recordedCalls: number;
-  missingCalls: number;
-  coverageRate: number;
-  costCny?: number;
-}
+type UsageRow = UsageSummaryRow;
 
 type UsageView = "day" | "session" | "total";
+type UsageMode = "simple" | "expert";
+
+const USAGE_MODE_STORAGE_KEY = "qingagent:model-usage-mode";
 
 interface BalanceState {
   ok: boolean;
@@ -137,6 +126,8 @@ export function ModelSettingsPanel() {
   const [verifyMsg, setVerifyMsg] = useState("");
   // 明细表的视图切换(看板的趋势/分布图用独立的 day/total 数据,不受这里影响)
   const [usageView, setUsageView] = useState<UsageView>("day");
+  const [usageMode, setUsageMode] = useState<UsageMode>(() => readUsageMode());
+  const [expandedUsageGroups, setExpandedUsageGroups] = useState<Set<string>>(() => new Set());
   const [usage, setUsage] = useState<UsageRow[] | null>(null);
   const [usageDate, setUsageDate] = useState("");
   // 看板专用:按天(趋势 + 近 7 天消耗)与总计(按模型分布)
@@ -210,7 +201,7 @@ export function ModelSettingsPanel() {
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
       if (res.ok) {
-        const body = (await res.json()) as { rows?: UsageRow[] };
+        const body = (await res.json()) as Partial<UsageSummaryResponse>;
         if (mountedRef.current && !signal?.aborted) setUsage(body.rows ?? []);
       }
     } catch {
@@ -222,7 +213,7 @@ export function ModelSettingsPanel() {
   const loadDashboardUsage = useCallback(async (view: "day" | "total", signal?: AbortSignal) => {
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
-      const rows = res.ok ? (((await res.json()) as { rows?: UsageRow[] }).rows ?? []) : [];
+      const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
       if (mountedRef.current && !signal?.aborted) {
         if (view === "day") setDayUsage(rows);
         else setTotalUsage(rows);
@@ -648,6 +639,26 @@ export function ModelSettingsPanel() {
     return usage;
   }, [usage, usageDate, usageView]);
   const usageDateUnsupported = usageDate !== "" && usageView !== "day";
+  const usageGroups = useMemo(
+    () => visibleUsage === null ? null : buildUsageGroups(visibleUsage, usageView),
+    [visibleUsage, usageView],
+  );
+
+  const toggleUsageMode = () => {
+    const nextMode: UsageMode = usageMode === "simple" ? "expert" : "simple";
+    setUsageMode(nextMode);
+    setExpandedUsageGroups(new Set());
+    persistUsageMode(nextMode);
+  };
+
+  const toggleUsageGroup = (key: string) => {
+    setExpandedUsageGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // —— 连通性状态:自动 checkBalance 结果 → 色点 + 文案 ——
   const status = deriveConnectivity(balance, balanceLoading, modelProvider);
@@ -860,18 +871,23 @@ export function ModelSettingsPanel() {
           </p>
           <div className="sm-field">
             <span className="sm-field-label">API 协议类型</span>
-            <select
-              className="sm-field-input"
+            <SkinSelect
+              className="sm-field-select"
               value={modelProvider === "kimi" ? "openai" : customProtocol}
               disabled={persisting || modelProvider === "kimi"}
-              onChange={(e) => {
+              ariaLabel="API 协议类型"
+              skin="ink"
+              options={[
+                { value: "openai", label: "OpenAI 兼容" },
+                ...(modelProvider === "deepseek"
+                  ? [{ value: "anthropic", label: "Anthropic 兼容" }]
+                  : []),
+              ]}
+              onChange={(value) => {
                 invalidateCustomTest();
-                setCustomProtocol(e.target.value);
+                setCustomProtocol(value);
               }}
-            >
-              <option value="openai">OpenAI 兼容</option>
-              {modelProvider === "deepseek" && <option value="anthropic">Anthropic 兼容</option>}
-            </select>
+            />
           </div>
           <div className="sm-field">
             <span className="sm-field-label">API 地址(Base URL)</span>
@@ -1263,17 +1279,28 @@ export function ModelSettingsPanel() {
           {/* —— 用量明细:单独卡片,筛选器在右上 —— */}
           <div className="md-card md-detail-card">
             <div className="md-block-head">
-              <span className="md-card-title">用量明细</span>
+              <button
+                type="button"
+                className="md-usage-mode-toggle"
+                aria-label={`用量明细，当前${usageMode === "expert" ? "专家" : "小白"}模式，点击切换`}
+                aria-pressed={usageMode === "expert"}
+                onClick={toggleUsageMode}
+                data-wf="UsageModeToggle"
+              >
+                <span className="md-card-title">用量明细</span>
+                <small>{usageMode === "expert" ? "专家" : "小白"}</small>
+              </button>
               <span className="md-detail-filters">
                 <label className="md-date-filter">
                   <span>日期</span>
-                  <input
-                    type="date"
+                  <CalendarDatePicker
                     value={usageDate}
                     max={todayYmd}
                     disabled={usageView !== "day"}
                     title={usageView === "day" ? "仅筛选已加载的按天用量" : "日期筛选仅支持按天视图"}
-                    onChange={(e) => setUsageDate(e.target.value)}
+                    ariaLabel="筛选用量日期"
+                    skin="ink"
+                    onChange={setUsageDate}
                   />
                 </label>
                 {usageDate && (
@@ -1301,12 +1328,12 @@ export function ModelSettingsPanel() {
               )}
               {visibleUsage === null ? (
                 <p className="md-empty">用量数据加载失败或暂不可用</p>
-              ) : visibleUsage.length === 0 ? (
+              ) : usageGroups?.length === 0 ? (
                 <p className="md-empty">
                   {usageDate && usageView === "day" ? "该日期暂无用量记录" : "还没有用量记录,开始一次对话后这里会出现消耗明细"}
                 </p>
               ) : (
-                <table className="md-table">
+                <table className={`md-table md-table--${usageMode}`} data-wf="UsageDetailTable">
                   <thead>
                     <tr>
                       <th>
@@ -1315,8 +1342,7 @@ export function ModelSettingsPanel() {
                           <HelpMark label="范围" text="当前行统计覆盖的日期、文档或总计范围。" />
                         </span>
                       </th>
-                      {/* 模型列:仅「总计」视图展示(按文档/按天不展示) */}
-                      {usageView === "total" && (
+                      {usageMode === "expert" && (
                         <th>
                           <span className="md-th-label">
                             模型
@@ -1324,18 +1350,22 @@ export function ModelSettingsPanel() {
                           </span>
                         </th>
                       )}
-                      <th>
-                        <span className="md-th-label">
-                          调用点
-                          <HelpMark label="调用点" text="产生这笔模型请求的功能入口；missing 请求也计入该组调用数和覆盖率。" />
-                        </span>
-                      </th>
-                      <th>
-                        <span className="md-th-label">
-                          请求覆盖
-                          <HelpMark label="请求覆盖" text="有 usage 的请求数 / 全部真实请求数；缺失请求仍计入分母。" />
-                        </span>
-                      </th>
+                      {usageMode === "expert" && (
+                        <>
+                          <th>
+                            <span className="md-th-label">
+                              调用点
+                              <HelpMark label="调用点" text="产生这笔模型请求的功能入口；missing 请求也计入该组调用数和覆盖率。" />
+                            </span>
+                          </th>
+                          <th>
+                            <span className="md-th-label">
+                              请求覆盖
+                              <HelpMark label="请求覆盖" text="有 usage 的请求数 / 全部真实请求数；缺失请求仍计入分母。" />
+                            </span>
+                          </th>
+                        </>
+                      )}
                       <th>
                         <span className="md-th-label">
                           输入
@@ -1363,36 +1393,66 @@ export function ModelSettingsPanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleUsage.map((row, i) => {
-                      // 缓存命中率 = 缓存命中 token / 输入 token(DeepSeek 输入分命中+未命中)。
-                      const hitRate = row.cacheHitRate == null
-                        ? null
-                        : Math.round(row.cacheHitRate * 100);
-                      return (
-                        <tr key={i}>
-                          <td className={usageView === "session" ? "md-cell-title" : "font-mono"}>
-                            {usageView === "session"
-                              ? row.label || "未命名草稿"
-                              : row.bucket === "total"
-                                ? "—"
-                                : row.bucket}
-                          </td>
-                          {usageView === "total" && (
-                            <td>{modelLabel(row.modelId)}</td>
-                          )}
-                          <td className="font-mono">{row.callSite}</td>
-                          <td
-                            className="font-mono"
-                            title={`共 ${row.calls} 次，usage 缺失 ${row.missingCalls} 次`}
-                          >
-                            {`${Math.round(row.coverageRate * 100)}% · ${row.recordedCalls}/${row.calls}`}
-                          </td>
-                          <td className="font-mono">{formatTokens(row.inputTokens)}</td>
-                          <td className="font-mono">{formatTokens(row.outputTokens)}</td>
-                          <td className="font-mono">{hitRate === null ? "未知" : `${hitRate}%`}</td>
-                          <td className="font-mono">{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</td>
-                        </tr>
+                    {usageGroups?.flatMap((group) => {
+                      const isExpanded = expandedUsageGroups.has(group.key);
+                      const groupRow = (
+                        <UsageTableRow
+                          key={group.key}
+                          row={group.summary}
+                          label={group.label}
+                          mode={usageMode}
+                          kind="group"
+                          expanded={isExpanded}
+                          childCount={new Set(group.rows.map((row) => row.callSite)).size}
+                          onToggle={() => toggleUsageGroup(group.key)}
+                        />
                       );
+                      if (usageMode === "simple" || !isExpanded) return [groupRow];
+                      if (usageView === "day" && group.children) {
+                        return [
+                          groupRow,
+                          ...group.children.flatMap((documentGroup) => {
+                            const isDocumentExpanded = expandedUsageGroups.has(documentGroup.key);
+                            const documentRow = (
+                              <UsageTableRow
+                                key={documentGroup.key}
+                                row={documentGroup.summary}
+                                label={documentGroup.label}
+                                mode={usageMode}
+                                kind="document"
+                                expanded={isDocumentExpanded}
+                                childCount={new Set(documentGroup.rows.map((row) => row.callSite)).size}
+                                onToggle={() => toggleUsageGroup(documentGroup.key)}
+                              />
+                            );
+                            if (!isDocumentExpanded) return [documentRow];
+                            return [
+                              documentRow,
+                              ...documentGroup.rows.map((row, index) => (
+                                <UsageTableRow
+                                  key={`${documentGroup.key}:${row.callSite}:${row.modelId}:${index}`}
+                                  row={row}
+                                  label=""
+                                  mode={usageMode}
+                                  kind="detail"
+                                />
+                              )),
+                            ];
+                          }),
+                        ];
+                      }
+                      return [
+                        groupRow,
+                        ...group.rows.map((row, index) => (
+                          <UsageTableRow
+                            key={`${group.key}:${row.callSite}:${row.modelId}:${index}`}
+                            row={row}
+                            label=""
+                            mode={usageMode}
+                            kind="detail"
+                          />
+                        )),
+                      ];
                     })}
                   </tbody>
                 </table>
@@ -1403,6 +1463,184 @@ export function ModelSettingsPanel() {
       )}
       {message && <p className="sm-message">{message}</p>}
     </div>
+  );
+}
+
+interface UsageGroup {
+  key: string;
+  label: string;
+  rows: UsageRow[];
+  summary: UsageRow;
+  children?: UsageGroup[];
+}
+
+function readUsageMode(): UsageMode {
+  if (typeof window === "undefined") return "simple";
+  try {
+    return window.localStorage.getItem(USAGE_MODE_STORAGE_KEY) === "expert" ? "expert" : "simple";
+  } catch {
+    return "simple";
+  }
+}
+
+function persistUsageMode(mode: UsageMode): void {
+  try {
+    window.localStorage.setItem(USAGE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // 浏览器禁用存储时仍允许本次会话内切换，不用 toast 打断查看。
+  }
+}
+
+function buildUsageGroups(rows: UsageRow[], view: UsageView): UsageGroup[] {
+  const buckets = new Map<string, UsageRow[]>();
+  for (const row of rows) {
+    const key = view === "total" ? "total" : row.bucket;
+    const bucketRows = buckets.get(key);
+    if (bucketRows) bucketRows.push(row);
+    else buckets.set(key, [row]);
+  }
+
+  return Array.from(buckets, ([key, bucketRows]) => {
+    const groupKey = `${view}:${key}`;
+    return {
+      key: groupKey,
+      label: view === "session"
+        ? bucketRows.find((row) => row.label)?.label || "未命名草稿"
+        : view === "total"
+          ? "全部用量"
+          : key,
+      rows: bucketRows,
+      summary: aggregateUsageRows(key, bucketRows),
+      ...(view === "day"
+        ? { children: buildDayDocumentGroups(groupKey, bucketRows) }
+        : {}),
+    };
+  });
+}
+
+function buildDayDocumentGroups(dayKey: string, rows: UsageRow[]): UsageGroup[] {
+  const documents = new Map<string, UsageRow[]>();
+  for (const row of rows) {
+    const key = row.documentId ?? `legacy:${row.documentTitle ?? "unknown"}`;
+    const documentRows = documents.get(key);
+    if (documentRows) documentRows.push(row);
+    else documents.set(key, [row]);
+  }
+  return Array.from(documents, ([documentId, documentRows]) => ({
+    key: `${dayKey}:document:${documentId}`,
+    label: documentRows.find((row) => row.documentTitle)?.documentTitle || "未命名草稿",
+    rows: documentRows,
+    summary: aggregateUsageRows(documentRows[0]?.bucket ?? "", documentRows),
+  }));
+}
+
+function aggregateUsageRows(bucket: string, rows: UsageRow[]): UsageRow {
+  const sum = (select: (row: UsageRow) => number) =>
+    rows.reduce((total, row) => total + select(row), 0);
+  const knownCacheRows = rows.filter((row) => row.cacheHitRate !== null);
+  const cacheHitTokens = sum((row) => row.cacheHitTokens);
+  const cacheMissTokens = sum((row) => row.cacheMissTokens);
+  const knownCacheTotal = knownCacheRows.reduce(
+    (total, row) => total + row.cacheHitTokens + row.cacheMissTokens,
+    0,
+  );
+  const calls = sum((row) => row.calls);
+  const recordedCalls = sum((row) => row.recordedCalls);
+  const models = new Set(rows.map((row) => row.modelId));
+  const pricedRows = rows.filter((row) => row.costCny !== undefined);
+
+  return {
+    bucket,
+    label: rows.find((row) => row.label)?.label,
+    callSite: "",
+    modelId: models.size === 1 ? rows[0]?.modelId ?? "" : "__multiple__",
+    inputTokens: sum((row) => row.inputTokens),
+    outputTokens: sum((row) => row.outputTokens),
+    cacheHitTokens,
+    cacheMissTokens,
+    cacheCreationTokens: sum((row) => row.cacheCreationTokens),
+    cacheHitRate: knownCacheTotal > 0
+      ? knownCacheRows.reduce((total, row) => total + row.cacheHitTokens, 0) / knownCacheTotal
+      : null,
+    calls,
+    recordedCalls,
+    missingCalls: sum((row) => row.missingCalls),
+    coverageRate: calls > 0 ? recordedCalls / calls : 0,
+    ...(pricedRows.length > 0
+      ? { costCny: pricedRows.reduce((total, row) => total + (row.costCny ?? 0), 0) }
+      : {}),
+  };
+}
+
+function UsageTableRow({
+  row,
+  label,
+  mode,
+  kind,
+  expanded = false,
+  childCount = 0,
+  onToggle,
+}: {
+  row: UsageRow;
+  label: string;
+  mode: UsageMode;
+  kind: "group" | "document" | "detail";
+  expanded?: boolean;
+  childCount?: number;
+  onToggle?: () => void;
+}) {
+  const hitRate = row.cacheHitRate == null ? null : Math.round(row.cacheHitRate * 100);
+  const isExpandable = mode === "expert" && kind !== "detail";
+  const rowClass = kind === "detail"
+    ? "md-usage-detail-row"
+    : kind === "document"
+      ? "md-usage-document-row"
+      : "md-usage-group-row";
+  const dataWf = kind === "detail"
+    ? "UsageDetailRow"
+    : kind === "document"
+      ? "UsageDocumentRow"
+      : "UsageGroupRow";
+
+  return (
+    <tr
+      className={rowClass}
+      data-wf={dataWf}
+    >
+      <td className={kind === "detail" ? "md-detail-spacer" : `md-cell-title md-cell-title--${kind}`}>
+        {isExpandable ? (
+          <button
+            type="button"
+            className={`md-usage-group-toggle${kind === "document" ? " md-usage-group-toggle--document" : ""}`}
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            <span className="md-usage-group-arrow" aria-hidden="true">›</span>
+            <span className="md-usage-group-label">{label}</span>
+          </button>
+        ) : label}
+      </td>
+      {mode === "expert" && (
+        <td>{row.modelId === "__multiple__" ? "多模型" : modelLabel(row.modelId)}</td>
+      )}
+      {mode === "expert" && (
+        <td className={kind === "detail" ? "font-mono md-callsite-detail" : "md-callsite-summary"}>
+          {kind === "detail" ? row.callSite : `${childCount} 个调用点`}
+        </td>
+      )}
+      {mode === "expert" && (
+        <td
+          className="font-mono"
+          title={`共 ${row.calls} 次，usage 缺失 ${row.missingCalls} 次`}
+        >
+          {`${Math.round(row.coverageRate * 100)}% · ${row.recordedCalls}/${row.calls}`}
+        </td>
+      )}
+      <td className="font-mono">{formatTokens(row.inputTokens)}</td>
+      <td className="font-mono">{formatTokens(row.outputTokens)}</td>
+      <td className="font-mono">{hitRate === null ? "未知" : `${hitRate}%`}</td>
+      <td className="font-mono">{row.costCny != null ? `¥${row.costCny.toFixed(3)}` : "—"}</td>
+    </tr>
   );
 }
 

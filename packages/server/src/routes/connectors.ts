@@ -24,6 +24,7 @@ function unavailableInfo(reasonCode: string): ConnectorInfoDto[] {
     name: definition.name,
     icon: definition.icon,
     official: definition.official,
+    authPresentation: definition.authPresentation,
     riskNote: definition.riskNote ?? null,
     usedBySkills: [...definition.usedBySkills],
     status: createConnectorStatus("unavailable", {

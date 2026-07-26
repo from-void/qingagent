@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -12,6 +13,7 @@ import { useSkills } from "../../../overlays/settings/useSkills";
 import { useResourceList } from "../../../system/resources/hooks";
 import { invocableSkillActionsFromApi } from "../../../system/skillDisplay";
 import { SkillMenu, SparkleIcon, SPARKLE_SVG, FILE_CHIP_SVG, SKILL_MENU_WIDTH, type SkillMenuAction } from "../../../system/SkillMenu";
+import { recordSkillUsage, sortSkillActionsByUsage } from "../../../system/skillUsage";
 import type { AssetSource } from "../data/sources";
 import type { MaterialParseRow } from "../data/useMaterialParseTracker";
 import {
@@ -22,7 +24,7 @@ import {
   useFolderSourceActions,
   type FolderCapability,
 } from "../../../system";
-import { truncateLabel } from "../textUtils";
+import { truncateFilenameMiddle, truncateLabel } from "../textUtils";
 import { NoKeyTip } from "../../../system/modelKeyGate";
 import {
   buildLongTextChip,
@@ -123,6 +125,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const folderDisconnectCancelRef = useRef<HTMLButtonElement>(null);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  // 打开瞬间冻结行序；本次选用只记账，下次打开才按最新使用记录重排。
+  const [skillMenuOrder, setSkillMenuOrder] = useState<string[]>([]);
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   // 技能菜单键盘高亮行(/ 唤起后 ↑/↓ 改它、Enter 选中)。
   const [skillIndex, setSkillIndex] = useState(0);
@@ -139,6 +143,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const [longTextView, setLongTextView] = useState<string | null>(null);
   const { skills } = useSkills();
   const invocableSkillActions: SkillMenuAction[] = invocableSkillActionsFromApi(skills);
+  const orderedSkillActions = useMemo(() => {
+    const rank = new Map(skillMenuOrder.map((id, index) => [id, index]));
+    return invocableSkillActions
+      .map((action, initialIndex) => ({
+        action,
+        initialIndex,
+        rank: rank.get(action.id),
+      }))
+      .sort((left, right) => {
+        if (left.rank != null && right.rank != null) return left.rank - right.rank;
+        if (left.rank != null) return -1;
+        if (right.rank != null) return 1;
+        return left.initialIndex - right.initialIndex;
+      })
+      .map(({ action }) => action);
+  }, [invocableSkillActions, skillMenuOrder]);
   const sendDisabled = disabled && !sendEnabledWhenDisabled;
   const {
     folderDialog,
@@ -484,9 +504,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       selection.addRange(range);
     }
     savedRangeRef.current = range.cloneRange();
+    recordSkillUsage(action.id);
     setSkillMenuOpen(false);
     reportChange();
   }, [disabled, reportChange]);
+
+  const freezeSkillMenuOrder = useCallback(() => {
+    setSkillMenuOrder(
+      sortSkillActionsByUsage(invocableSkillActions).map((action) => action.id),
+    );
+  }, [invocableSkillActions]);
 
   // 技能菜单:点面板外部或按 Esc 自动收起(修"失焦不消失")。
   useEffect(() => {
@@ -534,7 +561,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       }
       // 技能菜单开着:↑/↓ 选行、Enter 选中、Esc/Backspace 关、其它字符键关并放行。
       if (skillMenuOpen) {
-        const n = invocableSkillActions.length;
+        const n = orderedSkillActions.length;
         if (e.key === "ArrowDown") {
           e.preventDefault();
           if (n) setSkillIndex((i) => (i + 1) % n);
@@ -547,7 +574,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         }
         if (e.key === "Enter") {
           e.preventDefault();
-          const action = invocableSkillActions[skillIndex];
+          const action = orderedSkillActions[skillIndex];
           if (action) addSkill(action);
           return;
         }
@@ -586,6 +613,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           anchor = { left: vpLeft - wrapRect.left, bottom: wrapRect.bottom - caretTop + 6 };
         }
         setSkillIndex(0);
+        freezeSkillMenuOrder();
         setSkillAnchor(anchor);
         setFileMenuOpen(false);
         setSkillMenuOpen(true);
@@ -677,7 +705,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         }
       }
     },
-    [disabled, onSubmit, reportChange, skillMenuOpen, invocableSkillActions, skillIndex, addSkill, onOpenSkillMenu],
+    [disabled, onSubmit, reportChange, skillMenuOpen, orderedSkillActions, skillIndex, addSkill, freezeSkillMenuOrder, onOpenSkillMenu],
   );
 
   const removeAttachment = useCallback(
@@ -1025,6 +1053,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 if (!open) {
                   setSkillIndex(0);
                   setSkillAnchor(null);
+                  freezeSkillMenuOrder();
                 }
                 return !open;
               });
@@ -1037,7 +1066,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           </button>
           {skillMenuOpen && (
             <SkillMenu
-              actions={invocableSkillActions}
+              actions={orderedSkillActions}
               onPick={addSkill}
               disabled={disabled}
               selectedIndex={skillIndex}
@@ -1190,7 +1219,11 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   }
 
   // Display text: for selection chips, truncate for compact display
-  const displayLabel = spec.kind === "sel" ? truncateLabel(spec.label) : spec.label;
+  const displayLabel = spec.kind === "sel"
+    ? truncateLabel(spec.label)
+    : spec.kind === "attach"
+      ? truncateFilenameMiddle(spec.label)
+      : spec.label;
 
   // 统一样式:左侧 kind 图标 + 主标签 +(可选)后缀小标签 + 移除。去掉原来括号 + 等宽字体那套
   // 低对比小字渲染(图片/附件 chip 在暖纸面上几乎看不清)。
@@ -1216,6 +1249,7 @@ function makeChatChipNode(spec: ChatChipSpec): HTMLSpanElement {
   const labelEl = document.createElement("span");
   labelEl.className = "c-label";
   labelEl.textContent = displayLabel;
+  if (spec.kind === "attach") labelEl.title = spec.label;
   chip.appendChild(labelEl);
 
   if (spec.suffix) {

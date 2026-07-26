@@ -9,13 +9,13 @@ import { z } from "zod";
  * 渲染瞬间按 expiresInSec 起算过期,
  * 过期后码被作废,悬停变「刷新」按钮,点击发送 refreshQuery 让 agent 重新生成。
  *
- * 抽象统一:扫码授权(飞书/企微 device flow 的 verification URL)、配对、分享链接等都复用它。
+ * 仅供非连接器的分享链接、临时扫码等泛用场景；内置连接器授权由可信流层自动出卡。
  */
 export const showQrTool = createTool({
   id: "show_qr",
   description:
-    "在对话里渲染一个二维码卡片给用户扫码/点击(授权登录、配对、分享通用)。" +
-    "典型场景:平台 OAuth device flow —— 先用对应 CLI 拿到 verification URL(如 lark-cli auth login --no-wait --json)," +
+    "仅用于非连接器授权的泛用分享链接或临时扫码场景。GitHub、飞书、微信公众号等内置连接器的 auth_start 会自动展示正确形态的授权卡，禁止再调用本工具复述授权链接或配对码。" +
+    "非连接器典型场景:第三方 CLI OAuth —— 先用对应 CLI 拿到 verification URL," +
     "再调本工具把该 URL 渲染成二维码 + 可点链接交给用户。" +
     "若 CLI 会阻塞等待扫码(init/login 类,打印字符画二维码后停在「等待扫码」不退出):" +
     "用 execute_command 的 background:true 后台跑,再用 mastra_workspace_get_process_output 轮询输出、" +

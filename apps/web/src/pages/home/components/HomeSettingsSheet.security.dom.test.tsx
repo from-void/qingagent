@@ -26,20 +26,19 @@ describe("HomeSettingsSheet 安全页", () => {
     vi.clearAllMocks();
   });
 
-  it("安全 Tab 接入真实开关面板，恢复每次询问不要求 nonce", async () => {
+  it("安全 Tab 接入真实授权下拉，恢复每次询问调用设置端点", async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         categories: [
-          { kind: "install", label: "安装", needConfirmation: true, mutable: true, present: false, grantId: null, version: 0 },
-          { kind: "command", label: "同类操作", needConfirmation: false, mutable: true, present: true, grantId: "grant-command", version: 1 },
-          { kind: "send", label: "向外发送内容", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
-          { kind: "connect", label: "连接账号", needConfirmation: true, mutable: false, present: false, grantId: null, version: 0 },
+          { kind: "install", label: "安装", grantMode: "ask", grantModes: ["ask", "always"], present: false, grantId: null, version: 0 },
+          { kind: "command", label: "同类操作", grantMode: "always", grantModes: ["ask", "always"], present: true, grantId: "grant-command", version: 1 },
+          { kind: "send", label: "向外发送内容", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
+          { kind: "connect", label: "连接账号", grantMode: "ask", grantModes: ["ask"], present: false, grantId: null, version: 0 },
         ],
-        insecureRememberAllowed: true,
       }), { status: 200 }))
       .mockResolvedValue(new Response(JSON.stringify({
         kind: "command",
-        needConfirmation: true,
+        grantMode: "ask",
         present: false,
         grantId: null,
         version: 2,
@@ -78,13 +77,19 @@ describe("HomeSettingsSheet 安全页", () => {
     expect(securityTab?.getAttribute("aria-selected")).toBe("true");
     expect(host.querySelector('[data-wf="SecurityPanel"]')).not.toBeNull();
 
-    const command = host.querySelector<HTMLButtonElement>('button[aria-label^="同类操作："]')!;
+    const command = host.querySelector<HTMLButtonElement>('button[aria-label="同类操作的确认方式"]')!;
     await act(async () => {
-      command.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      command.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const askOption = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((button) => button.textContent?.includes("每次询问"));
+    expect(askOption).toBeDefined();
+    await act(async () => {
+      askOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/settings/security/command",
-      expect.objectContaining({ body: JSON.stringify({ needConfirmation: true }) }),
+      expect.objectContaining({ body: JSON.stringify({ grantMode: "ask" }) }),
     );
   });
 });

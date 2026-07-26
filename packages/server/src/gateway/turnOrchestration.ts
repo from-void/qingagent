@@ -880,7 +880,12 @@ export async function* handleTurnCommand(
         command.data.clientMessageId,
         command.data.richText,
         command.data.reviewContext,
-        { preemptedByNewMessage },
+        {
+          preemptedByNewMessage,
+          ...(command.data.turnContext
+            ? { turnContext: command.data.turnContext }
+            : {}),
+        },
       );
       return;
     }

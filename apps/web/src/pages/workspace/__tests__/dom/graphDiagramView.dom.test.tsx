@@ -545,7 +545,7 @@ flowchart LR
       "target:t",
     ]);
     expect(handles.map((handle) => handle.dataset.handlepos).sort()).toEqual(["bottom", "bottom", "left", "left", "right", "right", "top", "top"]);
-    expect(handles.every((handle) => handle.title === "拖到另一节点建立连线")).toBe(true);
+    expect(handles.every((handle) => handle.title === "建立连线")).toBe(true);
     expect(handles.every((handle) => handle.getAttribute("aria-label")?.includes("连线"))).toBe(true);
     // Loose 模式下 source/target 把手重叠；松手实际命中 DOM 上层 source，
     // source 也必须允许作为连接终点，否则真机拖拽会被 React Flow 静默拒绝。

@@ -192,7 +192,6 @@ export function AuthCard({ data, onRefresh, onStatusChange }: AuthCardProps) {
             className="qr-card__refresh"
             onClick={sendRefreshOnce}
             disabled={refreshSent}
-            title="发送刷新请求,重新生成二维码"
             aria-label={refreshSent ? "已请求刷新二维码" : "重新获取已失效二维码"}
           >
             <span className="qr-card__refresh-icon">↻</span>

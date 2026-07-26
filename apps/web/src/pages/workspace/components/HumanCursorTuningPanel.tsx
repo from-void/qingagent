@@ -89,7 +89,7 @@ export function HumanCursorTuningPanel({ canReplay, onReplay }: HumanCursorTunin
           type="button"
           className="ptp-collapse"
           onClick={() => setCollapsed((v) => !v)}
-          title={collapsed ? "展开鼠标调试" : "收起鼠标调试"}
+          title={collapsed ? "展开" : "收起"}
         >
           {collapsed ? "鼠标" : "−"}
         </button>
@@ -163,7 +163,7 @@ export function HumanCursorTuningPanel({ canReplay, onReplay }: HumanCursorTunin
               className="ptp-replay"
               onClick={onReplay}
               disabled={!canReplay}
-              title={canReplay ? "重播逐字打字(鼠标随之重演)" : "进入审批态后可重播"}
+              title={canReplay ? "同步重播打字" : undefined}
             >
               重播鼠标
             </button>

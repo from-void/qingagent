@@ -312,7 +312,6 @@ export function PatchPopupActions({
       <button
         type="button"
         className="patch-popup-btn"
-        title="撤销这处改动"
         onClick={() => onPatchVerdict?.(patchId, "rejected")}
       >
         撤销

@@ -89,7 +89,7 @@ export function AskUserPreview({ markdown }: { markdown: string }) {
 
   return (
     <div className="auq-preview-doc wf-doc" data-wf="AskUserPreview">
-      <button type="button" className="auq-preview-fullscreen" aria-label="全屏查看预览面板" title="全屏查看" onClick={(event) => {
+      <button type="button" className="auq-preview-fullscreen" aria-label="全屏查看预览面板" onClick={(event) => {
         lightboxTriggerRef.current = event.currentTarget;
         setFullscreen(true);
       }}><span aria-hidden="true">⛶</span><span>全屏</span></button>

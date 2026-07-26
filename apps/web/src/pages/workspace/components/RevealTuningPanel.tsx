@@ -100,7 +100,7 @@ export function RevealTuningPanel({ canReplay, onReplay }: RevealTuningPanelProp
           type="button"
           className="ptp-collapse"
           onClick={() => setCollapsed((value) => !value)}
-          title={collapsed ? "展开入场调试" : "收起入场调试"}
+          title={collapsed ? "展开" : "收起"}
         >
           {collapsed ? "入场" : "−"}
         </button>
@@ -178,7 +178,7 @@ export function RevealTuningPanel({ canReplay, onReplay }: RevealTuningPanelProp
               className="ptp-replay"
               onClick={onReplay}
               disabled={!canReplay}
-              title={canReplay ? "用当前参数重新逐字打字" : "进入审批态后可重播"}
+              title={canReplay ? "使用当前参数" : undefined}
             >
               重播打字
             </button>

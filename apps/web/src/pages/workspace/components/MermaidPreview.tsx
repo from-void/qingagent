@@ -199,7 +199,7 @@ export function DiagramSvgView({
           {onFullscreen && (
             <>
               <span className="pm-diagram-tool-sep" aria-hidden="true" />
-              <button type="button" className="pm-diagram-tool pm-diagram-tool--wide" title="全屏查看" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); onFullscreen(); }}>
+              <button type="button" className="pm-diagram-tool pm-diagram-tool--wide" aria-label="全屏查看图表" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); onFullscreen(); }}>
                 ⛶ 全屏
               </button>
             </>

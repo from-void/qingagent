@@ -107,7 +107,7 @@ function ConnectorDependency({
         event.stopPropagation();
         onOpen?.(connectorId);
       }}
-      title={`前往「连接」查看 ${CONNECTOR_NAMES[connectorId]}`}
+      title={`查看连接：${CONNECTOR_NAMES[connectorId]}`}
     >
       <span className="sk-dep-dot" aria-hidden="true" />
       依赖连接：<span className="sk-dep-name">{CONNECTOR_NAMES[connectorId]}</span>
@@ -444,7 +444,7 @@ export function SkillsPanel({ onOpenConnector }: { onOpenConnector?: (id: Connec
                   void toggle(s.name, !s.enabled);
                 }}
                 aria-pressed={s.enabled}
-                title={s.enabled ? "已启用,点击停用" : "已停用,点击启用"}
+                title={s.enabled ? "停用" : "启用"}
               >
                 <span className="sk-toggle-dot" aria-hidden="true" />
                 {s.enabled ? "已启用" : "已停用"}

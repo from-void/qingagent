@@ -100,7 +100,6 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
                 type="button"
                 className="pm-image-tool pm-image-tool--wide"
                 aria-label="全屏查看图片"
-                title="全屏查看"
                 onMouseDown={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -195,7 +194,7 @@ export function ReadonlyImageFigure({
         <button
           type="button"
           className="pm-image-fullscreen-btn"
-          title="全屏查看"
+          aria-label="全屏查看图片"
           onMouseDown={(event) => {
             event.preventDefault();
             event.stopPropagation();

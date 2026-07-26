@@ -728,7 +728,7 @@ export function TableControls({ editor, onAiModify, onToast }: {
           <div className="dt-divider" />
           <button
             className="dt-btn dt-ai"
-            title="发送到对话"
+            title="作为引用加入对话"
             disabled={!hasAxisSelection}
             onClick={() => { void doAiModify(); }}
           >

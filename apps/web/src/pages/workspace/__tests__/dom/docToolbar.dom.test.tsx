@@ -605,6 +605,39 @@ function createSelectedEditor() {
 }
 
 describe("DocToolbar 块节点选中(原子块走 AI 引用,不出文本工具栏)", () => {
+  it("图片/图表 AI 修改按钮不再用 title 复述可见文案，aria-label 保留", async () => {
+    editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createQingagentExtensions(),
+      content: {
+        type: "doc",
+        attrs: { schemaVersion: 1 },
+        content: [
+          { type: "diagram", attrs: { blockId: "d-tooltip", lang: "mermaid", source: "graph TD;A-->B;", svg: null } },
+        ],
+      } satisfies PmDoc,
+    });
+    document.body.appendChild(editor.view.dom);
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+
+    await render(
+      <DocToolbar
+        active
+        editor={editor}
+        containerSelector="body"
+        onAiModify={async () => true}
+      />,
+    );
+    await act(async () => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    const aiButton = document.querySelector<HTMLButtonElement>(".dt-block-ai");
+    expect(aiButton?.textContent).toContain("让 AI 修改这个图表");
+    expect(aiButton?.hasAttribute("title")).toBe(false);
+    expect(aiButton?.getAttribute("aria-label")).toBe("让 AI 修改这个图表");
+  });
+
   it("选中图表(原子块)→ resolveSelectedBlockNode 给出 图表 标签 + 单原子块范围放行", () => {
     const element = document.createElement("div");
     document.body.appendChild(element);

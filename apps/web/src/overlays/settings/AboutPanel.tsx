@@ -119,7 +119,7 @@ export function AboutPanel() {
           type="button"
           className="ab-version"
           data-wf="AboutVersion"
-          title="点击复制版本信息"
+          title="复制版本信息"
           onClick={copyVersionInfo}
         >
           {isDesktop ? (
@@ -167,7 +167,7 @@ export function AboutPanel() {
             type="button"
             className="ab-block ab-block--kernel"
             data-wf="AboutKernel"
-            title="点击复制版本信息"
+            title="复制版本信息"
             onClick={copyVersionInfo}
           >
             <div className="ab-block-title">内核信息</div>

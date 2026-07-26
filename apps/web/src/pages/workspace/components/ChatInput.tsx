@@ -1127,7 +1127,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onClick={onStop}
               disabled={!onStop}
               data-wf="WsStopBtn"
-              title="停止输出"
             >
               停止
             </Button>
@@ -1141,7 +1140,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                   if (!noModelKey) onSubmit();
                 }}
                 disabled={sendDisabled || noModelKey}
-                title={noModelKey ? "还没配置模型 key" : "发送 · ⌘ / Ctrl + Enter"}
+                title={noModelKey ? "还没配置模型 key" : "快捷键：⌘ / Ctrl + Enter"}
               >
                 发送 →
               </Button>

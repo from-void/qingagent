@@ -40,6 +40,10 @@ export function setCachedSearch(key: string, results: SearchResult[]): void {
   }
 }
 
-export function __resetSearchCacheForTest(): void {
+export function clearSearchCache(): void {
   cache.clear();
+}
+
+export function __resetSearchCacheForTest(): void {
+  clearSearchCache();
 }

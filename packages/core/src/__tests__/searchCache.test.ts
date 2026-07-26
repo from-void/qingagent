@@ -32,6 +32,7 @@ vi.mock("../mastra.js", () => ({
 
 import {
   __resetSearchCacheForTest,
+  clearSearchCache,
   getCachedSearch,
   setCachedSearch,
 } from "../search/searchCache.js";
@@ -106,6 +107,24 @@ describe("searchCache", () => {
     await searchLinksForEval("ttl query", "ttl", 2, "");
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
     await searchLinksForEval("ttl query", "ttl", 2, "");
+
+    expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("provider 设置更新清缓存后，同 key 不再返回旧结果", async () => {
+    mockSearchDeps.getPrimarySearchConfig.mockResolvedValue({ enabled: false });
+    const updatedResult = result("updated-provider");
+    mockSearchDeps.fallbackSearch
+      .mockResolvedValueOnce([fallbackResult])
+      .mockResolvedValueOnce([updatedResult]);
+
+    await expect(searchLinksForEval("provider update", "same-key", 2, "")).resolves.toEqual([
+      fallbackResult,
+    ]);
+    clearSearchCache();
+    await expect(searchLinksForEval("provider update", "same-key", 2, "")).resolves.toEqual([
+      updatedResult,
+    ]);
 
     expect(mockSearchDeps.fallbackSearch).toHaveBeenCalledTimes(2);
   });

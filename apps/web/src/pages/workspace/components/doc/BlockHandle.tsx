@@ -623,8 +623,8 @@ export function BlockHandle({ editor, onToast }: { editor: Editor; onToast?: (me
               "插入 drawio 工程图",
             );
             if (result.warning) onToast?.(result.warning);
-          } catch {
-            runHandleCommand(false, "插入 drawio 工程图");
+          } catch (drawioError) {
+            onToast?.(drawioError instanceof Error ? drawioError.message : String(drawioError));
           }
           return;
         }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isPoisonedMermaidSvg } from "@qingagent/pm-schema";
 import { renderMermaid } from "./mermaidRender";
-import { renderDrawio } from "./drawioRender";
+import { isEmptyDrawioSource, renderDrawio } from "./drawioRender";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
 import "./DiagramView.css";
 
@@ -229,6 +229,7 @@ export function MermaidPreview({
   align?: "left" | "center" | "right";
   onAlignChange?: (align: "left" | "center" | "right") => void;
 }) {
+  const emptyDrawio = lang === "drawio" && isEmptyDrawioSource((source ?? "").trim());
   const cachedSvgIsPoisoned = lang === "mermaid" && isPoisonedMermaidSvg(cachedSvg, source);
   const usableCachedSvg = cachedSvgIsPoisoned ? null : cachedSvg;
   const [svg, setSvg] = useState<string | null>(usableCachedSvg ?? null);
@@ -247,6 +248,11 @@ export function MermaidPreview({
   useEffect(() => {
     const trimmed = (source ?? "").trim();
     if (!trimmed) {
+      setSvg(null);
+      setError(null);
+      return;
+    }
+    if (emptyDrawio) {
       setSvg(null);
       setError(null);
       return;
@@ -272,7 +278,7 @@ export function MermaidPreview({
         if (!mountedRef.current || token !== tokenRef.current) return;
         setError(e instanceof Error ? e.message : String(e));
       });
-  }, [source, cachedSvg, lang]);
+  }, [source, cachedSvg, lang, emptyDrawio]);
 
   if (error) {
     return (
@@ -284,7 +290,7 @@ export function MermaidPreview({
     );
   }
   if (!svg) {
-    return <div className="pm-diagram-empty">{source ? "渲染中…" : "空图表"}</div>;
+    return <div className="pm-diagram-empty">{emptyDrawio || !source ? "空图表" : "渲染中…"}</div>;
   }
   const editable = !readOnly;
   return (

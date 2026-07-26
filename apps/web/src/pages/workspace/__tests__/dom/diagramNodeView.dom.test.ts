@@ -18,6 +18,7 @@ import {
 } from "@qingagent/pm-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pmDocToViewDocumentSnapshot } from "../../data/protocol";
+import { ToastProvider } from "../../../../system";
 
 // mermaid 在 jsdom 里无法真渲染(缺 getBBox 等 SVG 测量),用确定性桩替身:
 // render(id, source) → 回一个可识别 svg。这样测的是【我们的接缝】(diagram 节点 →
@@ -94,7 +95,7 @@ async function mountEditor(content: PmDoc, editable = true): Promise<Editor> {
   document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(createElement(EditorContent, { editor }));
+    root.render(createElement(ToastProvider, null, createElement(EditorContent, { editor })));
   });
   await flush();
   mounted = { root, container };
@@ -1183,6 +1184,26 @@ describe("diagram 节点视图(mermaid 渲染接缝)", () => {
         expect.any(Function),
       );
       expect(firstDiagramAttrs(editor)).toMatchObject({ source: secondSource, svg: secondSvg });
+    } finally {
+      await unmount(editor);
+    }
+  });
+
+  it("drawio 编辑器打开失败走全局 toast，且不进入解析失败态", async () => {
+    const editor = await mountEditor(drawioDoc());
+    try {
+      const reason = "已有 drawio 编辑器正在打开";
+      vi.mocked(openDrawioEditor).mockRejectedValueOnce(new Error(reason));
+      const visualButton = Array.from(
+        editor.view.dom.querySelectorAll<HTMLButtonElement>(".pm-diagram-view-actions button"),
+      ).find((button) => button.textContent?.trim() === "可视化编辑");
+
+      await act(async () => visualButton?.click());
+      await flush(4);
+
+      expect(document.querySelector(".qa-toast")?.textContent).toContain(reason);
+      expect(editor.view.dom.querySelector(".pm-diagram-error")).toBeNull();
+      expect(editor.view.dom.textContent).not.toContain("<mxGraphModel");
     } finally {
       await unmount(editor);
     }

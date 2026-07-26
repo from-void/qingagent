@@ -159,6 +159,27 @@ describe("drawio 全屏编辑面板", () => {
     ]);
   });
 
+  it("普通保存等待导出期间收到 exit，会在保存完成后携结果关闭", async () => {
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    const source = drawioSource("保存期间退出");
+    await fake.save(source, false);
+    await fake.exit();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await fake.exportSvg(svgDataUri("保存期间退出"));
+
+    const expected = {
+      source,
+      svg: expect.stringContaining("保存期间退出"),
+    };
+    expect(onSave).toHaveBeenCalledWith(expected);
+    expect(onClose).toHaveBeenCalledWith(expected);
+  });
+
   it("无改动保存也会先置脏再请求 snapshot，避免 v31 静默不回", async () => {
     const onSave = vi.fn();
     const onClose = vi.fn();
@@ -215,7 +236,7 @@ describe("drawio 全屏编辑面板", () => {
     ]);
   });
 
-  it("降级结果不会覆盖本会话同 source 的高保真 SVG", async () => {
+  it("连续多次保存只保留最近一条高保真结果", async () => {
     vi.useFakeTimers();
     const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>低保真</text></svg>';
     vi.mocked(renderDrawio).mockResolvedValue(fallbackSvg);
@@ -227,7 +248,6 @@ describe("drawio 全屏编辑面板", () => {
     const protectedSource = drawioSource("受保护");
     await fake.save(protectedSource, false);
     await fake.exportSvg(svgDataUri("受保护高保真"));
-    const protectedResult = onSave.mock.calls[0]?.[0];
 
     const otherSource = drawioSource("另一版本");
     await fake.save(otherSource, false);
@@ -240,10 +260,12 @@ describe("drawio 全屏编辑面板", () => {
 
     expect(renderDrawio).toHaveBeenCalledWith(protectedSource);
     expect(onSave).toHaveBeenCalledTimes(3);
-    expect(onSave.mock.calls[2]?.[0]).toBe(protectedResult);
-    expect(onSave.mock.calls[2]?.[0]?.svg).toContain("受保护高保真");
-    expect(onSave.mock.calls[2]?.[0]?.svg).not.toContain("低保真");
-    expect(onClose).toHaveBeenCalledWith(protectedResult);
+    expect(onSave.mock.calls[2]?.[0]).toEqual({
+      source: protectedSource,
+      svg: fallbackSvg,
+      warning: "drawio 原生 SVG 导出超时，已改用本地渲染保存",
+    });
+    expect(onClose).toHaveBeenCalledWith(onSave.mock.calls[2]?.[0]);
   });
 
   it("退出且从未保存时不回写", async () => {
@@ -323,6 +345,47 @@ describe("drawio 全屏编辑面板", () => {
       action: "status",
       modified: false,
     });
+  });
+
+  it("同一源码首次降级保存后再次保存仍会重试原生导出", async () => {
+    vi.useFakeTimers();
+    const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg"><text>低保真缓存</text></svg>';
+    vi.mocked(renderDrawio).mockResolvedValue(fallbackSvg);
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const fake = await createFakeV31Embed(onSave, onClose);
+    await fake.init();
+
+    const source = drawioSource("降级后重试");
+    await fake.save(source, false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DRAWIO_EXPORT_TIMEOUT_MS);
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0]?.[0]).toEqual({
+      source,
+      svg: fallbackSvg,
+      warning: "drawio 原生 SVG 导出超时，已改用本地渲染保存",
+    });
+
+    await fake.save(source, false);
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(renderDrawio).toHaveBeenCalledTimes(1);
+    expect(fake.postedActions().slice(-2)).toEqual([
+      { action: "status", modified: true },
+      { action: "snapshot" },
+    ]);
+
+    await fake.exportSvg(svgDataUri("重试得到高保真"));
+
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[1]?.[0]).toEqual({
+      source,
+      svg: expect.stringContaining("重试得到高保真"),
+    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("原生 export 与本地渲染均失败时仍保存 source，并丢弃旧缓存", async () => {

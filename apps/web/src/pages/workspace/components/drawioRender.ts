@@ -44,15 +44,17 @@ export async function renderDrawio(rawSource: string): Promise<string> {
   });
   document.body.appendChild(container);
 
-  const graph = new Graph(container);
+  let graph: InstanceType<typeof Graph> | null = null;
   try {
+    graph = new Graph(container);
+    const activeGraph = graph;
     graph.setEnabled(false);
     graph.setHtmlLabels(false);
     const getLabel = graph.getLabel.bind(graph);
     graph.getLabel = (cell) => {
       const label = getLabel(cell);
       if (!cell || typeof label !== "string") return label;
-      const style = graph.getCurrentCellStyle(cell) as Record<string, unknown>;
+      const style = activeGraph.getCurrentCellStyle(cell) as Record<string, unknown>;
       // draw.io 的富文本编辑器会把换行保存成 html=1 的 <div>/<br>。本地 SVG
       // 降级禁止 foreignObject，因此必须先转成纯文本再交给 SvgCanvas2D；
       // 直接关闭 HTML label 会把标签字面量画进 <text>。
@@ -104,7 +106,7 @@ export async function renderDrawio(rawSource: string): Promise<string> {
     if (!safeSvg) throw new Error("drawio SVG 安全校验失败");
     return safeSvg;
   } finally {
-    graph.destroy();
+    graph?.destroy();
     container.remove();
   }
 }

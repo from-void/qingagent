@@ -281,7 +281,11 @@ function DiagramComponent({ node, deleteNode, editor, selected, getPos }: NodeVi
         }
       })
         .catch((openError) => {
-          if (mountedRef.current) setError(openError instanceof Error ? openError.message : String(openError));
+          if (!mountedRef.current) return;
+          toast.show({
+            message: openError instanceof Error ? openError.message : String(openError),
+            tone: "error",
+          });
         })
         .finally(() => {
           if (mountedRef.current) setDrawioEditorOpening(false);

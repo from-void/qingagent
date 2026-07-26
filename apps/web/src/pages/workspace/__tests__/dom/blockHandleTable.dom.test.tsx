@@ -6,6 +6,7 @@ import { Editor } from "@tiptap/core";
 import { createQingagentExtensions } from "@qingagent/pm-schema/tiptap";
 import type { PmDoc } from "@qingagent/pm-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { openDrawioEditor } from "../../components/drawioEditorLauncher";
 import { BlockHandle } from "../../components/doc/BlockHandle";
 import { resolveDocumentPositionSafely } from "../../components/doc/blockHandlePosition";
 import {
@@ -15,6 +16,10 @@ import {
 } from "../../components/doc/blockHandleTable";
 import { glyphForBlock } from "../../components/doc/blockHandleGeometry";
 import { TableAxisSelectionExtension } from "../../data/tableToolbar";
+
+vi.mock("../../components/drawioEditorLauncher", () => ({
+  openDrawioEditor: vi.fn(async () => null),
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,6 +35,32 @@ afterEach(() => {
 });
 
 describe("BlockHandle 表格专属菜单", () => {
+  it("插入 drawio 打开失败时透传具体原因到 toast", async () => {
+    const workspace = document.createElement("div");
+    workspace.id = "view-workspace";
+    const editorElement = document.createElement("div");
+    const reactHost = document.createElement("div");
+    workspace.append(editorElement, reactHost);
+    document.body.appendChild(workspace);
+    editor = createEditor(editorElement, paragraph("empty"));
+    editor.commands.setTextSelection(1);
+    const onToast = vi.fn();
+    vi.mocked(openDrawioEditor).mockRejectedValueOnce(new Error("已有 drawio 编辑器正在打开"));
+    root = createRoot(reactHost);
+    await act(async () => root?.render(<BlockHandle editor={editor!} onToast={onToast} />));
+    await act(async () => {
+      editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "/", ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+
+    const insertDrawio = Array.from(workspace.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes("插入 drawio 工程图"));
+    await act(async () => insertDrawio?.click());
+
+    expect(onToast).toHaveBeenCalledWith("已有 drawio 编辑器正在打开");
+  });
+
   it("空表仍显示完整表格菜单，且隐藏转换格式", async () => {
     const workspace = document.createElement("div");
     workspace.id = "view-workspace";

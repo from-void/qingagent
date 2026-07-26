@@ -186,6 +186,8 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
       continue;
     }
 
+    // 审阅态删除铁律：含 replace 旧值在内，被删正文原位只留「竖线+圆点」游标，
+    // 原文仅在 hover 卡展示。改此处前先读 AGENTS.md UI Iron Rules。
     if (kind === "delete" || kind === "replace") {
       if (to! <= from!) {
         dropped.push(source.id);
@@ -196,7 +198,7 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           from!,
           to!,
           {
-            class: `wf-patch-del${kind === "replace" ? " wf-patch-replace-old" : ""}${currentClass}${statusClass}`,
+            class: `wf-patch-del${currentClass}${statusClass}`,
             "data-patch-id": source.id,
             "data-patch-index": String(index),
             "data-patch-state": "delete",
@@ -204,30 +206,24 @@ export function buildPatchDecorations(args: BuildPatchDecorationsArgs): {
           spec,
         ),
       );
-      // 替换处已有「删除线旧值 → 绿色新值」，不再叠加红色删除光标球——
-      // 否则"删除光标 + 替换标记"两个视觉指向同一处；仅纯删除(无新增块)
-      // 保留红球标示删除点。
-      if (kind === "delete") {
-        decorations.push(
-          Decoration.widget(
-            from!,
-            () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
-            {
-              ...spec,
-              // 稳定 key(含 current/accepted 状态):切换 activePatchId 时 ProseMirror 靠 key
-              // 复用未变 widget,只重建高亮状态真正变化的一两处,避免全量重挂导致满屏闪烁。
-              key: `pdel-${source.id}-${index}-${currentClass}-${statusClass}`,
-              side: 1,
-              ignoreSelection: true,
-            },
-          ),
-        );
-      }
+      decorations.push(
+        Decoration.widget(
+          from!,
+          () => renderDeleteMarkerDOM(source.id, index, currentClass, statusClass),
+          {
+            ...spec,
+            // 稳定 key(含 current/accepted 状态):切换 activePatchId 时 ProseMirror 靠 key
+            // 复用未变 widget,只重建高亮状态真正变化的一两处,避免全量重挂导致满屏闪烁。
+            key: `pdel-${source.id}-${index}-${currentClass}-${statusClass}`,
+            side: 1,
+            ignoreSelection: true,
+          },
+        ),
+      );
     }
 
     if (kind === "insert" || kind === "replace") {
-      // 替换按自然阅读顺序渲染为「旧值 → 新值」：旧值仍由 from..to 的 inline
-      // decoration 承载，新值 widget 锚到旧值末尾；纯新增仍留在原锚点。
+      // replace 新值锚到隐藏旧范围末尾，与其起点的紧凑删除游标分离；正文中不会出现旧新拼接。
       const insertAt = kind === "replace" ? to! : from!;
       const insertedText = revealedInsertedText(source.id, after, args.typedByPatch);
       if (insertedText.length > 0) {
@@ -399,13 +395,6 @@ export function renderInsertDOM(
   const outer = document.createElement("span");
   outer.className = state === "replace" ? "wf-patch-replace-wrap" : "wf-patch-ins-wrap";
   outer.dataset.patchState = state;
-  if (state === "replace") {
-    const separator = document.createElement("span");
-    separator.className = "wf-patch-replace-separator";
-    separator.setAttribute("aria-label", "替换为");
-    separator.textContent = "→";
-    outer.appendChild(separator);
-  }
   const inner = document.createElement("span");
   inner.className = "wf-patch-ins";
   inner.appendChild(renderMarkedTextDom(text, marks));

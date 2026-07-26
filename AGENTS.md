@@ -41,6 +41,7 @@ Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `R
 - Use the warm paper/gold/ink tokens from the UIKit Token section; do not invent new CSS variables for uncovered colors.
 - `qa-toast` via `ToastProvider` is the only production toast channel; do not add page-local toast stacks.
 - When the UIKit sheet and local code disagree, follow the sheet and document any unresolved visual exception.
+- **审阅态里一切被删除的正文（含「替换」建议的旧值），原文位置只留一个「竖线+圆点」紧凑游标，绝不在正文内联展示删除线文本；删除的具体内容只在 hover 卡里看。**
 
 **MUST**
 

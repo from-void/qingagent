@@ -352,9 +352,7 @@ export function DrawioEditorOverlay({
       <header className="drawio-editor-overlay__topbar diagram-editor-chrome__topbar">
         <div className="drawio-editor-overlay__heading">
           <strong className="diagram-editor-chrome__title">Drawio 编辑</strong>
-          <span className={error ? "is-error" : undefined} role={error ? "alert" : "status"}>
-            {error ?? status}
-          </span>
+          <span role="status">{status}</span>
         </div>
         {/* 实时保存语义:✕ = flush 最后一笔后关闭(requestClose),不是丢弃 */}
         <button

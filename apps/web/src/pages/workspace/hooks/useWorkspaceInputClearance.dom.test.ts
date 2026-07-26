@@ -1,12 +1,24 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { measureWorkspaceInputClearance } from "./useWorkspaceChrome";
+import { act, createElement, useRef } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  measureWorkspaceInputClearance,
+  useWorkspaceChrome,
+} from "./useWorkspaceChrome";
 
 const CHAT_BOTTOM = 800;
 const DESIGN_GAP = 24;
+let root: Root | null = null;
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("workspace 对话流底部留白", () => {
   afterEach(() => {
+    act(() => root?.unmount());
+    root = null;
     document.body.replaceChildren();
+    vi.unstubAllGlobals();
   });
 
   it.each([
@@ -25,6 +37,7 @@ describe("workspace 对话流底部留白", () => {
       });
 
       const clearance = measureWorkspaceInputClearance(chat, wrap);
+      if (clearance === null) throw new Error("已成画布局不应返回空测量");
       const actualOccupied = CHAT_BOTTOM - occupantTop;
       const lastMessageBottomAtScrollEnd = CHAT_BOTTOM - clearance;
 
@@ -62,10 +75,171 @@ describe("workspace 对话流底部留白", () => {
     });
 
     const clearance = measureWorkspaceInputClearance(chat, wrap);
+    if (clearance === null) throw new Error("已成画布局不应返回空测量");
     const actualOccupied = CHAT_BOTTOM - 682;
     expect(clearance - actualOccupied).toBe(32);
   });
+
+  it("内容成画前不写 0，成画后由 chat ResizeObserver 强制写入正确留白", async () => {
+    const resizeObservers: ResizeObserverMock[] = [];
+    const animationFrames: FrameRequestCallback[] = [];
+    let chatHeight = 0;
+
+    class ResizeObserverMock {
+      readonly targets = new Set<Element>();
+
+      constructor(
+        private readonly callback: ResizeObserverCallback,
+      ) {
+        resizeObservers.push(this);
+      }
+
+      observe(target: Element) {
+        this.targets.add(target);
+      }
+
+      disconnect() {
+        this.targets.clear();
+      }
+
+      flush() {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      (callback: FrameRequestCallback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      },
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(createElement(RaceHarness, {
+        getChatHeight: () => chatHeight,
+      }));
+    });
+
+    const left = host.querySelector<HTMLElement>(".ws-left")!;
+    const chat = host.querySelector<HTMLElement>(".ws-chat")!;
+    expect(left.style.getPropertyValue("--ws-input-clearance")).toBe("");
+    expect(resizeObservers.some((observer) => observer.targets.has(chat))).toBe(
+      true,
+    );
+
+    chatHeight = CHAT_BOTTOM;
+    await act(async () => {
+      for (const observer of resizeObservers) observer.flush();
+      while (animationFrames.length > 0) {
+        animationFrames.shift()?.(performance.now());
+      }
+    });
+
+    expect(left.style.getPropertyValue("--ws-input-clearance")).toBe("179px");
+    expect(left.style.getPropertyValue("--ws-input-clearance")).not.toBe("0px");
+  });
 });
+
+function RaceHarness({ getChatHeight }: { getChatHeight: () => number }) {
+  const viewRef = useRef<HTMLElement | null>(null);
+  const docScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  useWorkspaceChrome({
+    viewRef,
+    docScrollRef,
+    chatScrollRef,
+    sessionId: null,
+    reducedMotion: false,
+    flushPendingDocSave: async () => undefined,
+  });
+
+  return createElement(
+    "section",
+    { id: "view-workspace", ref: viewRef },
+    createElement("div", { ref: docScrollRef }),
+    createElement(
+      "div",
+      { className: "ws-left" },
+      createElement("div", {
+        className: "ws-chat",
+        ref: (element: HTMLDivElement | null): void => {
+          chatScrollRef.current = element;
+          if (!element) return;
+          setDynamicRect(element, () => ({
+            top: 0,
+            bottom: getChatHeight(),
+            width: 440,
+            height: getChatHeight(),
+          }));
+          Object.defineProperties(element, {
+            clientHeight: { configurable: true, get: getChatHeight },
+            scrollHeight: { configurable: true, get: () => 1_000 },
+            scrollTo: { configurable: true, value: vi.fn() },
+          });
+        },
+      }),
+      createElement(
+        "div",
+        {
+          className: "ws-input-wrap",
+          ref: (element: HTMLDivElement | null): void => {
+            if (element) {
+              element.style.setProperty(
+                "--ws-input-clearance-gap",
+                `${DESIGN_GAP}px`,
+              );
+              setRect(element, {
+                top: 645,
+                bottom: 800,
+                width: 440,
+                height: 155,
+              });
+            }
+          },
+        },
+        createElement("div", {
+          className: "wf-input",
+          ref: (element: HTMLDivElement | null): void => {
+            if (element) {
+              setRect(element, {
+                top: 645,
+                bottom: 776,
+                width: 422,
+                height: 131,
+              });
+            }
+          },
+        }),
+      ),
+    ),
+  );
+}
+
+function setDynamicRect(
+  element: HTMLElement,
+  getRect: () => Pick<DOMRect, "top" | "bottom" | "width" | "height">,
+) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => {
+      const rect = getRect();
+      return {
+        ...rect,
+        x: 0,
+        y: rect.top,
+        left: 0,
+        right: rect.width,
+        toJSON: () => ({}),
+      };
+    },
+  });
+}
 
 function createLayout(input: {
   occupantClass: string;

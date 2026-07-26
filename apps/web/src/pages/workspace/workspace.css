@@ -117,6 +117,8 @@
   #view-workspace .ws-deriv-tab:hover{background:rgba(236,227,208,0.09)}
   #view-workspace .ws-deriv-tab.is-active{background:rgba(236,227,208,0.16);color:rgba(240,232,214,0.92)}
   #view-workspace .ws-deriv-tab.is-main{max-width:200px}.ws-deriv-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #view-workspace .ws-deriv-tabs.is-single-untitled .ws-deriv-tab.is-main{opacity:0;transition:opacity 150ms ease}
+  #view-workspace .ws-deriv-tabs.is-single-untitled:hover .ws-deriv-tab.is-main,#view-workspace .ws-deriv-tabs.is-single-untitled:focus-within .ws-deriv-tab.is-main{opacity:1}
   /* 改名笔:贴 Tab 右缘的毛玻璃垫(手工调,替换早前的实底方块)——垫用 backdrop 模糊+
      极浅暗色,任何底(hover/选中/素面)上都不糊字;icon 幽灵态,悬停提亮。 */
   #view-workspace .ws-deriv-rename{position:absolute;right:0;top:0;height:100%;width:24px;padding:0;border:0;border-radius:0;background:linear-gradient(90deg,rgba(22,28,36,0) 0%,rgba(22,28,36,0.30) 42%,rgba(22,28,36,0.34) 100%);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);color:rgba(240,232,214,0.72);display:grid;place-items:center;opacity:0;pointer-events:none;cursor:pointer;transition:opacity 0.12s ease,color 0.12s ease}

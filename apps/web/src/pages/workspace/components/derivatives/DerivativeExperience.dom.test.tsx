@@ -206,6 +206,39 @@ describe("公众号稿生成体验", () => {
     expect(host.querySelector('[aria-label="新建稿件"]')).not.toBeNull();
   });
 
+  it("无标题单文档默认淡隐，hover 顶栏淡现并显示未命名文案", async () => {
+    await act(async () => root.render(
+      <DerivTabBar title="" items={[]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} />,
+    ));
+
+    const tabs = host.querySelector<HTMLElement>(".ws-deriv-tabs")!;
+    expect(tabs.classList.contains("is-single-untitled")).toBe(true);
+    expect(tabs.textContent).toContain("未命名文档");
+
+    const css = readFileSync(resolve(process.cwd(), "src/pages/workspace/workspace.css"), "utf8");
+    expect(css).toMatch(/\.ws-deriv-tabs\.is-single-untitled \.ws-deriv-tab\.is-main\{opacity:0;transition:opacity 150ms ease\}/);
+    expect(css).toMatch(/\.ws-deriv-tabs\.is-single-untitled:hover \.ws-deriv-tab\.is-main[^}]*\{opacity:1\}/);
+  });
+
+  it("有标题时主文档 Tab 常显", async () => {
+    await act(async () => root.render(
+      <DerivTabBar title="项目复盘" items={[]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} />,
+    ));
+
+    expect(host.querySelector(".ws-deriv-tabs")?.classList.contains("is-single-untitled")).toBe(false);
+    expect(host.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain("项目复盘");
+  });
+
+  it("有衍生稿时无标题主文档 Tab 常显，保留多 Tab 导航", async () => {
+    await act(async () => root.render(
+      <DerivTabBar title="" items={[item]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} />,
+    ));
+
+    expect(host.querySelector(".ws-deriv-tabs")?.classList.contains("is-single-untitled")).toBe(false);
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(host.querySelector(".ws-deriv-tab.is-main")?.textContent).toContain("未命名文档");
+  });
+
   it("青简编辑中「+」禁用:点了不开菜单、hover 展示原因", async () => {
     await act(async () => root.render(
       <DerivTabBar title="主文档" items={[item]} activeTab="main" onActivate={vi.fn()} onCreate={vi.fn()} onRename={vi.fn()} createDisabledReason="请等待青简完成编辑" />,

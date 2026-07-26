@@ -112,6 +112,39 @@ describe("confirm grant 与不可变审计仓储", () => {
     }]);
   });
 
+  it("settings 创建与撤销 grant 会在同一事务写入统一审计账本", async () => {
+    await createConfirmGrant({
+      kind: "command",
+      source: "settings",
+      grantId: "grant-settings-command",
+      now: "2026-07-21T04:00:00.000Z",
+    });
+    await revokeConfirmGrant(
+      "command",
+      "settings",
+      "2026-07-21T05:00:00.000Z",
+    );
+
+    expect(await listConfirmAuditEvents("settings")).toMatchObject([
+      {
+        eventType: "grant_created",
+        subjectId: "local-user",
+        kind: "command",
+        source: "settings",
+        grantId: "grant-settings-command",
+        result: "grant-created",
+      },
+      {
+        eventType: "grant_revoked",
+        subjectId: "local-user",
+        kind: "command",
+        source: "settings",
+        grantId: "grant-settings-command",
+        result: "grant-revoked",
+      },
+    ]);
+  });
+
   it("并发 create→revoke 以撤销后的 canonical 终态收敛", async () => {
     const observed = await getConfirmGrantState("install");
     const [created, revoked] = await Promise.all([

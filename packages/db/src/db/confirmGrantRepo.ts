@@ -10,14 +10,16 @@ import { ensureMigrated } from "./migrations.js";
 export type ConfirmGrantKind = "install" | "command";
 export type ConfirmGrantSource = "card" | "settings";
 export type ConfirmAuditKind = ConfirmGrantKind | "connect" | "send";
-export type ConfirmDecisionSource = "ui" | "stored-grant" | "expired";
+export type ConfirmDecisionSource = "ui" | "stored-grant" | "expired" | "settings";
 export type ConfirmAuditDecision = "accepted" | "rejected" | "expired" | "failed";
 export type ConfirmAuditEventType =
   | "decision_started"
   | "decision_finished"
   | "decision_failed"
   | "decision_expired"
-  | "remember_rejected";
+  | "remember_rejected"
+  | "grant_created"
+  | "grant_revoked";
 
 export interface ConfirmGrant {
   grantId: string;
@@ -320,6 +322,24 @@ export async function createConfirmGrantCanonical(input: {
         input.subjectId ?? "local-user",
       ],
     });
+    if (grant.source === "settings") {
+      await client.execute({
+        sql: `INSERT INTO confirm_audit_events (
+          event_id, ts, event_type, subject_id, session_id, run_id, tool_call_id, confirm_id,
+          kind, command_digest, command_preview, decision, source, grant_id,
+          result, policy_version, isolation_epoch, config_hash
+        ) VALUES (?, ?, 'grant_created', ?, 'settings', 'settings', 'settings', ?, ?, '', '',
+          'accepted', 'settings', ?, 'grant-created', 'security-settings-v1', NULL, NULL)`,
+        args: [
+          randomUUID(),
+          grant.createdAt,
+          input.subjectId ?? "local-user",
+          `settings:${grant.kind}`,
+          grant.kind,
+          grant.grantId,
+        ],
+      });
+    }
     const nextVersion = version + 1;
     await client.execute({
       sql: `UPDATE confirm_grant_states SET version = ? WHERE kind = ?`,
@@ -373,6 +393,24 @@ export async function revokeConfirmGrantWithState(
         ) VALUES (?, ?, ?, ?, 'revoked', ?, ?)`,
         args: [randomUUID(), now, grant.grantId, grant.kind, source, subjectId],
       });
+      if (source === "settings") {
+        await client.execute({
+          sql: `INSERT INTO confirm_audit_events (
+            event_id, ts, event_type, subject_id, session_id, run_id, tool_call_id, confirm_id,
+            kind, command_digest, command_preview, decision, source, grant_id,
+            result, policy_version, isolation_epoch, config_hash
+          ) VALUES (?, ?, 'grant_revoked', ?, 'settings', 'settings', 'settings', ?, ?, '', '',
+            'accepted', 'settings', ?, 'grant-revoked', 'security-settings-v1', NULL, NULL)`,
+          args: [
+            randomUUID(),
+            now,
+            subjectId,
+            `settings:${grant.kind}`,
+            grant.kind,
+            grant.grantId,
+          ],
+        });
+      }
     }
     await client.execute({
       sql: `UPDATE confirm_grant_states

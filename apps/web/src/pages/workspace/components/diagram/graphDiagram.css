@@ -50,21 +50,10 @@
   height: 100%;
 }
 
-/* 预览态右上角统一工具栏(对齐 左/中/右 + 缩小/放大/适应 + 全屏),视觉与图片块 .pm-image-toolbar 统一。
-   悬停/选中图表块时显现。 */
-.graph-diagram-viewbar.react-flow__panel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 8px;
-  padding: 4px;
-  border: 1px solid rgba(55, 45, 32, 0.12);
-  border-radius:0;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 6px 22px rgba(55, 45, 32, 0.14);
+/* 外部工具栏结构/视觉复用图片块，只在图表作用域补显隐。 */
+.graph-diagram-viewbar.pm-image-toolbar {
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
 }
 
 .graph-diagram-canvas-tool-icon {
@@ -73,13 +62,12 @@
   height: 17px;
   color: currentColor;
 }
-.pm-diagram:hover .graph-diagram-viewbar.react-flow__panel,
-.pm-diagram.is-selected .graph-diagram-viewbar.react-flow__panel,
-.graph-diagram-canvas--preview:hover .graph-diagram-viewbar.react-flow__panel {
+.pm-diagram:hover .graph-diagram-viewbar.pm-image-toolbar,
+.pm-diagram.is-selected .graph-diagram-viewbar.pm-image-toolbar,
+.graph-diagram-canvas--preview:hover .graph-diagram-viewbar.pm-image-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
-/* 工具栏按钮样式见 DiagramView.css 的 .pm-diagram-tool*(图表/SVG 两条路径共用,统一观感)。 */
 
 /* 连线 hover 态:鼠标移到箭头/连线上时加深加粗,给出可交互反馈(用户反馈"箭头没有 hover 态")。
    预览态连线默认 pointer-events:none(不可选),这里只为 hover 反馈放开命中,不影响点击空白选块。 */

@@ -16,6 +16,7 @@ import type { ChatMessageListProps } from "../workspace/components/ChatMessageLi
 import { ReviewOutcomeCard } from "../workspace/components/ReviewOutcomeCard";
 import { BrowserViewPart } from "../workspace/components/BrowserViewPart";
 import { DiagramRenderer } from "../workspace/components/diagram/DiagramRenderer";
+import { MediaBlockToolbar } from "../workspace/components/MediaBlockToolbar";
 // —— 本页真实引用的生产组件(mock props 驱动,零重写)——
 import { BigPlanPanel } from "../workspace/components/BigPlanPanel";
 import { AskUserOverlay } from "../workspace/components/AskUserOverlay";
@@ -1839,12 +1840,14 @@ export function UIKitPage() {
             <div className="uk-image-demo">
               <div className="uk-image-frame">
                 <span className="uk-image-ph" aria-hidden="true" />
-                <div className="pm-image-toolbar pm-image-chrome" role="toolbar" aria-label="图片操作">
-                  <button className="pm-image-tool is-active" type="button" aria-pressed>左</button>
-                  <button className="pm-image-tool" type="button">中</button>
-                  <button className="pm-image-tool" type="button">右</button>
-                  <button className="pm-image-tool pm-image-tool--wide" type="button">⛶ 全屏</button>
-                </div>
+                <MediaBlockToolbar
+                  align="left"
+                  onAlignChange={() => {}}
+                  onFullscreen={() => {}}
+                  ariaLabel="图片操作"
+                  fullscreenAriaLabel="全屏查看图片"
+                  className="uk-media-toolbar-demo"
+                />
                 <button className="pm-image-resize-handle pm-image-chrome" type="button" aria-label="调整图片宽度" />
               </div>
               <div className="uk-image-frame">
@@ -1870,23 +1873,19 @@ export function UIKitPage() {
 
         {/* 22. 图表工具栏(真实生产控件) */}
         <Section idx="22" zh="图表工具栏(生产控件)" en="Diagram toolbar" id="diagram">
-          <Group title="统一图表工具栏" code=".pm-diagram-tool / .is-active / --wide / -sep">
+          <Group title="图片与图表共用外部工具栏" code="MediaBlockToolbar / .pm-image-toolbar / .pm-image-tool">
             <div className="uk-row">
-              <div className="pm-diagram-svg-viewbar pm-diagram-chrome" style={{ position: "static", opacity: 1 }}>
-                <button className="pm-diagram-tool is-active" aria-pressed>
-                  左
-                </button>
-                <button className="pm-diagram-tool">中</button>
-                <button className="pm-diagram-tool">右</button>
-                <span className="pm-diagram-tool-sep" aria-hidden="true" />
-                <button className="pm-diagram-tool">−</button>
-                <button className="pm-diagram-tool">＋</button>
-                <span className="pm-diagram-tool-sep" aria-hidden="true" />
-                <button className="pm-diagram-tool pm-diagram-tool--wide">⛶ 全屏</button>
-              </div>
+              <MediaBlockToolbar
+                align="left"
+                onAlignChange={() => {}}
+                onFullscreen={() => {}}
+                ariaLabel="图表操作"
+                fullscreenAriaLabel="全屏查看图表"
+                className="uk-media-toolbar-demo"
+              />
             </div>
             <div className="uk-row">
-              <span className="uk-cap">说明:对齐左/中/右(is-active 高亮)· 缩放 −/＋ · 全屏。统一棕色边框、直角、14px 图标。</span>
+              <span className="uk-cap">说明:外部仅保留左/中/右块对齐与全屏查看；编辑入口、缩放和适配不进入外部栏。</span>
             </div>
           </Group>
         </Section>

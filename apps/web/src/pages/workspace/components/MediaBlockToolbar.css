@@ -1,0 +1,49 @@
+.pm-image-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid rgba(55, 45, 32, 0.12);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 22px rgba(55, 45, 32, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.pm-image-chrome {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pm-image-tool {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2, #4a4034);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pm-image-tool:hover {
+  background: var(--bg-hover);
+}
+
+.pm-image-tool.is-active {
+  border-color: rgba(168, 130, 63, 0.38);
+  background: var(--mark-soft);
+  color: var(--mark, #8f6d30);
+}
+
+.pm-image-tool--wide {
+  min-width: 58px;
+}

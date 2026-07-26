@@ -377,7 +377,7 @@ describe("GraphDiagramView", () => {
     expect(container?.querySelector(".react-flow__node")).toBeNull();
   });
 
-  it("工具栏全量图标化，编辑态分组齐全且只读态隐藏编辑按钮", async () => {
+  it("外部工具栏与图片款一致，仅保留左中右全屏文字按钮", async () => {
     const onAlignChange = vi.fn();
     const source = `flowchart TD
   A[开始] --> B[结束]
@@ -392,34 +392,37 @@ describe("GraphDiagramView", () => {
       />,
     );
     const editableToolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
-    const editableLabels = Array.from(editableToolbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
-      .map((button) => button.getAttribute("aria-label"));
-    expect(editableLabels).toEqual([
-      "新增分区",
+    expect(editableToolbar.classList.contains("pm-image-toolbar")).toBe(true);
+    expect(editableToolbar.classList.contains("pm-image-chrome")).toBe(true);
+    const editableButtons = Array.from(editableToolbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
+    expect(editableButtons.map((button) => button.textContent?.trim())).toEqual(["左", "中", "右", "全屏"]);
+    expect(editableButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "左对齐",
-      "居中对齐",
+      "居中",
       "右对齐",
-      "缩小",
-      "放大",
-      "适配视图",
-      "全屏编辑",
+      "全屏查看",
     ]);
-    expect(editableToolbar.querySelectorAll(".pm-diagram-tool-sep")).toHaveLength(3);
-    expect(editableToolbar.querySelectorAll(".graph-diagram-canvas-tool-icon")).toHaveLength(8);
-    expect(Array.from(editableToolbar.querySelectorAll("button")).every((button) => button.title === button.getAttribute("aria-label"))).toBe(true);
+    expect(editableToolbar.querySelector(".pm-diagram-tool")).toBeNull();
+    expect(editableToolbar.textContent).not.toContain("新增分区");
+    expect(editableToolbar.textContent).not.toContain("适配视图");
+    expect(editableToolbar.textContent).not.toContain("＋");
+    expect(editableToolbar.textContent).not.toContain("−");
     await mouseDown(editableToolbar.querySelector("[aria-label='右对齐']")!);
     expect(onAlignChange).toHaveBeenCalledWith("right");
+    await mouseDown(editableToolbar.querySelector("[aria-label='全屏查看']")!);
+    const editableViewer = await waitForSelector(".graph-diagram-viewer", document.body);
+    expect(editableViewer.querySelector(".graph-diagram-handle-add")).toBeNull();
+    expect(document.body.querySelector(".graph-diagram-editor")).toBeNull();
+    await click(findButton("关闭", editableViewer));
 
     await act(async () => {
       root!.render(<DiagramRenderer source={source} readOnly />);
     });
     await flush();
     const readOnlyToolbar = await waitForSelector("[aria-label='图表画布工具栏']", container!);
-    const readOnlyLabels = Array.from(readOnlyToolbar.querySelectorAll<HTMLButtonElement>(".pm-diagram-tool"))
-      .map((button) => button.getAttribute("aria-label"));
-    expect(readOnlyLabels).toEqual(["缩小", "放大", "适配视图", "全屏查看"]);
-    expect(readOnlyLabels).not.toContain("新增分区");
-    expect(readOnlyLabels.some((label) => label?.includes("对齐"))).toBe(false);
+    const readOnlyButtons = Array.from(readOnlyToolbar.querySelectorAll<HTMLButtonElement>(".pm-image-tool"));
+    expect(readOnlyButtons.map((button) => button.textContent?.trim())).toEqual(["全屏"]);
+    expect(readOnlyButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["全屏查看"]);
   });
 
   it("只读态全屏按钮打开纯查看层，Esc/关闭可退出且不出现编辑把手", async () => {

@@ -3,6 +3,7 @@ import { Node, type CommandProps, type NodeViewProps } from "@tiptap/core";
 import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import { PM_IMAGE_ALIGN_VALUES, isAllowedImageSrc } from "@qingagent/pm-schema";
 import { MediaZoomFullscreen } from "./MediaZoomFullscreen";
+import { MediaBlockToolbar } from "./MediaBlockToolbar";
 import { isSvgSrc, svgFallbackWidth } from "./imageSizing";
 import { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
 export { normalizeImageAlign, type ImageAlign } from "../data/imageAlign";
@@ -78,37 +79,13 @@ function ImageComponent({ node, updateAttributes, editor, selected }: NodeViewPr
             </div>
           ) : null}
           {editable ? (
-            <div className="pm-image-toolbar pm-image-chrome" contentEditable={false} role="toolbar" aria-label="图片操作">
-              {(["left", "center", "right"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={`pm-image-tool${align === option ? " is-active" : ""}`}
-                  aria-label={alignTitle(option)}
-                  aria-pressed={align === option}
-                  title={alignTitle(option)}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    updateAttributes({ align: option });
-                  }}
-                >
-                  {alignLabel(option)}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="pm-image-tool pm-image-tool--wide"
-                aria-label="全屏查看图片"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setFullscreen(true);
-                }}
-              >
-                ⛶ 全屏
-              </button>
-            </div>
+            <MediaBlockToolbar
+              align={align}
+              onAlignChange={(nextAlign) => updateAttributes({ align: nextAlign })}
+              onFullscreen={() => setFullscreen(true)}
+              ariaLabel="图片操作"
+              fullscreenAriaLabel="全屏查看图片"
+            />
           ) : null}
           {editable ? (
             <button
@@ -386,18 +363,6 @@ function resolveMaxImageWidth(frame: HTMLElement | null, fallback: number): numb
   const frameWidth = frame?.getBoundingClientRect().width ?? 0;
   const maxWidth = Math.max(parentWidth, frameWidth, fallback, MIN_IMAGE_WIDTH);
   return Math.round(maxWidth);
-}
-
-function alignTitle(align: ImageAlign): string {
-  if (align === "left") return "左对齐";
-  if (align === "right") return "右对齐";
-  return "居中";
-}
-
-function alignLabel(align: ImageAlign): string {
-  if (align === "left") return "左";
-  if (align === "right") return "右";
-  return "中";
 }
 
 function clamp(value: number, min: number, max: number): number {

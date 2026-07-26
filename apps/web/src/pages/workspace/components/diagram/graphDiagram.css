@@ -119,7 +119,7 @@
   flex: 1;
   min-height: 0;
   border-radius:0;
-  border-color: rgba(83, 105, 136, 0.24);
+  border-color: rgba(176, 138, 62, 0.24);
   background: #fbf7ee;
 }
 
@@ -134,15 +134,15 @@
   box-sizing: border-box;
   min-width: 1px;
   min-height: 1px;
-  border: 1.5px dashed #35619d;
-  background: rgba(53, 97, 157, 0.07);
+  border: 1.5px dashed #8f6d30;
+  background: rgba(143, 109, 48, 0.07);
   pointer-events: none;
   box-shadow: 0 0 0 1px rgba(255, 250, 240, 0.64) inset;
 }
 
 .graph-diagram-subgraph-draft.is-pending {
   border-style: solid;
-  background: rgba(53, 97, 157, 0.1);
+  background: rgba(143, 109, 48, 0.1);
 }
 
 .graph-diagram-subgraph-draft__input {
@@ -153,7 +153,7 @@
   height: 27px;
   box-sizing: border-box;
   padding: 2px 8px;
-  border: 1px solid rgba(53, 97, 157, 0.52);
+  border: 1px solid rgba(143, 109, 48, 0.52);
   border-radius: 0;
   outline: none;
   background: #fffaf0;
@@ -245,9 +245,9 @@
 }
 
 .graph-diagram-cluster.is-selected {
-  border-color: #35619d;
+  border-color: #8f6d30;
   background: color-mix(in srgb, var(--graph-cluster-fill) 82%, transparent);
-  box-shadow: 0 0 0 2px rgba(53, 97, 157, 0.14);
+  box-shadow: 0 0 0 2px rgba(143, 109, 48, 0.14);
 }
 
 .graph-diagram-cluster__title-input {
@@ -255,14 +255,14 @@
   width: min(240px, 100%);
   height: 26px;
   padding: 2px 7px;
-  border: 1px solid rgba(53, 97, 157, 0.46);
+  border: 1px solid rgba(143, 109, 48, 0.46);
   border-radius: 0;
   outline: none;
   background: #fffaf0;
   color: var(--graph-node-text);
   font: 600 14px/1.4 var(--font-zh-serif);
   text-align: center;
-  box-shadow: 0 0 0 3px rgba(53, 97, 157, 0.12);
+  box-shadow: 0 0 0 3px rgba(143, 109, 48, 0.12);
   pointer-events: auto;
 }
 
@@ -316,13 +316,13 @@
 
 .graph-diagram[data-diagram-type] .react-flow__node:hover .graph-diagram-node-shape-fill,
 .graph-diagram-editor .react-flow__node:hover .graph-diagram-node-shape-fill {
-  filter: drop-shadow(0 8px 16px rgba(53, 97, 157, 0.2));
+  filter: drop-shadow(0 8px 16px rgba(143, 109, 48, 0.2));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node:hover .graph-diagram-node-hover-ring,
 .graph-diagram-editor .react-flow__node:hover .graph-diagram-node-hover-ring {
   opacity: 1;
-  filter: drop-shadow(0 0 5px rgba(53, 97, 157, 0.28));
+  filter: drop-shadow(0 0 5px rgba(143, 109, 48, 0.28));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.selected,
@@ -354,7 +354,7 @@
   outline: none;
   cursor: text;
   user-select: text;
-  caret-color: #1d4f91;
+  caret-color: #8f6d30;
 }
 
 .graph-diagram-node-label.is-editing:focus {
@@ -378,8 +378,8 @@
   width: 10px;
   height: 10px;
   border: 2px solid #fffaf0;
-  background: #35619d;
-  opacity: 0.28;
+  background: #8f6d30;
+  opacity: 0;
   cursor: crosshair;
   transform: scale(0.82);
   transition: opacity 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
@@ -387,7 +387,7 @@
 
 .graph-diagram-canvas--editor .react-flow__handle {
   display: block;
-  opacity: 0.28;
+  opacity: 0;
 }
 
 .graph-diagram-canvas--preview .react-flow__handle {
@@ -444,8 +444,6 @@
 }
 
 .graph-diagram-canvas--editor .react-flow__node:hover .react-flow__handle,
-.graph-diagram-canvas--editor .react-flow__node.is-selected .react-flow__handle,
-.graph-diagram-canvas--editor .react-flow__node.selected .react-flow__handle,
 .graph-diagram-canvas--editor .react-flow__handle.connectingfrom,
 .graph-diagram-canvas--editor .react-flow__handle.connectingto,
 .graph-diagram-canvas--editor.is-connecting .react-flow__handle.connectionindicator {
@@ -455,10 +453,50 @@
 
 .graph-diagram-canvas--editor .react-flow__handle:hover {
   z-index: 7;
-  background: #1d4f91;
-  box-shadow: 0 0 0 3px rgba(53, 97, 157, 0.18);
+  background: #755821;
+  box-shadow: 0 0 0 3px rgba(143, 109, 48, 0.18);
   opacity: 1;
   transform: scale(1.35);
+}
+
+.graph-diagram-resize-line {
+  border-color: #8f6d30 !important;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.graph-diagram-resize-line::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #8f6d30;
+  background: #fffaf0;
+  transform: translate(-50%, -50%);
+}
+
+.graph-diagram-resize-handle {
+  width: 8px !important;
+  height: 8px !important;
+  border: 1px solid #8f6d30 !important;
+  border-radius: 0 !important;
+  background: #fffaf0 !important;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease, background 0.12s ease;
+}
+
+.graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-resize-line,
+.graph-diagram-canvas--editor .react-flow__node:hover .graph-diagram-resize-handle,
+.graph-diagram-canvas--editor .react-flow__node.resizing .graph-diagram-resize-line,
+.graph-diagram-canvas--editor .react-flow__node.resizing .graph-diagram-resize-handle {
+  opacity: 1;
+}
+
+.graph-diagram-canvas--editor .graph-diagram-resize-handle:hover {
+  background: #e5dfc9 !important;
+  transform: scale(1.2);
 }
 
 .graph-diagram-handle-add {
@@ -470,10 +508,10 @@
   width: 18px;
   height: 18px;
   padding: 0;
-  border: 1px solid rgba(53, 97, 157, 0.32);
+  border: 1px solid rgba(143, 109, 48, 0.32);
   border-radius: 999px;
   background: #fffaf0;
-  color: #1d4f91;
+  color: #755821;
   font: 700 13px/1 var(--font-zh-serif);
   opacity: 0;
   cursor: pointer;
@@ -518,7 +556,7 @@
 .graph-diagram-canvas--editor .react-flow__handle:hover + .graph-diagram-handle-add,
 .graph-diagram-canvas--editor .graph-diagram-handle-add:hover,
 .graph-diagram-canvas--editor .graph-diagram-handle-add:focus-visible {
-  border-color: rgba(53, 97, 157, 0.62);
+  border-color: rgba(143, 109, 48, 0.62);
   background: #ffffff;
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
@@ -529,8 +567,8 @@
 }
 
 .graph-diagram-editor .react-flow__selection {
-  border: 1px solid rgba(53, 97, 157, 0.72);
-  background: rgba(53, 97, 157, 0.12);
+  border: 1px solid rgba(143, 109, 48, 0.72);
+  background: rgba(143, 109, 48, 0.12);
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.is-selected,
@@ -544,7 +582,7 @@
 .graph-diagram[data-diagram-type] .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-selection-ring,
 .graph-diagram-editor .react-flow__node .graph-diagram-node-shell.is-renaming .graph-diagram-node-selection-ring {
   opacity: 1;
-  filter: drop-shadow(0 0 5px rgba(53, 97, 157, 0.45));
+  filter: drop-shadow(0 0 5px rgba(143, 109, 48, 0.45));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__node.is-selected:hover .graph-diagram-node-hover-ring,
@@ -556,7 +594,7 @@
 
 .graph-diagram[data-diagram-type] .react-flow__node.is-parent-target,
 .graph-diagram-editor .react-flow__node.is-parent-target {
-  outline: 2px dashed #2f7d68;
+  outline: 2px dashed #8f6d30;
   outline-offset: 5px;
 }
 
@@ -568,14 +606,14 @@
 
 .graph-diagram[data-diagram-type] .react-flow__edge.is-selected .react-flow__edge-path,
 .graph-diagram-editor .react-flow__edge.is-selected .react-flow__edge-path {
-  filter: drop-shadow(0 3px 4px rgba(53, 97, 157, 0.28));
+  filter: drop-shadow(0 3px 4px rgba(143, 109, 48, 0.28));
 }
 
 .graph-diagram[data-diagram-type] .react-flow__edge:hover .react-flow__edge-path,
 .graph-diagram-editor .react-flow__edge:hover .react-flow__edge-path {
-  stroke: #35619d !important;
+  stroke: #8f6d30 !important;
   stroke-width: 3px !important;
-  filter: drop-shadow(0 3px 5px rgba(53, 97, 157, 0.24));
+  filter: drop-shadow(0 3px 5px rgba(143, 109, 48, 0.24));
 }
 
 .graph-diagram-edge-label {
@@ -606,12 +644,12 @@
 .graph-diagram-edge-label.is-editing {
   min-width: 76px;
   outline: none;
-  border: 1px solid rgba(53, 97, 157, 0.42);
+  border: 1px solid rgba(143, 109, 48, 0.42);
   background: rgba(255, 250, 240, 0.98);
-  box-shadow: 0 0 0 3px rgba(53, 97, 157, 0.14), 0 10px 24px rgba(47, 42, 34, 0.14);
+  box-shadow: 0 0 0 3px rgba(143, 109, 48, 0.14), 0 10px 24px rgba(47, 42, 34, 0.14);
   cursor: text;
   user-select: text;
-  caret-color: #1d4f91;
+  caret-color: #8f6d30;
 }
 
 .graph-diagram-editor {
@@ -663,7 +701,7 @@
   flex: 1;
   height: auto;
   min-height: 0;
-  border: 1px solid rgba(83, 105, 136, 0.24);
+  border: 1px solid rgba(176, 138, 62, 0.24);
 }
 
 .graph-diagram-canvas--fullscreen .react-flow__controls {
@@ -700,7 +738,7 @@
 
 .graph-diagram-editor__close {
   padding: 0 14px;
-  background: #2f4f6f;
+  background: #3b3328;
   color: #ffffff;
 }
 
@@ -711,12 +749,12 @@
 
 .graph-diagram-context button:hover:not(:disabled),
 .graph-diagram-context button:hover:not(:disabled) {
-  border-color: rgba(53, 97, 157, 0.45);
-  color: #1d4f91;
+  border-color: rgba(143, 109, 48, 0.45);
+  color: #755821;
 }
 
 .graph-diagram-editor__close:hover {
-  background: #243e58;
+  background: #2f2a22;
 }
 
 .graph-diagram-context button:disabled,
@@ -727,13 +765,13 @@
 
 .graph-diagram-primary-action {
   white-space: nowrap;
-  background: #2f4f6f;
+  background: #3b3328;
   color: #ffffff;
 }
 
 .graph-diagram-primary-action:hover:not(:disabled) {
-  border-color: rgba(47, 79, 111, 0.78);
-  background: #243e58;
+  border-color: rgba(59, 51, 40, 0.78);
+  background: #2f2a22;
   color: #ffffff;
 }
 
@@ -743,12 +781,38 @@
   display: flex;
   align-items: stretch;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   width: max-content;
   max-width: min(92vw, 560px);
-  color: var(--ink-1);
+  padding: 5px 6px;
+  border: 1px solid var(--ink-1);
+  border-radius: 0;
+  background: var(--ink-1);
+  color: var(--ink-on-dark);
   overflow: visible;
   pointer-events: auto;
+  box-shadow: 0 10px 28px rgba(20, 18, 16, 0.28), 0 2px 6px rgba(20, 18, 16, 0.12);
+  font: 13px/1 var(--font-zh-serif);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.graph-diagram-context::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 12px;
+  height: 6px;
+  background: var(--ink-1);
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+  transform: translateX(-50%);
+}
+
+.graph-diagram-context.is-below::after {
+  top: auto;
+  bottom: 100%;
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
 }
 
 .graph-diagram-context--above {
@@ -760,7 +824,8 @@
 }
 
 .graph-diagram-context__hint {
-  color: #2f4f6f;
+  padding: 0 6px;
+  color: rgba(255, 250, 240, 0.72);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -771,11 +836,10 @@
   gap: 4px;
   width: max-content;
   max-width: min(92vw, 560px);
-  padding: 4px;
-  border: 1px solid rgba(47, 42, 34, 0.14);
-  border-radius:0;
-  background: rgba(255, 250, 240, 0.98);
-  box-shadow: 0 14px 34px rgba(47, 42, 34, 0.14);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .graph-diagram-toolbar__button {
@@ -786,12 +850,28 @@
   width: 32px;
   min-width: 32px;
   max-width: 120px;
-  height: 30px;
-  padding: 0 7px !important;
+  height: 26px;
+  padding: 0 6px !important;
+  border: 0;
   border-radius:0;
   background: transparent;
   white-space: nowrap;
   box-shadow: none;
+}
+
+.graph-diagram-context .dt-btn,
+.graph-diagram-context .dt-mi {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-on-dark);
+  font-family: var(--font-zh-serif);
+}
+
+.graph-diagram-context .dt-btn:hover:not(:disabled),
+.graph-diagram-context .dt-mi:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink-on-dark);
 }
 
 .graph-diagram-toolbar__button:has(.graph-diagram-toolbar__value) {
@@ -806,20 +886,19 @@
 
 .graph-diagram-toolbar__button.is-active,
 .graph-diagram-toolbar__button:hover:not(:disabled) {
-  border-color: rgba(53, 97, 157, 0.35);
-  background: rgba(53, 97, 157, 0.1);
-  color: #1d4f91;
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--ink-on-dark);
 }
 
 .graph-diagram-toolbar__value {
   max-width: 76px;
   overflow: hidden;
-  color: #6a6256;
+  color: var(--ink-on-dark);
   text-overflow: ellipsis;
 }
 
 .graph-diagram-toolbar__caret {
-  color: #6a6256;
+  color: rgba(255, 250, 240, 0.62);
   font-size: 10px;
 }
 
@@ -834,9 +913,10 @@
   max-width: min(92vw, 360px);
   max-height: min(56vh, 420px);
   padding: 10px;
-  border: 1px solid rgba(47, 42, 34, 0.14);
+  border: 1px solid #3a3328;
   border-radius:0;
-  background: rgba(255, 250, 240, 0.99);
+  background: var(--ink-1);
+  color: var(--ink-on-dark);
   overflow: auto;
   transform: translateX(-50%);
   box-shadow: 0 18px 42px rgba(47, 42, 34, 0.18);
@@ -871,20 +951,20 @@
 }
 
 .graph-diagram-menu-item:hover:not(:disabled) {
-  background: rgba(53, 97, 157, 0.1);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .graph-diagram-menu-item.is-danger {
-  color: #9e2b25;
+  color: rgba(255, 250, 240, 0.72);
 }
 
 .graph-diagram-menu-item kbd {
   min-width: 34px;
   padding: 1px 5px;
-  border: 1px solid rgba(47, 42, 34, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius:0;
-  background: rgba(47, 42, 34, 0.04);
-  color: #6a6256;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 250, 240, 0.58);
   font: 11px/1.4 var(--font-mono);
   text-align: center;
 }
@@ -902,9 +982,9 @@
 }
 
 .graph-diagram-shape-btn.is-active {
-  border-color: rgba(53, 97, 157, 0.55);
-  background: rgba(53, 97, 157, 0.12);
-  color: #1d4f91;
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--ink-on-dark);
   font-weight: 650;
 }
 
@@ -915,7 +995,7 @@
 }
 
 .graph-diagram-icon-options__label {
-  color: #6a6256;
+  color: rgba(255, 250, 240, 0.66);
   font-size: 12px;
 }
 
@@ -937,9 +1017,9 @@
 }
 
 .graph-diagram-icon-option.is-active {
-  border-color: rgba(53, 97, 157, 0.55);
-  background: rgba(53, 97, 157, 0.13);
-  color: #1d4f91;
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--ink-on-dark);
 }
 
 .graph-diagram-color-control {
@@ -961,7 +1041,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #6a6256;
+  color: rgba(255, 250, 240, 0.66);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1009,7 +1089,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #6a6256;
+  color: rgba(255, 250, 240, 0.66);
   font-size: 12px;
 }
 
@@ -1033,14 +1113,14 @@
 
 .graph-diagram-range-control input[type="range"] {
   width: 100%;
-  accent-color: #35619d;
+  accent-color: #8f6d30;
 }
 
 .graph-diagram-error {
   padding: 6px 10px;
-  border: 1px solid #f2c8bd;
-  background: #fff1ed;
-  color: #9e2b25;
+  border: 1px solid #cdbfa3;
+  background: #f3ecdd;
+  color: #5c5346;
   font-size: 12px;
 }
 
@@ -1052,7 +1132,7 @@
   max-width: min(520px, calc(100% - 32px));
   border-radius:0;
   transform: translateX(-50%);
-  box-shadow: 0 10px 24px rgba(158, 43, 37, 0.12);
+  box-shadow: 0 10px 24px rgba(77, 55, 26, 0.12);
 }
 
 .graph-diagram-export {

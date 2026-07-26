@@ -1264,6 +1264,28 @@ flowchart TD
     });
   });
 
+  it("flowchart 节点 width/height 可由 Mermaid style 或持久化 overlay 驱动布局与导出", () => {
+    const source = [
+      "flowchart LR",
+      "  A[可调节点] --> B[结束]",
+      "  style A width:240px,height:112px",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    expect((parsed.model as FlowGraph).perNodeStyles?.A).toMatchObject({ width: 240, height: 112 });
+
+    const sourceLayout = layoutDiagramGraph(parsed.model);
+    expect(sourceLayout.nodes.A).toMatchObject({ width: 240, height: 112 });
+
+    const overlay = { styles: { A: { width: 296, height: 144 } } };
+    const overlayLayout = layoutDiagramGraph(parsed.model, overlay);
+    expect(overlayLayout.nodes.A).toMatchObject({ width: 296, height: 144 });
+    const svg = graphToSvg(source, overlay)!;
+    expect(svg).toContain('data-layout-width="296"');
+    expect(svg).toContain('data-layout-height="144"');
+  });
+
   it("五类图都接住 init 图级色板,无 init 的 graphToSvg 保持纸墨默认", () => {
     const init = "%%{init: {\"themeVariables\":{\"mainBkg\":\"#FFFFFF\",\"nodeBorder\":\"#5178C6\",\"lineColor\":\"#BBBFC4\",\"textColor\":\"#1F2329\"}}}%%\n";
     const sources = [

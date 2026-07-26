@@ -235,27 +235,27 @@
   padding: 0 12px;
   border: 1px solid rgba(47, 42, 34, 0.18);
   border-radius:0;
-  background: rgba(47, 79, 111, 0.96);
+  background: rgba(143, 109, 48, 0.96);
   color: #fff;
   font-size: 12px;
   cursor: pointer;
   box-shadow: 0 6px 18px rgba(47, 42, 34, 0.08);
 }
 .pm-diagram-view-btn:hover {
-  background: #243e58;
+  background: #755821;
 }
 .pm-diagram-view-btn:disabled {
   opacity: 0.58;
   cursor: wait;
 }
 .pm-diagram-view-btn--ghost {
-  background: rgba(255, 250, 240, 0.94);
-  color: var(--ink-1);
+  background: rgba(143, 109, 48, 0.96);
+  color: #fff;
 }
 .pm-diagram-view-btn--ghost:hover {
-  border-color: rgba(53, 97, 157, 0.45);
-  background: #fffaf0;
-  color: #1d4f91;
+  border-color: rgba(143, 109, 48, 0.72);
+  background: #755821;
+  color: #fff;
 }
 /* 全屏覆盖层(legacy,已不再由图表使用) */
 .pm-diagram-fullscreen {

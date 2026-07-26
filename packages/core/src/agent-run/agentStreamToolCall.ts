@@ -34,13 +34,12 @@ import {
 import { schedulePersist } from "../session/threadPersistence.js";
 import {
   PURE_UI_TOOL_NAMES,
+  authCardToolCallSpec,
   buildAskUserToolCallSpec,
   generateSvgToolCallSpec,
   isTerminalCommandCard,
-  qrCardToolCallSpec,
   readImageToolCallSpec,
   researchCardToolCallSpec,
-  wechatAuthQrToolCallSpec,
 } from "./toolCards.js";
 import {
   buildToolIoEndMetadata,
@@ -49,6 +48,10 @@ import {
 } from "./toolIoSpans.js";
 import { emitOrUpdateToolCall } from "./agentStreamToolOutput.js";
 import { buildAnnotationPreviewData } from "./annotationPreview.js";
+import {
+  showQrDuplicatesTrustedAuthCard,
+} from "./authCardDedup.js";
+import { getConnectorDefinition } from "../connectors/registry.js";
 
 const logger = mastra.getLogger();
 export const SESSION_STATE_TOOL_NAMES = new Set(["updateTodos"]);
@@ -326,6 +329,16 @@ export async function* handleToolCallEvent(
         context.streamingPlaceholders.delete(toolCallId);
         return true;
       }
+      if (showQrDuplicatesTrustedAuthCard(toolArgs, context.trustedAuthCards)) {
+        context.suppressedShowQrCallIds.add(toolCallId);
+        context.streamingPlaceholders.delete(toolCallId);
+        logger.info("show_qr 命中本轮可信授权卡，已吞掉重复出卡", {
+          toolCallId,
+          streamId,
+          sessionId: state.sessionId,
+        });
+        return true;
+      }
       // 出码前确定性验真:content 若是"出码展示页"链接,替换为页面内嵌的真实授权 URL
       // (模型侧教学已实证不可靠,见 qrContentResolver 注释)。imageDataUri 模式不涉及。
       const qrArgs = toolArgs as Record<string, unknown>;
@@ -342,18 +355,33 @@ export async function* handleToolCallEvent(
       }
       yield* emitOrUpdateToolCall(
         context,
-        qrCardToolCallSpec(toolCallId, resolvedArgs, {
-          kind: "running",
-          data: { progressPct: null, etaSec: null },
+        authCardToolCallSpec({
+          ...resolvedArgs,
+          toolCallId,
+          toolName,
+          presentation: resolvedArgs.imageDataUri ? "scan" : "link",
+          status: {
+            kind: "running",
+            data: { progressPct: null, etaSec: null },
+          },
+          sourceArgs: resolvedArgs,
+          invalidText: "show_qr 缺少 content/imageDataUri,无法渲染二维码",
         }),
       );
       outcome.producedVisibleFrame = true;
     } else if (toolName === "wechat_auth_start") {
       yield* emitOrUpdateToolCall(
         context,
-        wechatAuthQrToolCallSpec(toolCallId, null, {
-          kind: "running",
-          data: { progressPct: null, etaSec: null },
+        authCardToolCallSpec({
+          toolCallId,
+          toolName,
+          presentation: getConnectorDefinition("wechat-mp").authPresentation,
+          status: {
+            kind: "running",
+            data: { progressPct: null, etaSec: null },
+          },
+          pendingText: "正在生成微信登录二维码…",
+          invalidText: "微信登录二维码生成失败,请重试",
         }),
       );
       outcome.producedVisibleFrame = true;

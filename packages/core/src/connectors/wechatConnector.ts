@@ -28,6 +28,7 @@ const wechatConnectorDefinition = {
   icon: "wechat",
   official: false,
   authStrategy: "qr-session",
+  authPresentation: "scan",
   custody: "internal",
   scopeGroups: [],
   tools: ["wechat_auth_start", "wechat_auth_status", "wechat_search_mp", "wechat_list_articles"],

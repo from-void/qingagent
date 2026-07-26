@@ -15,7 +15,7 @@ function createWechatSearchRouteQuestionnaire(): z.infer<typeof askUserQuestionI
 
 export const wechatAuthStartTool = createTool({
   id: "wechat_auth_start",
-  description: "打开微信公众号后台登录页,返回扫码二维码图片,并在后台等待扫码成功后保存微信登录凭据。",
+  description: "发起微信公众号后台登录；流层会自动展示扫码授权卡，并在后台等待扫码成功后保存微信登录凭据，不要再调用 show_qr。",
   inputSchema: z.object({}),
   outputSchema: z.object({
     ok: z.boolean(), imageDataUri: z.string(), expiresInSec: z.number(),

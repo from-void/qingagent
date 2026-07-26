@@ -74,6 +74,7 @@ describe("AuthCard v1 restore 金丝雀", () => {
       .map((part) => part.data.body.data);
     expect(qrBodies).toHaveLength(2);
     expect(qrBodies.every((body) => body.connectorId === undefined && body.pendingId === undefined)).toBe(true);
+    expect(qrBodies.every((body) => body.presentation === undefined)).toBe(true);
 
     const host = document.createElement("div");
     document.body.appendChild(host);

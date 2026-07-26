@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +25,11 @@ vi.mock("./components/WorkspaceOverlays", () => ({
 }));
 
 import { WorkspacePage } from "./WorkspacePage";
+
+const workspaceCss = readFileSync(
+  resolve(process.cwd(), "src/pages/workspace/workspace.css"),
+  "utf8",
+);
 
 describe("WorkspacePage hydration DOM gate", () => {
   let host: HTMLDivElement;
@@ -55,7 +62,9 @@ describe("WorkspacePage hydration DOM gate", () => {
     mocks.controller = controller("waiting");
     await act(async () => root.render(<WorkspacePage />));
 
-    expect(host.querySelector('[data-wf="WorkspaceHydrationCanvas"]')).not.toBeNull();
+    expect(host.querySelector('[data-wf="WorkspaceHydrationCanvas"]')).toBeNull();
+    expect(host.querySelector('[data-wf="WorkspaceHydrationChat"]')).not.toBeNull();
+    expect(host.querySelector('[data-wf="WorkspaceHydrationDocument"]')).not.toBeNull();
     expect(host.querySelector(".ws-left")).toBeNull();
     expect(host.querySelector(".ws-right")).toBeNull();
 
@@ -65,6 +74,17 @@ describe("WorkspacePage hydration DOM gate", () => {
     expect(host.querySelector('[data-wf="WorkspaceHydrationCanvas"]')).toBeNull();
     expect(host.querySelectorAll(".ws-left")).toHaveLength(1);
     expect(host.querySelectorAll(".ws-right")).toHaveLength(1);
+  });
+
+  it("占位层透明透出玄青桌面，禁止回退到全局浅色 canvas token", () => {
+    const hydrationRules = [
+      workspaceCss.match(/#view-workspace \.ws-hydration-left\{[^}]*\}/)?.[0],
+      workspaceCss.match(/#view-workspace \.ws-hydration-right\{[^}]*\}/)?.[0],
+    ].join("\n");
+
+    expect(hydrationRules).toContain("background:transparent");
+    expect(hydrationRules).not.toContain("var(--bg-canvas)");
+    expect(workspaceCss).not.toContain(".ws-hydration-canvas");
   });
 
   it("首页新建路径立即挂载空白文档与对话列", async () => {

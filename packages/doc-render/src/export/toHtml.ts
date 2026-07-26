@@ -20,6 +20,8 @@ import { DOCUMENT_EXPORT_CSS } from "./documentStyles.js";
 import { highlightCodeHtml, katexCssEmbedded, renderMathHtml } from "./exportAssets.js";
 import {
   documentLeadsWithTitle,
+  drawioFallbackMessage,
+  isDrawioExportSourceNormalized,
   isPmDocDocument,
   isRenderableSvg,
   MAX_EXPORT_SVG_BYTES,
@@ -138,7 +140,12 @@ function pmBlockToHtml(node: PmBlockNode): string {
         })
         .join("")}</div>`;
     case "diagram":
-      return diagramToHtml(node.attrs.lang, node.attrs.source, node.attrs.svg);
+      return diagramToHtml(
+        node.attrs.lang,
+        node.attrs.source,
+        node.attrs.svg,
+        isDrawioExportSourceNormalized(node.attrs),
+      );
     case "image":
       return imageToHtml({
         src: node.attrs.src,
@@ -271,11 +278,14 @@ function pmInlineText(content: readonly { type: string; text?: string }[]): stri
 
 // ============ 图表 / 图片 ============
 
-function diagramFallbackHtml(lang: string, source: string, oversized: boolean): string {
+function diagramFallbackHtml(
+  lang: string,
+  source: string,
+  oversized: boolean,
+  sourceNormalized: boolean,
+): string {
   if (lang === "drawio") {
-    const message = oversized
-      ? "draw.io 图表过大，以下数据已按安全边界归一化，可能与原图有差异（可复制到 draw.io 查看）"
-      : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）";
+    const message = drawioFallbackMessage(oversized, sourceNormalized);
     return `<div class="pm-diagram-fallback">${message}</div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
   }
   const typeLabel = lang === "drawio" ? "draw.io" : "Mermaid";
@@ -286,9 +296,14 @@ function diagramFallbackHtml(lang: string, source: string, oversized: boolean): 
   return `<div class="pm-diagram-fallback">${message}</div><pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
 }
 
-function diagramToHtml(lang: string, source: string, svg: string | null): string {
+function diagramToHtml(
+  lang: string,
+  source: string,
+  svg: string | null,
+  sourceNormalized = false,
+): string {
   if (svg && svgExceedsExportByteLimit(svg)) {
-    return diagramFallbackHtml(lang, source, true);
+    return diagramFallbackHtml(lang, source, true, sourceNormalized);
   }
   // 缓存图表 SVG 内联前必须加固:剔除 <script>/on*/外链等可执行面(导出 HTML 可能被人打开)。
   // 加固后仍是可信 SVG,直接内联不转义;加固失败(解析坏/含 XXE)则回退源码。
@@ -297,7 +312,7 @@ function diagramToHtml(lang: string, source: string, svg: string | null): string
     return `<div class="pm-diagram">${safe}</div>`;
   }
   // 无缓存 / 坏 SVG → 回退源码代码块,绝不让一张图毁掉整篇导出。
-  return diagramFallbackHtml(lang, source, false);
+  return diagramFallbackHtml(lang, source, false, sourceNormalized);
 }
 
 function imageToHtml(opts: { src: string; alt: string; caption: string | null; align: "left" | "center" | "right" | null }): string {
@@ -362,7 +377,12 @@ function legacySectionToHtml(section: LegacySection): string {
         .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(stripFormatting(cell))}</td>`).join("")}</tr>`)
         .join("")}</tbody></table>`;
     case "diagram":
-      return diagramToHtml(section.data.lang, section.data.source, section.data.svg);
+      return diagramToHtml(
+        section.data.lang,
+        section.data.source,
+        section.data.svg,
+        isDrawioExportSourceNormalized(section.data),
+      );
     case "image":
       return imageToHtml({
         src: section.data.src,

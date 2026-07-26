@@ -15,7 +15,11 @@ import {
   type ExportRunContext,
   type ExportSlotOptions,
 } from "./exportSlot.js";
-import { isRenderableSvg, type ExportDocument } from "./shared.js";
+import {
+  DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR,
+  isRenderableSvg,
+  type ExportDocument,
+} from "./shared.js";
 
 /**
  * 服务端渲染 mermaid 源码 → SVG(供导出用)。
@@ -321,6 +325,7 @@ interface DiagramRef {
   overlay?: DiagramOverlay | null;
   assign: (svg: string | null) => void;
   assignSource: (source: string) => void;
+  markSourceNormalized: () => void;
 }
 
 /** 递归收集文档里所有"有源码但缺可用 svg"的图表节点(PmDoc 节点 + Legacy 段都覆盖)。 */
@@ -331,6 +336,8 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
   // PmDoc 图表节点:{ type: "diagram", attrs: { source, svg } }
   if (obj.type === "diagram" && obj.attrs && typeof obj.attrs === "object") {
     const attrs = obj.attrs as Record<string, unknown>;
+    // 状态只能来自本轮导出预处理，不能沿用输入文档里可能残留的同名字段。
+    delete attrs[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR];
     const source = typeof attrs.source === "string" ? attrs.source : "";
     const lang = attrs.lang === "drawio" ? "drawio" : "mermaid";
     const svg = attrs.svg as string | null;
@@ -344,12 +351,15 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
         overlay: readOverlay(attrs.overlay),
         assign: (svg) => { attrs.svg = svg; },
         assignSource: (source) => { attrs.source = source; },
+        markSourceNormalized: () => { attrs[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR] = true; },
       });
     }
   }
   // Legacy 段:{ kind: "diagram", data: { source, svg } }
   if (obj.kind === "diagram" && obj.data && typeof obj.data === "object") {
     const data = obj.data as Record<string, unknown>;
+    // Legacy 段同样只在导出克隆上记录本轮结果。
+    delete data[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR];
     const source = typeof data.source === "string" ? data.source : "";
     const lang = data.lang === "drawio" ? "drawio" : "mermaid";
     const svg = data.svg as string | null;
@@ -362,6 +372,7 @@ function collectDiagrams(value: unknown, acc: DiagramRef[]): void {
         source,
         assign: (svg) => { data.svg = svg; },
         assignSource: (source) => { data.source = source; },
+        markSourceNormalized: () => { data[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR] = true; },
       });
     }
   }
@@ -397,6 +408,7 @@ export async function withRenderedDiagrams(document: ExportDocument): Promise<Ex
         const prepared = prepareDrawioModelXmlForRender(ref.source);
         if (!ref.source.trimStart().startsWith("<mxfile")) {
           ref.assignSource(prepared.modelXml);
+          ref.markSourceNormalized();
         }
       } catch (error) {
         getDocRenderLogger().warn("Drawio export source normalization failed; preserving original source", {

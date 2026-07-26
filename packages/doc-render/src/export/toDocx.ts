@@ -27,7 +27,7 @@ import {
   decodeSvgDataUrl,
   isAllowedThemeColor,
 } from "@qingagent/pm-schema";
-import { documentLeadsWithTitle, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
+import { documentLeadsWithTitle, drawioFallbackMessage, isDrawioExportSourceNormalized, isPmDocDocument, isRenderableSvg, readLocalUploadBuffer, readLocalUploadText, sectionText, svgExceedsExportByteLimit, type ExportDocument, type ExportOptions } from "./shared.js";
 import { withRenderedDiagrams } from "./mermaidServer.js";
 import { rasterizeMathBatch, rasterizeSvgToPng } from "./rasterize.js";
 
@@ -133,7 +133,12 @@ export async function toDocx(
     : new Map<string, ImageRun | null>();
   const sectionChildren = isPmDocDocument(prepared)
     ? await pmDocToDocx(prepared, mathImages)
-    : (await Promise.all(prepared.map(sectionToDocx))).flat();
+    : (await Promise.all(prepared.map((section) =>
+        sectionToDocx(
+          section,
+          section.kind === "diagram" && isDrawioExportSourceNormalized(section.data),
+        ),
+      ))).flat();
   const title = options.title?.trim();
   const children = [
     // 正文开头已是同名标题就不再加一遍(去重),避免两个标题
@@ -208,7 +213,10 @@ async function pmBlockToDocx(
       ).flat(2);
     case "diagram":
       // 图表块:有渲染好的 svg 就当图片嵌入(走 image 的 svg→png 路径),否则源码降级为 code 块。
-      return sectionToDocx({ kind: "diagram", data: { lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg } });
+      return sectionToDocx(
+        { kind: "diagram", data: { lang: node.attrs.lang, source: node.attrs.source, svg: node.attrs.svg } },
+        isDrawioExportSourceNormalized(node.attrs),
+      );
     case "heading":
       return [
         new Paragraph({
@@ -627,7 +635,10 @@ async function imageRun(section: Extract<LegacySection, { kind: "image" }>): Pro
   return null;
 }
 
-async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | Table>> {
+async function sectionToDocx(
+  section: LegacySection,
+  sourceNormalized = false,
+): Promise<Array<Paragraph | Table>> {
   switch (section.kind) {
     case "diagram": {
       const typeLabel = section.data.lang === "drawio" ? "draw.io" : "Mermaid";
@@ -635,9 +646,7 @@ async function sectionToDocx(section: LegacySection): Promise<Array<Paragraph | 
       const fallbackNotice = (oversized: boolean) => new Paragraph({
         children: [new TextRun({
           text: section.data.lang === "drawio"
-            ? oversized
-              ? "draw.io 图表过大，以下数据已按安全边界归一化，可能与原图有差异（可复制到 draw.io 查看）"
-              : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）"
+            ? drawioFallbackMessage(oversized, sourceNormalized)
             : oversized
               ? `${typeLabel} 图表过大，以下为源码（可复制到 ${viewerAction}）`
               : `${typeLabel} 图表源码（未能生成预览，可复制到 ${viewerAction}）`,

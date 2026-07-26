@@ -54,6 +54,7 @@ import {
   type RememberPromptCopy,
   type RememberPromptDecision,
 } from "./trustedRememberUi.js";
+import { computeMainWindowSize } from "./windowSize.js";
 
 let mainWindow: BrowserWindow | null = null;
 const trustedRememberUiGate = new TrustedRememberUiGate();
@@ -890,12 +891,9 @@ async function createWindowOnce() {
   // 顶部菜单栏(File / Edit / View / Window / Help)对终端用户无意义,整窗去掉。
   Menu.setApplicationMenu(null);
 
-  // 窗口尺寸按主显示器工作区动态算:高度取工作区 ~92%(在最小的 MacBook,
-  // 工作区约 1280×740,高度≈680,接近填满但不顶满);宽度取上限 1480 与屏宽 90%
-  // 的较小值,再居中。避免写死像素在小屏上过小、在大屏上过大。
+  // 窗口尺寸按主显示器工作区动态算后居中。
   const { width: waW, height: waH } = screen.getPrimaryDisplay().workAreaSize;
-  const winWidth = Math.min(1480, Math.round(waW * 0.9));
-  const winHeight = Math.round(waH * 0.92);
+  const { width: winWidth, height: winHeight } = computeMainWindowSize(waW, waH);
 
   mainWindow = new BrowserWindow({
     width: winWidth,

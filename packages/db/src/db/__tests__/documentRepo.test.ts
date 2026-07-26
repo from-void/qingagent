@@ -243,6 +243,71 @@ describe("documentRepo", () => {
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
   });
 
+  it("按不超过 50 个 id 轻量查询存在集合", async () => {
+    await documentRepo.saveMany([
+      input("exists-a"),
+      input("exists-b"),
+    ]);
+    const client = getDocumentsClient();
+    const execute = vi.spyOn(client, "execute");
+
+    const existing = await documentRepo.existsByIds([
+      "exists-a",
+      "missing",
+      "exists-b",
+      "exists-a",
+    ]);
+
+    expect(existing).toEqual(new Set(["exists-a", "exists-b"]));
+    const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
+    expect(sql).toMatch(/^\s*SELECT id FROM documents WHERE id IN/i);
+    expect(sql).not.toContain("*");
+    await expect(documentRepo.existsByIds(
+      Array.from({ length: 51 }, (_, index) => `id-${index}`),
+    )).rejects.toThrow("最多查询 50 个 id");
+  });
+
+  it("只按存在 thread 的 documents 计算 total 与分页位移", async () => {
+    await documentRepo.saveMany([
+      input("orphan-newest", {
+        resourceId: "session-resource",
+        threadId: "missing-thread",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("session-b", {
+        resourceId: "session-resource",
+        threadId: "thread-b",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("session-a", {
+        resourceId: "session-resource",
+        threadId: "thread-a",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute("CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute(
+      "INSERT INTO mastra_threads (id) VALUES ('thread-a'), ('thread-b')",
+    );
+
+    const first = await documentRepo.listWithExistingThreads({
+      resourceId: "session-resource",
+      perPage: 1,
+      offset: 0,
+    });
+    const second = await documentRepo.listWithExistingThreads({
+      resourceId: "session-resource",
+      perPage: 1,
+      offset: 1,
+    });
+
+    expect(first.total).toBe(2);
+    expect(first.rows.map((row) => row.id)).toEqual(["session-b"]);
+    expect(second.total).toBe(2);
+    expect(second.rows.map((row) => row.id)).toEqual(["session-a"]);
+  });
+
   it("后台巡检修复过期 PM 镜像", async () => {
     const pmDoc = legacySectionsToPm([section("镜像正文")] as never);
     await documentRepo.save(input("pm-mirror", { pmDoc }));

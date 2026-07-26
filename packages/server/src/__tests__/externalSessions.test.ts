@@ -1,4 +1,9 @@
-import { createSession, documentRepo, persistSessionMetadata, QINGAGENT_RESOURCE_ID } from "@qingagent/core";
+import {
+  createSession,
+  documentRepo,
+  persistSessionMetadata,
+  QINGAGENT_RESOURCE_ID,
+} from "@qingagent/core";
 import { deleteDocumentFamilyByDocIds, getDocumentsClient } from "@qingagent/db";
 import { __resetDocumentsClientForTest } from "@qingagent/db/client";
 import { __resetMigrationsForTest } from "@qingagent/db/migrations";
@@ -60,6 +65,7 @@ describe("external sessions", () => {
   });
 
   it("list 过滤没有 thread 的 documents 孤儿行", async () => {
+    syntheticSessionIds.push("orphan-doc-row");
     await documentRepo.save({
       id: "orphan-doc-row",
       threadId: "orphan-thread",
@@ -77,6 +83,70 @@ describe("external sessions", () => {
     expect(listed.status).toBe(200);
     const body = await listed.json() as { sessions: Array<{ id: string }> };
     expect(body.sessions.map((session) => session.id)).not.toContain("orphan-doc-row");
+  });
+
+  it("孤儿行不占 total 与 offset，内存会话跨页不重复", async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const orphanId = `000-orphan-page-${suffix}`;
+    const memoryOnlyId = `memory-page-${suffix}`;
+    syntheticSessionIds.push(orphanId, memoryOnlyId);
+
+    await documentRepo.save({
+      id: orphanId,
+      threadId: `missing-thread-${suffix}`,
+      resourceId: QINGAGENT_RESOURCE_ID,
+      title: "分页孤儿行",
+      docState: "editing",
+      docVersion: 1,
+      lastSyncedVersion: 1,
+      pmDoc: normalizePmDoc(markdownToPm("正文")),
+      createdAt: "9999-12-31T23:59:59.999Z",
+      updatedAt: "9999-12-31T23:59:59.999Z",
+    });
+    const memoryOnlySession = createSession(memoryOnlyId, new Date().toISOString());
+    memoryOnlySession.title = "分页内存会话";
+    sessions.set(memoryOnlyId, memoryOnlySession);
+    vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([memoryOnlyId]);
+
+    const all = await app.request("/api/v1/external/sessions?limit=500", {
+      headers: authHeaders(),
+    });
+    expect(all.status).toBe(200);
+    const allBody = await all.json() as {
+      sessions: Array<{ id: string }>;
+      total: number;
+      hasMore: boolean;
+    };
+    const memoryOffset = allBody.sessions.findIndex((session) => session.id === memoryOnlyId);
+    expect(memoryOffset).toBeGreaterThanOrEqual(0);
+    expect(allBody.total).toBe(allBody.sessions.length);
+    expect(allBody.hasMore).toBe(false);
+
+    const memoryPage = await app.request(
+      `/api/v1/external/sessions?limit=1&offset=${memoryOffset}`,
+      { headers: authHeaders() },
+    );
+    const memoryPageBody = await memoryPage.json() as {
+      sessions: Array<{ id: string }>;
+      total: number;
+      hasMore: boolean;
+    };
+    expect(memoryPageBody.sessions.map((session) => session.id)).toEqual([memoryOnlyId]);
+    expect(memoryPageBody.total).toBe(allBody.total);
+    expect(memoryPageBody.hasMore).toBe(false);
+
+    const afterMemory = await app.request(
+      `/api/v1/external/sessions?limit=1&offset=${memoryOffset + 1}`,
+      { headers: authHeaders() },
+    );
+    const afterMemoryBody = await afterMemory.json() as {
+      sessions: Array<{ id: string }>;
+      total: number;
+      hasMore: boolean;
+    };
+    expect(afterMemoryBody.sessions.map((session) => session.id)).not.toContain(memoryOnlyId);
+    expect(afterMemoryBody.total).toBe(allBody.total);
+    expect(afterMemoryBody.hasMore).toBe(false);
   });
 
   it("list 补充仅存在于内存的会话并对已落盘会话去重", async () => {
@@ -154,6 +224,10 @@ describe("external sessions", () => {
 
   it("文档超过默认上限时可分页读取后续会话并返回正确 hasMore", async () => {
     vi.spyOn(sessionManager, "listSessionIds").mockReturnValue([]);
+    // 本用例只验证 server 分页，局部复用原始 documents 查询，避免向共享
+    // Mastra thread 表写入 102 条极晚时间夹具而污染并行的首页排序用例。
+    vi.spyOn(documentRepo, "listWithExistingThreads")
+      .mockImplementation((opts) => documentRepo.list(opts));
     // 固定为最晚时间，避免并行测试新建会话改变本用例的分页边界。
     const updatedAt = "9999-12-31T23:59:59.999Z";
     const prefix = `pagination-${Date.now()}-${Math.random().toString(16).slice(2)}`;

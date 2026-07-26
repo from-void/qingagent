@@ -53,6 +53,7 @@ export interface DocumentSaveInput {
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
   findIdByThreadId(threadId: string): Promise<string | null>;
+  existsByIds(ids: string[]): Promise<Set<string>>;
   save(input: DocumentSaveInput): Promise<void>;
   saveMany(inputs: DocumentSaveInput[]): Promise<void>;
   list(opts: {
@@ -61,8 +62,16 @@ export interface DocumentRepo {
     perPage?: number;
     offset?: number;
   }): Promise<{ rows: DocumentRow[]; total: number }>;
+  listWithExistingThreads(opts: {
+    resourceId: string;
+    page?: number;
+    perPage?: number;
+    offset?: number;
+  }): Promise<{ rows: DocumentRow[]; total: number }>;
   countByResourceId(resourceId: string): Promise<number>;
 }
+
+const MAX_EXISTS_BY_IDS = 50;
 
 function valueAsString(value: unknown): string {
   return value == null ? "" : String(value);
@@ -413,6 +422,22 @@ export const documentRepo: DocumentRepo = {
     return result.rows[0]?.id == null ? null : String(result.rows[0].id);
   },
 
+  async existsByIds(ids) {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return new Set();
+    if (uniqueIds.length > MAX_EXISTS_BY_IDS) {
+      throw new Error(`documentRepo.existsByIds 最多查询 ${MAX_EXISTS_BY_IDS} 个 id`);
+    }
+    const client = await readyClient();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const result = await client.execute({
+      // 只取主键，供小集合存在性判断；禁止退化成 documents 全行扫描。
+      sql: `SELECT id FROM documents WHERE id IN (${placeholders})`,
+      args: uniqueIds,
+    });
+    return new Set(result.rows.map((row) => valueAsString(row.id)));
+  },
+
   async save(input) {
     const client = await readyClient();
     await withWriteRetry(async () => {
@@ -464,6 +489,34 @@ export const documentRepo: DocumentRepo = {
         sql: `SELECT * FROM documents
           WHERE resource_id = ? AND role = 'main'
           ORDER BY updated_at DESC, id ASC
+          LIMIT ? OFFSET ?`,
+        args: [opts.resourceId, perPage, offset],
+      }),
+    ]);
+    return {
+      rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
+      total: valueAsNumber(countResult.rows[0]?.total),
+    };
+  },
+
+  async listWithExistingThreads(opts) {
+    const client = await readyClient();
+    const page = opts.page ?? 0;
+    const perPage = opts.perPage ?? 50;
+    const offset = opts.offset ?? page * perPage;
+    const [countResult, rowsResult] = await Promise.all([
+      client.execute({
+        sql: `SELECT COUNT(*) AS total
+          FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ? AND d.role = 'main'`,
+        args: [opts.resourceId],
+      }),
+      client.execute({
+        sql: `SELECT d.* FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ? AND d.role = 'main'
+          ORDER BY d.updated_at DESC, d.id ASC
           LIMIT ? OFFSET ?`,
         args: [opts.resourceId, perPage, offset],
       }),

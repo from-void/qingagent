@@ -82,7 +82,8 @@ externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
   const limit = clampedQueryInteger(c.req.query("limit"), DEFAULT_SESSIONS_LIMIT, 1, MAX_SESSIONS_LIMIT);
   const offset = clampedQueryInteger(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
-  const { rows, total } = await documentRepo.list({
+  // documents 与 Mastra thread 同库关联后再分页，孤儿行不会占用 total/offset。
+  const { rows, total: persistedTotal } = await documentRepo.listWithExistingThreads({
     resourceId: QINGAGENT_RESOURCE_ID,
     perPage: limit,
     offset,
@@ -111,20 +112,8 @@ externalRoutes.get("/sessions", async (c) => {
   const unresolvedMemoryIds = memorySessionIds.filter(
     (sessionId) => !persistedSessionIds.has(sessionId),
   );
-  if (unresolvedMemoryIds.length > 0 && rows.length < total) {
-    const { rows: allRows } = await documentRepo.list({
-      resourceId: QINGAGENT_RESOURCE_ID,
-      perPage: total,
-      offset: 0,
-    });
-    const unresolvedMemoryIdSet = new Set(unresolvedMemoryIds);
-    const offPageDocumentIds = new Set(
-      allRows
-        .map((row) => row.id)
-        .filter((sessionId) =>
-          unresolvedMemoryIdSet.has(sessionId) && !persistedSessionIds.has(sessionId)
-        ),
-    );
+  if (unresolvedMemoryIds.length > 0) {
+    const offPageDocumentIds = await documentRepo.existsByIds(unresolvedMemoryIds);
     for (const sessionId of offPageDocumentIds) {
       if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
         persistedSessionIds.add(sessionId);
@@ -142,14 +131,14 @@ externalRoutes.get("/sessions", async (c) => {
       updatedAt: new Date().toISOString(),
     });
   }
-  const memoryOffset = Math.max(0, offset - total);
+  const memoryOffset = Math.max(0, offset - persistedTotal);
   const memoryPage = memoryOnlySessions.slice(
     memoryOffset,
-    memoryOffset + Math.max(0, limit - rows.length),
+    memoryOffset + Math.max(0, limit - sessions.length),
   );
   sessions.push(...memoryPage);
-  const mergedTotal = total + memoryOnlySessions.length;
-  const hasMore = offset + rows.length + memoryPage.length < mergedTotal;
+  const mergedTotal = persistedTotal + memoryOnlySessions.length;
+  const hasMore = offset + sessions.length < mergedTotal;
   externalLog("sessions", {
     ms: elapsed(startedAt),
     result: "ok",

@@ -40,6 +40,7 @@ Run: `pnpm dev` (web) / `pnpm dev:server` (backend) / `pnpm dev:desktop`. See `R
 - Default to square corners. Only pills/chips, circular avatars/dots, and 6px chat bubbles may use radius.
 - Use the warm paper/gold/ink tokens from the UIKit Token section; do not invent new CSS variables for uncovered colors.
 - `qa-toast` via `ToastProvider` is the only production toast channel; do not add page-local toast stacks.
+- Tool calls must never use red icons or red copy in any state, and must never expose internal error details (including raw English errors) to users; failures and aborts use neutral gray, short copy.
 - When the UIKit sheet and local code disagree, follow the sheet and document any unresolved visual exception.
 - **审阅态里一切被删除的正文（含「替换」建议的旧值），原文位置只留一个「竖线+圆点」紧凑游标，绝不在正文内联展示删除线文本；删除的具体内容只在 hover 卡里看。**
 

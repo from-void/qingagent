@@ -260,6 +260,26 @@ export class SessionManager {
     return this.actors.get(sessionId)?.actor.state ?? null;
   }
 
+  /**
+   * 最后一个 SSE 订阅断开时收敛仍在运行的 turn。
+   * 多标签页/重连重叠期只要还有订阅者就不动；没有 active runner 时也是幂等 no-op。
+   */
+  async cancelRunningTurnAfterDisconnect(sessionId: string): Promise<boolean> {
+    const live = this.frameLog.readFrom(sessionId, Number.MAX_SAFE_INTEGER);
+    if (this.frameLog.hasSubscribers(sessionId) || !live.activeRunner) return false;
+    const queued = await this.submitQueued(sessionId, {
+      command: { kind: "cancelStream", data: { sessionId } },
+      origin: "agent",
+    });
+    void queued.completion.catch((error) => {
+      console.error("[sessionManager] disconnect cleanup failed", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return true;
+  }
+
   listSessionIds(limit = 20): string[] {
     const n = Math.max(0, Math.floor(limit));
     if (n === 0) return [];

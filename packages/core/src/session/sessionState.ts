@@ -645,7 +645,11 @@ export function terminalizeAskUserToolCall(
       ) {
         continue;
       }
-      if (part.data.status.kind === "done" || part.data.status.kind === "failed") {
+      if (
+        part.data.status.kind === "done" ||
+        part.data.status.kind === "failed" ||
+        part.data.status.kind === "aborted"
+      ) {
         return null;
       }
       const spec: ToolCallSpec = {

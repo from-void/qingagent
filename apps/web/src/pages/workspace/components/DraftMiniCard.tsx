@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { WriteDraftCardBody } from "@qingagent/contract-ts";
+import type { ToolCallStatus, WriteDraftCardBody } from "@qingagent/contract-ts";
 
 // writeDraft 聊天内迷你草稿卡:生成期间像"一张正在被写的小纸",
 // 实时滚动摘录+字数进度;字数修订时显示校验状态;完成后定格最终字数与验收结果。
@@ -37,12 +37,22 @@ export function progressLine(body: WriteDraftCardBody): string {
 const TONE_COLOR: Record<"ok" | "warn" | "bad", string> = {
   ok: "var(--ok, #1a7f37)",
   warn: "var(--mark, #b27a1a)",
-  bad: "var(--danger, #b42318)",
+  bad: "var(--ink-3)",
 };
 
-export function DraftMiniCard({ body }: { body: WriteDraftCardBody }) {
-  const active = body.phase === "writing" || body.phase === "revising" || body.phase === "finalizing";
-  const done = body.phase === "done";
+export function DraftMiniCard({
+  body,
+  status,
+}: {
+  body: WriteDraftCardBody;
+  status?: ToolCallStatus["kind"];
+}) {
+  const aborted = status === "aborted";
+  const failed = status === "failed" || body.phase === "failed";
+  const active =
+    !aborted && !failed &&
+    (body.phase === "writing" || body.phase === "revising" || body.phase === "finalizing");
+  const done = status === "done" || (!aborted && !failed && body.phase === "done");
   const statusLabel = lengthStatusLabel(body.lengthStatus);
 
   // 把流式 tail 摘录重建成「全文」(平滑增长,不像滚动窗口那样跳),实现流式加载观感。
@@ -122,8 +132,10 @@ export function DraftMiniCard({ body }: { body: WriteDraftCardBody }) {
       </div>
       {/* 右下角:写作中显「目标自述」(不显已写字数);完成才显总字数 */}
       <div className="ws-draft-foot">
-        {body.phase === "failed" ? (
-          <span className="ws-draft-fail">生成失败,可重试</span>
+        {aborted ? (
+          <span className="ws-draft-fail">已中止</span>
+        ) : failed ? (
+          <span className="ws-draft-fail">未完成</span>
         ) : done ? (
           <span className="ws-draft-count">
             {body.charCount} 字

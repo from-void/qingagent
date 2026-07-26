@@ -309,6 +309,7 @@ streamRoutes.get("/events", async (c) => {
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => { settle = resolve; });
     let cleaned = false;
+    let disconnectCleanupQueued = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
@@ -317,11 +318,22 @@ streamRoutes.get("/events", async (c) => {
       admission.release();
       settle();
     };
+    const settleDisconnectedTurn = () => {
+      cleanup();
+      if (disconnectCleanupQueued) return;
+      disconnectCleanupQueued = true;
+      void sessionManager.cancelRunningTurnAfterDisconnect(sessionId).catch((error) => {
+        console.error(
+          "[events] failed to settle disconnected turn:",
+          redactStreamErrorForLog(error),
+        );
+      });
+    };
     const pump = new BoundedSsePump({
       write: (message) => stream.writeSSE(message),
       onClose: () => {
         stream.abort();
-        cleanup();
+        settleDisconnectedTurn();
       },
     });
 
@@ -355,7 +367,7 @@ streamRoutes.get("/events", async (c) => {
       }
       stream.onAbort(() => {
         pump.close();
-        cleanup();
+        settleDisconnectedTurn();
       });
       await settled;
       await pump.waitForIdle();

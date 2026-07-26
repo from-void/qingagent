@@ -1736,12 +1736,29 @@ describe("thread persistence", () => {
     expect(restored?.docState).toEqual({ kind: "empty" });
     expect(restoredTool?.kind).toBe("toolCall");
     if (restoredTool?.kind === "toolCall") {
-      expect(restoredTool.data.status).toEqual({
-        kind: "failed",
-        data: { retriable: false, reason: "上次的确认已结束，请重新发起。" },
-      });
+      expect(restoredTool.data.status).toEqual({ kind: "aborted" });
     }
   });
+
+  it.each(["pending", "running"] as const)(
+    "冷恢复把断线遗留的 %s 普通工具持久收敛为 aborted",
+    async (kind) => {
+      const { loadSessionFromThread } = await import("../session/threadPersistence.js");
+      const status: ToolCallSpec["status"] = kind === "pending"
+        ? { kind: "pending" }
+        : { kind: "running", data: { progressPct: 30, etaSec: null } };
+      const stale = toolCall("fetchArticle", status, `fetch-${kind}`);
+      threads.set(`stale-${kind}`, storedThread(`stale-${kind}`, metadata({
+        chatHistory: [toolMessage(stale)],
+      })));
+
+      const restored = await loadSessionFromThread(`stale-${kind}`);
+      const part = restored?.chatHistory[0]?.parts[0];
+      expect(part?.kind === "toolCall" ? part.data.status : null).toEqual({
+        kind: "aborted",
+      });
+    },
+  );
 
   it("冷恢复保留已完成启动动作但尚待进程终态的 PID owner", async () => {
     const { loadSessionFromThread } = await import("../session/threadPersistence.js");

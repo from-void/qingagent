@@ -100,11 +100,119 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([contradictory]);
 
-    expect(host?.textContent).toContain("运行失败");
+    expect(host?.textContent).toContain("未完成");
+    expect(host?.textContent).not.toContain("boom");
     expect(host?.textContent).not.toContain("处理中");
     expect(host?.textContent).not.toContain("退出码");
     expect(host?.textContent).not.toContain("9");
     expect(host?.querySelector(".u-spin")).toBeNull();
+  });
+
+  it("所有专用工具卡以 status 终态收敛，不泄露 body 内部错误或保留转圈", async () => {
+    const internalError =
+      "Rendered page is a hollow shell (nav/share controls only, no substantive article text).";
+    const specs: ToolCallSpec[] = [
+      {
+        id: "research-aborted",
+        name: "webSearch",
+        render: { kind: "chatInline" },
+        status: { kind: "aborted" },
+        body: {
+          kind: "researchCard",
+          data: {
+            query: "测试",
+            phase: "fetching",
+            items: [
+              {
+                url: "https://example.com",
+                title: "来源",
+                status: "browser",
+                wordCount: null,
+              },
+            ],
+            total: 1,
+            fetchedCount: 0,
+            okCount: 0,
+            skippedCount: 0,
+          },
+        },
+        result: null,
+      },
+      {
+        id: "svg-failed",
+        name: "generateSvg",
+        render: { kind: "chatInline" },
+        status: {
+          kind: "failed",
+          data: { retriable: false, reason: internalError },
+        },
+        body: {
+          kind: "generateSvg",
+          data: {
+            prompt: "示意图",
+            style: null,
+            aspect: null,
+            progress: {
+              stage: "failed",
+              elapsedMs: 10,
+              rawKb: 0,
+              message: "failed",
+              error: internalError,
+              src: null,
+              width: null,
+              height: null,
+              partialSvg: null,
+            },
+          },
+        },
+        result: null,
+      },
+      {
+        id: "image-failed",
+        name: "readImage",
+        render: { kind: "chatInline" },
+        status: {
+          kind: "failed",
+          data: { retriable: true, reason: internalError },
+        },
+        body: {
+          kind: "readImageCard",
+          data: { prompt: "识别", thumbnailSrc: null, excerpt: internalError },
+        },
+        result: null,
+      },
+    ];
+
+    await render(specs);
+
+    expect(host?.textContent).toContain("已中止");
+    expect(host?.textContent).toContain("未完成");
+    expect(host?.textContent).not.toContain(internalError);
+    expect(host?.querySelector(".u-spin")).toBeNull();
+    expect(host?.querySelector(".u-dots")).toBeNull();
+    expect(host?.querySelector(".is-error")).toBeNull();
+  });
+
+  it("通用失败行不把协议 reason 放入正文或 hover title", async () => {
+    const reason = "EACCES: permission denied /srv/internal/secret";
+    const failed: ToolCallSpec = {
+      id: "generic-terminal-failed",
+      name: "fetchArticle",
+      render: { kind: "chatInline" },
+      status: { kind: "failed", data: { retriable: false, reason } },
+      body: {
+        kind: "generic",
+        data: { argsJson: "{\"url\":\"https://example.com\"}" },
+      },
+      result: { kind: "genericText", data: reason },
+    };
+
+    await render([failed]);
+
+    expect(host?.textContent).toContain("未完成");
+    expect(host?.textContent).not.toContain(reason);
+    expect(host?.querySelector("[title*='permission denied']")).toBeNull();
+    expect(host?.querySelector(".is-error")).toBeNull();
   });
 
   it("后台命令 spawn 成功即显示带 PID 的完成态，不因进程仍运行而转圈", async () => {
@@ -201,15 +309,12 @@ describe("UnifiedToolCall generic placeholder labels", () => {
     expect(host?.querySelector(".u-command-stop")).toBeNull();
   });
 
-  it("定向停止终态显示已中止和结果可能未知", async () => {
+  it("定向停止终态显示中性已中止", async () => {
     const stopped: ToolCallSpec = {
       id: "command-stopped",
       name: "mastra_workspace_execute_command",
       render: { kind: "chatInline" },
-      status: {
-        kind: "failed",
-        data: { retriable: false, reason: "已中止，结果可能未知" },
-      },
+      status: { kind: "aborted" },
       body: {
         kind: "commandCard",
         data: {
@@ -227,16 +332,17 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([stopped]);
 
-    expect(host?.textContent).toContain("已中止，结果可能未知");
+    expect(host?.textContent).toContain("已中止");
+    expect(host?.textContent).not.toContain("结果可能未知");
     expect(host?.textContent).not.toContain("停止此命令");
   });
 
   it.each([
     ["rejected", -1, undefined, "已取消，命令未执行"],
     ["killed", -1, "SIGTERM", "已终止（SIGTERM）"],
-    ["aborted", -1, undefined, "已中止，结果可能未知"],
-    ["failed", 3, undefined, "运行失败（退出码 3）"],
-    ["timedOut", -1, undefined, "执行超时"],
+    ["aborted", -1, undefined, "已中止"],
+    ["failed", 3, undefined, "未完成"],
+    ["timedOut", -1, undefined, "已超时"],
     ["succeeded", 0, undefined, "已完成"],
   ] as const)(
     "命令终态 %s 使用结构化真值表展示",
@@ -248,6 +354,8 @@ describe("UnifiedToolCall generic placeholder labels", () => {
         render: { kind: "chatInline" },
         status: succeeded
           ? { kind: "done" }
+          : terminalKind === "aborted"
+            ? { kind: "aborted" }
           : {
               kind: "failed",
               data: { retriable: false, reason: expected },
@@ -271,6 +379,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       await render([spec]);
 
       expect(host?.textContent).toContain(expected);
+      expect(host?.textContent).not.toContain("permission denied");
       expect(host?.textContent).not.toContain("重试");
       expect(host?.querySelector(".u-spin")).toBeNull();
     },
@@ -281,10 +390,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
       id: "read-output-aborted",
       name: "mastra_workspace_get_process_output",
       render: { kind: "chatInline" },
-      status: {
-        kind: "failed",
-        data: { retriable: false, reason: "本轮生成已中断" },
-      },
+      status: { kind: "aborted" },
       body: {
         kind: "generic",
         data: {
@@ -297,7 +403,7 @@ describe("UnifiedToolCall generic placeholder labels", () => {
 
     await render([readOutput]);
 
-    expect(host?.textContent).toContain("已中止，结果可能未知");
+    expect(host?.textContent).toContain("已中止");
     expect(host?.textContent).not.toContain("操作失败");
   });
 

@@ -8,6 +8,7 @@ import {
   parseSkillWriteInjectSource,
   registerSkillWriteInjectResolver,
 } from "../skills/writeInject.js";
+import { parseSkillFrontmatter } from "../skills/discovery.js";
 
 function skillSource(
   name: string,
@@ -25,6 +26,27 @@ function skillSource(
 }
 
 describe("已激活技能写稿注入管道", () => {
+  it("技能名尾连字符在发现与写稿注入解析中都被拒绝", () => {
+    const source = "---\nname: foo-\ndescription: 非法技能名\nwrite-inject: true\n---\n正文";
+
+    expect(parseSkillFrontmatter(source)).toBeNull();
+    expect(parseSkillWriteInjectSource(source).name).toBeNull();
+  });
+
+  it("带 BOM 的 SKILL.md 在发现与写稿注入解析中都能解析", () => {
+    const source = "\uFEFF---\r\nname: foo\r\ndescription: 合法技能\r\nwrite-inject: true\r\n---\r\n正文";
+
+    expect(parseSkillFrontmatter(source)).toMatchObject({
+      name: "foo",
+      description: "合法技能",
+    });
+    expect(parseSkillWriteInjectSource(source)).toMatchObject({
+      name: "foo",
+      writeInject: true,
+      body: "正文",
+    });
+  });
+
   it("frontmatter 未声明时默认关闭，声明后默认注入去 frontmatter 的正文", async () => {
     const requestContext = new RequestContext();
     activateSkill(requestContext, "plain-skill");

@@ -23,8 +23,16 @@ export function diagramVizEditingSourceFromRequestContext(
 export function resolveDiagramVizEditingContent(
   source: DiagramVizEditingContentSource,
 ): string | null {
-  const raw = typeof source === "function" ? source() : source;
-  return typeof raw === "string" && raw.length > 0 ? raw : null;
+  try {
+    const raw = typeof source === "function" ? source() : source;
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+  } catch (error) {
+    console.warn("[diagram-viz] 图表编辑注入警告", {
+      kind: "resolver-failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 export function appendDiagramVizEditingToPromptOptions<T extends PromptOptions>(

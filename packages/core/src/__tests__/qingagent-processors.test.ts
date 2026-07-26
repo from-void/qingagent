@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestContext } from "@mastra/core/request-context";
 import {
   QINGAGENT_PROCESSOR_ENV,
@@ -201,6 +201,38 @@ describe("qingagent processors", () => {
       expect(content).toContain("Mermaid 语法只认半角");
       expect(content).not.toContain("未压缩明文 mxGraph XML");
     }
+  });
+
+  it("图表编辑注入解析失败时跳过注入并继续调用 provider", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const baseModel = {
+      async doGenerate(options: { prompt?: unknown }) {
+        return { options };
+      },
+      async doStream(options: { prompt?: unknown }) {
+        return { options };
+      },
+    };
+    const wrapped = wrapModelWithDiagramVizEditing(baseModel, () => {
+      throw new Error("diagram-viz 资源标记漂移");
+    });
+    const originalPrompt = [{ role: "user", content: "继续编辑" }];
+
+    await expect(wrapped.doGenerate({ prompt: originalPrompt })).resolves.toMatchObject({
+      options: { prompt: originalPrompt },
+    });
+    await expect(wrapped.doStream({ prompt: originalPrompt })).resolves.toMatchObject({
+      options: { prompt: originalPrompt },
+    });
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[diagram-viz] 图表编辑注入警告",
+      expect.objectContaining({
+        kind: "resolver-failed",
+        message: "diagram-viz 资源标记漂移",
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("LLM detector 默认走当前 flash 解析,并沿用请求级 key/baseURL/模型别名", () => {

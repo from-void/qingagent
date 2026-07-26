@@ -9,6 +9,7 @@ vi.mock("../../skills/enabledStore.js", () => ({
 }));
 
 import { createSkillChipInstructionLoader } from "../skillChipInstructionLoader.js";
+import { resolveSelectedSkillNames } from "../../session/sessionTools.js";
 
 const temporaryRoots: string[] = [];
 
@@ -19,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("skill chip 母子技能加载", () => {
-  it("只由母技能进入独立激活通道，子 SKILL.md 留给母流程按相对路径读取", async () => {
+  it("selectedSkills 与 chip 收到子技能 id 时都归一到母技能", async () => {
     const root = await mkdtemp(join(tmpdir(), "qingagent-skill-chip-parent-"));
     temporaryRoots.push(root);
     const parentDir = join(root, "review");
@@ -42,6 +43,10 @@ describe("skill chip 母子技能加载", () => {
           ? { name: "review", path: parentDir }
           : null,
       ),
+      has: vi.fn(async (id: string) => id === "review"),
+      list: vi.fn(async () => [
+        { name: "review", path: parentDir, description: "母技能" },
+      ]),
     } as unknown as WorkspaceSkills;
     const loader = createSkillChipInstructionLoader(skills);
 
@@ -57,12 +62,16 @@ describe("skill chip 母子技能加载", () => {
       expect(parent.content).not.toContain("# 敏感词审查");
     }
 
+    await expect(resolveSelectedSkillNames(["sensitive"], skills)).resolves.toEqual([
+      "review",
+    ]);
     await expect(
       loader({ id: "sensitive", label: "敏感词审查", index: 1 }),
     ).resolves.toMatchObject({
-      ok: false,
-      id: "sensitive",
-      reason: "not-found",
+      ok: true,
+      id: "review",
+      source: join(parentDir, "SKILL.md"),
+      content: expect.stringContaining("# 文档审查"),
     });
   });
 });

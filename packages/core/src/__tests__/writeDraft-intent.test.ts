@@ -10,7 +10,10 @@ import {
   pmToPlainText,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { activateDiagramVizSkill } from "../skills/diagramViz.js";
+import {
+  activateDiagramVizSkill,
+  inferDiagramVizLanguages,
+} from "../skills/diagramViz.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -27,6 +30,26 @@ vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
     ...actual,
     streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args),
   };
+});
+
+describe("diagram-viz 写作意图识别", () => {
+  it.each([
+    ["画一张流程图", ["mermaid"]],
+    ["生成 ER 图", ["mermaid"]],
+    ["用 mermaid 画时序图", ["mermaid"]],
+    ["请画系统架构图", ["drawio"]],
+  ])("%s 会激活对应图表语言", (text, expected) => {
+    expect(inferDiagramVizLanguages(text)).toEqual(expected);
+  });
+
+  it.each([
+    "帮我写一篇公司审批流程优化方案的文章",
+    "write a user onboarding guide",
+    "a quarterly report for the leadership team",
+    "写一篇关于登录状态管理的技术博客",
+  ])("%s 不会误激活图表技能", (text) => {
+    expect(inferDiagramVizLanguages(text)).toEqual([]);
+  });
 });
 
 interface InnerModelCall {

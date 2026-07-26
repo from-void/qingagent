@@ -2,6 +2,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_SKILL_CHIP_INSTRUCTION_CHAR_LIMIT } from "../session/chipOnlyNote.js";
+import { SKILL_NAME_RE, stripSkillSourceBom } from "./frontmatter.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "./paths.js";
 
 export const ACTIVATED_SKILLS_REQUEST_CONTEXT_KEY = "qingagentActivatedSkills";
@@ -10,7 +11,6 @@ export const SKILL_WRITE_INJECT_CHAR_LIMIT =
 
 const WRITE_INJECT_START = "<!-- skill:write-inject:start -->";
 const WRITE_INJECT_END = "<!-- skill:write-inject:end -->";
-const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const BUILTIN_SKILL_CATEGORIES = ["capability", "native", "style"] as const;
 
 export interface ActivatedSkillRegistration {
@@ -178,13 +178,17 @@ function markedPayload(body: string): string {
 export function parseSkillWriteInjectSource(
   source: string,
 ): ParsedSkillWriteInject {
-  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const normalizedSource = stripSkillSourceBom(source);
+  const match = normalizedSource.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   const frontmatter = match?.[1] ?? "";
-  const body = (match ? source.slice(match[0].length) : source).trim();
+  const body = (
+    match ? normalizedSource.slice(match[0].length) : normalizedSource
+  ).trim();
   const writeInjectValue = frontmatterField(frontmatter, "write-inject");
   const normalizedWriteInject = writeInjectValue?.replace(/^(['"])(.*)\1$/, "$2");
+  const parsedName = frontmatterField(frontmatter, "name");
   return {
-    name: frontmatterField(frontmatter, "name"),
+    name: parsedName && SKILL_NAME_RE.test(parsedName) ? parsedName : null,
     writeInject: normalizedWriteInject?.toLowerCase() === "true",
     body,
     payload: markedPayload(body),

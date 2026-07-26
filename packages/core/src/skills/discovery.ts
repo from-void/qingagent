@@ -1,7 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+import { SKILL_NAME_RE, stripSkillSourceBom } from "./frontmatter.js";
 
 export interface ParsedSkillFrontmatter {
   name: string;
@@ -34,7 +33,7 @@ type FrontmatterValue = string | boolean | string[];
  */
 export function parseSkillFrontmatter(source: string): ParsedSkillFrontmatter | null {
   // 去掉 UTF-8 BOM（Windows 记事本/部分编辑器导出的 Markdown 可能携带 BOM）。
-  const match = source.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const match = stripSkillSourceBom(source).match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   const data = parseFrontmatterBlock(match[1]!);
   const name = typeof data.name === "string" ? data.name.trim() : "";

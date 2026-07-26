@@ -30,9 +30,9 @@ export interface DiagramVizResources {
 }
 
 const DRAWIO_INTENT_RE =
-  /\b(?:draw\.?io|mxgraph|mxcell|mxgraphmodel)\b|网络拓扑|部署图|系统架构|架构图|工程框图|容器分组|精确坐标|复杂连线/iu;
+  /\b(?:draw\.?io|mxgraph|mxcell|mxgraphmodel)\b|网络拓扑|部署图|系统架构图|架构图|工程框图|容器分组|精确坐标|复杂连线/iu;
 const MERMAID_INTENT_RE =
-  /\bmermaid\b|流程图?|时序图?|序列图?|状态图?|类图|ER\s*图?|甘特图?|饼图|脑图|思维导图/iu;
+  /\bmermaid\b|流程图|时序图|序列图|状态图|类图|\bER\s*图|甘特图|饼图|脑图|思维导图|图表/iu;
 
 let cachedResources: DiagramVizResources | null = null;
 

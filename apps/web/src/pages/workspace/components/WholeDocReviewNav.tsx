@@ -137,7 +137,7 @@ export function WholeDocReviewNav({
         className="pn-commit"
         onClick={handleApply}
         disabled={submitting}
-        title="应用新版,提交本轮全部修改"
+        title="提交本轮全部修改"
       >
         应用新版
       </button>
@@ -146,7 +146,7 @@ export function WholeDocReviewNav({
         className="pn-ghost"
         onClick={() => void handleRevert()}
         disabled={submitting}
-        title="退回旧版,放弃本轮全部修改"
+        title="放弃本轮全部修改"
       >
         退回旧版
       </button>

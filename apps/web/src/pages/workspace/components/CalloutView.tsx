@@ -153,7 +153,7 @@ function CalloutComponent(props: CalloutNodeViewProps) {
           }}
           disabled={!editable}
           aria-label="选择图标"
-          title="点击选择图标"
+          title="选择图标"
         >
           {emoji ?? <span className="pm-callout-emoji-empty">＋</span>}
         </button>
@@ -213,7 +213,6 @@ function CalloutComponent(props: CalloutNodeViewProps) {
                 onMouseDown={keepFocus}
                 onClick={() => pickTone(theme.tone)}
                 aria-label={theme.label}
-                title={theme.label}
               >
                 <span className="pm-callout-theme-chip" style={{ background: theme.swatch }} />
                 <span className="pm-callout-theme-label">{theme.label}</span>

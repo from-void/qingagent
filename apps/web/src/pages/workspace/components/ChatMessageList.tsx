@@ -1263,7 +1263,7 @@ function LongTextChipCard({ chip }: { chip: ChatChip }) {
         data-kind="longtext"
         role="button"
         tabIndex={0}
-        title="点击查看全文"
+        title="查看全文"
         onClick={() => setOpen(true)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {

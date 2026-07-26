@@ -302,7 +302,7 @@ describe("TableControls 真选区与 chrome", () => {
     const { onAiModify } = await renderControls(editor);
     expect(portal.querySelectorAll(".tbl-col-hdr")).toHaveLength(3);
     await mouseDown(portal.querySelectorAll(".tbl-col-hdr")[2] ?? null);
-    const ai = portal.querySelector<HTMLButtonElement>('.tbl-sel-toolbar [title="发送到对话"]');
+    const ai = portal.querySelector<HTMLButtonElement>('.tbl-sel-toolbar [title="作为引用加入对话"]');
     expect(ai?.disabled).toBe(false);
     await act(async () => { ai?.click(); });
     expect(onAiModify).toHaveBeenCalled();

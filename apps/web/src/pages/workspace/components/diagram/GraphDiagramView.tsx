@@ -471,7 +471,7 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectableStart={false}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线目标`}
-            title="拖到另一节点建立连线"
+            title="建立连线"
           />
           <Handle
             id={handle.id}
@@ -480,7 +480,7 @@ function GraphNode({ data, isConnectable }: NodeProps<GraphRegularNode>) {
             isConnectable={isConnectable}
             className={`graph-diagram-handle graph-diagram-handle--${handle.id}`}
             aria-label={`${handleLabel(handle.id)}连线起点`}
-            title="拖到另一节点建立连线"
+            title="建立连线"
           />
           {data.canQuickAdd ? (
             <button

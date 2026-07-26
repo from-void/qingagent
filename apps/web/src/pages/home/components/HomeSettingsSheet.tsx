@@ -203,7 +203,6 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                         className={`qj-swatch${themeMode === m.id ? " qj-active" : ""}`}
                         data-set={m.id}
                         aria-pressed={themeMode === m.id}
-                        title={m.label}
                         onClick={() => onThemeModeChange(m.id)}
                       >
                         {m.label}
@@ -257,7 +256,6 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                         className="qj-ap-mode"
                         data-anim={a.id}
                         aria-pressed={anim === a.id}
-                        title={a.label}
                         onClick={() => onAnimChange(a.id)}
                       >
                         {a.label}
@@ -271,7 +269,6 @@ export function HomeSettingsSheet<Mode extends string, AnimId extends string, Fo
                     type="button"
                     className={`qj-sp-row${reduceMotion ? " qj-on" : ""}`}
                     aria-pressed={reduceMotion}
-                    title="减少动效"
                     onClick={onReduceMotionToggle}
                   >
                     <span>减少动效</span>

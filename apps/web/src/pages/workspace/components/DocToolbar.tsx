@@ -987,7 +987,6 @@ export function DocToolbar({
           type="button"
           className="dt-btn dt-ai dt-block-ai"
           aria-label={`让 AI 修改这个${blockSel.label}`}
-          title={`把这个${blockSel.label}作为引用加入对话,让 AI 修改`}
           disabled={!editorEditable}
           onClick={handleAiModify}
         >
@@ -1197,7 +1196,7 @@ export function DocToolbar({
         type="button"
         className="dt-btn dt-ai"
         aria-label="AI 修改"
-        title="把选中段作为引用插入对话"
+        title="作为引用加入对话"
         disabled={!editorEditable}
         onClick={handleAiModify}
       >

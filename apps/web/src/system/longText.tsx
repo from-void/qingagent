@@ -43,7 +43,7 @@ export function buildLongTextChip(text: string): HTMLSpanElement {
   chip.dataset.text = text;
   chip.dataset.label = "长文本";
   chip.dataset.suffix = `${countChars(text)} 字`;
-  chip.title = "点击查看全文";
+  chip.title = "查看全文";
 
   const ico = document.createElement("span");
   ico.className = "c-ico";

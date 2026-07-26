@@ -787,7 +787,7 @@ export function ModelSettingsPanel() {
             className="sm-btn"
             onClick={() => void handleVerifyKimiKey()}
             disabled={persisting || verifyStatus === "verifying" || !keyInput.trim()}
-            title="会发起一次最短 Kimi 对话请求"
+            title="发起 Kimi 请求"
           >
             {verifyStatus === "verifying" ? "测试中…" : "测试连接"}
           </button>
@@ -1021,7 +1021,7 @@ export function ModelSettingsPanel() {
             // 空值仍可点(handleSaveCustom 给"请填写 API 地址"就近提示)。
             disabled={customTesting || persisting || customBaseUrlValid === false}
             aria-disabled={customTesting || persisting || customBaseUrlValid === false}
-            title={customBaseUrlValid === false ? "API 地址格式不对,需以 http(s):// 开头" : undefined}
+            title={customBaseUrlValid === false ? "需以 http(s):// 开头" : undefined}
           >
             {customTesting ? "测试中…" : "测试并保存"}
           </button>
@@ -1248,7 +1248,7 @@ export function ModelSettingsPanel() {
                   <button
                     type="button"
                     className="md-mini-btn"
-                    title="临时回到未配置的引导/配置流程(不删后端 .env key,刷新即恢复)"
+                    title="不删除后端 key，刷新后恢复"
                     disabled={persisting}
                     onClick={async () => {
                       if (visitorKey && !(await handleClearVisitor())) return;

@@ -1152,7 +1152,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onClick={onStop}
               disabled={!onStop}
               data-wf="WsStopBtn"
-              title="停止输出"
             >
               停止
             </Button>

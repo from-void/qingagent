@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UsageSummaryResponse, UsageSummaryRow } from "@qingagent/contract-ts";
 import { useToast } from "../../system/ToastProvider";
 import { useConfirm } from "../../system";
 import "./modelDashboard.css";
@@ -56,24 +57,7 @@ interface ServerModelSettings {
   params: { temperature?: number; topP?: number; maxOutputTokens?: number } | null;
 }
 
-interface UsageRow {
-  bucket: string;
-  /** 会话视图:bucket(sessionId)对应的文档标题,由服务端注入。 */
-  label?: string;
-  callSite: string;
-  modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheHitTokens: number;
-  cacheMissTokens: number;
-  cacheCreationTokens: number;
-  cacheHitRate: number | null;
-  calls: number;
-  recordedCalls: number;
-  missingCalls: number;
-  coverageRate: number;
-  costCny?: number;
-}
+type UsageRow = UsageSummaryRow;
 
 type UsageView = "day" | "session" | "total";
 type UsageMode = "simple" | "expert";
@@ -215,7 +199,7 @@ export function ModelSettingsPanel() {
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
       if (res.ok) {
-        const body = (await res.json()) as { rows?: UsageRow[] };
+        const body = (await res.json()) as Partial<UsageSummaryResponse>;
         if (mountedRef.current && !signal?.aborted) setUsage(body.rows ?? []);
       }
     } catch {
@@ -227,7 +211,7 @@ export function ModelSettingsPanel() {
   const loadDashboardUsage = useCallback(async (view: "day" | "total", signal?: AbortSignal) => {
     try {
       const res = await fetch(`/api/v1/usage/summary?view=${view}`, { signal });
-      const rows = res.ok ? (((await res.json()) as { rows?: UsageRow[] }).rows ?? []) : [];
+      const rows = res.ok ? (((await res.json()) as Partial<UsageSummaryResponse>).rows ?? []) : [];
       if (mountedRef.current && !signal?.aborted) {
         if (view === "day") setDayUsage(rows);
         else setTotalUsage(rows);
@@ -1416,6 +1400,39 @@ export function ModelSettingsPanel() {
                         />
                       );
                       if (usageMode === "simple" || !isExpanded) return [groupRow];
+                      if (usageView === "day" && group.children) {
+                        return [
+                          groupRow,
+                          ...group.children.flatMap((documentGroup) => {
+                            const isDocumentExpanded = expandedUsageGroups.has(documentGroup.key);
+                            const documentRow = (
+                              <UsageTableRow
+                                key={documentGroup.key}
+                                row={documentGroup.summary}
+                                label={documentGroup.label}
+                                mode={usageMode}
+                                kind="document"
+                                expanded={isDocumentExpanded}
+                                childCount={new Set(documentGroup.rows.map((row) => row.callSite)).size}
+                                onToggle={() => toggleUsageGroup(documentGroup.key)}
+                              />
+                            );
+                            if (!isDocumentExpanded) return [documentRow];
+                            return [
+                              documentRow,
+                              ...documentGroup.rows.map((row, index) => (
+                                <UsageTableRow
+                                  key={`${documentGroup.key}:${row.callSite}:${row.modelId}:${index}`}
+                                  row={row}
+                                  label=""
+                                  mode={usageMode}
+                                  kind="detail"
+                                />
+                              )),
+                            ];
+                          }),
+                        ];
+                      }
                       return [
                         groupRow,
                         ...group.rows.map((row, index) => (
@@ -1446,6 +1463,7 @@ interface UsageGroup {
   label: string;
   rows: UsageRow[];
   summary: UsageRow;
+  children?: UsageGroup[];
 }
 
 function readUsageMode(): UsageMode {
@@ -1474,15 +1492,37 @@ function buildUsageGroups(rows: UsageRow[], view: UsageView): UsageGroup[] {
     else buckets.set(key, [row]);
   }
 
-  return Array.from(buckets, ([key, bucketRows]) => ({
-    key: `${view}:${key}`,
-    label: view === "session"
-      ? bucketRows.find((row) => row.label)?.label || "未命名草稿"
-      : view === "total"
-        ? "全部用量"
-        : key,
-    rows: bucketRows,
-    summary: aggregateUsageRows(key, bucketRows),
+  return Array.from(buckets, ([key, bucketRows]) => {
+    const groupKey = `${view}:${key}`;
+    return {
+      key: groupKey,
+      label: view === "session"
+        ? bucketRows.find((row) => row.label)?.label || "未命名草稿"
+        : view === "total"
+          ? "全部用量"
+          : key,
+      rows: bucketRows,
+      summary: aggregateUsageRows(key, bucketRows),
+      ...(view === "day"
+        ? { children: buildDayDocumentGroups(groupKey, bucketRows) }
+        : {}),
+    };
+  });
+}
+
+function buildDayDocumentGroups(dayKey: string, rows: UsageRow[]): UsageGroup[] {
+  const documents = new Map<string, UsageRow[]>();
+  for (const row of rows) {
+    const key = row.documentId ?? `legacy:${row.documentTitle ?? "unknown"}`;
+    const documentRows = documents.get(key);
+    if (documentRows) documentRows.push(row);
+    else documents.set(key, [row]);
+  }
+  return Array.from(documents, ([documentId, documentRows]) => ({
+    key: `${dayKey}:document:${documentId}`,
+    label: documentRows.find((row) => row.documentTitle)?.documentTitle || "未命名草稿",
+    rows: documentRows,
+    summary: aggregateUsageRows(documentRows[0]?.bucket ?? "", documentRows),
   }));
 }
 
@@ -1536,24 +1576,34 @@ function UsageTableRow({
   row: UsageRow;
   label: string;
   mode: UsageMode;
-  kind: "group" | "detail";
+  kind: "group" | "document" | "detail";
   expanded?: boolean;
   childCount?: number;
   onToggle?: () => void;
 }) {
   const hitRate = row.cacheHitRate == null ? null : Math.round(row.cacheHitRate * 100);
-  const isExpertGroup = mode === "expert" && kind === "group";
+  const isExpandable = mode === "expert" && kind !== "detail";
+  const rowClass = kind === "detail"
+    ? "md-usage-detail-row"
+    : kind === "document"
+      ? "md-usage-document-row"
+      : "md-usage-group-row";
+  const dataWf = kind === "detail"
+    ? "UsageDetailRow"
+    : kind === "document"
+      ? "UsageDocumentRow"
+      : "UsageGroupRow";
 
   return (
     <tr
-      className={kind === "detail" ? "md-usage-detail-row" : "md-usage-group-row"}
-      data-wf={kind === "detail" ? "UsageDetailRow" : "UsageGroupRow"}
+      className={rowClass}
+      data-wf={dataWf}
     >
-      <td className={kind === "group" ? "md-cell-title" : "md-detail-spacer"}>
-        {isExpertGroup ? (
+      <td className={kind === "detail" ? "md-detail-spacer" : `md-cell-title md-cell-title--${kind}`}>
+        {isExpandable ? (
           <button
             type="button"
-            className="md-usage-group-toggle"
+            className={`md-usage-group-toggle${kind === "document" ? " md-usage-group-toggle--document" : ""}`}
             aria-expanded={expanded}
             onClick={onToggle}
           >

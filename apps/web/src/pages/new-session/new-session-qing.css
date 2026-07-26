@@ -80,13 +80,23 @@
 .ccx-ink.active {
   opacity: 1;
 }
-/* —— 共享元素:morph 飞卡(从首页新建卡 rect 飞到右侧顶层模板) —— */
+/* —— 共享元素:morph 飞卡(从首页新建卡 rect 飞到右侧顶层模板) ——
+   外盒只做全屏承载；阴影/边衬不得参与纸面交接矩形。 */
 .ccx-morph {
   position: fixed;
+  inset: 0;
   z-index: 60;
+  pointer-events: none;
+  overflow: visible;
+}
+/* 用户看到的唯一纸边界；几何直接写本层，不写 morph 外盒。 */
+.ccx-morph-face {
+  position: absolute;
   top: 0;
   left: 0;
-  pointer-events: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
   will-change: transform;
   transform-origin: top left;
   overflow: hidden;

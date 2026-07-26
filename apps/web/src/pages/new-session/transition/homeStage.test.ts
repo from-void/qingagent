@@ -97,6 +97,7 @@ describe("homeStage 深色桌面交接", () => {
     document.body.appendChild(host);
     const stage = createHomeTransitionStage(host);
     const morph = host.querySelector<HTMLElement>(".ccx-morph");
+    const face = host.querySelector<HTMLElement>(".ccx-morph-face");
     const from = { left: 640, top: 52, width: 800, height: 868 };
 
     // 到达态首帧就必须是纯净纸:playReturn 要等双 rAF,晚一两帧就会 paint 出新建卡皮
@@ -106,11 +107,11 @@ describe("homeStage 深色桌面交接", () => {
     void stage.playReturn(from, from, { x: 1040, y: 486 }, false);
 
     expect(morph?.classList.contains("ccx-morph-plain")).toBe(true);
-    expect(morph?.style.opacity).toBe("0");
-    expect(morph?.style.transform).toBe(
+    expect(face?.style.opacity).toBe("0");
+    expect(face?.style.transform).toBe(
       `translate(640px,${window.innerHeight}px)`,
     );
-    expect(morph?.style.transition).toContain("transform");
+    expect(face?.style.transition).toContain("transform");
 
     raf.mockRestore();
     stage.dispose();

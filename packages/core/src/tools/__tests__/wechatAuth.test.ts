@@ -73,6 +73,36 @@ describe("wechat auth connector service thin tools", () => {
     });
   });
 
+  it.each([
+    ["NO_CREDENTIAL", true],
+    ["AUTHORIZING", false],
+    ["VERIFYING", false],
+    ["READY", false],
+    ["CAPABILITY_DENIED", true],
+    ["TIMEOUT", true],
+    ["EXPIRED", true],
+  ] as const)("%s 状态的路由问卷附带规则正确", async (state, shouldIncludeQuestionnaire) => {
+    const statusSpy = vi.spyOn(wechatAuthService, "status").mockResolvedValue({
+      ok: true,
+      state,
+      mpName: "",
+      message: "测试状态",
+    });
+
+    try {
+      const result = await status();
+
+      if (shouldIncludeQuestionnaire) {
+        expect(JSON.stringify(result.questionnaire))
+          .toBe(EXPECTED_WECHAT_SEARCH_ROUTE_QUESTIONNAIRE_LITERAL);
+      } else {
+        expect(result.questionnaire).toBeNull();
+      }
+    } finally {
+      statusSpy.mockRestore();
+    }
+  });
+
   it("授权成功单事务写 bundle，结果携 connectorId/pendingId", async () => {
     browserMock();
     const result = await start();

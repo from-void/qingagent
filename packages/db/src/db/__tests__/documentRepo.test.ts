@@ -9,7 +9,12 @@ import {
   getDocumentsClient,
 } from "../documentsClient.js";
 import { ensureMigrated, __resetMigrationsForTest } from "../migrations.js";
-import { documentRepo, repairStoredDocumentRows, type DocumentSaveInput } from "../documentRepo.js";
+import {
+  documentRepo,
+  isMissingMastraThreadsTableError,
+  repairStoredDocumentRows,
+  type DocumentSaveInput,
+} from "../documentRepo.js";
 import { insertVersion } from "../documentVersionRepo.js";
 
 let tempDir: string;
@@ -241,6 +246,105 @@ describe("documentRepo", () => {
     expect(page0.total).toBe(4);
     expect(page0.rows.map((row) => row.id)).toEqual(["doc-aa", "doc-b"]);
     expect(page1.rows.map((row) => row.id)).toEqual(["doc-d", "doc-a"]);
+  });
+
+  it("按不超过 50 个 id 轻量查询存在集合", async () => {
+    await documentRepo.saveMany([
+      input("exists-a"),
+      input("exists-b"),
+      input("other-resource", { resourceId: "other-user" }),
+      input("derivative"),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute({
+      sql: "UPDATE documents SET role = 'derivative' WHERE id = ?",
+      args: ["derivative"],
+    });
+    await client.execute("CREATE TABLE mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute(
+      "INSERT INTO mastra_threads (id) VALUES ('exists-a'), ('exists-b'), ('other-resource'), ('derivative')",
+    );
+    const execute = vi.spyOn(client, "execute");
+
+    const existing = await documentRepo.existsByIds("qingagent-user", [
+      "exists-a",
+      "missing",
+      "exists-b",
+      "exists-a",
+      "other-resource",
+      "derivative",
+    ]);
+
+    expect(existing).toEqual(new Set(["exists-a", "exists-b"]));
+    const sql = (execute.mock.calls.at(-1)?.[0] as { sql?: string } | undefined)?.sql ?? "";
+    expect(sql).toMatch(/INNER JOIN mastra_threads/i);
+    expect(sql).toMatch(/resource_id = \? AND d\.role = 'main' AND d\.id IN/i);
+    expect(sql).not.toContain("*");
+    await expect(documentRepo.existsByIds(
+      "qingagent-user",
+      Array.from({ length: 51 }, (_, index) => `id-${index}`),
+    )).rejects.toThrow("最多查询 50 个 id");
+  });
+
+  it("Mastra threads 表尚未创建时按无持久 thread 处理", async () => {
+    await documentRepo.save(input("pre-init-document"));
+
+    await expect(documentRepo.existsByIds(
+      "qingagent-user",
+      ["pre-init-document"],
+    )).resolves.toEqual(new Set());
+    await expect(documentRepo.listWithExistingThreads({
+      resourceId: "qingagent-user",
+    })).resolves.toEqual({ rows: [], total: 0 });
+    expect(isMissingMastraThreadsTableError(
+      new Error("外层", {
+        cause: new Error("SQLITE_ERROR: no such table: mastra_threads"),
+      }),
+    )).toBe(true);
+    expect(isMissingMastraThreadsTableError(
+      new Error("SQLITE_ERROR: no such table: documents"),
+    )).toBe(false);
+  });
+
+  it("只按存在 thread 的 documents 计算 total 与分页位移", async () => {
+    await documentRepo.saveMany([
+      input("orphan-newest", {
+        resourceId: "session-resource",
+        threadId: "missing-thread",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      }),
+      input("session-b", {
+        resourceId: "session-resource",
+        threadId: "thread-b",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      input("session-a", {
+        resourceId: "session-resource",
+        threadId: "thread-a",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const client = getDocumentsClient();
+    await client.execute("CREATE TABLE IF NOT EXISTS mastra_threads (id TEXT PRIMARY KEY)");
+    await client.execute(
+      "INSERT INTO mastra_threads (id) VALUES ('thread-a'), ('thread-b')",
+    );
+
+    const first = await documentRepo.listWithExistingThreads({
+      resourceId: "session-resource",
+      perPage: 1,
+      offset: 0,
+    });
+    const second = await documentRepo.listWithExistingThreads({
+      resourceId: "session-resource",
+      perPage: 1,
+      offset: 1,
+    });
+
+    expect(first.total).toBe(2);
+    expect(first.rows.map((row) => row.id)).toEqual(["session-b"]);
+    expect(second.total).toBe(2);
+    expect(second.rows.map((row) => row.id)).toEqual(["session-a"]);
   });
 
   it("后台巡检修复过期 PM 镜像", async () => {

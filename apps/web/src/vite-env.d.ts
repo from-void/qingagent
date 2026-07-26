@@ -56,6 +56,14 @@ interface Window {
     setOfficialModel?: (value: string | null) => Promise<boolean>;
     getModelTier?: () => string | null;
     setModelTier?: (value: string | null) => Promise<boolean>;
+    getKimiApiKey?: () => string | null;
+    setKimiApiKey?: (value: string | null) => Promise<boolean>;
+    getKimiCustomProvider?: () => string | null;
+    setKimiCustomProvider?: (value: string | null) => Promise<boolean>;
+    getKimiOfficialModel?: () => string | null;
+    setKimiOfficialModel?: (value: string | null) => Promise<boolean>;
+    getModelProvider?: () => string | null;
+    setModelProvider?: (value: string | null) => Promise<boolean>;
     requestConfirmRememberGrant?: (input: {
       sessionId: string;
       confirmId: string;

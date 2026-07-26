@@ -7,6 +7,7 @@ import type {
 } from "../session/chipOnlyNote.js";
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from "../skills/paths.js";
 import { readDisabledSet } from "../skills/enabledStore.js";
+import { resolveTopLevelSkillId } from "../skills/skillIdResolver.js";
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values));
@@ -48,9 +49,6 @@ export function createSkillChipInstructionLoader(
 ): SkillChipInstructionLoader {
   return async ({ id }): Promise<SkillChipInstructionLoadResult> => {
     const disabled = await readDisabledSet();
-    if (disabled.has(id)) {
-      return { ok: false, id, reason: "disabled" };
-    }
     if (!skills) {
       return {
         ok: false,
@@ -60,19 +58,27 @@ export function createSkillChipInstructionLoader(
       };
     }
 
+    const resolvedId = await resolveTopLevelSkillId(skills, id);
+    if (!resolvedId) {
+      return { ok: false, id, reason: "not-found" };
+    }
+    if (disabled.has(resolvedId)) {
+      return { ok: false, id: resolvedId, reason: "disabled" };
+    }
+
     let skill: Awaited<ReturnType<WorkspaceSkills["get"]>>;
     try {
-      skill = await skills.get(id);
+      skill = await skills.get(resolvedId);
     } catch (error) {
       return {
         ok: false,
-        id,
+        id: resolvedId,
         reason: "read-failed",
         error: error instanceof Error ? error.message : String(error),
       };
     }
     if (!skill) {
-      return { ok: false, id, reason: "not-found" };
+      return { ok: false, id: resolvedId, reason: "not-found" };
     }
 
     try {
@@ -80,21 +86,21 @@ export function createSkillChipInstructionLoader(
       if (!raw) {
         return {
           ok: false,
-          id,
+          id: resolvedId,
           reason: "read-failed",
           message: `无法定位 ${skill.path}/SKILL.md。`,
         };
       }
       return {
         ok: true,
-        id,
+        id: resolvedId,
         source: raw.source,
         content: raw.content,
       };
     } catch (error) {
       return {
         ok: false,
-        id,
+        id: resolvedId,
         reason: "read-failed",
         error: error instanceof Error ? error.message : String(error),
       };

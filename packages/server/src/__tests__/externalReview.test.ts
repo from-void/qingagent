@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../app";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import { SessionActorQueueFullError } from "../gateway/sessionActor";
 import {
   getExternalToken,
   startExternalInstance,
@@ -275,6 +276,58 @@ describe("external review", () => {
       sessionManager.frameLog.readFrom(sessionId, ignoredBody.seq - 1).frames
         .some((entry) => entry.frame.kind === "annotationGroupsReady"),
     ).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "verdicts",
+      path: (sessionId: string) => `/sessions/${sessionId}/review/verdicts`,
+      body: (patchId: string) => ({
+        expectedDocVersion: 1,
+        patchId,
+        verdict: "accepted",
+      }),
+    },
+    {
+      name: "commit",
+      path: (sessionId: string) => `/sessions/${sessionId}/review/commit`,
+      body: () => ({ expectedDocVersion: 1, action: "commit" }),
+    },
+    {
+      name: "annotations/ignore",
+      path: (sessionId: string) => `/sessions/${sessionId}/review/annotations/ignore`,
+      body: () => ({
+        expectedDocVersion: 1,
+        annotationIds: ["annotation-queue-full"],
+      }),
+    },
+  ])("$name 队列满时返回 429 和 Retry-After", async ({ path, body }) => {
+    const { sessionId, patchIds } = await createPendingReview();
+    const session = await getOrRestoreSession(sessionId);
+    session!.annotationGroups = [{
+      id: "annotation-queue-full",
+      summary: "队列满测试批注",
+      note: "用于进入 ignoreAnnotationGroups 提交路径",
+      origin: "source-check",
+      suggestion: "稍后重试",
+      severity: "warn",
+      status: "reviewing",
+      anchors: [],
+    }];
+    vi.spyOn(sessionManager, "submit")
+      .mockRejectedValue(new SessionActorQueueFullError(64));
+
+    const response = await request(path(sessionId), {
+      method: "POST",
+      body: JSON.stringify(body(patchIds[0]!)),
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("1");
+    expect(await response.json()).toMatchObject({
+      code: "RATE_LIMITED",
+      error: "会话命令队列已满",
+    });
   });
 });
 

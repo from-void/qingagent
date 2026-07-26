@@ -9,43 +9,23 @@ import { ARCHIVED_BUILTIN_SKILLS } from "../skills/archived.js";
 import {
   listChildSkills,
   listTopLevelSkills,
+  parseSkillFrontmatter,
   scanSkillHierarchy,
 } from "../skills/discovery.js";
-
-function parseFrontmatter(source: string): Record<string, unknown> {
-  const match = source.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) throw new Error("Missing frontmatter");
-  const data: Record<string, unknown> = {};
-  const lines = match[1]!.split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    const keyMatch = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
-    if (!keyMatch) continue;
-    const key = keyMatch[1]!;
-    let value = keyMatch[2] ?? "";
-    if (value === ">-" || value === "|") {
-      const parts: string[] = [];
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1]!)) {
-        i += 1;
-        parts.push(lines[i]!.trim());
-      }
-      value = parts.join(" ");
-    }
-    data[key] = value;
-  }
-  return data;
-}
+import { loadDiagramVizResources } from "../skills/diagramViz.js";
+import { parseSkillWriteInjectSource } from "../skills/writeInject.js";
 
 describe("builtin skills", () => {
   it("发现 cli-auth 内部技能且显式禁止用户调用", async () => {
     const skillPath = join(BUILTIN_SKILLS_DIR, "capability", "cli-auth", "SKILL.md");
     const source = await readFile(skillPath, "utf8");
-    const frontmatter = parseFrontmatter(source);
+    const frontmatter = parseSkillFrontmatter(source);
 
     expect(frontmatter).toMatchObject({
       name: "cli-auth",
       label: "命令行授权",
-      "user-invocable": "false",
+      userInvocable: false,
+      userInvocableExplicit: true,
     });
     expect(source).toContain("mastra_workspace_get_process_output(pid, tail)");
     expect(source).toContain("auth_url redirect_uri jump_url");
@@ -98,13 +78,15 @@ describe("builtin skills", () => {
     expect(diagramDir).toBeTruthy();
 
     const skillPath = join(diagramDir!, "SKILL.md");
-    const frontmatter = parseFrontmatter(await readFile(skillPath, "utf8"));
+    const source = await readFile(skillPath, "utf8");
+    const frontmatter = parseSkillFrontmatter(source);
     expect(frontmatter).toMatchObject({
       name: "diagram-viz",
       label: "图表可视化",
-      "user-invocable": "true",
-      "write-inject": "true",
+      userInvocable: true,
+      userInvocableExplicit: true,
     });
+    expect(parseSkillWriteInjectSource(source).writeInject).toBe(true);
 
     const workspace = new Workspace({
       filesystem: new LocalFilesystem({
@@ -154,14 +136,15 @@ describe("builtin skills", () => {
     const reviewDir = enabledDirs.find((dir) => basename(dir) === "review");
     expect(reviewDir).toBeTruthy();
     const skill = await readFile(join(reviewDir!, "SKILL.md"), "utf8");
-    const frontmatter = parseFrontmatter(skill);
+    const frontmatter = parseSkillFrontmatter(skill);
     expect(frontmatter).toMatchObject({
       name: "review",
       label: "文档审查",
       summary: "统一执行八类文档审查",
-      "user-invocable": "true",
+      userInvocable: true,
+      userInvocableExplicit: true,
     });
-    expect(frontmatter["write-inject"]).toBeUndefined();
+    expect(parseSkillWriteInjectSource(skill).writeInject).toBe(false);
     for (const commonRule of [
       "纯批注模式，不改稿",
       "`writeDraft` 产出候选后",
@@ -189,7 +172,7 @@ describe("builtin skills", () => {
         join(reviewDir!, childName, "SKILL.md"),
         "utf8",
       );
-      const childFrontmatter = parseFrontmatter(childSkill);
+      const childFrontmatter = parseSkillFrontmatter(childSkill);
       expect(childFrontmatter).toMatchObject({
         name: childName,
         description: expect.any(String),
@@ -321,10 +304,31 @@ describe("builtin skills", () => {
     expect(browserOps?.description.length).toBeGreaterThan(0);
 
     const skillPath = resolve(BUILTIN_SKILLS_DIR, "capability", "browser-ops", "SKILL.md");
-    const frontmatter = parseFrontmatter(await readFile(skillPath, "utf8"));
-    expect(frontmatter.name).toBe(basename(dirname(skillPath)));
-    expect(frontmatter.description).toEqual(expect.any(String));
-    expect((frontmatter.description as string).length).toBeGreaterThan(0);
+    const frontmatter = parseSkillFrontmatter(await readFile(skillPath, "utf8"));
+    expect(frontmatter?.name).toBe(basename(dirname(skillPath)));
+    expect(frontmatter?.description).toEqual(expect.any(String));
+    expect(frontmatter?.description.length).toBeGreaterThan(0);
+  });
+
+  it("真实加载 diagram-viz 五个资源文件且所有标记段非空", () => {
+    const resources = loadDiagramVizResources();
+
+    for (const content of Object.values(resources)) {
+      expect(content.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("真实 frontmatter 解析支持 CRLF、布尔化，并拒绝缺少必填字段", () => {
+    expect(parseSkillFrontmatter(
+      "\uFEFF---\r\nname: valid-skill\r\ndescription: 合法技能\r\nuser-invocable: true\r\n---\r\n正文",
+    )).toMatchObject({
+      name: "valid-skill",
+      description: "合法技能",
+      userInvocable: true,
+      userInvocableExplicit: true,
+    });
+    expect(parseSkillFrontmatter("---\nname: missing-description\n---\n")).toBeNull();
+    expect(parseSkillFrontmatter("---\ndescription: 缺少名称\n---\n")).toBeNull();
   });
 
   it("归档清单为空时仍正常发现内置技能", async () => {

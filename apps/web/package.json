@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "pretest": "pnpm check:drawio-vendor",
     "test": "vitest run && vitest run --config vitest.dom.config.ts",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:dom": "vitest run --config vitest.dom.config.ts",

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createDesktopClientSecretStore } from "./clientSecretStore.js";
 import {
   assertTrustedRenderer,
   UntrustedRendererIpcError,
@@ -56,8 +58,96 @@ test("preload 只暴露目的明确的配置 API，不暴露整份 clientConfig 
     "setOfficialModel",
     "getModelTier",
     "setModelTier",
+    "getKimiApiKey",
+    "setKimiApiKey",
+    "getKimiCustomProvider",
+    "setKimiCustomProvider",
+    "getKimiOfficialModel",
+    "setKimiOfficialModel",
+    "getModelProvider",
+    "setModelProvider",
   ]) {
     assert.match(preload, new RegExp(`\\b${api}\\b`), `缺少具名 preload API: ${api}`);
+  }
+});
+
+test("桌面客户端配置白名单完整覆盖 Kimi 与厂商选择配置", () => {
+  const main = readFileSync(path.join(__dirname, "index.ts"), "utf8");
+  const preload = readFileSync(path.join(__dirname, "../preload/index.ts"), "utf8");
+  const configSetStart = main.indexOf("const DESKTOP_CLIENT_CONFIG_KEYS");
+  const configSetEnd = main.indexOf("]);", configSetStart);
+  const configSetSource = main.slice(configSetStart, configSetEnd);
+  for (const key of [
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+    "qingagent.kimi_official_model",
+    "qingagent.model_provider",
+  ]) {
+    assert.ok(configSetSource.includes(`"${key}"`), `主进程白名单缺少：${key}`);
+    assert.ok(preload.includes(`"${key}"`), `preload 白名单缺少：${key}`);
+  }
+  for (const secretKey of [
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+  ]) {
+    const secretSetStart = main.indexOf("const DESKTOP_MODEL_SECRET_KEYS");
+    const secretSetEnd = main.indexOf("]);", secretSetStart);
+    assert.ok(
+      main.slice(secretSetStart, secretSetEnd).includes(`"${secretKey}"`),
+      `Kimi 敏感配置必须经 safeStorage 加密：${secretKey}`,
+    );
+  }
+});
+
+test("Kimi 敏感配置经主进程密文存储写入磁盘并可解密读回", () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "qingagent-kimi-secrets-"));
+  const secretsFile = path.join(tempDir, "client-config.secrets.json");
+  const encryptedPlaintexts: string[] = [];
+  const decryptedCiphertexts: Buffer[] = [];
+  const safeStorage = {
+    encryptString(plaintext: string): Buffer {
+      encryptedPlaintexts.push(plaintext);
+      return Buffer.from(Buffer.from(plaintext, "utf8").map((byte) => byte ^ 0xa5));
+    },
+    decryptString(ciphertext: Buffer): string {
+      decryptedCiphertexts.push(ciphertext);
+      return Buffer.from(ciphertext.map((byte) => byte ^ 0xa5)).toString("utf8");
+    },
+  };
+  const secretKeys = new Set([
+    "qingagent.kimi_api_key",
+    "qingagent.kimi_custom_provider",
+  ]);
+  const store = createDesktopClientSecretStore({
+    filePath: secretsFile,
+    secretKeys,
+    safeStorage,
+  });
+  const values = {
+    "qingagent.kimi_api_key": "kimi-plaintext-key",
+    "qingagent.kimi_custom_provider": JSON.stringify({
+      apiKey: "kimi-custom-plaintext-key",
+      baseUrl: "https://kimi.example/v1",
+    }),
+  };
+
+  try {
+    for (const [key, value] of Object.entries(values)) store.write(key, value);
+
+    const diskSource = readFileSync(secretsFile, "utf8");
+    const diskValues = JSON.parse(diskSource) as Record<string, string>;
+    assert.deepEqual(Object.keys(diskValues).sort(), Object.keys(values).sort());
+    for (const [key, plaintext] of Object.entries(values)) {
+      assert.notEqual(diskValues[key], plaintext, `${key} 不得以明文落盘`);
+      assert.ok(!diskSource.includes(plaintext), `${key} 的明文不得出现在密文文件`);
+      assert.equal(store.read(key), plaintext);
+    }
+    assert.ok(!diskSource.includes("kimi-plaintext-key"));
+    assert.ok(!diskSource.includes("kimi-custom-plaintext-key"));
+    assert.deepEqual(encryptedPlaintexts, Object.values(values));
+    assert.equal(decryptedCiphertexts.length, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

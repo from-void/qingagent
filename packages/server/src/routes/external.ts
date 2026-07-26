@@ -31,11 +31,13 @@ import {
   QINGAGENT_RESOURCE_ID,
 } from "@qingagent/core";
 import { markdownToPm, normalizePmDoc, pmToMarkdown } from "@qingagent/pm-schema";
+import { isMissingMastraThreadsTableError } from "@qingagent/db";
 import crypto from "node:crypto";
 import { getExternalInstancePublicInfo } from "../lib/externalInstance";
 import { EXTERNAL_NEXT_STEP, externalError } from "../lib/externalError";
 import { resolveRequestModelOverrides } from "../modelOverridesProvider";
 import { getOrRestoreSession, sessionManager } from "../gateway/bridgeHandler";
+import { loadSessionFromThread } from "../gateway/bridgeCore";
 import { getOrRestoreSessionReadOnly } from "../gateway/sessionLifecycle";
 import type { FrameLogReadResult, LoggedFrame } from "../gateway/frameLog";
 import type { Material } from "@qingagent/core";
@@ -81,7 +83,8 @@ externalRoutes.get("/sessions", async (c) => {
   const startedAt = Date.now();
   const limit = clampedQueryInteger(c.req.query("limit"), DEFAULT_SESSIONS_LIMIT, 1, MAX_SESSIONS_LIMIT);
   const offset = clampedQueryInteger(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
-  const { rows, total } = await documentRepo.list({
+  // documents 与 Mastra thread 同库关联后再分页，孤儿行不会占用 total/offset。
+  const { rows, total: persistedTotal } = await documentRepo.listWithExistingThreads({
     resourceId: QINGAGENT_RESOURCE_ID,
     perPage: limit,
     offset,
@@ -97,11 +100,64 @@ externalRoutes.get("/sessions", async (c) => {
       updatedAt: row.updatedAt,
     });
   }
-  const hasMore = offset + rows.length < total;
-  externalLog("sessions", { ms: elapsed(startedAt), result: "ok", count: sessions.length, total, hasMore });
+  const memoryOnlySessions: Array<{
+    id: string;
+    title: string;
+    state: ContentDocState["kind"];
+    updatedAt: string;
+  }> = [];
+  const memorySessionIds = sessionManager.listSessionIds(50);
+  // 当前页之外的真实落盘会话也不能作为内存会话重复出现；但仅有 documents
+  // 孤儿行不算落盘列表会话，必须经同一条 thread 恢复路径确认。
+  const persistedSessionIds = new Set(sessions.map((session) => session.id));
+  const unresolvedMemoryIds = memorySessionIds.filter(
+    (sessionId) => !persistedSessionIds.has(sessionId),
+  );
+  if (unresolvedMemoryIds.length > 0) {
+    const offPageDocumentIds = await documentRepo.existsByIds(
+      QINGAGENT_RESOURCE_ID,
+      unresolvedMemoryIds,
+    );
+    for (const sessionId of offPageDocumentIds) {
+      try {
+        if (await loadSessionFromThread(sessionId, { mode: "snapshot" })) {
+          persistedSessionIds.add(sessionId);
+        }
+      } catch (error) {
+        // Mastra memory domain 尚未建表时，该候选仍按内存会话处理；其他错误照常暴露。
+        if (!isMissingMastraThreadsTableError(error)) throw error;
+      }
+    }
+  }
+  for (const sessionId of memorySessionIds) {
+    if (persistedSessionIds.has(sessionId)) continue;
+    const session = await getOrRestoreSessionReadOnly(sessionId);
+    if (!session) continue;
+    memoryOnlySessions.push({
+      id: sessionId,
+      title: session.title || "未命名草稿",
+      state: deriveContentState(session).kind,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  const memoryOffset = Math.max(0, offset - persistedTotal);
+  const memoryPage = memoryOnlySessions.slice(
+    memoryOffset,
+    memoryOffset + Math.max(0, limit - sessions.length),
+  );
+  sessions.push(...memoryPage);
+  const mergedTotal = persistedTotal + memoryOnlySessions.length;
+  const hasMore = offset + sessions.length < mergedTotal;
+  externalLog("sessions", {
+    ms: elapsed(startedAt),
+    result: "ok",
+    count: sessions.length,
+    total: mergedTotal,
+    hasMore,
+  });
   return c.json({
     sessions,
-    total,
+    total: mergedTotal,
     hasMore,
   });
 });
@@ -326,12 +382,20 @@ externalRoutes.post("/sessions/:id/review/verdicts", async (c) => {
   const command: Command = body.verdict === "accepted"
     ? { kind: "acceptPatch", data: { id: body.patchId } }
     : { kind: "rejectPatch", data: { id: body.patchId } };
-  const frames = await sessionManager.submit(sessionId, {
-    command,
-    origin: "external",
-    client: parseExternalClient(c.req.header("x-qa-client")),
-    modelOverrides: await resolveRequestModelOverrides({}),
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   if (session.docVersion !== body.expectedDocVersion) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
   }
@@ -409,12 +473,20 @@ externalRoutes.post("/sessions/:id/review/commit", async (c) => {
   };
   const modelOverrides = await resolveRequestModelOverrides({});
   const client = parseExternalClient(c.req.header("x-qa-client"));
-  const frames = await sessionManager.submit(sessionId, {
-    command,
-    origin: "external",
-    client,
-    modelOverrides,
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command,
+      origin: "external",
+      client,
+      modelOverrides,
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   const seq = maxSeq(frames);
   if (session.docVersion !== body.expectedDocVersion && !hasFrame(frames, "docCommitted")) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, seq);
@@ -518,12 +590,20 @@ externalRoutes.post("/sessions/:id/review/annotations/ignore", async (c) => {
   if (!parsed.success || parsed.data.kind !== "ignoreAnnotationGroups") {
     return externalError(c, 400, "VALIDATION", "批注忽略请求不合法");
   }
-  const frames = await sessionManager.submit(sessionId, {
-    command: parsed.data,
-    origin: "external",
-    client: parseExternalClient(c.req.header("x-qa-client")),
-    modelOverrides: await resolveRequestModelOverrides({}),
-  });
+  let frames: LoggedFrame[];
+  try {
+    frames = await sessionManager.submit(sessionId, {
+      command: parsed.data,
+      origin: "external",
+      client: parseExternalClient(c.req.header("x-qa-client")),
+      modelOverrides: await resolveRequestModelOverrides({}),
+    });
+  } catch (error) {
+    if (error instanceof SessionActorQueueFullError) {
+      return externalError(c, 429, "RATE_LIMITED", "会话命令队列已满");
+    }
+    throw error;
+  }
   if (session.docVersion !== body.expectedDocVersion) {
     return reviewVersionConflict(c, body.expectedDocVersion, session.docVersion, maxSeq(frames));
   }

@@ -34,7 +34,7 @@ export function DrawioEditorOverlay({
   const pendingSaveIdRef = useRef<number | null>(null);
   const pendingExitRef = useRef(false);
   const latestResultRef = useRef<DrawioEditorResult | null>(null);
-  const highFidelityResultsRef = useRef(new Map<string, DrawioEditorResult>());
+  const latestHighFidelityResultRef = useRef<DrawioEditorResult | null>(null);
   const saveSequenceRef = useRef(0);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -123,7 +123,9 @@ export function DrawioEditorOverlay({
         ) {
           return;
         }
-        const highFidelityResult = highFidelityResultsRef.current.get(fallbackSource);
+        const highFidelityResult = latestHighFidelityResultRef.current?.source === fallbackSource
+          ? latestHighFidelityResultRef.current
+          : null;
         if (highFidelityResult) {
           completeSave(highFidelityResult, saveId);
           return;
@@ -141,7 +143,9 @@ export function DrawioEditorOverlay({
         ) {
           return;
         }
-        const highFidelityResult = highFidelityResultsRef.current.get(fallbackSource);
+        const highFidelityResult = latestHighFidelityResultRef.current?.source === fallbackSource
+          ? latestHighFidelityResultRef.current
+          : null;
         if (highFidelityResult) {
           completeSave(highFidelityResult, saveId);
           return;
@@ -186,12 +190,8 @@ export function DrawioEditorOverlay({
           pendingSourceRef.current = request.source;
           pendingSaveIdRef.current = saveId;
           pendingExitRef.current = message.exit === true;
-          const highFidelityResult = highFidelityResultsRef.current.get(request.source);
-          if (
-            latestResultRef.current?.source === request.source &&
-            highFidelityResult
-          ) {
-            completeSave(highFidelityResult, saveId);
+          if (latestHighFidelityResultRef.current?.source === request.source) {
+            completeSave(latestHighFidelityResultRef.current, saveId);
             return;
           }
           setSaving(true);
@@ -221,7 +221,7 @@ export function DrawioEditorOverlay({
         if (!pendingSource || saveId === null) return;
         try {
           const result = finalizeDrawioEdit(pendingSource, message.data);
-          highFidelityResultsRef.current.set(result.source, result);
+          latestHighFidelityResultRef.current = result;
           completeSave(result, saveId);
         } catch (exportError) {
           clearExportTimer();
@@ -235,8 +235,12 @@ export function DrawioEditorOverlay({
       }
       // saveAndExit 的 save 与 exit 可能相邻到达；已经开始导出时必须等 SVG
       // 加固完成，不能让 exit 抢先把一次有效保存当成取消。
-      if (message.event === "exit" && pendingSourceRef.current === null) {
-        finish(latestResultRef.current);
+      if (message.event === "exit") {
+        if (pendingSourceRef.current !== null) {
+          pendingExitRef.current = true;
+        } else {
+          finish(latestResultRef.current);
+        }
       }
       // openLink 在 suppressNewWindows + 离线模式下故意不转交系统浏览器。
     };

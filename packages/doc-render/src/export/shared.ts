@@ -13,6 +13,26 @@ export interface ExportOptions {
 
 export type ExportDocument = LegacySection[] | PmDoc;
 
+// 仅写入导出克隆，用于区分 draw.io 回退源码是否真的经过归一化。
+// 扫描导出文档时会先清除输入中可能存在的同名字段，避免污染或误信持久化数据。
+export const DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR = "__drawioExportSourceNormalized";
+
+export function isDrawioExportSourceNormalized(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  return (value as Record<string, unknown>)[DRAWIO_EXPORT_SOURCE_NORMALIZED_ATTR] === true;
+}
+
+export function drawioFallbackMessage(oversized: boolean, sourceNormalized: boolean): string {
+  if (!sourceNormalized) {
+    return oversized
+      ? "draw.io 图表过大，以下为图表源码（可复制到 draw.io 查看）"
+      : "以下为图表源码（可复制到 draw.io 查看）";
+  }
+  return oversized
+    ? "draw.io 图表过大，以下数据已按安全边界归一化，可能与原图有差异（可复制到 draw.io 查看）"
+    : "draw.io 图表数据已按安全边界归一化，可能与原图有差异（未能生成预览，可复制到 draw.io 查看）";
+}
+
 export function isPmDocDocument(value: ExportDocument): value is PmDoc {
   return !Array.isArray(value) && value.type === "doc";
 }

@@ -105,10 +105,115 @@ describe("diagram-engine", () => {
     expect(punctuationInLabel.edges.map((item) => [item.source, item.target])).toEqual([["A", "B"]]);
   });
 
+  it("flowchart 单边标签含 & 时仍可安全回写，多目标保持只读", () => {
+    const source = "flowchart TD\n  A -->|a & b| B\n";
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.edges).toHaveLength(1);
+    expect(model.edges[0]).toMatchObject({
+      source: "A",
+      target: "B",
+      label: "a & b",
+      rewritable: true,
+    });
+
+    const changed = applyEdit(source, {
+      kind: "setEdgeLabel",
+      edgeId: model.edges[0]!.id,
+      label: "更新 & 保留",
+    });
+    expect(changed.ok).toBe(true);
+    const changedEdge = (parseDiagram(changed.source).model as FlowGraph).edges[0]!;
+    const restored = applyEdit(changed.source, {
+      kind: "setEdgeLabel",
+      edgeId: changedEdge.id,
+      label: "a & b",
+    });
+    expect(restored).toMatchObject({ ok: true, source });
+
+    const multiTarget = parseDiagram("flowchart TD\n  A --> B & C\n").model as FlowGraph;
+    expect(multiTarget.edges).toHaveLength(2);
+    expect(multiTarget.edges.every((item) => item.rewritable === false)).toBe(true);
+  });
+
+  it("flowchart 按 Mermaid 官方词法区分紧贴圆叉端点与含 -o/-x 的节点 id", () => {
+    const cases = [
+      {
+        source: "flowchart TD\n  x-o-->B\n",
+        nodeIds: ["x-o", "B"],
+        edge: { source: "x-o", target: "B", syntaxKind: "-->", sourceMarker: "none" },
+      },
+      {
+        source: "flowchart TD\n  x-o --> B\n",
+        nodeIds: ["x-o", "B"],
+        edge: { source: "x-o", target: "B", syntaxKind: "-->", sourceMarker: "none" },
+      },
+      {
+        source: "flowchart TD\n  a-x-->b\n",
+        nodeIds: ["a-x", "b"],
+        edge: { source: "a-x", target: "b", syntaxKind: "-->", sourceMarker: "none" },
+      },
+      {
+        source: "flowchart TD\n  a-x --> b\n",
+        nodeIds: ["a-x", "b"],
+        edge: { source: "a-x", target: "b", syntaxKind: "-->", sourceMarker: "none" },
+      },
+    ];
+
+    for (const item of cases) {
+      const parsed = parseDiagram(item.source);
+      expect(parsed.ok, item.source).toBe(true);
+      const model = parsed.model as FlowGraph;
+      expect(model.nodes.map((node) => node.id), item.source).toEqual(item.nodeIds);
+      expect({
+        ...model.edges[0],
+        sourceMarker: model.edges[0]?.sourceMarker ?? "none",
+      }, item.source).toMatchObject(item.edge);
+    }
+  });
+
   it("flowchart 未闭合节点仍返回解析错误", () => {
     const source = "graph TD; A[未闭合 --> B";
     expect(parseDiagram(source)).toMatchObject({ ok: false, error: "节点 A 的形状未闭合" });
     expect(graphToSvg(source)).toBeNull();
+  });
+
+  it("flowchart accessibility 指令受保护且解析、改写、渲染与往返均可用", () => {
+    const sources = [
+      [
+        "flowchart TD",
+        "  accTitle: 我的标题",
+        "  accDescr: 这是单行说明",
+        "  A[开始] --> B[结束]",
+        "",
+      ].join("\n"),
+      [
+        "flowchart TD",
+        "  accTitle: 多行说明图",
+        "  accDescr {",
+        "    这是多行说明",
+        "    A --> Ghost 只是无障碍描述正文",
+        "  }",
+        "  A[开始] --> B[结束]",
+        "",
+      ].join("\n"),
+    ];
+
+    for (const source of sources) {
+      const parsed = parseDiagram(source);
+      expect(parsed.ok, source).toBe(true);
+      const model = parsed.model as FlowGraph;
+      expect(model.nodes.map((node) => node.id), source).toEqual(["A", "B"]);
+      expect(graphToSvg(source), source).not.toBeNull();
+
+      const changed = applyEdit(source, { kind: "relabelNode", nodeId: "A", label: "已更新" });
+      expect(changed.ok, source).toBe(true);
+      expect(changed.source).toContain("accTitle:");
+      expect(changed.source).toContain("accDescr");
+      const restored = applyEdit(changed.source, { kind: "relabelNode", nodeId: "A", label: "开始" });
+      expect(restored).toMatchObject({ ok: true, source });
+    }
   });
 
   it("flowchart a-e 矩阵:顶层 Unicode id 在分区前后、边端点、中英混合和数字开头均不丢失", () => {
@@ -607,6 +712,39 @@ describe("diagram-engine", () => {
     expect(movedOut.source).toContain("  A --> B");
   });
 
+  it("带 :::class 的独立节点可迁入、迁出及跨分区且绑定随声明保留", () => {
+    const rootSource = [
+      "flowchart TD",
+      "  A[甲]:::hot",
+      '  subgraph Left["左区"]',
+      "    L[左]",
+      "  end",
+      '  subgraph Right["右区"]',
+      "    R[右]",
+      "  end",
+      "  classDef hot fill:#ff0000",
+      "",
+    ].join("\n");
+    const movedIn = moveNodeToSubgraph(rootSource, "A", "Left");
+    expect(movedIn.ok).toBe(true);
+    expect((parseDiagram(movedIn.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual(["Left"]);
+    expect(movedIn.source.match(/A\[甲\]:::hot/g)).toHaveLength(1);
+
+    const movedAcross = moveNodeToSubgraph(movedIn.source, "A", "Right");
+    expect(movedAcross.ok).toBe(true);
+    expect((parseDiagram(movedAcross.source).model as FlowGraph).nodes.find((node) => node.id === "A")?.scopePath)
+      .toEqual(["Right"]);
+    expect(movedAcross.source.match(/A\[甲\]:::hot/g)).toHaveLength(1);
+
+    const movedOut = moveNodeToSubgraph(movedAcross.source, "A", null);
+    expect(movedOut.ok).toBe(true);
+    const movedOutModel = parseDiagram(movedOut.source).model as FlowGraph;
+    expect(movedOutModel.nodes.find((node) => node.id === "A")?.scopePath).toEqual([]);
+    expect(movedOutModel.perNodeStyles?.A).toMatchObject({ fill: "#ff0000" });
+    expect(movedOut.source.match(/A\[甲\]:::hot/g)).toHaveLength(1);
+  });
+
   it("renameSubgraph 只改标题 span，dissolveSubgraph 解散后子分区和节点归父", () => {
     const source = [
       "flowchart TD",
@@ -1102,6 +1240,28 @@ flowchart TD
 
     const overlaySvg = graphToSvg(source, { styles: { A: { fill: "#D7E7F6", stroke: "#123456", textColor: "#111111" } } })!;
     expect(overlaySvg).toMatch(/data-node-id="A"><rect[^>]+fill="#D7E7F6"[^>]+stroke="#123456"/);
+  });
+
+  it("classDef 与 linkStyle 的行尾 %% 注释不影响样式及 # 颜色值", () => {
+    const source = [
+      "flowchart TD",
+      "  A[开始] --> B[结束]",
+      "  classDef hot fill:#ff0000,stroke:#112233 %% 节点样式注释",
+      "  class A hot",
+      "  linkStyle 0 stroke:#445566,stroke-width:3px %% 边样式注释",
+      "",
+    ].join("\n");
+    const parsed = parseDiagram(source);
+    expect(parsed.ok).toBe(true);
+    const model = parsed.model as FlowGraph;
+    expect(model.perNodeStyles?.A).toMatchObject({
+      fill: "#ff0000",
+      stroke: "#112233",
+    });
+    expect(model.perEdgeStyles?.[model.edges[0]!.id]).toMatchObject({
+      stroke: "#445566",
+      strokeWidth: 3,
+    });
   });
 
   it("五类图都接住 init 图级色板,无 init 的 graphToSvg 保持纸墨默认", () => {

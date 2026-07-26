@@ -19,6 +19,7 @@ export interface ImportGeneratedImageInput {
 export interface ImportGeneratedImageResult {
   imageId: string;
   src: string;
+  alt?: string | null;
   width?: number;
   height?: number;
 }
@@ -83,11 +84,9 @@ function isJpegStartOfFrame(marker: number): boolean {
 }
 
 function hasJpegSignature(buffer: Buffer): boolean {
-  return buffer.length >= 4 &&
+  return buffer.length >= 2 &&
     buffer[0] === 0xff &&
-    buffer[1] === 0xd8 &&
-    buffer[buffer.length - 2] === 0xff &&
-    buffer[buffer.length - 1] === 0xd9;
+    buffer[1] === 0xd8;
 }
 
 function jpegDimensions(buffer: Buffer): { width: number; height: number } | null {
@@ -198,6 +197,7 @@ export async function importGeneratedImageFromPath(
   return {
     imageId,
     src: `/api/v1/files/${imageId}/${filename}`,
+    ...(input.alt !== undefined ? { alt: input.alt } : {}),
     ...(prepared.dimensions ?? {}),
   };
 }
@@ -208,7 +208,7 @@ export const importGeneratedImageTool = createTool({
     "【触发限制：仅供 image-gen/codex-image 子技能使用】" +
     "仅当本轮已经通过本机 codex exec 在当前会话沙箱工作区生成图片后，才可调用本工具将该产物导入文档图片库；" +
     "不得用于用户上传文件、资料库文件、uploads 文件或任意宿主路径，也不得借此绕过工作区路径边界。" +
-    "输入沙箱内图片的绝对 path（只允许 png/jpg/jpeg/webp/svg）和可选 alt，返回真实 imageId、src，" +
+    "输入沙箱内图片的绝对 path（只允许 png/jpg/jpeg/webp/svg）和可选 alt，返回真实 imageId、src 并回显 alt，" +
     "PNG/JPEG 可廉价识别时还返回 width/height。本工具只导入资产，不会把图片插进文档；" +
     "拿到 src 后必须另用 editDraft insertBlock 插入 <img>，并用 readDiff 核对。",
   inputSchema: z.object({
@@ -218,6 +218,7 @@ export const importGeneratedImageTool = createTool({
   outputSchema: z.object({
     imageId: z.string().uuid(),
     src: z.string(),
+    alt: z.string().max(500).nullable().optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
   }),

@@ -27,7 +27,12 @@ type DesktopConfigKey =
   | "qingagent.custom_provider"
   | "qingagent.vision_provider"
   | "qingagent.official_model"
-  | "qingagent.model_tier";
+  | "qingagent.model_tier"
+  // 与 web clientPersist.ts、desktop main 的白名单保持同步。
+  | "qingagent.kimi_api_key"
+  | "qingagent.kimi_custom_provider"
+  | "qingagent.kimi_official_model"
+  | "qingagent.model_provider";
 
 // 请求 header 仍需同步读取本机配置，因此保留 sendSync，但每次只读取调用方明确请求的一项；
 // contextBridge 不再挂整份已解密配置对象，也不暴露可枚举任意 key 的通用 API。
@@ -68,6 +73,18 @@ contextBridge.exposeInMainWorld("electron", {
   getModelTier: () => readDesktopConfigValue("qingagent.model_tier"),
   setModelTier: (value: string | null) =>
     writeDesktopConfigValue("qingagent.model_tier", value),
+  getKimiApiKey: () => readDesktopConfigValue("qingagent.kimi_api_key"),
+  setKimiApiKey: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.kimi_api_key", value),
+  getKimiCustomProvider: () => readDesktopConfigValue("qingagent.kimi_custom_provider"),
+  setKimiCustomProvider: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.kimi_custom_provider", value),
+  getKimiOfficialModel: () => readDesktopConfigValue("qingagent.kimi_official_model"),
+  setKimiOfficialModel: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.kimi_official_model", value),
+  getModelProvider: () => readDesktopConfigValue("qingagent.model_provider"),
+  setModelProvider: (value: string | null) =>
+    writeDesktopConfigValue("qingagent.model_provider", value),
   requestConfirmRememberGrant: (input: {
     sessionId: string;
     confirmId: string;

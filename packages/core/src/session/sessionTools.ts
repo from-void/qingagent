@@ -24,6 +24,7 @@ import {
   normalizeDiagramVizLanguage,
   type DiagramVizLanguage,
 } from "../skills/diagramViz.js";
+import { resolveTopLevelSkillId } from "../skills/skillIdResolver.js";
 import {
   filterDisabledSkillTools,
   isSkillDisabledToolResult,
@@ -468,13 +469,12 @@ export async function resolveSelectedSkillNames(
         .filter((id): id is string => Boolean(id)),
     ),
   );
-  const names: string[] = [];
+  const names = new Set<string>();
   for (const id of ids) {
-    if (await skills.has(id).catch(() => false)) {
-      names.push(id);
-    }
+    const resolvedId = await resolveTopLevelSkillId(skills, id);
+    if (resolvedId) names.add(resolvedId);
   }
-  return names;
+  return [...names];
 }
 
 // 能力工具集:全部 CAPABILITY_TOOLS,仅剔除被显式禁用的(disabled)。

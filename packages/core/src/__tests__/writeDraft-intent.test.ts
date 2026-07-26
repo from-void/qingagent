@@ -10,7 +10,10 @@ import {
   pmToPlainText,
   type PmDoc,
 } from "@qingagent/pm-schema";
-import { activateDiagramVizSkill } from "../skills/diagramViz.js";
+import {
+  activateDiagramVizSkill,
+  inferDiagramVizLanguages,
+} from "../skills/diagramViz.js";
 
 vi.mock("../mastra.js", () => ({
   mastra: {
@@ -27,6 +30,46 @@ vi.mock("../llm/innerModelStream.js", async (importOriginal) => {
     ...actual,
     streamInnerModel: (...args: unknown[]) => streamInnerModelMock(...args),
   };
+});
+
+describe("diagram-viz 写作意图识别", () => {
+  it.each([
+    ["画一张流程图", ["mermaid"]],
+    ["生成 ER 图", ["mermaid"]],
+    ["用 mermaid 画时序图", ["mermaid"]],
+    ["请画系统架构图", ["drawio"]],
+    ["请画系统架构", ["drawio"]],
+    ["请画流程", ["mermaid"]],
+    ["把服务时序可视化", ["mermaid"]],
+    ["绘制云原生架构设计图", ["drawio"]],
+    ["请画系统架构，标出核心依赖", ["drawio"]],
+    ["请绘制登录时序示意", ["mermaid"]],
+    ["请画审批流程优化。", ["mermaid"]],
+    ["绘制服务拓扑结构图；补充故障域", ["drawio"]],
+    ["请画退款状态机视图。", ["mermaid"]],
+  ])("%s 会激活对应图表语言", (text, expected) => {
+    expect(inferDiagramVizLanguages(text)).toEqual(expected);
+  });
+
+  it.each([
+    "帮我写一篇公司审批流程优化方案的文章",
+    "请画一个审批流程优化方案的封面",
+    "绘制时序小说的封面插画",
+    "可视化架构师成长路径的海报",
+    "write a user onboarding guide",
+    "a quarterly report for the leadership team",
+    "写一篇关于登录状态管理的技术博客",
+    "帮我优化审批流程",
+    "状态管理最佳实践",
+    "请画系统架构师。",
+    "请画审批流程封面。",
+    "请画系统架构师画像",
+    "绘制状态机学习手册的封面",
+    "请画审批流程优化版。",
+    "请画服务拓扑结构图册封面。",
+  ])("%s 不会误激活图表技能", (text) => {
+    expect(inferDiagramVizLanguages(text)).toEqual([]);
+  });
 });
 
 interface InnerModelCall {

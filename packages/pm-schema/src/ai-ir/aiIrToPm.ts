@@ -687,18 +687,31 @@ function blockToPm(block: AiBlock, index: number | string): PmBlockNode {
     }
     case "image":
       return { type: "image", attrs: { blockId, src: block.src, alt: block.alt ?? null, title: block.title ?? null, caption: block.caption ?? null, width: block.width ?? null, height: block.height ?? null, align: block.align ?? "center" } };
-    case "diagram":
+    case "diagram": {
       // 安全:绝不信任模型给的 svg(会被 dangerouslySetInnerHTML 注入 + 内嵌导出 → 存储型 XSS)。
       // svg 一律置 null,只允许前端渲染并经统一 hardenInlineSvg 加固后回写可信缓存。
+      const drawioSource = block.lang === "drawio"
+        ? detectDrawioSource(block.lang, block.source)
+        : null;
+      // 与 codeBlock 入口保持一致：模型给出截断/非法 drawio 时保留原始源码，
+      // 降级为可编辑代码块，不能让单个坏图导致整份 AI-IR 编译失败。
+      if (block.lang === "drawio" && drawioSource === null) {
+        return {
+          type: "codeBlock",
+          attrs: { blockId, language: "drawio" },
+          content: block.source ? [{ type: "text", text: block.source }] : [],
+        };
+      }
       return {
         type: "diagram",
         attrs: {
           blockId,
           lang: block.lang,
-          source: block.lang === "drawio" ? normalizeDrawioSource(block.source) : block.source,
+          source: drawioSource ?? block.source,
           svg: null,
         },
       };
+    }
     case "fileAttachment":
       return {
         type: "fileAttachment",

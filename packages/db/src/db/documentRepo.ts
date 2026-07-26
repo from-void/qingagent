@@ -53,6 +53,7 @@ export interface DocumentSaveInput {
 export interface DocumentRepo {
   load(id: string): Promise<DocumentRow | null>;
   findIdByThreadId(threadId: string): Promise<string | null>;
+  existsByIds(resourceId: string, ids: string[]): Promise<Set<string>>;
   save(input: DocumentSaveInput): Promise<void>;
   saveMany(inputs: DocumentSaveInput[]): Promise<void>;
   list(opts: {
@@ -61,7 +62,40 @@ export interface DocumentRepo {
     perPage?: number;
     offset?: number;
   }): Promise<{ rows: DocumentRow[]; total: number }>;
+  listWithExistingThreads(opts: {
+    resourceId: string;
+    page?: number;
+    perPage?: number;
+    offset?: number;
+  }): Promise<{ rows: DocumentRow[]; total: number }>;
   countByResourceId(resourceId: string): Promise<number>;
+}
+
+const MAX_EXISTS_BY_IDS = 50;
+
+/**
+ * Mastra 的 memory domain 会在首次存储调用时创建 threads 表。新库初始化完成前，
+ * documents 读路径应把缺表视为“还没有任何 thread”，不能吞掉其他 SQL 错误。
+ */
+export function isMissingMastraThreadsTableError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current != null && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error
+      ? current.message
+      : typeof current === "string"
+        ? current
+        : "";
+    if (/no such table:\s*(?:[\w-]+\.)?mastra_threads\b/i.test(message)) {
+      return true;
+    }
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : null;
+  }
+  return false;
 }
 
 function valueAsString(value: unknown): string {
@@ -413,6 +447,29 @@ export const documentRepo: DocumentRepo = {
     return result.rows[0]?.id == null ? null : String(result.rows[0].id);
   },
 
+  async existsByIds(resourceId, ids) {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return new Set();
+    if (uniqueIds.length > MAX_EXISTS_BY_IDS) {
+      throw new Error(`documentRepo.existsByIds 最多查询 ${MAX_EXISTS_BY_IDS} 个 id`);
+    }
+    const client = await readyClient();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    try {
+      const result = await client.execute({
+        // 只取指定资源且 thread 仍存在的主文档主键；禁止退化成 documents 全行扫描。
+        sql: `SELECT d.id FROM documents d
+          INNER JOIN mastra_threads t ON t.id = d.thread_id
+          WHERE d.resource_id = ? AND d.role = 'main' AND d.id IN (${placeholders})`,
+        args: [resourceId, ...uniqueIds],
+      });
+      return new Set(result.rows.map((row) => valueAsString(row.id)));
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) return new Set();
+      throw error;
+    }
+  },
+
   async save(input) {
     const client = await readyClient();
     await withWriteRetry(async () => {
@@ -472,6 +529,41 @@ export const documentRepo: DocumentRepo = {
       rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
       total: valueAsNumber(countResult.rows[0]?.total),
     };
+  },
+
+  async listWithExistingThreads(opts) {
+    const client = await readyClient();
+    const page = opts.page ?? 0;
+    const perPage = opts.perPage ?? 50;
+    const offset = opts.offset ?? page * perPage;
+    try {
+      const [countResult, rowsResult] = await Promise.all([
+        client.execute({
+          sql: `SELECT COUNT(*) AS total
+            FROM documents d
+            INNER JOIN mastra_threads t ON t.id = d.thread_id
+            WHERE d.resource_id = ? AND d.role = 'main'`,
+          args: [opts.resourceId],
+        }),
+        client.execute({
+          sql: `SELECT d.* FROM documents d
+            INNER JOIN mastra_threads t ON t.id = d.thread_id
+            WHERE d.resource_id = ? AND d.role = 'main'
+            ORDER BY d.updated_at DESC, d.id ASC
+            LIMIT ? OFFSET ?`,
+          args: [opts.resourceId, perPage, offset],
+        }),
+      ]);
+      return {
+        rows: rowsResult.rows.map((rawRow) => mapRow(rawRow).row),
+        total: valueAsNumber(countResult.rows[0]?.total),
+      };
+    } catch (error) {
+      if (isMissingMastraThreadsTableError(error)) {
+        return { rows: [], total: 0 };
+      }
+      throw error;
+    }
   },
 
   async countByResourceId(resourceId) {

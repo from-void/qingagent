@@ -35,15 +35,26 @@ export interface ExportMenuProps {
   anchorRef?: RefObject<HTMLElement>;
   onClose: () => void;
   onAction: (msg: string, durationMs?: number) => void;
+  prepareDrawioForExport?: (
+    onProgress: (current: number, total: number) => void,
+  ) => Promise<void>;
   flushPendingDocSave?: () => Promise<void>;
   getLatestPmDoc?: () => PmDoc | null;
 }
 
-export function ExportMenu({ anchorRef, onClose, onAction, flushPendingDocSave, getLatestPmDoc }: ExportMenuProps) {
+export function ExportMenu({
+  anchorRef,
+  onClose,
+  onAction,
+  prepareDrawioForExport,
+  flushPendingDocSave,
+  getLatestPmDoc,
+}: ExportMenuProps) {
   const sessionId = useSessionStore((s) => s.currentSessionId);
   const sessionTitle = useSessionStore((s) => s.currentSessionTitle);
   const { skills } = useSkills();
   const [busy, setBusy] = useState<Fmt["id"] | null>(null);
+  const [busyText, setBusyText] = useState("生成中…");
   const ref = useRef<HTMLDivElement>(null);
 
   // 点菜单外 / Esc 关闭
@@ -72,7 +83,19 @@ export function ExportMenu({ anchorRef, onClose, onAction, flushPendingDocSave, 
       return;
     }
     setBusy(f.id);
+    setBusyText("生成中…");
     try {
+      if (f.id === "pdf" || f.id === "docx" || f.id === "html") {
+        try {
+          await prepareDrawioForExport?.((current, total) => {
+            setBusyText(`正在渲染图表 ${current}/${total}`);
+          });
+        } catch (error) {
+          // 补缓存本身异常也不能阻断导出；服务端仍会对未补成的块回退源码。
+          console.warn("[export-menu] drawio cache preparation failed", error);
+        }
+        setBusyText("生成中…");
+      }
       await flushPendingDocSave?.();
       // 分栏只在 markdown 拍平:把"有损"提示并进导出成功 toast(而非单独先弹一条——
       // 那条会被随后的 doneToast 立即覆盖、用户根本看不到,e2e V1/V2 三次确认)。
@@ -135,7 +158,7 @@ export function ExportMenu({ anchorRef, onClose, onAction, flushPendingDocSave, 
           onClick={() => void download(f)}
           data-wf={`ExportFormat-${f.id}`}
         >
-          {busy === f.id ? <><span className="ws-export-spinner" aria-hidden="true" />生成中…</> : f.label}
+          {busy === f.id ? <><span className="ws-export-spinner" aria-hidden="true" />{busyText}</> : f.label}
         </button>
       ))}
       {platforms.length > 0 && <div className="ws-export-sep" aria-hidden="true" />}

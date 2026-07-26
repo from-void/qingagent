@@ -308,6 +308,147 @@ describe("Settings Track B", () => {
     expect(host?.textContent).toContain("Kimi 短对话测试已连通");
   });
 
+  it("DeepSeek 余额检测在途切到 Kimi 时复位 loading 并丢弃迟到结果", async () => {
+    await setVisitorDeepseekKey("deepseek-balance-key");
+    await setVisitorModelKey("kimi", "kimi-balance-key");
+    let resolveBalance!: (response: Response) => void;
+    const deferredBalance = new Promise<Response>((resolve) => {
+      resolveBalance = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredBalance
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    await waitForCondition(
+      () => (host?.textContent ?? "").includes("正在检测连接"),
+      "DeepSeek 余额检测开始",
+    );
+    await click(getButtonByWf("ProviderKimi"));
+
+    expect(host?.textContent ?? "").not.toContain("正在检测连接");
+    await act(async () => {
+      resolveBalance(json({ ok: false, error: "迟到的 DeepSeek 结果" }));
+      await deferredBalance;
+    });
+    await flush();
+    expect(host?.textContent ?? "").not.toContain("迟到的 DeepSeek 结果");
+  });
+
+  it("Kimi 测试连接在途切到 DeepSeek 时中止并丢弃迟到结果", async () => {
+    setSelectedModelProvider("kimi");
+    let resolveVerify!: (response: Response) => void;
+    const deferredVerify = new Promise<Response>((resolve) => {
+      resolveVerify = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredVerify
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "kimi-late-key");
+    await click(getButtonByText("测试连接"));
+    await click(getButtonByWf("ProviderDeepSeek"));
+
+    await act(async () => {
+      resolveVerify(json({ ok: true }));
+      await deferredVerify;
+    });
+    await flush();
+    expect(getButtonByWf("ProviderDeepSeek").getAttribute("aria-checked")).toBe("true");
+    expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
+  });
+
+  it("Kimi 测试连接在途修改 key 时作废旧请求并丢弃迟到成功", async () => {
+    setSelectedModelProvider("kimi");
+    let resolveVerify!: (response: Response) => void;
+    const deferredVerify = new Promise<Response>((resolve) => {
+      resolveVerify = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredVerify
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "kimi-key-a");
+    await click(getButtonByText("测试连接"));
+    setInput(getInputByWf("ModelKeyInput"), "kimi-key-b");
+
+    await act(async () => {
+      resolveVerify(json({ ok: true }));
+      await deferredVerify;
+    });
+    await flush();
+    expect(getInputByWf("ModelKeyInput").value).toBe("kimi-key-b");
+    expect(getButtonByText("测试连接").hasAttribute("disabled")).toBe(false);
+    expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
+  });
+
+  it("Kimi 测试连接在途切换档位时作废旧请求并丢弃迟到成功", async () => {
+    setSelectedModelProvider("kimi");
+    let resolveVerify!: (response: Response) => void;
+    const deferredVerify = new Promise<Response>((resolve) => {
+      resolveVerify = resolve;
+    });
+    const fallbackFetch = makeFetchMock();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/v1/settings/model/balance")
+        ? deferredVerify
+        : fallbackFetch(input),
+    ));
+
+    await render(
+      <ToastProvider>
+        <ModelSettingsPanel />
+      </ToastProvider>,
+    );
+    setInput(getInputByWf("ModelKeyInput"), "kimi-tier-key");
+    await click(getButtonByText("测试连接"));
+    await click(getButtonByWf("ModelTierPro"));
+
+    await act(async () => {
+      resolveVerify(json({ ok: true }));
+      await deferredVerify;
+    });
+    await flush();
+    expect(getButtonByWf("ModelTierPro").getAttribute("aria-checked")).toBe("true");
+    expect(getButtonByText("测试连接").hasAttribute("disabled")).toBe(false);
+    expect(host?.textContent ?? "").not.toContain("Kimi 短对话测试已连通");
+  });
+
+  it.each([
+    [false, "未配置"],
+    [true, "自动启用"],
+  ])("Kimi 原生识图按 key 配置状态显示徽标：configured=%s", async (configured, badge) => {
+    setSelectedModelProvider("kimi");
+    if (configured) await setVisitorModelKey("kimi", "kimi-vision-key");
+
+    await render(<VisionPanel />);
+
+    expect(host?.querySelector(".ss-card .ss-badge")?.textContent).toContain(badge);
+  });
+
   it("N7: 非标准长度 key 仍会自动验证并可保存", async () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);

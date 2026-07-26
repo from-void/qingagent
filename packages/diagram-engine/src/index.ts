@@ -803,7 +803,7 @@ function parseClassStyleStatements(source: string): {
   const nodeClasses = new Map<string, string[]>();
   const nodeStyles = new Map<string, NodeStyleOverride>();
   for (const line of getLines(source)) {
-    const trimmed = line.text.trim();
+    const trimmed = stripTrailingComment(line.text).trim();
     const definition = trimmed.match(CLASS_DEFINITION_RE);
     if (definition) {
       const style = parseClassDefinitionStyle(definition[2]!);
@@ -891,7 +891,7 @@ function parseEdgeStyle(source: string): EdgeStyleOverride | undefined {
 function parseLinkStyleStatements(source: string, edges: BaseEdge[]): Record<string, EdgeStyleOverride> {
   const out: Record<string, EdgeStyleOverride> = {};
   for (const line of getLines(source)) {
-    const match = line.text.trim().match(/^linkStyle\s+(\S+)\s+(.+?)\s*;?$/i);
+    const match = stripTrailingComment(line.text).trim().match(/^linkStyle\s+(\S+)\s+(.+?)\s*;?$/i);
     if (!match) continue;
     const style = parseEdgeStyle(match[2]!);
     if (!style) continue;
@@ -955,6 +955,7 @@ function parseFlowchart(source: string): ParseResult {
   const inlineNodeClasses = new Map<string, string[]>();
   let hasLinkStyle = false;
   let firstUnparsedLine: LineInfo | undefined;
+  let inAccDescrBlock = false;
 
   const ensureNode = (
     id: string,
@@ -1004,6 +1005,20 @@ function parseFlowchart(source: string): ParseResult {
     if (!trimmed || line === header) continue;
     if (trimmed.startsWith("%%")) {
       protectedSpans.push(lineSpan(line));
+      continue;
+    }
+    if (inAccDescrBlock) {
+      protectedSpans.push(lineSpan(line));
+      if (trimmed.includes("}")) inAccDescrBlock = false;
+      continue;
+    }
+    if (/^acc(?:Title|Descr)\s*:/i.test(trimmed)) {
+      protectedSpans.push(lineSpan(line));
+      continue;
+    }
+    if (/^accDescr\s*\{/i.test(trimmed)) {
+      protectedSpans.push(lineSpan(line));
+      if (!trimmed.slice(trimmed.indexOf("{") + 1).includes("}")) inAccDescrBlock = true;
       continue;
     }
     if (/^subgraph\b/i.test(trimmed)) {
@@ -1153,13 +1168,7 @@ function parseFlowEdgeLine(
   if (right.error) return { error: right.error };
   if (left.endOffset !== before.trim().length || right.endOffset !== after.trim().length) return null;
   const inSubgraph = scopePath.length > 0;
-  const safeRewrite =
-    isWholeLineStatement(line) &&
-    !inSubgraph &&
-    !left.unsupported &&
-    !right.unsupported &&
-    !/:::/i.test(raw) &&
-    !/\[[^\]]*\]\s*[^\s-]/.test(before.trim().replace(left.raw, ""));
+  const safeRewrite = isSafeFlowEdgeRewrite(line, inSubgraph, raw, left, right, before);
   const id = nextEdgeId({ source: left.id, target: right.id, syntaxKind: arrow, label: label || undefined });
   return {
     left,
@@ -1181,6 +1190,22 @@ function parseFlowEdgeLine(
       stmt: lineSpan(line),
     },
   };
+}
+
+function isSafeFlowEdgeRewrite(
+  line: LineInfo,
+  inSubgraph: boolean,
+  raw: string,
+  left: ParsedFlowNodeRef,
+  right: ParsedFlowNodeRef,
+  before: string,
+): boolean {
+  return isWholeLineStatement(line) &&
+    !inSubgraph &&
+    !left.unsupported &&
+    !right.unsupported &&
+    !/:::/i.test(raw) &&
+    !/\[[^\]]*\]\s*[^\s-]/.test(before.trim().replace(left.raw, ""));
 }
 
 type ParsedFlowLink = {
@@ -1285,6 +1310,18 @@ function parseFlowEdgeStatement(
     sources = targets.refs;
     const tail = raw.slice(cursor);
     if (!tail.trim()) break;
+  }
+  if (edges.length === 1 && refs.length === 2) {
+    const onlyEdge = edges[0]!;
+    const before = raw.slice(0, (onlyEdge.syntaxSpan?.start ?? line.start) - line.start);
+    onlyEdge.rewritable = isSafeFlowEdgeRewrite(
+      line,
+      scopePath.length > 0,
+      raw,
+      refs[0]!,
+      refs[1]!,
+      before,
+    );
   }
   return edges.length > 0 ? { edges, refs } : null;
 }
@@ -2584,6 +2621,8 @@ function parseFlowNodeRef(rawInput: string, absoluteStart: number): ParsedFlowNo
   // 贪婪 ID 正则会把箭头开头的 `--` 吞进 ID；以真实 link parser 找到最早合法边界。
   for (let cursor = 1; cursor < id.length; cursor += 1) {
     if (!parseFlowLinkAt(raw, cursor)) continue;
+    // Mermaid 把 `x-o-->B` 中紧跟连字符的 o/x 归入节点 ID，后续 `-->` 才是边。
+    if ((raw[cursor] === "o" || raw[cursor] === "x") && raw[cursor - 1] === "-") continue;
     id = raw.slice(0, cursor);
     rest = raw.slice(cursor);
     break;
@@ -3083,8 +3122,17 @@ function collectFlowNodeRelocation(source: string, nodes: FlowGraph["nodes"]): F
       if (!parsed.shapeOpenSpan || !parsed.shapeCloseSpan) {
         return { ok: false, error: `节点 ${node.id} 使用了无法安全迁移的声明语法` };
       }
-      declaration ??= source.slice(ref.start, parsed.shapeCloseSpan.end);
-      if (standalone && parsed.classNames.length === 0 && !parsed.unsupported) {
+      const inlineClassSuffix = source.slice(parsed.shapeCloseSpan.end, parsed.span.end).replace(/\s+/g, "");
+      const hasOnlyInlineClasses = parsed.classNames.length > 0 &&
+        inlineClassSuffix === parsed.classNames.map((className) => `:::${className}`).join("");
+      declaration ??= source.slice(
+        ref.start,
+        hasOnlyInlineClasses ? parsed.span.end : parsed.shapeCloseSpan.end,
+      );
+      if (standalone && (
+        (parsed.classNames.length === 0 && !parsed.unsupported) ||
+        hasOnlyInlineClasses
+      )) {
         if (!removedLineStarts.has(line.start)) {
           edits.push({ start: line.start, end: line.end, text: "" });
           removedLineStarts.add(line.start);
